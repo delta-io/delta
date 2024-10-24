@@ -138,7 +138,26 @@ public final class DeltaErrors {
     return new KernelException(message);
   }
 
-  /* ------------------------ PROTOCOL EXCEPTIONS ----------------------------- */
+  /* ------------------------ COORDINATED COMMITS EXCEPTIONS - START ------------------------ */
+
+  public static KernelException unknownCommitCoordinator(String ccName, String ccBuilderConfKey) {
+    return new KernelException(
+        String.format(
+            "Unknown commit coordinator: '%s'. Please ensure that session config '%s' is set.",
+            ccName, ccBuilderConfKey));
+  }
+
+  public static KernelException couldNotInstantiateCommitCoordinatorClient(
+      String ccName, String ccBuilderClassName, Exception ex) {
+    return new KernelException(
+        String.format(
+            "Could not instantiate Commit Coordinator Client for '%s' using builder class '%s'.",
+            ccName, ccBuilderClassName),
+        ex);
+  }
+
+  /* ------------------------ COORDINATED COMMITS EXCEPTIONS - END ------------------------ */
+  /* ------------------------ PROTOCOL EXCEPTIONS - START ----------------------------- */
 
   public static KernelException unsupportedReaderProtocol(
       String tablePath, int tableReaderVersion) {
@@ -178,6 +197,8 @@ public final class DeltaErrors {
             tablePath, writerFeature);
     return new KernelException(message);
   }
+
+  /* ------------------------ PROTOCOL EXCEPTIONS - END ----------------------------- */
 
   public static KernelException columnInvariantsNotSupported() {
     String message =

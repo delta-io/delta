@@ -22,6 +22,7 @@ import io.delta.kernel.utils.FileStatus;
 import java.io.ByteArrayInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.nio.file.FileAlreadyExistsException;
 
 /**
  * Provides file system related functionalities to Delta Kernel. Delta Kernel uses this client
@@ -85,4 +86,46 @@ public interface FileSystemClient {
    * @throws IOException for any IO error.
    */
   boolean delete(String path) throws IOException;
+
+  /**
+   * Get the status of the file at the given path.
+   *
+   * @param path Fully qualified path of the file to check.
+   * @return FileStatus object containing details such as file length, modification time, etc.
+   * @throws FileNotFoundException If the file at the given path does not exist.
+   * @throws IOException For any other IO error.
+   */
+  default FileStatus getFileStatus(String path) throws IOException {
+    throw new UnsupportedOperationException("Not implemented");
+  }
+
+  /**
+   * Check whether a file exists at the given path.
+   *
+   * @param path Fully qualified path of the file to check.
+   * @return true if the file exists, false otherwise.
+   * @throws IOException For any IO error while accessing the file system.
+   */
+  default boolean exists(String path) throws IOException {
+    throw new UnsupportedOperationException("Not implemented");
+  }
+
+  /**
+   * Copy a file from sourcePath to targetPath.
+   *
+   * <p>If {@code overwrite} is {@code true}, any existing file at the targetPath will be replaced
+   * with the source file. If {@code overwrite} is {@code false} and a file already exists at the
+   * targetPath, a {@link FileAlreadyExistsException} will be thrown.
+   *
+   * @param sourcePath Fully qualified path of the source file.
+   * @param targetPath Fully qualified path of the target file.
+   * @param overwrite If {@code true}, the target file is overwritten if it already exists. If
+   *     {@code false}, an exception is thrown if the target file exists.
+   * @throws FileAlreadyExistsException If a file already exists at the targetPath and {@code
+   *     overwrite} is {@code false}.
+   * @throws IOException For any other IO error while accessing the file system.
+   */
+  default void copy(String sourcePath, String targetPath, boolean overwrite) throws IOException {
+    throw new UnsupportedOperationException("Not implemented");
+  }
 }
