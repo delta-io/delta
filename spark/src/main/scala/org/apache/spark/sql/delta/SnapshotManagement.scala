@@ -910,7 +910,7 @@ trait SnapshotManagement { self: DeltaLog =>
             firstError = e
           }
           logWarning(log"Failed to create a snapshot from log segment " +
-            log"${MDC(DeltaLogKeys.SEGMENT, segment)}. Trying a different checkpoint.", e)
+            log"${MDC(DeltaLogKeys.LOG_SEGMENT, segment)}. Trying a different checkpoint.", e)
           segment = getLogSegmentWithMaxExclusiveCheckpointVersion(
             segment.version,
             segment.checkpointProvider.version,
@@ -922,7 +922,7 @@ trait SnapshotManagement { self: DeltaLog =>
           attempt += 1
         case e: SparkException if firstError != null =>
           logWarning(log"Failed to create a snapshot from log segment " +
-            log"${MDC(DeltaLogKeys.SEGMENT, segment)}", e)
+            log"${MDC(DeltaLogKeys.LOG_SEGMENT, segment)}", e)
           throw firstError
       }
     }

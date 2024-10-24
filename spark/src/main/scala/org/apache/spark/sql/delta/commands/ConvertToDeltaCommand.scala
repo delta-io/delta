@@ -310,7 +310,7 @@ abstract class ConvertToDeltaCommandBase(
         numFiles += statsBatchSize
         performStatsCollection(spark, txn, adds)
       } else if (collectStats) {
-        logWarning(log"collectStats is set to true but ${MDC(DeltaLogKeys.CONFIG,
+        logWarning(log"collectStats is set to true but ${MDC(DeltaLogKeys.CONFIG_KEY,
           DeltaSQLConf.DELTA_COLLECT_STATS.key)}" +
           log" is false. Skip statistics collection")
         adds.toIterator

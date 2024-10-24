@@ -46,22 +46,17 @@ import org.apache.spark.internal.LogKeyShims
  */
 trait DeltaLogKeysBase {
   case object APP_ID extends LogKeyShims
-  case object ATTEMPT extends LogKeyShims
   case object BATCH_ID extends LogKeyShims
   case object BATCH_SIZE extends LogKeyShims
-  case object CATALOG extends LogKeyShims
-  case object CLASS_NAME extends LogKeyShims
-  case object COLUMN_NAME extends LogKeyShims
-  case object COMPACTION_INFO_NEW extends LogKeyShims
-  case object COMPACTION_INFO_OLD extends LogKeyShims
+  case object CLONE_SOURCE_DESC extends LogKeyShims
   case object CONFIG extends LogKeyShims
+  case object CONFIG_KEY extends LogKeyShims
   case object COORDINATOR_CONF extends LogKeyShims
   case object COORDINATOR_NAME extends LogKeyShims
   case object COUNT extends LogKeyShims
   case object DATA_FILTER extends LogKeyShims
   case object DATE extends LogKeyShims
   case object DIR extends LogKeyShims
-  case object DRY_RUN extends LogKeyShims
   case object DURATION extends LogKeyShims
   case object END_INDEX extends LogKeyShims
   case object END_OFFSET extends LogKeyShims
@@ -69,21 +64,19 @@ trait DeltaLogKeysBase {
   case object ERROR extends LogKeyShims
   case object EXECUTOR_ID extends LogKeyShims
   case object EXPR extends LogKeyShims
-  case object FILE_ACTION_NEW extends LogKeyShims
-  case object FILE_ACTION_OLD extends LogKeyShims
   case object FILE_INDEX extends LogKeyShims
   case object FILE_NAME extends LogKeyShims
   case object FILE_STATUS extends LogKeyShims
   case object FILE_SYSTEM_SCHEME extends LogKeyShims
   case object FILTER extends LogKeyShims
   case object HOOK_NAME extends LogKeyShims
-  case object INDEX extends LogKeyShims
   case object ISOLATION_LEVEL extends LogKeyShims
+  case object IS_DRY_RUN extends LogKeyShims
   case object IS_INIT_SNAPSHOT extends LogKeyShims
   case object IS_PATH_TABLE extends LogKeyShims
   case object JOB_ID extends LogKeyShims
+  case object LOG_SEGMENT extends LogKeyShims
   case object MAX_SIZE extends LogKeyShims
-  case object MESSAGE extends LogKeyShims
   case object METADATA_ID extends LogKeyShims
   case object METADATA_NEW extends LogKeyShims
   case object METADATA_OLD extends LogKeyShims
@@ -91,6 +84,7 @@ trait DeltaLogKeysBase {
   case object MIN_SIZE extends LogKeyShims
   case object NUM_ACTIONS extends LogKeyShims
   case object NUM_ACTIONS2 extends LogKeyShims
+  case object NUM_ATTEMPT extends LogKeyShims
   case object NUM_BYTES extends LogKeyShims
   case object NUM_DIRS extends LogKeyShims
   case object NUM_FILES extends LogKeyShims
@@ -98,35 +92,28 @@ trait DeltaLogKeysBase {
   case object NUM_PARTITIONS extends LogKeyShims
   case object NUM_PREDICATES extends LogKeyShims
   case object NUM_RECORDS extends LogKeyShims
-  case object NUM_RECORDS_ACTUAL extends LogKeyShims
-  case object NUM_RECORDS_EXPECTED extends LogKeyShims
   case object NUM_SKIPPED extends LogKeyShims
   case object OFFSET extends LogKeyShims
   case object OPERATION extends LogKeyShims
-  case object OPERATION2 extends LogKeyShims
   case object OP_NAME extends LogKeyShims
-  case object OP_TYPE extends LogKeyShims
   case object PARTITION_FILTER extends LogKeyShims
   case object PATH extends LogKeyShims
   case object PATH2 extends LogKeyShims
   case object PATHS extends LogKeyShims
   case object PROTOCOL extends LogKeyShims
   case object QUERY_ID extends LogKeyShims
-  case object RDD_ID extends LogKeyShims
   case object SCHEMA extends LogKeyShims
   case object SCHEMA_DIFF extends LogKeyShims
-  case object SEGMENT extends LogKeyShims
-  case object SIZE extends LogKeyShims
   case object SNAPSHOT extends LogKeyShims
   case object START_INDEX extends LogKeyShims
   case object START_VERSION extends LogKeyShims
   case object STATS extends LogKeyShims
   case object STATUS extends LogKeyShims
-  case object TABLE_DESC extends LogKeyShims
+  case object STATUS_MESSAGE extends LogKeyShims
+  case object SYSTEM_CLASS_NAME extends LogKeyShims
   case object TABLE_FEATURES extends LogKeyShims
   case object TABLE_ID extends LogKeyShims
   case object TABLE_NAME extends LogKeyShims
-  case object TAG extends LogKeyShims
   case object TBL_PROPERTIES extends LogKeyShims
   case object THREAD_NAME extends LogKeyShims
   case object TIMESTAMP extends LogKeyShims
