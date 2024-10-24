@@ -236,7 +236,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
 
   test("Enablement tracking works when ICT is enabled post commit 0") {
     withTempDirAndEngine { (tablePath, engine) =>
-      val table = TableImpl.forPath(engine, tablePath)
+      val table = Table.forPath(engine, tablePath)
       val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
 
       val txn = txnBuilder
@@ -323,7 +323,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
 
   test("Metadata toString should work with ICT enabled") {
     withTempDirAndEngine { (tablePath, engine) =>
-      val table = TableImpl.forPath(engine, tablePath)
+      val table = Table.forPath(engine, tablePath)
       val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
 
       val txn = txnBuilder
@@ -360,7 +360,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
 
   test("Table with ICT enabled is readable") {
     withTempDirAndEngine { (tablePath, engine) =>
-      val table = TableImpl.forPath(engine, tablePath)
+      val table = Table.forPath(engine, tablePath)
       val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
 
       val txn = txnBuilder
