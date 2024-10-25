@@ -117,7 +117,7 @@ class StatsCollectionSuite
           val deltaLog = DeltaLog.forTable(spark, dir)
           StatisticsCollection.recompute(spark, deltaLog)
         }
-        assert(e.getErrorClass == "DELTA_UNSUPPORTED_STATS_RECOMPUTE_WITH_DELETION_VECTORS")
+        assert(e.getCondition == "DELTA_UNSUPPORTED_STATS_RECOMPUTE_WITH_DELETION_VECTORS")
         assert(e.getSqlState == "0AKDD")
         assert(e.getMessage ==
           "[DELTA_UNSUPPORTED_STATS_RECOMPUTE_WITH_DELETION_VECTORS] " +
@@ -514,7 +514,7 @@ class StatsCollectionSuite
           )
         }
         assert(
-          exceptOne.getErrorClass == "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_TYPE" &&
+          exceptOne.getCondition == "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_TYPE" &&
           exceptOne.getMessageParametersArray.toSeq == Seq(columnName, typename)
         )
         sql(s"create table $tableName2 (c1 long, c2 $invalidType) using delta")
@@ -522,7 +522,7 @@ class StatsCollectionSuite
           sql(s"ALTER TABLE $tableName2 SET TBLPROPERTIES('delta.dataSkippingStatsColumns' = 'c2')")
         }
         assert(
-          exceptTwo.getErrorClass == "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_TYPE" &&
+          exceptTwo.getCondition == "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_TYPE" &&
           exceptTwo.getMessageParametersArray.toSeq == Seq(columnName, typename)
         )
       }
@@ -538,7 +538,7 @@ class StatsCollectionSuite
           )
         }
         assert(
-          exceptOne.getErrorClass == "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_TYPE" &&
+          exceptOne.getCondition == "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_TYPE" &&
             exceptOne.getMessageParametersArray.toSeq == Seq(columnName, typename)
         )
         val exceptTwo = intercept[DeltaIllegalArgumentException] {
@@ -548,7 +548,7 @@ class StatsCollectionSuite
           )
         }
         assert(
-          exceptTwo.getErrorClass == "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_TYPE" &&
+          exceptTwo.getCondition == "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_TYPE" &&
           exceptTwo.getMessageParametersArray.toSeq == Seq(columnName, typename)
         )
         sql(s"create table $tableName2 (c1 long, c2 STRUCT<c20:INT, c21:$invalidType>) using delta")
@@ -558,14 +558,14 @@ class StatsCollectionSuite
           )
         }
         assert(
-          exceptThree.getErrorClass == "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_TYPE" &&
+          exceptThree.getCondition == "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_TYPE" &&
           exceptThree.getMessageParametersArray.toSeq == Seq(columnName, typename)
         )
         val exceptFour = interceptWithUnwrapping[DeltaIllegalArgumentException] {
           sql(s"ALTER TABLE $tableName2 SET TBLPROPERTIES('delta.dataSkippingStatsColumns'='c2')")
         }
         assert(
-          exceptFour.getErrorClass == "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_TYPE" &&
+          exceptFour.getCondition == "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_TYPE" &&
           exceptFour.getMessageParametersArray.toSeq == Seq(columnName, typename)
         )
       }
@@ -656,7 +656,7 @@ class StatsCollectionSuite
             )
           }
           assert(
-            except.getErrorClass == "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_PARTITIONED_COLUMN" &&
+            except.getCondition == "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_PARTITIONED_COLUMN" &&
             except.getMessageParametersArray.toSeq == Seq("c1")
           )
         } else {
@@ -667,7 +667,7 @@ class StatsCollectionSuite
             )
           }
           assert(
-            except.getErrorClass == "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_PARTITIONED_COLUMN" &&
+            except.getCondition == "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_PARTITIONED_COLUMN" &&
             except.getMessageParametersArray.toSeq == Seq("c1")
           )
         }
@@ -845,7 +845,7 @@ class StatsCollectionSuite
         )
       }
       assert(
-        exception.getErrorClass == "DELTA_DUPLICATE_DATA_SKIPPING_COLUMNS" &&
+        exception.getCondition == "DELTA_DUPLICATE_DATA_SKIPPING_COLUMNS" &&
         exception.getMessageParametersArray.toSeq == Seq(duplicatedColumns)
       )
     }
@@ -869,7 +869,7 @@ class StatsCollectionSuite
         )
       }
       assert(
-        exception.getErrorClass == "DELTA_DUPLICATE_DATA_SKIPPING_COLUMNS" &&
+        exception.getCondition == "DELTA_DUPLICATE_DATA_SKIPPING_COLUMNS" &&
         exception.getMessageParametersArray.toSeq == Seq(duplicatedColumns)
       )
     }

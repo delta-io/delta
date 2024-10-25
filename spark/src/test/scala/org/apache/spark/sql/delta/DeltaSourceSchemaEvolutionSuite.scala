@@ -84,7 +84,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
   protected val ExpectSchemaLogInitializationFailedException =
     ExpectFailure[DeltaRuntimeException](e =>
       assert(
-        e.asInstanceOf[DeltaRuntimeException].getErrorClass ==
+        e.asInstanceOf[DeltaRuntimeException].getCondition ==
           "DELTA_STREAMING_SCHEMA_LOG_INIT_FAILED_INCOMPATIBLE_METADATA" &&
           // Does NOT come from the stream start check which is for lazy initialization ...
           !e.getStackTrace.exists(
@@ -98,7 +98,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
   protected val ExpectMetadataEvolutionException =
     ExpectFailure[DeltaRuntimeException](e =>
       assert(
-        e.asInstanceOf[DeltaRuntimeException].getErrorClass ==
+        e.asInstanceOf[DeltaRuntimeException].getCondition ==
           "DELTA_STREAMING_METADATA_EVOLUTION" &&
           e.getStackTrace.exists(
             _.toString.contains("updateMetadataTrackingLogAndFailTheStreamIfNeeded"))
@@ -108,7 +108,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
   protected val ExpectMetadataEvolutionExceptionFromInitialization =
     ExpectFailure[DeltaRuntimeException](e =>
       assert(
-        e.asInstanceOf[DeltaRuntimeException].getErrorClass ==
+        e.asInstanceOf[DeltaRuntimeException].getCondition ==
           "DELTA_STREAMING_METADATA_EVOLUTION" &&
           !e.getStackTrace.exists(_.toString.contains("checkReadIncompatibleSchemaChanges")) &&
           e.getStackTrace.exists(_.toString.contains("initializeMetadataTrackingAndExitStream"))
@@ -282,7 +282,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       readStream(schemaLocation = Some(invalidSchemaLocation))
         .writeStream.option("checkpointLocation", ckpt).start(dest)
     }
-    assert(e.getErrorClass == "DELTA_STREAMING_SCHEMA_LOCATION_NOT_UNDER_CHECKPOINT")
+    assert(e.getCondition == "DELTA_STREAMING_SCHEMA_LOCATION_NOT_UNDER_CHECKPOINT")
 
     // But can be lifted with the flag
     allowSchemaLocationOutsideCheckpoint {
@@ -312,7 +312,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       val e = intercept[DeltaAnalysisException] {
         sdf.writeStream.option("checkpointLocation", ckpt).start(dest)
       }
-      assert(e.getErrorClass == "DELTA_STREAMING_SCHEMA_LOCATION_CONFLICT")
+      assert(e.getCondition == "DELTA_STREAMING_SCHEMA_LOCATION_CONFLICT")
 
 
       // But providing an additional source name can differentiate
@@ -394,7 +394,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
           q.stop()
         }
         ExceptionUtils.getRootCause(e).asInstanceOf[DeltaAnalysisException]
-          .getErrorClass == "DELTA_STREAMING_SCHEMA_LOG_INCOMPATIBLE_DELTA_TABLE_ID"
+          .getCondition == "DELTA_STREAMING_SCHEMA_LOG_INCOMPATIBLE_DELTA_TABLE_ID"
       }
     }
   }
@@ -417,7 +417,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       val e = intercept[DeltaAnalysisException] {
         schemaLog2.writeNewMetadata(newSchema)
       }
-      assert(e.getErrorClass == "DELTA_STREAMING_SCHEMA_LOCATION_CONFLICT")
+      assert(e.getCondition == "DELTA_STREAMING_SCHEMA_LOCATION_CONFLICT")
     }
   }
 
@@ -1664,7 +1664,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
     ExpectFailure[DeltaRuntimeException] { e =>
       val se = e.asInstanceOf[DeltaRuntimeException]
       assert {
-        se.getErrorClass == "DELTA_STREAMING_CANNOT_CONTINUE_PROCESSING_POST_SCHEMA_EVOLUTION" &&
+        se.getCondition == "DELTA_STREAMING_CANNOT_CONTINUE_PROCESSING_POST_SCHEMA_EVOLUTION" &&
           se.messageParameters(0) == opType && se.messageParameters(2) == ver.toString &&
           se.messageParameters.exists(_.contains(checkpointHash.toString))
       }

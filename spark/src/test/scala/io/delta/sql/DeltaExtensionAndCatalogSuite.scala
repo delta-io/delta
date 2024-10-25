@@ -108,7 +108,7 @@ class DeltaExtensionAndCatalogSuite extends SparkFunSuite {
           DeltaLog.forTable(spark, path)
         }
         assert(e.isInstanceOf[DeltaAnalysisException])
-        assert(e.getErrorClass() == "DELTA_CONFIGURE_SPARK_SESSION_WITH_EXTENSION_AND_CATALOG")
+        assert(e.getCondition() == "DELTA_CONFIGURE_SPARK_SESSION_WITH_EXTENSION_AND_CATALOG")
       }
     }
   }

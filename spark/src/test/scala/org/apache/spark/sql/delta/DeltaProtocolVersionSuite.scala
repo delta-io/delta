@@ -573,7 +573,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       tableNameOrPath: String,
       readerRequiredVersion: Int,
       writerRequiredVersion: Int): Unit = {
-    assert(exception.getErrorClass == "DELTA_INVALID_PROTOCOL_VERSION")
+    assert(exception.getCondition == "DELTA_INVALID_PROTOCOL_VERSION")
     assert(exception.tableNameOrPath == tableNameOrPath)
     assert(exception.readerRequiredVersion == readerRequiredVersion)
     assert(exception.writerRequiredVersion == writerRequiredVersion)
@@ -762,7 +762,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       errorClass: String,
       tableNameOrPath: String,
       unsupportedFeatures: Iterable[String]): Unit = {
-    assert(exception.getErrorClass == errorClass)
+    assert(exception.getCondition == errorClass)
     assert(exception.tableNameOrPath == tableNameOrPath)
     assert(exception.unsupported.toSeq.sorted == unsupportedFeatures.toSeq.sorted)
   }
@@ -778,7 +778,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           log.upgradeProtocol(Protocol(1, 2))
         }
         assert(log.update().protocol == Protocol(2, 5))
-        assert(e.getErrorClass.contains("DELTA_INVALID_PROTOCOL_DOWNGRADE"))
+        assert(e.getCondition.contains("DELTA_INVALID_PROTOCOL_DOWNGRADE"))
       }
       { // DeltaTable API
         val table = io.delta.tables.DeltaTable.forPath(spark, path.getCanonicalPath)
@@ -1173,13 +1173,13 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 
       assert(intercept[DeltaIllegalStateException] {
         log.update()
-      }.getErrorClass == "DELTA_STATE_RECOVER_ERROR")
+      }.getCondition == "DELTA_STATE_RECOVER_ERROR")
       assert(intercept[DeltaIllegalStateException] {
         spark.read.format("delta").load(path.getCanonicalPath)
-      }.getErrorClass == "DELTA_STATE_RECOVER_ERROR")
+      }.getCondition == "DELTA_STATE_RECOVER_ERROR")
       assert(intercept[DeltaIllegalStateException] {
         spark.range(1).write.format("delta").mode(SaveMode.Overwrite).save(path.getCanonicalPath)
-      }.getErrorClass == "DELTA_STATE_RECOVER_ERROR")
+      }.getCondition == "DELTA_STATE_RECOVER_ERROR")
     }
   }
 
@@ -1434,7 +1434,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
             sql(
               s"CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta " +
                 s"TBLPROPERTIES ($propString)")
-          }.getErrorClass === expectedExceptionClass.get)
+          }.getCondition === expectedExceptionClass.get)
         } else {
           sql(
             s"CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta " +
@@ -1647,7 +1647,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         if (expectedExceptionClass.isDefined) {
           assert(intercept[DeltaTableFeatureException] {
             sql(s"ALTER TABLE delta.`${dir.getCanonicalPath}` SET TBLPROPERTIES ($propString)")
-          }.getErrorClass === expectedExceptionClass.get)
+          }.getCondition === expectedExceptionClass.get)
         } else {
           sql(s"ALTER TABLE delta.`${dir.getCanonicalPath}` SET TBLPROPERTIES ($propString)")
         }
@@ -1905,7 +1905,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
             s"ALTER TABLE delta.`${dir.getCanonicalPath}` SET TBLPROPERTIES (" +
               s"  '${TestWriterMetadataNoAutoUpdateFeature.TABLE_PROP_KEY}' = 'true')")
         }
-      }.getErrorClass === "DELTA_FEATURES_REQUIRE_MANUAL_ENABLEMENT",
+      }.getCondition === "DELTA_FEATURES_REQUIRE_MANUAL_ENABLEMENT",
       "existing tables should ignore session defaults.")
 
       sql(
@@ -1950,7 +1950,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           (protocolOfNewTable.implicitlyAndExplicitlySupportedFeatures +
             ChangeDataFeedTableFeature +
             TestReaderWriterMetadataAutoUpdateFeature).map(_.name).toSeq.sorted.mkString(", ")
-        assert(e.getErrorClass === "DELTA_FEATURES_REQUIRE_MANUAL_ENABLEMENT")
+        assert(e.getCondition === "DELTA_FEATURES_REQUIRE_MANUAL_ENABLEMENT")
 
         // `getMessageParameters` is available starting from Spark 3.4.
         // For now we have to check for substrings.
@@ -3699,7 +3699,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
             AlterTableDropFeatureDeltaCommand(DeltaTableV2(spark, deltaLog.dataPath), featureName)
               .run(spark)
           }
-          assert(e.getErrorClass == exceptionClass)
+          assert(e.getCondition == exceptionClass)
         case None =>
           AlterTableDropFeatureDeltaCommand(DeltaTableV2(spark, deltaLog.dataPath), featureName)
             .run(spark)
@@ -3789,7 +3789,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
             featurePropertyKey)
           .run(spark)
       }
-      assert(e.getErrorClass == "DELTA_FEATURE_DROP_FEATURE_NOT_PRESENT")
+      assert(e.getCondition == "DELTA_FEATURE_DROP_FEATURE_NOT_PRESENT")
     }
   }
 

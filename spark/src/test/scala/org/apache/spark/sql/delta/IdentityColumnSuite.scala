@@ -503,7 +503,7 @@ class IdentityColumnScalaSuite
             )
           )
         }
-        assert(ex.getErrorClass === "DELTA_IDENTITY_COLUMNS_UNSUPPORTED_DATA_TYPE")
+        assert(ex.getCondition === "DELTA_IDENTITY_COLUMNS_UNSUPPORTED_DATA_TYPE")
         assert(ex.getMessage.contains("is not supported for IDENTITY columns"))
       }
     }
@@ -520,7 +520,7 @@ class IdentityColumnScalaSuite
           createTableWithIdColAndIntValueCol(
             tblName, generatedAsIdentityType, startsWith, incrementBy = Some(0))
         }
-        assert(ex.getErrorClass === "DELTA_IDENTITY_COLUMNS_ILLEGAL_STEP")
+        assert(ex.getCondition === "DELTA_IDENTITY_COLUMNS_ILLEGAL_STEP")
         assert(ex.getMessage.contains("step cannot be 0."))
       }
     }
@@ -531,7 +531,7 @@ class IdentityColumnScalaSuite
       val ex = intercept[DeltaAnalysisException] {
         f
       }
-      assert(ex.getErrorClass === "DELTA_IDENTITY_COLUMNS_WITH_GENERATED_EXPRESSION")
+      assert(ex.getCondition === "DELTA_IDENTITY_COLUMNS_WITH_GENERATED_EXPRESSION")
       ex.getMessage.contains(
         "Identity column cannot be specified with a generated column expression.")
     }

@@ -553,14 +553,14 @@ trait DeltaCDCColumnMappingSuiteBase extends DeltaCDCSuiteBase
       f
     }
     val (end, readSchemaJson) = if (bySchemaChange) {
-      assert(e.getErrorClass == "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_SCHEMA_CHANGE")
+      assert(e.getCondition == "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_SCHEMA_CHANGE")
       val Seq(_, end, readSchemaJson, readSchemaVersion, incompatibleVersion, _, _, _, _) =
         e.getMessageParametersArray.toSeq
       assert(incompatibleVersion.toLong == expectedIncompatSchemaVersion)
       assert(readSchemaVersion.toLong == expectedReadSchemaVersion)
       (end, readSchemaJson)
     } else {
-      assert(e.getErrorClass == "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_DATA_SCHEMA")
+      assert(e.getCondition == "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_DATA_SCHEMA")
       val Seq(_, end, readSchemaJson, readSchemaVersion, incompatibleVersion, config) =
         e.getMessageParametersArray.toSeq
       assert(incompatibleVersion.toLong == expectedIncompatSchemaVersion)
@@ -688,7 +688,7 @@ trait DeltaCDCColumnMappingScalaSuiteBase extends DeltaCDCColumnMappingSuiteBase
           EndingVersion("1"),
           readerOptions = Map(DeltaOptions.VERSION_AS_OF -> "0")).collect()
       }
-      assert(e.getErrorClass == "DELTA_UNSUPPORTED_TIME_TRAVEL_VIEWS")
+      assert(e.getCondition == "DELTA_UNSUPPORTED_TIME_TRAVEL_VIEWS")
     }
   }
 

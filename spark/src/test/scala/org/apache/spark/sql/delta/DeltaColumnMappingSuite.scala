@@ -743,7 +743,7 @@ class DeltaColumnMappingSuite extends QueryTest
               existingMetadata.configuration - DeltaConfigs.COLUMN_MAPPING_MAX_ID.key) :: Nil,
               DeltaOperations.ManualUpdate)
           }
-        }.getErrorClass == "DELTA_COLUMN_MAPPING_MAX_COLUMN_ID_NOT_SET"
+        }.getCondition == "DELTA_COLUMN_MAPPING_MAX_COLUMN_ID_NOT_SET"
       }
       // Use an invalid max column id prop
       assert {
@@ -757,7 +757,7 @@ class DeltaColumnMappingSuite extends QueryTest
               )) :: Nil,
               DeltaOperations.ManualUpdate)
           }
-        }.getErrorClass == "DELTA_COLUMN_MAPPING_MAX_COLUMN_ID_NOT_SET_CORRECTLY"
+        }.getCondition == "DELTA_COLUMN_MAPPING_MAX_COLUMN_ID_NOT_SET_CORRECTLY"
       }
     }
   }
@@ -1147,7 +1147,7 @@ class DeltaColumnMappingSuite extends QueryTest
       assert {
         intercept[DeltaAnalysisException] {
           df1.collect()
-        }.getErrorClass == "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS"
+        }.getCondition == "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS"
       }
       // See we can't read back the same data any more
       // Note: We need to use separate dataframe, because the error in df1 will be cached.
@@ -1820,7 +1820,7 @@ class DeltaColumnMappingSuite extends QueryTest
             assert {
               intercept[DeltaAnalysisException] {
                 oldDf.select("value").collect()
-              }.getErrorClass == "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS"
+              }.getCondition == "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS"
             }
           }
         }
@@ -1829,7 +1829,7 @@ class DeltaColumnMappingSuite extends QueryTest
         assert {
           intercept[DeltaAnalysisException] {
             oldDf.select("value").collect()
-          }.getErrorClass == "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS"
+          }.getCondition == "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS"
         }
       }
     }

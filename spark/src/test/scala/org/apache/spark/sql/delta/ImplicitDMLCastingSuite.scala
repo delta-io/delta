@@ -149,14 +149,14 @@ abstract class ImplicitDMLCastingSuite extends QueryTest
 
         val sparkThrowable = failureCause.asInstanceOf[SparkThrowable]
         assert(Seq("CAST_OVERFLOW", NUMERIC_VALUE_OUT_OF_RANGE_ERROR_MSG, "CAST_INVALID_INPUT")
-          .contains(sparkThrowable.getErrorClass))
+          .contains(sparkThrowable.getCondition))
       case Some(failureCause) if !sqlConfig.followAnsiEnabled =>
         assert(sqlConfig.storeAssignmentPolicy === SQLConf.StoreAssignmentPolicy.ANSI)
 
         val sparkThrowable = failureCause.asInstanceOf[SparkThrowable]
         // Only arithmetic exceptions get a custom error message.
         if (testConfig.exceptionAnsiCast == "SparkArithmeticException") {
-          assert(sparkThrowable.getErrorClass == "DELTA_CAST_OVERFLOW_IN_TABLE_WRITE")
+          assert(sparkThrowable.getCondition == "DELTA_CAST_OVERFLOW_IN_TABLE_WRITE")
           assert(sparkThrowable.getMessageParameters ==
             Map("sourceType" -> ("\"" + testConfig.sourceTypeInErrorMessage + "\""),
                 "targetType" -> ("\"" + testConfig.targetTypeInErrorMessage + "\""),
@@ -166,7 +166,7 @@ abstract class ImplicitDMLCastingSuite extends QueryTest
                   DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key,
                 "ansiEnabledFlag" -> SQLConf.ANSI_ENABLED.key).asJava)
         } else {
-          assert(sparkThrowable.getErrorClass == "CAST_INVALID_INPUT")
+          assert(sparkThrowable.getCondition == "CAST_INVALID_INPUT")
           assert(sparkThrowable.getMessageParameters.get("sourceType") == "\"STRING\"")
         }
       case None => assert(false, s"No arithmetic exception thrown: $exception")

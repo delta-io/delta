@@ -58,7 +58,7 @@ class DropColumnMappingFeatureSuite extends RemoveColumnMappingSuiteUtils {
       dropColumnMappingTableFeature()
     }
     checkError(e,
-      DeltaErrors.dropTableFeatureFeatureNotSupportedByProtocol(".").getErrorClass,
+      DeltaErrors.dropTableFeatureFeatureNotSupportedByProtocol(".").getCondition,
       parameters = Map("feature" -> "columnMapping"))
   }
 

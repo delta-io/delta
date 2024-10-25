@@ -198,9 +198,9 @@ class CaseSensitivitySuite extends QueryTest
             .option("replaceWhere", "key = 2") // note the different case
             .save(path)
         }
-        assert(e.getErrorClass == "UNRESOLVED_COLUMN.WITHOUT_SUGGESTION"
-          || e.getErrorClass == "MISSING_COLUMN"
-          || e.getErrorClass == "UNRESOLVED_COLUMN.WITH_SUGGESTION")
+        assert(e.getCondition == "UNRESOLVED_COLUMN.WITHOUT_SUGGESTION"
+          || e.getCondition == "MISSING_COLUMN"
+          || e.getCondition == "UNRESOLVED_COLUMN.WITH_SUGGESTION")
       }
 
       checkAnswer(

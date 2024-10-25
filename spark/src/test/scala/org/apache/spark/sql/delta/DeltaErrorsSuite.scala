@@ -183,9 +183,9 @@ trait DeltaErrorsSuiteBase
       startWith: Boolean = false): Unit = {
     val prefix = errClassOpt match {
       case Some(exist) =>
-        assert(e.getErrorClass == exist)
+        assert(e.getCondition == exist)
         exist
-      case _ => e.getErrorClass
+      case _ => e.getCondition
     }
     sqlStateOpt match {
       case Some(sqlState) => assert(e.getSqlState == sqlState)
@@ -682,7 +682,7 @@ trait DeltaErrorsSuiteBase
           throw DeltaErrors.schemaChangedException(oldSchema, newSchema, retryable, None, false)
         }
         assert(expectedClass.isAssignableFrom(e.getClass))
-        assert(e.getErrorClass == "DELTA_SCHEMA_CHANGED")
+        assert(e.getCondition == "DELTA_SCHEMA_CHANGED")
         assert(e.getSqlState == "KD007")
         // Use '#' as stripMargin interpolator to get around formatSchema having '|' in it
         var msg =
@@ -707,7 +707,7 @@ trait DeltaErrorsSuiteBase
           throw DeltaErrors.schemaChangedException(oldSchema, newSchema, retryable, Some(10), false)
         }
         assert(expectedClass.isAssignableFrom(e.getClass))
-        assert(e.getErrorClass == "DELTA_SCHEMA_CHANGED_WITH_VERSION")
+        assert(e.getCondition == "DELTA_SCHEMA_CHANGED_WITH_VERSION")
         assert(e.getSqlState == "KD007")
         // Use '#' as stripMargin interpolator to get around formatSchema having '|' in it
         msg =
@@ -727,7 +727,7 @@ trait DeltaErrorsSuiteBase
           throw DeltaErrors.schemaChangedException(oldSchema, newSchema, retryable, Some(10), true)
         }
         assert(expectedClass.isAssignableFrom(e.getClass))
-        assert(e.getErrorClass == "DELTA_SCHEMA_CHANGED_WITH_STARTING_OPTIONS")
+        assert(e.getCondition == "DELTA_SCHEMA_CHANGED_WITH_STARTING_OPTIONS")
         assert(e.getSqlState == "KD007")
         // Use '#' as stripMargin interpolator to get around formatSchema having '|' in it
         msg =
@@ -2781,7 +2781,7 @@ trait DeltaErrorsSuiteBase
           val e = intercept[AnalysisException] {
             sql(s"SELECT * FROM ${fnName}()").collect()
           }
-          assert(e.getErrorClass == "INCORRECT_NUMBER_OF_ARGUMENTS")
+          assert(e.getCondition == "INCORRECT_NUMBER_OF_ARGUMENTS")
           assert(e.getMessage.contains(
             s"not enough args, $fnName requires at least 2 arguments " +
               "and at most 3 arguments."))
@@ -2790,7 +2790,7 @@ trait DeltaErrorsSuiteBase
           val e = intercept[AnalysisException] {
             sql(s"SELECT * FROM ${fnName}(1, 2, 3, 4, 5)").collect()
           }
-          assert(e.getErrorClass == "INCORRECT_NUMBER_OF_ARGUMENTS")
+          assert(e.getCondition == "INCORRECT_NUMBER_OF_ARGUMENTS")
           assert(e.getMessage.contains(
             s"too many args, $fnName requires at least 2 arguments " +
               "and at most 3 arguments."))
@@ -3041,7 +3041,7 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaAnalysisException] {
         errorBuilder.finalizeAndThrow(spark.sessionState.conf)
       }
-      assert(e.getErrorClass == "_LEGACY_ERROR_TEMP_DELTA_0007")
+      assert(e.getCondition == "_LEGACY_ERROR_TEMP_DELTA_0007")
     }
     {
       val e = intercept[DeltaAnalysisException] {
