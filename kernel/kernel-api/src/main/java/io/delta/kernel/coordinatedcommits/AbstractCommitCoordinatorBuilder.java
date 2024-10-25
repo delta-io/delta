@@ -42,9 +42,7 @@ public abstract class AbstractCommitCoordinatorBuilder {
   /** Subclasses of this class must provide a no-argument constructor. */
   public AbstractCommitCoordinatorBuilder() {}
 
-  /**
-   * @return the commit coordinator name
-   */
+  /** @return the commit coordinator name */
   public abstract String getName();
 
   /**

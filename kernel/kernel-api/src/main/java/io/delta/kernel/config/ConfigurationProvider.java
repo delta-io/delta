@@ -54,8 +54,8 @@ public interface ConfigurationProvider {
    * @throws IllegalStateException if the key exists but its value is null
    */
   default String getNonNull(String key) throws NoSuchElementException, IllegalStateException {
-      final String value = get(key);
-      if (value == null) throw new IllegalStateException(String.format("%s is null", key));
-      return value;
+    final String value = get(key);
+    if (value == null) throw new IllegalStateException(String.format("%s is null", key));
+    return value;
   }
 }
