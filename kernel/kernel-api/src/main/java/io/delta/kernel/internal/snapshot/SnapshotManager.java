@@ -242,8 +242,8 @@ public class SnapshotManager {
 
     // Clean up delta log files if enabled.
     Metadata metadata = snapshot.getMetadata();
-    if (EXPIRED_LOG_CLEANUP_ENABLED.fromMetadata(engine, metadata)) {
-      cleanupExpiredLogs(engine, clock, tablePath, LOG_RETENTION.fromMetadata(engine, metadata));
+    if (EXPIRED_LOG_CLEANUP_ENABLED.fromMetadata(metadata)) {
+      cleanupExpiredLogs(engine, clock, tablePath, LOG_RETENTION.fromMetadata(metadata));
     } else {
       logger.info(
           "{}: Log cleanup is disabled. Skipping the deletion of expired log files", tablePath);
