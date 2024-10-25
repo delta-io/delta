@@ -398,6 +398,8 @@ That means specifically that for any commit…
 The `dataChange` flag on either an `add` or a `remove` can be set to `false` to indicate that an action when combined with other actions in the same atomic version only rearranges existing data or adds new statistics.
 For example, streaming queries that are tailing the transaction log can use this flag to skip actions that would not affect the final results.
 
+A single transaction should not contain duplicate `add` or `remove` actions. Readers may treat such transactions as invalid.
+
 The schema of the `add` action is as follows:
 
 Field Name | Data Type | Description | optional/required
