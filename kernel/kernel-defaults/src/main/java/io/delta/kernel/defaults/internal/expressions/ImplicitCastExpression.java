@@ -92,6 +92,8 @@ final class ImplicitCastExpression implements Expression {
         return new LongUpConverter(outputType, input);
       case "float":
         return new FloatUpConverter(outputType, input);
+      case "string":
+        return new StringUpConverter(outputType, input);
       default:
         throw new UnsupportedOperationException(
             format("Cast from %s is not supported", fromTypeStr));
@@ -108,6 +110,7 @@ final class ImplicitCastExpression implements Expression {
               this.put("integer", Arrays.asList("long", "float", "double"));
               this.put("long", Arrays.asList("float", "double"));
               this.put("float", Arrays.asList("double"));
+              this.put("string", Arrays.asList("string"));
             }
           });
 
@@ -257,6 +260,17 @@ final class ImplicitCastExpression implements Expression {
     @Override
     public double getDouble(int rowId) {
       return inputVector.getFloat(rowId);
+    }
+  }
+
+  private static class StringUpConverter extends UpConverter {
+    StringUpConverter(DataType targetType, ColumnVector inputVector) {
+      super(targetType, inputVector);
+    }
+
+    @Override
+    public String getString(int rowId) {
+      return inputVector.getString(rowId);
     }
   }
 }
