@@ -3140,7 +3140,7 @@ abstract class MergeIntoSuiteBase
                 runMerge()
               }
               checkError(ex)
-            case ExpectedResult.Success(expectedRows) =>
+            case ExpectedResult.Success(expectedRows: Seq[Row]) =>
               if (checkViewStripped) {
                 checkStripViewFromTarget(target = "v")
               }
