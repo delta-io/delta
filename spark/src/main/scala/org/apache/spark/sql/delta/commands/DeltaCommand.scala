@@ -41,7 +41,7 @@ import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.connector.catalog.V1Table
 import org.apache.spark.sql.execution.SQLExecution
-import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
+import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelationWithTable}
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 
@@ -194,9 +194,9 @@ trait DeltaCommand extends DeltaLogging {
     try {
       resolveIdentifier(analyzer, tableIdent) match {
         // is path
-        case LogicalRelation(HadoopFsRelation(_, _, _, _, _, _), _, None, _) => false
+        case LogicalRelationWithTable(HadoopFsRelation(_, _, _, _, _, _), None) => false
         // is table
-        case LogicalRelation(HadoopFsRelation(_, _, _, _, _, _), _, Some(_), _) => true
+        case LogicalRelationWithTable(HadoopFsRelation(_, _, _, _, _, _), Some(_)) => true
         // is iceberg table
         case DataSourceV2Relation(_: IcebergTablePlaceHolder, _, _, _, _) => false
         // could not resolve table/db

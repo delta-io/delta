@@ -40,7 +40,7 @@ import org.apache.spark.sql.catalyst.expressions.InSet
 import org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral
 import org.apache.spark.sql.catalyst.plans.logical.Filter
 import org.apache.spark.sql.execution.FileSourceScanExec
-import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
+import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelationWithTable}
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.functions.{asc, col, expr, lit, map_values, struct}
 import org.apache.spark.sql.internal.SQLConf
@@ -215,7 +215,7 @@ class DeltaSuite extends QueryTest
 
     // Verify the correct partitioning schema is picked up
     val hadoopFsRelations = df.queryExecution.analyzed.collect {
-      case LogicalRelation(baseRelation, _, _, _) if
+      case LogicalRelationWithTable(baseRelation, _) if
       baseRelation.isInstanceOf[HadoopFsRelation] =>
         baseRelation.asInstanceOf[HadoopFsRelation]
     }
