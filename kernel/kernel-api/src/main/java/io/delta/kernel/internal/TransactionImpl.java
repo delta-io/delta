@@ -251,8 +251,7 @@ public class TransactionImpl implements Transaction {
           "Write file actions to JSON log file `%s`",
           FileNames.deltaFile(logPath, commitAsVersion));
 
-      return new TransactionCommitResult(
-          commitAsVersion, isReadyForCheckpoint(engine, commitAsVersion));
+      return new TransactionCommitResult(commitAsVersion, isReadyForCheckpoint(commitAsVersion));
     } catch (FileAlreadyExistsException e) {
       throw e;
     } catch (IOException ioe) {
@@ -276,7 +275,7 @@ public class TransactionImpl implements Transaction {
    */
   private Optional<Long> generateInCommitTimestampForFirstCommitAttempt(
       Engine engine, long currentTimestamp) {
-    if (isICTEnabled(engine, metadata)) {
+    if (IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata)) {
       long lastCommitTimestamp = readSnapshot.getTimestamp(engine);
       return Optional.of(Math.max(currentTimestamp, lastCommitTimestamp + 1));
     } else {
@@ -297,8 +296,8 @@ public class TransactionImpl implements Transaction {
         Collections.emptyMap() /* operationMetrics */);
   }
 
-  private boolean isReadyForCheckpoint(Engine engine, long newVersion) {
-    int checkpointInterval = CHECKPOINT_INTERVAL.fromMetadata(engine, metadata);
+  private boolean isReadyForCheckpoint(long newVersion) {
+    int checkpointInterval = CHECKPOINT_INTERVAL.fromMetadata(metadata);
     return newVersion > 0 && newVersion % checkpointInterval == 0;
   }
 
