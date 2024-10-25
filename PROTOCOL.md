@@ -13,6 +13,7 @@
       - [Sidecar Files](#sidecar-files)
     - [Log Compaction Files](#log-compaction-files)
     - [Last Checkpoint File](#last-checkpoint-file)
+    - [Version Checksum File](#version-checksum-file)
   - [Actions](#actions)
     - [Change Metadata](#change-metadata)
       - [Format Specification](#format-specification)
@@ -320,6 +321,23 @@ The last checkpoint file can help reduce the cost of constructing the latest sna
 
 Rather than list the entire directory, readers can locate a recent checkpoint by looking at the `_delta_log/_last_checkpoint` file.
 Due to the zero-padded encoding of the files in the log, the version id of this recent checkpoint can be used on storage systems that support lexicographically-sorted, paginated directory listing to enumerate any delta files or newer checkpoints that comprise more recent versions of the table.
+
+### Version Checksum File
+
+The Delta transaction log must remain an append-only log. To enable the detection of non-compliant modifications to Delta files, writers can optionally emit an auxiliary file with every commit, which contains important information about the state of the table as of that version. This file is referred to as the **Version Checksum** and can be used to validate the integrity of the table. A file representing the Version Checksum of version X must be named `X.crc`, where X is zero-padded to 20 digits (e.g., for version 1, it will be `00000000000000000001.crc`), and must be a direct child of the `_delta_log` directory. Additionally, the checksum must be a JSON file with the following fields:
+
+| Field Name           | Data Type   | Description                                                                                                                  | Optional/Required |
+|----------------------|-------------|------------------------------------------------------------------------------------------------------------------------------|-------------------|
+| metadata              | `metaData` | The `metaData` of the table. See [Change Metadata](#change-metadata).                                                        | optional          |
+| protocol              | `protocol` | The `protocol` version of the table. See [Protocol Evolution](#protocol-evolution).                                          | optional          |
+| numFiles              | Long       | The total number of live (actions that remain after performing [Action Reconciliation](#action-reconciliation)) `add` file actions. See [Add File and Remove File](#add-file-and-remove-file).                       | required          |
+| numMetadata           | Long       | The total number of `metaData` actions. Must always be 1.                                                                    | required          |
+| numProtocol           | Long       | The total number of `protocol` actions. Must always be 1.                                                                    | required          |
+| tableSizeBytes        | Long       | The size of the table in bytes. This is equivalent to the sum of the `size` field of all live `add` actions.                 | required          |
+| inCommitTimestampOpt  | Long       | The in-commit timestamp of this Delta file version. This should only be if and only if the [In-Commit Timestamps](#in-commit-timestamps) feature is enabled. | optional          |
+
+To validate the integrity of the table at a version, the reader can compare the checksum of the table at that version with the state of the table computed by performing [Action Reconciliation](#action-reconciliation).
+
 
 ## Actions
 Actions modify the state of the table and they are stored both in delta files and in checkpoints.
