@@ -18,6 +18,7 @@ package io.delta.kernel.internal;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.delta.kernel.exceptions.InvalidConfigurationValueException;
+import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.exceptions.UnknownConfigurationException;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.util.*;
@@ -291,7 +292,7 @@ public class TableConfig<T> {
       ObjectMapper mapper = new ObjectMapper();
       return mapper.readValue(jsonString, new TypeReference<Map<String, String>>() {});
     } catch (Exception e) {
-      throw new RuntimeException("Failed to parse JSON string", e);
+      throw new KernelException(String.format("Failed to parse JSON string: %s", jsonString), e);
     }
   }
 
