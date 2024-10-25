@@ -22,6 +22,7 @@ import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
 import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsUtils
+import org.apache.spark.sql.delta.redirect.RedirectReaderWriter
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -367,6 +368,7 @@ object TableFeature {
       CoordinatedCommitsTableFeature)
     if (DeltaUtils.isTesting && testingFeaturesEnabled) {
       features ++= Set(
+        RedirectReaderWriterFeature,
         TestLegacyWriterFeature,
         TestLegacyReaderWriterFeature,
         TestWriterFeature,
@@ -574,6 +576,18 @@ object TimestampNTZTableFeature extends ReaderWriterFeature(name = "timestampNtz
       protocol: Protocol, metadata: Metadata, spark: SparkSession): Boolean = {
     SchemaUtils.checkForTimestampNTZColumnsRecursively(metadata.schema)
   }
+}
+
+object RedirectReaderWriterFeature
+  extends ReaderWriterFeature(name = "redirectReaderWriter-preview")
+  with FeatureAutomaticallyEnabledByMetadata {
+  override def metadataRequiresFeatureToBeEnabled(
+    protocol: Protocol,
+    metadata: Metadata,
+    spark: SparkSession
+  ): Boolean = RedirectReaderWriter.isFeatureSet(metadata)
+
+  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
 }
 
 object VariantTypeTableFeature extends ReaderWriterFeature(name = "variantType-preview")
