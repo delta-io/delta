@@ -795,6 +795,16 @@ object DeltaLog extends DeltaLogging {
   }
 
   /** Helper for creating a log for the table. */
+  def forTable(spark: SparkSession, table: CatalogTable, options: Map[String, String]): DeltaLog = {
+    apply(
+      spark,
+      logPathFor(new Path(table.location)),
+      options,
+      Some(table.identifier),
+      new SystemClock)
+  }
+
+  /** Helper for creating a log for the table. */
   def forTable(spark: SparkSession, table: CatalogTable, clock: Clock): DeltaLog = {
     apply(spark, logPathFor(new Path(table.location)), Some(table.identifier), clock)
   }
@@ -809,25 +819,52 @@ object DeltaLog extends DeltaLogging {
 
   /** Helper for getting a log, as well as the latest snapshot, of the table */
   def forTableWithSnapshot(spark: SparkSession, dataPath: String): (DeltaLog, Snapshot) =
-    withFreshSnapshot { forTable(spark, new Path(dataPath), _) }
+    withFreshSnapshot { clock =>
+      (forTable(spark, new Path(dataPath), clock), None)
+    }
 
   /** Helper for getting a log, as well as the latest snapshot, of the table */
   def forTableWithSnapshot(spark: SparkSession, dataPath: Path): (DeltaLog, Snapshot) =
-    withFreshSnapshot { forTable(spark, dataPath, _) }
+    withFreshSnapshot { clock =>
+      (forTable(spark, dataPath, clock), None)
+    }
 
   /** Helper for getting a log, as well as the latest snapshot, of the table */
   def forTableWithSnapshot(
       spark: SparkSession,
-      tableName: TableIdentifier): (DeltaLog, Snapshot) =
-    withFreshSnapshot { forTable(spark, tableName, _) }
+      tableName: TableIdentifier): (DeltaLog, Snapshot) = {
+      withFreshSnapshot { clock =>
+        if (DeltaTableIdentifier.isDeltaPath(spark, tableName)) {
+          (forTable(spark, new Path(tableName.table)), None)
+        } else {
+          val catalogTable = spark.sessionState.catalog.getTableMetadata(tableName)
+          (forTable(spark, catalogTable, clock), Some(catalogTable))
+        }
+      }
+  }
 
   /** Helper for getting a log, as well as the latest snapshot, of the table */
   def forTableWithSnapshot(
       spark: SparkSession,
       dataPath: Path,
       options: Map[String, String]): (DeltaLog, Snapshot) =
-    withFreshSnapshot {
-      apply(spark, logPathFor(dataPath), options, initialTableIdentifier = None, _)
+    withFreshSnapshot { clock =>
+      (
+        apply(spark, logPathFor(dataPath), options, initialTableIdentifier = None, clock),
+        None
+      )
+    }
+
+  /** Helper for getting a log, as well as the latest snapshot, of the table */
+  def forTableWithSnapshot(
+      spark: SparkSession,
+      table: CatalogTable,
+      options: Map[String, String]): (DeltaLog, Snapshot) =
+    withFreshSnapshot { clock =>
+      (
+        apply(spark, logPathFor(new Path(table.location)), options, Some(table.identifier), clock),
+        Some(table)
+      )
     }
 
   /**
@@ -835,11 +872,13 @@ object DeltaLog extends DeltaLogging {
    * partially applied DeltaLog.forTable call, which we can then wrap around with a
    * snapshot update. We use the system clock to avoid back-to-back updates.
    */
-  private[delta] def withFreshSnapshot(thunk: Clock => DeltaLog): (DeltaLog, Snapshot) = {
+  private[delta] def withFreshSnapshot(
+      thunk: Clock => (DeltaLog, Option[CatalogTable])): (DeltaLog, Snapshot) = {
     val clock = new SystemClock
     val ts = clock.getTimeMillis()
-    val deltaLog = thunk(clock)
-    val snapshot = deltaLog.update(checkIfUpdatedSinceTs = Some(ts))
+    val (deltaLog, catalogTableOpt) = thunk(clock)
+    val snapshot =
+      deltaLog.update(checkIfUpdatedSinceTs = Some(ts), catalogTableOpt = catalogTableOpt)
     (deltaLog, snapshot)
   }
 
