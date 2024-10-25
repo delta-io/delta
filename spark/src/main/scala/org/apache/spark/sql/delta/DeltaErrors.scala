@@ -31,6 +31,7 @@ import org.apache.spark.sql.delta.constraints.Constraints
 import org.apache.spark.sql.delta.hooks.AutoCompactType
 import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.redirect.RedirectState
 import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, InvariantViolationException, SchemaUtils, UnsupportedDataTypeInfo}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
@@ -340,6 +341,24 @@ trait DeltaErrorsBase
     new DeltaAnalysisException(
       errorClass = "DELTA_CANNOT_DROP_CHECK_CONSTRAINT_FEATURE",
       messageParameters = Array(constraintNames.map(formatColumn).mkString(", "))
+    )
+  }
+
+  def invalidRedirectStateTransition(
+      table: String,
+      oldState: RedirectState,
+      newState: RedirectState): Unit = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_TABLE_INVALID_REDIRECT_STATE_TRANSITION",
+      messageParameters = Array(
+        table, table, oldState.name, newState.name)
+    )
+  }
+
+  def invalidRemoveTableRedirect(table: String, currentState: RedirectState): Unit = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_TABLE_INVALID_REMOVE_TABLE_REDIRECT",
+      messageParameters = Array(table, table, currentState.name)
     )
   }
 
