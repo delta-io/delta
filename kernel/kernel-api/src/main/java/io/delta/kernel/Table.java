@@ -74,11 +74,10 @@ public interface Table {
   /**
    * The table identifier of this {@link Table} instance.
    *
-   * @param engine {@link Engine} instance.
    * @return the table identifier, or {@link Optional#empty()} if none is set.
    * @since 3.3.0
    */
-  Optional<TableIdentifier> getTableIdentifier(Engine engine);
+  Optional<TableIdentifier> getTableIdentifier();
 
   /**
    * Get the latest snapshot of the table.

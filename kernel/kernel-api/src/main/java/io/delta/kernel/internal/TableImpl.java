@@ -114,7 +114,7 @@ public class TableImpl implements Table {
   }
 
   @Override
-  public Optional<TableIdentifier> getTableIdentifier(Engine engine) {
+  public Optional<TableIdentifier> getTableIdentifier() {
     return tableIdOpt;
   }
 
