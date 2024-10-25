@@ -407,6 +407,26 @@ trait DeltaConfigsBase extends DeltaLogging {
     "needs to be a positive integer.")
 
   /**
+   * This is the property that describes the table redirection detail. It is a JSON string format
+   * of the `TableRedirectConfiguration` class, which includes following attributes:
+   * - type(String): The type of redirection.
+   * - state(String): The current state of the redirection:
+   *                  ENABLE-REDIRECT-IN-PROGRESS, REDIRECT-READY, DROP-REDIRECT-IN-PROGRESS.
+   * - spec(JSON String): The specification of accessing redirect destination table. This is free
+   *                      form json object. Each delta service provider can customize its own
+   *                      implementation. In Databricks, it is an object that contains a
+   *                      attribute named `Table` with Map[String, String] type.
+   */
+  val REDIRECT_READER_WRITER: DeltaConfig[Option[String]] =
+    buildConfig[Option[String]](
+      "redirectReaderWriter-preview",
+      null,
+      v => Option(v),
+      _ => true,
+      "A JSON representation of the TableRedirectConfiguration class, which contains all " +
+        "information of redirect reader writer feature.")
+
+  /**
    * Enable auto compaction for a Delta table. When enabled, we will check if files already
    * written to a Delta table can leverage compaction after a commit. If so, we run a post-commit
    * hook to compact the files.

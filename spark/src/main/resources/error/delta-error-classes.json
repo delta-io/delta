@@ -2371,6 +2371,19 @@
     ],
     "sqlState" : "XXKDS"
   },
+  "DELTA_TABLE_INVALID_REDIRECT_STATE_TRANSITION" : {
+    "message" : [
+      "Unable to update table redirection state: Invalid state transition attempted.",
+      "The Delta table '<table>' cannot change from '<oldState>' to '<newState>'."
+    ],
+    "sqlState" : "KD007"
+  },
+  "DELTA_TABLE_INVALID_REMOVE_TABLE_REDIRECT" : {
+    "message" : [
+      "Unable to remove table redirection for <table> due to its invalid state: <currentState>."
+    ],
+    "sqlState" : "KD007"
+  },
   "DELTA_TABLE_LOCATION_MISMATCH" : {
     "message" : [
       "The location of the existing table <tableName> is <existingTableLocation>. It doesn't match the specified location <tableLocation>."
