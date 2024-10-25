@@ -414,8 +414,7 @@ trait DeltaConfigsBase extends DeltaLogging {
    *                  ENABLE-REDIRECT-IN-PROGRESS, REDIRECT-READY, DROP-REDIRECT-IN-PROGRESS.
    * - spec(JSON String): The specification of accessing redirect destination table. This is free
    *                      form json object. Each delta service provider can customize its own
-   *                      implementation. In Databricks, it is an object that contains a
-   *                      attribute named `Table` with Map[String, String] type.
+   *                      implementation.
    */
   val REDIRECT_READER_WRITER: DeltaConfig[Option[String]] =
     buildConfig[Option[String]](
