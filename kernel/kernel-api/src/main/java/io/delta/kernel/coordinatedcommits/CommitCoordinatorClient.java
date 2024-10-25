@@ -38,7 +38,7 @@ import java.util.Map;
  * <ul>
  *   <li>{@link #registerTable}: Determine the table config during commit coordinator registration.
  *   <li>{@link #commit}: Commit a new version of the table.
- *   <li>{@link #getUnbackfilledCommits}: Tracks and returns unbackfilled commits.
+ *   <li>{@link #getCommits}: Tracks and returns unbackfilled commits.
  *   <li>{@link #backfillToVersion}: Ensure that commits are backfilled if/when needed.
  * </ul>
  *
@@ -72,7 +72,7 @@ public interface CommitCoordinatorClient {
    * @return A map of key-value pairs which is issued by the commit coordinator to uniquely identify
    *     the table. This should be stored in the table's metadata for table property {@link
    *     io.delta.kernel.internal.TableConfig#COORDINATED_COMMITS_TABLE_CONF}. This information
-   *     needs to be passed to the {@link #commit}, {@link #getUnbackfilledCommits}, and {@link
+   *     needs to be passed to the {@link #commit}, {@link #getCommits}, and {@link
    *     #backfillToVersion} APIs to identify the table.
    */
   Map<String, String> registerTable(
@@ -133,7 +133,7 @@ public interface CommitCoordinatorClient {
    *     io.delta.kernel.engine.coordinatedcommits.Commit}s and the latestTableVersion which is
    *     tracked by the {@link CommitCoordinatorClient}.
    */
-  GetCommitsResponse getUnbackfilledCommits(
+  GetCommitsResponse getCommits(
       Engine engine,
       TableDescriptor tableDescriptor,
       @Nullable Long startVersion,
