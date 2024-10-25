@@ -50,7 +50,7 @@ object GenerateRowIDs extends Rule[LogicalPlan] {
 
   override def apply(plan: LogicalPlan): LogicalPlan = plan.transformUpWithNewOutput {
     case DeltaScanWithRowTrackingEnabled(
-            scan @ LogicalRelationWithTable(baseRelation: HadoopFsRelation, _) =>
+            scan @ LogicalRelationWithTable(baseRelation: HadoopFsRelation, _)) =>
       // While Row IDs and commit versions are non-nullable, we'll use the Row ID & commit
       // version attributes to read the materialized values from now on, which can be null. We make
       // the materialized Row ID & commit version attributes nullable in the scan here.
