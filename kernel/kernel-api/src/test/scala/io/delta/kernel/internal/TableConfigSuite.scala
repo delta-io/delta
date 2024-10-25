@@ -22,19 +22,6 @@ import scala.collection.JavaConverters._
 
 class TableConfigSuite extends AnyFunSuite {
 
-  test("Parse Map[String, String] type table config - positive case") {
-    val expMap = Map("key1" -> "string_value", "key2Int" -> "2", "key3ComplexStr" -> "\"hello\"")
-    val input = """{"key1": "string_value", "key2Int": "2", "key3ComplexStr": "\"hello\""}"""
-    assert(TableConfig.parseJSONKeyValueMap(input) === expMap.asJava)
-  }
-
-  test("Parse Map[String, String] type table config - negative case") {
-    val e = intercept[KernelException] {
-      TableConfig.parseJSONKeyValueMap("""{"key1": "string_value", asdf"}""")
-    }
-    assert(e.getMessage.contains("Failed to parse JSON string:"))
-  }
-
   test("check TableConfig.editable is true") {
     TableConfig.validateProperties(
       Map(

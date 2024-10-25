@@ -15,10 +15,7 @@
  */
 package io.delta.kernel.internal;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.delta.kernel.exceptions.InvalidConfigurationValueException;
-import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.exceptions.UnknownConfigurationException;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.util.*;
@@ -167,7 +164,7 @@ public class TableConfig<T> {
       new TableConfig<>(
           "delta.coordinatedCommits.commitCoordinatorConf-preview",
           null, /* default values */
-          TableConfig::parseJSONKeyValueMap,
+          JsonUtils::parseJSONKeyValueMap,
           value -> true,
           "A string-to-string map of configuration properties for the"
               + " coordinated commits-coordinator.",
@@ -181,7 +178,7 @@ public class TableConfig<T> {
       new TableConfig<>(
           "delta.coordinatedCommits.tableConf-preview",
           null, /* default values */
-          TableConfig::parseJSONKeyValueMap,
+          JsonUtils::parseJSONKeyValueMap,
           value -> true,
           "A string-to-string map of configuration properties for"
               + "  describing the table to commit-coordinator.",
@@ -269,31 +266,6 @@ public class TableConfig<T> {
       }
     }
     return validatedConfigurations;
-  }
-
-  /**
-   * Parses the given JSON string into a map of key-value pairs.
-   *
-   * <p>The JSON string should be in the format:
-   *
-   * <pre>{@code {"key1": "value1", "key2": "value2", ...}}</pre>
-   *
-   * where both keys and values are strings.
-   *
-   * @param jsonString The JSON string to parse
-   * @return A map containing the key-value pairs extracted from the JSON string
-   */
-  public static Map<String, String> parseJSONKeyValueMap(String jsonString) {
-    if (jsonString == null || jsonString.trim().isEmpty()) {
-      return Collections.emptyMap();
-    }
-
-    try {
-      ObjectMapper mapper = new ObjectMapper();
-      return mapper.readValue(jsonString, new TypeReference<Map<String, String>>() {});
-    } catch (Exception e) {
-      throw new KernelException(String.format("Failed to parse JSON string: %s", jsonString), e);
-    }
   }
 
   private static void addConfig(HashMap<String, TableConfig<?>> configs, TableConfig<?> config) {
