@@ -72,7 +72,7 @@ public interface Table {
   String getPath(Engine engine);
 
   /**
-   * The catalog identifier of this {@link Table} instance.
+   * The table identifier of this {@link Table} instance.
    *
    * @param engine {@link Engine} instance.
    * @return the table identifier, or {@link Optional#empty()} if none is set.

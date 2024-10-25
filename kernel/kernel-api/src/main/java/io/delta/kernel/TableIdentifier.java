@@ -16,6 +16,7 @@
 
 package io.delta.kernel;
 
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.annotation.Evolving;
@@ -34,11 +35,9 @@ public class TableIdentifier {
   private final String name;
 
   public TableIdentifier(String[] namespace, String name) {
-    this.namespace = requireNonNull(namespace, "namespace cannot be null");
-    if (namespace.length == 0) {
-      throw new IllegalArgumentException("namespace cannot be empty");
-    }
-    this.name = requireNonNull(name, "name cannot be null");
+    checkArgument(namespace != null && namespace.length > 0, "namespace cannot be null or empty");
+    this.namespace = namespace;
+    this.name = requireNonNull(name, "name is null");
   }
 
   /** @return the namespace of the table. e.g. $catalog / $schema */
