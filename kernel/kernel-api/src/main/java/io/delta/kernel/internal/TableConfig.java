@@ -93,7 +93,7 @@ public class TableConfig<T> {
       new TableConfig<>(
           "delta.enableExpiredLogCleanup",
           "true",
-          v -> Boolean.valueOf(v),
+          Boolean::valueOf,
           value -> true,
           "needs to be a boolean.",
           true /* editable */);
