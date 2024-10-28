@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.skipping.clustering
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.skipping.ClusteredTableTestUtilsBase
 import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumnInfo, ClusteringFileStats, ClusteringStats}
-import org.apache.spark.sql.delta.{DeltaLog, DeltaUnsupportedOperationException}
+import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations, DeltaUnsupportedOperationException}
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -284,7 +284,7 @@ class IncrementalZCubeClusteringSuite extends QueryTest
     }
   }
 
-  test("OPTIMIZE FULL") {
+  test("OPTIMIZE FULL - change cluster keys") {
     withSQLConf(
       SQLConf.MAX_RECORDS_PER_FILE.key -> "2",
       // Enable update catalog for verifyClusteringColumns.
@@ -414,6 +414,108 @@ class IncrementalZCubeClusteringSuite extends QueryTest
             assert(metrics.numFilesAdded == 0)
           }
         }
+      }
+    }
+  }
+
+  test("OPTIMIZE FULL - change clustering provider") {
+    withSQLConf(
+      SQLConf.MAX_RECORDS_PER_FILE.key -> "2",
+      // Enable update catalog for verifyClusteringColumns.
+      DeltaSQLConf.DELTA_UPDATE_CATALOG_ENABLED.key -> "true") {
+      withClusteredTable(
+        table = table,
+        schema = "col1 int, col2 int",
+        clusterBy = "col1, col2") {
+        addFiles(table, numFiles = 4)
+        val files0 = getFiles(table)
+        assert(files0.size === 4)
+        // Cluster the table into two ZCUBEs.
+        runOptimize(table) { metrics =>
+          assert(metrics.clusteringStats.nonEmpty)
+          validateClusteringMetrics(
+            actualMetrics = metrics.clusteringStats.get,
+            expectedMetrics = ClusteringStats(
+              inputZCubeFiles = ClusteringFileStats(0, SKIP_CHECK_SIZE_VALUE),
+              inputOtherFiles = ClusteringFileStats(4, SKIP_CHECK_SIZE_VALUE),
+              inputNumZCubes = 0,
+              mergedFiles = ClusteringFileStats(4, SKIP_CHECK_SIZE_VALUE),
+              numOutputZCubes = 1))
+
+          assert(metrics.numFilesRemoved == 4)
+          assert(metrics.numFilesAdded == 2)
+        }
+        var files1 = getFiles(table)
+        assert(files1.size === 2)
+        for (f <- files1) {
+          assert(f.clusteringProvider.contains(ClusteredTableUtils.clusteringProvider))
+        }
+        // Change the clusteringProvider and verify files with different clusteringProvider
+        // are not clustered.
+        val (deltaLog, _) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(table))
+        val txn = deltaLog.startTransaction(None)
+        files1 = files1.map(f => f.copy(clusteringProvider = Some("customProvider")))
+        txn.commit(files1.toIndexedSeq, DeltaOperations.ManualUpdate)
+        files1 = getFiles(table)
+        assert(files1.size === 2)
+        for (f <- files1) {
+          assert(f.clusteringProvider.contains("customProvider"))
+        }
+
+        addFiles(table, numFiles = 4)
+        assert(getFiles(table).size == 6)
+
+        withSQLConf(
+          // Set an extreme value to make all zcubes unstable.
+          DeltaSQLConf.DELTA_OPTIMIZE_CLUSTERING_MIN_CUBE_SIZE.key -> Long.MaxValue.toString) {
+          runOptimize(table) { metrics =>
+            assert(metrics.clusteringStats.nonEmpty)
+            assert(metrics.numFilesRemoved == 4)
+            assert(metrics.numFilesAdded == 2)
+            validateClusteringMetrics(
+              actualMetrics = metrics.clusteringStats.get,
+              expectedMetrics = ClusteringStats(
+                inputZCubeFiles = ClusteringFileStats(2, SKIP_CHECK_SIZE_VALUE),
+                inputOtherFiles = ClusteringFileStats(4, SKIP_CHECK_SIZE_VALUE),
+                inputNumZCubes = 1,
+                mergedFiles = ClusteringFileStats(4, SKIP_CHECK_SIZE_VALUE),
+                numOutputZCubes = 1))
+          }
+        }
+        val files2 = getFiles(table)
+        assert(files2.size === 4)
+        assert(files2.forall { file =>
+          val zCubeInfo = ZCubeInfo.getForFile(file)
+          zCubeInfo.nonEmpty
+        })
+        assert(getZCubeIds(table).size == 2)
+        // validate files with different clusteringProvider are not re-clustered.
+        assert(files2.intersect(files1) === files1)
+
+        // OPTIMIZE FULL should re-cluster previously clustered files.
+        withSQLConf(
+          // Force all zcubes stable
+          DeltaSQLConf.DELTA_OPTIMIZE_CLUSTERING_MIN_CUBE_SIZE.key -> 1.toString) {
+          runOptimizeFull(table) { metrics =>
+            assert(metrics.clusteringStats.nonEmpty)
+            // Only files with old cluster keys are rewritten.
+            assert(metrics.numFilesRemoved == 2)
+            assert(metrics.numFilesAdded == 2)
+
+            validateClusteringMetrics(
+              actualMetrics = metrics.clusteringStats.get,
+              expectedMetrics = ClusteringStats(
+                inputZCubeFiles = ClusteringFileStats(4, SKIP_CHECK_SIZE_VALUE),
+                inputOtherFiles = ClusteringFileStats(0, SKIP_CHECK_SIZE_VALUE),
+                inputNumZCubes = 2,
+                mergedFiles = ClusteringFileStats(2, SKIP_CHECK_SIZE_VALUE),
+                numOutputZCubes = 1))
+          }
+        }
+        // all files have same clustering provider.
+        assert(getFiles(table).forall { f =>
+          f.clusteringProvider.contains(ClusteredTableUtils.clusteringProvider)
+        })
       }
     }
   }

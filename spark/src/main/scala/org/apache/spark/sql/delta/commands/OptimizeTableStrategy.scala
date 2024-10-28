@@ -241,7 +241,7 @@ case class ClusteringStrategy(
    * clusteringProvider is "liquid" when isFull is unset.
    * 2. Clustered files with different clustering columns are handled differently based
    * on isFull setting: If isFull is unset, existing clustered files with different columns are
-   * skipped. If isFull is set, all clustered files are considered.
+   * skipped. If isFull is set, all files are considered.
    * 3. Files that belong to the partial ZCubes are picked. A ZCube is considered as a partial
    * ZCube if its size is smaller than [[DELTA_OPTIMIZE_CLUSTERING_MIN_CUBE_SIZE]].
    * 4. If there is only single ZCUBE with all files are clustered and if all clustered files
