@@ -25,6 +25,7 @@ import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import java.io.IOException;
+import java.util.UUID;
 
 /** Various public utility methods related to Coordinated Commits. */
 public class CommitCoordinatorUtils {
