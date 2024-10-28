@@ -547,10 +547,10 @@ class OptimizeExecutor(
       case e: ConcurrentModificationException =>
         val newTxn = txn.deltaLog.startTransaction(txn.catalogTable)
         if (f(newTxn)) {
-          logInfo("Retrying commit after checking for semantic conflicts with concurrent updates.")
+          logInfo(log"Retrying commit after checking for semantic conflicts with concurrent updates.")
           commitAndRetry(newTxn, optimizeOperation, actions, metrics)(f)
         } else {
-          logWarning("Semantic conflicts detected. Aborting operation.")
+          logWarning(log"Semantic conflicts detected. Aborting operation.")
           throw e
         }
     }

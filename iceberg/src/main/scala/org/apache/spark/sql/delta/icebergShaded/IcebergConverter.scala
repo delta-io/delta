@@ -117,7 +117,7 @@ class IcebergConverter(spark: SparkSession)
                       convertSnapshot(snapshotVal, prevTxn)
                     } catch {
                       case NonFatal(e) =>
-                        logWarning("Error when writing Iceberg metadata asynchronously", e)
+                        logWarning(log"Error when writing Iceberg metadata asynchronously", e)
                         recordDeltaEvent(
                           log,
                           "delta.iceberg.conversion.async.error",
@@ -180,7 +180,7 @@ class IcebergConverter(spark: SparkSession)
       convertSnapshot(snapshotToConvert, None, catalogTable)
     } catch {
       case NonFatal(e) =>
-        logError("Error when converting to Iceberg metadata", e)
+        logError(log"Error when converting to Iceberg metadata", e)
         recordDeltaEvent(
           snapshotToConvert.deltaLog,
           "delta.iceberg.conversion.error",
@@ -214,7 +214,7 @@ class IcebergConverter(spark: SparkSession)
       }
     } catch {
       case NonFatal(e) =>
-        logError("Error when converting to Iceberg metadata", e)
+        logError(log"Error when converting to Iceberg metadata", e)
         recordDeltaEvent(
           txn.deltaLog,
           "delta.iceberg.conversion.error",

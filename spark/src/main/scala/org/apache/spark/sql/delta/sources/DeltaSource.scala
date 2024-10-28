@@ -241,7 +241,7 @@ trait DeltaSourceBase extends Source
   private var isTriggerAvailableNow = false
 
   override def prepareForTriggerAvailableNow(): Unit = {
-    logInfo("The streaming query reports to use Trigger.AvailableNow.")
+    logInfo(log"The streaming query reports to use Trigger.AvailableNow.")
     isTriggerAvailableNow = true
   }
 

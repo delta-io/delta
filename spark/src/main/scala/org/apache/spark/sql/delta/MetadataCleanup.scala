@@ -303,7 +303,7 @@ trait MetadataCleanup extends DeltaLogging {
       .collect { case file if file.getModificationTime < retentionTimestamp => file.getPath }
       .filterNot(path => activeSidecarFiles.contains(path.getName))
     val sidecarDeletionStartTimeMs = System.currentTimeMillis()
-    logInfo("Starting the deletion of unreferenced sidecar files")
+    logInfo(log"Starting the deletion of unreferenced sidecar files")
     val count = deleteMultiple(fs, sidecarFilesToDelete)
 
     logInfo(log"Deleted ${MDC(DeltaLogKeys.COUNT, count)} sidecar files")

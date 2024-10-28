@@ -277,7 +277,7 @@ trait Checkpoints extends DeltaLogging {
           opType,
           data = Map("exception" -> e.getMessage(), "stackTrace" -> e.getStackTrace())
         )
-        logWarning("Error when writing checkpoint-related files", e)
+        logWarning(log"Error when writing checkpoint-related files", e)
         val throwError = Utils.isTesting ||
           spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CHECKPOINT_THROW_EXCEPTION_WHEN_FAILED)
         if (throwError) throw e
@@ -470,7 +470,7 @@ trait Checkpoints extends DeltaLogging {
         // available checkpoint.
         .filterNot(cv => cv.version < 0 || cv.version == CheckpointInstance.MaxValue.version)
         .getOrElse {
-          logInfo("Try to find Delta last complete checkpoint")
+          logInfo(log"Try to find Delta last complete checkpoint")
           eventData("listingFromZero") = true.toString
           return findLastCompleteCheckpoint()
         }

@@ -1936,7 +1936,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED)) {
           throw DeltaErrors.metadataAbsentException()
         }
-        logWarning("Detected no metadata in initial commit but commit validation was turned off.")
+        logWarning(log"Detected no metadata in initial commit but commit validation was turned off.")
       }
     }
 
