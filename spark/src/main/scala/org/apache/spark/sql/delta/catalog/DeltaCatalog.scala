@@ -245,8 +245,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
             throw e
           }
       case e: AnalysisException if gluePermissionError(e) && isPathIdentifier(ident) =>
-        logWarning("Received an access denied error from Glue. Assuming this " +
-          s"identifier ($ident) is path based.", e)
+        logWarning(log"Received an access denied error from Glue. Assuming this " +
+          log"identifier (${MDC(DeltaLogKeys.TABLE_NAME ,ident)}) is path based.", e)
         newDeltaPathTable(ident)
     }
   }

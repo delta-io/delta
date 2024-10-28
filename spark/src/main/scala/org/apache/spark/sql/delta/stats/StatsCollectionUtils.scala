@@ -25,6 +25,7 @@ import scala.util.control.NonFatal
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaColumnMappingMode, DeltaErrors, DeltaLog, IdMapping, NameMapping, NoMapping, Snapshot}
 import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeltaStatistics._
 import org.apache.spark.sql.delta.util.{DeltaFileOperations, JsonUtils}
@@ -38,7 +39,7 @@ import org.apache.parquet.io.api.Binary
 import org.apache.parquet.schema.LogicalTypeAnnotation._
 import org.apache.parquet.schema.PrimitiveType
 
-import org.apache.spark.internal.Logging
+import org.apache.spark.internal.{Logging, MDC}
 import org.apache.spark.sql.{Dataset, SparkSession}
 import org.apache.spark.sql.catalyst.util.DateTimeUtils
 import org.apache.spark.sql.execution.datasources.DataSourceUtils
@@ -180,7 +181,8 @@ object StatsCollectionUtils
 
     if (metric.totalMissingFields > 0 || metric.numMissingTypes > 0) {
       logWarning(
-        s"StatsCollection of file `$path` misses fields/types: ${JsonUtils.toJson(metric)}")
+        log"StatsCollection of file `${MDC(DeltaLogKeys.PATH, path)}` " +
+        log"misses fields/types: ${MDC(DeltaLogKeys.METRICS, JsonUtils.toJson(metric))}")
     }
 
     val statsWithTightBoundsCol = {

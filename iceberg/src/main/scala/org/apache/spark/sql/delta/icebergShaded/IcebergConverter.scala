@@ -514,8 +514,9 @@ class IcebergConverter(spark: SparkSession)
           overwriteHelper.commit()
         } else if (hasAdds) {
           if (!hasRemoves && !hasDataChange && allDeltaActionsCaptured) {
-            logInfo(s"Skip Iceberg conversion for commit that only has AddFiles " +
-              s"without any RemoveFiles or data change. CommitInfo: $commitInfo")
+            logInfo(log"Skip Iceberg conversion for commit that only has AddFiles " +
+              log"without any RemoveFiles or data change. CommitInfo: " +
+              log"${MDC(DeltaLogKeys.DELTA_COMMIT_INFO, commitInfo)}")
           } else {
             val appendHelper = icebergTxn.getAppendOnlyHelper()
               addsAndRemoves.foreach(action => appendHelper.add(action.add))

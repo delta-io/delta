@@ -1964,10 +1964,11 @@ trait OptimisticTransactionImpl extends TransactionalWrite
             a.partitionValues.keySet.toSeq, partitionColumns.toSeq)
         }
         logWarning(
-          s"""
+          log"""
              |Detected mismatch in partition values between AddFile and table metadata but
              |commit validation was turned off.
-             |To turn it back on set ${DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED} to "true"
+             |To turn it back on set
+             |${MDC(DeltaLogKeys.CONFIG_KEY, DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED)} to "true"
           """.stripMargin)
         a
       case other => other

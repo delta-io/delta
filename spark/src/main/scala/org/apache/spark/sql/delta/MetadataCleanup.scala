@@ -260,8 +260,9 @@ trait MetadataCleanup extends DeltaLogging {
       otherFiles.partition(_.getPath.getName.endsWith("json"))
     if (unknownFormatCheckpointFiles.nonEmpty) {
       logWarning(
-        "Found checkpoint files other than parquet and json: " +
-          s"${unknownFormatCheckpointFiles.map(_.getPath.toString).mkString(",")}")
+        log"Found checkpoint files other than parquet and json: " +
+        log"${MDC(DeltaLogKeys.PATHS,
+          unknownFormatCheckpointFiles.map(_.getPath.toString).mkString(","))}")
     }
     metrics.numActiveParquetCheckpointFiles = parquetCheckpointFiles.size
     metrics.numActiveJsonCheckpointFiles = jsonCheckpointFiles.size
