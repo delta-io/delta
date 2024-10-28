@@ -26,6 +26,7 @@ import org.apache.spark.sql.delta.redirect.{
   RedirectReaderWriter,
   RedirectReady,
   RedirectState,
+  RedirectWriterOnly,
   TableRedirect
 }
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
@@ -45,14 +46,20 @@ class TableRedirectSuite extends QueryTest
   private def validateState(
       deltaLog: DeltaLog,
       redirectState: RedirectState,
-      destTablePath: File
+      destTablePath: File,
+      feature: TableRedirect
   ): Unit = {
     val snapshot = deltaLog.update()
-    assert(RedirectReaderWriter.isFeatureSet(snapshot.metadata))
-    val redirectConfig = RedirectReaderWriter.getRedirectConfiguration(snapshot.metadata).get
-    assert(snapshot.protocol.supportsReaderFeatures && snapshot.protocol.supportsWriterFeatures)
-    assert(snapshot.protocol.readerFeatureNames.contains(RedirectReaderWriterFeature.name))
-    assert(snapshot.protocol.writerFeatureNames.contains(RedirectReaderWriterFeature.name))
+    assert(feature.isFeatureSet(snapshot.metadata))
+    val redirectConfig = feature.getRedirectConfiguration(snapshot.metadata).get
+    val protocol = snapshot.protocol
+    if (feature != RedirectWriterOnly) {
+      assert(protocol.readerFeatureNames.contains(RedirectReaderWriterFeature.name))
+      assert(protocol.writerFeatureNames.contains(RedirectReaderWriterFeature.name))
+    } else {
+      assert(!protocol.readerFeatureNames.contains(RedirectWriterOnlyFeature.name))
+      assert(protocol.writerFeatureNames.contains(RedirectWriterOnlyFeature.name))
+    }
     assert(redirectConfig.redirectState == redirectState)
     assert(redirectConfig.`type` == PathBasedRedirectSpec.REDIRECT_TYPE)
     val expectedSpecValue = s"""{"tablePath":"${destTablePath.getCanonicalPath}"}"""
@@ -65,43 +72,51 @@ class TableRedirectSuite extends QueryTest
     val snapshot = deltaLog.update()
     val protocol = snapshot.protocol
     assert(!feature.isFeatureSet(snapshot.metadata))
-    assert(protocol.supportsReaderFeatures && protocol.supportsWriterFeatures)
-    assert(protocol.readerFeatureNames.contains(RedirectReaderWriterFeature.name))
-    assert(protocol.writerFeatureNames.contains(RedirectReaderWriterFeature.name))
+    if (feature != RedirectWriterOnly) {
+      assert(protocol.readerFeatureNames.contains(RedirectReaderWriterFeature.name))
+      assert(protocol.writerFeatureNames.contains(RedirectReaderWriterFeature.name))
+    } else {
+      assert(!protocol.readerFeatureNames.contains(RedirectWriterOnlyFeature.name))
+      assert(protocol.writerFeatureNames.contains(RedirectWriterOnlyFeature.name))
+    }
   }
 
-  test("basic table redirect") {
-    withTempDir { sourceTablePath =>
-      withTempDir { destTablePath =>
-        val feature = RedirectReaderWriter
-        sql(s"CREATE external TABLE t1(c0 long, c1 long) USING delta LOCATION '$sourceTablePath';")
-        val catalogTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier("t1"))
-        val deltaLog = DeltaLog.forTable(spark, new Path(sourceTablePath.getCanonicalPath))
-        assert(!feature.isFeatureSet(deltaLog.update().metadata))
-        val redirectSpec = new PathBasedRedirectSpec(destTablePath.getCanonicalPath)
-        val catalogTableOpt = Some(catalogTable)
-        val redirectType = PathBasedRedirectSpec.REDIRECT_TYPE
-        // Step-1: Initiate table redirection and set to EnableRedirectInProgress state.
-        feature.add(deltaLog, catalogTableOpt, redirectType, redirectSpec)
-        validateState(deltaLog, EnableRedirectInProgress, destTablePath)
-        // Step-2: Complete table redirection and set to RedirectReady state.
-        feature.update(deltaLog, catalogTableOpt, RedirectReady, redirectSpec)
-        validateState(deltaLog, RedirectReady, destTablePath)
-        // Step-3: Start dropping table redirection and set to DropRedirectInProgress state.
-        feature.update(deltaLog, catalogTableOpt, DropRedirectInProgress, redirectSpec)
-        validateState(deltaLog, DropRedirectInProgress, destTablePath)
-        // Step-4: Finish dropping table redirection and remove the property completely.
-        feature.remove(deltaLog, Some(catalogTable))
-        validateRemovedState(deltaLog, feature)
-        // Step-5: Initiate table redirection and set to EnableRedirectInProgress state one
-        // more time.
-        withTempDir { destTablePath2 =>
-          val redirectSpec = new PathBasedRedirectSpec(destTablePath2.getCanonicalPath)
-          feature.add(deltaLog, catalogTableOpt, redirectType, redirectSpec)
-          validateState(deltaLog, EnableRedirectInProgress, destTablePath2)
-          // Step-6: Finish dropping table redirection and remove the property completely.
-          feature.remove(deltaLog, Some(catalogTable))
-          validateRemovedState(deltaLog, feature)
+  Seq(RedirectReaderWriter, RedirectWriterOnly).foreach { feature =>
+    test(s"basic table redirect: ${feature.config.key}") {
+      withTempDir { sourceTablePath =>
+        withTempDir { destTablePath =>
+          withTable("t1") {
+            sql(s"CREATE external TABLE t1(c0 long)USING delta LOCATION '$sourceTablePath';")
+            val catalogTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier("t1"))
+            val deltaLog = DeltaLog.forTable(spark, new Path(sourceTablePath.getCanonicalPath))
+            val snapshot = deltaLog.update()
+            assert(!feature.isFeatureSet(snapshot.metadata))
+            val redirectSpec = new PathBasedRedirectSpec(destTablePath.getCanonicalPath)
+            val catalogTableOpt = Some(catalogTable)
+            val redirectType = PathBasedRedirectSpec.REDIRECT_TYPE
+            // Step-1: Initiate table redirection and set to EnableRedirectInProgress state.
+            feature.add(deltaLog, catalogTableOpt, redirectType, redirectSpec)
+            validateState(deltaLog, EnableRedirectInProgress, destTablePath, feature)
+            // Step-2: Complete table redirection and set to RedirectReady state.
+            feature.update(deltaLog, catalogTableOpt, RedirectReady, redirectSpec)
+            validateState(deltaLog, RedirectReady, destTablePath, feature)
+            // Step-3: Start dropping table redirection and set to DropRedirectInProgress state.
+            feature.update(deltaLog, catalogTableOpt, DropRedirectInProgress, redirectSpec)
+            validateState(deltaLog, DropRedirectInProgress, destTablePath, feature)
+            // Step-4: Finish dropping table redirection and remove the property completely.
+            feature.remove(deltaLog, catalogTableOpt)
+            validateRemovedState(deltaLog, feature)
+            // Step-5: Initiate table redirection and set to EnableRedirectInProgress state one
+            // more time.
+            withTempDir { destTablePath2 =>
+              val redirectSpec = new PathBasedRedirectSpec(destTablePath2.getCanonicalPath)
+              feature.add(deltaLog, catalogTableOpt, redirectType, redirectSpec)
+              validateState(deltaLog, EnableRedirectInProgress, destTablePath2, feature)
+              // Step-6: Finish dropping table redirection and remove the property completely.
+              feature.remove(deltaLog, catalogTableOpt)
+              validateRemovedState(deltaLog, feature)
+            }
+          }
         }
       }
     }

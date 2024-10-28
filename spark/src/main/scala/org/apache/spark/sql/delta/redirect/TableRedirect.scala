@@ -177,7 +177,7 @@ case class TableRedirectConfiguration(
 /**
  * This is the main class of the table redirect that interacts with other components.
  */
-class TableRedirect(config: DeltaConfig[Option[String]]) {
+class TableRedirect(val config: DeltaConfig[Option[String]]) {
   /**
    * Determine whether the property of table redirect feature is set.
    */
@@ -309,3 +309,5 @@ class TableRedirect(config: DeltaConfig[Option[String]]) {
 }
 
 object RedirectReaderWriter extends TableRedirect(config = DeltaConfigs.REDIRECT_READER_WRITER)
+
+object RedirectWriterOnly extends TableRedirect(config = DeltaConfigs.REDIRECT_WRITER_ONLY)

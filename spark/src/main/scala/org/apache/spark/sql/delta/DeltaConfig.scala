@@ -426,6 +426,18 @@ trait DeltaConfigsBase extends DeltaLogging {
         "information of redirect reader writer feature.")
 
   /**
+   * This table feature is same as REDIRECT_READER_WRITER except it is a writer only table feature.
+   */
+  val REDIRECT_WRITER_ONLY: DeltaConfig[Option[String]] =
+    buildConfig[Option[String]](
+      "redirectWriterOnly-preview",
+      null,
+      v => Option(v),
+      _ => true,
+      "A JSON representation of the TableRedirectConfiguration class, which contains all " +
+        "information of redirect writer only feature.")
+
+  /**
    * Enable auto compaction for a Delta table. When enabled, we will check if files already
    * written to a Delta table can leverage compaction after a commit. If so, we run a post-commit
    * hook to compact the files.

@@ -22,7 +22,7 @@ import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
 import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsUtils
-import org.apache.spark.sql.delta.redirect.RedirectReaderWriter
+import org.apache.spark.sql.delta.redirect.{RedirectReaderWriter, RedirectWriterOnly}
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -369,6 +369,7 @@ object TableFeature {
     if (DeltaUtils.isTesting && testingFeaturesEnabled) {
       features ++= Set(
         RedirectReaderWriterFeature,
+        RedirectWriterOnlyFeature,
         TestLegacyWriterFeature,
         TestLegacyReaderWriterFeature,
         TestWriterFeature,
@@ -586,6 +587,17 @@ object RedirectReaderWriterFeature
     metadata: Metadata,
     spark: SparkSession
   ): Boolean = RedirectReaderWriter.isFeatureSet(metadata)
+
+  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+}
+
+object RedirectWriterOnlyFeature extends WriterFeature(name = "redirectWriterOnly-preview")
+  with FeatureAutomaticallyEnabledByMetadata {
+  override def metadataRequiresFeatureToBeEnabled(
+    protocol: Protocol,
+    metadata: Metadata,
+    spark: SparkSession
+  ): Boolean = RedirectWriterOnly.isFeatureSet(metadata)
 
   override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
 }
