@@ -43,7 +43,14 @@ public interface ConfigurationProvider {
    * @param key the configuration key
    * @return the configuration value associated with the key, if it exists
    */
-  Optional<String> getOptional(String key);
+  default Optional<String> getOptional(String key) {
+    try {
+      final String value = get(key);
+      return Optional.of(value);
+    } catch (NoSuchElementException ex) {
+      return Optional.empty();
+    }
+  }
 
   /**
    * Retrieves the configuration value for the given key, ensuring that the value is not null.
