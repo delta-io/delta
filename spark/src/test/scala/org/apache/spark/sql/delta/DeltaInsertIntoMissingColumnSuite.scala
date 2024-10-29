@@ -137,6 +137,26 @@ class DeltaInsertIntoMissingColumnSuite extends DeltaInsertIntoTest {
       confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
     )
 
+  testInserts(s"insert with implicit cast and missing nested field," +
+      s"schemaEvolution=$schemaEvolution")(
+      initialData =
+        TestData("a int, s struct<x: int, y: int>", Seq("""{ "a": 1, "s": { "x": 2, "y": 3 } }""")),
+      partitionBy = Seq("a"),
+      overwriteWhere = "a" -> 1,
+      insertData =
+        TestData("a int, s struct<y: long>", Seq("""{ "a": 1, "s": { "y": 5 } }""")),
+      // Missing nested fields are allowed when writing to a delta streaming sink when there's a
+      // type mismatch, same as when there's no type mismatch.
+      expectedResult = ExpectedResult.Success(
+        expected = new StructType()
+          .add("a", IntegerType)
+          .add("s", new StructType()
+            .add("x", IntegerType)
+            .add("y", IntegerType))),
+      includeInserts = Set(StreamingInsert),
+      confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
+    )
+
     // Missing columns for all inserts by position and missing nested fields for all inserts by
     // position or SQL inserts are rejected. Whether the insert also includes a type mismatch
     // doesn't play a role.

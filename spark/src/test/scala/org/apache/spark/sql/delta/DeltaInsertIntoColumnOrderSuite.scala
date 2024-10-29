@@ -125,14 +125,17 @@ class DeltaInsertIntoColumnOrderSuite extends DeltaInsertIntoTest {
 
   for { (inserts: Set[Insert], expectedAnswer) <- Seq(
     // When there's a type mismatch and an implicit cast is required, then all inserts use position
-    // based resolution for struct fields, except for `INSERT OVERWRITE PARTITION (partition)` which
-    // uses name based resolution, and dataframe inserts by name which don't support implicit cast
-    // and fail - see negative test below.
+    // based resolution for struct fields, except for `INSERT OVERWRITE PARTITION (partition)` and
+    // streaming insert which use name based resolution, and dataframe inserts by name which don't
+    // support implicit cast and fail - see negative test below.
     insertsAppend - StreamingInsert ->
       TestData("a int, s struct <x int, y: int>",
         Seq("""{ "a": 1, "s": { "x": 2, "y": 3 } }""", """{ "a": 1, "s": { "x": 5, "y": 4 } }""")),
     insertsOverwrite - SQLInsertOverwritePartitionByPosition ->
       TestData("a int, s struct <x int, y: int>", Seq("""{ "a": 1, "s": { "x": 5, "y": 4 } }""")),
+    Set(StreamingInsert) ->
+      TestData("a int, s struct <x int, y: int>",
+        Seq("""{ "a": 1, "s": { "x": 2, "y": 3 } }""", """{ "a": 1, "s": { "x": 4, "y": 5 } }""")),
     Set(SQLInsertOverwritePartitionByPosition) ->
       TestData("a int, s struct <x int, y: int>", Seq("""{ "a": 1, "s": { "x": 4, "y": 5 } }"""))
     )

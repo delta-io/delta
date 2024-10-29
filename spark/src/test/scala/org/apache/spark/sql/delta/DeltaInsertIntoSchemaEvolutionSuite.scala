@@ -105,7 +105,7 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
             ))
         })
       },
-      includeInserts = insertsByPosition,
+      includeInserts = insertsByPosition + StreamingInsert,
       confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
     )
 
@@ -124,7 +124,7 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
             "updateField" -> "b"
           ))
       }),
-      includeInserts = insertsDataframe.intersect(insertsByName),
+      includeInserts = insertsDataframe.intersect(insertsByName) - StreamingInsert,
       confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
     )
 
@@ -210,7 +210,7 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
             ))
         })
       },
-      includeInserts = insertsSQL ++ insertsByPosition -- Seq(
+      includeInserts = insertsSQL ++ insertsByPosition + StreamingInsert -- Seq(
         // It's not possible to specify a column that doesn't exist in the target using SQL with an
         // explicit column list.
         SQLInsertColList(SaveMode.Append),
@@ -236,7 +236,7 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
             "updateField" -> "s"
           ))
       }),
-      includeInserts = insertsDataframe.intersect(insertsByName),
+      includeInserts = insertsDataframe.intersect(insertsByName) - StreamingInsert,
       confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
     )
   }
