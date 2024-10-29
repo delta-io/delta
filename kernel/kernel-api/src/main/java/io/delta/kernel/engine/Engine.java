@@ -69,29 +69,6 @@ public interface Engine {
    *     coordinator name
    * @since 3.3.0
    */
-  default CommitCoordinatorClient getCommitCoordinatorClient(
-      String commitCoordinatorName, Map<String, String> commitCoordinatorConf) {
-    throw new UnsupportedOperationException("Not implemented");
-  }
-
-  /**
-   * Retrieves a {@link CommitCoordinatorClientHandler} for the specified commit coordinator client.
-   *
-   * <p>{@link CommitCoordinatorClientHandler} helps Kernel perform commits to a table which is
-   * owned by a commit coordinator.
-   *
-   * @see <a
-   *     href="https://github.com/delta-io/delta/blob/master/protocol_rfcs/managed-commits.md#sample-commit-owner-api">Coordinated
-   *     commit protocol table feature</a>.
-   *     <p>This method creates and returns an implementation of {@link
-   *     CommitCoordinatorClientHandler} based on the provided name and configuration of the
-   *     underlying commit coordinator client.
-   * @param name The identifier or name of the underlying commit coordinator client
-   * @param conf The configuration settings for the underlying commit coordinator client
-   * @return An implementation of {@link CommitCoordinatorClientHandler} configured for the
-   *     specified client
-   * @since 3.3.0
-   */
-  CommitCoordinatorClientHandler getCommitCoordinatorClientHandler(
-      String name, Map<String, String> conf);
+  CommitCoordinatorClient getCommitCoordinatorClient(
+      String commitCoordinatorName, Map<String, String> commitCoordinatorConf);
 }
