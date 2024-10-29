@@ -24,8 +24,11 @@ import io.delta.kernel.utils.FileStatus;
 import io.delta.storage.LogStore;
 import java.io.*;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.FSDataInputStream;
+import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.shaded.org.apache.commons.io.IOUtils;
 
 /**
  * Default implementation of {@link FileSystemClient} based on Hadoop APIs. It takes a Hadoop {@link
@@ -63,6 +66,10 @@ public class DefaultFileSystemClient implements FileSystemClient {
   public DefaultFileSystemClient(Configuration hadoopConf) {
     this.hadoopConf = hadoopConf;
   }
+
+  /////////////////
+  // Public APIs //
+  /////////////////
 
   @Override
   public CloseableIterator<FileStatus> listFrom(String filePath) throws IOException {
@@ -105,6 +112,48 @@ public class DefaultFileSystemClient implements FileSystemClient {
     FileSystem fs = pathObject.getFileSystem(hadoopConf);
     return fs.delete(pathObject, false);
   }
+
+  @Override
+  public FileStatus getFileStatus(String path) throws IOException {
+    final Path pathObject = new Path(path);
+    final FileSystem fs = pathObject.getFileSystem(hadoopConf);
+    final org.apache.hadoop.fs.FileStatus hadoopFileStatus = fs.getFileStatus(pathObject);
+    return FileStatus.of(
+        hadoopFileStatus.getPath().toString(),
+        hadoopFileStatus.getLen(),
+        hadoopFileStatus.getModificationTime());
+  }
+
+  @Override
+  public boolean exists(String path) throws IOException {
+    final Path pathObject = new Path(path);
+    final FileSystem fs = pathObject.getFileSystem(hadoopConf);
+    return fs.exists(pathObject);
+  }
+
+  @Override
+  public void copy(String sourcePath, String targetPath, boolean overwrite) throws IOException {
+    final Path sourcePathObject = new Path(sourcePath);
+    final Path targetPathObject = new Path(targetPath);
+    final FileSystem fs = sourcePathObject.getFileSystem(hadoopConf);
+
+    final FSDataInputStream inputStream = fs.open(sourcePathObject);
+    try {
+      final FSDataOutputStream outputStream = fs.create(targetPathObject, false /* overwrite */);
+      IOUtils.copy(inputStream, outputStream);
+
+      // We don't close `outputStream` if an exception happens because it may create a partial file.
+      outputStream.close();
+    } catch (org.apache.hadoop.fs.FileAlreadyExistsException e) {
+      throw new java.nio.file.FileAlreadyExistsException(targetPathObject.toString());
+    } finally {
+      inputStream.close();
+    }
+  }
+
+  ////////////////////
+  // Helper Methods //
+  ////////////////////
 
   private ByteArrayInputStream getStream(String filePath, int offset, int size) {
     Path path = new Path(filePath);
