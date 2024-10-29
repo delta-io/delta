@@ -206,7 +206,7 @@ public class CommitInfo {
   }
 
   /** Get the persisted commit info (if available) for the given delta file. */
-  public static Optional<CommitInfo> getCommitInfoOpt(Engine engine, Path logPath, long version) {
+  public static Optional<CommitInfo> getCommitInfoOpt(Engine engine, String logPath, long version) {
     final FileStatus file =
         FileStatus.of(
             FileNames.deltaFile(logPath, version), /* path */

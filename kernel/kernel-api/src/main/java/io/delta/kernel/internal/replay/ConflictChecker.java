@@ -266,7 +266,7 @@ public class ConflictChecker {
 
   private List<FileStatus> getWinningCommitFiles(Engine engine) {
     String firstWinningCommitFile =
-        deltaFile(snapshot.getLogPath(), snapshot.getVersion(engine) + 1);
+        deltaFile(snapshot.getLogPath().toString(), snapshot.getVersion(engine) + 1);
 
     try (CloseableIterator<FileStatus> files =
         wrapEngineExceptionThrowsIO(

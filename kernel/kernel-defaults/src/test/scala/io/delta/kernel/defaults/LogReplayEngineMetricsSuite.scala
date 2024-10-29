@@ -387,7 +387,7 @@ trait FileReadMetrics { self: Object =>
   private def updateVersionsRead(fileStatus: FileStatus): Unit = {
     val path = new Path(fileStatus.getPath)
     if (FileNames.isCommitFile(path.getName) || FileNames.isCheckpointFile(path.getName)) {
-      val version = FileNames.getFileVersion(path)
+      val version = FileNames.getFileVersion(fileStatus.getPath)
 
       // We may split json/parquet reads, so don't record the same file multiple times
       if (!versionsRead.contains(version)) {

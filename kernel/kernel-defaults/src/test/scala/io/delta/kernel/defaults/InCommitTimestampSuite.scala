@@ -40,7 +40,7 @@ import io.delta.kernel.internal.actions.SingleAction.createCommitInfoSingleActio
 
 class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
 
-  private def removeCommitInfoFromCommit(engine: Engine, version: Long, logPath: Path): Unit = {
+  private def removeCommitInfoFromCommit(engine: Engine, version: Long, logPath: String): Unit = {
     val file = FileStatus.of(FileNames.deltaFile(logPath, version), 0, 0)
     val columnarBatches =
       engine.getJsonHandler.readJsonFiles(
@@ -159,7 +159,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
         value = "true",
         expectedValue = true)
       // Remove CommitInfo from the commit.
-      val logPath = new Path(table.getPath(engine), "_delta_log")
+      val logPath = table.getPath(engine) + "/_delta_log";
       removeCommitInfoFromCommit(engine, 0, logPath)
 
       val ex = intercept[InvalidTableException] {
@@ -180,7 +180,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
       setTablePropAndVerify(
         engine, tablePath, isNewTable = true, IN_COMMIT_TIMESTAMPS_ENABLED, "true", true)
       // Remove CommitInfo.inCommitTimestamp from the commit.
-      val logPath = new Path(table.getPath(engine), "_delta_log")
+      val logPath = table.getPath(engine) + "/_delta_log"
       val file = FileStatus.of(FileNames.deltaFile(logPath, 0), 0, 0)
       val columnarBatches =
         engine.getJsonHandler.readJsonFiles(
@@ -405,7 +405,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
    *  is not null, otherwise return null.
    */
   private def getInCommitTimestamp(engine: Engine, table: Table, version: Long): Option[Long] = {
-    val logPath = new Path(table.getPath(engine), "_delta_log")
+    val logPath = table.getPath(engine) + "/_delta_log"
     val commitInfoOpt = CommitInfo.getCommitInfoOpt(engine, logPath, version)
     if (commitInfoOpt.isPresent && commitInfoOpt.get.getInCommitTimestamp.isPresent) {
       Some(commitInfoOpt.get.getInCommitTimestamp.get)
@@ -526,7 +526,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
       )
 
       // Remove CommitInfo from the commit.
-      val logPath = new Path(table.getPath(engine), "_delta_log")
+      val logPath = table.getPath(engine) + "/_delta_log"
       removeCommitInfoFromCommit(engine, 2, logPath)
 
       clock.setTime(startTime - 1000)

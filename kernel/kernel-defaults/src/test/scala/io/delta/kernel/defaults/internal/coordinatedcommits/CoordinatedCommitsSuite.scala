@@ -85,7 +85,7 @@ class CoordinatedCommitsSuite extends DeltaTableWriteSuiteBase
 
     /** Rewrite the FS to CC conversion commit and move coordinated commits to _commits folder */
     (0L until totalCommitNum).foreach{ version =>
-      val commitFilePath = getHadoopDeltaFile(logPath, version)
+      val commitFilePath = getHadoopDeltaFile(logPath.toString, version)
 
       if (version == versionConvertToCC) {
         tableConf = handler.registerTable(

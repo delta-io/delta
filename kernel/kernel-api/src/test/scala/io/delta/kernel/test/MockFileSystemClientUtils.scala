@@ -39,7 +39,7 @@ trait MockFileSystemClientUtils extends MockEngineUtils {
   /** Delta file statuses where the timestamp = 10*version */
   def deltaFileStatuses(deltaVersions: Seq[Long]): Seq[FileStatus] = {
     assert(deltaVersions.size == deltaVersions.toSet.size)
-    deltaVersions.map(v => FileStatus.of(FileNames.deltaFile(logPath, v), v, v*10))
+    deltaVersions.map(v => FileStatus.of(FileNames.deltaFile(logPath.toString, v), v, v*10))
   }
 
   /** Checkpoint file statuses where the timestamp = 10*version */
@@ -79,7 +79,7 @@ trait MockFileSystemClientUtils extends MockEngineUtils {
       }
       val sidecars = (0 until numSidecars).map { _ =>
         FileStatus.of(
-          FileNames.v2CheckpointSidecarFile(logPath, UUID.randomUUID().toString).toString,
+          FileNames.v2CheckpointSidecarFile(logPath.toString, UUID.randomUUID().toString),
           v, v * 10)
       }
       (topLevelFile, sidecars)

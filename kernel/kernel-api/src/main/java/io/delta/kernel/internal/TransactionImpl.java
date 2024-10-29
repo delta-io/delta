@@ -29,7 +29,6 @@ import io.delta.kernel.exceptions.ConcurrentWriteException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.data.TransactionStateRow;
-import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.replay.ConflictChecker;
 import io.delta.kernel.internal.replay.ConflictChecker.TransactionRebaseState;
 import io.delta.kernel.internal.util.*;
@@ -62,8 +61,8 @@ public class TransactionImpl implements Transaction {
   private final boolean isNewTable; // the transaction is creating a new table
   private final String engineInfo;
   private final Operation operation;
-  private final Path dataPath;
-  private final Path logPath;
+  private final String dataPath;
+  private final String logPath;
   private final Protocol protocol;
   private final SnapshotImpl readSnapshot;
   private final Optional<SetTransaction> setTxnOpt;
@@ -77,8 +76,8 @@ public class TransactionImpl implements Transaction {
 
   public TransactionImpl(
       boolean isNewTable,
-      Path dataPath,
-      Path logPath,
+      String dataPath,
+      String logPath,
       SnapshotImpl readSnapshot,
       String engineInfo,
       Operation operation,
@@ -104,7 +103,7 @@ public class TransactionImpl implements Transaction {
 
   @Override
   public Row getTransactionState(Engine engine) {
-    return TransactionStateRow.of(metadata, dataPath.toString());
+    return TransactionStateRow.of(metadata, dataPath);
   }
 
   @Override
@@ -250,7 +249,7 @@ public class TransactionImpl implements Transaction {
       if (commitAsVersion == 0) {
         // New table, create a delta log directory
         if (!wrapEngineExceptionThrowsIO(
-            () -> engine.getFileSystemClient().mkdirs(logPath.toString()),
+            () -> engine.getFileSystemClient().mkdirs(logPath),
             "Creating directories for path %s",
             logPath)) {
           throw new RuntimeException("Failed to create delta log directory: " + logPath);

@@ -35,7 +35,7 @@ class DeltaLogActionUtilsSuite extends AnyFunSuite with MockFileSystemClientUtil
 
   def getCommitFiles(versions: Seq[Long]): java.util.List[FileStatus] = {
     versions
-      .map(v => FileStatus.of(FileNames.deltaFile(logPath, v), 0, 0))
+      .map(v => FileStatus.of(FileNames.deltaFile(logPath.toString, v), 0, 0))
       .asJava
   }
 

@@ -154,7 +154,7 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     tablePath: String,
     version: Long, consumer: Row => Option[Any]): Option[Any] = {
     val table = Table.forPath(engine, tablePath)
-    val logPath = new DeltaPath(table.getPath(engine), "_delta_log")
+    val logPath = table.getPath(engine) + "/_delta_log"
     val file = FileStatus.of(FileNames.deltaFile(logPath, version), 0, 0)
     val columnarBatches = engine.getJsonHandler.readJsonFiles(
       singletonCloseableIterator(file),

@@ -271,7 +271,7 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
       }
       FileStatus sideCarFileStatus =
           FileStatus.of(
-              FileNames.sidecarFile(deltaLogPath, sidecarFile.getPath()),
+              FileNames.sidecarFile(deltaLogPath.toString(), sidecarFile.getPath()),
               sidecarFile.getSizeInBytes(),
               sidecarFile.getModificationTime());
 
@@ -297,7 +297,7 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
       switch (nextLogFile.getLogType()) {
         case COMMIT:
           {
-            final long fileVersion = FileNames.deltaVersion(nextFilePath);
+            final long fileVersion = FileNames.deltaVersion(nextFilePath.toString());
             // We can not read multiple JSON files in parallel (like the checkpoint files),
             // because each one has a different version, and we need to associate the
             // version with actions read from the JSON file for further optimizations later
@@ -328,7 +328,7 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
             // parts of the current multipart checkpoint.
             CloseableIterator<ColumnarBatch> dataIter =
                 getActionsIterFromSinglePartOrV2Checkpoint(nextFile, fileName);
-            long version = checkpointVersion(nextFilePath);
+            long version = checkpointVersion(nextFilePath.toString());
             return combine(dataIter, true /* isFromCheckpoint */, version, Optional.empty());
           }
         case MULTIPART_CHECKPOINT:
@@ -350,7 +350,7 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
                     readSchema,
                     checkpointPredicate);
 
-            long version = checkpointVersion(nextFilePath);
+            long version = checkpointVersion(nextFilePath.toString());
             return combine(dataIter, true /* isFromCheckpoint */, version, Optional.empty());
           }
         default:
