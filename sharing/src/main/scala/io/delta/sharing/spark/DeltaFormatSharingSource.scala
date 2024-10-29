@@ -183,7 +183,7 @@ case class DeltaFormatSharingSource(
     s" for table(id:$tableId, name:${table.toString}, source:$sourceId)"
 
   private def getQueryIdForLogging: String = {
-    s", with queryId(${deltaLog.client.getQueryId})"
+    s", with queryId(${client.getQueryId})"
   }
 
   // A variable to store the latest table version on server, returned from the getTableVersion rpc.
