@@ -215,9 +215,7 @@ class DeltaSuite extends QueryTest
 
     // Verify the correct partitioning schema is picked up
     val hadoopFsRelations = df.queryExecution.analyzed.collect {
-      case LogicalRelationWithTable(baseRelation, _) if
-      baseRelation.isInstanceOf[HadoopFsRelation] =>
-        baseRelation.asInstanceOf[HadoopFsRelation]
+      case LogicalRelationWithTable(h: HadoopFsRelation, _) => h
     }
     assert(hadoopFsRelations.size === 1)
     assert(hadoopFsRelations.head.partitionSchema.exists(_.name == "is_odd"))
