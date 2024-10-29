@@ -18,7 +18,16 @@ package org.apache.spark.sql.delta.redirect
 
 import scala.reflect.ClassTag
 
-import org.apache.spark.sql.delta.{DeltaConfig, DeltaConfigs, DeltaErrors, DeltaLog, DeltaOperations}
+import org.apache.spark.sql.delta.{
+  DeltaConfig,
+  DeltaConfigs,
+  DeltaErrors,
+  DeltaLog,
+  DeltaOperations,
+  RedirectReaderWriterFeature,
+  RedirectWriterOnlyFeature,
+  Snapshot
+}
 import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.util.JsonUtils
 import com.fasterxml.jackson.annotation.JsonIgnore
@@ -141,12 +150,40 @@ object RedirectSpec {
 }
 
 /**
+ * This class defines the rule of allowing transaction to access redirect source table.
+ * @param appName The application name that is allowed to commit transaction defined inside
+ *                the `allowedOperations` set. If a rules' appName is empty, then all application
+ *                should fulfill its `allowedOperations`.
+ * @param allowedOperations The set of operation names that are allowed to commit on the
+ *                          redirect source table.
+ * The example of usage of NoRedirectRule.
+ *   {
+ *     "type": "PathBasedRedirect",
+ *     "state": "REDIRECT-READY",
+ *     "spec": {
+ *       "tablePath": "s3://<bucket-1>/tables/<table-name>"
+ *     },
+ *     "noRedirectRules": [
+ *       {"allowedOperations": ["Write", "Delete", "Refresh"] },
+ *       {"appName": "maintenance-job", "allowedOperations": ["Refresh"] }
+ *     ]
+ *   }
+ */
+case class NoRedirectRule(
+    @JsonProperty("appName")
+    appName: Option[String],
+    @JsonProperty("allowedOperations")
+    allowedOperations: Set[String]
+)
+
+/**
  * This class stores all values defined inside table redirection property.
  * @param type: The type of redirection.
  * @param state: The current state of the redirection:
  *               ENABLE-REDIRECT-IN-PROGRESS, REDIRECT-READY, DROP-REDIRECT-IN-PROGRESS.
  * @param specValue: The specification of accessing redirect destination table.
- *
+ * @param noRedirectRules: The set of rules that applications should fulfill to access
+ *                         redirect source table.
  * This class would be serialized into a JSON string during commit. One example of its JSON
  * presentation is:
  * PathBasedRedirect:
@@ -155,22 +192,34 @@ object RedirectSpec {
  *     "state": "DROP-REDIRECT-IN-PROGRESS",
  *     "spec": {
  *       "tablePath": "s3://<bucket-1>/tables/<table-name>"
- *     }
+ *     },
+ *     "noRedirectRules": [
+ *       {"allowedOperations": ["Write", "Refresh"] },
+ *       {"appName": "maintenance-job", "allowedOperations": ["Refresh"] }
+ *     ]
  *   }
  */
 case class TableRedirectConfiguration(
     `type`: String,
     state: String,
     @JsonProperty("spec")
-    specValue: String) {
+    specValue: String,
+    @JsonProperty("noRedirectRules")
+    noRedirectRules: Set[NoRedirectRule] = Set.empty) {
   @JsonIgnore
   val spec: RedirectSpec = RedirectSpec.getDeserializeModule(`type`).deserialize(specValue)
+
   @JsonIgnore
   val redirectState: RedirectState = state match {
     case EnableRedirectInProgress.name => EnableRedirectInProgress
     case RedirectReady.name => RedirectReady
     case DropRedirectInProgress.name => DropRedirectInProgress
     case _ => throw new IllegalArgumentException(s"Unrecognizable Table Redirect State: $state")
+  }
+
+  @JsonIgnore
+  val isInProgressState: Boolean = {
+    redirectState == EnableRedirectInProgress || redirectState == DropRedirectInProgress
   }
 }
 
@@ -199,15 +248,17 @@ class TableRedirect(val config: DeltaConfig[Option[String]]) {
    * Generate the key-value pair of the table redirect property. Its key is the table redirect
    * property name and its name is the JSON string of TableRedirectConfiguration.
    */
-  private def generateRedirectMetadata(
+  def generateRedirectMetadata(
     redirectType: String,
     state: RedirectState,
-    redirectSpec: RedirectSpec
+    redirectSpec: RedirectSpec,
+    noRedirectRules: Set[NoRedirectRule]
   ): Map[String, String] = {
     val redirectConfiguration = TableRedirectConfiguration(
       redirectType,
       state.name,
-      JsonUtils.toJson(redirectSpec)
+      JsonUtils.toJson(redirectSpec),
+      noRedirectRules
     )
     val redirectJson = JsonUtils.toJson(redirectConfiguration)
     Map(config.key -> redirectJson)
@@ -227,7 +278,8 @@ class TableRedirect(val config: DeltaConfig[Option[String]]) {
     deltaLog: DeltaLog,
     catalogTableOpt: Option[CatalogTable],
     state: RedirectState,
-    spec: RedirectSpec
+    spec: RedirectSpec,
+    noRedirectRules: Set[NoRedirectRule] = Set.empty[NoRedirectRule]
   ): Unit = {
     val txn = deltaLog.startTransaction(catalogTableOpt)
     val deltaMetadata = txn.snapshot.metadata
@@ -239,19 +291,20 @@ class TableRedirect(val config: DeltaConfig[Option[String]]) {
     }
 
     val currentConfig = currentConfigOpt.get
+    val redirectState = currentConfig.redirectState
     state match {
       case RedirectReady =>
-        if (currentConfig.redirectState != EnableRedirectInProgress) {
-          DeltaErrors.invalidRedirectStateTransition(tableIdent, currentConfig.redirectState, state)
+        if (redirectState != EnableRedirectInProgress && redirectState != RedirectReady) {
+          DeltaErrors.invalidRedirectStateTransition(tableIdent, redirectState, state)
         }
       case DropRedirectInProgress =>
-        if (currentConfig.redirectState != RedirectReady) {
-          DeltaErrors.invalidRedirectStateTransition(tableIdent, currentConfig.redirectState, state)
+        if (redirectState != RedirectReady) {
+          DeltaErrors.invalidRedirectStateTransition(tableIdent, redirectState, state)
         }
       case _ =>
-        DeltaErrors.invalidRedirectStateTransition(tableIdent, currentConfig.redirectState, state)
+        DeltaErrors.invalidRedirectStateTransition(tableIdent, redirectState, state)
     }
-    val properties = generateRedirectMetadata(currentConfig.`type`, state, spec)
+    val properties = generateRedirectMetadata(currentConfig.`type`, state, spec, noRedirectRules)
     val newConfigs = txn.metadata.configuration ++ properties
     val newMetadata = txn.metadata.copy(configuration = newConfigs)
     txn.updateMetadata(newMetadata)
@@ -272,7 +325,8 @@ class TableRedirect(val config: DeltaConfig[Option[String]]) {
      deltaLog: DeltaLog,
      catalogTableOpt: Option[CatalogTable],
      redirectType: String,
-     spec: RedirectSpec
+     spec: RedirectSpec,
+     noRedirectRules: Set[NoRedirectRule] = Set.empty[NoRedirectRule]
   ): Unit = {
     val txn = deltaLog.startTransaction(catalogTableOpt)
     val snapshot = txn.snapshot
@@ -283,7 +337,12 @@ class TableRedirect(val config: DeltaConfig[Option[String]]) {
         EnableRedirectInProgress
       )
     }
-    val properties = generateRedirectMetadata(redirectType, EnableRedirectInProgress, spec)
+    val properties = generateRedirectMetadata(
+      redirectType,
+      EnableRedirectInProgress,
+      spec,
+      noRedirectRules
+    )
     val newConfigs = txn.metadata.configuration ++ properties
     val newMetadata = txn.metadata.copy(configuration = newConfigs)
     txn.updateMetadata(newMetadata)
@@ -308,6 +367,62 @@ class TableRedirect(val config: DeltaConfig[Option[String]]) {
   }
 }
 
-object RedirectReaderWriter extends TableRedirect(config = DeltaConfigs.REDIRECT_READER_WRITER)
+object RedirectReaderWriter extends TableRedirect(config = DeltaConfigs.REDIRECT_READER_WRITER) {
+  /** True if `snapshot` enables redirect-reader-writer feature. */
+  def isFeatureSupported(snapshot: Snapshot): Boolean = {
+    snapshot.protocol.isFeatureSupported(RedirectReaderWriterFeature)
+  }
 
-object RedirectWriterOnly extends TableRedirect(config = DeltaConfigs.REDIRECT_WRITER_ONLY)
+  /** True if the update property command tries to set/unset redirect-reader-writer feature. */
+  def isUpdateProperty(snapshot: Snapshot, propKeys: Seq[String]): Boolean = {
+    propKeys.contains(DeltaConfigs.REDIRECT_READER_WRITER.key) && isFeatureSupported(snapshot)
+  }
+}
+
+object RedirectWriterOnly extends TableRedirect(config = DeltaConfigs.REDIRECT_WRITER_ONLY) {
+  /** True if `snapshot` enables redirect-writer-only feature. */
+  def isFeatureSupported(snapshot: Snapshot): Boolean = {
+    snapshot.protocol.isFeatureSupported(RedirectWriterOnlyFeature)
+  }
+
+  /** True if the update property command tries to set/unset redirect-writer-only feature. */
+  def isUpdateProperty(snapshot: Snapshot, propKeys: Seq[String]): Boolean = {
+    propKeys.contains(DeltaConfigs.REDIRECT_WRITER_ONLY.key) && isFeatureSupported(snapshot)
+  }
+}
+
+object RedirectFeature {
+  /**
+   * Determine whether the redirect-reader-writer or the redirect-writer-only feature is supported.
+   */
+  def isFeatureSupported(snapshot: Snapshot): Boolean = {
+    RedirectReaderWriter.isFeatureSupported(snapshot) ||
+    RedirectWriterOnly.isFeatureSupported(snapshot)
+  }
+
+  /**
+   * Determine whether the operation `op` updates the existing redirect-reader-writer or
+   * redirect-writer-only table property of a table with `snapshot`.
+   */
+  def isUpdateProperty(snapshot: Snapshot, op: DeltaOperations.Operation): Boolean = {
+    op match {
+      case _ @ DeltaOperations.SetTableProperties(properties) =>
+        val propertyKeys = properties.keySet.toSeq
+        RedirectReaderWriter.isUpdateProperty(snapshot, propertyKeys) ||
+          RedirectWriterOnly.isUpdateProperty(snapshot, propertyKeys)
+      case _ @ DeltaOperations.UnsetTableProperties(propertyKeys, _) =>
+        RedirectReaderWriter.isUpdateProperty(snapshot, propertyKeys) ||
+        RedirectWriterOnly.isUpdateProperty(snapshot, propertyKeys)
+      case _ => false
+    }
+  }
+
+  /** Get the current `TableRedirectConfiguration` object from the snapshot. */
+  def getRedirectConfiguration(snapshot: Snapshot): Option[TableRedirectConfiguration] = {
+    if (RedirectWriterOnly.isFeatureSupported(snapshot)) {
+      RedirectWriterOnly.getRedirectConfiguration(snapshot.metadata)
+    } else {
+      RedirectReaderWriter.getRedirectConfiguration(snapshot.metadata)
+    }
+  }
+}
