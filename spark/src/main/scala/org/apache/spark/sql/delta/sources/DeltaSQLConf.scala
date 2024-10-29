@@ -1969,6 +1969,13 @@ trait DeltaSQLConfBase {
       .intConf
       .createWithDefault(50000000)
 
+  val SKIP_REDIRECT_FEATURE =
+    buildConf("skipRedirectFeature")
+      .doc("True if skipping the redirect feature.")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_OPTIMIZE_WRITE_MAX_SHUFFLE_PARTITIONS =
     buildConf("optimizeWrite.maxShufflePartitions")
       .internal()

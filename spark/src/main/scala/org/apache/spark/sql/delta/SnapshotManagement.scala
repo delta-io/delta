@@ -1192,7 +1192,7 @@ trait SnapshotManagement { self: DeltaLog =>
         newSnapshot
       }
     }.getOrElse {
-      logInfo("Creating initial snapshot without metadata, because the directory is empty")
+      logInfo(log"Creating initial snapshot without metadata, because the directory is empty")
       new DummySnapshot(logPath, this)
     }
   }

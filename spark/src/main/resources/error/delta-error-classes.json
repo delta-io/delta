@@ -516,6 +516,12 @@
     ],
     "sqlState" : "2200G"
   },
+  "DELTA_COMMIT_INTERMEDIATE_REDIRECT_STATE" : {
+    "message" : [
+      "Cannot handle commit of table within redirect table state '<state>'."
+    ],
+    "sqlState" : "42P01"
+  },
   "DELTA_COMPLEX_TYPE_COLUMN_CONTAINS_NULL_TYPE" : {
     "message" : [
       " Found nested NullType in column <columName> which is of <dataType>. Delta doesn't support writing NullType in complex types."
@@ -1889,6 +1895,13 @@
       "No recreatable commits found at <logPath>"
     ],
     "sqlState" : "KD006"
+  },
+  "DELTA_NO_REDIRECT_RULES_VIOLATED" : {
+    "message" : [
+      "Operation not allowed: <operation> cannot be performed on a table with redirect feature.",
+      "The no redirect rules are not satisfied <noRedirectRules>."
+    ],
+    "sqlState" : "42P01"
   },
   "DELTA_NO_RELATION_TABLE" : {
     "message" : [

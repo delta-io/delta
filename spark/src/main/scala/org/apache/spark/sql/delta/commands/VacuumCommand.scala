@@ -628,7 +628,7 @@ trait VacuumCommandImpl extends DeltaCommand {
       supportedFsForLogging.contains(scheme)
     } catch {
       case _: UnsupportedOperationException =>
-        logWarning("Vacuum event logging" +
+        logWarning(log"Vacuum event logging" +
           " not enabled on this file system because we cannot detect your cloud storage type.")
         false
     }

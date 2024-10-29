@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.perf
 
-import org.apache.spark.internal.Logging
+import org.apache.spark.internal.LoggingShims
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate._
@@ -45,7 +45,7 @@ import java.util.Locale
  * - Query has no GROUP BY.
  * Example of valid query: SELECT COUNT(*), MIN(id), MAX(partition_col) FROM MyDeltaTable
  */
-trait OptimizeMetadataOnlyDeltaQuery extends Logging {
+trait OptimizeMetadataOnlyDeltaQuery extends LoggingShims {
   def optimizeQueryWithMetadata(plan: LogicalPlan): LogicalPlan = {
     plan.transformUpWithSubqueries {
       case agg@MetadataOptimizableAggregate(tahoeLogFileIndex) =>
@@ -111,7 +111,7 @@ trait OptimizeMetadataOnlyDeltaQuery extends Logging {
         Seq(InternalRow.fromSeq(rewrittenAggregationValues)))
       r
     } else {
-      logInfo("Query can't be optimized using metadata because stats are missing")
+      logInfo(log"Query can't be optimized using metadata because stats are missing")
       plan
     }
   }

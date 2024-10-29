@@ -40,6 +40,7 @@ import org.apache.spark.sql.delta.hooks.ChecksumHook
 import org.apache.spark.sql.delta.implicits.addFileEncoder
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.redirect.{RedirectFeature, TableRedirectConfiguration}
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.stats._
@@ -55,6 +56,7 @@ import org.apache.spark.internal.{MDC, MessageWithContext}
 import org.apache.spark.sql.{AnalysisException, Column, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions._
+import org.apache.spark.sql.catalyst.plans.logical.UnsetTableProperties
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.catalyst.util.{CharVarcharUtils, ResolveDefaultColumns}
 import org.apache.spark.sql.types.{StructField, StructType}
@@ -1246,6 +1248,56 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     }
   }
 
+  /**
+   * This method goes through all no-redirect-rules inside redirect feature to determine
+   * whether the current operation is valid to run on this table.
+   */
+  private def performNoRedirectRulesCheck(
+      op: DeltaOperations.Operation,
+      redirectConfig: TableRedirectConfiguration
+  ): Unit = {
+    // Find all rules that match with the current application name.
+    // If appName is not present, its no-redirect-rule are included.
+    // If appName is present, includes its no-redirect-rule only when appName
+    // matches with "spark.app.name".
+    val rulesOfMatchedApps = redirectConfig.noRedirectRules.filter { rule =>
+      rule.appName.forall(_.equalsIgnoreCase(spark.conf.get("spark.app.name")))
+    }
+    // Determine whether any rule is satisfied the given operation.
+    val noRuleSatisfied = !rulesOfMatchedApps.exists(_.allowedOperations.contains(op.name))
+    // If there is no rule satisfied, block the given operation.
+    if (noRuleSatisfied) {
+      throw DeltaErrors.noRedirectRulesViolated(op, redirectConfig.noRedirectRules)
+    }
+  }
+
+  /**
+   * This method determines whether `op` is valid when the table redirect feature is
+   * set on current table.
+   * 1. If redirect table feature is in progress state, no DML/DDL is allowed to execute.
+   * 2. If user tries to access redirect source table, only the allowed operations listed
+   *    inside no-redirect-rules are valid.
+   */
+  protected def performRedirectCheck(op: DeltaOperations.Operation): Unit = {
+    // If redirect conflict check is not enable, skips all remaining validations.
+    if (spark.conf.get(DeltaSQLConf.SKIP_REDIRECT_FEATURE)) return
+    // If redirect feature is not set, then skips validation.
+    if (!RedirectFeature.isFeatureSupported(snapshot)) return
+    // If this transaction tried to unset redirect feature, then skips validation.
+    if (RedirectFeature.isUpdateProperty(snapshot, op)) return
+    // Get the redirect configuration from current snapshot.
+    val redirectConfigOpt = RedirectFeature.getRedirectConfiguration(snapshot)
+    redirectConfigOpt.foreach { redirectConfig =>
+      // If the redirect state is in EnableRedirectInProgress or DropRedirectInProgress,
+      // all DML and DDL operation should be aborted.
+      if (redirectConfig.isInProgressState) {
+        throw DeltaErrors.invalidCommitIntermediateRedirectState(redirectConfig.redirectState)
+      }
+      // Validates the no redirect rules on the transactions that access redirect source table.
+      performNoRedirectRulesCheck(op, redirectConfig)
+    }
+  }
+
   @throws(classOf[ConcurrentModificationException])
   protected def commitImpl(
       actions: Seq[Action],
@@ -1255,6 +1307,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     commitStartNano = System.nanoTime()
 
     val (version, postCommitSnapshot, actualCommittedActions) = try {
+      // Check for satisfaction of no redirect rules
+      performRedirectCheck(op)
+
       // Check for CDC metadata columns
       performCdcMetadataCheck()
 
@@ -1936,7 +1991,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED)) {
           throw DeltaErrors.metadataAbsentException()
         }
-        logWarning("Detected no metadata in initial commit but commit validation was turned off.")
+        logWarning(
+          log"Detected no metadata in initial commit but commit validation was turned off.")
       }
     }
 
@@ -1964,10 +2020,12 @@ trait OptimisticTransactionImpl extends TransactionalWrite
             a.partitionValues.keySet.toSeq, partitionColumns.toSeq)
         }
         logWarning(
-          s"""
+          log"""
              |Detected mismatch in partition values between AddFile and table metadata but
              |commit validation was turned off.
-             |To turn it back on set ${DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED} to "true"
+             |To turn it back on set
+             |${MDC(DeltaLogKeys.CONFIG_KEY, DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED)}
+             |to "true"
           """.stripMargin)
         a
       case other => other

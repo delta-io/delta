@@ -31,6 +31,7 @@ import org.apache.spark.sql.delta.constraints.Constraints
 import org.apache.spark.sql.delta.hooks.AutoCompactType
 import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.redirect.NoRedirectRule
 import org.apache.spark.sql.delta.redirect.RedirectState
 import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, InvariantViolationException, SchemaUtils, UnsupportedDataTypeInfo}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -359,6 +360,23 @@ trait DeltaErrorsBase
     new DeltaIllegalStateException(
       errorClass = "DELTA_TABLE_INVALID_REMOVE_TABLE_REDIRECT",
       messageParameters = Array(table, table, currentState.name)
+    )
+  }
+
+  def invalidCommitIntermediateRedirectState(state: RedirectState): Throwable = {
+    throw new DeltaIllegalStateException (
+      errorClass = "DELTA_COMMIT_INTERMEDIATE_REDIRECT_STATE",
+      messageParameters = Array(state.name)
+    )
+  }
+
+  def noRedirectRulesViolated(
+      op: DeltaOperations.Operation,
+      noRedirectRules: Set[NoRedirectRule]): Throwable = {
+    throw new DeltaIllegalStateException (
+      errorClass = "DELTA_NO_REDIRECT_RULES_VIOLATED",
+      messageParameters =
+        Array(op.name, noRedirectRules.map("\"" + _ + "\"").mkString("[", ",\n", "]"))
     )
   }
 
