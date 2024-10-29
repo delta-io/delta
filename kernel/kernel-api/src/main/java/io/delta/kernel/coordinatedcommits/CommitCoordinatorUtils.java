@@ -25,7 +25,6 @@ import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import java.io.IOException;
-import java.util.UUID;
 
 /** Various public utility methods related to Coordinated Commits. */
 public class CommitCoordinatorUtils {
@@ -64,11 +63,11 @@ public class CommitCoordinatorUtils {
    *
    * @param logPath The root path of the delta log.
    * @param version The version of the delta file.
+   * @param uuid The UUID of the commit.
    * @return The path to the un-backfilled delta file: logPath/_commits/version.uuid.json
    */
-  public static String getUnbackfilledDeltaFilePath(String logPath, long version) {
+  public static String getUnbackfilledDeltaFilePath(String logPath, long version, String uuid) {
     final String basePath = getCommitDirPath(logPath);
-    final String uuid = UUID.randomUUID().toString();
     return new Path(basePath, String.format("%020d.%s.json", version, uuid)).toString();
   }
 
@@ -82,9 +81,14 @@ public class CommitCoordinatorUtils {
 
   /** Write a UUID-based commit file for the specified version to the table at logPath. */
   public static FileStatus writeUnbackfilledCommitFile(
-      Engine engine, String logPath, long commitVersion, CloseableIterator<Row> actions)
+      Engine engine,
+      String logPath,
+      long commitVersion,
+      CloseableIterator<Row> actions,
+      String uuid)
       throws IOException {
-    final String unbackfilledDeltaFilePath = getUnbackfilledDeltaFilePath(logPath, commitVersion);
+    final String unbackfilledDeltaFilePath =
+        getUnbackfilledDeltaFilePath(logPath, commitVersion, uuid);
 
     // Do not use Put-If-Absent for unbackfilled commit files since we assume that UUID-based
     // commit files are globally unique, and so we will never have concurrent writers attempting

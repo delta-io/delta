@@ -28,10 +28,11 @@ import org.slf4j.{Logger, LoggerFactory}
 import java.nio.file.FileAlreadyExistsException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.locks.ReentrantReadWriteLock
-import java.util.{ArrayList, Collections, Optional, TreeMap, Map => JMap}
+import java.util.{ArrayList, Collections, Optional, TreeMap, UUID, Map => JMap}
 
 class InMemoryCommitCoordinatorClient(val batchSize: Long) extends CommitCoordinatorClient {
   private val logger: Logger = LoggerFactory.getLogger(classOf[InMemoryCommitCoordinatorClient])
+  private val perTableMap = new ConcurrentHashMap[String, PerTableData]()
 
   /**
    * @param maxCommitVersion represents the max commit version known for the table. This is
@@ -68,8 +69,6 @@ class InMemoryCommitCoordinatorClient(val batchSize: Long) extends CommitCoordin
     // if all commits for a table have been backfilled.
     val lock: ReentrantReadWriteLock = new ReentrantReadWriteLock()
   }
-
-  private val perTableMap = new ConcurrentHashMap[String, PerTableData]()
 
   /////////////////
   // Public APIs //
@@ -125,7 +124,7 @@ class InMemoryCommitCoordinatorClient(val batchSize: Long) extends CommitCoordin
     }
     // Write new commit file in _commits directory
     val fileStatus = CommitCoordinatorUtils.writeUnbackfilledCommitFile(
-      engine, logPath, commitVersion, actions)
+      engine, logPath, commitVersion, actions, generateUUID())
     // Do the actual commit
     val commitTimestamp = updatedActions.getCommitInfo.getCommitTimestamp
     val commitResponse = addToMap(logPath, commitVersion, fileStatus, commitTimestamp)
@@ -198,6 +197,13 @@ class InMemoryCommitCoordinatorClient(val batchSize: Long) extends CommitCoordin
   }
 
   override def semanticEquals(other: CommitCoordinatorClient): Boolean = this == other
+
+  ///////////////////////
+  // Protected Methods //
+  ///////////////////////
+
+  /** Visible for testing. */
+  protected def generateUUID(): String = UUID.randomUUID().toString
 
   ////////////////////////////
   // Private Helper Methods //
