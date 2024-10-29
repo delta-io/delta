@@ -66,11 +66,13 @@ public class SnapshotManager {
 
   private final Path logPath;
   private final Path tablePath;
+  private final Optional<TableIdentifier> tableIdOpt;
 
-  public SnapshotManager(Path logPath, Path tablePath) {
+  public SnapshotManager(Path logPath, Path tablePath, Optional<TableIdentifier> tableIdOpt) {
     this.latestSnapshotHint = new AtomicReference<>();
     this.logPath = logPath;
     this.tablePath = tablePath;
+    this.tableIdOpt = tableIdOpt;
   }
 
   private static final Logger logger = LoggerFactory.getLogger(SnapshotManager.class);
@@ -365,7 +367,7 @@ public class SnapshotManager {
     // in delta versions if some delta files are backfilled after the log directory listing but
     // before the unbackfilled commits listing
     List<Commit> unbackfilledCommits =
-        getUnbackfilledCommits(tableCommitHandlerOpt, startVersion, versionToLoad);
+        getUnbackfilledCommits(engine, tableCommitHandlerOpt, startVersion, versionToLoad);
 
     final AtomicLong maxDeltaVersionSeen = new AtomicLong(startVersion - 1);
     Optional<CloseableIterator<FileStatus>> listing = listFromOrNone(engine, startVersion);
@@ -442,6 +444,7 @@ public class SnapshotManager {
   }
 
   private List<Commit> getUnbackfilledCommits(
+      Engine engine,
       Optional<TableCommitCoordinatorClientHandler> tableCommitHandlerOpt,
       long startVersion,
       Optional<Long> versionToLoad) {
@@ -453,7 +456,7 @@ public class SnapshotManager {
                     "Getting un-backfilled commits from commit coordinator for " + "table: {}",
                     tablePath);
                 return commitCoordinatorClientHandler
-                    .getCommits(startVersion, versionToLoad.orElse(null))
+                    .getCommits(engine, startVersion, versionToLoad.orElse(null))
                     .getCommits();
               })
           .orElse(Collections.emptyList());
@@ -540,7 +543,12 @@ public class SnapshotManager {
 
     final SnapshotImpl snapshot =
         new SnapshotImpl(
-            tablePath, initSegment, logReplay, logReplay.getProtocol(), logReplay.getMetadata());
+            tablePath,
+            initSegment,
+            logReplay,
+            logReplay.getProtocol(),
+            logReplay.getMetadata(),
+            tableIdOpt);
 
     logger.info(
         "{}: Took {}ms to construct the snapshot (loading protocol and metadata) for {} {}",

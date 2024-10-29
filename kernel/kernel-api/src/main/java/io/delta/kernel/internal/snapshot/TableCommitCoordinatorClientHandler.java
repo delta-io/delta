@@ -16,58 +16,60 @@
 
 package io.delta.kernel.internal.snapshot;
 
+import io.delta.kernel.annotation.Nullable;
+import io.delta.kernel.coordinatedcommits.CommitCoordinatorClient;
+import io.delta.kernel.coordinatedcommits.TableDescriptor;
 import io.delta.kernel.data.Row;
-import io.delta.kernel.engine.CommitCoordinatorClientHandler;
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.engine.coordinatedcommits.CommitFailedException;
 import io.delta.kernel.engine.coordinatedcommits.CommitResponse;
 import io.delta.kernel.engine.coordinatedcommits.GetCommitsResponse;
 import io.delta.kernel.engine.coordinatedcommits.UpdatedActions;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
-import java.util.Map;
 
 /**
- * A wrapper around {@link CommitCoordinatorClientHandler} that provides a more user-friendly API
- * for committing/ accessing commits to a specific table. This class takes care of passing the table
- * specific configuration to the underlying {@link CommitCoordinatorClientHandler} e.g. logPath /
+ * TODO: re-think if we really need this.
+ *
+ * <p>A wrapper around {@link CommitCoordinatorClient} that provides a more user-friendly API for
+ * committing/ accessing commits to a specific table. This class takes care of passing the table
+ * specific configuration to the underlying {@link CommitCoordinatorClient} e.g. logPath /
  * coordinatedCommitsTableConf.
  */
 public class TableCommitCoordinatorClientHandler {
-  private final CommitCoordinatorClientHandler commitCoordinatorClientHandler;
-  private final String logPath;
-  private final Map<String, String> tableConf;
+  private final CommitCoordinatorClient client;
+  private final TableDescriptor tableDescriptor;
 
   public TableCommitCoordinatorClientHandler(
-      CommitCoordinatorClientHandler commitCoordinatorClientHandler,
-      String logPath,
-      Map<String, String> tableConf) {
-    this.commitCoordinatorClientHandler = commitCoordinatorClientHandler;
-    this.logPath = logPath;
-    this.tableConf = tableConf;
+      CommitCoordinatorClient client, TableDescriptor tableDescriptor) {
+    this.client = client;
+    this.tableDescriptor = tableDescriptor;
   }
 
   public CommitResponse commit(
-      long commitVersion, CloseableIterator<Row> actions, UpdatedActions updatedActions)
+      Engine engine,
+      long commitVersion,
+      CloseableIterator<Row> actions,
+      UpdatedActions updatedActions)
       throws CommitFailedException {
-    return commitCoordinatorClientHandler.commit(
-        logPath, tableConf, commitVersion, actions, updatedActions);
+    return client.commit(engine, tableDescriptor, commitVersion, actions, updatedActions);
   }
 
-  public GetCommitsResponse getCommits(Long startVersion, Long endVersion) {
-    return commitCoordinatorClientHandler.getCommits(logPath, tableConf, startVersion, endVersion);
+  public GetCommitsResponse getCommits(
+      Engine engine, @Nullable Long startVersion, @Nullable Long endVersion) {
+    return client.getCommits(engine, tableDescriptor, startVersion, endVersion);
   }
 
-  public void backfillToVersion(long version, Long lastKnownBackfilledVersion) throws IOException {
-    commitCoordinatorClientHandler.backfillToVersion(
-        logPath, tableConf, version, lastKnownBackfilledVersion);
+  public void backfillToVersion(
+      Engine engine, long version, @Nullable Long lastKnownBackfilledVersion) throws IOException {
+    client.backfillToVersion(engine, tableDescriptor, version, lastKnownBackfilledVersion);
   }
 
-  public boolean semanticEquals(
-      CommitCoordinatorClientHandler otherCommitCoordinatorClientHandler) {
-    return commitCoordinatorClientHandler.semanticEquals(otherCommitCoordinatorClientHandler);
+  public boolean semanticEquals(CommitCoordinatorClient otherClient) {
+    return client.semanticEquals(otherClient);
   }
 
   public boolean semanticEquals(TableCommitCoordinatorClientHandler otherCommitCoordinatorClient) {
-    return semanticEquals(otherCommitCoordinatorClient.commitCoordinatorClientHandler);
+    return semanticEquals(otherCommitCoordinatorClient.client);
   }
 }

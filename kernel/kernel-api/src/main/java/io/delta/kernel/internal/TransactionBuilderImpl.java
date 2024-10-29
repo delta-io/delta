@@ -205,7 +205,13 @@ public class TransactionBuilderImpl implements TransactionBuilder {
 
   private class InitialSnapshot extends SnapshotImpl {
     InitialSnapshot(Path dataPath, LogReplay logReplay, Metadata metadata, Protocol protocol) {
-      super(dataPath, LogSegment.empty(table.getLogPath()), logReplay, protocol, metadata);
+      super(
+          dataPath,
+          LogSegment.empty(table.getLogPath()),
+          logReplay,
+          protocol,
+          metadata,
+          Optional.empty() /* tableIdOpt */); // TODO: figure out how to set this?
     }
 
     @Override

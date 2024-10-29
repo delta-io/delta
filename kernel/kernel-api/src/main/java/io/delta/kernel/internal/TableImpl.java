@@ -101,7 +101,7 @@ public class TableImpl implements Table {
     this.clock = clock;
     this.dataPath = new Path(tablePath);
     this.logPath = new Path(dataPath, "_delta_log");
-    this.snapshotManager = new SnapshotManager(logPath, dataPath);
+    this.snapshotManager = new SnapshotManager(logPath, dataPath, tableIdOpt);
   }
 
   /////////////////
