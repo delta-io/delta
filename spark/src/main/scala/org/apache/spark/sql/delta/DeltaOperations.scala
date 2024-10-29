@@ -735,7 +735,7 @@ object DeltaOperations {
   case class VacuumStart(
       retentionCheckEnabled: Boolean,
       specifiedRetentionMillis: Option[Long],
-      defaultRetentionMillis: Long) extends Operation("VACUUM START") {
+      defaultRetentionMillis: Long) extends Operation(VacuumStart.OPERATION_NAME) {
     override val parameters: Map[String, Any] = Map(
       "retentionCheckEnabled" -> retentionCheckEnabled,
       "defaultRetentionMillis" -> defaultRetentionMillis
@@ -749,10 +749,14 @@ object DeltaOperations {
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
   }
 
+  object VacuumStart {
+    val OPERATION_NAME = "VACUUM START"
+  }
+
   /**
    * @param status - whether the vacuum operation was successful; either "COMPLETED" or "FAILED"
    */
-  case class VacuumEnd(status: String) extends Operation(s"VACUUM END") {
+  case class VacuumEnd(status: String) extends Operation(VacuumEnd.OPERATION_NAME) {
     override val parameters: Map[String, Any] = Map(
       "status" -> status
     )
@@ -763,6 +767,10 @@ object DeltaOperations {
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
+  }
+
+  object VacuumEnd {
+    val OPERATION_NAME = "VACUUM END"
   }
 
   /** Recorded when running REORG on the table. */
