@@ -202,7 +202,11 @@ case class DeltaSink(
       val castExpr = castIfNeeded(
         fromExpression = data.col(columnName).expr,
         dataType = targetTypes(columnName),
-        allowStructEvolution = canMergeSchema,
+        castingBehavior = CastingBehavior(
+          allowMissingStructField = true,
+          resolveStructsByName = true,
+          isMergeOrUpdate = false
+        ),
         columnName = columnName
       )
       Column(Alias(castExpr, columnName)())

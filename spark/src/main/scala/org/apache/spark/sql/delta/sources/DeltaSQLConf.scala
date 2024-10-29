@@ -1581,9 +1581,7 @@ trait DeltaSQLConfBase {
           |The casting behavior is governed by 'spark.sql.storeAssignmentPolicy'.
           |""".stripMargin)
       .booleanConf
-      // This feature doesn't properly support structs with missing fields and is disabled until a
-      // fix is implemented.
-      .createWithDefault(false)
+      .createWithDefault(true)
 
   val DELTA_CDF_UNSAFE_BATCH_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES =
     buildConf("changeDataFeed.unsafeBatchReadOnIncompatibleSchemaChanges.enabled")

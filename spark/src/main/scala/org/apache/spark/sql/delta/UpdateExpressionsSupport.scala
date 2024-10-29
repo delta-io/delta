@@ -28,6 +28,7 @@ import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.codegen.{CodegenContext, CodeGenerator, ExprCode}
 import org.apache.spark.sql.catalyst.expressions.codegen.Block._
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Project}
+import org.apache.spark.sql.catalyst.types.DataTypeUtils
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 
@@ -38,19 +39,38 @@ import org.apache.spark.sql.types._
 trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with DeltaLogging {
 
   /**
-   * Whether casting behavior can revert to following 'spark.sql.ansi.enabled' instead of
-   * 'spark.sql.storeAssignmentPolicy' to preserve legacy behavior for UPDATE and MERGE.
-   * Legacy behavior is applied only if
-   * 'spark.databricks.delta.updateAndMergeCastingFollowsAnsiEnabledFlag' is set to true.
-   */
-  protected val supportMergeAndUpdateLegacyCastBehavior: Boolean = false
-
-  /**
    * Specifies an operation that updates a target column with the given expression.
    * The target column may or may not be a nested field and it is specified as a full quoted name
    * or as a sequence of split into parts.
    */
   case class UpdateOperation(targetColNameParts: Seq[String], updateExpr: Expression)
+
+  /**
+   * @param allowMissingStructField Whether missing struct fields are allowed in the data to cast.
+   *                                When true, missing struct fields in the input are set to null.
+   *                                When false, an error is thrown.
+   *                                Note: this should be set to true for schema evolution to work as
+   *                                the target schema may typically contain new struct fields not
+   *                                present in the input.
+   * @param resolveStructsByName    Whether struct fields should be resolved by name or by position
+   *                                during struct cast.
+   * @param isMergeOrUpdate         Allow differentiating between merge/update and insert operations
+   *                                in error messages and to provide backward compatible behavior.
+   */
+  case class CastingBehavior(
+    allowMissingStructField: Boolean,
+    resolveStructsByName: Boolean,
+    isMergeOrUpdate: Boolean
+  )
+
+  object CastingBehavior {
+    def forMergeOrUpdate(allowSchemaEvolution: Boolean): CastingBehavior =
+      CastingBehavior(
+        allowMissingStructField = allowSchemaEvolution,
+        resolveStructsByName =
+          conf.getConf(DeltaSQLConf.DELTA_RESOLVE_MERGE_UPDATE_STRUCTS_BY_NAME),
+        isMergeOrUpdate = true)
+  }
 
   /**
    * Add a cast to the child expression if it differs from the specified data type. Note that
@@ -66,7 +86,7 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
   protected def castIfNeeded(
       fromExpression: Expression,
       dataType: DataType,
-      allowStructEvolution: Boolean,
+      castingBehavior: CastingBehavior,
       columnName: String): Expression = {
 
     fromExpression match {
@@ -74,9 +94,6 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
       // StructType.
       case Literal(nul, NullType) => Literal(nul, dataType)
       case otherExpr =>
-        val resolveStructsByName =
-          conf.getConf(DeltaSQLConf.DELTA_RESOLVE_MERGE_UPDATE_STRUCTS_BY_NAME)
-
         (fromExpression.dataType, dataType) match {
           case (ArrayType(_: StructType, _), to @ ArrayType(toEt: StructType, toContainsNull)) =>
             fromExpression match {
@@ -84,45 +101,45 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
               // underlying array first and then perform the function on the transformed array.
               case ArrayUnion(leftExpression, rightExpression) =>
                 val castedLeft =
-                  castIfNeeded(leftExpression, dataType, allowStructEvolution, columnName)
+                  castIfNeeded(leftExpression, dataType, castingBehavior, columnName)
                 val castedRight =
-                  castIfNeeded(rightExpression, dataType, allowStructEvolution, columnName)
+                  castIfNeeded(rightExpression, dataType, castingBehavior, columnName)
                 ArrayUnion(castedLeft, castedRight)
 
               case ArrayIntersect(leftExpression, rightExpression) =>
                 val castedLeft =
-                  castIfNeeded(leftExpression, dataType, allowStructEvolution, columnName)
+                  castIfNeeded(leftExpression, dataType, castingBehavior, columnName)
                 val castedRight =
-                  castIfNeeded(rightExpression, dataType, allowStructEvolution, columnName)
+                  castIfNeeded(rightExpression, dataType, castingBehavior, columnName)
                 ArrayIntersect(castedLeft, castedRight)
 
               case ArrayExcept(leftExpression, rightExpression) =>
                 val castedLeft =
-                  castIfNeeded(leftExpression, dataType, allowStructEvolution, columnName)
+                  castIfNeeded(leftExpression, dataType, castingBehavior, columnName)
                 val castedRight =
-                  castIfNeeded(rightExpression, dataType, allowStructEvolution, columnName)
+                  castIfNeeded(rightExpression, dataType, castingBehavior, columnName)
                 ArrayExcept(castedLeft, castedRight)
 
               case ArrayRemove(leftExpression, rightExpression) =>
                 val castedLeft =
-                  castIfNeeded(leftExpression, dataType, allowStructEvolution, columnName)
+                  castIfNeeded(leftExpression, dataType, castingBehavior, columnName)
                 // ArrayRemove removes all elements that equal to element from the given array.
                 // In this case, the element to be removed also needs to be casted into the target
                 // array's element type.
                 val castedRight =
-                  castIfNeeded(rightExpression, toEt, allowStructEvolution, columnName)
+                  castIfNeeded(rightExpression, toEt, castingBehavior, columnName)
                 ArrayRemove(castedLeft, castedRight)
 
               case ArrayDistinct(expression) =>
                 val castedExpr =
-                  castIfNeeded(expression, dataType, allowStructEvolution, columnName)
+                  castIfNeeded(expression, dataType, castingBehavior, columnName)
                 ArrayDistinct(castedExpr)
 
               case _ =>
                 // generate a lambda function to cast each array item into to element struct type.
                 val structConverter: (Expression, Expression) => Expression = (_, i) =>
                   castIfNeeded(
-                  GetArrayItem(fromExpression, i), toEt, allowStructEvolution, columnName)
+                  GetArrayItem(fromExpression, i), toEt, castingBehavior, columnName)
                 val transformLambdaFunc = {
                   val elementVar = NamedLambdaVariable("elementVar", toEt, toContainsNull)
                   val indexVar = NamedLambdaVariable("indexVar", IntegerType, false)
@@ -136,6 +153,7 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
                 cast(
                   ArrayTransform(fromExpression, transformLambdaFunc),
                   to.asNullable,
+                  castingBehavior,
                   columnName
                 )
             }
@@ -153,27 +171,28 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
             if (from.keyType != to.keyType) {
               transformedKeysAndValues =
                 TransformKeys(transformedKeysAndValues, createMapConverter {
-                  (key, _) => castIfNeeded(key, to.keyType, allowStructEvolution, columnName)
+                  (key, _) => castIfNeeded(key, to.keyType, castingBehavior, columnName)
                 })
             }
 
             if (from.valueType != to.valueType) {
               transformedKeysAndValues =
                 TransformValues(transformedKeysAndValues, createMapConverter {
-                  (_, value) => castIfNeeded(value, to.valueType, allowStructEvolution, columnName)
+                  (_, value) => castIfNeeded(value, to.valueType, castingBehavior, columnName)
                 })
             }
-            cast(transformedKeysAndValues, to.asNullable, columnName)
+            cast(transformedKeysAndValues, to.asNullable, castingBehavior, columnName)
           case (from: StructType, to: StructType)
-            if !DataType.equalsIgnoreCaseAndNullability(from, to) && resolveStructsByName =>
+            if !DataTypeUtils.equalsIgnoreCaseAndNullability(from, to) &&
+              castingBehavior.resolveStructsByName =>
             // All from fields must be present in the final schema, or we'll silently lose data.
             if (from.exists { f => !to.exists(_.name.equalsIgnoreCase(f.name))}) {
               throw DeltaErrors.updateSchemaMismatchExpression(from, to)
             }
 
-            // If struct evolution isn't allowed, the field count also has to match, since we can't
-            // add columns.
-            if (from.length != to.length && !allowStructEvolution) {
+            // In addition, if we don't allow missing struct fields, then the number of fields must
+            // necessarily match.
+            if (from.length != to.length && !castingBehavior.allowMissingStructField) {
               throw DeltaErrors.updateSchemaMismatchExpression(from, to)
             }
 
@@ -184,21 +203,22 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
                 .map { _ =>
                   ExtractValue(fromExpression, fieldNameLit, SchemaUtils.DELTA_COL_RESOLVER)
                 }.getOrElse {
-                  // This shouldn't be possible - if all columns aren't present when struct
-                  // evolution is disabled, we should have thrown an error earlier.
-                  if (!allowStructEvolution) {
+                  // This shouldn't be possible - if all columns aren't present when missing struct
+                  // fields aren't allowed, we should have thrown an error earlier.
+                  if (!castingBehavior.allowMissingStructField) {
                     throw DeltaErrors.extractReferencesFieldNotFound(s"$field",
                       DeltaErrors.updateSchemaMismatchExpression(from, to))
                   }
                   Literal(null)
                 }
               Seq(fieldNameLit,
-                castIfNeeded(extractedField, field.dataType, allowStructEvolution, field.name))
+                castIfNeeded(extractedField, field.dataType, castingBehavior, field.name))
             })
 
-            cast(nameMappedStruct, to.asNullable, columnName)
+            cast(nameMappedStruct, to.asNullable, castingBehavior, columnName)
 
-          case (from, to) if (from != to) => cast(fromExpression, dataType, columnName)
+          case (from, to) if from != to =>
+            cast(fromExpression, dataType, castingBehavior, columnName)
           case _ => fromExpression
         }
     }
@@ -316,7 +336,7 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
           Some(castIfNeeded(
             fullyMatchedOp.get.updateExpr,
             targetCol.dataType,
-            allowSchemaEvolution,
+            castingBehavior = CastingBehavior.forMergeOrUpdate(allowSchemaEvolution),
             targetCol.name))
         } else {
           // So there are prefix-matched update operations, but none of them is a full match. Then
@@ -454,8 +474,12 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
    * behavior can be re-enabled by setting
    * 'spark.databricks.delta.updateAndMergeCastingFollowsAnsiEnabledFlag' to true.
    */
-  private def cast(child: Expression, dataType: DataType, columnName: String): Expression = {
-    if (supportMergeAndUpdateLegacyCastBehavior &&
+  private def cast(
+      child: Expression,
+      dataType: DataType,
+      castingBehavior: CastingBehavior,
+      columnName: String): Expression = {
+    if (castingBehavior.isMergeOrUpdate &&
       conf.getConf(DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG)) {
       return Cast(child, dataType, Option(conf.sessionLocalTimeZone))
     }
@@ -466,7 +490,7 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
       case SQLConf.StoreAssignmentPolicy.ANSI =>
         val cast = Cast(child, dataType, Some(conf.sessionLocalTimeZone), ansiEnabled = true)
         if (canCauseCastOverflow(cast)) {
-          if (supportMergeAndUpdateLegacyCastBehavior) {
+          if (castingBehavior.isMergeOrUpdate) {
             CheckOverflowInTableWrite(cast, columnName)
           } else {
             cast.setTagValue(Cast.BY_TABLE_INSERTION, ())
