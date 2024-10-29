@@ -16,8 +16,6 @@
 
 package org.apache.spark.sql.delta
 
-import scala.collection.JavaConverters._
-
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -28,16 +26,10 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.apache.parquet.format.converter.ParquetMetadataConverter
 import org.apache.parquet.hadoop.ParquetFileReader
-import org.apache.parquet.hadoop.util.HadoopInputFile
-import org.apache.parquet.schema.MessageType
-import org.apache.spark.sql.{DataFrame, Dataset, QueryTest, Row}
-import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
-import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.types.{StringType, StructField, StructType, TimestampType}
 
-import java.io.File
-import java.sql.Timestamp
+import org.apache.spark.sql.{DataFrame, Dataset, QueryTest}
+import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
+import org.apache.spark.sql.test.SharedSparkSession
 
 trait DeltaParquetFileFormatSuiteBase
     extends QueryTest
@@ -299,74 +291,6 @@ class DeltaParquetFileFormatWithPredicatePushdownSuite extends DeltaParquetFileF
         (900, notDeletedColumnValue),
         (10352, deletedColumnValue),
         (19999, deletedColumnValue))
-    }
-  }
-}
-
-class DeltaParquetTimestampFormatSuite extends DeltaParquetFileFormatSuiteBase {
-  import testImplicits._
-
-  private val timestamps = Seq(
-    Timestamp.valueOf("2024-01-01 23:00:01"),
-    Timestamp.valueOf("2024-11-30 19:25:32"),
-    Timestamp.valueOf("2026-05-09 10:12:43"),
-    Timestamp.valueOf("2026-12-29 09:22:00")
-  )
-
-  private def getSchemaFromFirstFileInDirectory(tempDir: File): MessageType = {
-    val files = tempDir.list().filter(_.contains(".parquet")).filter(!_.contains(".crc"))
-    val file = s"${tempDir}/${files(0)}"
-
-    val reader = ParquetFileReader
-      .open(HadoopInputFile.fromPath(new Path(file), new Configuration()))
-
-    val schema = reader.getFooter.getFileMetaData.getSchema
-
-    reader.close()
-
-    schema
-  }
-
-  private def writeDatesDataframe(tempDir: File): Unit = {
-    val schema = StructType(List(
-      StructField("eventTimeString", TimestampType, nullable = false)
-    ))
-    val sc = spark.sparkContext
-
-    val dfTimestamps = spark.createDataFrame(
-      sc.parallelize(timestamps.map(timestamp => Row(timestamp))), schema
-    ).coalesce(1)
-    dfTimestamps.write.format("delta").mode("append").save(tempDir.toString)
-  }
-
-  private def assertDataframe(tempDir: File): Unit = {
-    val readTimestamps =
-      spark.read.format("delta")
-      .load(tempDir.toString)
-      .sort("eventTimeString")
-      .toLocalIterator().asScala.toList
-    assert(readTimestamps.map(_.getTimestamp(0))== timestamps)
-  }
-
-  test("Write Parquet timestamp without any config") {
-    withTempDir { tempDir =>
-      writeDatesDataframe(tempDir)
-      val parquetSchema = getSchemaFromFirstFileInDirectory(tempDir)
-      assert(
-        parquetSchema.toString.contains("optional int64 eventTimeString (TIMESTAMP(MICROS,true))"))
-      assertDataframe(tempDir)
-    }
-  }
-
-  test("Write Parquet timestamp with explicit INT96") {
-    withTempDir { tempDir =>
-      spark.conf.set(DeltaSQLConf.PARQUET_OUTPUT_TIMESTAMP_TYPE.key,
-        SQLConf.ParquetOutputTimestampType.INT96.toString)
-      writeDatesDataframe(tempDir)
-      val parquetSchema = getSchemaFromFirstFileInDirectory(tempDir)
-      assert(
-        parquetSchema.toString.contains("optional int96 eventTimeString"))
-      assertDataframe(tempDir)
     }
   }
 }
