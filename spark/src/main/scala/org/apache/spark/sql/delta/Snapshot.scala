@@ -518,10 +518,10 @@ class Snapshot(
     numProtocol = numOfProtocol,
     inCommitTimestampOpt = getInCommitTimestampOpt,
     setTransactions = checksumOpt.flatMap(_.setTransactions),
-    domainMetadata = domainMetadatasIfKnown,
+    domainMetadata = checksumOpt.flatMap(_.domainMetadata),
     metadata = metadata,
     protocol = protocol,
-    histogramOpt = fileSizeHistogram,
+    histogramOpt = checksumOpt.flatMap(_.histogramOpt),
     allFiles = checksumOpt.flatMap(_.allFiles))
 
   /** Returns the data schema of the table, used for reading stats */
