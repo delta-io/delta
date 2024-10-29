@@ -19,7 +19,7 @@ package io.delta.kernel.engine.coordinatedcommits;
 import io.delta.kernel.annotation.Evolving;
 
 /**
- * Response container for {@link io.delta.kernel.engine.CommitCoordinatorClientHandler#commit}.
+ * Response container for {@link io.delta.kernel.coordinatedcommits.CommitCoordinatorClient#commit}.
  *
  * @since 3.3.0
  */

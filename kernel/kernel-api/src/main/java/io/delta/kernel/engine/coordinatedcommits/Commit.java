@@ -22,8 +22,8 @@ import io.delta.kernel.utils.FileStatus;
 /**
  * Representation of a commit file. It contains the version of the commit, the file status of the
  * commit, and the timestamp of the commit. This is used when we want to get the commit information
- * from the {@link io.delta.kernel.engine.CommitCoordinatorClientHandler#commit} and {@link
- * io.delta.kernel.engine.CommitCoordinatorClientHandler#getCommits} APIs.
+ * from the {@link io.delta.kernel.coordinatedcommits.CommitCoordinatorClient#commit} and {@link
+ * io.delta.kernel.coordinatedcommits.CommitCoordinatorClient#getCommits} APIs.
  *
  * @since 3.3.0
  */

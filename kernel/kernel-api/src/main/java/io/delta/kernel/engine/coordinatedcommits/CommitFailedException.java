@@ -19,7 +19,7 @@ package io.delta.kernel.engine.coordinatedcommits;
 import io.delta.kernel.annotation.Evolving;
 
 /**
- * Exception raised by {@link io.delta.kernel.engine.CommitCoordinatorClientHandler#commit}
+ * Exception raised by {@link io.delta.kernel.coordinatedcommits.CommitCoordinatorClient#commit}
  *
  * <pre>
  *  | retryable | conflict  | meaning                                                         |

@@ -22,8 +22,9 @@ import io.delta.kernel.engine.coordinatedcommits.actions.AbstractMetadata;
 import io.delta.kernel.engine.coordinatedcommits.actions.AbstractProtocol;
 
 /**
- * A container class to inform the {@link io.delta.kernel.engine.CommitCoordinatorClientHandler}
- * about any changes in Protocol/Metadata
+ * A container class to inform the {@link
+ * io.delta.kernel.coordinatedcommits.CommitCoordinatorClient} about any changes in
+ * Protocol/Metadata
  *
  * @since 3.3.0
  */

@@ -18,19 +18,17 @@ package io.delta.kernel.engine.coordinatedcommits;
 
 import io.delta.kernel.annotation.Evolving;
 import java.util.List;
-import java.util.Map;
 
 /**
- * Response container for {@link io.delta.kernel.engine.CommitCoordinatorClientHandler#getCommits(
- * String, Map, Long, Long)}. Holds all the commits that have not been backfilled as per the commit
- * coordinator.
+ * Response container for {@link
+ * io.delta.kernel.coordinatedcommits.CommitCoordinatorClient#getCommits}. Holds all the commits
+ * that have not been backfilled as per the commit coordinator.
  *
  * @since 3.3.0
  */
 @Evolving
 public class GetCommitsResponse {
   private final List<Commit> commits;
-
   private final long latestTableVersion;
 
   public GetCommitsResponse(List<Commit> commits, long latestTableVersion) {
