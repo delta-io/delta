@@ -934,7 +934,8 @@ class OptimisticTransactionSuite
 
   test("Append does not trigger snapshot state computation") {
     withSQLConf(
-      DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "false"
+      DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "false",
+      DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> "true"
     ) {
       withTempDir { tableDir =>
         val df = Seq((1, 0), (2, 1)).toDF("key", "value")

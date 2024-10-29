@@ -82,7 +82,8 @@ trait RecordChecksum extends DeltaLogging {
     }
 
     val version = snapshot.version
-    val checksum = snapshot.computeChecksum.copy(txnId = Some(txnId))
+    val checksumWithoutTxnId = snapshot.checksumOpt.getOrElse(snapshot.computeChecksum)
+    val checksum = checksumWithoutTxnId.copy(txnId = Some(txnId))
     val eventData = mutable.Map[String, Any]("operationSucceeded" -> false)
     eventData("numAddFileActions") = checksum.allFiles.map(_.size).getOrElse(-1)
     eventData("numSetTransactionActions") = checksum.setTransactions.map(_.size).getOrElse(-1)
@@ -167,7 +168,8 @@ trait RecordChecksum extends DeltaLogging {
         // then we cannot incrementally derive a new checksum for the new snapshot.
         logInfo(log"Incremental commit: starting with snapshot version " +
           log"${MDC(DeltaLogKeys.VERSION, expectedVersion)}")
-        snapshot.computeChecksum.copy(numMetadata = 1, numProtocol = 1) -> Some(snapshot)
+        val snapshotChecksum = snapshot.checksumOpt.getOrElse(snapshot.computeChecksum)
+        snapshotChecksum.copy(numMetadata = 1, numProtocol = 1) -> Some(snapshot)
       case _ =>
         previousVersionState.swap.foreach { snapshot =>
           // Occurs when snapshot is no longer fresh due to concurrent writers.
