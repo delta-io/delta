@@ -17,6 +17,7 @@
 package io.delta.sharing.spark
 
 import java.lang.ref.WeakReference
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 import org.apache.spark.sql.delta.{
@@ -65,6 +66,8 @@ case class DeltaFormatSharingSource(
     extends Source
     with SupportsAdmissionControl
     with DeltaLogging {
+
+  private val sourceId = Some(UUID.randomUUID().toString().split('-').head)
 
   private var tableId: String = "unset_table_id"
 
@@ -160,10 +163,12 @@ case class DeltaFormatSharingSource(
     val intervalSeconds = ConfUtils.MINIMUM_TABLE_VERSION_INTERVAL_SECONDS.max(
       ConfUtils.streamingQueryTableVersionIntervalSeconds(spark.sessionState.conf)
     )
-    logInfo(s"Configured queryTableVersionIntervalSeconds:${intervalSeconds}.")
+    logInfo(s"Configured queryTableVersionIntervalSeconds:${intervalSeconds}," +
+      getTableInfoForLogging)
     if (intervalSeconds < ConfUtils.MINIMUM_TABLE_VERSION_INTERVAL_SECONDS) {
       throw new IllegalArgumentException(s"QUERY_TABLE_VERSION_INTERVAL_MILLIS($intervalSeconds) " +
-        s"must not be less than ${ConfUtils.MINIMUM_TABLE_VERSION_INTERVAL_SECONDS} seconds.")
+        s"must not be less than ${ConfUtils.MINIMUM_TABLE_VERSION_INTERVAL_SECONDS} seconds,"
+        + getTableInfoForLogging)
     }
     TimeUnit.SECONDS.toMillis(intervalSeconds)
   }
@@ -173,6 +178,13 @@ case class DeltaFormatSharingSource(
   private val maxVersionsPerRpc: Int = options.maxVersionsPerRpc.getOrElse(
     DeltaSharingOptions.MAX_VERSIONS_PER_RPC_DEFAULT
   )
+
+  private lazy val getTableInfoForLogging: String =
+    s" for table(id:$tableId, name:${table.toString}, source:$sourceId)"
+
+  private def getQueryIdForLogging: String = {
+    s", with queryId(${deltaLog.client.getQueryId})"
+  }
 
   // A variable to store the latest table version on server, returned from the getTableVersion rpc.
   // Used to store the latest table version for getOrUpdateLatestTableVersion when not getting
@@ -193,17 +205,15 @@ case class DeltaFormatSharingSource(
       QUERY_TABLE_VERSION_INTERVAL_MILLIS) {
       val serverVersion = client.getTableVersion(table)
       if (serverVersion < 0) {
-        throw new IllegalStateException(
-          s"Delta Sharing Server returning negative table version: " +
-          s"$serverVersion."
-        )
+        throw new IllegalStateException(s"Delta Sharing Server returning negative table version:" +
+          s"$serverVersion," + getTableInfoForLogging)
       } else if (serverVersion < latestTableVersionOnServer) {
         logWarning(
           s"Delta Sharing Server returning smaller table version: $serverVersion < " +
-          s"$latestTableVersionOnServer."
+          s"$latestTableVersionOnServer," + getTableInfoForLogging
         )
       }
-      logInfo(s"Delta Sharing Server returning $serverVersion for getTableVersion.")
+      logInfo(s"Got table version $serverVersion from Delta Sharing Server,$getTableInfoForLogging")
       latestTableVersionOnServer = serverVersion
       lastTimestampForGetVersionFromServer = currentTimeMillis
     }
@@ -285,7 +295,7 @@ case class DeltaFormatSharingSource(
         s"Reducing ending version for delta sharing rpc from latestTableVersion(" +
         s"$latestTableVersion) to endingVersionForQuery($endingVersionForQuery), " +
         s"startVersion:${startingOffset.reservoirVersion}, maxVersionsPerRpc:$maxVersionsPerRpc, " +
-        s"for table(id:$tableId, name:${table.toString})."
+          getTableInfoForLogging
       )
     }
     endingVersionForQuery
@@ -399,8 +409,8 @@ case class DeltaFormatSharingSource(
     logInfo(
       s"Fetching files with table version(${startingOffset.reservoirVersion}), " +
       s"index(${startingOffset.index}), isInitialSnapshot(${startingOffset.isInitialSnapshot})," +
-      s" endingVersionForQuery($endingVersionForQuery), for table(id:$tableId, " +
-      s"name:${table.toString}) with latest version on server($latestTableVersionOnServer)."
+      s" endingVersionForQuery($endingVersionForQuery), server version" +
+      s"($latestTableVersionOnServer)," + getTableInfoForLogging
     )
 
     val (tableFiles, refreshFunc) = if (startingOffset.isInitialSnapshot) {
@@ -426,7 +436,7 @@ case class DeltaFormatSharingSource(
       )
       logInfo(
         s"Fetched ${tableFiles.lines.size} lines for table version ${tableFiles.version} from" +
-        " delta sharing server."
+        " delta sharing server." + getTableInfoForLogging + getQueryIdForLogging
       )
       (tableFiles, refreshFunc)
     } else {
@@ -446,7 +456,7 @@ case class DeltaFormatSharingSource(
       logInfo(
         s"Fetched ${tableFiles.lines.size} lines from startingVersion " +
         s"${startingOffset.reservoirVersion} to enedingVersion ${endingVersionForQuery} from " +
-        "delta sharing server."
+        "delta sharing server," + getTableInfoForLogging + getQueryIdForLogging
       )
       (tableFiles, refreshFunc)
     }
@@ -462,7 +472,8 @@ case class DeltaFormatSharingSource(
       s"Invalid table version in delta sharing response: ${tableFiles.lines}."
     )
     latestTableVersionInLocalDeltaLogOpt = Some(deltaLogMetadata.maxVersion)
-    logInfo(s"Setting latestTableVersionInLocalDeltaLogOpt to ${deltaLogMetadata.maxVersion}")
+    logInfo(s"Setting latestTableVersionInLocalDeltaLogOpt to ${deltaLogMetadata.maxVersion}" +
+      getTableInfoForLogging)
     assert(
       deltaLogMetadata.numFileActionsInMinVersionOpt.isDefined,
       "numFileActionsInMinVersionOpt missing after constructed delta log."
@@ -489,6 +500,8 @@ case class DeltaFormatSharingSource(
   }
 
   override def getBatch(startOffsetOption: Option[Offset], end: Offset): DataFrame = {
+    logInfo(s"getBatch with startOffsetOption($startOffsetOption) and end($end)," +
+      getTableInfoForLogging)
     val endOffset = deltaSource.toDeltaSourceOffset(end)
     val startDeltaOffsetOption = startOffsetOption.map(deltaSource.toDeltaSourceOffset)
     val startingOffset = getStartingOffset(startDeltaOffsetOption, Some(endOffset))
@@ -501,7 +514,7 @@ case class DeltaFormatSharingSource(
       (endOffset.reservoirVersion == latestProcessedEndOffsetOption.get.reservoirVersion &&
       endOffset.index > latestProcessedEndOffsetOption.get.index)) {
       latestProcessedEndOffsetOption = Some(endOffset)
-      logInfo(s"Setting latestProcessedEndOffsetOption to $endOffset")
+      logInfo(s"Setting latestProcessedEndOffsetOption to $endOffset," + getTableInfoForLogging)
     }
 
     deltaSource.getBatch(startOffsetOption, end)
@@ -543,7 +556,7 @@ case class DeltaFormatSharingSource(
 
   // Calls deltaSource.commit for checks related to column mapping.
   override def commit(end: Offset): Unit = {
-    logInfo(s"Commit end offset: $end.")
+    logInfo(s"Commit end offset: $end," + getTableInfoForLogging)
     deltaSource.commit(end)
 
     // Clean up previous blocks after commit.
