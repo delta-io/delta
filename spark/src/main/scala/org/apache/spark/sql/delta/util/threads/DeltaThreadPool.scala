@@ -117,16 +117,16 @@ class NonFateSharingFuture[T](pool: DeltaThreadPool)(f: SparkSession => T)
         // of the future will surface as SparkException(ExecutionException(OriginalException)).
         case outer: SparkException => outer.getCause match {
           case e: CancellationException =>
-            logWarning("Future was cancelled")
+            logWarning(log"Future was cancelled")
             futureOpt = None
             None
           case inner: ExecutionException if inner.getCause != null => inner.getCause match {
             case NonFatal(e) =>
-              logWarning("Future threw non-fatal exception", e)
+              logWarning(log"Future threw non-fatal exception", e)
               futureOpt = None
               None
             case e: Throwable =>
-              logWarning("Future threw fatal error", e)
+              logWarning(log"Future threw fatal error", e)
               if (ownerSession eq SparkSession.active) {
                 futureOpt = None
                 throw e
@@ -135,10 +135,10 @@ class NonFateSharingFuture[T](pool: DeltaThreadPool)(f: SparkSession => T)
           }
         }
         case e: TimeoutException =>
-          logWarning("Timed out waiting for future")
+          logWarning(log"Timed out waiting for future")
           None
         case NonFatal(e) =>
-          logWarning("Unknown failure while waiting for future", e)
+          logWarning(log"Unknown failure while waiting for future", e)
           None
       }
     }

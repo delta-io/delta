@@ -117,7 +117,7 @@ class IcebergConverter(spark: SparkSession)
                       convertSnapshot(snapshotVal, prevTxn)
                     } catch {
                       case NonFatal(e) =>
-                        logWarning("Error when writing Iceberg metadata asynchronously", e)
+                        logWarning(log"Error when writing Iceberg metadata asynchronously", e)
                         recordDeltaEvent(
                           log,
                           "delta.iceberg.conversion.async.error",
@@ -180,7 +180,7 @@ class IcebergConverter(spark: SparkSession)
       convertSnapshot(snapshotToConvert, None, catalogTable)
     } catch {
       case NonFatal(e) =>
-        logError("Error when converting to Iceberg metadata", e)
+        logError(log"Error when converting to Iceberg metadata", e)
         recordDeltaEvent(
           snapshotToConvert.deltaLog,
           "delta.iceberg.conversion.error",
@@ -214,7 +214,7 @@ class IcebergConverter(spark: SparkSession)
       }
     } catch {
       case NonFatal(e) =>
-        logError("Error when converting to Iceberg metadata", e)
+        logError(log"Error when converting to Iceberg metadata", e)
         recordDeltaEvent(
           txn.deltaLog,
           "delta.iceberg.conversion.error",
@@ -514,8 +514,9 @@ class IcebergConverter(spark: SparkSession)
           overwriteHelper.commit()
         } else if (hasAdds) {
           if (!hasRemoves && !hasDataChange && allDeltaActionsCaptured) {
-            logInfo(s"Skip Iceberg conversion for commit that only has AddFiles " +
-              s"without any RemoveFiles or data change. CommitInfo: $commitInfo")
+            logInfo(log"Skip Iceberg conversion for commit that only has AddFiles " +
+              log"without any RemoveFiles or data change. CommitInfo: " +
+              log"${MDC(DeltaLogKeys.DELTA_COMMIT_INFO, commitInfo)}")
           } else {
             val appendHelper = icebergTxn.getAppendOnlyHelper()
               addsAndRemoves.foreach(action => appendHelper.add(action.add))

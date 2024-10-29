@@ -116,7 +116,7 @@ class HudiConverter(spark: SparkSession)
                       convertSnapshot(snapshotVal, prevTxn)
                     } catch {
                       case NonFatal(e) =>
-                        logWarning("Error when writing Hudi metadata asynchronously", e)
+                        logWarning(log"Error when writing Hudi metadata asynchronously", e)
                         recordDeltaEvent(
                           log,
                           "delta.hudi.conversion.async.error",

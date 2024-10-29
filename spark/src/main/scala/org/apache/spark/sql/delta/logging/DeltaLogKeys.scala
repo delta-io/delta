@@ -56,6 +56,7 @@ trait DeltaLogKeysBase {
   case object COUNT extends LogKeyShims
   case object DATA_FILTER extends LogKeyShims
   case object DATE extends LogKeyShims
+  case object DELTA_COMMIT_INFO extends LogKeyShims
   case object DIR extends LogKeyShims
   case object DURATION extends LogKeyShims
   case object END_INDEX extends LogKeyShims
@@ -69,6 +70,7 @@ trait DeltaLogKeysBase {
   case object FILE_STATUS extends LogKeyShims
   case object FILE_SYSTEM_SCHEME extends LogKeyShims
   case object FILTER extends LogKeyShims
+  case object FILTER2 extends LogKeyShims
   case object HOOK_NAME extends LogKeyShims
   case object ISOLATION_LEVEL extends LogKeyShims
   case object IS_DRY_RUN extends LogKeyShims

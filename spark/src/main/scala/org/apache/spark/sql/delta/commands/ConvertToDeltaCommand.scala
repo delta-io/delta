@@ -172,7 +172,7 @@ abstract class ConvertToDeltaCommandBase(
         serde = None)
     )
     sessionCatalog.alterTable(newCatalog)
-    logInfo("Convert to Delta converted metadata")
+    logInfo(log"Convert to Delta converted metadata")
   }
 
   /**

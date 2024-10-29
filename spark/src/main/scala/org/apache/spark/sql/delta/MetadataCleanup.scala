@@ -260,8 +260,9 @@ trait MetadataCleanup extends DeltaLogging {
       otherFiles.partition(_.getPath.getName.endsWith("json"))
     if (unknownFormatCheckpointFiles.nonEmpty) {
       logWarning(
-        "Found checkpoint files other than parquet and json: " +
-          s"${unknownFormatCheckpointFiles.map(_.getPath.toString).mkString(",")}")
+        log"Found checkpoint files other than parquet and json: " +
+        log"${MDC(DeltaLogKeys.PATHS,
+          unknownFormatCheckpointFiles.map(_.getPath.toString).mkString(","))}")
     }
     metrics.numActiveParquetCheckpointFiles = parquetCheckpointFiles.size
     metrics.numActiveJsonCheckpointFiles = jsonCheckpointFiles.size
@@ -302,7 +303,7 @@ trait MetadataCleanup extends DeltaLogging {
       .collect { case file if file.getModificationTime < retentionTimestamp => file.getPath }
       .filterNot(path => activeSidecarFiles.contains(path.getName))
     val sidecarDeletionStartTimeMs = System.currentTimeMillis()
-    logInfo("Starting the deletion of unreferenced sidecar files")
+    logInfo(log"Starting the deletion of unreferenced sidecar files")
     val count = deleteMultiple(fs, sidecarFilesToDelete)
 
     logInfo(log"Deleted ${MDC(DeltaLogKeys.COUNT, count)} sidecar files")
