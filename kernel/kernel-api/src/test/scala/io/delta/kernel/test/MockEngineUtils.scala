@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.test
 
+import io.delta.kernel.coordinatedcommits.CommitCoordinatorClient
 import io.delta.kernel.engine._
 import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch, Row}
 import io.delta.kernel.expressions.{Column, Expression, ExpressionEvaluator, Predicate, PredicateEvaluator}
@@ -49,11 +50,11 @@ trait MockEngineUtils {
    * throw an exception when accessed.
    */
   def mockEngine(
-    fileSystemClient: FileSystemClient = null,
-    jsonHandler: JsonHandler = null,
-    parquetHandler: ParquetHandler = null,
-    expressionHandler: ExpressionHandler = null,
-    commitCoordinatorClientHandler: CommitCoordinatorClientHandler = null): Engine = {
+      fileSystemClient: FileSystemClient = null,
+      jsonHandler: JsonHandler = null,
+      parquetHandler: ParquetHandler = null,
+      expressionHandler: ExpressionHandler = null,
+      commitCoordinatorClient: CommitCoordinatorClient = null): Engine = {
     new Engine() {
       override def getExpressionHandler: ExpressionHandler =
         Option(expressionHandler).getOrElse(
@@ -71,9 +72,11 @@ trait MockEngineUtils {
         Option(parquetHandler).getOrElse(
           throw new UnsupportedOperationException("not supported in this test suite"))
 
-      override def getCommitCoordinatorClientHandler(name: String, conf: util.Map[String, String]):
-      CommitCoordinatorClientHandler =
-        Option(commitCoordinatorClientHandler).getOrElse(
+      override def getCommitCoordinatorClient(
+          commitCoordinatorName: String,
+          commitCoordinatorConf: util.Map[String, String]):
+      CommitCoordinatorClient =
+        Option(commitCoordinatorClient).getOrElse(
           throw new UnsupportedOperationException("not supported in this test suite"))
     }
   }

@@ -15,19 +15,17 @@
  */
 package io.delta.kernel.internal.snapshot
 
-import java.util.{Arrays, Collections, List, Optional}
+import java.util.{Arrays, Collections, Optional}
 import java.{lang => javaLang}
 import scala.collection.JavaConverters._
 import scala.reflect.ClassTag
-import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
-import io.delta.kernel.engine.CommitCoordinatorClientHandler
-import io.delta.kernel.engine.coordinatedcommits.{Commit, CommitResponse, GetCommitsResponse}
+import io.delta.kernel.data.{ColumnVector, ColumnarBatch}
+import io.delta.kernel.engine.Engine
+import io.delta.kernel.engine.coordinatedcommits.{Commit, GetCommitsResponse}
 import io.delta.kernel.exceptions.InvalidTableException
 import io.delta.kernel.expressions.Predicate
-import io.delta.kernel.internal.actions.CommitInfo
 import io.delta.kernel.internal.checkpoints.{CheckpointInstance, SidecarFile}
 import io.delta.kernel.internal.fs.Path
-import io.delta.kernel.internal.snapshot.{LogSegment, SnapshotManager, TableCommitCoordinatorClientHandler}
 import io.delta.kernel.internal.util.{FileNames, Utils}
 import io.delta.kernel.test.{BaseMockJsonHandler, BaseMockParquetHandler, MockFileSystemClientUtils, VectorTestUtils}
 import io.delta.kernel.types.StructType
@@ -126,7 +124,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
   // getLogSegmentAtOrBeforeVersion tests
   //////////////////////////////////////////////////////////////////////////////////
 
-  private val snapshotManager = new SnapshotManager(logPath, dataPath)
+  private val snapshotManager = new SnapshotManager(logPath, dataPath, Optional.empty())
 
   /* ------------------HELPER METHODS------------------ */
 
@@ -952,9 +950,9 @@ class MockSidecarJsonHandler(sidecars: Seq[FileStatus])
 
 class MockTableCommitCoordinatorClientHandler(
   logPath: Path, versions: Seq[Long] = Seq.empty, e: Throwable = null)
-  extends TableCommitCoordinatorClientHandler(null, null, null) {
+  extends TableCommitCoordinatorClientHandler(null, null) {
   override def getCommits(
-    startVersion: javaLang.Long, endVersion: javaLang.Long): GetCommitsResponse = {
+    engine: Engine, startVersion: javaLang.Long, endVersion: javaLang.Long): GetCommitsResponse = {
     if (e != null) {
       throw e
     }

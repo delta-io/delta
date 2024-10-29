@@ -16,40 +16,32 @@
 
 package io.delta.kernel.defaults.internal.coordinatedcommits
 
+import io.delta.kernel.config.ConfigurationProvider
 import io.delta.kernel.defaults.DeltaTableWriteSuiteBase
-import io.delta.kernel.defaults.internal.logstore.LogStoreProvider
 import io.delta.kernel.defaults.utils.TestRow
-import io.delta.kernel.internal.TableConfig._
-import io.delta.kernel.Table
+import io.delta.kernel.{Table, TableIdentifier}
+import io.delta.kernel.coordinatedcommits.{AbstractCommitCoordinatorBuilder, CommitCoordinatorClient, InMemoryCommitCoordinatorClient, TableDescriptor}
 import io.delta.kernel.data.Row
-import io.delta.kernel.defaults.engine.DefaultCommitCoordinatorClientHandler
 import io.delta.kernel.engine.Engine
+import io.delta.kernel.engine.coordinatedcommits.{CommitResponse, GetCommitsResponse, UpdatedActions}
+import io.delta.kernel.engine.coordinatedcommits.actions.{AbstractMetadata, AbstractProtocol}
 import io.delta.kernel.internal.{SnapshotImpl, TableConfig}
-import io.delta.kernel.internal.actions.{CommitInfo, Metadata, Protocol, SingleAction}
-import io.delta.kernel.internal.actions.SingleAction.{createMetadataSingleAction, FULL_SCHEMA}
-import io.delta.kernel.internal.fs.{Path => KernelPath}
-import io.delta.kernel.internal.snapshot.{SnapshotManager, TableCommitCoordinatorClientHandler}
-import io.delta.kernel.internal.util.{CoordinatedCommitsUtils, FileNames}
+import io.delta.kernel.internal.actions.SingleAction
+import io.delta.kernel.internal.actions.SingleAction.createMetadataSingleAction
+import io.delta.kernel.internal.util.CoordinatedCommitsUtils
 import io.delta.kernel.internal.util.Preconditions.checkArgument
-import io.delta.kernel.internal.util.Utils.{closeCloseables, singletonCloseableIterator, toCloseableIterator}
+import io.delta.kernel.internal.util.Utils.{singletonCloseableIterator, toCloseableIterator}
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
-import io.delta.storage.commit.{CommitCoordinatorClient, CommitResponse, GetCommitsResponse, InMemoryCommitCoordinator, TableDescriptor, TableIdentifier, UpdatedActions, CoordinatedCommitsUtils => CCU}
-import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
-import io.delta.storage.LogStore
-import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
-import java.{lang, util}
-import java.util.{Collections, Optional}
+import java.util.Optional
 import scala.collection.convert.ImplicitConversions.`iterator asScala`
 import scala.collection.JavaConverters._
-import scala.math
 
-class CoordinatedCommitsSuite extends DeltaTableWriteSuiteBase
-  with CoordinatedCommitsTestUtils {
+class CoordinatedCommitsSuite extends DeltaTableWriteSuiteBase with CoordinatedCommitsTestUtils {
 
   private val trackingInMemoryBatchSize10Config = Map(
-    CommitCoordinatorProvider.getCommitCoordinatorNameConfKey("tracking-in-memory") ->
+    AbstractCommitCoordinatorBuilder.getCommitCoordinatorBuilderConfKey("tracking-in-memory") ->
       classOf[TrackingInMemoryCommitCoordinatorBuilder].getName,
     InMemoryCommitCoordinatorBuilder.BATCH_SIZE_CONF_KEY -> "10")
 
@@ -65,10 +57,11 @@ class CoordinatedCommitsSuite extends DeltaTableWriteSuiteBase
     deleteVersion: Long = -1L): Unit = {
     assert(checkpointVersion < versionConvertToCC)
     val versionToDelete = math.max(versionConvertToCC + 1, deleteVersion)
-
-    val handler =
-      engine.getCommitCoordinatorClientHandler(
-        coordinatorName, OBJ_MAPPER.readValue(coordinatorConf, classOf[util.Map[String, String]]))
+    val client =
+      engine.getCommitCoordinatorClient(
+        coordinatorName,
+        OBJ_MAPPER.readValue(coordinatorConf, classOf[java.util.Map[String, String]])
+      )
     val logPath = new Path("file:" + tablePath, "_delta_log")
     val tableSpark = Table.forPath(engine, tablePath)
     val totalCommitNum = coordinatedCommitNum + versionConvertToCC
@@ -81,15 +74,17 @@ class CoordinatedCommitsSuite extends DeltaTableWriteSuiteBase
       spark.sql(s"SELECT * FROM delta.`$tablePath`").collect().map(TestRow(_)),
       (0L until totalCommitNum * 10L).map(TestRow(_)))
 
-    var tableConf: util.Map[String, String] = null
+    var tableConf: java.util.Map[String, String] = null
 
     /** Rewrite the FS to CC conversion commit and move coordinated commits to _commits folder */
     (0L until totalCommitNum).foreach{ version =>
       val commitFilePath = getHadoopDeltaFile(logPath, version)
 
       if (version == versionConvertToCC) {
-        tableConf = handler.registerTable(
+        tableConf = client.registerTable(
+          engine,
           logPath.toString,
+          null, // tableIdentifier
           version - 1L,
           CoordinatedCommitsUtils.convertMetadataToAbstractMetadata(getEmptyMetadata),
           CoordinatedCommitsUtils.convertProtocolToAbstractProtocol(getProtocol(1, 1)))
@@ -109,7 +104,7 @@ class CoordinatedCommitsSuite extends DeltaTableWriteSuiteBase
         writeConvertToCCCommit(engine, logPath, rows, version)
       } else if (version > versionConvertToCC) {
         val rows = getRowsFromFile(engine, commitFilePath)
-        commit(logPath.toString, tableConf, version, version, rows, handler)
+        commit(engine, logPath.toString, tableConf, version, version, rows, client)
         if (version >= versionToDelete) {
           logPath.getFileSystem(hadoopConf).delete(commitFilePath)
         }
@@ -148,7 +143,7 @@ class CoordinatedCommitsSuite extends DeltaTableWriteSuiteBase
 
   testWithCoordinatorCommits(
     "snapshot read should use coordinated commit related properties properly",
-    Map(CommitCoordinatorProvider.getCommitCoordinatorNameConfKey("test-coordinator") ->
+    Map(AbstractCommitCoordinatorBuilder.getCommitCoordinatorBuilderConfKey("test-coordinator") ->
       classOf[TestCommitCoordinatorBuilder].getName)) { (tablePath, engine) =>
         setupCoordinatedCommitFilesForTest(
           engine,
@@ -167,7 +162,7 @@ class CoordinatedCommitsSuite extends DeltaTableWriteSuiteBase
             .getTableCommitCoordinatorClientHandlerOpt(engine)
             .get()
             .semanticEquals(
-              engine.getCommitCoordinatorClientHandler(
+              engine.getCommitCoordinatorClient(
                 "test-coordinator", TestCommitCoordinator.EXP_COORDINATOR_CONF)))
   }
 
@@ -310,13 +305,13 @@ class CoordinatedCommitsSuite extends DeltaTableWriteSuiteBase
 }
 
 object TestCommitCoordinator {
-  val EXP_TABLE_CONF: util.Map[String, String] = Map(
+  val EXP_TABLE_CONF: java.util.Map[String, String] = Map(
     "tableKey1" -> "string_value",
     "tableKey2Int" -> "2",
     "tableKey3ComplexStr" -> "\"hello\""
   ).asJava
 
-  val EXP_COORDINATOR_CONF: util.Map[String, String] = Map(
+  val EXP_COORDINATOR_CONF: java.util.Map[String, String] = Map(
     "coordinatorKey1" -> "string_value",
     "coordinatorKey2Int" -> "2",
     "coordinatorKey3ComplexStr" -> "\"hello\"").asJava
@@ -325,43 +320,50 @@ object TestCommitCoordinator {
 }
 
 /**
- * A [[CommitCoordinatorClient]] that tests can use to check the coordinator configuration and
- * table configuration.
+ * A [[io.delta.kernel.coordinatedcommits.CommitCoordinatorClient]] that tests can use to check the
+ * coordinator configuration and table configuration.
  */
-class TestCommitCoordinatorClient extends InMemoryCommitCoordinator(10) {
+class TestCommitCoordinatorClient extends InMemoryCommitCoordinatorClient(10) {
+
   override def registerTable(
-    logPath: Path,
-    tableIdentifier: Optional[TableIdentifier],
-    currentVersion: Long,
-    currentMetadata: AbstractMetadata,
-    currentProtocol: AbstractProtocol): util.Map[String, String] = {
-    super.registerTable(logPath, tableIdentifier, currentVersion, currentMetadata, currentProtocol)
+      engine: Engine,
+      logPath: String,
+      tableIdentifier: TableIdentifier,
+      currentVersion: Long,
+      currentMetadata: AbstractMetadata,
+      currentProtocol: AbstractProtocol): java.util.Map[String, String] = {
+    super.registerTable(
+      engine, logPath, tableIdentifier, currentVersion, currentMetadata, currentProtocol)
     TestCommitCoordinator.EXP_TABLE_CONF
   }
-  override def getCommits(
-    tableDesc: TableDescriptor,
-    startVersion: lang.Long,
-    endVersion: lang.Long = null): GetCommitsResponse = {
-    checkArgument(tableDesc.getTableConf == TestCommitCoordinator.EXP_TABLE_CONF)
-    super.getCommits(tableDesc, startVersion, endVersion)
-  }
+
   override def commit(
-    logStore: LogStore,
-    hadoopConf: Configuration,
-    tableDesc: TableDescriptor,
-    commitVersion: Long,
-    actions: util.Iterator[String],
-    updatedActions: UpdatedActions): CommitResponse = {
-    checkArgument(tableDesc.getTableConf == TestCommitCoordinator.EXP_TABLE_CONF)
-    super.commit(logStore, hadoopConf, tableDesc, commitVersion, actions, updatedActions)
+      engine: Engine,
+      tableDescriptor: TableDescriptor,
+      commitVersion: Long,
+      actions: CloseableIterator[Row],
+      updatedActions: UpdatedActions): CommitResponse = {
+    checkArgument(tableDescriptor.getTableConf == TestCommitCoordinator.EXP_TABLE_CONF)
+    super.commit(engine, tableDescriptor, commitVersion, actions, updatedActions)
+  }
+
+  override def getCommits(
+      engine: Engine,
+      tableDescriptor: TableDescriptor,
+      startVersion: java.lang.Long,
+      endVersion: java.lang.Long): GetCommitsResponse = {
+    checkArgument(tableDescriptor.getTableConf == TestCommitCoordinator.EXP_TABLE_CONF)
+    super.getCommits(engine, tableDescriptor, startVersion, endVersion)
   }
 }
 
-class TestCommitCoordinatorBuilder(
-  hadoopConf: Configuration) extends CommitCoordinatorBuilder(hadoopConf) {
-  override def build(conf: util.Map[String, String]): CommitCoordinatorClient = {
-    checkArgument(conf == TestCommitCoordinator.EXP_COORDINATOR_CONF)
+class TestCommitCoordinatorBuilder extends AbstractCommitCoordinatorBuilder {
+  override def getName: String = "test-coordinator"
+
+  override def build(
+      sessionConfig: ConfigurationProvider,
+      commitCoordinatorConf: java.util.Map[String, String]): CommitCoordinatorClient = {
+    checkArgument(commitCoordinatorConf == TestCommitCoordinator.EXP_COORDINATOR_CONF)
     TestCommitCoordinator.COORDINATOR
   }
-  override def getName: String = "test-coordinator"
 }

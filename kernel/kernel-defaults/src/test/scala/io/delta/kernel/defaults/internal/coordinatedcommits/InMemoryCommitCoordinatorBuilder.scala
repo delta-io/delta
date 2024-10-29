@@ -16,31 +16,33 @@
 
 package io.delta.kernel.defaults.internal.coordinatedcommits
 
-import java.util
-
-import io.delta.storage.commit.{CommitCoordinatorClient, InMemoryCommitCoordinator}
-import org.apache.hadoop.conf.Configuration
+import io.delta.kernel.config.ConfigurationProvider
+import io.delta.kernel.coordinatedcommits.{AbstractCommitCoordinatorBuilder, CommitCoordinatorClient, InMemoryCommitCoordinatorClient}
 
 /**
  * The [[InMemoryCommitCoordinatorBuilder]] class is responsible for creating singleton instances of
- * [[InMemoryCommitCoordinator]] with the specified batchSize.
+ * [[InMemoryCommitCoordinatorClient]] with the specified batchSize.
  *
- * For testing purposes, a test can clear the instances of [[InMemoryCommitCoordinator]] by calling
- * [[InMemoryCommitCoordinatorBuilder.clearInMemoryInstances()]], configure the
+ * For testing purposes, a test can clear the instances of [[InMemoryCommitCoordinatorClient]] by
+ * calling [[InMemoryCommitCoordinatorBuilder.clearInMemoryInstances]], configure the
  * [[InMemoryCommitCoordinatorBuilder]] and batchSize in hadoopConf passed to the engine. In this
- * way, the [[InMemoryCommitCoordinator]] instances can be used by Kernel read and write across
- * the test.
+ * way, the [[InMemoryCommitCoordinatorClient]] instances can be used by Kernel read and write
+ * across the test.
  */
-class InMemoryCommitCoordinatorBuilder(hadoopConf: Configuration)
-  extends CommitCoordinatorBuilder(hadoopConf) {
-  private val batchSize =
-    hadoopConf.getLong(InMemoryCommitCoordinatorBuilder.BATCH_SIZE_CONF_KEY, 1)
+class InMemoryCommitCoordinatorBuilder extends AbstractCommitCoordinatorBuilder() {
 
   /** Name of the commit-coordinator */
   override def getName: String = "in-memory"
 
   /** Returns a commit-coordinator based on the given conf */
-  override def build(conf: util.Map[String, String]): CommitCoordinatorClient = {
+  override def build(
+      sessionConfig: ConfigurationProvider,
+      commitCoordinatorConf: java.util.Map[String, String]): CommitCoordinatorClient = {
+    val batchSize = sessionConfig
+      .getOptional(InMemoryCommitCoordinatorBuilder.BATCH_SIZE_CONF_KEY)
+      .orElse("1")
+      .toLong
+
     if (InMemoryCommitCoordinatorBuilder.batchSizeMap.containsKey(batchSize)) {
       InMemoryCommitCoordinatorBuilder.batchSizeMap.get(batchSize)
     } else {
@@ -53,13 +55,13 @@ class InMemoryCommitCoordinatorBuilder(hadoopConf: Configuration)
 
 /**
  * The [[InMemoryCommitCoordinatorBuilder]] companion object is responsible for storing the
- * singleton instances of [[InMemoryCommitCoordinator]] based on the batchSize. This is useful for
- * checking the state of the instances in UTs.
+ * singleton instances of [[InMemoryCommitCoordinatorClient]] based on the batchSize. This is useful
+ * for checking the state of the instances in UTs.
  */
 object InMemoryCommitCoordinatorBuilder {
   val BATCH_SIZE_CONF_KEY = "delta.kernel.default.coordinatedCommits.inMemoryCoordinator.batchSize"
-  val batchSizeMap: util.Map[Long, InMemoryCommitCoordinator] =
-    new util.HashMap[Long, InMemoryCommitCoordinator]()
+  val batchSizeMap: java.util.Map[Long, InMemoryCommitCoordinatorClient] =
+    new java.util.HashMap[Long, InMemoryCommitCoordinatorClient]()
 
   // Visible only for UTs
   private[defaults] def clearInMemoryInstances(): Unit = {
@@ -68,9 +70,10 @@ object InMemoryCommitCoordinatorBuilder {
 }
 
 class PredictableUuidInMemoryCommitCoordinatorClient(batchSize: Long)
-  extends InMemoryCommitCoordinator(batchSize) {
+  extends InMemoryCommitCoordinatorClient(batchSize) {
 
   var nextUuidSuffix = 1L
+
   override def generateUUID(): String = {
     nextUuidSuffix += 1
     s"uuid-${nextUuidSuffix - 1}"

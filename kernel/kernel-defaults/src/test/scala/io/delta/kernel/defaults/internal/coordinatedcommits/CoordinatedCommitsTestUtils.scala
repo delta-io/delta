@@ -15,21 +15,19 @@
  */
 package io.delta.kernel.defaults.internal.coordinatedcommits
 
+import io.delta.kernel.TableIdentifier
+import io.delta.kernel.config.ConfigurationProvider
+import io.delta.kernel.coordinatedcommits.{AbstractCommitCoordinatorBuilder, CommitCoordinatorClient, InMemoryCommitCoordinatorClient, TableDescriptor}
 import io.delta.kernel.data.Row
-
-import java.{lang, util}
-import io.delta.storage.commit.{CommitCoordinatorClient, InMemoryCommitCoordinator, Commit => StorageCommit, CommitResponse => StorageCommitResponse, GetCommitsResponse => StorageGetCommitsResponse, TableDescriptor, TableIdentifier, UpdatedActions => StorageUpdatedActions}
-import io.delta.kernel.defaults.internal.logstore.LogStoreProvider
-import io.delta.kernel.engine.{CommitCoordinatorClientHandler, Engine}
+import io.delta.kernel.engine.Engine
+import io.delta.kernel.engine.coordinatedcommits.actions.{AbstractMetadata, AbstractProtocol}
 import io.delta.kernel.internal.actions.{CommitInfo, Format, Metadata, Protocol}
 import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.util.{CoordinatedCommitsUtils, FileNames, VectorUtils}
 import io.delta.kernel.internal.util.VectorUtils.{stringArrayValue, stringVector}
 import io.delta.kernel.utils.CloseableIterator
 import io.delta.kernel.engine.coordinatedcommits.{Commit, CommitResponse, GetCommitsResponse, UpdatedActions}
-import io.delta.kernel.types.{LongType, StringType, StructType}
-import io.delta.storage.LogStore
-import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
+import io.delta.kernel.types.{LongType, StructType}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
@@ -42,7 +40,7 @@ trait CoordinatedCommitsTestUtils {
   val hadoopConf = new Configuration()
   def getEmptyMetadata: Metadata = {
     new Metadata(
-      util.UUID.randomUUID().toString,
+      java.util.UUID.randomUUID().toString,
       Optional.empty(),
       Optional.empty(),
       new Format(),
@@ -73,23 +71,25 @@ trait CoordinatedCommitsTestUtils {
   }
 
   def commit(
-    logPath: String,
-    tableConf: util.Map[String, String],
-    version: Long,
-    timestamp: Long,
-    commit: CloseableIterator[Row],
-    commitCoordinatorClientHandler: CommitCoordinatorClientHandler): Commit = {
+      engine: Engine,
+      logPath: String,
+      tableConf: java.util.Map[String, String],
+      version: Long,
+      timestamp: Long,
+      actions: CloseableIterator[Row],
+      commitCoordinatorClient: CommitCoordinatorClient): Commit = {
     val updatedCommitInfo = getCommitInfo(timestamp)
     val updatedActions = if (version == 0) {
       getUpdatedActionsForZerothCommit(updatedCommitInfo)
     } else {
       getUpdatedActionsForNonZerothCommit(updatedCommitInfo)
     }
-    commitCoordinatorClientHandler.commit(
-      logPath,
-      tableConf,
+
+    commitCoordinatorClient.commit(
+      engine,
+      new TableDescriptor(logPath, Optional.empty(), tableConf),
       version,
-      commit,
+      actions,
       updatedActions).getCommit
   }
 
@@ -157,13 +157,17 @@ trait CoordinatedCommitsTestUtils {
   }
 }
 
-case class TrackingInMemoryCommitCoordinatorBuilder(hadoopConf: Configuration)
-  extends CommitCoordinatorBuilder(hadoopConf) {
+class TrackingInMemoryCommitCoordinatorBuilder extends AbstractCommitCoordinatorBuilder {
+
   override def getName: String = "tracking-in-memory"
-  override def build(conf: util.Map[String, String]): CommitCoordinatorClient = {
+
+  override def build(
+      sessionConfig: ConfigurationProvider,
+      commitCoordinatorConf: java.util.Map[String, String]): CommitCoordinatorClient = {
     new TrackingCommitCoordinatorClient(
-      new InMemoryCommitCoordinatorBuilder(hadoopConf).build(conf)
-        .asInstanceOf[InMemoryCommitCoordinator])
+      new InMemoryCommitCoordinatorBuilder()
+        .build(sessionConfig, commitCoordinatorConf)
+        .asInstanceOf[InMemoryCommitCoordinatorClient])
   }
 }
 
@@ -178,7 +182,7 @@ object TrackingCommitCoordinatorClient {
   }
 }
 
-class TrackingCommitCoordinatorClient(delegatingCommitCoordinatorClient: InMemoryCommitCoordinator)
+class TrackingCommitCoordinatorClient(delegatingClient: InMemoryCommitCoordinatorClient)
   extends CommitCoordinatorClient {
 
   def recordOperation[T](op: String)(f: => T): T = {
@@ -202,37 +206,49 @@ class TrackingCommitCoordinatorClient(delegatingCommitCoordinatorClient: InMemor
     }
   }
 
+  override def registerTable(
+      engine: Engine,
+      logPath: String,
+      tableIdentifier: TableIdentifier,
+      currentVersion: Long,
+      currentMetadata: AbstractMetadata,
+      currentProtocol: AbstractProtocol): java.util.Map[String, String] = {
+    recordOperation("registerTable") {
+      delegatingClient.registerTable(
+        engine, logPath, tableIdentifier, currentVersion, currentMetadata, currentProtocol)
+    }
+  }
+
   override def commit(
-    logStore: LogStore,
-    hadoopConf: Configuration,
-    tableDesc: TableDescriptor,
-    commitVersion: Long,
-    actions: util.Iterator[String],
-    updatedActions: StorageUpdatedActions): StorageCommitResponse = recordOperation("commit") {
-    delegatingCommitCoordinatorClient.commit(
-      logStore,
-      hadoopConf,
-      tableDesc,
-      commitVersion,
-      actions,
-      updatedActions)
+      engine: Engine,
+      tableDescriptor: TableDescriptor,
+      commitVersion: Long,
+      actions: CloseableIterator[Row],
+      updatedActions: UpdatedActions): CommitResponse = {
+    recordOperation("getCommits") {
+      delegatingClient.commit(engine, tableDescriptor, commitVersion, actions, updatedActions)
+    }
   }
 
   override def getCommits(
-    tableDesc: TableDescriptor,
-    startVersion: lang.Long,
-    endVersion: lang.Long = null): StorageGetCommitsResponse = recordOperation("getCommits") {
-    delegatingCommitCoordinatorClient.getCommits(tableDesc, startVersion, endVersion)
+      engine: Engine,
+      tableDescriptor: TableDescriptor,
+      startVersion: java.lang.Long,
+      endVersion: java.lang.Long): GetCommitsResponse = {
+    recordOperation("getCommits") {
+      delegatingClient.getCommits(engine, tableDescriptor, startVersion, endVersion)
+    }
   }
 
   override def backfillToVersion(
-    logStore: LogStore,
-    hadoopConf: Configuration,
-    tableDesc: TableDescriptor,
-    version: Long,
-    lastKnownBackfilledVersion: lang.Long): Unit = recordOperation("backfillToVersion") {
-    delegatingCommitCoordinatorClient.backfillToVersion(
-      logStore, hadoopConf, tableDesc, version, lastKnownBackfilledVersion)
+      engine: Engine,
+      tableDescriptor: TableDescriptor,
+      version: Long,
+      lastKnownBackfilledVersion: java.lang.Long): Unit = {
+    recordOperation("backfillToVersion") {
+      delegatingClient
+        .backfillToVersion(engine, tableDescriptor, version, lastKnownBackfilledVersion)
+    }
   }
 
   override def semanticEquals(other: CommitCoordinatorClient): Boolean = this == other
@@ -241,16 +257,5 @@ class TrackingCommitCoordinatorClient(delegatingCommitCoordinatorClient: InMemor
     TrackingCommitCoordinatorClient.numCommitsCalled.set(0)
     TrackingCommitCoordinatorClient.numGetCommitsCalled.set(0)
     TrackingCommitCoordinatorClient.numBackfillToVersionCalled.set(0)
-  }
-
-  override def registerTable(
-    logPath: Path,
-    tableIdentifier: Optional[TableIdentifier],
-    currentVersion: Long,
-    currentMetadata: AbstractMetadata,
-    currentProtocol: AbstractProtocol):
-  util.Map[String, String] = recordOperation("registerTable") {
-    delegatingCommitCoordinatorClient.registerTable(
-      logPath, tableIdentifier, currentVersion, currentMetadata, currentProtocol)
   }
 }
