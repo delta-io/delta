@@ -46,7 +46,7 @@ public class TransactionStateRow extends GenericRow {
   public static TransactionStateRow of(Metadata metadata, String tablePath) {
     HashMap<Integer, Object> valueMap = new HashMap<>();
     valueMap.put(COL_NAME_TO_ORDINAL.get("logicalSchemaString"), metadata.getSchemaString());
-    valueMap.put(COL_NAME_TO_ORDINAL.get("partitionColumns"), metadata.getPartitionColumns());
+    valueMap.put(COL_NAME_TO_ORDINAL.get("partitionColumns"), metadata.getPartitionColumnsRaw());
     valueMap.put(COL_NAME_TO_ORDINAL.get("configuration"), metadata.getConfigurationMapValue());
     valueMap.put(COL_NAME_TO_ORDINAL.get("tablePath"), tablePath);
     return new TransactionStateRow(valueMap);

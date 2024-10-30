@@ -77,7 +77,8 @@ public class ScanImpl implements Scan {
     this.dataPath = dataPath;
     this.partitionColToStructFieldMap =
         () -> {
-          Set<String> partitionColNames = metadata.getPartitionColNames();
+          final Set<String> partitionColNames =
+              PartitionUtils.arrayValueToLowerCaseSet(metadata.getPartitionColumnsRaw());
           return metadata.getSchema().fields().stream()
               .filter(field -> partitionColNames.contains(field.getName().toLowerCase(Locale.ROOT)))
               .collect(toMap(field -> field.getName().toLowerCase(Locale.ROOT), identity()));
@@ -156,7 +157,7 @@ public class ScanImpl implements Scan {
     // Compute the physical data read schema, basically the list of columns to read
     // from a Parquet data file. It should exclude partition columns and include
     // row_index metadata columns (in case DVs are present)
-    List<String> partitionColumns = VectorUtils.toJavaList(metadata.getPartitionColumns());
+    List<String> partitionColumns = VectorUtils.toJavaList(metadata.getPartitionColumnsRaw());
     StructType physicalDataReadSchema =
         PartitionUtils.physicalSchemaWithoutPartitionColumns(
             readSchema, /* logical read schema */
@@ -185,7 +186,8 @@ public class ScanImpl implements Scan {
     return filter.map(
         predicate ->
             PartitionUtils.splitMetadataAndDataPredicates(
-                predicate, metadata.getPartitionColNames()));
+                predicate,
+                PartitionUtils.arrayValueToLowerCaseSet(metadata.getPartitionColumnsRaw())));
   }
 
   private Optional<Predicate> getDataFilters() {

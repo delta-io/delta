@@ -61,7 +61,7 @@ public class CoordinatedCommitsUtils {
       @Override
       public List<String> getPartitionColumns() {
         // Assuming Metadata class has a method to get partition columns
-        return VectorUtils.toJavaList(metadata.getPartitionColumns());
+        return VectorUtils.toJavaList(metadata.getPartitionColumnsRaw());
       }
 
       @Override

@@ -140,7 +140,7 @@ public class KernelSnapshotWrapper implements io.delta.standalone.Snapshot {
         );
 
         // Convert the partition columns from a ColumnVector to a List<String>
-        ColumnVector partitionsVec = kernelMetadata.getPartitionColumns().getElements();
+        ColumnVector partitionsVec = kernelMetadata.getPartitionColumnsRaw().getElements();
         ArrayList<String> partitionColumns = new ArrayList<String>(partitionsVec.getSize());
         for(int i = 0; i < partitionsVec.getSize(); i++) {
             partitionColumns.add(partitionsVec.getString(i));
