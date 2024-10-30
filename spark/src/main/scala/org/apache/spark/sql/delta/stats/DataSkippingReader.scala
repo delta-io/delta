@@ -696,8 +696,6 @@ trait DataSkippingReaderBase
           val (children, stats) = childResults.map(_.get).unzip
           (other.withNewChildren(children), stats.flatten.toSet)
         }
-      // For expensive expressions, we can't safely rewrite the expression.
-      case _ => None
     }
 
     /**
