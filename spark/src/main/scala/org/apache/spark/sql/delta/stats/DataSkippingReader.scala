@@ -670,6 +670,10 @@ trait DataSkippingReaderBase
       // Don't allow rewriting UDFs - even if deterministic, UDFs might have some unexpected
       // side effects when executed twice.
       case _: UserDefinedExpression => None
+      // Don't attempt to rewrite expressions might be extremely expensive to invoke twice.
+      case _: RegExpReplace | _: RegExpExtractBase | _: Like | _: MultiLikeBase => None
+      case _: InvokeLike => None
+      case _: JsonToStructs => None
       // Pushdown NOT through OR - we prefer AND to OR because AND can tolerate one branch not being
       // rewriteable.
       case Not(Or(e1, e2)) =>
@@ -684,10 +688,6 @@ trait DataSkippingReaderBase
             Some((And(newLeft, newRight), statsLeft ++ statsRight))
           case _ => leftResult.orElse(rightResult)
         }
-      // Don't attempt to rewrite expressions might be extremely expensive to invoke twice.
-      case _: RegExpReplace | _: RegExpExtractBase | _: Like | _: MultiLikeBase => None
-      case _: InvokeLike => None
-      case _: JsonToStructs => None
       // For all other expressions, recursively rewrite the children.
       case other =>
         val childResults = other.children.map(
