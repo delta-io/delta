@@ -39,7 +39,7 @@ import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.Literal.{FalseLiteral, TrueLiteral}
-import org.apache.spark.sql.catalyst.trees.TreePattern.{INVOKE, JSON_TO_STRUCT, LIKE_FAMLIY, REGEXP_EXTRACT_FAMILY, REGEXP_REPLACE}
+import org.apache.spark.sql.catalyst.expressions.objects.InvokeLike
 import org.apache.spark.sql.catalyst.util.TypeUtils
 import org.apache.spark.sql.execution.InSubqueryExec
 import org.apache.spark.sql.expressions.SparkUserDefinedFunction
@@ -684,10 +684,12 @@ trait DataSkippingReaderBase
             Some((And(newLeft, newRight), statsLeft ++ statsRight))
           case _ => leftResult.orElse(rightResult)
         }
-      // For any other expression, recursively rewrite the expression's children unless the
-      // expression might be very expensive to evaluate (JSON parsing, regex, etc.).
-      case other if !other.containsAnyPattern(INVOKE, JSON_TO_STRUCT, LIKE_FAMLIY,
-        REGEXP_EXTRACT_FAMILY, REGEXP_REPLACE) =>
+      // Don't attempt to rewrite expressions might be extremely expensive to invoke twice.
+      case _: RegExpReplace | _: RegExpExtractBase | _: Like | _: MultiLikeBase => None
+      case _: InvokeLike => None
+      case _: JsonToStructs => None
+      // For all other expressions, recursively rewrite the children.
+      case other =>
         val childResults = other.children.map(
           rewriteDataFiltersAsPartitionLikeInternal(_, clusteringColumnPaths))
         Option.whenNot (childResults.exists(_.isEmpty)) {
@@ -727,7 +729,7 @@ trait DataSkippingReaderBase
         Or(
           allNulls,
           And(
-            EqualNullSafe(
+            EqualTo(
               resolvedPartitionLikeReference.minExpr, resolvedPartitionLikeReference.maxExpr),
             EqualTo(resolvedPartitionLikeReference.nullCountExpr, Literal(0L))
           )
@@ -759,13 +761,14 @@ trait DataSkippingReaderBase
           // min-max values or partial nulls on any of the referenced columns.
           val numRecordsStatsCol = StatsColumn(NUM_RECORDS, pathToColumn = Nil, LongType)
           val numRecordsColOpt = getStatsColumnOpt(numRecordsStatsCol)
-          val (finalExpr, statsCols) =
-            referencedStats.foldLeft((newExpr, Seq(numRecordsStatsCol))) {
-              case ((oldExpr, stats), resolvedReference) =>
-                val updatedExpr = Or(
-                  oldExpr, fileMustBeScanned(resolvedReference, numRecordsColOpt))
-                (updatedExpr, stats ++ resolvedReference.referencedStatsCols)
-            }
+          val statsCols = ArrayBuffer(numRecordsStatsCol)
+          val finalExpr = referencedStats.foldLeft(newExpr) {
+            case (oldExpr, resolvedReference) =>
+              val updatedExpr = Or(
+                oldExpr, fileMustBeScanned(resolvedReference, numRecordsColOpt))
+              statsCols ++= resolvedReference.referencedStatsCols
+              updatedExpr
+          }
           // Create the final data skipping expression - read a file either if it's has nulls on any
           // referenced column, has mismatched stats on any referenced column, or the filter
           // expression evaluates to `true`.
