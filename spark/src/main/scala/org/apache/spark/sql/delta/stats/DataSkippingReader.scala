@@ -21,20 +21,25 @@ import java.io.Closeable
 
 import scala.collection.mutable.ArrayBuffer
 
+import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumnInfo}
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaLog, DeltaTableUtils}
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
 import org.apache.spark.sql.delta.implicits._
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeltaDataSkippingType.DeltaDataSkippingType
 import org.apache.spark.sql.delta.stats.DeltaStatistics._
 import org.apache.spark.sql.delta.util.StateCache
+import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{DataFrame, _}
+import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.Literal.{FalseLiteral, TrueLiteral}
+import org.apache.spark.sql.catalyst.trees.TreePattern.{INVOKE, JSON_TO_STRUCT, LIKE_FAMLIY, REGEXP_EXTRACT_FAMILY, REGEXP_REPLACE}
 import org.apache.spark.sql.catalyst.util.TypeUtils
 import org.apache.spark.sql.execution.InSubqueryExec
 import org.apache.spark.sql.expressions.SparkUserDefinedFunction
@@ -583,6 +588,191 @@ trait DataSkippingReaderBase
       case _ => None
     }
 
+    // Lightweight wrapper to represent a fully resolved reference to an attribute for
+    // partition-like data filters. Contains the min/max/null count stats column expressions and
+    // the referenced stats column for the attribute.
+    private case class ResolvedPartitionLikeReference(
+        referencedStatsCols: Seq[StatsColumn],
+        minExpr: Expression,
+        maxExpr: Expression,
+        nullCountExpr: Expression)
+
+    /**
+     * Rewrites the references in an expression to point to the collected stats over that column
+     * (if possible).
+     *
+     * This is generally equivalent to [[DeltaLog.rewritePartitionFilters]], with a few differences:
+     * 1. This method checks the eligibility of the column datatype before rewriting it to point to
+     *    the stats column (which isn't needed for partition columns).
+     * 2. There's no need to handle scalar subqueries (other than InSubqueryExec) here - subqueries
+     *    other than InSubqueryExec aren't eligible for data filtering.
+     * 3. AND expressions may be partially rewritten as partition-like data filters if one branch
+     *    is eligible but the other is not.
+     *
+     * For example:
+     *  CAST(a AS DATE) = '2024-09-11' -> CAST(parsed_stats[minValues][a] AS DATE) = '2024-09-11'
+     *
+     * @param expr    The expression to rewrite.
+     * @return        If the expression is safe to rewrite, return the rewritten expression and a
+     *                set of referenced attributes (with both the logical path to the column and the
+     *                column type).
+     */
+    private def rewriteDataFiltersAsPartitionLikeInternal(
+        expr: Expression,
+        clusteringColumnPaths: Set[Seq[String]])
+    : Option[(Expression, Set[ResolvedPartitionLikeReference])] = expr match {
+      // The expression is an eligible reference to an attribute.
+      // Do NOT allow partition-like filtering on timestamp columns because timestamps are truncated
+      // to millisecond precision, meaning that we can't guarantee that the collected minVal and
+      // maxVal are the same.
+      // Applying these partition-like filters will generally only be beneficial if a large
+      // percentage of files have the same min-max value. As a rough heuristic, only allow rewriting
+      // expressions that reference only the clustering columns (since these columns are more likely
+      // to have the same min-max values).
+      case SkippingEligibleColumn(c, SkippingEligibleDataType(dt))
+        if dt != TimestampType && dt != TimestampNTZType &&
+          clusteringColumnPaths.exists(SchemaUtils.areLogicalNamesEqual(_, c.reverse)) =>
+        // Only rewrite the expression if all stats are collected for this column.
+        val minStatsCol = StatsColumn(MIN, c, dt)
+        val maxStatsCol = StatsColumn(MAX, c, dt)
+        val nullCountStatsCol = StatsColumn(NULL_COUNT, c, dt)
+        for {
+          minCol <- getStatsColumnOpt(minStatsCol);
+          maxCol <- getStatsColumnOpt(maxStatsCol);
+          nullCol <- getStatsColumnOpt(nullCountStatsCol)
+        } yield {
+          val resolvedAttribute = ResolvedPartitionLikeReference(
+            Seq(minStatsCol, maxStatsCol, nullCountStatsCol),
+            minCol.expr,
+            maxCol.expr,
+            nullCol.expr)
+          (minCol.expr, Set(resolvedAttribute))
+        }
+      // For other attribute references, we can't safely rewrite the expression.
+      case SkippingEligibleColumn(_, _) => None
+      // Don't attempt data skipping on a nondeterministic expression, since the value returned
+      // might be different when executed twice on the same input.
+      // For example, rand() > 0.5 would return ~25% of records if used in data skipping, while the
+      // user would expect ~50% of records to be returned.
+      case other if !other.deterministic => None
+      // Inline subquery results to support InSet. The subquery should generally have already been
+      // evaluated.
+      case in: InSubqueryExec =>
+        // Values may not be defined if the subquery has been skipped - we can't apply this filter.
+        in.values().flatMap { possiblyNullValues =>
+          // Rewrite the children of InSubqueryExec, then replace the subquery with an InSet
+          // containing the materialized values.
+          rewriteDataFiltersAsPartitionLikeInternal(in.child, clusteringColumnPaths).flatMap {
+            case (rewrittenChildren, referencedStats) =>
+              Some(InSet(rewrittenChildren, possiblyNullValues.toSet), referencedStats)
+          }
+        }
+      // Don't allow rewriting UDFs - even if deterministic, UDFs might have some unexpected
+      // side effects when executed twice.
+      case _: UserDefinedExpression => None
+      // Pushdown NOT through OR - we prefer AND to OR because AND can tolerate one branch not being
+      // rewriteable.
+      case Not(Or(e1, e2)) =>
+        rewriteDataFiltersAsPartitionLikeInternal(And(Not(e1), Not(e2)), clusteringColumnPaths)
+      // For AND expressions, we can tolerate one side not being eligible for partition-like
+      // data skipping - simply remove the ineligible side.
+      case And(left, right) =>
+        val leftResult = rewriteDataFiltersAsPartitionLikeInternal(left, clusteringColumnPaths)
+        val rightResult = rewriteDataFiltersAsPartitionLikeInternal(right, clusteringColumnPaths)
+        (leftResult, rightResult) match {
+          case (Some((newLeft, statsLeft)), Some((newRight, statsRight))) =>
+            Some((And(newLeft, newRight), statsLeft ++ statsRight))
+          case _ => leftResult.orElse(rightResult)
+        }
+      // For any other expression, recursively rewrite the expression's children unless the
+      // expression might be very expensive to evaluate (JSON parsing, regex, etc.).
+      case other if !other.containsAnyPattern(INVOKE, JSON_TO_STRUCT, LIKE_FAMLIY,
+        REGEXP_EXTRACT_FAMILY, REGEXP_REPLACE) =>
+        val childResults = other.children.map(
+          rewriteDataFiltersAsPartitionLikeInternal(_, clusteringColumnPaths))
+        Option.whenNot (childResults.exists(_.isEmpty)) {
+          val (children, stats) = childResults.map(_.get).unzip
+          (other.withNewChildren(children), stats.flatten.toSet)
+        }
+      // For expensive expressions, we can't safely rewrite the expression.
+      case _ => None
+    }
+
+    /**
+     * Returns an expression that returns true if a file must be read because of a mismatched
+     * min-max value or partial nulls on a given column. For these files, it's not safe to apply
+     * arbitrary partition-like filters.
+     */
+    private def fileMustBeScanned(
+        resolvedPartitionLikeReference: ResolvedPartitionLikeReference,
+        numRecordsColOpt: Option[Column]): Expression = {
+      // Construct an expression to determine if all records in the file are null.
+      val nullCountExpr = resolvedPartitionLikeReference.nullCountExpr
+      val allNulls = numRecordsColOpt match {
+        case Some(physicalNumRecords) => EqualTo(nullCountExpr, physicalNumRecords.expr)
+        case _ => Literal(false)
+      }
+
+      // Note that there are 2 other differences in behavior between unpartitioned and partitioned
+      // tables:
+      // 1. If the column is a timestamp, the min-max stats are truncated to millisecond precision.
+      //    We shouldn't apply partition-like filters in this case, but
+      //    rewriteDataFiltersAsPartitionLikeInternal validates the column is not a Timestamp,
+      //    so we don't have to check here.
+      // 2. The min-max stats on a string column might be truncated for an unpartitioned table.
+      //    Note that just validating that the min and max are equal is enough to prevent this case
+      //    - if the string is truncated, the collected max value is guaranteed to be longer than
+      //    the min value due to the tiebreaker character(s) appended at the end of the max.
+      Not(
+        Or(
+          allNulls,
+          And(
+            EqualNullSafe(
+              resolvedPartitionLikeReference.minExpr, resolvedPartitionLikeReference.maxExpr),
+            EqualTo(resolvedPartitionLikeReference.nullCountExpr, Literal(0L))
+          )
+        )
+      )
+    }
+
+    /**
+     * Rewrites the given expression as a partition-like expression if possible:
+     * 1. Rewrite the attribute references in the expression to reference the collected min stats
+     *     on the attribute reference's column.
+     * 2. Construct an expression that returns true if any of the referenced columns are not
+     *     partition-like on a given file.
+     * The rewritten expression is a union of the above expressions: a file is read if it's either
+     * not partition-like on any of the columns or if the rewritten expression evaluates to true.
+     *
+     * @param clusteringColumns   The columns that are used for clustering.
+     * @param expr                The data filtering expression to rewrite.
+     * @return                    If the expression is safe to rewrite, return the rewritten
+     *                            expression. Otherwise, return None.
+     */
+    def rewriteDataFiltersAsPartitionLike(
+        clusteringColumns: Seq[String], expr: Expression): Option[DataSkippingPredicate] = {
+      val clusteringColumnPaths =
+        clusteringColumns.map(UnresolvedAttribute.quotedString(_).nameParts).toSet
+      rewriteDataFiltersAsPartitionLikeInternal(expr, clusteringColumnPaths).map {
+        case (newExpr, referencedStats) =>
+          // Create an expression that returns true if a file must be read because it has mismatched
+          // min-max values or partial nulls on any of the referenced columns.
+          val numRecordsStatsCol = StatsColumn(NUM_RECORDS, pathToColumn = Nil, LongType)
+          val numRecordsColOpt = getStatsColumnOpt(numRecordsStatsCol)
+          val (finalExpr, statsCols) =
+            referencedStats.foldLeft((newExpr, Seq(numRecordsStatsCol))) {
+              case ((oldExpr, stats), resolvedReference) =>
+                val updatedExpr = Or(
+                  oldExpr, fileMustBeScanned(resolvedReference, numRecordsColOpt))
+                (updatedExpr, stats ++ resolvedReference.referencedStatsCols)
+            }
+          // Create the final data skipping expression - read a file either if it's has nulls on any
+          // referenced column, has mismatched stats on any referenced column, or the filter
+          // expression evaluates to `true`.
+          DataSkippingPredicate(Column(finalExpr), statsCols.toSet)
+      }
+    }
+
     private def areAllLeavesLiteral(e: Expression): Boolean = e match {
       case _: Literal => true
       case _ if e.children.nonEmpty => e.children.forall(areAllLeavesLiteral)
@@ -927,6 +1117,8 @@ trait DataSkippingReaderBase
           scannedSnapshot = snapshotToScan,
           partitionFilters = ExpressionSet(Nil),
           dataFilters = ExpressionSet(Nil),
+          partitionLikeDataFilters = ExpressionSet(Nil),
+          rewrittenPartitionLikeDataFilters = Set.empty,
           unusedFilters = ExpressionSet(Nil),
           scanDurationMs = System.currentTimeMillis() - startTime,
           dataSkippingType = getCorrectDataSkippingType(DeltaDataSkippingType.noSkippingV1)
@@ -959,6 +1151,8 @@ trait DataSkippingReaderBase
         scannedSnapshot = snapshotToScan,
         partitionFilters = ExpressionSet(partitionFilters),
         dataFilters = ExpressionSet(Nil),
+        partitionLikeDataFilters = ExpressionSet(Nil),
+        rewrittenPartitionLikeDataFilters = Set.empty,
         unusedFilters = ExpressionSet(subqueryFilters),
         scanDurationMs = System.currentTimeMillis() - startTime,
         dataSkippingType =
@@ -973,11 +1167,45 @@ trait DataSkippingReaderBase
         DeltaDataSkippingType.dataSkippingAndPartitionFilteringV1
       }
 
-      val (skippingFilters, unusedFilters) = if (useStats) {
+      var (skippingFilters, unusedFilters) = if (useStats) {
         val constructDataFilters = new DataFiltersBuilder(spark, dataSkippingType)
         dataFilters.map(f => (f, constructDataFilters(f))).partition(f => f._2.isDefined)
       } else {
         (Nil, dataFilters.map(f => (f, None)))
+      }
+
+      // If enabled, rewrite unused data filters to use partition-like data skipping for clustered
+      // tables. Only rewrite filters if the table is expected to benefit from partition-like
+      // data skipping:
+      // 1. The table should be have a large portion of files with the same min-max values on the
+      //    referenced columns - as a rough heuristic, require the table to be a clustered table, as
+      //    many files often have the same min-max on the clustering columns.
+      // 2. The table should be large enough to benefit from partition-like data skipping - as a
+      //    rough heuristic, require the table to no longer be considered a "small delta table."
+      // 3. At least 1 data filter was not already used for data skipping.
+      val shouldRewriteDataFiltersAsPartitionLike =
+        spark.conf.get(DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_ENABLED) &&
+          ClusteredTableUtils.isSupported(snapshotToScan.protocol) &&
+          snapshotToScan.numOfFilesIfKnown.exists(_ >=
+            spark.conf.get(DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_THRESHOLD)) &&
+          unusedFilters.nonEmpty
+      val partitionLikeFilters = if (shouldRewriteDataFiltersAsPartitionLike) {
+        val clusteringColumns = ClusteringColumnInfo.extractLogicalNames(snapshotToScan)
+        val (rewrittenUsedFilters, rewrittenUnusedFilters) = {
+          val constructDataFilters = new DataFiltersBuilder(spark, dataSkippingType)
+          unusedFilters
+            .map { case (expr, _) =>
+              val rewrittenExprOpt = constructDataFilters.rewriteDataFiltersAsPartitionLike(
+                clusteringColumns, expr)
+              (expr, rewrittenExprOpt)
+            }
+            .partition(_._2.isDefined)
+        }
+        skippingFilters = skippingFilters ++ rewrittenUsedFilters
+        unusedFilters = rewrittenUnusedFilters
+        rewrittenUsedFilters.map { case (orig, rewrittenOpt) => (orig, rewrittenOpt.get) }
+      } else {
+        Nil
       }
 
       val finalSkippingFilters = skippingFilters
@@ -1000,6 +1228,8 @@ trait DataSkippingReaderBase
         scannedSnapshot = snapshotToScan,
         partitionFilters = ExpressionSet(partitionFilters),
         dataFilters = ExpressionSet(skippingFilters.map(_._1)),
+        partitionLikeDataFilters = ExpressionSet(partitionLikeFilters.map(_._1)),
+        rewrittenPartitionLikeDataFilters = partitionLikeFilters.map(_._2.expr.expr).toSet,
         unusedFilters = ExpressionSet(unusedFilters.map(_._1) ++ subqueryFilters),
         scanDurationMs = System.currentTimeMillis() - startTime,
         dataSkippingType = getCorrectDataSkippingType(dataSkippingType)
@@ -1044,6 +1274,8 @@ trait DataSkippingReaderBase
         scannedSnapshot = snapshotToScan,
         partitionFilters = ExpressionSet(partitionFilters),
         dataFilters = ExpressionSet(Nil),
+        partitionLikeDataFilters = ExpressionSet(Nil),
+        rewrittenPartitionLikeDataFilters = Set.empty,
         unusedFilters = ExpressionSet(Nil),
         scanDurationMs = System.currentTimeMillis() - startTime,
         dataSkippingType = DeltaDataSkippingType.filteredLimit
