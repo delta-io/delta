@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.skipping.clustering
 
+import org.apache.spark.sql.delta.commands.DeltaOptimizeContext
 import org.apache.spark.sql.delta.commands.optimize.ZCubeFileStatsCollector
 
 /**
@@ -54,10 +55,10 @@ case class ClusteringStats(
 /**
  * A class help collecting ClusteringStats.
  */
-case class ClusteringStatsCollector(zOrderBy: Seq[String]) {
+case class ClusteringStatsCollector(zOrderBy: Seq[String], optimizeContext: DeltaOptimizeContext) {
 
-  val inputStats = new ZCubeFileStatsCollector(zOrderBy)
-  val outputStats = new ZCubeFileStatsCollector(zOrderBy)
+  val inputStats = new ZCubeFileStatsCollector(zOrderBy, optimizeContext.isFull)
+  val outputStats = new ZCubeFileStatsCollector(zOrderBy, optimizeContext.isFull)
   var numOutputZCubes = 0
 
   def getClusteringStats: ClusteringStats = {

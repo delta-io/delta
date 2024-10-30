@@ -3456,6 +3456,12 @@ trait DeltaErrorsBase
       messageParameters = Array(s"${zOrderBy.map(_.name).mkString(", ")}"))
   }
 
+  def optimizeFullNotSupportedException(): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_OPTIMIZE_FULL_NOT_SUPPORTED",
+      messageParameters = Array.empty)
+  }
+
   def alterClusterByNotOnDeltaTableException(): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_ONLY_OPERATION",
