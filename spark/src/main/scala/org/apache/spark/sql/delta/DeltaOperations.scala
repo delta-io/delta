@@ -684,6 +684,8 @@ object DeltaOperations {
   val ZORDER_PARAMETER_KEY = "zOrderBy"
   /** parameter key to indicate clustering columns */
   val CLUSTERING_PARAMETER_KEY = "clusterBy"
+  /** operation name for FSCK REPAIR TABLE command */
+  val FSCK_OPERATION_NAME = "FSCK"
 
   /** Recorded when optimizing the table. */
   case class Optimize(
@@ -818,6 +820,15 @@ object DeltaOperations {
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(true)
   }
 
+  /** Recorded when running FSCK REPAIR TABLE on the table. */
+  case class Fsck(dryRun: Boolean = false) extends Operation(FSCK_OPERATION_NAME) {
+    override val parameters: Map[String, Any] = Map(
+    "dryRun" -> dryRun
+    )
+    override val operationMetrics: Set[String] = DeltaOperationMetrics.FSCK
+  }
+
+
   private def structFieldToMap(colPath: Seq[String], field: StructField): Map[String, Any] = {
     Map(
       "name" -> UnresolvedAttribute(colPath :+ field.name).name,
@@ -909,6 +920,12 @@ private[delta] object DeltaOperationMetrics {
     "rewriteTimeMs", // time taken to rewrite the matched files
     "numRemovedBytes", // number of bytes removed
     "numAddedBytes" // number of bytes added
+  )
+
+  val FSCK = Set(
+    "numMissingFiles", // number of files removed
+    "numFilesScanned", // number of files scanned
+    "executionTimeMs"  // time taken to execute the entire operation
   )
 
   val WRITE_REPLACE_WHERE = Set(
