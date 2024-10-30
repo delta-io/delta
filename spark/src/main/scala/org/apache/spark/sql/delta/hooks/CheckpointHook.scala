@@ -41,6 +41,6 @@ object CheckpointHook extends PostCommitHook {
       lastCheckpointHint = None,
       lastCheckpointProvider = Some(cp),
       tableIdentifierOpt = txn.catalogTable.map(_.identifier))
-    txn.deltaLog.checkpoint(snapshotToCheckpoint, txn.catalogTable.map(_.identifier))
+    txn.deltaLog.checkpoint(snapshotToCheckpoint, txn.catalogTable)
   }
 }
