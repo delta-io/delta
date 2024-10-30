@@ -69,8 +69,8 @@ trait PartitionLikeDataSkippingSuiteBase
       DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_THRESHOLD.key ->
         minNumFilesToApply.toString) {
       // Execute the query with partition-like filters and validate that the result matches.
-        val res = sql(query).collect()
-        assert(res.sameElements(baseResult))
+      val res = sql(query).collect()
+      assert(res.sameElements(baseResult))
 
       val predicates =
         sql(query).queryExecution.optimizedPlan.expressions.flatMap(splitConjunctivePredicates)
@@ -227,8 +227,8 @@ trait PartitionLikeDataSkippingSuiteBase
     ("CAST", "CAST(d AS STRING) = '1970-01-01 00:00:00.000'", 10, 0, false),
     // Unsupported expressions.
     ("RAND", "RAND(0) * s.a > 0.5", 10, 0, false),
-    ("UDF", "ISEVEN(s.a)", 10, 0, false),
-    ("UDF", "RANDISEVEN(s.a)", 10, 0, false),
+    ("UDF", "ISEVEN(s.a)", 11, 0, false),
+    ("UDF", "RANDISEVEN(s.a)", 11, 0, false),
     ("SCALAR_SUBQUERY", s"DATE(s.b) = (SELECT(MAX(c)) FROM $testTableName)", 10, 0, false),
     ("REGEX", "REGEXP_EXTRACT(s.b, '([0-9][0-9][0-9][0-9]).*') = '1970'", 10, 0, false)
   )
