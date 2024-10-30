@@ -78,9 +78,7 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
    *
    * @param fromExpression the expression to cast
    * @param dataType The data type to cast to.
-   * @param allowStructEvolution Whether to allow structs to evolve. When this is false (default),
-   *                             struct casting will throw an error if the target struct type
-   *                             contains more fields than the expression to cast.
+   * @param castingBehavior Configures the casting behavior to use, see [[CastingBehavior]].
    * @param columnName The name of the column written to. It is used for the error message.
    */
   protected def castIfNeeded(
