@@ -140,7 +140,7 @@ public class KernelSnapshotWrapper implements io.delta.standalone.Snapshot {
         );
 
         // Convert the partition columns from a ColumnVector to a List<String>
-        ColumnVector partitionsVec = kernelMetadata.getPartitionColumnsRaw().getElements();
+        ColumnVector partitionsVec = kernelMetadata.getPartitionColumnsArrayValue().getElements();
         ArrayList<String> partitionColumns = new ArrayList<String>(partitionsVec.getSize());
         for(int i = 0; i < partitionsVec.getSize(); i++) {
             partitionColumns.add(partitionsVec.getString(i));
@@ -186,12 +186,12 @@ public class KernelSnapshotWrapper implements io.delta.standalone.Snapshot {
 
         return new Metadata(
             kernelMetadata.getId(),
-            kernelMetadata.getName().orElse(null),
-            kernelMetadata.getDescription().orElse(null),
+            kernelMetadata.getName(),
+            kernelMetadata.getDescription(),
             format,
             partitionColumns,
             kernelMetadata.getConfiguration(),
-            kernelMetadata.getCreatedTime(),
+            Optional.ofNullable(kernelMetadata.getCreatedTime()),
             schema
         );
     }

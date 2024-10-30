@@ -121,7 +121,7 @@ public class StorageKernelAPIAdapter {
 
       @Override
       public Long getCreatedTime() {
-        return metadata.getCreatedTime().orElse(null);
+        return metadata.getCreatedTime();
       }
     };
   }

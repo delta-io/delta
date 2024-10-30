@@ -18,7 +18,9 @@ package io.delta.kernel.internal.actions;
 import static io.delta.kernel.internal.util.InternalUtils.requireNonNull;
 import static java.util.Objects.requireNonNull;
 
+import io.delta.kernel.annotation.Nullable;
 import io.delta.kernel.data.*;
+import io.delta.kernel.engine.coordinatedcommits.actions.AbstractMetadata;
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.types.DataTypeJsonSerDe;
@@ -28,7 +30,7 @@ import io.delta.kernel.types.*;
 import java.util.*;
 import java.util.stream.Collectors;
 
-public class Metadata {
+public class Metadata implements AbstractMetadata {
 
   ///////////////////
   // Static Fields //
@@ -62,7 +64,8 @@ public class Metadata {
 
     final String schemaJson =
         requireNonNull(vector.getChild(4), rowId, "schemaString").getString(rowId);
-    StructType schema = DataTypeJsonSerDe.deserializeStructType(schemaJson);
+
+    final StructType schema = DataTypeJsonSerDe.deserializeStructType(schemaJson);
 
     return new Metadata(
         requireNonNull(vector.getChild(0), rowId, "id").getString(rowId),
@@ -83,6 +86,8 @@ public class Metadata {
   // Member Fields / Methods //
   /////////////////////////////
 
+  // Constructor Params - anything Optional is not required as per the protocol spec. //
+
   private final String id;
   private final Optional<String> name;
   private final Optional<String> description;
@@ -92,6 +97,9 @@ public class Metadata {
   private final ArrayValue partitionColumns;
   private final Optional<Long> createdTime;
   private final MapValue configurationMapValue;
+
+  // Private member fields //
+
   private final Lazy<Map<String, String>> configuration;
   private final Lazy<StructType> dataSchema; // Logical data schema excluding partition columns
 
@@ -106,11 +114,12 @@ public class Metadata {
       Optional<Long> createdTime,
       MapValue configurationMapValue) {
     this.id = requireNonNull(id, "id is null");
-    this.name = name;
+    this.name = requireNonNull(name, "name is null");
     this.description = requireNonNull(description, "description is null");
     this.format = requireNonNull(format, "format is null");
     this.schemaString = requireNonNull(schemaString, "schemaString is null");
-    this.schema = schema;
+    ;
+    this.schema = requireNonNull(schema, "schema is null");
     this.partitionColumns = requireNonNull(partitionColumns, "partitionColumns is null");
     this.createdTime = createdTime;
     this.configurationMapValue = requireNonNull(configurationMapValue, "configuration is null");
@@ -118,15 +127,65 @@ public class Metadata {
     this.dataSchema = new Lazy<>(this::loadDataSchema);
   }
 
+  ///////////////////////////
+  // AbstractMetadata APIs //
+  ///////////////////////////
+
+  @Override
+  public String getId() {
+    return id;
+  }
+
+  @Override
+  @Nullable
+  public String getName() {
+    return name.orElse(null);
+  }
+
+  @Override
+  @Nullable
+  public String getDescription() {
+    return description.orElse(null);
+  }
+
+  @Override
+  public String getProvider() {
+    return format.getProvider();
+  }
+
+  @Override
+  public Map<String, String> getFormatOptions() {
+    return format.getOptions();
+  }
+
+  @Override
   public String getSchemaString() {
     return schemaString;
   }
+
+  @Override
+  public List<String> getPartitionColumns() {
+    return VectorUtils.toJavaList(partitionColumns);
+  }
+
+  @Override
+  public Map<String, String> getConfiguration() {
+    return Collections.unmodifiableMap(configuration.get());
+  }
+
+  public Long getCreatedTime() {
+    return createdTime.orElse(null);
+  }
+
+  ////////////////////////////////
+  // Other Kernel Metadata APIs //
+  ////////////////////////////////
 
   public StructType getSchema() {
     return schema;
   }
 
-  public ArrayValue getPartitionColumnsRaw() {
+  public ArrayValue getPartitionColumnsArrayValue() {
     return partitionColumns;
   }
 
@@ -135,32 +194,12 @@ public class Metadata {
     return dataSchema.get();
   }
 
-  public String getId() {
-    return id;
-  }
-
-  public Optional<String> getName() {
-    return name;
-  }
-
-  public Optional<String> getDescription() {
-    return description;
-  }
-
   public Format getFormat() {
     return format;
   }
 
-  public Optional<Long> getCreatedTime() {
-    return createdTime;
-  }
-
   public MapValue getConfigurationMapValue() {
     return configurationMapValue;
-  }
-
-  public Map<String, String> getConfiguration() {
-    return Collections.unmodifiableMap(configuration.get());
   }
 
   /**
@@ -259,6 +298,10 @@ public class Metadata {
         + configuration.get()
         + '}';
   }
+
+  ////////////////////
+  // Helper methods //
+  ////////////////////
 
   private StructType loadDataSchema() {
     final Set<String> partColNamesLowerCase =

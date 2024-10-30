@@ -17,9 +17,9 @@
 package io.delta.kernel.engine.coordinatedcommits.actions;
 
 import io.delta.kernel.annotation.Evolving;
+import io.delta.kernel.annotation.Nullable;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 /**
  * Interface for metadata actions in Delta. The metadata defines the metadata of the table.
@@ -33,9 +33,11 @@ public interface AbstractMetadata {
   String getId();
 
   /** User-specified table identifier. */
+  @Nullable
   String getName();
 
   /** User-specified table description. */
+  @Nullable
   String getDescription();
 
   /** The table provider format. */
@@ -54,5 +56,6 @@ public interface AbstractMetadata {
   Map<String, String> getConfiguration();
 
   /** Timestamp for the creation of this metadata. */
-  Optional<Long> getCreatedTime();
+  @Nullable
+  Long getCreatedTime();
 }

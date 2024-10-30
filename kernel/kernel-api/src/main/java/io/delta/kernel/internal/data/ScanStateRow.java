@@ -61,7 +61,8 @@ public class ScanStateRow extends GenericRow {
     valueMap.put(COL_NAME_TO_ORDINAL.get("physicalSchemaString"), readSchemaPhysicalJson);
     valueMap.put(
         COL_NAME_TO_ORDINAL.get("physicalDataReadSchemaString"), readPhysicalDataSchemaJson);
-    valueMap.put(COL_NAME_TO_ORDINAL.get("partitionColumns"), metadata.getPartitionColumnsRaw());
+    valueMap.put(
+        COL_NAME_TO_ORDINAL.get("partitionColumns"), metadata.getPartitionColumnsArrayValue());
     valueMap.put(COL_NAME_TO_ORDINAL.get("minReaderVersion"), protocol.getMinReaderVersion());
     valueMap.put(COL_NAME_TO_ORDINAL.get("minWriterVersion"), protocol.getMinWriterVersion());
     valueMap.put(COL_NAME_TO_ORDINAL.get("tablePath"), tablePath);
