@@ -138,6 +138,26 @@ public final class DeltaErrors {
     return new KernelException(message);
   }
 
+  public static KernelException missingCommitInfo(String version) {
+    final String message =
+        String.format(
+            "This table has the feature inCommitTimestamp enabled which requires the "
+                + "presence of the CommitInfo action in every commit. However, the CommitInfo "
+                + "action is missing from commit version %s.",
+            version);
+    return new KernelException(message);
+  }
+
+  public static KernelException missingCommitTimestamp(String version) {
+    final String message =
+        String.format(
+            "This table has the feature inCommitTimestamp enabled which requires the presence of "
+                + "inCommitTimestamp in the CommitInfo action. However, this field has not been "
+                + "set in commit version %s.",
+            version);
+    return new KernelException(message);
+  }
+
   /* ------------------------ PROTOCOL EXCEPTIONS ----------------------------- */
 
   public static KernelException unsupportedReaderProtocol(

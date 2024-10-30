@@ -15,10 +15,8 @@
  */
 package io.delta.kernel.internal.util;
 
-import io.delta.kernel.engine.coordinatedcommits.actions.AbstractCommitInfo;
 import io.delta.kernel.engine.coordinatedcommits.actions.AbstractMetadata;
 import io.delta.kernel.engine.coordinatedcommits.actions.AbstractProtocol;
-import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import java.util.*;
@@ -98,9 +96,5 @@ public class CoordinatedCommitsUtils {
         return new HashSet<>(protocol.getWriterFeatures());
       }
     };
-  }
-
-  public static AbstractCommitInfo convertCommitInfoToAbstractCommitInfo(CommitInfo commitInfo) {
-    return () -> commitInfo.getInCommitTimestamp().orElse(commitInfo.getTimestamp());
   }
 }

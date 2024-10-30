@@ -49,8 +49,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public class TransactionImpl implements Transaction {
-  private static final Logger logger = LoggerFactory.getLogger(TransactionImpl.class);
 
+  /////////////////////////////
+  // Static Fields / Methods //
+  /////////////////////////////
+
+  private static final Logger logger = LoggerFactory.getLogger(TransactionImpl.class);
   public static final int DEFAULT_READ_VERSION = 1;
   public static final int DEFAULT_WRITE_VERSION = 2;
 
@@ -61,8 +65,23 @@ public class TransactionImpl implements Transaction {
    */
   private static final int NUM_TXN_RETRIES = 200;
 
-  private final UUID txnId = UUID.randomUUID();
+  /**
+   * Get the part of the schema of the table that needs the statistics to be collected per file.
+   *
+   * @param engine {@link Engine} instance to use.
+   * @param transactionState State of the transaction
+   * @return
+   */
+  public static List<Column> getStatisticsColumns(Engine engine, Row transactionState) {
+    // TODO: implement this once we start supporting collecting stats
+    return Collections.emptyList();
+  }
 
+  /////////////////////////////
+  // Member Fields / Methods //
+  /////////////////////////////
+
+  private final UUID txnId = UUID.randomUUID();
   private final boolean isNewTable; // the transaction is creating a new table
   private final String engineInfo;
   private final Operation operation;
@@ -75,7 +94,6 @@ public class TransactionImpl implements Transaction {
   private final Clock clock;
   private Metadata metadata;
   private boolean shouldUpdateMetadata;
-
   private boolean closed; // To avoid trying to commit the same transaction again.
 
   public TransactionImpl(
@@ -105,6 +123,10 @@ public class TransactionImpl implements Transaction {
     this.clock = clock;
   }
 
+  /////////////////
+  // Public APIs //
+  /////////////////
+
   @Override
   public Row getTransactionState(Engine engine) {
     return TransactionStateRow.of(metadata, dataPath.toString());
@@ -128,7 +150,7 @@ public class TransactionImpl implements Transaction {
 
       long commitAsVersion = readSnapshot.getVersion(engine) + 1;
       // Generate the commit action with the inCommitTimestamp if ICT is enabled.
-      CommitInfo attemptCommitInfo = generateCommitAction(engine);
+      CommitInfo attemptCommitInfo = generateCommitAction(engine, commitAsVersion);
       updateMetadataWithICTIfRequired(
           engine, attemptCommitInfo.getInCommitTimestamp(), readSnapshot.getVersion(engine));
       int numRetries = 0;
@@ -168,6 +190,20 @@ public class TransactionImpl implements Transaction {
     logger.info("Exhausted maximum retries ({}) for committing transaction.", NUM_TXN_RETRIES);
     throw new ConcurrentWriteException();
   }
+
+  public boolean isBlindAppend() {
+    // For now, Kernel just supports blind append.
+    // Change this when read-after-write is supported.
+    return true;
+  }
+
+  public Optional<SetTransaction> getSetTxnOpt() {
+    return setTxnOpt;
+  }
+
+  ////////////////////////////
+  // Private Helper Methods //
+  ////////////////////////////
 
   private void updateMetadata(Metadata metadata) {
     logger.info(
@@ -259,16 +295,6 @@ public class TransactionImpl implements Transaction {
     }
   }
 
-  public boolean isBlindAppend() {
-    // For now, Kernel just supports blind append.
-    // Change this when read-after-write is supported.
-    return true;
-  }
-
-  public Optional<SetTransaction> getSetTxnOpt() {
-    return setTxnOpt;
-  }
-
   /**
    * Generates a timestamp which is greater than the commit timestamp of the readSnapshot. This can
    * result in an additional file read and that this will only happen if ICT is enabled.
@@ -283,9 +309,10 @@ public class TransactionImpl implements Transaction {
     }
   }
 
-  private CommitInfo generateCommitAction(Engine engine) {
+  private CommitInfo generateCommitAction(Engine engine, long commitVersion) {
     long commitAttemptStartTime = clock.getTimeMillis();
     return new CommitInfo(
+        commitVersion,
         generateInCommitTimestampForFirstCommitAttempt(engine, commitAttemptStartTime),
         commitAttemptStartTime, /* timestamp */
         "Kernel-" + Meta.KERNEL_VERSION + "/" + engineInfo, /* engineInfo */
@@ -311,17 +338,5 @@ public class TransactionImpl implements Transaction {
       return Collections.singletonMap("partitionBy", partitionBy);
     }
     return Collections.emptyMap();
-  }
-
-  /**
-   * Get the part of the schema of the table that needs the statistics to be collected per file.
-   *
-   * @param engine {@link Engine} instance to use.
-   * @param transactionState State of the transaction
-   * @return
-   */
-  public static List<Column> getStatisticsColumns(Engine engine, Row transactionState) {
-    // TODO: implement this once we start supporting collecting stats
-    return Collections.emptyList();
   }
 }
