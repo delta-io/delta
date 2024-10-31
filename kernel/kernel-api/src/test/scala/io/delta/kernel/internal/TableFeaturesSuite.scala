@@ -30,6 +30,31 @@ import scala.collection.JavaConverters._
  * Suite that tests Kernel throws error when it receives a unsupported protocol and metadata
  */
 class TableFeaturesSuite extends AnyFunSuite {
+  test("throws when table does not support reader features but readerFeatures is non-empty") {
+    val exMsg = intercept[KernelException] {
+      new Protocol(1, 7, Set("columnMapping").asJava, Collections.emptySet())
+    }.getMessage
+    assert(exMsg == "Found reader features [columnMapping] in reader protocol version 1 but " +
+      "these are only supported in reader protocol version 3 and above.")
+  }
+
+  test("throws when table does not support writer features but writerFeatures is non-empty") {
+    val exMsg = intercept[KernelException] {
+      new Protocol(1, 1, Collections.emptySet(), Set("appendOnly").asJava)
+    }.getMessage
+    assert(exMsg == "Found writer features [appendOnly] in writer protocol version 1 but these " +
+      "are only supported in writer protocol version 7 and above.")
+  }
+
+  test("throws when table supports reader features but does not support writer features") {
+    val exMsg = intercept[KernelException] {
+      new Protocol(3, 1, Collections.emptySet(), Collections.emptySet())
+    }.getMessage
+    assert(exMsg == "Table reader features are supported (current reader protocol version is 3) " +
+      "yet table writer features are not (current writer protocol version is 1). Writer protocol " +
+      "version must be at least 7 to proceed.")
+  }
+
   test("validate write supported: protocol 1") {
     checkSupported(createTestProtocol(minWriterVersion = 1))
   }
@@ -70,37 +95,41 @@ class TableFeaturesSuite extends AnyFunSuite {
 
   Seq("appendOnly", "inCommitTimestamp", "columnMapping", "typeWidening-preview", "typeWidening")
     .foreach { supportedWriterFeature =>
-    test(s"validateWriteSupported: protocol 7 with $supportedWriterFeature") {
-      checkSupported(createTestProtocol(minWriterVersion = 7, supportedWriterFeature))
+      test(s"validateWriteSupported: protocol 7 with $supportedWriterFeature") {
+        checkSupported(createTestProtocol(minWriterVersion = 7, supportedWriterFeature))
+      }
     }
-  }
 
   Seq("invariants", "checkConstraints", "generatedColumns", "allowColumnDefaults", "changeDataFeed",
-      "identityColumns", "deletionVectors", "rowTracking", "timestampNtz",
-      "domainMetadata", "v2Checkpoint", "icebergCompatV1", "icebergCompatV2", "clustering",
-      "vacuumProtocolCheck").foreach { unsupportedWriterFeature =>
+    "identityColumns", "deletionVectors", "rowTracking", "timestampNtz",
+    "domainMetadata", "v2Checkpoint", "icebergCompatV1", "icebergCompatV2", "clustering",
+    "vacuumProtocolCheck").foreach { unsupportedWriterFeature =>
     test(s"validateWriteSupported: protocol 7 with $unsupportedWriterFeature") {
       checkUnsupported(createTestProtocol(minWriterVersion = 7, unsupportedWriterFeature))
     }
   }
 
-  def checkSupported(
-    protocol: Protocol,
-    metadata: Metadata = null,
-    schema: StructType = createTestSchema()): Unit = {
+  ////////////////////
+  // Helper Methods //
+  ////////////////////
+
+  private def checkSupported(
+      protocol: Protocol,
+      metadata: Metadata = null,
+      schema: StructType = createTestSchema()): Unit = {
     validateWriteSupportedTable(protocol, metadata, schema, "/test/table")
   }
 
-  def checkUnsupported(
-    protocol: Protocol,
-    metadata: Metadata = null,
-    schema: StructType = createTestSchema()): Unit = {
+  private def checkUnsupported(
+      protocol: Protocol,
+      metadata: Metadata = null,
+      schema: StructType = createTestSchema()): Unit = {
     intercept[KernelException] {
       validateWriteSupportedTable(protocol, metadata, schema, "/test/table")
     }
   }
 
-  def createTestProtocol(minWriterVersion: Int, writerFeatures: String*): Protocol = {
+  private def createTestProtocol(minWriterVersion: Int, writerFeatures: String*): Protocol = {
     new Protocol(
       // minReaderVersion - it doesn't matter as the read fails anyway before the writer check
       0,
@@ -111,7 +140,7 @@ class TableFeaturesSuite extends AnyFunSuite {
     )
   }
 
-  def createTestMetadata(withAppendOnly: Boolean = false): Metadata = {
+  private def createTestMetadata(withAppendOnly: Boolean = false): Metadata = {
     var config: Map[String, String] = Map()
     if (withAppendOnly) {
       config = Map("delta.appendOnly" -> "true");
@@ -140,8 +169,8 @@ class TableFeaturesSuite extends AnyFunSuite {
     )
   }
 
-  def createTestSchema(
-    includeInvariant: Boolean = false): StructType = {
+  private def createTestSchema(
+      includeInvariant: Boolean = false): StructType = {
     var structType = new StructType()
       .add("c1", IntegerType.INTEGER)
       .add("c2", StringType.STRING)

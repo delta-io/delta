@@ -25,6 +25,7 @@ import io.delta.kernel.utils.DataFileStatus;
 import java.io.IOException;
 import java.sql.Timestamp;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Supplier;
@@ -146,11 +147,17 @@ public final class DeltaErrors {
       int tableFeatureVersion,
       int minRequiredVersion,
       Set<String> tableFeatures) {
+    final String featureTypeStr = featureType.toString().toLowerCase(Locale.ROOT);
     final String message =
         String.format(
-            "Found %s Features %s in protocol version %s but these are only supported in "
-                + "protocol version %s and above.",
-            featureType, tableFeatureVersion, minRequiredVersion, tableFeatures);
+            "Found %s features %s in %s protocol version %s but these are only supported in "
+                + "%s protocol version %s and above.",
+            featureTypeStr,
+            tableFeatures,
+            featureTypeStr,
+            tableFeatureVersion,
+            featureTypeStr,
+            minRequiredVersion);
     return new KernelException(message);
   }
 
@@ -158,9 +165,9 @@ public final class DeltaErrors {
       int tableReaderVersion, int tableWriterVersion) {
     final String message =
         String.format(
-            "Table Reader Features are supported (current reader protocol version is %s) yet "
-                + "table Writer Features are not (current writer protocol version is %s). Writer "
-                + "protocol version must be at least %s to proceed",
+            "Table reader features are supported (current reader protocol version is %s) yet "
+                + "table writer features are not (current writer protocol version is %s). Writer "
+                + "protocol version must be at least %s to proceed.",
             tableReaderVersion,
             tableWriterVersion,
             TableFeatures.TABLE_FEATURES_MIN_WRITER_VERSION);

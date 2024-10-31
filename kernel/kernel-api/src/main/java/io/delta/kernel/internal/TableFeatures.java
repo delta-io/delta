@@ -33,11 +33,6 @@ public class TableFeatures {
   public enum TableFeatureType {
     READER,
     WRITER;
-
-    @Override
-    public String toString() {
-      return name().charAt(0) + name().substring(1).toLowerCase();
-    }
   }
 
   /** Min reader version that supports reader features. */
