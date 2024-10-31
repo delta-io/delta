@@ -61,8 +61,7 @@ import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTrans
 import org.apache.spark.sql.errors.QueryCompilationErrors
 import org.apache.spark.sql.execution.command.CreateTableLikeCommand
 import org.apache.spark.sql.execution.command.RunnableCommand
-import org.apache.spark.sql.execution.datasources.HadoopFsRelation
-import org.apache.spark.sql.execution.datasources.LogicalRelation
+import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation, LogicalRelationWithTable}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.execution.streaming.StreamingRelation
@@ -327,8 +326,8 @@ class DeltaAnalysis(session: SparkSession)
         case TimeTravel(u: UnresolvedRelation, _, _, _) =>
           u.tableNotFound(u.multipartIdentifier)
 
-        case LogicalRelation(
-            HadoopFsRelation(location, _, _, _, _: ParquetFileFormat, _), _, catalogTable, _) =>
+        case LogicalRelationWithTable(
+            HadoopFsRelation(location, _, _, _, _: ParquetFileFormat, _), catalogTable) =>
           val tableIdent = catalogTable.map(_.identifier)
             .getOrElse(TableIdentifier(location.rootPaths.head.toString, Some("parquet")))
           val provider = if (catalogTable.isDefined) {
@@ -836,7 +835,7 @@ class DeltaAnalysis(session: SparkSession)
           output = CloneTableCommand.output)
 
       // Non-delta metastore table already exists at target
-      case LogicalRelation(_, _, existingCatalogTable @ Some(catalogTable), _) =>
+      case LogicalRelationWithTable(_, existingCatalogTable @ Some(catalogTable)) =>
         val tblIdent = catalogTable.identifier
         val path = new Path(catalogTable.location)
         val newCatalogTable = createCatalogTableForCloneCommand(path, byPath = false, tblIdent,
