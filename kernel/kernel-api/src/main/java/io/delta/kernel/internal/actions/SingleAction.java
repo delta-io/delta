@@ -32,7 +32,9 @@ public class SingleAction {
           .add("add", AddFile.FULL_SCHEMA)
           .add("remove", RemoveFile.FULL_SCHEMA)
           .add("metaData", Metadata.FULL_SCHEMA)
-          .add("protocol", Protocol.FULL_SCHEMA);
+          .add("protocol", Protocol.FULL_SCHEMA)
+          .add("domainMetadata", DomainMetadata.FULL_SCHEMA);
+
   // Once we start supporting updating CDC or domain metadata enabled tables, we should add the
   // schema for those fields here.
 
@@ -48,7 +50,8 @@ public class SingleAction {
           // .add("remove", RemoveFile.FULL_SCHEMA) // not needed for blind appends
           .add("metaData", Metadata.FULL_SCHEMA)
           .add("protocol", Protocol.FULL_SCHEMA)
-          .add("commitInfo", CommitInfo.FULL_SCHEMA);
+          .add("commitInfo", CommitInfo.FULL_SCHEMA)
+          .add("domainMetadata", DomainMetadata.FULL_SCHEMA);
   // Once we start supporting domain metadata/row tracking enabled tables, we should add the
   // schema for domain metadata fields here.
 
@@ -61,7 +64,8 @@ public class SingleAction {
           .add("metaData", Metadata.FULL_SCHEMA)
           .add("protocol", Protocol.FULL_SCHEMA)
           .add("cdc", new StructType())
-          .add("commitInfo", CommitInfo.FULL_SCHEMA);
+          .add("commitInfo", CommitInfo.FULL_SCHEMA)
+          .add("domainMetadata", DomainMetadata.FULL_SCHEMA);
   // Once we start supporting updating CDC or domain metadata enabled tables, we should add the
   // schema for those fields here.
 
@@ -71,6 +75,7 @@ public class SingleAction {
   private static final int METADATA_ORDINAL = FULL_SCHEMA.indexOf("metaData");
   private static final int PROTOCOL_ORDINAL = FULL_SCHEMA.indexOf("protocol");
   private static final int COMMIT_INFO_ORDINAL = FULL_SCHEMA.indexOf("commitInfo");
+  private static final int DOMAIN_METADATA_ORDINAL = FULL_SCHEMA.indexOf("domainMetadata");
 
   public static Row createAddFileSingleAction(Row addFile) {
     Map<Integer, Object> singleActionValueMap = new HashMap<>();
@@ -99,6 +104,12 @@ public class SingleAction {
   public static Row createCommitInfoSingleAction(Row commitInfo) {
     Map<Integer, Object> singleActionValueMap = new HashMap<>();
     singleActionValueMap.put(COMMIT_INFO_ORDINAL, commitInfo);
+    return new GenericRow(FULL_SCHEMA, singleActionValueMap);
+  }
+
+  public static Row createDomainMetadataSingleAction(Row domainMetadata) {
+    Map<Integer, Object> singleActionValueMap = new HashMap<>();
+    singleActionValueMap.put(DOMAIN_METADATA_ORDINAL, domainMetadata);
     return new GenericRow(FULL_SCHEMA, singleActionValueMap);
   }
 

@@ -274,6 +274,20 @@ public final class DeltaErrors {
     return new InvalidConfigurationValueException(key, value, helpMessage);
   }
 
+  public static KernelException domainMetadataUnsupported() {
+    String message = "Found DomainMetadata action(s) but DomainMetadata feature is not supported.";
+    return new KernelException(message);
+  }
+
+  public static KernelException duplicateDomainMetadataAction(String action1, String action2) {
+    String message =
+        String.format(
+            "Multiple domain metadata actions detected in single transaction: '%s' and '%s'. "
+                + "Only one action per domain is allowed.",
+            action1, action2);
+    return new KernelException(message);
+  }
+
   /* ------------------------ HELPER METHODS ----------------------------- */
   private static String formatTimestamp(long millisSinceEpochUTC) {
     return new Timestamp(millisSinceEpochUTC).toInstant().toString();

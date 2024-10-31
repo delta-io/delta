@@ -34,6 +34,8 @@ import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -74,6 +76,10 @@ public class LogReplay {
     return shouldReadStats ? AddFile.SCHEMA_WITH_STATS : AddFile.SCHEMA_WITHOUT_STATS;
   }
 
+  /** Read schema when searching for just the domain metadata */
+  public static final StructType DOMAIN_METADATA_READ_SCHEMA =
+      new StructType().add("domainMetadata", DomainMetadata.FULL_SCHEMA);
+
   public static String SIDECAR_FIELD_NAME = "sidecar";
   public static String ADDFILE_FIELD_NAME = "add";
   public static String REMOVEFILE_FIELD_NAME = "remove";
@@ -109,6 +115,7 @@ public class LogReplay {
   private final Path dataPath;
   private final LogSegment logSegment;
   private final Tuple2<Protocol, Metadata> protocolAndMetadata;
+  private final Map<String, DomainMetadata> domainMetadataMap;
 
   public LogReplay(
       Path logPath,
@@ -122,6 +129,7 @@ public class LogReplay {
     this.dataPath = dataPath;
     this.logSegment = logSegment;
     this.protocolAndMetadata = loadTableProtocolAndMetadata(engine, snapshotHint, snapshotVersion);
+    this.domainMetadataMap = loadDomainMetadataMap(engine);
   }
 
   /////////////////
@@ -138,6 +146,10 @@ public class LogReplay {
 
   public Optional<Long> getLatestTransactionIdentifier(Engine engine, String applicationId) {
     return loadLatestTransactionVersion(engine, applicationId);
+  }
+
+  public Map<String, DomainMetadata> getDomainMetadataMap() {
+    return domainMetadataMap;
   }
 
   /**
@@ -295,5 +307,47 @@ public class LogReplay {
     }
 
     return Optional.empty();
+  }
+
+  /**
+   * Retrieves a map of domainName -> {@link DomainMetadata} from the log files.
+   *
+   * @param engine The engine used to process the log files.
+   * @return A map where the keys are domain names and the values are the corresponding {@link
+   *     DomainMetadata} objects.
+   * @throws RuntimeException if an I/O error occurs while closing the iterator.
+   */
+  public Map<String, DomainMetadata> loadDomainMetadataMap(Engine engine) {
+
+    Map<String, DomainMetadata> domainMetadataMap = new HashMap<>();
+
+    try (CloseableIterator<ActionWrapper> reverseIter =
+        new ActionsIterator(
+            engine,
+            logSegment.allLogFilesReversed(),
+            DOMAIN_METADATA_READ_SCHEMA,
+            Optional.empty())) {
+      while (reverseIter.hasNext()) {
+
+        final ColumnarBatch columnarBatch = reverseIter.next().getColumnarBatch();
+        assert (columnarBatch.getSchema().equals(DOMAIN_METADATA_READ_SCHEMA));
+
+        final ColumnVector dmVector = columnarBatch.getColumnVector(0);
+        for (int rowId = 0; rowId < dmVector.getSize(); rowId++) {
+          if (!dmVector.isNullAt(rowId)) {
+            DomainMetadata dm = DomainMetadata.fromColumnVector(dmVector, rowId);
+            // We keep the latest version of each domain.
+            if (dm != null && !domainMetadataMap.containsKey(dm.getDomain())) {
+              domainMetadataMap.put(dm.getDomain(), dm);
+            }
+          }
+        }
+      }
+
+    } catch (IOException ex) {
+      throw new RuntimeException("Could not close iterator", ex);
+    }
+
+    return domainMetadataMap;
   }
 }

@@ -142,7 +142,8 @@ public class TransactionImpl implements Transaction {
                   + "Trying to resolve conflicts and retry commit.",
               commitAsVersion);
           TransactionRebaseState rebaseState =
-              ConflictChecker.resolveConflicts(engine, readSnapshot, commitAsVersion, this);
+              ConflictChecker.resolveConflicts(
+                  engine, readSnapshot, commitAsVersion, this, dataActions);
           long newCommitAsVersion = rebaseState.getLatestVersion() + 1;
           checkArgument(
               commitAsVersion < newCommitAsVersion,
@@ -220,6 +221,10 @@ public class TransactionImpl implements Transaction {
       metadataActions.add(createProtocolSingleAction(protocol.toRow()));
     }
     setTxnOpt.ifPresent(setTxn -> metadataActions.add(createTxnSingleAction(setTxn.toRow())));
+
+    // If dataActions contains any domainMetadata actions, we check if the feature is supported
+    // and if there are duplicates.
+    DomainMetadataUtils.validateSupportedAndNoDuplicate(protocol, dataActions, FULL_SCHEMA);
 
     try (CloseableIterator<Row> stageDataIter = dataActions.iterator()) {
       // Create a new CloseableIterator that will return the metadata actions followed by the

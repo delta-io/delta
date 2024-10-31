@@ -39,6 +39,7 @@ public class TableFeatures {
               add("columnMapping");
               add("typeWidening-preview");
               add("typeWidening");
+              add("domainMetadata");
             }
           });
 
@@ -93,7 +94,7 @@ public class TableFeatures {
    *   <li>protocol writer version 1.
    *   <li>protocol writer version 2 only with appendOnly feature enabled.
    *   <li>protocol writer version 7 with {@code appendOnly}, {@code inCommitTimestamp}, {@code
-   *       columnMapping}, {@code typeWidening} feature enabled.
+   *       columnMapping}, {@code typeWidening}, {@code domainMetadata} feature enabled.
    * </ul>
    *
    * @param protocol Table protocol
@@ -136,6 +137,8 @@ public class TableFeatures {
             case "typeWidening-preview":
               break;
             case "typeWidening":
+              break;
+            case "domainMetadata":
               break;
             default:
               throw unsupportedWriterFeature(tablePath, writerFeature);

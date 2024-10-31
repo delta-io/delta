@@ -23,6 +23,7 @@ import io.delta.kernel.Snapshot;
 import io.delta.kernel.engine.CommitCoordinatorClientHandler;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.actions.CommitInfo;
+import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.fs.Path;
@@ -31,6 +32,7 @@ import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.TableCommitCoordinatorClientHandler;
 import io.delta.kernel.types.StructType;
+import java.util.Map;
 import java.util.Optional;
 
 /** Implementation of {@link Snapshot}. */
@@ -166,5 +168,9 @@ public class SnapshotImpl implements Snapshot {
                   logPath.toString(),
                   COORDINATED_COMMITS_TABLE_CONF.fromMetadata(metadata));
             });
+  }
+
+  public Map<String, DomainMetadata> getDomainMetadataMap() {
+    return logReplay.getDomainMetadataMap();
   }
 }

@@ -17,20 +17,25 @@ package io.delta.kernel.internal.replay;
 
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 import static io.delta.kernel.internal.TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED;
-import static io.delta.kernel.internal.actions.SingleAction.CONFLICT_RESOLUTION_SCHEMA;
+import static io.delta.kernel.internal.actions.SingleAction.*;
 import static io.delta.kernel.internal.util.FileNames.deltaFile;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Preconditions.checkState;
+import static io.delta.kernel.utils.CloseableIterable.inMemoryIterable;
 import static java.lang.String.format;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.ConcurrentWriteException;
 import io.delta.kernel.internal.*;
 import io.delta.kernel.internal.actions.CommitInfo;
+import io.delta.kernel.internal.actions.DomainMetadata;
+import io.delta.kernel.internal.actions.DomainMetadataUtils;
 import io.delta.kernel.internal.actions.SetTransaction;
 import io.delta.kernel.internal.util.FileNames;
+import io.delta.kernel.utils.CloseableIterable;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import java.io.*;
@@ -57,10 +62,18 @@ public class ConflictChecker {
   private final TransactionImpl transaction;
   private final long attemptVersion;
 
-  private ConflictChecker(SnapshotImpl snapshot, TransactionImpl transaction, long attemptVersion) {
+  // Data actions from the losing transaction
+  CloseableIterable<Row> dataActions;
+
+  private ConflictChecker(
+      SnapshotImpl snapshot,
+      TransactionImpl transaction,
+      long attemptVersion,
+      CloseableIterable<Row> dataActions) {
     this.snapshot = snapshot;
     this.transaction = transaction;
     this.attemptVersion = attemptVersion;
+    this.dataActions = dataActions;
   }
 
   /**
@@ -71,15 +84,22 @@ public class ConflictChecker {
    * @param snapshot {@link SnapshotImpl} of the table when the losing transaction has started
    * @param transaction {@link TransactionImpl} that encountered the conflict (a.k.a the losing
    *     transaction)
+   * @param dataActions {@link CloseableIterable} of {@link Row}s that represent the losing
+   *     transaction's data actions
    * @return {@link TransactionRebaseState} that the losing transaction needs to rebase against
    * @throws ConcurrentWriteException if there are logical conflicts between the losing transaction
    *     and the winning transactions that cannot be resolved.
    */
   public static TransactionRebaseState resolveConflicts(
-      Engine engine, SnapshotImpl snapshot, long attemptVersion, TransactionImpl transaction)
+      Engine engine,
+      SnapshotImpl snapshot,
+      long attemptVersion,
+      TransactionImpl transaction,
+      CloseableIterable<Row> dataActions)
       throws ConcurrentWriteException {
     checkArgument(transaction.isBlindAppend(), "Current support is for blind appends only.");
-    return new ConflictChecker(snapshot, transaction, attemptVersion).resolveConflicts(engine);
+    return new ConflictChecker(snapshot, transaction, attemptVersion, dataActions)
+        .resolveConflicts(engine);
   }
 
   public TransactionRebaseState resolveConflicts(Engine engine) throws ConcurrentWriteException {
@@ -109,6 +129,7 @@ public class ConflictChecker {
             handleProtocol(batch.getColumnVector(PROTOCOL_ORDINAL));
             handleMetadata(batch.getColumnVector(METADATA_ORDINAL));
             handleTxn(batch.getColumnVector(TXN_ORDINAL));
+            handleDomainMetadata(batch);
           });
     } catch (IOException ioe) {
       throw new UncheckedIOException("Error reading actions from winning commits.", ioe);
@@ -188,6 +209,72 @@ public class ConflictChecker {
       if (!metadataVector.isNullAt(rowId)) {
         throw DeltaErrors.metadataChangedException();
       }
+    }
+  }
+
+  /**
+   * Checks whether each of the current transaction's {@link DomainMetadata} conflicts with the
+   * winning transaction at any domain.
+   *
+   * <ol>
+   *   1. Accept the current transaction if its set of metadata domains does not overlap with the
+   *   winning transaction's set of metadata domains.
+   *   <p>2. Otherwise, fail the current transaction unless each conflicting domain is associated
+   *   with a domain-specific way of resolving the conflict.
+   * </ol>
+   *
+   * @param actionBatch action batch from the winning transactions
+   */
+  private void handleDomainMetadata(ColumnarBatch actionBatch) {
+    // Extract the domain metadata map from the winning transactions. Allow a DM action in a later
+    // transaction to overwrite the DM in an earlier transaction for the same domain.
+    Map<String, DomainMetadata> winningDomainMetadataMap =
+        DomainMetadataUtils.extractDomainMetadataMap(
+            inMemoryIterable(actionBatch.getRows()), CONFLICT_RESOLUTION_SCHEMA, true);
+
+    // Get the ordinal of the domainMetadata action from the full schema, which is used when writing
+    // out the single action to the Delta Log
+    final int domainMetadataOrdinal = FULL_SCHEMA.indexOf("domainMetadata");
+
+    // Use try-with-resources to ensure that the CloseableIterable is closed after the loop
+    try (CloseableIterable<Row> closeableDataActions = dataActions) {
+      for (Row action : closeableDataActions) {
+        // Skip non-domainMetadata actions
+        if (action.isNullAt(domainMetadataOrdinal)) continue;
+
+        // Extract DomainMetadata action that the losing transaction trying to commit
+        DomainMetadata domainMetadata =
+            DomainMetadata.fromRow(action.getStruct(domainMetadataOrdinal));
+
+        // Try to resolve the conflict, if not possible, throw a ConcurrentTransaction exception
+        resolveDomainMetadataConflict(domainMetadata, winningDomainMetadataMap);
+      }
+    } catch (IOException ioe) {
+      throw new UncheckedIOException(ioe);
+    }
+  }
+
+  private void resolveDomainMetadataConflict(
+      DomainMetadata domainMetadataAttempt, Map<String, DomainMetadata> winningDomainMetadataMap) {
+
+    String domain = domainMetadataAttempt.getDomain();
+    DomainMetadata winningDomainMetadata = winningDomainMetadataMap.get(domain);
+    if (winningDomainMetadata == null) {
+      // No conflict
+      return;
+    } else {
+      // Conflict - check if the conflict can be resolved
+
+      // Currently, we don't have any domain-specific way of resolving the conflict.
+      // Domain-specific ways of resolving the conflict can be added here (e.g. for Row Tracking)
+      throw new ConcurrentWriteException(
+          "Concurrent domainMetadata actions detected for domain: "
+              + domain
+              + ". No domain-specific conflict resolution available for this domain."
+              + "Attempted domainMetadata: "
+              + domainMetadataAttempt
+              + ". Winning domainMetadata: "
+              + winningDomainMetadata);
     }
   }
 
