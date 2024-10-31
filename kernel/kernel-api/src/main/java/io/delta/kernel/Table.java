@@ -58,6 +58,20 @@ public interface Table {
     return TableImpl.forPath(engine, path);
   }
 
+  /**
+   * Instantiate a table object for the Delta Lake table at the given path and associate it with the
+   * given {@link TableIdentifier}.
+   *
+   * <p>See {@link #forPath(Engine, String)} for more details on behavior when the table path does
+   * or does not exist.
+   *
+   * @param engine the {@link Engine} instance to use in Delta Kernel.
+   * @param path location of the table. Path is resolved to fully qualified path using the given
+   *     {@code engine}.
+   * @param tableId the {@link TableIdentifier} to associate with the {@link Table}
+   * @return an instance of {@link Table} representing the Delta table at the given path and
+   *     associated with the given {@link TableIdentifier}
+   */
   static Table forPathWithTableId(Engine engine, String path, TableIdentifier tableId) {
     return TableImpl.forPathWithTableId(engine, path, tableId);
   }
