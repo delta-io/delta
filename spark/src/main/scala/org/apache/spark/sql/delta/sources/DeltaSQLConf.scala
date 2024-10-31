@@ -1027,6 +1027,14 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val INCREMENTAL_COMMIT_ENABLED =
+    buildConf("incremental.commit.enabled")
+      .internal()
+      .doc("If true, Delta will incrementally compute the content of the commit checksum " +
+        "file, which avoids the full state reconstruction that would otherwise be required.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_CHECKPOINT_THROW_EXCEPTION_WHEN_FAILED =
       buildConf("checkpoint.exceptionThrowing.enabled")
         .internal()
