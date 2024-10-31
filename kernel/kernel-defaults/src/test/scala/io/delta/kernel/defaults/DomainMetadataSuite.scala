@@ -245,7 +245,7 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
     }
   }
 
-  test("domain metadata persistence across table restarts") {
+  test("domain metadata persistence across log replay") {
     withTempDirAndEngine { (tablePath, engine) =>
       createTableWithDomainMetadataSupported(engine, tablePath)
 
