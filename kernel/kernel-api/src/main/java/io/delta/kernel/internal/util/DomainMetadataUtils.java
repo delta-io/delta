@@ -14,10 +14,12 @@
  * limitations under the License.
  */
 
-package io.delta.kernel.internal.actions;
+package io.delta.kernel.internal.util;
 
 import io.delta.kernel.data.Row;
 import io.delta.kernel.internal.DeltaErrors;
+import io.delta.kernel.internal.actions.DomainMetadata;
+import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterable;
 import java.io.IOException;
@@ -85,25 +87,5 @@ public class DomainMetadataUtils {
     }
     return writerFeatures.contains(DomainMetadata.FEATURE_NAME)
         && protocol.getMinWriterVersion() >= DomainMetadata.MIN_WRITER_VERSION_REQUIRED;
-  }
-
-  /**
-   * If there are domain metadata actions, validates that the protocol supports domain metadata.
-   * Validates that there are no duplicate domain metadata actions for the same domain in the
-   * provided actions.
-   *
-   * @param protocol the protocol to check for support of the "domainMetadata" feature
-   * @param actions an iterable of Row objects representing actions
-   * @param schema the schema of row which represents an action
-   */
-  public static void validateSupportedAndNoDuplicate(
-      Protocol protocol, CloseableIterable<Row> actions, StructType schema) {
-
-    Map<String, DomainMetadata> domainMetadataMap =
-        extractDomainMetadataMap(actions, schema, false);
-
-    if (!domainMetadataMap.isEmpty() && !isDomainMetadataSupported(protocol)) {
-      throw DeltaErrors.domainMetadataUnsupported();
-    }
   }
 }

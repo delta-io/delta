@@ -36,6 +36,7 @@ import io.delta.kernel.internal.util.Clock;
 import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.InCommitTimestampUtils;
+import io.delta.kernel.internal.util.ValidateDomainMetadataIterator;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterable;
@@ -222,11 +223,9 @@ public class TransactionImpl implements Transaction {
     }
     setTxnOpt.ifPresent(setTxn -> metadataActions.add(createTxnSingleAction(setTxn.toRow())));
 
-    // If dataActions contains any domainMetadata actions, we check if the feature is supported
-    // and if there are duplicates.
-    DomainMetadataUtils.validateSupportedAndNoDuplicate(protocol, dataActions, FULL_SCHEMA);
+    try (CloseableIterator<Row> stageDataIter =
+        new ValidateDomainMetadataIterator(protocol, dataActions.iterator(), FULL_SCHEMA, false)) {
 
-    try (CloseableIterator<Row> stageDataIter = dataActions.iterator()) {
       // Create a new CloseableIterator that will return the metadata actions followed by the
       // data actions.
       CloseableIterator<Row> dataAndMetadataActions =
