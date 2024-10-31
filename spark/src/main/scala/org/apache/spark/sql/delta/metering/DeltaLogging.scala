@@ -194,9 +194,9 @@ trait DeltaLogging
     var data = Map[String, Any]("exceptionMessage" -> e.getMessage)
     e condDo {
       case sparkEx: SparkThrowable
-        if sparkEx.getErrorClass != null && sparkEx.getErrorClass.nonEmpty =>
+        if sparkEx.getCondition != null && sparkEx.getCondition.nonEmpty =>
         data ++= Map(
-          "errorClass" -> sparkEx.getErrorClass,
+          "errorClass" -> sparkEx.getCondition,
           "sqlState" -> sparkEx.getSqlState
         )
       case NonFatal(e) if e.getCause != null =>

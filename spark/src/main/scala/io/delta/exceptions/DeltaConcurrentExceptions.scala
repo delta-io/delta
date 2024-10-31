@@ -46,7 +46,7 @@ class ConcurrentWriteException(message: String)
   def this(messageParameters: Array[String]) = {
     this(DeltaThrowableHelper.getMessage("DELTA_CONCURRENT_WRITE", messageParameters))
   }
-  override def getErrorClass: String = "DELTA_CONCURRENT_WRITE"
+  override def getCondition: String = "DELTA_CONCURRENT_WRITE"
   override def getMessage: String = message
 }
 
@@ -65,7 +65,7 @@ class MetadataChangedException(message: String)
   def this(messageParameters: Array[String]) = {
     this(DeltaThrowableHelper.getMessage("DELTA_METADATA_CHANGED", messageParameters))
   }
-  override def getErrorClass: String = "DELTA_METADATA_CHANGED"
+  override def getCondition: String = "DELTA_METADATA_CHANGED"
   override def getMessage: String = message
 }
 
@@ -84,7 +84,7 @@ class ProtocolChangedException(message: String)
   def this(messageParameters: Array[String]) = {
     this(DeltaThrowableHelper.getMessage("DELTA_PROTOCOL_CHANGED", messageParameters))
   }
-  override def getErrorClass: String = "DELTA_PROTOCOL_CHANGED"
+  override def getCondition: String = "DELTA_PROTOCOL_CHANGED"
   override def getMessage: String = message
 }
 
@@ -102,7 +102,7 @@ class ConcurrentAppendException(message: String)
   def this(messageParameters: Array[String]) = {
     this(DeltaThrowableHelper.getMessage("DELTA_CONCURRENT_APPEND", messageParameters))
   }
-  override def getErrorClass: String = "DELTA_CONCURRENT_APPEND"
+  override def getCondition: String = "DELTA_CONCURRENT_APPEND"
   override def getMessage: String = message
 }
 
@@ -120,7 +120,7 @@ class ConcurrentDeleteReadException(message: String)
   def this(messageParameters: Array[String]) = {
     this(DeltaThrowableHelper.getMessage("DELTA_CONCURRENT_DELETE_READ", messageParameters))
   }
-  override def getErrorClass: String = "DELTA_CONCURRENT_DELETE_READ"
+  override def getCondition: String = "DELTA_CONCURRENT_DELETE_READ"
   override def getMessage: String = message
 }
 
@@ -138,7 +138,7 @@ class ConcurrentDeleteDeleteException(message: String)
   def this(messageParameters: Array[String]) = {
     this(DeltaThrowableHelper.getMessage("DELTA_CONCURRENT_DELETE_DELETE", messageParameters))
   }
-  override def getErrorClass: String = "DELTA_CONCURRENT_DELETE_DELETE"
+  override def getCondition: String = "DELTA_CONCURRENT_DELETE_DELETE"
   override def getMessage: String = message
 }
 
@@ -156,6 +156,6 @@ class ConcurrentTransactionException(message: String)
   def this(messageParameters: Array[String]) = {
     this(DeltaThrowableHelper.getMessage("DELTA_CONCURRENT_TRANSACTION", messageParameters))
   }
-  override def getErrorClass: String = "DELTA_CONCURRENT_TRANSACTION"
+  override def getCondition: String = "DELTA_CONCURRENT_TRANSACTION"
   override def getMessage: String = message
 }

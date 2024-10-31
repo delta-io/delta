@@ -3014,7 +3014,7 @@ abstract class MergeIntoSuiteBase
 
             def extractErrorClass(e: Throwable): String =
               e match {
-                case dt: DeltaThrowable => s"\\[${dt.getErrorClass}\\] "
+                case dt: DeltaThrowable => s"\\[${dt.getCondition}\\] "
                 case _ => ""
               }
 
@@ -3168,7 +3168,7 @@ abstract class MergeIntoSuiteBase
     text = "SELECT key FROM tab",
     mergeCondition = "src.a = v.key AND src.b = v.value",
     expectedResult = ExpectedResult.Failure { ex =>
-      assert(ex.getErrorClass === "UNRESOLVED_COLUMN.WITH_SUGGESTION")
+      assert(ex.getCondition === "UNRESOLVED_COLUMN.WITH_SUGGESTION")
     }
   )
 

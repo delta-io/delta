@@ -398,8 +398,8 @@ abstract class UpdateSuiteBase
         executeUpdate("table", set = "column_doesnt_exist = 'San Francisco'", where = "t = 'a'")
       }
       // The error class is renamed from MISSING_COLUMN to UNRESOLVED_COLUMN in Spark 3.4
-      assert(ae.getErrorClass == "UNRESOLVED_COLUMN.WITH_SUGGESTION"
-        || ae.getErrorClass == "MISSING_COLUMN" )
+      assert(ae.getCondition == "UNRESOLVED_COLUMN.WITH_SUGGESTION"
+        || ae.getCondition == "MISSING_COLUMN" )
 
       withSQLConf(SQLConf.CASE_SENSITIVE.key -> "false") {
         executeUpdate(target = "table", set = "S = 1, T = 'b'", where = "T = 'a'")
@@ -414,23 +414,23 @@ abstract class UpdateSuiteBase
           executeUpdate(target = "table", set = "S = 1", where = "t = 'a'")
         }
         // The error class is renamed from MISSING_COLUMN to UNRESOLVED_COLUMN in Spark 3.4
-        assert(ae.getErrorClass == "UNRESOLVED_COLUMN.WITH_SUGGESTION"
-          || ae.getErrorClass == "MISSING_COLUMN" )
+        assert(ae.getCondition == "UNRESOLVED_COLUMN.WITH_SUGGESTION"
+          || ae.getCondition == "MISSING_COLUMN" )
 
         ae = intercept[AnalysisException] {
           executeUpdate(target = "table", set = "S = 1, s = 'b'", where = "s = 1")
         }
         // The error class is renamed from MISSING_COLUMN to UNRESOLVED_COLUMN in Spark 3.4
-        assert(ae.getErrorClass == "UNRESOLVED_COLUMN.WITH_SUGGESTION"
-          || ae.getErrorClass == "MISSING_COLUMN" )
+        assert(ae.getCondition == "UNRESOLVED_COLUMN.WITH_SUGGESTION"
+          || ae.getCondition == "MISSING_COLUMN" )
 
         // unresolved column in condition
         ae = intercept[AnalysisException] {
           executeUpdate(target = "table", set = "s = 1", where = "T = 'a'")
         }
         // The error class is renamed from MISSING_COLUMN to UNRESOLVED_COLUMN in Spark 3.4
-        assert(ae.getErrorClass == "UNRESOLVED_COLUMN.WITH_SUGGESTION"
-          || ae.getErrorClass == "MISSING_COLUMN" )
+        assert(ae.getCondition == "UNRESOLVED_COLUMN.WITH_SUGGESTION"
+          || ae.getCondition == "MISSING_COLUMN" )
       }
     }
   }

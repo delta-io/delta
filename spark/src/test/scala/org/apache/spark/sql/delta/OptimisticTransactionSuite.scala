@@ -766,7 +766,7 @@ class OptimisticTransactionSuite
       val addFileWithDVWithoutStats = addFileWithDV.copy(stats = null)
       testRuntimeErrorOnCommit(Seq(addFileWithDVWithoutStats, removeFile), deltaLog) { e =>
         val expErrorClass = "DELTA_DELETION_VECTOR_MISSING_NUM_RECORDS"
-        assert(e.getErrorClass == expErrorClass)
+        assert(e.getCondition == expErrorClass)
         assert(e.getSqlState == "2D521")
       }
     }

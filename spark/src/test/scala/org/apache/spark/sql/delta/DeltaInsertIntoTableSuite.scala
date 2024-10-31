@@ -161,7 +161,7 @@ class DeltaInsertIntoSQLSuite
         val e = intercept[AnalysisException] {
           sql(s"INSERT INTO $targetTableName BY NAME SELECT * FROM $sourceTableName")
         }
-        assert(e.getErrorClass === expectedErrorClass)
+        assert(e.getCondition === expectedErrorClass)
       }
     }
 

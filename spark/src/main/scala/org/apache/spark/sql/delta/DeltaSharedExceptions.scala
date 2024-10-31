@@ -51,7 +51,7 @@ class DeltaIllegalArgumentException(
   extends IllegalArgumentException(
       DeltaThrowableHelper.getMessage(errorClass, messageParameters), cause)
     with DeltaThrowable {
-    override def getErrorClass: String = errorClass
+    override def getCondition: String = errorClass
   def getMessageParametersArray: Array[String] = messageParameters
 
   override def getMessageParameters: java.util.Map[String, String] = {
@@ -66,7 +66,7 @@ class DeltaUnsupportedOperationException(
   extends UnsupportedOperationException(
       DeltaThrowableHelper.getMessage(errorClass, messageParameters))
     with DeltaThrowable {
-  override def getErrorClass: String = errorClass
+  override def getCondition: String = errorClass
   def getMessageParametersArray: Array[String] = messageParameters
 
   override def getMessageParameters: java.util.Map[String, String] = {
@@ -93,7 +93,7 @@ class DeltaArithmeticException(
   extends ArithmeticException(
       DeltaThrowableHelper.getMessage(errorClass, messageParameters))
     with DeltaThrowable {
-  override def getErrorClass: String = errorClass
+  override def getCondition: String = errorClass
 
   override def getMessageParameters: java.util.Map[String, String] = {
     DeltaThrowableHelper.getParameterNames(errorClass, errorSubClass = null)

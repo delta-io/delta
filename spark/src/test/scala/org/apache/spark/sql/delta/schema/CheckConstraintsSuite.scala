@@ -172,7 +172,7 @@ class CheckConstraintsSuite extends QueryTest
         val e = intercept[AnalysisException] {
           sql(s"ALTER TABLE $table DROP CONSTRAINT myConstraint")
         }
-        assert(e.getErrorClass == "DELTA_CONSTRAINT_DOES_NOT_EXIST")
+        assert(e.getCondition == "DELTA_CONSTRAINT_DOES_NOT_EXIST")
         errorContains(e.getMessage,
           "nonexistent constraint myconstraint from table `default`.`checkconstraintstest`")
         errorContains(e.getMessage,

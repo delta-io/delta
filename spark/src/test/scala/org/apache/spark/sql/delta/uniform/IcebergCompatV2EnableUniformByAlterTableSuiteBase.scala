@@ -581,7 +581,7 @@ trait IcebergCompatV2EnableUniformByAlterTableSuiteBase extends QueryTest {
       )
       assertResult(
         "DELTA_ICEBERG_COMPAT_VIOLATION.VERSION_MUTUAL_EXCLUSIVE"
-      )(ex.getErrorClass)
+      )(ex.getCondition)
     }
   }
 
@@ -606,7 +606,7 @@ trait IcebergCompatV2EnableUniformByAlterTableSuiteBase extends QueryTest {
       )
       assertResult(
         "DELTA_ICEBERG_COMPAT_VIOLATION.VERSION_MUTUAL_EXCLUSIVE"
-      )(ex.getErrorClass)
+      )(ex.getCondition)
     }
   }
 
@@ -633,7 +633,7 @@ trait IcebergCompatV2EnableUniformByAlterTableSuiteBase extends QueryTest {
       )
       assertResult(
         "DELTA_ICEBERG_COMPAT_VIOLATION.WRONG_REQUIRED_TABLE_PROPERTY"
-      )(ex.getErrorClass)
+      )(ex.getCondition)
     }
   }
 

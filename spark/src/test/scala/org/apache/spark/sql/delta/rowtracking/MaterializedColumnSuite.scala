@@ -254,7 +254,7 @@ class MaterializedColumnSuite extends RowIdTestUtils
 
           assert(intercept[DeltaIllegalStateException] {
             sql(s"CREATE OR REPLACE TABLE $targetTableName SHALLOW CLONE $sourceTableName")
-          }.getErrorClass === "DELTA_UNSUPPORTED_NON_EMPTY_CLONE")
+          }.getCondition === "DELTA_UNSUPPORTED_NON_EMPTY_CLONE")
         }
       }
     }
