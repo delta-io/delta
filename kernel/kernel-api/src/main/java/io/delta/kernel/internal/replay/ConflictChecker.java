@@ -268,7 +268,7 @@ public class ConflictChecker {
       // Currently, we don't have any domain-specific way of resolving the conflict.
       // Domain-specific ways of resolving the conflict can be added here (e.g. for Row Tracking)
       throw new ConcurrentWriteException(
-          "Concurrent domainMetadata actions detected for domain: "
+          "A concurrent writer added a domainMetadata action for the same domain: "
               + domain
               + ". No domain-specific conflict resolution available for this domain."
               + "Attempted domainMetadata: "
