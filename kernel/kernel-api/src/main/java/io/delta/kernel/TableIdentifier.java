@@ -20,9 +20,12 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.annotation.Evolving;
+import java.util.Arrays;
+import java.util.Objects;
+import java.util.stream.Collectors;
 
 /**
- * Identifier for a table. e.g. $catalog / $schema / $tableName
+ * Identifier for a table. e.g. $catalog / $schema / $table
  *
  * @since 3.3
  */
@@ -40,13 +43,42 @@ public class TableIdentifier {
     this.name = requireNonNull(name, "name is null");
   }
 
-  /** @return the namespace of the table. e.g. $catalog / $schema */
+  /** @return The namespace of the table. e.g. $catalog / $schema */
   public String[] getNamespace() {
     return namespace;
   }
 
-  /** @return the name of the table. */
+  /** @return The name of the table. */
   public String getName() {
     return name;
+  }
+
+  @Override
+  public boolean equals(Object o) {
+    if (this == o) {
+      return true;
+    }
+    if (o == null || getClass() != o.getClass()) {
+      return false;
+    }
+    TableIdentifier that = (TableIdentifier) o;
+    return Arrays.equals(getNamespace(), that.getNamespace()) && getName().equals(that.getName());
+  }
+
+  @Override
+  public int hashCode() {
+    return 31 * Objects.hash(getName()) + Arrays.hashCode(getNamespace());
+  }
+
+  @Override
+  public String toString() {
+    final String quotedNamespace =
+        Arrays.stream(namespace).map(this::quoteIdentifier).collect(Collectors.joining("."));
+    return "TableIdentifier{" + quotedNamespace + "." + quoteIdentifier(name) + "}";
+  }
+
+  /** Escapes back-ticks within the identifier name with double-back-ticks. */
+  private String quoteIdentifier(String identifier) {
+    return identifier.replace("`", "``");
   }
 }
