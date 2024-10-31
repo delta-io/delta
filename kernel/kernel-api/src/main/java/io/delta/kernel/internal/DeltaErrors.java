@@ -275,7 +275,7 @@ public final class DeltaErrors {
   }
 
   public static KernelException domainMetadataUnsupported() {
-    String message = "Found DomainMetadata action(s) but DomainMetadata feature is not supported.";
+    String message = "Found DomainMetadata action(s) but table feature 'domainMetadata' is not supported on this table.";
     return new KernelException(message);
   }
 
