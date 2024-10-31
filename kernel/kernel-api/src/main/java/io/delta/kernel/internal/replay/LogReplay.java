@@ -27,6 +27,7 @@ import io.delta.kernel.internal.TableFeatures;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.checkpoints.SidecarFile;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.SnapshotHint;
 import io.delta.kernel.internal.util.Tuple2;
@@ -115,7 +116,7 @@ public class LogReplay {
   private final Path dataPath;
   private final LogSegment logSegment;
   private final Tuple2<Protocol, Metadata> protocolAndMetadata;
-  private final Map<String, DomainMetadata> domainMetadataMap;
+  private final Lazy<Map<String, DomainMetadata>> domainMetadataMap;
 
   public LogReplay(
       Path logPath,
@@ -129,7 +130,8 @@ public class LogReplay {
     this.dataPath = dataPath;
     this.logSegment = logSegment;
     this.protocolAndMetadata = loadTableProtocolAndMetadata(engine, snapshotHint, snapshotVersion);
-    this.domainMetadataMap = loadDomainMetadataMap(engine);
+    // Lazy loading of domain metadata only when needed
+    this.domainMetadataMap = new Lazy<>(() -> loadDomainMetadataMap(engine));
   }
 
   /////////////////
@@ -149,7 +151,7 @@ public class LogReplay {
   }
 
   public Map<String, DomainMetadata> getDomainMetadataMap() {
-    return domainMetadataMap;
+    return domainMetadataMap.get();
   }
 
   /**
@@ -311,6 +313,10 @@ public class LogReplay {
 
   /**
    * Retrieves a map of domainName -> {@link DomainMetadata} from the log files.
+   *
+   * <p>Now loading domain metadata requires an additional round of log replay so this is done
+   * lazily only when domain metadata is requested. We might want to merge this into {@link
+   * #loadTableProtocolAndMetadata}.
    *
    * @param engine The engine used to process the log files.
    * @return A map where the keys are domain names and the values are the corresponding {@link
