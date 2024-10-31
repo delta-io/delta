@@ -16,9 +16,13 @@
 package io.delta.kernel.internal.actions;
 
 import static io.delta.kernel.internal.util.VectorUtils.stringArrayValue;
+import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.data.*;
+import io.delta.kernel.engine.coordinatedcommits.actions.AbstractProtocol;
+import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.TableFeatures;
+import io.delta.kernel.internal.TableFeatures.TableFeatureType;
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.internal.util.VectorUtils;
@@ -28,7 +32,22 @@ import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import java.util.*;
 
-public class Protocol {
+public class Protocol implements AbstractProtocol {
+
+  ///////////////////
+  // Static Fields //
+  ///////////////////
+
+  public static final StructType FULL_SCHEMA =
+      new StructType()
+          .add("minReaderVersion", IntegerType.INTEGER, false /* nullable */)
+          .add("minWriterVersion", IntegerType.INTEGER, false /* nullable */)
+          .add("readerFeatures", new ArrayType(StringType.STRING, false /* contains null */))
+          .add("writerFeatures", new ArrayType(StringType.STRING, false /* contains null */));
+
+  ////////////////////
+  // Static Methods //
+  ////////////////////
 
   public static Protocol fromColumnVector(ColumnVector vector, int rowId) {
     if (vector.isNullAt(rowId)) {
@@ -39,34 +58,58 @@ public class Protocol {
         vector.getChild(0).getInt(rowId),
         vector.getChild(1).getInt(rowId),
         vector.getChild(2).isNullAt(rowId)
-            ? Collections.emptyList()
-            : VectorUtils.toJavaList(vector.getChild(2).getArray(rowId)),
+            ? Collections.emptySet()
+            : new HashSet<>(VectorUtils.toJavaList(vector.getChild(2).getArray(rowId))),
         vector.getChild(3).isNullAt(rowId)
-            ? Collections.emptyList()
-            : VectorUtils.toJavaList(vector.getChild(3).getArray(rowId)));
+            ? Collections.emptySet()
+            : new HashSet<>(VectorUtils.toJavaList(vector.getChild(3).getArray(rowId))));
   }
 
-  public static final StructType FULL_SCHEMA =
-      new StructType()
-          .add("minReaderVersion", IntegerType.INTEGER, false /* nullable */)
-          .add("minWriterVersion", IntegerType.INTEGER, false /* nullable */)
-          .add("readerFeatures", new ArrayType(StringType.STRING, false /* contains null */))
-          .add("writerFeatures", new ArrayType(StringType.STRING, false /* contains null */));
+  /////////////////////////////
+  // Member Fields / Methods //
+  /////////////////////////////
 
   private final int minReaderVersion;
   private final int minWriterVersion;
-  private final List<String> readerFeatures;
-  private final List<String> writerFeatures;
+  private final Set<String> readerFeatures;
+  private final Set<String> writerFeatures;
 
   public Protocol(
       int minReaderVersion,
       int minWriterVersion,
-      List<String> readerFeatures,
-      List<String> writerFeatures) {
+      Set<String> readerFeatures,
+      Set<String> writerFeatures) {
     this.minReaderVersion = minReaderVersion;
     this.minWriterVersion = minWriterVersion;
-    this.readerFeatures = readerFeatures;
-    this.writerFeatures = writerFeatures;
+    this.readerFeatures =
+        Collections.unmodifiableSet(requireNonNull(readerFeatures, "readerFeatures is null"));
+    this.writerFeatures =
+        Collections.unmodifiableSet(requireNonNull(writerFeatures, "writerFeatures is null"));
+
+    final boolean supportsReaderFeatures =
+        minReaderVersion >= TableFeatures.TABLE_FEATURES_MIN_READER_VERSION;
+    final boolean supportsWriterFeatures =
+        minWriterVersion >= TableFeatures.TABLE_FEATURES_MIN_WRITER_VERSION;
+
+    if (!supportsReaderFeatures && !readerFeatures.isEmpty()) {
+      throw DeltaErrors.mismatchedProtocolVersionFeatureSet(
+          TableFeatureType.READER,
+          minReaderVersion /* tableFeatureVersion */,
+          TableFeatures.TABLE_FEATURES_MIN_READER_VERSION /* minRequiredVersion */,
+          readerFeatures /* tableFeatures */);
+    }
+
+    if (!supportsWriterFeatures && !writerFeatures.isEmpty()) {
+      throw DeltaErrors.mismatchedProtocolVersionFeatureSet(
+          TableFeatureType.WRITER,
+          minWriterVersion /* tableFeatureVersion */,
+          TableFeatures.TABLE_FEATURES_MIN_WRITER_VERSION /* minRequiredVersion */,
+          writerFeatures /* tableFeatures */);
+    }
+
+    if (supportsReaderFeatures && !supportsWriterFeatures) {
+      throw DeltaErrors.tableFeatureReadRequiresWrite(minReaderVersion, minWriterVersion);
+    }
   }
 
   public int getMinReaderVersion() {
@@ -77,11 +120,11 @@ public class Protocol {
     return minWriterVersion;
   }
 
-  public List<String> getReaderFeatures() {
+  public Set<String> getReaderFeatures() {
     return readerFeatures;
   }
 
-  public List<String> getWriterFeatures() {
+  public Set<String> getWriterFeatures() {
     return writerFeatures;
   }
 
@@ -105,23 +148,42 @@ public class Protocol {
     Map<Integer, Object> protocolMap = new HashMap<>();
     protocolMap.put(0, minReaderVersion);
     protocolMap.put(1, minWriterVersion);
-    protocolMap.put(2, stringArrayValue(readerFeatures));
-    protocolMap.put(3, stringArrayValue(writerFeatures));
+
+    // Note that we only write readerFeatures when the minReaderVersion is at least
+    // TableFeatures.TABLE_FEATURES_MIN_READER_VERSION, else we write null.
+    protocolMap.put(
+        2,
+        minReaderVersion < TableFeatures.TABLE_FEATURES_MIN_READER_VERSION
+            ? null
+            : stringArrayValue(new ArrayList<>(readerFeatures)));
+
+    // Note that we only write writerFeatures when the minWriterVersion is at least
+    // TableFeatures.TABLE_FEATURES_MIN_WRITER_VERSION, else we write null.
+    protocolMap.put(
+        3,
+        minWriterVersion < TableFeatures.TABLE_FEATURES_MIN_WRITER_VERSION
+            ? null
+            : stringArrayValue(new ArrayList<>(writerFeatures)));
 
     return new GenericRow(Protocol.FULL_SCHEMA, protocolMap);
   }
 
-  public Protocol withNewWriterFeatures(Set<String> writerFeatures) {
-    Tuple2<Integer, Integer> newProtocolVersions =
-        TableFeatures.minProtocolVersionFromAutomaticallyEnabledFeatures(writerFeatures);
-    List<String> newWriterFeatures = new ArrayList<>(writerFeatures);
-    if (this.writerFeatures != null) {
-      newWriterFeatures.addAll(this.writerFeatures);
+  public Protocol withAdditionalWriterFeatures(Set<String> additionalWriterFeatures) {
+    requireNonNull(additionalWriterFeatures, "additionalWriterFeatures is null");
+
+    Tuple2<Integer, Integer> protocolVersions =
+        TableFeatures.minProtocolVersionFromAutomaticallyEnabledFeatures(additionalWriterFeatures);
+
+    Set<String> combinedWriterFeatures = new HashSet<>(additionalWriterFeatures);
+
+    if (!writerFeatures.isEmpty()) {
+      combinedWriterFeatures.addAll(writerFeatures);
     }
+
     return new Protocol(
-        newProtocolVersions._1,
-        newProtocolVersions._2,
-        this.readerFeatures == null ? null : new ArrayList<>(this.readerFeatures),
-        newWriterFeatures);
+        protocolVersions._1,
+        protocolVersions._2,
+        readerFeatures.isEmpty() ? Collections.emptySet() : new HashSet<>(this.readerFeatures),
+        combinedWriterFeatures);
   }
 }

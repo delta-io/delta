@@ -20,7 +20,7 @@ import io.delta.kernel._
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.{InvalidTableException, ProtocolChangedException}
 import io.delta.kernel.expressions.Literal
-import io.delta.kernel.internal.actions.{CommitInfo, SingleAction}
+import io.delta.kernel.internal.actions.{CommitInfo, Protocol, SingleAction}
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.{FileNames, VectorUtils}
 import io.delta.kernel.internal.{DeltaHistoryManager, SnapshotImpl, TableImpl}
@@ -293,9 +293,11 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
         key = IN_COMMIT_TIMESTAMPS_ENABLED,
         value = "true",
         expectedValue = true)
-      val protocol = getProtocolActionFromCommit(engine, table, 0)
-      assert(protocol.isDefined)
-      assert(VectorUtils.toJavaList(protocol.get.getArray(3)).contains("inCommitTimestamp"))
+      val protocolRowOpt = getProtocolActionFromCommit(engine, table, 0)
+      assert(protocolRowOpt.isDefined)
+      val protocolWriterFeaturesArrayValue =
+        protocolRowOpt.get.getArray(Protocol.FULL_SCHEMA.indexOf("writerFeatures"))
+      assert(VectorUtils.toJavaList(protocolWriterFeaturesArrayValue).contains("inCommitTimestamp"))
 
       setTablePropAndVerify(
         engine = engine,
@@ -391,18 +393,18 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
       verifyWrittenContent(tablePath, testSchema, expData)
       verifyTableProperties(tablePath,
         ListMap(IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> true,
-        "delta.feature.inCommitTimestamp" -> "supported",
-        IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.getKey
-          -> getInCommitTimestamp(engine, table, version = 1).get,
-        IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.getKey -> 1L),
+          "delta.feature.inCommitTimestamp" -> "supported",
+          IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.getKey
+            -> getInCommitTimestamp(engine, table, version = 1).get,
+          IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.getKey -> 1L),
         3,
         7)
     }
   }
 
   /**
-   *  Helper method to read the inCommitTimestamp from the commit file of the given version if it
-   *  is not null, otherwise return null.
+   * Helper method to read the inCommitTimestamp from the commit file of the given version if it
+   * is not null, otherwise return null.
    */
   private def getInCommitTimestamp(engine: Engine, table: Table, version: Long): Option[Long] = {
     val logPath = new Path(table.getPath(engine), "_delta_log")

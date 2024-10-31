@@ -106,8 +106,8 @@ class TableFeaturesSuite extends AnyFunSuite {
       0,
       minWriterVersion,
       // reader features - it doesn't matter as the read fails anyway before the writer check
-      Collections.emptyList(),
-      writerFeatures.toSeq.asJava
+      Collections.emptySet(),
+      writerFeatures.toSet.asJava
     )
   }
 

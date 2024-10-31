@@ -18,6 +18,7 @@ package io.delta.kernel.internal;
 import static java.lang.String.format;
 
 import io.delta.kernel.exceptions.*;
+import io.delta.kernel.internal.TableFeatures.TableFeatureType;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.DataFileStatus;
@@ -138,7 +139,33 @@ public final class DeltaErrors {
     return new KernelException(message);
   }
 
-  /* ------------------------ PROTOCOL EXCEPTIONS ----------------------------- */
+  /* ------------------------ PROTOCOL EXCEPTIONS - START ----------------------------- */
+
+  public static KernelException mismatchedProtocolVersionFeatureSet(
+      TableFeatureType featureType,
+      int tableFeatureVersion,
+      int minRequiredVersion,
+      Set<String> tableFeatures) {
+    final String message =
+        String.format(
+            "Found %s Features %s in protocol version %s but these are only supported in "
+                + "protocol version %s and above.",
+            featureType, tableFeatureVersion, minRequiredVersion, tableFeatures);
+    return new KernelException(message);
+  }
+
+  public static KernelException tableFeatureReadRequiresWrite(
+      int tableReaderVersion, int tableWriterVersion) {
+    final String message =
+        String.format(
+            "Table Reader Features are supported (current reader protocol version is %s) yet "
+                + "table Writer Features are not (current writer protocol version is %s). Writer "
+                + "protocol version must be at least %s to proceed",
+            tableReaderVersion,
+            tableWriterVersion,
+            TableFeatures.TABLE_FEATURES_MIN_WRITER_VERSION);
+    return new KernelException(message);
+  }
 
   public static KernelException unsupportedReaderProtocol(
       String tablePath, int tableReaderVersion) {
@@ -185,6 +212,8 @@ public final class DeltaErrors {
             + "column invariants present.";
     return new KernelException(message);
   }
+
+  /* ------------------------ PROTOCOL EXCEPTIONS - END ----------------------------- */
 
   public static KernelException unsupportedDataType(DataType dataType) {
     return new KernelException("Kernel doesn't support writing data of type: " + dataType);

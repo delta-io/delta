@@ -30,6 +30,22 @@ import java.util.stream.Collectors;
 /** Contains utility methods related to the Delta table feature support in protocol. */
 public class TableFeatures {
 
+  public enum TableFeatureType {
+    READER,
+    WRITER;
+
+    @Override
+    public String toString() {
+      return name().charAt(0) + name().substring(1).toLowerCase();
+    }
+  }
+
+  /** Min reader version that supports reader features. */
+  public static final int TABLE_FEATURES_MIN_READER_VERSION = 3;
+
+  /** Min writer version that supports writer features. */
+  public static final int TABLE_FEATURES_MIN_WRITER_VERSION = 7;
+
   private static final Set<String> SUPPORTED_WRITER_FEATURES =
       Collections.unmodifiableSet(
           new HashSet<String>() {
@@ -58,7 +74,7 @@ public class TableFeatures {
           });
 
   ////////////////////
-  // Helper Methods //
+  // Public Methods //
   ////////////////////
 
   public static void validateReadSupportedTable(
@@ -70,7 +86,7 @@ public class TableFeatures {
         metadata.ifPresent(ColumnMapping::throwOnUnsupportedColumnMappingMode);
         break;
       case 3:
-        List<String> readerFeatures = protocol.getReaderFeatures();
+        final Set<String> readerFeatures = protocol.getReaderFeatures();
         if (!SUPPORTED_READER_FEATURES.containsAll(readerFeatures)) {
           Set<String> unsupportedFeatures = new HashSet<>(readerFeatures);
           unsupportedFeatures.removeAll(SUPPORTED_READER_FEATURES);
@@ -186,6 +202,10 @@ public class TableFeatures {
             f -> protocol.getWriterFeatures() == null || !protocol.getWriterFeatures().contains(f))
         .collect(Collectors.toSet());
   }
+
+  ////////////////////
+  // Helper Methods //
+  ////////////////////
 
   /**
    * Get the minimum reader version required for a feature.
