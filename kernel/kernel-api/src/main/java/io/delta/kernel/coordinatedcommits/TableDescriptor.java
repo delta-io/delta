@@ -86,10 +86,14 @@ public class TableDescriptor {
 
   @Override
   public String toString() {
-    return "TableDescriptor{" +
-        "logPath='" + logPath + '\'' +
-        ", tableIdOpt=" + tableIdOpt +
-        ", tableConf=" + tableConf +
-        '}';
+    return "TableDescriptor{"
+        + "logPath='"
+        + logPath
+        + '\''
+        + ", tableIdOpt="
+        + tableIdOpt
+        + ", tableConf="
+        + tableConf
+        + '}';
   }
 }
