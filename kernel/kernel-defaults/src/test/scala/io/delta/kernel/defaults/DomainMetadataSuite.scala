@@ -144,7 +144,11 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
     } catch {
       case e: KernelException =>
         assert(expectedConflict)
-        assert(e.getMessage.contains("Concurrent domainMetadata actions detected"))
+        assert(
+          e.getMessage.contains(
+            "A concurrent writer added a domainMetadata action for the same domain"
+          )
+        )
     }
   }
 
@@ -177,7 +181,10 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
       }
       assert(
         e.getMessage
-          .contains("Found DomainMetadata action(s) but DomainMetadata feature is not supported")
+          .contains(
+            "Found DomainMetadata action(s) but table feature 'domainMetadata' "
+            + "is not supported on this table."
+          )
       )
 
       // Set writer version and writer feature to support domain metadata
