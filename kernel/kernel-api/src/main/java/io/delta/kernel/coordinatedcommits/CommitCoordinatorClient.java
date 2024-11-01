@@ -18,7 +18,6 @@ package io.delta.kernel.coordinatedcommits;
 
 import io.delta.kernel.TableIdentifier;
 import io.delta.kernel.annotation.Evolving;
-import io.delta.kernel.annotation.Nullable;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.engine.coordinatedcommits.CommitFailedException;
@@ -30,6 +29,7 @@ import io.delta.kernel.engine.coordinatedcommits.actions.AbstractProtocol;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * The CommitCoordinatorClient is responsible for communicating with the commit coordinator and
@@ -58,10 +58,10 @@ public interface CommitCoordinatorClient {
    * and the upgrade commit needs to be a file system commit which will write the backfilled file
    * directly.
    *
-   * @param engine The {@link Engine} instance to use.
+   * @param engine The {@link Engine} instance to use, if needed.
    * @param logPath The path to the delta log of the table that should be converted.
-   * @param tableIdentifier The table identifier for the table, or {@code null} if the table doesn't
-   *     use any identifier (i.e. it is path-based).
+   * @param tableIdentifier The table identifier for the table, or {@link Optional#empty()} if the
+   *     table doesn't use any identifier (i.e. it is path-based).
    * @param currentVersion The version of the table just before conversion. currentVersion + 1
    *     represents the commit that will do the conversion. This must be backfilled atomically.
    *     currentVersion + 2 represents the first commit after conversion. This will go through the
@@ -78,7 +78,7 @@ public interface CommitCoordinatorClient {
   Map<String, String> registerTable(
       Engine engine,
       String logPath,
-      @Nullable TableIdentifier tableIdentifier,
+      Optional<TableIdentifier> tableIdentifier,
       long currentVersion,
       AbstractMetadata currentMetadata,
       AbstractProtocol currentProtocol);
@@ -86,7 +86,9 @@ public interface CommitCoordinatorClient {
   /**
    * Commit the given set of actions to the table represented by {@code tableDescriptor}.
    *
-   * @param engine The {@link Engine} instance to use.
+   * @param engine The {@link Engine} instance to use. This gives client implementations access to
+   *     {@link io.delta.kernel.engine.JsonHandler#writeJsonFileAtomically} in order to write the
+   *     given set of actions to an unbackfilled Delta file.
    * @param tableDescriptor The descriptor for the table.
    * @param commitVersion The version of the commit that is being committed.
    * @param actions The set of actions to be committed
@@ -123,12 +125,12 @@ public interface CommitCoordinatorClient {
    * coordinator. Note that returning latestTableVersion as -1 is acceptable only if the commit
    * coordinator never ratified any version, i.e. it never accepted any unbackfilled commit.
    *
-   * @param engine The {@link Engine} instance to use.
+   * @param engine The {@link Engine} instance to use, if needed.
    * @param tableDescriptor The descriptor for the table.
-   * @param startVersion The minimum version of the commit that should be returned, or {@code null}
-   *     if there is no minimum.
-   * @param endVersion The maximum version of the commit that should be returned, or {@code null} if
-   *     there is no maximum.
+   * @param startVersion The minimum version of the commit that should be returned, or {@link
+   *     Optional#empty()} if there is no minimum.
+   * @param endVersion The maximum version of the commit that should be returned, or {@link
+   *     Optional#empty()} if there is no maximum.
    * @return {@link GetCommitsResponse} which has a list of {@link
    *     io.delta.kernel.engine.coordinatedcommits.Commit}s and the latestTableVersion which is
    *     tracked by the {@link CommitCoordinatorClient}.
@@ -136,8 +138,8 @@ public interface CommitCoordinatorClient {
   GetCommitsResponse getCommits(
       Engine engine,
       TableDescriptor tableDescriptor,
-      @Nullable Long startVersion,
-      @Nullable Long endVersion);
+      Optional<Long> startVersion,
+      Optional<Long> endVersion);
 
   /**
    * Backfill all commits up to {@code version} and notify the commit coordinator.
@@ -145,19 +147,19 @@ public interface CommitCoordinatorClient {
    * <p>If this API returns successfully, that means the backfill must have been completed, although
    * the commit coordinator may not be aware of it yet.
    *
-   * @param engine The {@link Engine} instance to use.
+   * @param engine The {@link Engine} instance to use, if needed.
    * @param tableDescriptor The descriptor for the table.
    * @param version The version until which the commit coordinator client should backfill.
    * @param lastKnownBackfilledVersion The last known version that was backfilled before this API
-   *     was called. If it is {@code null}, then the commit coordinator client should backfill from
-   *     the beginning of the table.
+   *     was called. If it is {@link Optional#empty()}, then the commit coordinator client should
+   *     backfill from the beginning of the table.
    * @throws IOException if there is an IO error while backfilling the commits.
    */
   void backfillToVersion(
       Engine engine,
       TableDescriptor tableDescriptor,
       long version,
-      @Nullable Long lastKnownBackfilledVersion)
+      Optional<Long> lastKnownBackfilledVersion)
       throws IOException;
 
   /**
