@@ -61,7 +61,7 @@ public class TableIdentifier {
     if (o == null || getClass() != o.getClass()) {
       return false;
     }
-    TableIdentifier that = (TableIdentifier) o;
+    final TableIdentifier that = (TableIdentifier) o;
     return Arrays.equals(getNamespace(), that.getNamespace()) && getName().equals(that.getName());
   }
 
