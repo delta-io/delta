@@ -26,6 +26,7 @@ import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 import org.slf4j.{Logger, LoggerFactory}
 
 import java.nio.file.FileAlreadyExistsException
+import java.util.Objects.requireNonNull
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import java.util.{ArrayList, Collections, Optional, TreeMap, Map => JMap}
@@ -78,10 +79,16 @@ class InMemoryCommitCoordinatorClient(val batchSize: Long) extends CommitCoordin
   override def registerTable(
       engine: Engine,
       logPath: String,
-      tableIdentifier: TableIdentifier,
+      tableIdentifier: Optional[TableIdentifier],
       currentVersion: Long,
       currentMetadata: AbstractMetadata,
       currentProtocol: AbstractProtocol): JMap[String, String] = {
+    requireNonNull(engine, "engine is null")
+    requireNonNull(logPath, "logPath is null")
+    requireNonNull(tableIdentifier, "tableIdentifier is null")
+    requireNonNull(currentMetadata, "currentMetadata is null")
+    requireNonNull(currentProtocol, "currentProtocol is null")
+
     val newPerTableData = new PerTableData(currentVersion + 1)
     perTableMap.compute(logPath, (_, existingData) => {
       if (existingData != null) {
@@ -109,6 +116,11 @@ class InMemoryCommitCoordinatorClient(val batchSize: Long) extends CommitCoordin
       commitVersion: Long,
       actions: CloseableIterator[Row],
       updatedActions: UpdatedActions): CommitResponse = {
+    requireNonNull(engine, "engine is null")
+    requireNonNull(tableDescriptor, "tableDescriptor is null")
+    requireNonNull(actions, "actions is null")
+    requireNonNull(updatedActions, "updatedActions is null")
+
     val logPath = tableDescriptor.getLogPath
     val tablePath = new Path(logPath).getParent.toString
     if (commitVersion == 0) {
@@ -155,16 +167,19 @@ class InMemoryCommitCoordinatorClient(val batchSize: Long) extends CommitCoordin
   override def getCommits(
       engine: Engine,
       tableDescriptor: TableDescriptor,
-      startVersion: java.lang.Long,
-      endVersion: java.lang.Long): GetCommitsResponse =
+      startVersion: Optional[java.lang.Long],
+      endVersion: Optional[java.lang.Long]): GetCommitsResponse = {
+    requireNonNull(engine, "engine is null")
+    requireNonNull(tableDescriptor, "tableDescriptor is null")
+    requireNonNull(startVersion, "startVersion is null")
+    requireNonNull(endVersion, "endVersion is null")
+
     withReadLock[GetCommitsResponse](tableDescriptor.getLogPath) {
       val tableData = perTableMap.get(tableDescriptor.getLogPath)
-      val startVersionOpt = Optional.ofNullable(startVersion)
-      val endVersionOpt = Optional.ofNullable(endVersion)
-      val effectiveStartVersion = startVersionOpt.orElse(0L)
+      val effectiveStartVersion = startVersion.orElse(0L)
       // Calculate the end version for the range, or use the last key if endVersion is not
       // provided
-      val effectiveEndVersion = endVersionOpt.orElseGet(
+      val effectiveEndVersion = endVersion.orElseGet(
         () => if (tableData.commitsMap.isEmpty) effectiveStartVersion
         else tableData.commitsMap.lastKey)
       val commitsInRange =
@@ -172,26 +187,28 @@ class InMemoryCommitCoordinatorClient(val batchSize: Long) extends CommitCoordin
       new GetCommitsResponse(
         new ArrayList[Commit](commitsInRange.values), tableData.lastRatifiedCommitVersion)
     }
+  }
 
   override def backfillToVersion(
       engine: Engine,
       tableDescriptor: TableDescriptor,
       version: Long,
-      lastKnownBackfilledVersion: java.lang.Long): Unit = {
+      lastKnownBackfilledVersion: Optional[java.lang.Long]): Unit = {
+    requireNonNull(engine, "engine is null")
+    requireNonNull(tableDescriptor, "tableDescriptor is null")
+    requireNonNull(lastKnownBackfilledVersion, "lastKnownBackfilledVersion is null")
+
     val logPath = tableDescriptor.getLogPath
     // Confirm the last backfilled version by checking the backfilled delta file's existence.
-    var validLastKnownBackfilledVersion = lastKnownBackfilledVersion
-    if (lastKnownBackfilledVersion != null) {
+    val validLastKnownBackfilledVersion = lastKnownBackfilledVersion.flatMap(knownVersion => {
       val backfilledFileExists = engine
         .getFileSystemClient
         .exists(CommitCoordinatorUtils.getBackfilledDeltaFilePath(logPath, version))
-      if (!backfilledFileExists) {
-        validLastKnownBackfilledVersion = null
-      }
-    }
-    var startVersion: java.lang.Long = null
-    if (validLastKnownBackfilledVersion != null) startVersion = validLastKnownBackfilledVersion + 1
-    val commitsResponse = getCommits(engine, tableDescriptor, startVersion, version)
+      if (backfilledFileExists) Optional.of(knownVersion)
+      else Optional.empty[java.lang.Long]()
+    })
+    val startVersion: Optional[java.lang.Long] = validLastKnownBackfilledVersion.map(v => v + 1)
+    val commitsResponse = getCommits(engine, tableDescriptor, startVersion, Optional.of(version))
     commitsResponse.getCommits.forEach((commit: Commit) => {
       backfill(engine, logPath, commit.getVersion, commit.getFileStatus)
     })
