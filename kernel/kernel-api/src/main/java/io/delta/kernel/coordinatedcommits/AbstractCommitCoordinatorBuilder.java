@@ -40,8 +40,8 @@ import java.util.NoSuchElementException;
  * <p>From a user perspective, this means users just need to:
  *
  * <ol>
- *   <li>specify the commit coordinator name -> commit coordinator builder mapping in their Engine's
- *       configuration (e.g. "foo" -> "x.y.z.FooCCBuilder"). Note that Engine is then expected to
+ *   <li>specify the commit coordinator name to commit coordinator builder mapping in their Engine's
+ *       configuration (e.g. "foo" to "x.y.z.FooCCBuilder"). Note that Engine is then expected to
  *       include that mapping in the session-level configuration that is passed in to the {@link
  *       #buildCommitCoordinatorClient} API call.
  *   <li>include the x.y.z.FooCCBuilder and respective client implementation on their classpath
