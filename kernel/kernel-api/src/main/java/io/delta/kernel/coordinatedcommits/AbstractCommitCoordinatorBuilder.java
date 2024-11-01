@@ -24,7 +24,8 @@ import java.util.Map;
 import java.util.NoSuchElementException;
 
 /**
- * A builder class to create a {@link CommitCoordinatorClient} (CCC).
+ * A builder class to create a {@link CommitCoordinatorClient} (CCC). Engines may choose not to use
+ * this builder and to instantiate CCCs directly.
  *
  * <p>Subclasses of this class must provide a no-argument constructor.
  *
@@ -36,9 +37,17 @@ import java.util.NoSuchElementException;
  * #buildCommitCoordinatorClient} to (1) instantiate your builder, and then (2) build a new CCC via
  * reflection.
  *
- * <p>In short, this builder provides the ability for users to specify at runtime which builder
- * implementation (e.g. x.y.z.FooCCBuilder) to use for a given commit coordinator name (e.g. "foo"),
- * without imposing any restrictions on how to construct CCCs (i.e. these builders are optional).
+ * <p>From a user perspective, this means users just need to:
+ *
+ * <ol>
+ *   <li>specify the commit coordinator name -> commit coordinator builder mapping in their Engine's
+ *       configuration (e.g. "foo" -> "x.y.z.FooCCBuilder"). Note that Engine is then expected to
+ *       include that mapping in the session-level configuration that is passed in to the {@link
+ *       #buildCommitCoordinatorClient} API call.
+ *   <li>include the x.y.z.FooCCBuilder and respective client implementation on their classpath
+ * </ol>
+ *
+ * and then the client can be instantiated at runtime using reflection.
  *
  * @since 3.3.0
  */
@@ -68,8 +77,9 @@ public abstract class AbstractCommitCoordinatorBuilder {
    *     name. It can also be used by builders to lookup per-session configuration values unique to
    *     that builder.
    * @param commitCoordinatorConf the parsed value of the Delta table property {@link
-   *     io.delta.kernel.internal.TableConfig#COORDINATED_COMMITS_TABLE_CONF} and represents the
-   *     configuration properties for describing the Delta table to the commit-coordinator.
+   *     io.delta.kernel.internal.TableConfig#COORDINATED_COMMITS_COORDINATOR_CONF} which represents
+   *     the configuration properties the commit coordinator client needs to be correctly
+   *     instantiated and to communicate to the commit coordinator.
    * @return the {@link CommitCoordinatorClient} corresponding to the given commit coordinator name
    */
   public static CommitCoordinatorClient buildCommitCoordinatorClient(
