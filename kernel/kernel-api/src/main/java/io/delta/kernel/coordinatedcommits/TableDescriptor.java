@@ -21,11 +21,12 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.TableIdentifier;
 import io.delta.kernel.annotation.Evolving;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 
 /**
  * The complete descriptor of a Coordinated Commits (CC) Delta table, including its logPath, table
- * identifier, and table CC table configuration.
+ * identifier, and table CC configuration.
  *
  * @since 3.3.0
  */
@@ -62,5 +63,33 @@ public class TableDescriptor {
    */
   public Map<String, String> getTableConf() {
     return tableConf;
+  }
+
+  @Override
+  public boolean equals(Object o) {
+    if (this == o) {
+      return true;
+    }
+    if (o == null || getClass() != o.getClass()) {
+      return false;
+    }
+    final TableDescriptor that = (TableDescriptor) o;
+    return getLogPath().equals(that.getLogPath())
+        && tableIdOpt.equals(that.tableIdOpt)
+        && getTableConf().equals(that.getTableConf());
+  }
+
+  @Override
+  public int hashCode() {
+    return Objects.hash(getLogPath(), tableIdOpt, getTableConf());
+  }
+
+  @Override
+  public String toString() {
+    return "TableDescriptor{" +
+        "logPath='" + logPath + '\'' +
+        ", tableIdOpt=" + tableIdOpt +
+        ", tableConf=" + tableConf +
+        '}';
   }
 }
