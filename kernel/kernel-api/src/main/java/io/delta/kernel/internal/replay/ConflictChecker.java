@@ -226,11 +226,10 @@ public class ConflictChecker {
    * @param actionBatch action batch from the winning transactions
    */
   private void handleDomainMetadata(ColumnarBatch actionBatch) {
-    // Extract the domain metadata map from the winning transactions. Allow a DM action in a later
-    // transaction to overwrite the DM in an earlier transaction for the same domain.
+    // Extract the domain metadata map from the winning transaction.
     Map<String, DomainMetadata> winningDomainMetadataMap =
         DomainMetadataUtils.extractDomainMetadataMap(
-            inMemoryIterable(actionBatch.getRows()), CONFLICT_RESOLUTION_SCHEMA, true);
+            inMemoryIterable(actionBatch.getRows()), CONFLICT_RESOLUTION_SCHEMA);
 
     // Get the ordinal of the domainMetadata action from the full schema, which is used when writing
     // out the single action to the Delta Log

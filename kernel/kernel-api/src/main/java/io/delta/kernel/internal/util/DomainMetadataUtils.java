@@ -37,11 +37,10 @@ public class DomainMetadataUtils {
    *
    * @param actions an iterable of Row objects representing actions
    * @param schema the schema of the row
-   * @param allowDuplicate whether to allow duplicate domain metadata actions
    * @return a map where the keys are domain names and the values are DomainMetadata objects
    */
   public static Map<String, DomainMetadata> extractDomainMetadataMap(
-      CloseableIterable<Row> actions, StructType schema, boolean allowDuplicate) {
+      CloseableIterable<Row> actions, StructType schema) {
     Map<String, DomainMetadata> domainMetadataMap = new HashMap<>();
 
     final int domainMetadataOrdinal = schema.indexOf("domainMetadata");
@@ -61,7 +60,7 @@ public class DomainMetadataUtils {
 
         // Check if domain already seen
         String domain = domainMetadata.getDomain();
-        if (!allowDuplicate && domainMetadataMap.containsKey(domain)) {
+        if (domainMetadataMap.containsKey(domain)) {
           throw DeltaErrors.duplicateDomainMetadataAction(
               domainMetadataMap.get(domain).toString(), domainMetadata.toString());
         }
