@@ -399,7 +399,7 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
        * t3 ------- Txn2 commits.
        * t4 ------- Txn3 starts.
        * t5 ------- Txn3 commits.
-       * t6 ------------------------ Txn1 commits (SUCCESS).
+       * t6 ------------------------ Txn1 commits (FAIL).
        */
       val dm1 = new DomainMetadata("domain1", "", false)
       val dm2 = new DomainMetadata("domain2", "", false)
@@ -430,7 +430,7 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
        * t3 ------- Txn2 commits.
        * t4 ------- Txn3 starts.
        * t5 ------- Txn3 commits.
-       * t6 ------------------------ Txn1 commits (SUCCESS).
+       * t6 ------------------------ Txn1 commits (FAIL).
        */
       val dm1 = new DomainMetadata("domain1", "", false)
       val dm2 = new DomainMetadata("domain1", "", false)
