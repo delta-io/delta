@@ -1,6 +1,6 @@
 ---
 description: Learn how to drop table features in <Delta> to downgrade reader and writer protocol requirements and resolve compatibility issues.
-oprhan: 1
+orphan: 1
 ---
 
 # Drop Delta table features
@@ -53,7 +53,7 @@ After first disabling a feature, you can continue writing to the target table be
 To drop the table feature, you must remove all transaction history associated with the feature and downgrade the protocol.
 
 #. After at least 24 hours have passed, the user executes the `DROP FEATURE` command again with the `TRUNCATE HISTORY` clause.
-#. The client confirms that no transactions in the specified retention threshold use the table feature, then truncates the table history to that treshold.
+#. The client confirms that no transactions in the specified retention threshold use the table feature, then truncates the table history to that threshold.
 #. The protocol is downgraded, dropping the table feature.
 #. If the table features that are present in the table can be represented by a legacy protocol version, the `minReaderVersion` and `minWriterVersion` for the table are downgraded to the lowest version that supports exactly all remaining features in use by the Delta table.
 

@@ -187,7 +187,7 @@ Options like rate limits (`maxFilesPerTrigger`, `maxBytesPerTrigger`) and `exclu
 .. note::
   Rate limiting can be atomic for versions other than the starting snapshot version. That is, the entire commit version will be rate limited or the entire commit will be returned.
 
-  By default if a user passes in a version or timestamp exceeding the last commit on a table, the error `timestampGreaterThanLatestCommit` will be thrown. CDF can handle the out of range version case, if the user sets the following configuration to `true`.
+  By default, if a user passes in a version or timestamp exceeding the last commit on a table, the error `timestampGreaterThanLatestCommit` will be thrown. CDF can handle the out of range version case, if the user sets the following configuration to `true`.
   
   ```sql
   set spark.databricks.delta.changeDataFeed.timestampOutOfRange.enabled = true;

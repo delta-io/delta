@@ -106,13 +106,13 @@ StructType tableSchema = mySnapshot.getSchema(myEngine);
 Next, to read the table data, we have to *build* a [`Scan`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/Scan.html) object. In order to build a `Scan` object, create a [`ScanBuilder`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/ScanBuilder.html) object which optionally allows selecting a subset of columns to read or setting a query filter. For now, ignore these optional settings.
 
 ```java
-Scan myScan = mySnapshot.getScanBuilder(myEngine).build()
+Scan myScan = mySnapshot.getScanBuilder(myEngine).build();
 
 // Common information about scanning for all data files to read.
-Row scanState = myScan.getScanState(myEngine)
+Row scanState = myScan.getScanState(myEngine);
 
 // Information about the list of scan files to read
-CloseableIterator<FilteredColumnarBatch> scanFiles = myScan.getScanFiles(myEngine)
+CloseableIterator<FilteredColumnarBatch> scanFiles = myScan.getScanFiles(myEngine);
 ```
 
 This [`Scan`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/Scan.html) object has all the necessary metadata to start reading the table. There are two crucial pieces of information needed for reading data from a file in the table.
@@ -367,10 +367,10 @@ Transaction txn = txnBuilder.build(engine);
 Now that we have the [`Transaction`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/Transaction.html) object, the next step is generating the data that confirms the table schema and partitioned according to the table partitions.
 
 ```java
-StructType dataSchema = txn.getSchema(engine)
+StructType dataSchema = txn.getSchema(engine);
 
 // Optional for un-partitioned tables
-List<String> partitionColumnNames = txn.getPartitionColumns(engine)
+List<String> partitionColumnNames = txn.getPartitionColumns(engine);
 ```
 
 Using the data schema and partition column names the connector can plan the query and generate data. At tasks that actually have the data to write to the table, the connector can ask the Kernel to transform the data given in the table schema into physical data that can actually be written to the Parquet data files. For partitioned tables, the data needs to be first partitioned by the partition columns, and then the connector should ask the Kernel to transform the data for each partition separately. The partitioning step is needed because any given data file in the Delta table contains data belonging to exactly one partition.
@@ -472,7 +472,7 @@ TransactionBuilder txnBuilder =
     Operation.WRITE
   );
 
-/ Build the transaction - no need to provide the schema as the table already exists.
+// Build the transaction - no need to provide the schema as the table already exists.
 Transaction txn = txnBuilder.build(engine);
 
 // Get the transaction state
@@ -501,7 +501,7 @@ for (String city : Arrays.asList("San Francisco", "Campbell", "San Jose")) {
     Map<String, Literal> partitionValues =
 	    Collections.singletonMap(
 		    "city", // partition column name
-		    // partition value. Depending upon the parition column type, the
+		    // partition value. Depending upon the partition column type, the
 		    // partition value should be created. In this example, the partition
 		    // column is of type StringType, so we are creating a string literal.
 		    Literal.ofString(city));
@@ -629,7 +629,7 @@ As discussed above, you can import one or both of the artifacts as follows:
   <version>${delta-kernel.version}</version>
 </dependency>
 
-<!-- Optional depdendency -->
+<!-- Optional dependency -->
 <dependency>
   <groupId>io.delta</groupId>
   <artifactId>delta-kernel-defaults</artifactId>
@@ -700,7 +700,7 @@ The [`FileSystemClient`](https://delta-io.github.io/delta/snapshot/kernel-api/ja
 
 #### Step 2.3: Implement `ParquetHandler`
 
-As the name suggests, this interface contains everything related to reading and writing Parquet files. It has been designed such that a connector can plug in a wide variety of implementations, from a simple single-threaded reader to a very advanced multi-threaded reader with pre-fetching and advanced connector-specific expression pushdown. Let's explore the methods to implement, and the guarantees associated with them.
+As the name suggests, this interface contains everything related to reading and writing Parquet files. It has been designed such that a connector can plug in a wide variety of implementations, from a simple single-threaded reader to a very advanced multi-threaded reader with pre-fetching and advanced connector-specific expression push down. Let's explore the methods to implement, and the guarantees associated with them.
 
 ##### Method `readParquetFiles(CloseableIterator<FileStatus> fileIter, StructType physicalSchema, java.util.Optional<Predicate> predicate)`
 
@@ -872,7 +872,7 @@ As we will soon see, reading the columnar data from a selected file will need to
 ##### Requirements and guarantees
 Here are the details you need to ensure when defining this scan.
 
-* The provided `readSchema` must be the exact schema of the data that the engine will expect when executing the query. Any mismatch in the schema defined during this query planning and the query execution will result in runtime failures. Hence you must build the scan with the readSchema only after the engine has finalized the logical plan after any optimizations like column pruning.
+* The provided `readSchema` must be the exact schema of the data that the engine will expect when executing the query. Any mismatch in the schema defined during this query planning and the query execution will result in runtime failures. Hence, you must build the scan with the readSchema only after the engine has finalized the logical plan after any optimizations like column pruning.
 * When applicable (for example, with Java Kernel APIs), you have to make sure to call the close() method as you consume the `ColumnarBatch`es of scan files (that is, either serialize the rows or use them to read the table data).
 
 #### Step 3.3: Distribute the file information to the workers
@@ -1163,7 +1163,7 @@ if (commitResult.isReadyForCheckpoint()) {
 }
 ```
 
-Thats it. Now you should be able to append data to Delta tables using the Kernel APIs.
+That's it. Now you should be able to append data to Delta tables using the Kernel APIs.
 
 
 ## Migration guide

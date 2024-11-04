@@ -63,7 +63,7 @@ Run the following commands in your <Snowflake> environment.
 
 ##### Define an external table on the manifest files
 
-To define an external table in <Snowflake>, you must first [define a external stage](https://docs.snowflake.net/manuals/user-guide/data-load-s3-create-stage.html) `my_staged_table` that points to the Delta table. In <Snowflake>, run the following.
+To define an external table in <Snowflake>, you must first [define an external stage](https://docs.snowflake.net/manuals/user-guide/data-load-s3-create-stage.html) `my_staged_table` that points to the Delta table. In <Snowflake>, run the following.
 
 ```sql
 create or replace stage my_staged_table url='<path-to-delta-table>'
@@ -162,7 +162,7 @@ The <Snowflake> integration has known limitations in its behavior.
 
 #### Data consistency
 
-Whenever <Delta> generates updated manifests, it atomically overwrites existing manifest files. Therefore, <Snowflake> will always see a consistent view of the data files; it will see all of the old version files or all of the new version files. However, the granularity of the consistency guarantees depends on whether the table is partitioned or not.
+Whenever <Delta> generates updated manifests, it atomically overwrites existing manifest files. Therefore, <Snowflake> will always see a consistent view of the data files; it will see all the old version files or all of the new version files. However, the granularity of the consistency guarantees depends on whether the table is partitioned or not.
 
 - **Unpartitioned tables**: All the files names are written in one manifest file which is updated atomically. In this case <Snowflake> will see full table snapshot consistency.
 

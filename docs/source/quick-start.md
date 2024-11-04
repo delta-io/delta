@@ -18,7 +18,7 @@ Follow these instructions to set up <Delta> with Spark. You can run the steps in
 
 #. Run as a project: Set up a Maven or SBT project (Scala or Java) with <Delta>, copy the code snippets into a source file, and run the project. Alternatively, you can use the [examples provided in the Github repository](https://github.com/delta-io/delta/tree/master/examples).
 
-.. important:: For all of the following instructions, make sure to install the correct version of Spark or PySpark that is compatible with <Delta> `3.2.0`. See the [release compatibility matrix](releases.md) for details.
+.. important:: For all the following instructions, make sure to install the correct version of Spark or PySpark that is compatible with <Delta> `3.2.0`. See the [release compatibility matrix](releases.md) for details.
 
 ### Prerequisite: set up Java
 
