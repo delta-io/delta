@@ -312,7 +312,7 @@ public class LogReplay {
   }
 
   /**
-   * Retrieves a map of domainName -> {@link DomainMetadata} from the log files.
+   * Retrieves a map of domainName to {@link DomainMetadata} from the log files.
    *
    * <p>Now loading domain metadata requires an additional round of log replay so this is done
    * lazily only when domain metadata is requested. We might want to merge this into {@link
