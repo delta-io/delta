@@ -25,6 +25,7 @@ import io.delta.kernel.internal.actions.{DomainMetadata, Protocol, SingleAction}
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.utils.CloseableIterable
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
+import io.delta.golden.GoldenTableUtils.goldenTablePath
 
 import java.util.Collections
 import scala.collection.JavaConverters._
@@ -42,17 +43,21 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
   }
 
   def assertDomainMetadata(
+      snapshot: SnapshotImpl,
+      expectedValue: Map[String, DomainMetadata]): Unit = {
+    val domainMetadataMap = snapshot.getDomainMetadataMap.asScala.mapValues(_.toString)
+    val expectedValueMap = expectedValue.mapValues(_.toString)
+
+    assert(domainMetadataMap === expectedValueMap)
+  }
+
+  def assertDomainMetadata(
       table: Table,
       engine: Engine,
       expectedValue: Map[String, DomainMetadata]): Unit = {
     // Get the latest snapshot of the table
     val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-
-    // Convert the domainMetadata into string for comparison
-    val domainMetadataMap = snapshot.getDomainMetadataMap.asScala.mapValues(_.toString)
-    val expectedValueMap = expectedValue.mapValues(_.toString)
-
-    assert(domainMetadataMap === expectedValueMap)
+    assertDomainMetadata(snapshot, expectedValue)
   }
 
   def commitDomainMetadataAndVerify(
@@ -445,6 +450,28 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
         expectedConflict = true
       )
     }
+  }
+
+  test("Integration test - read a golden table with checkpoints and log files") {
+    withTempDirAndEngine((tablePath, engine) => {
+      val path = goldenTablePath("kernel-domain-metadata")
+      val snapshot = latestSnapshot(path).asInstanceOf[SnapshotImpl]
+
+      // We need to read 1 checkpoint file and 1 log file to replay the golden table
+      // The state of the domain metadata should be:
+      // testDomain1: "{\"key1\":\"10\"}", removed = false  (from 03.checkpoint)
+      // testDomain2: "", removed = true                    (from 03.checkpoint)
+      // testDomain3: "", removed = false                   (from 04.json)
+
+      val dm1 = new DomainMetadata("testDomain1", """{"key1":"10"}""", false)
+      val dm2 = new DomainMetadata("testDomain2", "", true)
+      val dm3 = new DomainMetadata("testDomain3", "", false)
+
+      assertDomainMetadata(
+        snapshot,
+        Map("testDomain1" -> dm1, "testDomain2" -> dm2, "testDomain3" -> dm3)
+      )
+    })
   }
 
 }

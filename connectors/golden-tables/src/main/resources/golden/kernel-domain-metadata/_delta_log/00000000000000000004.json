@@ -1,0 +1,3 @@
+{"commitInfo":{"timestamp":1730671962209,"operation":"Manual Update","operationParameters":{},"readVersion":3,"isolationLevel":"Serializable","isBlindAppend":true,"operationMetrics":{},"engineInfo":"Apache-Spark/3.5.3 Delta-Lake/3.3.0-SNAPSHOT","txnId":"063e4cd4-4091-4a30-a089-4e8a0fc5c0ac"}}
+{"domainMetadata":{"domain":"testDomain1","configuration":"{\"key1\":\"10\"}","removed":false}}
+{"domainMetadata":{"domain":"testDomain2","configuration":"","removed":true}}
