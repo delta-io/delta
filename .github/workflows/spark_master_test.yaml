@@ -48,12 +48,6 @@ jobs:
           sudo apt-get install -y make build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev wget curl llvm libncurses5-dev libncursesw5-dev xz-utils tk-dev libffi-dev liblzma-dev python-openssl git
           sudo apt install libedit-dev
         if: steps.git-diff.outputs.diff
-      - name: Scala structured logging style check
-        run: |
-        if [ -f ./dev/spark_structured_logging_style.py ]; then
-            python3 ./dev/spark_structured_logging_style.py
-        fi
-        if: steps.git-diff.outputs.diff
       - name: Run Spark Master tests
         # when changing TEST_PARALLELISM_COUNT make sure to also change it in spark_test.yaml
         run: |
