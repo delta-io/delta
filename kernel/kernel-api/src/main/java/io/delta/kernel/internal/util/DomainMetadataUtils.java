@@ -16,14 +16,10 @@
 
 package io.delta.kernel.internal.util;
 
-import io.delta.kernel.data.Row;
+import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.actions.Protocol;
-import io.delta.kernel.types.StructType;
-import io.delta.kernel.utils.CloseableIterable;
-import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -35,45 +31,38 @@ public class DomainMetadataUtils {
   }
 
   /**
-   * Extracts a map of domain metadata from actions. In one transaction, there can be only one
-   * DomainMetadata action per domain name. It throws a KernelException if duplicate domain metadata
-   * actions is found.
+   * Extracts a map of domain metadata from actions. There should be only one {@link DomainMetadata}
+   * per domain name. It throws a KernelException if duplicate domain metadata is found.
    *
-   * @param actions an iterable of Row objects representing actions
-   * @param schema the schema of the row
-   * @return a map where the keys are domain names and the values are DomainMetadata objects
+   * @param domainMetadataActionVector A {@link ColumnVector} containing the domain metadata rows
+   * @return A map where the keys are domain names and the values are {@link DomainMetadata} objects
    */
   public static Map<String, DomainMetadata> extractDomainMetadataMap(
-      CloseableIterable<Row> actions, StructType schema) {
-    final int domainMetadataOrdinal = schema.indexOf("domainMetadata");
-    if (domainMetadataOrdinal == -1) {
-      throw new IllegalArgumentException("Schema does not contain 'domainMetadata' field");
-    }
+      ColumnVector domainMetadataActionVector) {
+    // A map from domain name to DomainMetadata action
+    Map<String, DomainMetadata> domainMetadataMap = new HashMap<>();
 
-    // Use try-with-resources to ensure that the CloseableIterable is closed after the loop
-    try (CloseableIterable<Row> closeableDataActions = actions) {
-      Map<String, DomainMetadata> domainMetadataMap = new HashMap<>();
-
-      for (Row action : closeableDataActions) {
-        // Only process DomainMetadata actions
-        if (action.isNullAt(domainMetadataOrdinal)) continue;
-
-        // Extract DomainMetadata action
-        DomainMetadata domainMetadata =
-            DomainMetadata.fromRow(action.getStruct(domainMetadataOrdinal));
-
-        // Check if domain already seen
-        String domain = domainMetadata.getDomain();
-        if (domainMetadataMap.containsKey(domain)) {
-          throw DeltaErrors.duplicateDomainMetadataAction(
-              domainMetadataMap.get(domain).toString(), domainMetadata.toString());
-        }
-        domainMetadataMap.put(domain, domainMetadata);
+    final int vectorSize = domainMetadataActionVector.getSize();
+    for (int rowId = 0; rowId < vectorSize; rowId++) {
+      if (domainMetadataActionVector.isNullAt(rowId)) {
+        // Skip non-domainMetadata actions
+        continue;
       }
-      return domainMetadataMap;
-    } catch (IOException ioe) {
-      throw new UncheckedIOException(ioe);
+
+      // Extract DomainMetadata action
+      DomainMetadata domainMetadata =
+          DomainMetadata.fromColumnVector(domainMetadataActionVector, rowId);
+      assert (domainMetadata != null);
+
+      // Check if domain already seen
+      String domain = domainMetadata.getDomain();
+      if (domainMetadataMap.containsKey(domain)) {
+        throw DeltaErrors.duplicateDomainMetadataAction(
+            domainMetadataMap.get(domain).toString(), domainMetadata.toString());
+      }
+      domainMetadataMap.put(domain, domainMetadata);
     }
+    return domainMetadataMap;
   }
 
   /**
