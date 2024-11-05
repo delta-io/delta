@@ -45,11 +45,7 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
   def assertDomainMetadata(
       snapshot: SnapshotImpl,
       expectedValue: Map[String, DomainMetadata]): Unit = {
-//    val domainMetadataMap = snapshot.getDomainMetadataMap.asScala.mapValues(_.toString)
-//    val expectedValueMap = expectedValue.mapValues(_.toString)
-
-    val domainMetadataMap = snapshot.getDomainMetadataMap.asScala
-    assert(domainMetadataMap === expectedValue)
+    assert(expectedValue === snapshot.getDomainMetadataMap.asScala)
   }
 
   def assertDomainMetadata(
@@ -68,7 +64,6 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
       domainMetadatas: Seq[DomainMetadata],
       expectedValue: Map[String, DomainMetadata]
   ): Unit = {
-
     val table = Table.forPath(engine, tablePath)
 
     createTxn(engine, tablePath, isNewTable, testSchema, Seq.empty)
@@ -146,7 +141,6 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
           .mapValues(_.last)
 
       assertDomainMetadata(table, engine, expectedMetadata)
-
     } catch {
       case e: KernelException =>
         assert(expectedConflict)

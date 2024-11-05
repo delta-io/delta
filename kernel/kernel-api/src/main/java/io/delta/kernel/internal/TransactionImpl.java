@@ -225,7 +225,6 @@ public class TransactionImpl implements Transaction {
 
     try (CloseableIterator<Row> stageDataIter =
         new ValidateDomainMetadataIterator(protocol, dataActions.iterator(), FULL_SCHEMA)) {
-
       // Create a new CloseableIterator that will return the metadata actions followed by the
       // data actions.
       CloseableIterator<Row> dataAndMetadataActions =

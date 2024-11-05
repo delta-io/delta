@@ -94,7 +94,6 @@ public class CreateCheckpointIterator implements CloseableIterator<FilteredColum
   private CloseableIterator<ActionWrapper> actionsIter;
   private boolean closed;
   private Optional<FilteredColumnarBatch> toReturnNext = Optional.empty();
-
   /**
    * This buffer is reused across batches to keep the memory allocations minimal. It is resized as
    * required and the array entries are reset between batches.
