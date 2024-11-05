@@ -250,7 +250,8 @@ object OptimisticTransaction {
 trait OptimisticTransactionImpl extends TransactionalWrite
   with SQLMetricsReporting
   with DeltaScanGenerator
-  with DeltaLogging {
+  with DeltaLogging
+  with RecordChecksum {
 
   import org.apache.spark.sql.delta.util.FileNames._
 
@@ -2475,7 +2476,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     }
     val commitFile = writeCommitFileImpl(
       attemptVersion, jsonActions, commitCoordinatorClient, currentTransactionInfo)
-    (None, commitFile)
+    val newChecksumOpt = incrementallyDeriveChecksum(attemptVersion, currentTransactionInfo)
+    (newChecksumOpt, commitFile)
   }
 
   protected def writeCommitFileImpl(
@@ -2499,6 +2501,33 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       }
     }
     commitResponse.getCommit
+  }
+
+
+  /**
+   * Given an attemptVersion, obtain checksum for previous snapshot version
+   * (i.e., attemptVersion - 1) and incrementally derives a new checksum from
+   * the actions of the current transaction.
+   *
+   * @param attemptVersion that the current transaction is committing
+   * @param currentTransactionInfo containing actions of the current transaction
+   * @return
+   */
+  protected def incrementallyDeriveChecksum(
+      attemptVersion: Long,
+      currentTransactionInfo: CurrentTransactionInfo): Option[VersionChecksum] = {
+
+    incrementallyDeriveChecksum(
+      spark,
+      deltaLog,
+      attemptVersion,
+      actions = currentTransactionInfo.finalActionsToCommit,
+      metadata = currentTransactionInfo.metadata,
+      protocol = currentTransactionInfo.protocol,
+      operationName = currentTransactionInfo.op.name,
+      txnIdOpt = Some(currentTransactionInfo.txnId),
+      previousVersionState = scala.Left(snapshot)
+    ).toOption
   }
 
   /**

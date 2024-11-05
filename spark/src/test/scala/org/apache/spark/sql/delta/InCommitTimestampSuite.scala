@@ -46,28 +46,11 @@ class InCommitTimestampSuite
     with DeltaTestUtilsBase
     with CoordinatedCommitsTestUtils
     with StreamTest {
+  import InCommitTimestampTestUtils._
 
   override def beforeAll(): Unit = {
     super.beforeAll()
     spark.conf.set(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey, "true")
-  }
-
-  private def getInCommitTimestamp(deltaLog: DeltaLog, version: Long): Long = {
-    val deltaFile = DeltaCommitFileProvider(deltaLog.unsafeVolatileSnapshot).deltaFile(version)
-    val commitInfo = DeltaHistoryManager.getCommitInfoOpt(
-      deltaLog.store,
-      deltaFile,
-      deltaLog.newDeltaHadoopConf())
-    commitInfo.get.inCommitTimestamp.get
-  }
-
-  private def getFileModificationTimesMap(
-      deltaLog: DeltaLog, start: Long, end: Long): Map[Long, Long] = {
-    deltaLog.store.listFrom(
-        FileNames.listingPrefix(deltaLog.logPath, start), deltaLog.newDeltaHadoopConf())
-      .collect { case FileNames.DeltaFile(fs, v) => v -> fs.getModificationTime }
-      .takeWhile(_._1 <= end)
-      .toMap
   }
 
   test("Enable ICT on commit 0") {
