@@ -18,17 +18,21 @@ package io.delta.kernel.internal.snapshot;
 
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
+import java.util.Optional;
 
 /** Contains summary information of a {@link io.delta.kernel.Snapshot}. */
-public class SnapshotHint {
+public class SnapshotDescriptor {
   private final long version;
   private final Protocol protocol;
   private final Metadata metadata;
+  private final Optional<Long> inCommitTimestampOpt;
 
-  public SnapshotHint(long version, Protocol protocol, Metadata metadata) {
+  public SnapshotDescriptor(
+      long version, Protocol protocol, Metadata metadata, Optional<Long> inCommitTimestampOpt) {
     this.version = version;
     this.protocol = protocol;
     this.metadata = metadata;
+    this.inCommitTimestampOpt = inCommitTimestampOpt;
   }
 
   public long getVersion() {
@@ -41,5 +45,9 @@ public class SnapshotHint {
 
   public Metadata getMetadata() {
     return metadata;
+  }
+
+  public Optional<Long> getInCommitTimestampOpt() {
+    return inCommitTimestampOpt;
   }
 }
