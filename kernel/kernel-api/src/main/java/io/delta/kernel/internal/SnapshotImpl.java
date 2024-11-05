@@ -85,6 +85,10 @@ public class SnapshotImpl implements Snapshot {
     return protocol;
   }
 
+  public Map<String, DomainMetadata> getDomainMetadataMap() {
+    return logReplay.getDomainMetadataMap();
+  }
+
   public CreateCheckpointIterator getCreateCheckpointIterator(Engine engine) {
     long minFileRetentionTimestampMillis =
         System.currentTimeMillis() - TOMBSTONE_RETENTION.fromMetadata(metadata);
@@ -168,9 +172,5 @@ public class SnapshotImpl implements Snapshot {
                   logPath.toString(),
                   COORDINATED_COMMITS_TABLE_CONF.fromMetadata(metadata));
             });
-  }
-
-  public Map<String, DomainMetadata> getDomainMetadataMap() {
-    return logReplay.getDomainMetadataMap();
   }
 }

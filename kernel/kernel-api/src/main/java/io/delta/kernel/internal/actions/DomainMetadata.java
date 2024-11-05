@@ -34,7 +34,6 @@ public class DomainMetadata {
     if (vector.isNullAt(rowId)) {
       return null;
     }
-
     return new DomainMetadata(
         requireNonNull(vector.getChild(0), rowId, "domain").getString(rowId),
         requireNonNull(vector.getChild(1), rowId, "configuration").getString(rowId),
@@ -42,6 +41,9 @@ public class DomainMetadata {
   }
 
   public static DomainMetadata fromRow(Row row) {
+    if (row == null) {
+      return null;
+    }
     assert (row.getSchema() == FULL_SCHEMA);
     return new DomainMetadata(
         requireNonNull(row, 0, "domain").getString(0),
@@ -120,5 +122,20 @@ public class DomainMetadata {
         + ", removed="
         + removed
         + '}';
+  }
+
+  @Override
+  public boolean equals(Object obj) {
+    if (this == obj) return true;
+    if (obj == null || getClass() != obj.getClass()) return false;
+    DomainMetadata that = (DomainMetadata) obj;
+    return removed == that.removed
+        && domain.equals(that.domain)
+        && configuration.equals(that.configuration);
+  }
+
+  @Override
+  public int hashCode() {
+    return java.util.Objects.hash(domain, configuration, removed);
   }
 }

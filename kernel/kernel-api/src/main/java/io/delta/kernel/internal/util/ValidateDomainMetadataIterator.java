@@ -38,20 +38,15 @@ import java.util.Map;
  * </ul>
  */
 public class ValidateDomainMetadataIterator implements CloseableIterator<Row> {
-  private final CloseableIterator<Row> dataActionsIter;
-  private final Map<String, DomainMetadata> domainMetadataMap = new HashMap<>();
-  private final int domainMetadataOrdinal;
   private final boolean domainMetadataSupported;
-  private final boolean allowDuplicate;
+  private final CloseableIterator<Row> dataActionsIter;
+  private final int domainMetadataOrdinal;
+  private final Map<String, DomainMetadata> domainMetadataMap = new HashMap<>();
 
   public ValidateDomainMetadataIterator(
-      Protocol protocol,
-      CloseableIterator<Row> dataActionsIter,
-      StructType schema,
-      boolean allowDuplicate) {
+      Protocol protocol, CloseableIterator<Row> dataActionsIter, StructType schema) {
     this.domainMetadataSupported = DomainMetadataUtils.isDomainMetadataSupported(protocol);
     this.dataActionsIter = dataActionsIter;
-    this.allowDuplicate = allowDuplicate;
     this.domainMetadataOrdinal = schema.indexOf("domainMetadata");
     if (domainMetadataOrdinal == -1) {
       throw new IllegalArgumentException("Schema does not contain 'domainMetadata' field");
@@ -78,7 +73,7 @@ public class ValidateDomainMetadataIterator implements CloseableIterator<Row> {
 
       // Check if domain already seen
       String domain = domainMetadata.getDomain();
-      if (!allowDuplicate && domainMetadataMap.containsKey(domain)) {
+      if (domainMetadataMap.containsKey(domain)) {
         throw DeltaErrors.duplicateDomainMetadataAction(
             domainMetadataMap.get(domain).toString(), domainMetadata.toString());
       }

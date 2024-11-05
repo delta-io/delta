@@ -314,8 +314,8 @@ public class LogReplay {
   /**
    * Retrieves a map of domainName to {@link DomainMetadata} from the log files.
    *
-   * <p>Now loading domain metadata requires an additional round of log replay so this is done
-   * lazily only when domain metadata is requested. We might want to merge this into {@link
+   * <p>Loading domain metadata requires an additional round of log replay so this is done lazily
+   * only when domain metadata is requested. We might want to merge this into {@link
    * #loadTableProtocolAndMetadata}.
    *
    * @param engine The engine used to process the log files.
@@ -323,18 +323,16 @@ public class LogReplay {
    *     DomainMetadata} objects.
    * @throws RuntimeException if an I/O error occurs while closing the iterator.
    */
-  public Map<String, DomainMetadata> loadDomainMetadataMap(Engine engine) {
-
-    Map<String, DomainMetadata> domainMetadataMap = new HashMap<>();
+  private Map<String, DomainMetadata> loadDomainMetadataMap(Engine engine) {
 
     try (CloseableIterator<ActionWrapper> reverseIter =
         new ActionsIterator(
             engine,
             logSegment.allLogFilesReversed(),
             DOMAIN_METADATA_READ_SCHEMA,
-            Optional.empty())) {
+            Optional.empty() /* checkpointPredicate */)) {
+      Map<String, DomainMetadata> domainMetadataMap = new HashMap<>();
       while (reverseIter.hasNext()) {
-
         final ColumnarBatch columnarBatch = reverseIter.next().getColumnarBatch();
         assert (columnarBatch.getSchema().equals(DOMAIN_METADATA_READ_SCHEMA));
 
@@ -349,11 +347,9 @@ public class LogReplay {
           }
         }
       }
-
+      return domainMetadataMap;
     } catch (IOException ex) {
       throw new RuntimeException("Could not close iterator", ex);
     }
-
-    return domainMetadataMap;
   }
 }

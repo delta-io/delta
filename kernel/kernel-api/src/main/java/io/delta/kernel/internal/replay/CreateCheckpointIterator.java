@@ -365,18 +365,25 @@ public class CreateCheckpointIterator implements CloseableIterator<FilteredColum
     }
   }
 
+  /**
+   * Processes domain metadata actions during checkpoint creation. During the reverse log replay,
+   * for each domain, we only keep the first (latest) domain metadata action encountered by
+   * selecting them in the selection vector, and ignore any older ones for the same domain by
+   * unselecting them.
+   *
+   * @param domainMetadataVector Column vector containing domain names of domain metadata actions.
+   * @param selectionVectorBuffer The selection vector to attach to the batch to indicate which
+   *     records to write to the checkpoint and which ones not to.
+   */
   private void processDomainMetadata(
       ColumnVector domainMetadataVector, boolean[] selectionVectorBuffer) {
-
     final int vectorSize = domainMetadataVector.getSize();
-
     for (int rowId = 0; rowId < vectorSize; rowId++) {
       if (domainMetadataVector.isNullAt(rowId)) {
         continue; // selectionVector will be `false` at rowId by default
       }
 
       final String domain = domainMetadataVector.getString(rowId);
-
       if (domainSeen.contains(domain)) {
         // We do a reverse log replay. The latest domainMetadata seen for a given domain wins and
         // should be written to the checkpoint. Anything after the first one shouldn't be in

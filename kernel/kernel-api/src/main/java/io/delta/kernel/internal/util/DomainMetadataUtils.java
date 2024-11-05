@@ -30,6 +30,10 @@ import java.util.Map;
 
 public class DomainMetadataUtils {
 
+  private DomainMetadataUtils() {
+    // Empty private constructor to prevent instantiation
+  }
+
   /**
    * Extracts a map of domain metadata from actions. In one transaction, there can be only one
    * DomainMetadata action per domain name. It throws a KernelException if duplicate domain metadata
@@ -41,8 +45,6 @@ public class DomainMetadataUtils {
    */
   public static Map<String, DomainMetadata> extractDomainMetadataMap(
       CloseableIterable<Row> actions, StructType schema) {
-    Map<String, DomainMetadata> domainMetadataMap = new HashMap<>();
-
     final int domainMetadataOrdinal = schema.indexOf("domainMetadata");
     if (domainMetadataOrdinal == -1) {
       throw new IllegalArgumentException("Schema does not contain 'domainMetadata' field");
@@ -50,6 +52,8 @@ public class DomainMetadataUtils {
 
     // Use try-with-resources to ensure that the CloseableIterable is closed after the loop
     try (CloseableIterable<Row> closeableDataActions = actions) {
+      Map<String, DomainMetadata> domainMetadataMap = new HashMap<>();
+
       for (Row action : closeableDataActions) {
         // Only process DomainMetadata actions
         if (action.isNullAt(domainMetadataOrdinal)) continue;
@@ -66,11 +70,10 @@ public class DomainMetadataUtils {
         }
         domainMetadataMap.put(domain, domainMetadata);
       }
+      return domainMetadataMap;
     } catch (IOException ioe) {
       throw new UncheckedIOException(ioe);
     }
-
-    return domainMetadataMap;
   }
 
   /**

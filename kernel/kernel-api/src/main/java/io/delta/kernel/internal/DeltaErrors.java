@@ -18,6 +18,7 @@ package io.delta.kernel.internal;
 import static java.lang.String.format;
 
 import io.delta.kernel.exceptions.*;
+import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.DataFileStatus;
@@ -288,6 +289,17 @@ public final class DeltaErrors {
                 + "Only one action per domain is allowed.",
             action1, action2);
     return new KernelException(message);
+  }
+
+  public static ConcurrentWriteException concurrentDomainMetadataAction(
+      DomainMetadata domainMetadataAttempt, DomainMetadata winningDomainMetadata) {
+    String message =
+        String.format(
+            "A concurrent writer added a domainMetadata action for the same domain: %s. "
+                + "No domain-specific conflict resolution available for this domain. "
+                + "Attempted domainMetadata: %s. Winning domainMetadata: %s",
+            domainMetadataAttempt.getDomain(), domainMetadataAttempt, winningDomainMetadata);
+    return new ConcurrentWriteException(message);
   }
 
   /* ------------------------ HELPER METHODS ----------------------------- */

@@ -224,7 +224,7 @@ public class TransactionImpl implements Transaction {
     setTxnOpt.ifPresent(setTxn -> metadataActions.add(createTxnSingleAction(setTxn.toRow())));
 
     try (CloseableIterator<Row> stageDataIter =
-        new ValidateDomainMetadataIterator(protocol, dataActions.iterator(), FULL_SCHEMA, false)) {
+        new ValidateDomainMetadataIterator(protocol, dataActions.iterator(), FULL_SCHEMA)) {
 
       // Create a new CloseableIterator that will return the metadata actions followed by the
       // data actions.

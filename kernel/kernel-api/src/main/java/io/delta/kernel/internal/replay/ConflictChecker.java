@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.internal.replay;
 
+import static io.delta.kernel.internal.DeltaErrors.concurrentDomainMetadataAction;
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 import static io.delta.kernel.internal.TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED;
 import static io.delta.kernel.internal.actions.SingleAction.*;
@@ -63,7 +64,7 @@ public class ConflictChecker {
   private final long attemptVersion;
 
   // Data actions from the losing transaction
-  CloseableIterable<Row> dataActions;
+  private final CloseableIterable<Row> dataActions;
 
   private ConflictChecker(
       SnapshotImpl snapshot,
@@ -217,20 +218,19 @@ public class ConflictChecker {
    * winning transaction at any domain.
    *
    * <ol>
-   *   1. Accept the current transaction if its set of metadata domains does not overlap with the
-   *   winning transaction's set of metadata domains.
-   *   <p>2. Otherwise, fail the current transaction unless each conflicting domain is associated
-   *   with a domain-specific way of resolving the conflict.
+   *   <li>Accept the current transaction if its set of metadata domains does not overlap with the
+   *       winning transaction's set of metadata domains.
+   *   <li>Otherwise, fail the current transaction unless each conflicting domain is associated with
+   *       a domain-specific way of resolving the conflict.
    * </ol>
    *
-   * @param actionBatch action batch from the winning transactions
+   * @param winningCommitActionBatch action batch from the winning transactions
    */
-  private void handleDomainMetadata(ColumnarBatch actionBatch) {
+  private void handleDomainMetadata(ColumnarBatch winningCommitActionBatch) {
     // Extract the domain metadata map from the winning transaction.
     Map<String, DomainMetadata> winningDomainMetadataMap =
         DomainMetadataUtils.extractDomainMetadataMap(
-            inMemoryIterable(actionBatch.getRows()), CONFLICT_RESOLUTION_SCHEMA);
-
+            inMemoryIterable(winningCommitActionBatch.getRows()), CONFLICT_RESOLUTION_SCHEMA);
     // Get the ordinal of the domainMetadata action from the full schema, which is used when writing
     // out the single action to the Delta Log
     final int domainMetadataOrdinal = FULL_SCHEMA.indexOf("domainMetadata");
@@ -255,25 +255,13 @@ public class ConflictChecker {
 
   private void resolveDomainMetadataConflict(
       DomainMetadata domainMetadataAttempt, Map<String, DomainMetadata> winningDomainMetadataMap) {
-
     String domain = domainMetadataAttempt.getDomain();
     DomainMetadata winningDomainMetadata = winningDomainMetadataMap.get(domain);
-    if (winningDomainMetadata == null) {
-      // No conflict
-      return;
-    } else {
+    if (winningDomainMetadata != null) {
       // Conflict - check if the conflict can be resolved
-
       // Currently, we don't have any domain-specific way of resolving the conflict.
       // Domain-specific ways of resolving the conflict can be added here (e.g. for Row Tracking)
-      throw new ConcurrentWriteException(
-          "A concurrent writer added a domainMetadata action for the same domain: "
-              + domain
-              + ". No domain-specific conflict resolution available for this domain."
-              + "Attempted domainMetadata: "
-              + domainMetadataAttempt
-              + ". Winning domainMetadata: "
-              + winningDomainMetadata);
+      throw concurrentDomainMetadataAction(domainMetadataAttempt, winningDomainMetadata);
     }
   }
 
