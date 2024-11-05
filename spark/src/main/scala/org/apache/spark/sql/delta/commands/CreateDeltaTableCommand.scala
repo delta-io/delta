@@ -799,9 +799,12 @@ case class CreateDeltaTableCommand(
     val txn = deltaLog.startTransaction(None, snapshotOpt)
     validatePrerequisitesForClusteredTable(txn.snapshot.protocol, txn.deltaLog)
 
-    // During CREATE (not REPLACE/overwrites), we synchronously run conversion
+    // If its REPLACE or dataframe overwrite, and the table does not exist yet, or
+    // its CREATE without 'OR REPLACE', we synchronously run conversion
     //  (if Uniform is enabled) so we always remove the post commit hook here.
-    if (!isReplace) {
+    val tableExistsInCatalog = sparkSession.sessionState.managedCatalogSessionCatalog
+      .tableExists(tableWithLocation.identifier)
+    if (!isReplace || !tableExistsInCatalog) {
       txn.unregisterPostCommitHooksWhere(hook => hook.name == IcebergConverterHook.name)
       txn.unregisterPostCommitHooksWhere(hook => hook.name == HudiConverterHook.name)
     }
