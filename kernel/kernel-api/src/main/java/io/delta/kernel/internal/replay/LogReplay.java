@@ -23,13 +23,14 @@ import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Predicate;
+import io.delta.kernel.internal.DeltaErrors;
+import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.TableFeatures;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.checkpoints.SidecarFile;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.snapshot.LogSegment;
-import io.delta.kernel.internal.snapshot.SnapshotHint;
-import io.delta.kernel.internal.util.Tuple2;
+import io.delta.kernel.internal.snapshot.SnapshotDescriptor;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
@@ -45,10 +46,13 @@ import java.util.Optional;
  * recent {@code Protocol} version wins. - For each `(path, dv id)` tuple, this class should always
  * output only one {@code FileAction} (either {@code AddFile} or {@code RemoveFile})
  *
- * <p>This class exposes the following public APIs - {@link #getProtocol()}: latest non-null
- * Protocol - {@link #getMetadata()}: latest non-null Metadata - {@link
- * #getAddFilesAsColumnarBatches}: return all active (not tombstoned) AddFiles as {@link
- * ColumnarBatch}s
+ * <p>This class exposes the following public APIs
+ *
+ * <ul>
+ *   <li>{@link #getSnapshotDescriptor}: latest SnapshotDescriptor
+ *   <li>{@link #getAddFilesAsColumnarBatches}: return all active (not tombstoned) AddFiles as
+ *       {@link ColumnarBatch}s
+ * </ul>
  */
 public class LogReplay {
 
@@ -56,9 +60,12 @@ public class LogReplay {
   // Static Schema Fields //
   //////////////////////////
 
-  /** Read schema when searching for the latest Protocol and Metadata. */
-  public static final StructType PROTOCOL_METADATA_READ_SCHEMA =
-      new StructType().add("protocol", Protocol.FULL_SCHEMA).add("metaData", Metadata.FULL_SCHEMA);
+  /** Read schema when searching for the latest snapshot descriptor. */
+  private static final StructType SNAPSHOT_DESCRIPTOR_LOG_REPLAY_SCHEMA =
+      new StructType()
+          .add("protocol", Protocol.FULL_SCHEMA)
+          .add("metaData", Metadata.FULL_SCHEMA)
+          .add("commitInfo", CommitInfo.IN_COMMIT_TIMESTAMP_SCHEMA);
 
   /** We don't need to read the entire RemoveFile, only the path and dv info */
   private static StructType REMOVE_FILE_SCHEMA =
@@ -108,7 +115,7 @@ public class LogReplay {
 
   private final Path dataPath;
   private final LogSegment logSegment;
-  private final Tuple2<Protocol, Metadata> protocolAndMetadata;
+  private final SnapshotDescriptor snapshotDescriptor;
 
   public LogReplay(
       Path logPath,
@@ -116,24 +123,21 @@ public class LogReplay {
       long snapshotVersion,
       Engine engine,
       LogSegment logSegment,
-      Optional<SnapshotHint> snapshotHint) {
+      Optional<SnapshotDescriptor> snapshotHint) {
     assertLogFilesBelongToTable(logPath, logSegment.allLogFilesUnsorted());
 
     this.dataPath = dataPath;
     this.logSegment = logSegment;
-    this.protocolAndMetadata = loadTableProtocolAndMetadata(engine, snapshotHint, snapshotVersion);
+    this.snapshotDescriptor =
+        loadSnapshotDescriptor(engine, dataPath, snapshotHint, snapshotVersion);
   }
 
   /////////////////
   // Public APIs //
   /////////////////
 
-  public Protocol getProtocol() {
-    return this.protocolAndMetadata._1;
-  }
-
-  public Metadata getMetadata() {
-    return this.protocolAndMetadata._2;
+  public SnapshotDescriptor getSnapshotDescriptor() {
+    return snapshotDescriptor;
   }
 
   public Optional<Long> getLatestTransactionIdentifier(Engine engine, String applicationId) {
@@ -169,29 +173,31 @@ public class LogReplay {
   ////////////////////
 
   /**
-   * Returns the latest Protocol and Metadata from the delta files in the `logSegment`. Does *not*
-   * validate that this delta-kernel connector understands the table at that protocol.
+   * Returns the latest {@link SnapshotDescriptor} from the delta files in the `logSegment`.
    *
    * <p>Uses the `snapshotHint` to bound how many delta files it reads. i.e. we only need to read
    * delta files newer than the hint to search for any new P & M. If we don't find them, we can just
    * use the P and/or M from the hint.
    */
-  protected Tuple2<Protocol, Metadata> loadTableProtocolAndMetadata(
-      Engine engine, Optional<SnapshotHint> snapshotHint, long snapshotVersion) {
-
+  protected SnapshotDescriptor loadSnapshotDescriptor(
+      Engine engine,
+      Path dataPath,
+      Optional<SnapshotDescriptor> snapshotHint,
+      long snapshotVersion) {
     // Exit early if the hint already has the info we need
     if (snapshotHint.isPresent() && snapshotHint.get().getVersion() == snapshotVersion) {
-      return new Tuple2<>(snapshotHint.get().getProtocol(), snapshotHint.get().getMetadata());
+      return snapshotHint.get();
     }
 
     Protocol protocol = null;
     Metadata metadata = null;
+    Optional<Long> ictOpt = Optional.empty();
 
     try (CloseableIterator<ActionWrapper> reverseIter =
         new ActionsIterator(
             engine,
             logSegment.allLogFilesReversed(),
-            PROTOCOL_METADATA_READ_SCHEMA,
+            SNAPSHOT_DESCRIPTOR_LOG_REPLAY_SCHEMA,
             Optional.empty())) {
       while (reverseIter.hasNext()) {
         final ActionWrapper nextElem = reverseIter.next();
@@ -200,9 +206,31 @@ public class LogReplay {
         // Load this lazily (as needed). We may be able to just use the hint.
         ColumnarBatch columnarBatch = null;
 
+        // Note that (1) we don't yet know if ICT is enabled on this table and (2) we only care
+        // about getting the ICT from the latest commit whose version matches our desired snapshot
+        // version.
+        if (version == snapshotVersion) {
+          columnarBatch = nextElem.getColumnarBatch();
+          assert (columnarBatch.getSchema().equals(SNAPSHOT_DESCRIPTOR_LOG_REPLAY_SCHEMA));
+          final ColumnVector commitInfoVector = columnarBatch.getColumnVector(2);
+
+          for (int i = 0; i < commitInfoVector.getSize(); i++) {
+            if (!commitInfoVector.isNullAt(i)) {
+              ictOpt = CommitInfo.inCommitTimestampFromColumnVector(commitInfoVector, i);
+            }
+
+            if (!nextElem.isFromCheckpoint()) {
+              // If ICT is enabled and if we are reading from a Delta file (not a checkpoint), then
+              // the commitInfo action must be the first action in the commit. If this first commit
+              // action is null, then ICT isn't enabled and we can break early.
+              break;
+            }
+          }
+        }
+
         if (protocol == null) {
           columnarBatch = nextElem.getColumnarBatch();
-          assert (columnarBatch.getSchema().equals(PROTOCOL_METADATA_READ_SCHEMA));
+          assert (columnarBatch.getSchema().equals(SNAPSHOT_DESCRIPTOR_LOG_REPLAY_SCHEMA));
 
           final ColumnVector protocolVector = columnarBatch.getColumnVector(0);
 
@@ -212,7 +240,8 @@ public class LogReplay {
 
               if (metadata != null) {
                 // Stop since we have found the latest Protocol and Metadata.
-                return new Tuple2<>(protocol, metadata);
+                validateSnapshotDescriptor(dataPath, protocol, metadata, ictOpt, snapshotVersion);
+                return new SnapshotDescriptor(snapshotVersion, protocol, metadata, ictOpt);
               }
 
               break; // We just found the protocol, exit this for-loop
@@ -223,7 +252,7 @@ public class LogReplay {
         if (metadata == null) {
           if (columnarBatch == null) {
             columnarBatch = nextElem.getColumnarBatch();
-            assert (columnarBatch.getSchema().equals(PROTOCOL_METADATA_READ_SCHEMA));
+            assert (columnarBatch.getSchema().equals(SNAPSHOT_DESCRIPTOR_LOG_REPLAY_SCHEMA));
           }
           final ColumnVector metadataVector = columnarBatch.getColumnVector(1);
 
@@ -233,9 +262,8 @@ public class LogReplay {
 
               if (protocol != null) {
                 // Stop since we have found the latest Protocol and Metadata.
-                TableFeatures.validateReadSupportedTable(
-                    protocol, dataPath.toString(), Optional.of(metadata));
-                return new Tuple2<>(protocol, metadata);
+                validateSnapshotDescriptor(dataPath, protocol, metadata, ictOpt, snapshotVersion);
+                return new SnapshotDescriptor(snapshotVersion, protocol, metadata, ictOpt);
               }
 
               break; // We just found the metadata, exit this for-loop
@@ -253,7 +281,7 @@ public class LogReplay {
           if (metadata == null) {
             metadata = snapshotHint.get().getMetadata();
           }
-          return new Tuple2<>(protocol, metadata);
+          return new SnapshotDescriptor(snapshotVersion, protocol, metadata, ictOpt);
         }
       }
     } catch (IOException ex) {
@@ -267,6 +295,23 @@ public class LogReplay {
 
     throw new IllegalStateException(
         String.format("No metadata found at version %s", logSegment.version));
+  }
+
+  /**
+   * Note: this is called from {@link #loadSnapshotDescriptor}, which is called from the
+   * constructor, which has not finished initializing. Do not use member fields declared in the
+   * constructor.
+   */
+  private void validateSnapshotDescriptor(
+      Path dataPath,
+      Protocol protocol,
+      Metadata metadata,
+      Optional<Long> ictOpt,
+      long snapshotVersion) {
+    if (TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata) && !ictOpt.isPresent()) {
+      throw DeltaErrors.missingCommitTimestamp(dataPath.toString(), snapshotVersion);
+    }
+    TableFeatures.validateReadSupportedTable(protocol, dataPath.toString(), Optional.of(metadata));
   }
 
   private Optional<Long> loadLatestTransactionVersion(Engine engine, String applicationId) {
