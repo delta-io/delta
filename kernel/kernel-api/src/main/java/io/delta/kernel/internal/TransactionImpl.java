@@ -276,7 +276,7 @@ public class TransactionImpl implements Transaction {
   private Optional<Long> generateInCommitTimestampForFirstCommitAttempt(
       Engine engine, long currentTimestamp) {
     if (IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata)) {
-      long lastCommitTimestamp = readSnapshot.getTimestamp(engine);
+      long lastCommitTimestamp = readSnapshot.getTimestamp();
       return Optional.of(Math.max(currentTimestamp, lastCommitTimestamp + 1));
     } else {
       return Optional.empty();
