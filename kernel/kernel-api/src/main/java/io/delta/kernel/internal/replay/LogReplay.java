@@ -324,7 +324,6 @@ public class LogReplay {
    * @throws RuntimeException if an I/O error occurs while closing the iterator.
    */
   private Map<String, DomainMetadata> loadDomainMetadataMap(Engine engine) {
-
     try (CloseableIterator<ActionWrapper> reverseIter =
         new ActionsIterator(
             engine,

@@ -58,7 +58,7 @@ public class DomainMetadataUtils {
       String domain = domainMetadata.getDomain();
       if (domainMetadataMap.containsKey(domain)) {
         throw DeltaErrors.duplicateDomainMetadataAction(
-            domainMetadataMap.get(domain).toString(), domainMetadata.toString());
+            domain, domainMetadataMap.get(domain).toString(), domainMetadata.toString());
       }
       domainMetadataMap.put(domain, domainMetadata);
     }

@@ -33,7 +33,7 @@ import scala.collection.immutable.Seq
 
 class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
 
-  def generateDMActionsForCommit(actions: Seq[DomainMetadata]): CloseableIterable[Row] = {
+  private def generateDMActionsForCommit(actions: Seq[DomainMetadata]): CloseableIterable[Row] = {
     val actionsIter = actions
       .map(dmAction => SingleAction.createDomainMetadataSingleAction(dmAction.toRow))
       .asJava
@@ -42,13 +42,13 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
     inMemoryIterable(toCloseableIterator(actionsIter))
   }
 
-  def assertDomainMetadata(
+  private def assertDomainMetadata(
       snapshot: SnapshotImpl,
       expectedValue: Map[String, DomainMetadata]): Unit = {
     assert(expectedValue === snapshot.getDomainMetadataMap.asScala)
   }
 
-  def assertDomainMetadata(
+  private def assertDomainMetadata(
       table: Table,
       engine: Engine,
       expectedValue: Map[String, DomainMetadata]): Unit = {
@@ -57,22 +57,20 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
     assertDomainMetadata(snapshot, expectedValue)
   }
 
-  def commitDomainMetadataAndVerify(
+  private def commitDomainMetadataAndVerify(
       engine: Engine,
       tablePath: String,
       isNewTable: Boolean,
       domainMetadatas: Seq[DomainMetadata],
-      expectedValue: Map[String, DomainMetadata]
-  ): Unit = {
+      expectedValue: Map[String, DomainMetadata]): Unit = {
     val table = Table.forPath(engine, tablePath)
-
     createTxn(engine, tablePath, isNewTable, testSchema, Seq.empty)
       .commit(engine, generateDMActionsForCommit(domainMetadatas))
 
     assertDomainMetadata(table, engine, expectedValue)
   }
 
-  def setDomainMetadataSupport(engine: Engine, tablePath: String): Unit = {
+  private def setDomainMetadataSupport(engine: Engine, tablePath: String): Unit = {
     val protocol = new Protocol(
       1, // minReaderVersion
       7, // minWriterVersion
@@ -85,7 +83,7 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
     txn.commit(engine, inMemoryIterable(toCloseableIterator(Seq(protocolAction).asJava.iterator())))
   }
 
-  def createTableWithDomainMetadataSupported(engine: Engine, tablePath: String): Unit = {
+  private def createTableWithDomainMetadataSupported(engine: Engine, tablePath: String): Unit = {
     // Create an empty table
     createTxn(engine, tablePath, isNewTable = true, testSchema, Seq.empty)
       .commit(engine, emptyIterable())
@@ -101,7 +99,6 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
       winningTxn2DomainMetadatas: Seq[DomainMetadata],
       winningTxn3DomainMetadatas: Seq[DomainMetadata],
       expectedConflict: Boolean): Unit = {
-
     // Create table with domain metadata support
     createTableWithDomainMetadataSupported(engine, tablePath)
     val table = Table.forPath(engine, tablePath)
@@ -120,35 +117,33 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
      * t5 ------- Txn3 commits.
      * t6 ------------------------ Txn1 commits (SUCCESS or FAIL).
      */
-    try {
-      val txn1 = createTxn(engine, tablePath, isNewTable = false, testSchema, Seq.empty)
+    val txn1 = createTxn(engine, tablePath, isNewTable = false, testSchema, Seq.empty)
 
-      val txn2 = createTxn(engine, tablePath, isNewTable = false, testSchema, Seq.empty)
-      txn2.commit(engine, generateDMActionsForCommit(winningTxn2DomainMetadatas))
+    val txn2 = createTxn(engine, tablePath, isNewTable = false, testSchema, Seq.empty)
+    txn2.commit(engine, generateDMActionsForCommit(winningTxn2DomainMetadatas))
 
-      val txn3 = createTxn(engine, tablePath, isNewTable = false, testSchema, Seq.empty)
-      txn3.commit(engine, generateDMActionsForCommit(winningTxn3DomainMetadatas))
+    val txn3 = createTxn(engine, tablePath, isNewTable = false, testSchema, Seq.empty)
+    txn3.commit(engine, generateDMActionsForCommit(winningTxn3DomainMetadatas))
 
+    if (expectedConflict) {
+      // We expect the commit of txn1 to fail because of the conflicting DM actions
+      val ex = intercept[KernelException] {
+        txn1.commit(engine, generateDMActionsForCommit(currentTxn1DomainMetadatas))
+      }
+      assert(
+        ex.getMessage.contains(
+          "A concurrent writer added a domainMetadata action for the same domain"
+        )
+      )
+    } else {
+      // We expect the commit of txn1 to succeed
       txn1.commit(engine, generateDMActionsForCommit(currentTxn1DomainMetadatas))
-
-      // If we reach here, there was no conflict
-      assert(!expectedConflict)
-
       // Verify the final state includes merged domain metadata
       val expectedMetadata =
         (winningTxn2DomainMetadatas ++ winningTxn3DomainMetadatas ++ currentTxn1DomainMetadatas)
           .groupBy(_.getDomain)
           .mapValues(_.last)
-
       assertDomainMetadata(table, engine, expectedMetadata)
-    } catch {
-      case e: KernelException =>
-        assert(expectedConflict)
-        assert(
-          e.getMessage.contains(
-            "A concurrent writer added a domainMetadata action for the same domain"
-          )
-        )
     }
   }
 
@@ -210,7 +205,9 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
         txn.commit(engine, generateDMActionsForCommit(List(dm1_1, dm2, dm1_2)))
       }
       assert(
-        e.getMessage.contains("Multiple domain metadata actions detected in single transaction")
+        e.getMessage.contains(
+          "Multiple actions detected for domain 'domain1' in single transaction"
+        )
       )
     }
   }
