@@ -61,7 +61,7 @@ import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTrans
 import org.apache.spark.sql.errors.QueryCompilationErrors
 import org.apache.spark.sql.execution.command.CreateTableLikeCommand
 import org.apache.spark.sql.execution.command.RunnableCommand
-import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation, LogicalRelationWithTable}
+import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation, LogicalRelationShims, LogicalRelationWithTable}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.execution.streaming.StreamingRelation
@@ -1228,7 +1228,7 @@ object DeltaRelation extends DeltaLogging {
       } else {
         v2Relation.output
       }
-      LogicalRelation(relation, output, d.ttSafeCatalogTable, isStreaming = false)
+      LogicalRelationShims.newInstance(relation, output, d.ttSafeCatalogTable, isStreaming = false)
     }
   }
 }
