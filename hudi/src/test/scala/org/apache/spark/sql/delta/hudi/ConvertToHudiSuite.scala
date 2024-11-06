@@ -431,6 +431,7 @@ class ConvertToHudiSuite
   }
 
   override def withTempTableAndDir(f: (String, String) => Unit): Unit = {
+
     val tableId = s"testTable${UUID.randomUUID()}".replace("-", "_")
     withTempDir { externalLocation =>
       val tablePath = new Path(externalLocation.toString, "table")
