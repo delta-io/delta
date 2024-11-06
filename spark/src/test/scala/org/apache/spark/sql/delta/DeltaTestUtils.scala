@@ -25,7 +25,7 @@ import scala.collection.concurrent
 import scala.reflect.ClassTag
 import scala.util.matching.Regex
 
-import com.databricks.spark.util.UsageRecord
+import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
 import org.apache.spark.sql.delta.DeltaTestUtils.Plans
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -161,6 +161,13 @@ trait DeltaTestUtilsBase {
   def filterUsageRecords(usageRecords: Seq[UsageRecord], opType: String): Seq[UsageRecord] = {
     usageRecords.filter { r =>
       r.tags.get("opType").contains(opType) || r.opType.map(_.typeName).contains(opType)
+    }
+  }
+
+  def collectUsageLogs(opType: String)(f: => Unit): collection.Seq[UsageRecord] = {
+    Log4jUsageLogger.track(f).filter { r =>
+      r.metric == "tahoeEvent" &&
+        r.tags.get("opType").contains(opType)
     }
   }
 

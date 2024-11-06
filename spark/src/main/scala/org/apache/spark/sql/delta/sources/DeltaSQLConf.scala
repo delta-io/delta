@@ -1035,6 +1035,34 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_CHECKSUM_MISMATCH_IS_FATAL =
+    buildConf("checksum.mismatch.fatal")
+      .internal()
+      .doc(
+        """If true, throws a fatal error when the recreated Delta State doesn't
+          |match committed checksum file.
+        """)
+      .booleanConf
+      .createWithDefault(true)
+
+  val INCREMENTAL_COMMIT_VERIFY =
+    buildConf("incremental.commit.verify")
+      .internal()
+      .doc("If true, Delta commit will validate the commit checksum file content before and " +
+        "after each incremental commit. Note that this requires two full state reconstructions.")
+      .booleanConf
+      .createWithDefault(false)
+
+  // This config is effective only in unit tests.
+  val INCREMENTAL_COMMIT_FORCE_VERIFY_IN_TESTS =
+    buildConf("incremental.commit.forceVerifyInTests")
+      .internal()
+      .doc("If true, Delta commit will validate the commit checksum file content before and " +
+        "after each incremental commit as part of Unit Tests. Note that this overrides any " +
+        s"behaviour from ${INCREMENTAL_COMMIT_VERIFY.key} config.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_CHECKPOINT_THROW_EXCEPTION_WHEN_FAILED =
       buildConf("checkpoint.exceptionThrowing.enabled")
         .internal()

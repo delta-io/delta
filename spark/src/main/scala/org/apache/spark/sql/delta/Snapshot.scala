@@ -88,6 +88,7 @@ class Snapshot(
   with StateCache
   with StatisticsCollection
   with DataSkippingReader
+  with ValidateChecksum
   with DeltaLogging {
 
   import Snapshot._

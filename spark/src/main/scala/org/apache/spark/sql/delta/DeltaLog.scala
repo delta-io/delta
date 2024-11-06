@@ -143,7 +143,12 @@ class DeltaLog private(
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_MAX_SNAPSHOT_LINEAGE_LENGTH)
 
   private[delta] def incrementalCommitEnabled: Boolean = {
-    DeltaLog.incrementalCommitEnableConfigs.forall(conf => spark.conf.get(conf))
+    spark.conf.get(DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED)
+  }
+
+  private[delta] def shouldVerifyIncrementalCommit: Boolean = {
+    spark.conf.get(DeltaSQLConf.INCREMENTAL_COMMIT_VERIFY) ||
+      (Utils.isTesting && spark.conf.get(DeltaSQLConf.INCREMENTAL_COMMIT_FORCE_VERIFY_IN_TESTS))
   }
 
   /** The unique identifier for this table. */
@@ -723,10 +728,6 @@ object DeltaLog extends DeltaLogging {
       .expireAfterAccess(cacheRetention, TimeUnit.MINUTES)
       .maximumSize(cacheSize)
   }
-
-  val incrementalCommitEnableConfigs = Seq(
-    DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED
-  )
 
 
   /**

@@ -1250,12 +1250,37 @@ trait SnapshotManagement { self: DeltaLog =>
     logInfo(
       log"Creating a new snapshot v${MDC(DeltaLogKeys.VERSION, initSegment.version)} " +
       log"for commit version ${MDC(DeltaLogKeys.VERSION2, committedVersion)}")
-    createSnapshot(
+
+    val newSnapshot = createSnapshot(
       initSegment,
       tableCommitCoordinatorClientOpt = tableCommitCoordinatorClientOpt,
       tableIdentifierOpt = tableIdentifierOpt,
       checksumOpt = newChecksumOpt
     )
+    // Verify when enabled or when tests run to help future proof IC
+    if (shouldVerifyIncrementalCommit) {
+      val crcIsValid = try {
+        // NOTE: Validation is a no-op with incremental commit disabled.
+        newSnapshot.validateChecksum(Map("context" -> "incrementalCommit"))
+      } catch {
+        case _: IllegalStateException if !Utils.isTesting => false
+      }
+
+      if (!crcIsValid) {
+        // Create snapshot without incremental checksum. This will fallback to creating
+        // a checksum based on state reconstruction. Disable incremental commit to avoid
+        // further error triggers in this session.
+        spark.sessionState.conf.setConf(DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED, false)
+        return createSnapshotAfterCommit(
+          initSegment,
+          newChecksumOpt = None,
+          tableCommitCoordinatorClientOpt = tableCommitCoordinatorClientOpt,
+          tableIdentifierOpt,
+          committedVersion)
+      }
+    }
+
+    newSnapshot
   }
 
   /**

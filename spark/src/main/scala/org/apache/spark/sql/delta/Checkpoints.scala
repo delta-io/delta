@@ -608,6 +608,10 @@ object Checkpoints
       deltaLog: DeltaLog,
       snapshot: Snapshot): LastCheckpointInfo = recordFrameProfile(
       "Delta", "Checkpoints.writeCheckpoint") {
+    if (spark.conf.get(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED)) {
+      snapshot.validateChecksum(Map("context" -> "writeCheckpoint"))
+    }
+
     val hadoopConf = deltaLog.newDeltaHadoopConf()
 
     // The writing of checkpoints doesn't go through log store, so we need to check with the
