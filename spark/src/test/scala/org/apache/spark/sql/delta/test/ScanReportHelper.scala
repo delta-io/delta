@@ -81,6 +81,9 @@ trait ScanReportHelper extends SharedSparkSession with AdaptiveSparkPlanHelper {
                 scanType = "delta-query",
                 deltaDataSkippingType = preparedScan.dataSkippingType.toString,
                 partitionFilters = preparedScan.partitionFilters.map(_.sql).toSeq,
+                partitionLikeDataFilters = preparedScan.partitionLikeDataFilters.map(_.sql).toSeq,
+                rewrittenPartitionLikeDataFilters =
+                  preparedScan.rewrittenPartitionLikeDataFilters.map(_.sql).toSeq,
                 dataFilters = preparedScan.dataFilters.map(_.sql).toSeq,
                 unusedFilters = preparedScan.unusedFilters.map(_.sql).toSeq,
                 size = Map(
@@ -107,6 +110,8 @@ trait ScanReportHelper extends SharedSparkSession with AdaptiveSparkPlanHelper {
                 scanType = "delta-unknown",
                 partitionFilters = Nil,
                 dataFilters = Nil,
+                partitionLikeDataFilters = Nil,
+                rewrittenPartitionLikeDataFilters = Nil,
                 unusedFilters = Nil,
                 size = Map(
                   "total" -> DataSize(
