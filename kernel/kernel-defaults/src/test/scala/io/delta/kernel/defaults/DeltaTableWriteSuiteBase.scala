@@ -316,16 +316,14 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
   }
 
   def assertMetadataProp(
-    engine: Engine,
     snapshot: SnapshotImpl,
     key: TableConfig[_ <: Any],
     expectedValue: Any): Unit = {
-    assert(key.fromMetadata(engine, snapshot.getMetadata) == expectedValue)
+    assert(key.fromMetadata(snapshot.getMetadata) == expectedValue)
   }
 
-  def assertHasNoMetadataProp(
-    engine: Engine, snapshot: SnapshotImpl, key: TableConfig[_ <: Any]): Unit = {
-    assertMetadataProp(engine, snapshot, key, Optional.empty())
+  def assertHasNoMetadataProp(snapshot: SnapshotImpl, key: TableConfig[_ <: Any]): Unit = {
+    assertMetadataProp(snapshot, key, Optional.empty())
   }
 
   def assertHasWriterFeature(snapshot: SnapshotImpl, writerFeature: String): Unit = {
@@ -352,7 +350,7 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       .commit(engine, emptyIterable())
 
     val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-    assertMetadataProp(engine, snapshot, key, expectedValue)
+    assertMetadataProp(snapshot, key, expectedValue)
   }
 
   def verifyWrittenContent(path: String, expSchema: StructType, expData: Seq[TestRow]): Unit = {

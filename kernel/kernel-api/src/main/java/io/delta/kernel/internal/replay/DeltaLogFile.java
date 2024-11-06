@@ -43,7 +43,7 @@ public class DeltaLogFile {
     } else if (FileNames.isClassicCheckpointFile(fileName)) {
       logType = LogType.CHECKPOINT_CLASSIC;
       version = FileNames.checkpointVersion(fileName);
-    } else if (FileNames.isMulitPartCheckpointFile(fileName)) {
+    } else if (FileNames.isMultiPartCheckpointFile(fileName)) {
       logType = LogType.MULTIPART_CHECKPOINT;
       version = FileNames.checkpointVersion(fileName);
     } else if (FileNames.isV2CheckpointFile(fileName)) {

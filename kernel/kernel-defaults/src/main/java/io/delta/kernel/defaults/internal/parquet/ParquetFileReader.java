@@ -48,7 +48,7 @@ public class ParquetFileReader {
     this.configuration = requireNonNull(configuration, "configuration is null");
     this.maxBatchSize =
         configuration.getInt("delta.kernel.default.parquet.reader.batch-size", 1024);
-    checkArgument(maxBatchSize > 0, "invalid Parquet reader batch size: " + maxBatchSize);
+    checkArgument(maxBatchSize > 0, "invalid Parquet reader batch size: %s", maxBatchSize);
   }
 
   public CloseableIterator<ColumnarBatch> read(

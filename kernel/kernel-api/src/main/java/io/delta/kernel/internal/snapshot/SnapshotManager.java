@@ -103,13 +103,15 @@ public class SnapshotManager {
         v -> {
           checkArgument(
               !versions.isEmpty() && Objects.equals(versions.get(0), v),
-              format("Did not get the first delta file version %s to compute Snapshot", v));
+              "Did not get the first delta file version %s to compute Snapshot",
+              v);
         });
     expectedEndVersion.ifPresent(
         v -> {
           checkArgument(
               !versions.isEmpty() && Objects.equals(versions.get(versions.size() - 1), v),
-              format("Did not get the last delta file version %s to compute Snapshot", v));
+              "Did not get the last delta file version %s to compute Snapshot",
+              v);
         });
   }
 
@@ -141,9 +143,9 @@ public class SnapshotManager {
             Optional.of(version) /* versionToLoadOpt */,
             Optional.empty() /* tableCommitHandlerOpt */);
 
-    // For non-coordinated commit table, the {@code getCoodinatedCommitsAwareSnapshot} will
+    // For non-coordinated commit table, the {@code getCoordinatedCommitsAwareSnapshot} will
     // create the snapshot with the {@code logSegmentOpt} built here and will not trigger other
-    // operations. For coordinated commit table, the {@code getCoodinatedCommitsAwareSnapshot}
+    // operations. For coordinated commit table, the {@code getCoordinatedCommitsAwareSnapshot}
     // will create the snapshot with the {@code logSegmentOpt} built here and will build the
     // logSegment again by also fetching the unbackfilled commits from the commit coordinator.
     // With the unbackfilled commits plus the backfilled commits in Delta log, a new snapshot
@@ -240,8 +242,8 @@ public class SnapshotManager {
 
     // Clean up delta log files if enabled.
     Metadata metadata = snapshot.getMetadata();
-    if (EXPIRED_LOG_CLEANUP_ENABLED.fromMetadata(engine, metadata)) {
-      cleanupExpiredLogs(engine, clock, tablePath, LOG_RETENTION.fromMetadata(engine, metadata));
+    if (EXPIRED_LOG_CLEANUP_ENABLED.fromMetadata(metadata)) {
+      cleanupExpiredLogs(engine, clock, tablePath, LOG_RETENTION.fromMetadata(metadata));
     } else {
       logger.info(
           "{}: Log cleanup is disabled. Skipping the deletion of expired log files", tablePath);
@@ -350,7 +352,9 @@ public class SnapshotManager {
         v ->
             checkArgument(
                 v >= startVersion,
-                format("versionToLoad=%s provided is less than startVersion=%s", v, startVersion)));
+                "versionToLoad=%s provided is less than startVersion=%s",
+                v,
+                startVersion));
     logger.debug(
         "startVersion: {}, versionToLoad: {}, coordinated commits enabled: {}",
         startVersion,
@@ -403,7 +407,7 @@ public class SnapshotManager {
                   break;
                 }
 
-                // Ideally listFromOrNone should return lexiographically sorted
+                // Ideally listFromOrNone should return lexicographically sorted
                 // files and so maxDeltaVersionSeen should be equal to fileVersion.
                 // But we are being defensive here and taking max of all the
                 // fileVersions seen.

@@ -128,8 +128,10 @@ object OptimizeTableCommand {
 /**
  * The `optimize` command implementation for Spark SQL. Example SQL:
  * {{{
- *    OPTIMIZE ('/path/to/dir' | delta.table) [WHERE part = 25];
+ *    OPTIMIZE ('/path/to/dir' | delta.table) [WHERE part = 25] [FULL];
  * }}}
+ *
+ * Note FULL and WHERE clauses are set exclusively.
  */
 case class OptimizeTableCommand(
     override val child: LogicalPlan,
@@ -151,13 +153,19 @@ case class OptimizeTableCommand(
       throw DeltaErrors.notADeltaTableException(table.deltaLog.dataPath.toString)
     }
 
-    if (ClusteredTableUtils.isSupported(snapshot.protocol)) {
+    val isClusteredTable = ClusteredTableUtils.isSupported(snapshot.protocol)
+    if (isClusteredTable) {
       if (userPartitionPredicates.nonEmpty) {
         throw DeltaErrors.clusteringWithPartitionPredicatesException(userPartitionPredicates)
       }
       if (zOrderBy.nonEmpty) {
         throw DeltaErrors.clusteringWithZOrderByException(zOrderBy)
       }
+    }
+
+    lazy val clusteringColumns = ClusteringColumnInfo.extractLogicalNames(snapshot)
+    if (optimizeContext.isFull && (!isClusteredTable || clusteringColumns.isEmpty)) {
+      throw DeltaErrors.optimizeFullNotSupportedException()
     }
 
     val partitionColumns = snapshot.metadata.partitionColumns
@@ -199,12 +207,14 @@ case class OptimizeTableCommand(
  *                            this threshold will be rewritten by the OPTIMIZE command. If not
  *                            specified, [[DeltaSQLConf.DELTA_OPTIMIZE_MAX_DELETED_ROWS_RATIO]]
  *                            will be used. This parameter must be set to `0` when [[reorg]] is set.
+ * @param isFull whether OPTIMIZE FULL is run. This is only for clustered tables.
  */
 case class DeltaOptimizeContext(
     reorg: Option[DeltaReorgOperation] = None,
     minFileSize: Option[Long] = None,
     maxFileSize: Option[Long] = None,
-    maxDeletedRowsRatio: Option[Double] = None) {
+    maxDeletedRowsRatio: Option[Double] = None,
+    isFull: Boolean = false) {
   if (reorg.nonEmpty) {
     require(
       minFileSize.contains(0L) && maxDeletedRowsRatio.contains(0d),
@@ -547,10 +557,11 @@ class OptimizeExecutor(
       case e: ConcurrentModificationException =>
         val newTxn = txn.deltaLog.startTransaction(txn.catalogTable)
         if (f(newTxn)) {
-          logInfo("Retrying commit after checking for semantic conflicts with concurrent updates.")
+          logInfo(
+            log"Retrying commit after checking for semantic conflicts with concurrent updates.")
           commitAndRetry(newTxn, optimizeOperation, actions, metrics)(f)
         } else {
-          logWarning("Semantic conflicts detected. Aborting operation.")
+          logWarning(log"Semantic conflicts detected. Aborting operation.")
           throw e
         }
     }

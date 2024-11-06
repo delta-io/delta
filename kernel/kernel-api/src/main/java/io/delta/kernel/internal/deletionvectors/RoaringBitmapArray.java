@@ -203,7 +203,7 @@ public final class RoaringBitmapArray {
       // This format is designed for sparse bitmaps, so numberOfBitmaps is only a lower bound
       // for the actual size of the array.
       int minimumArraySize = (int) numberOfBitmaps;
-      ArrayList<RoaringBitmap> bitmaps = new ArrayList(minimumArraySize);
+      ArrayList<RoaringBitmap> bitmaps = new ArrayList<>(minimumArraySize);
       int lastIndex = 0;
       for (long i = 0; i < numberOfBitmaps; i++) {
         int key = buffer.getInt();
@@ -233,7 +233,7 @@ public final class RoaringBitmapArray {
   ////////////////////////////////////////////////////////////////////////////////
 
   static Tuple2<Integer, Integer> decomposeHighLowBytes(long value) {
-    return new Tuple2(highBytes(value), lowBytes(value));
+    return new Tuple2<>(highBytes(value), lowBytes(value));
   }
 
   public void add(long value) {

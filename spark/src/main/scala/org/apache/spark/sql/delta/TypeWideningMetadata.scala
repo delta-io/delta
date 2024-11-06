@@ -196,9 +196,10 @@ private[delta] object TypeWideningMetadata extends DeltaLogging {
         toType,
         fieldPath = Seq.empty
       ))
-    // Char/Varchar/String type changes are expected and unrelated to type widening. We don't record
-    // them in the table schema metadata and don't log them as unexpected type changes either,
-    case (StringType | CharType(_) | VarcharType(_), StringType | CharType(_) | VarcharType(_)) =>
+    // Char/Varchar/String and collation type changes are expected and unrelated to type widening.
+    // We don't record them in the table schema metadata and don't log them as unexpected type
+    // changes either.
+    case (fromType: AtomicType, toType: AtomicType) if isStringTypeChange(fromType, toType) =>
       Seq.empty
     case (_: AtomicType, _: AtomicType) =>
       deltaAssert(fromType == toType,
@@ -213,6 +214,14 @@ private[delta] object TypeWideningMetadata extends DeltaLogging {
     // Don't recurse inside structs, `collectTypeChanges` should be called directly on each struct
     // fields instead to only collect type changes inside these fields.
     case (_: StructType, _: StructType) => Seq.empty
+  }
+
+  /** Returns whether the given type change is Char/Varchar/String or collation type change. */
+  private def isStringTypeChange(from: AtomicType, to: AtomicType): Boolean = (from, to) match {
+    case (
+      _: StringType | CharType(_) | VarcharType(_),
+      _: StringType | CharType(_) | VarcharType(_)) => true
+    case _ => false
   }
 
   /**

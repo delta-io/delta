@@ -108,10 +108,9 @@ public class TimestampConverters {
     private long binaryToSQLTimestamp(Binary binary) {
       checkArgument(
           binary.length() == 12,
-          String.format(
-              "Timestamps (with nanoseconds) are expected to be stored in 12-byte long "
-                  + "binaries. Found a %s-byte binary instead.",
-              binary.length()));
+          "Timestamps (with nanoseconds) are expected to be stored in 12-byte long "
+              + "binaries. Found a %s-byte binary instead.",
+          binary.length());
       ByteBuffer buffer = binary.toByteBuffer().order(ByteOrder.LITTLE_ENDIAN);
       long timeOfDayNanos = buffer.getLong();
       int julianDay = buffer.getInt();

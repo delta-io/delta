@@ -113,16 +113,16 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
           handleExceptionDuringAttempt(ex, isLastAttempt, deltaLog) match {
             case RetryHandling.Retry =>
               logInfo(log"Retrying MERGE with materialized source. Attempt " +
-                log"${MDC(DeltaLogKeys.ATTEMPT, attempt)} failed.")
+                log"${MDC(DeltaLogKeys.NUM_ATTEMPT, attempt)} failed.")
               doRetry = true
               attempt += 1
             case RetryHandling.ExhaustedRetries =>
-              logError(log"Exhausted retries after ${MDC(DeltaLogKeys.ATTEMPT, attempt)}" +
+              logError(log"Exhausted retries after ${MDC(DeltaLogKeys.NUM_ATTEMPT, attempt)}" +
                 log" attempts in MERGE with materialized source. Logging latest exception.", ex)
               throw DeltaErrors.sourceMaterializationFailedRepeatedlyInMerge
             case RetryHandling.RethrowException =>
               logError(log"Fatal error in MERGE with materialized source in " +
-                log"attempt ${MDC(DeltaLogKeys.ATTEMPT, attempt)}", ex)
+                log"attempt ${MDC(DeltaLogKeys.NUM_ATTEMPT, attempt)}", ex)
               throw ex
           }
       } finally {

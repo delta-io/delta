@@ -43,6 +43,7 @@ import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{Cast, ElementAt, Literal}
 import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.datasources.FileFormat
@@ -277,7 +278,7 @@ trait Checkpoints extends DeltaLogging {
           opType,
           data = Map("exception" -> e.getMessage(), "stackTrace" -> e.getStackTrace())
         )
-        logWarning("Error when writing checkpoint-related files", e)
+        logWarning(log"Error when writing checkpoint-related files", e)
         val throwError = Utils.isTesting ||
           spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CHECKPOINT_THROW_EXCEPTION_WHEN_FAILED)
         if (throwError) throw e
@@ -300,12 +301,13 @@ trait Checkpoints extends DeltaLogging {
    */
   def checkpoint(
       snapshotToCheckpoint: Snapshot,
-      tableIdentifierOpt: Option[TableIdentifier] = None): Unit =
+      catalogTable: Option[CatalogTable] = None): Unit =
     recordDeltaOperation(this, "delta.checkpoint") {
     withCheckpointExceptionHandling(snapshotToCheckpoint.deltaLog, "delta.checkpoint.sync.error") {
       if (snapshotToCheckpoint.version < 0) {
         throw DeltaErrors.checkpointNonExistTable(dataPath)
       }
+      val tableIdentifierOpt = catalogTable.map(_.identifier)
       checkpointAndCleanUpDeltaLog(snapshotToCheckpoint, tableIdentifierOpt)
     }
   }
@@ -470,7 +472,7 @@ trait Checkpoints extends DeltaLogging {
         // available checkpoint.
         .filterNot(cv => cv.version < 0 || cv.version == CheckpointInstance.MaxValue.version)
         .getOrElse {
-          logInfo("Try to find Delta last complete checkpoint")
+          logInfo(log"Try to find Delta last complete checkpoint")
           eventData("listingFromZero") = true.toString
           return findLastCompleteCheckpoint()
         }

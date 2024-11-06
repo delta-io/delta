@@ -32,6 +32,7 @@ import org.apache.spark.sql.delta.{DeltaLog, DeltaOptions, IdentityColumn}
 import org.apache.spark.sql.delta.DeltaTableIdentifier.gluePermissionError
 import org.apache.spark.sql.delta.commands._
 import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSourceUtils, DeltaSQLConf}
@@ -42,7 +43,7 @@ import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkException
-import org.apache.spark.internal.Logging
+import org.apache.spark.internal.{Logging, MDC}
 import org.apache.spark.sql.{AnalysisException, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{NoSuchDatabaseException, NoSuchNamespaceException, NoSuchTableException, UnresolvedAttribute, UnresolvedFieldName, UnresolvedFieldPosition}
@@ -245,8 +246,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
             throw e
           }
       case e: AnalysisException if gluePermissionError(e) && isPathIdentifier(ident) =>
-        logWarning("Received an access denied error from Glue. Assuming this " +
-          s"identifier ($ident) is path based.", e)
+        logWarning(log"Received an access denied error from Glue. Assuming this " +
+          log"identifier (${MDC(DeltaLogKeys.TABLE_NAME, ident)}) is path based.", e)
         newDeltaPathTable(ident)
     }
   }

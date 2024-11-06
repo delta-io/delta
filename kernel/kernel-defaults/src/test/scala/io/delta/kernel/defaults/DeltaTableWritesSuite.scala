@@ -146,7 +146,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       txn1.commit(engine, emptyIterable())
 
       val ver0Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-      assertMetadataProp(engine, ver0Snapshot, TableConfig.CHECKPOINT_INTERVAL, 10)
+      assertMetadataProp(ver0Snapshot, TableConfig.CHECKPOINT_INTERVAL, 10)
 
       setTablePropAndVerify(
         engine = engine,
@@ -174,7 +174,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         data = Seq(Map.empty[String, Literal] -> dataBatches1)
       )
       val ver1Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-      assertMetadataProp(engine, ver1Snapshot, TableConfig.CHECKPOINT_INTERVAL, 2)
+      assertMetadataProp(ver1Snapshot, TableConfig.CHECKPOINT_INTERVAL, 2)
     }
   }
 
@@ -197,13 +197,13 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       )
 
       val ver1Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-      assertMetadataProp(engine, ver1Snapshot, TableConfig.CHECKPOINT_INTERVAL, 10)
+      assertMetadataProp(ver1Snapshot, TableConfig.CHECKPOINT_INTERVAL, 10)
 
       // Try to commit txn1
       txn1.commit(engine, emptyIterable())
 
       val ver2Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-      assertMetadataProp(engine, ver2Snapshot, TableConfig.CHECKPOINT_INTERVAL, 2)
+      assertMetadataProp(ver2Snapshot, TableConfig.CHECKPOINT_INTERVAL, 2)
     }
   }
 
@@ -225,7 +225,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         tableProperties =
           Map(TableConfig.CHECKPOINT_INTERVAL.getKey.toLowerCase(Locale.ROOT) -> "2"))
       val ver1Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-      assertMetadataProp(engine, ver1Snapshot, TableConfig.CHECKPOINT_INTERVAL, 2)
+      assertMetadataProp(ver1Snapshot, TableConfig.CHECKPOINT_INTERVAL, 2)
       assert(getMetadataActionFromCommit(engine, table, 1).isEmpty)
     }
   }
@@ -246,7 +246,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
           Map(TableConfig.CHECKPOINT_INTERVAL.getKey.toLowerCase(Locale.ROOT) -> "2"))
 
       val ver0Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-      assertMetadataProp(engine, ver0Snapshot, TableConfig.CHECKPOINT_INTERVAL, 2)
+      assertMetadataProp(ver0Snapshot, TableConfig.CHECKPOINT_INTERVAL, 2)
 
       val configurations = ver0Snapshot.getMetadata.getConfiguration
       assert(configurations.containsKey(TableConfig.CHECKPOINT_INTERVAL.getKey))

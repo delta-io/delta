@@ -85,7 +85,7 @@ public class SnapshotImpl implements Snapshot {
 
   public CreateCheckpointIterator getCreateCheckpointIterator(Engine engine) {
     long minFileRetentionTimestampMillis =
-        System.currentTimeMillis() - TOMBSTONE_RETENTION.fromMetadata(engine, metadata);
+        System.currentTimeMillis() - TOMBSTONE_RETENTION.fromMetadata(metadata);
     return new CreateCheckpointIterator(engine, logSegment, minFileRetentionTimestampMillis);
   }
 
@@ -129,7 +129,7 @@ public class SnapshotImpl implements Snapshot {
    * @return the timestamp of the latest commit
    */
   public long getTimestamp(Engine engine) {
-    if (TableConfig.isICTEnabled(engine, metadata)) {
+    if (IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata)) {
       if (!inCommitTimestampOpt.isPresent()) {
         Optional<CommitInfo> commitInfoOpt =
             CommitInfo.getCommitInfoOpt(engine, logPath, logSegment.version);
@@ -154,17 +154,17 @@ public class SnapshotImpl implements Snapshot {
   public Optional<TableCommitCoordinatorClientHandler> getTableCommitCoordinatorClientHandlerOpt(
       Engine engine) {
     return COORDINATED_COMMITS_COORDINATOR_NAME
-        .fromMetadata(engine, metadata)
+        .fromMetadata(metadata)
         .map(
             commitCoordinatorStr -> {
               CommitCoordinatorClientHandler handler =
                   engine.getCommitCoordinatorClientHandler(
                       commitCoordinatorStr,
-                      COORDINATED_COMMITS_COORDINATOR_CONF.fromMetadata(engine, metadata));
+                      COORDINATED_COMMITS_COORDINATOR_CONF.fromMetadata(metadata));
               return new TableCommitCoordinatorClientHandler(
                   handler,
                   logPath.toString(),
-                  COORDINATED_COMMITS_TABLE_CONF.fromMetadata(engine, metadata));
+                  COORDINATED_COMMITS_TABLE_CONF.fromMetadata(metadata));
             });
   }
 }

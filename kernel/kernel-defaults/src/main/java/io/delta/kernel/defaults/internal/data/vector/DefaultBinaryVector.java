@@ -39,7 +39,8 @@ public class DefaultBinaryVector extends AbstractColumnVector {
     super(size, dataType, Optional.empty());
     checkArgument(
         dataType instanceof StringType || dataType instanceof BinaryType,
-        "invalid type for binary vector: " + dataType);
+        "invalid type for binary vector: %s",
+        dataType);
     this.values = requireNonNull(values, "values is null");
     checkArgument(
         values.length >= size,

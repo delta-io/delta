@@ -101,8 +101,8 @@ public class InternalScanFileUtils {
   public static FileStatus getAddFileStatus(Row scanFileInfo) {
     Row addFile = getAddFileEntry(scanFileInfo);
     String path = addFile.getString(ADD_FILE_PATH_ORDINAL);
-    Long size = addFile.getLong(ADD_FILE_SIZE_ORDINAL);
-    Long modificationTime = addFile.getLong(ADD_FILE_MOD_TIME_ORDINAL);
+    long size = addFile.getLong(ADD_FILE_SIZE_ORDINAL);
+    long modificationTime = addFile.getLong(ADD_FILE_MOD_TIME_ORDINAL);
 
     // TODO: this is hack until the path in `add.path` is converted to an absolute path
     String tableRoot = scanFileInfo.getString(TABLE_ROOT_ORDINAL);

@@ -238,7 +238,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
         case _ => snapshot.minFileRetentionTimestamp
       }
       logInfo(log"Starting garbage collection (dryRun = " +
-        log"${MDC(DeltaLogKeys.DRY_RUN, dryRun)}) of untracked " +
+        log"${MDC(DeltaLogKeys.IS_DRY_RUN, dryRun)}) of untracked " +
         log"files older than ${MDC(DeltaLogKeys.DATE,
           new Date(deleteBeforeTimestamp).toGMTString)} in " +
         log"${MDC(DeltaLogKeys.PATH, path)}")
@@ -628,7 +628,7 @@ trait VacuumCommandImpl extends DeltaCommand {
       supportedFsForLogging.contains(scheme)
     } catch {
       case _: UnsupportedOperationException =>
-        logWarning("Vacuum event logging" +
+        logWarning(log"Vacuum event logging" +
           " not enabled on this file system because we cannot detect your cloud storage type.")
         false
     }

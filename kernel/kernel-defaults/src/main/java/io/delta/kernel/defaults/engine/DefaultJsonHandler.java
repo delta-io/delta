@@ -53,7 +53,7 @@ public class DefaultJsonHandler implements JsonHandler {
   public DefaultJsonHandler(Configuration hadoopConf) {
     this.hadoopConf = hadoopConf;
     this.maxBatchSize = hadoopConf.getInt("delta.kernel.default.json.reader.batch-size", 1024);
-    checkArgument(maxBatchSize > 0, "invalid JSON reader batch size: " + maxBatchSize);
+    checkArgument(maxBatchSize > 0, "invalid JSON reader batch size: %d", maxBatchSize);
   }
 
   @Override

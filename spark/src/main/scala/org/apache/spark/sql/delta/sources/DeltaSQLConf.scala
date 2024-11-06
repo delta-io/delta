@@ -569,21 +569,6 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
-  val PARQUET_OUTPUT_TIMESTAMP_TYPE =
-    buildConf("parquet.outputTimestampType")
-      .doc(
-        """
-          |Sets which Parquet timestamp type to use when Spark writes data to Parquet files:
-          |INT96 is a non-standard but commonly used timestamp type in Parquet.
-          |TIMESTAMP_MICROS is a standard timestamp type in Parquet,
-          |which stores number of microseconds from the Unix epoch.
-          |TIMESTAMP_MILLIS is also standard, but with millisecond precision,
-          |which means Spark has to truncate the microsecond portion of its timestamp value.
-          |""".stripMargin)
-      .stringConf
-      .checkValues(Set("INT96", "TIMESTAMP_MICROS", "TIMESTAMP_MILLIS"))
-      .createWithDefaultString("TIMESTAMP_MICROS")
-
   //////////////////////////////////////////////
   // DynamoDB Commit Coordinator-specific configs
   /////////////////////////////////////////////
@@ -1039,6 +1024,14 @@ trait DeltaSQLConfBase {
   val DELTA_WRITE_CHECKSUM_ENABLED =
     buildConf("writeChecksumFile.enabled")
       .doc("Whether the checksum file can be written.")
+      .booleanConf
+      .createWithDefault(false)
+
+  val INCREMENTAL_COMMIT_ENABLED =
+    buildConf("incremental.commit.enabled")
+      .internal()
+      .doc("If true, Delta will incrementally compute the content of the commit checksum " +
+        "file, which avoids the full state reconstruction that would otherwise be required.")
       .booleanConf
       .createWithDefault(true)
 
@@ -1705,6 +1698,15 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_CLONE_ICEBERG_SKIP_GETFILESTATUS = {
+    buildConf("clone.IcebergSkipGetFileStatus")
+      .internal()
+      .doc("If clone with Iceberg source can skip getFileStatus and " +
+        "use snapshot timestamp as the modificationTime for Delta AddFile")
+      .booleanConf
+      .createWithDefault(true)
+  }
+
   val DELTA_OPTIMIZE_METADATA_QUERY_ENABLED =
     buildConf("optimizeMetadataQuery.enabled")
       .internal()
@@ -1968,6 +1970,13 @@ trait DeltaSQLConfBase {
         "in optimized writes.")
       .intConf
       .createWithDefault(50000000)
+
+  val SKIP_REDIRECT_FEATURE =
+    buildConf("skipRedirectFeature")
+      .doc("True if skipping the redirect feature.")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
 
   val DELTA_OPTIMIZE_WRITE_MAX_SHUFFLE_PARTITIONS =
     buildConf("optimizeWrite.maxShufflePartitions")

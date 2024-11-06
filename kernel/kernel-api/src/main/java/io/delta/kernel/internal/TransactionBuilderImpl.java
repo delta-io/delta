@@ -118,7 +118,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     Protocol protocol = snapshot.getProtocol();
     if (tableProperties.isPresent()) {
       Map<String, String> validatedProperties =
-          TableConfig.validateProperties(engine, tableProperties.get());
+          TableConfig.validateProperties(tableProperties.get());
       Map<String, String> newProperties =
           metadata.filterOutUnchangedProperties(validatedProperties);
 
@@ -131,7 +131,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       }
 
       Set<String> newWriterFeatures =
-          TableFeatures.extractAutomaticallyEnabledWriterFeatures(engine, metadata, protocol);
+          TableFeatures.extractAutomaticallyEnabledWriterFeatures(metadata, protocol);
       if (!newWriterFeatures.isEmpty()) {
         logger.info("Automatically enabling writer features: {}", newWriterFeatures);
         shouldUpdateProtocol = true;

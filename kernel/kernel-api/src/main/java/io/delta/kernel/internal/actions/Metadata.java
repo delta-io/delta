@@ -106,7 +106,7 @@ public class Metadata {
     this.createdTime = createdTime;
     this.configurationMapValue = requireNonNull(configurationMapValue, "configuration is null");
     this.configuration = new Lazy<>(() -> VectorUtils.toJavaMap(configurationMapValue));
-    this.partitionColNames = new Lazy<>(() -> loadPartitionColNames());
+    this.partitionColNames = new Lazy<>(this::loadPartitionColNames);
     this.dataSchema =
         new Lazy<>(
             () ->

@@ -246,7 +246,7 @@ trait DeltaTestUtilsBase {
    * - Failure: an exception is thrown and the caller passes a function to check that it matches an
    *     expected error, typ. `checkError()` or `checkErrorMatchPVals()`.
    */
-  sealed trait ExpectedResult[T]
+  sealed trait ExpectedResult[-T]
   object ExpectedResult {
     case class Success[T](expected: T) extends ExpectedResult[T]
     case class Failure[T](checkError: SparkThrowable => Unit) extends ExpectedResult[T]

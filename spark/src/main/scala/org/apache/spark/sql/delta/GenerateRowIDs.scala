@@ -22,7 +22,7 @@ import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Project}
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.trees.TreePattern.PLAN_EXPRESSION
-import org.apache.spark.sql.execution.datasources.{FileFormat, HadoopFsRelation, LogicalRelation}
+import org.apache.spark.sql.execution.datasources.{FileFormat, HadoopFsRelation, LogicalRelation, LogicalRelationWithTable}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.types.StructType
 
@@ -38,7 +38,7 @@ object GenerateRowIDs extends Rule[LogicalPlan] {
    */
   private object DeltaScanWithRowTrackingEnabled {
     def unapply(plan: LogicalPlan): Option[LogicalRelation] = plan match {
-      case scan @ LogicalRelation(relation: HadoopFsRelation, _, _, _) =>
+      case scan @ LogicalRelationWithTable(relation: HadoopFsRelation, _) =>
         relation.fileFormat match {
           case format: DeltaParquetFileFormat
             if RowTracking.isEnabled(format.protocol, format.metadata) => Some(scan)
@@ -50,7 +50,7 @@ object GenerateRowIDs extends Rule[LogicalPlan] {
 
   override def apply(plan: LogicalPlan): LogicalPlan = plan.transformUpWithNewOutput {
     case DeltaScanWithRowTrackingEnabled(
-            scan @ LogicalRelation(baseRelation: HadoopFsRelation, _, _, _)) =>
+            scan @ LogicalRelationWithTable(baseRelation: HadoopFsRelation, _)) =>
       // While Row IDs and commit versions are non-nullable, we'll use the Row ID & commit
       // version attributes to read the materialized values from now on, which can be null. We make
       // the materialized Row ID & commit version attributes nullable in the scan here.

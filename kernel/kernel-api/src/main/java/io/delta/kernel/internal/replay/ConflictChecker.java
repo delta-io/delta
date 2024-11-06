@@ -16,7 +16,7 @@
 package io.delta.kernel.internal.replay;
 
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
-import static io.delta.kernel.internal.TableConfig.isICTEnabled;
+import static io.delta.kernel.internal.TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED;
 import static io.delta.kernel.internal.actions.SingleAction.CONFLICT_RESOLUTION_SCHEMA;
 import static io.delta.kernel.internal.util.FileNames.deltaFile;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
@@ -268,15 +268,13 @@ public class ConflictChecker {
       long lastWinningVersion,
       FileStatus lastWinningTxn,
       Optional<CommitInfo> winningCommitInfoOpt) {
-    long winningCommitTimestamp = -1L;
-    if (snapshot.getVersion(engine) == -1 || !isICTEnabled(engine, snapshot.getMetadata())) {
-      winningCommitTimestamp = lastWinningTxn.getModificationTime();
+    if (snapshot.getVersion(engine) == -1
+        || !IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(snapshot.getMetadata())) {
+      return lastWinningTxn.getModificationTime();
     } else {
-      winningCommitTimestamp =
-          CommitInfo.getRequiredInCommitTimestamp(
-              winningCommitInfoOpt, String.valueOf(lastWinningVersion), snapshot.getDataPath());
+      return CommitInfo.getRequiredInCommitTimestamp(
+          winningCommitInfoOpt, String.valueOf(lastWinningVersion), snapshot.getDataPath());
     }
-    return winningCommitTimestamp;
   }
 
   private static List<FileStatus> ensureNoGapsInWinningCommits(List<FileStatus> winningCommits) {
