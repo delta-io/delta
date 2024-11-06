@@ -703,6 +703,59 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
     )
   }
 
+  test("identity columns shouldn't cause schema mismatches") {
+    withTable("source") {
+      spark.sql(
+        s"""
+          |CREATE TABLE source (key INT, id LONG GENERATED ALWAYS AS IDENTITY)
+          |USING DELTA
+        """.stripMargin
+      )
+
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier("source"))
+      deltaLog.update()
+      val schemaLocation = getDefaultSchemaLocation(deltaLog).toString
+      val checkpointLocation = getDefaultCheckpoint(deltaLog).toString
+
+      def addData(values: Seq[Int]): Unit =
+        spark.createDataFrame(values.map(Row(_)).asJava, StructType.fromDDL("key INT"))
+          .write.format("delta").mode("append").saveAsTable("source")
+
+      def readStream(): DataFrame =
+        spark.readStream
+          .format("delta")
+          .option(DeltaOptions.SCHEMA_TRACKING_LOCATION, schemaLocation)
+          .table("source")
+
+      // Check fix disabled: writing to the table updates the identity column's high-water mark
+      // stored in the table schema, causing a schema change to be detected.
+      addData(values = 0 until 5)
+      withSQLConf(
+        DeltaSQLConf.DELTA_STREAMING_IGNORE_INTERNAL_METADATA_FOR_SCHEMA_CHANGE.key -> "false"
+      ) {
+        testStream(readStream())(
+          StartStream(checkpointLocation = checkpointLocation),
+          ProcessAllAvailable(),
+          Execute { _ => addData(values = 10 until 15) },
+          ExpectMetadataEvolutionException
+        )
+      }
+
+      // Check fix enabled: high-water mark updates are ignored when checking for schema changes.
+      addData(values = 15 until 20)
+      withSQLConf(
+        DeltaSQLConf.DELTA_STREAMING_IGNORE_INTERNAL_METADATA_FOR_SCHEMA_CHANGE.key -> "true"
+      ) {
+        testStream(readStream())(
+          StartStream(checkpointLocation = checkpointLocation),
+          ProcessAllAvailable(),
+          Execute { _ => addData(values = 20 until 25) },
+          ProcessAllAvailable()
+        )
+      }
+    }
+  }
+
   /**
    * This test manually generates Delta source offsets that crosses non-additive schema change
    * boundaries to test if the schema log initialization check logic can detect those changes and

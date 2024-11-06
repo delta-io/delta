@@ -1503,6 +1503,15 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_STREAMING_IGNORE_INTERNAL_METADATA_FOR_SCHEMA_CHANGE =
+    buildConf("streaming.ignoreInternalMetadataForSchemaChange.enabled")
+      .doc(
+        "Whether to ignore internal metadata attached to struct fields when detecting schema " +
+        "changes in Delta sources, e.g. identity columns internal high-water mark tracking.")
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_STREAMING_ENABLE_SCHEMA_TRACKING =
     buildConf("streaming.schemaTracking.enabled")
       .doc(
