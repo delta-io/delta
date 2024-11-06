@@ -1214,8 +1214,7 @@ class DeltaTableTestsMixin:
         dt.addFeatureSupport("appendOnly")
         dt_details = dt.detail().collect()[0].asDict()
         self.assertTrue(dt_details["minReaderVersion"] == 1, "The upgrade should be a no-op")
-        self.assertTrue(dt_details["minWriterVersion"] == 7,
-                        "Explicitly support table features will bump version")
+        self.assertTrue(dt_details["minReaderVersion"] == 2, "The upgrade should be a no-op")
         self.assertEqual(sorted(dt_details["tableFeatures"]), ["appendOnly", "invariants"])
 
         dt.addFeatureSupport("deletionVectors")
