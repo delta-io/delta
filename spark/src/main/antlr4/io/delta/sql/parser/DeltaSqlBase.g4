@@ -73,8 +73,7 @@ singleStatement
 // If you add keywords here that should not be reserved, add them to 'nonReserved' list.
 statement
     : VACUUM (path=STRING | table=qualifiedName)
-        (USING INVENTORY (inventoryTable=qualifiedName | LEFT_PAREN inventoryQuery=subQuery RIGHT_PAREN))?
-        (RETAIN number HOURS)? (DRY RUN)?                               #vacuumTable
+        vacuumModifiers                                                 #vacuumTable
     | (DESC | DESCRIBE) DETAIL (path=STRING | table=qualifiedName)      #describeDeltaDetail
     | GENERATE modeName=identifier FOR TABLE table=qualifiedName        #generate
     | (DESC | DESCRIBE) HISTORY (path=STRING | table=qualifiedName)
@@ -196,6 +195,29 @@ dataType
     : identifier ('(' INTEGER_VALUE (',' INTEGER_VALUE)* ')')?         #primitiveDataType
     ;
 
+vacuumModifiers
+    : (vacuumType
+    | inventory
+    | retain
+    | dryRun)*
+    ;
+
+vacuumType
+    : LITE|FULL
+    ;
+
+inventory
+    : USING INVENTORY (inventoryTable=qualifiedName | LEFT_PAREN inventoryQuery=subQuery RIGHT_PAREN)
+    ;
+
+retain
+    : RETAIN number HOURS
+    ;
+
+dryRun
+    : DRY RUN
+    ;
+
 number
     : MINUS? DECIMAL_VALUE            #decimalLiteral
     | MINUS? INTEGER_VALUE            #integerLiteral
@@ -234,7 +256,7 @@ exprToken
 // Add keywords here so that people's queries don't break if they have a column name as one of
 // these tokens
 nonReserved
-    : VACUUM | USING | INVENTORY | RETAIN | HOURS | DRY | RUN
+    : VACUUM | FULL | LITE | USING | INVENTORY | RETAIN | HOURS | DRY | RUN
     | CONVERT | TO | DELTA | PARTITIONED | BY
     | DESC | DESCRIBE | LIMIT | DETAIL
     | GENERATE | FOR | TABLE | CHECK | EXISTS | OPTIMIZE | FULL
@@ -285,6 +307,7 @@ IF: 'IF';
 INVENTORY: 'INVENTORY';
 LEFT_PAREN: '(';
 LIMIT: 'LIMIT';
+LITE: 'LITE';
 LOCATION: 'LOCATION';
 MINUS: '-';
 NO: 'NO';
