@@ -16,6 +16,10 @@
 
 package io.delta.kernel.internal.snapshot;
 
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import static java.util.Objects.requireNonNull;
+
+import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import java.util.Optional;
@@ -25,14 +29,28 @@ public class SnapshotDescriptor {
   private final long version;
   private final Protocol protocol;
   private final Metadata metadata;
+
+  /** Should be non-empty if and only if ICT is enabled. */
   private final Optional<Long> inCommitTimestampOpt;
 
   public SnapshotDescriptor(
       long version, Protocol protocol, Metadata metadata, Optional<Long> inCommitTimestampOpt) {
+    requireNonNull(protocol, "protocol is null");
+    requireNonNull(metadata, "metadata is null");
+    requireNonNull(inCommitTimestampOpt, "inCommitTimestampOpt is null");
+
+    if (TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata)) {
+      checkArgument(
+          inCommitTimestampOpt.isPresent(),
+          "ICT is enabled but inCommitTimestampOpt is not present");
+      this.inCommitTimestampOpt = inCommitTimestampOpt;
+    } else {
+      this.inCommitTimestampOpt = Optional.empty();
+    }
+
     this.version = version;
     this.protocol = protocol;
     this.metadata = metadata;
-    this.inCommitTimestampOpt = inCommitTimestampOpt;
   }
 
   public long getVersion() {

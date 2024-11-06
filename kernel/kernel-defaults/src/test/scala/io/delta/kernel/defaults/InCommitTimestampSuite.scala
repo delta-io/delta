@@ -34,6 +34,10 @@ import io.delta.kernel.internal.TableConfig._
 import io.delta.kernel.utils.FileStatus
 import io.delta.kernel.internal.actions.SingleAction.createCommitInfoSingleAction
 
+import java.nio.charset.StandardCharsets
+import java.nio.file.Files
+import java.nio.file.attribute.FileTime
+
 class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
 
   private def removeCommitInfoFromCommit(engine: Engine, version: Long, logPath: Path): Unit = {
@@ -575,5 +579,116 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
         "can not be committed. Query needs to be re-executed using the latest version of the " +
         "table.")))
     }
+  }
+
+  private def getCommit0JsonStr(
+      isIctEnabled: Boolean,
+      writeCommitInfoFirst: Boolean,
+      ictTimestamp: Long,
+      otherTimestamp: Long): String = {
+    val ictStr = if (isIctEnabled) "\"inCommitTimestamp\"" else ""
+
+    // scalastyle:off line.size.limit
+    val commitInfoStr = s"""{"commitInfo":{"inCommitTimestamp":$ictTimestamp,"timestamp":$otherTimestamp,"operation":"CREATE TABLE","operationParameters":{"partitionBy":"[]","clusterBy":"[]","description":null,"isManaged":"false","properties":"{\\"delta.enableInCommitTimestamps\\":\\"true\\"}"},"isolationLevel":"Serializable","isBlindAppend":true,"operationMetrics":{},"engineInfo":"Apache-Spark/3.5.2 Delta-Lake/3.2.0","txnId":"9298365f-0df6-44f1-8efa-7c807c402fcd"}}\n"""
+    val metadataStr = s"""{"metaData":{"configuration":{"delta.enableInCommitTimestamps":"$isIctEnabled"},"id":"ce8322f2-6071-4fa1-9d9a-3e4ae8aeddc9","format":{"provider":"parquet","options":{}},"schemaString":"{\\"type\\":\\"struct\\",\\"fields\\":[{\\"name\\":\\"id\\",\\"type\\":\\"integer\\",\\"nullable\\":true,\\"metadata\\":{}}]}","partitionColumns":[],"createdTime":1730846048181}}\n"""
+    val protocolStr = s"""{"protocol":{"minReaderVersion":1,"minWriterVersion":7,"writerFeatures":[$ictStr]}}"""
+    // scalastyle:on line.size.limit
+
+    if (writeCommitInfoFirst) {
+      commitInfoStr + metadataStr + protocolStr
+    } else {
+      metadataStr + commitInfoStr + protocolStr
+    }
+  }
+
+  /** Returns the path written */
+  private def writeCommit0(tablePath: String, commit0Str: String): java.nio.file.Path = {
+    val logPath = new Path(tablePath, "_delta_log")
+    val commit0File = java.nio.file.Paths.get(FileNames.deltaFile(logPath, 0))
+    val commit0Bytes = commit0Str.getBytes(StandardCharsets.UTF_8)
+
+    Files.createDirectory(java.nio.file.Paths.get(logPath.toString))
+    Files.write(commit0File, commit0Bytes)
+
+    commit0File
+  }
+
+  test("CommitInfo must be the first action in a commit when ICT is enabled") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val timestamp = 1730844254118L
+
+      val commit0JsonStr = getCommit0JsonStr(
+        isIctEnabled = true, writeCommitInfoFirst = false, timestamp, timestamp)
+
+      writeCommit0(tablePath, commit0JsonStr)
+
+      val ex = intercept[InvalidTableException] {
+        Table.forPath(engine, tablePath).getLatestSnapshot(engine)
+      }
+
+      assert(ex.getMessage.contains("This table has the feature inCommitTimestamp enabled which " +
+        "requires the presence of inCommitTimestamp in the CommitInfo action. However, this " +
+        "field has not been set in commit version 0."))
+    }
+  }
+
+  test("CommitInfo does not need to be the first action in a commit if ICT is disabled") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val timestamp = 1730844254118L
+
+      val commit0JsonStr = getCommit0JsonStr(
+        isIctEnabled = false, writeCommitInfoFirst = false, timestamp, timestamp)
+
+      writeCommit0(tablePath, commit0JsonStr)
+
+      Table.forPath(engine, tablePath).getLatestSnapshot(engine)
+    }
+  }
+
+  test("ICT value in CommitInfo is used if ICT is enabled") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val commitInfoInCommitTimestamp = 1730844254118L
+      val commitInfoOtherTimestamp = commitInfoInCommitTimestamp - 1000L
+
+      val commit0JsonStr = getCommit0JsonStr(isIctEnabled = true, writeCommitInfoFirst = true,
+        commitInfoInCommitTimestamp, commitInfoOtherTimestamp)
+
+      writeCommit0(tablePath, commit0JsonStr)
+
+      val snapshotTimestamp = TableImpl
+        .forPath(engine, tablePath)
+        .getLatestSnapshot(engine)
+        .asInstanceOf[SnapshotImpl]
+        .getTimestamp()
+
+      assert(snapshotTimestamp == commitInfoInCommitTimestamp)
+    }
+  }
+
+  test("ICT value in CommitInfo is not used if ICT is disabled") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val commitInfoInCommitTimestamp = 1730844254118L
+      val commitInfoOtherTimestamp = commitInfoInCommitTimestamp - 1000L
+      val commitInfoLastModified = commitInfoInCommitTimestamp - 2000L
+
+      val commit0JsonStr = getCommit0JsonStr(isIctEnabled = false, writeCommitInfoFirst = false,
+        commitInfoInCommitTimestamp, commitInfoOtherTimestamp)
+
+      val commit0Path = writeCommit0(tablePath, commit0JsonStr)
+
+      Files.setLastModifiedTime(commit0Path, FileTime.fromMillis(commitInfoLastModified))
+
+      val snapshotTimestamp = TableImpl
+        .forPath(engine, tablePath)
+        .getLatestSnapshot(engine)
+        .asInstanceOf[SnapshotImpl]
+        .getTimestamp()
+
+      assert(snapshotTimestamp == commitInfoLastModified)
+    }
+  }
+
+  test("Can read ICT from a Kernel-written checkpoint") {
+    // TODO
   }
 }
