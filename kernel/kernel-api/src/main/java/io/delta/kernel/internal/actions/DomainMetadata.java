@@ -44,7 +44,7 @@ public class DomainMetadata {
     if (row == null) {
       return null;
     }
-    assert (row.getSchema() == FULL_SCHEMA);
+    assert (row.getSchema().equals(FULL_SCHEMA));
     return new DomainMetadata(
         requireNonNull(row, 0, "domain").getString(0),
         requireNonNull(row, 1, "configuration").getString(1),
@@ -112,16 +112,7 @@ public class DomainMetadata {
 
   @Override
   public String toString() {
-    return "DomainMetadata{"
-        + "domain='"
-        + domain
-        + '\''
-        + ", configuration='"
-        + configuration
-        + '\''
-        + ", removed="
-        + removed
-        + '}';
+    return String.format("DomainMetadata{domain='%s', configuration='%s', removed='%s'}", domain, configuration, removed);
   }
 
   @Override

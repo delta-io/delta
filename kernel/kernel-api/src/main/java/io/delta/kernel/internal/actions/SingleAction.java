@@ -18,6 +18,8 @@ package io.delta.kernel.internal.actions;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.types.StructType;
+
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -52,6 +54,7 @@ public class SingleAction {
           .add("protocol", Protocol.FULL_SCHEMA)
           .add("commitInfo", CommitInfo.FULL_SCHEMA)
           .add("domainMetadata", DomainMetadata.FULL_SCHEMA);
+
   // Once we start supporting domain metadata/row tracking enabled tables, we should add the
   // schema for domain metadata fields here.
 
@@ -108,9 +111,8 @@ public class SingleAction {
   }
 
   public static Row createDomainMetadataSingleAction(Row domainMetadata) {
-    Map<Integer, Object> singleActionValueMap = new HashMap<>();
-    singleActionValueMap.put(DOMAIN_METADATA_ORDINAL, domainMetadata);
-    return new GenericRow(FULL_SCHEMA, singleActionValueMap);
+    return new GenericRow(
+        FULL_SCHEMA, Collections.singletonMap(DOMAIN_METADATA_ORDINAL, domainMetadata));
   }
 
   public static Row createTxnSingleAction(Row txn) {

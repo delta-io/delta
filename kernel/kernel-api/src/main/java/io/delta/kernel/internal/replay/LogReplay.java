@@ -35,6 +35,7 @@ import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -348,7 +349,7 @@ public class LogReplay {
       }
       return domainMetadataMap;
     } catch (IOException ex) {
-      throw new RuntimeException("Could not close iterator", ex);
+      throw new UncheckedIOException("Could not close iterator", ex);
     }
   }
 }
