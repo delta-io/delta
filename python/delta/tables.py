@@ -581,6 +581,19 @@ class DeltaTable(object):
                              type(writerVersion))
         jdt.upgradeTableProtocol(readerVersion, writerVersion)
 
+    @since(3.3)  # type: ignore[arg-type]
+    def addFeatureSupport(self, featureName: str) -> None:
+        """
+        Modify the protocol to add a supported feature, and if the table does not support table
+        features, upgrade the protocol automatically. In such a case when the provided feature is
+        writer-only, the table's writer version will be upgraded to `7`, and when the provided
+        feature is reader-writer, both reader and writer versions will be upgraded, to `(3, 7)`.
+
+        See online documentation and Delta's protocol specification at PROTOCOL.md for more details.
+        """
+        DeltaTable._verify_type_str(featureName, "featureName")
+        self._jdt.addFeatureSupport(featureName)
+
     @since(1.2)  # type: ignore[arg-type]
     def restoreToVersion(self, version: int) -> DataFrame:
         """

@@ -23,6 +23,7 @@ import os
 from multiprocessing.pool import ThreadPool
 from typing import List, Set, Dict, Optional, Any, Callable, Union, Tuple
 
+from py4j.protocol import Py4JJavaError
 from pyspark.errors.exceptions.base import UnsupportedOperationException
 from pyspark.sql import DataFrame, Row
 from pyspark.sql.functions import col, lit, expr, floor
@@ -1186,6 +1187,42 @@ class DeltaTableTestsMixin:
             dt.upgradeTableProtocol(1, [])  # type: ignore[arg-type]
         with self.assertRaisesRegex(ValueError, "writerVersion"):
             dt.upgradeTableProtocol(1, {})  # type: ignore[arg-type]
+
+    def test_addFeatureSupport(self) -> None:
+        try:
+            self.spark.conf.set('spark.databricks.delta.minReaderVersion', '1')
+            self.spark.conf.set('spark.databricks.delta.minWriterVersion', '2')
+            self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3), ('d', 4)])
+            dt = DeltaTable.forPath(self.spark, self.tempFile)
+        finally:
+            self.spark.conf.unset('spark.databricks.delta.minReaderVersion')
+            self.spark.conf.unset('spark.databricks.delta.minWriterVersion')
+
+        # bad args
+        with self.assertRaisesRegex(Py4JJavaError, "DELTA_UNSUPPORTED_FEATURES_IN_CONFIG"):
+            dt.addFeatureSupport("abc")
+        with self.assertRaisesRegex(ValueError, "featureName needs to be a string"):
+            dt.addFeatureSupport(12345)  # type: ignore[arg-type]
+        with self.assertRaisesRegex(ValueError, "featureName needs to be a string"):
+            dt.addFeatureSupport([12345])  # type: ignore[arg-type]
+        with self.assertRaisesRegex(ValueError, "featureName needs to be a string"):
+            dt.addFeatureSupport({})  # type: ignore[arg-type]
+        with self.assertRaisesRegex(ValueError, "featureName needs to be a string"):
+            dt.addFeatureSupport([])  # type: ignore[arg-type]
+
+        # good args
+        dt.addFeatureSupport("appendOnly")
+        dt_details = dt.detail().collect()[0].asDict()
+        self.assertTrue(dt_details["minReaderVersion"] == 1, "The upgrade should be a no-op")
+        self.assertTrue(dt_details["minWriterVersion"] == 2, "The upgrade should be a no-op")
+        self.assertEqual(sorted(dt_details["tableFeatures"]), ["appendOnly", "invariants"])
+
+        dt.addFeatureSupport("deletionVectors")
+        dt_details = dt.detail().collect()[0].asDict()
+        self.assertTrue(dt_details["minReaderVersion"] == 3, "DV requires reader version 3")
+        self.assertTrue(dt_details["minWriterVersion"] == 7, "DV requires writer version 7")
+        self.assertEqual(sorted(dt_details["tableFeatures"]),
+                         ["appendOnly", "deletionVectors", "invariants"])
 
     def test_restore_to_version(self) -> None:
         self.__writeDeltaTable([('a', 1), ('b', 2)])
