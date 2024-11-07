@@ -32,21 +32,6 @@ object LogicalRelationShims {
       output: Seq[AttributeReference],
       catalogTable: Option[CatalogTable],
       isStreaming: Boolean): LogicalRelation = {
-    LogicalRelation(relation, output, catalogTable, isStreaming)
-  }
-}
-
-// Handles a breaking change between Spark 3.5 and Spark Master (4.0).
-// `LogicalRelationWithTable` is a new object in Spark 4.0.
-
-/**
- * Extract the [[BaseRelation]] and [[CatalogTable]] from [[LogicalRelation]]. You can also
- * retrieve the instance of LogicalRelation like following:
- *
- * case l @ LogicalRelationWithTable(relation, catalogTable) => ...
- */
-object LogicalRelationWithTable {
-  def unapply(plan: LogicalRelation): Option[(BaseRelation, Option[CatalogTable])] = {
-    Some(plan.relation, plan.catalogTable)
+    LogicalRelation(relation, output, catalogTable, isStreaming, stream = None)
   }
 }
