@@ -79,4 +79,35 @@ public class DomainMetadataUtils {
     return writerFeatures.contains(DomainMetadata.FEATURE_NAME)
         && protocol.getMinWriterVersion() >= DomainMetadata.MIN_WRITER_VERSION_REQUIRED;
   }
+
+  /**
+   * Validates the list of domain metadata actions. It ensures that
+   * <ol>
+   *   <li>domain metadata actions are only present when supported by the table protocol
+   *   <li>there are no duplicate domain metadata actions for the same domain in the provided
+   *       actions.
+   * </ol>
+   *
+   * @param domainMetadataActions The list of domain metadata actions to validate
+   * @param protocol The protocol to check for domain metadata support
+   */
+  public static void validateDomainMetadatas(
+      List<DomainMetadata> domainMetadataActions, Protocol protocol) {
+    if (domainMetadataActions.isEmpty()) return;
+
+    // The list of domain metadata is non-empty, so the protocol must support domain metadata
+    if (!isDomainMetadataSupported(protocol)) {
+      throw DeltaErrors.domainMetadataUnsupported();
+    }
+
+    Map<String, DomainMetadata> domainMetadataMap = new HashMap<>();
+    for (DomainMetadata domainMetadata : domainMetadataActions) {
+      String domain = domainMetadata.getDomain();
+      if (domainMetadataMap.containsKey(domain)) {
+        throw DeltaErrors.duplicateDomainMetadataAction(
+            domain, domainMetadataMap.get(domain).toString(), domainMetadata.toString());
+      }
+      domainMetadataMap.put(domain, domainMetadata);
+    }
+  }
 }

@@ -32,12 +32,7 @@ import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.replay.ConflictChecker;
 import io.delta.kernel.internal.replay.ConflictChecker.TransactionRebaseState;
-import io.delta.kernel.internal.util.Clock;
-import io.delta.kernel.internal.util.ColumnMapping;
-import io.delta.kernel.internal.util.FileNames;
-import io.delta.kernel.internal.util.InCommitTimestampUtils;
-import io.delta.kernel.internal.util.ValidateDomainMetadataIterator;
-import io.delta.kernel.internal.util.VectorUtils;
+import io.delta.kernel.internal.util.*;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.kernel.utils.CloseableIterator;
@@ -76,6 +71,7 @@ public class TransactionImpl implements Transaction {
   private final Clock clock;
   private Metadata metadata;
   private boolean shouldUpdateMetadata;
+  private final List<DomainMetadata> domainMetadatas = new ArrayList<>();
 
   private boolean closed; // To avoid trying to commit the same transaction again.
 
@@ -143,8 +139,7 @@ public class TransactionImpl implements Transaction {
                   + "Trying to resolve conflicts and retry commit.",
               commitAsVersion);
           TransactionRebaseState rebaseState =
-              ConflictChecker.resolveConflicts(
-                  engine, readSnapshot, commitAsVersion, this, dataActions);
+              ConflictChecker.resolveConflicts(engine, readSnapshot, commitAsVersion, this);
           long newCommitAsVersion = rebaseState.getLatestVersion() + 1;
           checkArgument(
               commitAsVersion < newCommitAsVersion,
@@ -223,13 +218,22 @@ public class TransactionImpl implements Transaction {
     }
     setTxnOpt.ifPresent(setTxn -> metadataActions.add(createTxnSingleAction(setTxn.toRow())));
 
-    try (CloseableIterator<Row> stageDataIter =
-        new ValidateDomainMetadataIterator(
-            protocol, dataActions.iterator(), SingleAction.FULL_SCHEMA)) {
+    // Check for duplicate domain metadata and if the protocol supports
+    DomainMetadataUtils.validateDomainMetadatas(domainMetadatas, protocol);
+
+    // Create domain metadata action rows
+    List<Row> domainMetadataActions = new ArrayList<>();
+    for (DomainMetadata domainMetadata : domainMetadatas) {
+      domainMetadataActions.add(createDomainMetadataSingleAction(domainMetadata.toRow()));
+    }
+
+    try (CloseableIterator<Row> stageDataIter = dataActions.iterator()) {
       // Create a new CloseableIterator that will return the metadata actions followed by the
       // data actions.
       CloseableIterator<Row> dataAndMetadataActions =
-          toCloseableIterator(metadataActions.iterator()).combine(stageDataIter);
+          toCloseableIterator(metadataActions.iterator())
+              .combine(toCloseableIterator(domainMetadataActions.iterator()))
+              .combine(stageDataIter);
 
       if (commitAsVersion == 0) {
         // New table, create a delta log directory
@@ -271,6 +275,19 @@ public class TransactionImpl implements Transaction {
 
   public Optional<SetTransaction> getSetTxnOpt() {
     return setTxnOpt;
+  }
+
+  /**
+   * Add domain metadata to the transaction to be committed.
+   *
+   * @param domainMetadatas List of domain metadata to be added.
+   */
+  public void addDomainMetadata(List<DomainMetadata> domainMetadatas) {
+    this.domainMetadatas.addAll(domainMetadatas);
+  }
+
+  public List<DomainMetadata> getDomainMetadatas() {
+    return domainMetadatas;
   }
 
   /**

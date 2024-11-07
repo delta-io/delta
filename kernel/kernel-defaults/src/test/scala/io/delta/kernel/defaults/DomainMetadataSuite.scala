@@ -21,6 +21,7 @@ import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions._
 import io.delta.kernel.internal.SnapshotImpl
+import io.delta.kernel.internal.TransactionImpl
 import io.delta.kernel.internal.actions.{DomainMetadata, Protocol, SingleAction}
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.utils.CloseableIterable
@@ -32,15 +33,6 @@ import scala.collection.JavaConverters._
 import scala.collection.immutable.Seq
 
 class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
-
-  private def generateDMActionsForCommit(actions: Seq[DomainMetadata]): CloseableIterable[Row] = {
-    val actionsIter = actions
-      .map(dmAction => SingleAction.createDomainMetadataSingleAction(dmAction.toRow))
-      .asJava
-      .iterator
-
-    inMemoryIterable(toCloseableIterator(actionsIter))
-  }
 
   private def assertDomainMetadata(
       snapshot: SnapshotImpl,
@@ -57,16 +49,27 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
     assertDomainMetadata(snapshot, expectedValue)
   }
 
+  private def createTxnWithDomainMetadatas(
+      engine: Engine,
+      tablePath: String,
+      domainMetadatas: Seq[DomainMetadata]): Transaction = {
+    val txn = createTxn(engine, tablePath, isNewTable = false, testSchema, Seq.empty)
+      .asInstanceOf[TransactionImpl]
+    txn.addDomainMetadata(domainMetadatas.asJava)
+    txn
+  }
+
   private def commitDomainMetadataAndVerify(
       engine: Engine,
       tablePath: String,
-      isNewTable: Boolean,
       domainMetadatas: Seq[DomainMetadata],
       expectedValue: Map[String, DomainMetadata]): Unit = {
-    val table = Table.forPath(engine, tablePath)
-    createTxn(engine, tablePath, isNewTable, testSchema, Seq.empty)
-      .commit(engine, generateDMActionsForCommit(domainMetadatas))
+    // Create the transaction with domain metadata and commit
+    val txn = createTxnWithDomainMetadatas(engine, tablePath, domainMetadatas)
+    txn.commit(engine, emptyIterable())
 
+    // Verify the final state includes the expected domain metadata
+    val table = Table.forPath(engine, tablePath)
     assertDomainMetadata(table, engine, expectedValue)
   }
 
@@ -117,18 +120,18 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
      * t5 ------- Txn3 commits.
      * t6 ------------------------ Txn1 commits (SUCCESS or FAIL).
      */
-    val txn1 = createTxn(engine, tablePath, isNewTable = false, testSchema, Seq.empty)
+    val txn1 = createTxnWithDomainMetadatas(engine, tablePath, currentTxn1DomainMetadatas)
 
-    val txn2 = createTxn(engine, tablePath, isNewTable = false, testSchema, Seq.empty)
-    txn2.commit(engine, generateDMActionsForCommit(winningTxn2DomainMetadatas))
+    val txn2 = createTxnWithDomainMetadatas(engine, tablePath, winningTxn2DomainMetadatas)
+    txn2.commit(engine, emptyIterable())
 
-    val txn3 = createTxn(engine, tablePath, isNewTable = false, testSchema, Seq.empty)
-    txn3.commit(engine, generateDMActionsForCommit(winningTxn3DomainMetadatas))
+    val txn3 = createTxnWithDomainMetadatas(engine, tablePath, winningTxn3DomainMetadatas)
+    txn3.commit(engine, emptyIterable())
 
     if (expectedConflict) {
       // We expect the commit of txn1 to fail because of the conflicting DM actions
       val ex = intercept[KernelException] {
-        txn1.commit(engine, generateDMActionsForCommit(currentTxn1DomainMetadatas))
+        txn1.commit(engine, emptyIterable())
       }
       assert(
         ex.getMessage.contains(
@@ -137,7 +140,7 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
       )
     } else {
       // We expect the commit of txn1 to succeed
-      txn1.commit(engine, generateDMActionsForCommit(currentTxn1DomainMetadatas))
+      txn1.commit(engine, emptyIterable())
       // Verify the final state includes merged domain metadata
       val expectedMetadata =
         (winningTxn2DomainMetadatas ++ winningTxn3DomainMetadatas ++ currentTxn1DomainMetadatas)
@@ -168,11 +171,11 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
         .commit(engine, emptyIterable())
 
       val dm1 = new DomainMetadata("domain1", "", false)
-      val txn1 = createTxn(engine, tablePath, isNewTable = false, testSchema, Seq.empty)
+      val txn1 = createTxnWithDomainMetadatas(engine, tablePath, List(dm1))
 
       // We expect the commit to fail because the table doesn't support domain metadata
       val e = intercept[KernelException] {
-        txn1.commit(engine, generateDMActionsForCommit(List(dm1)))
+        txn1.commit(engine, emptyIterable())
       }
       assert(
         e.getMessage
@@ -186,8 +189,8 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
       setDomainMetadataSupport(engine, tablePath)
 
       // Commit domain metadata again and expect success
-      val txn2 = createTxn(engine, tablePath, isNewTable = false, testSchema, Seq.empty)
-      txn2.commit(engine, generateDMActionsForCommit(List(dm1)))
+      val txn2 = createTxnWithDomainMetadatas(engine, tablePath, List(dm1))
+      txn2.commit(engine, emptyIterable())
     }
   }
 
@@ -199,10 +202,10 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
       val dm2 = new DomainMetadata("domain2", "", false)
       val dm1_2 = new DomainMetadata("domain1", """{"key1":"10"}"""", false)
 
-      val txn = createTxn(engine, tablePath, isNewTable = false, testSchema, Seq.empty)
+      val txn = createTxnWithDomainMetadatas(engine, tablePath, List(dm1_1, dm2, dm1_2))
 
       val e = intercept[KernelException] {
-        txn.commit(engine, generateDMActionsForCommit(List(dm1_1, dm2, dm1_2)))
+        txn.commit(engine, emptyIterable())
       }
       assert(
         e.getMessage.contains(
@@ -226,7 +229,6 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
       commitDomainMetadataAndVerify(
         engine,
         tablePath,
-        isNewTable = false,
         domainMetadatas = Seq(dm1),
         expectedValue = Map("domain1" -> dm1)
       )
@@ -234,7 +236,6 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
       commitDomainMetadataAndVerify(
         engine,
         tablePath,
-        isNewTable = false,
         domainMetadatas = Seq(dm2, dm3, dm1_2),
         expectedValue = Map("domain1" -> dm1_2, "domain2" -> dm2, "domain3" -> dm3)
       )
@@ -242,7 +243,6 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
       commitDomainMetadataAndVerify(
         engine,
         tablePath,
-        isNewTable = false,
         domainMetadatas = Seq(dm3_2),
         expectedValue = Map("domain1" -> dm1_2, "domain2" -> dm2, "domain3" -> dm3_2)
       )
@@ -259,7 +259,6 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
       commitDomainMetadataAndVerify(
         engine,
         tablePath,
-        isNewTable = false,
         domainMetadatas = Seq(dm1, dm2),
         expectedValue = Map("domain1" -> dm1, "domain2" -> dm2)
       )
@@ -284,28 +283,24 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
       commitDomainMetadataAndVerify(
         engine,
         tablePath,
-        isNewTable = false,
         domainMetadatas = Seq(dm1),
         expectedValue = Map("domain1" -> dm1)
       )
       commitDomainMetadataAndVerify(
         engine,
         tablePath,
-        isNewTable = false,
         domainMetadatas = Seq(dm2),
         expectedValue = Map("domain1" -> dm1, "domain2" -> dm2)
       )
       commitDomainMetadataAndVerify(
         engine,
         tablePath,
-        isNewTable = false,
         domainMetadatas = Seq(dm3),
         expectedValue = Map("domain1" -> dm1, "domain2" -> dm2, "domain3" -> dm3)
       )
       commitDomainMetadataAndVerify(
         engine,
         tablePath,
-        isNewTable = false,
         domainMetadatas = Seq(dm1_2, dm3_2),
         expectedValue = Map("domain1" -> dm1_2, "domain2" -> dm2, "domain3" -> dm3_2)
       )

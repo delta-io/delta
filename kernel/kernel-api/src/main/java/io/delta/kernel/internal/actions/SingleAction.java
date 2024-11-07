@@ -18,7 +18,6 @@ package io.delta.kernel.internal.actions;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.types.StructType;
-
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;

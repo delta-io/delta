@@ -26,7 +26,6 @@ import static java.lang.String.format;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.ConcurrentWriteException;
 import io.delta.kernel.internal.*;
@@ -35,7 +34,6 @@ import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.actions.SetTransaction;
 import io.delta.kernel.internal.util.DomainMetadataUtils;
 import io.delta.kernel.internal.util.FileNames;
-import io.delta.kernel.utils.CloseableIterable;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import java.io.*;
@@ -64,18 +62,10 @@ public class ConflictChecker {
   private final TransactionImpl transaction;
   private final long attemptVersion;
 
-  // Data actions from the losing transaction
-  private final CloseableIterable<Row> dataActions;
-
-  private ConflictChecker(
-      SnapshotImpl snapshot,
-      TransactionImpl transaction,
-      long attemptVersion,
-      CloseableIterable<Row> dataActions) {
+  private ConflictChecker(SnapshotImpl snapshot, TransactionImpl transaction, long attemptVersion) {
     this.snapshot = snapshot;
     this.transaction = transaction;
     this.attemptVersion = attemptVersion;
-    this.dataActions = dataActions;
   }
 
   /**
@@ -86,22 +76,15 @@ public class ConflictChecker {
    * @param snapshot {@link SnapshotImpl} of the table when the losing transaction has started
    * @param transaction {@link TransactionImpl} that encountered the conflict (a.k.a the losing
    *     transaction)
-   * @param dataActions {@link CloseableIterable} of {@link Row}s that represent the losing
-   *     transaction's data actions
    * @return {@link TransactionRebaseState} that the losing transaction needs to rebase against
    * @throws ConcurrentWriteException if there are logical conflicts between the losing transaction
    *     and the winning transactions that cannot be resolved.
    */
   public static TransactionRebaseState resolveConflicts(
-      Engine engine,
-      SnapshotImpl snapshot,
-      long attemptVersion,
-      TransactionImpl transaction,
-      CloseableIterable<Row> dataActions)
+      Engine engine, SnapshotImpl snapshot, long attemptVersion, TransactionImpl transaction)
       throws ConcurrentWriteException {
     checkArgument(transaction.isBlindAppend(), "Current support is for blind appends only.");
-    return new ConflictChecker(snapshot, transaction, attemptVersion, dataActions)
-        .resolveConflicts(engine);
+    return new ConflictChecker(snapshot, transaction, attemptVersion).resolveConflicts(engine);
   }
 
   public TransactionRebaseState resolveConflicts(Engine engine) throws ConcurrentWriteException {
@@ -232,25 +215,9 @@ public class ConflictChecker {
     Map<String, DomainMetadata> winningDomainMetadataMap =
         DomainMetadataUtils.extractDomainMetadataMap(winningCommitActionVector);
 
-    // Get the ordinal of the domainMetadata action from the full schema, which is used when writing
-    // out the single action to the Delta Log
-    final int domainMetadataOrdinal = FULL_SCHEMA.indexOf("domainMetadata");
-
-    // Use try-with-resources to ensure that the CloseableIterable is closed after the loop
-    try (CloseableIterable<Row> closeableDataActions = dataActions) {
-      for (Row action : closeableDataActions) {
-        // Skip non-domainMetadata actions
-        if (action.isNullAt(domainMetadataOrdinal)) continue;
-
-        // Extract DomainMetadata action that the losing transaction trying to commit
-        DomainMetadata domainMetadata =
-            DomainMetadata.fromRow(action.getStruct(domainMetadataOrdinal));
-
-        // Try to resolve the conflict, if not possible, throw a ConcurrentTransaction exception
-        resolveDomainMetadataConflict(domainMetadata, winningDomainMetadataMap);
-      }
-    } catch (IOException ioe) {
-      throw new UncheckedIOException(ioe);
+    for (DomainMetadata dm : this.transaction.getDomainMetadatas()) {
+      // Try to resolve the conflict, if not possible, throw a ConcurrentTransaction exception
+      resolveDomainMetadataConflict(dm, winningDomainMetadataMap);
     }
   }
 
