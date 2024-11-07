@@ -665,13 +665,19 @@ object DeletionVectorWriter extends DeltaLogging {
         // Load the existing bit map
         val existingBitmap =
           StoredBitmap.create(existingDvDescriptor, ctx.tablePath).load(ctx.dvStore)
-        val newBitmap = RoaringBitmapArray.readFrom(row.deletedRowIndexSet)
-
+        val newBitmap =
+          DeletionVectorUtils.deserialize(row.deletedRowIndexSet, Some(ctx.tablePath))
         // Merge both the existing and new bitmaps into one, and finally persist on disk
         existingBitmap.merge(newBitmap)
+
+        val serializedBitmap = DeletionVectorUtils.serialize(
+          existingBitmap,
+          RoaringBitmapArrayFormat.Portable,
+          Some(ctx.tablePath),
+          debugInfo = Map("existingDvDescriptor" -> existingDvDescriptor))
         storeSerializedBitmap(
           ctx,
-          existingBitmap.serializeAsByteArray(RoaringBitmapArrayFormat.Portable),
+          serializedBitmap,
           existingBitmap.cardinality)
       case Some(existingDvDescriptor) =>
         existingDvDescriptor // This is already stored.

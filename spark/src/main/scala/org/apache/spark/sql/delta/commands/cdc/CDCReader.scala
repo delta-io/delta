@@ -23,6 +23,7 @@ import scala.util.Try
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
 import org.apache.spark.sql.delta.files.{CdcAddFileIndex, TahoeChangeFileIndex, TahoeFileIndexWithSnapshotDescriptor, TahoeRemoveFileIndex}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
@@ -1073,10 +1074,12 @@ trait CDCReaderImpl extends DeltaLogging {
         val finalReAddedRowsBitmap = getDeletionVectorsDiff(removeBitmap, addBitmap)
 
         val finalRemovedRowsDv = DeletionVectorDescriptor.inlineInLog(
-          finalRemovedRowsBitmap.serializeAsByteArray(RoaringBitmapArrayFormat.Portable),
+          DeletionVectorUtils.serialize(
+            finalRemovedRowsBitmap, RoaringBitmapArrayFormat.Portable, Some(deltaLog.dataPath)),
           finalRemovedRowsBitmap.cardinality)
         val finalReAddedRowsDv = DeletionVectorDescriptor.inlineInLog(
-          finalReAddedRowsBitmap.serializeAsByteArray(RoaringBitmapArrayFormat.Portable),
+          DeletionVectorUtils.serialize(
+            finalReAddedRowsBitmap, RoaringBitmapArrayFormat.Portable, Some(deltaLog.dataPath)),
           finalReAddedRowsBitmap.cardinality)
 
         newActions += remove.copy(deletionVector = finalRemovedRowsDv)
