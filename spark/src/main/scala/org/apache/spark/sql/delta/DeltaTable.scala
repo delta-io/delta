@@ -611,8 +611,7 @@ object DeltaTableUtils extends PredicateHelper
    * intentionally. This method removes all possible metadata keys to avoid Spark interpreting
    * table columns incorrectly.
    */
-  def removeInternalMetadata(spark: SparkSession, persistedSchema: StructType): StructType = {
-    val schema = ColumnWithDefaultExprUtils.removeDefaultExpressions(persistedSchema)
+  def removeSparkInternalMetadata(spark: SparkSession, schema: StructType): StructType = {
     if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SCHEMA_REMOVE_SPARK_INTERNAL_METADATA)) {
       var updated = false
       val updatedSchema = schema.map { field =>
@@ -634,6 +633,18 @@ object DeltaTableUtils extends PredicateHelper
       schema
     }
   }
+
+  /**
+   * Removes from the given schema all the metadata keys that are not used when reading a Delta
+   * table. This includes typically all metadata used by writer-only table features.
+   * Note that this also removes all leaked Spark internal metadata.
+   */
+  def removeInternalWriterMetadata(spark: SparkSession, schema: StructType): StructType = {
+    ColumnWithDefaultExprUtils.removeDefaultExpressions(
+      removeSparkInternalMetadata(spark, schema)
+    )
+  }
+
 }
 
 sealed abstract class UnresolvedPathBasedDeltaTableBase(path: String) extends UnresolvedLeafNode {

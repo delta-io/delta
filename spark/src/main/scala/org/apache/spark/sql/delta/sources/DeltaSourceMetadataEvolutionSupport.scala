@@ -156,8 +156,8 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
    */
   private def hasSchemaChangeComparedToStreamMetadata(newSchema: StructType): Boolean =
     if (spark.conf.get(DeltaSQLConf.DELTA_STREAMING_IGNORE_INTERNAL_METADATA_FOR_SCHEMA_CHANGE)) {
-      DeltaTableUtils.removeInternalMetadata(spark, newSchema) !=
-        DeltaTableUtils.removeInternalMetadata(spark, readSchemaAtSourceInit)
+      DeltaTableUtils.removeInternalWriterMetadata(spark, newSchema) !=
+        DeltaTableUtils.removeInternalWriterMetadata(spark, readSchemaAtSourceInit)
     } else {
       newSchema != readSchemaAtSourceInit
     }

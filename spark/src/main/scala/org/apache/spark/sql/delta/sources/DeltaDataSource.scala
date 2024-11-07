@@ -109,7 +109,7 @@ class DeltaDataSource
     }
 
     val schemaToUse = DeltaColumnMapping.dropColumnMappingMetadata(
-      DeltaTableUtils.removeInternalMetadata(sqlContext.sparkSession, readSchema)
+      DeltaTableUtils.removeInternalWriterMetadata(sqlContext.sparkSession, readSchema)
     )
     if (schemaToUse.isEmpty) {
       throw DeltaErrors.schemaNotSetException

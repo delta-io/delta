@@ -181,7 +181,7 @@ case class DeltaTableV2(
 
   private lazy val tableSchema: StructType = {
     val baseSchema = cdcRelation.map(_.schema).getOrElse {
-      DeltaTableUtils.removeInternalMetadata(spark, initialSnapshot.schema)
+      DeltaTableUtils.removeInternalWriterMetadata(spark, initialSnapshot.schema)
     }
     DeltaColumnMapping.dropColumnMappingMetadata(baseSchema)
   }

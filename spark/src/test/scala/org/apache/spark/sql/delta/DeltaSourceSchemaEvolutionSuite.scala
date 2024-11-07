@@ -705,7 +705,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
 
   test("identity columns shouldn't cause schema mismatches") {
     withTable("source") {
-      spark.sql(
+      sql(
         s"""
           |CREATE TABLE source (key INT, id LONG GENERATED ALWAYS AS IDENTITY)
           |USING DELTA
@@ -752,6 +752,10 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
           Execute { _ => addData(values = 20 until 25) },
           ProcessAllAvailable()
         )
+        // No schema change detected. Note that the identity column metadata is still present in the
+        // tracked schema
+        val field = getDefaultSchemaLog()(deltaLog).getLatestMetadata.get.dataSchema("id")
+        assert(field.metadata.contains(DeltaSourceUtils.IDENTITY_INFO_HIGHWATERMARK))
       }
     }
   }
