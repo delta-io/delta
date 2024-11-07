@@ -109,16 +109,12 @@ class IcebergFileManifest(
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_UNSAFE_MOR_TABLE_ENABLE)
 
     var numFiles = 0L
-    val skipGetFileStatus = spark.sessionState.conf.getConf(
-      DeltaSQLConf.DELTA_CLONE_ICEBERG_SKIP_GETFILESTATUS)
-    val snapshotTimestamp: Option[Long] = Option(table.currentSnapshot()).map(_.timestampMillis())
-
     val res = table.newScan().planFiles().iterator().asScala.grouped(schemaBatchSize).map { batch =>
       logInfo(log"Getting file statuses for a batch of " +
         log"${MDC(DeltaLogKeys.BATCH_SIZE, batch.size)} of files; " +
         log"finished ${MDC(DeltaLogKeys.NUM_FILES, numFiles)} files so far")
       numFiles += batch.length
-      val filePathWithPartValuesAndSize = batch.map { fileScanTask =>
+      val filePathWithPartValues = batch.map { fileScanTask =>
         val filePath = fileScanTask.file().path().toString
         // If an Iceberg table has deletion file associated with the data file (Supported in
         // Iceberg V2, either position deletes or equality deletes), we could not convert directly.
@@ -133,23 +129,18 @@ class IcebergFileManifest(
           Some(convertIcebergPartitionToPartitionValues(
             fileScanTask.file().partition()))
         } else None
-        (filePath, partitionValues, fileScanTask.file.fileSizeInBytes())
+        (filePath, partitionValues)
       }
-      val numParallelism = Math.min(Math.max(filePathWithPartValuesAndSize.size, 1),
+      val numParallelism = Math.min(Math.max(filePathWithPartValues.size, 1),
         spark.sparkContext.defaultParallelism)
 
-      val rdd = spark.sparkContext.parallelize(filePathWithPartValuesAndSize, numParallelism)
+      val rdd = spark.sparkContext.parallelize(filePathWithPartValues, numParallelism)
         .mapPartitions { iterator =>
-          iterator.map { case (filePath, partValues, size) =>
-            val serializableFileStatus = (skipGetFileStatus, snapshotTimestamp) match {
-              case (true, Some(ts)) =>
-                SerializableFileStatus(filePath, size, isDir = false, ts)
-              case _ =>
-                val path = new Path(filePath)
-                val fs = path.getFileSystem(conf.value.value)
-                SerializableFileStatus.fromStatus(fs.getFileStatus(path))
-            }
-            ConvertTargetFile(serializableFileStatus, partValues)
+          iterator.map { case (filePath, partValues) =>
+            val path = new Path(filePath)
+            val fs = path.getFileSystem(conf.value.value)
+            val fileStatus = fs.getFileStatus(path)
+            ConvertTargetFile(SerializableFileStatus.fromStatus(fileStatus), partValues)
           }
         }
       spark.createDataset(rdd)
