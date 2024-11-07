@@ -24,6 +24,7 @@ import java.util.zip.CRC32
 
 import org.apache.spark.sql.delta.DeltaErrors
 import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor
+import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, StoredBitmap}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.PathWithFileSystem
@@ -197,7 +198,9 @@ class HadoopFileSystemDVStore(hadoopConf: Configuration)
       reader.seek(offset)
       DeletionVectorStore.readRangeFromStream(reader, size)
     }
-    RoaringBitmapArray.readFrom(buffer)
+    DeletionVectorUtils.deserialize(
+      buffer,
+      debugInfo = Map("path" -> path, "offset" -> offset, "size" -> size))
   }
 
   override def createWriter(path: PathWithFileSystem): DeletionVectorStore.Writer = {
