@@ -33,6 +33,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.Path
 import shadedForDelta.org.apache.iceberg.{Table => IcebergTable}
+import shadedForDelta.org.apache.iceberg.exceptions.CommitFailedException
 import shadedForDelta.org.apache.iceberg.hive.{HiveCatalog, HiveTableOperations}
 
 import org.apache.spark.internal.MDC
@@ -54,8 +55,17 @@ object IcebergConverter {
    */
   val DELTA_TIMESTAMP_PROPERTY = "delta-timestamp"
 
+  /**
+   * Property to be set in translated Iceberg metadata files.
+   * Indicates the base delta commit version # that the conversion started from
+   */
+  val BASE_DELTA_VERSION_PROPERTY = "base-delta-version"
+
   def getLastConvertedDeltaVersion(table: Option[IcebergTable]): Option[Long] =
     table.flatMap(_.properties().asScala.get(DELTA_VERSION_PROPERTY)).map(_.toLong)
+
+  def getLastConvertedDeltaTimestamp(table: Option[IcebergTable]): Option[Long] =
+    table.flatMap(_.properties().asScala.get(DELTA_TIMESTAMP_PROPERTY)).map(_.toLong)
 }
 
 /**
@@ -177,7 +187,7 @@ class IcebergConverter(spark: SparkSession)
   override def convertSnapshot(
       snapshotToConvert: Snapshot, catalogTable: CatalogTable): Option[(Long, Long)] = {
     try {
-      convertSnapshot(snapshotToConvert, None, catalogTable)
+      convertSnapshotWithRetry(snapshotToConvert, None, catalogTable)
     } catch {
       case NonFatal(e) =>
         logError(log"Error when converting to Iceberg metadata", e)
@@ -205,7 +215,7 @@ class IcebergConverter(spark: SparkSession)
       snapshotToConvert: Snapshot, txn: OptimisticTransactionImpl): Option[(Long, Long)] = {
     try {
       txn.catalogTable match {
-        case Some(table) => convertSnapshot(snapshotToConvert, Some(txn), table)
+        case Some(table) => convertSnapshotWithRetry(snapshotToConvert, Some(txn), table)
         case _ =>
           val msg = s"CatalogTable for table ${snapshotToConvert.deltaLog.tableId} " +
             s"is empty in txn. Skip iceberg conversion."
@@ -225,6 +235,41 @@ class IcebergConverter(spark: SparkSession)
         )
         throw e
     }
+  }
+
+  /**
+   *  Convert the specified snapshot into Iceberg with retry
+   */
+  private def convertSnapshotWithRetry(
+      snapshotToConvert: Snapshot,
+      txnOpt: Option[OptimisticTransactionImpl],
+      catalogTable: CatalogTable,
+      maxRetry: Int =
+        spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_UNIFORM_ICEBERG_RETRY_TIMES)
+  ): Option[(Long, Long)] = {
+    var retryAttempt = 0
+    while (retryAttempt < maxRetry) {
+      try {
+        return convertSnapshot(snapshotToConvert, txnOpt, catalogTable)
+      } catch {
+        case e: CommitFailedException if retryAttempt < maxRetry =>
+          retryAttempt += 1
+          val lastConvertedIcebergTable = loadIcebergTable(snapshotToConvert, catalogTable)
+          val lastDeltaVersionConverted = IcebergConverter
+            .getLastConvertedDeltaVersion(lastConvertedIcebergTable)
+          val lastConvertedDeltaTimestamp = IcebergConverter
+            .getLastConvertedDeltaTimestamp(lastConvertedIcebergTable)
+          // Do not retry if the current or higher Delta version is already converted
+          (lastDeltaVersionConverted, lastConvertedDeltaTimestamp) match {
+            case (Some(version), Some(timestamp)) if version >= snapshotToConvert.version =>
+              return Some(version, timestamp)
+            case _ =>
+              logWarning(s"CommitFailedException when converting to Iceberg metadata;" +
+                s" retry count $retryAttempt", e)
+          }
+      }
+    }
+    throw new IllegalStateException("should not happen")
   }
 
   /**
@@ -288,7 +333,7 @@ class IcebergConverter(spark: SparkSession)
     }
 
     val icebergTxn = new IcebergConversionTransaction(
-      cleanedCatalogTable, log.newDeltaHadoopConf(), snapshotToConvert, tableOp,
+      spark, cleanedCatalogTable, log.newDeltaHadoopConf(), snapshotToConvert, tableOp,
       lastConvertedIcebergSnapshotId, lastDeltaVersionConverted)
 
     // Write out the actions taken since the last conversion (or since table creation).
