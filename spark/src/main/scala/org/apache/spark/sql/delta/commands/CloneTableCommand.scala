@@ -243,7 +243,7 @@ abstract class CloneConvertedSource(spark: SparkSession) extends CloneSource {
         val basePath = new Path(baseDir)
         val fs = basePath.getFileSystem(conf.value.value)
         targetFile.map(ConvertUtils.createAddFile(
-          _, basePath, fs, SQLConf.get, Some(partitionSchema), useAbsolutePath = true))
+          _, basePath, fs, SQLConf.get, Some(partitionSchema)))
       }
     }
   }

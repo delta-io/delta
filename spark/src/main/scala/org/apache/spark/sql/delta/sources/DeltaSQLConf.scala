@@ -1717,15 +1717,6 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
-  val DELTA_CLONE_ICEBERG_SKIP_GETFILESTATUS = {
-    buildConf("clone.IcebergSkipGetFileStatus")
-      .internal()
-      .doc("If clone with Iceberg source can skip getFileStatus and " +
-        "use snapshot timestamp as the modificationTime for Delta AddFile")
-      .booleanConf
-      .createWithDefault(true)
-  }
-
   val DELTA_OPTIMIZE_METADATA_QUERY_ENABLED =
     buildConf("optimizeMetadataQuery.enabled")
       .internal()
