@@ -128,7 +128,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
     allTableProperties.asScala
       .get(DeltaConfigs.DATA_SKIPPING_STATS_COLUMNS.key)
       .foreach(StatisticsCollection.validateDeltaStatsColumns(schema, partitionColumns, _))
-    val isByPath = isPathIdentifier(ident)
+    val isByPath = PathIdentifierHelpers.isPathIdentifier(spark, ident)
     if (isByPath && !conf.getConf(DeltaSQLConf.DELTA_LEGACY_ALLOW_AMBIGUOUS_PATHS)
       && allTableProperties.containsKey("location")
       // The location property can be qualified and different from the path in the identifier, so
@@ -238,14 +238,15 @@ class DeltaCatalog extends DelegatingCatalogExtension
     } catch {
       case e @ (
         _: NoSuchDatabaseException | _: NoSuchNamespaceException | _: NoSuchTableException) =>
-          if (isPathIdentifier(ident)) {
+          if (PathIdentifierHelpers.isPathIdentifier(spark, ident)) {
             newDeltaPathTable(ident)
-          } else if (isIcebergPathIdentifier(ident)) {
+          } else if (PathIdentifierHelpers.isIcebergPathIdentifier(ident)) {
             newIcebergPathTable(ident)
           } else {
             throw e
           }
-      case e: AnalysisException if gluePermissionError(e) && isPathIdentifier(ident) =>
+      case e: AnalysisException
+        if gluePermissionError(e) && PathIdentifierHelpers.isPathIdentifier(spark, ident) =>
         logWarning(log"Received an access denied error from Glue. Assuming this " +
           log"identifier (${MDC(DeltaLogKeys.TABLE_NAME, ident)}) is path based.", e)
         newDeltaPathTable(ident)
@@ -520,7 +521,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
   def getExistingTableIfExists(table: TableIdentifier): Option[CatalogTable] = {
     // If this is a path identifier, we cannot return an existing CatalogTable. The Create command
     // will check the file system itself
-    if (isPathIdentifier(table)) return None
+    if (PathIdentifierHelpers.isPathIdentifier(spark, table)) return None
     val tableExists = catalog.tableExists(table)
     if (tableExists) {
       val oldTable = catalog.getTableMetadata(table)
@@ -908,15 +909,9 @@ class DeltaCatalog extends DelegatingCatalogExtension
   }
 }
 
-/**
- * A trait for handling table access through delta.`/some/path`. This is a stop-gap solution
- * until PathIdentifiers are implemented in Apache Spark.
- */
-trait SupportsPathIdentifier extends TableCatalog { self: DeltaCatalog =>
-
-  private def supportSQLOnFile: Boolean = spark.sessionState.conf.runSQLonFile
-
-  protected lazy val catalog: SessionCatalog = spark.sessionState.catalog
+/** Collects helper methods to check if a table is accessed by path via e.g. delta.`/some/path`. */
+object PathIdentifierHelpers {
+  private def supportSQLOnFile(spark: SparkSession): Boolean = spark.sessionState.conf.runSQLonFile
 
   private def hasDeltaNamespace(ident: Identifier): Boolean = {
     ident.namespace().length == 1 && DeltaSourceUtils.isDeltaDataSourceName(ident.namespace().head)
@@ -926,34 +921,44 @@ trait SupportsPathIdentifier extends TableCatalog { self: DeltaCatalog =>
     ident.namespace().length == 1 && ident.namespace().head.equalsIgnoreCase("iceberg")
   }
 
-  protected def isIcebergPathIdentifier(ident: Identifier): Boolean = {
+  def isIcebergPathIdentifier(ident: Identifier): Boolean = {
     hasIcebergNamespace(ident) && new Path(ident.name()).isAbsolute
   }
 
-  protected def newIcebergPathTable(ident: Identifier): IcebergTablePlaceHolder = {
-    IcebergTablePlaceHolder(TableIdentifier(ident.name(), Some("iceberg")))
-  }
-
-  protected def isPathIdentifier(ident: Identifier): Boolean = {
+  def isPathIdentifier(spark: SparkSession, ident: Identifier): Boolean = {
     // Should be a simple check of a special PathIdentifier class in the future
     try {
-      supportSQLOnFile && hasDeltaNamespace(ident) && new Path(ident.name()).isAbsolute
+      supportSQLOnFile(spark) && hasDeltaNamespace(ident) && new Path(ident.name()).isAbsolute
     } catch {
       case _: IllegalArgumentException => false
     }
   }
 
-  protected def isPathIdentifier(table: CatalogTable): Boolean = {
-    isPathIdentifier(table.identifier)
+  def isPathIdentifier(spark: SparkSession, table: CatalogTable): Boolean = {
+    isPathIdentifier(spark, table.identifier)
   }
 
-  protected def isPathIdentifier(tableIdentifier: TableIdentifier) : Boolean = {
-    isPathIdentifier(Identifier.of(tableIdentifier.database.toArray, tableIdentifier.table))
+  def isPathIdentifier(spark: SparkSession, tableIdentifier: TableIdentifier): Boolean = {
+    isPathIdentifier(spark, Identifier.of(tableIdentifier.database.toArray, tableIdentifier.table))
+  }
+}
+
+/**
+ * A trait for handling table access through delta.`/some/path`. This is a stop-gap solution
+ * until PathIdentifiers are implemented in Apache Spark.
+ */
+trait SupportsPathIdentifier extends TableCatalog { self: DeltaCatalog =>
+  import PathIdentifierHelpers._
+
+  protected lazy val catalog: SessionCatalog = spark.sessionState.catalog
+
+  protected def newIcebergPathTable(ident: Identifier): IcebergTablePlaceHolder = {
+    IcebergTablePlaceHolder(TableIdentifier(ident.name(), Some("iceberg")))
   }
 
   override def tableExists(ident: Identifier): Boolean = recordFrameProfile(
       "DeltaCatalog", "tableExists") {
-    if (isPathIdentifier(ident)) {
+    if (isPathIdentifier(spark, ident)) {
       val path = new Path(ident.name())
       // scalastyle:off deltahadoopconfiguration
       val fs = path.getFileSystem(spark.sessionState.newHadoopConf())
