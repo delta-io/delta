@@ -16,11 +16,13 @@
 
 package org.apache.spark.sql.delta
 
+// scalastyle:off typedlit
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.PrintWriter
 
 import scala.collection.JavaConverters._
 
+import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, InvariantViolationException, SchemaUtils}
@@ -31,16 +33,18 @@ import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import io.delta.tables.DeltaTableBuilder
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.{AnalysisException, DataFrame, Dataset, QueryTest, Row}
+import org.apache.spark.sql.{AnalysisException, Column, DataFrame, Dataset, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.util.DateTimeUtils.{getZoneId, stringToDate, stringToTimestamp, toJavaDate, toJavaTimestamp}
 import org.apache.spark.sql.catalyst.util.quietly
 import org.apache.spark.sql.execution.streaming.MemoryStream
-import org.apache.spark.sql.functions.{current_timestamp, lit}
+
+import org.apache.spark.sql.functions.{current_timestamp, lit, struct, typedLit}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.{StreamingQueryException, Trigger}
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.types.{ArrayType, DateType, IntegerType, MetadataBuilder, StringType, StructField, StructType, TimestampType}
+import org.apache.spark.sql.types.{ArrayType, DataType, DateType, IntegerType, LongType, MetadataBuilder, ShortType, StringType, StructField, StructType, TimestampType}
 import org.apache.spark.unsafe.types.UTF8String
 
 trait GeneratedColumnSuiteBase
@@ -605,14 +609,157 @@ trait GeneratedColumnSuiteBase
     }
   }
 
-  test("validateGeneratedColumns: column type doesn't match expression type") {
-    val f1 = StructField("foo", IntegerType)
-    val f2 = withGenerationExpression(StructField("bar", IntegerType), "CAST(foo AS string)")
-    val schema = StructType(f1 :: f2 :: Nil)
-    val e = intercept[AnalysisException](validateGeneratedColumns(spark, schema))
-    errorContains(e.getMessage, "The expression type of the generated column bar is STRING, " +
-      "but the column type is INT")
+  protected def testTypeMismatch(
+      generatedColumnType: DataType,
+      generatedColumnNullable: Boolean,
+      generateAsExpression: Column,
+      expectSuccess: Boolean
+  ): Unit = {
+    val verb = if (expectSuccess) "matches" else "doesn't match"
+    val columnTypeString = if (generatedColumnNullable) {
+      generatedColumnType.sql
+    } else {
+      s"${generatedColumnType.sql} NOT NULL"
+    }
+    test(s"validateGeneratedColumns: column type ${columnTypeString}" +
+        s" $verb expression type ${generateAsExpression.expr.sql}") {
+      val f1 = StructField("nullableIntCol", IntegerType, nullable = true)
+      val f2 = withGenerationExpression(
+        StructField("genCol", generatedColumnType, nullable = generatedColumnNullable),
+        generateAsExpression.expr.sql)
+      val schema = StructType(f1 :: f2 :: Nil)
+      if (expectSuccess) {
+        validateGeneratedColumns(spark, schema)
+      } else {
+        val e = intercept[AnalysisException](validateGeneratedColumns(spark, schema))
+        val expressionTypeString = if (generateAsExpression.expr.resolved) {
+          generateAsExpression.expr.dataType.sql
+        } else {
+          val df1 = spark.createDataFrame(spark.emptyDataFrame.rdd, schema)
+            .select(generateAsExpression)
+          df1.schema.fields.head.dataType.sql
+        }
+        checkErrorMatchPVals(e,
+          errorClass = "DELTA_GENERATED_COLUMNS_EXPR_TYPE_MISMATCH",
+          parameters = Map(
+            "columnName" -> "genCol",
+            "expressionType" -> s".*${expressionTypeString}.*",
+            "columnType" -> s".*${generatedColumnType.sql}.*"
+          ))
+      }
+    }
   }
+
+  testTypeMismatch(
+    generatedColumnType = IntegerType,
+    generatedColumnNullable = true,
+    generateAsExpression = $"nullableIntCol",
+    expectSuccess = true
+  )
+
+  testTypeMismatch(
+    generatedColumnType = IntegerType,
+    generatedColumnNullable = false,
+    generateAsExpression = $"nullableIntCol",
+    // Even though foo is nullable, we allow this and fail at runtime when foo actually contains
+    // a NULL value.
+    expectSuccess = true
+  )
+
+  testTypeMismatch(
+    generatedColumnType = IntegerType,
+    generatedColumnNullable = false,
+    generateAsExpression = lit(5),
+    expectSuccess = true
+  )
+
+
+  testTypeMismatch(
+    generatedColumnType = IntegerType,
+    generatedColumnNullable = false,
+    // We need to force this to be INT NULL not a VOID NULL.
+    generateAsExpression = typedLit[java.lang.Integer](null),
+    // Even though the expression is clearly nullable, we allow this and fail at runtime
+    // when actually generating a NULL value.
+    expectSuccess = true
+  )
+
+  testTypeMismatch(
+    generatedColumnType = IntegerType,
+    generatedColumnNullable = true,
+    // We need to force this to be INT NULL not a VOID NULL.
+    generateAsExpression = typedLit[java.lang.Integer](null),
+    expectSuccess = true
+  )
+
+  for (generatedColumnNullable <- BOOLEAN_DOMAIN) {
+    testTypeMismatch(
+      generatedColumnType = IntegerType,
+      generatedColumnNullable = generatedColumnNullable,
+      generateAsExpression = $"nullableIntCol".cast(StringType),
+      expectSuccess = false)
+
+    testTypeMismatch(
+      generatedColumnType = IntegerType,
+      generatedColumnNullable = generatedColumnNullable,
+      generateAsExpression = $"nullableIntCol".cast(LongType),
+      expectSuccess = false)
+
+    testTypeMismatch(
+      generatedColumnType = IntegerType,
+      generatedColumnNullable = generatedColumnNullable,
+      generateAsExpression = $"nullableIntCol".cast(ShortType),
+      expectSuccess = false)
+  }
+
+  testTypeMismatch(
+    generatedColumnType = StructType(Array(StructField("first", IntegerType, nullable = false))),
+    generatedColumnNullable = true,
+    generateAsExpression = struct($"nullableIntCol".as("first")),
+    // Even though foo is nullable, we allow this and fail at runtime when foo actually contains
+    // a NULL value.
+    expectSuccess = true
+  )
+
+  testTypeMismatch(
+    generatedColumnType =
+      StructType(Array(StructField("firstNullable", IntegerType, nullable = true))),
+    generatedColumnNullable = true,
+    generateAsExpression = struct($"nullableIntCol".as("firstNullable")),
+    expectSuccess = true
+  )
+
+  test("nullability mismatch fails at runtime") {
+    withTableName("tbl") { tbl =>
+      createTable(
+        tableName = tbl,
+        path = None,
+        schemaString = "base STRING, gen STRING",
+        generatedColumns = Map("gen" -> "concat(base, '-generated')"),
+        partitionColumns = Seq.empty,
+        // base is nullable, but gen isn't even though it's derived from base.
+        notNullColumns = Set("gen"))
+      // Perform a legal write.
+      Seq("1").toDF("base")
+        .write.format("delta").mode("append").saveAsTable(tbl)
+
+      // Perform an illegal write.
+      val e = intercept[DeltaInvariantViolationException] {
+        Seq(null.asInstanceOf[String]).toDF("base")
+          .write.format("delta").mode("append").saveAsTable(tbl)
+      }
+      checkError(e,
+        errorClass = "DELTA_NOT_NULL_CONSTRAINT_VIOLATED",
+        parameters = Map("columnName" -> "gen"))
+
+      // Ensure the result is correct.
+      checkAnswer(
+        spark.read.table(tbl),
+        Row("1", "1-generated") :: Nil
+      )
+    }
+  }
+
 
   test("test partition transform expressions end to end") {
     withTableName("partition_transform_expressions") { table =>
@@ -630,8 +777,8 @@ trait GeneratedColumnSuiteBase
         .withColumn("time", $"time".cast(TimestampType))
         .write
         .format("delta")
-        .mode("append").
-        saveAsTable(table)
+        .mode("append")
+        .saveAsTable(table)
       checkAnswer(
         sql(s"SELECT * from $table"),
         Row(sqlTimestamp("2020-10-11 12:30:30"), sqlDate("2020-01-01"), sqlDate("2020-10-01"),

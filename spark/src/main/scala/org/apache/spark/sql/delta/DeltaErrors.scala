@@ -1847,9 +1847,17 @@ trait DeltaErrorsBase
       column: String,
       columnType: DataType,
       exprType: DataType): Throwable = {
+    val exprTypeSql = exprType.sql
+    val columnTypeSql = columnType.sql
+    val (exprTypeString, columnTypeString) = if (exprTypeSql == columnTypeSql) {
+      // We need to add some more information for the error message to be useful.
+      (exprType.json, columnType.json)
+    } else {
+      (exprTypeSql, columnTypeSql)
+    }
     new DeltaAnalysisException(
       errorClass = "DELTA_GENERATED_COLUMNS_EXPR_TYPE_MISMATCH",
-      messageParameters = Array(column, exprType.sql, columnType.sql)
+      messageParameters = Array(column, exprTypeString, columnTypeString)
     )
   }
 
