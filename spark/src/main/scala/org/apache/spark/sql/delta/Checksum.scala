@@ -20,6 +20,7 @@ import java.io.FileNotFoundException
 import java.nio.charset.StandardCharsets.UTF_8
 
 // scalastyle:off import.ordering.noEmptyLine
+import scala.collection.immutable.ListMap
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
@@ -35,10 +36,11 @@ import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.hadoop.fs.FileStatus
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.SparkEnv
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.execution.streaming.CheckpointFileManager
-import org.apache.spark.util.Utils
+import org.apache.spark.util.{SerializableConfiguration, Utils}
 
 /**
  * Stats calculated within a snapshot, which we store along individual transactions for
@@ -76,13 +78,17 @@ trait RecordChecksum extends DeltaLogging {
   private lazy val writer =
     CheckpointFileManager.create(deltaLog.logPath, deltaLog.newDeltaHadoopConf())
 
+  private def getChecksum(snapshot: Snapshot): VersionChecksum = {
+    snapshot.checksumOpt.getOrElse(snapshot.computeChecksum)
+  }
+
   protected def writeChecksumFile(txnId: String, snapshot: Snapshot): Unit = {
     if (!spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED)) {
       return
     }
 
     val version = snapshot.version
-    val checksumWithoutTxnId = snapshot.checksumOpt.getOrElse(snapshot.computeChecksum)
+    val checksumWithoutTxnId = getChecksum(snapshot)
     val checksum = checksumWithoutTxnId.copy(txnId = Some(txnId))
     val eventData = mutable.Map[String, Any]("operationSucceeded" -> false)
     eventData("numAddFileActions") = checksum.allFiles.map(_.size).getOrElse(-1)
@@ -168,8 +174,7 @@ trait RecordChecksum extends DeltaLogging {
         // then we cannot incrementally derive a new checksum for the new snapshot.
         logInfo(log"Incremental commit: starting with snapshot version " +
           log"${MDC(DeltaLogKeys.VERSION, expectedVersion)}")
-        val snapshotChecksum = snapshot.checksumOpt.getOrElse(snapshot.computeChecksum)
-        snapshotChecksum.copy(numMetadata = 1, numProtocol = 1) -> Some(snapshot)
+        getChecksum(snapshot).copy(numMetadata = 1, numProtocol = 1) -> Some(snapshot)
       case _ =>
         previousVersionState.swap.foreach { snapshot =>
           // Occurs when snapshot is no longer fresh due to concurrent writers.
@@ -366,3 +371,163 @@ trait ReadChecksum extends DeltaLogging { self: DeltaLog =>
   }
 }
 
+/**
+ * Verify the state of the table using the checksum information.
+ */
+trait ValidateChecksum extends DeltaLogging { self: Snapshot =>
+
+  /**
+   * Validate checksum (if any) by comparing it against the snapshot's state reconstruction.
+   * @param contextInfo caller context that will be added to the logging if validation fails
+   * @return True iff validation succeeded.
+   * @throws IllegalStateException if validation failed and corruption is configured as fatal.
+   */
+  def validateChecksum(contextInfo: Map[String, String] = Map.empty): Boolean = {
+    val contextSuffix = contextInfo.get("context").map(c => s".context-$c").getOrElse("")
+    val computedStateAccessor = s"ValidateChecksum.checkMismatch$contextSuffix"
+    val computedStateToCompareAgainst = computedState
+    val (mismatchErrorMap, detailedErrorMapForUsageLogs) = checksumOpt
+        .map(checkMismatch(_, computedStateToCompareAgainst))
+        .getOrElse((Map.empty[String, String], Map.empty[String, String]))
+    logAndThrowValidationFailure(mismatchErrorMap, detailedErrorMapForUsageLogs, contextInfo)
+  }
+
+  private def logAndThrowValidationFailure(
+      mismatchErrorMap: Map[String, String],
+      detailedErrorMapForUsageLogs: Map[String, String],
+      contextInfo: Map[String, String]): Boolean = {
+    if (mismatchErrorMap.isEmpty) return true
+    val mismatchString = mismatchErrorMap.values.mkString("\n")
+
+    // We get the active SparkSession, which may be different than the SparkSession of the
+    // Snapshot that was created, since we cache `DeltaLog`s.
+    val sparkOpt = SparkSession.getActiveSession
+
+    // Report the failure to usage logs.
+    recordDeltaEvent(
+      this.deltaLog,
+      "delta.checksum.invalid",
+      data = Map(
+        "error" -> mismatchString,
+        "mismatchingFields" -> mismatchErrorMap.keys.toSeq,
+        "detailedErrorMap" -> detailedErrorMapForUsageLogs,
+        "v2CheckpointEnabled" ->
+          CheckpointProvider.isV2CheckpointEnabled(this),
+        "checkpointProviderCheckpointPolicy" ->
+          checkpointProvider.checkpointPolicy.map(_.name).getOrElse("")
+      ) ++ contextInfo)
+
+    val spark = sparkOpt.getOrElse {
+      throw DeltaErrors.sparkSessionNotSetException()
+    }
+    if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CHECKSUM_MISMATCH_IS_FATAL)) {
+      throw DeltaErrors.logFailedIntegrityCheck(version, mismatchString)
+    }
+    false
+  }
+
+  /**
+   * Validates the given `checksum` against [[Snapshot.computedState]].
+   * Returns an tuple of Maps:
+   *  - first Map contains fieldName to user facing errorMessage mapping.
+   *  - second Map is just for usage logs purpose and contains more details for different fields.
+   *    Adding info to this map is optional.
+   */
+  private def checkMismatch(
+      checksum: VersionChecksum,
+      computedStateToCheckAgainst: SnapshotState
+  ): (Map[String, String], Map[String, String]) = {
+    var errorMap = ListMap[String, String]()
+    var detailedErrorMapForUsageLogs = ListMap[String, String]()
+
+    def compare(expected: Long, found: Long, title: String, field: String): Unit = {
+      if (expected != found) {
+        errorMap += (field -> s"$title - Expected: $expected Computed: $found")
+      }
+    }
+    def compareAction(expected: Action, found: Action, title: String, field: String): Unit = {
+      // only compare when expected is not null for being backward compatible to the checksum
+      // without protocol and metadata
+      Option(expected).filterNot(_.equals(found)).foreach { expected =>
+        errorMap += (field -> s"$title - Expected: $expected Computed: $found")
+      }
+    }
+
+    def compareSetTransactions(
+        setTransactionsInCRC: Seq[SetTransaction],
+        setTransactionsComputed: Seq[SetTransaction]): Unit = {
+      val appIdsFromCrc = setTransactionsInCRC.map(_.appId)
+      val repeatedEntriesForSameAppId = appIdsFromCrc.size != appIdsFromCrc.toSet.size
+      val setTransactionsInCRCSet = setTransactionsInCRC.toSet
+      val setTransactionsFromComputeStateSet = setTransactionsComputed.toSet
+      val exactMatchFailed = setTransactionsInCRCSet != setTransactionsFromComputeStateSet
+      if (repeatedEntriesForSameAppId || exactMatchFailed) {
+        val repeatedAppIds = appIdsFromCrc.groupBy(identity).filter(_._2.size > 1).keySet.toSeq
+        val matchedActions = setTransactionsInCRCSet.intersect(setTransactionsFromComputeStateSet)
+        val unmatchedActionsInCrc = setTransactionsInCRCSet -- matchedActions
+        val unmatchedActionsInComputed = setTransactionsFromComputeStateSet -- matchedActions
+        val eventData = Map(
+          "unmatchedSetTransactionsCRC" -> unmatchedActionsInCrc,
+          "unmatchedSetTransactionsComputedState" -> unmatchedActionsInComputed,
+          "version" -> version,
+          "minSetTransactionRetentionTimestamp" -> minSetTransactionRetentionTimestamp,
+          "repeatedEntriesForSameAppId" -> repeatedAppIds,
+          "exactMatchFailed" -> exactMatchFailed)
+        errorMap += ("setTransactions" -> s"SetTransaction mismatch")
+        detailedErrorMapForUsageLogs += ("setTransactions" -> JsonUtils.toJson(eventData))
+      }
+    }
+
+    def compareDomainMetadata(
+        domainMetadataInCRC: Seq[DomainMetadata],
+        domainMetadataComputed: Seq[DomainMetadata]): Unit = {
+      val domainMetadataInCRCSet = domainMetadataInCRC.toSet
+      // Remove any tombstones from the reconstructed set before comparison.
+      val domainMetadataInComputeStateSet = domainMetadataComputed.filterNot(_.removed).toSet
+      val exactMatchFailed = domainMetadataInCRCSet != domainMetadataInComputeStateSet
+      if (exactMatchFailed) {
+        val matchedActions = domainMetadataInCRCSet.intersect(domainMetadataInComputeStateSet)
+        val unmatchedActionsInCRC = domainMetadataInCRCSet -- matchedActions
+        val unmatchedActionsInComputed = domainMetadataInComputeStateSet -- matchedActions
+        val eventData = Map(
+          "unmatchedDomainMetadataInCRC" -> unmatchedActionsInCRC,
+          "unmatchedDomainMetadataInComputedState" -> unmatchedActionsInComputed,
+          "version" -> version)
+        errorMap += ("domainMetadata" -> "domainMetadata mismatch")
+        detailedErrorMapForUsageLogs += ("domainMetadata" -> JsonUtils.toJson(eventData))
+      }
+    }
+
+    compareAction(checksum.metadata, computedStateToCheckAgainst.metadata, "Metadata", "metadata")
+    compareAction(checksum.protocol, computedStateToCheckAgainst.protocol, "Protocol", "protocol")
+    compare(
+      checksum.tableSizeBytes,
+      computedStateToCheckAgainst.sizeInBytes,
+      title = "Table size (bytes)",
+      field = "tableSizeBytes")
+    compare(
+      checksum.numFiles,
+      computedStateToCheckAgainst.numOfFiles,
+      title = "Number of files",
+      field = "numFiles")
+    compare(
+      checksum.numMetadata,
+      computedStateToCheckAgainst.numOfMetadata,
+      title = "Metadata updates",
+      field = "numOfMetadata")
+    compare(
+      checksum.numProtocol,
+      computedStateToCheckAgainst.numOfProtocol,
+      title = "Protocol updates",
+      field = "numOfProtocol")
+
+    checksum.setTransactions.foreach { setTransactionsInCRC =>
+      compareSetTransactions(setTransactionsInCRC, computedStateToCheckAgainst.setTransactions)
+    }
+
+    checksum.domainMetadata.foreach(
+      compareDomainMetadata(_, computedStateToCheckAgainst.domainMetadata))
+
+    (errorMap, detailedErrorMapForUsageLogs)
+  }
+}

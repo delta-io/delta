@@ -250,15 +250,29 @@ object OptimisticTransaction {
 trait OptimisticTransactionImpl extends TransactionalWrite
   with SQLMetricsReporting
   with DeltaScanGenerator
-  with DeltaLogging
-  with RecordChecksum {
+  with RecordChecksum
+  with DeltaLogging {
 
   import org.apache.spark.sql.delta.util.FileNames._
+
+  // Intentionally cache the values of these configs to ensure stable commit code path
+  // and avoid race conditions between committing and dynamic config changes.
+  protected val incrementalCommitEnabled = deltaLog.incrementalCommitEnabled
+  protected val shouldVerifyIncrementalCommit = deltaLog.shouldVerifyIncrementalCommit
 
   val deltaLog: DeltaLog
   val catalogTable: Option[CatalogTable]
   val snapshot: Snapshot
   def clock: Clock = deltaLog.clock
+
+  // This would be a quick operation if we already validated the checksum
+  // Otherwise, we should at least perform the validation here.
+  // NOTE: When incremental commits are enabled, skip validation unless it was specifically
+  // requested. This allows us to maintain test converage internally, while avoiding the extreme
+  // overhead of those checks in prod or benchmark settings.
+  if (!incrementalCommitEnabled || shouldVerifyIncrementalCommit) {
+    snapshot.validateChecksum(Map("context" -> "transactionInitialization"))
+  }
 
   protected def spark = SparkSession.active
 

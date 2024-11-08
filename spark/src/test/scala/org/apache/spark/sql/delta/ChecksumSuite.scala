@@ -18,13 +18,15 @@ package org.apache.spark.sql.delta
 
 import java.io.File
 
+import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.DeltaTestUtils._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.util.FileNames
+import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.SaveMode
 import org.apache.spark.sql.functions.col
@@ -33,7 +35,11 @@ import org.apache.spark.sql.test.SharedSparkSession
 class ChecksumSuite
   extends QueryTest
   with SharedSparkSession
+  with DeltaTestUtilsBase
   with DeltaSQLCommandTest {
+
+  override def sparkConf: SparkConf = super.sparkConf
+    .set(DeltaSQLConf.INCREMENTAL_COMMIT_FORCE_VERIFY_IN_TESTS, false)
 
   test(s"A Checksum should be written after every commit when " +
     s"${DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key} is true") {
@@ -128,6 +134,106 @@ class ChecksumSuite
   test("Incremental checksums: DELETE") {
     testIncrementalChecksumWrites { tablePath =>
       sql(s"DELETE FROM delta.`$tablePath` WHERE id % 2 = 0")
+    }
+  }
+
+  test("Checksum validation should happen on checkpoint") {
+    withSQLConf(
+      DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true",
+      DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> "true"
+    ) {
+      withTempDir { tempDir =>
+        spark.range(10).write.format("delta").save(tempDir.getCanonicalPath)
+        spark.range(1)
+          .write
+          .format("delta")
+          .mode("append")
+          .save(tempDir.getCanonicalPath)
+        val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+        val checksumOpt = log.readChecksum(1)
+        assert(checksumOpt.isDefined)
+        val checksum = checksumOpt.get
+        // Corrupt the checksum file.
+        val corruptedChecksum = checksum.copy(
+          protocol =
+            checksum.protocol.copy(minReaderVersion = checksum.protocol.minReaderVersion + 1),
+          metadata = checksum.metadata.copy(description = "corrupted"),
+          numProtocol = 2,
+          numMetadata = 2,
+          tableSizeBytes = checksum.tableSizeBytes + 1,
+          numFiles = checksum.numFiles + 1)
+        val corruptedChecksumJson = JsonUtils.toJson(corruptedChecksum)
+        log.store.write(
+          FileNames.checksumFile(log.logPath, 1),
+          Seq(corruptedChecksumJson).toIterator,
+          overwrite = true)
+        DeltaLog.clearCache()
+        val log2 = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+        val usageLogs = Log4jUsageLogger.track {
+          intercept[DeltaIllegalStateException] {
+            log2.checkpoint()
+          }
+        }
+        val validationFailureLogs = filterUsageRecords(usageLogs, "delta.checksum.invalid")
+        assert(validationFailureLogs.size == 1)
+        validationFailureLogs.foreach { log =>
+          val usageLogBlob = JsonUtils.fromJson[Map[String, Any]](log.blob)
+          val mismatchingFieldsOpt = usageLogBlob.get("mismatchingFields")
+          assert(mismatchingFieldsOpt.isDefined)
+          val mismatchingFieldsSet = mismatchingFieldsOpt.get.asInstanceOf[Seq[String]].toSet
+          val expectedMismatchingFields = Set(
+            "protocol",
+            "metadata",
+            "numOfProtocol",
+            "numOfMetadata",
+            "tableSizeBytes",
+            "numFiles"
+          )
+          assert(mismatchingFieldsSet === expectedMismatchingFields)
+        }
+      }
+    }
+  }
+
+  test("incremental commit verify mode should always detect invalid .crc") {
+    withSQLConf(
+      DeltaSQLConf.INCREMENTAL_COMMIT_VERIFY.key -> "true",
+      DeltaSQLConf.DELTA_CHECKSUM_MISMATCH_IS_FATAL.key -> "false",
+      DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> "true"
+    ) {
+      withTempDir { tempDir =>
+        import testImplicits._
+        val numAddFiles = 10
+
+        // Procedure:
+        // 1. Populate the table with several files
+        // 2. Start a new transaction
+        // 3. Intentionally try to commit the same files again
+        //    a. Silently duplicated AddFile breaks incremental commit invariants
+        //    b. Incrementally computed .crc is thus invalid
+        //    c. Incremental commit verification should detect the "invalid" .crc
+        //    d. Post-commit snapshot should have empty checksumOpt
+        // 4. Clear the delta log cache so we pick up the correct (fallback) .crc
+        // 5. Create a new snapshot and manually validate the .crc
+
+        val files = (1 to numAddFiles).map(i => createTestAddFile(encodedPath = i.toString))
+        DeltaLog.forTable(spark, tempDir).startTransaction().commitWriteAppend(files: _*)
+
+        val log = DeltaLog.forTable(spark, tempDir)
+        val txn = log.startTransaction()
+        val expected =
+          s"""Table size (bytes) - Expected: ${2*numAddFiles} Computed: $numAddFiles
+             |Number of files - Expected: ${2*numAddFiles} Computed: $numAddFiles
+          """.stripMargin.trim
+
+        val Seq(corruptionReport) = collectUsageLogs("delta.checksum.invalid") {
+          // Intentionally re-add the same files, without identifying them as duplicates
+          txn.commitWriteAppend(files: _*)
+        }
+        val error = JsonUtils.fromJson[Map[String, Any]](corruptionReport.blob).get("error")
+        assert(error.exists(_.asInstanceOf[String].contains(expected)))
+        assert(log.snapshot.checksumOpt.isEmpty)
+      }
     }
   }
 }
