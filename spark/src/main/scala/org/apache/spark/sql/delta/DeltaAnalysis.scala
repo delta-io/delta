@@ -1144,11 +1144,12 @@ class DeltaAnalysis(session: SparkSession)
             session, dataSourceV1.options
           ).foreach { rootSchemaTrackingLocation =>
             assert(dataSourceV1.options.contains("path"), "Path for Delta table must be defined")
-            val log = DeltaLog.forTable(session, new Path(dataSourceV1.options("path")))
+            val tableId =
+              dataSourceV1.options("path").replace(":", "").replace("/", "_")
             val sourceIdOpt = dataSourceV1.options.get(DeltaOptions.STREAMING_SOURCE_TRACKING_ID)
             val schemaTrackingLocation =
               DeltaSourceMetadataTrackingLog.fullMetadataTrackingLocation(
-                rootSchemaTrackingLocation, log.tableId, sourceIdOpt)
+                rootSchemaTrackingLocation, tableId, sourceIdOpt)
             // Make sure schema location is under checkpoint
             if (!allowSchemaLocationOutsideOfCheckpoint &&
               !(schemaTrackingLocation.stripPrefix("file:").stripSuffix("/") + "/")

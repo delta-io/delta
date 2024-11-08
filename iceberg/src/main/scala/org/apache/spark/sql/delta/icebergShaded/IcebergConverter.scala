@@ -267,7 +267,7 @@ class IcebergConverter(spark: SparkSession)
         try {
           // TODO: We can optimize this by providing a checkpointHint to getSnapshotAt. Check if
           //  txn.snapshot.version < version. If true, use txn.snapshot's checkpoint as a hint.
-          Some(log.getSnapshotAt(version))
+          Some(log.getSnapshotAt(version, catalogTableOpt = Some(catalogTable)))
         } catch {
           // If we can't load the file since the last time Iceberg was converted, it's likely that
           // the commit file expired. Treat this like a new Iceberg table conversion.

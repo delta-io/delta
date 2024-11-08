@@ -594,7 +594,7 @@ class DeltaLogSuite extends QueryTest
           Iterator(JsonUtils.toJson(add.wrap)),
           overwrite = false,
           deltaLog.newDeltaHadoopConf())
-        deltaLog
+        (deltaLog, None)
       }
       assert(snapshot.version === 0)
 

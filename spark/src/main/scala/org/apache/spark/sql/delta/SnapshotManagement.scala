@@ -43,6 +43,7 @@ import org.apache.spark.{SparkContext, SparkException}
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.util.{ThreadUtils, Utils}
 
 /**
@@ -1016,7 +1017,7 @@ trait SnapshotManagement { self: DeltaLog =>
   def update(
       stalenessAcceptable: Boolean = false,
       checkIfUpdatedSinceTs: Option[Long] = None,
-      tableIdentifierOpt: Option[TableIdentifier] = None): Snapshot = {
+      catalogTableOpt: Option[CatalogTable] = None): Snapshot = {
     val startTimeMs = System.currentTimeMillis()
     // currentSnapshot is volatile. Make a local copy of it at the start of the update call, so
     // that there's no chance of a race condition changing the snapshot partway through the update.
@@ -1049,7 +1050,7 @@ trait SnapshotManagement { self: DeltaLog =>
         withSnapshotLockInterruptibly {
           val newSnapshot = updateInternal(
             isAsync = false,
-            tableIdentifierOpt)
+            catalogTableOpt.map(_.identifier))
           sendEvent(newSnapshot = capturedSnapshot.snapshot)
           newSnapshot
         }
@@ -1067,7 +1068,7 @@ trait SnapshotManagement { self: DeltaLog =>
               interruptOnCancel = true)
             tryUpdate(
               isAsync = true,
-              tableIdentifierOpt)
+              catalogTableOpt.map(_.identifier))
           }
         } catch {
           case NonFatal(e) if !Utils.isTesting =>
@@ -1313,12 +1314,12 @@ trait SnapshotManagement { self: DeltaLog =>
   def getSnapshotAt(
       version: Long,
       lastCheckpointHint: Option[CheckpointInstance] = None,
-      tableIdentifierOpt: Option[TableIdentifier] = None): Snapshot = {
+      catalogTableOpt: Option[CatalogTable] = None): Snapshot = {
     getSnapshotAt(
       version,
       lastCheckpointHint,
       lastCheckpointProvider = None,
-      tableIdentifierOpt)
+      catalogTableOpt)
   }
 
   /**
@@ -1329,7 +1330,7 @@ trait SnapshotManagement { self: DeltaLog =>
       version: Long,
       lastCheckpointHint: Option[CheckpointInstance],
       lastCheckpointProvider: Option[CheckpointProvider],
-      tableIdentifierOpt: Option[TableIdentifier]): Snapshot = {
+      catalogTableOpt: Option[CatalogTable]): Snapshot = {
 
     // See if the version currently cached on the cluster satisfies the requirement
     val currentSnapshot = unsafeVolatileSnapshot
@@ -1338,7 +1339,7 @@ trait SnapshotManagement { self: DeltaLog =>
       // upper bound.
       currentSnapshot
     } else {
-      val latestSnapshot = update(tableIdentifierOpt = tableIdentifierOpt)
+      val latestSnapshot = update(catalogTableOpt = catalogTableOpt)
       if (latestSnapshot.version < version) {
         throwNonExistentVersionError(version)
       }
@@ -1360,6 +1361,7 @@ trait SnapshotManagement { self: DeltaLog =>
             .map(manuallyLoadCheckpoint)
         lastCheckpointInfoForListing -> None
     }
+    val tableIdentifierOpt = catalogTableOpt.map(_.identifier)
     val logSegmentOpt = createLogSegment(
       versionToLoad = Some(version),
       oldCheckpointProviderOpt = lastCheckpointProviderOpt,
