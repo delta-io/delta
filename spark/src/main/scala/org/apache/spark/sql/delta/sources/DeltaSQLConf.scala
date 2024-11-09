@@ -1412,6 +1412,22 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_UNIFORM_ICEBERG_RETRY_TIMES =
+    buildConf("uniform.iceberg.retry.times")
+      .doc("The number of retries iceberg conversions should have in case " +
+        "of failures")
+      .internal()
+      .intConf
+      .createWithDefault(3)
+
+  val DELTA_UNIFORM_ICEBERG_INCLUDE_BASE_CONVERTED_VERSION =
+    buildConf("uniform.iceberg.include.base.converted.version")
+      .doc("If true, include the base converted delta version as a tbl property in Iceberg " +
+        "metadata to indicate the delta version that the conversion started from")
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_OPTIMIZE_MIN_FILE_SIZE =
     buildConf("optimize.minFileSize")
         .internal()
