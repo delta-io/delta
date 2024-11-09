@@ -21,7 +21,6 @@ import org.apache.spark.sql.catalyst.plans.QueryPlan
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.rules.{RuleId, UnknownRuleId}
 import org.apache.spark.sql.catalyst.trees.{AlwaysProcess, TreePatternBits}
-import org.apache.spark.sql.delta.util.DeltaEncoders
 import org.apache.spark.sql.types.{ArrayType, MapType, StructField, StructType}
 
 trait RichSparkClasses {

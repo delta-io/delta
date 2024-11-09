@@ -18,21 +18,17 @@ package org.apache.spark.sql.delta.coordinatedcommits
 
 import java.util.Optional
 
-import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{CoordinatedCommitsTableFeature, DeltaConfig, DeltaConfigs, DeltaIllegalArgumentException, DeltaLog, Snapshot, SnapshotDescriptor}
+import org.apache.spark.sql.delta.{CoordinatedCommitsTableFeature, DeltaConfigs, DeltaIllegalArgumentException, DeltaLog, Snapshot, SnapshotDescriptor}
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.commands.CloneTableCommand
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
+import org.apache.spark.sql.delta.util.FileNames
 import org.apache.spark.sql.delta.util.FileNames.{BackfilledDeltaFile, CompactedDeltaFile, DeltaFile, UnbackfilledDeltaFile}
-import io.delta.storage.LogStore
 import io.delta.storage.commit.{CommitCoordinatorClient, GetCommitsResponse => JGetCommitsResponse, TableIdentifier}
-import io.delta.storage.commit.actions.AbstractMetadata
-import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileStatus, Path}
+import org.apache.hadoop.fs.FileStatus
 
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession

@@ -37,7 +37,7 @@ import org.apache.spark.SparkContext.SPARK_JOB_GROUP_ID
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.{AnalysisException, Encoders, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.{UnresolvedAttribute, UnresolvedTable}
+import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, Expression}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, UnaryNode}
 import org.apache.spark.sql.execution.command.RunnableCommand

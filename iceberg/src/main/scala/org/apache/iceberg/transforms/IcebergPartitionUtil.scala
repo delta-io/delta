@@ -21,7 +21,7 @@ import scala.collection.JavaConverters._
 import org.apache.spark.sql.delta.DeltaColumnMapping
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
 import org.apache.spark.sql.delta.util.{DateFormatter, TimestampFormatter}
-import org.apache.iceberg.{PartitionField, PartitionSpec, Schema, StructLike}
+import org.apache.iceberg.{PartitionField, PartitionSpec, Schema}
 import org.apache.iceberg.spark.SparkSchemaUtil
 import org.apache.iceberg.types.Type.TypeID
 import org.apache.iceberg.types.Types

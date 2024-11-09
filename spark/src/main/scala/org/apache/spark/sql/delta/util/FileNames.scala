@@ -18,7 +18,6 @@ package org.apache.spark.sql.delta.util
 
 import java.util.UUID
 
-import org.apache.spark.sql.delta.DeltaLog
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 /** Helper for creating file names for specific commits / checkpoints. */

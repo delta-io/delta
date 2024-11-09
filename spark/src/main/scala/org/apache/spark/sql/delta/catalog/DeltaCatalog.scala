@@ -43,7 +43,7 @@ import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkException
-import org.apache.spark.internal.{Logging, MDC}
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.{AnalysisException, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{NoSuchDatabaseException, NoSuchNamespaceException, NoSuchTableException, UnresolvedAttribute, UnresolvedFieldName, UnresolvedFieldPosition}

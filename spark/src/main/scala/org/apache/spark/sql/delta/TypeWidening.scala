@@ -16,10 +16,9 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.actions.{Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
-import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 

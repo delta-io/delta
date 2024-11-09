@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.sources
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.IOException
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog}
+import org.apache.spark.sql.delta.DeltaErrors
 import org.apache.spark.sql.delta.util.JsonUtils
 import com.fasterxml.jackson.core.{JsonGenerator, JsonParseException, JsonParser, JsonProcessingException}
 import com.fasterxml.jackson.databind.{DeserializationContext, SerializerProvider}
@@ -59,7 +59,6 @@ case class DeltaSourceOffset private(
     isInitialSnapshot: Boolean
   ) extends Offset with Comparable[DeltaSourceOffset] {
 
-  import DeltaSourceOffset._
 
   assert(index != -1, "Index should never be -1, it should be set to the BASE_INDEX instead.")
 

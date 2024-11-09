@@ -20,7 +20,7 @@ import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaTableUtils.withActiveSession
-import org.apache.spark.sql.delta.actions.{Protocol, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.AlterTableSetPropertiesDeltaCommand
 import org.apache.spark.sql.delta.sources.DeltaSQLConf

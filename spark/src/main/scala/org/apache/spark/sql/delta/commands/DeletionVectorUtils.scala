@@ -22,13 +22,10 @@ import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBi
 import org.apache.spark.sql.delta.files.SupportsRowIndexFilters
 import org.apache.spark.sql.delta.files.TahoeFileIndex
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.execution.datasources.FileIndex
 import org.apache.spark.sql.functions.col
-import org.apache.spark.util.Utils
 
 trait DeletionVectorUtils extends DeltaLogging {
 

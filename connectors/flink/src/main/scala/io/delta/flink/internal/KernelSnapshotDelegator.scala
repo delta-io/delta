@@ -18,7 +18,6 @@
 
 package io.delta.standalone.internal
 
-import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.engine.Engine
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path

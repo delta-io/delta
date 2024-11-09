@@ -20,14 +20,13 @@ import scala.collection.mutable
 
 import org.apache.spark.sql.delta.expressions.JoinedProjection
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileSystem, Path}
+import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate._
 import org.apache.spark.sql.catalyst.expressions.codegen.GenerateMutableProjection
 import org.apache.spark.sql.execution.datasources._
-import org.apache.spark.sql.types._
 import org.apache.spark.util.SerializableConfiguration
 
 /**

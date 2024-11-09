@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.actions.{Action, CommitInfo, Metadata}
+import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.util.ScalaExtensions._
 
 object InCommitTimestampUtils {

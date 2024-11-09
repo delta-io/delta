@@ -37,7 +37,6 @@ import org.apache.spark.sql.delta.files.DeltaFileFormatWriter.PartitionedTaskAtt
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{DataType, StringType, TimestampType}
-import org.apache.spark.util.Utils
 
 /**
  * Writes out the files to `path` and returns a list of them in `addedStatuses`. Includes

@@ -17,13 +17,10 @@
 package io.delta.sharing.spark
 
 import java.lang.ref.WeakReference
-import java.nio.charset.StandardCharsets.UTF_8
 
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
-import com.google.common.hash.Hashing
 import io.delta.sharing.client.DeltaSharingClient
 import io.delta.sharing.client.model.{Table => DeltaSharingTable}
-import org.apache.hadoop.fs.Path
 
 import org.apache.spark.delta.sharing.CachedTableManager
 import org.apache.spark.internal.Logging

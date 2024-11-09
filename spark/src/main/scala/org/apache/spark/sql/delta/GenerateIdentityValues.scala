@@ -22,7 +22,7 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 
 import org.apache.spark.{SparkException, TaskContext}
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.{Expression, LeafExpression, Nondeterministic}
+import org.apache.spark.sql.catalyst.expressions.{LeafExpression, Nondeterministic}
 import org.apache.spark.sql.catalyst.expressions.codegen.{CodegenContext, CodeGenerator, ExprCode, FalseLiteral}
 import org.apache.spark.sql.catalyst.expressions.codegen.Block._
 import org.apache.spark.sql.types.{DataType, LongType}

@@ -32,7 +32,7 @@ import org.json4s.jackson.JsonMethods._
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, QuotingUtils}
+import org.apache.spark.sql.catalyst.util.QuotingUtils
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{ArrayType, DataType, MapType, Metadata => SparkMetadata, MetadataBuilder, StructField, StructType}

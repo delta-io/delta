@@ -19,7 +19,6 @@ package org.apache.spark.sql.delta.hooks
 import java.nio.charset.Charset
 import java.util.concurrent.atomic.AtomicInteger
 
-import scala.collection.JavaConverters._
 import scala.concurrent.{ExecutionContext, Future, TimeoutException}
 import scala.util.Try
 import scala.util.control.NonFatal
@@ -35,13 +34,12 @@ import org.apache.spark.sql.delta.util.threads.DeltaThreadPool
 import org.apache.commons.lang3.exception.ExceptionUtils
 
 import org.apache.spark.internal.MDC
-import org.apache.spark.internal.config.ConfigEntry
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.connector.catalog.CatalogManager.SESSION_CATALOG_NAME
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.types.{StructField, StructType}
+import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.ThreadUtils
 
 /**

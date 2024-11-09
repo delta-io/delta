@@ -22,7 +22,7 @@ import java.util.concurrent.TimeUnit
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaColumnMapping.{dropColumnMappingMetadata, filterColumnMappingProperties}
-import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
 import org.apache.spark.sql.delta.actions.DomainMetadata
 import org.apache.spark.sql.delta.commands.DMLUtils.TaggedCommitData
 import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsUtils
@@ -44,7 +44,6 @@ import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.execution.command.{LeafRunnableCommand, RunnableCommand}
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
-import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructType
 
 /**

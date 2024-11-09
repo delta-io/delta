@@ -16,7 +16,6 @@
 
 package org.apache.spark.sql.delta.deletionvectors
 
-import java.io.{IOException, ObjectInputStream}
 
 import org.apache.spark.sql.delta.DeltaErrors
 import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor
@@ -25,7 +24,6 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.util.Utils
 
 /**
  * Interface for bitmaps that are stored as Deletion Vectors.

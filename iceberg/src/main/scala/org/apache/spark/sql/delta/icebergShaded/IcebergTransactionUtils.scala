@@ -22,7 +22,7 @@ import java.time.Instant
 import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaConfig, DeltaConfigs, DeltaErrors, DeltaLog, Snapshot}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaConfig, DeltaConfigs, DeltaErrors, Snapshot}
 import org.apache.spark.sql.delta.DeltaConfigs.parseCalendarInterval
 import org.apache.spark.sql.delta.actions.{AddFile, FileAction, RemoveFile}
 import org.apache.spark.sql.delta.metering.DeltaLogging

@@ -16,7 +16,6 @@
 
 package org.apache.spark.sql.delta.commands
 
-import org.apache.spark.sql.delta.catalog.DeltaTableV2
 
 import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder

@@ -21,7 +21,6 @@ import java.util.Locale
 // scalastyle:off import.ordering.noEmptyLine
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
-import scala.language.existentials
 
 import org.apache.spark.sql.delta.{Checkpoints, DeletionVectorsTableFeature, DeltaColumnMapping, DeltaColumnMappingMode, DeltaConfigs, DeltaErrors, DeltaIllegalArgumentException, DeltaLog, DeltaUDF, NoMapping}
 import org.apache.spark.sql.delta.DeltaColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY
@@ -46,7 +45,6 @@ import org.apache.spark.sql.catalyst.parser.{AbstractSqlParser, AstBuilder, Pars
 import org.apache.spark.sql.catalyst.parser.SqlBaseParser.MultipartIdentifierListContext
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.functions.lit
-import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 
 /**

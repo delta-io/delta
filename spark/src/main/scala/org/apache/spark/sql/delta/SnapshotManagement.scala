@@ -23,7 +23,6 @@ import java.util.concurrent.locks.ReentrantLock
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable
-import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
 // scalastyle:off import.ordering.noEmptyLine
@@ -37,7 +36,7 @@ import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.spark.sql.delta.util.threads.DeltaThreadPool
 import com.fasterxml.jackson.annotation.JsonIgnore
 import io.delta.storage.commit.{Commit, GetCommitsResponse}
-import org.apache.hadoop.fs.{BlockLocation, FileStatus, LocatedFileStatus, Path}
+import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.{SparkContext, SparkException}
 import org.apache.spark.internal.MDC

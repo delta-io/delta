@@ -23,7 +23,6 @@ import scala.util.control.NonFatal
 import org.apache.spark.sql.delta.SnapshotManagement.checkpointV2ThreadPool
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.FileNames._
 import org.apache.spark.sql.delta.util.threads.NonFateSharingFuture
@@ -32,7 +31,6 @@ import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.sql.Dataset
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.types.StructType
 
 /**
  * Represents basic information about a checkpoint.

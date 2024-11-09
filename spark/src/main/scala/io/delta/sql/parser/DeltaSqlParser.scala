@@ -54,7 +54,7 @@ import org.antlr.v4.runtime.atn.PredictionMode
 import org.antlr.v4.runtime.misc.{Interval, ParseCancellationException}
 import org.antlr.v4.runtime.tree._
 
-import org.apache.spark.sql.{AnalysisException, SparkSession}
+import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
 import org.apache.spark.sql.catalyst.{FunctionIdentifier, TableIdentifier}
 import org.apache.spark.sql.catalyst.analysis._
@@ -63,9 +63,7 @@ import org.apache.spark.sql.catalyst.parser.{CompoundBody, ParseErrorListener, P
 import org.apache.spark.sql.catalyst.parser.ParserUtils.{checkDuplicateClauses, string, withOrigin}
 import org.apache.spark.sql.catalyst.plans.logical.{AlterColumnSyncIdentity, AlterTableAddConstraint, AlterTableDropConstraint, AlterTableDropFeature, CloneTableStatement, LogicalPlan, RestoreTableStatement}
 import org.apache.spark.sql.catalyst.trees.Origin
-import org.apache.spark.sql.connector.catalog.{CatalogV2Util, TableCatalog}
-import org.apache.spark.sql.errors.QueryParsingErrors
-import org.apache.spark.sql.internal.{SQLConf, VariableSubstitution}
+import org.apache.spark.sql.internal.VariableSubstitution
 import org.apache.spark.sql.types._
 
 /**

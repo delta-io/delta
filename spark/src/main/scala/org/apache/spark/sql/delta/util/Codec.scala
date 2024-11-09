@@ -20,7 +20,6 @@ import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets.US_ASCII
 import java.util.UUID
 
-import com.google.common.primitives.UnsignedInteger
 
 /** Additional codecs not supported by Apache Commons Codecs. */
 object Codec {

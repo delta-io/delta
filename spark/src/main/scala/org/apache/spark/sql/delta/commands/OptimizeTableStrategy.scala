@@ -18,10 +18,10 @@ package org.apache.spark.sql.delta.commands
 
 import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumnInfo, ClusteringStatsCollector}
 import org.apache.spark.sql.delta.skipping.clustering.ZCube
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaErrors, OptimisticTransaction, Snapshot}
-import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, FileAction, RemoveFile}
+import org.apache.spark.sql.delta.Snapshot
+import org.apache.spark.sql.delta.actions.{AddFile, RemoveFile}
 import org.apache.spark.sql.delta.commands.OptimizeTableStrategy.DummyBinInfo
-import org.apache.spark.sql.delta.commands.optimize.{AddFileWithNumRecords, DeletionVectorStats, OptimizeStats, ZOrderFileStats, ZOrderStats}
+import org.apache.spark.sql.delta.commands.optimize.{AddFileWithNumRecords, OptimizeStats, ZOrderFileStats, ZOrderStats}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.sources.DeltaSQLConf.{DELTA_OPTIMIZE_CLUSTERING_MIN_CUBE_SIZE, DELTA_OPTIMIZE_CLUSTERING_TARGET_CUBE_SIZE}
 import org.apache.spark.sql.delta.zorder.ZCubeInfo

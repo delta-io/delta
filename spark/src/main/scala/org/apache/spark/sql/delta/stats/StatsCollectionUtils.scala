@@ -18,7 +18,6 @@ package org.apache.spark.sql.delta.stats
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable
-import scala.concurrent.duration.Duration
 import scala.language.existentials
 import scala.util.control.NonFatal
 

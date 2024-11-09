@@ -16,7 +16,6 @@
 
 package org.apache.spark.sql.delta.sources
 
-import java.util.concurrent.ConcurrentHashMap
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaOperations.StreamingUpdate

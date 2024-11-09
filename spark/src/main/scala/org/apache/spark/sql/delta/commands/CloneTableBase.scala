@@ -22,7 +22,6 @@ import java.util.UUID
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsUtils
@@ -30,7 +29,7 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util._
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileSystem, Path}
+import org.apache.hadoop.fs.Path
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.{Dataset, Row, SparkSession}
@@ -39,7 +38,7 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.plans.logical.LeafCommand
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.types.StructType
-import org.apache.spark.util.{Clock, SerializableConfiguration}
+import org.apache.spark.util.Clock
 // scalastyle:on import.ordering.noEmptyLine
 
 /**

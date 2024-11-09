@@ -52,7 +52,6 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.unsafe.types.UTF8String
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis._
 import org.apache.spark.sql.catalyst.catalog.CatalogTypes.TablePartitionSpec

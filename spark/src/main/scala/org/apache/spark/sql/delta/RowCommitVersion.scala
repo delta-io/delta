@@ -23,7 +23,6 @@ import org.apache.spark.sql.{types, Column, DataFrame}
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, FileSourceGeneratedMetadataStructField}
 import org.apache.spark.sql.catalyst.types.DataTypeUtils
 import org.apache.spark.sql.execution.datasources.FileFormat
-import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.types.{DataType, LongType, MetadataBuilder, StructField}
 
 object RowCommitVersion {

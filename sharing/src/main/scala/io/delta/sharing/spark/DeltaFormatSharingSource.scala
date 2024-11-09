@@ -22,11 +22,8 @@ import java.util.concurrent.TimeUnit
 
 import org.apache.spark.sql.delta.{
   DeltaErrors,
-  DeltaLog,
-  DeltaOptions,
-  SnapshotDescriptor
+  DeltaOptions
 }
-import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.{

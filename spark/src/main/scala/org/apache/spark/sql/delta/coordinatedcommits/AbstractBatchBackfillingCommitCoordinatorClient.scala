@@ -17,18 +17,15 @@
 package org.apache.spark.sql.delta.coordinatedcommits
 
 import java.nio.file.FileAlreadyExistsException
-import java.util.{Optional, UUID}
+import java.util.UUID
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.TransactionExecutionObserver
-import org.apache.spark.sql.delta.actions.CommitInfo
-import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.util.FileNames
 import io.delta.storage.LogStore
-import io.delta.storage.commit.{CommitCoordinatorClient, CommitFailedException => JCommitFailedException, CommitResponse, CoordinatedCommitsUtils => JCoordinatedCommitsUtils, TableDescriptor, TableIdentifier, UpdatedActions}
+import io.delta.storage.commit.{CommitCoordinatorClient, CommitFailedException => JCommitFailedException, CommitResponse, CoordinatedCommitsUtils => JCoordinatedCommitsUtils, TableDescriptor, UpdatedActions}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 

@@ -34,7 +34,6 @@ import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.Path
 import shadedForDelta.org.apache.iceberg.{Table => IcebergTable}
 import shadedForDelta.org.apache.iceberg.exceptions.CommitFailedException
-import shadedForDelta.org.apache.iceberg.hive.{HiveCatalog, HiveTableOperations}
 
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession

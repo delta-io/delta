@@ -18,12 +18,10 @@ package org.apache.spark.sql.delta
 
 import java.util.Locale
 
-import scala.collection.mutable
 
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
-import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.analysis._
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.plans.logical._

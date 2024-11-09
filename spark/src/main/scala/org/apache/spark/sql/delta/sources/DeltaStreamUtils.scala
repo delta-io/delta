@@ -16,14 +16,12 @@
 
 package org.apache.spark.sql.delta.sources
 
-import scala.collection.mutable
 
-import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Encoder}
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.execution.QueryExecution
-import org.apache.spark.sql.execution.streaming.{IncrementalExecution, IncrementalExecutionShims, StreamExecution}
+import org.apache.spark.sql.execution.streaming.{IncrementalExecution, IncrementalExecutionShims}
 
 object DeltaStreamUtils {
 

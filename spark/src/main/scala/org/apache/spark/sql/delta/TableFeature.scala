@@ -23,14 +23,12 @@ import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
 import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsUtils
 import org.apache.spark.sql.delta.redirect.{RedirectReaderWriter, RedirectWriterOnly}
-import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.FileNames
 
 import org.apache.spark.sql.{Dataset, SparkSession}
-import org.apache.spark.sql.types.TimestampNTZType
 
 /* --------------------------------------- *
  |  Table features base class definitions  |

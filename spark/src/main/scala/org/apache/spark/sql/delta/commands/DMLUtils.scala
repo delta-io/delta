@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.commands
 
 import org.apache.spark.sql.delta.DeltaCommitTag
-import org.apache.spark.sql.delta.actions.{Action, FileAction}
+import org.apache.spark.sql.delta.actions.Action
 
 object DMLUtils {
 

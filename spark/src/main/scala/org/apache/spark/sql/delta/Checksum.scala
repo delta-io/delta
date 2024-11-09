@@ -22,7 +22,6 @@ import java.nio.charset.StandardCharsets.UTF_8
 // scalastyle:off import.ordering.noEmptyLine
 import scala.collection.immutable.ListMap
 import scala.collection.mutable
-import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.actions._
@@ -36,11 +35,10 @@ import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.hadoop.fs.FileStatus
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.SparkEnv
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.execution.streaming.CheckpointFileManager
-import org.apache.spark.util.{SerializableConfiguration, Utils}
+import org.apache.spark.util.Utils
 
 /**
  * Stats calculated within a snapshot, which we store along individual transactions for

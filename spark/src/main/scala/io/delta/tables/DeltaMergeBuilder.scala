@@ -22,7 +22,6 @@ import scala.collection.Map
 import org.apache.spark.sql.delta.{DeltaAnalysisException, PostHocResolveUpCast, PreprocessTableMerge, ResolveDeltaMergeInto}
 import org.apache.spark.sql.delta.DeltaTableUtils.withActiveSession
 import org.apache.spark.sql.delta.DeltaViewHelper
-import org.apache.spark.sql.delta.commands.MergeIntoCommand
 import org.apache.spark.sql.delta.util.AnalysisHelper
 
 import org.apache.spark.annotation._
@@ -30,7 +29,7 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.ExtendedAnalysisException
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
-import org.apache.spark.sql.catalyst.expressions.{AttributeReference, NamedExpression}
+import org.apache.spark.sql.catalyst.expressions.AttributeReference
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.functions.expr
 import org.apache.spark.sql.internal.SQLConf

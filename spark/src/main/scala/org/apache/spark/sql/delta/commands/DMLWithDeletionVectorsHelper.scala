@@ -24,7 +24,7 @@ import org.apache.spark.sql.catalyst.expressions.aggregation.BitmapAggregator
 import org.apache.spark.sql.delta.{DeltaLog, DeltaParquetFileFormat, OptimisticTransaction, Snapshot}
 import org.apache.spark.sql.delta.DeltaParquetFileFormat._
 import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, FileAction}
-import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat, StoredBitmap}
+import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArrayFormat, StoredBitmap}
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
