@@ -125,23 +125,18 @@ public class TableFeatures {
         // Identity is the only one writer feature added in version 6
         throw unsupportedWriterProtocol(tablePath, minWriterVersion);
       case 7:
+        Set<String> supportedWriterFeatures =
+            new HashSet<>(
+                Arrays.asList(
+                    "appendOnly",
+                    "inCommitTimestamp",
+                    "columnMapping",
+                    "typeWidening-preview",
+                    "typeWidening",
+                    "domainMetadata"));
         for (String writerFeature : protocol.getWriterFeatures()) {
-          switch (writerFeature) {
-              // Only supported writer features as of today in Kernel
-            case "appendOnly":
-              break;
-            case "inCommitTimestamp":
-              break;
-            case "columnMapping":
-              break;
-            case "typeWidening-preview":
-              break;
-            case "typeWidening":
-              break;
-            case "domainMetadata":
-              break;
-            default:
-              throw unsupportedWriterFeature(tablePath, writerFeature);
+          if (!supportedWriterFeatures.contains(writerFeature)) {
+            throw unsupportedWriterFeature(tablePath, writerFeature);
           }
         }
         break;
