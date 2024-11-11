@@ -23,7 +23,6 @@ import os
 from multiprocessing.pool import ThreadPool
 from typing import List, Set, Dict, Optional, Any, Callable, Union, Tuple
 
-from py4j.protocol import Py4JJavaError
 from pyspark.errors.exceptions.base import UnsupportedOperationException
 from pyspark.sql import DataFrame, Row
 from pyspark.sql.functions import col, lit, expr, floor
@@ -1199,7 +1198,7 @@ class DeltaTableTestsMixin:
             self.spark.conf.unset('spark.databricks.delta.minWriterVersion')
 
         # bad args
-        with self.assertRaisesRegex(Py4JJavaError, "DELTA_UNSUPPORTED_FEATURES_IN_CONFIG"):
+        with self.assertRaisesRegex(Exception, "DELTA_UNSUPPORTED_FEATURES_IN_CONFIG"):
             dt.addFeatureSupport("abc")
         with self.assertRaisesRegex(ValueError, "featureName needs to be a string"):
             dt.addFeatureSupport(12345)  # type: ignore[arg-type]
