@@ -85,6 +85,13 @@ public class SnapshotImpl implements Snapshot {
     return protocol;
   }
 
+  /**
+   * Get the domain metadata map from the log replay, which lazily loads and replays a history of
+   * domain metadata actions, resolving them to produce the current state of the domain metadata.
+   *
+   * @return A map where the keys are domain names and the values are {@link DomainMetadata}
+   *     objects.
+   */
   public Map<String, DomainMetadata> getDomainMetadataMap() {
     return logReplay.getDomainMetadataMap();
   }

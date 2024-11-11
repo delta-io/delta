@@ -226,26 +226,13 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
       val dm1_2 = new DomainMetadata("domain1", """{"key1":"10"}""", false)
       val dm3_2 = new DomainMetadata("domain3", """{"key3":"30"}""", false)
 
-      commitDomainMetadataAndVerify(
-        engine,
-        tablePath,
-        domainMetadatas = Seq(dm1),
-        expectedValue = Map("domain1" -> dm1)
-      )
-
-      commitDomainMetadataAndVerify(
-        engine,
-        tablePath,
-        domainMetadatas = Seq(dm2, dm3, dm1_2),
-        expectedValue = Map("domain1" -> dm1_2, "domain2" -> dm2, "domain3" -> dm3)
-      )
-
-      commitDomainMetadataAndVerify(
-        engine,
-        tablePath,
-        domainMetadatas = Seq(dm3_2),
-        expectedValue = Map("domain1" -> dm1_2, "domain2" -> dm2, "domain3" -> dm3_2)
-      )
+      Seq(
+        (Seq(dm1), Map("domain1" -> dm1)),
+        (Seq(dm2, dm3, dm1_2), Map("domain1" -> dm1_2, "domain2" -> dm2, "domain3" -> dm3)),
+        (Seq(dm3_2), Map("domain1" -> dm1_2, "domain2" -> dm2, "domain3" -> dm3_2))
+      ).foreach { case (domainMetadatas, expectedValue) =>
+        commitDomainMetadataAndVerify(engine, tablePath, domainMetadatas, expectedValue)
+      }
     }
   }
 
@@ -280,30 +267,14 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
       val dm1_2 = new DomainMetadata("domain1", """{"key1":"10"}""", false)
       val dm3_2 = new DomainMetadata("domain3", """{"key3":"30"}""", true)
 
-      commitDomainMetadataAndVerify(
-        engine,
-        tablePath,
-        domainMetadatas = Seq(dm1),
-        expectedValue = Map("domain1" -> dm1)
-      )
-      commitDomainMetadataAndVerify(
-        engine,
-        tablePath,
-        domainMetadatas = Seq(dm2),
-        expectedValue = Map("domain1" -> dm1, "domain2" -> dm2)
-      )
-      commitDomainMetadataAndVerify(
-        engine,
-        tablePath,
-        domainMetadatas = Seq(dm3),
-        expectedValue = Map("domain1" -> dm1, "domain2" -> dm2, "domain3" -> dm3)
-      )
-      commitDomainMetadataAndVerify(
-        engine,
-        tablePath,
-        domainMetadatas = Seq(dm1_2, dm3_2),
-        expectedValue = Map("domain1" -> dm1_2, "domain2" -> dm2, "domain3" -> dm3_2)
-      )
+      Seq(
+        (Seq(dm1), Map("domain1" -> dm1)),
+        (Seq(dm2), Map("domain1" -> dm1, "domain2" -> dm2)),
+        (Seq(dm3), Map("domain1" -> dm1, "domain2" -> dm2, "domain3" -> dm3)),
+        (Seq(dm1_2, dm3_2), Map("domain1" -> dm1_2, "domain2" -> dm2, "domain3" -> dm3_2))
+      ).foreach { case (domainMetadatas, expectedValue) =>
+        commitDomainMetadataAndVerify(engine, tablePath, domainMetadatas, expectedValue)
+      }
 
       // Checkpoint the table
       val latestVersion = table.getLatestSnapshot(engine).getVersion(engine)
@@ -460,5 +431,4 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
       )
     })
   }
-
 }

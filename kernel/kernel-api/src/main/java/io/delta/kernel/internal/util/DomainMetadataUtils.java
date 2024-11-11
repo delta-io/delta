@@ -18,6 +18,7 @@ package io.delta.kernel.internal.util;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.internal.DeltaErrors;
+import io.delta.kernel.internal.TableFeatures;
 import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.actions.Protocol;
 import java.util.HashMap;
@@ -44,23 +45,18 @@ public class DomainMetadataUtils {
 
     final int vectorSize = domainMetadataActionVector.getSize();
     for (int rowId = 0; rowId < vectorSize; rowId++) {
-      if (domainMetadataActionVector.isNullAt(rowId)) {
-        // Skip non-domainMetadata actions
-        continue;
-      }
-
-      // Extract DomainMetadata action
       DomainMetadata domainMetadata =
           DomainMetadata.fromColumnVector(domainMetadataActionVector, rowId);
-      assert (domainMetadata != null);
 
-      // Check if domain already seen
-      String domain = domainMetadata.getDomain();
-      if (domainMetadataMap.containsKey(domain)) {
-        throw DeltaErrors.duplicateDomainMetadataAction(
-            domain, domainMetadataMap.get(domain).toString(), domainMetadata.toString());
+      if (domainMetadata != null) {
+        DomainMetadata existingDomainMetadata =
+            domainMetadataMap.put(domainMetadata.getDomain(), domainMetadata);
+
+        if (existingDomainMetadata != null) {
+          throw DeltaErrors.duplicateDomainMetadataAction(
+              domainMetadata.getDomain(), existingDomainMetadata, domainMetadata);
+        }
       }
-      domainMetadataMap.put(domain, domainMetadata);
     }
     return domainMetadataMap;
   }
@@ -76,8 +72,9 @@ public class DomainMetadataUtils {
     if (writerFeatures == null) {
       return false;
     }
-    return writerFeatures.contains(DomainMetadata.FEATURE_NAME)
-        && protocol.getMinWriterVersion() >= DomainMetadata.MIN_WRITER_VERSION_REQUIRED;
+    return writerFeatures.contains(TableFeatures.DOMAIN_METADATA_FEATURE_NAME)
+        && protocol.getMinWriterVersion()
+            >= TableFeatures.DOMAIN_METADATA_MIN_WRITER_VERSION_REQUIRED;
   }
 
   /**
@@ -106,7 +103,7 @@ public class DomainMetadataUtils {
       String domain = domainMetadata.getDomain();
       if (domainMetadataMap.containsKey(domain)) {
         throw DeltaErrors.duplicateDomainMetadataAction(
-            domain, domainMetadataMap.get(domain).toString(), domainMetadata.toString());
+            domain, domainMetadataMap.get(domain), domainMetadata);
       }
       domainMetadataMap.put(domain, domainMetadata);
     }

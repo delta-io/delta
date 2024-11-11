@@ -283,12 +283,12 @@ public final class DeltaErrors {
   }
 
   public static KernelException duplicateDomainMetadataAction(
-      String domain, String action1, String action2) {
+      String domain, DomainMetadata action1, DomainMetadata action2) {
     String message =
         String.format(
             "Multiple actions detected for domain '%s' in single transaction: '%s' and '%s'. "
                 + "Only one action per domain is allowed.",
-            domain, action1, action2);
+            domain, action1.toString(), action2.toString());
     return new KernelException(message);
   }
 
@@ -297,7 +297,7 @@ public final class DeltaErrors {
     String message =
         String.format(
             "A concurrent writer added a domainMetadata action for the same domain: %s. "
-                + "No domain-specific conflict resolution available for this domain. "
+                + "No domain-specific conflict resolution is available for this domain. "
                 + "Attempted domainMetadata: %s. Winning domainMetadata: %s",
             domainMetadataAttempt.getDomain(), domainMetadataAttempt, winningDomainMetadata);
     return new ConcurrentWriteException(message);

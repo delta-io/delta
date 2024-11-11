@@ -69,9 +69,9 @@ public class TransactionImpl implements Transaction {
   private final Optional<SetTransaction> setTxnOpt;
   private final boolean shouldUpdateProtocol;
   private final Clock clock;
+  private final List<DomainMetadata> domainMetadatas = new ArrayList<>();
   private Metadata metadata;
   private boolean shouldUpdateMetadata;
-  private final List<DomainMetadata> domainMetadatas = new ArrayList<>();
 
   private boolean closed; // To avoid trying to commit the same transaction again.
 
@@ -221,19 +221,14 @@ public class TransactionImpl implements Transaction {
     // Check for duplicate domain metadata and if the protocol supports
     DomainMetadataUtils.validateDomainMetadatas(domainMetadatas, protocol);
 
-    // Create domain metadata action rows
-    List<Row> domainMetadataActions = new ArrayList<>();
-    for (DomainMetadata domainMetadata : domainMetadatas) {
-      domainMetadataActions.add(createDomainMetadataSingleAction(domainMetadata.toRow()));
-    }
+    domainMetadatas.forEach(
+        dm -> metadataActions.add(createDomainMetadataSingleAction(dm.toRow())));
 
     try (CloseableIterator<Row> stageDataIter = dataActions.iterator()) {
       // Create a new CloseableIterator that will return the metadata actions followed by the
       // data actions.
       CloseableIterator<Row> dataAndMetadataActions =
-          toCloseableIterator(metadataActions.iterator())
-              .combine(toCloseableIterator(domainMetadataActions.iterator()))
-              .combine(stageDataIter);
+          toCloseableIterator(metadataActions.iterator()).combine(stageDataIter);
 
       if (commitAsVersion == 0) {
         // New table, create a delta log directory

@@ -208,12 +208,12 @@ public class ConflictChecker {
    *       a domain-specific way of resolving the conflict.
    * </ol>
    *
-   * @param winningCommitActionVector domainMetadata rows from the winning transactions
+   * @param domainMetadataVector domainMetadata rows from the winning transactions
    */
-  private void handleDomainMetadata(ColumnVector winningCommitActionVector) {
+  private void handleDomainMetadata(ColumnVector domainMetadataVector) {
     // Extract the domain metadata map from the winning transaction.
     Map<String, DomainMetadata> winningDomainMetadataMap =
-        DomainMetadataUtils.extractDomainMetadataMap(winningCommitActionVector);
+        DomainMetadataUtils.extractDomainMetadataMap(domainMetadataVector);
 
     for (DomainMetadata dm : this.transaction.getDomainMetadatas()) {
       // Try to resolve the conflict, if not possible, throw a ConcurrentTransaction exception

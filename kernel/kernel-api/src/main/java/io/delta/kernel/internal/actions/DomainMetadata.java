@@ -29,6 +29,12 @@ import java.util.Map;
 
 /** Delta log action representing an `DomainMetadata` action */
 public class DomainMetadata {
+  /** Full schema of the {@link DomainMetadata} action in the Delta Log. */
+  public static final StructType FULL_SCHEMA =
+      new StructType()
+          .add("domain", StringType.STRING, false /* nullable */)
+          .add("configuration", StringType.STRING, false /* nullable */)
+          .add("removed", BooleanType.BOOLEAN, false /* nullable */);
 
   public static DomainMetadata fromColumnVector(ColumnVector vector, int rowId) {
     if (vector.isNullAt(rowId)) {
@@ -51,30 +57,17 @@ public class DomainMetadata {
         requireNonNull(row, 2, "removed").getBoolean(2));
   }
 
-  /** Full schema of the {@link DomainMetadata} action in the Delta Log. */
-  public static final StructType FULL_SCHEMA =
-      new StructType()
-          .add("domain", StringType.STRING, false /* nullable */)
-          .add("configuration", StringType.STRING, false /* nullable */)
-          .add("removed", BooleanType.BOOLEAN, false /* nullable */);
-
-  /** The feature name for domain metadata. */
-  public static final String FEATURE_NAME = "domainMetadata";
-
-  /** The minimum writer version required to support domain metadata. */
-  public static final int MIN_WRITER_VERSION_REQUIRED = 7;
-
   private final String domain;
   private final String configuration;
   private final boolean removed;
 
   /**
-   * The domain metadata action contains a configuration (string-string map) for a named metadata
-   * domain. Two overlapping transactions conflict if they both contain a domain metadata action for
-   * the same metadata domain. Per-domain conflict resolution logic can be implemented.
+   * The domain metadata action contains a configuration string for a named metadata domain. Two
+   * overlapping transactions conflict if they both contain a domain metadata action for the same
+   * metadata domain. Per-domain conflict resolution logic can be implemented.
    *
-   * @param domain A string used to identify a specific feature.
-   * @param configuration A string containing configuration options for the conflict domain.
+   * @param domain A string used to identify a specific domain.
+   * @param configuration A string containing configuration for the metadata domain.
    * @param removed If it is true it serves as a tombstone to logically delete a {@link
    *     DomainMetadata} action.
    */

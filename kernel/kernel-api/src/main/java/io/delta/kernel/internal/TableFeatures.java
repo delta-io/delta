@@ -58,6 +58,12 @@ public class TableFeatures {
             }
           });
 
+  /** The feature name for domain metadata. */
+  public static final String DOMAIN_METADATA_FEATURE_NAME = "domainMetadata";
+
+  /** The minimum writer version required to support domain metadata. */
+  public static final int DOMAIN_METADATA_MIN_WRITER_VERSION_REQUIRED = 7;
+
   ////////////////////
   // Helper Methods //
   ////////////////////
