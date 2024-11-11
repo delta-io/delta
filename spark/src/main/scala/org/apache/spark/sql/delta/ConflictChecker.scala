@@ -272,7 +272,7 @@ private[delta] class ConflictChecker(
           case m: Metadata if m != currentTransactionInfo.metadata =>
             recordDeltaEvent(
               deltaLog = currentTransactionInfo.readSnapshot.deltaLog,
-              opType = "dropFeature.conflictCheck.metadataMismatch",
+              opType = "dropFeature.conflictCheck.metadataMissmatch",
               data = Map(
                 "transactionInfoMetadata" -> currentTransactionInfo.metadata,
                 "actionMetadata" -> m))
