@@ -414,7 +414,7 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
 
   test("Integration test - read a golden table with checkpoints and log files") {
     withTempDirAndEngine((tablePath, engine) => {
-      val path = goldenTablePath("kernel-domain-metadata")
+      val path = getTestResourceFilePath("kernel-domain-metadata")
       val snapshot = latestSnapshot(path).asInstanceOf[SnapshotImpl]
 
       // We need to read 1 checkpoint file and 1 log file to replay the golden table
