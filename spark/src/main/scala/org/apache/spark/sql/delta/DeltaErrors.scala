@@ -2435,6 +2435,12 @@ trait DeltaErrorsBase
     )
   }
 
+  def dropTableFeatureCheckpointFailedException(featureName: String): Throwable = {
+    new DeltaTableFeatureException(
+      errorClass = "DELTA_FEATURE_DROP_CHECKPOINT_FAILED",
+      messageParameters = Array(featureName))
+  }
+
   def concurrentAppendException(
       conflictingCommit: Option[CommitInfo],
       partition: String,

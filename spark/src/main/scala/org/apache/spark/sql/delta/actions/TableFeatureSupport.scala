@@ -242,15 +242,21 @@ trait TableFeatureSupport { this: Protocol =>
 
   /**
    * Determine whether this protocol can be safely downgraded to a new protocol `to`.
-   * All we need is the implicit and explicit features between the two protocols to match,
-   * excluding the dropped feature. Note, this accounts for cases where we downgrade
-   * from table features to legacy protocol versions.
+   * All the implicit and explicit features between the two protocols need to match,
+   * excluding the dropped feature. We also need to take into account that in some cases
+   * the downgrade process may add the CheckpointProtectionTableFeature.
+   *
+   * Note, the conditions above also account for cases where we downgrade from table features
+   * to legacy protocol versions.
    */
   def canDowngradeTo(to: Protocol, droppedFeatureName: String): Boolean = {
     val thisFeatures = this.implicitlyAndExplicitlySupportedFeatures
     val toFeatures = to.implicitlyAndExplicitlySupportedFeatures
+    val allowedNewFeatures: Set[TableFeature] = Set(CheckpointProtectionTableFeature)
     val droppedFeature = Seq(droppedFeatureName).flatMap(TableFeature.featureNameToFeature)
-    (thisFeatures -- droppedFeature) == toFeatures
+    val newFeatures = toFeatures -- thisFeatures
+    newFeatures.subsetOf(allowedNewFeatures) &&
+      (thisFeatures -- droppedFeature == toFeatures -- newFeatures)
   }
 
   /**

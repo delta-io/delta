@@ -967,6 +967,13 @@
     ],
     "sqlState" : "0AKDE"
   },
+  "DELTA_FEATURE_DROP_CHECKPOINT_FAILED" : {
+    "message" : [
+      "Dropping <featureName> failed due to a failure in checkpoint creation.",
+      "Please try again later. It the issue persists, contact support."
+    ],
+    "sqlState" : "22KD0"
+  },
   "DELTA_FEATURE_DROP_CONFLICT_REVALIDATION_FAIL" : {
     "message" : [
       "Cannot drop feature because a concurrent transaction modified the table.",
