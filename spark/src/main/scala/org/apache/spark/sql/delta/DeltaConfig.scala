@@ -835,6 +835,24 @@ trait DeltaConfigsBase extends DeltaLogging {
     v => Option(v).map(_.toLong),
     validationFunction = _ => true,
     "needs to be a long.")
+
+  /**
+   * This property is used by CheckpointProtectionTableFeature and denotes the
+   * version up to which the checkpoints are required to be cleaned up only together with the
+   * corresponding commits. If this is not possible, and metadata cleanup creates a new checkpoint
+   * prior to requireCheckpointProtectionBeforeVersion, it should validate write support against
+   * all protocols included in the commits that are being removed, or else abort. This is needed
+   * to make sure that the writer understands how to correctly create a checkpoint for the
+   * historic commit.
+   *
+   * Note, this is an internal config and should never be manually altered.
+   */
+  val REQUIRE_CHECKPOINT_PROTECTION_BEFORE_VERSION = buildConfig[Long](
+    "requireCheckpointProtectionBeforeVersion",
+    "0",
+    _.toLong,
+    _ >= 0,
+    "needs to be greater or equal to zero.")
 }
 
 object DeltaConfigs extends DeltaConfigsBase

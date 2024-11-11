@@ -431,6 +431,16 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val FAST_DROP_FEATURE_ENABLED =
+    buildConf("tableFeatures.dev.fastDropFeature.enabled")
+      .internal()
+      .doc(
+        """Whether to enable the fast drop feature feature functionality.
+          |This feature is currently in development and this config is only intended to be enabled
+          |for testing purposes.""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_MAX_SNAPSHOT_LINEAGE_LENGTH =
     buildConf("maxSnapshotLineageLength")
       .internal()

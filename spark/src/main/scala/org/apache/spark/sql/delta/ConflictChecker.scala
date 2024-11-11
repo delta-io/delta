@@ -234,7 +234,7 @@ private[delta] class ConflictChecker(
       // a rare event and thus not that disruptive if other concurrent transactions fail.
       val winningProtocol = winningCommitSummary.protocol.get
       val readProtocol = currentTransactionInfo.readSnapshot.protocol
-      val isWinnerDroppingFeatures = TableFeature.isProtocolRemovingExplicitFeatures(
+      val isWinnerDroppingFeatures = TableFeature.isProtocolRemovingFeatures(
         newProtocol = winningProtocol,
         oldProtocol = readProtocol)
       if (isWinnerDroppingFeatures) {
@@ -243,18 +243,45 @@ private[delta] class ConflictChecker(
     }
     // When the winning transaction does not change the protocol but the losing txn is
     // a protocol downgrade, we re-validate the invariants of the removed feature.
+    // Furthermore, when dropping with the fast drop feature we need to adjust
+    // requireCheckpointProtectionBeforeVersion.
     // TODO: only revalidate against the snapshot of the last interleaved txn.
-    val currentProtocol = currentTransactionInfo.protocol
+    val newProtocol = currentTransactionInfo.protocol
     val readProtocol = currentTransactionInfo.readSnapshot.protocol
-    if (TableFeature.isProtocolRemovingExplicitFeatures(currentProtocol, readProtocol)) {
+    if (TableFeature.isProtocolRemovingFeatures(newProtocol, readProtocol)) {
       val winningSnapshot = deltaLog.getSnapshotAt(winningCommitSummary.commitVersion)
       val isDowngradeCommitValid = TableFeature.validateFeatureRemovalAtSnapshot(
-        newProtocol = currentProtocol,
+        newProtocol = newProtocol,
         oldProtocol = readProtocol,
         snapshot = winningSnapshot)
       if (!isDowngradeCommitValid) {
         throw DeltaErrors.dropTableFeatureConflictRevalidationFailed(
           winningCommitSummary.commitInfo)
+      }
+      // When the current transaction is removing a feature and CheckpointProtectionTableFeature
+      // is enabled, the current transaction will set the requireCheckpointProtectionBeforeVersion
+      // table property to the version of the current transaction.
+      // So we need to update it after resolving conflicts with winning transactions.
+      if (newProtocol.isFeatureSupported(CheckpointProtectionTableFeature) &&
+          TableFeature.isProtocolRemovingFeatureWithHistoryProtection(newProtocol, readProtocol)) {
+        val newVersion = winningCommitSummary.commitVersion + 1L
+        val newMetadata = CheckpointProtectionTableFeature.metadataWithCheckpointProtection(
+          currentTransactionInfo.metadata, newVersion)
+        val newActions = currentTransactionInfo.actions.collect {
+          // Sanity check.
+          case m: Metadata if m != currentTransactionInfo.metadata =>
+            recordDeltaEvent(
+              deltaLog = currentTransactionInfo.readSnapshot.deltaLog,
+              opType = "dropFeature.conflictCheck.metadataMissmatch",
+              data = Map(
+                "transactionInfoMetadata" -> currentTransactionInfo.metadata,
+                "actionMetadata" -> m))
+            CheckpointProtectionTableFeature.metadataWithCheckpointProtection(m, newVersion)
+          case _: Metadata => newMetadata
+          case a => a
+        }
+        currentTransactionInfo = currentTransactionInfo.copy(
+          metadata = newMetadata, actions = newActions)
       }
     }
   }
