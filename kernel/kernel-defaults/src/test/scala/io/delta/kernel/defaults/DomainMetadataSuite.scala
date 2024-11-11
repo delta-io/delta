@@ -230,8 +230,9 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
         (Seq(dm1), Map("domain1" -> dm1)),
         (Seq(dm2, dm3, dm1_2), Map("domain1" -> dm1_2, "domain2" -> dm2, "domain3" -> dm3)),
         (Seq(dm3_2), Map("domain1" -> dm1_2, "domain2" -> dm2, "domain3" -> dm3_2))
-      ).foreach { case (domainMetadatas, expectedValue) =>
-        commitDomainMetadataAndVerify(engine, tablePath, domainMetadatas, expectedValue)
+      ).foreach {
+        case (domainMetadatas, expectedValue) =>
+          commitDomainMetadataAndVerify(engine, tablePath, domainMetadatas, expectedValue)
       }
     }
   }
@@ -272,8 +273,9 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
         (Seq(dm2), Map("domain1" -> dm1, "domain2" -> dm2)),
         (Seq(dm3), Map("domain1" -> dm1, "domain2" -> dm2, "domain3" -> dm3)),
         (Seq(dm1_2, dm3_2), Map("domain1" -> dm1_2, "domain2" -> dm2, "domain3" -> dm3_2))
-      ).foreach { case (domainMetadatas, expectedValue) =>
-        commitDomainMetadataAndVerify(engine, tablePath, domainMetadatas, expectedValue)
+      ).foreach {
+        case (domainMetadatas, expectedValue) =>
+          commitDomainMetadataAndVerify(engine, tablePath, domainMetadatas, expectedValue)
       }
 
       // Checkpoint the table

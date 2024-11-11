@@ -1663,46 +1663,6 @@ class GoldenTables extends QueryTest with SharedSparkSession {
       Row(0, 0) :: Nil,
       schema)
   }
-
-  generateGoldenTable("kernel-domain-metadata") { tablePath =>
-    withSQLConf(
-      ("spark.databricks.delta.properties.defaults.checkpointInterval", "3")
-    ) {
-      val tbl = "tbl"
-
-      sql(s"CREATE TABLE $tbl (id LONG) USING delta LOCATION '$tablePath'")
-      sql(s"ALTER TABLE $tbl SET TBLPROPERTIES('delta.feature.domainMetadata' = 'enabled')")
-
-      val deltaLog = DeltaLog.forTable(spark, new Path(tablePath))
-
-      deltaLog
-        .startTransaction()
-        .commitManually(
-          List(
-            DomainMetadata("testDomain1", "{\"key1\":\"1\"}", removed = false),
-            DomainMetadata("testDomain2", "", removed = false),
-            DomainMetadata("testDomain3", "", removed = false)
-          ): _*
-        )
-
-      spark.range(0, 2).write.format("delta").mode("append").save(tablePath) // Checkpoint created
-
-      deltaLog
-        .startTransaction()
-        .commitManually(
-          List(
-            DomainMetadata("testDomain1", "{\"key1\":\"10\"}".stripMargin, removed = false),
-            DomainMetadata("testDomain2", "", removed = true)
-          ): _*
-        )
-
-      // In the end, we need to read 1 checkpoint file and 1 log file to replay the golden table
-      // The state of the domain metadata should be:
-      // testDomain1: "\"key1\":\"10\"", removed = false
-      // testDomain2: "", removed = true
-      // testDomain3: "", removed = false
-    }
-  }
 }
 
 case class TestStruct(f1: String, f2: Long)
