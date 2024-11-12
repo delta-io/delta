@@ -576,7 +576,8 @@ class OptimizeExecutor(
         predicate = partitionPredicate,
         zOrderBy = zOrderByColumns,
         auto = isAutoCompact,
-        clusterBy = if (isClusteredTable) Option(clusteringColumns).filter(_.nonEmpty) else None)
+        clusterBy = if (isClusteredTable) Option(clusteringColumns).filter(_.nonEmpty) else None,
+        isFull = optimizeContext.isFull)
     }
   }
 
