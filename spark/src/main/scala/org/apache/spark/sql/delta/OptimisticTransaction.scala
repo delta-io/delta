@@ -1869,7 +1869,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       commit,
       newChecksumOpt = None,
       preCommitLogSegment = preCommitLogSegment,
-      catalogTable.map(_.identifier))
+      catalogTable)
     if (currentSnapshot.version != attemptVersion) {
       throw DeltaErrors.invalidCommittedVersion(attemptVersion, currentSnapshot.version)
     }
@@ -2313,7 +2313,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       commit,
       newChecksumOpt,
       preCommitLogSegment,
-      catalogTable.map(_.identifier))
+      catalogTable)
     val postCommitReconstructionTime = System.nanoTime()
 
     // Post stats
@@ -2639,7 +2639,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     val (newPreCommitLogSegment, newCommitFileStatuses) = deltaLog.getUpdatedLogSegment(
       preCommitLogSegment,
       readSnapshotTableCommitCoordinatorClientOpt,
-      catalogTable.map(_.identifier))
+      catalogTable)
     assert(preCommitLogSegment.version + newCommitFileStatuses.size ==
       newPreCommitLogSegment.version)
     preCommitLogSegment = newPreCommitLogSegment
