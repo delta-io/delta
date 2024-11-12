@@ -41,7 +41,6 @@ import org.apache.spark.TaskContext
 import org.apache.spark.internal.MDC
 import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Row, SparkSession}
-import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{Cast, ElementAt, Literal}
@@ -301,14 +300,13 @@ trait Checkpoints extends DeltaLogging {
    */
   def checkpoint(
       snapshotToCheckpoint: Snapshot,
-      catalogTable: Option[CatalogTable] = None): Unit =
+      catalogTableOpt: Option[CatalogTable] = None): Unit =
     recordDeltaOperation(this, "delta.checkpoint") {
     withCheckpointExceptionHandling(snapshotToCheckpoint.deltaLog, "delta.checkpoint.sync.error") {
       if (snapshotToCheckpoint.version < 0) {
         throw DeltaErrors.checkpointNonExistTable(dataPath)
       }
-      val tableIdentifierOpt = catalogTable.map(_.identifier)
-      checkpointAndCleanUpDeltaLog(snapshotToCheckpoint, tableIdentifierOpt)
+      checkpointAndCleanUpDeltaLog(snapshotToCheckpoint, catalogTableOpt)
     }
   }
 
@@ -329,8 +327,8 @@ trait Checkpoints extends DeltaLogging {
 
   def checkpointAndCleanUpDeltaLog(
       snapshotToCheckpoint: Snapshot,
-      tableIdentifierOpt: Option[TableIdentifier] = None): Unit = {
-    val lastCheckpointInfo = writeCheckpointFiles(snapshotToCheckpoint, tableIdentifierOpt)
+      catalogTableOpt: Option[CatalogTable] = None): Unit = {
+    val lastCheckpointInfo = writeCheckpointFiles(snapshotToCheckpoint, catalogTableOpt)
     writeLastCheckpointFile(
       snapshotToCheckpoint.deltaLog, lastCheckpointInfo, LastCheckpointInfo.checksumEnabled(spark))
     doLogCleanup(snapshotToCheckpoint)
@@ -354,7 +352,7 @@ trait Checkpoints extends DeltaLogging {
 
   protected def writeCheckpointFiles(
       snapshotToCheckpoint: Snapshot,
-      tableIdentifierOpt: Option[TableIdentifier] = None): LastCheckpointInfo = {
+      catalogTableOpt: Option[CatalogTable] = None): LastCheckpointInfo = {
     // With Coordinated-Commits, commit files are not guaranteed to be backfilled immediately in the
     // _delta_log dir. While it is possible to compute a checkpoint file without backfilling,
     // writing the checkpoint file in the log directory before backfilling the relevant commits
@@ -369,7 +367,7 @@ trait Checkpoints extends DeltaLogging {
     //   00015.json
     //   00016.json
     //   00018.checkpoint.parquet
-    snapshotToCheckpoint.ensureCommitFilesBackfilled(tableIdentifierOpt)
+    snapshotToCheckpoint.ensureCommitFilesBackfilled(catalogTableOpt)
     Checkpoints.writeCheckpoint(spark, this, snapshotToCheckpoint)
   }
 

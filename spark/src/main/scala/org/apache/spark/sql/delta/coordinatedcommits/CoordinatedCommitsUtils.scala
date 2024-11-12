@@ -37,6 +37,7 @@ import org.apache.hadoop.fs.{FileStatus, Path}
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.{TableIdentifier => CatalystTableIdentifier}
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.util.Utils
 
@@ -49,7 +50,7 @@ object CoordinatedCommitsUtils extends DeltaLogging {
   def getCommitsFromCommitCoordinatorWithUsageLogs(
       deltaLog: DeltaLog,
       tableCommitCoordinatorClient: TableCommitCoordinatorClient,
-      tableIdentifierOpt: Option[CatalystTableIdentifier],
+      catalogTableOpt: Option[CatalogTable],
       startVersion: Long,
       versionToLoad: Option[Long],
       isAsyncRequest: Boolean): JGetCommitsResponse = {
@@ -71,7 +72,10 @@ object CoordinatedCommitsUtils extends DeltaLogging {
       try {
         val response =
           tableCommitCoordinatorClient.getCommits(
-            tableIdentifierOpt, Some(startVersion), endVersion = versionToLoad)
+            catalogTableOpt.map(_.identifier),
+            Some(startVersion),
+            endVersion = versionToLoad
+          )
         val additionalEventData = Map(
           "responseCommitsSize" -> response.getCommits.size,
           "responseLatestTableVersion" -> response.getLatestTableVersion)
