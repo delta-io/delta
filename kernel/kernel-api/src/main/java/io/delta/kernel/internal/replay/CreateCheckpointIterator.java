@@ -242,9 +242,9 @@ public class CreateCheckpointIterator implements CloseableIterator<FilteredColum
     processTxn(txnVector, selectionVectorBuffer);
 
     // Step 5: Process the domain metadata
-    final ColumnVector domainMetadataVector =
+    final ColumnVector domainMetadataDomainNameVector =
         getVector(actionsBatch, DOMAIN_METADATA_DOMAIN_NAME_ORDINAL);
-    processDomainMetadata(domainMetadataVector, selectionVectorBuffer);
+    processDomainMetadata(domainMetadataDomainNameVector, selectionVectorBuffer);
 
     Optional<ColumnVector> selectionVector =
         Optional.of(createSelectionVector(selectionVectorBuffer, actionsBatch.getSize()));

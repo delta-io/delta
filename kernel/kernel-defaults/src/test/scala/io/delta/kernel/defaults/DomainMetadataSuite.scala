@@ -24,9 +24,7 @@ import io.delta.kernel.internal.SnapshotImpl
 import io.delta.kernel.internal.TransactionImpl
 import io.delta.kernel.internal.actions.{DomainMetadata, Protocol, SingleAction}
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
-import io.delta.kernel.utils.CloseableIterable
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
-import io.delta.golden.GoldenTableUtils.goldenTablePath
 
 import java.util.Collections
 import scala.collection.JavaConverters._

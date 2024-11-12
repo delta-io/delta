@@ -78,7 +78,7 @@ public class DomainMetadataUtils {
   }
 
   /**
-   * Validates the list of domain metadata actions. It ensures that
+   * Validates the list of domain metadata actions before committing them. It ensures that
    *
    * <ol>
    *   <li>domain metadata actions are only present when supported by the table protocol
