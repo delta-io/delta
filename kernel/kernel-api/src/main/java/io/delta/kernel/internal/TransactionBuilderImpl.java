@@ -54,6 +54,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   private Optional<List<String>> partitionColumns = Optional.empty();
   private Optional<SetTransaction> setTxnOpt = Optional.empty();
   private Optional<Map<String, String>> tableProperties = Optional.empty();
+  private List<DomainMetadata> domainMetadatas = new ArrayList<>();
 
   public TransactionBuilderImpl(TableImpl table, String engineInfo, Operation operation) {
     this.table = table;
@@ -90,6 +91,16 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   @Override
   public TransactionBuilder withTableProperties(Engine engine, Map<String, String> properties) {
     this.tableProperties = Optional.of(new HashMap<>(properties));
+    return this;
+  }
+
+  /**
+   * Internal API to set the domain metadata for the transaction. Visible for testing.
+   *
+   * @param domainMetadatas List of domain metadata to be added to the transaction.
+   */
+  public TransactionBuilder withDomainMetadatas(List<DomainMetadata> domainMetadatas) {
+    this.domainMetadatas = new ArrayList<>(domainMetadatas);
     return this;
   }
 
@@ -156,7 +167,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         setTxnOpt,
         shouldUpdateMetadata,
         shouldUpdateProtocol,
-        table.getClock());
+        table.getClock(),
+        domainMetadatas);
   }
 
   /** Validate the given parameters for the transaction. */
