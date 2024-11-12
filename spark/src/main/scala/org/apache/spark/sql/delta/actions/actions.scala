@@ -590,7 +590,15 @@ sealed trait FileAction extends Action {
   @JsonIgnore
   val tags: Map[String, String]
   @JsonIgnore
-  lazy val pathAsUri: URI = new URI(path)
+  lazy val pathAsUri: URI = {
+    // Paths like http:example.com are opaque URIs that have schema and scheme-specific parts, but
+    // path is not defined. We do not support such paths, so we throw an exception.
+    val uri = new URI(path)
+    if (uri.getPath == null) {
+      throw DeltaErrors.cannotReconstructPathFromURI(path)
+    }
+    uri
+  }
   @JsonIgnore
   def numLogicalRecords: Option[Long]
   @JsonIgnore
