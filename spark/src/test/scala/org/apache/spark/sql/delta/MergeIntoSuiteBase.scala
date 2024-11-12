@@ -3464,7 +3464,7 @@ abstract class MergeIntoSuiteBase
     }
   }
 
-  test("CHAR(N) type should not cause AnalysisException") {
+  test("#3868: CHAR(N) type should not cause AnalysisException") {
     withTable("target", "source") {
       sql("create table target (id char(5), value char(5)) using delta")
       sql("insert into target values ('a', 'foo'), ('bb', 'foo2')")
