@@ -303,7 +303,8 @@ class DeltaMergeBuilder private(
       // explained in the function `mergePlan` and
       // https://issues.apache.org/jira/browse/SPARK-34962.
       val resolvedMergeInto =
-      ResolveDeltaMergeInto.resolveReferencesAndSchema(mergePlan, sparkSession.sessionState.conf)(
+      ResolveDeltaMergeInto.resolveReferencesAndSchema(
+        tryResolveMergeChildren(sparkSession, mergePlan), sparkSession.sessionState.conf)(
         tryResolveReferencesForExpressions(sparkSession))
       if (!resolvedMergeInto.resolved) {
         throw new ExtendedAnalysisException(

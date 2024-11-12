@@ -22,6 +22,7 @@ import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaErrors}
 import org.apache.spark.sql.{AnalysisException, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.ExtendedAnalysisException
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
+import org.apache.spark.sql.catalyst.plans.logical.DeltaMergeInto
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 
 trait AnalysisHelper {
@@ -112,6 +113,20 @@ trait AnalysisHelper {
     }
   }
 
+  // Spark can insert Project plan nodes if there're CHAR(n) columns. It can
+  // create invalid references when expressions are resolved with resolveExprs.
+  protected def tryResolveMergeChildren(
+      sparkSession: SparkSession,
+      merge: DeltaMergeInto): DeltaMergeInto = {
+    val newPlan = FakeLogicalPlan(Nil, Seq(merge.target, merge.source))
+    sparkSession.sessionState.analyzer.execute(newPlan) match {
+      case FakeLogicalPlan(_, Seq(newTarget, newSource)) =>
+        merge.withNewChildren(Seq(newTarget, newSource)).asInstanceOf[DeltaMergeInto]
+      case _ =>
+        // This is unexpected - let's just return the original merge
+        merge
+    }
+  }
 }
 
 object AnalysisHelper {

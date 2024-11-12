@@ -3463,6 +3463,27 @@ abstract class MergeIntoSuiteBase
           Nil)
     }
   }
+
+  test("CHAR(N) type should not cause AnalysisException") {
+    withTable("target", "source") {
+      sql("create table target (id char(5), value char(5)) using delta")
+      sql("insert into target values ('a', 'foo'), ('bb', 'foo2')")
+      sql("create table source (id char(5), value char(5)) using parquet")
+      sql("insert into source values ('a', 'bar'), ('c', 'xxx')")
+      executeMerge(
+        target = "target",
+        source = "source",
+        condition = "target.id = source.id",
+        update = "target.value = source.value",
+        insert = "*"
+      )
+      checkAnswer(spark.sql("select * from target"),
+        Row("a    ", "bar  ") ::
+        Row("bb   ", "foo2 ") ::
+        Row("c    ", "xxx  ") ::
+        Nil)
+    }
+  }
 }
 
 
