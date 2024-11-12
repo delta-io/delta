@@ -39,14 +39,16 @@ case class DeltaGenerateCommand(
       throw DeltaErrors.unsupportedGenerateModeException(modeName)
     }
 
-    val tablePath = DeltaTableIdentifier(sparkSession, tableId) match {
+    val deltaLog = DeltaTableIdentifier(sparkSession, tableId) match {
       case Some(id) if id.path.isDefined =>
-        new Path(id.path.get)
+        DeltaLog.forTable(sparkSession, new Path(id.path.get), options)
       case _ =>
-        new Path(sparkSession.sessionState.catalog.getTableMetadata(tableId).location)
+        DeltaLog.forTable(
+          sparkSession,
+          sparkSession.sessionState.catalog.getTableMetadata(tableId),
+          options)
     }
 
-    val deltaLog = DeltaLog.forTable(sparkSession, tablePath, options)
     if (!deltaLog.tableExists) {
       throw DeltaErrors.notADeltaTableException("GENERATE")
     }

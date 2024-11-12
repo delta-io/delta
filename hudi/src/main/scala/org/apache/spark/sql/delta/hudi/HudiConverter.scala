@@ -177,7 +177,7 @@ class HudiConverter(spark: SparkSession)
     if (!UniversalFormat.hudiEnabled(snapshotToConvert.metadata)) {
       return None
     }
-    convertSnapshot(snapshotToConvert, None, Option.apply(catalogTable.identifier.table))
+    convertSnapshot(snapshotToConvert, None, Some(catalogTable))
   }
 
   /**
@@ -193,7 +193,7 @@ class HudiConverter(spark: SparkSession)
     if (!UniversalFormat.hudiEnabled(snapshotToConvert.metadata)) {
       return None
     }
-    convertSnapshot(snapshotToConvert, Some(txn), txn.catalogTable.map(_.identifier.table))
+    convertSnapshot(snapshotToConvert, Some(txn), txn.catalogTable)
   }
 
   /**
@@ -208,11 +208,13 @@ class HudiConverter(spark: SparkSession)
   private def convertSnapshot(
       snapshotToConvert: Snapshot,
       txnOpt: Option[OptimisticTransactionImpl],
-      tableName: Option[String]): Option[(Long, Long)] =
+      catalogTable: Option[CatalogTable]): Option[(Long, Long)] =
       recordFrameProfile("Delta", "HudiConverter.convertSnapshot") {
     val log = snapshotToConvert.deltaLog
-    val metaClient = loadTableMetaClient(snapshotToConvert.deltaLog.dataPath.toString,
-      tableName, snapshotToConvert.metadata.partitionColumns,
+    val metaClient = loadTableMetaClient(
+      snapshotToConvert.deltaLog.dataPath.toString,
+      catalogTable.flatMap(ct => Option(ct.identifier.table)),
+      snapshotToConvert.metadata.partitionColumns,
       new HadoopStorageConfiguration(log.newDeltaHadoopConf()))
     val lastDeltaVersionConverted: Option[Long] = loadLastDeltaVersionConverted(metaClient)
     val maxCommitsToConvert =
@@ -233,7 +235,7 @@ class HudiConverter(spark: SparkSession)
         try {
           // TODO: We can optimize this by providing a checkpointHint to getSnapshotAt. Check if
           //  txn.snapshot.version < version. If true, use txn.snapshot's checkpoint as a hint.
-          Some(log.getSnapshotAt(version))
+          Some(log.getSnapshotAt(version, catalogTableOpt = catalogTable))
         } catch {
           // If we can't load the file since the last time Hudi was converted, it's likely that
           // the commit file expired. Treat this like a new Hudi table conversion.
