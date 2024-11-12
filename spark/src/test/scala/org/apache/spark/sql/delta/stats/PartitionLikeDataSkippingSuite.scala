@@ -27,7 +27,7 @@ import org.scalatest.BeforeAndAfter
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.functions.{col, concat, lit, struct}
+import org.apache.spark.sql.functions.{array, col, concat, lit, struct}
 import org.apache.spark.sql.test.SharedSparkSession
 
 trait PartitionLikeDataSkippingSuiteBase
@@ -340,6 +340,38 @@ trait PartitionLikeDataSkippingSuiteBase
       expectedNumPartitionLikeDataFilters = 1,
       allPredicatesUsed = true,
       minNumFilesToApply = 1)
+  }
+
+  test("partition-like data skipping expression references non-skipping eligible columns") {
+    val tbl = "tbl"
+    withClusteredTable(
+      table = tbl,
+      schema = "a BIGINT, b ARRAY<BIGINT>, c STRUCT<d ARRAY<BIGINT>, e BIGINT>",
+      clusterBy = "a") {
+      spark.range(10)
+        .withColumnRenamed("id", "a")
+        .withColumn("b", array(col("a"), lit(0L)))
+        .withColumn("c", struct(array(col("a"), lit(0L)), lit(0L)))
+        .select("a", "b", "c") // Reorder columns to ensure the schema matches.
+        .repartitionByRange(10, col("a"))
+        .write.format("delta").mode("append").insertInto(tbl)
+
+      // All files should be read because the filters are on columns that aren't skipping eligible.
+      validateExpectedScanMetrics(
+        tableName = tbl,
+        query = s"SELECT * FROM $tbl WHERE GET(b, 1) = 0",
+        expectedNumFiles = 10,
+        expectedNumPartitionLikeDataFilters = 0,
+        allPredicatesUsed = false,
+        minNumFilesToApply = 1)
+      validateExpectedScanMetrics(
+        tableName = tbl,
+        query = s"SELECT * FROM $tbl WHERE GET(c.d, 1) = 0",
+        expectedNumFiles = 10,
+        expectedNumPartitionLikeDataFilters = 0,
+        allPredicatesUsed = false,
+        minNumFilesToApply = 1)
+    }
   }
 }
 

@@ -650,6 +650,7 @@ trait DataSkippingReaderBase
         }
       // For other attribute references, we can't safely rewrite the expression.
       case SkippingEligibleColumn(_, _) => None
+      case _: AttributeReference => None
       // Don't attempt data skipping on a nondeterministic expression, since the value returned
       // might be different when executed twice on the same input.
       // For example, rand() > 0.5 would return ~25% of records if used in data skipping, while the
