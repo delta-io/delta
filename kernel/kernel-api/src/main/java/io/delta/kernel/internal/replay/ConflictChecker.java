@@ -212,24 +212,20 @@ public class ConflictChecker {
    */
   private void handleDomainMetadata(ColumnVector domainMetadataVector) {
     // Extract the domain metadata map from the winning transaction.
-    Map<String, DomainMetadata> winningDomainMetadataMap =
+    Map<String, DomainMetadata> winningTxnDomainMetadataMap =
         DomainMetadataUtils.extractDomainMetadataMap(domainMetadataVector);
 
-    for (DomainMetadata dm : this.transaction.getDomainMetadatas()) {
-      // Try to resolve the conflict, if not possible, throw a ConcurrentTransaction exception
-      resolveDomainMetadataConflict(dm, winningDomainMetadataMap);
-    }
-  }
-
-  private void resolveDomainMetadataConflict(
-      DomainMetadata domainMetadataAttempt, Map<String, DomainMetadata> winningDomainMetadataMap) {
-    String domain = domainMetadataAttempt.getDomain();
-    DomainMetadata winningDomainMetadata = winningDomainMetadataMap.get(domain);
-    if (winningDomainMetadata != null) {
-      // Conflict - check if the conflict can be resolved.
-      // Currently, we don't have any domain-specific way of resolving the conflict.
-      // Domain-specific ways of resolving the conflict can be added here (e.g. for Row Tracking).
-      throw concurrentDomainMetadataAction(domainMetadataAttempt, winningDomainMetadata);
+    for (DomainMetadata currentTxnDM : this.transaction.getDomainMetadatas()) {
+      // For each domain metadata action in the current transaction, check if it has a conflict with
+      // the winning transaction.
+      String domainName = currentTxnDM.getDomain();
+      DomainMetadata winningTxnDM = winningTxnDomainMetadataMap.get(domainName);
+      if (winningTxnDM != null) {
+        // Conflict - check if the conflict can be resolved.
+        // Currently, we don't have any domain-specific way of resolving the conflict.
+        // Domain-specific ways of resolving the conflict can be added here (e.g. for Row Tracking).
+        throw concurrentDomainMetadataAction(currentTxnDM, winningTxnDM);
+      }
     }
   }
 
