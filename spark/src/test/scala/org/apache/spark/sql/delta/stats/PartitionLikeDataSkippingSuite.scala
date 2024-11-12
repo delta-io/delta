@@ -345,9 +345,9 @@ trait PartitionLikeDataSkippingSuiteBase
   test("partition-like data skipping expression references non-skipping eligible columns") {
     val tbl = "tbl"
     withClusteredTable(
-      table = tbl,
-      schema = "a BIGINT, b ARRAY<BIGINT>, c STRUCT<d ARRAY<BIGINT>, e BIGINT>",
-      clusterBy = "a") {
+        table = tbl,
+        schema = "a BIGINT, b ARRAY<BIGINT>, c STRUCT<d ARRAY<BIGINT>, e BIGINT>",
+        clusterBy = "a") {
       spark.range(10)
         .withColumnRenamed("id", "a")
         .withColumn("b", array(col("a"), lit(0L)))
