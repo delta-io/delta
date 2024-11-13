@@ -16,15 +16,12 @@
 package io.delta.kernel.defaults
 
 import io.delta.kernel._
-import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions._
-import io.delta.kernel.internal.{SnapshotImpl, TableImpl, TransactionBuilderImpl, TransactionImpl}
+import io.delta.kernel.internal.{SnapshotImpl, TableImpl, TransactionBuilderImpl}
 import io.delta.kernel.internal.actions.{DomainMetadata, Protocol, SingleAction}
-import io.delta.kernel.internal.util.Clock
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
-import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 
 import java.util.Collections
