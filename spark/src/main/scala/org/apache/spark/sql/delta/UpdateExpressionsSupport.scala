@@ -46,30 +46,49 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
   case class UpdateOperation(targetColNameParts: Seq[String], updateExpr: Expression)
 
   /**
+   * The following trait and classes define casting behaviors to use in `castIfNeeded()`.
+   * @param resolveStructsByName    Whether struct fields should be resolved by name or by position
+   *                                during struct cast.
    * @param allowMissingStructField Whether missing struct fields are allowed in the data to cast.
+   *                                Only relevant when struct fields are resolved by name.
    *                                When true, missing struct fields in the input are set to null.
    *                                When false, an error is thrown.
    *                                Note: this should be set to true for schema evolution to work as
    *                                the target schema may typically contain new struct fields not
    *                                present in the input.
-   * @param resolveStructsByName    Whether struct fields should be resolved by name or by position
-   *                                during struct cast.
-   * @param isMergeOrUpdate         Allow differentiating between merge/update and insert operations
-   *                                in error messages and to provide backward compatible behavior.
    */
-  case class CastingBehavior(
-    allowMissingStructField: Boolean,
-    resolveStructsByName: Boolean,
-    isMergeOrUpdate: Boolean
-  )
+  sealed trait CastingBehavior {
+    val resolveStructsByName: Boolean
+    val allowMissingStructField: Boolean
+  }
 
-  object CastingBehavior {
-    def forMergeOrUpdate(allowSchemaEvolution: Boolean): CastingBehavior =
-      CastingBehavior(
-        allowMissingStructField = allowSchemaEvolution,
-        resolveStructsByName =
-          conf.getConf(DeltaSQLConf.DELTA_RESOLVE_MERGE_UPDATE_STRUCTS_BY_NAME),
-        isMergeOrUpdate = true)
+  case class CastByPosition() extends CastingBehavior {
+    val resolveStructsByName: Boolean = false
+    val allowMissingStructField: Boolean = false
+  }
+
+  case class CastByName(allowMissingStructField: Boolean) extends CastingBehavior {
+    val resolveStructsByName: Boolean = true
+  }
+
+  /*
+   * MERGE and UPDATE casting behavior is configurable using internal configs to allow reverting to
+   * legacy behavior. In particular:
+   * - 'resolveMergeUpdateStructsByName.enabled': defaults to resolution by name for struct fields,
+   *   can be disabled to revert to resolution by position.
+   * - 'updateAndMergeCastingFollowsAnsiEnabledFlag': defaults to following
+   *   'spark.sql.storeAssignmentPolicy' for the type of cast to use, can be enabled to revert to
+   *   following 'spark.sql.ansi.enabled'. See `cast()` below.
+   */
+  trait MergeOrUpdateCastingBehavior
+  object MergeOrUpdateCastingBehavior {
+    def apply(schemaEvolutionEnabled: Boolean): CastingBehavior =
+      if (conf.getConf(DeltaSQLConf.DELTA_RESOLVE_MERGE_UPDATE_STRUCTS_BY_NAME)) {
+        new CastByName(allowMissingStructField = schemaEvolutionEnabled)
+          with MergeOrUpdateCastingBehavior
+      } else {
+        new CastByPosition() with MergeOrUpdateCastingBehavior
+      }
   }
 
   /**
@@ -334,7 +353,7 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
           Some(castIfNeeded(
             fullyMatchedOp.get.updateExpr,
             targetCol.dataType,
-            castingBehavior = CastingBehavior.forMergeOrUpdate(allowSchemaEvolution),
+            castingBehavior = MergeOrUpdateCastingBehavior(allowSchemaEvolution),
             targetCol.name))
         } else {
           // So there are prefix-matched update operations, but none of them is a full match. Then
@@ -477,7 +496,7 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
       dataType: DataType,
       castingBehavior: CastingBehavior,
       columnName: String): Expression = {
-    if (castingBehavior.isMergeOrUpdate &&
+    if (castingBehavior.isInstanceOf[MergeOrUpdateCastingBehavior] &&
       conf.getConf(DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG)) {
       return Cast(child, dataType, Option(conf.sessionLocalTimeZone))
     }
@@ -488,11 +507,12 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
       case SQLConf.StoreAssignmentPolicy.ANSI =>
         val cast = Cast(child, dataType, Some(conf.sessionLocalTimeZone), ansiEnabled = true)
         if (canCauseCastOverflow(cast)) {
-          if (castingBehavior.isMergeOrUpdate) {
-            CheckOverflowInTableWrite(cast, columnName)
-          } else {
-            cast.setTagValue(Cast.BY_TABLE_INSERTION, ())
-            CheckOverflowInTableInsert(cast, columnName)
+          castingBehavior match {
+            case _: MergeOrUpdateCastingBehavior =>
+              CheckOverflowInTableWrite(cast, columnName)
+            case _ =>
+              cast.setTagValue(Cast.BY_TABLE_INSERTION, ())
+              CheckOverflowInTableInsert(cast, columnName)
           }
         } else {
           cast

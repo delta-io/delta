@@ -33,6 +33,13 @@ class DeltaInsertIntoColumnOrderSuite extends DeltaInsertIntoTest {
     spark.conf.set(SQLConf.ANSI_ENABLED.key, "true")
   }
 
+  /** Collects inserts that don't support implicit casting and will fail if the input data type
+   * doesn't match the expected column type.
+   * These are all dataframe inserts that use by name resolution, except for streaming writes.
+   */
+  private val insertsWithoutImplicitCastSupport: Set[Insert] =
+    insertsByName.intersect(insertsDataframe) - StreamingInsert
+
   test("all test cases are implemented") {
     checkAllTestCasesImplemented()
   }
@@ -68,9 +75,8 @@ class DeltaInsertIntoColumnOrderSuite extends DeltaInsertIntoTest {
       overwriteWhere = "a" -> 1,
       insertData = TestData("a long, c int, b int", Seq("""{ "a": 1, "c": 4, "b": 5 }""")),
       expectedResult = ExpectedResult.Success(expectedAnswer),
-      // Exclude dataframe inserts by name (except streaming) which don't support implicit cast.
-      // See negative test below.
-      includeInserts = inserts -- (insertsByName.intersect(insertsDataframe) - StreamingInsert)
+      // Inserts that don't support implicit cast are failing, these are covered in the test below.
+      includeInserts = inserts -- insertsWithoutImplicitCastSupport
     )
   }
 
@@ -87,7 +93,7 @@ class DeltaInsertIntoColumnOrderSuite extends DeltaInsertIntoTest {
           "currentField" -> "a",
           "updateField" -> "a"
         ))}),
-    includeInserts = insertsByName.intersect(insertsDataframe) - StreamingInsert
+    includeInserts = insertsWithoutImplicitCastSupport
   )
 
   // Inserting using a different ordering for struct fields is full of surprises...
@@ -149,9 +155,8 @@ class DeltaInsertIntoColumnOrderSuite extends DeltaInsertIntoTest {
       insertData = TestData("a long, s struct <y int, x: int>",
         Seq("""{ "a": 1, "s": { "y": 5, "x": 4 } }""")),
       expectedResult = ExpectedResult.Success(expectedAnswer),
-      // Exclude dataframe inserts by name (except streaming) which don't support implicit cast.
-      // See negative test below.
-      includeInserts = inserts -- (insertsByName.intersect(insertsDataframe) - StreamingInsert)
+      // Inserts that don't support implicit cast are failing, these are covered in the test below.
+      includeInserts = inserts -- insertsWithoutImplicitCastSupport
     )
   }
 
@@ -171,6 +176,6 @@ class DeltaInsertIntoColumnOrderSuite extends DeltaInsertIntoTest {
           "currentField" -> "a",
           "updateField" -> "a"
         ))}),
-    includeInserts = insertsDataframe.intersect(insertsByName) - StreamingInsert
+    includeInserts = insertsWithoutImplicitCastSupport
   )
 }
