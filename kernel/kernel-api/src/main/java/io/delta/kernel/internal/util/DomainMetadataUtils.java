@@ -32,33 +32,25 @@ public class DomainMetadataUtils {
   }
 
   /**
-   * Extracts a map of domain metadata from actions. There should be only one {@link DomainMetadata}
-   * per domain name. It throws a KernelException if duplicate domain metadata is found.
+   * Populate the map of domain metadata from actions. When encountering duplicate domain metadata
+   * actions for the same domain, this method preserves the first seen entry and skips subsequent
+   * entries. This behavior is especially useful for log replay as we want to ensure that earlier
+   * domain metadata entries take precedence over later ones.
    *
    * @param domainMetadataActionVector A {@link ColumnVector} containing the domain metadata rows
-   * @return A map where the keys are domain names and the values are {@link DomainMetadata} objects
+   * @param domainMetadataMap The existing map to be populated with domain metadata entries, where
+   *     the key is the domain name and the value is the domain metadata
    */
-  public static Map<String, DomainMetadata> extractDomainMetadataMap(
-      ColumnVector domainMetadataActionVector) {
-    // A map from domain name to DomainMetadata action
-    Map<String, DomainMetadata> domainMetadataMap = new HashMap<>();
-
+  public static void fillDomainMetadataMap(
+      ColumnVector domainMetadataActionVector, Map<String, DomainMetadata> domainMetadataMap) {
     final int vectorSize = domainMetadataActionVector.getSize();
     for (int rowId = 0; rowId < vectorSize; rowId++) {
-      DomainMetadata domainMetadata =
-          DomainMetadata.fromColumnVector(domainMetadataActionVector, rowId);
-
-      if (domainMetadata != null) {
-        DomainMetadata existingDomainMetadata =
-            domainMetadataMap.put(domainMetadata.getDomain(), domainMetadata);
-
-        if (existingDomainMetadata != null) {
-          throw DeltaErrors.duplicateDomainMetadataAction(
-              domainMetadata.getDomain(), existingDomainMetadata, domainMetadata);
-        }
+      DomainMetadata dm = DomainMetadata.fromColumnVector(domainMetadataActionVector, rowId);
+      if (dm != null && !domainMetadataMap.containsKey(dm.getDomain())) {
+        // We only add the domain metadata if its domain name not already present in the map
+        domainMetadataMap.put(dm.getDomain(), dm);
       }
     }
-    return domainMetadataMap;
   }
 
   /**

@@ -30,6 +30,7 @@ import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.SnapshotHint;
+import io.delta.kernel.internal.util.DomainMetadataUtils;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
@@ -337,15 +338,10 @@ public class LogReplay {
         assert (columnarBatch.getSchema().equals(DOMAIN_METADATA_READ_SCHEMA));
 
         final ColumnVector dmVector = columnarBatch.getColumnVector(0);
-        for (int rowId = 0; rowId < dmVector.getSize(); rowId++) {
-          if (!dmVector.isNullAt(rowId)) {
-            DomainMetadata dm = DomainMetadata.fromColumnVector(dmVector, rowId);
-            // We keep the latest version of each domain.
-            if (dm != null && !domainMetadataMap.containsKey(dm.getDomain())) {
-              domainMetadataMap.put(dm.getDomain(), dm);
-            }
-          }
-        }
+
+        // We are performing a reverse log replay. This function ensures that only the first
+        // encountered domain metadata for each domain is added to the map.
+        DomainMetadataUtils.fillDomainMetadataMap(dmVector, domainMetadataMap);
       }
       return domainMetadataMap;
     } catch (IOException ex) {
