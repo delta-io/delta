@@ -25,7 +25,7 @@ import scala.collection.concurrent
 import scala.reflect.ClassTag
 import scala.util.matching.Regex
 
-import com.databricks.spark.util.UsageRecord
+import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
 import org.apache.spark.sql.delta.DeltaTestUtils.Plans
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -164,6 +164,13 @@ trait DeltaTestUtilsBase {
     }
   }
 
+  def collectUsageLogs(opType: String)(f: => Unit): collection.Seq[UsageRecord] = {
+    Log4jUsageLogger.track(f).filter { r =>
+      r.metric == "tahoeEvent" &&
+        r.tags.get("opType").contains(opType)
+    }
+  }
+
   protected def getfindTouchedFilesJobPlans(plans: Seq[Plans]): SparkPlan = {
     // The expected plan for touched file computation is of the format below.
     // The data column should be pruned from both leaves.
@@ -246,7 +253,7 @@ trait DeltaTestUtilsBase {
    * - Failure: an exception is thrown and the caller passes a function to check that it matches an
    *     expected error, typ. `checkError()` or `checkErrorMatchPVals()`.
    */
-  sealed trait ExpectedResult[T]
+  sealed trait ExpectedResult[-T]
   object ExpectedResult {
     case class Success[T](expected: T) extends ExpectedResult[T]
     case class Failure[T](checkError: SparkThrowable => Unit) extends ExpectedResult[T]

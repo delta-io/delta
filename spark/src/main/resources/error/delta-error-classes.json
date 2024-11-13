@@ -516,6 +516,12 @@
     ],
     "sqlState" : "2200G"
   },
+  "DELTA_COMMIT_INTERMEDIATE_REDIRECT_STATE" : {
+    "message" : [
+      "Cannot handle commit of table within redirect table state '<state>'."
+    ],
+    "sqlState" : "42P01"
+  },
   "DELTA_COMPLEX_TYPE_COLUMN_CONTAINS_NULL_TYPE" : {
     "message" : [
       " Found nested NullType in column <columName> which is of <dataType>. Delta doesn't support writing NullType in complex types."
@@ -960,6 +966,13 @@
       "Current supported feature(s): <supportedFeatures>."
     ],
     "sqlState" : "0AKDE"
+  },
+  "DELTA_FEATURE_DROP_CHECKPOINT_FAILED" : {
+    "message" : [
+      "Dropping <featureName> failed due to a failure in checkpoint creation.",
+      "Please try again later. It the issue persists, contact support."
+    ],
+    "sqlState" : "22KD0"
   },
   "DELTA_FEATURE_DROP_CONFLICT_REVALIDATION_FAIL" : {
     "message" : [
@@ -1890,6 +1903,13 @@
     ],
     "sqlState" : "KD006"
   },
+  "DELTA_NO_REDIRECT_RULES_VIOLATED" : {
+    "message" : [
+      "Operation not allowed: <operation> cannot be performed on a table with redirect feature.",
+      "The no redirect rules are not satisfied <noRedirectRules>."
+    ],
+    "sqlState" : "42P01"
+  },
   "DELTA_NO_RELATION_TABLE" : {
     "message" : [
       "Table <tableIdent> not found"
@@ -1949,6 +1969,12 @@
       "Operation not allowed: <operation> cannot be performed on a view."
     ],
     "sqlState" : "0AKDC"
+  },
+  "DELTA_OPTIMIZE_FULL_NOT_SUPPORTED" : {
+    "message" : [
+      "OPTIMIZE FULL is only supported for clustered tables with non-empty clustering columns."
+    ],
+    "sqlState" : "42601"
   },
   "DELTA_OVERWRITE_SCHEMA_WITH_DYNAMIC_PARTITION_OVERWRITE" : {
     "message" : [
@@ -2370,6 +2396,19 @@
       "DeltaTable cannot be used in executors"
     ],
     "sqlState" : "XXKDS"
+  },
+  "DELTA_TABLE_INVALID_REDIRECT_STATE_TRANSITION" : {
+    "message" : [
+      "Unable to update table redirection state: Invalid state transition attempted.",
+      "The Delta table '<table>' cannot change from '<oldState>' to '<newState>'."
+    ],
+    "sqlState" : "KD007"
+  },
+  "DELTA_TABLE_INVALID_REMOVE_TABLE_REDIRECT" : {
+    "message" : [
+      "Unable to remove table redirection for <table> due to its invalid state: <currentState>."
+    ],
+    "sqlState" : "KD007"
   },
   "DELTA_TABLE_LOCATION_MISMATCH" : {
     "message" : [

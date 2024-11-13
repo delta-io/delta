@@ -216,7 +216,7 @@ trait DeltaSourceBase extends Source
   @volatile protected var hasCheckedReadIncompatibleSchemaChangesOnStreamStart: Boolean = false
 
   override val schema: StructType = {
-    val readSchema = DeltaTableUtils.removeInternalMetadata(spark, readSchemaAtSourceInit)
+    val readSchema = DeltaTableUtils.removeInternalWriterMetadata(spark, readSchemaAtSourceInit)
     val readSchemaWithCdc = if (options.readChangeFeed) {
       CDCReader.cdcReadSchema(readSchema)
     } else {
@@ -241,7 +241,7 @@ trait DeltaSourceBase extends Source
   private var isTriggerAvailableNow = false
 
   override def prepareForTriggerAvailableNow(): Unit = {
-    logInfo("The streaming query reports to use Trigger.AvailableNow.")
+    logInfo(log"The streaming query reports to use Trigger.AvailableNow.")
     isTriggerAvailableNow = true
   }
 

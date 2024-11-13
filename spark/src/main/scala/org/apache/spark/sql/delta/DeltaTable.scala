@@ -40,7 +40,7 @@ import org.apache.spark.sql.catalyst.plans.logical.{Filter, LeafNode, LogicalPla
 import org.apache.spark.sql.catalyst.util.CharVarcharCodegenUtils
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform}
-import org.apache.spark.sql.execution.datasources.{FileFormat, FileIndex, HadoopFsRelation, LogicalRelation}
+import org.apache.spark.sql.execution.datasources.{FileFormat, FileIndex, HadoopFsRelation, LogicalRelation, LogicalRelationWithTable}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
@@ -50,7 +50,7 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap
  */
 object RelationFileIndex {
   def unapply(a: LogicalRelation): Option[FileIndex] = a match {
-    case LogicalRelation(hrel: HadoopFsRelation, _, _, _) => Some(hrel.location)
+    case LogicalRelationWithTable(hrel: HadoopFsRelation, _) => Some(hrel.location)
     case _ => None
   }
 }
@@ -416,7 +416,7 @@ object DeltaTableUtils extends PredicateHelper
       target: LogicalPlan,
       fileIndex: FileIndex): LogicalPlan = {
     target transform {
-      case l @ LogicalRelation(hfsr: HadoopFsRelation, _, _, _) =>
+      case l @ LogicalRelationWithTable(hfsr: HadoopFsRelation, _) =>
         l.copy(relation = hfsr.copy(location = fileIndex)(hfsr.sparkSession))
     }
   }
@@ -454,7 +454,7 @@ object DeltaTableUtils extends PredicateHelper
     }
 
     target transformUp {
-      case l@LogicalRelation(hfsr: HadoopFsRelation, _, _, _) =>
+      case l@LogicalRelationWithTable(hfsr: HadoopFsRelation, _) =>
         // Prune columns from the scan.
         val prunedOutput = l.output.filterNot { col =>
           columnsToDrop.exists(resolver(_, col.name))
@@ -488,7 +488,7 @@ object DeltaTableUtils extends PredicateHelper
       target: LogicalPlan,
       updatedFileFormat: FileFormat): LogicalPlan = {
     target transform {
-      case l @ LogicalRelation(hfsr: HadoopFsRelation, _, _, _) =>
+      case l @ LogicalRelationWithTable(hfsr: HadoopFsRelation, _) =>
         l.copy(
           relation = hfsr.copy(fileFormat = updatedFileFormat)(hfsr.sparkSession))
     }
@@ -611,8 +611,7 @@ object DeltaTableUtils extends PredicateHelper
    * intentionally. This method removes all possible metadata keys to avoid Spark interpreting
    * table columns incorrectly.
    */
-  def removeInternalMetadata(spark: SparkSession, persistedSchema: StructType): StructType = {
-    val schema = ColumnWithDefaultExprUtils.removeDefaultExpressions(persistedSchema)
+  def removeSparkInternalMetadata(spark: SparkSession, schema: StructType): StructType = {
     if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SCHEMA_REMOVE_SPARK_INTERNAL_METADATA)) {
       var updated = false
       val updatedSchema = schema.map { field =>
@@ -634,6 +633,18 @@ object DeltaTableUtils extends PredicateHelper
       schema
     }
   }
+
+  /**
+   * Removes from the given schema all the metadata keys that are not used when reading a Delta
+   * table. This includes typically all metadata used by writer-only table features.
+   * Note that this also removes all leaked Spark internal metadata.
+   */
+  def removeInternalWriterMetadata(spark: SparkSession, schema: StructType): StructType = {
+    ColumnWithDefaultExprUtils.removeDefaultExpressions(
+      removeSparkInternalMetadata(spark, schema)
+    )
+  }
+
 }
 
 sealed abstract class UnresolvedPathBasedDeltaTableBase(path: String) extends UnresolvedLeafNode {

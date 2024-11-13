@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.skipping
 import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumn, ClusteringColumnInfo}
 import org.apache.spark.sql.delta.skipping.clustering.temp.ClusterBySpec
 import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
+import org.apache.spark.sql.delta.DeltaOperations
 import org.apache.spark.sql.delta.DeltaOperations.{CLUSTERING_PARAMETER_KEY, ZORDER_PARAMETER_KEY}
 import org.apache.spark.sql.delta.commands.optimize.OptimizeMetrics
 import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
@@ -53,10 +54,55 @@ trait ClusteredTableTestUtilsBase
    * @param postHook callback triggered with OptimizeMetrics returned by the OPTIMIZE command
    */
   def runOptimize(table: String)(postHook: OptimizeMetrics => Unit): Unit = {
+    // Verify Delta history operation parameters' clusterBy
+    val isPathBasedTable = table.startsWith("tahoe.") || table.startsWith("delta.")
+    var (deltaLog, snapshot) = if (isPathBasedTable) {
+      // Path based table e.g. delta.`path-to-directory` or tahoe.`path-to-directory`. Strip
+      // 6 characters to extract table path.
+      DeltaLog.forTableWithSnapshot(spark, table.drop(6).replace("`", ""))
+    } else {
+      DeltaLog.forTableWithSnapshot(spark, TableIdentifier(table))
+    }
+    val beforeVersion = snapshot.version
+
     postHook(optimizeTable(table).select($"metrics.*").as[OptimizeMetrics].head())
+    snapshot = deltaLog.update()
+    val afterVersion = snapshot.version
+
+    val shouldCheckFullStatus = deltaLog.history.getHistory(Some(1)).headOption.exists { h =>
+      Seq(DeltaOperations.OPTIMIZE_OPERATION_NAME
+      ).contains(h.operation)
+    }
+
+    // Note: Only expect isFull status when the table has non-empty clustering columns and
+    // clustering table feature, otherwise the OPTIMIZE will fall back to compaction and
+    // isFull status will not be relevant anymore.
+    val expectedOperationParameters = ClusteredTableUtils
+      .getClusteringColumnsOptional(snapshot)
+      .filter { cols =>
+        cols.nonEmpty &&
+          shouldCheckFullStatus &&
+          ClusteredTableUtils.isSupported(snapshot.protocol) &&
+          afterVersion > beforeVersion
+      }
+      .map(_ => Map(DeltaOperations.CLUSTERING_IS_FULL_KEY -> false))
+      .getOrElse(Map.empty)
+    verifyDescribeHistoryOperationParameters(
+      table, expectedOperationParameters = expectedOperationParameters)
+  }
+
+  /**
+   * Runs optimize full on the table and calls postHook on the metrics.
+   *
+   * @param table    the name of table
+   * @param postHook callback triggered with OptimizeMetrics returned by the OPTIMIZE command
+   */
+  def runOptimizeFull(table: String)(postHook: OptimizeMetrics => Unit): Unit = {
+    postHook(sql(s"OPTIMIZE $table FULL").select($"metrics.*").as[OptimizeMetrics].head())
 
     // Verify Delta history operation parameters' clusterBy
-    verifyDescribeHistoryOperationParameters(table)
+    verifyDescribeHistoryOperationParameters(table, expectedOperationParameters = Map(
+      DeltaOperations.CLUSTERING_IS_FULL_KEY -> true))
   }
 
   def verifyClusteringColumnsInDomainMetadata(
@@ -70,8 +116,8 @@ trait ClusteredTableTestUtilsBase
 
   // Verify the operation parameters of the last history event contains `clusterBy`.
   protected def verifyDescribeHistoryOperationParameters(
-      table: String
-  ): Unit = {
+      table: String,
+      expectedOperationParameters: Map[String, Any] = Map.empty): Unit = {
     val clusterBySupportedOperations = Set(
       "CREATE TABLE",
       "REPLACE TABLE",
@@ -102,7 +148,8 @@ trait ClusteredTableTestUtilsBase
         "add the operation to the appropriate case in " +
         "verifyDescribeHistoryOperationParameters. " +
         s"table: $table, lastOperation: ${lastEvent.operation} " +
-        s"lastOperationParameters: $lastOperationParameters"
+        s"lastOperationParameters: $lastOperationParameters " +
+        s"expectedOperationParameters: $expectedOperationParameters"
       try {
         assert(assertion, debugMsg)
       } catch {
@@ -125,6 +172,12 @@ trait ClusteredTableTestUtilsBase
     // Check clusterBy does not exist.
     def assertClusterByNotExist(): Unit = {
       doAssert(!lastOperationParameters.contains(CLUSTERING_PARAMETER_KEY))
+    }
+
+    // Validate caller provided operator parameters from the last commit.
+    for ((operationParameterKey, value) <- expectedOperationParameters) {
+      // Convert value to string since value is stored as toString in operationParameters.
+      doAssert(lastOperationParameters(operationParameterKey) === value.toString)
     }
 
     // Check clusterBy

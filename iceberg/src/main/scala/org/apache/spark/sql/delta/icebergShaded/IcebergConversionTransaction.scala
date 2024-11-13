@@ -29,6 +29,7 @@ import org.apache.spark.sql.delta.icebergShaded.IcebergTransactionUtils._
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.conf.Configuration
 import shadedForDelta.org.apache.iceberg.{AppendFiles, DeleteFiles, OverwriteFiles, PendingUpdate, RewriteFiles, Transaction => IcebergTransaction}
@@ -37,6 +38,7 @@ import shadedForDelta.org.apache.iceberg.mapping.MappingUtil
 import shadedForDelta.org.apache.iceberg.mapping.NameMappingParser
 
 import org.apache.spark.internal.MDC
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
 sealed trait IcebergTableOp
@@ -56,6 +58,7 @@ case object REPLACE_TABLE extends IcebergTableOp
  * @param lastConvertedDeltaVersion the delta version this Iceberg txn starts from.
  */
 class IcebergConversionTransaction(
+    protected val spark: SparkSession,
     protected val catalogTable: CatalogTable,
     protected val conf: Configuration,
     protected val postCommitSnapshot: Snapshot,
@@ -342,11 +345,18 @@ class IcebergConversionTransaction(
     // possible legitimate Delta version which is 0.
     val deltaVersion = if (tableOp == CREATE_TABLE) -1 else postCommitSnapshot.version
 
-    txn.updateProperties()
-      .set(IcebergConverter.DELTA_VERSION_PROPERTY, deltaVersion.toString)
+    var updateTxn = txn.updateProperties()
+    updateTxn = updateTxn.set(IcebergConverter.DELTA_VERSION_PROPERTY, deltaVersion.toString)
       .set(IcebergConverter.DELTA_TIMESTAMP_PROPERTY, postCommitSnapshot.timestamp.toString)
       .set(IcebergConstants.ICEBERG_NAME_MAPPING_PROPERTY, nameMapping)
-      .commit()
+
+    if (spark.sessionState.conf.getConf(
+        DeltaSQLConf.DELTA_UNIFORM_ICEBERG_INCLUDE_BASE_CONVERTED_VERSION)) {
+      lastConvertedDeltaVersion.foreach { v =>
+        updateTxn = updateTxn.set(IcebergConverter.BASE_DELTA_VERSION_PROPERTY, v.toString)
+      }
+    }
+    updateTxn.commit()
 
     // We ensure the iceberg txns are serializable by only allowing them to commit against
     // lastConvertedIcebergSnapshotId.

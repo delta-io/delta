@@ -33,7 +33,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.util.{DeltaFileOperations, FileNames}
+import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, DeltaFileOperations, FileNames}
 import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.FileSystem
@@ -359,7 +359,7 @@ trait DeltaVacuumSuiteBase extends QueryTest
   }
 
   protected def deleteCommitFile(deltaLog: DeltaLog, version: Long) = {
-    new File(FileNames.unsafeDeltaFile(deltaLog.logPath, version).toUri).delete()
+    new File(DeltaCommitFileProvider(deltaLog.update()).deltaFile(version).toUri).delete()
   }
 
   /**
@@ -371,7 +371,7 @@ trait DeltaVacuumSuiteBase extends QueryTest
   }
 
   protected def setCommitClock(deltaLog: DeltaLog, version: Long, clock: ManualClock) = {
-    val f = new File(FileNames.unsafeDeltaFile(deltaLog.logPath, version).toUri)
+    val f = new File(DeltaCommitFileProvider(deltaLog.update()).deltaFile(version).toUri)
     f.setLastModified(clock.getTimeMillis())
   }
 
@@ -1315,8 +1315,8 @@ class DeltaVacuumSuite
     test(s"vacuum event logging dryRun=$isDryRun loggingEnabled=$loggingEnabled" +
       s" retentionHours=$retentionHours timeGap=$timeGapHours") {
       withSQLConf(DeltaSQLConf.DELTA_VACUUM_LOGGING_ENABLED.key -> loggingEnabled.toString) {
-
         withEnvironment { (dir, clock) =>
+          clock.setTime(System.currentTimeMillis())
           spark.range(2).write.format("delta").save(dir.getAbsolutePath)
           val deltaLog = DeltaLog.forTable(spark, dir, clock)
           setCommitClock(deltaLog, 0L, clock)
@@ -1395,6 +1395,86 @@ class DeltaVacuumSuite
     retentionHours = 20, // vacuum will not delete any files
     timeGapHours = 10
   )
+
+  test(s"vacuum sql syntax checks") {
+    val tableName = "testTable"
+    withTable(tableName) {
+      withDeletionVectorsEnabled() {
+        withSQLConf(
+          DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false",
+          DeltaSQLConf.LITE_VACUUM_ENABLED.key -> "false"
+        ) {
+          spark.range(0, 50, step = 1, numPartitions = 5).write.format("delta")
+            .saveAsTable(tableName)
+          var e = intercept[AnalysisException] {
+            spark.sql(s"Vacuum $tableName DRY RUN DRY RUN")
+          }
+          assert(e.getMessage.contains("Found duplicate clauses: DRY RUN"))
+
+          e = intercept[AnalysisException] {
+            spark.sql(s"Vacuum $tableName RETAIN 200 HOURS RETAIN 200 HOURS")
+          }
+          assert(e.getMessage.contains("Found duplicate clauses: RETAIN"))
+
+          e = intercept[AnalysisException] {
+            spark.sql(s"Vacuum $tableName FULL LITE")
+          }
+          assert(e.getMessage.contains("Found duplicate clauses: LITE/FULL"))
+
+          e = intercept[AnalysisException] {
+            spark.sql(s"Vacuum $tableName USING INVENTORY $tableName INVENTORY $tableName")
+          }
+          assert(e.getMessage.contains("Syntax error at or near"))
+
+          e = intercept[AnalysisException] {
+            spark.sql(s"Vacuum $tableName USING INVENTORY $tableName LITE")
+          }
+          assert(e.getMessage.contains("Inventory option is not compatible with LITE"))
+
+          // create an uncommitted file. Presence or lack of this file will help us
+          // validate that we ran the right type of Vacuum.
+          val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+          val basePath = deltaLog.dataPath.toString
+          val clock = new ManualClock()
+          val fs = new Path(basePath).getFileSystem(deltaLog.newDeltaHadoopConf())
+          val sanitizedPath = new Path("UnCommittedFile.parquet").toUri.toString
+          val file = new File(
+            fs.makeQualified(DeltaFileOperations.absolutePath(basePath, sanitizedPath)).toUri)
+          createFile(basePath, sanitizedPath, file, clock)
+
+          spark.sql(s"DELETE from $tableName WHERE ID % 2 = 0 and ID < 40")
+          assertNumFiles(deltaLog, addFiles = 5, addFilesWithDVs = 4, dvFiles = 1, dataFiles = 6)
+          purgeDVs(tableName)
+
+          assertNumFiles(deltaLog, addFiles = 5, addFilesWithDVs = 0, dvFiles = 1,
+            dataFiles = 10) // 9 file actions + one  uncommitted file
+
+          spark.sql(s"Vacuum $tableName LITE DRY RUN RETAIN 0 HOURS")
+          // DRY RUN option doesn't change anything.
+          assertNumFiles(deltaLog, addFiles = 5, addFilesWithDVs = 0, dvFiles = 1,
+            dataFiles = 10)
+
+          // LITE will be able to GC 4 files removed by DELETE.
+          spark.sql(s"Vacuum $tableName LITE RETAIN 0 HOURS")
+          assertNumFiles(deltaLog, addFiles = 5, addFilesWithDVs = 0, dvFiles = 0,
+            dataFiles = 6)
+
+          // Default is full and it's able to delete the 'notCommittedFile.parquet'
+          spark.sql(s"Vacuum $tableName RETAIN 0 HOURS")
+          assertNumFiles(deltaLog, addFiles = 5, addFilesWithDVs = 0, dvFiles = 0,
+            dataFiles = 5)
+          // Create the uncommittedFile file again to make sure explicit vacuum full works as
+          // expected.
+          createFile(basePath, sanitizedPath, file, clock)
+          assertNumFiles(deltaLog, addFiles = 5, addFilesWithDVs = 0, dvFiles = 0,
+            dataFiles = 6)
+          spark.sql(s"Vacuum $tableName FULL RETAIN 0 HOURS")
+          assertNumFiles(deltaLog, addFiles = 5, addFilesWithDVs = 0, dvFiles = 0,
+            dataFiles = 5)
+        }
+      }
+    }
+  }
 }
 
 class DeltaVacuumWithCoordinatedCommitsBatch100Suite extends DeltaVacuumSuite {
@@ -1436,12 +1516,15 @@ class DeltaLiteVacuumSuite
         val deltaTable = io.delta.tables.DeltaTable.forPath(dir.getAbsolutePath)
         val deltaLog = DeltaLog.forTable(spark, dir.getAbsolutePath)
         deltaTable.delete()
-        // Checkpoint will allow us to construct the table snapshot
-        deltaLog.createCheckpointAtVersion(0L)
+        // Checkpoints will allow us to construct the table snapshot
+        deltaLog.createCheckpointAtVersion(2L)
         deleteCommitFile(deltaLog, 0L) // delete version 0
-        intercept[DeltaIllegalStateException] {
+
+        val e = intercept[DeltaIllegalStateException] {
           VacuumCommand.gc(spark, deltaLog, dryRun = true, retentionHours = Some(0))
         }
+        assert(e.getMessage.contains("VACUUM LITE cannot delete all eligible files as some files" +
+          " are not referenced by the Delta log. Please run VACUUM FULL."))
       }
     }
   }
@@ -1478,9 +1561,12 @@ class DeltaLiteVacuumSuite
         for (i <- 1 to 2) {
           deleteCommitFile(deltaLog, i)
         }
-        intercept[DeltaIllegalStateException] {
+
+        val e = intercept[DeltaIllegalStateException] {
           VacuumCommand.gc(spark, deltaLog, dryRun = true, retentionHours = Some(0))
         }
+        assert(e.getMessage.contains("VACUUM LITE cannot delete all eligible files as some files" +
+          " are not referenced by the Delta log. Please run VACUUM FULL."))
       }
     }
   }
@@ -1511,4 +1597,8 @@ class DeltaLiteVacuumSuite
       )
     }
   }
+}
+
+class DeltaLiteVacuumWithCoordinatedCommitsBatch100Suite extends DeltaLiteVacuumSuite {
+  override val coordinatedCommitsBackfillBatchSize: Option[Int] = Some(100)
 }

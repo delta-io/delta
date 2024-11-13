@@ -123,7 +123,7 @@ object DeltaTestImplicits {
   /** Helper class for working with [[Snapshot]] */
   implicit class SnapshotTestHelper(snapshot: Snapshot) {
     def ensureCommitFilesBackfilled(): Unit = {
-      snapshot.ensureCommitFilesBackfilled(tableIdentifierOpt = None)
+      snapshot.ensureCommitFilesBackfilled(catalogTableOpt = None)
     }
   }
 

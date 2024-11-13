@@ -125,9 +125,9 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
   }
 
   /**
-   * Check if a schema change is different from the stream read schema. We make sure:
-   * 1. A strict equality check on the schemas to capture all schema changes, OR
-   * 2. A strict equality check on the delta related table configurations, AND
+   * Check the table metadata or protocol changed since the initial read snapshot. We make sure:
+   * 1. The schema is the same, except for internal metadata, AND
+   * 2. The delta related table configurations are strictly equal, AND
    * 3. The incoming metadata change should not be considered a failure-causing change if we have
    *    marked the persisted schema and the stream progress is behind that schema version.
    *    This could happen when we've already merged consecutive schema changes during the analysis
@@ -143,13 +143,24 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
     } else {
       protocolChangeOpt.exists(_ != readProtocolAtSourceInit) ||
       metadataChangeOpt.exists { newMetadata =>
-         newMetadata.schema != readSchemaAtSourceInit ||
+         hasSchemaChangeComparedToStreamMetadata(newMetadata.schema) ||
            newMetadata.partitionSchema != readPartitionSchemaAtSourceInit ||
            newMetadata.configuration.filterKeys(_.startsWith("delta.")).toMap !=
              readConfigurationsAtSourceInit.filterKeys(_.startsWith("delta.")).toMap
       }
     }
   }
+
+  /**
+   * Check that the give schema is the same as the schema from the initial read snapshot.
+   */
+  private def hasSchemaChangeComparedToStreamMetadata(newSchema: StructType): Boolean =
+    if (spark.conf.get(DeltaSQLConf.DELTA_STREAMING_IGNORE_INTERNAL_METADATA_FOR_SCHEMA_CHANGE)) {
+      DeltaTableUtils.removeInternalWriterMetadata(spark, newSchema) !=
+        DeltaTableUtils.removeInternalWriterMetadata(spark, readSchemaAtSourceInit)
+    } else {
+      newSchema != readSchemaAtSourceInit
+    }
 
   /**
    * If the current stream metadata is not equal to the metadata change in [[metadataChangeOpt]],

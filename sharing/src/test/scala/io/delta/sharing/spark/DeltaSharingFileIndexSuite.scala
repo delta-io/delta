@@ -93,6 +93,7 @@ class TestDeltaSharingClientForFileIndex(
     readerFeatures: String = "",
     queryTablePaginationEnabled: Boolean = false,
     maxFilesPerReq: Int = 100000,
+    endStreamActionEnabled: Boolean = false,
     enableAsyncQuery: Boolean = false,
     asyncQueryPollIntervalMillis: Long = 10000L,
     asyncQueryMaxDuration: Long = 600000L,

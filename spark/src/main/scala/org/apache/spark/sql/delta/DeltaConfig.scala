@@ -407,6 +407,37 @@ trait DeltaConfigsBase extends DeltaLogging {
     "needs to be a positive integer.")
 
   /**
+   * This is the property that describes the table redirection detail. It is a JSON string format
+   * of the `TableRedirectConfiguration` class, which includes following attributes:
+   * - type(String): The type of redirection.
+   * - state(String): The current state of the redirection:
+   *                  ENABLE-REDIRECT-IN-PROGRESS, REDIRECT-READY, DROP-REDIRECT-IN-PROGRESS.
+   * - spec(JSON String): The specification of accessing redirect destination table. This is free
+   *                      form json object. Each delta service provider can customize its own
+   *                      implementation.
+   */
+  val REDIRECT_READER_WRITER: DeltaConfig[Option[String]] =
+    buildConfig[Option[String]](
+      "redirectReaderWriter-preview",
+      null,
+      v => Option(v),
+      _ => true,
+      "A JSON representation of the TableRedirectConfiguration class, which contains all " +
+        "information of redirect reader writer feature.")
+
+  /**
+   * This table feature is same as REDIRECT_READER_WRITER except it is a writer only table feature.
+   */
+  val REDIRECT_WRITER_ONLY: DeltaConfig[Option[String]] =
+    buildConfig[Option[String]](
+      "redirectWriterOnly-preview",
+      null,
+      v => Option(v),
+      _ => true,
+      "A JSON representation of the TableRedirectConfiguration class, which contains all " +
+        "information of redirect writer only feature.")
+
+  /**
    * Enable auto compaction for a Delta table. When enabled, we will check if files already
    * written to a Delta table can leverage compaction after a commit. If so, we run a post-commit
    * hook to compact the files.
@@ -804,6 +835,24 @@ trait DeltaConfigsBase extends DeltaLogging {
     v => Option(v).map(_.toLong),
     validationFunction = _ => true,
     "needs to be a long.")
+
+  /**
+   * This property is used by CheckpointProtectionTableFeature and denotes the
+   * version up to which the checkpoints are required to be cleaned up only together with the
+   * corresponding commits. If this is not possible, and metadata cleanup creates a new checkpoint
+   * prior to requireCheckpointProtectionBeforeVersion, it should validate write support against
+   * all protocols included in the commits that are being removed, or else abort. This is needed
+   * to make sure that the writer understands how to correctly create a checkpoint for the
+   * historic commit.
+   *
+   * Note, this is an internal config and should never be manually altered.
+   */
+  val REQUIRE_CHECKPOINT_PROTECTION_BEFORE_VERSION = buildConfig[Long](
+    "requireCheckpointProtectionBeforeVersion",
+    "0",
+    _.toLong,
+    _ >= 0,
+    "needs to be greater or equal to zero.")
 }
 
 object DeltaConfigs extends DeltaConfigsBase

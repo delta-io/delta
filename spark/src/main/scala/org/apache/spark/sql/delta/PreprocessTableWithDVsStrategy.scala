@@ -20,7 +20,7 @@ import org.apache.spark.sql.{SparkSession, Strategy}
 import org.apache.spark.sql.catalyst.planning.ScanOperation
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.SparkPlan
-import org.apache.spark.sql.execution.datasources.{FileSourceStrategy, HadoopFsRelation, LogicalRelation}
+import org.apache.spark.sql.execution.datasources.{FileSourceStrategy, HadoopFsRelation, LogicalRelationWithTable}
 
 /**
  * Strategy to process tables with DVs and add the skip row column and filters.
@@ -35,7 +35,7 @@ case class PreprocessTableWithDVsStrategy(session: SparkSession)
     with PreprocessTableWithDVs {
 
   override def apply(plan: LogicalPlan): Seq[SparkPlan] = plan match {
-    case ScanOperation(_, _, _, _ @ LogicalRelation(_: HadoopFsRelation, _, _, _)) =>
+    case ScanOperation(_, _, _, _ @ LogicalRelationWithTable(_: HadoopFsRelation, _)) =>
       val updatedPlan = preprocessTablesWithDVs(plan)
       FileSourceStrategy(updatedPlan)
     case _ => Nil

@@ -46,7 +46,7 @@ import org.apache.spark.sql.connector.catalog.V1Table
 import org.apache.spark.sql.connector.expressions._
 import org.apache.spark.sql.connector.write.{LogicalWriteInfo, SupportsDynamicOverwrite, SupportsOverwrite, SupportsTruncate, V1Write, WriteBuilder}
 import org.apache.spark.sql.errors.QueryCompilationErrors
-import org.apache.spark.sql.execution.datasources.LogicalRelation
+import org.apache.spark.sql.execution.datasources.{LogicalRelation, LogicalRelationShims}
 import org.apache.spark.sql.sources.{BaseRelation, Filter, InsertableRelation}
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
@@ -156,11 +156,12 @@ case class DeltaTableV2(
         "queriedVersion" -> version,
         "accessType" -> accessType
       ))
-      deltaLog.getSnapshotAt(version)
+      deltaLog.getSnapshotAt(version, catalogTableOpt = catalogTable)
     }.getOrElse(
       deltaLog.update(
         stalenessAcceptable = true,
-        checkIfUpdatedSinceTs = Some(creationTimeMs)
+        checkIfUpdatedSinceTs = Some(creationTimeMs),
+        catalogTableOpt = catalogTable
       )
     )
   }
@@ -181,7 +182,7 @@ case class DeltaTableV2(
 
   private lazy val tableSchema: StructType = {
     val baseSchema = cdcRelation.map(_.schema).getOrElse {
-      DeltaTableUtils.removeInternalMetadata(spark, initialSnapshot.schema)
+      DeltaTableUtils.removeInternalWriterMetadata(spark, initialSnapshot.schema)
     }
     DeltaColumnMapping.dropColumnMappingMetadata(baseSchema)
   }
@@ -280,7 +281,7 @@ case class DeltaTableV2(
   /** Creates a [[LogicalRelation]] that represents this table */
   lazy val toLogicalRelation: LogicalRelation = {
     val relation = this.toBaseRelation
-    LogicalRelation(
+    LogicalRelationShims.newInstance(
       relation, toAttributes(relation.schema), ttSafeCatalogTable, isStreaming = false)
   }
 

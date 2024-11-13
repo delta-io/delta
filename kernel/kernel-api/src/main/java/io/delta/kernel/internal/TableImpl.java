@@ -44,6 +44,10 @@ import org.slf4j.LoggerFactory;
 
 public class TableImpl implements Table {
 
+  //////////////////////////////
+  // Static Methods / Members //
+  //////////////////////////////
+
   private static final Logger logger = LoggerFactory.getLogger(TableImpl.class);
 
   public static Table forPath(Engine engine, String path) {
@@ -60,32 +64,58 @@ public class TableImpl implements Table {
    * @return an instance of {@link Table} representing the Delta table at the given path
    */
   public static Table forPath(Engine engine, String path, Clock clock) {
-    String resolvedPath;
+    return forPathWithTableId(engine, path, Optional.empty(), clock);
+  }
+
+  public static Table forPathWithTableId(Engine engine, String path, TableIdentifier tableId) {
+    return forPathWithTableId(engine, path, Optional.of(tableId), System::currentTimeMillis);
+  }
+
+  public static Table forPathWithTableId(
+      Engine engine, String path, Optional<TableIdentifier> tableIdOpt, Clock clock) {
     try {
-      resolvedPath =
+      final String resolvedPath =
           wrapEngineExceptionThrowsIO(
               () -> engine.getFileSystemClient().resolvePath(path), "Resolving path %s", path);
+      return new TableImpl(resolvedPath, tableIdOpt, clock);
     } catch (IOException io) {
       throw new UncheckedIOException(io);
     }
-    return new TableImpl(resolvedPath, clock);
   }
 
-  private final SnapshotManager snapshotManager;
+  ////////////////////////////////
+  // Instance Methods / Members //
+  ////////////////////////////////
+
   private final String tablePath;
+  private final Optional<TableIdentifier> tableIdOpt;
   private final Clock clock;
 
-  public TableImpl(String tablePath, Clock clock) {
+  private final Path dataPath;
+  private final Path logPath;
+  private final SnapshotManager snapshotManager;
+
+  private TableImpl(String tablePath, Optional<TableIdentifier> tableIdOpt, Clock clock) {
     this.tablePath = tablePath;
-    final Path dataPath = new Path(tablePath);
-    final Path logPath = new Path(dataPath, "_delta_log");
-    this.snapshotManager = new SnapshotManager(logPath, dataPath);
+    this.tableIdOpt = tableIdOpt;
     this.clock = clock;
+    this.dataPath = new Path(tablePath);
+    this.logPath = new Path(dataPath, "_delta_log");
+    this.snapshotManager = new SnapshotManager(logPath, dataPath);
   }
+
+  /////////////////
+  // Public APIs //
+  /////////////////
 
   @Override
   public String getPath(Engine engine) {
     return tablePath;
+  }
+
+  @Override
+  public Optional<TableIdentifier> getTableIdentifier() {
+    return tableIdOpt;
   }
 
   @Override
@@ -169,8 +199,7 @@ public class TableImpl implements Table {
               for (int rowId = 0; rowId < protocolVector.getSize(); rowId++) {
                 if (!protocolVector.isNullAt(rowId)) {
                   Protocol protocol = Protocol.fromColumnVector(protocolVector, rowId);
-                  TableFeatures.validateReadSupportedTable(
-                      protocol, getDataPath().toString(), Optional.empty());
+                  TableFeatures.validateReadSupportedTable(protocol, tablePath, Optional.empty());
                 }
               }
               if (shouldDropProtocolColumn) {
@@ -179,14 +208,6 @@ public class TableImpl implements Table {
                 return batch;
               }
             });
-  }
-
-  protected Path getDataPath() {
-    return new Path(tablePath);
-  }
-
-  protected Path getLogPath() {
-    return new Path(tablePath, "_delta_log");
   }
 
   /**
@@ -268,6 +289,22 @@ public class TableImpl implements Table {
       return commit.getVersion() + 1;
     }
   }
+
+  ////////////////////
+  // Protected APIs //
+  ////////////////////
+
+  protected Path getDataPath() {
+    return dataPath;
+  }
+
+  protected Path getLogPath() {
+    return logPath;
+  }
+
+  ////////////////////////////
+  // Private Helper Methods //
+  ////////////////////////////
 
   /**
    * Returns the raw delta actions for each version between startVersion and endVersion. Only reads

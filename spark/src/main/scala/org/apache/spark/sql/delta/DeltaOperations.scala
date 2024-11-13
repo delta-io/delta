@@ -684,13 +684,16 @@ object DeltaOperations {
   val ZORDER_PARAMETER_KEY = "zOrderBy"
   /** parameter key to indicate clustering columns */
   val CLUSTERING_PARAMETER_KEY = "clusterBy"
+  /** parameter key to indicate the operation for `OPTIMIZE tbl FULL` */
+  val CLUSTERING_IS_FULL_KEY = "isFull"
 
   /** Recorded when optimizing the table. */
   case class Optimize(
       predicate: Seq[Expression],
       zOrderBy: Seq[String] = Seq.empty,
       auto: Boolean = false,
-      clusterBy: Option[Seq[String]] = None
+      clusterBy: Option[Seq[String]] = None,
+      isFull: Boolean = false
   ) extends OptimizeOrReorg(OPTIMIZE_OPERATION_NAME, predicate) {
     override val parameters: Map[String, Any] = super.parameters ++ Map(
       // When clustering columns are specified, set the zOrderBy key to empty.
@@ -698,6 +701,8 @@ object DeltaOperations {
       CLUSTERING_PARAMETER_KEY -> JsonUtils.toJson(clusterBy.getOrElse(Seq.empty)),
       AUTO_COMPACTION_PARAMETER_KEY -> auto
     )
+    // `isFull` is not relevant for non-clustering tables, so skip it.
+    .++(clusterBy.filter(_.nonEmpty).map(_ => CLUSTERING_IS_FULL_KEY -> isFull))
 
     override val operationMetrics: Set[String] = DeltaOperationMetrics.OPTIMIZE
 
@@ -735,7 +740,7 @@ object DeltaOperations {
   case class VacuumStart(
       retentionCheckEnabled: Boolean,
       specifiedRetentionMillis: Option[Long],
-      defaultRetentionMillis: Long) extends Operation("VACUUM START") {
+      defaultRetentionMillis: Long) extends Operation(VacuumStart.OPERATION_NAME) {
     override val parameters: Map[String, Any] = Map(
       "retentionCheckEnabled" -> retentionCheckEnabled,
       "defaultRetentionMillis" -> defaultRetentionMillis
@@ -749,10 +754,14 @@ object DeltaOperations {
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
   }
 
+  object VacuumStart {
+    val OPERATION_NAME = "VACUUM START"
+  }
+
   /**
    * @param status - whether the vacuum operation was successful; either "COMPLETED" or "FAILED"
    */
-  case class VacuumEnd(status: String) extends Operation(s"VACUUM END") {
+  case class VacuumEnd(status: String) extends Operation(VacuumEnd.OPERATION_NAME) {
     override val parameters: Map[String, Any] = Map(
       "status" -> status
     )
@@ -763,6 +772,10 @@ object DeltaOperations {
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
+  }
+
+  object VacuumEnd {
+    val OPERATION_NAME = "VACUUM END"
   }
 
   /** Recorded when running REORG on the table. */

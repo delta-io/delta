@@ -241,7 +241,7 @@ class DeltaSinkSuite
 
         // Verify the correct partitioning schema has been inferred
         val hadoopFsRelations = outputDf.queryExecution.analyzed.collect {
-          case LogicalRelation(baseRelation, _, _, _) if
+          case LogicalRelationWithTable(baseRelation, _) if
               baseRelation.isInstanceOf[HadoopFsRelation] =>
             baseRelation.asInstanceOf[HadoopFsRelation]
         }

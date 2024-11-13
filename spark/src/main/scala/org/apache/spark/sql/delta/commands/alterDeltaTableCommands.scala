@@ -40,6 +40,7 @@ import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.internal.MDC
+import org.apache.spark.internal.config.ConfigEntry
 import org.apache.spark.sql.{AnalysisException, Column, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.catalog.CatalogUtils
@@ -257,48 +258,113 @@ case class AlterTableUnsetPropertiesDeltaCommand(
  *   ALTER TABLE t DROP FEATURE f [TRUNCATE HISTORY]
  * }}}
  *
- * The operation consists of two stages (see [[RemovableFeature]]):
- *  1) preDowngradeCommand. This command is responsible for removing any data and metadata
- *     related to the feature.
- *  2) Protocol downgrade. Removes the feature from the current version's protocol.
- *     During this stage we also validate whether all traces of the feature-to-be-removed are gone.
+ * When dropping a feature, remove the feature traces from the latest version. However, the table
+ * history still contains feature traces. This creates two problems:
  *
- *  For removing writer features the 2 steps above are sufficient. However, for removing
- *  reader+writer features we also need to ensure the history does not contain any traces of the
- *  removed feature. The user journey is the following:
+ * 1) Reconstructing the state of the latest version may require replaying log records prior to
+ *    feature removal. Log replay is based on checkpoints which is used by clients as a starting
+ *    point for replaying history. Any actions before the checkpoint do not need to be replayed.
+ *    However, checkpoints may be deleted at any time, which can then expose readers to older
+ *    log records.
+ * 2) Clients could create checkpoints in past versions. These could lead to incorrect behavior
+ *    if the client that created the checkpoint did not support all features.
  *
- *  1) The user runs the remove feature command which removes any traces of the feature from
- *     the latest version. The removal command throws a message that there was partial success
- *     and the retention period must pass before a protocol downgrade is possible.
- *  2) The user runs again the command after the retention period is over. The command checks the
- *     current state again and the history. If everything is clean, it proceeds with the protocol
- *     downgrade. The TRUNCATE HISTORY option may be used here to automatically set
- *     the log retention period to a minimum of 24 hours before clearing the logs. The minimum
- *     value is based on the expected duration of the longest running transaction. This is the
- *     lowest retention period we can set without endangering concurrent transactions.
- *     If transactions do run for longer than this period while this command is run, then this
- *     can lead to data corruption.
+ * To address these issues, we currently provide two implementations:
  *
- *  Note, legacy features can be removed as well. When removing a legacy feature from a legacy
- *  protocol, if the result cannot be represented with a legacy representation we use the
- *  table features representation. For example, removing Invariants from (1, 3) results to
- *  (1, 7, None, [AppendOnly, CheckConstraints]). Adding back Invariants to the protocol is
- *  normalized back to (1, 3). This allows to easily transitions back and forth between legacy
- *  protocols and table feature protocols.
+ * 1) [[DropFeatureWithHistoryTruncation]]. We truncate history at the boundary of version of the
+ *    dropped feature (when required). Requires two executions of the drop feature command with
+ *    a waiting time in between the two executions.
+ * 2) [[executeDropFeatureWithCheckpointProtection]], i.e. fast drop feature. We create barrier
+ *    checkpoints to protect against log replay and checkpoint creation. The behavior is enforced
+ *    with the aid of CheckpointProtectionTableFeature.
+ *
+ * Config tableFeatures.fastDropFeature.enabled can be used to control which implementation
+ * is used. Furthermore, please note the option [TRUNCATE HISTORY] in the SQL syntax is only
+ * relevant for [[DropFeatureWithHistoryTruncation]]. When used, we always fallback to that
+ * implementation.
+ *
+ * At a high level, dropping a feature consists of two stages (see [[RemovableFeature]]):
+ *
+ * 1) preDowngradeCommand. This command is responsible for removing any data and metadata
+ * related to the feature.
+ * 2) Protocol downgrade. Removes the feature from the current version's protocol.
+ *    During this stage we also validate whether all traces of the feature-to-be-removed are gone.
+ *
+ * For removing features with requiresHistoryProtection=false the two steps above are sufficient.
+ * For features that require history protection, we follow a different approach for each of the
+ * implementations listed above. Please see the corresponding functions for more details.
+ *
+ * Note, legacy features can be removed as well. When removing a legacy feature from a legacy
+ * protocol, if the result cannot be represented with a legacy representation we use the
+ * table features representation. For example, removing Invariants from (1, 3) results to
+ * (1, 7, None, [AppendOnly, CheckConstraints]). Adding back Invariants to the protocol is
+ * normalized back to (1, 3). This allows to consistently transition back and forth between legacy
+ * protocols and table feature protocols.
  */
 case class AlterTableDropFeatureDeltaCommand(
     table: DeltaTableV2,
     featureName: String,
     truncateHistory: Boolean = false)
-  extends LeafRunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
+  extends LeafRunnableCommand
+  with AlterDeltaTableCommand
+  with IgnoreCachedData {
 
-  def createEmptyCommitAndCheckpoint(snapshotRefreshStartTime: Long): Unit = {
+
+  val MAX_CHECKPOINT_RETRIES = 3
+  val NUMBER_OF_BARRIER_CHECKPOINTS = 3
+
+  /**
+   * Helper function for creating checkpoints. If checkpoint creation fails we retry up
+   * to [[MAX_CHECKPOINT_RETRIES]] times.
+   *
+   * @param snapshotRefreshStartTimeTs The timestamp to use as a starting point for refreshing
+   *                                   the snapshot. This value is used to improve the performance
+   *                                   of the snapshot refresh operation.
+   */
+  private def createCheckpointWithRetries(snapshotRefreshStartTimeTs: Long): Boolean = {
     val log = table.deltaLog
-    val snapshot = log.update(checkIfUpdatedSinceTs = Some(snapshotRefreshStartTime))
+    val snapshot = log.update(checkIfUpdatedSinceTs = Some(snapshotRefreshStartTimeTs))
+
+    def checkpointAndVerify(snapshot: Snapshot): Boolean = {
+      try {
+        log.checkpoint(snapshot)
+        val upperBoundVersion = Some(CheckpointInstance(version = snapshot.version + 1))
+        val lastVerifiedCheckpoint = log.findLastCompleteCheckpointBefore(upperBoundVersion)
+        lastVerifiedCheckpoint.exists(_.version == snapshot.version)
+      } catch {
+        case NonFatal(e) =>
+          recordDeltaEvent(
+            deltaLog = log,
+            opType = "dropFeature.checkpointAndVerify.error",
+            data = Map(
+              "message" -> e.getMessage,
+              "stackTrace" -> e.getStackTrace().mkString("\n")))
+          false
+      }
+    }
+
+    (1 to MAX_CHECKPOINT_RETRIES).collectFirst {
+      case _ if checkpointAndVerify(snapshot) => true
+    }.getOrElse(false)
+  }
+
+  private def createEmptyCommitAndCheckpoint(
+      snapshotRefreshStartTs: Long,
+      retryOnFailure: Boolean = false): Boolean = {
+    val log = table.deltaLog
+    val snapshot = log.update(checkIfUpdatedSinceTs = Some(snapshotRefreshStartTs))
     val emptyCommitTS = System.nanoTime()
     log.startTransaction(table.catalogTable, Some(snapshot))
       .commit(Nil, DeltaOperations.EmptyCommit)
-    log.checkpoint(log.update(checkIfUpdatedSinceTs = Some(emptyCommitTS)))
+
+    // retryOnFailure is temporary to avoid affecting the behavior of the legacy Drop Feature
+    // command behavior.
+    if (retryOnFailure) {
+      createCheckpointWithRetries(emptyCommitTS)
+    } else {
+      log.checkpoint(log.update(checkIfUpdatedSinceTs = Some(emptyCommitTS)))
+      true
+    }
   }
 
   def truncateHistoryLogRetentionMillis(txn: OptimisticTransaction): Option[Long] = {
@@ -312,32 +378,61 @@ case class AlterTableDropFeatureDeltaCommand(
   }
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
+    val removableFeature = TableFeature.featureNameToFeature(featureName) match {
+      case Some(feature: RemovableFeature) => feature
+      case Some(_) => throw DeltaErrors.dropTableFeatureNonRemovableFeature(featureName)
+      case None => throw DeltaErrors.dropTableFeatureFeatureNotSupportedByClient(featureName)
+    }
+
+    // Check whether the protocol contains the feature in either the writer features list or
+    // the reader+writer features list. Note, protocol needs to denormalized to allow dropping
+    // features from legacy protocols.
+    val protocol = table.initialSnapshot.protocol
+    val protocolContainsFeatureName =
+      protocol.implicitlyAndExplicitlySupportedFeatures.map(_.name).contains(featureName)
+    if (!protocolContainsFeatureName) {
+      throw DeltaErrors.dropTableFeatureFeatureNotSupportedByProtocol(featureName)
+    }
+
+    if (truncateHistory && !removableFeature.requiresHistoryProtection) {
+      throw DeltaErrors.tableFeatureDropHistoryTruncationNotAllowed()
+    }
+
+    // Validate that the `removableFeature` is not a dependency of any other feature that is
+    // enabled on the table.
+    dependentFeatureCheck(removableFeature, protocol)
+
+    // If the user uses the truncate history option we always fallback to the old implementation.
+    if (!truncateHistory && conf.getConf(DeltaSQLConf.FAST_DROP_FEATURE_ENABLED)) {
+      executeDropFeatureWithCheckpointProtection(sparkSession, removableFeature)
+    } else {
+      executeDropFeatureWithHistoryTruncation(sparkSession, removableFeature)
+    }
+  }
+
+  /**
+   *  Drop features with history truncation. When dropping a feature that
+   *  requiresHistoryProtection, we need to truncate history prior to feature removal to ensure
+   *  the history does not contain any traces of the removed feature. The user journey is the
+   *  following:
+   *
+   *  1) The user runs the remove feature command which removes any traces of the feature from
+   *     the latest version. The removal command throws a message that there was partial success
+   *     and the retention period must pass before a protocol downgrade is possible.
+   *  2) The user runs again the command after the retention period is over. The command checks the
+   *     current state again and the history. If everything is clean, it proceeds with the protocol
+   *     downgrade. The TRUNCATE HISTORY option may be used here to automatically set
+   *     the log retention period to a minimum of 24 hours before clearing the logs. The minimum
+   *     value is based on the expected duration of the longest running transaction. This is the
+   *     lowest retention period we can set without endangering concurrent transactions.
+   *     If transactions do run for longer than this period while this command is run, then this
+   *     can lead to data corruption.
+   */
+  private def executeDropFeatureWithHistoryTruncation(
+      sparkSession: SparkSession,
+      removableFeature: TableFeature with RemovableFeature): Seq[Row] = {
     val deltaLog = table.deltaLog
     recordDeltaOperation(deltaLog, "delta.ddl.alter.dropFeature") {
-      val removableFeature = TableFeature.featureNameToFeature(featureName) match {
-        case Some(feature: RemovableFeature) => feature
-        case Some(_) => throw DeltaErrors.dropTableFeatureNonRemovableFeature(featureName)
-        case None => throw DeltaErrors.dropTableFeatureFeatureNotSupportedByClient(featureName)
-      }
-
-      // Check whether the protocol contains the feature in either the writer features list or
-      // the reader+writer features list. Note, protocol needs to denormalized to allow dropping
-      // features from legacy protocols.
-      val protocol = table.initialSnapshot.protocol
-      val protocolContainsFeatureName =
-        protocol.implicitlyAndExplicitlySupportedFeatures.map(_.name).contains(featureName)
-      if (!protocolContainsFeatureName) {
-        throw DeltaErrors.dropTableFeatureFeatureNotSupportedByProtocol(featureName)
-      }
-
-      if (truncateHistory && !removableFeature.requiresHistoryTruncation) {
-        throw DeltaErrors.tableFeatureDropHistoryTruncationNotAllowed()
-      }
-
-      // Validate that the `removableFeature` is not a dependency of any other feature that is
-      // enabled on the table.
-      dependentFeatureCheck(removableFeature, protocol)
-
       // The removableFeature.preDowngradeCommand needs to adhere to the following requirements:
       //
       // a) Bring the table to a state the validation passes.
@@ -347,7 +442,7 @@ case class AlterTableDropFeatureDeltaCommand(
       //
       // Note, for features that cannot be disabled we solely rely for correctness on
       // validateRemoval.
-      val requiresHistoryValidation = removableFeature.requiresHistoryTruncation
+      val requiresHistoryValidation = removableFeature.requiresHistoryProtection
       val startTimeNs = System.nanoTime()
       val preDowngradeMadeChanges =
         removableFeature.preDowngradeCommand(table).removeFeatureTracesIfNeeded()
@@ -401,8 +496,100 @@ case class AlterTableDropFeatureDeltaCommand(
         }
       }
 
-      txn.updateProtocol(txn.protocol.denormalized.removeFeature(removableFeature))
-      txn.commit(Nil, DeltaOperations.DropTableFeature(featureName, truncateHistory))
+      val op = DeltaOperations.DropTableFeature(featureName, truncateHistory)
+      txn.updateProtocol(txn.protocol.removeFeature(removableFeature))
+      txn.commit(Nil, op)
+      Nil
+    }
+  }
+
+  /**
+   * Drop [[removableFeature]] and enforce correctness with protected checkpoints. When dropping a
+   * feature that requiresHistoryProtection we need to make sure:
+   *
+   * 1) Clients will not process historical commits that contain traces of the dropped feature.
+   * 2) Clients will not create checkpoints in historical versions when they do not support the
+   *    required features.
+   *
+   * This can be achieved as follows:
+   * 1) Create DELTA_SNAPSHOT_LOADING_MAX_RETRIES + 1 checkpoints (3 checkpoints),
+   *    after the execution of the pre-downgrade command but before the protocol downgrade commit.
+   *    Clients should never attempt to read prior to these checkpoints. We create multiple
+   *    checkpoints because the Delta Spark client may try multiple earlier checkpoints when it
+   *    encounters a checkpoint that it cannot read. By adding multiple checkpoints, we make
+   *    sure it gives up before it proceeds to earlier checkpoints.
+   * 2) Protect checkpoints 1-3 from metadata cleanup operations. This is achieved with the aid of
+   *    the CheckpointProtectionTableFeature. Using a table property we store the version of
+   *    the last dropped feature, V. With CheckpointProtectionTableFeature we enforce clients
+   *    can only delete checkpoints before V if they clean up the corresponding commit history at
+   *    the same time and do not create any checkpoints prior to V. To create a checkpoint prior
+   *    to V, they must support all features for the versions they truncate.
+   * 3) In a single commit, drop the feature from the protocol, set V = the version the current
+   *    feature is dropped and add the CheckpointProtectionTableFeature.
+   * 4) Create a checkpoint after the protocol downgrade. This is optional and it is used to allow
+   *    log replay from checkpoint 3 to the protocol downgrade commit. This is for clients that do
+   *    not support the dropped feature and choose to validate against the protocols of all commits
+   *    used in the replay of a snapshot instead of only validating against the final resulting
+   *    protocol.
+   *
+   */
+  private def executeDropFeatureWithCheckpointProtection(
+      sparkSession: SparkSession,
+      removableFeature: TableFeature with RemovableFeature): Seq[Row] = {
+    val deltaLog = table.deltaLog
+    recordDeltaOperation(deltaLog, "delta.ddl.alter.dropFeatureWithCheckpointProtection") {
+      var startTimeNs = System.nanoTime()
+      removableFeature.preDowngradeCommand(table).removeFeatureTracesIfNeeded()
+
+      // Create and validate the barrier checkpoints. The checkpoint are created on top of
+      // empty commits. However, this is not guaranteed. Other txns might interleave the empty
+      // commit. As a result the checkpoint could be created on top of an unrelated non-empty
+      // commit. This is not a problem. We only care about the checkpoint being created after the
+      // pre-downgrade process and before the protocol downgrade commit.
+      // Furthermore, each checkpoint validation requires a roundtrip to the object store.
+      // Could be optimized, if required, by performing a single list operation and checking
+      // whether NUMBER_OF_BARRIER_CHECKPOINTS exist after the pre-downgrade commit.
+      val historyBarrierIsRequired = removableFeature.requiresHistoryProtection
+      if (historyBarrierIsRequired) {
+        (1 to NUMBER_OF_BARRIER_CHECKPOINTS).foreach { _ =>
+          // This call also cleans up the logs. In most of the cases we should be able to truncate
+          // the history of a previous drop feature operation.
+          if (!createEmptyCommitAndCheckpoint(startTimeNs, retryOnFailure = true)) {
+            throw DeltaErrors.dropTableFeatureCheckpointFailedException(removableFeature.name)
+          }
+          startTimeNs = System.nanoTime()
+        }
+      }
+
+      val txn = table.startTransaction()
+      val snapshot = txn.snapshot
+
+      // Verify whether all requirements hold before performing the protocol downgrade.
+      // If any concurrent transactions interfere with the protocol downgrade txn we
+      // revalidate the requirements against the snapshot of the winning txn.
+      if (!removableFeature.validateRemoval(snapshot)) {
+        throw DeltaErrors.dropTableFeatureConflictRevalidationFailed()
+      }
+
+      if (historyBarrierIsRequired) {
+        val newMetadata = CheckpointProtectionTableFeature.metadataWithCheckpointProtection(
+          txn.metadata, txn.readVersion + 1L)
+        txn.updateMetadata(newMetadata)
+
+        val newProtocol = txn.protocol
+          .denormalized
+          .withFeature(CheckpointProtectionTableFeature)
+          .removeFeature(removableFeature)
+
+        txn.updateProtocol(newProtocol)
+      } else {
+        txn.updateProtocol(txn.protocol.removeFeature(removableFeature))
+      }
+
+      txn.commit(Nil, DeltaOperations.DropTableFeature(featureName, false))
+
+      // This is a protected checkpoint.
+      if (historyBarrierIsRequired) createCheckpointWithRetries(System.nanoTime())
       Nil
     }
   }

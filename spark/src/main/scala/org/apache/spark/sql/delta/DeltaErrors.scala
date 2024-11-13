@@ -31,6 +31,8 @@ import org.apache.spark.sql.delta.constraints.Constraints
 import org.apache.spark.sql.delta.hooks.AutoCompactType
 import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.redirect.NoRedirectRule
+import org.apache.spark.sql.delta.redirect.RedirectState
 import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, InvariantViolationException, SchemaUtils, UnsupportedDataTypeInfo}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
@@ -340,6 +342,41 @@ trait DeltaErrorsBase
     new DeltaAnalysisException(
       errorClass = "DELTA_CANNOT_DROP_CHECK_CONSTRAINT_FEATURE",
       messageParameters = Array(constraintNames.map(formatColumn).mkString(", "))
+    )
+  }
+
+  def invalidRedirectStateTransition(
+      table: String,
+      oldState: RedirectState,
+      newState: RedirectState): Unit = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_TABLE_INVALID_REDIRECT_STATE_TRANSITION",
+      messageParameters = Array(
+        table, table, oldState.name, newState.name)
+    )
+  }
+
+  def invalidRemoveTableRedirect(table: String, currentState: RedirectState): Unit = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_TABLE_INVALID_REMOVE_TABLE_REDIRECT",
+      messageParameters = Array(table, table, currentState.name)
+    )
+  }
+
+  def invalidCommitIntermediateRedirectState(state: RedirectState): Throwable = {
+    throw new DeltaIllegalStateException (
+      errorClass = "DELTA_COMMIT_INTERMEDIATE_REDIRECT_STATE",
+      messageParameters = Array(state.name)
+    )
+  }
+
+  def noRedirectRulesViolated(
+      op: DeltaOperations.Operation,
+      noRedirectRules: Set[NoRedirectRule]): Throwable = {
+    throw new DeltaIllegalStateException (
+      errorClass = "DELTA_NO_REDIRECT_RULES_VIOLATED",
+      messageParameters =
+        Array(op.name, noRedirectRules.map("\"" + _ + "\"").mkString("[", ",\n", "]"))
     )
   }
 
@@ -1810,9 +1847,17 @@ trait DeltaErrorsBase
       column: String,
       columnType: DataType,
       exprType: DataType): Throwable = {
+    val exprTypeSql = exprType.sql
+    val columnTypeSql = columnType.sql
+    val (exprTypeString, columnTypeString) = if (exprTypeSql == columnTypeSql) {
+      // We need to add some more information for the error message to be useful.
+      (exprType.json, columnType.json)
+    } else {
+      (exprTypeSql, columnTypeSql)
+    }
     new DeltaAnalysisException(
       errorClass = "DELTA_GENERATED_COLUMNS_EXPR_TYPE_MISMATCH",
-      messageParameters = Array(column, exprType.sql, columnType.sql)
+      messageParameters = Array(column, exprTypeString, columnTypeString)
     )
   }
 
@@ -2388,6 +2433,12 @@ trait DeltaErrorsBase
       errorClass = "DELTA_ONLY_OPERATION",
       messageParameters = Array("ALTER TABLE DROP FEATURE")
     )
+  }
+
+  def dropTableFeatureCheckpointFailedException(featureName: String): Throwable = {
+    new DeltaTableFeatureException(
+      errorClass = "DELTA_FEATURE_DROP_CHECKPOINT_FAILED",
+      messageParameters = Array(featureName))
   }
 
   def concurrentAppendException(
@@ -3417,6 +3468,12 @@ trait DeltaErrorsBase
     new DeltaAnalysisException(
       errorClass = "DELTA_CLUSTERING_WITH_ZORDER_BY",
       messageParameters = Array(s"${zOrderBy.map(_.name).mkString(", ")}"))
+  }
+
+  def optimizeFullNotSupportedException(): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_OPTIMIZE_FULL_NOT_SUPPORTED",
+      messageParameters = Array.empty)
   }
 
   def alterClusterByNotOnDeltaTableException(): Throwable = {

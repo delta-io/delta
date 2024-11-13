@@ -21,11 +21,11 @@ import scala.language.implicitConversions
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
-import org.apache.spark.sql.functions.{array, current_date, lit, struct}
+import org.apache.spark.sql.functions.{array, lit, struct}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.internal.SQLConf.StoreAssignmentPolicy
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.types.{ArrayType, IntegerType, LongType, MapType, NullType, StringType, StructField, StructType}
+import org.apache.spark.sql.types.{ArrayType, DateType, IntegerType, LongType, MapType, NullType, StringType, StructField, StructType}
 import org.apache.spark.util.Utils
 
 /**
@@ -824,11 +824,15 @@ trait MergeIntoSchemaEvolutionBaseTests {
     targetData = Seq(500000).toDF("key"),
     sourceData = Seq(500000, 100000).toDF("key")
       .withColumn("generalDeduction",
-        struct(current_date().as("date"), array(struct(lit(0d).as("data"))))),
+        struct(
+          lit("2024-11-08").cast(DateType).as("date"),
+          array(struct(lit(0d).as("data"))))),
     clauses = update("*") :: insert("*") :: Nil,
     expected = Seq(500000, 100000).toDF("key")
       .withColumn("generalDeduction",
-        struct(current_date().as("date"), array(struct(lit(0d).as("data"))))),
+        struct(
+          lit("2024-11-08").cast(DateType).as("date"),
+          array(struct(lit(0d).as("data"))))),
     expectedWithoutEvolution = Seq(500000, 100000).toDF("key")
   )
 

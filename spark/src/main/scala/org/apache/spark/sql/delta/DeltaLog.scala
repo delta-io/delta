@@ -69,16 +69,16 @@ import org.apache.spark.util._
  * @param options Filesystem options filtered from `allOptions`.
  * @param allOptions All options provided by the user, for example via `df.write.option()`. This
  *                   includes but not limited to filesystem and table properties.
- * @param initialTableIdentifier Identifier of the table when the log is initialized.
  * @param clock Clock to be used when starting a new transaction.
+ * @param initialCatalogTable The catalog table given when the log is initialized.
  */
 class DeltaLog private(
     val logPath: Path,
     val dataPath: Path,
     val options: Map[String, String],
     val allOptions: Map[String, String],
-    val initialTableIdentifier: Option[TableIdentifier],
-    val clock: Clock
+    val clock: Clock,
+    initialCatalogTable: Option[CatalogTable]
   ) extends Checkpoints
   with MetadataCleanup
   with LogStoreProvider
@@ -127,6 +127,9 @@ class DeltaLog private(
   lazy val history = new DeltaHistoryManager(
     this, spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_HISTORY_PAR_SEARCH_THRESHOLD))
 
+  /** Initialize the variables in SnapshotManagement. */
+  createSnapshotAtInit(initialCatalogTable)
+
   /* --------------- *
    |  Configuration  |
    * --------------- */
@@ -141,6 +144,15 @@ class DeltaLog private(
    */
   def maxSnapshotLineageLength: Int =
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_MAX_SNAPSHOT_LINEAGE_LENGTH)
+
+  private[delta] def incrementalCommitEnabled: Boolean = {
+    spark.conf.get(DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED)
+  }
+
+  private[delta] def shouldVerifyIncrementalCommit: Boolean = {
+    spark.conf.get(DeltaSQLConf.INCREMENTAL_COMMIT_VERIFY) ||
+      (Utils.isTesting && spark.conf.get(DeltaSQLConf.INCREMENTAL_COMMIT_FORCE_VERIFY_IN_TESTS))
+  }
 
   /** The unique identifier for this table. */
   def tableId: String = unsafeVolatileMetadata.id // safe because table id never changes
@@ -603,7 +615,7 @@ class DeltaLog private(
       // column locations. Otherwise, for any partition columns not in `dataSchema`, Spark would
       // just append them to the end of `dataSchema`.
       dataSchema = DeltaColumnMapping.dropColumnMappingMetadata(
-        DeltaTableUtils.removeInternalMetadata(spark, dataSchema)
+        DeltaTableUtils.removeInternalWriterMetadata(spark, dataSchema)
       ),
       bucketSpec = bucketSpec,
       fileFormat(snapshot.protocol, snapshot.metadata),
@@ -756,23 +768,23 @@ object DeltaLog extends DeltaLogging {
       spark,
       logPathFor(dataPath),
       options = Map.empty,
-      initialTableIdentifier = None,
+      initialCatalogTable = None,
       new SystemClock)
   }
 
   /** Helper for creating a log when it stored at the root of the data. */
   def forTable(spark: SparkSession, dataPath: Path): DeltaLog = {
-    apply(spark, logPathFor(dataPath), initialTableIdentifier = None, new SystemClock)
+    apply(spark, logPathFor(dataPath), initialCatalogTable = None, new SystemClock)
   }
 
   /** Helper for creating a log when it stored at the root of the data. */
   def forTable(spark: SparkSession, dataPath: Path, options: Map[String, String]): DeltaLog = {
-    apply(spark, logPathFor(dataPath), options, initialTableIdentifier = None, new SystemClock)
+    apply(spark, logPathFor(dataPath), options, initialCatalogTable = None, new SystemClock)
   }
 
   /** Helper for creating a log when it stored at the root of the data. */
   def forTable(spark: SparkSession, dataPath: Path, clock: Clock): DeltaLog = {
-    apply(spark, logPathFor(dataPath), initialTableIdentifier = None, clock)
+    apply(spark, logPathFor(dataPath), initialCatalogTable = None, clock)
   }
 
   /** Helper for creating a log for the table. */
@@ -795,39 +807,74 @@ object DeltaLog extends DeltaLogging {
   }
 
   /** Helper for creating a log for the table. */
+  def forTable(spark: SparkSession, table: CatalogTable, options: Map[String, String]): DeltaLog = {
+    apply(
+      spark,
+      logPathFor(new Path(table.location)),
+      options,
+      Some(table),
+      new SystemClock)
+  }
+
+  /** Helper for creating a log for the table. */
   def forTable(spark: SparkSession, table: CatalogTable, clock: Clock): DeltaLog = {
-    apply(spark, logPathFor(new Path(table.location)), Some(table.identifier), clock)
+    apply(spark, logPathFor(new Path(table.location)), Some(table), clock)
   }
 
   private def apply(
       spark: SparkSession,
       rawPath: Path,
-      initialTableIdentifier: Option[TableIdentifier],
+      initialCatalogTable: Option[CatalogTable],
       clock: Clock): DeltaLog =
-    apply(spark, rawPath, options = Map.empty, initialTableIdentifier, clock)
+    apply(spark, rawPath, options = Map.empty, initialCatalogTable, clock)
 
 
   /** Helper for getting a log, as well as the latest snapshot, of the table */
   def forTableWithSnapshot(spark: SparkSession, dataPath: String): (DeltaLog, Snapshot) =
-    withFreshSnapshot { forTable(spark, new Path(dataPath), _) }
+    withFreshSnapshot { clock =>
+      (forTable(spark, new Path(dataPath), clock), None)
+    }
 
   /** Helper for getting a log, as well as the latest snapshot, of the table */
   def forTableWithSnapshot(spark: SparkSession, dataPath: Path): (DeltaLog, Snapshot) =
-    withFreshSnapshot { forTable(spark, dataPath, _) }
+    withFreshSnapshot { clock =>
+      (forTable(spark, dataPath, clock), None)
+    }
 
   /** Helper for getting a log, as well as the latest snapshot, of the table */
   def forTableWithSnapshot(
       spark: SparkSession,
-      tableName: TableIdentifier): (DeltaLog, Snapshot) =
-    withFreshSnapshot { forTable(spark, tableName, _) }
+      tableName: TableIdentifier): (DeltaLog, Snapshot) = {
+    withFreshSnapshot { clock =>
+      if (DeltaTableIdentifier.isDeltaPath(spark, tableName)) {
+        (forTable(spark, new Path(tableName.table)), None)
+      } else {
+        val catalogTable = spark.sessionState.catalog.getTableMetadata(tableName)
+        (forTable(spark, catalogTable, clock), Some(catalogTable))
+      }
+    }
+  }
 
   /** Helper for getting a log, as well as the latest snapshot, of the table */
   def forTableWithSnapshot(
       spark: SparkSession,
       dataPath: Path,
       options: Map[String, String]): (DeltaLog, Snapshot) =
-    withFreshSnapshot {
-      apply(spark, logPathFor(dataPath), options, initialTableIdentifier = None, _)
+    withFreshSnapshot { clock =>
+      val deltaLog =
+        apply(spark, logPathFor(dataPath), options, initialCatalogTable = None, clock)
+      (deltaLog, None)
+    }
+
+  /** Helper for getting a log, as well as the latest snapshot, of the table */
+  def forTableWithSnapshot(
+      spark: SparkSession,
+      table: CatalogTable,
+      options: Map[String, String]): (DeltaLog, Snapshot) =
+    withFreshSnapshot { clock =>
+      val deltaLog =
+        apply(spark, logPathFor(new Path(table.location)), options, Some(table), clock)
+      (deltaLog, Some(table))
     }
 
   /**
@@ -835,11 +882,13 @@ object DeltaLog extends DeltaLogging {
    * partially applied DeltaLog.forTable call, which we can then wrap around with a
    * snapshot update. We use the system clock to avoid back-to-back updates.
    */
-  private[delta] def withFreshSnapshot(thunk: Clock => DeltaLog): (DeltaLog, Snapshot) = {
+  private[delta] def withFreshSnapshot(
+      thunk: Clock => (DeltaLog, Option[CatalogTable])): (DeltaLog, Snapshot) = {
     val clock = new SystemClock
     val ts = clock.getTimeMillis()
-    val deltaLog = thunk(clock)
-    val snapshot = deltaLog.update(checkIfUpdatedSinceTs = Some(ts))
+    val (deltaLog, catalogTableOpt) = thunk(clock)
+    val snapshot =
+      deltaLog.update(checkIfUpdatedSinceTs = Some(ts), catalogTableOpt = catalogTableOpt)
     (deltaLog, snapshot)
   }
 
@@ -847,7 +896,7 @@ object DeltaLog extends DeltaLogging {
       spark: SparkSession,
       rawPath: Path,
       options: Map[String, String],
-      initialTableIdentifier: Option[TableIdentifier],
+      initialCatalogTable: Option[CatalogTable],
       clock: Clock
   ): DeltaLog = {
     val fileSystemOptions: Map[String, String] =
@@ -876,8 +925,8 @@ object DeltaLog extends DeltaLogging {
             dataPath = path.getParent,
             options = fileSystemOptions,
             allOptions = options,
-            initialTableIdentifier = initialTableIdentifier,
-            clock = clock
+            clock = clock,
+            initialCatalogTable = initialCatalogTable
           )
         }
     }

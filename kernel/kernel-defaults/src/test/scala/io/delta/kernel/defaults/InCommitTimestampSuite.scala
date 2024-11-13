@@ -93,7 +93,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
       txn1.commit(engine, emptyIterable())
 
       val ver0Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-      assertMetadataProp(engine, ver0Snapshot, IN_COMMIT_TIMESTAMPS_ENABLED, false)
+      assertMetadataProp(ver0Snapshot, IN_COMMIT_TIMESTAMPS_ENABLED, false)
       assertHasNoWriterFeature(ver0Snapshot, "inCommitTimestamp")
       assert(getInCommitTimestamp(engine, table, version = 0).isEmpty)
 
@@ -132,7 +132,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
 
       val ver1Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
       val ver1Timestamp = ver1Snapshot.getTimestamp(engine)
-      assert(isICTEnabled(engine, ver1Snapshot.getMetadata))
+      assert(IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(ver1Snapshot.getMetadata))
 
       clock.setTime(startTime - 10000)
       appendData(
@@ -229,14 +229,14 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
 
       val ver0Snapshot =
         Table.forPath(engine, tablePath).getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-      assertHasNoMetadataProp(engine, ver0Snapshot, IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP)
-      assertHasNoMetadataProp(engine, ver0Snapshot, IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION)
+      assertHasNoMetadataProp(ver0Snapshot, IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP)
+      assertHasNoMetadataProp(ver0Snapshot, IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION)
     }
   }
 
   test("Enablement tracking works when ICT is enabled post commit 0") {
     withTempDirAndEngine { (tablePath, engine) =>
-      val table = TableImpl.forPath(engine, tablePath)
+      val table = Table.forPath(engine, tablePath)
       val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
 
       val txn = txnBuilder
@@ -254,14 +254,12 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
         tableProperties = Map(IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true"))
 
       val ver1Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-      assertMetadataProp(engine, ver1Snapshot, IN_COMMIT_TIMESTAMPS_ENABLED, true)
+      assertMetadataProp(ver1Snapshot, IN_COMMIT_TIMESTAMPS_ENABLED, true)
       assertMetadataProp(
-        engine,
         ver1Snapshot,
         IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP,
         Optional.of(ver1Snapshot.getTimestamp(engine)))
       assertMetadataProp(
-        engine,
         ver1Snapshot,
         IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION,
         Optional.of(1L))
@@ -274,14 +272,12 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
         data = Seq(Map.empty[String, Literal] -> dataBatches2))
 
       val ver2Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-      assertMetadataProp(engine, ver2Snapshot, IN_COMMIT_TIMESTAMPS_ENABLED, true)
+      assertMetadataProp(ver2Snapshot, IN_COMMIT_TIMESTAMPS_ENABLED, true)
       assertMetadataProp(
-        engine,
         ver2Snapshot,
         IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP,
         Optional.of(ver1Snapshot.getTimestamp(engine)))
       assertMetadataProp(
-        engine,
         ver2Snapshot,
         IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION,
         Optional.of(1L))
@@ -323,7 +319,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
 
   test("Metadata toString should work with ICT enabled") {
     withTempDirAndEngine { (tablePath, engine) =>
-      val table = TableImpl.forPath(engine, tablePath)
+      val table = Table.forPath(engine, tablePath)
       val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
 
       val txn = txnBuilder
@@ -360,7 +356,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
 
   test("Table with ICT enabled is readable") {
     withTempDirAndEngine { (tablePath, engine) =>
-      val table = TableImpl.forPath(engine, tablePath)
+      val table = Table.forPath(engine, tablePath)
       val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
 
       val txn = txnBuilder
@@ -378,14 +374,12 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
         tableProperties = Map(IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true"))
 
       val ver1Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-      assertMetadataProp(engine, ver1Snapshot, IN_COMMIT_TIMESTAMPS_ENABLED, true)
+      assertMetadataProp(ver1Snapshot, IN_COMMIT_TIMESTAMPS_ENABLED, true)
       assertMetadataProp(
-        engine,
         ver1Snapshot,
         IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP,
         Optional.of(getInCommitTimestamp(engine, table, version = 1).get))
       assertMetadataProp(
-        engine,
         ver1Snapshot,
         IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION,
         Optional.of(1L))
@@ -489,9 +483,9 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
           engine, winningCommitCount).asInstanceOf[SnapshotImpl]
         val curSnapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
         val observedEnablementTimestamp =
-          IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.fromMetadata(engine, curSnapshot.getMetadata)
+          IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.fromMetadata(curSnapshot.getMetadata)
         val observedEnablementVersion =
-          IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.fromMetadata(engine, curSnapshot.getMetadata)
+          IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.fromMetadata(curSnapshot.getMetadata)
         assert(observedEnablementTimestamp.get === lastSnapshot.getTimestamp(engine) + 1)
         assert(
           observedEnablementTimestamp.get ===

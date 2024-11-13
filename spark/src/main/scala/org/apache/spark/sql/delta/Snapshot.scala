@@ -38,7 +38,7 @@ import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.internal.{MDC, MessageWithContext}
 import org.apache.spark.sql._
-import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.Utils
@@ -88,6 +88,7 @@ class Snapshot(
   with StateCache
   with StatisticsCollection
   with DataSkippingReader
+  with ValidateChecksum
   with DeltaLogging {
 
   import Snapshot._
@@ -518,10 +519,10 @@ class Snapshot(
     numProtocol = numOfProtocol,
     inCommitTimestampOpt = getInCommitTimestampOpt,
     setTransactions = checksumOpt.flatMap(_.setTransactions),
-    domainMetadata = domainMetadatasIfKnown,
+    domainMetadata = checksumOpt.flatMap(_.domainMetadata),
     metadata = metadata,
     protocol = protocol,
-    histogramOpt = fileSizeHistogram,
+    histogramOpt = checksumOpt.flatMap(_.histogramOpt),
     allFiles = checksumOpt.flatMap(_.allFiles))
 
   /** Returns the data schema of the table, used for reading stats */
@@ -575,7 +576,7 @@ class Snapshot(
    * @throws IllegalStateException
    *   if the delta file for the current version is not found after backfilling.
    */
-  def ensureCommitFilesBackfilled(tableIdentifierOpt: Option[TableIdentifier]): Unit = {
+  def ensureCommitFilesBackfilled(catalogTableOpt: Option[CatalogTable]): Unit = {
     val tableCommitCoordinatorClient = getTableCommitCoordinatorForWrites.getOrElse {
       return
     }
@@ -583,7 +584,7 @@ class Snapshot(
     if (minUnbackfilledVersion <= version) {
       val hadoopConf = deltaLog.newDeltaHadoopConf()
       tableCommitCoordinatorClient.backfillToVersion(
-        tableIdentifierOpt,
+        catalogTableOpt.map(_.identifier),
         version,
         lastKnownBackfilledVersion = Some(minUnbackfilledVersion - 1))
       val fs = deltaLog.logPath.getFileSystem(hadoopConf)

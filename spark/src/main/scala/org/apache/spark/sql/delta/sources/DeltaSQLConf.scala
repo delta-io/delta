@@ -431,6 +431,16 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val FAST_DROP_FEATURE_ENABLED =
+    buildConf("tableFeatures.dev.fastDropFeature.enabled")
+      .internal()
+      .doc(
+        """Whether to enable the fast drop feature feature functionality.
+          |This feature is currently in development and this config is only intended to be enabled
+          |for testing purposes.""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_MAX_SNAPSHOT_LINEAGE_LENGTH =
     buildConf("maxSnapshotLineageLength")
       .internal()
@@ -568,21 +578,6 @@ trait DeltaSQLConfBase {
         "This also means that reads can be stale.")
       .booleanConf
       .createWithDefault(true)
-
-  val PARQUET_OUTPUT_TIMESTAMP_TYPE =
-    buildConf("parquet.outputTimestampType")
-      .doc(
-        """
-          |Sets which Parquet timestamp type to use when Spark writes data to Parquet files:
-          |INT96 is a non-standard but commonly used timestamp type in Parquet.
-          |TIMESTAMP_MICROS is a standard timestamp type in Parquet,
-          |which stores number of microseconds from the Unix epoch.
-          |TIMESTAMP_MILLIS is also standard, but with millisecond precision,
-          |which means Spark has to truncate the microsecond portion of its timestamp value.
-          |""".stripMargin)
-      .stringConf
-      .checkValues(Set("INT96", "TIMESTAMP_MICROS", "TIMESTAMP_MILLIS"))
-      .createWithDefaultString("TIMESTAMP_MICROS")
 
   //////////////////////////////////////////////
   // DynamoDB Commit Coordinator-specific configs
@@ -1040,6 +1035,42 @@ trait DeltaSQLConfBase {
     buildConf("writeChecksumFile.enabled")
       .doc("Whether the checksum file can be written.")
       .booleanConf
+      .createWithDefault(false)
+
+  val INCREMENTAL_COMMIT_ENABLED =
+    buildConf("incremental.commit.enabled")
+      .internal()
+      .doc("If true, Delta will incrementally compute the content of the commit checksum " +
+        "file, which avoids the full state reconstruction that would otherwise be required.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_CHECKSUM_MISMATCH_IS_FATAL =
+    buildConf("checksum.mismatch.fatal")
+      .internal()
+      .doc(
+        """If true, throws a fatal error when the recreated Delta State doesn't
+          |match committed checksum file.
+        """)
+      .booleanConf
+      .createWithDefault(true)
+
+  val INCREMENTAL_COMMIT_VERIFY =
+    buildConf("incremental.commit.verify")
+      .internal()
+      .doc("If true, Delta commit will validate the commit checksum file content before and " +
+        "after each incremental commit. Note that this requires two full state reconstructions.")
+      .booleanConf
+      .createWithDefault(false)
+
+  // This config is effective only in unit tests.
+  val INCREMENTAL_COMMIT_FORCE_VERIFY_IN_TESTS =
+    buildConf("incremental.commit.forceVerifyInTests")
+      .internal()
+      .doc("If true, Delta commit will validate the commit checksum file content before and " +
+        "after each incremental commit as part of Unit Tests. Note that this overrides any " +
+        s"behaviour from ${INCREMENTAL_COMMIT_VERIFY.key} config.")
+      .booleanConf
       .createWithDefault(true)
 
   val DELTA_CHECKPOINT_THROW_EXCEPTION_WHEN_FAILED =
@@ -1238,6 +1269,25 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_ENABLED =
+    buildConf("skipping.partitionLikeFilters.enabled")
+      .doc(
+        """
+           |If true, during data skipping, apply arbitrary data filters to "partition-like"
+           |files (files with the same min-max values and no nulls on all referenced attributes).
+           |""".stripMargin)
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_THRESHOLD =
+    buildConf("skipping.partitionLikeDataSkippingFilesThreshold")
+      .internal()
+      .doc("Partition-like data skipping on files with the same min-max values will only be" +
+        "attempted when a Delta table has a number of files larger than this threshold.")
+      .intConf
+      .createWithDefault(100)
+
   /**
    * The below confs have a special prefix `spark.databricks.io` because this is the conf value
    * already used by Databricks' data skipping implementation. There's no benefit to making OSS
@@ -1371,6 +1421,22 @@ trait DeltaSQLConfBase {
       .internal()
       .booleanConf
       .createWithDefault(false)
+
+  val DELTA_UNIFORM_ICEBERG_RETRY_TIMES =
+    buildConf("uniform.iceberg.retry.times")
+      .doc("The number of retries iceberg conversions should have in case " +
+        "of failures")
+      .internal()
+      .intConf
+      .createWithDefault(3)
+
+  val DELTA_UNIFORM_ICEBERG_INCLUDE_BASE_CONVERTED_VERSION =
+    buildConf("uniform.iceberg.include.base.converted.version")
+      .doc("If true, include the base converted delta version as a tbl property in Iceberg " +
+        "metadata to indicate the delta version that the conversion started from")
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
 
   val DELTA_OPTIMIZE_MIN_FILE_SIZE =
     buildConf("optimize.minFileSize")
@@ -1509,6 +1575,15 @@ trait DeltaSQLConfBase {
       .internal()
       .booleanConf
       .createWithDefault(false)
+
+  val DELTA_STREAMING_IGNORE_INTERNAL_METADATA_FOR_SCHEMA_CHANGE =
+    buildConf("streaming.ignoreInternalMetadataForSchemaChange.enabled")
+      .doc(
+        "Whether to ignore internal metadata attached to struct fields when detecting schema " +
+        "changes in Delta sources, e.g. identity columns internal high-water mark tracking.")
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
 
   val DELTA_STREAMING_ENABLE_SCHEMA_TRACKING =
     buildConf("streaming.schemaTracking.enabled")
@@ -1968,6 +2043,13 @@ trait DeltaSQLConfBase {
         "in optimized writes.")
       .intConf
       .createWithDefault(50000000)
+
+  val SKIP_REDIRECT_FEATURE =
+    buildConf("skipRedirectFeature")
+      .doc("True if skipping the redirect feature.")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
 
   val DELTA_OPTIMIZE_WRITE_MAX_SHUFFLE_PARTITIONS =
     buildConf("optimizeWrite.maxShufflePartitions")

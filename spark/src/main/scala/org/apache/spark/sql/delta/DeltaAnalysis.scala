@@ -61,8 +61,7 @@ import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTrans
 import org.apache.spark.sql.errors.QueryCompilationErrors
 import org.apache.spark.sql.execution.command.CreateTableLikeCommand
 import org.apache.spark.sql.execution.command.RunnableCommand
-import org.apache.spark.sql.execution.datasources.HadoopFsRelation
-import org.apache.spark.sql.execution.datasources.LogicalRelation
+import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation, LogicalRelationShims, LogicalRelationWithTable}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.execution.streaming.StreamingRelation
@@ -327,8 +326,8 @@ class DeltaAnalysis(session: SparkSession)
         case TimeTravel(u: UnresolvedRelation, _, _, _) =>
           u.tableNotFound(u.multipartIdentifier)
 
-        case LogicalRelation(
-            HadoopFsRelation(location, _, _, _, _: ParquetFileFormat, _), _, catalogTable, _) =>
+        case LogicalRelationWithTable(
+            HadoopFsRelation(location, _, _, _, _: ParquetFileFormat, _), catalogTable) =>
           val tableIdent = catalogTable.map(_.identifier)
             .getOrElse(TableIdentifier(location.rootPaths.head.toString, Some("parquet")))
           val provider = if (catalogTable.isDefined) {
@@ -836,7 +835,7 @@ class DeltaAnalysis(session: SparkSession)
           output = CloneTableCommand.output)
 
       // Non-delta metastore table already exists at target
-      case LogicalRelation(_, _, existingCatalogTable @ Some(catalogTable), _) =>
+      case LogicalRelationWithTable(_, existingCatalogTable @ Some(catalogTable)) =>
         val tblIdent = catalogTable.identifier
         val path = new Path(catalogTable.location)
         val newCatalogTable = createCatalogTableForCloneCommand(path, byPath = false, tblIdent,
@@ -1145,11 +1144,12 @@ class DeltaAnalysis(session: SparkSession)
             session, dataSourceV1.options
           ).foreach { rootSchemaTrackingLocation =>
             assert(dataSourceV1.options.contains("path"), "Path for Delta table must be defined")
-            val log = DeltaLog.forTable(session, new Path(dataSourceV1.options("path")))
+            val tableId =
+              dataSourceV1.options("path").replace(":", "").replace("/", "_")
             val sourceIdOpt = dataSourceV1.options.get(DeltaOptions.STREAMING_SOURCE_TRACKING_ID)
             val schemaTrackingLocation =
               DeltaSourceMetadataTrackingLog.fullMetadataTrackingLocation(
-                rootSchemaTrackingLocation, log.tableId, sourceIdOpt)
+                rootSchemaTrackingLocation, tableId, sourceIdOpt)
             // Make sure schema location is under checkpoint
             if (!allowSchemaLocationOutsideOfCheckpoint &&
               !(schemaTrackingLocation.stripPrefix("file:").stripSuffix("/") + "/")
@@ -1229,7 +1229,7 @@ object DeltaRelation extends DeltaLogging {
       } else {
         v2Relation.output
       }
-      LogicalRelation(relation, output, d.ttSafeCatalogTable, isStreaming = false)
+      LogicalRelationShims.newInstance(relation, output, d.ttSafeCatalogTable, isStreaming = false)
     }
   }
 }

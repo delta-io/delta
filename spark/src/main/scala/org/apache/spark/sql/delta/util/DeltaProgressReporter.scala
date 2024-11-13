@@ -31,7 +31,7 @@ trait DeltaProgressReporter extends LoggingShims {
       defaultMessage: String,
       data: Map[String, Any] = Map.empty)(body: => T): T = {
     logInfo(log"${MDC(DeltaLogKeys.STATUS, statusCode)}: " +
-      log"${MDC(DeltaLogKeys.MESSAGE, defaultMessage)}")
+      log"${MDC(DeltaLogKeys.STATUS_MESSAGE, defaultMessage)}")
     val t = withJobDescription(defaultMessage)(body)
     logInfo(log"${MDC(DeltaLogKeys.STATUS, statusCode)}: Done")
     t

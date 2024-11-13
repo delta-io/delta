@@ -1442,6 +1442,12 @@ def normalizeColumnNamesInDataType(
           log"${MDC(DeltaLogKeys.PATH, deltaLog.logPath)}", e)
     }
   }
+
+  // Helper method to validate that two logical column names are equal using the Delta column
+  // resolver (case insensitive comparison).
+  def areLogicalNamesEqual(col1: Seq[String], col2: Seq[String]): Boolean = {
+    col1.length == col2.length && col1.zip(col2).forall(DELTA_COL_RESOLVER.tupled)
+  }
 }
 
 /**

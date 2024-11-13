@@ -93,7 +93,7 @@ class FileMetadataMaterializationTracker extends LoggingShims {
       materializationMetrics.overAllocFilesMaterializedCount += 1
     } else if (!FileMetadataMaterializationTracker.materializationSemaphore.tryAcquire(1)) {
       // we acquire the overAllocationLock for this thread
-      logInfo("Acquiring over allocation lock for this query.")
+      logInfo(log"Acquiring over allocation lock for this query.")
       val startTime = System.currentTimeMillis()
       FileMetadataMaterializationTracker.overAllocationLock.acquire(1)
       val waitTime = System.currentTimeMillis() - startTime
@@ -134,7 +134,7 @@ class FileMetadataMaterializationTracker extends LoggingShims {
         permitsToRelease -= overAllocatedPermitsToRelease
         if (numOverAllocatedPermits == 0) {
           FileMetadataMaterializationTracker.overAllocationLock.release(1)
-          logInfo("Released over allocation lock.")
+          logInfo(log"Released over allocation lock.")
         }
       }
       numPermitsFromSemaphore -= permitsToRelease
@@ -208,7 +208,7 @@ object FileMetadataMaterializationTracker extends DeltaLogging {
       new FileMetadataMaterializationTracker()
     } else {
       logInfo(log"File metadata materialization tracking is disabled for this query." +
-        log" Please set ${MDC(DeltaLogKeys.CONFIG,
+        log" Please set ${MDC(DeltaLogKeys.CONFIG_KEY,
           DeltaSQLConf.DELTA_COMMAND_FILE_MATERIALIZATION_TRACKING_ENABLED.key)} " +
         log"to true to enable it.")
       noopTracker
@@ -260,7 +260,7 @@ object FileMetadataMaterializationTracker extends DeltaLogging {
      */
     def acquirePermit(): Unit = {
       if (isNewTask) {
-        logInfo("Acquiring file materialization permits for a new task")
+        logInfo(log"Acquiring file materialization permits for a new task")
       }
       tracker.acquirePermit(isNewTask = isNewTask)
       isNewTask = false

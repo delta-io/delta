@@ -17,8 +17,8 @@
 package io.delta.kernel.internal;
 
 import static io.delta.kernel.internal.DeltaErrors.*;
+import static io.delta.kernel.internal.TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED;
 
-import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.util.ColumnMapping;
@@ -174,15 +174,14 @@ public class TableFeatures {
    * when the delta property name (delta.enableInCommitTimestamps) is set to true in the metadata if
    * it is not already enabled.
    *
-   * @param engine the engine to use for IO operations
    * @param metadata the metadata of the table
    * @param protocol the protocol of the table
    * @return the writer features that should be enabled automatically
    */
   public static Set<String> extractAutomaticallyEnabledWriterFeatures(
-      Engine engine, Metadata metadata, Protocol protocol) {
+      Metadata metadata, Protocol protocol) {
     return TableFeatures.SUPPORTED_WRITER_FEATURES.stream()
-        .filter(f -> metadataRequiresWriterFeatureToBeEnabled(engine, metadata, f))
+        .filter(f -> metadataRequiresWriterFeatureToBeEnabled(metadata, f))
         .filter(
             f -> protocol.getWriterFeatures() == null || !protocol.getWriterFeatures().contains(f))
         .collect(Collectors.toSet());
@@ -222,16 +221,15 @@ public class TableFeatures {
    * Determine whether a writer feature must be supported and enabled to satisfy the metadata
    * requirements.
    *
-   * @param engine the engine to use for IO operations
    * @param metadata the table metadata
    * @param feature the writer feature to check
    * @return whether the writer feature must be enabled
    */
   private static boolean metadataRequiresWriterFeatureToBeEnabled(
-      Engine engine, Metadata metadata, String feature) {
+      Metadata metadata, String feature) {
     switch (feature) {
       case "inCommitTimestamp":
-        return TableConfig.isICTEnabled(engine, metadata);
+        return IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata);
       default:
         return false;
     }

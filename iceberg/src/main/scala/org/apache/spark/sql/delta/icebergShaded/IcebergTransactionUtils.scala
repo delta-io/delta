@@ -152,7 +152,7 @@ object IcebergTransactionUtils
       }
     } catch {
       case NonFatal(e) =>
-        logWarning("Failed to convert Delta stats to Iceberg stats. Iceberg conversion will " +
+        logWarning(log"Failed to convert Delta stats to Iceberg stats. Iceberg conversion will " +
           "attempt to proceed without stats.", e)
     }
 

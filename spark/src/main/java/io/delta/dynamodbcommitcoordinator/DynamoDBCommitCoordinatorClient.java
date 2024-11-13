@@ -398,7 +398,7 @@ public class DynamoDBCommitCoordinatorClient implements CommitCoordinatorClient 
             }
             return res;
         } catch (IOException e) {
-            throw new CommitFailedException(false /* retryable */, false /* conflict */, e.getMessage());
+            throw new CommitFailedException(false /* retryable */, false /* conflict */, e.getMessage(), e);
         }
     }
 
