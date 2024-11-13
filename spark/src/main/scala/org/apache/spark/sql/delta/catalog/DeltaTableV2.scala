@@ -109,6 +109,11 @@ case class DeltaTableV2(
     }
   }
 
+  /**
+   * Updates the delta log for this table and returns a new snapshot
+   */
+  def update(): Snapshot = deltaLog.update(catalogTableOpt = catalogTable)
+
   def getTableIdentifierIfExists: Option[TableIdentifier] = tableIdentifier.map { tableName =>
     spark.sessionState.sqlParser.parseMultipartIdentifier(tableName).asTableIdentifier
   }

@@ -172,7 +172,10 @@ class OptimisticTransaction(
       deltaLog: DeltaLog,
       catalogTable: Option[CatalogTable],
       snapshotOpt: Option[Snapshot] = None) =
-    this(deltaLog, catalogTable, snapshotOpt.getOrElse(deltaLog.update()))
+    this(
+      deltaLog,
+      catalogTable,
+      snapshotOpt.getOrElse(deltaLog.update(catalogTableOpt = catalogTable)))
 }
 
 object CommitConflictFailure {
@@ -1727,8 +1730,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite
             // Actions of a commit which went in before ours.
             // Requires updating deltaLog to retrieve these actions, as another writer may have used
             // CommitCoordinatorClient for writing.
+            val fileProvider = DeltaCommitFileProvider(
+              deltaLog.update(catalogTableOpt = catalogTable))
             val logs = deltaLog.store.readAsIterator(
-              DeltaCommitFileProvider(deltaLog.update()).deltaFile(attemptVersion),
+              fileProvider.deltaFile(attemptVersion),
               deltaLog.newDeltaHadoopConf())
             try {
               val winningCommitActions = logs.map(Action.fromJson)
