@@ -323,7 +323,7 @@ public class LogReplay {
    * @param engine The engine used to process the log files.
    * @return A map where the keys are domain names and the values are the corresponding {@link
    *     DomainMetadata} objects.
-   * @throws RuntimeException if an I/O error occurs while closing the iterator.
+   * @throws UncheckedIOException if an I/O error occurs while closing the iterator.
    */
   private Map<String, DomainMetadata> loadDomainMetadataMap(Engine engine) {
     try (CloseableIterator<ActionWrapper> reverseIter =
