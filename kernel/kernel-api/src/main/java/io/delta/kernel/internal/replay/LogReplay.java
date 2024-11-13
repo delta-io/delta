@@ -341,7 +341,7 @@ public class LogReplay {
 
         // We are performing a reverse log replay. This function ensures that only the first
         // encountered domain metadata for each domain is added to the map.
-        DomainMetadataUtils.fillDomainMetadataMap(dmVector, domainMetadataMap);
+        DomainMetadataUtils.populateDomainMetadataMap(dmVector, domainMetadataMap);
       }
       return domainMetadataMap;
     } catch (IOException ex) {

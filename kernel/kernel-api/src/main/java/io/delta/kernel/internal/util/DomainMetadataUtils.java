@@ -41,7 +41,7 @@ public class DomainMetadataUtils {
    * @param domainMetadataMap The existing map to be populated with domain metadata entries, where
    *     the key is the domain name and the value is the domain metadata
    */
-  public static void fillDomainMetadataMap(
+  public static void populateDomainMetadataMap(
       ColumnVector domainMetadataActionVector, Map<String, DomainMetadata> domainMetadataMap) {
     final int vectorSize = domainMetadataActionVector.getSize();
     for (int rowId = 0; rowId < vectorSize; rowId++) {

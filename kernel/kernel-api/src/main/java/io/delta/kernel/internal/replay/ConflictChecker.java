@@ -211,9 +211,10 @@ public class ConflictChecker {
    * @param domainMetadataVector domainMetadata rows from the winning transactions
    */
   private void handleDomainMetadata(ColumnVector domainMetadataVector) {
-    // Extract the domain metadata map from the winning transaction.
+    // Build a domain metadata map from the winning transaction.
     Map<String, DomainMetadata> winningTxnDomainMetadataMap = new HashMap<>();
-    DomainMetadataUtils.fillDomainMetadataMap(domainMetadataVector, winningTxnDomainMetadataMap);
+    DomainMetadataUtils.populateDomainMetadataMap(
+        domainMetadataVector, winningTxnDomainMetadataMap);
 
     for (DomainMetadata currentTxnDM : this.transaction.getDomainMetadatas()) {
       // For each domain metadata action in the current transaction, check if it has a conflict with
