@@ -21,6 +21,7 @@ import java.util.UUID
 
 import scala.collection.mutable
 import scala.math.Ordering.Implicits._
+import scala.util.{Failure, Success, Try}
 import scala.util.control.NonFatal
 
 // scalastyle:off import.ordering.noEmptyLine
@@ -376,23 +377,28 @@ trait Checkpoints extends DeltaLogging {
     loadMetadataFromFile(0)
   }
 
+  /** Try loading the checkpoint metadata from the `_last_checkpoint` file. */
+  protected def tryLoadingMetadataFromFile(): Try[LastCheckpointInfo] = {
+    Try {
+      val lastCheckpointInfoJson = store.read(LAST_CHECKPOINT, newDeltaHadoopConf())
+      val validate = LastCheckpointInfo.checksumEnabled(spark)
+      LastCheckpointInfo.deserializeFromJson(lastCheckpointInfoJson.head, validate)
+    }
+  }
+
   /** Loads the checkpoint metadata from the _last_checkpoint file. */
-  private def loadMetadataFromFile(tries: Int): Option[LastCheckpointInfo] =
+  protected def loadMetadataFromFile(tries: Int): Option[LastCheckpointInfo] =
     recordDeltaOperation(self, "delta.deltaLog.loadMetadataFromFile") {
-      try {
-        val lastCheckpointInfoJson = store.read(LAST_CHECKPOINT, newDeltaHadoopConf())
-        val validate = LastCheckpointInfo.checksumEnabled(spark)
-        Some(LastCheckpointInfo.deserializeFromJson(lastCheckpointInfoJson.head, validate))
-      } catch {
-        case _: FileNotFoundException =>
-          None
-        case NonFatal(e) if tries < 3 =>
+      tryLoadingMetadataFromFile() match {
+        case Success(metadata) => Some(metadata)
+        case Failure(_: FileNotFoundException) => None
+        case Failure(NonFatal(e)) if tries < 3 =>
           logWarning(log"Failed to parse ${MDC(DeltaLogKeys.PATH, LAST_CHECKPOINT)}. " +
             log"This may happen if there was an error during read operation, " +
             log"or a file appears to be partial. Sleeping and trying again.", e)
           Thread.sleep(1000)
           loadMetadataFromFile(tries + 1)
-        case NonFatal(e) =>
+        case Failure(NonFatal(e)) =>
           recordDeltaEvent(
             self,
             "delta.lastCheckpoint.read.corruptedJson",
