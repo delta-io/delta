@@ -24,6 +24,7 @@ import io.delta.kernel.internal.{SnapshotImpl, TableImpl, TransactionBuilderImpl
 import io.delta.kernel.internal.actions.{DomainMetadata, Protocol, SingleAction}
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.internal.TableConfig.CHECKPOINT_INTERVAL
+import io.delta.kernel.internal.rowtracking.RowTrackingMetadataDomain
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.delta.DeltaLog
@@ -539,5 +540,76 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
         )
       }
     }
+  }
+
+  test(
+    "RowTrackingMetadataDomain is serializable and deserializable"
+  ) {
+    withTempDirAndEngine((tablePath, engine) => {
+      // Create a RowTrackingMetadataDomain
+      val rowTrackingMetadataDomain = new RowTrackingMetadataDomain(10)
+
+      // Generate a DomainMetadata action from it.
+      val dm = rowTrackingMetadataDomain.toDomainMetadata
+      // The configuration string should be a JSON serialization of the rowTrackingMetadataDomain
+      assert(dm.getDomain === rowTrackingMetadataDomain.getDomainName)
+      assert(dm.getConfiguration === """{"rowIdHighWaterMark":10}""")
+
+      // Verify the deserialization from DomainMetadata action into concrete domain object
+      val deserializedDomain = RowTrackingMetadataDomain.fromJsonConfiguration(dm.getConfiguration)
+      assert(deserializedDomain === rowTrackingMetadataDomain)
+
+      // Verify the domainMetadata can be committed and read back
+      createTableWithDomainMetadataSupported(engine, tablePath)
+      // Commit the domain metadata and verify
+      commitDomainMetadataAndVerify(
+        engine,
+        tablePath,
+        domainMetadatas = Seq(dm),
+        expectedValue = Map(rowTrackingMetadataDomain.getDomainName -> dm)
+      )
+
+      // Read the domain metadata back from the table snapshot
+      val table = Table.forPath(engine, tablePath)
+      val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      val rowTrackingMetadataDomainFromSnapshot =
+        RowTrackingMetadataDomain.fromSnapshot(snapshot).get
+
+      // Verify the domain metadata read back from the snapshot
+      assert(rowTrackingMetadataDomain === rowTrackingMetadataDomainFromSnapshot)
+    })
+  }
+
+  test(
+    "JsonMetadataDomain deserialization fails if there are missing/extra fields"
+  ) {
+    // Create a RowTrackingMetadataDomain, which is a concrete JsonMetadataDomain implementation
+    val rowTrackingMetadataDomain = new RowTrackingMetadataDomain(10)
+
+    // Serialize it to a JSON configuration
+    val config = rowTrackingMetadataDomain.toJsonConfiguration
+    assert(config === """{"rowIdHighWaterMark":10}""")
+
+    // Deserialization should fail if the configuration string has extra fields
+    val configExtraField = """{"rowIdHighWaterMark":10, "extraField": "extra"}"""
+    val e1 = intercept[KernelException] {
+      RowTrackingMetadataDomain.fromJsonConfiguration(configExtraField)
+    }
+    assert(
+      e1.getMessage.contains(
+        "Failed to parse JSON string into a RowTrackingMetadataDomain instance"
+      )
+    )
+
+    // Deserialization should fail if the configuration string has missing fields
+    val configMissingField = """{}"""
+    val e2 = intercept[KernelException] {
+      RowTrackingMetadataDomain.fromJsonConfiguration(configMissingField)
+    }
+    assert(
+      e2.getMessage.contains(
+        "Failed to parse JSON string into a RowTrackingMetadataDomain instance"
+      )
+    )
   }
 }
