@@ -21,6 +21,7 @@ import java.util.UUID
 
 import scala.collection.mutable
 import scala.math.Ordering.Implicits._
+import scala.util.Try
 import scala.util.control.NonFatal
 
 // scalastyle:off import.ordering.noEmptyLine
@@ -376,13 +377,22 @@ trait Checkpoints extends DeltaLogging {
     loadMetadataFromFile(0)
   }
 
+  /**
+   * Reads the checkpoint metadata from the `_last_checkpoint` file. This method doesn't handle any
+   * exceptions that can be thrown, for example IOExceptions thrown when reading the data such as
+   * FileNotFoundExceptions which is expected for a new Delta table or JSON deserialization errors.
+   */
+  protected def unsafeLoadMetadataFromFile(): LastCheckpointInfo = {
+    val lastCheckpointInfoJson = store.read(LAST_CHECKPOINT, newDeltaHadoopConf())
+    val validate = LastCheckpointInfo.checksumEnabled(spark)
+    LastCheckpointInfo.deserializeFromJson(lastCheckpointInfoJson.head, validate)
+  }
+
   /** Loads the checkpoint metadata from the _last_checkpoint file. */
-  private def loadMetadataFromFile(tries: Int): Option[LastCheckpointInfo] =
+  protected def loadMetadataFromFile(tries: Int): Option[LastCheckpointInfo] =
     recordDeltaOperation(self, "delta.deltaLog.loadMetadataFromFile") {
       try {
-        val lastCheckpointInfoJson = store.read(LAST_CHECKPOINT, newDeltaHadoopConf())
-        val validate = LastCheckpointInfo.checksumEnabled(spark)
-        Some(LastCheckpointInfo.deserializeFromJson(lastCheckpointInfoJson.head, validate))
+        Some(unsafeLoadMetadataFromFile())
       } catch {
         case _: FileNotFoundException =>
           None
