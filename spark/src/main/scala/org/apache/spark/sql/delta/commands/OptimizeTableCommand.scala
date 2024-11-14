@@ -148,7 +148,7 @@ case class OptimizeTableCommand(
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val table = getDeltaTable(child, "OPTIMIZE")
-    val snapshot = table.deltaLog.update()
+    val snapshot = table.update()
     if (snapshot.version == -1) {
       throw DeltaErrors.notADeltaTableException(table.deltaLog.dataPath.toString)
     }

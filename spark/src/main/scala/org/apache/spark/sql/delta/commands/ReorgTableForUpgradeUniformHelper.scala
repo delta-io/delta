@@ -144,7 +144,7 @@ trait ReorgTableForUpgradeUniformHelper extends DeltaLogging {
       sparkSession: SparkSession,
       targetIcebergCompatVersion: Int): Seq[Row] = {
 
-    val snapshot = target.deltaLog.update()
+    val snapshot = target.update()
     val currIcebergCompatVersionOpt = getEnabledVersion(snapshot.metadata)
     val targetVersionDeltaConfig = getIcebergCompatVersionConfigForValidVersion(
       targetIcebergCompatVersion)
