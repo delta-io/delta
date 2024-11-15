@@ -93,8 +93,8 @@ case class DeltaSink(
       logInfo(
         log"Committed transaction, batchId=${MDC(DeltaLogKeys.BATCH_ID, batchId)}, " +
         log"duration=${MDC(DeltaLogKeys.DURATION, durationMs)} ms, " +
-        log"added ${MDC(DeltaLogKeys.NUM_FILES, newFiles.size)} files, " +
-        log"removed ${MDC(DeltaLogKeys.NUM_FILES2, deletedFiles.size)} files.")
+        log"added ${MDC(DeltaLogKeys.NUM_FILES, newFiles.size.toLong)} files, " +
+        log"removed ${MDC(DeltaLogKeys.NUM_FILES2, deletedFiles.size.toLong)} files.")
       val executionId = sc.getLocalProperty(SQLExecution.EXECUTION_ID_KEY)
       SQLMetrics.postDriverMetricUpdates(sc, executionId, metrics.values.toSeq)
     }
@@ -153,8 +153,8 @@ case class DeltaSink(
     val totalSize = newFiles.map(_.getFileSize).sum
     val totalLogicalRecords = newFiles.map(_.numLogicalRecords.getOrElse(0L)).sum
     logInfo(
-      log"Wrote ${MDC(DeltaLogKeys.NUM_FILES, newFiles.size)} files, with total size " +
-      log"${MDC(DeltaLogKeys.NUM_BYTES, totalSize)}, " +
+      log"Wrote ${MDC(DeltaLogKeys.NUM_FILES, newFiles.size.toLong)} files, " +
+        log"with total size ${MDC(DeltaLogKeys.NUM_BYTES, totalSize)}, " +
       log"${MDC(DeltaLogKeys.NUM_RECORDS, totalLogicalRecords)} logical records, " +
       log"duration=${MDC(DeltaLogKeys.DURATION, writeFilesTimeMs)} ms.")
 

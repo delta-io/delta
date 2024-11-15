@@ -304,7 +304,8 @@ abstract class ConvertToDeltaCommandBase(
           _, txn.deltaLog.dataPath, fs, conf, Some(partitionSchema), deltaPath.isDefined))
       if (shouldCollectStats) {
         logInfo(
-          log"Collecting stats for a batch of ${MDC(DeltaLogKeys.NUM_FILES, batch.size)} files; " +
+          log"Collecting stats for a batch of " +
+          log"${MDC(DeltaLogKeys.NUM_FILES, batch.size.toLong)} files; " +
           log"finished ${MDC(DeltaLogKeys.NUM_FILES2, numFiles)} so far"
           )
         numFiles += statsBatchSize

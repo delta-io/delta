@@ -423,10 +423,10 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
             )
 
             recordDeltaEvent(deltaLog, "delta.gc.stats", data = stats)
-            logInfo(log"Found ${MDC(DeltaLogKeys.NUM_FILES, numFiles)} files " +
+            logInfo(log"Found ${MDC(DeltaLogKeys.NUM_FILES, numFiles.toLong)} files " +
               log"(${MDC(DeltaLogKeys.NUM_BYTES, sizeOfDataToDelete)} bytes) and directories in " +
               log"a total of ${MDC(DeltaLogKeys.NUM_DIRS, dirCounts)} directories " +
-              log"that are safe to delete. Vacuum stats: ${MDC(DeltaLogKeys.STATS, stats)}")
+              log"that are safe to delete. Vacuum stats: ${MDC(DeltaLogKeys.VACUUM_STATS, stats)}")
 
             return diffFiles.map(f => urlEncodedStringToPath(f).toString).toDF("path")
           }
