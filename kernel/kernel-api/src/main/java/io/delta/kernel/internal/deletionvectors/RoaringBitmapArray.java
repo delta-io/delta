@@ -23,6 +23,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.ArrayList;
+import org.roaringbitmap.IntIterator;
 import org.roaringbitmap.RoaringBitmap;
 
 /**
@@ -151,7 +152,7 @@ public final class RoaringBitmapArray {
    */
   static class NativeRoaringBitmapArraySerializationFormat {
     /** Magic number prefix for serialization with this format. */
-    static int MAGIC_NUMBER = 1681511376;
+    static final int MAGIC_NUMBER = 1681511376;
 
     /** Deserialize all bitmaps from the `buffer` into a fresh array. */
     static RoaringBitmap[] deserialize(ByteBuffer buffer) throws IOException {
@@ -186,7 +187,7 @@ public final class RoaringBitmapArray {
    */
   static class PortableRoaringBitmapArraySerializationFormat {
     /** Magic number prefix for serialization with this format. */
-    static int MAGIC_NUMBER = 1681511377;
+    static final int MAGIC_NUMBER = 1681511377;
 
     /** Deserialize all bitmaps from the `buffer` into a fresh array. */
     static RoaringBitmap[] deserialize(ByteBuffer buffer) throws IOException {
@@ -258,7 +259,7 @@ public final class RoaringBitmapArray {
         newBitmaps, // dest
         0, // dest start pos
         bitmaps.length); // number of entries to copy
-    for (int i = 0; i < bitmaps.length; i++) {
+    for (int i = bitmaps.length; i < newBitmaps.length; i++) {
       newBitmaps[i] = new RoaringBitmap();
     }
     bitmaps = newBitmaps;
@@ -266,9 +267,31 @@ public final class RoaringBitmapArray {
 
   public static RoaringBitmapArray create(long... values) {
     RoaringBitmapArray bitmap = new RoaringBitmapArray();
+    bitmap.bitmaps = new RoaringBitmap[0];
     for (long value : values) {
       bitmap.add(value);
     }
     return bitmap;
+  }
+
+  public long[] toArray() {
+    long cardinality = 0;
+    for (final RoaringBitmap bitmap : bitmaps) {
+      cardinality += bitmap.getCardinality();
+    }
+    checkArgument(cardinality <= Integer.MAX_VALUE, "Cardinality higher than max int value");
+
+    final long[] values = new long[(int) cardinality];
+
+    int valuesIndex = 0;
+    for (int bitmapIndex = 0; bitmapIndex < bitmaps.length; bitmapIndex++) {
+      final IntIterator valueIterator = bitmaps[bitmapIndex].getIntIterator();
+      while (valueIterator.hasNext()) {
+        final int value = valueIterator.next();
+        values[valuesIndex++] = composeFromHighLowBytes(bitmapIndex, value);
+      }
+    }
+
+    return values;
   }
 }
