@@ -34,6 +34,7 @@ import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.util._
 import org.apache.hadoop.fs.{FileSystem, Path}
 
+import org.apache.spark.SparkContext
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.{AnalysisException, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -41,6 +42,7 @@ import org.apache.spark.sql.catalyst.analysis.{Analyzer, NoSuchTableException}
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, SessionCatalog}
 import org.apache.spark.sql.connector.catalog.{Identifier, TableCatalog, V1Table}
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
+import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.types.StructType
 
 /**
@@ -75,6 +77,11 @@ abstract class ConvertToDeltaCommandBase(
 
   protected lazy val icebergEnabled: Boolean =
     conf.getConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_ENABLED)
+
+  override lazy val metrics: Map[String, SQLMetric] = Map (
+    "numConvertedFiles" ->
+      SQLMetrics.createMetric(SparkContext.getOrCreate(), "number of files converted")
+  )
 
   protected def isParquetPathProvider(provider: String): Boolean =
     provider.equalsIgnoreCase("parquet")
@@ -380,16 +387,18 @@ abstract class ConvertToDeltaCommandBase(
 
       val numFiles = targetTable.numFiles
       val addFilesIter = createDeltaActions(spark, manifest, partitionFields, txn, fs)
-      val metrics = Map[String, String](
+      val transactionMetrics = Map[String, String](
         "numConvertedFiles" -> numFiles.toString
       )
+      metrics("numConvertedFiles") += numFiles
+      sendDriverMetrics(spark, metrics)
       val (committedVersion, postCommitSnapshot) = txn.commitLarge(
         spark,
         addFilesIter,
         Some(txn.protocol),
         getOperation(numFiles, convertProperties, targetTable.format),
         getContext,
-        metrics)
+        transactionMetrics)
     } finally {
       manifest.close()
     }
