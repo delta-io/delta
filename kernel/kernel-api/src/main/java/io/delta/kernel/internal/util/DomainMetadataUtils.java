@@ -66,7 +66,7 @@ public class DomainMetadataUtils {
     }
     return writerFeatures.contains(TableFeatures.DOMAIN_METADATA_FEATURE_NAME)
         && protocol.getMinWriterVersion()
-            >= TableFeatures.DOMAIN_METADATA_MIN_WRITER_VERSION_REQUIRED;
+            >= TableFeatures.TABLE_FEATURES_MIN_WRITER_VERSION;
   }
 
   /**

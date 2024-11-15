@@ -39,7 +39,7 @@ public class TableFeatures {
               add("columnMapping");
               add("typeWidening-preview");
               add("typeWidening");
-              add("domainMetadata");
+              add(DOMAIN_METADATA_FEATURE_NAME);
             }
           });
 
@@ -62,7 +62,7 @@ public class TableFeatures {
   public static final String DOMAIN_METADATA_FEATURE_NAME = "domainMetadata";
 
   /** The minimum writer version required to support domain metadata. */
-  public static final int DOMAIN_METADATA_MIN_WRITER_VERSION_REQUIRED = 7;
+  public static final int TABLE_FEATURES_MIN_WRITER_VERSION = 7;
 
   ////////////////////
   // Helper Methods //

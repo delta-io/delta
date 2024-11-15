@@ -119,6 +119,14 @@ public class TransactionImpl implements Transaction {
     return readSnapshot.getSchema(engine);
   }
 
+  public Optional<SetTransaction> getSetTxnOpt() {
+    return setTxnOpt;
+  }
+
+  public List<DomainMetadata> getDomainMetadatas() {
+    return domainMetadatas;
+  }
+
   @Override
   public TransactionCommitResult commit(Engine engine, CloseableIterable<Row> dataActions)
       throws ConcurrentWriteException {
@@ -268,14 +276,6 @@ public class TransactionImpl implements Transaction {
     // For now, Kernel just supports blind append.
     // Change this when read-after-write is supported.
     return true;
-  }
-
-  public Optional<SetTransaction> getSetTxnOpt() {
-    return setTxnOpt;
-  }
-
-  public List<DomainMetadata> getDomainMetadatas() {
-    return domainMetadatas;
   }
 
   /**
