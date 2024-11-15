@@ -23,6 +23,10 @@ import io.delta.kernel.internal.{SnapshotImpl, TableImpl, TransactionBuilderImpl
 import io.delta.kernel.internal.actions.{DomainMetadata, Protocol, SingleAction}
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
+import org.apache.hadoop.fs.Path
+import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.actions.{DomainMetadata => SparkDomainMetadata}
+import org.apache.spark.sql.delta.test.DeltaTestImplicits.OptimisticTxnTestHelper
 
 import java.util.Collections
 import scala.collection.JavaConverters._
@@ -409,25 +413,61 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
     }
   }
 
-  test("Integration test - read a golden table with checkpoints and log files") {
-    withTempDirAndEngine((tablePath, engine) => {
-      val path = getTestResourceFilePath("kernel-domain-metadata")
-      val snapshot = latestSnapshot(path).asInstanceOf[SnapshotImpl]
+  test("Integration test - create a table with Spark and read its domain metadata using Kernel") {
+    withTempDir(dir => {
+      val tbl = "tbl"
+      withTable(tbl) {
+        val tablePath = dir.getCanonicalPath
+        // Create table with domain metadata enabled
+        spark.sql(s"CREATE TABLE $tbl (id LONG) USING delta LOCATION '$tablePath'")
+        spark.sql(
+          s"ALTER TABLE $tbl SET TBLPROPERTIES(" +
+          s"'delta.feature.domainMetadata' = 'enabled'," +
+          s"'delta.checkpointInterval' = '3')"
+        )
 
-      // We need to read 1 checkpoint file and 1 log file to replay the golden table
-      // The state of the domain metadata should be:
-      // testDomain1: "{\"key1\":\"10\"}", removed = false  (from 03.checkpoint)
-      // testDomain2: "", removed = true                    (from 03.checkpoint)
-      // testDomain3: "", removed = false                   (from 04.json)
+        // Manually commit domain metadata actions. This will create 02.json
+        val deltaLog = DeltaLog.forTable(spark, new Path(tablePath))
+        deltaLog
+          .startTransaction()
+          .commitManually(
+            List(
+              SparkDomainMetadata("testDomain1", "{\"key1\":\"1\"}", removed = false),
+              SparkDomainMetadata("testDomain2", "", removed = false),
+              SparkDomainMetadata("testDomain3", "", removed = false)
+            ): _*
+          )
 
-      val dm1 = new DomainMetadata("testDomain1", """{"key1":"10"}""", false)
-      val dm2 = new DomainMetadata("testDomain2", "", true)
-      val dm3 = new DomainMetadata("testDomain3", "", false)
+        // This will create 03.json and 03.checkpoint
+        spark.range(0, 2).write.format("delta").mode("append").save(tablePath)
 
-      assertDomainMetadata(
-        snapshot,
-        Map("testDomain1" -> dm1, "testDomain2" -> dm2, "testDomain3" -> dm3)
-      )
+        // Manually commit domain metadata actions. This will create 04.json
+        deltaLog
+          .startTransaction()
+          .commitManually(
+            List(
+              SparkDomainMetadata("testDomain1", "{\"key1\":\"10\"}", removed = false),
+              SparkDomainMetadata("testDomain2", "", removed = true)
+            ): _*
+          )
+
+        // Use Delta Kernel to read the table's domain metadata and verify the result.
+        // We will need to read 1 checkpoint file and 1 log file to replay the table.
+        // The state of the domain metadata should be:
+        // testDomain1: "{\"key1\":\"10\"}", removed = false  (from 03.checkpoint)
+        // testDomain2: "", removed = true                    (from 03.checkpoint)
+        // testDomain3: "", removed = false                   (from 04.json)
+
+        val dm1 = new DomainMetadata("testDomain1", """{"key1":"10"}""", false)
+        val dm2 = new DomainMetadata("testDomain2", "", true)
+        val dm3 = new DomainMetadata("testDomain3", "", false)
+
+        val snapshot = latestSnapshot(tablePath).asInstanceOf[SnapshotImpl]
+        assertDomainMetadata(
+          snapshot,
+          Map("testDomain1" -> dm1, "testDomain2" -> dm2, "testDomain3" -> dm3)
+        )
+      }
     })
   }
 }
