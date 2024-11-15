@@ -16,9 +16,24 @@
 
 package io.delta.kernel.deletionvectors
 
+import io.delta.kernel.internal.deletionvectors.RoaringBitmapArray
 import org.scalatest.funsuite.AnyFunSuite
 
 class RoaringBitmapArraySuite extends AnyFunSuite {
+
+  test("RoaringBitmapArray create and contains methods") {
+    val bitmap = RoaringBitmapArray.create(1L, 100L, 10000000000L)
+
+    assert(bitmap.contains(1L))
+    assert(bitmap.contains(100L))
+    assert(bitmap.contains(10000000000L))
+
+    assert(!bitmap.contains(2L))
+    assert(!bitmap.contains(99L))
+    assert(!bitmap.contains(10000000001L))
+
+    assert(bitmap.toArray.sorted sameElements Array(1L, 100L, 10000000000L))
+  }
 
   // TODO need to implement serialize to copy over tests
 
