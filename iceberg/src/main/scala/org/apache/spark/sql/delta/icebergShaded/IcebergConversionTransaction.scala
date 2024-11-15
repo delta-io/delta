@@ -350,11 +350,13 @@ class IcebergConversionTransaction(
       .set(IcebergConverter.DELTA_TIMESTAMP_PROPERTY, postCommitSnapshot.timestamp.toString)
       .set(IcebergConstants.ICEBERG_NAME_MAPPING_PROPERTY, nameMapping)
 
-    if (spark.sessionState.conf.getConf(
-        DeltaSQLConf.DELTA_UNIFORM_ICEBERG_INCLUDE_BASE_CONVERTED_VERSION)) {
-      lastConvertedDeltaVersion.foreach { v =>
-        updateTxn = updateTxn.set(IcebergConverter.BASE_DELTA_VERSION_PROPERTY, v.toString)
-      }
+    val includeBaseVersion = spark.sessionState.conf.getConf(
+      DeltaSQLConf.DELTA_UNIFORM_ICEBERG_INCLUDE_BASE_CONVERTED_VERSION)
+    updateTxn = lastConvertedDeltaVersion match {
+      case Some(v) if includeBaseVersion =>
+        updateTxn.set(IcebergConverter.BASE_DELTA_VERSION_PROPERTY, v.toString)
+      case _ =>
+        updateTxn.remove(IcebergConverter.BASE_DELTA_VERSION_PROPERTY)
     }
     updateTxn.commit()
 
