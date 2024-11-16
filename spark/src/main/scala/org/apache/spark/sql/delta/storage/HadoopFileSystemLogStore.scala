@@ -18,7 +18,6 @@ package org.apache.spark.sql.delta.storage
 
 import java.io.{BufferedReader, InputStreamReader}
 import java.nio.charset.StandardCharsets.UTF_8
-import java.nio.file.FileAlreadyExistsException
 import java.util.UUID
 
 import scala.collection.JavaConverters._
@@ -26,7 +25,7 @@ import scala.collection.JavaConverters._
 import org.apache.spark.sql.delta.DeltaErrors
 import org.apache.commons.io.IOUtils
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileStatus, FileSystem, FSDataInputStream, Path}
+import org.apache.hadoop.fs.{FileStatus, FSDataInputStream, Path}
 
 import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.sql.SparkSession

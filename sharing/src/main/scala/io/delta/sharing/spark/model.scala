@@ -31,10 +31,9 @@ import org.apache.spark.sql.delta.actions.{
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
 import org.apache.spark.sql.delta.util.JsonUtils
 import com.fasterxml.jackson.annotation._
-import com.fasterxml.jackson.annotation.JsonInclude.Include
 import io.delta.sharing.client.DeltaSharingFileSystem
 
-import org.apache.spark.sql.types.{DataType, StructType}
+import org.apache.spark.sql.types.StructType
 
 // Represents a single action in the response of a Delta Sharing rpc.
 sealed trait DeltaSharingAction {

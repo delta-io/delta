@@ -16,20 +16,18 @@
 
 package io.delta.sharing.spark
 
-import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.{
   DeltaColumnMapping,
   DeltaErrors,
   DeltaTableUtils => TahoeDeltaTableUtils
 }
-import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSQLConf}
 import io.delta.sharing.client.{DeltaSharingClient, DeltaSharingRestClient}
 import io.delta.sharing.client.model.{Table => DeltaSharingTable}
-import io.delta.sharing.client.util.{ConfUtils, JsonUtils}
+import io.delta.sharing.client.util.ConfUtils
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkEnv

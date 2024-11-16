@@ -17,11 +17,9 @@
 package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
-import java.util.concurrent.TimeUnit.NANOSECONDS
 
-import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaErrors, DeltaLog, DeltaOptions, DeltaTableIdentifier, DeltaTableUtils, OptimisticTransaction, ResolvedPathBasedNonDeltaTable}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOptions, DeltaTableIdentifier, DeltaTableUtils, OptimisticTransaction, ResolvedPathBasedNonDeltaTable}
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.catalog.{DeltaTableV2, IcebergTablePlaceHolder}
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex

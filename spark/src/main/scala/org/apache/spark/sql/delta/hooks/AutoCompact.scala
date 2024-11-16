@@ -16,7 +16,6 @@
 
 package org.apache.spark.sql.delta.hooks
 
-import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.{DeltaOptimizeContext, OptimizeExecutor}

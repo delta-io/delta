@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.hooks
 
 import org.apache.spark.sql.delta.{OptimisticTransactionImpl, Snapshot, UniversalFormat}
 import org.apache.spark.sql.delta.DeltaErrors
-import org.apache.spark.sql.delta.actions.{Action, Metadata}
+import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf.DELTA_UNIFORM_ICEBERG_SYNC_CONVERT_ENABLED
 import org.apache.commons.lang3.exception.ExceptionUtils

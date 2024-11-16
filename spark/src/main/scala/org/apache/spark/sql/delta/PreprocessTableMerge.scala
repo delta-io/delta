@@ -20,16 +20,13 @@ import java.time.{Instant, LocalDateTime}
 import java.util.Locale
 
 import scala.collection.mutable
-import scala.reflect.ClassTag
 
 import org.apache.spark.sql.delta.commands.MergeIntoCommand
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
-import org.apache.spark.sql.{AnalysisException, SparkSession}
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.analysis.EliminateSubqueryAliases
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
-import org.apache.spark.sql.catalyst.optimizer.ComputeCurrentTime
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.trees.TreePattern.CURRENT_LIKE

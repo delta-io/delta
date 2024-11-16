@@ -17,7 +17,6 @@
 package org.apache.spark.sql.delta.schema
 
 import scala.collection.mutable
-import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingMode, DeltaErrors, DeltaLog, GeneratedColumn, NoMapping, TypeWidening}

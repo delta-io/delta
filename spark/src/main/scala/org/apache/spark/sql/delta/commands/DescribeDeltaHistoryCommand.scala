@@ -17,13 +17,13 @@
 package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaHistory, DeltaTableIdentifier, UnresolvedDeltaPathOrIdentifier, UnresolvedPathBasedDeltaTable}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaHistory, DeltaTableIdentifier, UnresolvedDeltaPathOrIdentifier}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.metering.DeltaLogging
 
 import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.{MultiInstanceRelation, UnresolvedTable}
+import org.apache.spark.sql.catalyst.analysis.MultiInstanceRelation
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeSet}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Project, UnaryNode}

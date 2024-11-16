@@ -20,12 +20,10 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol, SetTransaction}
 import org.apache.spark.sql.delta.actions.DomainMetadata
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.FileSizeHistogram
 
 import org.apache.spark.sql.{Column, DataFrame}
 import org.apache.spark.sql.functions.{coalesce, col, collect_set, count, last, lit, sum}
-import org.apache.spark.util.Utils
 
 
 /**

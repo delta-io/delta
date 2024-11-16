@@ -17,11 +17,8 @@
 package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
-import java.io.Closeable
-import java.lang.reflect.InvocationTargetException
 import java.util.Locale
 
-import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
@@ -31,7 +28,6 @@ import org.apache.spark.sql.delta.commands.convert.{ConvertTargetFileManifest, C
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
-import org.apache.spark.sql.delta.util._
 import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.SparkContext

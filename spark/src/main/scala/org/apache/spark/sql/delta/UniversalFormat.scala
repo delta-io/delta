@@ -17,7 +17,6 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
-import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -25,7 +24,7 @@ import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.spark.sql.types.{ByteType, CalendarIntervalType, NullType, ShortType, TimestampNTZType}
+import org.apache.spark.sql.types.{ByteType, NullType, ShortType, TimestampNTZType}
 
 /**
  * Utils to validate the Universal Format (UniForm) Delta feature (NOT a table feature).

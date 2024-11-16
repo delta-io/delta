@@ -19,7 +19,6 @@ package org.apache.spark.sql.delta.expressions
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeMap, BoundReference, Expression, GetStructField}
 import org.apache.spark.sql.catalyst.types.DataTypeUtils
-import org.apache.spark.sql.types.StructType
 
 /**
  * Helper class for generating a joined projection.

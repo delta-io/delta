@@ -17,9 +17,7 @@
 package org.apache.spark.sql.delta.sources
 
 
-import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.connector.read.streaming.{ReadLimit, ReadMaxFiles}
-import org.apache.spark.sql.internal.SQLConf
 
 /** A read limit that admits a soft-max of `maxBytes` per micro-batch. */
 case class ReadMaxBytes(maxBytes: Long) extends ReadLimit

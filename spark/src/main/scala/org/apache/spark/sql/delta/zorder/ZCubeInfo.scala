@@ -18,17 +18,12 @@ package org.apache.spark.sql.delta.zorder
 
 import java.util.UUID
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, SnapshotIsolation}
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.actions.AddFile.Tags.{ZCUBE_ID, ZCUBE_ZORDER_BY, ZCUBE_ZORDER_CURVE}
 import org.apache.spark.sql.delta.commands.DeltaCommand
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.spark.sql.delta.zorder.ZCubeInfo.ZCubeID
 
-import org.apache.spark.sql.{AnalysisException, SparkSession}
-import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
-import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
 
 
 /**

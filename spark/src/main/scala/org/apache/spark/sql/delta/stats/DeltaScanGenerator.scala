@@ -16,10 +16,10 @@
 
 package org.apache.spark.sql.delta.stats
 
-import org.apache.spark.sql.delta.{Snapshot, SnapshotDescriptor}
+import org.apache.spark.sql.delta.Snapshot
 
 import org.apache.spark.sql.DataFrame
-import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
+import org.apache.spark.sql.catalyst.expressions.Expression
 
 /** Trait representing a class that can generate [[DeltaScan]] given filters and a limit. */
 trait DeltaScanGenerator {

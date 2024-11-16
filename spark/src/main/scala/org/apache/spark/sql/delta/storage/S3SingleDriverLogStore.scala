@@ -16,7 +16,6 @@
 
 package org.apache.spark.sql.delta.storage
 
-import java.io.FileNotFoundException
 import java.net.URI
 import java.nio.charset.StandardCharsets.UTF_8
 import java.util.concurrent.{ConcurrentHashMap, TimeUnit}

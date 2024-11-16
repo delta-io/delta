@@ -23,12 +23,11 @@ import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{DateFormatter, TimestampFormatter}
 import org.apache.hadoop.fs.Path
-import org.apache.iceberg.{PartitionData, RowLevelOperationMode, StructLike, Table, TableProperties}
+import org.apache.iceberg.{PartitionData, StructLike, Table, TableProperties}
 import org.apache.iceberg.transforms.IcebergPartitionUtil
 
 import org.apache.spark.internal.{LoggingShims, MDC}
 import org.apache.spark.sql.{Dataset, SparkSession}
-import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.SerializableConfiguration
 

@@ -21,7 +21,7 @@ import java.util.Objects
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.actions.{AddFile, Protocol}
+import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeFileIndexWithSnapshotDescriptor, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -37,7 +37,6 @@ import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.trees.TreePattern.PROJECT
 import org.apache.spark.sql.execution.datasources.{FileIndex, LogicalRelation}
-import org.apache.spark.sql.types.StructType
 
 /**
  * Before query planning, we prepare any scans over delta tables by pushing

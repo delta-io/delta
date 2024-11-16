@@ -18,7 +18,6 @@ package org.apache.spark.sql.delta.util
 
 import scala.collection.mutable.ArrayBuffer
 
-import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 

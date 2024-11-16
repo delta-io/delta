@@ -16,7 +16,6 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.storage.ClosableIterator
 import org.apache.spark.sql.delta.util.FileNames.DeltaFile
 import org.apache.hadoop.conf.Configuration

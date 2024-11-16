@@ -21,7 +21,6 @@ import scala.collection.mutable
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.{DeltaLog, OptimisticTransactionImpl, Snapshot}
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.sources.DeltaSQLConf._
 import org.apache.spark.sql.delta.stats.AutoCompactPartitionStats
 

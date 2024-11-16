@@ -54,4 +54,6 @@ dependencyOverrides += "com.puppycrawl.tools" % "checkstyle" % "9.3"
 
 addSbtPlugin("com.thesamet" % "sbt-protoc" % "1.0.7")
 
+addSbtPlugin("ch.epfl.scala" % "sbt-scalafix" % "0.13.0")
+
 addSbtPlugin("com.lightbend.sbt" % "sbt-java-formatter" % "0.8.0")

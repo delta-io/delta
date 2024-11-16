@@ -33,8 +33,7 @@ import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.Expression
-import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.execution.metric.SQLMetric
 
 /**
  * An interface for writing [[data]] into Delta tables.

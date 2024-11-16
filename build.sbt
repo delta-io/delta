@@ -131,6 +131,10 @@ lazy val commonSettings = Seq(
   crossScalaVersions := all_scala_versions,
   fork := true,
   scalacOptions ++= Seq("-Ywarn-unused:imports"),
+  semanticdbEnabled := true,
+  semanticdbVersion := scalafixSemanticdb.revision,
+  // Enable Scalafix to run on every compile
+  scalafixOnCompile := true,
   javacOptions ++= {
     if (javaVersion.startsWith("1.8")) {
       Seq.empty // `--release` is supported since JDK 9 and the minimum supported JDK is 8

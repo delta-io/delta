@@ -29,7 +29,6 @@ import com.databricks.spark.util.TagDefinitions.{
   TAG_TAHOE_PATH
 }
 import org.apache.spark.sql.delta.DeltaLog
-import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.util.DeltaProgressReporter
 import org.apache.spark.sql.delta.util.JsonUtils

@@ -18,7 +18,6 @@ package org.apache.spark.sql.catalyst.plans.logical
 
 import org.apache.spark.sql.delta.DeltaAnalysisException
 
-import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.expressions.{Alias, Attribute, Expression, ExtractValue, GetStructField}
 
 /**

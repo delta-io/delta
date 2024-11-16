@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.files
 
 import java.text.SimpleDateFormat
 
-import org.apache.spark.sql.delta.{DeltaLog, Snapshot, SnapshotDescriptor}
+import org.apache.spark.sql.delta.{DeltaLog, SnapshotDescriptor}
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader.{CDC_COMMIT_TIMESTAMP, CDC_COMMIT_VERSION, CDCDataSpec}
 import org.apache.spark.sql.delta.implicits._

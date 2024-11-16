@@ -20,7 +20,6 @@ import java.io.{ByteArrayInputStream, FileNotFoundException}
 import java.net.{URI, URLDecoder, URLEncoder}
 import java.nio.charset.StandardCharsets
 
-import scala.collection.JavaConverters._
 import scala.collection.mutable.{ArrayBuffer, Builder}
 import scala.reflect.ClassTag
 import scala.util.control.NonFatal

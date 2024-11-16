@@ -22,7 +22,7 @@ import java.util.{Base64, UUID}
 
 import org.apache.spark.sql.delta.DeltaErrors
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.util.{Codec, DeltaEncoder, JsonUtils}
+import org.apache.spark.sql.delta.util.{Codec, DeltaEncoder}
 import com.fasterxml.jackson.annotation.JsonIgnore
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.hadoop.fs.Path
@@ -32,7 +32,6 @@ import org.apache.spark.sql.{Column, Encoder}
 import org.apache.spark.sql.functions.{concat, lit, when}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
-import org.apache.spark.util.Utils
 
 /** Information about a deletion vector attached to a file action. */
 case class DeletionVectorDescriptor(

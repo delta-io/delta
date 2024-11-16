@@ -18,7 +18,6 @@ package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
 import java.util.Locale
-import java.util.concurrent.TimeUnit
 
 import scala.util.control.NonFatal
 
@@ -45,8 +44,8 @@ import org.apache.spark.sql.{AnalysisException, Column, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.catalog.CatalogUtils
 import org.apache.spark.sql.catalyst.expressions._
-import org.apache.spark.sql.catalyst.plans.logical.{Filter, IgnoreCachedData, QualifiedColType}
-import org.apache.spark.sql.catalyst.util.{CharVarcharUtils, SparkCharVarcharUtils}
+import org.apache.spark.sql.catalyst.plans.logical.{IgnoreCachedData, QualifiedColType}
+import org.apache.spark.sql.catalyst.util.CharVarcharUtils
 import org.apache.spark.sql.connector.catalog.TableCatalog
 import org.apache.spark.sql.connector.catalog.TableChange.{After, ColumnPosition, First}
 import org.apache.spark.sql.connector.expressions.FieldReference

@@ -17,7 +17,6 @@
 package org.apache.spark.sql.delta.storage.dv
 
 import java.io.{Closeable, DataInputStream}
-import java.net.URI
 import java.nio.charset.StandardCharsets.UTF_8
 import java.util.UUID
 import java.util.zip.CRC32
@@ -29,7 +28,7 @@ import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, StoredBit
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.PathWithFileSystem
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileSystem, FSDataOutputStream, Path}
+import org.apache.hadoop.fs.{FSDataOutputStream, Path}
 
 import org.apache.spark.paths.SparkPath
 import org.apache.spark.util.Utils

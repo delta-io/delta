@@ -20,7 +20,7 @@ import java.util.{HashMap, Locale}
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.actions.{Action, Metadata, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.hooks.AutoCompactType
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -31,7 +31,6 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.util.{DateTimeConstants, IntervalUtils}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.unsafe.types.{CalendarInterval, UTF8String}
-import org.apache.spark.util.Utils
 
 case class DeltaConfig[T](
     key: String,

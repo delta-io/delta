@@ -17,14 +17,12 @@
 package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
-import java.io.File
 import java.io.FileNotFoundException
 import java.net.URI
 import java.sql.Timestamp
 import java.util.Date
 import java.util.concurrent.TimeUnit
 import scala.collection.JavaConverters._
-import scala.math.min
 import scala.util.control.NonFatal
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, FileAction, RemoveFile, SingleAction}
@@ -42,7 +40,7 @@ import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Encoder, SparkSession}
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
-import org.apache.spark.sql.functions.{col, count, lit, replace, startswith, substr, sum}
+import org.apache.spark.sql.functions.{col, count, lit, startswith, substr, sum}
 import org.apache.spark.sql.types.{BooleanType, LongType, StringType, StructField, StructType}
 import org.apache.spark.util.{Clock, SerializableConfiguration, SystemClock, Utils}
 

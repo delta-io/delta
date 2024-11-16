@@ -23,7 +23,6 @@ import scala.collection.mutable
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import com.fasterxml.jackson.annotation.JsonIgnore
 
 /**

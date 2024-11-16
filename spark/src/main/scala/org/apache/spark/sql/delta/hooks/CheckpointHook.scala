@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.hooks
 
-import org.apache.spark.sql.delta.{CheckpointInstance, OptimisticTransactionImpl, Snapshot}
+import org.apache.spark.sql.delta.{OptimisticTransactionImpl, Snapshot}
 import org.apache.spark.sql.delta.actions.Action
 
 import org.apache.spark.sql.SparkSession

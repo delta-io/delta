@@ -20,7 +20,6 @@ import org.apache.spark.sql.delta.{DeltaTableUtils => SqlDeltaTableUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.{PreparedDeltaFileIndex, PrepareDeltaScan}
 import io.delta.sharing.client.util.ConfUtils
-import io.delta.sharing.spark.DeltaSharingFileIndex
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions._
