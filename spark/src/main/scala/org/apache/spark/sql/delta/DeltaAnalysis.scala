@@ -69,6 +69,7 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
+
 /**
  * Analysis rules for Delta. Currently, these rules enable schema enforcement / evolution with
  * INSERT INTO.
@@ -913,8 +914,8 @@ class DeltaAnalysis(session: SparkSession)
   }
 
   private def addCastToColumn(
-      attr: Attribute,
-      targetAttr: Attribute,
+      attr: NamedExpression,
+      targetAttr: NamedExpression,
       tblName: String,
       allowTypeWidening: Boolean): NamedExpression = {
     val expr = (attr.dataType, targetAttr.dataType) match {
@@ -930,6 +931,11 @@ class DeltaAnalysis(session: SparkSession)
         // Keep the type from the query, the target schema will be updated to widen the existing
         // type to match it.
         attr
+      case (s: MapType, t: MapType)
+        if !DataType.equalsStructurally(s, t, ignoreNullability = true) || allowTypeWidening =>
+        // only trigger addCastsToMaps if exits differences like extra fields, renaming
+        // Or allowTypeWidening is enabled
+        addCastsToMaps(tblName, attr, s, t, allowTypeWidening)
       case _ =>
         getCastFunction(attr, targetAttr.dataType, targetAttr.name)
     }
@@ -1047,8 +1053,7 @@ class DeltaAnalysis(session: SparkSession)
   }
 
   /**
-   * Recursively casts structs in case it contains null types.
-   * TODO: Support other complex types like MapType and ArrayType
+   * Recursively casts struct data types in case the source/target type differs.
    */
   private def addCastsToStructs(
       tableName: String,
@@ -1122,6 +1127,65 @@ class DeltaAnalysis(session: SparkSession)
 
   private def stripTempViewForMergeWrapper(plan: LogicalPlan): LogicalPlan = {
     DeltaViewHelper.stripTempViewForMerge(plan, conf)
+  }
+
+  /**
+   * Recursively casts map data types in case the key/value type differs.
+   */
+  private def addCastsToMaps(
+      tableName: String,
+      parent: NamedExpression,
+      sourceMapType: MapType,
+      targetMapType: MapType,
+      allowTypeWidening: Boolean): Expression = {
+
+    val transformedKeys =
+      if (sourceMapType.keyType != targetMapType.keyType) {
+        // Create a transformation for the keys
+        ArrayTransform(MapKeys(parent), {
+          val key = NamedLambdaVariable(
+                  "key", sourceMapType.keyType, nullable = false)
+
+          val keyAttr = AttributeReference(
+              "key", targetMapType.keyType, nullable = false)()
+
+          val castedKey =
+              addCastToColumn(
+                key,
+                keyAttr,
+                tableName,
+                allowTypeWidening
+              )
+          LambdaFunction(castedKey, Seq(key))
+        })
+      } else {
+        MapKeys(parent)
+      }
+
+    val transformedValues =
+      if (sourceMapType.valueType != targetMapType.valueType) {
+        // Create a transformation for the values
+        ArrayTransform(MapValues(parent), {
+          val value = NamedLambdaVariable(
+              "value", sourceMapType.valueType, sourceMapType.valueContainsNull)
+
+          val valueAttr = AttributeReference(
+              "value", targetMapType.valueType, sourceMapType.valueContainsNull)()
+
+          val castedValue =
+              addCastToColumn(
+                value,
+                valueAttr,
+                tableName,
+                allowTypeWidening
+              )
+          LambdaFunction(castedValue, Seq(value))
+        })
+      } else {
+        MapValues(parent)
+      }
+    // Create new map from transformed keys and values
+    MapFromArrays(transformedKeys, transformedValues)
   }
 
   /**
