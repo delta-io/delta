@@ -22,15 +22,7 @@ import java.util.{TimeZone, UUID}
 
 import scala.reflect.ClassTag
 
-import org.apache.spark.sql.delta.{
-  ColumnMappingTableFeature,
-  DeletionVectorsTableFeature,
-  DeltaLog,
-  DeltaParquetFileFormat,
-  SnapshotDescriptor,
-  TimestampNTZTableFeature
-}
-import org.apache.spark.sql.delta.VariantTypeTableFeature
+import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import com.google.common.hash.Hashing
 import io.delta.sharing.client.{DeltaSharingClient, DeltaSharingRestClient}
@@ -51,13 +43,18 @@ object DeltaSharingUtils extends Logging {
       DeletionVectorsTableFeature.name,
       ColumnMappingTableFeature.name,
       TimestampNTZTableFeature.name,
+      TypeWideningPreviewTableFeature.name,
+      TypeWideningTableFeature.name,
       VariantTypeTableFeature.name
     )
+
   val SUPPORTED_READER_FEATURES: Seq[String] =
     Seq(
       DeletionVectorsTableFeature.name,
       ColumnMappingTableFeature.name,
       TimestampNTZTableFeature.name,
+      TypeWideningPreviewTableFeature.name,
+      TypeWideningTableFeature.name,
       VariantTypeTableFeature.name
     )
 
