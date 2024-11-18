@@ -337,7 +337,7 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
     }
 
     logInfo(log"Deleted manifest partitions [" +
-      log"${MDC(DeltaLogKeys.NUM_FILES, partitionRelativePathsToDelete.size)}]:\n\t" +
+      log"${MDC(DeltaLogKeys.NUM_FILES, partitionRelativePathsToDelete.size.toLong)}]:\n\t" +
       log"${MDC(DeltaLogKeys.PATHS, partitionRelativePathsToDelete.mkString("\n\t"))}")
   }
 

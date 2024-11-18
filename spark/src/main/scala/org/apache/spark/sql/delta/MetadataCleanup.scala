@@ -128,8 +128,8 @@ trait MetadataCleanup extends DeltaLogging {
           sidecarDeletionMetrics)
         logInfo(log"Sidecar deletion metrics: ${MDC(DeltaLogKeys.METRICS, sidecarDeletionMetrics)}")
       }
-      logInfo(log"Deleted ${MDC(DeltaLogKeys.NUM_FILES, numDeleted)} log files and " +
-        log"${MDC(DeltaLogKeys.NUM_FILES2, numDeletedUnbackfilled)} unbackfilled commit " +
+      logInfo(log"Deleted ${MDC(DeltaLogKeys.NUM_FILES, numDeleted.toLong)} log files and " +
+        log"${MDC(DeltaLogKeys.NUM_FILES2, numDeletedUnbackfilled.toLong)} unbackfilled commit " +
         log"files older than ${MDC(DeltaLogKeys.DATE, formattedDate)}")
     }
   }

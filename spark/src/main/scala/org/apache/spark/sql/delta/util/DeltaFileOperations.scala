@@ -128,7 +128,7 @@ object DeltaFileOperations extends DeltaLogging {
       base: Int = 100,
       jitter: Int = 1000): Unit = {
     val sleepTime = Random.nextInt(jitter) + base
-    logWarning(log"Sleeping for ${MDC(DeltaLogKeys.TIME_MS, sleepTime)} ms to rate limit " +
+    logWarning(log"Sleeping for ${MDC(DeltaLogKeys.TIME_MS, sleepTime.toLong)} ms to rate limit " +
       log"${MDC(DeltaLogKeys.OP_NAME, opName)}", t)
     Thread.sleep(sleepTime)
   }
