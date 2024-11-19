@@ -699,7 +699,7 @@ object DeltaOperations {
       // When clustering columns are specified, set the zOrderBy key to empty.
       ZORDER_PARAMETER_KEY -> JsonUtils.toJson(if (clusterBy.isEmpty) zOrderBy else Seq.empty),
       CLUSTERING_PARAMETER_KEY -> JsonUtils.toJson(clusterBy.getOrElse(Seq.empty)),
-      AUTO_COMPACTION_PARAMETER_KEY -> auto
+      AUTO_COMPACTION_PARAMETER_KEY -> auto.toString
     )
     // `isFull` is not relevant for non-clustering tables, so skip it.
     .++(clusterBy.filter(_.nonEmpty).map(_ => CLUSTERING_IS_FULL_KEY -> isFull))

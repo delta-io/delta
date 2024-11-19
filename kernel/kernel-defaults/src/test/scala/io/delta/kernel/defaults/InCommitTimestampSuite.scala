@@ -17,26 +17,23 @@ package io.delta.kernel.defaults
 
 import io.delta.kernel.Operation.{CREATE_TABLE, WRITE}
 import io.delta.kernel._
+import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.{InvalidTableException, ProtocolChangedException}
 import io.delta.kernel.expressions.Literal
+import io.delta.kernel.internal.TableConfig._
+import io.delta.kernel.internal.actions.SingleAction.createCommitInfoSingleAction
 import io.delta.kernel.internal.actions.{CommitInfo, SingleAction}
 import io.delta.kernel.internal.fs.Path
-import io.delta.kernel.internal.util.{FileNames, VectorUtils}
-import io.delta.kernel.internal.{DeltaHistoryManager, SnapshotImpl, TableImpl}
-import io.delta.kernel.internal.util.ManualClock
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
-import io.delta.kernel.types.IntegerType.INTEGER
-import io.delta.kernel.types._
-import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
-
-import java.util.{Locale, Optional}
-import scala.collection.JavaConverters._
-import scala.collection.immutable.{ListMap, Seq}
-import scala.collection.mutable
-import io.delta.kernel.internal.TableConfig._
+import io.delta.kernel.internal.util.{FileNames, ManualClock, VectorUtils}
+import io.delta.kernel.internal.{SnapshotImpl, TableImpl}
+import io.delta.kernel.utils.CloseableIterable.emptyIterable
 import io.delta.kernel.utils.FileStatus
-import io.delta.kernel.internal.actions.SingleAction.createCommitInfoSingleAction
+import org.apache.hadoop.conf.Configuration
+
+import java.util.Optional
+import scala.collection.immutable.{ListMap, Seq}
 
 class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
 
@@ -577,6 +574,17 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
       assert(ex.getMessage.contains(String.format("Transaction has encountered a conflict and " +
         "can not be committed. Query needs to be re-executed using the latest version of the " +
         "table.")))
+    }
+  }
+
+  test("CommitInfo getCommitInfoOpt should work after Spark optimize") {
+    withTempDir { dir =>
+      spark.range(10).repartition(2).write.format("delta").save(dir.toString)
+      spark.sql(s"OPTIMIZE delta.`$dir`").collect()
+
+      val engine = DefaultEngine.create(new Configuration())
+
+      CommitInfo.getCommitInfoOpt(engine, new Path(dir.getCanonicalPath, "_delta_log"), 1L)
     }
   }
 }
