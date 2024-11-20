@@ -183,7 +183,7 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
       assert(
         e.getMessage
           .contains(
-            "Found DomainMetadata action(s) but table feature 'domainMetadata' "
+            "Cannot commit DomainMetadata action(s) because the feature 'domainMetadata' "
             + "is not supported on this table."
           )
       )
