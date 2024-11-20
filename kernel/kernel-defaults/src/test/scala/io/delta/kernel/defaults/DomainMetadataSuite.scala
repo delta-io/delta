@@ -19,7 +19,7 @@ import io.delta.kernel._
 import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions._
-import io.delta.kernel.internal.{SnapshotImpl, TableImpl, TransactionBuilderImpl}
+import io.delta.kernel.internal.{SnapshotImpl, TableImpl, TransactionBuilderImpl, TransactionImpl}
 import io.delta.kernel.internal.actions.{DomainMetadata, Protocol, SingleAction}
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
@@ -57,7 +57,9 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
     val txnBuilder = createWriteTxnBuilder(TableImpl.forPath(engine, tablePath))
       .asInstanceOf[TransactionBuilderImpl]
 
-    txnBuilder.withDomainMetadatas(domainMetadatas.asJava).build(engine)
+    val txn = txnBuilder.build(engine).asInstanceOf[TransactionImpl]
+    txn.addDomainMetadatas(domainMetadatas.asJava)
+    txn
   }
 
   private def commitDomainMetadataAndVerify(

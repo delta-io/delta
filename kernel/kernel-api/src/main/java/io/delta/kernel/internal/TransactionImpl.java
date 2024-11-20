@@ -69,7 +69,7 @@ public class TransactionImpl implements Transaction {
   private final Optional<SetTransaction> setTxnOpt;
   private final boolean shouldUpdateProtocol;
   private final Clock clock;
-  private final List<DomainMetadata> domainMetadatas;
+  private final List<DomainMetadata> domainMetadatas = new ArrayList<>();
   private Metadata metadata;
   private boolean shouldUpdateMetadata;
 
@@ -87,8 +87,7 @@ public class TransactionImpl implements Transaction {
       Optional<SetTransaction> setTxnOpt,
       boolean shouldUpdateMetadata,
       boolean shouldUpdateProtocol,
-      Clock clock,
-      List<DomainMetadata> domainMetadatas) {
+      Clock clock) {
     this.isNewTable = isNewTable;
     this.dataPath = dataPath;
     this.logPath = logPath;
@@ -101,7 +100,6 @@ public class TransactionImpl implements Transaction {
     this.shouldUpdateMetadata = shouldUpdateMetadata;
     this.shouldUpdateProtocol = shouldUpdateProtocol;
     this.clock = clock;
-    this.domainMetadatas = domainMetadatas;
   }
 
   @Override
@@ -121,6 +119,15 @@ public class TransactionImpl implements Transaction {
 
   public Optional<SetTransaction> getSetTxnOpt() {
     return setTxnOpt;
+  }
+
+  /**
+   * Internal API to add domain metadata actions for this transaction. Visible for testing.
+   *
+   * @param domainMetadatas List of domain metadata to be added to the transaction.
+   */
+  public void addDomainMetadatas(List<DomainMetadata> domainMetadatas) {
+    this.domainMetadatas.addAll(domainMetadatas);
   }
 
   public List<DomainMetadata> getDomainMetadatas() {
