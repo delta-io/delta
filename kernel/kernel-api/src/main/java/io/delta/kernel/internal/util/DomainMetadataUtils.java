@@ -93,8 +93,12 @@ public class DomainMetadataUtils {
     for (DomainMetadata domainMetadata : domainMetadataActions) {
       String domain = domainMetadata.getDomain();
       if (domainMetadataMap.containsKey(domain)) {
-        throw DeltaErrors.duplicateDomainMetadataAction(
-            domain, domainMetadataMap.get(domain), domainMetadata);
+        String message =
+            String.format(
+                "Multiple actions detected for domain '%s' in single transaction: '%s' and '%s'. "
+                    + "Only one action per domain is allowed.",
+                domain, domainMetadataMap.get(domain).toString(), domainMetadata.toString());
+        throw new IllegalArgumentException(message);
       }
       domainMetadataMap.put(domain, domainMetadata);
     }

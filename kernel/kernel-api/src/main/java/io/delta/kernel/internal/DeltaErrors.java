@@ -282,16 +282,6 @@ public final class DeltaErrors {
     return new KernelException(message);
   }
 
-  public static KernelException duplicateDomainMetadataAction(
-      String domain, DomainMetadata action1, DomainMetadata action2) {
-    String message =
-        String.format(
-            "Multiple actions detected for domain '%s' in single transaction: '%s' and '%s'. "
-                + "Only one action per domain is allowed.",
-            domain, action1.toString(), action2.toString());
-    return new KernelException(message);
-  }
-
   public static ConcurrentWriteException concurrentDomainMetadataAction(
       DomainMetadata domainMetadataAttempt, DomainMetadata winningDomainMetadata) {
     String message =

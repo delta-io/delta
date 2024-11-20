@@ -207,7 +207,7 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
 
       val txn = createTxnWithDomainMetadatas(engine, tablePath, List(dm1_1, dm2, dm1_2))
 
-      val e = intercept[KernelException] {
+      val e = intercept[IllegalArgumentException] {
         txn.commit(engine, emptyIterable())
       }
       assert(
