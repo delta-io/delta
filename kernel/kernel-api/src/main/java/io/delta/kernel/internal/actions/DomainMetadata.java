@@ -16,6 +16,7 @@
 package io.delta.kernel.internal.actions;
 
 import static io.delta.kernel.internal.util.InternalUtils.requireNonNull;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.data.ColumnVector;
@@ -50,7 +51,7 @@ public class DomainMetadata {
     if (row == null) {
       return null;
     }
-    assert (row.getSchema().equals(FULL_SCHEMA));
+    checkArgument(row.getSchema().equals(FULL_SCHEMA));
     return new DomainMetadata(
         requireNonNull(row, 0, "domain").getString(0),
         requireNonNull(row, 1, "configuration").getString(1),

@@ -61,7 +61,7 @@ public class TableFeatures {
   /** The feature name for domain metadata. */
   public static final String DOMAIN_METADATA_FEATURE_NAME = "domainMetadata";
 
-  /** The minimum writer version required to support domain metadata. */
+  /** The minimum writer version required to support table features. */
   public static final int TABLE_FEATURES_MIN_WRITER_VERSION = 7;
 
   ////////////////////
