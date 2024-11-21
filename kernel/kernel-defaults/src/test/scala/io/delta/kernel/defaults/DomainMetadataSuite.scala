@@ -19,9 +19,11 @@ import io.delta.kernel._
 import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions._
+import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.{SnapshotImpl, TableImpl, TransactionBuilderImpl, TransactionImpl}
 import io.delta.kernel.internal.actions.{DomainMetadata, Protocol, SingleAction}
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
+import io.delta.kernel.internal.TableConfig.CHECKPOINT_INTERVAL
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.delta.DeltaLog
@@ -78,7 +80,7 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
 
   private def setDomainMetadataSupport(engine: Engine, tablePath: String): Unit = {
     val protocol = new Protocol(
-      1, // minReaderVersion
+      3, // minReaderVersion
       7, // minWriterVersion
       Collections.emptyList(), // readerFeatures
       Seq("domainMetadata").asJava // writerFeatures
@@ -192,8 +194,12 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
       setDomainMetadataSupport(engine, tablePath)
 
       // Commit domain metadata again and expect success
-      val txn2 = createTxnWithDomainMetadatas(engine, tablePath, List(dm1))
-      txn2.commit(engine, emptyIterable())
+      commitDomainMetadataAndVerify(
+        engine,
+        tablePath,
+        domainMetadatas = Seq(dm1),
+        expectedValue = Map("domain1" -> dm1)
+      )
     }
   }
 
@@ -471,5 +477,67 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
         )
       }
     })
+  }
+
+  test("Integration test - create a table using Kernel and read its domain metadata using Spark") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val tbl = "tbl"
+      withTable(tbl) {
+        // Create table with domain metadata enabled
+        createTableWithDomainMetadataSupported(engine, tablePath)
+
+        // Manually commit three domain metadata actions
+        val dm1 = new DomainMetadata("testDomain1", """{"key1":"1"}""", false)
+        val dm2 = new DomainMetadata("testDomain2", "", false)
+        val dm3 = new DomainMetadata("testDomain3", "", false)
+        commitDomainMetadataAndVerify(
+          engine,
+          tablePath,
+          domainMetadatas = Seq(dm1, dm2, dm3),
+          expectedValue = Map("testDomain1" -> dm1, "testDomain2" -> dm2, "testDomain3" -> dm3)
+        )
+
+        appendData(
+          engine,
+          tablePath,
+          data = Seq(Map.empty[String, Literal] -> dataBatches1)
+        )
+
+        // Checkpoint the table, to distribute the domain metadatas to both checkpoint and log files
+        val table = Table.forPath(engine, tablePath)
+        val latestVersion = table.getLatestSnapshot(engine).getVersion(engine)
+        table.checkpoint(engine, latestVersion)
+
+        // Manually commit two domain metadata actions
+        val dm1_2 = new DomainMetadata("testDomain1", """{"key1":"10"}""", false)
+        val dm2_2 = new DomainMetadata("testDomain2", "", true)
+        commitDomainMetadataAndVerify(
+          engine,
+          tablePath,
+          domainMetadatas = Seq(dm1_2, dm2_2),
+          expectedValue = Map("testDomain1" -> dm1_2, "testDomain2" -> dm2_2, "testDomain3" -> dm3)
+        )
+
+        // Use Spark to read the table's domain metadata and verify the result
+        val deltaLog = DeltaLog.forTable(spark, new Path(tablePath))
+        val domainMetadata = deltaLog.snapshot.domainMetadata.groupBy(_.domain).map {
+          case (name, domains) =>
+            assert(domains.size == 1)
+            name -> domains.head
+        }
+        // Note that in Delta-Spark, the deltaLog.snapshot.domainMetadata does not include
+        // domain metadata that are removed
+        assert(
+          domainMetadata === Map(
+            "testDomain1" -> SparkDomainMetadata(
+              "testDomain1",
+              """{"key1":"10"}""",
+              removed = false
+            ),
+            "testDomain3" -> SparkDomainMetadata("testDomain3", "", removed = false)
+          )
+        )
+      }
+    }
   }
 }
