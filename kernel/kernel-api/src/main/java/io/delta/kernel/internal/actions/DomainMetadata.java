@@ -51,7 +51,11 @@ public class DomainMetadata {
     if (row == null) {
       return null;
     }
-    checkArgument(row.getSchema().equals(FULL_SCHEMA));
+    checkArgument(
+        row.getSchema().equals(FULL_SCHEMA),
+        "Expected schema: %s, found: %s",
+        FULL_SCHEMA,
+        row.getSchema());
     return new DomainMetadata(
         requireNonNull(row, 0, "domain").getString(0),
         requireNonNull(row, 1, "configuration").getString(1),
