@@ -47,6 +47,15 @@ public class DomainMetadata {
         requireNonNull(vector.getChild(2), rowId, "removed").getBoolean(rowId));
   }
 
+  /**
+   * Creates a {@link DomainMetadata} instance from a Row with the schema being {@link
+   * DomainMetadata#FULL_SCHEMA}.
+   *
+   * @param row the Row object containing the DomainMetadata action
+   * @return a DomainMetadata instance or null if the row is null
+   * @throws IllegalArgumentException if the schema of the row does not match {@link
+   *     DomainMetadata#FULL_SCHEMA}
+   */
   public static DomainMetadata fromRow(Row row) {
     if (row == null) {
       return null;
