@@ -78,9 +78,7 @@ trait RecordChecksum extends DeltaLogging {
   private lazy val writer =
     CheckpointFileManager.create(deltaLog.logPath, deltaLog.newDeltaHadoopConf())
 
-  private def getChecksum(snapshot: Snapshot): VersionChecksum = {
-    snapshot.checksumOpt.getOrElse(snapshot.computeChecksum)
-  }
+  private def getChecksum(snapshot: Snapshot): VersionChecksum = snapshot.computeChecksum
 
   protected def writeChecksumFile(txnId: String, snapshot: Snapshot): Unit = {
     if (!spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED)) {
@@ -277,6 +275,12 @@ trait RecordChecksum extends DeltaLogging {
       case _ =>
     }
 
+    val setTransactions = incrementallyComputeSetTransactions(
+      oldSnapshot, oldVersionChecksum, attemptVersion, actions)
+
+    val domainMetadata = incrementallyComputeDomainMetadatas(
+      oldSnapshot, oldVersionChecksum, attemptVersion, actions)
+
     Right(VersionChecksum(
       txnId = txnIdOpt,
       tableSizeBytes = tableSizeBytes,
@@ -286,13 +290,106 @@ trait RecordChecksum extends DeltaLogging {
       inCommitTimestampOpt = inCommitTimestamp,
       metadata = metadata,
       protocol = protocol,
-      setTransactions = None,
-      domainMetadata = None,
+      setTransactions = setTransactions,
+      domainMetadata = domainMetadata,
       histogramOpt = None,
       allFiles = None
     ))
   }
 
+  /**
+   * Incrementally compute [[Snapshot.setTransactions]] for the commit `attemptVersion`.
+   *
+   * @param oldSnapshot - snapshot corresponding to `attemptVersion` - 1
+   * @param oldVersionChecksum - [[VersionChecksum]] corresponding to `attemptVersion` - 1
+   * @param attemptVersion - version which we want to commit
+   * @param actionsToCommit - actions for commit `attemptVersion`
+   * @return Optional sequence of incrementally computed [[SetTransaction]]s for commit
+   *         `attemptVersion`.
+   */
+  private def incrementallyComputeSetTransactions(
+      oldSnapshot: Option[Snapshot],
+      oldVersionChecksum: VersionChecksum,
+      attemptVersion: Long,
+      actionsToCommit: Seq[Action]): Option[Seq[SetTransaction]] = {
+    // Check-1: check conf
+    if (!spark.conf.get(DeltaSQLConf.DELTA_WRITE_SET_TRANSACTIONS_IN_CRC)) {
+      return None
+    }
+
+    // Check-2: check `minSetTransactionRetentionTimestamp` is not set
+    val newMetadataToCommit = actionsToCommit.collectFirst { case m: Metadata => m }
+    // TODO: Add support for incrementally computing [[SetTransaction]]s even when
+    //  `minSetTransactionRetentionTimestamp` is set.
+    // We don't incrementally compute [[SetTransaction]]s when user has configured
+    // `minSetTransactionRetentionTimestamp` as it makes verification non-deterministic.
+    // Check all places to figure out whether `minSetTransactionRetentionTimestamp` is set:
+    // 1. oldSnapshot corresponding to `attemptVersion - 1`
+    // 2. old VersionChecksum's MetaData (corresponding to `attemptVersion-1`)
+    // 3. new VersionChecksum's MetaData (corresponding to `attemptVersion`)
+    val setTransactionRetentionTimestampConfigured =
+      (oldSnapshot.map(_.metadata) ++ Option(oldVersionChecksum.metadata) ++ newMetadataToCommit)
+        .exists(DeltaLog.minSetTransactionRetentionInterval(_).nonEmpty)
+    if (setTransactionRetentionTimestampConfigured) return None
+
+    // Check-3: Check old setTransactions are available so that we can incrementally compute new.
+    val oldSetTransactions = oldVersionChecksum.setTransactions
+      .getOrElse { return None }
+
+    // Check-4: old/new setTransactions are within the threshold.
+    val setTransactionsToCommit = actionsToCommit.filter(_.isInstanceOf[SetTransaction])
+    val threshold = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_MAX_SET_TRANSACTIONS_IN_CRC)
+    if (Math.max(setTransactionsToCommit.size, oldSetTransactions.size) > threshold) return None
+
+    // We currently don't attempt incremental [[SetTransaction]] when
+    // `minSetTransactionRetentionTimestamp` is set. So passing this as None here explicitly.
+    // We can also ignore file retention because that only affects [[RemoveFile]] actions.
+    val logReplay = new InMemoryLogReplay(
+      minFileRetentionTimestamp = 0,
+      minSetTransactionRetentionTimestamp = None)
+
+    logReplay.append(attemptVersion - 1, oldSetTransactions.toIterator)
+    logReplay.append(attemptVersion, setTransactionsToCommit.toIterator)
+    Some(logReplay.getTransactions.toSeq).filter(_.size <= threshold)
+  }
+
+  /**
+   * Incrementally compute [[Snapshot.domainMetadata]] for the commit `attemptVersion`.
+   *
+   * @param oldVersionChecksum - [[VersionChecksum]] corresponding to `attemptVersion` - 1
+   * @param attemptVersion - version which we want to commit
+   * @param actionsToCommit - actions for commit `attemptVersion`
+   * @return Sequence of incrementally computed [[DomainMetadata]]s for commit
+   *         `attemptVersion`.
+   */
+  private def incrementallyComputeDomainMetadatas(
+      oldSnapshot: Option[Snapshot],
+      oldVersionChecksum: VersionChecksum,
+      attemptVersion: Long,
+      actionsToCommit: Seq[Action]): Option[Seq[DomainMetadata]] = {
+    // Check old DomainMetadatas are available so that we can incrementally compute new.
+    val oldDomainMetadatas = oldVersionChecksum.domainMetadata
+      .getOrElse { return None }
+    val newDomainMetadatas = actionsToCommit.filter(_.isInstanceOf[DomainMetadata])
+
+    // We only work with DomainMetadata, so RemoveFile and SetTransaction retention don't matter.
+    val logReplay = new InMemoryLogReplay(
+      minFileRetentionTimestamp = 0,
+      minSetTransactionRetentionTimestamp = None)
+
+    val threshold = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_MAX_DOMAIN_METADATAS_IN_CRC)
+
+    logReplay.append(attemptVersion - 1, oldDomainMetadatas.iterator)
+    logReplay.append(attemptVersion, newDomainMetadatas.iterator)
+    // We don't truncate the set of DomainMetadata actions. Instead, we either store all of them or
+    // none of them. The advantage of this is that you can then determine presence based on the
+    // checksum, i.e. if the checksum contains domain metadatas but it doesn't contain the one you
+    // are looking for, then it's not there.
+    //
+    // It's also worth noting that we can distinguish "no domain metadatas" versus
+    // "domain metadatas not stored" as [[Some]] vs. [[None]].
+    Some(logReplay.getDomainMetadatas.toSeq).filter(_.size <= threshold)
+  }
 }
 
 object RecordChecksum {

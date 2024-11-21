@@ -65,6 +65,9 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
 
   // For implicits which re-use Encoder:
   import implicits._
+  /** Whether computedState is already computed or not */
+  @volatile protected var _computedStateTriggered: Boolean = false
+
 
   /** A map to look up transaction version by appId. */
   lazy val transactions: Map[String, Long] = setTransactions.map(t => t.appId -> t.version).toMap
@@ -114,6 +117,7 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
           throw DeltaErrors.actionNotFoundException("metadata", version)
         }
 
+        _computedStateTriggered = true
         _computedState
       }
     }

@@ -1073,6 +1073,31 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_WRITE_SET_TRANSACTIONS_IN_CRC =
+    buildConf("setTransactionsInCrc.writeOnCommit")
+      .internal()
+      .doc("When enabled, each commit will incrementally compute and cache all SetTransaction" +
+        " actions in the .crc file. Note that this only happens when incremental commits" +
+        s" are enabled (${INCREMENTAL_COMMIT_ENABLED.key})")
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_MAX_SET_TRANSACTIONS_IN_CRC =
+    buildConf("setTransactionsInCrc.maxAllowed")
+      .internal()
+      .doc("Threshold of the number of SetTransaction actions below which this optimization" +
+        " should be enabled")
+      .longConf
+      .createWithDefault(100)
+
+  val DELTA_MAX_DOMAIN_METADATAS_IN_CRC =
+    buildConf("domainMetadatasInCrc.maxAllowed")
+      .internal()
+      .doc("Threshold of the number of DomainMetadata actions below which this optimization" +
+        " should be enabled")
+      .longConf
+      .createWithDefault(10)
+
   val DELTA_CHECKPOINT_THROW_EXCEPTION_WHEN_FAILED =
       buildConf("checkpoint.exceptionThrowing.enabled")
         .internal()

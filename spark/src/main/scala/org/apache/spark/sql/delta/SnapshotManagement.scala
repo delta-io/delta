@@ -1271,6 +1271,7 @@ trait SnapshotManagement { self: DeltaLog =>
         // a checksum based on state reconstruction. Disable incremental commit to avoid
         // further error triggers in this session.
         spark.sessionState.conf.setConf(DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED, false)
+        spark.sessionState.conf.setConf(DeltaSQLConf.DELTA_WRITE_SET_TRANSACTIONS_IN_CRC, false)
         return createSnapshotAfterCommit(
           initSegment,
           newChecksumOpt = None,
