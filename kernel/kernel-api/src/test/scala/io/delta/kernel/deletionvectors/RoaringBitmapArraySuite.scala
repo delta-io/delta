@@ -21,14 +21,13 @@ import org.scalatest.funsuite.AnyFunSuite
 
 class RoaringBitmapArraySuite extends AnyFunSuite {
 
-
   test("RoaringBitmapArray create empty map") {
     val bitmap = RoaringBitmapArray.create()
     assert(bitmap.toArray.isEmpty)
   }
 
   test("RoaringBitmapArray create map with values only in first bitmap") {
-    // Values <= max unsigned integer (4,294,967,295) will be in the first bitmap
+    // Values <= max unsigned int (4,294,967,295) will be in the first bitmap
     val bitmap = RoaringBitmapArray.create(1L, 100L)
 
     assert(bitmap.contains(1L))
@@ -41,7 +40,7 @@ class RoaringBitmapArraySuite extends AnyFunSuite {
   }
 
   test("RoaringBitmapArray create map with values only in second bitmap") {
-    // Values > max unsigned integer (4,294,967,295) will be in the second bitmap
+    // Values between max unsigned int and 2*(max unsigned int) will be in the second bitmap
     val bitmap = RoaringBitmapArray.create(5000000000L, 5000000100L)
 
     assert(bitmap.contains(5000000000L))
