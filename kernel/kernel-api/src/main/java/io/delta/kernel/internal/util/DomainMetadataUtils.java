@@ -54,21 +54,6 @@ public class DomainMetadataUtils {
   }
 
   /**
-   * Checks if the table protocol supports the "domainMetadata" writer feature.
-   *
-   * @param protocol the protocol to check
-   * @return true if the "domainMetadata" feature is supported, false otherwise
-   */
-  public static boolean isDomainMetadataSupported(Protocol protocol) {
-    List<String> writerFeatures = protocol.getWriterFeatures();
-    if (writerFeatures == null) {
-      return false;
-    }
-    return writerFeatures.contains(TableFeatures.DOMAIN_METADATA_FEATURE_NAME)
-        && protocol.getMinWriterVersion() >= TableFeatures.TABLE_FEATURES_MIN_WRITER_VERSION;
-  }
-
-  /**
    * Validates the list of domain metadata actions before committing them. It ensures that
    *
    * <ol>
@@ -85,7 +70,7 @@ public class DomainMetadataUtils {
     if (domainMetadataActions.isEmpty()) return;
 
     // The list of domain metadata is non-empty, so the protocol must support domain metadata
-    if (!isDomainMetadataSupported(protocol)) {
+    if (!TableFeatures.isDomainMetadataSupported(protocol)) {
       throw DeltaErrors.domainMetadataUnsupported();
     }
 

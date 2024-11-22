@@ -183,6 +183,21 @@ public class TableFeatures {
   }
 
   /**
+   * Checks if the table protocol supports the "domainMetadata" writer feature.
+   *
+   * @param protocol the protocol to check
+   * @return true if the "domainMetadata" feature is supported, false otherwise
+   */
+  public static boolean isDomainMetadataSupported(Protocol protocol) {
+    List<String> writerFeatures = protocol.getWriterFeatures();
+    if (writerFeatures == null) {
+      return false;
+    }
+    return writerFeatures.contains(DOMAIN_METADATA_FEATURE_NAME)
+        && protocol.getMinWriterVersion() >= TABLE_FEATURES_MIN_WRITER_VERSION;
+  }
+
+  /**
    * Get the minimum reader version required for a feature.
    *
    * @param feature the feature
