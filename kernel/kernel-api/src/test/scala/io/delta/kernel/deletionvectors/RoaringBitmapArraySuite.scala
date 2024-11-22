@@ -52,16 +52,17 @@ class RoaringBitmapArraySuite extends AnyFunSuite {
     assert(bitmap.toArray sameElements Array(5000000000L, 5000000100L))
   }
 
-  test("RoaringBitmapArray create map with values in first and second bitmap") {
-    val bitmap = RoaringBitmapArray.create(100L, 5000000000L)
+  test("RoaringBitmapArray create map with values in first and third bitmap") {
+    // Values between 2*(max unsigned int) and 3*(max unsigned int) will be in the third bitmap
+    val bitmap = RoaringBitmapArray.create(100L, 10000000000L)
 
     assert(bitmap.contains(100L))
-    assert(bitmap.contains(5000000000L))
+    assert(bitmap.contains(10000000000L))
 
     assert(!bitmap.contains(101L))
-    assert(!bitmap.contains(5000000001L))
+    assert(!bitmap.contains(10000000001L))
 
-    assert(bitmap.toArray sameElements Array(100L, 5000000000L))
+    assert(bitmap.toArray sameElements Array(100L, 10000000000L))
   }
 
   // TODO need to implement serialize to copy over tests
