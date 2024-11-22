@@ -100,7 +100,7 @@ public final class RoaringBitmapArray {
   // Instance Fields / Methods
   ////////////////////////////////////////////////////////////////////////////////
 
-  private RoaringBitmap[] bitmaps;
+  private RoaringBitmap[] bitmaps = new RoaringBitmap[0];
 
   /**
    * Deserialize the contents of `buffer` into this [[RoaringBitmapArray]].
@@ -267,7 +267,6 @@ public final class RoaringBitmapArray {
 
   public static RoaringBitmapArray create(long... values) {
     RoaringBitmapArray bitmap = new RoaringBitmapArray();
-    bitmap.bitmaps = new RoaringBitmap[0];
     for (long value : values) {
       bitmap.add(value);
     }
