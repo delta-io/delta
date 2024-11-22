@@ -503,7 +503,7 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
           data = Seq(Map.empty[String, Literal] -> dataBatches1)
         )
 
-        // Checkpoint the table, to distribute the domain metadatas to both checkpoint and log files
+        // Checkpoint the table so domain metadata is distributed to both checkpoint and log files
         val table = Table.forPath(engine, tablePath)
         val latestVersion = table.getLatestSnapshot(engine).getVersion(engine)
         table.checkpoint(engine, latestVersion)
@@ -526,7 +526,7 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
             name -> domains.head
         }
         // Note that in Delta-Spark, the deltaLog.snapshot.domainMetadata does not include
-        // domain metadata that are removed
+        // domain metadata that are removed.
         assert(
           domainMetadata === Map(
             "testDomain1" -> SparkDomainMetadata(
