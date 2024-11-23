@@ -132,11 +132,9 @@ public class SnapshotImpl implements Snapshot {
     if (IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata)) {
       if (!inCommitTimestampOpt.isPresent()) {
         Optional<CommitInfo> commitInfoOpt =
-            CommitInfo.getCommitInfoOpt(engine, logPath, logSegment.version);
+            CommitInfo.loadCommitInfoAtVersion(engine, logPath, logSegment.version);
         inCommitTimestampOpt =
-            Optional.of(
-                CommitInfo.getRequiredInCommitTimestamp(
-                    commitInfoOpt, String.valueOf(logSegment.version), dataPath));
+            Optional.of(CommitInfo.getRequiredInCommitTimestamp(commitInfoOpt, logSegment.version));
       }
       return inCommitTimestampOpt.get();
     } else {

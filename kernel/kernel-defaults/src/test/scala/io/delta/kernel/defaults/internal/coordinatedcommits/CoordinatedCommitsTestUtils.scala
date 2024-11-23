@@ -59,8 +59,9 @@ trait CoordinatedCommitsTestUtils {
       minReaderVersion, minWriterVersion, Collections.emptyList(), Collections.emptyList())
   }
 
-  def getCommitInfo(newTimestamp: Long): CommitInfo = {
+  def getCommitInfo(version: Long, newTimestamp: Long): CommitInfo = {
     new CommitInfo(
+      version,
       Optional.of(newTimestamp),
       -1,
       null,
@@ -79,7 +80,7 @@ trait CoordinatedCommitsTestUtils {
     timestamp: Long,
     commit: CloseableIterator[Row],
     commitCoordinatorClientHandler: CommitCoordinatorClientHandler): Commit = {
-    val updatedCommitInfo = getCommitInfo(timestamp)
+    val updatedCommitInfo = getCommitInfo(version, timestamp)
     val updatedActions = if (version == 0) {
       getUpdatedActionsForZerothCommit(updatedCommitInfo)
     } else {
@@ -121,7 +122,7 @@ trait CoordinatedCommitsTestUtils {
         TableConfig.COORDINATED_COMMITS_COORDINATOR_CONF.getKey -> "{}")
     val newMetadata = oldMetadata.withNewConfiguration(newMetadataConfiguration.asJava)
     new UpdatedActions(
-      CoordinatedCommitsUtils.convertCommitInfoToAbstractCommitInfo(commitInfo),
+      commitInfo,
       CoordinatedCommitsUtils.convertMetadataToAbstractMetadata(newMetadata),
       CoordinatedCommitsUtils.convertProtocolToAbstractProtocol(getProtocol(3, 7)),
       CoordinatedCommitsUtils.convertMetadataToAbstractMetadata(oldMetadata),

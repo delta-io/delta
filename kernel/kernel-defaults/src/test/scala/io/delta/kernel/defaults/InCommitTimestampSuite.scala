@@ -18,7 +18,7 @@ package io.delta.kernel.defaults
 import io.delta.kernel.Operation.{CREATE_TABLE, WRITE}
 import io.delta.kernel._
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.exceptions.{InvalidTableException, ProtocolChangedException}
+import io.delta.kernel.exceptions.{InvalidTableException, KernelException, ProtocolChangedException}
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.actions.{CommitInfo, SingleAction}
 import io.delta.kernel.internal.fs.Path
@@ -162,13 +162,12 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
       val logPath = new Path(table.getPath(engine), "_delta_log")
       removeCommitInfoFromCommit(engine, 0, logPath)
 
-      val ex = intercept[InvalidTableException] {
+      val ex = intercept[KernelException] {
         table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl].getTimestamp(engine)
       }
-      assert(ex.getMessage.contains(String.format(
-        "This table has the feature %s enabled which requires the presence of the " +
-          "CommitInfo action in every commit. However, the CommitInfo action is " +
-          "missing from commit version %s.", "inCommitTimestamp", "0")))
+      assert(ex.getMessage.contains("This table has the feature inCommitTimestamp enabled which " +
+        "requires the presence of the CommitInfo action in every commit. However, the CommitInfo " +
+        "action is missing from commit version 0."))
     }
   }
 
@@ -189,7 +188,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
           Optional.empty())
       assert(columnarBatches.hasNext)
       val rows = columnarBatches.next().getRows
-      val commitInfoOpt = CommitInfo.getCommitInfoOpt(engine, logPath, 0)
+      val commitInfoOpt = CommitInfo.loadCommitInfoAtVersion(engine, logPath, 0)
       assert(commitInfoOpt.isPresent)
       val commitInfo = commitInfoOpt.get
       commitInfo.setInCommitTimestamp(Optional.empty())
@@ -208,13 +207,12 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
           FileNames.deltaFile(logPath, 0),
           rowsWithoutCommitInfoInCommitTimestamp, true /* overwrite */)
 
-      val ex = intercept[InvalidTableException] {
+      val ex = intercept[KernelException] {
         table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl].getTimestamp(engine)
       }
-      assert(ex.getMessage.contains(String.format(
-        "This table has the feature %s enabled which requires the presence of " +
-          "inCommitTimestamp in the CommitInfo action. However, this field has not " +
-          "been set in commit version %s.", "inCommitTimestamp", "0")))
+      assert(ex.getMessage.contains("This table has the feature inCommitTimestamp enabled which " +
+        "requires the presence of inCommitTimestamp in the CommitInfo action. However, this " +
+        "field has not been set in commit version 0."))
     }
   }
 
@@ -391,22 +389,22 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
       verifyWrittenContent(tablePath, testSchema, expData)
       verifyTableProperties(tablePath,
         ListMap(IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> true,
-        "delta.feature.inCommitTimestamp" -> "supported",
-        IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.getKey
-          -> getInCommitTimestamp(engine, table, version = 1).get,
-        IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.getKey -> 1L),
+          "delta.feature.inCommitTimestamp" -> "supported",
+          IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.getKey
+            -> getInCommitTimestamp(engine, table, version = 1).get,
+          IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.getKey -> 1L),
         3,
         7)
     }
   }
 
   /**
-   *  Helper method to read the inCommitTimestamp from the commit file of the given version if it
-   *  is not null, otherwise return null.
+   * Helper method to read the inCommitTimestamp from the commit file of the given version if it
+   * is not null, otherwise return null.
    */
   private def getInCommitTimestamp(engine: Engine, table: Table, version: Long): Option[Long] = {
     val logPath = new Path(table.getPath(engine), "_delta_log")
-    val commitInfoOpt = CommitInfo.getCommitInfoOpt(engine, logPath, version)
+    val commitInfoOpt = CommitInfo.loadCommitInfoAtVersion(engine, logPath, version)
     if (commitInfoOpt.isPresent && commitInfoOpt.get.getInCommitTimestamp.isPresent) {
       Some(commitInfoOpt.get.getInCommitTimestamp.get)
     } else {
@@ -530,13 +528,12 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
       removeCommitInfoFromCommit(engine, 2, logPath)
 
       clock.setTime(startTime - 1000)
-      val ex = intercept[InvalidTableException] {
+      val ex = intercept[KernelException] {
         commitAppendData(engine, txn1, Seq(Map.empty[String, Literal] -> dataBatches1))
       }
-      assert(ex.getMessage.contains(String.format(
-        "This table has the feature %s enabled which requires the presence of the " +
-          "CommitInfo action in every commit. However, the CommitInfo action is " +
-          "missing from commit version %s.", "inCommitTimestamp", "2")))
+      assert(ex.getMessage.contains("This table has the feature inCommitTimestamp enabled which " +
+        "requires the presence of the CommitInfo action in every commit. However, the CommitInfo " +
+        "action is missing from commit version 2."))
     }
   }
 
