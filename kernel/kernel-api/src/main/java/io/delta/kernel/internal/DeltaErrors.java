@@ -140,6 +140,16 @@ public final class DeltaErrors {
 
   /* ------------------------ PROTOCOL EXCEPTIONS ----------------------------- */
 
+  public static KernelException missingCommitTimestamp(String tablePath, long version) {
+    final String message =
+        String.format(
+            "This table has the feature inCommitTimestamp enabled which requires the presence of "
+                + "inCommitTimestamp in the CommitInfo action. However, this field has not been "
+                + "set in commit version %s.",
+            version);
+    return new InvalidTableException(tablePath, message);
+  }
+
   public static KernelException unsupportedReaderProtocol(
       String tablePath, int tableReaderVersion) {
     String message =

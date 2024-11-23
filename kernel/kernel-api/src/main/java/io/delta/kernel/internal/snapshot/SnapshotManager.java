@@ -59,10 +59,10 @@ import org.slf4j.LoggerFactory;
 public class SnapshotManager {
 
   /**
-   * The latest {@link SnapshotHint} for this table. The initial value inside the AtomicReference is
-   * `null`.
+   * The latest {@link SnapshotDescriptor} for this table. The initial value inside the
+   * AtomicReference is `null`.
    */
-  private AtomicReference<SnapshotHint> latestSnapshotHint;
+  private AtomicReference<SnapshotDescriptor> latestSnapshotHint;
 
   private final Path logPath;
   private final Path tablePath;
@@ -260,7 +260,7 @@ public class SnapshotManager {
    *
    * <p>Must be thread-safe.
    */
-  private void registerHint(SnapshotHint newHint) {
+  private void registerHint(SnapshotDescriptor newHint) {
     latestSnapshotHint.updateAndGet(
         currHint -> {
           if (currHint == null) return newHint; // the initial reference value is null
@@ -539,8 +539,7 @@ public class SnapshotManager {
     assertLogFilesBelongToTable(logPath, initSegment.allLogFilesUnsorted());
 
     final SnapshotImpl snapshot =
-        new SnapshotImpl(
-            tablePath, initSegment, logReplay, logReplay.getProtocol(), logReplay.getMetadata());
+        new SnapshotImpl(tablePath, initSegment, logReplay, logReplay.getSnapshotDescriptor());
 
     logger.info(
         "{}: Took {}ms to construct the snapshot (loading protocol and metadata) for {} {}",
@@ -549,11 +548,7 @@ public class SnapshotManager {
         initSegment.version,
         startingFromStr);
 
-    final SnapshotHint hint =
-        new SnapshotHint(
-            snapshot.getVersion(engine), snapshot.getProtocol(), snapshot.getMetadata());
-
-    registerHint(hint);
+    registerHint(logReplay.getSnapshotDescriptor());
 
     return snapshot;
   }

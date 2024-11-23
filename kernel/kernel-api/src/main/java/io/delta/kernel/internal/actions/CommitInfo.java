@@ -25,6 +25,7 @@ import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.InvalidTableException;
+import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.FileNames;
@@ -60,6 +61,22 @@ import org.slf4j.LoggerFactory;
  */
 public class CommitInfo {
 
+  /**
+   * @return The ICT of the given CommitInfo vector at the given rowId, if the ICT field is
+   *     non-null. Else {@link Optional#empty()}
+   * @throws NullPointerException if vector is null
+   */
+  public static Optional<Long> inCommitTimestampFromColumnVector(ColumnVector vector, int rowId)
+      throws NullPointerException {
+    if (vector.isNullAt(rowId)) {
+      throw new NullPointerException("ColumnVector is null");
+    }
+    if (vector.getChild(0).isNullAt(rowId)) {
+      return Optional.empty();
+    }
+    return Optional.of(vector.getChild(0).getLong(rowId));
+  }
+
   public static CommitInfo fromColumnVector(ColumnVector vector, int rowId) {
     if (vector.isNullAt(rowId)) {
       return null;
@@ -84,6 +101,9 @@ public class CommitInfo {
             ? Collections.emptyMap()
             : VectorUtils.toJavaMap(children[7].getMap(rowId)));
   }
+
+  public static StructType IN_COMMIT_TIMESTAMP_SCHEMA =
+      new StructType().add("inCommitTimestamp", LongType.LONG, true /* nullable */);
 
   public static StructType FULL_SCHEMA =
       new StructType()
@@ -181,7 +201,7 @@ public class CommitInfo {
    * exception if `commitInfoOpt` is empty or contains an empty `inCommitTimestamp`.
    */
   public static long getRequiredInCommitTimestamp(
-      Optional<CommitInfo> commitInfoOpt, String version, Path dataPath) {
+      Optional<CommitInfo> commitInfoOpt, long version, Path dataPath) {
     CommitInfo commitInfo =
         commitInfoOpt.orElseThrow(
             () ->
@@ -194,15 +214,7 @@ public class CommitInfo {
                             + "missing from commit version %s.",
                         version)));
     return commitInfo.inCommitTimestamp.orElseThrow(
-        () ->
-            new InvalidTableException(
-                dataPath.toString(),
-                String.format(
-                    "This table has the feature inCommitTimestamp "
-                        + "enabled which requires the presence of inCommitTimestamp in the "
-                        + "CommitInfo action. However, this field has not "
-                        + "been set in commit version %s.",
-                    version)));
+        () -> DeltaErrors.missingCommitTimestamp(dataPath.toString(), version));
   }
 
   /** Get the persisted commit info (if available) for the given delta file. */

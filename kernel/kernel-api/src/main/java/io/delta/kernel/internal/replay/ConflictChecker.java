@@ -273,7 +273,7 @@ public class ConflictChecker {
       return lastWinningTxn.getModificationTime();
     } else {
       return CommitInfo.getRequiredInCommitTimestamp(
-          winningCommitInfoOpt, String.valueOf(lastWinningVersion), snapshot.getDataPath());
+          winningCommitInfoOpt, lastWinningVersion, snapshot.getDataPath());
     }
   }
 
