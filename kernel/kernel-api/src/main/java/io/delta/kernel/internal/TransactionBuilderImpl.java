@@ -135,9 +135,9 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       if (!newWriterFeatures.isEmpty()) {
         logger.info("Automatically enabling writer features: {}", newWriterFeatures);
         shouldUpdateProtocol = true;
-        List<String> oldWriterFeatures = protocol.getWriterFeatures();
-        protocol = protocol.withNewWriterFeatures(newWriterFeatures);
-        List<String> curWriterFeatures = protocol.getWriterFeatures();
+        final Set<String> oldWriterFeatures = protocol.getWriterFeatures();
+        protocol = protocol.withAdditionalWriterFeatures(newWriterFeatures);
+        final Set<String> curWriterFeatures = protocol.getWriterFeatures();
         checkArgument(!Objects.equals(oldWriterFeatures, curWriterFeatures));
         TableFeatures.validateWriteSupportedTable(
             protocol, metadata, metadata.getSchema(), table.getPath(engine));
@@ -257,7 +257,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     return new Protocol(
         DEFAULT_READ_VERSION,
         DEFAULT_WRITE_VERSION,
-        null /* readerFeatures */,
-        null /* writerFeatures */);
+        Collections.emptySet() /* readerFeatures */,
+        Collections.emptySet() /* writerFeatures */);
   }
 }

@@ -56,7 +56,7 @@ trait CoordinatedCommitsTestUtils {
 
   def getProtocol(minReaderVersion: Int, minWriterVersion: Int): Protocol = {
     new Protocol(
-      minReaderVersion, minWriterVersion, Collections.emptyList(), Collections.emptyList())
+      minReaderVersion, minWriterVersion, Collections.emptySet(), Collections.emptySet())
   }
 
   def getCommitInfo(newTimestamp: Long): CommitInfo = {
@@ -123,9 +123,9 @@ trait CoordinatedCommitsTestUtils {
     new UpdatedActions(
       CoordinatedCommitsUtils.convertCommitInfoToAbstractCommitInfo(commitInfo),
       CoordinatedCommitsUtils.convertMetadataToAbstractMetadata(newMetadata),
-      CoordinatedCommitsUtils.convertProtocolToAbstractProtocol(getProtocol(3, 7)),
+      getProtocol(3, 7),
       CoordinatedCommitsUtils.convertMetadataToAbstractMetadata(oldMetadata),
-      CoordinatedCommitsUtils.convertProtocolToAbstractProtocol(getProtocol(3, 7)))
+      getProtocol(3, 7))
   }
 
   def getUpdatedActionsForNonZerothCommit(commitInfo: CommitInfo): UpdatedActions = {

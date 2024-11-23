@@ -92,7 +92,7 @@ class CoordinatedCommitsSuite extends DeltaTableWriteSuiteBase
           logPath.toString,
           version - 1L,
           CoordinatedCommitsUtils.convertMetadataToAbstractMetadata(getEmptyMetadata),
-          CoordinatedCommitsUtils.convertProtocolToAbstractProtocol(getProtocol(1, 1)))
+          getProtocol(1, 1))
         val tableConfString = if (tableConfToOverwrite != null) {
           tableConfToOverwrite
         } else {
