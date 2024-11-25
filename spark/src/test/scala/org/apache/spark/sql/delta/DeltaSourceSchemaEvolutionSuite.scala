@@ -142,8 +142,9 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
 
   protected def testSchemaEvolution(
       testName: String,
-      columnMapping: Boolean = true)(f: DeltaLog => Unit): Unit = {
-    super.test(testName) {
+      columnMapping: Boolean = true,
+      tags: Seq[org.scalatest.Tag] = Seq.empty)(f: DeltaLog => Unit): Unit = {
+    super.test(testName, tags: _*) {
       if (columnMapping) {
         withStarterTable { log =>
           f(log)
@@ -523,7 +524,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       ExpectMetadataEvolutionException,
       AssertOnQuery { q =>
         val offset = DeltaSourceOffset(log.tableId, q.availableOffsets.values.last)
-        offset.sourceVersion == 3 && offset.index == indexWhenSchemaLogIsUpdated
+        offset.index == indexWhenSchemaLogIsUpdated
       }
     )
     assert(getDefaultSchemaLog().getCurrentTrackedMetadata.get.deltaCommitVersion == v2)
@@ -605,9 +606,8 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
         // bumped from file action, no pending schema change
         offset.reservoirVersion == v1 + 1 &&
           offset.index == DeltaSourceOffset.BASE_INDEX &&
-          // base index uses latest VERSION_3 as well for consistency
-          offset.sourceVersion == 3 &&
-          // but serialized should use version 1 & -1 index for backward compatibility
+          // BASE_INDEX is -100 but serialized form should use version 1 & index -1 for backward
+          // compatibility
           offset.json.contains(s""""sourceVersion":1""") &&
           offset.json.contains(s""""index":-1""")
       },
@@ -624,8 +624,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
         // latest offset should have a schema attached and evolved set to true
         // note the reservoir version has not changed
         offset.reservoirVersion == v1 + 1 &&
-          offset.index == indexWhenSchemaLogIsUpdated &&
-          offset.sourceVersion == 3
+          offset.index == indexWhenSchemaLogIsUpdated
       },
       ExpectMetadataEvolutionException
     )
@@ -702,6 +701,63 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       ProcessAllAvailable(),
       CheckAnswer((5 until 10).map(i => (i.toString, i.toString)): _*)
     )
+  }
+
+  test("identity columns shouldn't cause schema mismatches") {
+    withTable("source") {
+      sql(
+        s"""
+          |CREATE TABLE source (key INT, id LONG GENERATED ALWAYS AS IDENTITY)
+          |USING DELTA
+        """.stripMargin
+      )
+
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier("source"))
+      deltaLog.update()
+      val schemaLocation = getDefaultSchemaLocation(deltaLog).toString
+      val checkpointLocation = getDefaultCheckpoint(deltaLog).toString
+
+      def addData(values: Seq[Int]): Unit =
+        spark.createDataFrame(values.map(Row(_)).asJava, StructType.fromDDL("key INT"))
+          .write.format("delta").mode("append").saveAsTable("source")
+
+      def readStream(): DataFrame =
+        spark.readStream
+          .format("delta")
+          .option(DeltaOptions.SCHEMA_TRACKING_LOCATION, schemaLocation)
+          .table("source")
+
+      // Check fix disabled: writing to the table updates the identity column's high-water mark
+      // stored in the table schema, causing a schema change to be detected.
+      addData(values = 0 until 5)
+      withSQLConf(
+        DeltaSQLConf.DELTA_STREAMING_IGNORE_INTERNAL_METADATA_FOR_SCHEMA_CHANGE.key -> "false"
+      ) {
+        testStream(readStream())(
+          StartStream(checkpointLocation = checkpointLocation),
+          ProcessAllAvailable(),
+          Execute { _ => addData(values = 10 until 15) },
+          ExpectMetadataEvolutionException
+        )
+      }
+
+      // Check fix enabled: high-water mark updates are ignored when checking for schema changes.
+      addData(values = 15 until 20)
+      withSQLConf(
+        DeltaSQLConf.DELTA_STREAMING_IGNORE_INTERNAL_METADATA_FOR_SCHEMA_CHANGE.key -> "true"
+      ) {
+        testStream(readStream())(
+          StartStream(checkpointLocation = checkpointLocation),
+          ProcessAllAvailable(),
+          Execute { _ => addData(values = 20 until 25) },
+          ProcessAllAvailable()
+        )
+        // No schema change detected. Note that the identity column metadata is still present in the
+        // tracked schema
+        val field = getDefaultSchemaLog()(deltaLog).getLatestMetadata.get.dataSchema("id")
+        assert(field.metadata.contains(DeltaSourceUtils.IDENTITY_INFO_HIGHWATERMARK))
+      }
+    }
   }
 
   /**
@@ -975,9 +1031,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
           // bumped from file action
           offset.reservoirVersion == schemaChangeVersion &&
             offset.index == DeltaSourceOffset.METADATA_CHANGE_INDEX &&
-            // deserialized has latest version 3
-            offset.sourceVersion == 3 &&
-            // serialized has latest version 3 as well
+            // serialized as version 3 because METADATA_CHANGE_INDEX is only available in v3
             offset.json.contains(s""""sourceVersion":3""")
         }
       )
@@ -995,7 +1049,8 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
           // still stuck, but the pending schema change is marked as evolved
           offset.reservoirVersion == schemaChangeVersion &&
             offset.index == DeltaSourceOffset.POST_METADATA_CHANGE_INDEX &&
-            offset.sourceVersion == 3
+            // serialized as version 3 because POST_METADATA_CHANGE_INDEX is only available in v3
+            offset.json.contains(s""""sourceVersion":3""")
         },
         ExpectMetadataEvolutionException
       )
@@ -1023,9 +1078,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
           val offset = DeltaSourceOffset(log.tableId, q.availableOffsets.values.last)
           // bumped by file action, and since it's an non schema change, just clear schema change
           offset.reservoirVersion == v2 + 1 &&
-            offset.index == DeltaSourceOffset.BASE_INDEX &&
-            // Base index still uses VERSION_1
-            offset.sourceVersion == 3
+            offset.index == DeltaSourceOffset.BASE_INDEX
         }
       )
 
@@ -1045,8 +1098,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
         AssertOnQuery { q =>
           val offset = DeltaSourceOffset(log.tableId, q.availableOffsets.values.last)
           offset.reservoirVersion == v2 + 1 &&
-            offset.index == DeltaSourceOffset.METADATA_CHANGE_INDEX &&
-            offset.sourceVersion == 3
+            offset.index == DeltaSourceOffset.METADATA_CHANGE_INDEX
         }
       )
 
@@ -1060,8 +1112,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
         AssertOnQuery { q =>
           val offset = DeltaSourceOffset(log.tableId, q.availableOffsets.values.last)
           offset.reservoirVersion == v3 &&
-            offset.index == DeltaSourceOffset.POST_METADATA_CHANGE_INDEX &&
-            offset.sourceVersion == 3
+            offset.index == DeltaSourceOffset.POST_METADATA_CHANGE_INDEX
         },
         ExpectMetadataEvolutionException
       )
@@ -1110,8 +1161,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
           val offset = DeltaSourceOffset(log.tableId, q.availableOffsets.values.last)
           offset.reservoirVersion == schemaChangeVersion &&
             // schema change marked as evolved
-            offset.index == DeltaSourceOffset.POST_METADATA_CHANGE_INDEX &&
-            offset.sourceVersion == 3
+            offset.index == DeltaSourceOffset.POST_METADATA_CHANGE_INDEX
         },
         ExpectMetadataEvolutionException
       )
@@ -1153,8 +1203,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
         AssertOnQuery { q =>
           val offset = DeltaSourceOffset(log.tableId, q.availableOffsets.values.last)
           offset.reservoirVersion == v3 &&
-            offset.index == DeltaSourceOffset.POST_METADATA_CHANGE_INDEX &&
-            offset.sourceVersion == 3
+            offset.index == DeltaSourceOffset.POST_METADATA_CHANGE_INDEX
         },
         ExpectMetadataEvolutionException
       )
@@ -1202,8 +1251,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
         AssertOnQuery { q =>
           q.availableOffsets.size == 1 && {
             val offset = DeltaSourceOffset(log.tableId, q.availableOffsets.values.head)
-            offset.reservoirVersion == v5 + 1 && offset.index == indexWhenSchemaLogIsUpdated &&
-              offset.sourceVersion == 3
+            offset.reservoirVersion == v5 + 1 && offset.index == indexWhenSchemaLogIsUpdated
           }
         },
         ExpectMetadataEvolutionException
@@ -1219,8 +1267,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
           // size is 1 because commit removes previous offset
           q.availableOffsets.size == 1 && {
             val offset = DeltaSourceOffset(log.tableId, q.availableOffsets.values.head)
-            offset.reservoirVersion == v5 + 2 && offset.index == indexWhenSchemaLogIsUpdated &&
-              offset.sourceVersion == 3
+            offset.reservoirVersion == v5 + 2 && offset.index == indexWhenSchemaLogIsUpdated
           }
         },
         ExpectMetadataEvolutionException
@@ -1235,8 +1282,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
         AssertOnQuery { q =>
           q.availableOffsets.size == 1 && {
             val offset = DeltaSourceOffset(log.tableId, q.availableOffsets.values.head)
-            offset.reservoirVersion == v5 + 3 && offset.index == indexWhenSchemaLogIsUpdated &&
-              offset.sourceVersion == 3
+            offset.reservoirVersion == v5 + 3 && offset.index == indexWhenSchemaLogIsUpdated
           }
         },
         ExpectMetadataEvolutionException
@@ -1251,8 +1297,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
         AssertOnQuery { q =>
           q.availableOffsets.size == 1 && {
             val offset = DeltaSourceOffset(log.tableId, q.availableOffsets.values.head)
-            offset.reservoirVersion == v5 + 4 && offset.index == indexWhenSchemaLogIsUpdated &&
-              offset.sourceVersion == 3
+            offset.reservoirVersion == v5 + 4 && offset.index == indexWhenSchemaLogIsUpdated
           }
         },
         ExpectMetadataEvolutionException
@@ -1299,8 +1344,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       AssertOnQuery { q =>
         q.availableOffsets.size == 1 && {
           val offset = DeltaSourceOffset(log.tableId, q.availableOffsets.values.head)
-          offset.reservoirVersion == v5 + 1 && offset.index == indexWhenSchemaLogIsUpdated &&
-            offset.sourceVersion == 3
+          offset.reservoirVersion == v5 + 1 && offset.index == indexWhenSchemaLogIsUpdated
         }
       },
       ExpectMetadataEvolutionException
@@ -1336,10 +1380,8 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       AssertOnQuery { q =>
         assert(q.availableOffsets.size == 1)
         val offset = DeltaSourceOffset(log.tableId, q.availableOffsets.values.last)
-        // Still using the legacy offset format, bumped from file action
         offset.reservoirVersion == v0 + 1 &&
-          offset.index == DeltaSourceOffset.BASE_INDEX &&
-          offset.sourceVersion == 3
+          offset.index == DeltaSourceOffset.BASE_INDEX
       }
     )
 
@@ -1376,10 +1418,8 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
         CheckAnswer(("5", "5")),
         AssertOnQuery { q =>
           val offset = DeltaSourceOffset(log.tableId, q.availableOffsets.values.last)
-          // Upgraded to the new offset version
           offset.reservoirVersion == v2 &&
-            offset.index == indexWhenSchemaLogIsUpdated &&
-            offset.sourceVersion == 3
+            offset.index == indexWhenSchemaLogIsUpdated
         },
         ExpectMetadataEvolutionException
       )
@@ -1415,7 +1455,8 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
     }
   }
 
-  testSchemaEvolution("multiple sources with schema evolution") { implicit log =>
+  testSchemaEvolution("multiple sources with schema evolution"
+    ) { implicit log =>
     val v5 = log.update().version // v5 has an ADD file action with value (4, 4)
     renameColumn("b", "c")
     addData(5 until 10)

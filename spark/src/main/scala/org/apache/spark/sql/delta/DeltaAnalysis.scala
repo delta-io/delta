@@ -30,6 +30,7 @@ import org.apache.spark.sql.delta.catalog.IcebergTablePlaceHolder
 import org.apache.spark.sql.delta.commands._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsUtils
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -50,6 +51,9 @@ import org.apache.spark.sql.catalyst.plans.logical.CloneTableStatement
 import org.apache.spark.sql.catalyst.plans.logical.RestoreTableStatement
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.streaming.WriteToStream
+import org.apache.spark.sql.catalyst.trees.TreeNodeTag
+import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttribute
+import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.connector.catalog.{Identifier, TableCatalog}
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
@@ -57,13 +61,12 @@ import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTrans
 import org.apache.spark.sql.errors.QueryCompilationErrors
 import org.apache.spark.sql.execution.command.CreateTableLikeCommand
 import org.apache.spark.sql.execution.command.RunnableCommand
-import org.apache.spark.sql.execution.datasources.HadoopFsRelation
-import org.apache.spark.sql.execution.datasources.LogicalRelation
+import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation, LogicalRelationShims, LogicalRelationWithTable}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.execution.streaming.StreamingRelation
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.types.{ArrayType, DataType, IntegerType, MapType, StructField, StructType}
+import org.apache.spark.sql.types._
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 /**
@@ -78,8 +81,8 @@ class DeltaAnalysis(session: SparkSession)
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperatorsDown {
     // INSERT INTO by ordinal and df.insertInto()
     case a @ AppendDelta(r, d) if !a.isByName &&
-        needsSchemaAdjustmentByOrdinal(d.name(), a.query, r.schema) =>
-      val projection = resolveQueryColumnsByOrdinal(a.query, r.output, d.name())
+        needsSchemaAdjustmentByOrdinal(d, a.query, r.schema) =>
+      val projection = resolveQueryColumnsByOrdinal(a.query, r.output, d)
       if (projection != a.query) {
         a.copy(query = projection)
       } else {
@@ -146,18 +149,23 @@ class DeltaAnalysis(session: SparkSession)
           // used on the source delta table, then the corresponding fields would be set for the
           // sourceTable and needs to be removed from the targetTable's configuration. The fields
           // will then be set in the targetTable's configuration internally after.
+          // Coordinated commits configurations from the source delta table should also be left out,
+          // since CREATE LIKE is similar to CLONE, and we do not copy the commit coordinator from
+          // the source table. If users want a commit coordinator for the target table, they can
+          // specify the configurations in the CREATE LIKE command explicitly.
           val sourceMetadata = deltaLogSrc.initialSnapshot.metadata
           val config =
             sourceMetadata.configuration.-("delta.columnMapping.maxColumnId")
               .-(MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP)
               .-(MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP)
+              .filterKeys(!CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS.contains(_)).toMap
 
           new CatalogTable(
             identifier = targetTableIdentifier,
             tableType = tblType,
             storage = newStorage,
             schema = sourceMetadata.schema,
-            properties = config,
+            properties = config ++ ctl.properties,
             partitionColumnNames = sourceMetadata.partitionColumns,
             provider = Some("delta"),
             comment = Option(sourceMetadata.description)
@@ -168,7 +176,7 @@ class DeltaAnalysis(session: SparkSession)
               tableType = tblType,
               storage = newStorage,
               schema = src.schema,
-              properties = src.properties,
+              properties = src.properties ++ ctl.properties,
               partitionColumnNames = src.partitionColumnNames,
               provider = Some("delta"),
               comment = src.comment
@@ -188,13 +196,15 @@ class DeltaAnalysis(session: SparkSession)
           None
         }
       val newDeltaCatalog = new DeltaCatalog()
+      val existingTableOpt = newDeltaCatalog.getExistingTableIfExists(catalogTableTarget.identifier)
+      val newTable = newDeltaCatalog
+        .verifyTableAndSolidify(
+          catalogTableTarget,
+          None
+        )
       CreateDeltaTableCommand(
-        table = newDeltaCatalog
-          .verifyTableAndSolidify(
-            catalogTableTarget,
-            None
-          ),
-        existingTableOpt = newDeltaCatalog.getExistingTableIfExists(catalogTableTarget.identifier),
+        table = newTable,
+        existingTableOpt = existingTableOpt,
         mode = saveMode,
         query = None,
         output = ctl.output,
@@ -203,8 +213,8 @@ class DeltaAnalysis(session: SparkSession)
 
     // INSERT OVERWRITE by ordinal and df.insertInto()
     case o @ OverwriteDelta(r, d) if !o.isByName &&
-        needsSchemaAdjustmentByOrdinal(d.name(), o.query, r.schema) =>
-      val projection = resolveQueryColumnsByOrdinal(o.query, r.output, d.name())
+        needsSchemaAdjustmentByOrdinal(d, o.query, r.schema) =>
+      val projection = resolveQueryColumnsByOrdinal(o.query, r.output, d)
       if (projection != o.query) {
         val aliases = AttributeMap(o.query.output.zip(projection.output).collect {
           case (l: AttributeReference, r: AttributeReference) if !l.sameRef(r) => (l, r)
@@ -240,9 +250,9 @@ class DeltaAnalysis(session: SparkSession)
     case o @ DynamicPartitionOverwriteDelta(r, d) if o.resolved
       =>
       val adjustedQuery = if (!o.isByName &&
-          needsSchemaAdjustmentByOrdinal(d.name(), o.query, r.schema)) {
+          needsSchemaAdjustmentByOrdinal(d, o.query, r.schema)) {
         // INSERT OVERWRITE by ordinal and df.insertInto()
-        resolveQueryColumnsByOrdinal(o.query, r.output, d.name())
+        resolveQueryColumnsByOrdinal(o.query, r.output, d)
       } else if (o.isByName && o.origin.sqlText.nonEmpty &&
           needsSchemaAdjustmentByName(o.query, r.output, d)) {
         // INSERT OVERWRITE by name
@@ -316,8 +326,8 @@ class DeltaAnalysis(session: SparkSession)
         case TimeTravel(u: UnresolvedRelation, _, _, _) =>
           u.tableNotFound(u.multipartIdentifier)
 
-        case LogicalRelation(
-            HadoopFsRelation(location, _, _, _, _: ParquetFileFormat, _), _, catalogTable, _) =>
+        case LogicalRelationWithTable(
+            HadoopFsRelation(location, _, _, _, _: ParquetFileFormat, _), catalogTable) =>
           val tableIdent = catalogTable.map(_.identifier)
             .getOrElse(TableIdentifier(location.rootPaths.head.toString, Some("parquet")))
           val provider = if (catalogTable.isDefined) {
@@ -364,10 +374,6 @@ class DeltaAnalysis(session: SparkSession)
             if tt.expressions.forall(_.resolved) =>
           val ttSpec = DeltaTimeTravelSpec(tt.timestamp, tt.version, tt.creationSource)
           val traveledTable = tbl.copy(timeTravelOpt = Some(ttSpec))
-          val tblIdent = tbl.catalogTable match {
-            case Some(existingCatalog) => existingCatalog.identifier
-            case None => TableIdentifier(tbl.path.toString, Some("delta"))
-          }
           // restoring to same version as latest should be a no-op.
           val sourceSnapshot = try {
             traveledTable.initialSnapshot
@@ -391,7 +397,7 @@ class DeltaAnalysis(session: SparkSession)
             return LocalRelation(restoreStatement.output)
           }
 
-          RestoreTableCommand(traveledTable, tblIdent)
+          RestoreTableCommand(traveledTable)
 
         case u: UnresolvedRelation =>
           u.tableNotFound(u.multipartIdentifier)
@@ -407,20 +413,19 @@ class DeltaAnalysis(session: SparkSession)
     // path and pass it along in a ResolvedPathBasedNonDeltaTable. This is needed as DESCRIBE DETAIL
     // supports both delta and non delta paths.
     case u: UnresolvedPathBasedTable =>
-      val table = getPathBasedDeltaTable(u.path)
-      val tableExists = Try(table.tableExists).getOrElse(false)
-      if (tableExists) {
+      val table = getPathBasedDeltaTable(u.path, u.options)
+      if (Try(table.tableExists).getOrElse(false)) {
         // Resolve it as a path-based Delta table
         val catalog = session.sessionState.catalogManager.currentCatalog.asTableCatalog
         ResolvedTable.create(
           catalog, Identifier.of(Array(DeltaSourceUtils.ALT_NAME), u.path), table)
       } else {
         // Resolve it as a placeholder, to identify it as a non-Delta table.
-        ResolvedPathBasedNonDeltaTable(u.path, u.commandName)
+        ResolvedPathBasedNonDeltaTable(u.path, u.options, u.commandName)
       }
 
     case u: UnresolvedPathBasedDeltaTable =>
-      val table = getPathBasedDeltaTable(u.path)
+      val table = getPathBasedDeltaTable(u.path, u.options)
       if (!table.tableExists) {
         throw DeltaErrors.notADeltaTableException(u.commandName, u.deltaTableIdentifier)
       }
@@ -437,7 +442,8 @@ class DeltaAnalysis(session: SparkSession)
     case d: DescribeDeltaHistory if d.childrenResolved => d.toCommand
 
     // This rule falls back to V1 nodes, since we don't have a V2 reader for Delta right now
-    case dsv2 @ DataSourceV2Relation(d: DeltaTableV2, _, _, _, options) =>
+    case dsv2 @ DataSourceV2Relation(d: DeltaTableV2, _, _, _, options)
+        if dsv2.getTagValue(DeltaRelation.KEEP_AS_V2_RELATION_TAG).isEmpty =>
       DeltaRelation.fromV2Relation(d, dsv2, options)
 
     case ResolvedTable(_, _, d: DeltaTableV2, _) if d.catalogTable.isEmpty && !d.tableExists =>
@@ -531,19 +537,38 @@ class DeltaAnalysis(session: SparkSession)
           newTarget,
           merge.sourceTable,
           merge.mergeCondition,
-          matchedActions ++ notMatchedActions ++ notMatchedBySourceActions
+          matchedActions ++ notMatchedActions ++ notMatchedBySourceActions,
+          // TODO: We are waiting for Spark to support the SQL "WITH SCHEMA EVOLUTION" syntax.
+          // After that this argument will be `merge.withSchemaEvolution`.
+          withSchemaEvolution = false
         )
 
-        DeltaMergeInto.resolveReferencesAndSchema(deltaMerge, conf)(
+        ResolveDeltaMergeInto.resolveReferencesAndSchema(deltaMerge, conf)(
           tryResolveReferencesForExpressions(session))
       } else {
         merge
       }
 
-    case reorg @ DeltaReorgTable(resolved @ ResolvedTable(_, _, _: DeltaTableV2, _)) =>
-      DeltaReorgTableCommand(resolved)(reorg.predicates)
+    case merge: MergeIntoTable if merge.targetTable.exists(_.isInstanceOf[DataSourceV2Relation]) =>
+      // When we hit here, it means the MERGE source is not resolved and we can't convert the MERGE
+      // command to the Delta variant. We need to add a special marker to the target table, so that
+      // this rule does not convert it to v1 relation too early, as we need to keep it as a v2
+      // relation to bypass the OSS MERGE resolution code in the rule `ResolveReferences`.
+      merge.targetTable.foreach {
+        // TreeNodeTag is not very reliable, but it's OK to use it here, as we will use it very
+        // soon: when this rule transforms down the plan tree and hits the MERGE target table.
+        // There is no chance in this rule that we will drop this tag. At the end, This rule will
+        // turn MergeIntoTable into DeltaMergeInto, and convert all Delta relations inside it to
+        // v1 relations (no need to clean up this tag).
+        case r: DataSourceV2Relation => r.setTagValue(DeltaRelation.KEEP_AS_V2_RELATION_TAG, ())
+        case _ =>
+      }
+      merge
 
-    case DeltaReorgTable(ResolvedTable(_, _, t, _)) =>
+    case reorg @ DeltaReorgTable(resolved @ ResolvedTable(_, _, _: DeltaTableV2, _), spec) =>
+      DeltaReorgTableCommand(resolved, spec)(reorg.predicates)
+
+    case DeltaReorgTable(ResolvedTable(_, _, t, _), _) =>
       throw DeltaErrors.notADeltaTable(t.name())
 
     case cmd @ ShowColumns(child @ ResolvedTable(_, _, table: DeltaTableV2, _), namespace, _) =>
@@ -560,7 +585,7 @@ class DeltaAnalysis(session: SparkSession)
 
     case deltaMerge: DeltaMergeInto =>
       val d = if (deltaMerge.childrenResolved && !deltaMerge.resolved) {
-        DeltaMergeInto.resolveReferencesAndSchema(deltaMerge, conf)(
+        ResolveDeltaMergeInto.resolveReferencesAndSchema(deltaMerge, conf)(
           tryResolveReferencesForExpressions(session))
       } else deltaMerge
       d.copy(target = stripTempViewForMergeWrapper(d.target))
@@ -600,7 +625,8 @@ class DeltaAnalysis(session: SparkSession)
       tableIdent: TableIdentifier,
       targetLocation: Option[String],
       existingTable: Option[CatalogTable],
-      srcTable: CloneSource): CatalogTable = {
+      srcTable: CloneSource,
+      propertiesOverrides: Map[String, String]): CatalogTable = {
     // If external location is defined then then table is an external table
     // If the table is a path-based table, we also say that the table is external even if no
     // metastore table will be created. This is done because we are still explicitly providing a
@@ -613,7 +639,10 @@ class DeltaAnalysis(session: SparkSession)
     } else {
       (CatalogTableType.MANAGED, CatalogStorageFormat.empty)
     }
-    val properties = srcTable.metadata.configuration
+    var properties = srcTable.metadata.configuration
+    val validatedOverrides = DeltaConfigs.validateConfigurations(propertiesOverrides)
+    properties = properties.filterKeys(!validatedOverrides.keySet.contains(_)).toMap ++
+      validatedOverrides
 
     new CatalogTable(
       identifier = tableIdent,
@@ -626,10 +655,31 @@ class DeltaAnalysis(session: SparkSession)
     )
   }
 
-  private def getPathBasedDeltaTable(
-      path: String,
-      options: Map[String, String] = Map.empty): DeltaTableV2 = {
+  private def getPathBasedDeltaTable(path: String, options: Map[String, String]): DeltaTableV2 = {
     DeltaTableV2(session, new Path(path), options = options)
+  }
+
+  private def resolveCreateTableMode(
+      isCreate: Boolean,
+      isReplace: Boolean,
+      ifNotExist: Boolean): (SaveMode, TableCreationModes.CreationMode) = {
+    val saveMode = if (isReplace) {
+      SaveMode.Overwrite
+    } else if (ifNotExist) {
+      SaveMode.Ignore
+    } else {
+      SaveMode.ErrorIfExists
+    }
+
+    val tableCreationMode = if (isCreate && isReplace) {
+      TableCreationModes.CreateOrReplace
+    } else if (isCreate) {
+      TableCreationModes.Create
+    } else {
+      TableCreationModes.Replace
+    }
+
+    (saveMode, tableCreationMode)
   }
 
   /**
@@ -645,24 +695,11 @@ class DeltaAnalysis(session: SparkSession)
       statement: CloneTableStatement): LogicalPlan = {
     val isReplace = statement.isReplaceCommand
     val isCreate = statement.isCreateCommand
+    val ifNotExists = statement.ifNotExists
 
     import session.sessionState.analyzer.{NonSessionCatalogAndIdentifier, SessionCatalogAndIdentifier}
     val targetLocation = statement.targetLocation
-    val saveMode = if (isReplace) {
-      SaveMode.Overwrite
-    } else if (statement.ifNotExists) {
-      SaveMode.Ignore
-    } else {
-      SaveMode.ErrorIfExists
-    }
-
-    val tableCreationMode = if (isCreate && isReplace) {
-      TableCreationModes.CreateOrReplace
-    } else if (isCreate) {
-      TableCreationModes.Create
-    } else {
-      TableCreationModes.Replace
-    }
+    val (saveMode, tableCreationMode) = resolveCreateTableMode(isCreate, isReplace, ifNotExists)
     // We don't use information in the catalog if the table is time travelled
     val sourceCatalogTable = if (sourceTbl.timeTravelOpt.isDefined) None else sourceTbl.catalogTable
 
@@ -684,8 +721,8 @@ class DeltaAnalysis(session: SparkSession)
           throw DeltaErrors.cloneAmbiguousTarget(statement.targetLocation.get, tblIdent)
         }
         // We're creating a table by path and there won't be a place to store catalog stats
-        val catalog = createCatalogTableForCloneCommand(
-          path, byPath = true, tblIdent, targetLocation, sourceCatalogTable, sourceTbl)
+        val catalog = createCatalogTableForCloneCommand(path, byPath = true, tblIdent,
+          targetLocation, sourceCatalogTable, sourceTbl, statement.tablePropertyOverrides)
         CreateDeltaTableCommand(
           catalog,
           None,
@@ -707,8 +744,8 @@ class DeltaAnalysis(session: SparkSession)
           .asTableIdentifier
         val finalTarget = new Path(statement.targetLocation.getOrElse(
           session.sessionState.catalog.defaultTablePath(tblIdent).toString))
-        val catalogTable = createCatalogTableForCloneCommand(
-          finalTarget, byPath = false, tblIdent, targetLocation, sourceCatalogTable, sourceTbl)
+        val catalogTable = createCatalogTableForCloneCommand(finalTarget, byPath = false, tblIdent,
+          targetLocation, sourceCatalogTable, sourceTbl, statement.tablePropertyOverrides)
         val catalogTableWithPath = if (targetLocation.isEmpty) {
           catalogTable.copy(
             storage = CatalogStorageFormat.empty.copy(locationUri = Some(finalTarget.toUri)))
@@ -744,8 +781,8 @@ class DeltaAnalysis(session: SparkSession)
             case targetTable: DeltaTableV2 =>
               val path = targetTable.path
               val tblIdent = TableIdentifier(path.toString, Some("delta"))
-              val catalogTable = createCatalogTableForCloneCommand(
-                path, byPath = true, tblIdent, targetLocation, sourceCatalogTable, sourceTbl)
+              val catalogTable = createCatalogTableForCloneCommand(path, byPath = true, tblIdent,
+                targetLocation, sourceCatalogTable, sourceTbl, statement.tablePropertyOverrides)
               CreateDeltaTableCommand(
                 table = catalogTable,
                 existingTableOpt = None,
@@ -775,27 +812,21 @@ class DeltaAnalysis(session: SparkSession)
           case Some(existingCatalog) => existingCatalog.identifier
           case None => TableIdentifier(path.toString, Some("delta"))
         }
-        // Reuse the existing schema so that the physical name of columns are consistent
-        val cloneSourceTable = sourceTbl match {
-          case source: CloneIcebergSource =>
-            // Reuse the existing schema so that the physical name of columns are consistent
-            source.copy(tableSchema = Some(deltaTableV2.initialSnapshot.metadata.schema))
-          case other => other
-        }
         val catalogTable = createCatalogTableForCloneCommand(
           path,
           byPath = existingTable.isEmpty,
           tblIdent,
           targetLocation,
           sourceCatalogTable,
-          cloneSourceTable)
+          sourceTbl,
+          statement.tablePropertyOverrides)
 
         CreateDeltaTableCommand(
           catalogTable,
           existingTable,
           saveMode,
           Some(CloneTableCommand(
-            cloneSourceTable,
+            sourceTbl,
             tblIdent,
             statement.tablePropertyOverrides,
             path)),
@@ -804,11 +835,11 @@ class DeltaAnalysis(session: SparkSession)
           output = CloneTableCommand.output)
 
       // Non-delta metastore table already exists at target
-      case LogicalRelation(_, _, existingCatalogTable @ Some(catalogTable), _) =>
+      case LogicalRelationWithTable(_, existingCatalogTable @ Some(catalogTable)) =>
         val tblIdent = catalogTable.identifier
         val path = new Path(catalogTable.location)
-        val newCatalogTable = createCatalogTableForCloneCommand(
-          path, byPath = false, tblIdent, targetLocation, sourceCatalogTable, sourceTbl)
+        val newCatalogTable = createCatalogTableForCloneCommand(path, byPath = false, tblIdent,
+          targetLocation, sourceCatalogTable, sourceTbl, statement.tablePropertyOverrides)
         CreateDeltaTableCommand(
           newCatalogTable,
           existingCatalogTable,
@@ -832,12 +863,14 @@ class DeltaAnalysis(session: SparkSession)
    * type column/field.
    */
   private def resolveQueryColumnsByOrdinal(
-      query: LogicalPlan, targetAttrs: Seq[Attribute], tblName: String): LogicalPlan = {
+      query: LogicalPlan, targetAttrs: Seq[Attribute], deltaTable: DeltaTableV2): LogicalPlan = {
     // always add a Cast. it will be removed in the optimizer if it is unnecessary.
     val project = query.output.zipWithIndex.map { case (attr, i) =>
       if (i < targetAttrs.length) {
         val targetAttr = targetAttrs(i)
-        addCastToColumn(attr, targetAttr, tblName)
+        addCastToColumn(attr, targetAttr, deltaTable.name(),
+          allowTypeWidening = allowTypeWidening(deltaTable)
+        )
       } else {
         attr
       }
@@ -857,20 +890,24 @@ class DeltaAnalysis(session: SparkSession)
   private def resolveQueryColumnsByName(
       query: LogicalPlan, targetAttrs: Seq[Attribute], deltaTable: DeltaTableV2): LogicalPlan = {
     insertIntoByNameMissingColumn(query, targetAttrs, deltaTable)
-    // Spark will resolve columns to make sure specified columns are in the table schema and don't
-    // have duplicates. This is just a sanity check.
-    assert(
-      query.output.length <= targetAttrs.length,
-      s"Too many specified columns ${query.output.map(_.name).mkString(", ")}. " +
-        s"Table columns: ${targetAttrs.map(_.name).mkString(", ")}")
+
+    // This is called before resolveOutputColumns in postHocResolutionRules, so we need to duplicate
+    // the schema validation here.
+    if (query.output.length > targetAttrs.length) {
+      throw QueryCompilationErrors.cannotWriteTooManyColumnsToTableError(
+        tableName = deltaTable.name(),
+        expected = targetAttrs.map(_.name),
+        queryOutput = query.output)
+    }
 
     val project = query.output.map { attr =>
       val targetAttr = targetAttrs.find(t => session.sessionState.conf.resolver(t.name, attr.name))
         .getOrElse {
-          // This is a sanity check. Spark should have done the check.
           throw DeltaErrors.missingColumn(attr, targetAttrs)
         }
-      addCastToColumn(attr, targetAttr, deltaTable.name())
+      addCastToColumn(attr, targetAttr, deltaTable.name(),
+        allowTypeWidening = allowTypeWidening(deltaTable)
+      )
     }
     Project(project, query)
   }
@@ -878,19 +915,38 @@ class DeltaAnalysis(session: SparkSession)
   private def addCastToColumn(
       attr: Attribute,
       targetAttr: Attribute,
-      tblName: String): NamedExpression = {
+      tblName: String,
+      allowTypeWidening: Boolean): NamedExpression = {
     val expr = (attr.dataType, targetAttr.dataType) match {
       case (s, t) if s == t =>
         attr
       case (s: StructType, t: StructType) if s != t =>
-        addCastsToStructs(tblName, attr, s, t)
+        addCastsToStructs(tblName, attr, s, t, allowTypeWidening)
       case (ArrayType(s: StructType, sNull: Boolean), ArrayType(t: StructType, tNull: Boolean))
           if s != t && sNull == tNull =>
-        addCastsToArrayStructs(tblName, attr, s, t, sNull)
+        addCastsToArrayStructs(tblName, attr, s, t, sNull, allowTypeWidening)
+      case (s: AtomicType, t: AtomicType)
+        if allowTypeWidening && TypeWidening.isTypeChangeSupportedForSchemaEvolution(t, s) =>
+        // Keep the type from the query, the target schema will be updated to widen the existing
+        // type to match it.
+        attr
       case _ =>
         getCastFunction(attr, targetAttr.dataType, targetAttr.name)
     }
     Alias(expr, targetAttr.name)(explicitMetadata = Option(targetAttr.metadata))
+  }
+
+  /**
+   * Whether inserting values that have a wider type than the table has is allowed. In that case,
+   * values are not downcasted to the current table type and the table schema is updated instead to
+   * use the wider type.
+   */
+  private def allowTypeWidening(deltaTable: DeltaTableV2): Boolean = {
+    val options = new DeltaOptions(Map.empty[String, String], conf)
+    options.canMergeSchema && TypeWidening.isEnabled(
+      deltaTable.initialSnapshot.protocol,
+      deltaTable.initialSnapshot.metadata
+    )
   }
 
   /**
@@ -899,18 +955,19 @@ class DeltaAnalysis(session: SparkSession)
    * skips this step, we see if we need to perform any schema adjustment here.
    */
   private def needsSchemaAdjustmentByOrdinal(
-      tableName: String,
+      deltaTable: DeltaTableV2,
       query: LogicalPlan,
       schema: StructType): Boolean = {
     val output = query.output
     if (output.length < schema.length) {
-      throw DeltaErrors.notEnoughColumnsInInsert(tableName, output.length, schema.length)
+      throw DeltaErrors.notEnoughColumnsInInsert(deltaTable.name(), output.length, schema.length)
     }
     // Now we should try our best to match everything that already exists, and leave the rest
     // for schema evolution to WriteIntoDelta
     val existingSchemaOutput = output.take(schema.length)
     existingSchemaOutput.map(_.name) != schema.map(_.name) ||
-      !SchemaUtils.isReadCompatible(schema.asNullable, existingSchemaOutput.toStructType)
+      !SchemaUtils.isReadCompatible(schema.asNullable, existingSchemaOutput.toStructType,
+        allowTypeWidening = allowTypeWidening(deltaTable))
   }
 
   /**
@@ -964,7 +1021,10 @@ class DeltaAnalysis(session: SparkSession)
     }
     val specifiedTargetAttrs = targetAttrs.filter(col => userSpecifiedNames.contains(col.name))
     !SchemaUtils.isReadCompatible(
-      specifiedTargetAttrs.toStructType.asNullable, query.output.toStructType)
+      specifiedTargetAttrs.toStructType.asNullable,
+      query.output.toStructType,
+      allowTypeWidening = allowTypeWidening(deltaTable)
+    )
   }
 
   // Get cast operation for the level of strictness in the schema a user asked for
@@ -994,7 +1054,8 @@ class DeltaAnalysis(session: SparkSession)
       tableName: String,
       parent: NamedExpression,
       source: StructType,
-      target: StructType): NamedExpression = {
+      target: StructType,
+      allowTypeWidening: Boolean): NamedExpression = {
     if (source.length < target.length) {
       throw DeltaErrors.notEnoughColumnsInInsert(
         tableName, source.length, target.length, Some(parent.qualifiedName))
@@ -1005,12 +1066,20 @@ class DeltaAnalysis(session: SparkSession)
           case t: StructType =>
             val subField = Alias(GetStructField(parent, i, Option(name)), target(i).name)(
               explicitMetadata = Option(metadata))
-            addCastsToStructs(tableName, subField, nested, t)
+            addCastsToStructs(tableName, subField, nested, t, allowTypeWidening)
           case o =>
             val field = parent.qualifiedName + "." + name
             val targetName = parent.qualifiedName + "." + target(i).name
             throw DeltaErrors.cannotInsertIntoColumn(tableName, field, targetName, o.simpleString)
         }
+
+      case (StructField(name, dt: AtomicType, _, _), i) if i < target.length && allowTypeWidening &&
+        TypeWidening.isTypeChangeSupportedForSchemaEvolution(
+          target(i).dataType.asInstanceOf[AtomicType], dt) =>
+        val targetAttr = target(i)
+        Alias(
+          GetStructField(parent, i, Option(name)),
+          targetAttr.name)(explicitMetadata = Option(targetAttr.metadata))
       case (other, i) if i < target.length =>
         val targetAttr = target(i)
         Alias(
@@ -1034,9 +1103,11 @@ class DeltaAnalysis(session: SparkSession)
       parent: NamedExpression,
       source: StructType,
       target: StructType,
-      sourceNullable: Boolean): Expression = {
+      sourceNullable: Boolean,
+      allowTypeWidening: Boolean): Expression = {
     val structConverter: (Expression, Expression) => Expression = (_, i) =>
-      addCastsToStructs(tableName, Alias(GetArrayItem(parent, i), i.toString)(), source, target)
+      addCastsToStructs(
+        tableName, Alias(GetArrayItem(parent, i), i.toString)(), source, target, allowTypeWidening)
     val transformLambdaFunc = {
       val elementVar = NamedLambdaVariable("elementVar", source, sourceNullable)
       val indexVar = NamedLambdaVariable("indexVar", IntegerType, false)
@@ -1073,11 +1144,12 @@ class DeltaAnalysis(session: SparkSession)
             session, dataSourceV1.options
           ).foreach { rootSchemaTrackingLocation =>
             assert(dataSourceV1.options.contains("path"), "Path for Delta table must be defined")
-            val log = DeltaLog.forTable(session, new Path(dataSourceV1.options("path")))
+            val tableId =
+              dataSourceV1.options("path").replace(":", "").replace("/", "_")
             val sourceIdOpt = dataSourceV1.options.get(DeltaOptions.STREAMING_SOURCE_TRACKING_ID)
             val schemaTrackingLocation =
               DeltaSourceMetadataTrackingLog.fullMetadataTrackingLocation(
-                rootSchemaTrackingLocation, log.tableId, sourceIdOpt)
+                rootSchemaTrackingLocation, tableId, sourceIdOpt)
             // Make sure schema location is under checkpoint
             if (!allowSchemaLocationOutsideOfCheckpoint &&
               !(schemaTrackingLocation.stripPrefix("file:").stripSuffix("/") + "/")
@@ -1128,6 +1200,8 @@ class DeltaAnalysis(session: SparkSession)
 
 /** Matchers for dealing with a Delta table. */
 object DeltaRelation extends DeltaLogging {
+  val KEEP_AS_V2_RELATION_TAG = new TreeNodeTag[Unit]("__keep_as_v2_relation")
+
   def unapply(plan: LogicalPlan): Option[LogicalRelation] = plan match {
     case dsv2 @ DataSourceV2Relation(d: DeltaTableV2, _, _, _, options) =>
       Some(fromV2Relation(d, dsv2, options))
@@ -1143,11 +1217,19 @@ object DeltaRelation extends DeltaLogging {
       val relation = d.withOptions(options.asScala.toMap).toBaseRelation
       val output = if (CDCReader.isCDCRead(options)) {
         // Handles cdc for the spark.read.options().table() code path
-        relation.schema.toAttributes
+        // Mapping needed for references to the table's columns coming from Spark Connect.
+        val newOutput = toAttributes(relation.schema)
+        newOutput.map { a =>
+          val existingReference = v2Relation.output
+            .find(e => e.name == a.name && e.dataType == a.dataType && e.nullable == a.nullable)
+          existingReference.map { e =>
+            e.copy(metadata = a.metadata)(exprId = e.exprId, qualifier = e.qualifier)
+          }.getOrElse(a)
+        }
       } else {
         v2Relation.output
       }
-      LogicalRelation(relation, output, d.ttSafeCatalogTable, isStreaming = false)
+      LogicalRelationShims.newInstance(relation, output, d.ttSafeCatalogTable, isStreaming = false)
     }
   }
 }

@@ -40,6 +40,7 @@ package org.apache.spark.sql.delta.util
 
 import java.lang.{Double => JDouble, Long => JLong}
 import java.math.{BigDecimal => JBigDecimal}
+import java.time.ZoneId
 import java.util.{Locale, TimeZone}
 
 import scala.collection.mutable
@@ -48,6 +49,7 @@ import scala.util.Try
 
 import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaErrors}
 import org.apache.hadoop.fs.Path
+import org.apache.spark.unsafe.types.UTF8String
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.AnalysisException
@@ -55,6 +57,7 @@ import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis._
 import org.apache.spark.sql.catalyst.catalog.CatalogTypes.TablePartitionSpec
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Cast, Literal}
+import org.apache.spark.sql.catalyst.types.DataTypeUtils
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.types._
 
@@ -116,7 +119,8 @@ object PartitionSpec {
 
 private[delta] object PartitionUtils {
 
-  val timestampPartitionPattern = "yyyy-MM-dd HH:mm:ss[.S]"
+  lazy val timestampPartitionPattern = "yyyy-MM-dd HH:mm:ss[.S]"
+  lazy val utcFormatter = TimestampFormatter("yyyy-MM-dd'T'HH:mm:ss.SSSSSSz", ZoneId.of("Z"))
 
   case class PartitionValues(columnNames: Seq[String], literals: Seq[Literal])
   {
@@ -278,7 +282,8 @@ private[delta] object PartitionUtils {
       validatePartitionColumns: Boolean,
       timeZone: TimeZone,
       dateFormatter: DateFormatter,
-      timestampFormatter: TimestampFormatter): (Option[PartitionValues], Option[Path]) = {
+      timestampFormatter: TimestampFormatter,
+      useUtcNormalizedTimestamp: Boolean = false): (Option[PartitionValues], Option[Path]) = {
     val columns = ArrayBuffer.empty[(String, Literal)]
     // Old Hadoop versions don't have `Path.isRoot`
     var finished = path.getParent == null
@@ -300,7 +305,8 @@ private[delta] object PartitionUtils {
         // Once we get the string, we try to parse it and find the partition column and value.
         val maybeColumn =
         parsePartitionColumn(currentPath.getName, typeInference, userSpecifiedDataTypes,
-          validatePartitionColumns, timeZone, dateFormatter, timestampFormatter)
+          validatePartitionColumns, timeZone, dateFormatter, timestampFormatter,
+          useUtcNormalizedTimestamp)
         maybeColumn.foreach(columns += _)
 
         // Now, we determine if we should stop.
@@ -337,7 +343,8 @@ private[delta] object PartitionUtils {
       validatePartitionColumns: Boolean,
       timeZone: TimeZone,
       dateFormatter: DateFormatter,
-      timestampFormatter: TimestampFormatter): Option[(String, Literal)] = {
+      timestampFormatter: TimestampFormatter,
+      useUtcNormalizedTimestamp: Boolean = false): Option[(String, Literal)] = {
     val equalSignIndex = columnSpec.indexOf('=')
     if (equalSignIndex == -1) {
       None
@@ -359,12 +366,25 @@ private[delta] object PartitionUtils {
           dateFormatter,
           timestampFormatter)
         val columnValue = columnValueLiteral.eval()
-        val castedValue = Cast(columnValueLiteral, dataType, Option(timeZone.getID)).eval()
-        if (validatePartitionColumns && columnValue != null && castedValue == null) {
-          throw DeltaErrors.partitionColumnCastFailed(
-            columnValue.toString, dataType.toString, columnName)
+        if (dataType == DataTypes.TimestampType) {
+          if (useUtcNormalizedTimestamp) {
+            Try {
+              Literal.create(
+                utcFormatter.format(
+                  timestampFormatter.parse(columnValue.asInstanceOf[UTF8String].toString)),
+                StringType)
+            }.getOrElse(columnValueLiteral)
+          } else {
+            columnValueLiteral
+          }
+        } else {
+          val castedValue = Cast(columnValueLiteral, dataType, Option(timeZone.getID)).eval()
+          if (validatePartitionColumns && columnValue != null && castedValue == null) {
+            throw DeltaErrors.partitionColumnCastFailed(
+              columnValue.toString, dataType.toString, columnName)
+          }
+          Literal.create(castedValue, dataType)
         }
-        Literal.create(castedValue, dataType)
       } else {
         inferPartitionColumnValue(
           rawColumnValue,
@@ -407,7 +427,7 @@ private[delta] object PartitionUtils {
   }
 
   def getPathFragment(spec: TablePartitionSpec, partitionColumns: Seq[Attribute]): String = {
-    getPathFragment(spec, StructType.fromAttributes(partitionColumns))
+    getPathFragment(spec, DataTypeUtils.fromAttributes(partitionColumns))
   }
 
   /**
@@ -527,7 +547,7 @@ private[delta] object PartitionUtils {
       timeZone: TimeZone,
       dateFormatter: DateFormatter,
       timestampFormatter: TimestampFormatter): Literal = {
-    val decimalTry = Try {
+    def decimalTry = Try {
       // `BigDecimal` conversion can fail when the `field` is not a form of number.
       val bigDecimal = new JBigDecimal(raw)
       // It reduces the cases for decimals by disallowing values having scale (eg. `1.1`).
@@ -538,7 +558,7 @@ private[delta] object PartitionUtils {
       Literal(bigDecimal)
     }
 
-    val dateTry = Try {
+    def dateTry = Try {
       // try and parse the date, if no exception occurs this is a candidate to be resolved as
       // DateType
       dateFormatter.parse(raw)
@@ -554,7 +574,7 @@ private[delta] object PartitionUtils {
       Literal.create(dateValue, DateType)
     }
 
-    val timestampTry = Try {
+    def timestampTry = Try {
       val unescapedRaw = unescapePathName(raw)
       // try and parse the date, if no exception occurs this is a candidate to be resolved as
       // TimestampType
@@ -604,7 +624,8 @@ private[delta] object PartitionUtils {
 
     partitionColumnsSchema(schema, partitionColumns, caseSensitive).foreach {
       field => field.dataType match {
-        case _: AtomicType => // OK
+        // Variant types are not orderable and thus cannot be partition columns.
+        case a: AtomicType if !VariantShims.isVariantType(a) => // OK
         case _ => throw DeltaErrors.cannotUseDataTypeForPartitionColumnError(field)
       }
     }

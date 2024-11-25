@@ -20,24 +20,44 @@ import java.util.{Locale, UUID}
 
 import scala.collection.mutable
 
+import org.apache.spark.sql.delta.RowId.RowIdMetadataStructField
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.json4s.DefaultFormats
+import org.json4s.jackson.JsonMethods._
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
+import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, QuotingUtils}
+import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.types.{DataType, Metadata => SparkMetadata, MetadataBuilder, StructField, StructType}
+import org.apache.spark.sql.types.{ArrayType, DataType, MapType, Metadata => SparkMetadata, MetadataBuilder, StructField, StructType}
 
 trait DeltaColumnMappingBase extends DeltaLogging {
   val PARQUET_FIELD_ID_METADATA_KEY = "parquet.field.id"
+  val PARQUET_FIELD_NESTED_IDS_METADATA_KEY = "parquet.field.nested.ids"
   val COLUMN_MAPPING_METADATA_PREFIX = "delta.columnMapping."
   val COLUMN_MAPPING_METADATA_ID_KEY = COLUMN_MAPPING_METADATA_PREFIX + "id"
   val COLUMN_MAPPING_PHYSICAL_NAME_KEY = COLUMN_MAPPING_METADATA_PREFIX + "physicalName"
+  val COLUMN_MAPPING_METADATA_NESTED_IDS_KEY = COLUMN_MAPPING_METADATA_PREFIX + "nested.ids"
+  val PARQUET_LIST_ELEMENT_FIELD_NAME = "element"
+  val PARQUET_MAP_KEY_FIELD_NAME = "key"
+  val PARQUET_MAP_VALUE_FIELD_NAME = "value"
+
+  /**
+   * The list of column mapping metadata for each column in the schema.
+   */
+  val COLUMN_MAPPING_METADATA_KEYS: Set[String] = Set(
+    COLUMN_MAPPING_METADATA_ID_KEY,
+    COLUMN_MAPPING_PHYSICAL_NAME_KEY,
+    COLUMN_MAPPING_METADATA_NESTED_IDS_KEY,
+    PARQUET_FIELD_ID_METADATA_KEY,
+    PARQUET_FIELD_NESTED_IDS_METADATA_KEY
+  )
 
   /**
    * This list of internal columns (and only this list) is allowed to have missing
@@ -56,6 +76,15 @@ trait DeltaColumnMappingBase extends DeltaLogging {
     (CDCReader.CDC_COLUMNS_IN_DATA ++ Seq(
       CDCReader.CDC_COMMIT_VERSION,
       CDCReader.CDC_COMMIT_TIMESTAMP,
+      /**
+       * Whenever `_metadata` column is selected, Spark adds the format generated metadata
+       * columns to `ParquetFileFormat`'s required output schema. Column `_metadata` contains
+       * constant value subfields metadata such as `file_path` and format specific custom metadata
+       * subfields such as `row_index` in Parquet. Spark creates the file format object with
+       * data schema plus additional custom metadata columns required from file format to fill up
+       * the `_metadata` column.
+       */
+      ParquetFileFormat.ROW_INDEX_TEMPORARY_COLUMN_NAME,
       DeltaParquetFileFormat.IS_ROW_DELETED_COLUMN_NAME,
       DeltaParquetFileFormat.ROW_INDEX_COLUMN_NAME)
     ).map(_.toLowerCase(Locale.ROOT)).toSet
@@ -63,21 +92,26 @@ trait DeltaColumnMappingBase extends DeltaLogging {
   val supportedModes: Set[DeltaColumnMappingMode] =
     Set(IdMapping, NoMapping, NameMapping)
 
-  def isInternalField(field: StructField): Boolean = DELTA_INTERNAL_COLUMNS
-    .contains(field.name.toLowerCase(Locale.ROOT))
-
-  def satisfiesColumnMappingProtocol(protocol: Protocol): Boolean =
-    protocol.isFeatureSupported(ColumnMappingTableFeature)
+  def isInternalField(field: StructField): Boolean =
+    DELTA_INTERNAL_COLUMNS.contains(field.name.toLowerCase(Locale.ROOT)) ||
+      RowIdMetadataStructField.isRowIdColumn(field) ||
+      RowCommitVersion.MetadataStructField.isRowCommitVersionColumn(field)
 
   /**
-   * The only allowed mode change is from NoMapping to NameMapping. Other changes
-   * would require re-writing Parquet files and are not supported right now.
+   * Allow NameMapping -> NoMapping transition behind a feature flag.
+   * Otherwise only NoMapping -> NameMapping is allowed.
    */
   private def allowMappingModeChange(
       oldMode: DeltaColumnMappingMode,
       newMode: DeltaColumnMappingMode): Boolean = {
-    if (oldMode == newMode) true
-    else oldMode == NoMapping && newMode == NameMapping
+    val removalAllowed = SparkSession.getActiveSession
+      .exists(_.conf.get(DeltaSQLConf.ALLOW_COLUMN_MAPPING_REMOVAL))
+    // No change.
+    (oldMode == newMode) ||
+      // Downgrade allowed with a flag.
+      (removalAllowed && (oldMode != NoMapping && newMode == NoMapping)) ||
+      // Upgrade always allowed.
+      (oldMode == NoMapping && newMode == NameMapping)
   }
 
   def isColumnMappingUpgrade(
@@ -93,6 +127,7 @@ trait DeltaColumnMappingBase extends DeltaLogging {
    *     - upgrading to the column mapping Protocol through configurations
    */
   def verifyAndUpdateMetadataChange(
+      spark: SparkSession,
       deltaLog: DeltaLog,
       oldProtocol: Protocol,
       oldMetadata: Metadata,
@@ -108,37 +143,39 @@ trait DeltaColumnMappingBase extends DeltaLogging {
     }
 
     val isChangingModeOnExistingTable = oldMappingMode != newMappingMode && !isCreatingNewTable
-    if (isChangingModeOnExistingTable) {
-      if (!allowMappingModeChange(oldMappingMode, newMappingMode)) {
-        throw DeltaErrors.changeColumnMappingModeNotSupported(
-          oldMappingMode.name, newMappingMode.name)
-      } else {
-        // legal mode change, now check if protocol is upgraded before or part of this txn
-        val caseInsensitiveMap = CaseInsensitiveMap(newMetadata.configuration)
-        val minReaderVersion = caseInsensitiveMap
-          .get(Protocol.MIN_READER_VERSION_PROP).map(_.toInt)
-          .getOrElse(oldProtocol.minReaderVersion)
-        val minWriterVersion = caseInsensitiveMap
-          .get(Protocol.MIN_WRITER_VERSION_PROP).map(_.toInt)
-          .getOrElse(oldProtocol.minWriterVersion)
-        var newProtocol = Protocol(minReaderVersion, minWriterVersion)
-        val satisfiesWriterVersion = minWriterVersion >= ColumnMappingTableFeature.minWriterVersion
-        val satisfiesReaderVersion = minReaderVersion >= ColumnMappingTableFeature.minReaderVersion
-        // This is an OR check because `readerFeatures` and `writerFeatures` can independently
-        // support table features.
-        if ((newProtocol.supportsReaderFeatures && satisfiesWriterVersion) ||
-            (newProtocol.supportsWriterFeatures && satisfiesReaderVersion)) {
-          newProtocol = newProtocol.withFeature(ColumnMappingTableFeature)
-        }
+    if (isChangingModeOnExistingTable && !allowMappingModeChange(oldMappingMode, newMappingMode)) {
+      throw DeltaErrors.changeColumnMappingModeNotSupported(
+        oldMappingMode.name, newMappingMode.name)
+    }
 
-        if (!satisfiesColumnMappingProtocol(newProtocol)) {
-          throw DeltaErrors.changeColumnMappingModeOnOldProtocol(oldProtocol)
-        }
+    var updatedMetadata = newMetadata
+
+    // If column mapping is disabled, we need to strip any column mapping metadata from the schema,
+    // because Delta code will use them even when column mapping is not enabled. However, we cannot
+    // strip column mapping metadata that already exist in the schema, because this would break
+    // the table.
+    if (newMappingMode == NoMapping &&
+        schemaHasColumnMappingMetadata(newMetadata.schema)) {
+      val addsColumnMappingMetadata = !schemaHasColumnMappingMetadata(oldMetadata.schema)
+      if (addsColumnMappingMetadata &&
+          spark.conf.get(DeltaSQLConf.DELTA_COLUMN_MAPPING_STRIP_METADATA)) {
+        recordDeltaEvent(deltaLog, opType = "delta.columnMapping.stripMetadata")
+        val strippedSchema = dropColumnMappingMetadata(newMetadata.schema)
+        updatedMetadata = newMetadata.copy(schemaString = strippedSchema.json)
+      } else {
+        recordDeltaEvent(
+          deltaLog,
+          opType = "delta.columnMapping.updateSchema.metadataPresentButFeatureDisabled",
+          data = Map(
+            "addsColumnMappingMetadata" -> addsColumnMappingMetadata.toString,
+            "isCreatingNewTable" -> isCreatingNewTable.toString,
+            "isOverwriteSchema" -> isOverwriteSchema.toString)
+        )
       }
     }
 
-    val updatedMetadata = updateColumnMappingMetadata(
-      oldMetadata, newMetadata, isChangingModeOnExistingTable, isOverwriteSchema)
+    updatedMetadata = updateColumnMappingMetadata(
+      oldMetadata, updatedMetadata, isChangingModeOnExistingTable, isOverwriteSchema)
 
     // record column mapping table creation/upgrade
     if (newMappingMode != NoMapping) {
@@ -158,6 +195,22 @@ trait DeltaColumnMappingBase extends DeltaLogging {
   def getColumnId(field: StructField): Int =
     field.metadata.getLong(COLUMN_MAPPING_METADATA_ID_KEY).toInt
 
+  def hasNestedColumnIds(field: StructField): Boolean =
+    field.metadata.contains(COLUMN_MAPPING_METADATA_NESTED_IDS_KEY)
+
+  def getNestedColumnIds(field: StructField): SparkMetadata =
+    field.metadata.getMetadata(COLUMN_MAPPING_METADATA_NESTED_IDS_KEY)
+
+  def getNestedColumnIdsAsLong(field: StructField): Iterable[Long] = {
+    val nestedColumnMetadata = getNestedColumnIds(field)
+    metadataToMap[Map[String, Long]](nestedColumnMetadata).values
+  }
+
+  private def metadataToMap[T <: Map[_, _]](metadata: SparkMetadata)(implicit m: Manifest[T]): T = {
+    implicit val formats: DefaultFormats.type = DefaultFormats
+    parse(metadata.json).extract[T]
+  }
+
   def hasPhysicalName(field: StructField): Boolean =
     field.metadata.contains(COLUMN_MAPPING_PHYSICAL_NAME_KEY)
 
@@ -171,7 +224,9 @@ trait DeltaColumnMappingBase extends DeltaLogging {
         new MetadataBuilder()
           .withMetadata(field.metadata)
           .remove(COLUMN_MAPPING_METADATA_ID_KEY)
+          .remove(COLUMN_MAPPING_METADATA_NESTED_IDS_KEY)
           .remove(PARQUET_FIELD_ID_METADATA_KEY)
+          .remove(PARQUET_FIELD_NESTED_IDS_METADATA_KEY)
           .remove(COLUMN_MAPPING_PHYSICAL_NAME_KEY)
           .build()
 
@@ -185,10 +240,17 @@ trait DeltaColumnMappingBase extends DeltaLogging {
         // Delta spec requires writer to always write field_id in parquet schema for column mapping
         // Reader strips PARQUET_FIELD_ID_METADATA_KEY in
         // DeltaParquetFileFormat:prepareSchemaForRead
-        new MetadataBuilder()
+        val builder = new MetadataBuilder()
           .withMetadata(field.metadata)
           .putLong(PARQUET_FIELD_ID_METADATA_KEY, getColumnId(field))
-          .build()
+
+        // Nested field IDs for the 'element' and 'key'/'value' fields of Arrays
+        // and Maps are written when Uniform with IcebergCompatV2 is enabled on a table.
+        if (hasNestedColumnIds(field)) {
+          builder.putMetadata(PARQUET_FIELD_NESTED_IDS_METADATA_KEY, getNestedColumnIds(field))
+        }
+
+        builder.build()
 
       case mode =>
         throw DeltaErrors.unsupportedColumnMappingMode(mode.name)
@@ -209,9 +271,12 @@ trait DeltaColumnMappingBase extends DeltaLogging {
       .build())
   }
 
-  def assignPhysicalNames(schema: StructType): StructType = {
+  def assignPhysicalNames(schema: StructType, reuseLogicalName: Boolean = false): StructType = {
     SchemaMergingUtils.transformColumns(schema) { (_, field, _) =>
-      if (hasPhysicalName(field)) field else assignPhysicalName(field, generatePhysicalName)
+      if (hasPhysicalName(field)) field else {
+        if (reuseLogicalName) assignPhysicalName(field, field.name)
+        else assignPhysicalName(field, generatePhysicalName)
+      }
     }
   }
 
@@ -265,6 +330,10 @@ trait DeltaColumnMappingBase extends DeltaLogging {
     SchemaMergingUtils.transformColumns(schema)((_, f, _) => {
       if (hasColumnId(f)) {
         maxId = maxId max getColumnId(f)
+        if (hasNestedColumnIds(f)) {
+          val nestedIds = getNestedColumnIdsAsLong(f)
+          maxId = maxId max (if (nestedIds.nonEmpty) nestedIds.max else 0)
+        }
       }
       f
     })
@@ -341,6 +410,7 @@ trait DeltaColumnMappingBase extends DeltaLogging {
     val rawSchema = newMetadata.schema
     var maxId = DeltaConfigs.COLUMN_MAPPING_MAX_ID.fromMetaData(newMetadata) max
                 findMaxColumnId(rawSchema)
+    val startId = maxId
     val newSchema =
       SchemaMergingUtils.transformColumns(rawSchema)((path, field, _) => {
         val builder = new MetadataBuilder().withMetadata(field.metadata)
@@ -408,23 +478,27 @@ trait DeltaColumnMappingBase extends DeltaLogging {
         field.copy(metadata = builder.build())
       })
 
+    val (finalSchema, newMaxId) = if (IcebergCompatV2.isEnabled(newMetadata)) {
+      rewriteFieldIdsForIceberg(newSchema, maxId)
+    } else {
+      (newSchema, maxId)
+    }
+
     newMetadata.copy(
-      schemaString = newSchema.json,
-      configuration =
-        newMetadata.configuration ++ Map(DeltaConfigs.COLUMN_MAPPING_MAX_ID.key -> maxId.toString)
+      schemaString = finalSchema.json,
+      configuration = newMetadata.configuration
+        ++ Map(DeltaConfigs.COLUMN_MAPPING_MAX_ID.key -> newMaxId.toString)
     )
   }
 
   def dropColumnMappingMetadata(schema: StructType): StructType = {
     SchemaMergingUtils.transformColumns(schema) { (_, field, _) =>
-      field.copy(
-        metadata = new MetadataBuilder()
-          .withMetadata(field.metadata)
-          .remove(COLUMN_MAPPING_METADATA_ID_KEY)
-          .remove(COLUMN_MAPPING_PHYSICAL_NAME_KEY)
-          .remove(PARQUET_FIELD_ID_METADATA_KEY)
-          .build()
-      )
+      var strippedMetadataBuilder = new MetadataBuilder().withMetadata(field.metadata)
+      for (key <- COLUMN_MAPPING_METADATA_KEYS) {
+        strippedMetadataBuilder = strippedMetadataBuilder.remove(key)
+      }
+      val strippedMetadata = strippedMetadataBuilder.build()
+      field.copy(metadata = strippedMetadata)
     }
   }
 
@@ -463,10 +537,15 @@ trait DeltaColumnMappingBase extends DeltaLogging {
       throw DeltaErrors.unsupportedColumnMappingMode(columnMappingMode.name)
     }
 
+    val referenceSchemaColumnMap: Map[String, StructField] =
+      SchemaMergingUtils.explode(referenceSchema).map { case (path, field) =>
+        QuotingUtils.quoteNameParts(path).toLowerCase(Locale.ROOT) -> field
+      }.toMap
+
     SchemaMergingUtils.transformColumns(schema) { (path, field, _) =>
       val fullName = path :+ field.name
-      val inSchema = SchemaUtils
-        .findNestedFieldIgnoreCase(referenceSchema, fullName, includeCollections = true)
+      val inSchema =
+        referenceSchemaColumnMap.get(QuotingUtils.quoteNameParts(fullName).toLowerCase(Locale.ROOT))
       inSchema.map { refField =>
         val sparkMetadata = getColumnMappingMetadata(refField, columnMappingMode)
         field.copy(metadata = sparkMetadata, name = getPhysicalName(refField))
@@ -518,6 +597,18 @@ trait DeltaColumnMappingBase extends DeltaLogging {
     val originalSchemaFields = SchemaMergingUtils.explode(schema).map(_._2)
 
     physicalSchemaFieldPaths.zip(originalSchemaFields).toMap
+  }
+
+  /**
+   * Returns a map from the logical name paths to the physical name paths for the given schema.
+   * The logical name path is the result of splitting a multi-part identifier, and the physical name
+   * path is result of replacing all names in the logical name path with their physical names.
+   */
+  def getLogicalNameToPhysicalNameMap(schema: StructType): Map[Seq[String], Seq[String]] = {
+    val physicalSchema = renameColumns(schema)
+    val logicalSchemaFieldPaths = SchemaMergingUtils.explode(schema).map(_._1)
+    val physicalSchemaFieldPaths = SchemaMergingUtils.explode(physicalSchema).map(_._1)
+    logicalSchemaFieldPaths.zip(physicalSchemaFieldPaths).toMap
   }
 
   /**
@@ -581,6 +672,7 @@ trait DeltaColumnMappingBase extends DeltaLogging {
 
   /**
    * Compare the old metadata's schema with new metadata's schema for column mapping schema changes.
+   * Also check for repartition because we need to fail fast when repartition detected.
    *
    * newMetadata's snapshot version must be >= oldMetadata's snapshot version so we could reliably
    * detect the difference between ADD COLUMN and DROP COLUMN.
@@ -588,13 +680,24 @@ trait DeltaColumnMappingBase extends DeltaLogging {
    * As of now, `newMetadata` is column mapping read compatible with `oldMetadata` if
    * no rename column or drop column has happened in-between.
    */
-  def hasNoColumnMappingSchemaChanges(newMetadata: Metadata, oldMetadata: Metadata): Boolean = {
+  def hasNoColumnMappingSchemaChanges(newMetadata: Metadata, oldMetadata: Metadata,
+      allowUnsafeReadOnPartitionChanges: Boolean = false): Boolean = {
+    // Helper function to check no column mapping schema change and no repartition
+    def hasNoColMappingAndRepartitionSchemaChange(
+       newMetadata: Metadata, oldMetadata: Metadata): Boolean = {
+      isRenameColumnOperation(newMetadata, oldMetadata) ||
+        isDropColumnOperation(newMetadata, oldMetadata) ||
+        !SchemaUtils.isPartitionCompatible(
+          // if allow unsafe row read for partition change, ignore the check
+          if (allowUnsafeReadOnPartitionChanges) Seq.empty else newMetadata.partitionColumns,
+          if (allowUnsafeReadOnPartitionChanges) Seq.empty else oldMetadata.partitionColumns)
+    }
+
     val (oldMode, newMode) = (oldMetadata.columnMappingMode, newMetadata.columnMappingMode)
     if (oldMode != NoMapping && newMode != NoMapping) {
       require(oldMode == newMode, "changing mode is not supported")
       // Both changes are post column mapping enabled
-      !isRenameColumnOperation(newMetadata, oldMetadata) &&
-        !isDropColumnOperation(newMetadata, oldMetadata)
+      !hasNoColMappingAndRepartitionSchemaChange(newMetadata, oldMetadata)
     } else if (oldMode == NoMapping && newMode != NoMapping) {
       // The old metadata does not have column mapping while the new metadata does, in this case
       // we assume an upgrade has happened in between.
@@ -611,12 +714,117 @@ trait DeltaColumnMappingBase extends DeltaLogging {
           Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> newMetadata.columnMappingMode.name)
       )
       // use the same check
-      !isRenameColumnOperation(newMetadata, upgradedMetadata) &&
-        !isDropColumnOperation(newMetadata, upgradedMetadata)
+      !hasNoColMappingAndRepartitionSchemaChange(newMetadata, upgradedMetadata)
     } else {
-      // Not column mapping, don't block
-      // TODO: support column mapping downgrade check once that's rolled out.
-      true
+      // Prohibit reading across a downgrade.
+      val isDowngrade = oldMode != NoMapping && newMode == NoMapping
+      !isDowngrade
+    }
+  }
+
+  /**
+   * Adds the nested field IDs required by Iceberg.
+   *
+   * In parquet, list-type columns have a nested, implicitly defined [[element]] field and
+   * map-type columns have implicitly defined [[key]] and [[value]] fields. By default,
+   * Spark does not write field IDs for these fields in the parquet files. However, Iceberg
+   * requires these *nested* field IDs to be present. This method rewrites the specified
+   * Spark schema to add those nested field IDs.
+   *
+   * As list and map types are not [[StructField]]s themselves, nested field IDs are stored in
+   * a map as part of the metadata of the *nearest* parent [[StructField]]. For example, consider
+   * the following schema:
+   *
+   * col1 ARRAY(INT)
+   * col2 MAP(INT, INT)
+   * col3 STRUCT(a INT, b ARRAY(STRUCT(c INT, d MAP(INT, INT))))
+   *
+   * col1 is a list and so requires one nested field ID for the [[element]] field in parquet.
+   * This nested field ID will be stored in a map that is part of col1's [[StructField.metadata]].
+   * The same applies to the nested field IDs for col2's implicit [[key]] and [[value]] fields.
+   * col3 itself is a Struct, consisting of an integer field and a list field named 'b'. The
+   * nested field ID for the list of 'b' is stored in b's StructField metadata. Finally, the
+   * list type itself is again a struct consisting of an integer field and a map field named 'd'.
+   * The nested field IDs for the map of 'd' are stored in d's StructField metadata.
+   *
+   * @param schema  The schema to which nested field IDs should be added
+   * @param startId The first field ID to use for the nested field IDs
+   */
+  def rewriteFieldIdsForIceberg(schema: StructType, startId: Long): (StructType, Long) = {
+    var currFieldId = startId
+
+    def initNestedIdsMetadata(field: StructField): MetadataBuilder = {
+      if (hasNestedColumnIds(field)) {
+        new MetadataBuilder().withMetadata(getNestedColumnIds(field))
+      } else {
+        new MetadataBuilder()
+      }
+    }
+
+    /*
+     * Helper to add the next field ID to the specified [[MetadataBuilder]] under
+     * the specified key. This method first checks whether this is an existing nested
+     * field or a newly added nested field. New field IDs are only assigned to newly
+     * added nested fields.
+     */
+    def updateFieldId(metadata: MetadataBuilder, key: String): Unit = {
+      if (!metadata.build().contains(key)) {
+        currFieldId += 1
+        metadata.putLong(key, currFieldId)
+      }
+    }
+
+    /*
+     * Recursively adds nested field IDs for the passed data type in pre-order,
+     * ensuring uniqueness of field IDs.
+     *
+     * @param dt The data type that should be transformed
+     * @param nestedIds A MetadataBuilder that keeps track of the nested field ID
+     *                  assignment. This metadata is added to the parent field.
+     * @param path The current field path relative to the parent field
+     */
+    def transform[E <: DataType](dt: E, nestedIds: MetadataBuilder, path: Seq[String]): E = {
+      val newDt = dt match {
+        case StructType(fields) =>
+          StructType(fields.map { field =>
+            val newNestedIds = initNestedIdsMetadata(field)
+            val newDt = transform(field.dataType, newNestedIds, Seq(getPhysicalName(field)))
+            val newFieldMetadata = new MetadataBuilder().withMetadata(field.metadata).putMetadata(
+              COLUMN_MAPPING_METADATA_NESTED_IDS_KEY, newNestedIds.build()).build()
+            field.copy(dataType = newDt, metadata = newFieldMetadata)
+          })
+        case ArrayType(elementType, containsNull) =>
+          // update element type metadata and recurse into element type
+          val elemPath = path :+ PARQUET_LIST_ELEMENT_FIELD_NAME
+          updateFieldId(nestedIds, elemPath.mkString("."))
+          val elementDt = transform(elementType, nestedIds, elemPath)
+          // return new array type with updated metadata
+          ArrayType(elementDt, containsNull)
+        case MapType(keyType, valType, valueContainsNull) =>
+          // update key type metadata and recurse into key type
+          val keyPath = path :+ PARQUET_MAP_KEY_FIELD_NAME
+          updateFieldId(nestedIds, keyPath.mkString("."))
+          val keyDt = transform(keyType, nestedIds, keyPath)
+          // update value type metadata and recurse into value type
+          val valPath = path :+ PARQUET_MAP_VALUE_FIELD_NAME
+          updateFieldId(nestedIds, valPath.mkString("."))
+          val valDt = transform(valType, nestedIds, valPath)
+          // return new map type with updated metadata
+          MapType(keyDt, valDt, valueContainsNull)
+        case other => other
+      }
+      newDt.asInstanceOf[E]
+    }
+
+    (transform(schema, new MetadataBuilder(), Seq.empty), currFieldId)
+  }
+
+  /**
+   * Returns whether the schema contains any metadata reserved for column mapping.
+   */
+  def schemaHasColumnMappingMetadata(schema: StructType): Boolean = {
+    SchemaMergingUtils.explode(schema).exists { case (_, col) =>
+      COLUMN_MAPPING_METADATA_KEYS.exists(k => col.metadata.contains(k))
     }
   }
 }

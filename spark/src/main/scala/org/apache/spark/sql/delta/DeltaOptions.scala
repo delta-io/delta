@@ -289,6 +289,10 @@ object DeltaOptions extends DeltaLogging {
    */
   val STREAMING_SOURCE_TRACKING_ID = "streamingSourceTrackingId"
 
+  /**
+   * An option to control if delta will write partition columns to data files
+   */
+  val WRITE_PARTITION_COLUMNS = "writePartitionColumns"
 
   val validOptionKeys : Set[String] = Set(
     REPLACE_WHERE_OPTION,
@@ -323,7 +327,8 @@ object DeltaOptions extends DeltaLogging {
     "checkpointLocation",
     "path",
     VERSION_AS_OF,
-    TIMESTAMP_AS_OF
+    TIMESTAMP_AS_OF,
+    WRITE_PARTITION_COLUMNS
   )
 
 

@@ -16,8 +16,12 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.DeltaCommitTag.PreservedRowTrackingTag
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.actions.CommitInfo
 
+import org.apache.spark.sql.DataFrame
+import org.apache.spark.sql.types.StructField
 
 /**
  * Utility functions for Row Tracking that are shared between Row IDs and Row Commit Versions.
@@ -62,30 +66,110 @@ object RowTracking {
   }
 
   /**
-   * Returns the sourceMetadata with the row tracking property coming from the targetMetadata.
+   * @return the Row Tracking metadata fields for the file's _metadata
+   *         when Row Tracking is enabled.
    */
-  private[delta] def takeRowTrackingPropertyFromTarget(
-      targetMetadata: Metadata,
-      sourceMetadata: Metadata): Metadata = {
-    var newConfig = sourceMetadata.configuration - DeltaConfigs.ROW_TRACKING_ENABLED.key
-    targetMetadata.configuration.get(DeltaConfigs.ROW_TRACKING_ENABLED.key).foreach { v =>
-      newConfig += DeltaConfigs.ROW_TRACKING_ENABLED.key -> v
+  def createMetadataStructFields(
+      protocol: Protocol,
+      metadata: Metadata,
+      nullable: Boolean): Iterable[StructField] = {
+    RowId.createRowIdField(protocol, metadata, nullable) ++
+      RowId.createBaseRowIdField(protocol, metadata) ++
+      DefaultRowCommitVersion.createDefaultRowCommitVersionField(protocol, metadata) ++
+      RowCommitVersion.createMetadataStructField(protocol, metadata, nullable)
+  }
+
+  /**
+   * @param preserved The value of [[DeltaCommitTag.PreservedRowTrackingTag.key]] tag
+   * @return A copy of ``tagsMap`` with the [[DeltaCommitTag.PreservedRowTrackingTag.key]] tag added
+   *         or replaced with the new value.
+   */
+  private def addPreservedRowTrackingTag(
+      tagsMap: Map[String, String],
+      preserved: Boolean = true): Map[String, String] = {
+    tagsMap + (DeltaCommitTag.PreservedRowTrackingTag.key -> preserved.toString)
+  }
+
+  /**
+   * Sets the [[DeltaCommitTag.PreservedRowTrackingTag.key]] tag to true if not set. We add the tag
+   * to every operation because we assume all operations preserve row tracking by default. The
+   * absence of the tag means that row tracking is not preserved.
+   * Operations can set the tag to mark row tracking as preserved/not preserved.
+   */
+  private[delta] def addPreservedRowTrackingTagIfNotSet(
+      snapshot: SnapshotDescriptor,
+      tagsMap: Map[String, String] = Map.empty): Map[String, String] = {
+    if (!isEnabled(snapshot.protocol, snapshot.metadata) ||
+      tagsMap.contains(PreservedRowTrackingTag.key)) {
+      return tagsMap
     }
-    sourceMetadata.copy(configuration = newConfig)
+    addPreservedRowTrackingTag(tagsMap)
   }
 
   /**
-   * Removes the row tracking property from the metadata.
+   * Returns a copy of the CommitInfo passed in with the PreservedRowTrackingTag tag set to false.
    */
-  private[delta] def removeRowTrackingProperty(metadata: Metadata): Metadata = {
-    metadata.copy(configuration = metadata.configuration - DeltaConfigs.ROW_TRACKING_ENABLED.key)
+  private def addRowTrackingNotPreservedTag(commitInfo: CommitInfo): CommitInfo = {
+    val tagsMap = commitInfo.tags.getOrElse(Map.empty[String, String])
+    val newCommitInfoTags = addPreservedRowTrackingTag(tagsMap, preserved = false)
+    commitInfo.copy(tags = Some(newCommitInfoTags))
   }
 
   /**
-   * Removes the row tracking table feature from the protocol.
+   * Checks whether the CommitInfo has the RowTrackingEnablementOnly tag set to true.
+   * If omitted, we assume it is false.
    */
-  private[delta] def removeRowTrackingTableFeature(protocol: Protocol): Protocol = {
-    val writerFeaturesWithoutRowTracking = protocol.writerFeatures.map(_ - RowTrackingFeature.name)
-    protocol.copy(writerFeatures = writerFeaturesWithoutRowTracking)
+  private def isRowTrackingEnablementOnlyCommit(commitInfo: Option[CommitInfo]): Boolean = {
+    DeltaCommitTag
+        .getTagValueFromCommitInfo(commitInfo, DeltaCommitTag.RowTrackingEnablementOnlyTag.key)
+        .exists(_.toBoolean)
+  }
+
+  /**
+   * Returns a Boolean indicating whether it is safe the resolve the metadata update conflict
+   * between the current and winning transaction conflict, from the perspective of row tracking
+   * enablement.
+   */
+  def canResolveMetadataUpdateConflict(
+      currentTransactionInfo: CurrentTransactionInfo,
+      winningCommitSummary: WinningCommitSummary): Boolean = {
+    if (!isSupported(currentTransactionInfo.protocol)) return false
+
+    RowTracking.isRowTrackingEnablementOnlyCommit(winningCommitSummary.commitInfo) &&
+      !currentTransactionInfo.metadataChanged
+  }
+
+  /**
+   * Update the currentTransactionInfo properly to resolve a metadata update conflict when the
+   * winning commit is tagged as RowTrackingEnablementOnly. It is only safe to call this function if
+   * [[RowTracking.canResolveMetadataUpdateConflict]] returns true.
+   *
+   * See [[ConflictCheckerEdge.checkNoMetadataUpdates()]] for more details.
+   */
+  def resolveRowTrackingEnablementOnlyMetadataUpdateConflict(
+      currentTransactionInfo: CurrentTransactionInfo,
+      winningCommitSummary: WinningCommitSummary): CurrentTransactionInfo = {
+    require(canResolveMetadataUpdateConflict(currentTransactionInfo, winningCommitSummary))
+    // If the CommitInfo is None, do nothing because the absence of the
+    // [[DeltaCommitTag.PreservedRowTrackingTag]] means it is false.
+    val newCommitInfo =
+        currentTransactionInfo.commitInfo.map(RowTracking.addRowTrackingNotPreservedTag)
+
+    val newMetadata = winningCommitSummary.metadataUpdates.head
+
+    // OptimisticTransactions sets the metadata seen by the current txn
+    // (currentTransactionInfo.metadata) to the updated metadata. To be consistent, let's do this
+    // even if the current txn does not update metadata.
+    currentTransactionInfo.copy(
+      metadata = newMetadata,
+      commitInfo = newCommitInfo
+    )
+  }
+
+  def preserveRowTrackingColumns(
+      dfWithoutRowTrackingColumns: DataFrame,
+      snapshot: SnapshotDescriptor): DataFrame = {
+    val dfWithRowIds = RowId.preserveRowIds(dfWithoutRowTrackingColumns, snapshot)
+    RowCommitVersion.preserveRowCommitVersions(dfWithRowIds, snapshot)
   }
 }

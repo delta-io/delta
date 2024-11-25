@@ -38,6 +38,7 @@ import javax.annotation.Nullable;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.delta.flink.internal.ConnectorUtils;
+import io.delta.flink.internal.DeltaFlinkHadoopConf;
 import io.delta.flink.internal.lang.Lazy;
 import io.delta.flink.sink.internal.SchemaConverter;
 import io.delta.flink.sink.internal.committables.DeltaCommittable;
@@ -61,7 +62,7 @@ import io.delta.standalone.actions.AddFile;
 import io.delta.standalone.actions.Metadata;
 import io.delta.standalone.actions.SetTransaction;
 import io.delta.standalone.types.StructType;
-
+import io.delta.standalone.internal.KernelDeltaLogDelegator;
 
 /**
  * A {@link GlobalCommitter} implementation for
@@ -126,8 +127,14 @@ public class DeltaGlobalCommitter
         this.conf = conf;
         this.rowType = rowType;
         this.mergeSchema = mergeSchema;
-        this.deltaLog = DeltaLog.forTable(conf,
-            new org.apache.hadoop.fs.Path(basePath.toUri()));
+        if (conf.getBoolean(DeltaFlinkHadoopConf.DELTA_KERNEL_ENABLED, false)) {
+            LOG.info("Using delta-kernel for commits");
+            this.deltaLog = KernelDeltaLogDelegator.forTable(conf, basePath.toString());
+        } else {
+            LOG.info("Using delta-standalone for commits");
+            this.deltaLog = DeltaLog.forTable(conf,
+                new org.apache.hadoop.fs.Path(basePath.toUri()));
+        }
     }
 
     /**
@@ -233,6 +240,7 @@ public class DeltaGlobalCommitter
      */
     @Override
     public List<DeltaGlobalCommittable> commit(List<DeltaGlobalCommittable> globalCommittables) {
+        long start = System.nanoTime();
         String appId = resolveAppId(globalCommittables);
         if (appId != null) { // means there are committables to process
 
@@ -250,7 +258,8 @@ public class DeltaGlobalCommitter
                     this.deltaLog.tableExists());
             }
         }
-
+        long timeElapsed = System.nanoTime() - start;
+        LOG.info("Commit finished in " + timeElapsed + ", was first: " + this.firstCommit);
         this.firstCommit = false;
         return Collections.emptyList();
     }

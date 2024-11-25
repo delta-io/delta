@@ -24,9 +24,9 @@ import io.delta.kernel.annotation.Evolving;
  */
 @Evolving
 public class LongType extends BasePrimitiveType {
-    public static final LongType INSTANCE = new LongType();
+  public static final LongType LONG = new LongType();
 
-    private LongType() {
-        super("long");
-    }
+  private LongType() {
+    super("long");
+  }
 }

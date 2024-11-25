@@ -36,13 +36,13 @@
           "z": 0.00
         },
         {
-          "config": "{\"name\":\"ab30bfc2485357da0d28\",\"layouts\":[{\"id\":0,\"position\":{\"x\":401.32978556894665,\"y\":96.16528408201596,\"z\":1001,\"width\":751.3714196274848,\"height\":235.92549694787917}}],\"singleVisual\":{\"visualType\":\"tableEx\",\"projections\":{\"Values\":[{\"queryRef\":\"RowCounts.GoldenTable\"},{\"queryRef\":\"Sum(RowCounts.RowCounts)\"}]},\"prototypeQuery\":{\"Version\":2,\"From\":[{\"Name\":\"r\",\"Entity\":\"RowCounts\",\"Type\":0}],\"Select\":[{\"Column\":{\"Expression\":{\"SourceRef\":{\"Source\":\"r\"}},\"Property\":\"GoldenTable\"},\"Name\":\"RowCounts.GoldenTable\",\"NativeReferenceName\":\"GoldenTable\"},{\"Aggregation\":{\"Expression\":{\"Column\":{\"Expression\":{\"SourceRef\":{\"Source\":\"r\"}},\"Property\":\"RowCounts\"}},\"Function\":0},\"Name\":\"Sum(RowCounts.RowCounts)\",\"NativeReferenceName\":\"RowCounts\"}]},\"drillFilterOtherVisuals\":true}}",
+          "config": "{\"name\":\"ab30bfc2485357da0d28\",\"layouts\":[{\"id\":0,\"position\":{\"x\":401.32978556894665,\"y\":96.16528408201596,\"z\":2000,\"width\":751.3714196274848,\"height\":235.92549694787917}}],\"singleVisual\":{\"visualType\":\"tableEx\",\"projections\":{\"Values\":[{\"queryRef\":\"RowCounts.GoldenTable\"},{\"queryRef\":\"Sum(RowCounts.RowCounts)\"}]},\"prototypeQuery\":{\"Version\":2,\"From\":[{\"Name\":\"r\",\"Entity\":\"RowCounts\",\"Type\":0}],\"Select\":[{\"Column\":{\"Expression\":{\"SourceRef\":{\"Source\":\"r\"}},\"Property\":\"GoldenTable\"},\"Name\":\"RowCounts.GoldenTable\",\"NativeReferenceName\":\"GoldenTable\"},{\"Aggregation\":{\"Expression\":{\"Column\":{\"Expression\":{\"SourceRef\":{\"Source\":\"r\"}},\"Property\":\"RowCounts\"}},\"Function\":0},\"Name\":\"Sum(RowCounts.RowCounts)\",\"NativeReferenceName\":\"RowCounts\"}]},\"drillFilterOtherVisuals\":true}}",
           "filters": "[]",
           "height": 235.93,
           "width": 751.37,
           "x": 401.33,
           "y": 96.17,
-          "z": 1001.00
+          "z": 2000.00
         },
         {
           "config": "{\"name\":\"faeabc8e9d35160bee93\",\"layouts\":[{\"id\":0,\"position\":{\"x\":0,\"y\":138.47800907810299,\"z\":1000,\"width\":380.81452496478323,\"height\":162.83988104554703}}],\"singleVisual\":{\"visualType\":\"card\",\"projections\":{\"Values\":[{\"queryRef\":\"DeltaTableData_Generic.Function Up-to-Date\"}]},\"prototypeQuery\":{\"Version\":2,\"From\":[{\"Name\":\"d\",\"Entity\":\"DeltaTableData_CurrentFunction\",\"Type\":0}],\"Select\":[{\"Measure\":{\"Expression\":{\"SourceRef\":{\"Source\":\"d\"}},\"Property\":\"Function Up-to-Date\"},\"Name\":\"DeltaTableData_Generic.Function Up-to-Date\"}]},\"drillFilterOtherVisuals\":true}}",

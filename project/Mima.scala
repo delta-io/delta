@@ -105,6 +105,7 @@ object Mima {
     Test / test := ((Test / test) dependsOn mimaReportBinaryIssues).value,
     mimaPreviousArtifacts := {
       Set("io.delta" % "delta-flink" % getPrevConnectorVersion(version.value))
-    }
+    },
+    mimaBinaryIssueFilters ++= FlinkMimaExcludes.ignoredABIProblems
   )
 }

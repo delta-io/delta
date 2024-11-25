@@ -37,9 +37,8 @@ import org.apache.spark.sql.streaming._
 import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
 
-class DeltaSinkSuite
+abstract class DeltaSinkTest
   extends StreamTest
-  with DeltaColumnMappingTestUtils
   with DeltaSQLCommandTest {
 
   override val streamingTimeout = 60.seconds
@@ -68,6 +67,13 @@ class DeltaSinkSuite
       }
     }
   }
+}
+
+class DeltaSinkSuite
+  extends DeltaSinkTest
+  with DeltaColumnMappingTestUtils {
+
+  import testImplicits._
 
   test("append mode") {
     failAfter(streamingTimeout) {
@@ -235,7 +241,7 @@ class DeltaSinkSuite
 
         // Verify the correct partitioning schema has been inferred
         val hadoopFsRelations = outputDf.queryExecution.analyzed.collect {
-          case LogicalRelation(baseRelation, _, _, _) if
+          case LogicalRelationWithTable(baseRelation, _) if
               baseRelation.isInstanceOf[HadoopFsRelation] =>
             baseRelation.asInstanceOf[HadoopFsRelation]
         }
@@ -358,7 +364,7 @@ class DeltaSinkSuite
 
         val e = intercept[AnalysisException] {
           spark.range(100)
-            .select('id.cast("integer"), 'id % 4 as 'by4, 'id.cast("integer") * 1000 as 'value)
+            .select('id.cast("integer"), 'id % 4 as "by4", 'id.cast("integer") * 1000 as "value")
             .write
             .format("delta")
             .partitionBy("id", "by4")
@@ -393,14 +399,17 @@ class DeltaSinkSuite
         }
 
         val e = intercept[AnalysisException] {
-          spark.range(100).select('id, ('id * 3).cast("string") as 'value)
+          spark.range(100).select('id, ('id * 3).cast("string") as "value")
             .write
             .partitionBy("id")
             .format("delta")
             .mode("append")
             .save(outputDir.getCanonicalPath)
         }
-        assert(e.getMessage.contains("incompatible"))
+        checkError(
+          e,
+          "DELTA_FAILED_TO_MERGE_FIELDS",
+          parameters = Map("currentField" -> "id", "updateField" -> "id"))
       } finally {
         query.stop()
       }
@@ -417,19 +426,26 @@ class DeltaSinkSuite
           .writeStream
           .option("checkpointLocation", checkpointDir.getCanonicalPath)
           .format("delta")
-      spark.range(100).select('id, ('id * 3).cast("string") as 'value)
+      spark.range(100).select('id, ('id * 3).cast("string") as "value")
         .write
         .format("delta")
         .mode("append")
         .save(outputDir.getCanonicalPath)
 
-      val wrapperException = intercept[StreamingQueryException] {
-        val q = dsWriter.start(outputDir.getCanonicalPath)
-        inputData.addData(1, 2, 3)
-        q.processAllAvailable()
+      // More tests covering type changes can be found in [[DeltaSinkImplicitCastSuite]]. This only
+      // covers type changes disabled.
+      withSQLConf(DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS.key -> "false") {
+        val wrapperException = intercept[StreamingQueryException] {
+          val q = dsWriter.start(outputDir.getCanonicalPath)
+          inputData.addData(1, 2, 3)
+          q.processAllAvailable()
+        }
+        assert(wrapperException.cause.isInstanceOf[AnalysisException])
+        checkError(
+          wrapperException.cause.asInstanceOf[AnalysisException],
+          "DELTA_FAILED_TO_MERGE_FIELDS",
+          parameters = Map("currentField" -> "id", "updateField" -> "id"))
       }
-      assert(wrapperException.cause.isInstanceOf[AnalysisException])
-      assert(wrapperException.cause.getMessage.contains("incompatible"))
     }
   }
 

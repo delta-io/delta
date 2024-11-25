@@ -20,15 +20,17 @@ import java.io.{File, FileNotFoundException}
 import java.util.concurrent.atomic.AtomicInteger
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.DeltaSuiteShims._
 import org.apache.spark.sql.delta.actions.{Action, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{DeltaFileOperations, FileNames}
-import org.apache.spark.sql.delta.util.FileNames.deltaFile
-import org.apache.hadoop.fs.{FileSystem, Path}
+import org.apache.spark.sql.delta.util.FileNames.unsafeDeltaFile
+import org.apache.hadoop.fs.{FileSystem, FSDataInputStream, Path, PathHandle}
 
 import org.apache.spark.SparkException
 import org.apache.spark.scheduler.{SparkListener, SparkListenerJobStart}
@@ -38,19 +40,19 @@ import org.apache.spark.sql.catalyst.expressions.InSet
 import org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral
 import org.apache.spark.sql.catalyst.plans.logical.Filter
 import org.apache.spark.sql.execution.FileSourceScanExec
-import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
+import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelationWithTable}
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.functions.{asc, col, expr, lit, map_values, struct}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.StreamingQuery
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{StringType, StructType}
 import org.apache.spark.util.Utils
 
 class DeltaSuite extends QueryTest
   with SharedSparkSession
   with DeltaColumnMappingTestUtils
-  with SQLTestUtils
+  with DeltaSQLTestUtils
   with DeltaSQLCommandTest {
 
   import testImplicits._
@@ -213,9 +215,7 @@ class DeltaSuite extends QueryTest
 
     // Verify the correct partitioning schema is picked up
     val hadoopFsRelations = df.queryExecution.analyzed.collect {
-      case LogicalRelation(baseRelation, _, _, _) if
-      baseRelation.isInstanceOf[HadoopFsRelation] =>
-        baseRelation.asInstanceOf[HadoopFsRelation]
+      case LogicalRelationWithTable(h: HadoopFsRelation, _) => h
     }
     assert(hadoopFsRelations.size === 1)
     assert(hadoopFsRelations.head.partitionSchema.exists(_.name == "is_odd"))
@@ -260,7 +260,7 @@ class DeltaSuite extends QueryTest
             .option(DeltaOptions.REPLACE_WHERE_OPTION, "is_odd = true")
             .save(tempDir.toString)
         }.getMessage
-        assert(e1.contains("Data written out does not match replaceWhere"))
+        assert(e1.contains("does not conform to partial table overwrite condition or constraint"))
 
         val e2 = intercept[AnalysisException] {
           Seq(true).toDF("is_odd")
@@ -303,7 +303,9 @@ class DeltaSuite extends QueryTest
             .save(tempDir.toString)
         }.getMessage
         if (enabled) {
-          assert(e4.contains("Data written out does not match replaceWhere 'value = 1'"))
+          assert(e4.contains(
+            "Written data does not conform to partial table overwrite condition " +
+              "or constraint 'value = 1'"))
         } else {
           assert(e4.contains("Predicate references non-partition column 'value'. Only the " +
             "partition columns may be referenced: [is_odd]"))
@@ -1191,7 +1193,7 @@ class DeltaSuite extends QueryTest
         assert(tempDir.delete())
       }
 
-      spark.range(100).select('id, 'id % 4 as 'by4, 'id % 8 as 'by8)
+      spark.range(100).select('id, 'id % 4 as "by4", 'id % 8 as "by8")
         .write
         .format("delta")
         .partitionBy("by4", "by8")
@@ -1211,7 +1213,7 @@ class DeltaSuite extends QueryTest
         assert(tempDir.delete())
       }
 
-      spark.range(100).select('id, 'id % 4 as 'by4)
+      spark.range(100).select('id, 'id % 4 as "by4")
         .write
         .format("delta")
         .partitionBy("by4")
@@ -1264,14 +1266,14 @@ class DeltaSuite extends QueryTest
         assert(tempDir.delete())
       }
 
-      spark.range(100).select('id, 'id % 4 as 'by4, 'id % 8 as 'by8)
+      spark.range(100).select('id, 'id % 4 as "by4", 'id % 8 as "by8")
         .write
         .format("delta")
         .partitionBy("by4", "by8")
         .save(tempDir.toString)
 
       val e = intercept[AnalysisException] {
-        spark.range(100).select('id, 'id % 4 as 'by4)
+        spark.range(100).select('id, 'id % 4 as "by4")
           .write
           .format("delta")
           .partitionBy("by4")
@@ -1288,19 +1290,22 @@ class DeltaSuite extends QueryTest
         assert(tempDir.delete())
       }
 
-      spark.range(100).select('id, ('id * 3).cast("string") as 'value)
+      spark.range(100).select('id, ('id * 3).cast("string") as "value")
         .write
         .format("delta")
         .save(tempDir.toString)
 
       val e = intercept[AnalysisException] {
-        spark.range(100).select('id, 'id * 3 as 'value)
+        spark.range(100).select('id, 'id * 3 as "value")
           .write
           .format("delta")
           .mode("append")
           .save(tempDir.toString)
       }
-      assert(e.getMessage.contains("incompatible"))
+      checkError(
+        e,
+        "DELTA_FAILED_TO_MERGE_FIELDS",
+        parameters = Map("currentField" -> "value", "updateField" -> "value"))
     }
   }
 
@@ -1310,7 +1315,7 @@ class DeltaSuite extends QueryTest
         assert(tempDir.delete())
       }
 
-      spark.range(100).select('id, 'id % 4 as 'by4)
+      spark.range(100).select('id, 'id % 4 as "by4")
         .write
         .format("delta")
         .partitionBy("by4")
@@ -1321,7 +1326,7 @@ class DeltaSuite extends QueryTest
       val deltaLog = loadDeltaLog(tempDir.getAbsolutePath)
       assertPartitionExists("by4", deltaLog, files)
 
-      spark.range(101, 200).select('id, 'id % 4 as 'by4, 'id % 8 as 'by8)
+      spark.range(101, 200).select('id, 'id % 4 as "by4", 'id % 8 as "by8")
         .write
         .format("delta")
         .option(DeltaOptions.MERGE_SCHEMA_OPTION, "true")
@@ -1330,7 +1335,7 @@ class DeltaSuite extends QueryTest
 
       checkAnswer(
         spark.read.format("delta").load(tempDir.toString),
-        spark.range(101, 200).select('id, 'id % 4 as 'by4, 'id % 8 as 'by8))
+        spark.range(101, 200).select('id, 'id % 4 as "by4", 'id % 8 as "by8"))
     }
   }
 
@@ -1340,7 +1345,7 @@ class DeltaSuite extends QueryTest
         assert(tempDir.delete())
       }
 
-      spark.range(100).select('id, 'id % 4 as 'by4)
+      spark.range(100).select('id, 'id % 4 as "by4")
         .write
         .format("delta")
         .partitionBy("by4")
@@ -1352,7 +1357,7 @@ class DeltaSuite extends QueryTest
       assertPartitionExists("by4", deltaLog, files)
 
       val e = intercept[AnalysisException] {
-        spark.range(101, 200).select('id, 'id % 4 as 'by4, 'id % 8 as 'by8)
+        spark.range(101, 200).select('id, 'id % 4 as "by4", 'id % 8 as "by8")
           .write
           .format("delta")
           .partitionBy("by4", "by8")
@@ -1372,7 +1377,7 @@ class DeltaSuite extends QueryTest
         }
 
         val e = intercept[AnalysisException] {
-          spark.range(100).select('id, 'id % 4 as 'by4)
+          spark.range(100).select('id, 'id % 4 as "by4")
             .write
             .format("delta")
             .partitionBy("by4", "id")
@@ -1441,7 +1446,7 @@ class DeltaSuite extends QueryTest
         val inputFiles = TahoeLogFileIndex(spark, deltaLog).inputFiles.toSeq
         assert(inputFiles.size == 5)
 
-        val filesToDelete = inputFiles.filter(_.split("/").last.startsWith("part-00001"))
+        val filesToDelete = inputFiles.filter(_.split("/").last.contains("part-00001"))
         assert(filesToDelete.size == 1)
         filesToDelete.foreach { f =>
           val deleted = tryDeleteNonRecursive(
@@ -1474,7 +1479,7 @@ class DeltaSuite extends QueryTest
         val inputFiles = TahoeLogFileIndex(spark, deltaLog).inputFiles.toSeq
         assert(inputFiles.size == 5)
 
-        val filesToCorrupt = inputFiles.filter(_.split("/").last.startsWith("part-00001"))
+        val filesToCorrupt = inputFiles.filter(_.split("/").last.contains("part-00001"))
         assert(filesToCorrupt.size == 1)
         val fs = tempDirPath.getFileSystem(deltaLog.newDeltaHadoopConf())
         filesToCorrupt.foreach { f =>
@@ -1485,7 +1490,7 @@ class DeltaSuite extends QueryTest
         val thrown = intercept[SparkException] {
           data.toDF().collect()
         }
-        assert(thrown.getMessage.contains("is not a Parquet file"))
+        assert(thrown.getMessage.contains(THROWS_ON_CORRUPTED_FILE_ERROR_MSG))
       }
     }
   }
@@ -1537,9 +1542,10 @@ class DeltaSuite extends QueryTest
       val thrown = intercept[SparkException] {
         data.toDF().collect()
       }
-      assert(thrown.getMessage.contains("FileNotFound"))
+      assert(thrown.getMessage.contains(THROWS_ON_DELETED_FILE_ERROR_MSG))
     }
   }
+
 
   test("ES-4716: Delta shouldn't be broken when users turn on case sensitivity") {
     withSQLConf(SQLConf.CASE_SENSITIVE.key -> "false") {
@@ -1602,6 +1608,37 @@ class DeltaSuite extends QueryTest
     }
   }
 
+  test("support Java8 API for DATE type") {
+    withSQLConf(SQLConf.DATETIME_JAVA8API_ENABLED.key -> "true") {
+      val tableName = "my_table"
+      withTable(tableName) {
+        spark.sql(s"CREATE TABLE $tableName (id STRING, date DATE) USING DELTA;")
+        spark.sql(
+          s"""
+             |INSERT INTO $tableName REPLACE
+             |where (DATE IN (DATE('2024-03-11'), DATE('2024-03-13')))
+             |VALUES ('2', DATE('2024-03-13')), ('3', DATE('2024-03-11'))
+             |""".stripMargin)
+      }
+    }
+  }
+
+  test("support Java8 API for TIMESTAMP type") {
+    withSQLConf(SQLConf.DATETIME_JAVA8API_ENABLED.key -> "true") {
+      val tableName = "my_table"
+      withTable(tableName) {
+        spark.sql(s"CREATE TABLE $tableName (id STRING, timestamp TIMESTAMP) USING DELTA;")
+        spark.sql(
+          s"""
+             |INSERT INTO $tableName REPLACE
+             |where
+             | (timestamp IN (TIMESTAMP('2022-12-22 15:50:00'), TIMESTAMP('2022-12-23 15:50:00')))
+             | VALUES
+             | ('2', TIMESTAMP('2022-12-22 15:50:00')), ('3', TIMESTAMP('2022-12-23 15:50:00'))
+             |""".stripMargin)
+      }
+    }
+  }
 
   test("all operations with special characters in path") {
     withTempDir { dir =>
@@ -1999,13 +2036,13 @@ class DeltaSuite extends QueryTest
     // changes the schema
     val actions = Seq(Action.supportedProtocolVersion(), newMetadata) ++ files.map(_.remove)
     deltaLog.store.write(
-      FileNames.deltaFile(deltaLog.logPath, snapshot.version + 1),
+      FileNames.unsafeDeltaFile(deltaLog.logPath, snapshot.version + 1),
       actions.map(_.json).iterator,
       overwrite = false,
       hadoopConf)
 
     deltaLog.store.write(
-      FileNames.deltaFile(deltaLog.logPath, snapshot.version + 2),
+      FileNames.unsafeDeltaFile(deltaLog.logPath, snapshot.version + 2),
       files.take(1).map(_.json).iterator,
       overwrite = false,
       hadoopConf)
@@ -2113,7 +2150,7 @@ class DeltaSuite extends QueryTest
           .saveAsTable(table)
       }
       assert(e.getMessage.startsWith("[DELTA_REPLACE_WHERE_MISMATCH] " +
-        "Data written out does not match replaceWhere"))
+        "Written data does not conform to partial table overwrite condition or constraint"))
 
       Seq(("a", "b", "c"), ("d", "e", "f"))
         .toDF("a.b", "c.d", "ab")

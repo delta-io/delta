@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.storage
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog}
+import io.delta.storage.CloseableIterator
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
@@ -271,7 +272,7 @@ object LogStore extends LogStoreProvider
     // scalastyle:off deltahadoopconfiguration
     // Ensure that the LogStore's hadoopConf has the values from the SQLConf.
     // This ensures that io.delta.storage LogStore (Java) hadoopConf's are configured correctly.
-    apply(spark.sparkContext.getConf, spark.sessionState.newHadoopConf)
+    apply(spark.sparkContext.getConf, spark.sessionState.newHadoopConf())
     // scalastyle:on deltahadoopconfiguration
   }
 
@@ -386,6 +387,50 @@ trait LogStoreProvider {
   }
 }
 
+class LogStoreInverseAdaptor(val logStoreImpl: LogStore, override val initHadoopConf: Configuration)
+    extends io.delta.storage.LogStore(initHadoopConf) {
+
+  override def read(
+      path: Path,
+      hadoopConf: Configuration): CloseableIterator[String] = {
+    val iter = logStoreImpl.readAsIterator(path, hadoopConf)
+    new CloseableIterator[String] {
+      override def close(): Unit = iter.close
+      override def hasNext: Boolean = iter.hasNext
+      override def next(): String = iter.next()
+    }
+  }
+
+  override def write(
+      path: Path,
+      actions: java.util.Iterator[String],
+      overwrite: java.lang.Boolean,
+      hadoopConf: Configuration): Unit = {
+    logStoreImpl.write(path, actions.asScala, overwrite, hadoopConf)
+  }
+
+  override def listFrom(
+      path: Path,
+      hadoopConf: Configuration): java.util.Iterator[FileStatus] =
+    logStoreImpl.listFrom(path, hadoopConf).asJava
+
+  override def resolvePathOnPhysicalStorage(
+      path: Path,
+      hadoopConf: Configuration): Path =
+    logStoreImpl.resolvePathOnPhysicalStorage(path, hadoopConf)
+
+  override def isPartialWriteVisible(
+      path: Path,
+      hadoopConf: Configuration): java.lang.Boolean =
+    logStoreImpl.isPartialWriteVisible(path, hadoopConf)
+}
+
+object LogStoreInverseAdaptor {
+  def apply(logStoreImpl: LogStore, initHadoopConf: Configuration): LogStoreInverseAdaptor = {
+    new LogStoreInverseAdaptor(logStoreImpl, initHadoopConf)
+  }
+}
+
 /**
  * An adaptor from the new public LogStore API to the old private LogStore API. The old LogStore
  * API is still used in most places. Before we move all of them to the new API, adapting from
@@ -395,7 +440,7 @@ trait LogStoreProvider {
  */
 class LogStoreAdaptor(val logStoreImpl: io.delta.storage.LogStore) extends LogStore {
 
-  private def getHadoopConfiguration(): Configuration = {
+  private def getHadoopConfiguration: Configuration = {
     // scalastyle:off deltahadoopconfiguration
     SparkSession.getActiveSession.map(_.sessionState.newHadoopConf())
       .getOrElse(logStoreImpl.initHadoopConf())

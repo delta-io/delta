@@ -16,18 +16,19 @@
 
 package org.apache.spark.sql.delta.test
 
+import org.apache.spark.sql.delta.DeltaExcludedBySparkVersionTestMixinShims
 import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
 import org.apache.spark.sql.execution.{ColumnarToRowExec, FileSourceScanExec, InputAdapter, SparkPlan}
 import org.apache.spark.sql.functions.from_json
 import org.apache.spark.sql.{Column, DataFrame}
-import org.apache.spark.sql.test.SQLTestUtils
 
 /**
  * Provides utilities for testing StatisticsCollection.
  */
-trait TestsStatistics { self: SQLTestUtils =>
+trait TestsStatistics extends DeltaExcludedBySparkVersionTestMixinShims { self: DeltaSQLTestUtils =>
 
   /** A function to get the reconciled statistics DataFrame from the DeltaLog */
   protected var getStatsDf: (DeltaLog, Seq[Column]) => DataFrame = _
@@ -39,6 +40,27 @@ trait TestsStatistics { self: SQLTestUtils =>
     import testImplicits._
 
     test(testName, testTags: _*) {
+      getStatsDf = (deltaLog, columns) => {
+        val snapshot = deltaLog.snapshot
+        snapshot.allFiles
+          .withColumn("stats", from_json($"stats", snapshot.statsSchema))
+          .select("stats.*")
+          .select(columns: _*)
+      }
+      testFun
+    }
+  }
+
+  /**
+   * Creates the correct `getStatsDf` to be used by the `testFun` and executes the `testFun`.
+   * Runs only against Spark master.
+   */
+  protected def statsTestSparkMasterOnly(
+      testName: String,
+      testTags: org.scalatest.Tag*)(testFun: => Any): Unit = {
+    import testImplicits._
+
+    testSparkMasterOnly(testName, testTags: _*) {
       getStatsDf = (deltaLog, columns) => {
         val snapshot = deltaLog.snapshot
         snapshot.allFiles

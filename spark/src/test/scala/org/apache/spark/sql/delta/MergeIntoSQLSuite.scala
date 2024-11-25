@@ -19,6 +19,8 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
+import org.scalatest.matchers.must.Matchers.be
+import org.scalatest.matchers.should.Matchers.noException
 
 import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
 import org.apache.spark.sql.catalyst.analysis.{Analyzer, ResolveSessionCatalog}
@@ -37,6 +39,11 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase
   with DeltaTestUtilsForTempViews {
 
   import testImplicits._
+
+  override def excluded: Seq[String] = super.excluded ++ Seq(
+    // Schema evolution SQL syntax is not yet supported
+    "schema evolution enabled for the current command"
+  )
 
   test("CTE as a source in MERGE") {
     withTable("source") {
@@ -178,7 +185,7 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase
     }
   }
 
-  def testNondeterministicOrder: Unit = {
+  def testNondeterministicOrder(insertOnly: Boolean): Unit = {
     withTable("target") {
       // For the spark sql random() function the seed is fixed for both invocations
       val trueRandom = () => Math.random()
@@ -189,15 +196,23 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase
       sql("INSERT INTO target VALUES (1,2), (3,4)")
       // This generates different data sets on every execution
       val sourceSql =
-      s"""
-         |(SELECT r.id AS srcKey, r.id AS srcValue
-         | FROM range(1, 100000) as r
-         |  JOIN (SELECT trueRandom() * 100000 AS bound) ON r.id < bound
-         |) AS source
-         |""".stripMargin
-
-      sql(
         s"""
+           |(SELECT r.id AS srcKey, r.id AS srcValue
+           | FROM range(1, 100000) as r
+           |  JOIN (SELECT trueRandom() * 100000 AS bound) ON r.id < bound
+           |) AS source
+           |""".stripMargin
+
+      if (insertOnly) {
+        sql(s"""
+           |MERGE INTO target
+           |USING ${sourceSql}
+           |ON srcKey = trgKey
+           |WHEN NOT MATCHED THEN
+           |  INSERT (trgValue, trgKey) VALUES (srcValue, srcKey)
+           |""".stripMargin)
+      } else {
+        sql(s"""
            |MERGE INTO target
            |USING ${sourceSql}
            |ON srcKey = trgKey
@@ -205,20 +220,30 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase
            |  UPDATE SET trgValue = srcValue
            |WHEN NOT MATCHED THEN
            |  INSERT (trgValue, trgKey) VALUES (srcValue, srcKey)
-      """.stripMargin)
+           |""".stripMargin)
+      }
     }
   }
 
-  test("detect nondeterministic source - flag on") {
+  test(s"detect nondeterministic source - flag on") {
     withSQLConf(
       // materializing source would fix determinism
       DeltaSQLConf.MERGE_MATERIALIZE_SOURCE.key -> DeltaSQLConf.MergeMaterializeSource.NONE,
       DeltaSQLConf.MERGE_FAIL_IF_SOURCE_CHANGED.key -> "true"
     ) {
       val e = intercept[UnsupportedOperationException](
-        testNondeterministicOrder
+        testNondeterministicOrder(insertOnly = false)
       )
       assert(e.getMessage.contains("source dataset is not deterministic"))
+    }
+  }
+
+  test(s"detect nondeterministic source - flag on - insertOnly") {
+    withSQLConf(
+        // materializing source would fix determinism
+        DeltaSQLConf.MERGE_MATERIALIZE_SOURCE.key -> DeltaSQLConf.MergeMaterializeSource.NONE,
+        DeltaSQLConf.MERGE_FAIL_IF_SOURCE_CHANGED.key -> "true") {
+      testNondeterministicOrder(insertOnly = true)
     }
   }
 
@@ -228,7 +253,7 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase
       DeltaSQLConf.MERGE_MATERIALIZE_SOURCE.key -> DeltaSQLConf.MergeMaterializeSource.NONE,
       DeltaSQLConf.MERGE_FAIL_IF_SOURCE_CHANGED.key -> "false"
     ) {
-      testNondeterministicOrder
+      testNondeterministicOrder(insertOnly = false)
     }
   }
 
@@ -238,7 +263,172 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase
       DeltaSQLConf.MERGE_MATERIALIZE_SOURCE.key -> DeltaSQLConf.MergeMaterializeSource.ALL,
       DeltaSQLConf.MERGE_FAIL_IF_SOURCE_CHANGED.key -> "true"
     ) {
-      testNondeterministicOrder
+      testNondeterministicOrder(insertOnly = false)
+    }
+  }
+
+  test("detect nondeterministic merge condition") {
+    withKeyValueData(
+      source = (0, 0) :: (1, 10) :: (2, 20) :: Nil,
+      target = (-1, -10) :: (1, 1) :: (2, 2) :: Nil
+    ) {
+      case (sourceName, targetName) =>
+        val nonDeterministicCondition = "rand() > 0.5"
+        val e = intercept[AnalysisException](
+          executeMerge(
+            tgt = s"$targetName t",
+            src = s"$sourceName s",
+            cond = s"s.key = t.key AND $nonDeterministicCondition",
+            update(condition = "s.key < 2", set = "key = s.key, value = s.value")))
+        assert(e.getMessage.contains("DELTA_NON_DETERMINISTIC_FUNCTION_NOT_SUPPORTED"))
+    }
+  }
+
+  test("detect nondeterministic update condition in merge") {
+    withKeyValueData(
+      source = (0, 0) :: (1, 10) :: (2, 20) :: Nil,
+      target = (-1, -10) :: (1, 1) :: (2, 2) :: Nil
+    ) {
+      case (sourceName, targetName) =>
+        val nonDeterministicCondition = "rand() > 0.5"
+        val e = intercept[AnalysisException](
+          executeMerge(
+            tgt = s"$targetName t",
+            src = s"$sourceName s",
+            cond = s"s.key = t.key",
+            update(
+              condition = nonDeterministicCondition,
+              set = "key = s.key, value = s.value")))
+        assert(e.getMessage.contains("DELTA_NON_DETERMINISTIC_FUNCTION_NOT_SUPPORTED"))
+    }
+  }
+
+  test("detect nondeterministic delete condition in merge") {
+    withKeyValueData(
+      source = (0, 0) :: (1, 10) :: (2, 20) :: Nil,
+      target = (-1, -10) :: (1, 1) :: (2, 2) :: Nil
+    ) {
+      case (sourceName, targetName) =>
+        val nonDeterministicCondition = "rand() > 0.5"
+        val e = intercept[AnalysisException](
+          executeMerge(
+            tgt = s"$targetName t",
+            src = s"$sourceName s",
+            cond = s"s.key = t.key",
+            delete(condition = nonDeterministicCondition)))
+        assert(e.getMessage.contains("DELTA_NON_DETERMINISTIC_FUNCTION_NOT_SUPPORTED"))
+    }
+  }
+
+  test("detect nondeterministic insert condition in merge") {
+    withKeyValueData(
+      source = (0, 0) :: (1, 10) :: (2, 20) :: Nil,
+      target = (-1, -10) :: (1, 1) :: (2, 2) :: Nil
+    ) {
+      case (sourceName, targetName) =>
+        val nonDeterministicCondition = "rand() > 0.5"
+        val e = intercept[AnalysisException](
+          executeMerge(
+            tgt = s"$targetName t",
+            src = s"$sourceName s",
+            cond = s"s.key = t.key",
+            insert(
+              condition = nonDeterministicCondition,
+              values = "(key, value) VALUES (s.key, s.value)")))
+        assert(e.getMessage.contains("DELTA_NON_DETERMINISTIC_FUNCTION_NOT_SUPPORTED"))
+    }
+  }
+
+  test("detect nondeterministic updateNotMatched condition in merge") {
+    withKeyValueData(
+      source = (0, 0) :: (1, 10) :: (2, 20) :: Nil,
+      target = (-1, -10) :: (1, 1) :: (2, 2) :: Nil
+    ) {
+      case (sourceName, targetName) =>
+        val nonDeterministicCondition = "rand() > 0.5"
+        val e = intercept[AnalysisException](
+          executeMerge(
+            tgt = s"$targetName t",
+            src = s"$sourceName s",
+            cond = s"s.key = t.key",
+            updateNotMatched(
+              condition = nonDeterministicCondition,
+              set = "key = t.key, value = t.value + 1")))
+        assert(e.getMessage.contains("DELTA_NON_DETERMINISTIC_FUNCTION_NOT_SUPPORTED"))
+    }
+  }
+
+  test("detect nondeterministic deleteNotMatched condition in merge") {
+    withKeyValueData(
+      source = (0, 0) :: (1, 10) :: (2, 20) :: Nil,
+      target = (-1, -10) :: (1, 1) :: (2, 2) :: Nil
+    ) {
+      case (sourceName, targetName) =>
+        val nonDeterministicCondition = "rand() > 0.5"
+        val e = intercept[AnalysisException](
+          executeMerge(
+            tgt = s"$targetName t",
+            src = s"$sourceName s",
+            cond = s"s.key = t.key",
+            deleteNotMatched(condition = nonDeterministicCondition)))
+        assert(e.getMessage.contains("DELTA_NON_DETERMINISTIC_FUNCTION_NOT_SUPPORTED"))
+    }
+  }
+
+  test("allow nondeterministic update action in merge") {
+    withKeyValueData(
+      source = (0, 0) :: (1, 10) :: (2, 20) :: Nil,
+      target = (-1, -10) :: (1, 1) :: (2, 2) :: Nil
+    ) {
+      case (sourceName, targetName) =>
+        val nonDeterministicAction = "rand()"
+        noException should be thrownBy {
+          executeMerge(
+            tgt = s"$targetName t",
+            src = s"$sourceName s",
+            cond = s"s.key = t.key",
+            update(
+              condition = "s.key < 2",
+              set = s"key = s.key, value = $nonDeterministicAction"))
+        }
+    }
+  }
+
+  test("allow nondeterministic insert action in merge") {
+    withKeyValueData(
+      source = (0, 0) :: (1, 10) :: (2, 20) :: Nil,
+      target = (-1, -10) :: (1, 1) :: (2, 2) :: Nil
+    ) {
+      case (sourceName, targetName) =>
+        val nonDeterministicAction = "rand()"
+        noException should be thrownBy {
+          executeMerge(
+            tgt = s"$targetName t",
+            src = s"$sourceName s",
+            cond = s"s.key = t.key",
+            insert(
+              condition = "s.key < 2",
+              values = s"(key, value) VALUES (s.key, $nonDeterministicAction)"))
+        }
+    }
+  }
+
+  test("allow nondeterministic updateNotMatched action in merge") {
+    withKeyValueData(
+      source = (0, 0) :: (1, 10) :: (2, 20) :: Nil,
+      target = (-1, -10) :: (1, 1) :: (2, 2) :: Nil
+    ) {
+      case (sourceName, targetName) =>
+        val nonDeterministicAction = "rand()"
+        noException should be thrownBy {
+          executeMerge(
+            tgt = s"$targetName t",
+            src = s"$sourceName s",
+            cond = s"s.key = t.key",
+            updateNotMatched(
+              condition = "t.key < 2",
+              set = s"key = t.key, value = t.value + $nonDeterministicAction"))
+        }
     }
   }
 
@@ -344,6 +534,23 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase
           assert(_change_type === "foo" || _change_type === "bar",
             s"Invalid _change_type for id=${row.get(0)}")
         }
+      }
+    }
+  }
+
+  test("SET * with schema evolution") {
+    withTable("tgt", "src") {
+      withSQLConf("spark.databricks.delta.schema.autoMerge.enabled" -> "true") {
+        sql("create table tgt(id int, delicious string, dummy_col string) using delta")
+        sql("create table src(id int, delicious string) using parquet")
+        // Make sure this MERGE command can resolve
+        sql(
+          """
+            |merge into tgt as target
+            |using (select * from src) as source on target.id=source.id
+            |when matched then update set *
+            |when not matched then insert *;
+            |""".stripMargin)
       }
     }
   }

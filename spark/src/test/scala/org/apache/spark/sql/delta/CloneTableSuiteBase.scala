@@ -16,47 +16,39 @@
 
 package org.apache.spark.sql.delta
 
-// scalastyle:off import.ordering.noEmptyLine
 import java.io.File
-import java.net.URI
 import java.util.Locale
 
 import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
-import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.actions.{FileAction, Metadata, Protocol, SetTransaction, SingleAction, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands._
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsTestUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
-import org.apache.spark.sql.delta.util.FileNames.{checksumFile, deltaFile}
+import org.apache.spark.sql.delta.util.FileNames.unsafeDeltaFile
 import org.apache.spark.sql.delta.util.JsonUtils
-import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{Path, RawLocalFileSystem}
+import org.apache.hadoop.fs.Path
 import org.scalatest.Tag
 
-import org.apache.spark.{DebugFilesystem, SparkException, TaskFailedReason}
-import org.apache.spark.scheduler.{SparkListener, SparkListenerTaskEnd}
-import org.apache.spark.sql.{AnalysisException, DataFrame, Dataset, QueryTest, Row}
+import org.apache.spark.sql.{AnalysisException, DataFrame, Dataset, QueryTest, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.NoSuchDatabaseException
-import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.connector.catalog.CatalogManager
 import org.apache.spark.sql.execution.datasources.LogicalRelation
-import org.apache.spark.sql.execution.streaming.{CheckpointFileManager, FileSystemBasedCheckpointFileManager, MemoryStream}
-import org.apache.spark.sql.functions.{col, floor, from_json}
-import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.OutputMode
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{IntegerType, StructType}
 import org.apache.spark.util.Utils
-// scalastyle:on import.ordering.noEmptyLine
 
 trait CloneTableSuiteBase extends QueryTest
   with SharedSparkSession
   with DeltaColumnMappingTestUtils
-  with DeltaSQLCommandTest {
+  with DeltaSQLCommandTest
+  with CoordinatedCommitsBaseSuite
+  with CoordinatedCommitsTestUtils {
 
   protected val TAG_HAS_SHALLOW_CLONE = new Tag("SHALLOW CLONE")
   protected val TAG_MODIFY_PROTOCOL = new Tag("CHANGES PROTOCOL")
@@ -108,6 +100,7 @@ trait CloneTableSuiteBase extends QueryTest
   protected def runAndValidateClone(
       source: String,
       target: String,
+      isShallow: Boolean,
       sourceIsTable: Boolean = false,
       targetIsTable: Boolean = false,
       targetLocation: Option[String] = None,
@@ -125,6 +118,7 @@ trait CloneTableSuiteBase extends QueryTest
         () => cloneTable(
           source,
           target,
+          isShallow,
           sourceIsTable,
           targetIsTable,
           targetLocation,
@@ -231,7 +225,7 @@ trait CloneTableSuiteBase extends QueryTest
       targetLocation.isEmpty && targetIsTable,
       isReplaceOperation)
 
-    val commit = deltaFile(targetLog.logPath, targetLog.unsafeVolatileSnapshot.version)
+    val commit = unsafeDeltaFile(targetLog.logPath, targetLog.unsafeVolatileSnapshot.version)
     val hadoopConf = targetLog.newDeltaHadoopConf()
     val filePaths: Seq[FileAction] = targetLog.store.read(commit, hadoopConf).flatMap { line =>
       JsonUtils.fromJson[SingleAction](line) match {
@@ -319,6 +313,7 @@ trait CloneTableSuiteBase extends QueryTest
   protected def cloneTable(
       source: String,
       target: String,
+      isShallow: Boolean,
       sourceIsTable: Boolean = false,
       targetIsTable: Boolean = false,
       targetLocation: Option[String] = None,
@@ -364,12 +359,14 @@ trait CloneTableSuiteBase extends QueryTest
       source: String,
       target: String,
       sqlString: String,
+      isShallow: Boolean = true,
       targetIsTable: Boolean = false): Unit = {
     withTable(source) {
       spark.range(5).write.format("delta").saveAsTable(source)
       runAndValidateClone(
         source,
         target,
+        isShallow,
         sourceIsTable = true,
         targetIsTable = targetIsTable) {
         () => sql(sqlString)
@@ -385,7 +382,8 @@ trait CloneTableSuiteBase extends QueryTest
 
     runAndValidateClone(
       source,
-      clone
+      clone,
+      isShallow = true
     )()
     // no files should be copied
     val cloneDir = new File(clone).list()
@@ -412,12 +410,14 @@ trait CloneTableSuiteBase extends QueryTest
 
     runAndValidateClone(
       source,
-      shallow1
+      shallow1,
+      isShallow = true
     )()
 
     runAndValidateClone(
       shallow1,
-      shallow2
+      shallow2,
+      isShallow = true
     )()
 
     deleteSourceAndCompareData(shallow1, spark.read.format("delta").load(shallow2), df1)
@@ -443,6 +443,7 @@ trait CloneTableSuiteBase extends QueryTest
     runAndValidateClone(
       source,
       clone,
+      isShallow,
       commitLargeMetricsMap = commitLargeMetricsMap)()
 
     checkAnswer(
@@ -456,13 +457,12 @@ trait CloneTableSuiteBase extends QueryTest
         "fs.s3.impl" -> classOf[S3LikeLocalFileSystem].getName,
         "fs.s3.impl.disable.cache" -> "true") {
       val df1 = Seq(1, 2, 3, 4, 5).toDF("id")
-      df1.write.format("delta").mode("append").save(source)
-
-      val baseS3 = new URI("s3", null, source, null, null).toString
+      df1.write.format("delta").mode("append").save(s"s3:$source")
 
       runAndValidateClone(
-        baseS3,
-        s"file:$clone"
+        s"s3:$source",
+        s"file:$clone",
+        isShallow = true
       )()
 
       checkAnswer(
@@ -489,7 +489,8 @@ trait CloneTableSuiteBase extends QueryTest
     val ex = intercept[AnalysisException] {
       runAndValidateClone(
         source,
-        clone
+        clone,
+        isShallow
       )()
     }
     assert(ex.getMessage.contains("is not empty"))
@@ -518,7 +519,8 @@ trait CloneTableSuiteBase extends QueryTest
     // Create a clone
     runAndValidateClone(
       source,
-      target
+      target,
+      isShallow
     )()
 
     // Write to clone should be visible
@@ -536,11 +538,12 @@ trait CloneTableSuiteBase extends QueryTest
       runAndValidateClone(
         tableName,
         target,
+        isShallow,
         sourceIsTable = true)()
     }
   }
 
-  testAllClones("Clone a time traveled source") { (_, target, isShallow) =>
+  testAllClones("clone a time traveled source using version") { (_, target, isShallow) =>
     val tableName = "source"
     withTable(tableName) {
       spark.range(5).write.format("delta").saveAsTable(tableName)
@@ -552,16 +555,18 @@ trait CloneTableSuiteBase extends QueryTest
       runAndValidateClone(
         tableName,
         target,
+        isShallow,
         sourceIsTable = true,
         sourceVersion = Some(2))()
       assert(spark.read.format("delta").load(target).count() === 15)
     }
   }
 
-  cloneTest("create or replace table - shallow", TAG_HAS_SHALLOW_CLONE) { (_, _) =>
-    val tbl = "source"
-    val target = "target"
-    Seq(true, false).foreach { isCreate =>
+  Seq(true, false).foreach { isCreate =>
+    cloneTest(s"create or replace table - shallow, isCreate: $isCreate",
+        TAG_HAS_SHALLOW_CLONE) { (_, _) =>
+      val tbl = "source"
+      val target = "target"
       withTable(tbl, target) {
         spark.range(5).write.format("delta").saveAsTable(tbl)
         spark.range(25).write.format("delta").saveAsTable(target)
@@ -569,6 +574,7 @@ trait CloneTableSuiteBase extends QueryTest
         runAndValidateClone(
           tbl,
           target,
+          isShallow = true,
           sourceIsTable = true,
           targetIsTable = true,
           isCreate = isCreate,
@@ -577,11 +583,12 @@ trait CloneTableSuiteBase extends QueryTest
     }
   }
 
-  cloneTest("create or replace non Delta table - shallow", TAG_HAS_SHALLOW_CLONE) { (_, _) =>
-    val tbl = "source"
-    val target = "target"
-    Seq(true, false).foreach { isCreate =>
-      Seq("parquet", "json").foreach { format =>
+  Seq(true, false).foreach { isCreate =>
+    Seq("parquet", "json").foreach { format =>
+      cloneTest(s"create or replace non Delta table - shallow, isCreate: $isCreate, " +
+          s"format: $format", TAG_HAS_SHALLOW_CLONE) { (_, _) =>
+        val tbl = "source"
+        val target = "target"
         withTable(tbl, target) {
           spark.range(5).write.format("delta").saveAsTable(tbl)
           spark.range(25).write.format(format).saveAsTable(target)
@@ -589,6 +596,7 @@ trait CloneTableSuiteBase extends QueryTest
           runAndValidateClone(
             tbl,
             target,
+            isShallow = true,
             sourceIsTable = true,
             targetIsTable = true,
             isCreate = isCreate,
@@ -599,15 +607,17 @@ trait CloneTableSuiteBase extends QueryTest
     }
   }
 
-  cloneTest("shallow clone a table unto itself", TAG_HAS_SHALLOW_CLONE) { (_, _) =>
-    val tbl = "source"
-    Seq(true, false).foreach { isCreate =>
+  Seq(true, false).foreach { isCreate =>
+    cloneTest(s"shallow clone a table unto itself, isCreate: $isCreate",
+        TAG_HAS_SHALLOW_CLONE) { (_, _) =>
+      val tbl = "source"
       withTable(tbl) {
         spark.range(5).write.format("delta").saveAsTable(tbl)
 
         runAndValidateClone(
           tbl,
           tbl,
+          isShallow = true,
           sourceIsTable = true,
           targetIsTable = true,
           isCreate = isCreate,
@@ -624,9 +634,12 @@ trait CloneTableSuiteBase extends QueryTest
 
   cloneTest("CLONE ignores reader/writer session defaults", TAG_HAS_SHALLOW_CLONE) {
     (source, clone) =>
+      if (coordinatedCommitsEnabledInTests) {
+        cancel("Expects base protocol version")
+      }
       withSQLConf(
-        DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> "1",
-        DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "1") {
+          DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> "1",
+          DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "1") {
         // Create table without a default property setting.
         spark.range(1L).write.format("delta").mode("overwrite").save(source)
         val oldProtocol = DeltaLog.forTable(spark, source).update().protocol
@@ -640,7 +653,8 @@ trait CloneTableSuiteBase extends QueryTest
           // (i.e. target properties are identical to source properties).
           runAndValidateClone(
             source,
-            clone
+            clone,
+            isShallow = true
           )()
         }
 
@@ -668,19 +682,26 @@ trait CloneTableSuiteBase extends QueryTest
     val fs = path.getFileSystem(spark.sessionState.newHadoopConf())
     // scalastyle:on deltahadoopconfiguration
     fs.setTimes(path, time, 0)
+    if (coordinatedCommitsEnabledInTests) {
+      InCommitTimestampTestUtils.overwriteICTInDeltaFile(
+        DeltaLog.forTable(spark, source),
+        path,
+        Some(time))
+    }
 
     runAndValidateClone(
       source,
       clone,
+      isShallow,
       sourceTimestamp = Some(desiredTime))()
   }
 
   cloneTest("clones take protocol from the source",
     TAG_HAS_SHALLOW_CLONE, TAG_MODIFY_PROTOCOL, TAG_CHANGE_COLUMN_MAPPING_MODE) { (source, clone) =>
-    // Change protocol versions of (read, write) = (2, 3). We cannot initialize this to (0, 0)
+    // Change protocol versions of (read, write) = (2, 5). We cannot initialize this to (0, 0)
     // because min reader and writer versions are at least 1.
     val defaultNewTableProtocol = Protocol.forNewTable(spark, metadataOpt = None)
-    val sourceProtocol = Protocol(2, 3)
+    val sourceProtocol = Protocol(2, 5)
     // Make sure this is actually an upgrade. Downgrades are not supported, and if it's the same
     // version, we aren't testing anything there.
     assert(sourceProtocol.minWriterVersion > defaultNewTableProtocol.minWriterVersion &&
@@ -688,9 +709,9 @@ trait CloneTableSuiteBase extends QueryTest
     val log = DeltaLog.forTable(spark, source)
     // make sure to have a dummy schema because we can't have empty schema table by default
     val newSchema = new StructType().add("id", IntegerType, nullable = true)
-    log.ensureLogDirectoryExist()
+    log.createLogDirectoriesIfNotExists()
     log.store.write(
-      deltaFile(log.logPath, 0),
+      unsafeDeltaFile(log.logPath, 0),
       Iterator(Metadata(schemaString = newSchema.json).json, sourceProtocol.json),
       overwrite = false,
       log.newDeltaHadoopConf())
@@ -699,7 +720,8 @@ trait CloneTableSuiteBase extends QueryTest
     // Validate that clone has the new protocol version
     runAndValidateClone(
       source,
-      clone
+      clone,
+      isShallow = true
     )()
   }
 
@@ -719,7 +741,8 @@ trait CloneTableSuiteBase extends QueryTest
 
       runAndValidateClone(
         path,
-        target
+        target,
+        isShallow
       )()
     }
   }
@@ -733,6 +756,7 @@ trait CloneTableSuiteBase extends QueryTest
       runAndValidateClone(
         source,
         target,
+        isShallow,
         tableProperties = Map(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key -> "false"))()
     }.getErrorClass === "DELTA_ADDING_DELETION_VECTORS_DISALLOWED"
   }
@@ -754,6 +778,7 @@ trait CloneTableSuiteBase extends QueryTest
       cloneTable(
         source,
         target,
+        isShallow,
         isReplace = true,
         tableProperties = tblPropertyOverrides)
 
@@ -775,6 +800,10 @@ trait CloneTableSuiteBase extends QueryTest
     testAllClones("Cloning a table with new table properties" +
       s" that force protocol version upgrade - ${featureWithProperty.property.key}"
     ) { (source, target, isShallow) =>
+      if (coordinatedCommitsEnabledInTests) {
+        cancel("table needs to start with default protocol versions but enabling " +
+          "coordinatedCommits upgrades table protocol version.")
+      }
       import DeltaTestUtils.StrictProtocolOrdering
 
       spark.range(5).write.format("delta").save(source)
@@ -793,6 +822,7 @@ trait CloneTableSuiteBase extends QueryTest
       cloneTable(
         source,
         target,
+        isShallow,
         isReplace = true,
         tableProperties = tblProperties)
 
@@ -809,6 +839,10 @@ trait CloneTableSuiteBase extends QueryTest
 
   testAllClones("Cloning a table without DV property should not upgrade protocol version"
   ) { (source, target, isShallow) =>
+    if (coordinatedCommitsEnabledInTests) {
+      cancel("table needs to start with default protocol versions but enabling " +
+        "coordinatedCommits upgrades table protocol version.")
+    }
     import DeltaTestUtils.StrictProtocolOrdering
 
     spark.range(5).write.format("delta").save(source)
@@ -827,6 +861,7 @@ trait CloneTableSuiteBase extends QueryTest
       cloneTable(
         source,
         target,
+        isShallow,
         isReplace = true)
 
       val targetDeltaLog = DeltaLog.forTable(spark, target)
@@ -846,10 +881,12 @@ trait CloneTableColumnMappingSuiteBase
   override protected def runOnlyTests: Seq[String] = Seq(
     "simple shallow clone",
     "shallow clone a shallow clone",
-    "create or replace table - shallow",
-    "shallow clone a table unto itself",
-    "Clone a time traveled source",
-
+    "create or replace table - shallow, isCreate: false",
+    "create or replace table - shallow, isCreate: true",
+    "shallow clone a table unto itself, isCreate: false",
+    "shallow clone a table unto itself, isCreate: true",
+    "clone a time traveled source using version",
+    "clone a time traveled source using timestamp",
     "validate commitLarge usage metrics",
     "clones take the set transactions of the source",
     "block changing column mapping mode and modify max id modes under CLONE"
@@ -876,6 +913,7 @@ trait CloneTableColumnMappingSuiteBase
           cloneTable(
             source,
             target,
+            isShallow,
             tableProperties = Map(
               DeltaConfigs.COLUMN_MAPPING_MAX_ID.key -> "123123"
           ))
@@ -885,7 +923,8 @@ trait CloneTableColumnMappingSuiteBase
           withMaxColumnIdConf("123123") {
             cloneTable(
               source,
-              target
+              target,
+              isShallow
             )
           }
         }
@@ -908,6 +947,7 @@ trait CloneTableColumnMappingSuiteBase
           cloneTable(
             source,
             target,
+            isShallow,
             tableProperties = Map(
               DeltaConfigs.COLUMN_MAPPING_MODE.key -> otherMode
           ))
@@ -920,7 +960,8 @@ trait CloneTableColumnMappingSuiteBase
         withColumnMappingConf(otherMode) {
           cloneTable(
             source,
-            target
+            target,
+            isShallow
           )
         }
         assert(DeltaLog.forTable(spark, target).snapshot.metadata.columnMappingMode.name ==
@@ -935,6 +976,7 @@ trait CloneTableColumnMappingSuiteBase
           cloneTable(
             source,
             target,
+            isShallow,
             tableProperties = Map(
               DeltaConfigs.COLUMN_MAPPING_MODE.key -> "none"
           ))
@@ -946,7 +988,8 @@ trait CloneTableColumnMappingSuiteBase
         withColumnMappingConf("none") {
           cloneTable(
             source,
-            target
+            target,
+            isShallow
           )
         }
         assert(DeltaLog.forTable(spark, target).snapshot.metadata.columnMappingMode.name ==

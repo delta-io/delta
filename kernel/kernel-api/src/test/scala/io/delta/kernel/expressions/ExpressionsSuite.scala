@@ -21,17 +21,17 @@ import org.scalatest.funsuite.AnyFunSuite
 class ExpressionsSuite extends AnyFunSuite {
   test("expressions: unsupported literal data types") {
     val ex1 = intercept[IllegalArgumentException] {
-      Literal.ofNull(new ArrayType(IntegerType.INSTANCE, true))
+      Literal.ofNull(new ArrayType(IntegerType.INTEGER, true))
     }
     assert(ex1.getMessage.contains("array[integer] is an invalid data type for Literal."))
 
     val ex2 = intercept[IllegalArgumentException] {
-      Literal.ofNull(new MapType(IntegerType.INSTANCE, IntegerType.INSTANCE, true))
+      Literal.ofNull(new MapType(IntegerType.INTEGER, IntegerType.INTEGER, true))
     }
     assert(ex2.getMessage.contains("map[integer, integer] is an invalid data type for Literal."))
 
     val ex3 = intercept[IllegalArgumentException] {
-      Literal.ofNull(new StructType().add("s1", BooleanType.INSTANCE))
+      Literal.ofNull(new StructType().add("s1", BooleanType.BOOLEAN))
     }
     assert(ex3.getMessage.matches("struct.* is an invalid data type for Literal."))
   }

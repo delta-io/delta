@@ -24,18 +24,22 @@ import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.constraints.{Constraint, Constraints}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
-import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
+import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf, DeltaStreamUtils}
 
-import org.apache.spark.sql.{Column, DataFrame, Dataset, Encoder}
-import org.apache.spark.sql.catalyst.encoders.RowEncoder
+import org.apache.spark.sql.{Column, DataFrame}
 import org.apache.spark.sql.catalyst.expressions.EqualNullSafe
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
+import org.apache.spark.sql.catalyst.util.ResolveDefaultColumns._
 import org.apache.spark.sql.execution.QueryExecution
-import org.apache.spark.sql.execution.streaming.{IncrementalExecution, StreamExecution}
+import org.apache.spark.sql.execution.streaming.IncrementalExecution
 import org.apache.spark.sql.types.{MetadataBuilder, StructField, StructType}
 
 /**
  * Provide utilities to handle columns with default expressions.
+ * Currently we support three types of such columns:
+ * (1) GENERATED columns.
+ * (2) IDENTITY columns.
+ * (3) Columns with user-specified default value expression.
  */
 object ColumnWithDefaultExprUtils extends DeltaLogging {
   val USE_NULL_AS_DEFAULT_DELTA_OPTION = "__use_null_as_default"
@@ -58,6 +62,7 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
 
   // Return if `protocol` satisfies the requirement for IDENTITY columns.
   def satisfiesIdentityColumnProtocol(protocol: Protocol): Boolean =
+    protocol.isFeatureSupported(IdentityColumnsTableFeature) ||
     protocol.minWriterVersion == 6 || protocol.writerFeatureNames.contains("identityColumns")
 
   // Return true if the column `col` has default expressions (and can thus be omitted from the
@@ -66,12 +71,9 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
       protocol: Protocol,
       col: StructField,
       nullAsDefault: Boolean): Boolean = {
-    GeneratedColumn.isGeneratedColumn(protocol, col)
-  }
-
-  // Return true if the column `col` cannot be included as the input data column of COPY INTO.
-  // TODO: ideally column with default value can be optionally excluded.
-  def shouldBeExcludedInCopyInto(protocol: Protocol, col: StructField): Boolean = {
+    isIdentityColumn(col) ||
+    col.metadata.contains(CURRENT_DEFAULT_COLUMN_METADATA_KEY) ||
+    (col.nullable && nullAsDefault) ||
     GeneratedColumn.isGeneratedColumn(protocol, col)
   }
 
@@ -80,6 +82,11 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
       protocol: Protocol,
       metadata: Metadata,
       nullAsDefault: Boolean): Boolean = {
+    hasIdentityColumn(metadata.schema) ||
+    metadata.schema.exists { f =>
+      f.metadata.contains(CURRENT_DEFAULT_COLUMN_METADATA_KEY) ||
+        (f.nullable && nullAsDefault)
+    } ||
     GeneratedColumn.enforcesGeneratedColumns(protocol, metadata)
   }
 
@@ -94,7 +101,8 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
    * @param data The data to be written into the table.
    * @param nullAsDefault If true, use null literal as the default value for missing columns.
    * @return The data with potentially additional default expressions projected and constraints
-   *         from generated columns if any.
+   *         from generated columns if any. This includes IDENTITY column names for which we
+   *         should track the high water marks.
    */
   def addDefaultExprsOrReturnConstraints(
       deltaLog: DeltaLog,
@@ -106,6 +114,7 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
     val topLevelOutputNames = CaseInsensitiveMap(data.schema.map(f => f.name -> f).toMap)
     lazy val metadataOutputNames = CaseInsensitiveMap(schema.map(f => f.name -> f).toMap)
     val constraints = mutable.ArrayBuffer[Constraint]()
+    // Column names for which we will track high water marks.
     val track = mutable.Set[String]()
     var selectExprs = schema.flatMap { f =>
       GeneratedColumn.getGenerationExpression(f) match {
@@ -117,9 +126,18 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
             constraints += Constraints.Check(s"Generated Column", EqualNullSafe(column.expr, expr))
             Some(column)
           } else {
-            Some(new Column(expr).alias(f.name))
+            Some(Column(expr).alias(f.name))
           }
         case _ =>
+          if (isIdentityColumn(f)) {
+            if (topLevelOutputNames.contains(f.name)) {
+              Some(SchemaUtils.fieldToColumn(f))
+            } else {
+              // Track high water marks for generated IDENTITY values.
+              track += f.name
+              Some(IdentityColumn.createIdentityColumnGenerationExprAsColumn(f))
+            }
+          } else {
             if (topLevelOutputNames.contains(f.name) ||
                 !data.sparkSession.conf.get(DeltaSQLConf.GENERATED_COLUMN_ALLOW_NULLABLE)) {
               Some(SchemaUtils.fieldToColumn(f))
@@ -127,8 +145,9 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
               // we only want to consider columns that are in the data's schema or are generated
               // to allow DataFrame with null columns to be written.
               // The actual check for nullability on data is done in the DeltaInvariantCheckerExec
-              None
+              getDefaultValueExprOrNullLit(f, nullAsDefault).map(Column(_))
             }
+          }
       }
     }
     val cdcSelectExprs = CDCReader.CDC_COLUMNS_IN_DATA.flatMap { cdcColumnName =>
@@ -145,9 +164,20 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
       }
     }
     selectExprs = selectExprs ++ cdcSelectExprs
+
+    val rowIdExprs = data.queryExecution.analyzed.output
+      .filter(RowId.RowIdMetadataAttribute.isRowIdColumn)
+      .map(Column(_))
+    selectExprs = selectExprs ++ rowIdExprs
+
+    val rowCommitVersionExprs = data.queryExecution.analyzed.output
+      .filter(RowCommitVersion.MetadataAttribute.isRowCommitVersionColumn)
+      .map(Column(_))
+    selectExprs = selectExprs ++ rowCommitVersionExprs
+
     val newData = queryExecution match {
       case incrementalExecution: IncrementalExecution =>
-        selectFromStreamingDataFrame(incrementalExecution, data, selectExprs: _*)
+        DeltaStreamUtils.selectFromStreamingDataFrame(incrementalExecution, data, selectExprs: _*)
       case _ => data.select(selectExprs: _*)
     }
     recordDeltaEvent(deltaLog, "delta.generatedColumns.write")
@@ -189,38 +219,5 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
     } else {
       schema
     }
-  }
-
-  /**
-   * Select `cols` from a micro batch DataFrame. Directly calling `select` won't work because it
-   * will create a `QueryExecution` rather than inheriting `IncrementalExecution` from
-   * the micro batch DataFrame. A streaming micro batch DataFrame to execute should use
-   * `IncrementalExecution`.
-   */
-  private def selectFromStreamingDataFrame(
-      incrementalExecution: IncrementalExecution,
-      df: DataFrame,
-      cols: Column*): DataFrame = {
-    val newMicroBatch = df.select(cols: _*)
-    val newIncrementalExecution = new IncrementalExecution(
-      newMicroBatch.sparkSession,
-      newMicroBatch.queryExecution.logical,
-      incrementalExecution.outputMode,
-      incrementalExecution.checkpointLocation,
-      incrementalExecution.queryId,
-      incrementalExecution.runId,
-      incrementalExecution.currentBatchId,
-      incrementalExecution.prevOffsetSeqMetadata,
-      incrementalExecution.offsetSeqMetadata
-    )
-    newIncrementalExecution.executedPlan // Force the lazy generation of execution plan
-
-
-    // Use reflection to call the private constructor.
-    val constructor =
-      classOf[Dataset[_]].getConstructor(classOf[QueryExecution], classOf[Encoder[_]])
-    constructor.newInstance(
-      newIncrementalExecution,
-      RowEncoder(newIncrementalExecution.analyzed.schema)).asInstanceOf[DataFrame]
   }
 }

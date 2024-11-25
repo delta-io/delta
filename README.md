@@ -127,11 +127,11 @@ To execute tests, run
 
 To execute a single test suite, run
 
-    build/sbt 'testOnly org.apache.spark.sql.delta.optimize.OptimizeCompactionSuite'
+    build/sbt spark/'testOnly org.apache.spark.sql.delta.optimize.OptimizeCompactionSQLSuite'
 
 To execute a single test within and a single test suite, run
 
-    build/sbt 'testOnly *.OptimizeCompactionSuite -- -z "optimize command: on partitioned table - all partitions"'
+    build/sbt spark/'testOnly *.OptimizeCompactionSQLSuite -- -z "optimize command: on partitioned table - all partitions"'
 
 Refer to [SBT docs](https://www.scala-sbt.org/1.x/docs/Command-Line-Reference.html) for more commands.
 

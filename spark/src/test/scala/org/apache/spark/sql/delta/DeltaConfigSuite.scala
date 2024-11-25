@@ -203,4 +203,10 @@ class DeltaConfigSuite extends SparkFunSuite
       assert(e.getMessage == msg)
     }
   }
+
+  test("getAllConfigs API") {
+    assert(DeltaConfigs.getAllConfigs.contains("minreaderversion"))
+    assert(!DeltaConfigs.getAllConfigs.contains("confignotexist"))
+  }
 }
+

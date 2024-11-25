@@ -852,7 +852,7 @@ trait ConvertIcebergToDeltaSuiteBase
       val e = intercept[UnsupportedOperationException] {
         convert(s"iceberg.`$tablePath`")
       }
-      assert(e.getMessage.contains("merge-on-read"))
+      assert(e.getMessage.contains("convert Iceberg table with row-level deletes"))
     }
 
     // --- DELETE

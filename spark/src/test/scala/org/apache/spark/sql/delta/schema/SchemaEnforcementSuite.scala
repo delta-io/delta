@@ -23,6 +23,7 @@ import org.apache.spark.sql.delta.{DeltaLog, DeltaOptions}
 import org.apache.spark.sql.delta.actions.SingleAction
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 
@@ -32,7 +33,7 @@ import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.StreamingQueryException
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 
 sealed trait SaveOperation {
@@ -287,7 +288,7 @@ trait AppendSaveModeTests extends BatchWriterTest {
 }
 
 trait AppendOutputModeTests extends SchemaEnforcementSuiteBase with SharedSparkSession
-  with SQLTestUtils {
+  with DeltaSQLTestUtils {
   import testImplicits._
 
   testQuietly("reject schema changes by default - streaming") {
@@ -713,7 +714,7 @@ trait OverwriteSaveModeTests extends BatchWriterTest {
 }
 
 trait CompleteOutputModeTests extends SchemaEnforcementSuiteBase with SharedSparkSession
-  with SQLTestUtils {
+  with DeltaSQLTestUtils {
   import testImplicits._
 
   testQuietly("reject complete mode with new schema by default") {

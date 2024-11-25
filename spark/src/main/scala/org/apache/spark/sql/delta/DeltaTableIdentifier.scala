@@ -17,11 +17,12 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.internal.Logging
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 // scalastyle:on import.ordering.noEmptyLine
@@ -43,14 +44,6 @@ case class DeltaTableIdentifier(
       val metadata = spark.sessionState.catalog.getTableMetadata(table.get)
       new Path(metadata.location)
     }
-  }
-
-  def getDeltaLog(spark: SparkSession): DeltaLog = {
-    DeltaLog.forTable(spark, getPath(spark))
-  }
-
-  def getDeltaLogWithSnapshot(spark: SparkSession): (DeltaLog, Snapshot) = {
-    DeltaLog.forTableWithSnapshot(spark, getPath(spark))
   }
 
   /**
@@ -90,17 +83,17 @@ object DeltaTableIdentifier extends DeltaLogging {
         catalog.databaseExists(identifier.database.get) && catalog.tableExists(identifier)
       } catch {
         case e: AnalysisException if gluePermissionError(e) =>
-          logWarning("Received an access denied error from Glue. Will check to see if this " +
-            s"identifier ($identifier) is path based.", e)
+          logWarning(log"Received an access denied error from Glue. Will check to see if this " +
+            log"identifier (${MDC(DeltaLogKeys.TABLE_NAME, identifier)}) is path based.", e)
           false
       }
     }
 
     spark.sessionState.conf.runSQLonFile &&
+      new Path(identifier.table).isAbsolute &&
       DeltaSourceUtils.isDeltaTable(identifier.database) &&
       !tableIsTemporaryTable &&
-      !tableExists &&
-      new Path(identifier.table).isAbsolute
+      !tableExists
   }
 
   /**

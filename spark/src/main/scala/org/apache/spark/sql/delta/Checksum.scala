@@ -20,21 +20,27 @@ import java.io.FileNotFoundException
 import java.nio.charset.StandardCharsets.UTF_8
 
 // scalastyle:off import.ordering.noEmptyLine
+import scala.collection.immutable.ListMap
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.FileSizeHistogram
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize
+import org.apache.hadoop.fs.FileStatus
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.SparkEnv
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.execution.streaming.CheckpointFileManager
-import org.apache.spark.util.Utils
+import org.apache.spark.util.{SerializableConfiguration, Utils}
 
 /**
  * Stats calculated within a snapshot, which we store along individual transactions for
@@ -53,6 +59,8 @@ case class VersionChecksum(
     numFiles: Long,
     numMetadata: Long,
     numProtocol: Long,
+    @JsonDeserialize(contentAs = classOf[Long])
+    inCommitTimestampOpt: Option[Long],
     setTransactions: Option[Seq[SetTransaction]],
     domainMetadata: Option[Seq[DomainMetadata]],
     metadata: Metadata,
@@ -70,13 +78,16 @@ trait RecordChecksum extends DeltaLogging {
   private lazy val writer =
     CheckpointFileManager.create(deltaLog.logPath, deltaLog.newDeltaHadoopConf())
 
+  private def getChecksum(snapshot: Snapshot): VersionChecksum = snapshot.computeChecksum
+
   protected def writeChecksumFile(txnId: String, snapshot: Snapshot): Unit = {
     if (!spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED)) {
       return
     }
 
     val version = snapshot.version
-    val checksum = snapshot.computeChecksum.copy(txnId = Some(txnId))
+    val checksumWithoutTxnId = getChecksum(snapshot)
+    val checksum = checksumWithoutTxnId.copy(txnId = Some(txnId))
     val eventData = mutable.Map[String, Any]("operationSucceeded" -> false)
     eventData("numAddFileActions") = checksum.allFiles.map(_.size).getOrElse(-1)
     eventData("numSetTransactionActions") = checksum.setTransactions.map(_.size).getOrElse(-1)
@@ -95,18 +106,302 @@ trait RecordChecksum extends DeltaLogging {
         eventData("operationSucceeded") = true
       } catch {
         case NonFatal(e) =>
-          logWarning(s"Failed to write the checksum for version: $version", e)
+          logWarning(log"Failed to write the checksum for version: " +
+            log"${MDC(DeltaLogKeys.VERSION, version)}", e)
           stream.cancel()
       }
     } catch {
       case NonFatal(e) =>
-        logWarning(s"Failed to write the checksum for version: $version", e)
+        logWarning(log"Failed to write the checksum for version: " +
+          log"${MDC(DeltaLogKeys.VERSION, version)}", e)
     }
     recordDeltaEvent(
       deltaLog,
       opType = "delta.checksum.write",
       data = eventData)
   }
+
+  /**
+   * Incrementally derive checksum for the just-committed or about-to-be committed snapshot.
+   * @param spark The SparkSession
+   * @param deltaLog The DeltaLog
+   * @param versionToCompute The version for which we want to compute the checksum
+   * @param actions The actions corresponding to the version `versionToCompute`
+   * @param metadata The metadata corresponding to the version `versionToCompute`
+   * @param protocol The protocol corresponding to the version `versionToCompute`
+   * @param operationName The operation name corresponding to the version `versionToCompute`
+   * @param txnIdOpt The transaction identifier for the version `versionToCompute`
+   * @param previousVersionState Contains either the versionChecksum corresponding to
+   *                             `versionToCompute - 1` or a snapshot. Note that the snapshot may
+   *                             belong to any version and this method will only use the snapshot if
+   *                             it corresponds to `versionToCompute - 1`.
+   * @return Either the new checksum or an error code string if the checksum could not be computed.
+   */
+  // scalastyle:off argcount
+  def incrementallyDeriveChecksum(
+      spark: SparkSession,
+      deltaLog: DeltaLog,
+      versionToCompute: Long,
+      actions: Seq[Action],
+      metadata: Metadata,
+      protocol: Protocol,
+      operationName: String,
+      txnIdOpt: Option[String],
+      previousVersionState: Either[Snapshot, VersionChecksum]
+  ): Either[String, VersionChecksum] = {
+    // scalastyle:on argcount
+    if (!deltaLog.incrementalCommitEnabled) {
+      return Left("INCREMENTAL_COMMITS_DISABLED")
+    }
+
+    // Do not incrementally derive checksum for ManualUpdate operations since it may
+    // include actions that violate delta protocol invariants.
+    if (operationName == DeltaOperations.ManualUpdate.name) {
+      return Left("INVALID_OPERATION_MANUAL_UPDATE")
+    }
+
+    // Try to incrementally compute a VersionChecksum for the just-committed snapshot.
+    val expectedVersion = versionToCompute - 1
+    val (oldVersionChecksum, oldSnapshot) = previousVersionState match {
+      case Right(checksum) => checksum -> None
+      case Left(snapshot) if snapshot.version == expectedVersion =>
+        // The original snapshot is still fresh so use it directly. Note this could trigger
+        // a state reconstruction if there is not an existing checksumOpt in the snapshot
+        // or if the existing checksumOpt contains missing information e.g.
+        // a null valued metadata or protocol. However, if we do not obtain a checksum here,
+        // then we cannot incrementally derive a new checksum for the new snapshot.
+        logInfo(log"Incremental commit: starting with snapshot version " +
+          log"${MDC(DeltaLogKeys.VERSION, expectedVersion)}")
+        getChecksum(snapshot).copy(numMetadata = 1, numProtocol = 1) -> Some(snapshot)
+      case _ =>
+        previousVersionState.swap.foreach { snapshot =>
+          // Occurs when snapshot is no longer fresh due to concurrent writers.
+          // Read CRC file and validate checksum information is complete.
+          recordDeltaEvent(deltaLog, opType = "delta.commit.snapshotAgedOut", data = Map(
+            "snapshotVersion" -> snapshot.version,
+            "commitAttemptVersion" -> versionToCompute
+          ))
+        }
+        val oldCrcOpt = deltaLog.readChecksum(expectedVersion)
+        if (oldCrcOpt.isEmpty) {
+          return Left("MISSING_OLD_CRC")
+        }
+        val oldCrcFiltered = oldCrcOpt
+          .filterNot(_.metadata == null)
+          .filterNot(_.protocol == null)
+
+        val oldCrc = oldCrcFiltered.getOrElse {
+          return Left("OLD_CRC_INCOMPLETE")
+        }
+        oldCrc -> None
+    }
+
+    // Incrementally compute the new version checksum, if the old one is available.
+    val ignoreAddFilesInOperation =
+      RecordChecksum.operationNamesWhereAddFilesIgnoredForIncrementalCrc.contains(operationName)
+
+    computeNewChecksum(
+      versionToCompute,
+      operationName,
+      txnIdOpt,
+      oldVersionChecksum,
+      oldSnapshot,
+      actions,
+      ignoreAddFilesInOperation
+    )
+  }
+
+  /**
+   * Incrementally derive new checksum from old checksum + actions.
+   *
+   * @param attemptVersion commit attempt version for which we want to generate CRC.
+   * @param operationName operation name for the attempted commit.
+   * @param txnId transaction identifier.
+   * @param oldVersionChecksum from previous commit (attemptVersion - 1).
+   * @param oldSnapshot snapshot representing previous commit version (i.e. attemptVersion - 1),
+   *                    None if not available.
+   * @param actions used to incrementally compute new checksum.
+   * @param ignoreAddFiles for transactions whose add file actions refer to already-existing files
+   *                       e.g., [[DeltaOperations.ComputeStats]] transactions.
+   * @return Either the new checksum or error code string if the checksum could not be computed
+   *         incrementally due to some reason.
+   */
+  // scalastyle:off argcount
+  private[delta] def computeNewChecksum(
+      attemptVersion: Long,
+      operationName: String,
+      txnIdOpt: Option[String],
+      oldVersionChecksum: VersionChecksum,
+      oldSnapshot: Option[Snapshot],
+      actions: Seq[Action],
+      ignoreAddFiles: Boolean
+  ) : Either[String, VersionChecksum] = {
+    // scalastyle:on argcount
+    oldSnapshot.foreach(s => require(s.version == (attemptVersion - 1)))
+    var tableSizeBytes = oldVersionChecksum.tableSizeBytes
+    var numFiles = oldVersionChecksum.numFiles
+    var protocol = oldVersionChecksum.protocol
+    var metadata = oldVersionChecksum.metadata
+
+    var inCommitTimestamp : Option[Long] = None
+    actions.foreach {
+      case a: AddFile if !ignoreAddFiles =>
+        tableSizeBytes += a.size
+        numFiles += 1
+
+
+      // extendedFileMetadata == true implies fields partitionValues, size, and tags are present
+      case r: RemoveFile if r.extendedFileMetadata == Some(true) =>
+        val size = r.size.get
+        tableSizeBytes -= size
+        numFiles -= 1
+
+
+      case r: RemoveFile =>
+        // Report the failure to usage logs.
+        val msg = s"A remove action with a missing file size was detected in file ${r.path} " +
+          "causing incremental commit to fallback to state reconstruction."
+        recordDeltaEvent(
+          this.deltaLog,
+          "delta.checksum.compute",
+          data = Map("error" -> msg))
+        return Left("ENCOUNTERED_REMOVE_FILE_MISSING_SIZE")
+      case p: Protocol =>
+        protocol = p
+      case m: Metadata =>
+        metadata = m
+      case ci: CommitInfo =>
+        inCommitTimestamp = ci.inCommitTimestamp
+      case _ =>
+    }
+
+    val setTransactions = incrementallyComputeSetTransactions(
+      oldSnapshot, oldVersionChecksum, attemptVersion, actions)
+
+    val domainMetadata = incrementallyComputeDomainMetadatas(
+      oldSnapshot, oldVersionChecksum, attemptVersion, actions)
+
+    Right(VersionChecksum(
+      txnId = txnIdOpt,
+      tableSizeBytes = tableSizeBytes,
+      numFiles = numFiles,
+      numMetadata = 1,
+      numProtocol = 1,
+      inCommitTimestampOpt = inCommitTimestamp,
+      metadata = metadata,
+      protocol = protocol,
+      setTransactions = setTransactions,
+      domainMetadata = domainMetadata,
+      histogramOpt = None,
+      allFiles = None
+    ))
+  }
+
+  /**
+   * Incrementally compute [[Snapshot.setTransactions]] for the commit `attemptVersion`.
+   *
+   * @param oldSnapshot - snapshot corresponding to `attemptVersion` - 1
+   * @param oldVersionChecksum - [[VersionChecksum]] corresponding to `attemptVersion` - 1
+   * @param attemptVersion - version which we want to commit
+   * @param actionsToCommit - actions for commit `attemptVersion`
+   * @return Optional sequence of incrementally computed [[SetTransaction]]s for commit
+   *         `attemptVersion`.
+   */
+  private def incrementallyComputeSetTransactions(
+      oldSnapshot: Option[Snapshot],
+      oldVersionChecksum: VersionChecksum,
+      attemptVersion: Long,
+      actionsToCommit: Seq[Action]): Option[Seq[SetTransaction]] = {
+    // Check-1: check conf
+    if (!spark.conf.get(DeltaSQLConf.DELTA_WRITE_SET_TRANSACTIONS_IN_CRC)) {
+      return None
+    }
+
+    // Check-2: check `minSetTransactionRetentionTimestamp` is not set
+    val newMetadataToCommit = actionsToCommit.collectFirst { case m: Metadata => m }
+    // TODO: Add support for incrementally computing [[SetTransaction]]s even when
+    //  `minSetTransactionRetentionTimestamp` is set.
+    // We don't incrementally compute [[SetTransaction]]s when user has configured
+    // `minSetTransactionRetentionTimestamp` as it makes verification non-deterministic.
+    // Check all places to figure out whether `minSetTransactionRetentionTimestamp` is set:
+    // 1. oldSnapshot corresponding to `attemptVersion - 1`
+    // 2. old VersionChecksum's MetaData (corresponding to `attemptVersion-1`)
+    // 3. new VersionChecksum's MetaData (corresponding to `attemptVersion`)
+    val setTransactionRetentionTimestampConfigured =
+      (oldSnapshot.map(_.metadata) ++ Option(oldVersionChecksum.metadata) ++ newMetadataToCommit)
+        .exists(DeltaLog.minSetTransactionRetentionInterval(_).nonEmpty)
+    if (setTransactionRetentionTimestampConfigured) return None
+
+    // Check-3: Check old setTransactions are available so that we can incrementally compute new.
+    val oldSetTransactions = oldVersionChecksum.setTransactions
+      .getOrElse { return None }
+
+    // Check-4: old/new setTransactions are within the threshold.
+    val setTransactionsToCommit = actionsToCommit.filter(_.isInstanceOf[SetTransaction])
+    val threshold = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_MAX_SET_TRANSACTIONS_IN_CRC)
+    if (Math.max(setTransactionsToCommit.size, oldSetTransactions.size) > threshold) return None
+
+    // We currently don't attempt incremental [[SetTransaction]] when
+    // `minSetTransactionRetentionTimestamp` is set. So passing this as None here explicitly.
+    // We can also ignore file retention because that only affects [[RemoveFile]] actions.
+    val logReplay = new InMemoryLogReplay(
+      minFileRetentionTimestamp = 0,
+      minSetTransactionRetentionTimestamp = None)
+
+    logReplay.append(attemptVersion - 1, oldSetTransactions.toIterator)
+    logReplay.append(attemptVersion, setTransactionsToCommit.toIterator)
+    Some(logReplay.getTransactions.toSeq).filter(_.size <= threshold)
+  }
+
+  /**
+   * Incrementally compute [[Snapshot.domainMetadata]] for the commit `attemptVersion`.
+   *
+   * @param oldVersionChecksum - [[VersionChecksum]] corresponding to `attemptVersion` - 1
+   * @param attemptVersion - version which we want to commit
+   * @param actionsToCommit - actions for commit `attemptVersion`
+   * @return Sequence of incrementally computed [[DomainMetadata]]s for commit
+   *         `attemptVersion`.
+   */
+  private def incrementallyComputeDomainMetadatas(
+      oldSnapshot: Option[Snapshot],
+      oldVersionChecksum: VersionChecksum,
+      attemptVersion: Long,
+      actionsToCommit: Seq[Action]): Option[Seq[DomainMetadata]] = {
+    // Check old DomainMetadatas are available so that we can incrementally compute new.
+    val oldDomainMetadatas = oldVersionChecksum.domainMetadata
+      .getOrElse { return None }
+    val newDomainMetadatas = actionsToCommit.filter(_.isInstanceOf[DomainMetadata])
+
+    // We only work with DomainMetadata, so RemoveFile and SetTransaction retention don't matter.
+    val logReplay = new InMemoryLogReplay(
+      minFileRetentionTimestamp = 0,
+      minSetTransactionRetentionTimestamp = None)
+
+    val threshold = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_MAX_DOMAIN_METADATAS_IN_CRC)
+
+    logReplay.append(attemptVersion - 1, oldDomainMetadatas.iterator)
+    logReplay.append(attemptVersion, newDomainMetadatas.iterator)
+    // We don't truncate the set of DomainMetadata actions. Instead, we either store all of them or
+    // none of them. The advantage of this is that you can then determine presence based on the
+    // checksum, i.e. if the checksum contains domain metadatas but it doesn't contain the one you
+    // are looking for, then it's not there.
+    //
+    // It's also worth noting that we can distinguish "no domain metadatas" versus
+    // "domain metadatas not stored" as [[Some]] vs. [[None]].
+    Some(logReplay.getDomainMetadatas.toSeq).filter(_.size <= threshold)
+  }
+}
+
+object RecordChecksum {
+  // Operations where we should ignore AddFiles in the incremental checksum computation.
+  val operationNamesWhereAddFilesIgnoredForIncrementalCrc = Set(
+    // The transaction that computes stats is special -- it re-adds files that already exist, in
+    // order to update their min/max stats. We should not count those against the totals.
+    DeltaOperations.ComputeStats(Seq.empty).name,
+    // Backfill/Tagging re-adds existing AddFiles without changing the underlying data files.
+    // Incremental commits should ignore backfill commits.
+    DeltaOperations.RowTrackingBackfill().name
+  )
 }
 
 /**
@@ -117,12 +412,19 @@ trait ReadChecksum extends DeltaLogging { self: DeltaLog =>
   val logPath: Path
   private[delta] def store: LogStore
 
-  private[delta] def readChecksum(version: Long): Option[VersionChecksum] = {
+  private[delta] def readChecksum(
+      version: Long,
+      checksumFileStatusHintOpt: Option[FileStatus] = None): Option[VersionChecksum] = {
     recordDeltaOperation(self, "delta.readChecksum") {
-      val checksumFile = FileNames.checksumFile(logPath, version)
-
+      val checksumFilePath = FileNames.checksumFile(logPath, version)
+      val verifiedChecksumFileStatusOpt =
+        checksumFileStatusHintOpt.filter(_.getPath == checksumFilePath)
       var exception: Option[String] = None
-      val content = try Some(store.read(checksumFile, newDeltaHadoopConf())) catch {
+      val content = try Some(
+        verifiedChecksumFileStatusOpt
+          .map(store.read(_, newDeltaHadoopConf()))
+          .getOrElse(store.read(checksumFilePath, newDeltaHadoopConf()))
+      ) catch {
         case NonFatal(e) =>
           // We expect FileNotFoundException; if it's another kind of exception, we still catch them
           // here but we log them in the checksum error event below.
@@ -166,3 +468,163 @@ trait ReadChecksum extends DeltaLogging { self: DeltaLog =>
   }
 }
 
+/**
+ * Verify the state of the table using the checksum information.
+ */
+trait ValidateChecksum extends DeltaLogging { self: Snapshot =>
+
+  /**
+   * Validate checksum (if any) by comparing it against the snapshot's state reconstruction.
+   * @param contextInfo caller context that will be added to the logging if validation fails
+   * @return True iff validation succeeded.
+   * @throws IllegalStateException if validation failed and corruption is configured as fatal.
+   */
+  def validateChecksum(contextInfo: Map[String, String] = Map.empty): Boolean = {
+    val contextSuffix = contextInfo.get("context").map(c => s".context-$c").getOrElse("")
+    val computedStateAccessor = s"ValidateChecksum.checkMismatch$contextSuffix"
+    val computedStateToCompareAgainst = computedState
+    val (mismatchErrorMap, detailedErrorMapForUsageLogs) = checksumOpt
+        .map(checkMismatch(_, computedStateToCompareAgainst))
+        .getOrElse((Map.empty[String, String], Map.empty[String, String]))
+    logAndThrowValidationFailure(mismatchErrorMap, detailedErrorMapForUsageLogs, contextInfo)
+  }
+
+  private def logAndThrowValidationFailure(
+      mismatchErrorMap: Map[String, String],
+      detailedErrorMapForUsageLogs: Map[String, String],
+      contextInfo: Map[String, String]): Boolean = {
+    if (mismatchErrorMap.isEmpty) return true
+    val mismatchString = mismatchErrorMap.values.mkString("\n")
+
+    // We get the active SparkSession, which may be different than the SparkSession of the
+    // Snapshot that was created, since we cache `DeltaLog`s.
+    val sparkOpt = SparkSession.getActiveSession
+
+    // Report the failure to usage logs.
+    recordDeltaEvent(
+      this.deltaLog,
+      "delta.checksum.invalid",
+      data = Map(
+        "error" -> mismatchString,
+        "mismatchingFields" -> mismatchErrorMap.keys.toSeq,
+        "detailedErrorMap" -> detailedErrorMapForUsageLogs,
+        "v2CheckpointEnabled" ->
+          CheckpointProvider.isV2CheckpointEnabled(this),
+        "checkpointProviderCheckpointPolicy" ->
+          checkpointProvider.checkpointPolicy.map(_.name).getOrElse("")
+      ) ++ contextInfo)
+
+    val spark = sparkOpt.getOrElse {
+      throw DeltaErrors.sparkSessionNotSetException()
+    }
+    if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CHECKSUM_MISMATCH_IS_FATAL)) {
+      throw DeltaErrors.logFailedIntegrityCheck(version, mismatchString)
+    }
+    false
+  }
+
+  /**
+   * Validates the given `checksum` against [[Snapshot.computedState]].
+   * Returns an tuple of Maps:
+   *  - first Map contains fieldName to user facing errorMessage mapping.
+   *  - second Map is just for usage logs purpose and contains more details for different fields.
+   *    Adding info to this map is optional.
+   */
+  private def checkMismatch(
+      checksum: VersionChecksum,
+      computedStateToCheckAgainst: SnapshotState
+  ): (Map[String, String], Map[String, String]) = {
+    var errorMap = ListMap[String, String]()
+    var detailedErrorMapForUsageLogs = ListMap[String, String]()
+
+    def compare(expected: Long, found: Long, title: String, field: String): Unit = {
+      if (expected != found) {
+        errorMap += (field -> s"$title - Expected: $expected Computed: $found")
+      }
+    }
+    def compareAction(expected: Action, found: Action, title: String, field: String): Unit = {
+      // only compare when expected is not null for being backward compatible to the checksum
+      // without protocol and metadata
+      Option(expected).filterNot(_.equals(found)).foreach { expected =>
+        errorMap += (field -> s"$title - Expected: $expected Computed: $found")
+      }
+    }
+
+    def compareSetTransactions(
+        setTransactionsInCRC: Seq[SetTransaction],
+        setTransactionsComputed: Seq[SetTransaction]): Unit = {
+      val appIdsFromCrc = setTransactionsInCRC.map(_.appId)
+      val repeatedEntriesForSameAppId = appIdsFromCrc.size != appIdsFromCrc.toSet.size
+      val setTransactionsInCRCSet = setTransactionsInCRC.toSet
+      val setTransactionsFromComputeStateSet = setTransactionsComputed.toSet
+      val exactMatchFailed = setTransactionsInCRCSet != setTransactionsFromComputeStateSet
+      if (repeatedEntriesForSameAppId || exactMatchFailed) {
+        val repeatedAppIds = appIdsFromCrc.groupBy(identity).filter(_._2.size > 1).keySet.toSeq
+        val matchedActions = setTransactionsInCRCSet.intersect(setTransactionsFromComputeStateSet)
+        val unmatchedActionsInCrc = setTransactionsInCRCSet -- matchedActions
+        val unmatchedActionsInComputed = setTransactionsFromComputeStateSet -- matchedActions
+        val eventData = Map(
+          "unmatchedSetTransactionsCRC" -> unmatchedActionsInCrc,
+          "unmatchedSetTransactionsComputedState" -> unmatchedActionsInComputed,
+          "version" -> version,
+          "minSetTransactionRetentionTimestamp" -> minSetTransactionRetentionTimestamp,
+          "repeatedEntriesForSameAppId" -> repeatedAppIds,
+          "exactMatchFailed" -> exactMatchFailed)
+        errorMap += ("setTransactions" -> s"SetTransaction mismatch")
+        detailedErrorMapForUsageLogs += ("setTransactions" -> JsonUtils.toJson(eventData))
+      }
+    }
+
+    def compareDomainMetadata(
+        domainMetadataInCRC: Seq[DomainMetadata],
+        domainMetadataComputed: Seq[DomainMetadata]): Unit = {
+      val domainMetadataInCRCSet = domainMetadataInCRC.toSet
+      // Remove any tombstones from the reconstructed set before comparison.
+      val domainMetadataInComputeStateSet = domainMetadataComputed.filterNot(_.removed).toSet
+      val exactMatchFailed = domainMetadataInCRCSet != domainMetadataInComputeStateSet
+      if (exactMatchFailed) {
+        val matchedActions = domainMetadataInCRCSet.intersect(domainMetadataInComputeStateSet)
+        val unmatchedActionsInCRC = domainMetadataInCRCSet -- matchedActions
+        val unmatchedActionsInComputed = domainMetadataInComputeStateSet -- matchedActions
+        val eventData = Map(
+          "unmatchedDomainMetadataInCRC" -> unmatchedActionsInCRC,
+          "unmatchedDomainMetadataInComputedState" -> unmatchedActionsInComputed,
+          "version" -> version)
+        errorMap += ("domainMetadata" -> "domainMetadata mismatch")
+        detailedErrorMapForUsageLogs += ("domainMetadata" -> JsonUtils.toJson(eventData))
+      }
+    }
+
+    compareAction(checksum.metadata, computedStateToCheckAgainst.metadata, "Metadata", "metadata")
+    compareAction(checksum.protocol, computedStateToCheckAgainst.protocol, "Protocol", "protocol")
+    compare(
+      checksum.tableSizeBytes,
+      computedStateToCheckAgainst.sizeInBytes,
+      title = "Table size (bytes)",
+      field = "tableSizeBytes")
+    compare(
+      checksum.numFiles,
+      computedStateToCheckAgainst.numOfFiles,
+      title = "Number of files",
+      field = "numFiles")
+    compare(
+      checksum.numMetadata,
+      computedStateToCheckAgainst.numOfMetadata,
+      title = "Metadata updates",
+      field = "numOfMetadata")
+    compare(
+      checksum.numProtocol,
+      computedStateToCheckAgainst.numOfProtocol,
+      title = "Protocol updates",
+      field = "numOfProtocol")
+
+    checksum.setTransactions.foreach { setTransactionsInCRC =>
+      compareSetTransactions(setTransactionsInCRC, computedStateToCheckAgainst.setTransactions)
+    }
+
+    checksum.domainMetadata.foreach(
+      compareDomainMetadata(_, computedStateToCheckAgainst.domainMetadata))
+
+    (errorMap, detailedErrorMapForUsageLogs)
+  }
+}

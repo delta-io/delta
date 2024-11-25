@@ -16,13 +16,20 @@
 
 package org.apache.spark.sql.delta.schema
 
+import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
+import org.apache.spark.sql.delta.skipping.clustering.temp.ClusterBySpec
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.actions.Metadata
+import org.apache.spark.sql.delta.actions.{DomainMetadata, Metadata, Protocol}
+import org.apache.spark.sql.delta.constraints.Constraints
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.PartitionUtils
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.catalyst.expressions.FileSourceGeneratedMetadataStructField
+import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
+import org.apache.spark.sql.types.{DataType, StructType}
 
 /**
  * A trait that writers into Delta can extend to update the schema and/or partitioning of the table.
@@ -43,10 +50,19 @@ trait ImplicitMetadataOperation extends DeltaLogging {
       if (colMatches.length > 1) {
         throw DeltaErrors.ambiguousPartitionColumnException(columnName, colMatches)
       } else if (colMatches.isEmpty) {
-        throw DeltaErrors.partitionColumnNotFoundException(columnName, schema.toAttributes)
+        throw DeltaErrors.partitionColumnNotFoundException(columnName, toAttributes(schema))
       }
       colMatches.head.name
     }
+  }
+
+  /** Remove all file source generated metadata columns from the schema. */
+  private def dropGeneratedMetadataColumns(structType: StructType): StructType = {
+    val fields = structType.filter {
+      case FileSourceGeneratedMetadataStructField(_, _) => false
+      case _ => true
+    }
+    StructType(fields)
   }
 
   protected final def updateMetadata(
@@ -56,13 +72,18 @@ trait ImplicitMetadataOperation extends DeltaLogging {
       partitionColumns: Seq[String],
       configuration: Map[String, String],
       isOverwriteMode: Boolean,
-      rearrangeOnly: Boolean): Unit = {
+      rearrangeOnly: Boolean
+      ): Unit = {
     // To support the new column mapping mode, we drop existing metadata on data schema
     // so that all the column mapping related properties can be reinitialized in
     // OptimisticTransaction.updateMetadata
-    val dataSchema =
+    var dataSchema =
       DeltaColumnMapping.dropColumnMappingMetadata(schema.asNullable)
-    val mergedSchema = mergeSchema(txn, dataSchema, isOverwriteMode, canOverwriteSchema)
+
+    // File Source generated columns are not added to the stored schema.
+    dataSchema = dropGeneratedMetadataColumns(dataSchema)
+
+    val mergedSchema = mergeSchema(spark, txn, dataSchema, isOverwriteMode, canOverwriteSchema)
     val normalizedPartitionCols =
       normalizePartitionColumns(spark, partitionColumns, dataSchema)
     // Merged schema will contain additional columns at the end
@@ -88,15 +109,19 @@ trait ImplicitMetadataOperation extends DeltaLogging {
         throw DeltaErrors.unexpectedDataChangeException("Create a Delta table")
       }
       val description = configuration.get("comment").orNull
-      val cleanedConfs = configuration.filterKeys(_ != "comment").toMap
+      // Filter out the property for clustering columns from Metadata action.
+      val cleanedConfs = ClusteredTableUtils.removeClusteringColumnsProperty(
+        configuration.filterKeys(_ != "comment").toMap)
       txn.updateMetadata(
         Metadata(
           description = description,
           schemaString = dataSchema.json,
           partitionColumns = normalizedPartitionCols,
-          configuration = cleanedConfs,
+          configuration = cleanedConfs
+          ,
           createdTime = Some(System.currentTimeMillis())))
-    } else if (isOverwriteMode && canOverwriteSchema && (isNewSchema || isPartitioningChanged)) {
+    } else if (isOverwriteMode && canOverwriteSchema && (isNewSchema || isPartitioningChanged
+        )) {
       // Can define new partitioning in overwrite mode
       val newMetadata = txn.metadata.copy(
         schemaString = dataSchema.json,
@@ -108,14 +133,24 @@ trait ImplicitMetadataOperation extends DeltaLogging {
           "change the partition schema")
       }
       txn.updateMetadataForTableOverwrite(newMetadata)
-    } else if (isNewSchema && canMergeSchema && !isNewPartitioning) {
-      logInfo(s"New merged schema: ${mergedSchema.treeString}")
+    } else if (isNewSchema && canMergeSchema && !isNewPartitioning
+        ) {
+      logInfo(log"New merged schema: ${MDC(DeltaLogKeys.SCHEMA, mergedSchema.treeString)}")
       recordDeltaEvent(txn.deltaLog, "delta.ddl.mergeSchema")
       if (rearrangeOnly) {
         throw DeltaErrors.unexpectedDataChangeException("Change the Delta table schema")
       }
-      txn.updateMetadata(txn.metadata.copy(schemaString = mergedSchema.json))
-    } else if (isNewSchema || isNewPartitioning) {
+
+      val schemaWithTypeWideningMetadata = TypeWideningMetadata.addTypeWideningMetadata(
+        txn,
+        schema = mergedSchema,
+        oldSchema = txn.metadata.schema
+      )
+
+      txn.updateMetadata(txn.metadata.copy(schemaString = schemaWithTypeWideningMetadata.json
+      ))
+    } else if (isNewSchema || isNewPartitioning
+        ) {
       recordDeltaEvent(txn.deltaLog, "delta.schemaValidation.failure")
       val errorBuilder = new MetadataMismatchErrorBuilder
       if (isNewSchema) {
@@ -128,6 +163,38 @@ trait ImplicitMetadataOperation extends DeltaLogging {
         errorBuilder.addOverwriteBit()
       }
       errorBuilder.finalizeAndThrow(spark.sessionState.conf)
+    }
+  }
+
+  /**
+   * Returns a sequence of new DomainMetadata if canUpdateMetadata is true and the operation is
+   * either create table or replace the whole table (not replaceWhere operation). This is because
+   * we only update Domain Metadata when creating or replacing table, and replace table for DDL
+   * and DataFrameWriterV2 are already handled in CreateDeltaTableCommand. In that case,
+   * canUpdateMetadata is false, so we don't update again.
+   *
+   * @param txn [[OptimisticTransaction]] being used to create or replace table.
+   * @param canUpdateMetadata true if the metadata is not updated yet.
+   * @param isReplacingTable true if the operation is replace table without replaceWhere option.
+   * @param clusterBySpecOpt optional ClusterBySpec containing user-specified clustering columns.
+   */
+  protected final def getNewDomainMetadata(
+      txn: OptimisticTransaction,
+      canUpdateMetadata: Boolean,
+      isReplacingTable: Boolean,
+      clusterBySpecOpt: Option[ClusterBySpec] = None): Seq[DomainMetadata] = {
+    if (canUpdateMetadata && (!txn.deltaLog.tableExists || isReplacingTable)) {
+      val newDomainMetadata = Seq.empty[DomainMetadata] ++
+        ClusteredTableUtils.getDomainMetadataFromTransaction(clusterBySpecOpt, txn)
+      if (!txn.deltaLog.tableExists) {
+        newDomainMetadata
+      } else {
+        // Handle domain metadata for replacing a table.
+        DomainMetadataUtils.handleDomainMetadataForReplaceTable(
+          txn.snapshot.domainMetadata, newDomainMetadata)
+      }
+    } else {
+      Seq.empty
     }
   }
 }
@@ -143,6 +210,7 @@ object ImplicitMetadataOperation {
    * @return Merged schema
    */
   private[delta] def mergeSchema(
+      spark: SparkSession,
       txn: OptimisticTransaction,
       dataSchema: StructType,
       isOverwriteMode: Boolean,
@@ -150,17 +218,139 @@ object ImplicitMetadataOperation {
     if (isOverwriteMode && canOverwriteSchema) {
       dataSchema
     } else {
-      val fixedTypeColumns =
-        if (GeneratedColumn.satisfyGeneratedColumnProtocol(txn.protocol)) {
-          txn.metadata.fixedTypeColumns
-        } else {
-          Set.empty[String]
-        }
+      checkDependentExpressions(spark, txn.protocol, txn.metadata, dataSchema)
+
       SchemaMergingUtils.mergeSchemas(
         txn.metadata.schema,
         dataSchema,
-        fixedTypeColumns = fixedTypeColumns)
+        allowTypeWidening = TypeWidening.isEnabled(txn.protocol, txn.metadata))
     }
   }
 
+  /**
+   * Check whether there are dependant (CHECK) constraints for
+   * the provided `currentDt`; if so, throw an error indicating
+   * the constraint data type mismatch.
+   *
+   * @param spark the spark session used.
+   * @param path the full column path for the current field.
+   * @param metadata the metadata used for checking dependant (CHECK) constraints.
+   * @param currentDt the current data type.
+   * @param updateDt the updated data type.
+   */
+  private def checkDependentConstraints(
+      spark: SparkSession,
+      path: Seq[String],
+      metadata: Metadata,
+      currentDt: DataType,
+      updateDt: DataType): Unit = {
+    val dependentConstraints =
+      Constraints.findDependentConstraints(spark, path, metadata)
+    if (dependentConstraints.nonEmpty) {
+      throw DeltaErrors.constraintDataTypeMismatch(
+        path,
+        currentDt,
+        updateDt,
+        dependentConstraints
+      )
+    }
+  }
+
+  /**
+   * Check whether there are dependant generated columns for
+   * the provided `currentDt`; if so, throw an error indicating
+   * the generated columns data type mismatch.
+   *
+   * @param spark the spark session used.
+   * @param path the full column path for the current field.
+   * @param protocol the protocol used.
+   * @param metadata the metadata used for checking dependant generated columns.
+   * @param currentDt the current data type.
+   * @param updateDt the updated data type.
+   */
+  private def checkDependentGeneratedColumns(
+      spark: SparkSession,
+      path: Seq[String],
+      protocol: Protocol,
+      metadata: Metadata,
+      currentDt: DataType,
+      updateDt: DataType): Unit = {
+    val dependentGeneratedColumns = SchemaUtils.findDependentGeneratedColumns(
+      spark, path, protocol, metadata.schema)
+    if (dependentGeneratedColumns.nonEmpty) {
+      throw DeltaErrors.generatedColumnsDataTypeMismatch(
+        path,
+        currentDt,
+        updateDt,
+        dependentGeneratedColumns
+      )
+    }
+  }
+
+  /**
+   * Check whether the provided field is currently being referenced
+   * by CHECK constraints or generated columns.
+   * Note that we explicitly ignore the check for `StructType` in this
+   * function by only inspecting its inner fields to relax the check;
+   * plus, any `StructType` will be traversed in [[checkDependentExpressions]].
+   *
+   * @param spark the spark session used.
+   * @param path the full column path for the current field.
+   * @param protocol the protocol used.
+   * @param metadata the metadata used for checking constraints and generated columns.
+   * @param currentDt the current data type.
+   * @param updateDt the updated data type.
+   */
+  private def checkConstraintsOrGeneratedColumnsOnStructField(
+      spark: SparkSession,
+      path: Seq[String],
+      protocol: Protocol,
+      metadata: Metadata,
+      currentDt: DataType,
+      updateDt: DataType): Unit = (currentDt, updateDt) match {
+    // we explicitly ignore the check for `StructType` here.
+    case (StructType(_), StructType(_)) =>
+
+    // FIXME: we intentionally incorporate the pattern match for `ArrayType` and `MapType`
+    //        here mainly due to the field paths for maps/arrays in constraints/generated columns
+    //        are *NOT* consistent with regular field paths,
+    //        e.g., `hash(a.arr[0].x)` vs. `hash(a.element.x)`.
+    //        this makes it hard to recurse into maps/arrays and check for the corresponding
+    //        fields - thus we can not actually block the operation even if the updated field
+    //        is being referenced by any CHECK constraints or generated columns.
+    case (from, to) =>
+      if (currentDt != updateDt) {
+        checkDependentConstraints(spark, path, metadata, from, to)
+        checkDependentGeneratedColumns(spark, path, protocol, metadata, from, to)
+      }
+  }
+
+  /**
+   * Finds all fields that change between the current schema and the new data schema and fail if any
+   * of them are referenced by check constraints or generated columns.
+   */
+  private def checkDependentExpressions(
+      sparkSession: SparkSession,
+      protocol: Protocol,
+      metadata: actions.Metadata,
+      dataSchema: StructType): Unit =
+    SchemaMergingUtils.transformColumns(metadata.schema, dataSchema) {
+      case (fieldPath, currentField, Some(updateField), _)
+        if !SchemaMergingUtils.equalsIgnoreCaseAndCompatibleNullability(
+          currentField.dataType,
+          updateField.dataType
+        ) =>
+        checkConstraintsOrGeneratedColumnsOnStructField(
+          spark = sparkSession,
+          path = fieldPath :+ currentField.name,
+          protocol = protocol,
+          metadata = metadata,
+          currentDt = currentField.dataType,
+          updateDt = updateField.dataType
+        )
+        // We don't transform the schema but just perform checks,
+        // the returned field won't be used anyway.
+        updateField
+      case (_, field, _, _) => field
+    }
 }

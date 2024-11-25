@@ -16,12 +16,11 @@
 
 package io.delta.kernel.types;
 
-import java.util.Collections;
-import java.util.Map;
-import java.util.Objects;
-import java.util.stream.Collectors;
-
 import io.delta.kernel.annotation.Evolving;
+import io.delta.kernel.internal.util.Tuple2;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
 
 /**
  * Represents a subfield of {@link StructType} with additional properties and metadata.
@@ -31,121 +30,149 @@ import io.delta.kernel.annotation.Evolving;
 @Evolving
 public class StructField {
 
-    ////////////////////////////////////////////////////////////////////////////////
-    // Static Fields / Methods
-    ////////////////////////////////////////////////////////////////////////////////
+  ////////////////////////////////////////////////////////////////////////////////
+  // Static Fields / Methods
+  ////////////////////////////////////////////////////////////////////////////////
 
-    // TODO: for now we introduce isMetadataColumn as a field in the column metadata
-    /**
-     * Indicates a metadata column when present in the field metadata and the value is true
-     */
-    private static String IS_METADATA_COLUMN_KEY = "isMetadataColumn";
+  /** Indicates a metadata column when present in the field metadata and the value is true */
+  private static String IS_METADATA_COLUMN_KEY = "isMetadataColumn";
 
-    /**
-     * The name of a row index metadata column. When present this column must be populated with
-     * row index of each row when reading from parquet.
-     */
-    public static String ROW_INDEX_COLUMN_NAME = "_metadata.row_index";
-    public static StructField ROW_INDEX_COLUMN = new StructField(
-        ROW_INDEX_COLUMN_NAME,
-        LongType.INSTANCE,
-        false,
-        Collections.singletonMap(IS_METADATA_COLUMN_KEY, "true"));
+  /**
+   * The name of a row index metadata column. When present this column must be populated with row
+   * index of each row when reading from parquet.
+   */
+  public static String METADATA_ROW_INDEX_COLUMN_NAME = "_metadata.row_index";
 
+  public static StructField METADATA_ROW_INDEX_COLUMN =
+      new StructField(
+          METADATA_ROW_INDEX_COLUMN_NAME,
+          LongType.LONG,
+          false,
+          FieldMetadata.builder().putBoolean(IS_METADATA_COLUMN_KEY, true).build());
 
-    ////////////////////////////////////////////////////////////////////////////////
-    // Instance Fields / Methods
-    ////////////////////////////////////////////////////////////////////////////////
+  public static final String COLLATIONS_METADATA_KEY = "__COLLATIONS";
 
-    private final String name;
-    private final DataType dataType;
-    private final boolean nullable;
-    private final Map<String, String> metadata;
+  ////////////////////////////////////////////////////////////////////////////////
+  // Instance Fields / Methods
+  ////////////////////////////////////////////////////////////////////////////////
 
-    public StructField(
-        String name,
-        DataType dataType,
-        boolean nullable,
-        Map<String, String> metadata) {
-        this.name = name;
-        this.dataType = dataType;
-        this.nullable = nullable;
-        this.metadata = metadata;
+  private final String name;
+  private final DataType dataType;
+  private final boolean nullable;
+  private final FieldMetadata metadata;
+
+  public StructField(String name, DataType dataType, boolean nullable) {
+    this(name, dataType, nullable, FieldMetadata.empty());
+  }
+
+  public StructField(String name, DataType dataType, boolean nullable, FieldMetadata metadata) {
+    this.name = name;
+    this.dataType = dataType;
+    this.nullable = nullable;
+
+    FieldMetadata collationMetadata = fetchCollationMetadata();
+    this.metadata =
+        new FieldMetadata.Builder().fromMetadata(metadata).fromMetadata(collationMetadata).build();
+  }
+
+  /** @return the name of this field */
+  public String getName() {
+    return name;
+  }
+
+  /** @return the data type of this field */
+  public DataType getDataType() {
+    return dataType;
+  }
+
+  /** @return the metadata for this field */
+  public FieldMetadata getMetadata() {
+    return metadata;
+  }
+
+  /** @return whether this field allows to have a {@code null} value. */
+  public boolean isNullable() {
+    return nullable;
+  }
+
+  public boolean isMetadataColumn() {
+    return metadata.contains(IS_METADATA_COLUMN_KEY)
+        && (boolean) metadata.get(IS_METADATA_COLUMN_KEY);
+  }
+
+  public boolean isDataColumn() {
+    return !isMetadataColumn();
+  }
+
+  @Override
+  public String toString() {
+    return String.format(
+        "StructField(name=%s,type=%s,nullable=%s,metadata=%s)", name, dataType, nullable, metadata);
+  }
+
+  @Override
+  public boolean equals(Object o) {
+    if (this == o) {
+      return true;
+    }
+    if (o == null || getClass() != o.getClass()) {
+      return false;
+    }
+    StructField that = (StructField) o;
+    return nullable == that.nullable
+        && name.equals(that.name)
+        && dataType.equals(that.dataType)
+        && metadata.equals(that.metadata);
+  }
+
+  @Override
+  public int hashCode() {
+    return Objects.hash(name, dataType, nullable, metadata);
+  }
+
+  public StructField withNewMetadata(FieldMetadata metadata) {
+    return new StructField(name, dataType, nullable, metadata);
+  }
+
+  private List<Tuple2<String, String>> getNestedCollatedFields(DataType parent, String path) {
+    List<Tuple2<String, String>> nestedCollatedFields = new ArrayList<>();
+    if (parent instanceof StringType) {
+      StringType stringType = (StringType) parent;
+      if (!stringType
+          .getCollationIdentifier()
+          .equals(CollationIdentifier.fromString("SPARK.UTF8_BINARY"))) {
+        nestedCollatedFields.add(
+            new Tuple2<>(
+                path, ((StringType) parent).getCollationIdentifier().toStringWithoutVersion()));
+      }
+    } else if (parent instanceof MapType) {
+      nestedCollatedFields.addAll(
+          getNestedCollatedFields(((MapType) parent).getKeyType(), path + ".key"));
+      nestedCollatedFields.addAll(
+          getNestedCollatedFields(((MapType) parent).getValueType(), path + ".value"));
+    } else if (parent instanceof ArrayType) {
+      nestedCollatedFields.addAll(
+          getNestedCollatedFields(((ArrayType) parent).getElementType(), path + ".element"));
+    }
+    // We didn't check for StructType because we store the StringType's
+    // collation information in the nearest ancestor StructField's metadata when serializing.
+    return nestedCollatedFields;
+  }
+
+  /** Fetches collation metadata from nested collated fields. */
+  private FieldMetadata fetchCollationMetadata() {
+    List<Tuple2<String, String>> nestedCollatedFields = getNestedCollatedFields(dataType, name);
+    if (nestedCollatedFields.isEmpty()) {
+      return FieldMetadata.empty();
     }
 
-    /**
-     * @return the name of this field
-     */
-    public String getName() {
-        return name;
+    FieldMetadata.Builder metadataBuilder = new FieldMetadata.Builder();
+    for (Tuple2<String, String> nestedField : nestedCollatedFields) {
+      metadataBuilder.putString(nestedField._1, nestedField._2);
     }
 
-    /**
-     * @return the data type of this field
-     */
-    public DataType getDataType() {
-        return dataType;
-    }
-
-    /**
-     * @return the metadata for this field
-     */
-    public Map<String, String> getMetadata() {
-        return metadata;
-    }
-
-    /**
-     * @return whether this field allows to have a {@code null} value.
-     */
-    public boolean isNullable() {
-        return nullable;
-    }
-
-    public boolean isMetadataColumn() {
-        return metadata.containsKey(IS_METADATA_COLUMN_KEY) &&
-            Boolean.parseBoolean(metadata.get(IS_METADATA_COLUMN_KEY));
-    }
-
-    public boolean isDataColumn() {
-        return !isMetadataColumn();
-    }
-
-    @Override
-    public String toString() {
-        return String.format("StructField(name=%s,type=%s,nullable=%s,metadata=%s)",
-            name, dataType, nullable, "empty(fix - this)");
-    }
-
-    public String toJson() {
-        String metadataAsJson = metadata.entrySet().stream()
-            .map(e -> String.format("\"%s\" : \"%s\"", e.getKey(), e.getValue()))
-            .collect(Collectors.joining(",\n"));
-
-        return String.format(
-            "{\n" +
-                "  \"name\" : \"%s\",\n" +
-                "  \"type\" : %s,\n" +
-                "  \"nullable\" : %s, \n" +
-                "  \"metadata\" : { %s }\n" +
-                "}", name, dataType.toJson(), nullable, metadataAsJson);
-    }
-
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) {
-            return true;
-        }
-        if (o == null || getClass() != o.getClass()) {
-            return false;
-        }
-        StructField that = (StructField) o;
-        return nullable == that.nullable && name.equals(that.name) &&
-            dataType.equals(that.dataType) &&
-            metadata.equals(that.metadata);
-    }
-
-    @Override
-    public int hashCode() {
-        return Objects.hash(name, dataType, nullable, metadata);
-    }
+    return new FieldMetadata.Builder()
+        .putFieldMetadata(COLLATIONS_METADATA_KEY, metadataBuilder.build())
+        .build();
+  }
 }

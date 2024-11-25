@@ -28,7 +28,7 @@ import org.apache.spark.sql.delta.sources.DeltaDataSource
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.FunctionIdentifier
-import org.apache.spark.sql.catalyst.analysis.{FunctionRegistryBase, NamedRelation, TableFunctionRegistry, UnresolvedRelation}
+import org.apache.spark.sql.catalyst.analysis.{FunctionRegistryBase, NamedRelation, TableFunctionRegistry, UnresolvedLeafNode, UnresolvedRelation}
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression, ExpressionInfo, StringLiteral}
 import org.apache.spark.sql.catalyst.plans.logical.{LeafNode, LogicalPlan, UnaryNode}
 import org.apache.spark.sql.connector.catalog.V1Table
@@ -71,13 +71,9 @@ object DeltaTableValueFunctions {
 /**
  * Represents an unresolved Delta Table Value Function
  */
-// TODO[SPARK-44071]: Inherit from UnresolvedLeafNode once spark-3.5 is released
-trait DeltaTableValueFunction extends LeafNode {
+trait DeltaTableValueFunction extends UnresolvedLeafNode {
   def fnName: String
   val functionArgs: Seq[Expression]
-
-  override def output: Seq[Attribute] = Nil
-  override lazy val resolved = false
 }
 
 /**
@@ -114,15 +110,15 @@ trait CDCStatementBase extends DeltaTableValueFunction {
 
   protected def getOptions: CaseInsensitiveStringMap = {
     def toDeltaOption(keyPrefix: String, value: Expression): (String, String) = {
+      val evaluated = DeltaTableValueFunctionsShims.evaluateTimeOption(value)
       value.dataType match {
         // We dont need to explicitly handle ShortType as it is parsed as IntegerType.
-        case _: IntegerType | LongType => (keyPrefix + "Version") -> value.eval().toString
-        case _: StringType => (keyPrefix + "Timestamp") -> value.eval().toString
+        case _: IntegerType | LongType => (keyPrefix + "Version") -> evaluated
+        case _: StringType => (keyPrefix + "Timestamp") -> evaluated
         case _: TimestampType => (keyPrefix + "Timestamp") -> {
-          val time = value.eval().toString
           val fmt = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS")
           // when evaluated the time is represented with microseconds, which needs to be trimmed.
-          fmt.format(new Date(time.toLong / 1000))
+          fmt.format(new Date(evaluated.toLong / 1000))
         }
         case _ =>
           throw DeltaErrors.unsupportedExpression(s"${keyPrefix} option", value.dataType,
@@ -157,8 +153,8 @@ case class CDCNameBased(override val functionArgs: Seq[Expression])
 
   override protected def getTable(spark: SparkSession, name: Expression): LogicalPlan = {
     val stringId = getStringLiteral(name, "table name")
-    val tableId = spark.sessionState.sqlParser.parseTableIdentifier(stringId)
-    UnresolvedRelation(tableId, getOptions, isStreaming = false)
+    val identifier = spark.sessionState.sqlParser.parseMultipartIdentifier(stringId)
+    UnresolvedRelation(identifier, getOptions, isStreaming = false)
   }
 }
 

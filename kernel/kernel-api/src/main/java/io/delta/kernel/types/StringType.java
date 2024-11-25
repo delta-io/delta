@@ -24,9 +24,42 @@ import io.delta.kernel.annotation.Evolving;
  */
 @Evolving
 public class StringType extends BasePrimitiveType {
-    public static final StringType INSTANCE = new StringType();
+  public static final StringType STRING =
+      new StringType(CollationIdentifier.fromString("SPARK.UTF8_BINARY"));
 
-    private StringType() {
-        super("string");
+  private final CollationIdentifier collationIdentifier;
+
+  /**
+   * @param collationIdentifier An identifier representing the collation to be used for string
+   *     comparison and sorting. This determines how strings will be ordered and compared in query
+   *     operations.
+   */
+  public StringType(CollationIdentifier collationIdentifier) {
+    super("string");
+    this.collationIdentifier = collationIdentifier;
+  }
+
+  /**
+   * @param collationName name of collation in which this StringType will be observed. In form of
+   *     {@code PROVIDER.COLLATION_NAME[.VERSION]}
+   */
+  public StringType(String collationName) {
+    super("string");
+    this.collationIdentifier = CollationIdentifier.fromString(collationName);
+  }
+
+  /** @return StringType's collation identifier */
+  public CollationIdentifier getCollationIdentifier() {
+    return collationIdentifier;
+  }
+
+  @Override
+  public boolean equals(Object o) {
+    if (!(o instanceof StringType)) {
+      return false;
     }
+
+    StringType that = (StringType) o;
+    return collationIdentifier.equals(that.collationIdentifier);
+  }
 }

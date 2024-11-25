@@ -64,20 +64,15 @@ trait InsertOnlyMergeExecutor extends MergeOutputGeneration {
 
       // If nothing to do when not matched, then nothing to insert, that is, no new files to write
       if (!includesInserts && !filterMatchedRows) {
-        metrics("numSourceRowsInSecondScan").set(-1)
+        performedSecondSourceScan = false
         return Seq.empty
       }
 
-      // Expression to update metrics
-      val incrSourceRowCountExpr = incrementMetricAndReturnBool(numSourceRowsMetric, true)
       // source DataFrame
-      var sourceDF = getSourceDF.filter(Column(incrSourceRowCountExpr))
-      // If there is only one insert clause, then filter out the source rows that do not
-      // satisfy the clause condition because those rows will not be written out.
-      if (notMatchedClauses.size == 1 && notMatchedClauses.head.condition.isDefined) {
-        sourceDF =
-          sourceDF.filter(Column(notMatchedClauses.head.condition.get))
-      }
+      val mergeSource = getMergeSource
+      // Expression to update metrics.
+      val incrSourceRowCountExpr = incrementMetricAndReturnBool(numSourceRowsMetric, true)
+      val sourceDF = filterSource(mergeSource.df.filter(Column(incrSourceRowCountExpr)))
 
       var dataSkippedFiles: Option[Seq[AddFile]] = None
       val preparedSourceDF = if (filterMatchedRows) {
@@ -101,7 +96,7 @@ trait InsertOnlyMergeExecutor extends MergeOutputGeneration {
         sourceDF
       }
 
-      val outputDF = generateInsertsOnlyOutputDF(preparedSourceDF, deltaTxn)
+      val outputDF = generateInsertsOnlyOutputDF(spark, preparedSourceDF, deltaTxn)
       logDebug(s"$extraOpType: output plan:\n" + outputDF.queryExecution)
 
       val newFiles = writeFiles(spark, deltaTxn, outputDF)
@@ -129,6 +124,16 @@ trait InsertOnlyMergeExecutor extends MergeOutputGeneration {
     }
   }
 
+  private def filterSource(source: DataFrame): DataFrame = {
+    // If there is only one insert clause, then filter out the source rows that do not
+    // satisfy the clause condition because those rows will not be written out.
+    if (notMatchedClauses.size == 1 && notMatchedClauses.head.condition.isDefined) {
+      source.filter(Column(notMatchedClauses.head.condition.get))
+    } else {
+      source
+    }
+  }
+
   /**
    * Generate the DataFrame to write out for merges that contains only inserts - either, insert-only
    * clauses or inserts when no matches were found.
@@ -137,15 +142,16 @@ trait InsertOnlyMergeExecutor extends MergeOutputGeneration {
    * and when there are multiple insert clauses.
    */
   private def generateInsertsOnlyOutputDF(
+      spark: SparkSession,
       preparedSourceDF: DataFrame,
       deltaTxn: OptimisticTransaction): DataFrame = {
 
-    val targetOutputColNames = getTargetOutputCols(deltaTxn).map(_.name)
+    val targetWriteColNames = deltaTxn.metadata.schema.map(_.name)
 
     // When there is only one insert clause, there is no need for ROW_DROPPED_COL and
     // output df can be generated without CaseWhen.
     if (notMatchedClauses.size == 1) {
-      val outputCols = generateOneInsertOutputCols(targetOutputColNames)
+      val outputCols = generateOneInsertOutputCols(targetWriteColNames)
       return preparedSourceDF.select(outputCols: _*)
     }
 
@@ -156,7 +162,7 @@ trait InsertOnlyMergeExecutor extends MergeOutputGeneration {
 
     // Generate output cols.
     val outputCols = generateInsertsOnlyOutputCols(
-      targetOutputColNames,
+      targetWriteColNames,
       insertClausesWithPrecompConditions
         .collect { case c: DeltaMergeIntoNotMatchedInsertClause => c })
 
@@ -175,20 +181,19 @@ trait InsertOnlyMergeExecutor extends MergeOutputGeneration {
    * the output target table rows.
    */
   private def generateOneInsertOutputCols(
-      targetOutputColNames: Seq[String]
+      targetWriteColNames: Seq[String]
     ): Seq[Column] = {
 
-    val outputColNames = targetOutputColNames
     val outputExprs = notMatchedClauses.head.resolvedActions.map(_.expr)
     assert(outputExprs.nonEmpty)
     // generate the outputDF without `CaseWhen` expressions.
-    outputExprs.zip(outputColNames).zipWithIndex.map { case ((expr, name), i) =>
+    outputExprs.zip(targetWriteColNames).zipWithIndex.map { case ((expr, name), i) =>
       val exprAfterPassthru = if (i == 0) {
         IncrementMetric(expr, metrics("numTargetRowsInserted"))
       } else {
         expr
       }
-      new Column(Alias(exprAfterPassthru, name)())
+      Column(Alias(exprAfterPassthru, name)())
     }
   }
 
@@ -207,7 +212,7 @@ trait InsertOnlyMergeExecutor extends MergeOutputGeneration {
    *        ELSE [mark the source row to be dropped]
    */
   private def generateInsertsOnlyOutputCols(
-      targetOutputColNames: Seq[String],
+      targetWriteColNames: Seq[String],
       insertClausesWithPrecompConditions: Seq[DeltaMergeIntoNotMatchedClause]
     ): Seq[Column] = {
     // ==== Generate the expressions to generate the target rows from the source rows ====
@@ -216,7 +221,7 @@ trait InsertOnlyMergeExecutor extends MergeOutputGeneration {
     // - ROW_DROPPED_COL to define whether the generated row should be dropped or written out
     // To generate these N + 1 columns, we will generate N + 1 expressions
 
-    val outputColNames = targetOutputColNames :+ ROW_DROPPED_COL
+    val outputColNames = targetWriteColNames :+ ROW_DROPPED_COL
     val numOutputCols = outputColNames.size
 
     // Generate the sequence of N + 1 expressions from the sequence of INSERT clauses
@@ -229,7 +234,7 @@ trait InsertOnlyMergeExecutor extends MergeOutputGeneration {
     // Expressions to drop the source row when it does not match any of the insert clause
     // conditions. Note that it sets the N+1-th column ROW_DROPPED_COL to true.
     val dropSourceRowExprs =
-      targetOutputColNames.map { _ => Literal(null)} :+ Literal.TrueLiteral
+      targetWriteColNames.map { _ => Literal(null)} :+ Literal.TrueLiteral
 
     // Generate the final N + 1 expressions to generate the final target output rows.
     // There are multiple not match clauses. Use `CaseWhen` to conditionally evaluate the right
@@ -258,7 +263,7 @@ trait InsertOnlyMergeExecutor extends MergeOutputGeneration {
       seqToString(outputExprs))
 
     outputExprs.zip(outputColNames).map { case (expr, name) =>
-      new Column(Alias(expr, name)())
+      Column(Alias(expr, name)())
     }
   }
 }

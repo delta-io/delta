@@ -21,16 +21,24 @@ import scala.collection.mutable
 
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.Action.logSchema
+import org.apache.spark.sql.delta.coordinatedcommits.{CommitCoordinatorClient, CommitCoordinatorProvider, CoordinatedCommitsUsageLogs, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DataSkippingReader
 import org.apache.spark.sql.delta.stats.DeltaStatsColumnSpec
 import org.apache.spark.sql.delta.stats.StatisticsCollection
+import org.apache.spark.sql.delta.util.DeltaCommitFileProvider
+import org.apache.spark.sql.delta.util.FileNames
 import org.apache.spark.sql.delta.util.StateCache
+import org.apache.spark.sql.util.ScalaExtensions._
+import io.delta.storage.commit.CommitCoordinatorClient
 import org.apache.hadoop.fs.{FileStatus, Path}
 
+import org.apache.spark.internal.{MDC, MessageWithContext}
 import org.apache.spark.sql._
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.Utils
@@ -61,9 +69,11 @@ trait SnapshotDescriptor {
  *  - Metadata
  *  - Transaction state
  *
- * @param timestamp The timestamp of the latest commit in milliseconds. Can also be set to -1 if the
- *                  timestamp of the commit is unknown or the table has not been initialized, i.e.
- *                  `version = -1`.
+ * @param inCommitTimestampOpt The in-commit-timestamp of the latest commit in milliseconds. Can
+ *                  be set to None if
+ *                   1. The timestamp has not been read yet - generally the case for cold tables.
+ *                   2. Or the table has not been initialized, i.e. `version = -1`.
+ *                   3. Or the table does not have [[InCommitTimestampTableFeature]] enabled.
  *
  */
 class Snapshot(
@@ -71,7 +81,6 @@ class Snapshot(
     override val version: Long,
     val logSegment: LogSegment,
     override val deltaLog: DeltaLog,
-    val timestamp: Long,
     val checksumOpt: Option[VersionChecksum]
   )
   extends SnapshotDescriptor
@@ -79,6 +88,7 @@ class Snapshot(
   with StateCache
   with StatisticsCollection
   with DataSkippingReader
+  with ValidateChecksum
   with DeltaLogging {
 
   import Snapshot._
@@ -93,6 +103,55 @@ class Snapshot(
 
   override def columnMappingMode: DeltaColumnMappingMode = metadata.columnMappingMode
 
+  /**
+   * Returns the timestamp of the latest commit of this snapshot.
+   * For an uninitialized snapshot, this returns -1.
+   *
+   * When InCommitTimestampTableFeature is enabled, the timestamp
+   * is retrieved from the CommitInfo of the latest commit which
+   * can result in an IO operation.
+   */
+  def timestamp: Long =
+    getInCommitTimestampOpt.getOrElse(logSegment.lastCommitFileModificationTimestamp)
+
+  /**
+   * Returns the inCommitTimestamp if ICT is enabled, otherwise returns None.
+   * This potentially triggers an IO operation to read the inCommitTimestamp.
+   * This is a lazy val, so repeated calls will not trigger multiple IO operations.
+   */
+  protected lazy val getInCommitTimestampOpt: Option[Long] =
+    Option.when(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(metadata)) {
+      _reconstructedProtocolMetadataAndICT.inCommitTimestamp
+        .getOrElse {
+          val startTime = System.currentTimeMillis()
+          var exception = Option.empty[Throwable]
+          try {
+            val commitInfoOpt = DeltaHistoryManager.getCommitInfoOpt(
+              deltaLog.store,
+              DeltaCommitFileProvider(this).deltaFile(version),
+              deltaLog.newDeltaHadoopConf())
+            CommitInfo.getRequiredInCommitTimestamp(commitInfoOpt, version.toString)
+          } catch {
+            case e: Throwable =>
+              exception = Some(e)
+              throw e
+          } finally {
+            recordDeltaEvent(
+              deltaLog,
+              "delta.inCommitTimestamp.read",
+              data = Map(
+                "version" -> version,
+                "callSite" -> "Snapshot.getInCommitTimestampOpt",
+                "checkpointVersion" -> logSegment.checkpointProvider.version,
+                "durationMs" -> (System.currentTimeMillis() - startTime),
+                "exceptionMessage" -> exception.map(_.getMessage).getOrElse(""),
+                "exceptionStackTrace" -> exception.map(_.getStackTrace.mkString("\n")).getOrElse("")
+              )
+            )
+          }
+        }
+    }
+
 
   private[delta] lazy val nonFileActions: Seq[Action] = {
     Seq(protocol, metadata) ++
@@ -101,6 +160,60 @@ class Snapshot(
   }
 
   @volatile private[delta] var stateReconstructionTriggered = false
+
+  /**
+   * The last known backfilled version of this snapshot. This can be larger than the last
+   * backfilled file in the snapshot's LogSegment so is separately tracked in this mutable
+   * variable. The reason why this is needed is as follows:
+   *
+   * In general, we update a snapshot's LogSegment after a commit by appending the latest
+   * commit file. This can be an unbackfilled commit. The next time we call update(), we
+   * check, if we can reuse the post commit snapshot or if we need to create a new snapshot.
+   * The update performs a listing and creates a new LogSegment and the criteria for
+   * keeping or replacing the old snapshot is whether the old snapshot's LogSegment is equal
+   * to the LogSegment created by the update() call (see getSnapshotForLogSegmentInternal).
+   *
+   * If an unbackfilled commit has been backfilled before update() is called, the new LogSegment
+   * would contain the backfilled version of this commit and so the old and new LogSegments are
+   * determined to be different and the snapshot is swapped. However, the snapshots are in fact
+   * identical and so swapping the snapshot is not necessary and wold only lead to a loss of the
+   * cached state of the old snapshot.
+   *
+   * To prevent this, we don't swap the snapshot in this case (see
+   * LogSegment.lastMatchingBackfilledCommitIsEqual). This means that we'll continue to use
+   * the old LogSegment, which contains the unbackfilled commit(s). To correctly keep track of
+   * the fact that all commits in the LogSegment have indeed been backfilled, we keep the
+   * last known backfilled version of the snapshot in this variable and update it each time
+   * during LogSegment comparison. This allows callers to figure out whether this snapshot
+   * indeed contains any unbackfilled commits or the LogSegment is just based on an older
+   * version.
+   */
+  @volatile private var lastKnownBackfilledVersion: Long =
+    logSegment.lastBackfilledVersionInSegment
+
+  def getLastKnownBackfilledVersion: Long = lastKnownBackfilledVersion
+
+  def updateLastKnownBackfilledVersion(newVersion: Long): Unit = {
+    if (newVersion > this.version) {
+      throw new IllegalStateException("Can't update the last known backfilled version " +
+        "to a version greater than the snapshot's version.")
+    }
+    lastKnownBackfilledVersion = math.max(lastKnownBackfilledVersion, newVersion)
+  }
+
+  /**
+   * Helper method to determine, whether this snapshot contains "actual" unbackfilled
+   * commits. See [[Snapshot.lastKnownBackfilledVersion]] for more details on why a
+   * LogSegment may contain unbackfilled commits, even though these files have already
+   * been backfilled.
+   */
+  private[delta] def allCommitsBackfilled: Boolean = {
+    lastKnownBackfilledVersion >= FileNames.getFileVersion(logSegment.deltas.last) &&
+      // This should always be true because we synchronously backfill during checkpoint
+      // creation and always create a new snapshot after that, which will force the
+      // latest LogSegment to be used.
+      lastKnownBackfilledVersion >= logSegment.checkpointProvider.version
+  }
 
   /**
    * Use [[stateReconstruction]] to create a representation of the actions in this table.
@@ -127,17 +240,29 @@ class Snapshot(
   }
 
   /**
+   * Protocol, Metadata, and In-Commit Timestamp retrieved through
+   * `protocolMetadataAndICTReconstruction` which skips a full state reconstruction.
+   */
+  case class ReconstructedProtocolMetadataAndICT(
+      protocol: Protocol,
+      metadata: Metadata,
+      inCommitTimestamp: Option[Long])
+
+  /**
    * Generate the protocol and metadata for this snapshot. This is usually cheaper than a
    * full state reconstruction, but still only compute it when necessary.
    */
-  private lazy val (_protocol, _metadata): (Protocol, Metadata) = {
+  private lazy val _reconstructedProtocolMetadataAndICT: ReconstructedProtocolMetadataAndICT =
+      {
     // Should be small. At most 'checkpointInterval' rows, unless new commits are coming
     // in before a checkpoint can be written
     var protocol: Protocol = null
     var metadata: Metadata = null
-    protocolAndMetadataReconstruction().foreach {
-      case (p: Protocol, _) => protocol = p
-      case (_, m: Metadata) => metadata = m
+    var inCommitTimestamp: Option[Long] = None
+    protocolMetadataAndICTReconstruction().foreach {
+      case ReconstructedProtocolMetadataAndICT(p: Protocol, _, _) => protocol = p
+      case ReconstructedProtocolMetadataAndICT(_, m: Metadata, _) => metadata = m
+      case ReconstructedProtocolMetadataAndICT(_, _, ict: Option[Long]) => inCommitTimestamp = ict
     }
 
     if (protocol == null) {
@@ -158,7 +283,54 @@ class Snapshot(
       throw DeltaErrors.actionNotFoundException("metadata", version)
     }
 
-    protocol -> metadata
+    ReconstructedProtocolMetadataAndICT(protocol, metadata, inCommitTimestamp)
+  }
+
+  /**
+   * [[CommitCoordinatorClient]] for the given delta table as of this snapshot.
+   * - This should not be None when a coordinator has been configured for this table. However, if
+   *   the configured coordinator implementation has not been registered, this will be None. In such
+   *   cases, the user will see potentially stale reads for the table. For strict enforcement of
+   *   coordinated commits, the user can set the configuration
+   *   [[DeltaSQLConf.COORDINATED_COMMITS_IGNORE_MISSING_COORDINATOR_IMPLEMENTATION]] to false.
+   * - This must be None when coordinated commits is disabled.
+   */
+  val tableCommitCoordinatorClientOpt: Option[TableCommitCoordinatorClient] = {
+    val failIfImplUnavailable =
+      !spark.conf.get(DeltaSQLConf.COORDINATED_COMMITS_IGNORE_MISSING_COORDINATOR_IMPLEMENTATION)
+    CoordinatedCommitsUtils.getTableCommitCoordinator(
+      spark,
+      deltaLog,
+      this,
+      failIfImplUnavailable
+    )
+  }
+
+  /**
+   * Returns the [[TableCommitCoordinatorClient]] that should be used for any type of mutation
+   * operation on the table. This includes, data writes, backfills etc.
+   * This method will throw an error if the configured coordinator could not be instantiated.
+   * @return [[TableCommitCoordinatorClient]] if the table is configured for coordinated commits,
+   *         None if the table is not configured for coordinated commits.
+   */
+  def getTableCommitCoordinatorForWrites: Option[TableCommitCoordinatorClient] = {
+    val coordinatorOpt = tableCommitCoordinatorClientOpt
+      val coordinatorName =
+        DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.fromMetaData(metadata)
+      if (coordinatorName.isDefined && coordinatorOpt.isEmpty) {
+        recordDeltaEvent(
+          deltaLog,
+          CoordinatedCommitsUsageLogs.COMMIT_COORDINATOR_MISSING_IMPLEMENTATION_WRITE,
+          data = Map(
+            "commitCoordinatorName" -> coordinatorName.get,
+            "registeredCommitCoordinators" ->
+              CommitCoordinatorProvider.getRegisteredCoordinatorNames.mkString(", "),
+            "readVersion" -> version.toString
+          )
+        )
+        throw DeltaErrors.unsupportedWritesWithMissingCoordinators(coordinatorName.get)
+      }
+      coordinatorOpt
   }
 
   /** Number of columns to collect stats on for data skipping */
@@ -199,37 +371,43 @@ class Snapshot(
 
   def checkpointSizeInBytes(): Long = checkpointProvider.effectiveCheckpointSizeInBytes()
 
-  override def metadata: Metadata = _metadata
+  override def metadata: Metadata = _reconstructedProtocolMetadataAndICT.metadata
 
-  override def protocol: Protocol = _protocol
+  override def protocol: Protocol = _reconstructedProtocolMetadataAndICT.protocol
 
   /**
    * Pulls the protocol and metadata of the table from the files that are used to compute the
    * Snapshot directly--without triggering a full state reconstruction. This is important, because
    * state reconstruction depends on protocol and metadata for correctness.
+   * If the current table version does not have a checkpoint, this function will also return the
+   * in-commit-timestamp of the latest commit if available.
    *
    * Also this method should only access methods defined in [[UninitializedCheckpointProvider]]
    * which are not present in [[CheckpointProvider]]. This is because initialization of
-   * [[Snapshot.checkpointProvider]] depends on [[Snapshot.protocolAndMetadataReconstruction()]]
-   * and so if [[Snapshot.protocolAndMetadataReconstruction()]] starts depending on
+   * [[Snapshot.checkpointProvider]] depends on [[Snapshot.protocolMetadataAndICTReconstruction()]]
+   * and so if [[Snapshot.protocolMetadataAndICTReconstruction()]] starts depending on
    * [[Snapshot.checkpointProvider]] then there will be cyclic dependency.
    */
-  protected def protocolAndMetadataReconstruction(): Array[(Protocol, Metadata)] = {
+  protected def protocolMetadataAndICTReconstruction():
+      Array[ReconstructedProtocolMetadataAndICT] = {
     import implicits._
 
-    val schemaToUse = Action.logSchema(Set("protocol", "metaData"))
+    val schemaToUse = Action.logSchema(Set("protocol", "metaData", "commitInfo"))
     val checkpointOpt = checkpointProvider.topLevelFileIndex.map { index =>
       deltaLog.loadIndex(index, schemaToUse)
         .withColumn(COMMIT_VERSION_COLUMN, lit(checkpointProvider.version))
     }
     (checkpointOpt ++ deltaFileIndexOpt.map(deltaLog.loadIndex(_, schemaToUse)).toSeq)
       .reduceOption(_.union(_)).getOrElse(emptyDF)
-      .select("protocol", "metaData", COMMIT_VERSION_COLUMN)
-      .where("protocol.minReaderVersion is not null or metaData.id is not null")
-      .as[(Protocol, Metadata, Long)]
+      .select("protocol", "metaData", "commitInfo.inCommitTimestamp", COMMIT_VERSION_COLUMN)
+      .where("protocol.minReaderVersion is not null or metaData.id is not null " +
+        s"or (commitInfo.inCommitTimestamp is not null and version = $version)")
+      .as[(Protocol, Metadata, Option[Long], Long)]
       .collect()
-      .sortBy(_._3)
-      .map { case (p, m, _) => p -> m }
+      .sortBy(_._4)
+      .map {
+        case (p, m, ict, _) => ReconstructedProtocolMetadataAndICT(p, m, ict)
+      }
   }
 
   // Reconstruct the state by applying deltas in order to the checkpoint.
@@ -273,7 +451,8 @@ class Snapshot(
             col("add.tags"),
             col("add.deletionVector"),
             col("add.baseRowId"),
-            col("add.defaultRowCommitVersion")
+            col("add.defaultRowCommitVersion"),
+            col("add.clusteringProvider")
           )))
         .withColumn("remove", when(
           col("remove.path").isNotNull,
@@ -334,16 +513,29 @@ class Snapshot(
    */
   def computeChecksum: VersionChecksum = VersionChecksum(
     txnId = None,
-    tableSizeBytes = sizeInBytes,
-    numFiles = numOfFiles,
-    numMetadata = numOfMetadata,
-    numProtocol = numOfProtocol,
-    setTransactions = checksumOpt.flatMap(_.setTransactions),
-    domainMetadata = domainMetadatasIfKnown,
+    inCommitTimestampOpt = getInCommitTimestampOpt,
     metadata = metadata,
     protocol = protocol,
-    histogramOpt = fileSizeHistogram,
-    allFiles = checksumOpt.flatMap(_.allFiles))
+    allFiles = checksumOpt.flatMap(_.allFiles),
+    tableSizeBytes = checksumOpt.map(_.tableSizeBytes).getOrElse(sizeInBytes),
+    numFiles = checksumOpt.map(_.numFiles).getOrElse(numOfFiles),
+    numMetadata = checksumOpt.map(_.numMetadata).getOrElse(numOfMetadata),
+    numProtocol = checksumOpt.map(_.numProtocol).getOrElse(numOfProtocol),
+    // Only return setTransactions and domainMetadata if they are either already present
+    // in the checksum or if they have already been computed in the current snapshot.
+    setTransactions = checksumOpt.flatMap(_.setTransactions)
+      .orElse {
+        Option.when(_computedStateTriggered &&
+            // Only extract it from the current snapshot if set transaction
+            // writes are enabled.
+            spark.conf.get(DeltaSQLConf.DELTA_WRITE_SET_TRANSACTIONS_IN_CRC)) {
+          setTransactions
+        }
+      },
+    domainMetadata = checksumOpt.flatMap(_.domainMetadata)
+      .orElse(Option.when(_computedStateTriggered)(domainMetadata)),
+    histogramOpt = checksumOpt.flatMap(_.histogramOpt)
+  )
 
   /** Returns the data schema of the table, used for reading stats */
   def tableSchema: StructType = metadata.dataSchema
@@ -386,36 +578,67 @@ class Snapshot(
   def redactedPath: String =
     Utils.redact(spark.sessionState.conf.stringRedactionPattern, path.toUri.toString)
 
+  /**
+   * Ensures that commit files are backfilled up to the current version in the snapshot.
+   *
+   * This method checks if there are any un-backfilled versions up to the current version and
+   * triggers the backfilling process using the commit-coordinator. It verifies that the delta file
+   * for the current version exists after the backfilling process.
+   *
+   * @throws IllegalStateException
+   *   if the delta file for the current version is not found after backfilling.
+   */
+  def ensureCommitFilesBackfilled(catalogTableOpt: Option[CatalogTable]): Unit = {
+    val tableCommitCoordinatorClient = getTableCommitCoordinatorForWrites.getOrElse {
+      return
+    }
+    val minUnbackfilledVersion = DeltaCommitFileProvider(this).minUnbackfilledVersion
+    if (minUnbackfilledVersion <= version) {
+      val hadoopConf = deltaLog.newDeltaHadoopConf()
+      tableCommitCoordinatorClient.backfillToVersion(
+        catalogTableOpt.map(_.identifier),
+        version,
+        lastKnownBackfilledVersion = Some(minUnbackfilledVersion - 1))
+      val fs = deltaLog.logPath.getFileSystem(hadoopConf)
+      val expectedBackfilledDeltaFile = FileNames.unsafeDeltaFile(deltaLog.logPath, version)
+      if (!fs.exists(expectedBackfilledDeltaFile)) {
+        throw new IllegalStateException("Backfilling of commit files failed. " +
+          s"Expected delta file $expectedBackfilledDeltaFile not found.")
+      }
+    }
+  }
+
 
   protected def emptyDF: DataFrame =
     spark.createDataFrame(spark.sparkContext.emptyRDD[Row], logSchema)
 
 
-  override def logInfo(msg: => String): Unit = {
-    super.logInfo(s"[tableId=${deltaLog.tableId}] " + msg)
+  def logInfo(msg: MessageWithContext): Unit = {
+    super.logInfo(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, deltaLog.tableId)}] " + msg)
   }
 
-  override def logWarning(msg: => String): Unit = {
-    super.logWarning(s"[tableId=${deltaLog.tableId}] " + msg)
+  def logWarning(msg: MessageWithContext): Unit = {
+    super.logWarning(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, deltaLog.tableId)}] " + msg)
   }
 
-  override def logWarning(msg: => String, throwable: Throwable): Unit = {
-    super.logWarning(s"[tableId=${deltaLog.tableId}] " + msg, throwable)
+  def logWarning(msg: MessageWithContext, throwable: Throwable): Unit = {
+    super.logWarning(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, deltaLog.tableId)}] " + msg,
+      throwable)
   }
 
-  override def logError(msg: => String): Unit = {
-    super.logError(s"[tableId=${deltaLog.tableId}] " + msg)
+  def logError(msg: MessageWithContext): Unit = {
+    super.logError(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, deltaLog.tableId)}] " + msg)
   }
 
-  override def logError(msg: => String, throwable: Throwable): Unit = {
-    super.logError(s"[tableId=${deltaLog.tableId}] " + msg, throwable)
+  def logError(msg: MessageWithContext, throwable: Throwable): Unit = {
+    super.logError(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, deltaLog.tableId)}] " + msg, throwable)
   }
 
   override def toString: String =
     s"${getClass.getSimpleName}(path=$path, version=$version, metadata=$metadata, " +
       s"logSegment=$logSegment, checksumOpt=$checksumOpt)"
 
-  logInfo(s"Created snapshot $this")
+  logInfo(log"Created snapshot ${MDC(DeltaLogKeys.SNAPSHOT, this)}")
   init()
 }
 
@@ -428,11 +651,14 @@ object Snapshot extends DeltaLogging {
 
   /** Verifies that a set of delta or checkpoint files to be read actually belongs to this table. */
   private def assertLogFilesBelongToTable(logBasePath: Path, files: Seq[FileStatus]): Unit = {
+    val logPath = new Path(logBasePath.toUri)
+    val commitDirPath = FileNames.commitDirPath(logPath)
     files.map(_.getPath).foreach { filePath =>
-      if (new Path(filePath.toUri).getParent != new Path(logBasePath.toUri)) {
+      val commitParent = new Path(filePath.toUri).getParent
+      if (commitParent != logPath && commitParent != commitDirPath) {
         // scalastyle:off throwerror
         throw new AssertionError(s"File ($filePath) doesn't belong in the " +
-          s"transaction log at $logBasePath. Please contact Databricks Support.")
+          s"transaction log at $logBasePath.")
         // scalastyle:on throwerror
       }
     }
@@ -440,23 +666,33 @@ object Snapshot extends DeltaLogging {
 }
 
 /**
- * An initial snapshot with only metadata specified. Useful for creating a DataFrame from an
- * existing parquet table during its conversion to delta.
+ * A dummy snapshot with only metadata and protocol specified. It is used for a targeted table
+ * version that does not exist yet before commiting a change. This can be used to create a
+ * DataFrame, or to derive the stats schema from an existing Parquet table when converting it to
+ * Delta or cloning it to a Delta table prior to the actual snapshot being available after a commit.
+ *
+ * Note that the snapshot state reconstruction contains only the protocol and metadata - it does not
+ * include add/remove actions, appids, or metadata domains, even if the actual table currently has
+ * or will have them in the future.
  *
  * @param logPath the path to transaction log
  * @param deltaLog the delta log object
  * @param metadata the metadata of the table
+ * @param protocolOpt the protocol version of the table (optional). If not specified, a default
+ *                    protocol will be computed based on the metadata. This must be explicitly
+ *                    specified when replacing an existing Delta table, otherwise using the metadata
+ *                    to compute the protocol might result in a protocol downgrade for the table.
  */
-class InitialSnapshot(
+class DummySnapshot(
     val logPath: Path,
     override val deltaLog: DeltaLog,
-    override val metadata: Metadata)
+    override val metadata: Metadata,
+    protocolOpt: Option[Protocol] = None)
   extends Snapshot(
     path = logPath,
     version = -1,
     logSegment = LogSegment.empty(logPath),
     deltaLog = deltaLog,
-    timestamp = -1,
     checksumOpt = None
   ) {
 
@@ -475,6 +711,18 @@ class InitialSnapshot(
 
   override def stateDS: Dataset[SingleAction] = emptyDF.as[SingleAction]
   override def stateDF: DataFrame = emptyDF
-  override protected lazy val computedState: SnapshotState = initialState(metadata)
-  override def protocol: Protocol = computedState.protocol
+  override def protocol: Protocol =
+    protocolOpt.getOrElse(Protocol.forNewTable(spark, Some(metadata)))
+
+  override protected lazy val computedState: SnapshotState = initialState(metadata, protocol)
+  override protected lazy val getInCommitTimestampOpt: Option[Long] = None
+  _computedStateTriggered = true
+
+  // The [[InitialSnapshot]] is not backed by any external commit-coordinator.
+  override val tableCommitCoordinatorClientOpt: Option[TableCommitCoordinatorClient] = None
+
+  // Commit 0 cannot be performed through a commit coordinator.
+  override def getTableCommitCoordinatorForWrites: Option[TableCommitCoordinatorClient] = None
+
+  override def timestamp: Long = -1L
 }

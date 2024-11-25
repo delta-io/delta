@@ -120,7 +120,9 @@ trait DeltaDDLUsingPathTests extends QueryTest
     val ex = intercept[AnalysisException] {
       spark.table(s"delta.`/path/to/delta`")
     }
-    assert(ex.getMessage.matches(".*Path does not exist: (file:)?/path/to/delta.?"))
+    assert(ex.getMessage.matches(
+      ".*Path does not exist: (file:)?/path/to/delta.?.*"),
+      "Found: " + ex.getMessage)
 
     withSQLConf(SQLConf.RUN_SQL_ON_FILES.key -> "false") {
       val ex = intercept[AnalysisException] {
@@ -167,25 +169,25 @@ trait DeltaDDLUsingPathTests extends QueryTest
         "key" -> "value")
     }
 
+    val protocol = Protocol.forNewTable(spark, Some(metadata))
+    val supportedFeatures = protocol
+      .readerAndWriterFeatureNames
+      .map(name => s"delta.feature.$name" -> "supported")
+    val expectedProperties = Seq(
+      "delta.logRetentionDuration" -> "2 weeks",
+      "delta.minReaderVersion" -> protocol.minReaderVersion.toString,
+      "delta.minWriterVersion" -> protocol.minWriterVersion.toString,
+      "key" -> "value") ++ supportedFeatures
+
     checkDatasetUnorderly(
       dropColumnMappingConfigurations(
         sql(s"SHOW TBLPROPERTIES $table").as[(String, String)]),
-      "delta.logRetentionDuration" -> "2 weeks",
-      "delta.minReaderVersion" ->
-        Protocol.forNewTable(spark, Some(metadata)).minReaderVersion.toString,
-      "delta.minWriterVersion" ->
-        Protocol.forNewTable(spark, Some(metadata)).minWriterVersion.toString,
-      "key" -> "value")
+      expectedProperties: _*)
 
     checkDatasetUnorderly(
       dropColumnMappingConfigurations(
         sql(s"SHOW TBLPROPERTIES delta.`$path`").as[(String, String)]),
-      "delta.logRetentionDuration" -> "2 weeks",
-      "delta.minReaderVersion" ->
-        Protocol.forNewTable(spark, Some(metadata)).minReaderVersion.toString,
-      "delta.minWriterVersion" ->
-        Protocol.forNewTable(spark, Some(metadata)).minWriterVersion.toString,
-      "key" -> "value")
+      expectedProperties: _*)
 
     if (table == "`delta_test`") {
       val tableName = s"$catalogName.default.delta_test"

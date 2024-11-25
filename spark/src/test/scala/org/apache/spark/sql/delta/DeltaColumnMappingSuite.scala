@@ -24,11 +24,12 @@ import scala.collection.JavaConverters._
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
+import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, Metadata => MetadataAction, Protocol, SetTransaction}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.hadoop.fs.Path
 import org.apache.parquet.format.converter.ParquetMetadataConverter
@@ -43,7 +44,10 @@ import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 // scalastyle:on import.ordering.noEmptyLine
 
-trait DeltaColumnMappingSuiteUtils extends SharedSparkSession with DeltaSQLCommandTest {
+trait DeltaColumnMappingSuiteUtils
+  extends SharedSparkSession
+  with DeltaSQLTestUtils
+  with DeltaSQLCommandTest {
 
 
   protected def supportedModes: Seq[String] = Seq("id", "name")
@@ -479,12 +483,13 @@ class DeltaColumnMappingSuite extends QueryTest
       expectedSchema: StructType,
       ignorePhysicalName: Boolean,
       mode: String,
-      createNewTable: Boolean = true)(fn: => Unit): Unit = {
+      createNewTable: Boolean = true,
+      tableFeaturesProtocolExpected: Boolean = true)(fn: => Unit): Unit = {
     withTable(tableName) {
         fn
       checkProperties(tableName,
         readerVersion = 2,
-        writerVersion = 5,
+        writerVersion = if (tableFeaturesProtocolExpected) 7 else 5,
         mode = Some(mode),
         curMaxId = DeltaColumnMapping.findMaxColumnId(expectedSchema)
       )
@@ -823,7 +828,7 @@ class DeltaColumnMappingSuite extends QueryTest
       checkSchema("t1", schemaWithId)
       checkProperties("t1",
         readerVersion = 2,
-        writerVersion = 5,
+        writerVersion = 7,
         mode = Some(mode),
         curMaxId = DeltaColumnMapping.findMaxColumnId(schemaWithId)
       )
@@ -846,7 +851,7 @@ class DeltaColumnMappingSuite extends QueryTest
 
       checkProperties("t1",
         readerVersion = 2,
-        writerVersion = 5,
+        writerVersion = 7,
         mode = Some(mode),
         curMaxId = DeltaColumnMapping.findMaxColumnId(schemaWithIdNested))
       checkSchema(
@@ -868,7 +873,7 @@ class DeltaColumnMappingSuite extends QueryTest
 
       checkProperties("t1",
         readerVersion = 2,
-        writerVersion = 5,
+        writerVersion = 7,
         mode = Some(mode),
         curMaxId = curMaxId)
 
@@ -883,7 +888,7 @@ class DeltaColumnMappingSuite extends QueryTest
       )
       checkProperties("t1",
         readerVersion = 2,
-        writerVersion = 5,
+        writerVersion = 7,
         mode = Some(mode),
         curMaxId = curMaxId2)
       checkSchema("t1",
@@ -935,7 +940,7 @@ class DeltaColumnMappingSuite extends QueryTest
 
       checkProperties("t1",
         readerVersion = 2,
-        writerVersion = 5,
+        writerVersion = 7,
         mode = Some(mode),
         curMaxId = curMaxId)
       checkSchema("t1",
@@ -957,7 +962,7 @@ class DeltaColumnMappingSuite extends QueryTest
       )
       checkProperties("t1",
         readerVersion = 2,
-        writerVersion = 5,
+        writerVersion = 7,
         mode = Some(mode),
         curMaxId = curMaxId2)
       checkSchema("t1",
@@ -995,7 +1000,7 @@ class DeltaColumnMappingSuite extends QueryTest
 
       checkProperties("t1",
         readerVersion = 2,
-        writerVersion = 5,
+        writerVersion = 7,
         mode = Some(mode),
         curMaxId = curMaxId)
       checkSchema("t1", schemaWithId)
@@ -1010,7 +1015,7 @@ class DeltaColumnMappingSuite extends QueryTest
 
       checkProperties("t1",
         readerVersion = 2,
-        writerVersion = 5,
+        writerVersion = 7,
         mode = Some(mode),
         curMaxId = curMaxId)
 
@@ -1034,7 +1039,7 @@ class DeltaColumnMappingSuite extends QueryTest
       val curMaxId2 = DeltaColumnMapping.findMaxColumnId(schemaWithId) + 1
       checkProperties("t1",
         readerVersion = 2,
-        writerVersion = 5,
+        writerVersion = 7,
         mode = Some(mode),
         curMaxId = curMaxId2)
       checkSchema("t1", schemaWithId.add("c", StringType, true, withId(3)))
@@ -1129,7 +1134,8 @@ class DeltaColumnMappingSuite extends QueryTest
       spark.range(10).toDF("id")
         .write.format("delta").save(dir.getCanonicalPath)
       // Analysis phase
-      val df = spark.read.format("delta").load(dir.getCanonicalPath)
+      val df1 = spark.read.format("delta").load(dir.getCanonicalPath)
+      val df2 = spark.read.format("delta").load(dir.getCanonicalPath)
       // Overwrite schema but with same logical schema
       withSQLConf(DeltaSQLConf.REUSE_COLUMN_MAPPING_METADATA_DURING_OVERWRITE.key -> "false") {
         spark.range(10).toDF("id")
@@ -1140,13 +1146,14 @@ class DeltaColumnMappingSuite extends QueryTest
       // new physical name for the underlying columns, so we should fail.
       assert {
         intercept[DeltaAnalysisException] {
-          df.collect()
+          df1.collect()
         }.getErrorClass == "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS"
       }
       // See we can't read back the same data any more
+      // Note: We need to use separate dataframe, because the error in df1 will be cached.
       withSQLConf(DeltaSQLConf.DELTA_SCHEMA_ON_READ_CHECK_ENABLED.key -> "false") {
         checkAnswer(
-          df,
+          df2,
           (0 until 10).map(_ => Row(null))
         )
       }
@@ -1165,8 +1172,10 @@ class DeltaColumnMappingSuite extends QueryTest
         checkAnswer(spark.table(tableName),
           Row("str1", 1) :: Row("str2", 2) :: Row("str3", 3) :: Row("str4", 4) :: Nil)
         // both new table writes and appends should use prefix
-        val pattern = s"[A-Za-z0-9]{$prefixLen}/part-.*parquet"
-        assert(snapshot.allFiles.collect().map(_.path).forall(_.matches(pattern)))
+        val pattern = s"[A-Za-z0-9]{$prefixLen}/.*part-.*parquet"
+        for (file <- snapshot.allFiles.collect()) {
+          assert(file.path.matches(pattern))
+        }
       }
     }
   }
@@ -1324,40 +1333,35 @@ class DeltaColumnMappingSuite extends QueryTest
     val oldModes = Seq("none") ++ supportedModes
     val newModes = Seq("none") ++ supportedModes
     val upgrade = Seq(true, false)
-    oldModes.foreach { oldMode =>
-      newModes.foreach { newMode =>
-        upgrade.foreach { ug =>
-          val oldProps = Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> oldMode)
-          val newProps = Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> newMode) ++
-            (if (!ug) Map.empty else Map(
-              DeltaConfigs.MIN_READER_VERSION.key -> "2",
-              DeltaConfigs.MIN_WRITER_VERSION.key -> "5"))
-
-          if (oldMode != newMode && !(oldMode == "none" && newMode == "name")) {
-            Given(s"old mode: $oldMode, new mode: $newMode, upgrade: $ug")
-            val e = intercept[UnsupportedOperationException] {
-              withTable("t1") {
-                createTableWithSQLAPI("t1", props = oldProps)
-                alterTableWithProps("t1", props = newProps)
-              }
+    val removalAllowed = Seq(true, false)
+    for(oldMode <- oldModes; newMode <- newModes; ug <- upgrade; ra <- removalAllowed) {
+      val oldProps = Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> oldMode)
+      val newProps = Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> newMode) ++
+        (if (!ug) Map.empty else Map(
+          DeltaConfigs.MIN_READER_VERSION.key -> "2",
+          DeltaConfigs.MIN_WRITER_VERSION.key -> "5"))
+      val isSupportedChange = {
+        // No change.
+        (oldMode == newMode) ||
+          // Downgrade allowed with a flag.
+          (ra && oldMode != NoMapping.name && newMode == NoMapping.name) ||
+          // Upgrade always allowed.
+          (oldMode == NoMapping.name && newMode == NameMapping.name)
+      }
+      if (!isSupportedChange) {
+        Given(s"old mode: $oldMode, new mode: $newMode, upgrade: $ug, removalAllowed: $ra")
+        val e = intercept[UnsupportedOperationException] {
+          withTable("t1") {
+            createTableWithSQLAPI("t1", props = oldProps)
+            withSQLConf(DeltaSQLConf.ALLOW_COLUMN_MAPPING_REMOVAL.key ->
+              ra.toString) {
+              alterTableWithProps("t1", props = newProps)
             }
-            assert(e.getMessage.contains("Changing column mapping mode from"))
           }
         }
+        assert(e.getMessage.contains("Changing column mapping mode from"))
       }
     }
-  }
-
-  test("legal mode change without explicit upgrade") {
-    val e = intercept[UnsupportedOperationException] {
-      withTable("t1") {
-        createTableWithSQLAPI("t1")
-        alterTableWithProps("t1", props = Map(
-          DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name"))
-      }
-    }
-    assert(e.getMessage.contains("Your current table protocol version does not" +
-      " support changing column mapping modes"))
   }
 
   test("getPhysicalNameFieldMap") {
@@ -1570,7 +1574,7 @@ class DeltaColumnMappingSuite extends QueryTest
       files.foreach { f =>
         val footer = ParquetFileReader.readFooter(
           log.newDeltaHadoopConf(),
-          new Path(log.dataPath, f.path),
+          f.absolutePath(log),
           ParquetMetadataConverter.NO_FILTER)
         footer.getFileMetaData.getSchema.getFields.asScala.foreach(f =>
           // getId.intValue will throw NPE if field id does not exist
@@ -1627,7 +1631,8 @@ class DeltaColumnMappingSuite extends QueryTest
       schemaWithDottedColumnNames,
       false,
       "name",
-      createNewTable = false
+      createNewTable = false,
+      tableFeaturesProtocolExpected = false
     ) {
       sql(s"CREATE TABLE t1 (${schemaWithDottedColumnNames.toDDL}) USING DELTA")
       alterTableWithProps("t1", props = Map(
@@ -1900,8 +1905,7 @@ class DeltaColumnMappingSuite extends QueryTest
         s"""CREATE TABLE $testTableName
            |USING DELTA
            |TBLPROPERTIES(
-           |'$minReaderKey' = '2',
-           |'$minWriterKey' = '7'
+           |'${DeltaConfigs.ROW_TRACKING_ENABLED.key}' = 'true'
            |)
            |AS SELECT * FROM RANGE(1)
            |""".stripMargin)
@@ -1913,6 +1917,180 @@ class DeltaColumnMappingSuite extends QueryTest
         s"""ALTER TABLE $testTableName SET TBLPROPERTIES(
            |'$columnMappingMode'='name'
            |)""".stripMargin)
+
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(testTableName))
+      assert(deltaLog.update().protocol === Protocol(2, 7).withFeatures(Seq(
+        AppendOnlyTableFeature,
+        InvariantsTableFeature,
+        ColumnMappingTableFeature,
+        RowTrackingFeature
+      )))
+    }
+  }
+
+  test("DELTA_INVALID_CHARACTERS_IN_COLUMN_NAMES exception should include column names") {
+    val testTableName = "columnMappingTestTable"
+    withTable(testTableName) {
+      val invalidColName1 = colName("col1")
+      val invalidColName2 = colName("col2")
+      // Make sure the error class stays the same for a single and multiple columns.
+      testWithInvalidColumns(Seq(invalidColName1))
+      testWithInvalidColumns(Seq(invalidColName1, invalidColName2))
+
+      def testWithInvalidColumns(invalidColumns: Seq[String]): Unit = {
+        val allColumns = (Seq("a", "b") ++ invalidColumns)
+          .mkString("(`", "` int, `", "` int)")
+        val e = intercept[DeltaAnalysisException] {
+          sql(
+            s"""CREATE TABLE $testTableName $allColumns
+               |USING DELTA
+               |TBLPROPERTIES('${DeltaConfigs.COLUMN_MAPPING_MODE.key}'='none')
+               |""".stripMargin)
+        }
+        val condition = "DELTA_INVALID_CHARACTERS_IN_COLUMN_NAMES"
+        checkError(
+          e,
+          condition,
+          parameters = DeltaThrowableHelper
+            .getParameterNames(condition, errorSubClass = null)
+            .zip(invalidColumns).toMap
+        )
+      }
+    }
+  }
+
+  test("filters pushed down to parquet use physical names") {
+    val tableName = "table_name"
+    withTable(tableName) {
+      // Create a table with column mapping **disabled**
+      sql(
+        s"""CREATE TABLE $tableName (a INT, b INT)
+           |USING DELTA
+           |TBLPROPERTIES (
+           |  '${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = 'none',
+           |  '${DeltaConfigs.MIN_READER_VERSION.key}' = '2',
+           |  '${DeltaConfigs.MIN_WRITER_VERSION.key}' = '5'
+           |)
+           |""".stripMargin)
+
+      sql(s"INSERT INTO $tableName VALUES (100, 1000)")
+
+      sql(
+        s"""ALTER TABLE $tableName
+           |SET TBLPROPERTIES ('${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = 'name')
+           |""".stripMargin)
+
+      // Confirm that the physical names are equal to the logical names
+      val schema = DeltaLog.forTable(spark, TableIdentifier(tableName)).update().schema
+      assert(DeltaColumnMapping.getPhysicalName(schema("a")) == "a")
+      assert(DeltaColumnMapping.getPhysicalName(schema("b")) == "b")
+
+      // Rename the columns so that the logical name of the second column is equal to the physical
+      // name of the first column.
+      sql(s"ALTER TABLE $tableName RENAME COLUMN a TO c")
+      sql(s"ALTER TABLE $tableName RENAME COLUMN b TO a")
+
+      // Filter the table by the second column. This will return empty results if the filter was
+      // (incorrectly) pushed down without translating the logical names to physical names.
+      checkAnswer(
+        sql(s"SELECT * FROM $tableName WHERE a = 1000"),
+        Seq(Row(100, 1000))
+      )
+    }
+  }
+
+  testColumnMapping("stream read from column mapping does not leak metadata") { mode =>
+    withTempDir { dir =>
+      val (t1, t2, t3) = (
+        s"t1_${System.currentTimeMillis()}",
+        s"t2_${System.currentTimeMillis()}",
+        s"t3_${System.currentTimeMillis()}"
+      )
+      withTable(t1, t2, t3) {
+        // Create source table with column mapping mode and partitioning
+        sql(
+          s"""CREATE TABLE $t1 (a INT, b STRING)
+             |USING DELTA
+             |PARTITIONED BY (b)
+             |TBLPROPERTIES (
+             |  '${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = '$mode',
+             |  '${DeltaConfigs.MIN_READER_VERSION.key}' = '2',
+             |  '${DeltaConfigs.MIN_WRITER_VERSION.key}' = '5'
+             |)
+             |""".stripMargin)
+        // Insert data into source table
+        sql(s"INSERT INTO $t1 VALUES (1, 'a'), (2, 'b')")
+
+        // Stream read from source table
+        val streamDf = spark.readStream.format("delta").table(t1)
+        // Should not contain column mapping metadata
+        assert(streamDf.schema.forall(_.metadata.json == "{}"))
+
+        // Create and write to another table
+        // The streaming create-table path is what currently leaks the column mapping metadata
+        // into the target table. If it was writing to an existing table via DeltaSink, it would not
+        // leak because we pruned the column mapping metadata in [[ImplicitMetadataOperations]] when
+        // we update the target metadata.
+        val q = streamDf.writeStream
+          .partitionBy("b")
+          .trigger(org.apache.spark.sql.streaming.Trigger.AvailableNow())
+          .format("delta")
+          .option("checkpointLocation", new File(dir, "_checkpoint1").getCanonicalPath)
+          .toTable(t2)
+        q.awaitTermination()
+
+        // Check target table Delta log
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(t2))
+        assert(deltaLog.update().metadata.schema.forall(_.metadata.json == "{}"))
+        assert(deltaLog.update().metadata.columnMappingMode == NoMapping)
+
+        // Check target table data
+        checkAnswer(spark.table(t2), Seq(Row(1, "a"), Row(2, "b")))
+      }
+    }
+  }
+
+  for (txnIntroducesMetadata <- BOOLEAN_DOMAIN) {
+    test("column mapping metadata are stripped when feature is disabled - " +
+      s"txnIntroducesMetadata=$txnIntroducesMetadata") {
+      withTempDir { dir =>
+        val tablePath = dir.getCanonicalPath
+        val deltaLog = DeltaLog.forTable(spark, tablePath)
+        // Create the original table.
+        val schemaV0 = if (txnIntroducesMetadata) {
+          new StructType().add("id", LongType, true)
+        } else {
+          new StructType().add("id", LongType, true, withIdAndPhysicalName(0, "col-0"))
+        }
+        withSQLConf(DeltaSQLConf.DELTA_COLUMN_MAPPING_STRIP_METADATA.key -> "false") {
+          deltaLog.withNewTransaction(catalogTableOpt = None) { txn =>
+            val metadata = actions.Metadata(
+              name = "testTable",
+              schemaString = schemaV0.json,
+              configuration = Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> NoMapping.name)
+            )
+            txn.updateMetadata(metadata)
+            txn.commit(Seq.empty, ManualUpdate)
+          }
+        }
+        val metadataV0 = deltaLog.update().metadata
+        assert(DeltaColumnMapping.schemaHasColumnMappingMetadata(metadataV0.schema) ===
+          !txnIntroducesMetadata)
+
+        // Update the schema of the existing table.
+        withSQLConf(DeltaSQLConf.DELTA_COLUMN_MAPPING_STRIP_METADATA.key -> "true") {
+          deltaLog.withNewTransaction(catalogTableOpt = None) { txn =>
+            val schemaV1 =
+              schemaV0.add("value", LongType, true, withIdAndPhysicalName(0, "col-0"))
+            val metadata = metadataV0.copy(schemaString = schemaV1.json)
+            txn.updateMetadata(metadata)
+            txn.commit(Seq.empty, ManualUpdate)
+          }
+          val metadataV1 = deltaLog.update().metadata
+          assert(DeltaColumnMapping.schemaHasColumnMappingMetadata(metadataV1.schema) ===
+            !txnIntroducesMetadata)
+        }
+      }
     }
   }
 }

@@ -22,6 +22,8 @@ import java.{util => ju}
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 
+import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumnInfo}
+import org.apache.spark.sql.delta.skipping.clustering.temp.ClusterBySpec
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -33,8 +35,10 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.{DataFrame, Dataset, SaveMode, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{ResolvedTable, UnresolvedTable}
+import org.apache.spark.sql.catalyst.analysis.UnresolvedTableImplicits._
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, CatalogUtils}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, SubqueryAlias}
+import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.connector.catalog.{SupportsWrite, Table, TableCapability, TableCatalog, V2TableWithV1Fallback}
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 import org.apache.spark.sql.connector.catalog.TableCapability._
@@ -42,7 +46,7 @@ import org.apache.spark.sql.connector.catalog.V1Table
 import org.apache.spark.sql.connector.expressions._
 import org.apache.spark.sql.connector.write.{LogicalWriteInfo, SupportsDynamicOverwrite, SupportsOverwrite, SupportsTruncate, V1Write, WriteBuilder}
 import org.apache.spark.sql.errors.QueryCompilationErrors
-import org.apache.spark.sql.execution.datasources.LogicalRelation
+import org.apache.spark.sql.execution.datasources.{LogicalRelation, LogicalRelationShims}
 import org.apache.spark.sql.sources.{BaseRelation, Filter, InsertableRelation}
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
@@ -86,8 +90,29 @@ case class DeltaTableV2(
   // The loading of the DeltaLog is lazy in order to reduce the amount of FileSystem calls,
   // in cases where we will fallback to the V1 behavior.
   lazy val deltaLog: DeltaLog = {
-      DeltaLog.forTable(spark, rootPath, options)
+    DeltaTableV2.withEnrichedUnsupportedTableException(catalogTable, tableIdentifier) {
+      // Ideally the table storage properties should always be the same as the options load from
+      // the Delta log, as Delta CREATE TABLE command guarantees it. However, custom catalogs such
+      // as Unity Catalog may add more table storage properties on the fly. We should respect it
+      // and merge the table storage properties and Delta options.
+      val dataSourceOptions = if (catalogTable.isDefined) {
+        // To be safe, here we only extract file system options from table storage properties and
+        // the original `options` has higher priority than the table storage properties.
+        val fileSystemOptions = catalogTable.get.storage.properties.filter { case (k, _) =>
+          DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
+        }
+        fileSystemOptions ++ options
+      } else {
+        options
+      }
+      DeltaLog.forTable(spark, rootPath, dataSourceOptions)
+    }
   }
+
+  /**
+   * Updates the delta log for this table and returns a new snapshot
+   */
+  def update(): Snapshot = deltaLog.update(catalogTableOpt = catalogTable)
 
   def getTableIdentifierIfExists: Option[TableIdentifier] = tableIdentifier.map { tableName =>
     spark.sessionState.sqlParser.parseMultipartIdentifier(tableName).asTableIdentifier
@@ -117,7 +142,9 @@ case class DeltaTableV2(
    * WARNING: Because the snapshot is captured lazily, callers should explicitly access the snapshot
    * if they want to be certain it has been captured.
    */
-  lazy val initialSnapshot: Snapshot = {
+  lazy val initialSnapshot: Snapshot = DeltaTableV2.withEnrichedUnsupportedTableException(
+    catalogTable, tableIdentifier) {
+
     timeTravelSpec.map { spec =>
       // By default, block using CDF + time-travel
       if (CDCReader.isCDCRead(caseInsensitiveOptions) &&
@@ -134,11 +161,12 @@ case class DeltaTableV2(
         "queriedVersion" -> version,
         "accessType" -> accessType
       ))
-      deltaLog.getSnapshotAt(version)
+      deltaLog.getSnapshotAt(version, catalogTableOpt = catalogTable)
     }.getOrElse(
       deltaLog.update(
         stalenessAcceptable = true,
-        checkIfUpdatedSinceTs = Some(creationTimeMs)
+        checkIfUpdatedSinceTs = Some(creationTimeMs),
+        catalogTableOpt = catalogTable
       )
     )
   }
@@ -159,7 +187,7 @@ case class DeltaTableV2(
 
   private lazy val tableSchema: StructType = {
     val baseSchema = cdcRelation.map(_.schema).getOrElse {
-      DeltaTableUtils.removeInternalMetadata(spark, initialSnapshot.schema)
+      DeltaTableUtils.removeInternalWriterMetadata(spark, initialSnapshot.schema)
     }
     DeltaColumnMapping.dropColumnMappingMetadata(baseSchema)
   }
@@ -185,6 +213,13 @@ case class DeltaTableV2(
       }
       if (v1Table.tableType == CatalogTableType.EXTERNAL) {
         base.put(TableCatalog.PROP_EXTERNAL, "true")
+      }
+    }
+    // Don't use [[PROP_CLUSTERING_COLUMNS]] from CatalogTable because it may be stale.
+    // Since ALTER TABLE updates it using an async post-commit hook.
+    clusterBySpec.foreach { clusterBy =>
+      ClusterBySpec.toProperties(clusterBy).foreach { case (key, value) =>
+        base.put(key, value)
       }
     }
     Option(initialSnapshot.metadata.description).foreach(base.put(TableCatalog.PROP_COMMENT, _))
@@ -251,7 +286,8 @@ case class DeltaTableV2(
   /** Creates a [[LogicalRelation]] that represents this table */
   lazy val toLogicalRelation: LogicalRelation = {
     val relation = this.toBaseRelation
-    LogicalRelation(relation, relation.schema.toAttributes, ttSafeCatalogTable, isStreaming = false)
+    LogicalRelationShims.newInstance(
+      relation, toAttributes(relation.schema), ttSafeCatalogTable, isStreaming = false)
   }
 
   /** Creates a [[DataFrame]] that uses the requested spark session to read from this table */
@@ -271,9 +307,11 @@ case class DeltaTableV2(
    */
   def withOptions(newOptions: Map[String, String]): DeltaTableV2 = {
     val ttSpec = DeltaDataSource.getTimeTravelVersion(newOptions)
-    if (timeTravelOpt.nonEmpty && ttSpec.nonEmpty) {
-      throw DeltaErrors.multipleTimeTravelSyntaxUsed
-    }
+
+    // Spark 4.0 and 3.5 handle time travel options differently.
+    DeltaTimeTravelSpecShims.validateTimeTravelSpec(
+      currSpecOpt = timeTravelOpt,
+      newSpecOpt = ttSpec)
 
     val caseInsensitiveNewOptions = new CaseInsensitiveStringMap(newOptions.asJava)
 
@@ -313,16 +351,28 @@ case class DeltaTableV2(
   override def v1Table: CatalogTable = ttSafeCatalogTable.getOrElse {
     throw DeltaErrors.invalidV1TableCall("v1Table", "DeltaTableV2")
   }
+
+  lazy val clusterBySpec: Option[ClusterBySpec] = {
+    // Always get the clustering columns from metadata domain in delta log.
+    if (ClusteredTableUtils.isSupported(initialSnapshot.protocol)) {
+      val clusteringColumns = ClusteringColumnInfo.extractLogicalNames(
+        initialSnapshot)
+      Some(ClusterBySpec.fromColumnNames(clusteringColumns))
+    } else {
+      None
+    }
+  }
 }
 
 object DeltaTableV2 {
   /** Resolves a path into a DeltaTableV2, leveraging standard v2 table resolution. */
-  def apply(spark: SparkSession, tablePath: Path, cmd: String): DeltaTableV2 =
-    resolve(spark, UnresolvedPathBasedDeltaTable(tablePath.toString, cmd), cmd)
+  def apply(spark: SparkSession, tablePath: Path, options: Map[String, String], cmd: String)
+      : DeltaTableV2 =
+    resolve(spark, UnresolvedPathBasedDeltaTable(tablePath.toString, options, cmd), cmd)
 
   /** Resolves a table identifier into a DeltaTableV2, leveraging standard v2 table resolution. */
   def apply(spark: SparkSession, tableId: TableIdentifier, cmd: String): DeltaTableV2 = {
-    resolve(spark, UnresolvedTable(tableId.nameParts, cmd, None), cmd)
+    resolve(spark, UnresolvedTable(tableId.nameParts, cmd), cmd)
   }
 
   /** Applies standard v2 table resolution to an unresolved Delta table plan node */
@@ -338,6 +388,29 @@ object DeltaTableV2 {
     case ResolvedTable(_, _, t: V1Table, _) if DeltaTableUtils.isDeltaTable(t.catalogTable) =>
       DeltaTableV2(SparkSession.active, new Path(t.v1Table.location), Some(t.v1Table))
     case _ => throw DeltaErrors.notADeltaTableException(cmd)
+  }
+
+  /**
+   * When Delta Log throws InvalidProtocolVersionException it doesn't know the table name and uses
+   * the data path in the message, this wrapper throw a new InvalidProtocolVersionException with
+   * table name and sets its Cause to the original InvalidProtocolVersionException.
+   */
+  def withEnrichedUnsupportedTableException[T](
+      catalogTable: Option[CatalogTable],
+      tableName: Option[String] = None)(thunk: => T): T = {
+
+    lazy val tableNameToUse = catalogTable match {
+      case Some(ct) => Some(ct.identifier.copy(catalog = None).unquotedString)
+      case None => tableName
+    }
+
+    try thunk catch {
+      case e: InvalidProtocolVersionException if tableNameToUse.exists(_ != e.tableNameOrPath) =>
+        throw e.copy(tableNameOrPath = tableNameToUse.get).initCause(e)
+      case e: DeltaUnsupportedTableFeatureException if
+          tableNameToUse.exists(_ != e.tableNameOrPath) =>
+        throw e.copy(tableNameOrPath = tableNameToUse.get).initCause(e)
+    }
   }
 }
 

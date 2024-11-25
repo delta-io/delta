@@ -19,23 +19,31 @@ package org.apache.spark.sql.delta.commands
 // scalastyle:off import.ordering.noEmptyLine
 import java.util.concurrent.TimeUnit
 
+import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaColumnMapping.{dropColumnMappingMetadata, filterColumnMappingProperties}
-import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.actions.DomainMetadata
-import org.apache.spark.sql.delta.hooks.IcebergConverterHook
+import org.apache.spark.sql.delta.commands.DMLUtils.TaggedCommitData
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsUtils
+import org.apache.spark.sql.delta.hooks.{HudiConverterHook, IcebergConverterHook, UpdateCatalog, UpdateCatalogFactory}
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
 
+import org.apache.spark.SparkContext
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.execution.command.{LeafRunnableCommand, RunnableCommand}
+import org.apache.spark.sql.execution.metric.SQLMetric
+import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructType
 
@@ -51,6 +59,8 @@ import org.apache.spark.sql.types.StructType
  *                - CTAS
  *                - saveAsTable
  * @param protocol This is used to create a table with specific protocol version
+ * @param createTableFunc If specified, call this function to create the table, instead of
+ *                        Spark `SessionCatalog#createTable` which is backed by Hive Metastore.
  */
 case class CreateDeltaTableCommand(
     table: CatalogTable,
@@ -60,10 +70,32 @@ case class CreateDeltaTableCommand(
     operation: TableCreationModes.CreationMode = TableCreationModes.Create,
     tableByPath: Boolean = false,
     override val output: Seq[Attribute] = Nil,
-    protocol: Option[Protocol] = None)
+    protocol: Option[Protocol] = None,
+    createTableFunc: Option[CatalogTable => Unit] = None)
   extends LeafRunnableCommand
   with DeltaCommand
   with DeltaLogging {
+
+  @transient
+  private lazy val sc: SparkContext = SparkContext.getOrCreate()
+
+  override lazy val metrics = Map[String, SQLMetric](
+    "numCopiedFiles" -> createMetric(sc, "number of files copied"),
+    "copiedFilesSize" -> createMetric(sc, "size of files copied"),
+    "executionTimeMs" -> createMetric(sc, "time taken to execute the entire operation"),
+    "numRemovedBytes" -> createMetric(sc, "number of bytes removed"),
+    "removedFilesSize" -> createMetric(sc, "size of files removed"),
+    "sourceTableSize" -> createMetric(sc, "size of source table"),
+    "numOutputRows" -> createMetric(sc, "number of output rows"),
+    "numParts" -> createMetric(sc, "number of partitions"),
+    "numFiles" -> createMetric(sc, "number of written files"),
+    "sourceNumOfFiles" -> createMetric(sc, "number of files in source table"),
+    "numRemovedFiles" -> createMetric(sc, "number of files removed."),
+    "numOutputBytes" -> createMetric(sc, "number of output bytes"),
+    "taskCommitTime" -> createMetric(sc, "task commit time"),
+    "jobCommitTime" -> createMetric(sc, "job commit time"),
+    "numOfSyncedTransactions" -> createMetric(sc, "number of synced transactions")
+  )
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
 
@@ -101,11 +133,20 @@ case class CreateDeltaTableCommand(
       table
     }
 
-    val tableLocation = new Path(tableWithLocation.location)
-    val deltaLog = DeltaLog.forTable(sparkSession, tableLocation)
+    val tableLocation = getDeltaTablePath(tableWithLocation)
+    // To be safe, here we only extract file system options from table storage properties, to create
+    // the DeltaLog.
+    val fileSystemOptions = table.storage.properties.filter { case (k, _) =>
+      DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
+    }
+    val deltaLog = DeltaLog.forTable(sparkSession, tableLocation, fileSystemOptions)
+    CoordinatedCommitsUtils.validateConfigurationsForCreateDeltaTableCommand(
+      sparkSession, deltaLog.tableExists, query, tableWithLocation.properties)
 
     recordDeltaOperation(deltaLog, "delta.ddl.createTable") {
-      handleCommit(sparkSession, deltaLog, tableWithLocation)
+      val result = handleCommit(sparkSession, deltaLog, tableWithLocation)
+      sendDriverMetrics(sparkSession, metrics)
+      result
     }
   }
 
@@ -118,7 +159,7 @@ case class CreateDeltaTableCommand(
       tableWithLocation: CatalogTable): Seq[Row] = {
     val tableExistsInCatalog = existingTableOpt.isDefined
     val hadoopConf = deltaLog.newDeltaHadoopConf()
-    val tableLocation = new Path(tableWithLocation.location)
+    val tableLocation = getDeltaTablePath(tableWithLocation)
     val fs = tableLocation.getFileSystem(hadoopConf)
 
     def checkPathEmpty(txn: OptimisticTransaction): Unit = {
@@ -138,40 +179,46 @@ case class CreateDeltaTableCommand(
 
     val txn = startTxnForTableCreation(sparkSession, deltaLog, tableWithLocation)
 
-    val result = query match {
-      // CLONE handled separately from other CREATE TABLE syntax
-      case Some(cmd: CloneTableCommand) =>
-        checkPathEmpty(txn)
-        cmd.handleClone(sparkSession, txn, targetDeltaLog = deltaLog)
-      case Some(deltaWriter: WriteIntoDelta) =>
-        checkPathEmpty(txn)
-        handleCreateTableAsSelect(sparkSession, txn, deltaLog, deltaWriter, tableWithLocation)
-        Nil
-      case Some(query) =>
-        checkPathEmpty(txn)
-        require(!query.isInstanceOf[RunnableCommand])
-        // When using V1 APIs, the `query` plan is not yet optimized, therefore, it is safe
-        // to once again go through analysis
-        val data = Dataset.ofRows(sparkSession, query)
-        val options = new DeltaOptions(table.storage.properties, sparkSession.sessionState.conf)
-        val deltaWriter = WriteIntoDelta(
-          deltaLog = deltaLog,
-          mode = mode,
-          options,
-          partitionColumns = table.partitionColumnNames,
-          configuration = tableWithLocation.properties + ("comment" -> table.comment.orNull),
-          data = data,
-          Some(tableWithLocation))
-        handleCreateTableAsSelect(sparkSession, txn, deltaLog, deltaWriter, tableWithLocation)
-        Nil
-      case _ =>
-        handleCreateTable(sparkSession, txn, tableWithLocation, fs, hadoopConf)
-        Nil
+    OptimisticTransaction.withActive(txn) {
+      val result = query match {
+        // CLONE handled separately from other CREATE TABLE syntax
+        case Some(cmd: CloneTableCommand) =>
+          checkPathEmpty(txn)
+          cmd.handleClone(
+            sparkSession,
+            txn,
+            targetDeltaLog = deltaLog,
+            commandMetrics = Some(metrics))
+        case Some(deltaWriter: WriteIntoDeltaLike) =>
+          checkPathEmpty(txn)
+          handleCreateTableAsSelect(sparkSession, txn, deltaLog, deltaWriter, tableWithLocation)
+          Nil
+        case Some(query) =>
+          checkPathEmpty(txn)
+          require(!query.isInstanceOf[RunnableCommand])
+          // When using V1 APIs, the `query` plan is not yet optimized, therefore, it is safe
+          // to once again go through analysis
+          val data = Dataset.ofRows(sparkSession, query)
+          val options = new DeltaOptions(table.storage.properties, sparkSession.sessionState.conf)
+          val deltaWriter = WriteIntoDelta(
+            deltaLog = deltaLog,
+            mode = mode,
+            options,
+            partitionColumns = table.partitionColumnNames,
+            configuration = tableWithLocation.properties + ("comment" -> table.comment.orNull),
+            data = data,
+            Some(tableWithLocation))
+          handleCreateTableAsSelect(sparkSession, txn, deltaLog, deltaWriter, tableWithLocation)
+          Nil
+        case _ =>
+          handleCreateTable(sparkSession, txn, tableWithLocation, fs, hadoopConf)
+          Nil
+      }
+
+      runPostCommitUpdates(sparkSession, txn, deltaLog, tableWithLocation)
+
+      result
     }
-
-    runPostCommitUpdates(sparkSession, txn, deltaLog, tableWithLocation)
-
-    result
   }
 
   /**
@@ -185,15 +232,24 @@ case class CreateDeltaTableCommand(
       tableWithLocation: CatalogTable): Unit = {
     // Note that someone may have dropped and recreated the table in a separate location in the
     // meantime... Unfortunately we can't do anything there at the moment, because Hive sucks.
-    logInfo(s"Table is path-based table: $tableByPath. Update catalog with mode: $operation")
+    logInfo(log"Table is path-based table: ${MDC(DeltaLogKeys.IS_PATH_TABLE, tableByPath)}. " +
+      log"Update catalog with mode: ${MDC(DeltaLogKeys.OPERATION, operation)}")
     val opStartTs = TimeUnit.NANOSECONDS.toMillis(txnUsedForCommit.txnStartTimeNs)
-    val postCommitSnapshot = deltaLog.update(checkIfUpdatedSinceTs = Some(opStartTs))
+    val postCommitSnapshot = deltaLog.update(
+      checkIfUpdatedSinceTs = Some(opStartTs),
+      catalogTableOpt = Some(tableWithLocation))
     val didNotChangeMetadata = txnUsedForCommit.metadata == txnUsedForCommit.snapshot.metadata
     updateCatalog(sparkSession, tableWithLocation, postCommitSnapshot, didNotChangeMetadata)
 
 
-    if (UniversalFormat.icebergEnabled(postCommitSnapshot.metadata)) {
+    if (UniversalFormat.icebergEnabled(postCommitSnapshot.metadata) &&
+        !txnUsedForCommit.containsPostCommitHook(IcebergConverterHook)) {
       deltaLog.icebergConverter.convertSnapshot(postCommitSnapshot, tableWithLocation)
+    }
+
+    if (UniversalFormat.hudiEnabled(postCommitSnapshot.metadata) &&
+        !txnUsedForCommit.containsPostCommitHook(HudiConverterHook)) {
+      deltaLog.hudiConverter.convertSnapshot(postCommitSnapshot, tableWithLocation)
     }
   }
 
@@ -207,7 +263,7 @@ case class CreateDeltaTableCommand(
       sparkSession: SparkSession,
       txn: OptimisticTransaction,
       deltaLog: DeltaLog,
-      deltaWriter: WriteIntoDelta,
+      deltaWriter: WriteIntoDeltaLike,
       tableWithLocation: CatalogTable): Unit = {
     val isManagedTable = tableWithLocation.tableType == CatalogTableType.MANAGED
     val options = new DeltaOptions(table.storage.properties, sparkSession.sessionState.conf)
@@ -219,8 +275,8 @@ case class CreateDeltaTableCommand(
     //     new created actions,
     //   - returning the Delta Operation type of this DataFrameWriter
     def doDeltaWrite(
-        deltaWriter: WriteIntoDelta,
-        schema: StructType): (Seq[Action], DeltaOperations.Operation) = {
+        deltaWriter: WriteIntoDeltaLike,
+        schema: StructType): (TaggedCommitData[Action], DeltaOperations.Operation) = {
       // In the V2 Writer, methods like "replace" and "createOrReplace" implicitly mean that
       // the metadata should be changed. This wasn't the behavior for DataFrameWriterV1.
       if (!isV1Writer) {
@@ -230,27 +286,46 @@ case class CreateDeltaTableCommand(
           options,
           schema)
       }
-      var actions = deltaWriter.write(
+      var taggedCommitData = deltaWriter.writeAndReturnCommitData(
         txn,
-        sparkSession
+        sparkSession,
+        ClusteredTableUtils.getClusterBySpecOptional(table),
+        // Pass this option to the writer so that it can differentiate between an INSERT and a
+        // REPLACE command. This is needed because the writer is shared between the two commands.
+        // But some options, such as dynamic partition overwrite, are only valid for INSERT.
+        // Only allow createOrReplace command which is not a V1 writer.
+        // saveAsTable() command uses this same code path and is marked as a V1 writer.
+        // We do not want saveAsTable() to be treated as a REPLACE command wrt dynamic partition
+        // overwrite.
+        isTableReplace = isReplace && !isV1Writer
       )
-      val newDomainMetadata = Seq.empty[DomainMetadata]
-      if (isReplace) {
+      // Metadata updates for creating table (with any writer) and replacing table
+      // (only with V1 writer) will be handled inside WriteIntoDelta.
+      // For createOrReplace operation, metadata updates are handled here if the table already
+      // exists (replacing table), otherwise it is handled inside WriteIntoDelta (creating table).
+      if (!isV1Writer && isReplace && txn.readVersion > -1L) {
+        val newDomainMetadata = Seq.empty[DomainMetadata] ++
+          ClusteredTableUtils.getDomainMetadataFromTransaction(
+            ClusteredTableUtils.getClusterBySpecOptional(table), txn)
         // Ensure to remove any domain metadata for REPLACE TABLE.
-        actions = actions ++ DomainMetadataUtils.handleDomainMetadataForReplaceTable(
-          txn.snapshot.domainMetadata, newDomainMetadata)
-      } else {
-        actions = actions ++ newDomainMetadata
+        val newActions = taggedCommitData.actions ++
+          DomainMetadataUtils.handleDomainMetadataForReplaceTable(
+            txn.snapshot.domainMetadata, newDomainMetadata)
+        taggedCommitData = taggedCommitData.copy(actions = newActions)
       }
-      val op = getOperation(txn.metadata, isManagedTable, Some(options)
+      val op = getOperation(txn.metadata, isManagedTable, Some(options),
+        clusterBy = ClusteredTableUtils.getLogicalClusteringColumnNames(
+          txn, taggedCommitData.actions)
       )
-      (actions, op)
+      (taggedCommitData, op)
     }
-
+    val updatedConfiguration = UniversalFormat
+      .enforceDependenciesInConfiguration(deltaWriter.configuration, txn.snapshot)
+    val updatedWriter = deltaWriter.withNewWriterConfiguration(updatedConfiguration)
     // We are either appending/overwriting with saveAsTable or creating a new table with CTAS
     if (!hasBeenExecuted(txn, sparkSession, Some(options))) {
-      val (actions, op) = doDeltaWrite(deltaWriter, deltaWriter.data.schema.asNullable)
-      txn.commit(actions, op)
+      val (taggedCommitData, op) = doDeltaWrite(updatedWriter, updatedWriter.data.schema.asNullable)
+      txn.commit(taggedCommitData.actions, op, tags = taggedCommitData.stringTags)
     }
   }
 
@@ -266,7 +341,7 @@ case class CreateDeltaTableCommand(
       hadoopConf: Configuration): Unit = {
 
     val isManagedTable = tableWithLocation.tableType == CatalogTableType.MANAGED
-    val tableLocation = new Path(tableWithLocation.location)
+    val tableLocation = getDeltaTablePath(tableWithLocation)
     val tableExistsInCatalog = existingTableOpt.isDefined
     val options = new DeltaOptions(table.storage.properties, sparkSession.sessionState.conf)
 
@@ -303,13 +378,18 @@ case class CreateDeltaTableCommand(
         assertPathEmpty(hadoopConf, tableWithLocation)
         // This is a user provided schema.
         // Doesn't come from a query, Follow nullability invariants.
-        val newMetadata =
+        var newMetadata =
           getProvidedMetadata(tableWithLocation, table.schema.json)
+        newMetadata = newMetadata.copy(configuration =
+          UniversalFormat.enforceDependenciesInConfiguration(
+            newMetadata.configuration, txn.snapshot))
+
         txn.updateMetadataForNewTable(newMetadata)
         protocol.foreach { protocol =>
           txn.updateProtocol(protocol)
         }
-        Nil
+        ClusteredTableUtils.getDomainMetadataFromTransaction(
+          ClusteredTableUtils.getClusterBySpecOptional(table), txn).toSeq
       } else {
         verifyTableMetadata(txn, tableWithLocation)
         Nil
@@ -334,6 +414,12 @@ case class CreateDeltaTableCommand(
         if (tableWithLocation.schema.isEmpty) {
           throw DeltaErrors.schemaNotProvidedException
         }
+        // This can happen if someone deleted files from the filesystem but
+        // the table still exists in the catalog.
+        if (txn.readVersion == -1 && tableExistsInCatalog) {
+          throw DeltaErrors.metadataAbsentForExistingCatalogTable(
+            tableWithLocation.identifier.toString, txn.deltaLog.logPath.toString)
+        }
         // We need to replace
         replaceMetadataIfNecessary(
           txn,
@@ -344,14 +430,20 @@ case class CreateDeltaTableCommand(
         val operationTimestamp = System.currentTimeMillis()
         var actionsToCommit = Seq.empty[Action]
         val removes = txn.filterFiles().map(_.removeWithTimestamp(operationTimestamp))
-        actionsToCommit = removes
+        actionsToCommit = removes ++
+          DomainMetadataUtils.handleDomainMetadataForReplaceTable(
+            txn.snapshot.domainMetadata,
+            ClusteredTableUtils.getDomainMetadataFromTransaction(
+              ClusteredTableUtils.getClusterBySpecOptional(table), txn).toSeq)
         actionsToCommit
     }
 
     val changedMetadata = txn.metadata != txn.snapshot.metadata
     val changedProtocol = txn.protocol != txn.snapshot.protocol
     if (actionsToCommit.nonEmpty || changedMetadata || changedProtocol) {
-      val op = getOperation(txn.metadata, isManagedTable, None
+      val op = getOperation(txn.metadata, isManagedTable, None,
+        clusterBy = ClusteredTableUtils.getLogicalClusteringColumnNames(
+          txn, actionsToCommit)
       )
       txn.commit(actionsToCommit, op)
     }
@@ -362,14 +454,16 @@ case class CreateDeltaTableCommand(
       description = table.comment.orNull,
       schemaString = schemaString,
       partitionColumns = table.partitionColumnNames,
-      configuration = table.properties,
+      // Filter out ephemeral clustering columns config because we don't want to persist
+      // it in delta log. This will be persisted in CatalogTable's table properties instead.
+      configuration = ClusteredTableUtils.removeClusteringColumnsProperty(table.properties),
       createdTime = Some(System.currentTimeMillis()))
   }
 
   private def assertPathEmpty(
       hadoopConf: Configuration,
       tableWithLocation: CatalogTable): Unit = {
-    val path = new Path(tableWithLocation.location)
+    val path = getDeltaTablePath(tableWithLocation)
     val fs = path.getFileSystem(hadoopConf)
     // Verify that the table location associated with CREATE TABLE doesn't have any data. Note that
     // we intentionally diverge from this behavior w.r.t regular datasource tables (that silently
@@ -377,7 +471,7 @@ case class CreateDeltaTableCommand(
     if (fs.exists(path) && fs.listStatus(path).nonEmpty) {
       throw DeltaErrors.createTableWithNonEmptyLocation(
         tableWithLocation.identifier.toString,
-        tableWithLocation.location.toString)
+        path.toString)
     }
   }
 
@@ -406,6 +500,32 @@ case class CreateDeltaTableCommand(
     }
   }
 
+
+  /**
+   * When creating an external table in a location where some table already existed, we make sure
+   * that the specified table properties match the existing table properties. Since Coordinated
+   * Commits is not designed to be overridden, we should not error out if the command omits these
+   * properties. If the existing table has Coordinated Commits enabled, we also do not error out if
+   * the command omits the ICT properties, which are the dependencies for Coordinated Commits.
+   */
+  private def filterCoordinatedCommitsProperties(
+      existingProperties: Map[String, String],
+      tableProperties: Map[String, String]): Map[String, String] = {
+    var filteredExistingProperties = existingProperties
+    val overridingCCConfs = CoordinatedCommitsUtils.getExplicitCCConfigurations(tableProperties)
+    val existingCCConfs = CoordinatedCommitsUtils.getExplicitCCConfigurations(existingProperties)
+    if (existingCCConfs.nonEmpty && overridingCCConfs.isEmpty) {
+      filteredExistingProperties --= CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS
+      val overridingICTConfs = CoordinatedCommitsUtils.getExplicitICTConfigurations(tableProperties)
+      val existingICTConfs = CoordinatedCommitsUtils.getExplicitICTConfigurations(
+        existingProperties)
+      if (existingICTConfs.nonEmpty && overridingICTConfs.isEmpty) {
+        filteredExistingProperties --= CoordinatedCommitsUtils.ICT_TABLE_PROPERTY_KEYS
+      }
+    }
+    filteredExistingProperties
+  }
+
   /**
    * Verify against our transaction metadata that the user specified the right metadata for the
    * table.
@@ -414,7 +534,7 @@ case class CreateDeltaTableCommand(
       txn: OptimisticTransaction,
       tableDesc: CatalogTable): Unit = {
     val existingMetadata = txn.metadata
-    val path = new Path(tableDesc.location)
+    val path = getDeltaTablePath(tableDesc)
 
     // The delta log already exists. If they give any configuration, we'll make sure it all matches.
     // Otherwise we'll just go with the metadata already present in the log.
@@ -439,14 +559,44 @@ case class CreateDeltaTableCommand(
           throw DeltaErrors.createTableWithDifferentPartitioningException(
             path, tableDesc.partitionColumnNames, existingMetadata.partitionColumns)
         }
+        // If schema is specified, we must make sure the clustering column matches (includes when
+        // clustering is not specified).
+        val specifiedClusterBySpec = ClusteredTableUtils.getClusterBySpecOptional(tableDesc)
+        val existingClusterBySpec = ClusteredTableUtils.getClusterBySpecOptional(txn.snapshot)
+        if (specifiedClusterBySpec != existingClusterBySpec) {
+          throw DeltaErrors.createTableWithDifferentClusteringException(
+            path,
+            specifiedClusterBySpec,
+            existingClusterBySpec)
+        }
       }
 
       if (tableDesc.properties.nonEmpty) {
         // When comparing properties of the existing table and the new table, remove some
         // internal column mapping properties for the sake of comparison.
-        val filteredTableProperties = filterColumnMappingProperties(tableDesc.properties)
-        val filteredExistingProperties = filterColumnMappingProperties(
+        var filteredTableProperties = filterColumnMappingProperties(
+          tableDesc.properties)
+        // We also need to remove any protocol-related properties as we're filtering these
+        // from the metadata so they won't be present in the table properties.
+        filteredTableProperties =
+          Protocol.filterProtocolPropsFromTableProps(filteredTableProperties)
+        var filteredExistingProperties = filterColumnMappingProperties(
           existingMetadata.configuration)
+        // Clustered table has internal table properties in Metadata configurations and they are
+        // never configured by the user so remove them before validation.
+        if (ClusteredTableUtils.isSupported(txn.protocol)) {
+          filteredExistingProperties =
+            ClusteredTableUtils.removeInternalTableProperties(filteredExistingProperties) ++
+              // Validate clustering columns in CatalogTable.PROP_CLUSTERING_COLUMNS
+              // are matched.
+              ClusteredTableUtils.getClusteringColumnsAsProperty(txn.snapshot)
+          // Note that clustering columns are already stored in the key
+          // CatalogTable.PROP_CLUSTERING_COLUMNS.
+          filteredTableProperties =
+            ClusteredTableUtils.removeInternalTableProperties(filteredTableProperties)
+        }
+        filteredExistingProperties =
+          filterCoordinatedCommitsProperties(filteredExistingProperties, filteredTableProperties)
         if (filteredTableProperties != filteredExistingProperties) {
           throw DeltaErrors.createTableWithDifferentPropertiesException(
             path, filteredTableProperties, filteredExistingProperties)
@@ -471,7 +621,8 @@ case class CreateDeltaTableCommand(
   private def getOperation(
       metadata: Metadata,
       isManagedTable: Boolean,
-      options: Option[DeltaOptions]
+      options: Option[DeltaOptions],
+      clusterBy: Option[Seq[String]]
   ): DeltaOperations.Operation = operation match {
     // This is legacy saveAsTable behavior in Databricks Runtime
     case TableCreationModes.Create if existingTableOpt.isDefined && query.isDefined =>
@@ -484,7 +635,7 @@ case class CreateDeltaTableCommand(
     // (userMetadata uses SQLConf in this case)
     case TableCreationModes.Create =>
       DeltaOperations.CreateTable(
-        metadata, isManagedTable, query.isDefined
+        metadata, isManagedTable, query.isDefined, clusterBy = clusterBy
       )
 
     // DataSourceV2 table replace
@@ -492,7 +643,7 @@ case class CreateDeltaTableCommand(
     // (userMetadata uses SQLConf in this case)
     case TableCreationModes.Replace =>
       DeltaOperations.ReplaceTable(
-        metadata, isManagedTable, orCreate = false, query.isDefined
+        metadata, isManagedTable, orCreate = false, query.isDefined, clusterBy = clusterBy
       )
 
     // Legacy saveAsTable with Overwrite mode
@@ -504,8 +655,12 @@ case class CreateDeltaTableCommand(
     // New DataSourceV2 saveAsTable with overwrite mode behavior
     case TableCreationModes.CreateOrReplace =>
       DeltaOperations.ReplaceTable(metadata, isManagedTable, orCreate = true, query.isDefined,
-        options.flatMap(_.userMetadata)
+        options.flatMap(_.userMetadata), clusterBy = clusterBy
       )
+  }
+
+  private def getDeltaTablePath(table: CatalogTable): Path = {
+    new Path(table.location)
   }
 
   /**
@@ -523,13 +678,17 @@ case class CreateDeltaTableCommand(
     operation match {
       case _ if tableByPath => // do nothing with the metastore if this is by path
       case TableCreationModes.Create =>
-        spark.sessionState.catalog.createTable(
-          cleaned,
-          ignoreIfExists = existingTableOpt.isDefined,
-          validateLocation = false)
+        if (createTableFunc.isDefined) {
+          createTableFunc.get.apply(cleaned)
+        } else {
+          spark.sessionState.catalog.createTable(
+            cleaned,
+            ignoreIfExists = existingTableOpt.isDefined || mode == SaveMode.Ignore,
+            validateLocation = false)
+        }
       case TableCreationModes.Replace | TableCreationModes.CreateOrReplace
           if existingTableOpt.isDefined =>
-        spark.sessionState.catalog.alterTable(table)
+        UpdateCatalogFactory.getUpdateCatalogHook(table, spark).updateSchema(spark, snapshot)
       case TableCreationModes.Replace =>
         val ident = Identifier.of(table.identifier.database.toArray, table.identifier.table)
         throw DeltaErrors.cannotReplaceMissingTableException(ident)
@@ -553,13 +712,36 @@ case class CreateDeltaTableCommand(
       table.storage.copy(properties = Map.empty)
     }
 
-    table.copy(
-      schema = new StructType(),
-      properties = Map.empty,
-      partitionColumnNames = Nil,
-      // Remove write specific options when updating the catalog
-      storage = storageProps,
-      tracksPartitionsInCatalog = true)
+    // If we have to update the catalog, use the correct schema and table properties, otherwise
+    // empty out the schema and property information
+    if (conf.getConf(DeltaSQLConf.DELTA_UPDATE_CATALOG_ENABLED)) {
+      // In the case we're creating a Delta table on an existing path and adopting the schema
+      val schema = if (table.schema.isEmpty) snapshot.schema else table.schema
+      val truncationThreshold = spark.sessionState.conf.getConf(
+        DeltaSQLConf.DELTA_UPDATE_CATALOG_LONG_FIELD_TRUNCATION_THRESHOLD)
+      val (truncatedSchema, additionalProperties) = UpdateCatalog.truncateSchemaIfNecessary(
+          snapshot.schema,
+          truncationThreshold)
+
+      table.copy(
+        schema = truncatedSchema,
+        // Hive does not allow for the removal of partition columns once stored.
+        // To avoid returning the incorrect schema when the partition columns change,
+        // we store the partition columns as regular data columns.
+        partitionColumnNames = Nil,
+        properties = UpdateCatalog.updatedProperties(snapshot)
+          ++ additionalProperties,
+        storage = storageProps,
+        tracksPartitionsInCatalog = true)
+    } else {
+      table.copy(
+        schema = new StructType(),
+        properties = Map.empty,
+        partitionColumnNames = Nil,
+        // Remove write specific options when updating the catalog
+        storage = storageProps,
+        tracksPartitionsInCatalog = true)
+    }
   }
 
   /**
@@ -582,8 +764,12 @@ case class CreateDeltaTableCommand(
     if (txn.readVersion > -1L && isReplace && !dontOverwriteSchema) {
       // When a table already exists, and we're using the DataFrameWriterV2 API to replace
       // or createOrReplace a table, we blindly overwrite the metadata.
-      val newMetadata = getProvidedMetadata(table, schema.json)
-      txn.updateMetadataForNewTable(newMetadata)
+      var newMetadata = getProvidedMetadata(table, schema.json)
+      val updatedConfig = UniversalFormat.enforceDependenciesInConfiguration(
+        newMetadata.configuration,
+        txn.snapshot)
+      newMetadata = newMetadata.copy(configuration = updatedConfig)
+      txn.updateMetadataForNewTableInReplace(newMetadata)
     }
   }
 
@@ -612,13 +798,32 @@ case class CreateDeltaTableCommand(
       deltaLog: DeltaLog,
       tableWithLocation: CatalogTable,
       snapshotOpt: Option[Snapshot] = None): OptimisticTransaction = {
-    val txn = deltaLog.startTransaction(snapshotOpt)
+    val txn = deltaLog.startTransaction(None, snapshotOpt)
+    validatePrerequisitesForClusteredTable(txn.snapshot.protocol, txn.deltaLog)
 
-    // During CREATE/REPLACE, we synchronously run conversion (if Uniform is enabled) so
-    // we always remove the post commit hook here.
-    txn.unregisterPostCommitHooksWhere(hook => hook.name == IcebergConverterHook.name)
-
+    // During CREATE (not REPLACE/overwrites), we synchronously run conversion
+    //  (if Uniform is enabled) so we always remove the post commit hook here.
+    if (!isReplace) {
+      txn.unregisterPostCommitHooksWhere(hook => hook.name == IcebergConverterHook.name)
+      txn.unregisterPostCommitHooksWhere(hook => hook.name == HudiConverterHook.name)
+    }
     txn
+  }
+
+  /**
+   * Validate pre-requisites for clustered tables for CREATE/REPLACE operations.
+   * @param protocol Protocol used for validations. This protocol should
+   *                 be used during the CREATE/REPLACE commit.
+   * @param deltaLog Delta log used for logging purposes.
+   */
+  private def validatePrerequisitesForClusteredTable(
+      protocol: Protocol,
+      deltaLog: DeltaLog): Unit = {
+    // Validate a clustered table is not replaced by a partitioned table.
+    if (table.partitionColumnNames.nonEmpty &&
+      ClusteredTableUtils.isSupported(protocol)) {
+      throw DeltaErrors.replacingClusteredTableWithPartitionedTableNotAllowed()
+    }
   }
 }
 

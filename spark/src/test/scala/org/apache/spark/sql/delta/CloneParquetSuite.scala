@@ -16,11 +16,14 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.SparkException
+import org.apache.spark.sql.delta.test.DeltaExceptionTestUtils
+
+import org.apache.spark.{SparkException, SparkThrowable}
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.functions.col
 
 class CloneParquetByPathSuite extends CloneParquetSuiteBase
+    with DeltaExceptionTestUtils
 {
 
   protected def withParquetTable(
@@ -49,10 +52,10 @@ class CloneParquetByPathSuite extends CloneParquetSuiteBase
     withParquetTable(df, Seq("key1", "key2")) { sourceIdent =>
       val tableName = "cloneTable"
       withTable(tableName) {
-        val se = intercept[SparkException] {
+        val ex = interceptWithUnwrapping[DeltaAnalysisException] {
           sql(s"CREATE TABLE $tableName $mode CLONE $sourceIdent")
         }
-        assert(se.getMessage.contains("Expecting 0 partition column(s)"))
+        assert(ex.getMessage.contains("Expecting 0 partition column(s)"))
       }
     }
   }

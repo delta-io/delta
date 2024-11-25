@@ -43,6 +43,13 @@ object IcebergSchemaUtils extends DeltaLogging {
     new IcebergSchema(icebergStruct.fields())
   }
 
+  private[delta] def getNestedFieldId(field: Option[StructField], path: Seq[String]): Int = {
+    field.get.metadata
+      .getMetadata(DeltaColumnMapping.COLUMN_MAPPING_METADATA_NESTED_IDS_KEY)
+      .getLong(path.mkString("."))
+      .toInt
+  }
+
   ////////////////////
   // Helper Methods //
   ////////////////////
@@ -58,7 +65,8 @@ object IcebergSchemaUtils extends DeltaLogging {
      * - MapType -> IcebergTypes.MapType
      * - primitive -> IcebergType.PrimitiveType
      */
-    def transform[E <: DataType](elem: E): IcebergType = elem match {
+    def transform[E <: DataType](elem: E, field: Option[StructField], name: Seq[String])
+        : IcebergType = elem match {
       case StructType(fields) =>
         IcebergTypes.StructType.of(fields.map { f =>
           if (!DeltaColumnMapping.hasColumnId(f)) {
@@ -69,16 +77,40 @@ object IcebergSchemaUtils extends DeltaLogging {
             DeltaColumnMapping.getColumnId(f),
             f.nullable,
             f.name,
-            transform(f.dataType),
+            transform(f.dataType, Some(f), Seq(DeltaColumnMapping.getPhysicalName(f))),
             f.getComment().orNull
           )
         }.toList.asJava)
 
       case ArrayType(elementType, containsNull) =>
-        throw new UnsupportedOperationException("UniForm doesn't support Array columns")
+        val currName = name :+ DeltaColumnMapping.PARQUET_LIST_ELEMENT_FIELD_NAME
+        val id = getNestedFieldId(field, currName)
+        if (containsNull) {
+          IcebergTypes.ListType.ofOptional(id, transform(elementType, field, currName))
+        } else {
+          IcebergTypes.ListType.ofRequired(id, transform(elementType, field, currName))
+        }
 
       case MapType(keyType, valueType, valueContainsNull) =>
-        throw new UnsupportedOperationException("UniForm doesn't support Map columns")
+        val currKeyName = name :+ DeltaColumnMapping.PARQUET_MAP_KEY_FIELD_NAME
+        val currValName = name :+ DeltaColumnMapping.PARQUET_MAP_VALUE_FIELD_NAME
+        val keyId = getNestedFieldId(field, currKeyName)
+        val valId = getNestedFieldId(field, currValName)
+        if (valueContainsNull) {
+          IcebergTypes.MapType.ofOptional(
+            keyId,
+            valId,
+            transform(keyType, field, currKeyName),
+            transform(valueType, field, currValName)
+          )
+        } else {
+          IcebergTypes.MapType.ofRequired(
+            keyId,
+            valId,
+            transform(keyType, field, currKeyName),
+            transform(valueType, field, currValName)
+          )
+        }
 
       case atomicType: AtomicType => convertAtomic(atomicType)
 
@@ -86,7 +118,7 @@ object IcebergSchemaUtils extends DeltaLogging {
         throw new UnsupportedOperationException(s"Cannot convert Delta type $other to Iceberg")
     }
 
-    transform(deltaSchema).asStructType()
+    transform(deltaSchema, None, Seq.empty).asStructType()
   }
 
   /**

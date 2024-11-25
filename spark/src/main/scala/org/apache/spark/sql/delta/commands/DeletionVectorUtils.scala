@@ -18,22 +18,25 @@ package org.apache.spark.sql.delta.commands
 
 import org.apache.spark.sql.delta.{DeletionVectorsTableFeature, DeltaConfigs, Snapshot, SnapshotDescriptor}
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
+import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
 import org.apache.spark.sql.delta.files.SupportsRowIndexFilters
 import org.apache.spark.sql.delta.files.TahoeFileIndex
+import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.execution.datasources.FileIndex
 import org.apache.spark.sql.functions.col
 import org.apache.spark.util.Utils
 
-trait DeletionVectorUtils {
+trait DeletionVectorUtils extends DeltaLogging {
 
   /**
    * Run a query on the delta log to determine if the given snapshot contains no deletion vectors.
    * Return `false` if it does contain deletion vectors.
    */
-  def isTableDVFree(spark: SparkSession, snapshot: Snapshot): Boolean = {
+  def isTableDVFree(snapshot: Snapshot): Boolean = {
     val dvsReadable = deletionVectorsReadable(snapshot)
 
     if (dvsReadable) {
@@ -84,6 +87,55 @@ trait DeletionVectorUtils {
       metadata: Metadata): Boolean = {
     protocol.isFeatureSupported(DeletionVectorsTableFeature) &&
       metadata.format.provider == "parquet" // DVs are only supported on parquet tables.
+  }
+
+  /**
+   * Serializes `bitmap` into a byte array using `serializationFormat`. If it fails, it records a
+   * delta event and re-throws the exception.
+   */
+  def serialize(
+      bitmap: RoaringBitmapArray,
+      serializationFormat: RoaringBitmapArrayFormat.Value,
+      tablePath: Option[Path] = None,
+      debugInfo: Map[String, Any] = Map.empty): Array[Byte] = {
+    try {
+      bitmap.serializeAsByteArray(serializationFormat)
+    } catch {
+      case e: Exception =>
+        recordDeltaEvent(
+          deltaLog = null,
+          opType = "delta.assertions.deletionVectorSerializationError",
+          data = debugInfo ++ Map(
+            "serializationFormat" -> serializationFormat,
+            "cardinality" -> bitmap.cardinality,
+            "errorMsg" -> e.getMessage,
+            "errorStackTrace" -> e.getStackTrace),
+          path = tablePath)
+        throw e
+    }
+  }
+
+  /**
+   * Deserializes a RoaringBitmapArray from `bytes`. If it fails, it records a delta event and
+   * re-throws the exception.
+   */
+  def deserialize(
+      bytes: Array[Byte],
+      tablePath: Option[Path] = None,
+      debugInfo: Map[String, Any] = Map.empty): RoaringBitmapArray = {
+    try {
+      RoaringBitmapArray.readFrom(bytes)
+    } catch {
+      case e: Exception =>
+        recordDeltaEvent(
+          deltaLog = null,
+          "delta.assertions.deletionVectorDeserializationError",
+          data = debugInfo ++ Map(
+            "errorMsg" -> e.getMessage,
+            "errorStackTrace" -> e.getStackTrace),
+          path = tablePath)
+        throw e
+    }
   }
 }
 

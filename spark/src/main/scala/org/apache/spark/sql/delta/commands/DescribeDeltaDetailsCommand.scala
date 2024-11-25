@@ -17,21 +17,20 @@
 package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
-import java.io.FileNotFoundException
 import java.sql.Timestamp
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaTableIdentifier, Snapshot, UnresolvedPathOrIdentifier}
+import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumnInfo}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, Snapshot, UnresolvedPathOrIdentifier}
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.util.FileNames
+import org.apache.spark.sql.delta.util.DeltaCommitFileProvider
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.catalyst.{CatalystTypeConverters, ScalaReflection, TableIdentifier}
-import org.apache.spark.sql.catalyst.analysis.{NoSuchDatabaseException, NoSuchTableException}
-import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, CatalogUtils}
+import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.catalyst.trees.UnaryLike
+import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, UnaryNode}
+import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.execution.command.RunnableCommand
 import org.apache.spark.sql.types.StructType
 
@@ -45,6 +44,7 @@ case class TableDetail(
     createdAt: Timestamp,
     lastModified: Timestamp,
     partitionColumns: Seq[String],
+    clusteringColumns: Seq[String],
     numFiles: java.lang.Long,
     sizeInBytes: java.lang.Long,
     properties: Map[String, String],
@@ -72,11 +72,11 @@ case class DescribeDeltaDetailCommand(
     override val child: LogicalPlan,
     hadoopConf: Map[String, String])
   extends RunnableCommand
-    with UnaryLike[LogicalPlan]
+    with UnaryNode
     with DeltaLogging
     with DeltaCommand
 {
-  override val output: Seq[Attribute] = TableDetail.schema.toAttributes
+  override val output: Seq[Attribute] = toAttributes(TableDetail.schema)
 
   override protected def withNewChildInternal(newChild: LogicalPlan): DescribeDeltaDetailCommand =
     copy(child = newChild)
@@ -84,15 +84,14 @@ case class DescribeDeltaDetailCommand(
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val tableMetadata = getTableCatalogTable(child, DescribeDeltaDetailCommand.CMD_NAME)
     val (_, path) = getTablePathOrIdentifier(child, DescribeDeltaDetailCommand.CMD_NAME)
-    val basePath = tableMetadata match {
-      case Some(metadata) => new Path(metadata.location)
-      case _ if path.isDefined => new Path(path.get)
+    val deltaLog = (tableMetadata, path) match {
+      case (Some(metadata), _) => DeltaLog.forTable(sparkSession, metadata, hadoopConf)
+      case (_, Some(path)) => DeltaLog.forTable(sparkSession, new Path(path), hadoopConf)
       case _ =>
         throw DeltaErrors.missingTableIdentifierException(DescribeDeltaDetailCommand.CMD_NAME)
     }
-    val deltaLog = DeltaLog.forTable(sparkSession, basePath, hadoopConf)
     recordDeltaOperation(deltaLog, "delta.ddl.describeDetails") {
-      val snapshot = deltaLog.update()
+      val snapshot = deltaLog.update(catalogTableOpt = tableMetadata)
       if (snapshot.version == -1) {
         if (path.nonEmpty) {
           val fs = new Path(path.get).getFileSystem(deltaLog.newDeltaHadoopConf())
@@ -123,6 +122,7 @@ case class DescribeDeltaDetailCommand(
         createdAt = new Timestamp(table.createTime),
         lastModified = null,
         partitionColumns = table.partitionColumnNames,
+        clusteringColumns = null,
         numFiles = null,
         sizeInBytes = null,
         properties = table.properties,
@@ -143,6 +143,7 @@ case class DescribeDeltaDetailCommand(
         createdAt = null,
         lastModified = null,
         partitionColumns = null,
+        clusteringColumns = null,
         numFiles = null,
         sizeInBytes = null,
         properties = Map.empty,
@@ -156,12 +157,17 @@ case class DescribeDeltaDetailCommand(
       deltaLog: DeltaLog,
       snapshot: Snapshot,
       tableMetadata: Option[CatalogTable]): Seq[Row] = {
-    val currentVersionPath = FileNames.deltaFile(deltaLog.logPath, snapshot.version)
+    val currentVersionPath = DeltaCommitFileProvider(snapshot).deltaFile(snapshot.version)
     val fs = currentVersionPath.getFileSystem(deltaLog.newDeltaHadoopConf())
     val tableName = tableMetadata.map(_.qualifiedName).getOrElse(snapshot.metadata.name)
     val featureNames = (
       snapshot.protocol.implicitlySupportedFeatures.map(_.name) ++
         snapshot.protocol.readerAndWriterFeatureNames).toSeq.sorted
+    val clusteringColumns = if (ClusteredTableUtils.isSupported(snapshot.protocol)) {
+      ClusteringColumnInfo.extractLogicalNames(snapshot)
+    } else {
+      Nil
+    }
     toRows(
       TableDetail(
         format = "delta",
@@ -172,6 +178,7 @@ case class DescribeDeltaDetailCommand(
         createdAt = snapshot.metadata.createdTime.map(new Timestamp(_)).orNull,
         lastModified = new Timestamp(fs.getFileStatus(currentVersionPath).getModificationTime),
         partitionColumns = snapshot.metadata.partitionColumns,
+        clusteringColumns = clusteringColumns,
         numFiles = snapshot.numOfFiles,
         sizeInBytes = snapshot.sizeInBytes,
         properties = snapshot.metadata.configuration,

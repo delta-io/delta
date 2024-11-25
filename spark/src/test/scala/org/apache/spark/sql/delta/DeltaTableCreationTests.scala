@@ -31,6 +31,7 @@ import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.{SparkConf, SparkException}
@@ -1206,7 +1207,7 @@ trait DeltaTableCreationTests
   test("create datasource table with a non-existing location") {
     withTempPath { dir =>
       withTable("t") {
-        spark.sql(s"CREATE TABLE t(a int, b int) USING delta LOCATION '${dir.toURI}'")
+        spark.sql(s"CREATE TABLE t(a int, b int) USING delta LOCATION '${dir.getAbsolutePath}'")
 
         val table = spark.sessionState.catalog.getTableMetadata(TableIdentifier("t"))
         assert(table.location == makeQualifiedPath(dir.getAbsolutePath))
@@ -1224,17 +1225,21 @@ trait DeltaTableCreationTests
     withTempPath { dir =>
       withTable("t1") {
         spark.sql(
-          s"CREATE TABLE t1(a int, b int) USING delta PARTITIONED BY(a) LOCATION '${dir.toURI}'")
+          s"""
+             |CREATE TABLE t1(a int, b int) USING delta PARTITIONED BY(a)
+             |LOCATION '${dir.getAbsolutePath}'
+             |""".stripMargin)
 
         val table = spark.sessionState.catalog.getTableMetadata(TableIdentifier("t1"))
         assert(table.location == makeQualifiedPath(dir.getAbsolutePath))
 
         Seq((1, 2)).toDF("a", "b")
-          .write.format("delta").mode("append").save(table.location.toString)
-        val read = spark.read.format("delta").load(table.location.toString)
+          .write.format("delta").mode("append").save(table.location.getPath)
+        val read = spark.read.format("delta").load(table.location.getPath)
         checkAnswer(read, Seq(Row(1, 2)))
 
-        val deltaLog = loadDeltaLog(table.location.toString)
+        val deltaLog = loadDeltaLog(table.location.getPath)
+        assert(deltaLog.update().version > 0)
         assertPartitionWithValueExists("a", "1", deltaLog)
       }
     }
@@ -1251,7 +1256,7 @@ trait DeltaTableCreationTests
             s"""
                |CREATE TABLE t
                |USING delta
-               |LOCATION '${dir.toURI}'
+               |LOCATION '${dir.getAbsolutePath}'
                |AS SELECT 3 as a, 4 as b, 1 as c, 2 as d
              """.stripMargin)
           val table = spark.sessionState.catalog.getTableMetadata(TableIdentifier("t"))
@@ -1261,6 +1266,7 @@ trait DeltaTableCreationTests
 
           // Query the data and the metadata directly via the DeltaLog
           val deltaLog = getDeltaLog(table)
+          assert(deltaLog.update().version >= 0)
 
           assertEqual(deltaLog.snapshot.schema, new StructType()
             .add("a", "integer").add("b", "integer")
@@ -1289,7 +1295,7 @@ trait DeltaTableCreationTests
                |CREATE TABLE t1
                |USING delta
                |PARTITIONED BY(a, b)
-               |LOCATION '${dir.toURI}'
+               |LOCATION '${dir.getAbsolutePath}'
                |AS SELECT 3 as a, 4 as b, 1 as c, 2 as d
              """.stripMargin)
           val table = spark.sessionState.catalog.getTableMetadata(TableIdentifier("t1"))
@@ -1379,12 +1385,12 @@ trait DeltaTableCreationTests
         dir.delete()
         Seq((3, 4)).toDF("a", "b")
           .write.format("delta")
-          .save(dir.toString)
+          .save(dir.getAbsolutePath)
         val ex = intercept[AnalysisException](spark.sql(
           s"""
              |CREATE TABLE t
              |USING delta
-             |LOCATION '${dir.toURI}'
+             |LOCATION '${dir.getAbsolutePath}'
              |AS SELECT 1 as a, 2 as b
              """.stripMargin))
         assert(ex.getMessage.contains("Cannot create table"))
@@ -1394,14 +1400,12 @@ trait DeltaTableCreationTests
     withTable("t") {
       withTempDir { dir =>
         dir.delete()
-        Seq((3, 4)).toDF("a", "b")
-          .write.format("parquet")
-          .save(dir.toString)
+        Seq((3, 4)).toDF("a", "b").write.format("parquet").save(dir.getCanonicalPath)
         val ex = intercept[AnalysisException](spark.sql(
           s"""
              |CREATE TABLE t
              |USING delta
-             |LOCATION '${dir.toURI}'
+             |LOCATION '${dir.getAbsolutePath}'
              |AS SELECT 1 as a, 2 as b
              """.stripMargin))
         assert(ex.getMessage.contains("Cannot create table"))
@@ -1464,7 +1468,7 @@ trait DeltaTableCreationTests
     test(s"data source table:partition column name containing $specialChars") {
       // On Windows, it looks colon in the file name is illegal by default. See
       // https://support.microsoft.com/en-us/help/289627
-      // assume(!Utils.isWindows || specialChars != "a:b")
+      assume(!Utils.isWindows || specialChars != "a:b")
 
       withTable("t") {
         withTempDir { dir =>
@@ -1473,13 +1477,14 @@ trait DeltaTableCreationTests
                |CREATE TABLE t(a string, `$specialChars` string)
                |USING delta
                |PARTITIONED BY(`$specialChars`)
-               |LOCATION '${dir.toURI}'
+               |LOCATION '${dir.getAbsolutePath}'
              """.stripMargin)
 
           assert(dir.listFiles().forall(_.toString.contains("_delta_log")))
           spark.sql(s"INSERT INTO TABLE t SELECT 1, 2")
 
-          val deltaLog = loadDeltaLog(dir.toString)
+          val deltaLog = loadDeltaLog(dir.getAbsolutePath)
+          assert(deltaLog.update().version > 0)
           assertPartitionWithValueExists(specialChars, "2", deltaLog)
 
           checkAnswer(spark.table("t"), Row("1", "2") :: Nil)
@@ -1492,7 +1497,7 @@ trait DeltaTableCreationTests
     test(s"location uri contains $specialChars for datasource table") {
       // On Windows, it looks colon in the file name is illegal by default. See
       // https://support.microsoft.com/en-us/help/289627
-      // assume(!Utils.isWindows || specialChars != "a:b")
+      assume(!Utils.isWindows || specialChars != "a:b")
 
       withTable("t", "t1") {
         withTempDir { dir =>
@@ -2366,6 +2371,44 @@ class DeltaTableCreationSuite
     }
   }
 
+  test("CREATE OR REPLACE TABLE on a catalog table where the backing " +
+    "directory has been deleted") {
+    val tbl = "delta_tbl"
+    withTempDir { dir =>
+      withTable(tbl) {
+        val subdir = new File(dir, "subdir")
+        sql(s"CREATE OR REPLACE table $tbl (id String) USING delta " +
+          s"LOCATION '${subdir.getCanonicalPath}'")
+        val tableIdentifier =
+          spark.sessionState.catalog.getTableMetadata(TableIdentifier(tbl)).identifier
+        val tableName = tableIdentifier.copy(catalog = None).toString
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tbl))
+        sql(s"INSERT INTO $tbl VALUES ('1')")
+        FileUtils.deleteDirectory(subdir)
+        val e = intercept[DeltaIllegalStateException] {
+          sql(
+            s"CREATE OR REPLACE table $tbl (id String) USING delta" +
+              s" LOCATION '${subdir.getCanonicalPath}'")
+        }
+        checkError(
+          e,
+          "DELTA_METADATA_ABSENT_EXISTING_CATALOG_TABLE",
+          parameters = Map(
+            "tableName" -> tableName,
+            "tablePath" -> deltaLog.logPath.toString,
+            "tableNameForDropCmd" -> tableName
+          ))
+
+        // Table creation should work after running DROP TABLE.
+        sql(s"DROP table ${e.getMessageParameters().get("tableNameForDropCmd")}")
+        sql(s"CREATE OR REPLACE table $tbl (id String) USING delta " +
+          s"LOCATION '${subdir.getCanonicalPath}'")
+        sql(s"INSERT INTO $tbl VALUES ('21')")
+        val data = sql(s"SELECT * FROM $tbl").collect()
+        assert(data.length == 1)
+      }
+    }
+  }
 }
 
 trait DeltaTableCreationColumnMappingSuiteBase extends DeltaColumnMappingSelectedTestMixin {
@@ -2388,6 +2431,7 @@ trait DeltaTableCreationColumnMappingSuiteBase extends DeltaColumnMappingSelecte
 
 class DeltaTableCreationIdColumnMappingSuite extends DeltaTableCreationSuite
   with DeltaColumnMappingEnableIdMode {
+
   override protected def getTableProperties(tableName: String): Map[String, String] = {
     // ignore comparing column mapping properties
     dropColumnMappingConfigurations(super.getTableProperties(tableName))
@@ -2396,6 +2440,7 @@ class DeltaTableCreationIdColumnMappingSuite extends DeltaTableCreationSuite
 
 class DeltaTableCreationNameColumnMappingSuite extends DeltaTableCreationSuite
   with DeltaColumnMappingEnableNameMode {
+
   override protected def getTableProperties(tableName: String): Map[String, String] = {
     // ignore comparing column mapping properties
     dropColumnMappingConfigurations(super.getTableProperties(tableName))

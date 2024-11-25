@@ -23,13 +23,14 @@ import java.nio.file.Files
 
 import org.apache.spark.sql.catalyst.expressions.aggregation.BitmapAggregator
 import org.apache.spark.sql.delta.deletionvectors.{PortableRoaringBitmapArraySerializationFormat, RoaringBitmapArray, RoaringBitmapArrayFormat}
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 
 import org.apache.spark.sql.{Column, QueryTest}
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.SharedSparkSession
 
 class BitmapAggregatorE2ESuite extends QueryTest
   with SharedSparkSession
-  with SQLTestUtils {
+  with DeltaSQLTestUtils {
 
   import BitmapAggregatorE2ESuite._
   import testImplicits._
@@ -198,6 +199,6 @@ object BitmapAggregatorE2ESuite {
       column: Column,
       format: RoaringBitmapArrayFormat.Value): Column = {
     val func = new BitmapAggregator(column.expr, format);
-    new Column(func.toAggregateExpression(isDistinct = false))
+    Column(func.toAggregateExpression(isDistinct = false))
   }
 }

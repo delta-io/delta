@@ -19,11 +19,13 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.File
 
+import org.apache.spark.sql.delta.DescribeDeltaHistorySuiteShims._
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, Metadata, Protocol, RemoveFile}
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.util.FileNames
+import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.scalactic.source.Position
 import org.scalatest.Tag
 
@@ -41,7 +43,8 @@ trait DescribeDeltaHistorySuiteBase
   with SharedSparkSession
   with DeltaSQLCommandTest
   with DeltaTestUtilsForTempViews
-  with MergeIntoMetricsBase {
+  with MergeIntoMetricsBase
+  with CoordinatedCommitsBaseSuite {
 
   import testImplicits._
 
@@ -138,6 +141,21 @@ trait DescribeDeltaHistorySuiteBase
       .asInstanceOf[Map[String, String]]
   }
 
+  // Returns necessary delta property json expected for the test. If coordinated commit is enabled,
+  // a few properties will be automatically populated, and this method will take care of it.
+  protected def getPropertiesJson(extraProperty: Option[Map[String, String]] = None): String = {
+    val coordinatedCommitsProperty = if (coordinatedCommitsEnabledInTests) {
+      getCoordinatedCommitsDefaultProperties()
+    } else {
+      Map.empty[String, String]
+    }
+    // For history command, the output omits the empty config value, so we also need to
+    // manually omit the value here.
+    val properties = coordinatedCommitsProperty.filterNot { case (_, value) => value == "{}" }
+    val finalProperties = extraProperty.map(properties ++ _).getOrElse(properties)
+    JsonUtils.toJson(finalProperties)
+  }
+
   testWithFlag("basic case - Scala history with path-based table") {
     val tempDir = Utils.createTempDir().toString
     Seq(1, 2, 3).toDF().write.format("delta").save(tempDir)
@@ -224,8 +242,8 @@ trait DescribeDeltaHistorySuiteBase
       val e = intercept[AnalysisException] {
         sql(s"DESCRIBE HISTORY $viewName").collect()
       }
-      assert(e.getMessage.contains("spark_catalog.default.delta_view is a view. " +
-        "'DESCRIBE HISTORY' expects a table"))
+
+      assert(e.getMessage.contains(FAILS_ON_VIEWS_ERROR_MSG))
     }
   }
 
@@ -238,7 +256,8 @@ trait DescribeDeltaHistorySuiteBase
         val e = intercept[AnalysisException] {
           sql(s"DESCRIBE HISTORY $viewName").collect()
         }
-        assert(e.getMessage.contains("v is a temp view. 'DESCRIBE HISTORY' expects a table"))
+
+        assert(e.getMessage.contains(FAILS_ON_TEMP_VIEWS_ERROR_MSG))
       }
   }
 
@@ -254,17 +273,20 @@ trait DescribeDeltaHistorySuiteBase
            |comment 'this is my table'
            |tblproperties (delta.appendOnly=true)
          """.stripMargin)
+      val appendOnlyTableProperty = Map("delta.appendOnly" -> "true")
       checkLastOperation(
         spark.sessionState.catalog.getTableMetadata(TableIdentifier("delta_test")).location.getPath,
         Seq(
           "CREATE TABLE",
           "true",
           """["b"]""",
-          """{"delta.appendOnly":"true"}""",
+          """[]""",
+          getPropertiesJson(Some(appendOnlyTableProperty)),
           "this is my table"),
         Seq(
           $"operation", $"operationParameters.isManaged", $"operationParameters.partitionBy",
-          $"operationParameters.properties", $"operationParameters.description"))
+          $"operationParameters.clusterBy", $"operationParameters.properties",
+          $"operationParameters.description"))
     }
   }
 
@@ -275,9 +297,10 @@ trait DescribeDeltaHistorySuiteBase
         .option("path", tempDir).saveAsTable("delta_test")
       checkLastOperation(
         tempDir,
-        Seq("CREATE TABLE AS SELECT", "false", """[]""", "{}", null),
+        Seq("CREATE TABLE AS SELECT", "false", """[]""", """[]""", getPropertiesJson(), null),
         Seq($"operation", $"operationParameters.isManaged", $"operationParameters.partitionBy",
-          $"operationParameters.properties", $"operationParameters.description"))
+          $"operationParameters.clusterBy", $"operationParameters.properties",
+          $"operationParameters.description"))
     }
   }
 
@@ -292,14 +315,18 @@ trait DescribeDeltaHistorySuiteBase
            |partitioned by (b)
            |as select 1 as a, 'x' as b
          """.stripMargin)
+      val appendOnlyProperty = Map[String, String]("delta.appendOnly" -> "true")
       checkLastOperation(
         tempDir,
         Seq("CREATE TABLE AS SELECT",
           "false",
           """["b"]""",
-          """{"delta.appendOnly":"true"}""", null),
+          """[]""",
+          getPropertiesJson(Some(appendOnlyProperty)),
+          null),
         Seq($"operation", $"operationParameters.isManaged", $"operationParameters.partitionBy",
-          $"operationParameters.properties", $"operationParameters.description"))
+          $"operationParameters.clusterBy", $"operationParameters.properties",
+          $"operationParameters.description"))
     }
     val tempDir2 = Utils.createTempDir().toString
     withTable("delta_test") {
@@ -314,9 +341,10 @@ trait DescribeDeltaHistorySuiteBase
       checkLastOperation(
         tempDir2,
         Seq("CREATE TABLE AS SELECT",
-          "false", """[]""", """{}""", "this is my table"),
+          "false", """[]""", """[]""", getPropertiesJson(), "this is my table"),
         Seq($"operation", $"operationParameters.isManaged", $"operationParameters.partitionBy",
-          $"operationParameters.properties", $"operationParameters.description"))
+          $"operationParameters.clusterBy", $"operationParameters.properties",
+          $"operationParameters.description"))
     }
   }
 
@@ -378,9 +406,9 @@ trait DescribeDeltaHistorySuiteBase
     val writerVersion = Action.supportedProtocolVersion().minWriterVersion
     withTempDir { path =>
       val log = DeltaLog.forTable(spark, path)
-      log.ensureLogDirectoryExist()
+      log.createLogDirectoriesIfNotExists()
       log.store.write(
-        FileNames.deltaFile(log.logPath, 0),
+        FileNames.unsafeDeltaFile(log.logPath, 0),
         Iterator(
           Metadata(schemaString = spark.range(1).schema.asNullable.json).json,
           Protocol(1, 1).json),

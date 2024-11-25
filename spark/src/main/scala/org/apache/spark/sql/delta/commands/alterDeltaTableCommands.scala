@@ -22,24 +22,34 @@ import java.util.concurrent.TimeUnit
 
 import scala.util.control.NonFatal
 
+import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
+import org.apache.spark.sql.delta.skipping.clustering.ClusteringColumnInfo
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.Protocol
+import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.commands.backfill.RowTrackingBackfillCommand
+import org.apache.spark.sql.delta.commands.columnmapping.RemoveColumnMappingCommand
 import org.apache.spark.sql.delta.constraints.{CharVarcharConstraint, Constraints}
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsUtils
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
-import org.apache.spark.sql.delta.schema.SchemaUtils.transformColumnsStructs
+import org.apache.spark.sql.delta.schema.SchemaUtils.transformSchema
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.internal.MDC
+import org.apache.spark.internal.config.ConfigEntry
 import org.apache.spark.sql.{AnalysisException, Column, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.catalog.CatalogUtils
 import org.apache.spark.sql.catalyst.expressions._
-import org.apache.spark.sql.catalyst.plans.logical.{IgnoreCachedData, QualifiedColType}
-import org.apache.spark.sql.catalyst.util.CharVarcharUtils
+import org.apache.spark.sql.catalyst.plans.logical.{Filter, IgnoreCachedData, QualifiedColType}
+import org.apache.spark.sql.catalyst.util.{CharVarcharUtils, SparkCharVarcharUtils}
 import org.apache.spark.sql.connector.catalog.TableCatalog
 import org.apache.spark.sql.connector.catalog.TableChange.{After, ColumnPosition, First}
+import org.apache.spark.sql.connector.expressions.FieldReference
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.types._
 
@@ -69,8 +79,7 @@ trait AlterDeltaTableCommand extends DeltaCommand {
       sparkSession: SparkSession,
       columnParts: Seq[String],
       newMetadata: actions.Metadata,
-      protocol: Protocol,
-      operationName: String): Unit = {
+      protocol: Protocol): Unit = {
     if (!sparkSession.sessionState.conf.getConf(
       DeltaSQLConf.DELTA_ALTER_TABLE_CHANGE_COLUMN_CHECK_EXPRESSIONS)) {
       return
@@ -80,14 +89,14 @@ trait AlterDeltaTableCommand extends DeltaCommand {
       Constraints.findDependentConstraints(sparkSession, columnParts, newMetadata)
     if (dependentConstraints.nonEmpty) {
       throw DeltaErrors.foundViolatingConstraintsForColumnChange(
-        operationName, UnresolvedAttribute(columnParts).name, dependentConstraints)
+        UnresolvedAttribute(columnParts).name, dependentConstraints)
     }
     // check if the column to change is referenced by any generated columns
     val dependentGenCols = SchemaUtils.findDependentGeneratedColumns(
       sparkSession, columnParts, protocol, newMetadata.schema)
     if (dependentGenCols.nonEmpty) {
       throw DeltaErrors.foundViolatingGeneratedColumnsForColumnChange(
-        operationName, UnresolvedAttribute(columnParts).name, dependentGenCols.toList)
+        UnresolvedAttribute(columnParts).name, dependentGenCols)
     }
   }
 }
@@ -107,6 +116,31 @@ case class AlterTableSetPropertiesDeltaCommand(
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val deltaLog = table.deltaLog
+
+    val rowTrackingPropertyKey = DeltaConfigs.ROW_TRACKING_ENABLED.key
+    val enableRowTracking = configuration.keySet.contains(rowTrackingPropertyKey) &&
+      configuration(rowTrackingPropertyKey).toBoolean
+
+    if (enableRowTracking) {
+      // If we're enabling row tracking on an existing table, we need to complete a backfill process
+      // prior to updating the table metadata.
+      RowTrackingBackfillCommand(
+        deltaLog,
+        nameOfTriggeringOperation = DeltaOperations.OP_SET_TBLPROPERTIES,
+        table.catalogTable).run(sparkSession)
+    }
+    val columnMappingPropertyKey = DeltaConfigs.COLUMN_MAPPING_MODE.key
+    val disableColumnMapping = configuration.get(columnMappingPropertyKey).contains("none")
+    val columnMappingRemovalAllowed = sparkSession.sessionState.conf.getConf(
+      DeltaSQLConf.ALLOW_COLUMN_MAPPING_REMOVAL)
+    if (disableColumnMapping && columnMappingRemovalAllowed) {
+      RemoveColumnMappingCommand(deltaLog, table.catalogTable)
+        .run(sparkSession, removeColumnMappingTableProperty = false)
+      // Not changing anything else, so we can return early.
+      if (configuration.size == 1) {
+        return Seq.empty[Row]
+      }
+    }
     recordDeltaOperation(deltaLog, "delta.ddl.alter.setProperties") {
       val txn = startTransaction()
 
@@ -120,17 +154,30 @@ case class AlterTableSetPropertiesDeltaCommand(
           false
         case k if k == TableCatalog.PROP_PROVIDER =>
           throw DeltaErrors.cannotChangeProvider()
+        case k if k == TableFeatureProtocolUtils.propertyKey(ClusteringTableFeature) =>
+          throw DeltaErrors.alterTableSetClusteringTableFeatureException(
+            ClusteringTableFeature.name)
+        case k if k == ClusteredTableUtils.PROP_CLUSTERING_COLUMNS =>
+          throw DeltaErrors.cannotModifyTableProperty(k)
         case _ =>
           true
-      }
+      }.toMap
 
+      CoordinatedCommitsUtils.validateConfigurationsForAlterTableSetPropertiesDeltaCommand(
+        metadata.configuration, filteredConfs)
       val newMetadata = metadata.copy(
         description = configuration.getOrElse(TableCatalog.PROP_COMMENT, metadata.description),
         configuration = metadata.configuration ++ filteredConfs)
 
       txn.updateMetadata(newMetadata)
 
-      txn.commit(Nil, DeltaOperations.SetTableProperties(configuration))
+      // Tag if the metadata update is _only_ for enabling row tracking. This allows for
+      // an optimization where we can safely not fail concurrent txns from the metadata update.
+      var tags = Map.empty[String, String]
+      if (enableRowTracking && configuration.size == 1) {
+        tags += (DeltaCommitTag.RowTrackingEnablementOnlyTag.key -> "true")
+      }
+      txn.commit(Nil, DeltaOperations.SetTableProperties(configuration), tags)
 
       Seq.empty[Row]
     }
@@ -150,11 +197,24 @@ case class AlterTableSetPropertiesDeltaCommand(
 case class AlterTableUnsetPropertiesDeltaCommand(
     table: DeltaTableV2,
     propKeys: Seq[String],
-    ifExists: Boolean)
+    ifExists: Boolean,
+    fromDropFeatureCommand: Boolean = false)
   extends LeafRunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val deltaLog = table.deltaLog
+    val columnMappingPropertyKey = DeltaConfigs.COLUMN_MAPPING_MODE.key
+    val disableColumnMapping = propKeys.contains(columnMappingPropertyKey)
+    val columnMappingRemovalAllowed = sparkSession.sessionState.conf.getConf(
+      DeltaSQLConf.ALLOW_COLUMN_MAPPING_REMOVAL)
+    if (disableColumnMapping && columnMappingRemovalAllowed) {
+      RemoveColumnMappingCommand(deltaLog, table.catalogTable)
+        .run(sparkSession, removeColumnMappingTableProperty = true)
+      if (propKeys.size == 1) {
+        // Not unsetting anything else, so we can return early.
+        return Seq.empty[Row]
+      }
+    }
     recordDeltaOperation(deltaLog, "delta.ddl.alter.unsetProperties") {
       val txn = startTransaction()
       val metadata = txn.metadata
@@ -168,6 +228,10 @@ case class AlterTableUnsetPropertiesDeltaCommand(
         }
       }
 
+      if (!fromDropFeatureCommand) {
+        CoordinatedCommitsUtils.validateConfigurationsForAlterTableUnsetPropertiesDeltaCommand(
+          metadata.configuration, normalizedKeys)
+      }
       val newConfiguration = metadata.configuration.filterNot {
         case (key, _) => normalizedKeys.contains(key)
       }
@@ -194,45 +258,119 @@ case class AlterTableUnsetPropertiesDeltaCommand(
  *   ALTER TABLE t DROP FEATURE f [TRUNCATE HISTORY]
  * }}}
  *
- * The operation consists of two stages (see [[RemovableFeature]]):
- *  1) preDowngradeCommand. This command is responsible for removing any data and metadata
- *     related to the feature.
- *  2) Protocol downgrade. Removes the feature from the current version's protocol.
- *     During this stage we also validate whether all traces of the feature-to-be-removed are gone.
+ * When dropping a feature, remove the feature traces from the latest version. However, the table
+ * history still contains feature traces. This creates two problems:
  *
- *  For removing writer features the 2 steps above are sufficient. However, for removing
- *  reader+writer features we also need to ensure the history does not contain any traces of the
- *  removed feature. The user journey is the following:
+ * 1) Reconstructing the state of the latest version may require replaying log records prior to
+ *    feature removal. Log replay is based on checkpoints which is used by clients as a starting
+ *    point for replaying history. Any actions before the checkpoint do not need to be replayed.
+ *    However, checkpoints may be deleted at any time, which can then expose readers to older
+ *    log records.
+ * 2) Clients could create checkpoints in past versions. These could lead to incorrect behavior
+ *    if the client that created the checkpoint did not support all features.
  *
- *  1) The user runs the remove feature command which removes any traces of the feature from
- *     the latest version. The removal command throws a message that there was partial success
- *     and the retention period must pass before a protocol downgrade is possible.
- *  2) The user runs again the command after the retention period is over. The command checks the
- *     current state again and the history. If everything is clean, it proceeds with the protocol
- *     downgrade. The TRUNCATE HISTORY option may be used here to automatically set
- *     the log retention period to a minimum of 24 hours before clearing the logs. The minimum
- *     value is based on the expected duration of the longest running transaction. This is the
- *     lowest retention period we can set without endangering concurrent transactions.
- *     If transactions do run for longer than this period while this command is run, then this
- *     can lead to data corruption.
+ * To address these issues, we currently provide two implementations:
  *
- *  Note, legacy features can be removed as well, as long as the protocol supports Table Features.
- *  This will not downgrade protocol versions but only remove the feature from the
- *  supported features list. For example, removing legacyRWFeature from
- *  (3, 7, [legacyRWFeature], [legacyRWFeature]) will result in (3, 7, [], []) and not (1, 1).
+ * 1) [[DropFeatureWithHistoryTruncation]]. We truncate history at the boundary of version of the
+ *    dropped feature (when required). Requires two executions of the drop feature command with
+ *    a waiting time in between the two executions.
+ * 2) [[executeDropFeatureWithCheckpointProtection]], i.e. fast drop feature. We create barrier
+ *    checkpoints to protect against log replay and checkpoint creation. The behavior is enforced
+ *    with the aid of CheckpointProtectionTableFeature.
+ *
+ * Config tableFeatures.fastDropFeature.enabled can be used to control which implementation
+ * is used. Furthermore, please note the option [TRUNCATE HISTORY] in the SQL syntax is only
+ * relevant for [[DropFeatureWithHistoryTruncation]]. When used, we always fallback to that
+ * implementation.
+ *
+ * At a high level, dropping a feature consists of two stages (see [[RemovableFeature]]):
+ *
+ * 1) preDowngradeCommand. This command is responsible for removing any data and metadata
+ * related to the feature.
+ * 2) Protocol downgrade. Removes the feature from the current version's protocol.
+ *    During this stage we also validate whether all traces of the feature-to-be-removed are gone.
+ *
+ * For removing features with requiresHistoryProtection=false the two steps above are sufficient.
+ * For features that require history protection, we follow a different approach for each of the
+ * implementations listed above. Please see the corresponding functions for more details.
+ *
+ * Note, legacy features can be removed as well. When removing a legacy feature from a legacy
+ * protocol, if the result cannot be represented with a legacy representation we use the
+ * table features representation. For example, removing Invariants from (1, 3) results to
+ * (1, 7, None, [AppendOnly, CheckConstraints]). Adding back Invariants to the protocol is
+ * normalized back to (1, 3). This allows to consistently transition back and forth between legacy
+ * protocols and table feature protocols.
  */
 case class AlterTableDropFeatureDeltaCommand(
     table: DeltaTableV2,
     featureName: String,
     truncateHistory: Boolean = false)
-  extends LeafRunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
+  extends LeafRunnableCommand
+  with AlterDeltaTableCommand
+  with IgnoreCachedData {
 
-  def createEmptyCommitAndCheckpoint(snapshotRefreshStartTime: Long): Unit = {
+
+  val MAX_CHECKPOINT_RETRIES = 3
+  val NUMBER_OF_BARRIER_CHECKPOINTS = 3
+
+  /**
+   * Helper function for creating checkpoints. If checkpoint creation fails we retry up
+   * to [[MAX_CHECKPOINT_RETRIES]] times.
+   *
+   * @param snapshotRefreshStartTimeTs The timestamp to use as a starting point for refreshing
+   *                                   the snapshot. This value is used to improve the performance
+   *                                   of the snapshot refresh operation.
+   */
+  private def createCheckpointWithRetries(snapshotRefreshStartTimeTs: Long): Boolean = {
     val log = table.deltaLog
-    val snapshot = log.update(checkIfUpdatedSinceTs = Some(snapshotRefreshStartTime))
+    val snapshot = log.update(
+      checkIfUpdatedSinceTs = Some(snapshotRefreshStartTimeTs),
+      catalogTableOpt = table.catalogTable)
+
+    def checkpointAndVerify(snapshot: Snapshot): Boolean = {
+      try {
+        log.checkpoint(snapshot)
+        val upperBoundVersion = Some(CheckpointInstance(version = snapshot.version + 1))
+        val lastVerifiedCheckpoint = log.findLastCompleteCheckpointBefore(upperBoundVersion)
+        lastVerifiedCheckpoint.exists(_.version == snapshot.version)
+      } catch {
+        case NonFatal(e) =>
+          recordDeltaEvent(
+            deltaLog = log,
+            opType = "dropFeature.checkpointAndVerify.error",
+            data = Map(
+              "message" -> e.getMessage,
+              "stackTrace" -> e.getStackTrace().mkString("\n")))
+          false
+      }
+    }
+
+    (1 to MAX_CHECKPOINT_RETRIES).collectFirst {
+      case _ if checkpointAndVerify(snapshot) => true
+    }.getOrElse(false)
+  }
+
+  private def createEmptyCommitAndCheckpoint(
+      snapshotRefreshStartTs: Long,
+      retryOnFailure: Boolean = false): Boolean = {
+    val log = table.deltaLog
+    val snapshot = log.update(
+      checkIfUpdatedSinceTs = Some(snapshotRefreshStartTs),
+      catalogTableOpt = table.catalogTable)
     val emptyCommitTS = System.nanoTime()
-    log.startTransaction(Some(snapshot)).commit(Nil, DeltaOperations.EmptyCommit)
-    log.checkpoint(log.update(checkIfUpdatedSinceTs = Some(emptyCommitTS)))
+    table.startTransaction(Some(snapshot))
+      .commit(Nil, DeltaOperations.EmptyCommit)
+
+    // retryOnFailure is temporary to avoid affecting the behavior of the legacy Drop Feature
+    // command behavior.
+    if (retryOnFailure) {
+      createCheckpointWithRetries(emptyCommitTS)
+    } else {
+      log.checkpoint(log.update(
+        checkIfUpdatedSinceTs = Some(emptyCommitTS),
+        catalogTableOpt = table.catalogTable))
+      true
+    }
   }
 
   def truncateHistoryLogRetentionMillis(txn: OptimisticTransaction): Option[Long] = {
@@ -246,27 +384,61 @@ case class AlterTableDropFeatureDeltaCommand(
   }
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
+    val removableFeature = TableFeature.featureNameToFeature(featureName) match {
+      case Some(feature: RemovableFeature) => feature
+      case Some(_) => throw DeltaErrors.dropTableFeatureNonRemovableFeature(featureName)
+      case None => throw DeltaErrors.dropTableFeatureFeatureNotSupportedByClient(featureName)
+    }
+
+    // Check whether the protocol contains the feature in either the writer features list or
+    // the reader+writer features list. Note, protocol needs to denormalized to allow dropping
+    // features from legacy protocols.
+    val protocol = table.initialSnapshot.protocol
+    val protocolContainsFeatureName =
+      protocol.implicitlyAndExplicitlySupportedFeatures.map(_.name).contains(featureName)
+    if (!protocolContainsFeatureName) {
+      throw DeltaErrors.dropTableFeatureFeatureNotSupportedByProtocol(featureName)
+    }
+
+    if (truncateHistory && !removableFeature.requiresHistoryProtection) {
+      throw DeltaErrors.tableFeatureDropHistoryTruncationNotAllowed()
+    }
+
+    // Validate that the `removableFeature` is not a dependency of any other feature that is
+    // enabled on the table.
+    dependentFeatureCheck(removableFeature, protocol)
+
+    // If the user uses the truncate history option we always fallback to the old implementation.
+    if (!truncateHistory && conf.getConf(DeltaSQLConf.FAST_DROP_FEATURE_ENABLED)) {
+      executeDropFeatureWithCheckpointProtection(sparkSession, removableFeature)
+    } else {
+      executeDropFeatureWithHistoryTruncation(sparkSession, removableFeature)
+    }
+  }
+
+  /**
+   *  Drop features with history truncation. When dropping a feature that
+   *  requiresHistoryProtection, we need to truncate history prior to feature removal to ensure
+   *  the history does not contain any traces of the removed feature. The user journey is the
+   *  following:
+   *
+   *  1) The user runs the remove feature command which removes any traces of the feature from
+   *     the latest version. The removal command throws a message that there was partial success
+   *     and the retention period must pass before a protocol downgrade is possible.
+   *  2) The user runs again the command after the retention period is over. The command checks the
+   *     current state again and the history. If everything is clean, it proceeds with the protocol
+   *     downgrade. The TRUNCATE HISTORY option may be used here to automatically set
+   *     the log retention period to a minimum of 24 hours before clearing the logs. The minimum
+   *     value is based on the expected duration of the longest running transaction. This is the
+   *     lowest retention period we can set without endangering concurrent transactions.
+   *     If transactions do run for longer than this period while this command is run, then this
+   *     can lead to data corruption.
+   */
+  private def executeDropFeatureWithHistoryTruncation(
+      sparkSession: SparkSession,
+      removableFeature: TableFeature with RemovableFeature): Seq[Row] = {
     val deltaLog = table.deltaLog
     recordDeltaOperation(deltaLog, "delta.ddl.alter.dropFeature") {
-      // This guard is only temporary while the drop feature is in development.
-      require(sparkSession.conf.get(DeltaSQLConf.TABLE_FEATURE_DROP_ENABLED))
-
-      val removableFeature = TableFeature.featureNameToFeature(featureName) match {
-        case Some(feature: RemovableFeature) => feature
-        case Some(_) => throw DeltaErrors.dropTableFeatureNonRemovableFeature(featureName)
-        case None => throw DeltaErrors.dropTableFeatureFeatureNotSupportedByClient(featureName)
-      }
-
-      // Check whether the protocol contains the feature in either the writer features list or
-      // the reader+writer features list.
-      if (!table.initialSnapshot.protocol.readerAndWriterFeatureNames.contains(featureName)) {
-        throw DeltaErrors.dropTableFeatureFeatureNotSupportedByProtocol(featureName)
-      }
-
-      if (truncateHistory && !removableFeature.isReaderWriterFeature) {
-        throw DeltaErrors.tableFeatureDropHistoryTruncationNotAllowed()
-      }
-
       // The removableFeature.preDowngradeCommand needs to adhere to the following requirements:
       //
       // a) Bring the table to a state the validation passes.
@@ -276,22 +448,25 @@ case class AlterTableDropFeatureDeltaCommand(
       //
       // Note, for features that cannot be disabled we solely rely for correctness on
       // validateRemoval.
-      val isReaderWriterFeature = removableFeature.isReaderWriterFeature
+      val requiresHistoryValidation = removableFeature.requiresHistoryProtection
       val startTimeNs = System.nanoTime()
       val preDowngradeMadeChanges =
         removableFeature.preDowngradeCommand(table).removeFeatureTracesIfNeeded()
-      if (preDowngradeMadeChanges && isReaderWriterFeature) {
+      if (requiresHistoryValidation) {
         // Generate a checkpoint after the cleanup that is based on commits that do not use
         // the feature. This intends to help slow-moving tables to qualify for history truncation
         // asap. The checkpoint is based on a new commit to avoid creating a checkpoint
         // on a commit that still contains traces of the removed feature.
+        // Note, the checkpoint is created in both executions of DROP FEATURE command.
         createEmptyCommitAndCheckpoint(startTimeNs)
 
         // If the pre-downgrade command made changes, then the table's historical versions
         // certainly still contain traces of the feature. We don't have to run an expensive
         // explicit check, but instead we fail straight away.
-        throw DeltaErrors.dropTableFeatureWaitForRetentionPeriod(
-          featureName, table.initialSnapshot.metadata)
+        if (preDowngradeMadeChanges) {
+          throw DeltaErrors.dropTableFeatureWaitForRetentionPeriod(
+            featureName, table.initialSnapshot.metadata)
+        }
       }
 
       val txn = table.startTransaction()
@@ -310,14 +485,14 @@ case class AlterTableDropFeatureDeltaCommand(
       // Note, if this txn conflicts, we check all winning commits for traces of the feature.
       // Therefore, we do not need to check again for historical versions during conflict
       // resolution.
-      if (isReaderWriterFeature) {
+      if (requiresHistoryValidation) {
         // Clean up expired logs before checking history. This also makes sure there is no
         // concurrent metadataCleanup during findEarliestReliableCheckpoint. Note, this
-        // cleanUpExpiredLogs call truncates the cutoff at an hour granularity.
+        // cleanUpExpiredLogs call truncates the cutoff at a minute granularity.
         deltaLog.cleanUpExpiredLogs(
           snapshot,
           truncateHistoryLogRetentionMillis(txn),
-          TruncationGranularity.HOUR)
+          TruncationGranularity.MINUTE)
 
         val historyContainsFeature = removableFeature.historyContainsFeature(
           spark = sparkSession,
@@ -327,9 +502,120 @@ case class AlterTableDropFeatureDeltaCommand(
         }
       }
 
+      val op = DeltaOperations.DropTableFeature(featureName, truncateHistory)
       txn.updateProtocol(txn.protocol.removeFeature(removableFeature))
-      txn.commit(Nil, DeltaOperations.DropTableFeature(featureName, truncateHistory))
+      txn.commit(Nil, op)
       Nil
+    }
+  }
+
+  /**
+   * Drop [[removableFeature]] and enforce correctness with protected checkpoints. When dropping a
+   * feature that requiresHistoryProtection we need to make sure:
+   *
+   * 1) Clients will not process historical commits that contain traces of the dropped feature.
+   * 2) Clients will not create checkpoints in historical versions when they do not support the
+   *    required features.
+   *
+   * This can be achieved as follows:
+   * 1) Create DELTA_SNAPSHOT_LOADING_MAX_RETRIES + 1 checkpoints (3 checkpoints),
+   *    after the execution of the pre-downgrade command but before the protocol downgrade commit.
+   *    Clients should never attempt to read prior to these checkpoints. We create multiple
+   *    checkpoints because the Delta Spark client may try multiple earlier checkpoints when it
+   *    encounters a checkpoint that it cannot read. By adding multiple checkpoints, we make
+   *    sure it gives up before it proceeds to earlier checkpoints.
+   * 2) Protect checkpoints 1-3 from metadata cleanup operations. This is achieved with the aid of
+   *    the CheckpointProtectionTableFeature. Using a table property we store the version of
+   *    the last dropped feature, V. With CheckpointProtectionTableFeature we enforce clients
+   *    can only delete checkpoints before V if they clean up the corresponding commit history at
+   *    the same time and do not create any checkpoints prior to V. To create a checkpoint prior
+   *    to V, they must support all features for the versions they truncate.
+   * 3) In a single commit, drop the feature from the protocol, set V = the version the current
+   *    feature is dropped and add the CheckpointProtectionTableFeature.
+   * 4) Create a checkpoint after the protocol downgrade. This is optional and it is used to allow
+   *    log replay from checkpoint 3 to the protocol downgrade commit. This is for clients that do
+   *    not support the dropped feature and choose to validate against the protocols of all commits
+   *    used in the replay of a snapshot instead of only validating against the final resulting
+   *    protocol.
+   *
+   */
+  private def executeDropFeatureWithCheckpointProtection(
+      sparkSession: SparkSession,
+      removableFeature: TableFeature with RemovableFeature): Seq[Row] = {
+    val deltaLog = table.deltaLog
+    recordDeltaOperation(deltaLog, "delta.ddl.alter.dropFeatureWithCheckpointProtection") {
+      var startTimeNs = System.nanoTime()
+      removableFeature.preDowngradeCommand(table).removeFeatureTracesIfNeeded()
+
+      // Create and validate the barrier checkpoints. The checkpoint are created on top of
+      // empty commits. However, this is not guaranteed. Other txns might interleave the empty
+      // commit. As a result the checkpoint could be created on top of an unrelated non-empty
+      // commit. This is not a problem. We only care about the checkpoint being created after the
+      // pre-downgrade process and before the protocol downgrade commit.
+      // Furthermore, each checkpoint validation requires a roundtrip to the object store.
+      // Could be optimized, if required, by performing a single list operation and checking
+      // whether NUMBER_OF_BARRIER_CHECKPOINTS exist after the pre-downgrade commit.
+      val historyBarrierIsRequired = removableFeature.requiresHistoryProtection
+      if (historyBarrierIsRequired) {
+        (1 to NUMBER_OF_BARRIER_CHECKPOINTS).foreach { _ =>
+          // This call also cleans up the logs. In most of the cases we should be able to truncate
+          // the history of a previous drop feature operation.
+          if (!createEmptyCommitAndCheckpoint(startTimeNs, retryOnFailure = true)) {
+            throw DeltaErrors.dropTableFeatureCheckpointFailedException(removableFeature.name)
+          }
+          startTimeNs = System.nanoTime()
+        }
+      }
+
+      val txn = table.startTransaction()
+      val snapshot = txn.snapshot
+
+      // Verify whether all requirements hold before performing the protocol downgrade.
+      // If any concurrent transactions interfere with the protocol downgrade txn we
+      // revalidate the requirements against the snapshot of the winning txn.
+      if (!removableFeature.validateRemoval(snapshot)) {
+        throw DeltaErrors.dropTableFeatureConflictRevalidationFailed()
+      }
+
+      if (historyBarrierIsRequired) {
+        val newMetadata = CheckpointProtectionTableFeature.metadataWithCheckpointProtection(
+          txn.metadata, txn.readVersion + 1L)
+        txn.updateMetadata(newMetadata)
+
+        val newProtocol = txn.protocol
+          .denormalized
+          .withFeature(CheckpointProtectionTableFeature)
+          .removeFeature(removableFeature)
+
+        txn.updateProtocol(newProtocol)
+      } else {
+        txn.updateProtocol(txn.protocol.removeFeature(removableFeature))
+      }
+
+      txn.commit(Nil, DeltaOperations.DropTableFeature(featureName, false))
+
+      // This is a protected checkpoint.
+      if (historyBarrierIsRequired) createCheckpointWithRetries(System.nanoTime())
+      Nil
+    }
+  }
+
+  /**
+   * Checks if the `removableFeature` is a requirement for some other feature that is enabled on the
+   * table. In such a scenario, we need to fail the drop feature command. The dependent features
+   * needs to be dropped first before this `removableFeature` can be removed.
+   */
+  private def dependentFeatureCheck(
+      removableFeature: TableFeature,
+      protocol: Protocol): Unit = {
+    val dependentFeatures = TableFeature.getDependentFeatures(removableFeature)
+    if (dependentFeatures.nonEmpty) {
+      val dependentFeaturesInProtocol = dependentFeatures.filter(protocol.isFeatureSupported)
+      if (dependentFeaturesInProtocol.nonEmpty) {
+        val dependentFeatureNames = dependentFeaturesInProtocol.map(_.name)
+        throw DeltaErrors.dropTableFeatureFailedBecauseOfDependentFeatures(
+          removableFeature.name, dependentFeatureNames.toSeq)
+      }
     }
   }
 }
@@ -420,7 +706,11 @@ case class AlterTableAddColumnsDeltaCommand(
 
       val field = StructField(col.name.last, col.dataType, col.nullable, builder.build())
 
+      col.default.map { value =>
+        Some((col.name.init, field.withCurrentDefaultValue(value), col.position.map(toV2Position)))
+      }.getOrElse {
         Some((col.name.init, field, col.position.map(toV2Position)))
+      }
     }
   }
 }
@@ -464,6 +754,12 @@ case class AlterTableDropColumnsDeltaCommand(
       if (droppingPartitionCols.nonEmpty) {
         throw DeltaErrors.dropPartitionColumnNotSupported(droppingPartitionCols)
       }
+      // Disallow dropping clustering columns.
+      val clusteringCols = ClusteringColumnInfo.extractLogicalNames(txn.snapshot)
+      val droppingClusteringCols = clusteringCols.filter(droppedColumnSet.contains(_))
+      if (droppingClusteringCols.nonEmpty) {
+        throw DeltaErrors.dropClusteringColumnNotSupported(droppingClusteringCols)
+      }
       // Updates the delta statistics column list by removing the dropped columns from it.
       val newConfiguration = metadata.configuration ++
         StatisticsCollection.dropDeltaStatsColumns(metadata, columnsToDrop)
@@ -472,7 +768,7 @@ case class AlterTableDropColumnsDeltaCommand(
         configuration = newConfiguration
       )
       columnsToDrop.foreach { columnParts =>
-        checkDependentExpressions(sparkSession, columnParts, newMetadata, txn.protocol, "drop")
+        checkDependentExpressions(sparkSession, columnParts, newMetadata, txn.protocol)
       }
 
       txn.updateMetadata(newMetadata)
@@ -508,28 +804,58 @@ case class AlterTableChangeColumnDeltaCommand(
     recordDeltaOperation(deltaLog, "delta.ddl.alter.changeColumns") {
       val txn = startTransaction()
       val metadata = txn.metadata
-      val oldSchema = metadata.schema
+      val bypassCharVarcharToStringFix =
+        sparkSession.conf.get(DeltaSQLConf.DELTA_BYPASS_CHARVARCHAR_TO_STRING_FIX)
+      val oldSchema = if (bypassCharVarcharToStringFix) {
+          metadata.schema
+        } else {
+          SchemaUtils.getRawSchemaWithoutCharVarcharMetadata(metadata.schema)
+        }
       val resolver = sparkSession.sessionState.conf.resolver
 
       // Verify that the columnName provided actually exists in the schema
       SchemaUtils.findColumnPosition(columnPath :+ columnName, oldSchema, resolver)
 
-      val newSchema = transformColumnsStructs(oldSchema, Some(columnName)) {
+      val transformedSchema = transformSchema(oldSchema, Some(columnName)) {
         case (`columnPath`, struct @ StructType(fields), _) =>
           val oldColumn = struct(columnName)
-          verifyColumnChange(sparkSession, struct(columnName), resolver, txn)
+
+          // Analyzer already validates the char/varchar type change of ALTER COLUMN in
+          // `CheckAnalysis.checkAlterTableCommand`. We should normalize char/varchar type
+          // to string type first, then apply Delta-specific checks.
+          val oldColumnForVerification = if (bypassCharVarcharToStringFix) {
+            oldColumn
+          } else {
+            CharVarcharUtils.replaceCharVarcharWithStringInSchema(StructType(Seq(oldColumn))).head
+          }
+          verifyColumnChange(sparkSession, oldColumnForVerification, resolver, txn)
 
           val newField = {
+            if (syncIdentity) {
+              assert(oldColumn == newColumn)
+              val df = txn.snapshot.deltaLog.createDataFrame(txn.snapshot, txn.filterFiles())
+              val field = IdentityColumn.syncIdentity(newColumn, df)
+              txn.setSyncIdentity()
+              txn.readWholeTable()
+              field
+            } else {
               // Take the name, comment, nullability and data type from newField
               // It's crucial to keep the old column's metadata, which may contain column mapping
               // metadata.
               var result = newColumn.getComment().map(oldColumn.withComment).getOrElse(oldColumn)
+              // Apply the current default value as well, if any.
+              result = newColumn.getCurrentDefaultValue() match {
+                case Some(newDefaultValue) => result.withCurrentDefaultValue(newDefaultValue)
+                case None => result.clearCurrentDefaultValue()
+              }
+
               result
                 .copy(
                   name = newColumn.name,
                   dataType =
                     SchemaUtils.changeDataType(oldColumn.dataType, newColumn.dataType, resolver),
                   nullable = newColumn.nullable)
+            }
           }
 
           // Replace existing field with new field
@@ -541,11 +867,36 @@ case class AlterTableChangeColumnDeltaCommand(
           }
 
           // Reorder new field to correct position if necessary
-          colPosition.map { position =>
+          StructType(colPosition.map { position =>
             reorderFieldList(struct, newFieldList, newField, position, resolver)
-          }.getOrElse(newFieldList.toSeq)
+          }.getOrElse(newFieldList.toSeq))
 
-        case (_, _ @ StructType(fields), _) => fields
+        case (`columnPath`, m: MapType, _) if columnName == "key" =>
+          val originalField = StructField(columnName, m.keyType, nullable = false)
+          verifyMapArrayChange(sparkSession, originalField, resolver, txn)
+          m.copy(keyType = SchemaUtils.changeDataType(m.keyType, newColumn.dataType, resolver))
+
+        case (`columnPath`, m: MapType, _) if columnName == "value" =>
+          val originalField = StructField(columnName, m.valueType, nullable = m.valueContainsNull)
+          verifyMapArrayChange(sparkSession, originalField, resolver, txn)
+          m.copy(valueType = SchemaUtils.changeDataType(m.valueType, newColumn.dataType, resolver))
+
+        case (`columnPath`, a: ArrayType, _) if columnName == "element" =>
+          val originalField = StructField(columnName, a.elementType, nullable = a.containsNull)
+          verifyMapArrayChange(sparkSession, originalField, resolver, txn)
+          a.copy(elementType =
+            SchemaUtils.changeDataType(a.elementType, newColumn.dataType, resolver))
+
+        case (_, other @ (_: StructType | _: ArrayType | _: MapType), _) => other
+      }
+      val newSchema = if (bypassCharVarcharToStringFix) {
+        transformedSchema
+      } else {
+        // Fields with type CHAR/VARCHAR had been converted from
+        // (StringType, metadata = 'VARCHAR(n)') into (VARCHAR(n), metadata = '')
+        // so that CHAR/VARCHAR to String conversion can be handled correctly. We should
+        // invert this conversion so that downstream operations are not affected.
+        CharVarcharUtils.replaceCharVarcharWithStringInSchema(transformedSchema)
       }
 
       // update `partitionColumns` if the changed column is a partition column
@@ -561,8 +912,14 @@ case class AlterTableChangeColumnDeltaCommand(
       val newConfiguration = metadata.configuration ++
         StatisticsCollection.renameDeltaStatsColumn(metadata, oldColumnPath, newColumnPath)
 
+      val newSchemaWithTypeWideningMetadata =
+        TypeWideningMetadata.addTypeWideningMetadata(
+          txn,
+          schema = newSchema,
+          oldSchema = metadata.schema)
+
       val newMetadata = metadata.copy(
-        schemaString = newSchema.json,
+        schemaString = newSchemaWithTypeWideningMetadata.json,
         partitionColumns = newPartitionColumns,
         configuration = newConfiguration
       )
@@ -570,7 +927,7 @@ case class AlterTableChangeColumnDeltaCommand(
       if (newColumn.name != columnName) {
         // need to validate the changes if the column is renamed
         checkDependentExpressions(
-          sparkSession, columnPath :+ columnName, newMetadata, txn.protocol, "rename")
+          sparkSession, columnPath :+ columnName, newMetadata, txn.protocol)
       }
 
 
@@ -665,15 +1022,19 @@ case class AlterTableChangeColumnDeltaCommand(
     // first (original data type is already normalized as we store char/varchar as string type with
     // special metadata in the Delta log), then apply Delta-specific checks.
     val newType = CharVarcharUtils.replaceCharVarcharWithString(newColumn.dataType)
-    if (SchemaUtils.canChangeDataType(originalField.dataType, newType, resolver,
-        txn.metadata.columnMappingMode, columnPath :+ originalField.name).nonEmpty) {
+    if (SchemaUtils.canChangeDataType(
+        originalField.dataType,
+        newType,
+        resolver,
+        txn.metadata.columnMappingMode,
+        columnPath :+ originalField.name,
+        allowTypeWidening = TypeWidening.isEnabled(txn.protocol, txn.metadata)
+      ).nonEmpty) {
       throw DeltaErrors.alterTableChangeColumnException(
-        s"'${UnresolvedAttribute(columnPath :+ originalField.name).name}' with type " +
-          s"'${originalField.dataType}" +
-          s" (nullable = ${originalField.nullable})'",
-        s"'${UnresolvedAttribute(Seq(newColumn.name)).name}' with type " +
-          s"'$newType" +
-          s" (nullable = ${newColumn.nullable})'")
+        fieldPath = UnresolvedAttribute(columnPath :+ originalField.name).name,
+        oldField = originalField,
+        newField = newColumn
+      )
     }
 
     if (columnName != newColumn.name) {
@@ -682,15 +1043,43 @@ case class AlterTableChangeColumnDeltaCommand(
       }
     }
 
+    if (originalField.dataType != newType) {
+      checkDependentExpressions(
+        spark, columnPath :+ columnName, txn.metadata, txn.protocol)
+    }
+
     if (originalField.nullable && !newColumn.nullable) {
       throw DeltaErrors.alterTableChangeColumnException(
-        s"'${UnresolvedAttribute(columnPath :+ originalField.name).name}' with type " +
-          s"'${originalField.dataType}" +
-          s" (nullable = ${originalField.nullable})'",
-        s"'${UnresolvedAttribute(Seq(newColumn.name)).name}' with type " +
-          s"'${newColumn.dataType}" +
-          s" (nullable = ${newColumn.nullable})'")
+        fieldPath = UnresolvedAttribute(columnPath :+ originalField.name).name,
+        oldField = originalField,
+        newField = newColumn
+      )
     }
+  }
+
+  /**
+   * Verify whether replacing the original map key/value or array element with a new data type is a
+   * valid operation.
+   *
+   * @param originalField the original map key/value or array element to update.
+   */
+  private def verifyMapArrayChange(spark: SparkSession, originalField: StructField,
+      resolver: Resolver, txn: OptimisticTransaction): Unit = {
+    // Map key/value and array element can't have comments.
+    if (newColumn.getComment().nonEmpty) {
+      throw DeltaErrors.addCommentToMapArrayException(
+        fieldPath = UnresolvedAttribute(columnPath :+ columnName).name
+      )
+    }
+    // Changing the nullability of map key/value or array element isn't supported.
+    if (originalField.nullable != newColumn.nullable) {
+      throw DeltaErrors.alterTableChangeColumnException(
+        fieldPath = UnresolvedAttribute(columnPath :+ originalField.name).name,
+        oldField = originalField,
+        newField = newColumn
+      )
+    }
+    verifyColumnChange(spark, originalField, resolver, txn)
   }
 }
 
@@ -715,11 +1104,21 @@ case class AlterTableReplaceColumnsDeltaCommand(
       val metadata = txn.metadata
       val existingSchema = metadata.schema
 
+      if (ColumnWithDefaultExprUtils.hasIdentityColumn(table.initialSnapshot.schema)) {
+        throw DeltaErrors.identityColumnReplaceColumnsNotSupported()
+      }
+
       val resolver = sparkSession.sessionState.conf.resolver
       val changingSchema = StructType(columns)
 
-      SchemaUtils.canChangeDataType(existingSchema, changingSchema, resolver,
-        txn.metadata.columnMappingMode, failOnAmbiguousChanges = true).foreach { operation =>
+      SchemaUtils.canChangeDataType(
+        existingSchema,
+        changingSchema,
+        resolver,
+        txn.metadata.columnMappingMode,
+        allowTypeWidening = TypeWidening.isEnabled(txn.protocol, txn.metadata),
+        failOnAmbiguousChanges = true
+      ).foreach { operation =>
         throw DeltaErrors.alterTableReplaceColumnsException(
           existingSchema, changingSchema, operation)
       }
@@ -730,7 +1129,13 @@ case class AlterTableReplaceColumnsDeltaCommand(
       SchemaMergingUtils.checkColumnNameDuplication(newSchema, "in replacing columns")
       SchemaUtils.checkSchemaFieldNames(newSchema, metadata.columnMappingMode)
 
-      val newMetadata = metadata.copy(schemaString = newSchema.json)
+      val newSchemaWithTypeWideningMetadata = TypeWideningMetadata.addTypeWideningMetadata(
+        txn,
+        schema = newSchema,
+        oldSchema = existingSchema
+      )
+
+      val newMetadata = metadata.copy(schemaString = newSchemaWithTypeWideningMetadata.json)
       txn.updateMetadata(newMetadata)
       txn.commit(Nil, DeltaOperations.ReplaceColumns(columns))
 
@@ -767,7 +1172,7 @@ case class AlterTableSetLocationDeltaCommand(
     val catalogTable = table.catalogTable.get
     val locUri = CatalogUtils.stringToURI(location)
 
-    val oldTable = table.deltaLog.update()
+    val oldTable = table.update()
     if (oldTable.version == -1) {
       throw DeltaErrors.notADeltaTableException(table.name())
     }
@@ -775,7 +1180,8 @@ case class AlterTableSetLocationDeltaCommand(
 
     var updatedTable = catalogTable.withNewStorage(locationUri = Some(locUri))
 
-    val (_, newTable) = DeltaLog.forTableWithSnapshot(sparkSession, new Path(location))
+    val (_, newTable) =
+      DeltaLog.forTableWithSnapshot(sparkSession, updatedTable, options = Map.empty[String, String])
     if (newTable.version == -1) {
       throw DeltaErrors.notADeltaTableException(DeltaTableIdentifier(path = Some(location)))
     }
@@ -850,17 +1256,26 @@ case class AlterTableAddConstraintDeltaCommand(
           (Constraints.checkConstraintPropertyName(name) -> exprText)
       )
 
-      val expr = sparkSession.sessionState.sqlParser.parseExpression(exprText)
-      if (expr.dataType != BooleanType) {
-        throw DeltaErrors.checkConstraintNotBoolean(name, exprText)
+      val df = txn.snapshot.deltaLog.createDataFrame(txn.snapshot, txn.filterFiles())
+      val unresolvedExpr = sparkSession.sessionState.sqlParser.parseExpression(exprText)
+
+      try {
+        df.where(Column(unresolvedExpr)).queryExecution.analyzed
+      } catch {
+        case a: AnalysisException
+            if a.errorClass.contains("DATATYPE_MISMATCH.FILTER_NOT_BOOLEAN") =>
+          throw DeltaErrors.checkConstraintNotBoolean(name, exprText)
+        case a: AnalysisException =>
+          // Strip out the context of the DataFrame that was used to analyze the expression.
+          throw a.copy(context = Array.empty)
       }
-      logInfo(s"Checking that $exprText is satisfied for existing data. " +
-        "This will require a full table scan.")
+
+      logInfo(log"Checking that ${MDC(DeltaLogKeys.EXPR, exprText)} " +
+        log"is satisfied for existing data. This will require a full table scan.")
       recordDeltaOperation(
           txn.snapshot.deltaLog,
           "delta.ddl.alter.addConstraint.checkExisting") {
-        val df = txn.snapshot.deltaLog.createDataFrame(txn.snapshot, txn.filterFiles())
-        val n = df.where(new Column(Or(Not(expr), IsUnknown(expr)))).count()
+        val n = df.where(Column(Or(Not(unresolvedExpr), IsUnknown(unresolvedExpr)))).count()
 
         if (n > 0) {
           throw DeltaErrors.newCheckConstraintViolated(n, table.name(), exprText)
@@ -912,3 +1327,76 @@ case class AlterTableDropConstraintDeltaCommand(
   }
 }
 
+/**
+ * Command for altering clustering columns for clustered tables.
+ * - ALTER TABLE .. CLUSTER BY (col1, col2, ...)
+ * - ALTER TABLE .. CLUSTER BY NONE
+ *
+ * Note that the given `clusteringColumns` are empty when CLUSTER BY NONE is specified.
+ * Also, `clusteringColumns` are validated (e.g., duplication / existence check) in
+ * DeltaCatalog.alterTable().
+ */
+case class AlterTableClusterByDeltaCommand(
+    table: DeltaTableV2,
+    clusteringColumns: Seq[Seq[String]])
+  extends LeafRunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
+  override def run(sparkSession: SparkSession): Seq[Row] = {
+    val deltaLog = table.deltaLog
+    ClusteredTableUtils.validateNumClusteringColumns(clusteringColumns, Some(deltaLog))
+    // If the target table is not a clustered table and there are no clustering columns being added
+    // (CLUSTER BY NONE), do not convert the table into a clustered table.
+    val snapshot = table.update()
+    if (clusteringColumns.isEmpty &&
+      !ClusteredTableUtils.isSupported(snapshot.protocol)) {
+      logInfo(log"Skipping ALTER TABLE CLUSTER BY NONE on a non-clustered table: " +
+        log"${MDC(DeltaLogKeys.TABLE_NAME, table.name())}.")
+      recordDeltaEvent(
+        deltaLog,
+        "delta.ddl.alter.clusterBy",
+        data = Map(
+          "isClusterByNoneSkipped" -> true,
+          "isNewClusteredTable" -> false,
+          "oldColumnsCount" -> 0,
+          "newColumnsCount" -> 0))
+      return Seq.empty
+    }
+    recordDeltaOperation(deltaLog, "delta.ddl.alter.clusterBy") {
+      val txn = startTransaction()
+
+      val clusteringColsLogicalNames = ClusteringColumnInfo.extractLogicalNames(txn.snapshot)
+      val oldLogicalClusteringColumnsString = clusteringColsLogicalNames.mkString(",")
+      val oldColumnsCount = clusteringColsLogicalNames.size
+
+      val newLogicalClusteringColumns = clusteringColumns.map(FieldReference(_).toString)
+      ClusteredTableUtils.validateClusteringColumnsInStatsSchema(
+        txn.snapshot, newLogicalClusteringColumns)
+
+      val newDomainMetadata =
+        ClusteredTableUtils
+          .getClusteringDomainMetadataForAlterTableClusterBy(newLogicalClusteringColumns, txn)
+
+      recordDeltaEvent(
+        deltaLog,
+        "delta.ddl.alter.clusterBy",
+        data = Map(
+          "isClusterByNoneSkipped" -> false,
+          "isNewClusteredTable" -> !ClusteredTableUtils.isSupported(txn.protocol),
+          "oldColumnsCount" -> oldColumnsCount, "newColumnsCount" -> clusteringColumns.size))
+      // Add clustered table properties if the current table is not clustered.
+      // [[DeltaCatalog.alterTable]] already ensures that the table is not partitioned.
+      if (!ClusteredTableUtils.isSupported(txn.protocol)) {
+        txn.updateMetadata(
+          txn.metadata.copy(
+            configuration = txn.metadata.configuration ++
+              ClusteredTableUtils.getTableFeatureProperties(txn.metadata.configuration)
+          ))
+      }
+      txn.commit(
+        newDomainMetadata,
+        DeltaOperations.ClusterBy(
+          oldLogicalClusteringColumnsString,
+          newLogicalClusteringColumns.mkString(",")))
+    }
+    Seq.empty[Row]
+  }
+}

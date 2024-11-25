@@ -46,12 +46,12 @@ Depending on the version of the connector you can use it with following Apache F
 
 ### APIs
 
-See the [Java API docs](https://delta-io.github.io/connectors/latest/delta-flink/api/java/index.html) here.
+See the [Java API docs](https://docs.delta.io/latest/api/java/flink/overview-summary.html) here.
 
 ### Known limitations
 
-- For Azure Blob Storage, the current version only supports reading. Writing to Azure Blob Storage is not supported by Flink due to [issue](https://issues.apache.org/jira/browse/FLINK-17444) with class shading
-  and will probably be added along with [Azure Data Lake Store Gen 2 support](https://issues.apache.org/jira/browse/FLINK-18568). 
+- For Azure Blob Storage, the current version only supports reading. Writing to Azure Blob Storage is not supported by Flink due to [issue](https://issues.apache.org/jira/browse/FLINK-17444) with class shading.
+  However, since Flink 1.17 Azure Data Lake Gen2 is supported – see [FLINK-30128](https://issues.apache.org/jira/browse/FLINK-30128).
 - For AWS S3 storage, in order to ensure concurrent transactional writes from different clusters, use [multi-cluster configuration guidelines](https://docs.delta.io/latest/delta-storage.html#multi-cluster-setup). Please see [example](#3-sink-creation-with-multi-cluster-support-for-delta-standalone) for how to use this configuration in Flink Delta Sink. 
 
 ## Delta Sink
@@ -318,6 +318,8 @@ Both Delta Source and Delta Sink can be used as Flink Tables for SELECT and INSE
 Flink/Delta SQL connector **must** be used with Delta Catalog. Trying to execute SQL queries on Delta table
 using Flink API without Delta Catalog configured will cause SQL job to fail.
 
+_For an example of configuring Flink SQL to write to Delta Lake, see [this blog](https://www.decodable.co/blog/adventures-with-apache-flink-and-delta-lake)._
+
 | Feature support                                | Notes                                                                                   |
 |------------------------------------------------|-----------------------------------------------------------------------------------------|
 | [CREATE CATALOG](#delta-catalog-configuration) | A Delta Catalog is required for Delta Flink SQL support.                                |
@@ -475,7 +477,7 @@ USE custom_DB;
 ```
 
 #### CREATE TABLE
-To create non-partitioned table use `CREARTE TABLE` statement:
+To create non-partitioned table use `CREATE TABLE` statement:
 ```sql
 CREATE TABLE testTable (
     id BIGINT,

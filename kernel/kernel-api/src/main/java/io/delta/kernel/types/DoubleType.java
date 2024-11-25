@@ -24,9 +24,9 @@ import io.delta.kernel.annotation.Evolving;
  */
 @Evolving
 public class DoubleType extends BasePrimitiveType {
-    public static final DoubleType INSTANCE = new DoubleType();
+  public static final DoubleType DOUBLE = new DoubleType();
 
-    private DoubleType() {
-        super("double");
-    }
+  private DoubleType() {
+    super("double");
+  }
 }

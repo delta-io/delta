@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta.util
 
 import com.fasterxml.jackson.annotation.JsonInclude.Include
+import com.fasterxml.jackson.core.StreamReadConstraints
 import com.fasterxml.jackson.databind.{DeserializationFeature, ObjectMapper}
 import com.fasterxml.jackson.module.scala.{DefaultScalaModule, ScalaObjectMapper}
 
@@ -28,6 +29,15 @@ object JsonUtils {
     _mapper.setSerializationInclusion(Include.NON_ABSENT)
     _mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
     _mapper.registerModule(DefaultScalaModule)
+
+    // We do not want to limit the length of JSON strings in the Delta log or table data. Also note
+    // that not having a limit was the default behavior before Jackson 2.15.
+    val streamReadConstraints = StreamReadConstraints
+      .builder()
+      .maxStringLength(Int.MaxValue)
+      .build()
+    _mapper.getFactory.setStreamReadConstraints(streamReadConstraints)
+
     _mapper
   }
 

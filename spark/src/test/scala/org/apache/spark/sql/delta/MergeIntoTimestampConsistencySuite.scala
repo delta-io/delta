@@ -28,6 +28,10 @@ import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
 
 class MergeIntoTimestampConsistencySuite extends MergeIntoTimestampConsistencySuiteBase {
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    spark.conf.set(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS.key, "false")
+  }
 }
 
 

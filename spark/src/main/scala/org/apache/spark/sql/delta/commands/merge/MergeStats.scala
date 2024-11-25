@@ -16,7 +16,12 @@
 
 package org.apache.spark.sql.delta.commands.merge
 
+import scala.collection.mutable.ArrayBuffer
+
+import org.apache.spark.sql.delta.NumRecordsStats
+import org.apache.spark.sql.util.ScalaExtensions._
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
+import org.apache.commons.lang3.StringUtils
 
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.plans.logical.{DeltaMergeIntoClause, DeltaMergeIntoMatchedClause, DeltaMergeIntoNotMatchedBySourceClause, DeltaMergeIntoNotMatchedClause}
@@ -46,9 +51,30 @@ case class MergeClauseStats(
 object MergeClauseStats {
   def apply(mergeClause: DeltaMergeIntoClause): MergeClauseStats = {
     MergeClauseStats(
-      condition = mergeClause.condition.map(_.sql),
+      condition = mergeClause.condition.map(c => StringUtils.abbreviate(c.sql, 256)),
       mergeClause.clauseType.toLowerCase(),
-      actionExpr = mergeClause.actions.map(_.sql))
+      actionExpr = truncateSeq(
+        mergeClause.actions.map(a => StringUtils.abbreviate(a.sql, 256)),
+        maxLength = 512)
+    )
+  }
+
+  /**
+   * Truncate a list of items to be serialized to around 'maxLength' characters.
+   * Always include at least on item.
+   */
+  private def truncateSeq(seq: Seq[String], maxLength: Long): Seq[String] = {
+    val buffer = ArrayBuffer.empty[String]
+    var length = 0L
+    for (x <- seq if length + x.length <= maxLength || buffer.isEmpty) {
+      length += x.length + 3 // quotes and comma
+      buffer.append(x)
+    }
+    val numTruncatedItems = seq.length - buffer.length
+    if (numTruncatedItems > 0) {
+      buffer.append("... " + numTruncatedItems + " more fields")
+    }
+    buffer.toSeq
   }
 }
 
@@ -71,6 +97,7 @@ case class MergeStats(
 
     // Timings
     executionTimeMs: Long,
+    materializeSourceTimeMs: Long,
     scanTimeMs: Long,
     rewriteTimeMs: Long,
 
@@ -104,11 +131,21 @@ case class MergeStats(
     targetRowsDeleted: Long,
     targetRowsMatchedDeleted: Long,
     targetRowsNotMatchedBySourceDeleted: Long,
+    numTargetDeletionVectorsAdded: Long,
+    numTargetDeletionVectorsRemoved: Long,
+    numTargetDeletionVectorsUpdated: Long,
 
     // MergeMaterializeSource stats
     materializeSourceReason: Option[String] = None,
     @JsonDeserialize(contentAs = classOf[java.lang.Long])
-    materializeSourceAttempts: Option[Long] = None
+    materializeSourceAttempts: Option[Long] = None,
+
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    numLogicalRecordsAdded: Option[Long],
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    numLogicalRecordsRemoved: Option[Long],
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    commitVersion: Option[Long] = None
 )
 
 object MergeStats {
@@ -119,7 +156,11 @@ object MergeStats {
       matchedClauses: Seq[DeltaMergeIntoMatchedClause],
       notMatchedClauses: Seq[DeltaMergeIntoNotMatchedClause],
       notMatchedBySourceClauses: Seq[DeltaMergeIntoNotMatchedBySourceClause],
-      isPartitioned: Boolean): MergeStats = {
+      isPartitioned: Boolean,
+      performedSecondSourceScan: Boolean,
+      commitVersion: Option[Long],
+      numRecordsStats: NumRecordsStats
+    ): MergeStats = {
 
     def metricValueIfPartitioned(metricName: String): Option[Long] = {
       if (isPartitioned) Some(metrics(metricName).value) else None
@@ -127,7 +168,7 @@ object MergeStats {
 
     MergeStats(
       // Merge condition expression
-      conditionExpr = condition.sql,
+      conditionExpr = StringUtils.abbreviate(condition.sql, 2048),
 
       // Newer expressions used in MERGE with any number of MATCHED/NOT MATCHED/
       // NOT MATCHED BY SOURCE
@@ -137,6 +178,7 @@ object MergeStats {
 
       // Timings
       executionTimeMs = metrics("executionTimeMs").value,
+      materializeSourceTimeMs = metrics("materializeSourceTimeMs").value,
       scanTimeMs = metrics("scanTimeMs").value,
       rewriteTimeMs = metrics("rewriteTimeMs").value,
 
@@ -152,7 +194,7 @@ object MergeStats {
           bytes = Some(metrics("numTargetBytesAfterSkipping").value),
           partitions = metricValueIfPartitioned("numTargetPartitionsAfterSkipping")),
       sourceRowsInSecondScan =
-        metrics.get("numSourceRowsInSecondScan").map(_.value).filter(_ >= 0),
+        Option.when(performedSecondSourceScan)(metrics("numSourceRowsInSecondScan").value),
 
       // Data change sizes
       targetFilesAdded = metrics("numTargetFilesAdded").value,
@@ -171,6 +213,15 @@ object MergeStats {
       targetRowsDeleted = metrics("numTargetRowsDeleted").value,
       targetRowsMatchedDeleted = metrics("numTargetRowsMatchedDeleted").value,
       targetRowsNotMatchedBySourceDeleted = metrics("numTargetRowsNotMatchedBySourceDeleted").value,
+
+      // Deletion Vector metrics.
+      numTargetDeletionVectorsAdded = metrics("numTargetDeletionVectorsAdded").value,
+      numTargetDeletionVectorsRemoved = metrics("numTargetDeletionVectorsRemoved").value,
+      numTargetDeletionVectorsUpdated = metrics("numTargetDeletionVectorsUpdated").value,
+
+      commitVersion = commitVersion,
+      numLogicalRecordsAdded = numRecordsStats.numLogicalRecordsAdded,
+      numLogicalRecordsRemoved = numRecordsStats.numLogicalRecordsRemoved,
 
       // Deprecated fields
       updateConditionExpr = null,

@@ -32,7 +32,7 @@ import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.DeltaCommand
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
-import org.apache.spark.sql.delta.schema.SchemaUtils.transformColumnsStructs
+import org.apache.spark.sql.delta.schema.SchemaUtils.transformSchema
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeltaStatistics._
 import org.apache.spark.sql.delta.stats.StatisticsCollection.getIndexedColumns
@@ -40,6 +40,7 @@ import org.apache.spark.sql.util.ScalaExtensions._
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.parser.{AbstractSqlParser, AstBuilder, ParseException, ParserUtils}
 import org.apache.spark.sql.catalyst.parser.SqlBaseParser.MultipartIdentifierListContext
@@ -200,26 +201,29 @@ trait StatisticsCollection extends DeltaLogging {
     val logicalNumRecordsCol = physicalNumRecordsCol - dvCardinalityCol
     val nullCountCol = col(s"$statsColName.$NULL_COUNT")
     val tightBoundsCol = col(s"$statsColName.$TIGHT_BOUNDS")
+    val statsSchema = withStats.schema.apply(statsColName).dataType.asInstanceOf[StructType]
 
-    // Use the schema of the existing stats column. We only want to modify the existing
-    // nullCount stats. Note, when the column mapping mode is enabled, the schema uses
-    // the physical column names, not the logical names.
-    val nullCountSchema = withStats.schema
-      .apply(statsColName).dataType.asInstanceOf[StructType]
-      .apply(NULL_COUNT).dataType.asInstanceOf[StructType]
+    val allStatCols = ALL_STAT_FIELDS.flatMap {
+      case TIGHT_BOUNDS => Some(lit(false).as(TIGHT_BOUNDS))
+      case NULL_COUNT if statsSchema.names.contains(NULL_COUNT) =>
+        // Use the schema of the existing stats column. We only want to modify the existing
+        // nullCount stats. Note, when the column mapping mode is enabled, the schema uses
+        // the physical column names, not the logical names.
+        val nullCountSchema = statsSchema
+          .apply(NULL_COUNT).dataType.asInstanceOf[StructType]
 
-    // When bounds are tight and we are about to transition to wide, store the physical null count
-    // for ALL_NULLs columns.
-    val nullCountColSeq = applyFuncToStatisticsColumn(nullCountSchema, nullCountCol) {
-      case (c, _) =>
-        val allNullTightBounds = tightBoundsCol && (c === logicalNumRecordsCol)
-        Some(when(allNullTightBounds, physicalNumRecordsCol).otherwise(c))
-    }
-
-    val allStatCols = ALL_STAT_FIELDS.map {
-      case f if f == TIGHT_BOUNDS => lit(false).as(TIGHT_BOUNDS)
-      case f if f == NULL_COUNT => struct(nullCountColSeq: _*).as(NULL_COUNT)
-      case f => col(s"${statsColName}.${f}")
+        // When bounds are tight and we are about to transition to wide, store the physical null
+        // count for ALL_NULLs columns.
+        val nullCountColSeq = applyFuncToStatisticsColumn(nullCountSchema, nullCountCol) {
+          case (c, _) =>
+            val allNullTightBounds = tightBoundsCol && (c === logicalNumRecordsCol)
+            Some(when(allNullTightBounds, physicalNumRecordsCol).otherwise(c))
+        }
+        Some(struct(nullCountColSeq: _*).as(NULL_COUNT))
+      case f if statsSchema.names.contains(f) => Some(col(s"${statsColName}.${f}"))
+      case _ =>
+        // This stat is not present in the original stats schema, so we should not include it.
+        None
     }
 
     // This may be very expensive because it is rewriting JSON.
@@ -273,7 +277,7 @@ trait StatisticsCollection extends DeltaLogging {
         case (_, _, false) => count(new Column("*"))
       }) ++ tightBoundsColOpt
 
-    struct(statCols: _*).as('stats)
+    struct(statCols: _*).as("stats")
   }
 
 
@@ -355,7 +359,7 @@ trait StatisticsCollection extends DeltaLogging {
       schema.flatMap {
         case f @ StructField(name, s: StructType, _, _) =>
           val column = parent.map(_.getItem(name))
-            .getOrElse(new Column(UnresolvedAttribute.quoted(name)))
+            .getOrElse(Column(UnresolvedAttribute.quoted(name)))
           val stats = collectStats(s, Some(column), parentFields :+ name, function)
           if (stats.nonEmpty) {
             Some(struct(stats: _*) as DeltaColumnMapping.getPhysicalName(f))
@@ -365,7 +369,7 @@ trait StatisticsCollection extends DeltaLogging {
         case f @ StructField(name, _, _, _) =>
           val fieldPath = UnresolvedAttribute(parentFields :+ name).name
           val column = parent.map(_.getItem(name))
-            .getOrElse(new Column(UnresolvedAttribute.quoted(name)))
+            .getOrElse(Column(UnresolvedAttribute.quoted(name)))
           // alias the column with its physical name
           // Note: explodedDataSchemaNames comes from dataSchema. In the read path, dataSchema comes
           // from the table's metadata.dataSchema, which is the same as tableSchema. In the
@@ -400,6 +404,11 @@ case class DeltaStatsColumnSpec(
 }
 
 object StatisticsCollection extends DeltaCommand {
+
+  val ASCII_MAX_CHARACTER = '\u007F'
+
+  val UTF8_MAX_CHARACTER = new String(Character.toChars(Character.MAX_CODE_POINT))
+
   /**
    * The SQL grammar already includes a `multipartIdentifierList` rule for parsing a string into a
    * list of multi-part identifiers. We just expose it here, with a custom parser and AstBuilder.
@@ -489,12 +498,12 @@ object StatisticsCollection extends DeltaCommand {
         SchemaUtils.findColumnPosition(columnFullPath, schema)
         // Delta statistics columns must be data skipping type.
         val (prefixPath, columnName) = columnFullPath.splitAt(columnFullPath.size - 1)
-        transformColumnsStructs(schema, Some(columnName.head)) {
+        transformSchema(schema, Some(columnName.head)) {
           case (`prefixPath`, struct @ StructType(_), _) =>
             val columnField = struct(columnName.head)
             validateDataSkippingType(columnAttribute.name, columnField.dataType, visitedColumns)
             struct
-          case (_, s: StructType, _) => s
+          case (_, other, _) => other
         }
       }
     }
@@ -627,12 +636,23 @@ object StatisticsCollection extends DeltaCommand {
     // Find the unique column names at this nesting depth, each with its path remainders (if any)
     val cols = statsColPaths.groupBy(_.head).mapValues(_.map(_.tail))
     val newSchema = schema.flatMap { field =>
-      cols.get(field.name).flatMap { paths =>
+      val lowerCaseFieldName = field.name.toLowerCase(Locale.ROOT)
+      cols.get(lowerCaseFieldName).flatMap { paths =>
         field.dataType match {
           case _ if paths.forall(_.isEmpty) =>
-            val fullPath = (parentPath:+ field.name).mkString(".")
+            // Convert full path to lower cases to avoid schema name contains upper case
+            // characters.
+            val fullPath = (parentPath :+ field.name).mkString(".").toLowerCase(Locale.ROOT)
             Some(convertToPhysicalName(fullPath, field, schemaNames, mappingMode))
           case fieldSchema: StructType =>
+            // Convert full path to lower cases to avoid schema name contains upper case
+            // characters.
+            val fullPath = (parentPath :+ field.name).mkString(".").toLowerCase(Locale.ROOT)
+            val physicalName = if (mappingMode == NoMapping || schemaNames.contains(fullPath)) {
+              field.name
+            } else {
+              field.metadata.getString(COLUMN_MAPPING_PHYSICAL_NAME_KEY)
+            }
             // Recurse into the child fields of this struct.
             val newSchema = filterSchema(
               schemaNames,
@@ -641,7 +661,7 @@ object StatisticsCollection extends DeltaCommand {
               mappingMode,
               parentPath:+ field.name
             )
-            Some(field.copy(dataType = newSchema))
+            Some(field.copy(name = physicalName, dataType = newSchema))
           case _ =>
             // Filter expected a nested field and this isn't nested. No match
             None
@@ -663,7 +683,9 @@ object StatisticsCollection extends DeltaCommand {
       mappingMode: DeltaColumnMappingMode): StructType = {
     spec.deltaStatsColumnNamesOpt
       .map { indexedColNames =>
-        val indexedColPaths = indexedColNames.map(_.nameParts)
+        // convert all index columns to lower case characters to avoid user assigning any upper
+        // case characters.
+        val indexedColPaths = indexedColNames.map(_.nameParts.map(_.toLowerCase(Locale.ROOT)))
         filterSchema(schemaNames, schema, indexedColPaths, mappingMode)
       }
       .getOrElse {
@@ -741,9 +763,10 @@ object StatisticsCollection extends DeltaCommand {
   def recompute(
       spark: SparkSession,
       deltaLog: DeltaLog,
+      catalogTable: Option[CatalogTable],
       predicates: Seq[Expression] = Seq(Literal(true)),
       fileFilter: AddFile => Boolean = af => true): Unit = {
-    val txn = deltaLog.startTransaction()
+    val txn = deltaLog.startTransaction(catalogTable)
     verifyPartitionPredicates(spark, txn.metadata.partitionColumns, predicates)
     // Save the current AddFiles that match the predicates so we can update their stats
     val files = txn.filterFiles(predicates).filter(fileFilter)
@@ -751,22 +774,69 @@ object StatisticsCollection extends DeltaCommand {
     txn.commit(newAddFiles, ComputeStats(predicates))
   }
 
-  /**
-   * Helper method to truncate the input string `x` to the given `prefixLen` length, while also
-   * appending the unicode max character to the end of the truncated string. This ensures that any
-   * value in this column is less than or equal to the max.
-   */
-  def truncateMaxStringAgg(prefixLen: Int)(x: String): String = {
-    if (x == null || x.length <= prefixLen) {
-      x
+  def truncateMinStringAgg(prefixLen: Int)(input: String): String = {
+    if (input == null || input.length <= prefixLen) {
+      return input
+    }
+    if (prefixLen <= 0) {
+      return null
+    }
+    if (Character.isHighSurrogate(input.charAt(prefixLen - 1)) &&
+        Character.isLowSurrogate(input.charAt(prefixLen))) {
+      // If the character at prefixLen - 1 is a high surrogate and the next character is a low
+      // surrogate, we need to include the next character in the prefix to ensure that we don't
+      // truncate the string in the middle of a surrogate pair.
+      input.take(prefixLen + 1)
     } else {
-      // Grab the prefix. We want to append `\ufffd` as a tie-breaker, but that is only safe
-      // if the character we truncated was smaller. Keep extending the prefix until that
-      // condition holds, or we run off the end of the string.
-      // scalastyle:off nonascii
-      val tieBreaker = '\ufffd'
-      x.take(prefixLen) + x.substring(prefixLen).takeWhile(_ >= tieBreaker) + tieBreaker
-      // scalastyle:off nonascii
+      input.take(prefixLen)
     }
   }
+
+  /**
+   * Helper method to truncate the input string `input` to the given `prefixLen` length, while also
+   * ensuring the any value in this column is less than or equal to the truncated max in UTF-8
+   * encoding.
+   */
+  def truncateMaxStringAgg(prefixLen: Int)(originalMax: String): String = {
+    // scalastyle:off nonascii
+    if (originalMax == null || originalMax.length <= prefixLen) {
+      return originalMax
+    }
+    if (prefixLen <= 0) {
+      return null
+    }
+
+    // Grab the prefix. We want to append max Unicode code point `\uDBFF\uDFFF` as a tie-breaker,
+    // but that is only safe if the character we truncated was smaller in UTF-8 encoded binary
+    // comparison. Keep extending the prefix until that condition holds, or we run off the end of
+    // the string.
+    // We also try to use the ASCII max character `\u007F` as a tie-breaker if possible.
+    val maxLen = getExpansionLimit(prefixLen)
+    // Start with a valid prefix
+    var currLen = truncateMinStringAgg(prefixLen)(originalMax).length
+    while (currLen <= maxLen) {
+      if (currLen >= originalMax.length) {
+        // Return originalMax if we have reached the end of the string
+        return originalMax
+      } else if (currLen + 1 < originalMax.length &&
+          originalMax.substring(currLen, currLen + 2) == UTF8_MAX_CHARACTER) {
+        // Skip the UTF-8 max character. It occupies two characters in a Scala string.
+        currLen += 2
+      } else if (originalMax.charAt(currLen) < ASCII_MAX_CHARACTER) {
+        return originalMax.take(currLen) + ASCII_MAX_CHARACTER
+      } else {
+        return originalMax.take(currLen) + UTF8_MAX_CHARACTER
+      }
+    }
+
+    // Return null when the input string is too long to truncate.
+    null
+    // scalastyle:on nonascii
+  }
+
+  /**
+   * Calculates the upper character limit when constructing a maximum is not possible with only
+   * prefixLen chars.
+   */
+  private def getExpansionLimit(prefixLen: Int): Int = 2 * prefixLen
 }

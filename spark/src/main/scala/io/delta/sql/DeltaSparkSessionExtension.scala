@@ -16,12 +16,18 @@
 
 package io.delta.sql
 
+import scala.util.control.NonFatal
+
 import org.apache.spark.sql.delta.optimizer.RangePartitionIdRewrite
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.PrepareDeltaScan
 import io.delta.sql.parser.DeltaSqlParser
 
 import org.apache.spark.sql.SparkSessionExtensions
+import org.apache.spark.sql.catalyst.optimizer.ConstantFolding
+import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.delta.PreprocessTimeTravel
 import org.apache.spark.sql.internal.SQLConf
 
@@ -75,14 +81,14 @@ import org.apache.spark.sql.internal.SQLConf
  */
 class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
   override def apply(extensions: SparkSessionExtensions): Unit = {
-    extensions.injectParser { (session, parser) =>
+    extensions.injectParser { (_, parser) =>
       new DeltaSqlParser(parser)
     }
     extensions.injectResolutionRule { session =>
       ResolveDeltaPathTable(session)
     }
     extensions.injectResolutionRule { session =>
-      new PreprocessTimeTravel(session)
+      PreprocessTimeTravel(session)
     }
     extensions.injectResolutionRule { session =>
       // To ensure the parquet field id reader is turned on, these fields are required to support
@@ -92,8 +98,13 @@ class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
       session.sessionState.conf.setConf(SQLConf.PARQUET_FIELD_ID_WRITE_ENABLED, true)
       new DeltaAnalysis(session)
     }
+    // [SPARK-45383] Spark CheckAnalysis rule misses a case for RelationTimeTravel, and so a
+    // non-existent table throws an internal spark error instead of the expected AnalysisException.
     extensions.injectCheckRule { session =>
-      new DeltaUnsupportedOperationsCheck(session)
+      new CheckUnresolvedRelationTimeTravel(session)
+    }
+    extensions.injectCheckRule { session =>
+      DeltaUnsupportedOperationsCheck(session)
     }
     // Rule for rewriting the place holder for range_partition_id to manually construct the
     // `RangePartitioner` (which requires an RDD to be sampled in order to determine
@@ -102,29 +113,73 @@ class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
       new RangePartitionIdRewrite(session)
     }
     extensions.injectPostHocResolutionRule { session =>
-      new PreprocessTableUpdate(session.sessionState.conf)
+      PreprocessTableUpdate(session.sessionState.conf)
     }
     extensions.injectPostHocResolutionRule { session =>
-      new PreprocessTableMerge(session.sessionState.conf)
+      PreprocessTableMerge(session.sessionState.conf)
     }
     extensions.injectPostHocResolutionRule { session =>
-      new PreprocessTableDelete(session.sessionState.conf)
+      PreprocessTableDelete(session.sessionState.conf)
     }
     // Resolve new UpCast expressions that might have been introduced by [[PreprocessTableUpdate]]
     // and [[PreprocessTableMerge]].
     extensions.injectPostHocResolutionRule { session =>
       PostHocResolveUpCast(session)
     }
-    // We don't use `injectOptimizerRule` here as we won't want to apply further optimizations after
-    // `PrepareDeltaScan`.
-    // For example, `ConstantFolding` will break unit tests in `OptimizeGeneratedColumnSuite`.
+
+    extensions.injectPlanNormalizationRule { _ => GenerateRowIDs }
+
     extensions.injectPreCBORule { session =>
       new PrepareDeltaScan(session)
+    }
+    // Fold constants that may have been introduced by PrepareDeltaScan. This is only useful with
+    // Spark 3.5 as later versions apply constant folding after pre-CBO rules.
+    extensions.injectPreCBORule { _ => ConstantFolding }
+
+    // Add skip row column and filter.
+    extensions.injectPlannerStrategy(PreprocessTableWithDVsStrategy)
+
+    // Tries to load PrepareDeltaSharingScan class with class reflection, when delta-sharing-spark
+    // 3.1+ package is installed, this will be loaded and delta sharing batch queries with
+    // DeltaSharingFileIndex will be handled by the rule.
+    // When the package is not installed or upon any other issues, it should do nothing and not
+    // affect all the existing rules.
+    try {
+      // scalastyle:off classforname
+      val constructor = Class.forName("io.delta.sharing.spark.PrepareDeltaSharingScan")
+        .getConstructor(classOf[org.apache.spark.sql.SparkSession])
+      // scalastyle:on classforname
+      extensions.injectPreCBORule { session =>
+        try {
+          // Inject the PrepareDeltaSharingScan rule if enabled, otherwise, inject the no op
+          // rule. It can be disabled if there are any issues so all existing rules are not blocked.
+          if (
+            session.conf.get(DeltaSQLConf.DELTA_SHARING_ENABLE_DELTA_FORMAT_BATCH.key) == "true"
+          ) {
+            constructor.newInstance(session).asInstanceOf[Rule[LogicalPlan]]
+          } else {
+            new NoOpRule
+          }
+        } catch {
+          // Inject a no op rule which doesn't apply any changes to the logical plan.
+          case NonFatal(_) => new NoOpRule
+        }
+      }
+    } catch {
+      case NonFatal(_) => // Do nothing
     }
 
     DeltaTableValueFunctions.supportedFnNames.foreach { fnName =>
       extensions.injectTableFunction(
         DeltaTableValueFunctions.getTableValueFunctionInjection(fnName))
     }
+  }
+
+  /**
+   * An no op rule which doesn't apply any changes to the LogicalPlan. Used to be injected upon
+   * exceptions.
+   */
+  class NoOpRule extends Rule[LogicalPlan] {
+    override def apply(plan: LogicalPlan): LogicalPlan = plan
   }
 }

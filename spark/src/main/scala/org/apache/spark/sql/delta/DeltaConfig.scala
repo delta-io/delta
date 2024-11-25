@@ -18,10 +18,14 @@ package org.apache.spark.sql.delta
 
 import java.util.{HashMap, Locale}
 
+import scala.collection.JavaConverters._
+
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.hooks.AutoCompactType
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.{DataSkippingReader, StatisticsCollection}
+import org.apache.spark.sql.delta.util.JsonUtils
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.util.{DateTimeConstants, IntervalUtils}
@@ -80,6 +84,11 @@ case class DeltaConfig[T](
  * Contains list of reservoir configs and validation checks.
  */
 trait DeltaConfigsBase extends DeltaLogging {
+
+  // Special properties stored in the Hive MetaStore that specifies which version last updated
+  // the entry in the MetaStore with the latest schema and table property information
+  val METASTORE_LAST_UPDATE_VERSION = "delta.lastUpdateVersion"
+  val METASTORE_LAST_COMMIT_TIMESTAMP = "delta.lastCommitTimestamp"
 
   /**
    * Convert a string to [[CalendarInterval]]. This method is case-insensitive and will throw
@@ -169,6 +178,9 @@ trait DeltaConfigsBase extends DeltaLogging {
         case lKey if lKey.startsWith("delta.") =>
           Option(entries.get(lKey.stripPrefix("delta."))) match {
             case Some(deltaConfig) => deltaConfig(value) // validate the value
+            case None if lKey.startsWith(DELTA_UNIVERSAL_FORMAT_CONFIG_PREFIX) =>
+              // always allow any delta universal format config with key converted to lower case
+              lKey -> value
             case None if allowArbitraryProperties =>
               logConsole(
                 s"You are setting a property: $key that is not recognized by this " +
@@ -207,7 +219,6 @@ trait DeltaConfigsBase extends DeltaLogging {
       sqlConfs: SQLConf,
       tableConf: Map[String, String],
       ignoreProtocolConfsOpt: Option[Boolean] = None): Map[String, String] = {
-    import scala.collection.JavaConverters._
 
     val ignoreProtocolConfs =
       ignoreProtocolConfsOpt.getOrElse(ignoreProtocolDefaultsIsSet(sqlConfs, tableConf))
@@ -307,6 +318,13 @@ trait DeltaConfigsBase extends DeltaLogging {
   }
 
   /**
+   * Return all Delta configurations, including both set and unset ones.
+   */
+  def getAllConfigs: Map[String, DeltaConfig[_]] = {
+    entries.asScala.toMap
+  }
+
+  /**
    * The protocol reader version modelled as a table property. This property is *not* stored as
    * a table property in the `Metadata` action. It is stored as its own action. Having it modelled
    * as a table property makes it easier to upgrade, and view the version.
@@ -387,6 +405,52 @@ trait DeltaConfigsBase extends DeltaLogging {
     _.toInt,
     _ > 0,
     "needs to be a positive integer.")
+
+  /**
+   * This is the property that describes the table redirection detail. It is a JSON string format
+   * of the `TableRedirectConfiguration` class, which includes following attributes:
+   * - type(String): The type of redirection.
+   * - state(String): The current state of the redirection:
+   *                  ENABLE-REDIRECT-IN-PROGRESS, REDIRECT-READY, DROP-REDIRECT-IN-PROGRESS.
+   * - spec(JSON String): The specification of accessing redirect destination table. This is free
+   *                      form json object. Each delta service provider can customize its own
+   *                      implementation.
+   */
+  val REDIRECT_READER_WRITER: DeltaConfig[Option[String]] =
+    buildConfig[Option[String]](
+      "redirectReaderWriter-preview",
+      null,
+      v => Option(v),
+      _ => true,
+      "A JSON representation of the TableRedirectConfiguration class, which contains all " +
+        "information of redirect reader writer feature.")
+
+  /**
+   * This table feature is same as REDIRECT_READER_WRITER except it is a writer only table feature.
+   */
+  val REDIRECT_WRITER_ONLY: DeltaConfig[Option[String]] =
+    buildConfig[Option[String]](
+      "redirectWriterOnly-preview",
+      null,
+      v => Option(v),
+      _ => true,
+      "A JSON representation of the TableRedirectConfiguration class, which contains all " +
+        "information of redirect writer only feature.")
+
+  /**
+   * Enable auto compaction for a Delta table. When enabled, we will check if files already
+   * written to a Delta table can leverage compaction after a commit. If so, we run a post-commit
+   * hook to compact the files.
+   *  It can be enabled by setting the property to `true`
+   * Note that the behavior from table property can be overridden by the config:
+   * [[org.apache.spark.sql.delta.sources.DeltaSQLConf.DELTA_AUTO_COMPACT_ENABLED]]
+   */
+  val AUTO_COMPACT = buildConfig[Option[String]](
+    "autoOptimize.autoCompact",
+    null,
+    v => Option(v).map(_.toLowerCase(Locale.ROOT)),
+    v => v.isEmpty || AutoCompactType.ALLOWED_VALUES.contains(v.get),
+      s""""needs to be one of: ${AutoCompactType.ALLOWED_VALUES.mkString(",")}""")
 
   /** Whether to clean up expired checkpoints and delta logs. */
   val ENABLE_EXPIRED_LOG_CLEANUP = buildConfig[Boolean](
@@ -682,6 +746,113 @@ trait DeltaConfigsBase extends DeltaLogging {
     _ => true,
     "needs to be a boolean."
   )
+
+  val ICEBERG_COMPAT_V2_ENABLED = buildConfig[Option[Boolean]](
+    key = "enableIcebergCompatV2",
+    defaultValue = null,
+    fromString = v => Option(v).map(_.toBoolean),
+    validationFunction = _ => true,
+    helpMessage = "needs to be a boolean."
+  )
+
+  /**
+   * Enable optimized writes into a Delta table. Optimized writes adds an adaptive shuffle before
+   * the write to write compacted files into a Delta table during a write.
+   */
+  val OPTIMIZE_WRITE = buildConfig[Option[Boolean]](
+    "autoOptimize.optimizeWrite",
+    null,
+    v => Option(v).map(_.toBoolean),
+    _ => true,
+    "needs to be a boolean."
+  )
+
+  /**
+   * Whether widening the type of an existing column or field is allowed, either manually using
+   * ALTER TABLE CHANGE COLUMN or automatically if automatic schema evolution is enabled.
+   */
+  val ENABLE_TYPE_WIDENING = buildConfig[Boolean](
+    key = "enableTypeWidening",
+    defaultValue = false.toString,
+    fromString = _.toBoolean,
+    validationFunction = _ => true,
+    helpMessage = "needs to be a boolean.")
+
+  val COORDINATED_COMMITS_COORDINATOR_NAME = buildConfig[Option[String]](
+    "coordinatedCommits.commitCoordinator-preview",
+    null,
+    v => Option(v),
+    _ => true,
+    """The commit-coordinator name for this table. This is used to determine which
+      |implementation of commit-coordinator to use when committing to this table. If this property
+      |is not set, the table will be considered as file system table and commits will be done via
+      |atomically publishing the commit file.
+      |""".stripMargin)
+
+  val COORDINATED_COMMITS_COORDINATOR_CONF = buildConfig[Map[String, String]](
+    "coordinatedCommits.commitCoordinatorConf-preview",
+    null,
+    v => JsonUtils.fromJson[Map[String, String]](Option(v).getOrElse("{}")),
+    _ => true,
+    "A string-to-string map of configuration properties for the coordinated commits-coordinator.")
+
+  val COORDINATED_COMMITS_TABLE_CONF = buildConfig[Map[String, String]](
+    "coordinatedCommits.tableConf-preview",
+    null,
+    v => JsonUtils.fromJson[Map[String, String]](Option(v).getOrElse("{}")),
+    _ => true,
+    "A string-to-string map of configuration properties for describing the table to" +
+      " commit-coordinator.")
+
+  val IN_COMMIT_TIMESTAMPS_ENABLED = buildConfig[Boolean](
+    "enableInCommitTimestamps",
+    false.toString,
+    _.toBoolean,
+    validationFunction = _ => true,
+    "needs to be a boolean."
+  )
+
+  /**
+   * This table property is used to track the version of the table at which
+   * inCommitTimestamps were enabled.
+   */
+  val IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION = buildConfig[Option[Long]](
+    "inCommitTimestampEnablementVersion",
+    null,
+    v => Option(v).map(_.toLong),
+    validationFunction = _ => true,
+    "needs to be a long."
+  )
+
+  /**
+   * This table property is used to track the timestamp at which inCommitTimestamps
+   * were enabled. More specifically, it is the inCommitTimestamp of the commit with
+   * the version specified in [[IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION]].
+   */
+  val IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP = buildConfig[Option[Long]](
+    "inCommitTimestampEnablementTimestamp",
+    null,
+    v => Option(v).map(_.toLong),
+    validationFunction = _ => true,
+    "needs to be a long.")
+
+  /**
+   * This property is used by CheckpointProtectionTableFeature and denotes the
+   * version up to which the checkpoints are required to be cleaned up only together with the
+   * corresponding commits. If this is not possible, and metadata cleanup creates a new checkpoint
+   * prior to requireCheckpointProtectionBeforeVersion, it should validate write support against
+   * all protocols included in the commits that are being removed, or else abort. This is needed
+   * to make sure that the writer understands how to correctly create a checkpoint for the
+   * historic commit.
+   *
+   * Note, this is an internal config and should never be manually altered.
+   */
+  val REQUIRE_CHECKPOINT_PROTECTION_BEFORE_VERSION = buildConfig[Long](
+    "requireCheckpointProtectionBeforeVersion",
+    "0",
+    _.toLong,
+    _ >= 0,
+    "needs to be greater or equal to zero.")
 }
 
 object DeltaConfigs extends DeltaConfigsBase

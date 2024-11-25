@@ -15,40 +15,38 @@
  */
 package io.delta.kernel.expressions;
 
-import java.util.Arrays;
-
 import io.delta.kernel.annotation.Evolving;
+import java.util.Arrays;
 
 /**
  * {@code AND} expression
+ *
+ * <p>Definition:
+ *
  * <p>
- * Definition:
- * <p>
+ *
  * <ul>
- *     <li>Logical {@code expr1} AND {@code expr2} on two inputs.</li>
- *     <li>Requires both left and right input expressions of type {@link Predicate}.</li>
- *     <li>Result is null at least one of the inputs is null.</li>
+ *   <li>Logical {@code expr1} AND {@code expr2} on two inputs.
+ *   <li>Requires both left and right input expressions of type {@link Predicate}.
+ *   <li>Result is null when both inputs are null, or when one input is null and the other is {@code
+ *       true}.
  * </ul>
  *
  * @since 3.0.0
  */
 @Evolving
 public final class And extends Predicate {
-    public And(Predicate left, Predicate right) {
-        super("AND", Arrays.asList(left, right));
-    }
+  public And(Predicate left, Predicate right) {
+    super("AND", Arrays.asList(left, right));
+  }
 
-    /**
-     * @return Left side operand.
-     */
-    public Predicate getLeft() {
-        return (Predicate) getChildren().get(0);
-    }
+  /** @return Left side operand. */
+  public Predicate getLeft() {
+    return (Predicate) getChildren().get(0);
+  }
 
-    /**
-     * @return Right side operand.
-     */
-    public Predicate getRight() {
-        return (Predicate) getChildren().get(1);
-    }
+  /** @return Right side operand. */
+  public Predicate getRight() {
+    return (Predicate) getChildren().get(1);
+  }
 }

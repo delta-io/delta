@@ -16,9 +16,15 @@
 package io.delta.kernel.defaults.utils
 
 import scala.collection.JavaConverters._
-
+import org.apache.spark.sql.{types => sparktypes}
+import org.apache.spark.sql.{Row => SparkRow}
 import io.delta.kernel.data.{ArrayValue, ColumnVector, MapValue, Row}
 import io.delta.kernel.types._
+
+import java.sql.Timestamp
+import java.time.ZoneOffset.UTC
+import java.time.temporal.ChronoUnit
+import java.time.{Instant, LocalDate, LocalDateTime, ZoneOffset}
 
 /**
  * Corresponding Scala class for each Kernel data type:
@@ -32,6 +38,7 @@ import io.delta.kernel.types._
  * - StringType --> String
  * - DateType --> int (number of days since the epoch)
  * - TimestampType --> long (number of microseconds since the unix epoch)
+ * - TimestampNTZType --> long (number of microseconds in local time with no timezone)
  * - DecimalType --> java.math.BigDecimal
  * - BinaryType --> Array[Byte]
  * - ArrayType --> Seq[Any]
@@ -92,6 +99,7 @@ object TestRow {
         case _: ShortType => row.getShort(i)
         case _: DateType => row.getInt(i)
         case _: TimestampType => row.getLong(i)
+        case _: TimestampNTZType => row.getLong(i)
         case _: FloatType => row.getFloat(i)
         case _: DoubleType => row.getDouble(i)
         case _: StringType => row.getString(i)
@@ -100,6 +108,71 @@ object TestRow {
         case _: ArrayType => arrayValueToScalaSeq(row.getArray(i))
         case _: MapType => mapValueToScalaMap(row.getMap(i))
         case _: StructType => TestRow(row.getStruct(i))
+        case _ => throw new UnsupportedOperationException("unrecognized data type")
+      }
+    })
+  }
+
+  def apply(row: SparkRow): TestRow = {
+    def decodeCellValue(dataType: sparktypes.DataType, obj: Any): Any = {
+      dataType match {
+        case _ if obj == null => null
+        case _: sparktypes.BooleanType => obj.asInstanceOf[Boolean]
+        case _: sparktypes.ByteType => obj.asInstanceOf[Byte]
+        case _: sparktypes.IntegerType => obj.asInstanceOf[Int]
+        case _: sparktypes.LongType => obj.asInstanceOf[Long]
+        case _: sparktypes.ShortType => obj.asInstanceOf[Short]
+        case _: sparktypes.DateType => LocalDate.ofEpochDay(obj.asInstanceOf[Int])
+        case _: sparktypes.TimestampType =>
+          ChronoUnit.MICROS.between(Instant.EPOCH, obj.asInstanceOf[Timestamp].toInstant)
+        case _: sparktypes.TimestampNTZType =>
+          ChronoUnit.MICROS.between(Instant.EPOCH, obj.asInstanceOf[LocalDateTime].toInstant(UTC))
+        case _: sparktypes.FloatType => obj.asInstanceOf[Float]
+        case _: sparktypes.DoubleType => obj.asInstanceOf[Double]
+        case _: sparktypes.StringType => obj.asInstanceOf[String]
+        case _: sparktypes.BinaryType => obj.asInstanceOf[Array[Byte]]
+        case _: sparktypes.DecimalType => obj.asInstanceOf[java.math.BigDecimal]
+        case arrayType: sparktypes.ArrayType =>
+          obj.asInstanceOf[Seq[Any]]
+            .map(decodeCellValue(arrayType.elementType, _))
+        case mapType: sparktypes.MapType => obj.asInstanceOf[Map[Any, Any]].map {
+          case (k, v) =>
+            decodeCellValue(mapType.keyType, k) -> decodeCellValue(mapType.valueType, v)
+        }
+        case _: sparktypes.StructType => TestRow(obj.asInstanceOf[SparkRow])
+        case _ => throw new UnsupportedOperationException("unrecognized data type")
+      }
+    }
+
+    TestRow.fromSeq(row.schema.fields.zipWithIndex.map { case (field, i) =>
+      field.dataType match {
+        case _ if row.isNullAt(i) => null
+        case _: sparktypes.BooleanType => row.getBoolean(i)
+        case _: sparktypes.ByteType => row.getByte(i)
+        case _: sparktypes.IntegerType => row.getInt(i)
+        case _: sparktypes.LongType => row.getLong(i)
+        case _: sparktypes.ShortType => row.getShort(i)
+        case _: sparktypes.DateType => row.getDate(i).toLocalDate.toEpochDay.toInt
+        case _: sparktypes.TimestampType =>
+          ChronoUnit.MICROS.between(Instant.EPOCH, row.getTimestamp(i).toInstant)
+        case _: sparktypes.TimestampNTZType =>
+          ChronoUnit.MICROS.between(Instant.EPOCH, row.getAs[LocalDateTime](i).toInstant(UTC))
+        case _: sparktypes.FloatType => row.getFloat(i)
+        case _: sparktypes.DoubleType => row.getDouble(i)
+        case _: sparktypes.StringType => row.getString(i)
+        case _: sparktypes.BinaryType => row(i) // return as byte[], there is no getBinary method
+        case _: sparktypes.DecimalType => row.getDecimal(i)
+        case arrayType: sparktypes.ArrayType =>
+          val arrayValue = row.getSeq[Any](i)
+          arrayValue.indices.map { i =>
+            decodeCellValue(arrayType.elementType, arrayValue(i));
+          }
+        case mapType: sparktypes.MapType =>
+          val mapValue = row.getMap[Any, Any](i)
+          mapValue.map { case (k, v) =>
+            decodeCellValue(mapType.keyType, k) -> decodeCellValue(mapType.valueType, v)
+          }
+        case _: sparktypes.StructType => TestRow(row.getStruct(i))
         case _ => throw new UnsupportedOperationException("unrecognized data type")
       }
     })
@@ -119,6 +192,7 @@ object TestRow {
       case _: ShortType => vector.getShort(rowId)
       case _: DateType => vector.getInt(rowId)
       case _: TimestampType => vector.getLong(rowId)
+      case _: TimestampNTZType => vector.getLong(rowId)
       case _: FloatType => vector.getFloat(rowId)
       case _: DoubleType => vector.getDouble(rowId)
       case _: StringType => vector.getString(rowId)
@@ -126,7 +200,10 @@ object TestRow {
       case _: DecimalType => vector.getDecimal(rowId)
       case _: ArrayType => arrayValueToScalaSeq(vector.getArray(rowId))
       case _: MapType => mapValueToScalaMap(vector.getMap(rowId))
-       case _: StructType => TestRow(vector.getStruct(rowId))
+      case dataType: StructType =>
+        TestRow.fromSeq(Seq.range(0, dataType.length()).map { ordinal =>
+          getAsTestObject(vector.getChild(ordinal), rowId)
+        })
       case _ => throw new UnsupportedOperationException("unrecognized data type")
     }
   }

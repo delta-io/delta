@@ -45,8 +45,11 @@ object Unidoc {
   implicit class UnidocHelper(val projectToUpdate: Project) {
     def configureUnidoc(
       docTitle: String = null,
-      generateScalaDoc: Boolean = false
+      generatedJavaDoc: Boolean = true,
+      generateScalaDoc: Boolean = false,
+      classPathToSkip: String = null
     ): Project = {
+      if (!generatedJavaDoc && !generateScalaDoc) return projectToUpdate
 
       var updatedProject: Project = projectToUpdate
       if (generateScalaDoc) {
@@ -63,7 +66,7 @@ object Unidoc {
               "com.typesafe.genjavadoc" %% "genjavadoc-plugin" % "0.18" cross CrossVersion.full)
           ),
 
-          generateUnidocSettings(docTitle, generateScalaDoc),
+          generateUnidocSettings(docTitle, generateScalaDoc, classPathToSkip),
 
           // Ensure unidoc is run with tests.
           (Test / test) := ((Test / test) dependsOn (Compile / unidoc)).value
@@ -72,7 +75,8 @@ object Unidoc {
 
     private def generateUnidocSettings(
         customDocTitle: String,
-        generateScalaDoc: Boolean): Def.SettingsDefinition = {
+        generateScalaDoc: Boolean,
+        classPathToSkip : String): Def.SettingsDefinition = {
 
       val internalFilePattern = Seq("/internal/", "/execution/", "$")
 
@@ -121,7 +125,6 @@ object Unidoc {
           "-noqualifier", "java.lang",
           "-tag", "implNote:a:Implementation Note:",
           "-tag", "apiNote:a:API Note:",
-          "-tag", "return:X",
           "-Xdoclint:none"
         ),
 
@@ -153,6 +156,12 @@ object Unidoc {
             sourceFilePatternsToKeep = unidocSourceFilePatterns.value
           )
         },
+
+        ScalaUnidoc / unidoc / fullClasspath := {
+          (ScalaUnidoc / unidoc / fullClasspath).value
+            .filter(f =>
+              classPathToSkip == null || !f.data.getCanonicalPath.contains(classPathToSkip))
+        }
       ) else Nil
 
       javaUnidocSettings ++ scalaUnidocSettings

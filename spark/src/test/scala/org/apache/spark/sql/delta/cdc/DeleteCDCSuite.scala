@@ -51,19 +51,15 @@ class DeleteCDCSuite extends DeleteSQLSuite {
 
           executeDelete(s"delta.`$path`", deleteCondition)
 
-          val log = DeltaLog.forTable(spark, dir)
-          val version = log.snapshot.version
-
           checkAnswer(
             spark.read.format("delta").load(path),
             expectedData.toDF())
 
-          val expectedChangeData = expectedChangeDataWithoutVersion
-            .withColumn(CDCReader.CDC_COMMIT_VERSION, lit(version))
-          // The timestamp is nondeterministic so we drop it when comparing results.
           checkAnswer(
-            CDCReader.changesToBatchDF(log, version, version, spark).drop(CDC_COMMIT_TIMESTAMP),
-            expectedChangeData)
+            getCDCForLatestOperation(
+              deltaLog = DeltaLog.forTable(spark, dir),
+              operation = "DELETE"),
+            expectedChangeDataWithoutVersion.toDF())
         }
       }
     }

@@ -82,7 +82,7 @@ class DeltaThrowableSuite extends SparkFunSuite {
     checkCondition(errorClasses ++ errorMsgs, s => !s.toLowerCase().contains("databricks"))
   }
 
-  test("Delta error classes are correctly formatted") {
+  test("Delta error classes are correctly formatted with keys in alphabetical order") {
     lazy val ossDeltaErrorFile = new File(getWorkspaceFilePath(
       "delta", "core", "src", "main", "resources", "error").toFile,
       "delta-error-classes.json")

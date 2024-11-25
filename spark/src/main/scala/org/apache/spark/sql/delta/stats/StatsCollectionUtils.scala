@@ -18,15 +18,18 @@ package org.apache.spark.sql.delta.stats
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable
+import scala.concurrent.duration.Duration
 import scala.language.existentials
 import scala.util.control.NonFatal
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaColumnMappingMode, DeltaErrors, IdMapping, NameMapping, NoMapping}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaColumnMappingMode, DeltaErrors, DeltaLog, IdMapping, NameMapping, NoMapping, Snapshot}
 import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeltaStatistics._
 import org.apache.spark.sql.delta.util.{DeltaFileOperations, JsonUtils}
+import org.apache.spark.sql.delta.util.threads.DeltaThreadPool
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.FileSystem
 import org.apache.hadoop.fs.Path
@@ -36,7 +39,7 @@ import org.apache.parquet.io.api.Binary
 import org.apache.parquet.schema.LogicalTypeAnnotation._
 import org.apache.parquet.schema.PrimitiveType
 
-import org.apache.spark.internal.Logging
+import org.apache.spark.internal.{LoggingShims, MDC}
 import org.apache.spark.sql.{Dataset, SparkSession}
 import org.apache.spark.sql.catalyst.util.DateTimeUtils
 import org.apache.spark.sql.execution.datasources.DataSourceUtils
@@ -46,18 +49,19 @@ import org.apache.spark.util.SerializableConfiguration
 
 
 object StatsCollectionUtils
-  extends Logging
+  extends LoggingShims
 {
 
-  /** A helper function to compute stats of addFiles using StatsCollector.
+  /**
+   * A helper function to compute stats of addFiles using StatsCollector.
    *
    * @param spark The SparkSession used to process data.
    * @param conf The Hadoop configuration used to access file system.
-   * @param dataPath The data path of table, to which these AddFile(s) belong.
+   * @param deltaLog The delta log of table, to which these AddFile(s) belong.
+   * @param snapshot The snapshot of the table used to derive table schema information. We do not
+   *                 derive it from deltaLog because a snapshot may not exist yet.
    * @param addFiles The list of target AddFile(s) to be processed.
-   * @param columnMappingMode The column mapping mode of table.
-   * @param dataSchema The data schema of table.
-   * @param statsSchema The stats schema to be collected.
+   * @param numFilesOpt The number of AddFile(s) to process if known. Speeds up the query.
    * @param ignoreMissingStats Whether to ignore missing stats during computation.
    * @param setBoundsToWide Whether to set bounds to wide independently of whether or not
    *                        the files have DVs.
@@ -68,15 +72,20 @@ object StatsCollectionUtils
   def computeStats(
       spark: SparkSession,
       conf: Configuration,
-      dataPath: Path,
+      deltaLog: DeltaLog,
+      snapshot: Snapshot,
       addFiles: Dataset[AddFile],
-      columnMappingMode: DeltaColumnMappingMode,
-      dataSchema: StructType,
-      statsSchema: StructType,
+      numFilesOpt: Option[Long],
       ignoreMissingStats: Boolean = true,
       setBoundsToWide: Boolean = false): Dataset[AddFile] = {
 
-    import org.apache.spark.sql.delta.implicits._
+    val useMultiThreadedStatsCollection = spark.sessionState.conf.getConf(
+      DeltaSQLConf.DELTA_USE_MULTI_THREADED_STATS_COLLECTION)
+    val preparedAddFiles = if (useMultiThreadedStatsCollection) {
+      prepareRDDForMultiThreadedStatsCollection(spark, addFiles, numFilesOpt)
+    } else {
+      addFiles
+    }
 
     val parquetRebaseMode =
       spark.sessionState.conf.getConf(SQLConf.PARQUET_REBASE_MODE_IN_READ)
@@ -84,24 +93,72 @@ object StatsCollectionUtils
     val stringTruncateLength =
       spark.sessionState.conf.getConf(DeltaSQLConf.DATA_SKIPPING_STRING_PREFIX_LENGTH)
 
-    val statsCollector = StatsCollector(columnMappingMode, dataSchema, statsSchema,
-      parquetRebaseMode, ignoreMissingStats, Some(stringTruncateLength))
+    val statsCollector = StatsCollector(
+      snapshot.columnMappingMode,
+      snapshot.dataSchema,
+      snapshot.statsSchema,
+      parquetRebaseMode,
+      ignoreMissingStats,
+      Some(stringTruncateLength))
 
     val serializableConf = new SerializableConfiguration(conf)
     val broadcastConf = spark.sparkContext.broadcast(serializableConf)
 
-    val dataRootDir = dataPath.toString
-    addFiles.mapPartitions { addFileIter =>
+    val dataRootDir = deltaLog.dataPath.toString
+
+    import org.apache.spark.sql.delta.implicits._
+    preparedAddFiles.mapPartitions { addFileIter =>
       val defaultFileSystem = new Path(dataRootDir).getFileSystem(broadcastConf.value.value)
-      addFileIter.map { addFile =>
-        computeStatsForFile(
-          addFile,
-          dataRootDir,
-          defaultFileSystem,
-          broadcastConf.value,
-          setBoundsToWide,
-          statsCollector)
+      if (useMultiThreadedStatsCollection) {
+        ParallelFetchPool.parallelMap(spark, addFileIter.toSeq) { addFile =>
+          computeStatsForFile(
+            addFile,
+            dataRootDir,
+            defaultFileSystem,
+            broadcastConf.value,
+            setBoundsToWide,
+            statsCollector)
+        }.toIterator
+      } else {
+        addFileIter.map { addFile =>
+          computeStatsForFile(
+            addFile,
+            dataRootDir,
+            defaultFileSystem,
+            broadcastConf.value,
+            setBoundsToWide,
+            statsCollector)
+        }
       }
+    }
+  }
+
+  /**
+   * Prepares the underlying RDD of [[addFiles]] for multi-threaded stats collection by splitting
+   * them up into more partitions if necessary.
+   * If the number of partitions is too small, not every executor might
+   * receive a partition, which reduces the achievable parallelism. By increasing the number of
+   * partitions we can achieve more parallelism.
+   */
+  private def prepareRDDForMultiThreadedStatsCollection(
+      spark: SparkSession,
+      addFiles: Dataset[AddFile],
+      numFilesOpt: Option[Long]): Dataset[AddFile] = {
+
+    val numFiles = numFilesOpt.getOrElse(addFiles.count())
+    val currNumPartitions = addFiles.rdd.getNumPartitions
+    val numFilesPerPartition = spark.sessionState.conf.getConf(
+      DeltaSQLConf.DELTA_STATS_COLLECTION_NUM_FILES_PARTITION)
+
+    // We should not create more partitions than the cluster can currently handle.
+    val minNumPartitions = Math.min(
+      spark.sparkContext.defaultParallelism,
+      numFiles / numFilesPerPartition + 1).toInt
+    // Only repartition if it would increase the achievable parallelism
+    if (currNumPartitions < minNumPartitions) {
+      addFiles.repartition(minNumPartitions)
+    } else {
+      addFiles
     }
   }
 
@@ -124,7 +181,8 @@ object StatsCollectionUtils
 
     if (metric.totalMissingFields > 0 || metric.numMissingTypes > 0) {
       logWarning(
-        s"StatsCollection of file `$path` misses fields/types: ${JsonUtils.toJson(metric)}")
+        log"StatsCollection of file `${MDC(DeltaLogKeys.PATH, path)}` " +
+        log"misses fields/types: ${MDC(DeltaLogKeys.METRICS, JsonUtils.toJson(metric))}")
     }
 
     val statsWithTightBoundsCol = {
@@ -135,6 +193,20 @@ object StatsCollectionUtils
 
     addFile.copy(stats = JsonUtils.toJson(statsWithTightBoundsCol))
   }
+}
+
+object ParallelFetchPool {
+  val NUM_THREADS_PER_CORE = 10
+  val MAX_THREADS = 1024
+
+  val NUM_THREADS = Math.min(
+    Runtime.getRuntime.availableProcessors() * NUM_THREADS_PER_CORE, MAX_THREADS)
+
+  lazy val threadPool = DeltaThreadPool("stats-collection", NUM_THREADS)
+  def parallelMap[T, R](
+      spark: SparkSession,
+      items: Iterable[T])(
+      f: T => R): Iterable[R] = threadPool.parallelMap(spark, items)(f)
 }
 
 /**
@@ -447,7 +519,7 @@ abstract class StatsCollector(
             // the max, check the helper function for more details.
             StatisticsCollection.truncateMaxStringAgg(stringTruncateLength.get)(rawString)
           } else {
-            rawString.substring(0, stringTruncateLength.get)
+            StatisticsCollection.truncateMinStringAgg(stringTruncateLength.get)(rawString)
           }
         } else {
           rawString

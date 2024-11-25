@@ -24,9 +24,9 @@ import io.delta.kernel.annotation.Evolving;
  */
 @Evolving
 public class ShortType extends BasePrimitiveType {
-    public static final ShortType INSTANCE = new ShortType();
+  public static final ShortType SHORT = new ShortType();
 
-    private ShortType() {
-        super("short");
-    }
+  private ShortType() {
+    super("short");
+  }
 }

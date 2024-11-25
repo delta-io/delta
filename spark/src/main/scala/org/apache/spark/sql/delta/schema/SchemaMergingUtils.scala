@@ -16,23 +16,20 @@
 
 package org.apache.spark.sql.delta.schema
 
-import java.util.Locale
-
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.DeltaAnalysisException
+import org.apache.spark.sql.delta.{DeltaAnalysisException, TypeWidening}
 
-import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.analysis.{Resolver, TypeCoercion, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.expressions.Literal
-import org.apache.spark.sql.catalyst.plans.logical.DeltaMergeInto
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
-import org.apache.spark.sql.types.{ArrayType, ByteType, DataType, DecimalType, IntegerType, MapType, NullType, ShortType, StructField, StructType}
+import org.apache.spark.sql.types._
 
 /**
  * Utils to merge table schema with data schema.
  * This is split from SchemaUtils, because finalSchema is introduced into DeltaMergeInto,
- * and resolving the final schema is now part of [[DeltaMergeInto.resolveReferencesAndSchema]].
+ * and resolving the final schema is now part of
+ * [[ResolveDeltaMergeInto.resolveReferencesAndSchema]].
  */
 object SchemaMergingUtils {
 
@@ -130,6 +127,9 @@ object SchemaMergingUtils {
   }
 
   /**
+   * A variant of [[mergeDataTypes]] with common default values and enforce struct type
+   * as inputs for Delta table operation.
+   *
    * Check whether we can write to the Delta table, which has `tableSchema`, using a query that has
    * `dataSchema`. Our rules are that:
    *   - `dataSchema` may be missing columns or have additional columns
@@ -147,9 +147,29 @@ object SchemaMergingUtils {
    *
    * Schema merging occurs in a case insensitive manner. Hence, column names that only differ
    * by case are not accepted in the `dataSchema`.
-   *
-   * @param tableSchema The current schema of the table.
-   * @param dataSchema The schema of the new data being written.
+   */
+  def mergeSchemas(
+      tableSchema: StructType,
+      dataSchema: StructType,
+      allowImplicitConversions: Boolean = false,
+      keepExistingType: Boolean = false,
+      allowTypeWidening: Boolean = false,
+      caseSensitive: Boolean = false): StructType = {
+    checkColumnNameDuplication(dataSchema, "in the data to save", caseSensitive)
+    mergeDataTypes(
+      tableSchema,
+      dataSchema,
+      allowImplicitConversions,
+      keepExistingType,
+      allowTypeWidening,
+      caseSensitive,
+      allowOverride = false
+    ).asInstanceOf[StructType]
+  }
+
+  /**
+   * @param current The current data type.
+   * @param update The data type of the new data being written.
    * @param allowImplicitConversions Whether to allow Spark SQL implicit conversions. By default,
    *                                 we merge according to Parquet write compatibility - for
    *                                 example, an integer type data field will throw when merged to a
@@ -158,22 +178,19 @@ object SchemaMergingUtils {
    *                                 merge will succeed, because once we get to write time Spark SQL
    *                                 will support implicitly converting the int to a string.
    * @param keepExistingType Whether to keep existing types instead of trying to merge types.
-   * @param fixedTypeColumns The set of columns whose type should not be changed in any case.
    * @param caseSensitive Whether we should keep field mapping case-sensitively.
    *                      This should default to false for Delta, which is case insensitive.
+   * @param allowOverride Whether to let incoming type override the existing type if unmatched.
    */
-  def mergeSchemas(
-      tableSchema: StructType,
-      dataSchema: StructType,
-      allowImplicitConversions: Boolean = false,
-      keepExistingType: Boolean = false,
-      fixedTypeColumns: Set[String] = Set.empty,
-      caseSensitive: Boolean = false): StructType = {
-    checkColumnNameDuplication(dataSchema, "in the data to save", caseSensitive)
-    def merge(
-        current: DataType,
-        update: DataType,
-        fixedTypeColumnsSet: Set[String] = Set.empty): DataType = {
+  def mergeDataTypes(
+      current: DataType,
+      update: DataType,
+      allowImplicitConversions: Boolean,
+      keepExistingType: Boolean,
+      allowTypeWidening: Boolean,
+      caseSensitive: Boolean,
+      allowOverride: Boolean): DataType = {
+    def merge(current: DataType, update: DataType): DataType = {
       (current, update) match {
         case (StructType(currentFields), StructType(updateFields)) =>
           // Merge existing fields.
@@ -181,15 +198,6 @@ object SchemaMergingUtils {
           val updatedCurrentFields = currentFields.map { currentField =>
             updateFieldMap.get(currentField.name) match {
               case Some(updateField) =>
-                if (fixedTypeColumnsSet.contains(currentField.name.toLowerCase(Locale.ROOT)) &&
-                    !equalsIgnoreCaseAndCompatibleNullability(
-                      currentField.dataType, updateField.dataType)) {
-                  throw new DeltaAnalysisException(
-                    errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
-                    messageParameters = Array(currentField.name, currentField.dataType.sql,
-                      updateField.dataType.sql)
-                  )
-                }
                 try {
                   StructField(
                     currentField.name,
@@ -198,8 +206,11 @@ object SchemaMergingUtils {
                     currentField.metadata)
                 } catch {
                   case NonFatal(e) =>
-                    throw new AnalysisException(s"Failed to merge fields '${currentField.name}' " +
-                      s"and '${updateField.name}'. " + e.getMessage)
+                    throw new DeltaAnalysisException(
+                      errorClass = "DELTA_FAILED_TO_MERGE_FIELDS",
+                      messageParameters = Array(currentField.name, updateField.name),
+                      cause = Some(e)
+                    )
                 }
               case None =>
                 // Retain the old field.
@@ -214,28 +225,33 @@ object SchemaMergingUtils {
           // Create the merged struct, the new fields are appended at the end of the struct.
           StructType(updatedCurrentFields ++ newFields)
         case (ArrayType(currentElementType, currentContainsNull),
-              ArrayType(updateElementType, _)) =>
+        ArrayType(updateElementType, _)) =>
           ArrayType(
             merge(currentElementType, updateElementType),
             currentContainsNull)
         case (MapType(currentKeyType, currentElementType, currentContainsNull),
-              MapType(updateKeyType, updateElementType, _)) =>
+        MapType(updateKeyType, updateElementType, _)) =>
           MapType(
             merge(currentKeyType, updateKeyType),
             merge(currentElementType, updateElementType),
             currentContainsNull)
 
+        // If allowTypeWidening is true and supported, it takes precedence over keepExistingType
+        case (current: AtomicType, update: AtomicType) if allowTypeWidening &&
+          TypeWidening.isTypeChangeSupportedForSchemaEvolution(current, update) => update
+
         // Simply keeps the existing type for primitive types
-        case (current, update) if keepExistingType => current
+        case (current, _) if keepExistingType => current
+        case (_, update) if allowOverride => update
 
         // If implicit conversions are allowed, that means we can use any valid implicit cast to
         // perform the merge.
         case (current, update)
-            if allowImplicitConversions && typeForImplicitCast(update, current).isDefined =>
+          if allowImplicitConversions && typeForImplicitCast(update, current).isDefined =>
           typeForImplicitCast(update, current).get
 
         case (DecimalType.Fixed(leftPrecision, leftScale),
-              DecimalType.Fixed(rightPrecision, rightScale)) =>
+        DecimalType.Fixed(rightPrecision, rightScale)) =>
           if ((leftPrecision == rightPrecision) && (leftScale == rightScale)) {
             current
           } else if ((leftPrecision != rightPrecision) && (leftScale != rightScale)) {
@@ -273,12 +289,11 @@ object SchemaMergingUtils {
         case (_, NullType) =>
           current
         case _ =>
-          throw new AnalysisException(
-            s"Failed to merge incompatible data types $current and $update")
+          throw new DeltaAnalysisException(errorClass = "DELTA_MERGE_INCOMPATIBLE_DATATYPE",
+            messageParameters = Array(current.toString, update.toString))
       }
     }
-    merge(tableSchema, dataSchema, fixedTypeColumns.map(_.toLowerCase(Locale.ROOT)))
-      .asInstanceOf[StructType]
+    merge(current, update)
   }
 
   /**
@@ -307,9 +322,9 @@ object SchemaMergingUtils {
    * @param tf function to apply.
    * @return the transformed schema.
    */
-  def transformColumns(
-      schema: StructType)(
-      tf: (Seq[String], StructField, Resolver) => StructField): StructType = {
+  def transformColumns[T <: DataType](
+      schema: T)(
+      tf: (Seq[String], StructField, Resolver) => StructField): T = {
     def transform[E <: DataType](path: Seq[String], dt: E): E = {
       val newDt = dt match {
         case StructType(fields) =>
@@ -330,6 +345,89 @@ object SchemaMergingUtils {
       newDt.asInstanceOf[E]
     }
     transform(Seq.empty, schema)
+  }
+
+  /**
+   * Prune all nested empty structs from the schema. Return None if top level struct is also empty.
+   * @param dataType the data type to prune.
+   */
+  def pruneEmptyStructs(dataType: DataType): Option[DataType] = {
+    dataType match {
+      case StructType(fields) =>
+        val newFields = fields.flatMap { f =>
+          pruneEmptyStructs(f.dataType).map { newType =>
+            StructField(f.name, newType, f.nullable, f.metadata)
+          }
+        }
+        // when there is no fields, i.e., the struct is empty, we will return None to indicate
+        // we don't want to include that field.
+        if (newFields.isEmpty) {
+          None
+        } else {
+          Option(StructType(newFields))
+        }
+      case ArrayType(currentElementType, containsNull) =>
+        // if the array element type is from from_json, we will exclude the array.
+        pruneEmptyStructs(currentElementType).map { newType =>
+          ArrayType(newType, containsNull)
+        }
+      case MapType(keyType, elementType, containsNull) =>
+        // if the map key/element type is from from_json, we will exclude the map.
+        val filtertedKeyType = pruneEmptyStructs(keyType)
+        val filtertedValueType = pruneEmptyStructs(elementType)
+        if (filtertedKeyType.isEmpty || filtertedValueType.isEmpty) {
+          None
+        } else {
+          Option(MapType(filtertedKeyType.get, filtertedValueType.get, containsNull))
+        }
+      case _ => Option(dataType)
+    }
+  }
+
+  /**
+   * Transform (nested) columns in `schema` by walking down `schema` and `other` simultaneously.
+   * This allows comparing the two schemas and transforming `schema` based on the comparison.
+   * Columns or fields present only in `other` are ignored while `None` is passed to the transform
+   * function for columns or fields missing in `other`.
+   * @param schema Schema to transform.
+   * @param other Schema to compare with.
+   * @param tf Function to apply. The function arguments are the full path of the current field to
+   *           transform, the current field in `schema` and, if present, the corresponding field in
+   *           `other`.
+   */
+  def transformColumns(
+      schema: StructType,
+      other: StructType)(
+    tf: (Seq[String], StructField, Option[StructField], Resolver) => StructField): StructType = {
+    def transform[E <: DataType](path: Seq[String], dt: E, otherDt: E): E = {
+      val newDt = (dt, otherDt) match {
+        case (struct: StructType, otherStruct: StructType) =>
+          val otherFields = SchemaMergingUtils.toFieldMap(otherStruct.fields, caseSensitive = true)
+          StructType(struct.map { field =>
+            val otherField = otherFields.get(field.name)
+            val newField = tf(path, field, otherField, DELTA_COL_RESOLVER)
+            otherField match {
+              case Some(other) =>
+                newField.copy(
+                  dataType = transform(path :+ field.name, field.dataType, other.dataType)
+                )
+              case None => newField
+            }
+          })
+        case (map: MapType, otherMap: MapType) =>
+          map.copy(
+            keyType = transform(path :+ "key", map.keyType, otherMap.keyType),
+            valueType = transform(path :+ "value", map.valueType, otherMap.valueType)
+          )
+        case (array: ArrayType, otherArray: ArrayType) =>
+          array.copy(
+            elementType = transform(path :+ "element", array.elementType, otherArray.elementType)
+          )
+        case _ => dt
+      }
+      newDt.asInstanceOf[E]
+    }
+    transform(Seq.empty, schema, other)
   }
 
   /**

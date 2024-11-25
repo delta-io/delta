@@ -1,0 +1,3 @@
+The file `hive-schema-3.1.0.derby.sql` is copied from the Hive official repository. Hive MetaStore uses this file to create database schema used by the metastore with Apache Derby. We use it for the same purpose as the EmbeddedHMS is back by Apache Derby. The original file can be found [here](https://github.com/apache/hive/blob/master/standalone-metastore/metastore-server/src/main/sql/derby/hive-schema-3.1.0.derby.sql).
+
+In the embedded HMS, we first create a derby instance, then load this script into derby to initialize the schema. See `org.apache.spark.sql.delta.uniform.ehms.EmbeddedHMS` for more details.

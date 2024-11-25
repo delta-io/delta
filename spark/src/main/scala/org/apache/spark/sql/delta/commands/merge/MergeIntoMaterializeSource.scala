@@ -20,19 +20,26 @@ import scala.annotation.tailrec
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog}
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.DeltaSparkPlanUtils
 
 import org.apache.spark.SparkException
+import org.apache.spark.internal.MDC
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{DataFrame, Dataset, Row, SparkSession}
+import org.apache.spark.sql.catalyst.FileSourceOptions
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{AttributeSet, Expression}
 import org.apache.spark.sql.catalyst.optimizer.EliminateResolvedHint
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.execution.LogicalRDD
+import org.apache.spark.sql.execution.datasources.HadoopFsRelation
+import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.execution.metric.SQLMetric
+import org.apache.spark.sql.internal.SQLConf._
+import org.apache.spark.sql.sources.BaseRelation
 import org.apache.spark.storage.StorageLevel
 
 /**
@@ -66,9 +73,9 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
 
   /**
    * Prepared Dataframe with source data.
-   * If needed, it is materialized, @see prepareSourceDFAndReturnMaterializeReason
+   * If needed, it is materialized, @see prepareMergeSource
    */
-  private var sourceDF: Option[DataFrame] = None
+  private var mergeSource: Option[MergeSource] = None
 
   /**
    * If the source was materialized, reference to the checkpointed RDD.
@@ -83,7 +90,7 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
   /**
    * Run the Merge with retries in case it detects an RDD block lost error of the
    * materialized source RDD.
-   * It will also record out of disk error, if such happen - possibly because of increased disk
+   * It will also record out of disk error, if such happens - possibly because of increased disk
    * pressure from the materialized source RDD.
    */
   protected def runWithMaterializedSourceLostRetries(
@@ -105,15 +112,17 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
             attempt == spark.conf.get(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_MAX_ATTEMPTS)
           handleExceptionDuringAttempt(ex, isLastAttempt, deltaLog) match {
             case RetryHandling.Retry =>
-              logInfo(s"Retrying MERGE with materialized source. Attempt $attempt failed.")
+              logInfo(log"Retrying MERGE with materialized source. Attempt " +
+                log"${MDC(DeltaLogKeys.NUM_ATTEMPT, attempt)} failed.")
               doRetry = true
               attempt += 1
             case RetryHandling.ExhaustedRetries =>
-              logError(s"Exhausted retries after $attempt attempts in MERGE with" +
-                s" materialized source. Logging latest exception.", ex)
+              logError(log"Exhausted retries after ${MDC(DeltaLogKeys.NUM_ATTEMPT, attempt)}" +
+                log" attempts in MERGE with materialized source. Logging latest exception.", ex)
               throw DeltaErrors.sourceMaterializationFailedRepeatedlyInMerge
             case RetryHandling.RethrowException =>
-              logError(s"Fatal error in MERGE with materialized source in attempt $attempt.", ex)
+              logError(log"Fatal error in MERGE with materialized source in " +
+                log"attempt ${MDC(DeltaLogKeys.NUM_ATTEMPT, attempt)}", ex)
               throw ex
           }
       } finally {
@@ -122,7 +131,7 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
           rdd.unpersist()
         }
         materializedSourceRDD = None
-        sourceDF = None
+        mergeSource = None
       }
     } while (doRetry)
 
@@ -153,7 +162,7 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
     // If a checkpointed RDD block is lost, it throws
     // SparkCoreErrors.checkpointRDDBlockIdNotFoundError from LocalCheckpointRDD.compute.
     case s: SparkException
-      if !materializedSourceRDD.isEmpty &&
+      if materializedSourceRDD.nonEmpty &&
         s.getMessage.matches(
           mergeMaterializedSourceRddBlockLostErrorRegex(materializedSourceRDD.get.id)) =>
       log.warn("Materialized Merge source RDD block lost. Merge needs to be restarted. " +
@@ -175,9 +184,10 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
         RetryHandling.ExhaustedRetries
       }
 
-    // Record if we ran out of executor disk space.
+    // Record if we ran out of executor disk space when we materialized the source.
     case s: SparkException
-      if s.getMessage.contains("java.io.IOException: No space left on device") =>
+      if materializedSourceRDD.nonEmpty &&
+        s.getMessage.contains("java.io.IOException: No space left on device") =>
       // Record situations where we ran out of disk space, possibly because of the space took
       // by the materialized RDD.
       recordDeltaEvent(
@@ -201,6 +211,28 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
     case _ => RetryHandling.RethrowException
   }
 
+  private def planContainsIgnoreUnreadableFilesReadOptions(plan: LogicalPlan): Boolean = {
+    def relationContainsOptions(relation: BaseRelation): Boolean = {
+      relation match {
+        case hdpRelation: HadoopFsRelation =>
+          hdpRelation.options.get(FileSourceOptions.IGNORE_CORRUPT_FILES).contains("true") ||
+            hdpRelation.options.get(FileSourceOptions.IGNORE_MISSING_FILES).contains("true")
+        case _ => false
+      }
+    }
+
+    val res = plan.collectFirst {
+      case lr: LogicalRelation if relationContainsOptions(lr.relation) => lr
+    }
+    res.nonEmpty
+  }
+
+  private def ignoreUnreadableFilesConfigsAreSet(plan: LogicalPlan, spark: SparkSession)
+    : Boolean = {
+    spark.conf.get(IGNORE_MISSING_FILES) || spark.conf.get(IGNORE_CORRUPT_FILES) ||
+      planContainsIgnoreUnreadableFilesReadOptions(plan)
+  }
+
   /**
    * @return pair of boolean whether source should be materialized
    *         and the source materialization reason
@@ -209,7 +241,11 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
     spark: SparkSession, source: LogicalPlan, isInsertOnly: Boolean
   ): (Boolean, MergeIntoMaterializeSourceReason.MergeIntoMaterializeSourceReason) = {
     val materializeType = spark.conf.get(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE)
+    val forceMaterializationWithUnreadableFiles =
+      spark.conf.get(DeltaSQLConf.MERGE_FORCE_SOURCE_MATERIALIZATION_WITH_UNREADABLE_FILES)
     import DeltaSQLConf.MergeMaterializeSource._
+    val checkDeterministicOptions =
+      DeltaSparkPlanUtils.CheckDeterministicOptions(allowDeterministicUdf = true)
     materializeType match {
       case ALL =>
         (true, MergeIntoMaterializeSourceReason.MATERIALIZE_ALL)
@@ -220,8 +256,20 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
           (false, MergeIntoMaterializeSourceReason.NOT_MATERIALIZED_AUTO_INSERT_ONLY)
         } else if (!planContainsOnlyDeltaScans(source)) {
           (true, MergeIntoMaterializeSourceReason.NON_DETERMINISTIC_SOURCE_NON_DELTA)
-        } else if (!planIsDeterministic(source)) {
+        } else if (!planIsDeterministic(source, checkDeterministicOptions)) {
           (true, MergeIntoMaterializeSourceReason.NON_DETERMINISTIC_SOURCE_OPERATORS)
+          // Force source materialization if Spark configs IGNORE_CORRUPT_FILES,
+          // IGNORE_MISSING_FILES or file source read options FileSourceOptions.IGNORE_CORRUPT_FILES
+          // FileSourceOptions.IGNORE_MISSING_FILES are enabled on the source.
+          // This is done so to prevent irrecoverable data loss or unexpected results.
+        } else if (forceMaterializationWithUnreadableFiles &&
+            ignoreUnreadableFilesConfigsAreSet(source, spark)) {
+          (true, MergeIntoMaterializeSourceReason.IGNORE_UNREADABLE_FILES_CONFIGS_ARE_SET)
+        } else if (planContainsUdf(source)) {
+          // Force source materialization if the source contains a User Defined Function, even if
+          // the user defined function is marked as deterministic, as it is often incorrectly marked
+          // as such.
+          (true, MergeIntoMaterializeSourceReason.NON_DETERMINISTIC_SOURCE_WITH_DETERMINISTIC_UDF)
         } else {
           (false, MergeIntoMaterializeSourceReason.NOT_MATERIALIZED_AUTO)
         }
@@ -235,19 +283,25 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
    * Otherwise, prepare regular dataframe.
    * @return the source materialization reason
    */
-  protected def prepareSourceDFAndReturnMaterializeReason(
+  protected def prepareMergeSource(
       spark: SparkSession,
       source: LogicalPlan,
       condition: Expression,
       matchedClauses: Seq[DeltaMergeIntoMatchedClause],
       notMatchedClauses: Seq[DeltaMergeIntoNotMatchedClause],
-      isInsertOnly: Boolean): MergeIntoMaterializeSourceReason.MergeIntoMaterializeSourceReason = {
+      isInsertOnly: Boolean): Unit = {
     val (materialize, materializeReason) =
       shouldMaterializeSource(spark, source, isInsertOnly)
     if (!materialize) {
       // Does not materialize, simply return the dataframe from source plan
-      sourceDF = Some(Dataset.ofRows(spark, source))
-      return materializeReason
+      mergeSource = Some(
+        MergeSource(
+          df = Dataset.ofRows(spark, source),
+          isMaterialized = false,
+          materializeReason = materializeReason
+        )
+      )
+      return
     }
 
     val referencedSourceColumns =
@@ -273,15 +327,24 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
     // We should still keep the hints from the input plan.
     checkpointedPlan = addHintsToPlan(source, checkpointedPlan)
 
-    sourceDF = Some(Dataset.ofRows(spark, checkpointedPlan))
+    mergeSource = Some(
+      MergeSource(
+        df = Dataset.ofRows(spark, checkpointedPlan),
+        isMaterialized = true,
+        materializeReason = materializeReason
+      )
+    )
 
 
     // Sets appropriate StorageLevel
     val storageLevel = StorageLevel.fromString(
       if (attempt == 1) {
         spark.conf.get(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_RDD_STORAGE_LEVEL)
+      } else if (attempt == 2) {
+        // If it failed the first time, potentially use a different storage level on retry. The
+        // first retry has its own conf to allow gradually increasing the replication level.
+        spark.conf.get(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_RDD_STORAGE_LEVEL_FIRST_RETRY)
       } else {
-        // If it failed the first time, potentially use a different storage level on retry.
         spark.conf.get(DeltaSQLConf.MERGE_MATERIALIZE_SOURCE_RDD_STORAGE_LEVEL_RETRY)
       }
     )
@@ -302,16 +365,14 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
     }
 
     logDebug(s"Materializing MERGE with pruned columns $referencedSourceColumns.")
-    logDebug(s"Materialized MERGE source plan:\n${getSourceDF.queryExecution}")
-    materializeReason
+    logDebug(s"Materialized MERGE source plan:\n${getMergeSource.df.queryExecution}")
   }
 
-  protected def getSourceDF(): DataFrame = {
-    if (sourceDF.isEmpty) {
-      throw new IllegalStateException(
-        "sourceDF was not initialized! Call prepareSourceDFAndReturnMaterializeReason before.")
-    }
-    sourceDF.get
+  /** Returns the prepared merge source. */
+  protected def getMergeSource: MergeSource = mergeSource match {
+    case Some(source) => source
+    case None => throw new IllegalStateException(
+      "mergeSource was not initialized! Call prepareMergeSource before.")
   }
 
   private def addHintsToPlan(sourcePlan: LogicalPlan, plan: LogicalPlan): LogicalPlan = {
@@ -332,6 +393,14 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
 }
 
 object MergeIntoMaterializeSource {
+  case class MergeSource(
+      df: DataFrame,
+      isMaterialized: Boolean,
+      materializeReason: MergeIntoMaterializeSourceReason.MergeIntoMaterializeSourceReason) {
+    assert(!isMaterialized ||
+      MergeIntoMaterializeSourceReason.MATERIALIZED_REASONS.contains(materializeReason))
+  }
+
   // This depends on SparkCoreErrors.checkpointRDDBlockIdNotFoundError msg
   def mergeMaterializedSourceRddBlockLostErrorRegex(rddId: Int): String =
     s"(?s).*Checkpoint block rdd_${rddId}_[0-9]+ not found!.*"
@@ -382,10 +451,27 @@ object MergeIntoMaterializeSourceReason extends Enumeration {
   // The source query is considered non-deterministic, because it contains non-deterministic
   // operators.
   val NON_DETERMINISTIC_SOURCE_OPERATORS = Value("materializeNonDeterministicSourceOperators")
+  // Either spark configs to ignore unreadable files are set or the source plan contains relations
+  // with ignore unreadable files options.
+  val IGNORE_UNREADABLE_FILES_CONFIGS_ARE_SET =
+    Value("materializeIgnoreUnreadableFilesConfigsAreSet")
+  // The source query is considered non-determistic because it contains a User Defined Function.
+  val NON_DETERMINISTIC_SOURCE_WITH_DETERMINISTIC_UDF =
+    Value("materializeNonDeterministicSourceWithDeterministicUdf")
   // Materialize when the configuration is invalid
   val INVALID_CONFIG = Value("invalidConfigurationFailsafe")
   // Catch-all case.
   val UNKNOWN = Value("unknown")
+
+  // Set of reasons that result in source materialization.
+  final val MATERIALIZED_REASONS: Set[MergeIntoMaterializeSourceReason] = Set(
+    MATERIALIZE_ALL,
+    NON_DETERMINISTIC_SOURCE_NON_DELTA,
+    NON_DETERMINISTIC_SOURCE_OPERATORS,
+    IGNORE_UNREADABLE_FILES_CONFIGS_ARE_SET,
+    NON_DETERMINISTIC_SOURCE_WITH_DETERMINISTIC_UDF,
+    INVALID_CONFIG
+  )
 }
 
 /**

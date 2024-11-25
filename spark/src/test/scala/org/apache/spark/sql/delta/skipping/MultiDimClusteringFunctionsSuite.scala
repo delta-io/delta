@@ -20,10 +20,13 @@ import java.nio.ByteBuffer
 
 import scala.util.Random
 
+import org.apache.spark.sql.delta.expressions.{HilbertByteArrayIndex, HilbertLongIndex}
 import org.apache.spark.sql.delta.skipping.MultiDimClusteringFunctions._
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
+import org.apache.spark.SparkException
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
+import org.apache.spark.sql.catalyst.expressions.Cast
 import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
@@ -227,6 +230,22 @@ class MultiDimClusteringFunctionsSuite extends QueryTest
         Row(Array.fill(3 * 4 - 1)(0x00.toByte) :+ 0x07.toByte)
       )
     )
+  }
+
+  test("hilbert_index selects underlying expression correctly") {
+    assert(hilbert_index(10, Seq($"c1", $"c2", $"c3", $"c4", $"c5", $"c6"): _*).expr
+      .isInstanceOf[HilbertLongIndex])
+    assert(
+      hilbert_index(
+        10,
+        Seq($"c1", $"c2", $"c3", $"c4", $"c5", $"c6", $"c7", $"c8", $"c9"): _*)
+      .expr.asInstanceOf[Cast].child.isInstanceOf[HilbertByteArrayIndex])
+    val e = intercept[SparkException](
+      hilbert_index(
+        11,
+        Seq($"c1", $"c2", $"c3", $"c4", $"c5", $"c6", $"c7", $"c8", $"c9", $"c10"): _*)
+      .expr.isInstanceOf[HilbertByteArrayIndex])
+    assert(e.getMessage.contains("Hilbert indexing can only be used on 9 or fewer columns."))
   }
 
   private def intToBinary(x: Int): Array[Byte] = {

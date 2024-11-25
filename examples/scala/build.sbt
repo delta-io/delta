@@ -18,9 +18,17 @@ name := "example"
 organization := "com.example"
 organizationName := "example"
 
-val scala212 = "2.12.15"
-val scala213 = "2.13.8"
-val deltaVersion = "2.1.0"
+val scala212 = "2.12.18"
+val scala213 = "2.13.13"
+val icebergVersion = "1.4.1"
+val defaultDeltaVersion = {
+  val versionFileContent = IO.read(file("../../version.sbt"))
+  val versionRegex = """.*version\s*:=\s*"([^"]+)".*""".r
+  versionRegex.findFirstMatchIn(versionFileContent) match {
+    case Some(m) => m.group(1)
+    case None => throw new Exception("Could not parse version from version.sbt")
+  }
+}
 
 def getMajorMinor(version: String): (Int, Int) = {
   val majorMinor = Try {
@@ -35,8 +43,14 @@ def getMajorMinor(version: String): (Int, Int) = {
   }
 }
 val lookupSparkVersion: PartialFunction[(Int, Int), String] = {
-  // versions 2.4.0 and above
-  case (major,  minor) if (major == 2 && minor >= 4) || major >= 3 => "3.4.0"
+  // version 4.0.0-preview1
+  case (major, minor) if major >= 4 => "4.0.0-preview1"
+  // versions 3.3.x+
+  case (major, minor) if major >= 3 && minor >=3 => "3.5.3"
+  // versions 3.0.0 to 3.2.x
+  case (major, minor) if major >= 3 && minor <=2 => "3.5.0"
+  // versions 2.4.x
+  case (major, minor) if major == 2 && minor == 4 => "3.4.0"
   // versions 2.3.x
   case (major, minor) if major == 2  && minor == 3 => "3.3.2"
   // versions 2.2.x
@@ -55,21 +69,24 @@ val getScalaVersion = settingKey[String](
   s"get scala version from environment variable SCALA_VERSION. If it doesn't exist, use $scala213"
 )
 val getDeltaVersion = settingKey[String](
-  s"get delta version from environment variable DELTA_VERSION. If it doesn't exist, use $deltaVersion"
+  s"get delta version from environment variable DELTA_VERSION. If it doesn't exist, use $defaultDeltaVersion"
 )
 val getDeltaArtifactName = settingKey[String](
   s"get delta artifact name based on the delta version. either `delta-core` or `delta-spark`."
 )
-
+val getIcebergSparkRuntimeArtifactName = settingKey[String](
+  s"get iceberg-spark-runtime name based on the delta version."
+)
 getScalaVersion := {
   sys.env.get("SCALA_VERSION") match {
-    case Some("2.12") =>
+    case Some("2.12") | Some(`scala212`) =>
       scala212
-    case Some("2.13") =>
+    case Some("2.13") | Some(`scala213`) =>
       scala213
     case Some(v) =>
       println(
-        s"[warn] Invalid  SCALA_VERSION. Expected 2.12 or 2.13 but got $v. Fallback to $scala213."
+        s"[warn] Invalid  SCALA_VERSION. Expected one of {2.12, $scala212, 2.13, $scala213} but " +
+        s"got $v. Fallback to $scala213."
       )
       scala213
     case None =>
@@ -83,10 +100,11 @@ version := "0.1.0"
 getDeltaVersion := {
   sys.env.get("DELTA_VERSION") match {
     case Some(v) =>
-      println(s"Using Delta version $v")
+      println(s"Using DELTA_VERSION Delta version $v")
       v
     case None =>
-      deltaVersion
+      println(s"Using default Delta version $defaultDeltaVersion")
+      defaultDeltaVersion
   }
 }
 
@@ -95,8 +113,46 @@ getDeltaArtifactName := {
   if (deltaVersion.charAt(0).asDigit >= 3) "delta-spark" else "delta-core"
 }
 
+getIcebergSparkRuntimeArtifactName := {
+  val (expMaj, expMin) = getMajorMinor(lookupSparkVersion.apply(
+    getMajorMinor(getDeltaVersion.value)))
+  s"iceberg-spark-runtime-$expMaj.$expMin"
+}
+
 lazy val extraMavenRepo = sys.env.get("EXTRA_MAVEN_REPO").toSeq.map { repo =>
   resolvers += "Delta" at repo
+}
+
+lazy val java17Settings = Seq(
+  fork := true,
+  javaOptions ++= Seq(
+    "--add-exports=java.base/sun.nio.ch=ALL-UNNAMED"
+  )
+)
+
+def getLibraryDependencies(
+    deltaVersion: String,
+    deltaArtifactName: String,
+    icebergSparkRuntimeArtifactName: String): Seq[ModuleID] = {
+  Seq(
+    "io.delta" %% deltaArtifactName % deltaVersion,
+    "org.apache.spark" %% "spark-sql" % lookupSparkVersion.apply(
+      getMajorMinor(deltaVersion)
+    ),
+    "org.apache.spark" %% "spark-hive" % lookupSparkVersion.apply(
+      getMajorMinor(deltaVersion)
+    ),
+    "org.apache.iceberg" % "iceberg-hive-metastore" % icebergVersion
+  ) ++ (getMajorMinor(deltaVersion) match {
+    case (major, _) if major >= 4 =>
+      // Don't include the iceberg dependencies for 4.0.0rc1
+      Seq()
+    case _ =>
+      Seq(
+        "io.delta" %% "delta-iceberg" % deltaVersion,
+        "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % icebergVersion,
+      )
+  })
 }
 
 lazy val root = (project in file("."))
@@ -104,16 +160,15 @@ lazy val root = (project in file("."))
     run / fork := true,
     name := "hello-world",
     crossScalaVersions := Seq(scala212, scala213),
-    libraryDependencies ++= Seq(
-      "io.delta" %% getDeltaArtifactName.value % getDeltaVersion.value,
-      "org.apache.spark" %% "spark-sql" % lookupSparkVersion.apply(
-        getMajorMinor(getDeltaVersion.value)
-      )
-    ),
+    libraryDependencies ++= getLibraryDependencies(
+      getDeltaVersion.value,
+      getDeltaArtifactName.value,
+      getIcebergSparkRuntimeArtifactName.value),
     extraMavenRepo,
     resolvers += Resolver.mavenLocal,
     scalacOptions ++= Seq(
       "-deprecation",
       "-feature"
-    )
+    ),
+    java17Settings
   )

@@ -15,49 +15,48 @@
  */
 package io.delta.kernel.defaults.internal.data.vector;
 
-import java.util.Optional;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.DateType;
 import io.delta.kernel.types.IntegerType;
+import java.util.Optional;
 
-import static io.delta.kernel.defaults.internal.DefaultKernelUtils.checkArgument;
+/** {@link io.delta.kernel.data.ColumnVector} implementation for integer type data. */
+public class DefaultIntVector extends AbstractColumnVector {
+  private final int[] values;
 
-/**
- * {@link io.delta.kernel.data.ColumnVector} implementation for integer type data.
- */
-public class DefaultIntVector
-    extends AbstractColumnVector {
-    private final int[] values;
+  /**
+   * Create an instance of {@link io.delta.kernel.data.ColumnVector} for integer type.
+   *
+   * @param size number of elements in the vector.
+   * @param nullability Optional array of nullability value for each element in the vector. All
+   *     values in the vector are considered non-null when parameter is empty.
+   * @param values column vector values.
+   */
+  public DefaultIntVector(
+      DataType dataType, int size, Optional<boolean[]> nullability, int[] values) {
+    super(size, dataType, nullability);
+    checkArgument(dataType instanceof IntegerType || dataType instanceof DateType);
+    this.values = requireNonNull(values, "values is null");
+    checkArgument(
+        values.length >= size,
+        "invalid number of values (%s) for given size (%s)",
+        values.length,
+        size);
+  }
 
-    /**
-     * Create an instance of {@link io.delta.kernel.data.ColumnVector} for integer type.
-     *
-     * @param size        number of elements in the vector.
-     * @param nullability Optional array of nullability value for each element in the vector.
-     *                    All values in the vector are considered non-null when parameter is empty.
-     * @param values      column vector values.
-     */
-    public DefaultIntVector(
-        DataType dataType, int size, Optional<boolean[]> nullability, int[] values) {
-        super(size, dataType, nullability);
-        checkArgument(dataType instanceof IntegerType || dataType instanceof DateType);
-        this.values = requireNonNull(values, "values is null");
-        checkArgument(values.length >= size,
-            "invalid number of values (%s) for given size (%s)", values.length, size);
-    }
-
-    /**
-     * Get the value at given {@code rowId}. The return value is undefined and can be
-     * anything, if the slot for {@code rowId} is null.
-     *
-     * @param rowId
-     * @return
-     */
-    @Override
-    public int getInt(int rowId) {
-        checkValidRowId(rowId);
-        return values[rowId];
-    }
+  /**
+   * Get the value at given {@code rowId}. The return value is undefined and can be anything, if the
+   * slot for {@code rowId} is null.
+   *
+   * @param rowId
+   * @return
+   */
+  @Override
+  public int getInt(int rowId) {
+    checkValidRowId(rowId);
+    return values[rowId];
+  }
 }

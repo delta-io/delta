@@ -47,7 +47,7 @@ private[internal] class OptimisticTransactionImpl(
   private val txnId = UUID.randomUUID().toString
 
   /** Tracks the appIds that have been seen by this transaction. */
-  private val readTxn = new ArrayBuffer[String]
+  private[internal] val readTxn = new ArrayBuffer[String]
 
   /**
    * Tracks the data that could have been seen by recording the partition
@@ -525,7 +525,9 @@ private[internal] class OptimisticTransactionImpl(
    * Returns true if we should checkpoint the version that has just been committed.
    */
   private def shouldCheckpoint(committedVersion: Long): Boolean = {
-    committedVersion != 0 && committedVersion % deltaLog.checkpointInterval == 0
+    val checkpointingEnabled =
+      deltaLog.hadoopConf.getBoolean(StandaloneHadoopConf.CHECKPOINTING_ENABLED, true)
+    checkpointingEnabled && committedVersion != 0 && committedVersion % deltaLog.checkpointInterval == 0
   }
 
   /** Returns the next attempt version given the last attempted version */

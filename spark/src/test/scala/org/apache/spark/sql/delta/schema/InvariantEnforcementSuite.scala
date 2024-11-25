@@ -30,19 +30,20 @@ import org.apache.spark.sql.delta.constraints.Constraints.NotNull
 import org.apache.spark.sql.delta.constraints.Invariants.PersistedExpression
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.streaming.StreamingQueryException
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 
 class InvariantEnforcementSuite extends QueryTest
     with SharedSparkSession
     with DeltaSQLCommandTest
-    with SQLTestUtils {
+    with DeltaSQLTestUtils {
 
 
   import testImplicits._
@@ -406,14 +407,10 @@ class InvariantEnforcementSuite extends QueryTest
         val newMetadata = txn.metadata.copy(
           configuration = txn.metadata.configuration +
             ("delta.constraints.mychk" -> "valueA < valueB"))
-        assert(txn.protocol.minWriterVersion === writerVersion)
         txn.commit(Seq(newMetadata), DeltaOperations.ManualUpdate)
-        val upVersion = if (TableFeatureProtocolUtils.supportsWriterFeatures(writerVersion)) {
-          TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION
-        } else {
-          CheckConstraintsTableFeature.minWriterVersion
-        }
-        assert(table.deltaLog.unsafeVolatileSnapshot.protocol.minWriterVersion === upVersion)
+        val protocol = table.deltaLog.update().protocol
+        assert(protocol.implicitlyAndExplicitlySupportedFeatures
+          .contains(CheckConstraintsTableFeature))
         spark.sql("INSERT INTO constraint VALUES (50, 100, null)")
         val e = intercept[InvariantViolationException] {
           spark.sql("INSERT INTO constraint VALUES (100, 50, null)")

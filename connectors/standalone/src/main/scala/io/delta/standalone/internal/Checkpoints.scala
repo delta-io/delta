@@ -238,6 +238,9 @@ private[internal] object Checkpoints extends Logging {
         snapshot.tombstonesScala
       ).map(_.wrap)
 
+    logInfo(s"Starting to write checkpoint at path=$path using rename=$useRename and " +
+        s"snapshot=$snapshot")
+
     val writtenPath =
       if (useRename) {
         val p = new Path(path)
@@ -245,6 +248,7 @@ private[internal] object Checkpoints extends Logging {
         // speculation, stage retry), so generate the temp path here to avoid two tasks
         // using the same path.
         val tempPath = new Path(p.getParent, s".${p.getName}.${UUID.randomUUID}.tmp")
+        logInfo(s"Writing the checkpoint first to temp file: $tempPath")
         tempPath.toString
       } else {
         path
@@ -265,6 +269,25 @@ private[internal] object Checkpoints extends Logging {
           numOfFiles += 1
         }
       }
+
+      // Before calling close (or rename if applicable) make sure we have written
+      // all `addFiles` actions from the snapshot. By writing the `addFiles` actions,
+      // we ensure the table state is captured in the checkpoint.
+      if (numOfFiles != snapshot.numOfFiles) {
+        val msg = s"Number of `add` files written to checkpoint file ($numOfFiles) doesn't match " +
+          s"the number of `add` files contained in the snapshot (${snapshot.numOfFiles}). " +
+          s"Skipping creating the checkpoint.\nCheckpoint file: `$path`." +
+          (if (writtenPath != path) s"\nTemporary file: `$writtenPath`" else "")
+
+        // The error message will be logged in the catch block below.
+        throw new IllegalStateException(msg)
+      }
+
+      // Close the writer only after writing all the actions. Calling close before writing
+      // all the records could result in leaving a Parquet file with partial content as the
+      // `close` flushes the already buffered data to storage.
+      // This would leak resources but we don't have a way to abort the storage request here.
+      writer.close()
     } catch {
       case e: org.apache.hadoop.fs.FileAlreadyExistsException if !useRename =>
         val p = new Path(writtenPath)
@@ -274,8 +297,11 @@ private[internal] object Checkpoints extends Logging {
         } else {
           throw e
         }
-    } finally {
-      writer.close()
+      case other: Throwable =>
+        // Make sure the log the exception before throwing it, so that we know why the checkpoint
+        // write failed.
+        logError(s"Error writing checkpoint at $writtenPath", other)
+        throw other
     }
 
     if (useRename) {
@@ -287,20 +313,22 @@ private[internal] object Checkpoints extends Logging {
         if (fs.rename(src, dest)) {
           renameDone = true
         } else {
+          val msg = s"Cannot rename $src to $dest"
           // There should be only one writer writing the checkpoint file, so there must be
           // something wrong here.
-          throw new IllegalStateException(s"Cannot rename $src to $dest")
+          logError(msg)
+          throw new IllegalStateException(msg)
         }
       } finally {
         if (!renameDone) {
-          fs.delete(src, false)
+          try {
+            fs.delete(src, false)
+          } catch {
+            case NonFatal(e) =>
+              logWarning(s"Error while deleting the temporary checkpoint part file $src", e)
+          }
         }
       }
-    }
-
-    if (numOfFiles != snapshot.numOfFiles) {
-      throw new IllegalStateException(
-        "State of the checkpoint doesn't match that of the snapshot.")
     }
 
     // Attempting to write empty checkpoint
@@ -308,6 +336,8 @@ private[internal] object Checkpoints extends Logging {
       logWarning(DeltaErrors.EmptyCheckpointErrorMessage)
     }
 
-    CheckpointMetaData(snapshot.version, checkpointSize, None)
+    val checkpointMetaData = CheckpointMetaData(snapshot.version, checkpointSize, None)
+    logInfo(s"Checkpoint written to $path with $checkpointMetaData")
+    checkpointMetaData
   }
 }

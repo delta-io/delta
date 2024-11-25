@@ -20,8 +20,11 @@ package org.apache.spark.sql.delta.files
 import java.net.URI
 import java.util.Objects
 
+import scala.collection.mutable
 import org.apache.spark.sql.delta.RowIndexFilterType
-import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, DeltaLog, NoMapping, Snapshot, SnapshotDescriptor}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, DeltaLog, DeltaParquetFileFormat, Snapshot, SnapshotDescriptor}
+import org.apache.spark.sql.delta.DefaultRowCommitVersion
+import org.apache.spark.sql.delta.RowId
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol}
 import org.apache.spark.sql.delta.implicits._
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -30,10 +33,18 @@ import org.apache.hadoop.fs.FileStatus
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.{InternalRow, TableIdentifier}
 import org.apache.spark.sql.catalyst.expressions.{Cast, Expression, GenericInternalRow, Literal}
 import org.apache.spark.sql.execution.datasources._
 import org.apache.spark.sql.types.StructType
+
+/**
+ * Similar to [[FileListingResult]], but maintains the partitions as [[AddFile]].
+ */
+case class DeltaFileListingResult(
+    partitions: Seq[(InternalRow, Seq[AddFile])],
+    addFiles: Seq[AddFile],
+    sortTime: Long = 0L)
 
 /**
  * A [[FileIndex]] that generates the list of files managed by the Tahoe protocol.
@@ -58,11 +69,38 @@ abstract class TahoeFileIndex(
       partitionFilters: Seq[Expression],
       dataFilters: Seq[Expression]): Seq[AddFile]
 
+  /**
+   * Utility method to convert a sequence of partition values (represented as a Map) and AddFiles
+   * to a sequence of (partitionValuesRow, files) tuples. The partitionValuesRow is a
+   * [[InternalRow]] representing the partition values. The files are represented as a
+   * sequence of [[AddFile]].
+   */
+  private def convertPartitionsToInternalRow(
+      partitions: Seq[(Map[String, String], Seq[AddFile])]): Seq[(InternalRow, Seq[AddFile])] = {
+    partitions.map { case (partitionValues, addFiles) =>
+        (getPartitionValuesRow(partitionValues), addFiles)
+    }
+  }
+
+  /**
+   * Returns (i) tuples of partition directories to their respective AddFile actions and
+   * (ii) a collection of matched AddFiles. The matched AddFiles are those that meet the criteria
+   * set by the partition and data filters. Essentially, this is a collection of all the files
+   * associated with the identified partitions.
+   */
+  def listPartitionsAsAddFiles(
+      partitionFilters: Seq[Expression],
+      dataFilters: Seq[Expression]): (Seq[(InternalRow, Seq[AddFile])], Seq[AddFile]) = {
+    val matchedFiles = matchingFiles(partitionFilters, dataFilters)
+    val partitionValuesToFiles = matchedFiles.groupBy(_.partitionValues)
+    (convertPartitionsToInternalRow(partitionValuesToFiles.toSeq), matchedFiles)
+  }
+
   override def listFiles(
       partitionFilters: Seq[Expression],
       dataFilters: Seq[Expression]): Seq[PartitionDirectory] = {
     val partitionValuesToFiles = listAddFiles(partitionFilters, dataFilters)
-    makePartitionDirectories(partitionValuesToFiles.toSeq)
+    makePartitionDirectories(convertPartitionsToInternalRow(partitionValuesToFiles.toSeq))
   }
 
 
@@ -72,24 +110,43 @@ abstract class TahoeFileIndex(
     matchingFiles(partitionFilters, dataFilters).groupBy(_.partitionValues)
   }
 
-  private def makePartitionDirectories(
-      partitionValuesToFiles: Seq[(Map[String, String], Seq[AddFile])]): Seq[PartitionDirectory] = {
+  /**
+   * Generates a FileStatusWithMetadata using data extracted from a given AddFile.
+   */
+  def fileStatusWithMetadataFromAddFile(addFile: AddFile): FileStatusWithMetadata = {
+    val fs = new FileStatus(
+      /* length */ addFile.size,
+      /* isDir */ false,
+      /* blockReplication */ 0,
+      /* blockSize */ 1,
+      /* modificationTime */ addFile.modificationTime,
+      /* path */ absolutePath(addFile.path))
+    val metadata = mutable.Map.empty[String, Any]
+    addFile.baseRowId.foreach(baseRowId => metadata.put(RowId.BASE_ROW_ID, baseRowId))
+    addFile.defaultRowCommitVersion.foreach(defaultRowCommitVersion =>
+      metadata.put(DefaultRowCommitVersion.METADATA_STRUCT_FIELD_NAME, defaultRowCommitVersion))
+
+    if (addFile.deletionVector != null) {
+      metadata.put(DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_ID_ENCODED,
+        addFile.deletionVector.serializeToBase64())
+
+      // Set the filter type to IF_CONTAINED by default to let [[DeltaParquetFileFormat]] filter
+      // out rows unless a filter type was explicitly provided in rowIndexFilters. This can happen
+      // e.g. when reading CDC data to keep deleted rows instead of filtering them out.
+      val filterType = rowIndexFilters.getOrElse(Map.empty)
+        .getOrElse(addFile.path, RowIndexFilterType.IF_CONTAINED)
+      metadata.put(DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_TYPE, filterType)
+    }
+    FileStatusWithMetadata(fs, metadata.toMap)
+  }
+
+  def makePartitionDirectories(
+      partitionValuesToFiles: Seq[(InternalRow, Seq[AddFile])]): Seq[PartitionDirectory] = {
     val timeZone = spark.sessionState.conf.sessionLocalTimeZone
     partitionValuesToFiles.map {
       case (partitionValues, files) =>
-        val partitionValuesRow = getPartitionValuesRow(partitionValues)
-
-        val fileStatuses = files.map { f =>
-          new FileStatus(
-            /* length */ f.size,
-            /* isDir */ false,
-            /* blockReplication */ 0,
-            /* blockSize */ 1,
-            /* modificationTime */ f.modificationTime,
-            absolutePath(f.path))
-        }.toArray
-
-        PartitionDirectory(partitionValuesRow, fileStatuses)
+        val fileStatuses = files.map(f => fileStatusWithMetadataFromAddFile(f)).toArray
+        PartitionDirectory(partitionValues, fileStatuses)
     }
   }
 
@@ -105,7 +162,7 @@ abstract class TahoeFileIndex(
 
   override def partitionSchema: StructType = metadata.partitionSchema
 
-  protected def absolutePath(child: String): Path = {
+  def absolutePath(child: String): Path = {
     // scalastyle:off pathfromuri
     val p = new Path(new URI(child))
     // scalastyle:on pathfromuri
@@ -159,6 +216,22 @@ abstract class TahoeFileIndexWithSnapshotDescriptor(
   protected[delta] def sizeInBytesIfKnown: Option[Long] = snapshot.sizeInBytesIfKnown
 }
 
+/**
+ * A lightweight [[SnapshotDescriptor]] implementation that points to an actual [[Snapshot]].
+ *
+ * @param snapshot the [[Snapshot]] this pointer points to
+ */
+class ShallowSnapshotDescriptor(snapshot: Snapshot) extends SnapshotDescriptor {
+  override val deltaLog: DeltaLog = snapshot.deltaLog
+  override val version: Long = snapshot.version
+  override val metadata: Metadata = snapshot.metadata
+  override val protocol: Protocol = snapshot.protocol
+  // Avoid eager state reconstruction
+  override protected[delta] def numOfFilesIfKnown: Option[Long] =
+    deltaLog.getSnapshotAt(version).numOfFilesIfKnown
+  override protected[delta] def sizeInBytesIfKnown: Option[Long] =
+    deltaLog.getSnapshotAt(version).sizeInBytesIfKnown
+}
 
 /**
  * A [[TahoeFileIndex]] that generates the list of files from DeltaLog with given partition filters.
@@ -170,10 +243,28 @@ case class TahoeLogFileIndex(
     override val spark: SparkSession,
     override val deltaLog: DeltaLog,
     override val path: Path,
+    snapshotAtAnalysis: SnapshotDescriptor,
+    partitionFilters: Seq[Expression],
+    isTimeTravelQuery: Boolean)
+  extends TahoeFileIndex(spark, deltaLog, path) {
+
+  def this(
+    spark: SparkSession,
+    deltaLog: DeltaLog,
+    path: Path,
     snapshotAtAnalysis: Snapshot,
     partitionFilters: Seq[Expression] = Nil,
-    isTimeTravelQuery: Boolean = false)
-  extends TahoeFileIndex(spark, deltaLog, path) {
+    isTimeTravelQuery: Boolean = false
+  ) = this (
+    spark,
+    deltaLog,
+    path,
+    if (isTimeTravelQuery) snapshotAtAnalysis
+    else new ShallowSnapshotDescriptor(snapshotAtAnalysis),
+    partitionFilters,
+    isTimeTravelQuery)
+
+  require(!isTimeTravelQuery || snapshotAtAnalysis.isInstanceOf[Snapshot])
 
 
   // WARNING: Stability of this method is _NOT_ guaranteed!
@@ -190,9 +281,12 @@ case class TahoeLogFileIndex(
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SCHEMA_ON_READ_CHECK_ENABLED)
   }
 
+  private def includeTableIdInComparisons: Boolean =
+    spark.conf.get(DeltaSQLConf.DELTA_INCLUDE_TABLE_ID_IN_FILE_INDEX_COMPARISON)
+
   protected def getSnapshotToScan: Snapshot = {
     if (isTimeTravelQuery) {
-      snapshotAtAnalysis
+      snapshotAtAnalysis.asInstanceOf[Snapshot]
     } else {
       deltaLog.update(stalenessAcceptable = true)
     }
@@ -246,13 +340,22 @@ case class TahoeLogFileIndex(
 
   override def equals(that: Any): Boolean = that match {
     case t: TahoeLogFileIndex =>
-      t.path == path && t.deltaLog.isSameLogAs(deltaLog) &&
+      t.path == path &&
+        (if (includeTableIdInComparisons) {
+          t.deltaLog.isSameLogAs(deltaLog)
+        } else {
+          t.deltaLog.dataPath == deltaLog.dataPath
+        }) &&
         t.versionToUse == versionToUse && t.partitionFilters == partitionFilters
     case _ => false
   }
 
   override def hashCode: scala.Int = {
-    Objects.hashCode(path, deltaLog.compositeId, versionToUse, partitionFilters)
+    if (includeTableIdInComparisons) {
+      Objects.hashCode(path, deltaLog.compositeId, versionToUse, partitionFilters)
+    } else {
+      Objects.hashCode(path, deltaLog.dataPath, versionToUse, partitionFilters)
+    }
   }
 
   protected[delta] def numOfFilesIfKnown: Option[Long] =
@@ -264,7 +367,18 @@ case class TahoeLogFileIndex(
 
 object TahoeLogFileIndex {
   def apply(spark: SparkSession, deltaLog: DeltaLog): TahoeLogFileIndex =
-    TahoeLogFileIndex(spark, deltaLog, deltaLog.dataPath, deltaLog.unsafeVolatileSnapshot)
+    new TahoeLogFileIndex(spark, deltaLog, deltaLog.dataPath, deltaLog.unsafeVolatileSnapshot)
+
+  def apply(
+    spark: SparkSession,
+    deltaLog: DeltaLog,
+    path: Path,
+    snapshotAtAnalysis: Snapshot,
+    partitionFilters: Seq[Expression] = Nil,
+    isTimeTravelQuery: Boolean = false): TahoeLogFileIndex
+  = new TahoeLogFileIndex(
+    spark, deltaLog, path, snapshotAtAnalysis, partitionFilters, isTimeTravelQuery
+  )
 }
 
 /**

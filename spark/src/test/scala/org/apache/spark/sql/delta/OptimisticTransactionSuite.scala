@@ -17,18 +17,25 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
+import java.nio.file.FileAlreadyExistsException
+
+import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, Metadata, Protocol, RemoveFile, SetTransaction}
+import org.apache.spark.sql.delta.coordinatedcommits.{CommitCoordinatorBuilder, CommitCoordinatorProvider, InMemoryCommitCoordinator, InMemoryCommitCoordinatorBuilder, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.util.FileNames
+import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
+import io.delta.storage.LogStore
+import io.delta.storage.commit.{CommitCoordinatorClient, CommitFailedException, CommitResponse, TableDescriptor, UpdatedActions}
+import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.Row
-import org.apache.spark.sql.SaveMode
+import org.apache.spark.sql.{Row, SaveMode, SparkSession}
 import org.apache.spark.sql.catalyst.dsl.expressions._
 import org.apache.spark.sql.catalyst.expressions.{EqualTo, Literal}
+import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.types.{IntegerType, StructType}
 import org.apache.spark.util.ManualClock
 
@@ -40,8 +47,8 @@ class OptimisticTransactionSuite
   import testImplicits._
 
   // scalastyle:off: removeFile
-  private val addA = createTestAddFile(path = "a")
-  private val addB = createTestAddFile(path = "b")
+  private val addA = createTestAddFile(encodedPath = "a")
+  private val addB = createTestAddFile(encodedPath = "b")
 
   /* ************************** *
    * Allowed concurrent actions *
@@ -261,6 +268,11 @@ class OptimisticTransactionSuite
     actions = Seq(
       AddFile("b", Map.empty, 1, 1, dataChange = true)))
 
+  override def beforeEach(): Unit = {
+    super.beforeEach()
+    CommitCoordinatorProvider.clearNonDefaultBuilders()
+  }
+
   test("initial commit without metadata should fail") {
     withTempDir { tempDir =>
       val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
@@ -285,12 +297,45 @@ class OptimisticTransactionSuite
     }
   }
 
+  test("enabling Coordinated Commits on an existing table should create commit dir") {
+    withTempDir { tempDir =>
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getAbsolutePath))
+      val metadata = Metadata()
+      log.startTransaction().commit(Seq(metadata), ManualUpdate)
+      val fs = log.logPath.getFileSystem(log.newDeltaHadoopConf())
+      val commitDir = FileNames.commitDirPath(log.logPath)
+      // Delete commit directory.
+      fs.delete(commitDir)
+      assert(!fs.exists(commitDir))
+      // With no Coordinated Commits conf, commit directory should not be created.
+      log.startTransaction().commit(Seq(metadata), ManualUpdate)
+      assert(!fs.exists(commitDir))
+      // Enabling Coordinated Commits on an existing table should create the commit dir.
+      CommitCoordinatorProvider.registerBuilder(InMemoryCommitCoordinatorBuilder(3))
+      val newMetadata = metadata.copy(configuration =
+        (metadata.configuration ++
+          Map(DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key -> "in-memory")).toMap)
+      log.startTransaction().commit(Seq(newMetadata), ManualUpdate)
+      assert(fs.exists(commitDir))
+      log.update().ensureCommitFilesBackfilled()
+      // With no new Coordinated Commits conf, commit directory should not be created and so the
+      // transaction should fail because of corrupted dir.
+      fs.delete(commitDir)
+      assert(!fs.exists(commitDir))
+      intercept[java.io.FileNotFoundException] {
+        log.startTransaction().commit(Seq(newMetadata), ManualUpdate)
+      }
+    }
+  }
+
   test("AddFile with different partition schema compared to metadata should fail") {
     withTempDir { tempDir =>
       val log = DeltaLog.forTable(spark, new Path(tempDir.getAbsolutePath))
-      log.startTransaction().commit(Seq(Metadata(
+      val initTxn = log.startTransaction()
+      initTxn.updateMetadataForNewTable(Metadata(
         schemaString = StructType.fromDDL("col2 string, a int").json,
-        partitionColumns = Seq("col2"))), ManualUpdate)
+        partitionColumns = Seq("col2")))
+      initTxn.commit(Seq(), ManualUpdate)
       withSQLConf(DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key -> "true") {
         val e = intercept[IllegalStateException] {
           log.startTransaction().commit(Seq(AddFile(
@@ -335,7 +380,7 @@ class OptimisticTransactionSuite
 
       // Validate that actions in both transactions are not exactly same.
       def readActions(version: Long): Seq[Action] = {
-        log.store.read(FileNames.deltaFile(log.logPath, version), log.newDeltaHadoopConf())
+        log.store.read(FileNames.unsafeDeltaFile(log.logPath, version), log.newDeltaHadoopConf())
           .map(Action.fromJson)
       }
       def removeTxnIdAndMetricsFromActions(actions: Seq[Action]): Seq[Action] = actions.map {
@@ -365,7 +410,7 @@ class OptimisticTransactionSuite
       val version = txn.commit(Seq(), ManualUpdate)
 
       def readActions(version: Long): Seq[Action] = {
-        log.store.read(FileNames.deltaFile(log.logPath, version), log.newDeltaHadoopConf())
+        log.store.read(FileNames.unsafeDeltaFile(log.logPath, version), log.newDeltaHadoopConf())
           .map(Action.fromJson)
       }
       val actions = readActions(version)
@@ -401,7 +446,7 @@ class OptimisticTransactionSuite
       txn.updateSetTransaction("TestAppId", 1L, None)
       val version = txn.commit(Seq(SetTransaction("TestAppId", 1L, None)), ManualUpdate)
       def readActions(version: Long): Seq[Action] = {
-        log.store.read(FileNames.deltaFile(log.logPath, version), log.newDeltaHadoopConf())
+        log.store.read(FileNames.unsafeDeltaFile(log.logPath, version), log.newDeltaHadoopConf())
           .map(Action.fromJson)
       }
       assert(readActions(version).collectFirst {
@@ -425,7 +470,7 @@ class OptimisticTransactionSuite
 
       // preCommitLogSegment should not get updated until a commit is triggered
       assert(testTxn.preCommitLogSegment.version == 1)
-      assert(testTxn.preCommitLogSegment.lastCommitTimestamp < testTxnStartTs)
+      assert(testTxn.preCommitLogSegment.lastCommitFileModificationTimestamp < testTxnStartTs)
       assert(testTxn.preCommitLogSegment.deltas.size == 2)
       assert(testTxn.preCommitLogSegment.checkpointProvider.isEmpty)
 
@@ -433,9 +478,130 @@ class OptimisticTransactionSuite
 
       // preCommitLogSegment should get updated to the version right before the txn commits
       assert(testTxn.preCommitLogSegment.version == 12)
-      assert(testTxn.preCommitLogSegment.lastCommitTimestamp < testTxnEndTs)
+      assert(testTxn.preCommitLogSegment.lastCommitFileModificationTimestamp < testTxnEndTs)
       assert(testTxn.preCommitLogSegment.deltas.size == 2)
       assert(testTxn.preCommitLogSegment.checkpointProvider.version == 10)
+    }
+  }
+
+  test("Limited retries for non-conflict retryable CommitFailedExceptions") {
+    val commitCoordinatorName = "retryable-non-conflict-commit-coordinator"
+    var commitAttempts = 0
+    val numRetries = "100"
+    val numNonConflictRetries = "10"
+    val initialNonConflictErrors = 5
+    val initialConflictErrors = 5
+
+    object RetryableNonConflictCommitCoordinatorBuilder$ extends CommitCoordinatorBuilder {
+
+      override def getName: String = commitCoordinatorName
+
+      val commitCoordinatorClient: InMemoryCommitCoordinator = {
+        new InMemoryCommitCoordinator(batchSize = 1000L) {
+          override def commit(
+              logStore: LogStore,
+              hadoopConf: Configuration,
+              tableDesc: TableDescriptor,
+              commitVersion: Long,
+              actions: java.util.Iterator[String],
+              updatedActions: UpdatedActions): CommitResponse = {
+            // Fail all commits except first one
+            if (commitVersion == 0) {
+              return super.commit(
+                logStore,
+                hadoopConf,
+                tableDesc,
+                commitVersion,
+                actions,
+                updatedActions)
+            }
+            commitAttempts += 1
+            throw new CommitFailedException(
+              true,
+              commitAttempts > initialNonConflictErrors &&
+                commitAttempts <= (initialNonConflictErrors + initialConflictErrors),
+              "")
+          }
+        }
+      }
+      override def build(
+          spark: SparkSession,
+          conf: Map[String, String]): CommitCoordinatorClient = commitCoordinatorClient
+    }
+
+    CommitCoordinatorProvider.registerBuilder(RetryableNonConflictCommitCoordinatorBuilder$)
+
+    withSQLConf(
+        DeltaSQLConf.DELTA_MAX_RETRY_COMMIT_ATTEMPTS.key -> numRetries,
+        DeltaSQLConf.DELTA_MAX_NON_CONFLICT_RETRY_COMMIT_ATTEMPTS.key -> numNonConflictRetries) {
+      withTempDir { tempDir =>
+        val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+        val conf =
+          Map(DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key -> commitCoordinatorName)
+        log.startTransaction().commit(Seq(Metadata(configuration = conf)), ManualUpdate)
+        val testTxn = log.startTransaction()
+        intercept[CommitFailedException] { testTxn.commit(Seq.empty, ManualUpdate) }
+        // num-attempts = 1 + num-retries
+        assert(commitAttempts ==
+          (initialNonConflictErrors + initialConflictErrors + numNonConflictRetries.toInt + 1))
+      }
+    }
+  }
+
+  test("No retries for FileAlreadyExistsException with commit-coordinator") {
+    val commitCoordinatorName = "file-already-exists-commit-coordinator"
+    var commitAttempts = 0
+
+    object FileAlreadyExistsCommitCoordinatorBuilder extends CommitCoordinatorBuilder {
+
+      override def getName: String = commitCoordinatorName
+
+      lazy val commitCoordinatorClient: CommitCoordinatorClient = {
+        new InMemoryCommitCoordinator(batchSize = 1000L) {
+          override def commit(
+              logStore: LogStore,
+              hadoopConf: Configuration,
+              tableDesc: TableDescriptor,
+              commitVersion: Long,
+              actions: java.util.Iterator[String],
+              updatedActions: UpdatedActions): CommitResponse = {
+            // Fail all commits except first one
+            if (commitVersion == 0) {
+              return super.commit(
+                logStore,
+                hadoopConf,
+                tableDesc,
+                commitVersion,
+                actions,
+                updatedActions)
+            }
+            commitAttempts += 1
+            throw new FileAlreadyExistsException("Commit-File Already Exists")
+          }
+        }
+      }
+      override def build(
+          spark: SparkSession,
+          conf: Map[String, String]): CommitCoordinatorClient = commitCoordinatorClient
+    }
+
+    CommitCoordinatorProvider.registerBuilder(FileAlreadyExistsCommitCoordinatorBuilder)
+
+    withSQLConf(
+        DeltaSQLConf.DELTA_MAX_RETRY_COMMIT_ATTEMPTS.key -> "100",
+        DeltaSQLConf.DELTA_MAX_NON_CONFLICT_RETRY_COMMIT_ATTEMPTS.key -> "10") {
+      withTempDir { tempDir =>
+        val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+        val conf =
+          Map(DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key -> commitCoordinatorName)
+        log.startTransaction().commit(Seq(Metadata(configuration = conf)), ManualUpdate)
+        val testTxn = log.startTransaction()
+        intercept[FileAlreadyExistsException] { testTxn.commit(Seq.empty, ManualUpdate) }
+        // Test that there are no retries for the FileAlreadyExistsException in
+        // CommitCoordinatorClient.commit()
+        // num-attempts(1) = 1 + num-retries(0)
+        assert(commitAttempts == 1)
+      }
     }
   }
 
@@ -699,4 +865,94 @@ class OptimisticTransactionSuite
       }
     }
   }
+
+  BOOLEAN_DOMAIN.foreach { conflict =>
+    test(s"commitLarge should handle Commit Failed Exception with conflict: $conflict") {
+      withTempDir { tempDir =>
+        val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
+        val commitCoordinatorName = "retryable-conflict-commit-coordinator"
+        class RetryableConflictCommitCoordinatorClient
+          extends InMemoryCommitCoordinator(batchSize = 5) {
+          override def commit(
+              logStore: LogStore,
+              hadoopConf: Configuration,
+              tableDesc: TableDescriptor,
+              commitVersion: Long,
+              actions: java.util.Iterator[String],
+              updatedActions: UpdatedActions): CommitResponse = {
+            if (updatedActions.getCommitInfo.asInstanceOf[CommitInfo].operation
+                == DeltaOperations.OP_RESTORE) {
+              deltaLog.startTransaction().commit(addB :: Nil, ManualUpdate)
+              throw new CommitFailedException(true, conflict, "")
+            }
+            super.commit(logStore, hadoopConf, tableDesc, commitVersion, actions, updatedActions)
+          }
+        }
+        object RetryableConflictCommitCoordinatorBuilder$ extends CommitCoordinatorBuilder {
+          lazy val commitCoordinatorClient = new RetryableConflictCommitCoordinatorClient()
+          override def getName: String = commitCoordinatorName
+          override def build(
+              spark: SparkSession,
+              conf: Map[String, String]): CommitCoordinatorClient = commitCoordinatorClient
+        }
+        CommitCoordinatorProvider.registerBuilder(RetryableConflictCommitCoordinatorBuilder$)
+        val conf =
+          Map(DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key -> commitCoordinatorName)
+        deltaLog.startTransaction().commit(Seq(Metadata(configuration = conf)), ManualUpdate)
+        deltaLog.startTransaction().commit(addA :: Nil, ManualUpdate)
+        val records = Log4jUsageLogger.track {
+          // commitLarge must fail because of a conflicting commit at version-2.
+          val e = intercept[Exception] {
+            deltaLog.startTransaction().commitLarge(
+              spark,
+              nonProtocolMetadataActions = (addB :: Nil).iterator,
+              newProtocolOpt = None,
+              op = DeltaOperations.Restore(Some(0), None),
+              context = Map.empty,
+              metrics = Map.empty)
+          }
+          if (conflict) {
+            assert(e.isInstanceOf[ConcurrentWriteException])
+            assert(
+              e.getMessage.contains(
+                "A concurrent transaction has written new data since the current transaction " +
+                  s"read the table. Please try the operation again"))
+          } else {
+              assert(e.isInstanceOf[CommitFailedException])
+          }
+          assert(deltaLog.update().version == 2)
+        }
+        val failureRecord = filterUsageRecords(records, "delta.commitLarge.failure")
+        assert(failureRecord.size == 1)
+        val data = JsonUtils.fromJson[Map[String, Any]](failureRecord.head.blob)
+        assert(data("fromCoordinatedCommits") == true)
+        assert(data("fromCoordinatedCommitsConflict") == conflict)
+        assert(data("fromCoordinatedCommitsRetryable") == true)
+      }
+    }
+  }
+
+  test("Append does not trigger snapshot state computation") {
+    withSQLConf(
+      DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "false",
+      DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> "true",
+      DeltaSQLConf.INCREMENTAL_COMMIT_FORCE_VERIFY_IN_TESTS.key -> "false"
+    ) {
+      withTempDir { tableDir =>
+        val df = Seq((1, 0), (2, 1)).toDF("key", "value")
+        df.write.format("delta").mode("append").save(tableDir.getCanonicalPath)
+
+        val deltaLog = DeltaLog.forTable(spark, tableDir)
+        val preCommitSnapshot = deltaLog.update()
+        assert(!preCommitSnapshot.stateReconstructionTriggered)
+
+        df.write.format("delta").mode("append").save(tableDir.getCanonicalPath)
+
+        val postCommitSnapshot = deltaLog.update()
+        assert(!preCommitSnapshot.stateReconstructionTriggered)
+        assert(!postCommitSnapshot.stateReconstructionTriggered)
+      }
+    }
+  }
+
 }

@@ -142,6 +142,30 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
     val expectedCommitInfo = CommitInfo(
       time = 123L,
       operation = "CONVERT",
+      inCommitTimestamp = Some(123L),
+      operationParameters = Map.empty,
+      commandContext = Map.empty,
+      readVersion = Some(23),
+      isolationLevel = Some("SnapshotIsolation"),
+      isBlindAppend = Some(true),
+      operationMetrics = Some(Map("m1" -> "v1", "m2" -> "v2")),
+      userMetadata = Some("123"),
+      tags = None,
+      txnId = None).copy(engineInfo = None)
+
+    // json of commit info actions without tag or engineInfo field
+    val json1 =
+      """{"commitInfo":{"inCommitTimestamp":123,"timestamp":123,"operation":"CONVERT",""" +
+        """"operationParameters":{},"readVersion":23,""" +
+        """"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
+        """"operationMetrics":{"m1":"v1","m2":"v2"},"userMetadata":"123"}}""".stripMargin
+    assert(Action.fromJson(json1) === expectedCommitInfo)
+  }
+
+  test("deserialization of CommitInfo without commitTime") {
+    val expectedCommitInfo = CommitInfo(
+      time = 123L,
+      operation = "CONVERT",
       operationParameters = Map.empty,
       commandContext = Map.empty,
       readVersion = Some(23),
@@ -159,6 +183,34 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
         """"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
         """"operationMetrics":{"m1":"v1","m2":"v2"},"userMetadata":"123"}}""".stripMargin
     assert(Action.fromJson(json1) === expectedCommitInfo)
+  }
+
+  test("deserialization of CommitInfo with a very small ICT") {
+    val json1 =
+      """{"commitInfo":{"inCommitTimestamp":123,"timestamp":123,"operation":"CONVERT",""" +
+        """"operationParameters":{},"readVersion":23,""" +
+        """"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
+        """"operationMetrics":{"m1":"v1","m2":"v2"},"userMetadata":"123"}}""".stripMargin
+    assert(Action.fromJson(json1).asInstanceOf[CommitInfo].inCommitTimestamp.get == 123L)
+  }
+
+  test("deserialization of CommitInfo with a very large ICT") {
+    val json1 =
+      """{"commitInfo":{"inCommitTimestamp":123333333,"timestamp":123,"operation":"CONVERT",""" +
+        """"operationParameters":{},"readVersion":23,""" +
+        """"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
+        """"operationMetrics":{"m1":"v1","m2":"v2"},"userMetadata":"123"}}""".stripMargin
+    assert(Action.fromJson(json1).asInstanceOf[CommitInfo].inCommitTimestamp.get == 123333333L)
+  }
+
+  test("deserialization of CommitInfo with missing ICT") {
+    val json1 =
+      """{"commitInfo":{"timestamp":123,"operation":"CONVERT",""" +
+        """"operationParameters":{},"readVersion":23,""" +
+        """"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
+        """"operationMetrics":{"m1":"v1","m2":"v2"},"userMetadata":"123"}}""".stripMargin
+    val ictOpt: Option[Long] = Action.fromJson(json1).asInstanceOf[CommitInfo].inCommitTimestamp
+    assert(ictOpt.isEmpty)
   }
 
   testActionSerDe(
@@ -185,6 +237,19 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
         s""""minWriterVersion":$TABLE_FEATURES_MIN_WRITER_VERSION,""" +
         """"readerFeatures":["testLegacyReaderWriter"],""" +
         """"writerFeatures":["testLegacyReaderWriter"]}}""")
+
+  testActionSerDe(
+    "Protocol - json serialization/deserialization with several reader and writer features",
+    Protocol(
+      minReaderVersion = TABLE_FEATURES_MIN_READER_VERSION,
+      minWriterVersion = TABLE_FEATURES_MIN_WRITER_VERSION)
+      .withFeature(TestLegacyReaderWriterFeature)
+      .withFeature(TestReaderWriterFeature),
+    expectedJson =
+      s"""{"protocol":{"minReaderVersion":$TABLE_FEATURES_MIN_READER_VERSION,""" +
+        s""""minWriterVersion":$TABLE_FEATURES_MIN_WRITER_VERSION,""" +
+        """"readerFeatures":["testLegacyReaderWriter","testReaderWriter"],""" +
+        """"writerFeatures":["testLegacyReaderWriter","testReaderWriter"]}}""")
 
   testActionSerDe(
     "Protocol - json serialization/deserialization with empty reader and writer features",
@@ -221,6 +286,23 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       ""","modificationTime":1,"dataChange":true,"stats":"{\"numRecords\": 2}",""" +
       """"tags":{"TAG1":"23"}}}"""
   )
+
+  testActionSerDe(
+    "AddFile (with clusteringProvider) - json serialization/deserialization",
+    AddFile(
+      "clusteredFile.part",
+      partitionValues = Map.empty[String, String],
+      size = 10,
+      modificationTime = 1,
+      dataChange = true,
+      stats = "{\"numRecords\": 2}",
+      tags = Map("TAG1" -> "23"),
+      clusteringProvider = Some("liquid")),
+    expectedJson =
+      """{"add":{"path":"clusteredFile.part","partitionValues":{},"size":10""" +
+        ""","modificationTime":1,"dataChange":true,"stats":"{\"numRecords\": 2}",""" +
+        """"tags":{"TAG1":"23"}""" +
+        ""","clusteringProvider":"liquid"}}""")
 
   testActionSerDe(
     "RemoveFile (without tags) - json serialization/deserialization",
@@ -368,7 +450,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       val version = deltaTable.startTransactionWithInitialSnapshot()
         .commit(domainMetadatas, ManualUpdate)
       val committedActions = deltaLog.store.read(
-        FileNames.deltaFile(deltaLog.logPath, version),
+        FileNames.unsafeDeltaFile(deltaLog.logPath, version),
         deltaLog.newDeltaHadoopConf())
       assert(committedActions.size == 2)
       val serializedJson = committedActions.last
@@ -446,21 +528,23 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       """"size":10,"dataChange":false}}""".stripMargin)
 
   {
-    // We want this metadata to be lazy so it is instantiated after `SparkFunSuite::beforeAll`.
-    // This will ensure that `Utils.isTesting` returns true and that its id is set to 'testId'.
-    lazy val metadata = Metadata(createdTime = Some(2222))
+    val metadata = Metadata(id = "testId", createdTime = Some(2222))
     testActionSerDe(
       "Metadata (with all defaults) - json serialization/deserialization",
       metadata,
       expectedJson = """{"metaData":{"id":"testId","format":{"provider":"parquet",""" +
         """"options":{}},"partitionColumns":[],"configuration":{},"createdTime":2222}}""")
+    testActionSerDe(
+      "Metadata (with all defaults and empty createdTime) - json serialization/deserialization",
+      metadata.copy(createdTime = None),
+      expectedJson = """{"metaData":{"id":"testId","format":{"provider":"parquet",""" +
+        """"options":{}},"partitionColumns":[],"configuration":{}}}""")
   }
 
   {
     val schemaStr = new StructType().add("a", "long").json
-    // We want this metadata to be lazy so it is instantiated after `SparkFunSuite::beforeAll`.
-    // This will ensure that `Utils.isTesting` returns true and that its id is set to 'testId'.
-    lazy val metadata = Metadata(
+    val metadata = Metadata(
+      id = "testId",
       name = "t1",
       description = "desc",
       format = Format(provider = "parquet", options = Map("o1" -> "v1")),
@@ -488,6 +572,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
     val commitInfo = CommitInfo(
       time = 123L,
       operation = "CONVERT",
+      inCommitTimestamp = Some(123L),
       operationParameters = Map.empty,
       commandContext = Map("clusterId" -> "23"),
       readVersion = Some(23),
@@ -502,11 +587,12 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
     testActionSerDe(
       "CommitInfo (without operationParameters) - json serialization/deserialization",
       commitInfo,
-      expectedJson = """{"commitInfo":{"timestamp":123,"operation":"CONVERT",""" +
-        """"operationParameters":{},"clusterId":"23","readVersion":23,""" +
-        """"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
-        """"operationMetrics":{"m1":"v1","m2":"v2"},"userMetadata":"123",""" +
-        """"tags":{"k1":"v1"},"txnId":"123"}}""".stripMargin)
+      expectedJson =
+        """{"commitInfo":{"inCommitTimestamp":123,"timestamp":123,"operation":"CONVERT",""" +
+          """"operationParameters":{},"clusterId":"23","readVersion":23,""" +
+          """"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
+          """"operationMetrics":{"m1":"v1","m2":"v2"},"userMetadata":"123",""" +
+          """"tags":{"k1":"v1"},"txnId":"123"}}""".stripMargin)
 
     test("CommitInfo (with operationParameters) - json serialization/deserialization") {
       val operation = DeltaOperations.Convert(
@@ -518,14 +604,16 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       val commitInfo1 = commitInfo.copy(operationParameters = operation.jsonEncodedValues)
       val expectedCommitInfoJson1 = // TODO JSON ordering differs between 2.12 and 2.13
         if (scala.util.Properties.versionNumberString.startsWith("2.13")) {
-          """{"commitInfo":{"timestamp":123,"operation":"CONVERT","operationParameters"""" +
+          """{"commitInfo":{"inCommitTimestamp":123,""" +
+            """"timestamp":123,"operation":"CONVERT","operationParameters"""" +
             """:{"catalogTable":"t1","numFiles":23,"partitionedBy":"[\"a\",\"b\"]",""" +
             """"sourceFormat":"parquet","collectStats":false},"clusterId":"23","readVersion"""" +
             """:23,"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
             """"operationMetrics":{"m1":"v1","m2":"v2"},""" +
             """"userMetadata":"123","tags":{"k1":"v1"},"txnId":"123"}}"""
         } else {
-          """{"commitInfo":{"timestamp":123,"operation":"CONVERT","operationParameters"""" +
+          """{"commitInfo":{"inCommitTimestamp":123,""" +
+            """"timestamp":123,"operation":"CONVERT","operationParameters"""" +
             """:{"catalogTable":"t1","numFiles":23,"partitionedBy":"[\"a\",\"b\"]",""" +
             """"sourceFormat":"parquet","collectStats":false},"clusterId":"23","readVersion""" +
             """":23,"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
@@ -543,12 +631,13 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
     testActionSerDe(
       "CommitInfo (with engineInfo) - json serialization/deserialization",
       commitInfo.copy(engineInfo = Some("Apache-Spark/3.1.1 Delta-Lake/10.1.0")),
-      expectedJson = """{"commitInfo":{"timestamp":123,"operation":"CONVERT",""" +
-        """"operationParameters":{},"clusterId":"23","readVersion":23,""" +
-        """"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
-        """"operationMetrics":{"m1":"v1","m2":"v2"},"userMetadata":"123",""" +
-        """"tags":{"k1":"v1"},"engineInfo":"Apache-Spark/3.1.1 Delta-Lake/10.1.0",""" +
-        """"txnId":"123"}}""".stripMargin)
+      expectedJson =
+        """{"commitInfo":{"inCommitTimestamp":123,"timestamp":123,"operation":"CONVERT",""" +
+          """"operationParameters":{},"clusterId":"23","readVersion":23,""" +
+          """"isolationLevel":"SnapshotIsolation","isBlindAppend":true,""" +
+          """"operationMetrics":{"m1":"v1","m2":"v2"},"userMetadata":"123",""" +
+          """"tags":{"k1":"v1"},"engineInfo":"Apache-Spark/3.1.1 Delta-Lake/10.1.0",""" +
+          """"txnId":"123"}}""".stripMargin)
   }
 
   private def roundTripCompare(name: String, actions: Action*) = {
@@ -589,7 +678,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
           val version = deltaLog.startTransaction().commit(Seq(action), ManualUpdate)
           // Read the commit file and get the serialized committed actions
           val committedActions = deltaLog.store.read(
-            FileNames.deltaFile(deltaLog.logPath, version),
+            FileNames.unsafeDeltaFile(deltaLog.logPath, version),
             deltaLog.newDeltaHadoopConf())
 
           assert(committedActions.size == 2)

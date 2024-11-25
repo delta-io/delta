@@ -51,9 +51,30 @@ class DeltaTableUtilsSuite extends SharedSparkSession with DeltaSQLCommandTest {
       new Path("s3://my-bucket/subfolder/_delta_log"))
     assert(DeltaTableUtils.safeConcatPaths(basePathEmpty, "_delta_log") ==
       new Path("s3://my-bucket/_delta_log"))
+    assert(DeltaTableUtils.safeConcatPaths(basePath, "_delta/_log") ==
+      new Path("s3://my-bucket/subfolder/_delta/_log"))
+    assert(DeltaTableUtils.safeConcatPaths(basePathEmpty, "_delta/_log") ==
+      new Path("s3://my-bucket/_delta/_log"))
+
+    withSQLConf(DeltaSQLConf.DELTA_WORK_AROUND_COLONS_IN_HADOOP_PATHS.key -> "false") {
+      assert(intercept[IllegalArgumentException] {
+        DeltaTableUtils.safeConcatPaths(basePath, "part-2024-03-05T16:08:53.002.csv")
+      }.getMessage.contains("Relative path in absolute URI"))
+    }
+
+    withSQLConf(DeltaSQLConf.DELTA_WORK_AROUND_COLONS_IN_HADOOP_PATHS.key -> "true") {
+      assert(DeltaTableUtils.safeConcatPaths(basePath, "part-2024-03-05T16:08:53.002.csv") ==
+        new Path("s3://my-bucket/subfolder/part-2024-03-05T16:08:53.002.csv"))
+      assert(DeltaTableUtils.safeConcatPaths(basePathEmpty, "part-2024-03-05T16:08:53.002.csv") ==
+        new Path("s3://my-bucket/part-2024-03-05T16:08:53.002.csv"))
+      assert(DeltaTableUtils.safeConcatPaths(basePath, "part/2024-03-05T16:08:53.002.csv") ==
+        new Path("s3://my-bucket/subfolder/part/2024-03-05T16:08:53.002.csv"))
+      assert(DeltaTableUtils.safeConcatPaths(basePathEmpty, "part/2024-03-05T16:08:53.002.csv") ==
+        new Path("s3://my-bucket/part/2024-03-05T16:08:53.002.csv"))
+    }
   }
 
-  test("removeInternalMetadata") {
+  test("removeInternalWriterMetadata") {
     for (flag <- BOOLEAN_DOMAIN) {
       withSQLConf(DeltaSQLConf.DELTA_SCHEMA_REMOVE_SPARK_INTERNAL_METADATA.key -> flag.toString) {
         for (internalMetadataKey <- DeltaTableUtils.SPARK_INTERNAL_METADATA_KEYS) {
@@ -62,7 +83,7 @@ class DeltaTableUtilsSuite extends SharedSparkSession with DeltaSQLCommandTest {
             .putString("other", "bar")
             .build()
           val schema = StructType(Seq(StructField("foo", StringType, metadata = metadata)))
-          val newSchema = DeltaTableUtils.removeInternalMetadata(spark, schema)
+          val newSchema = DeltaTableUtils.removeInternalWriterMetadata(spark, schema)
           newSchema.foreach { f =>
             if (flag) {
               // Flag on: should remove internal metadata

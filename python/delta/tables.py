@@ -14,6 +14,7 @@
 # limitations under the License.
 #
 
+from dataclasses import dataclass
 from typing import (
     TYPE_CHECKING, cast, overload, Any, Dict, Iterable, Optional, Union, NoReturn, List, Tuple
 )
@@ -25,7 +26,6 @@ from delta._typing import (
 
 from pyspark import since
 from pyspark.sql import Column, DataFrame, functions, SparkSession
-from pyspark.sql.column import _to_seq  # type: ignore[attr-defined]
 from pyspark.sql.types import DataType, StructType, StructField
 
 
@@ -214,7 +214,7 @@ class DeltaTable(object):
         """
         if source is None:
             raise ValueError("'source' in merge cannot be None")
-        elif type(source) is not DataFrame:
+        elif not isinstance(source, DataFrame):
             raise TypeError("Type of 'source' in merge must be DataFrame.")
         if condition is None:
             raise ValueError("'condition' in merge cannot be None")
@@ -393,9 +393,10 @@ class DeltaTable(object):
         cls, sparkSession: SparkSession, tableOrViewName: str
     ) -> "DeltaTable":
         """
-        Instantiate a :class:`DeltaTable` object using the given table or view name. If the given
+        Instantiate a :class:`DeltaTable` object using the given table name. If the given
         tableOrViewName is invalid (i.e. either no table exists or an existing table is not a
-        Delta table), it throws a `not a Delta table` error.
+        Delta table), it throws a `not a Delta table` error. Note: Passing a view name will
+        also result in this error as views are not supported.
 
         The given tableOrViewName can also be the absolute path of a delta datasource (i.e.
         delta.`path`), If so, instantiate a :class:`DeltaTable` object representing the data at
@@ -580,6 +581,19 @@ class DeltaTable(object):
                              type(writerVersion))
         jdt.upgradeTableProtocol(readerVersion, writerVersion)
 
+    @since(3.3)  # type: ignore[arg-type]
+    def addFeatureSupport(self, featureName: str) -> None:
+        """
+        Modify the protocol to add a supported feature, and if the table does not support table
+        features, upgrade the protocol automatically. In such a case when the provided feature is
+        writer-only, the table's writer version will be upgraded to `7`, and when the provided
+        feature is reader-writer, both reader and writer versions will be upgraded, to `(3, 7)`.
+
+        See online documentation and Delta's protocol specification at PROTOCOL.md for more details.
+        """
+        DeltaTable._verify_type_str(featureName, "featureName")
+        self._jdt.addFeatureSupport(featureName)
+
     @since(1.2)  # type: ignore[arg-type]
     def restoreToVersion(self, version: int) -> DataFrame:
         """
@@ -678,7 +692,7 @@ class DeltaTable(object):
                 e = ("Keys of dict in %s must contain only strings with column names" % argname) + \
                     (", found '%s' of type '%s" % (str(col), str(type(col))))
                 raise TypeError(e)
-            if type(expr) is Column:
+            if isinstance(expr, Column) and hasattr(expr, "_jc"):
                 jmap.put(col, expr._jc)
             elif type(expr) is str:
                 jmap.put(col, functions.expr(expr)._jc)
@@ -695,7 +709,7 @@ class DeltaTable(object):
     ) -> "JavaObject":
         if condition is None:
             jcondition = None
-        elif type(condition) is Column:
+        elif isinstance(condition, Column) and hasattr(condition, "_jc"):
             jcondition = condition._jc
         elif type(condition) is str:
             jcondition = functions.expr(condition)._jc
@@ -1012,6 +1026,19 @@ class DeltaMergeBuilder(object):
         new_jbuilder = self.__getNotMatchedBySourceBuilder(condition).delete()
         return DeltaMergeBuilder(self._spark, new_jbuilder)
 
+    @since(3.2)  # type: ignore[arg-type]
+    def withSchemaEvolution(self) -> "DeltaMergeBuilder":
+        """
+        Enable schema evolution for the merge operation. This allows the target table schema to
+        be automatically updated based on the schema of the source DataFrame.
+
+        See :py:class:`~delta.tables.DeltaMergeBuilder` for complete usage details.
+
+        :return: this builder
+        """
+        new_jbuilder = self._jbuilder.withSchemaEvolution()
+        return DeltaMergeBuilder(self._spark, new_jbuilder)
+
     @since(0.4)  # type: ignore[arg-type]
     def execute(self) -> None:
         """
@@ -1045,6 +1072,19 @@ class DeltaMergeBuilder(object):
         else:
             return self._jbuilder.whenNotMatchedBySource(
                 DeltaTable._condition_to_jcolumn(condition))
+
+
+@dataclass
+class IdentityGenerator:
+    """
+    Identity generator specifications for the identity column in the Delta table.
+    :param start: the start for the identity column. Default is 1.
+    :type start: int
+    :param step: the step for the identity column. Default is 1.
+    :type step: int
+    """
+    start: int = 1
+    step: int = 1
 
 
 class DeltaTableBuilder(object):
@@ -1094,6 +1134,10 @@ class DeltaTableBuilder(object):
         for obj in objs:
             errorMsg += " Found %s with type %s" % ((str(obj)), str(type(obj)))
         raise TypeError(errorMsg)
+
+    def _check_identity_column_spec(self, identityGenerator: IdentityGenerator) -> None:
+        if identityGenerator.step == 0:
+            raise ValueError("Column identity generation requires step to be non-zero.")
 
     @since(1.0)  # type: ignore[arg-type]
     def tableName(self, identifier: str) -> "DeltaTableBuilder":
@@ -1151,7 +1195,8 @@ class DeltaTableBuilder(object):
         colName: str,
         dataType: Union[str, DataType],
         nullable: bool = True,
-        generatedAlwaysAs: Optional[str] = None,
+        generatedAlwaysAs: Optional[Union[str, IdentityGenerator]] = None,
+        generatedByDefaultAs: Optional[IdentityGenerator] = None,
         comment: Optional[str] = None,
     ) -> "DeltaTableBuilder":
         """
@@ -1164,9 +1209,15 @@ class DeltaTableBuilder(object):
         :param nullable: whether column is nullable
         :type nullable: bool
         :param generatedAlwaysAs: a SQL expression if the column is always generated
-                                  as a function of other columns.
+                                  as a function of other columns;
+                                  an IdentityGenerator object if the column is always
+                                  generated using identity generator
                                   See online documentation for details on Generated Columns.
-        :type generatedAlwaysAs: str
+        :type generatedAlwaysAs: str or delta.tables.IdentityGenerator
+        :param generatedByDefaultAs: an IdentityGenerator object to generate identity values
+                                     if the user does not provide values for the column
+                                  See online documentation for details on Generated Columns.
+        :type generatedByDefaultAs: delta.tables.IdentityGenerator
         :param comment: the column comment
         :type comment: str
 
@@ -1190,11 +1241,31 @@ class DeltaTableBuilder(object):
         if type(nullable) is not bool:
             self._raise_type_error("Column nullable must be bool.", [nullable])
         _col_jbuilder = _col_jbuilder.nullable(nullable)
+
+        if generatedAlwaysAs is not None and generatedByDefaultAs is not None:
+            raise ValueError(
+                "generatedByDefaultAs and generatedAlwaysAs cannot both be set.",
+                [generatedByDefaultAs, generatedAlwaysAs])
         if generatedAlwaysAs is not None:
-            if type(generatedAlwaysAs) is not str:
-                self._raise_type_error("Column generation expression must be str.",
-                                       [generatedAlwaysAs])
-            _col_jbuilder = _col_jbuilder.generatedAlwaysAs(generatedAlwaysAs)
+            if type(generatedAlwaysAs) is str:
+                _col_jbuilder = _col_jbuilder.generatedAlwaysAs(generatedAlwaysAs)
+            elif isinstance(generatedAlwaysAs, IdentityGenerator):
+                self._check_identity_column_spec(generatedAlwaysAs)
+                _col_jbuilder = _col_jbuilder.generatedAlwaysAsIdentity(
+                    generatedAlwaysAs.start, generatedAlwaysAs.step)
+            else:
+                self._raise_type_error(
+                    "Generated always as expression must be str or IdentityGenerator.",
+                    [generatedAlwaysAs])
+        elif generatedByDefaultAs is not None:
+            if not isinstance(generatedByDefaultAs, IdentityGenerator):
+                self._raise_type_error(
+                    "Generated by default expression must be IdentityGenerator.",
+                    [generatedByDefaultAs])
+            self._check_identity_column_spec(generatedByDefaultAs)
+            _col_jbuilder = _col_jbuilder.generatedByDefaultAsIdentity(
+                generatedByDefaultAs.start, generatedByDefaultAs.step)
+
         if comment is not None:
             if type(comment) is not str:
                 self._raise_type_error("Column comment must be str.", [comment])
@@ -1260,12 +1331,61 @@ class DeltaTableBuilder(object):
 
         .. note:: Evolving
         """
+        try:
+            from pyspark.sql.column import _to_seq  # type: ignore[attr-defined]
+        except ImportError:
+            # Spark 4
+            from pyspark.sql.classic.column import _to_seq  # type: ignore[import, no-redef]
+
         if len(cols) == 1 and isinstance(cols[0], (list, tuple)):
             cols = cols[0]  # type: ignore[assignment]
         for c in cols:
             if type(c) is not str:
                 self._raise_type_error("Partitioning column must be str.", [c])
         self._jbuilder = self._jbuilder.partitionedBy(_to_seq(
+            self._spark._sc,  # type: ignore[attr-defined]
+            cast(Iterable[Union[Column, str]], cols)
+        ))
+        return self
+
+    @overload
+    def clusterBy(
+        self, *cols: str
+    ) -> "DeltaTableBuilder":
+        ...
+
+    @overload
+    def clusterBy(
+        self, __cols: Union[List[str], Tuple[str, ...]]
+    ) -> "DeltaTableBuilder":
+        ...
+
+    @since(3.2)  # type: ignore[arg-type]
+    def clusterBy(
+        self, *cols: Union[str, List[str], Tuple[str, ...]]
+    ) -> "DeltaTableBuilder":
+        """
+        Specify columns for clustering
+
+        :param cols: the clustering cols
+        :type cols: str or list name of columns
+
+        :return: this builder
+
+        .. note:: Evolving
+        """
+        try:
+            from pyspark.sql.column import _to_seq  # type: ignore[attr-defined]
+        except ImportError:
+            # Spark 4
+            from pyspark.sql.classic.column import _to_seq  # type: ignore[import, no-redef]
+
+        if len(cols) == 1 and isinstance(cols[0], (list, tuple)):
+            cols = cols[0]  # type: ignore[assignment]
+        for c in cols:
+            if type(c) is not str:
+                self._raise_type_error("Clustering column must be str.", [c])
+        self._jbuilder = self._jbuilder.clusterBy(_to_seq(
             self._spark._sc,  # type: ignore[attr-defined]
             cast(Iterable[Union[Column, str]], cols)
         ))
@@ -1352,6 +1472,12 @@ class DeltaOptimizeBuilder(object):
         :return: DataFrame containing the OPTIMIZE execution metrics
         :rtype: pyspark.sql.DataFrame
         """
+        try:
+            from pyspark.sql.column import _to_seq  # type: ignore[attr-defined]
+        except ImportError:
+            # Spark 4
+            from pyspark.sql.classic.column import _to_seq  # type: ignore[import, no-redef]
+
         if len(cols) == 1 and isinstance(cols[0], (list, tuple)):
             cols = cols[0]  # type: ignore[assignment]
         for c in cols:

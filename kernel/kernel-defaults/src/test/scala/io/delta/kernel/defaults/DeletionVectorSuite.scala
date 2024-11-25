@@ -17,9 +17,7 @@ package io.delta.kernel.defaults
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 
-import io.delta.kernel.defaults.client.DefaultTableClient
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
-import io.delta.kernel.defaults.utils.DefaultKernelTestUtils.getTestResourceFilePath
 import org.apache.hadoop.conf.Configuration
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -52,11 +50,10 @@ class DeletionVectorSuite extends AnyFunSuite with TestUtils {
     checkTable(
       path = goldenTablePath("dv-partitioned-with-checkpoint"),
       expectedAnswer = expectedResult.map(TestRow.fromTuple(_)),
-      tableClient = defaultTableClient
+      engine = defaultEngine
     )
   }
 
-  // TODO: update to use goldenTables once bug is fixed in delta-spark see issue #1886
   test(
     "end-to-end usage: reading partitioned dv table with checkpoint with columnMappingMode=name") {
     val expectedResult = (0 until 50).map(x => (x%10, x, s"foo${x % 5}"))
@@ -64,7 +61,7 @@ class DeletionVectorSuite extends AnyFunSuite with TestUtils {
         !(col1 % 2 == 0 && col1 < 30)
       }
     checkTable(
-      path = getTestResourceFilePath("dv-with-columnmapping"),
+      path = goldenTablePath("dv-with-columnmapping"),
       expectedAnswer = expectedResult.map(TestRow.fromTuple(_))
     )
   }

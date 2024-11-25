@@ -19,7 +19,8 @@ package org.apache.spark.sql.delta
 import scala.collection.JavaConverters._
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.catalog.{DeltaCatalog, DeltaTableV2}
+import org.apache.spark.sql.delta.commands._
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.hadoop.fs.{FileSystem, Path}
 
@@ -27,11 +28,16 @@ import org.apache.spark.SparkConf
 import org.apache.spark.sql.{QueryTest, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.NoSuchTableException
+import org.apache.spark.sql.catalyst.analysis.ResolvedTable
 import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
-import org.apache.spark.sql.connector.catalog.{Identifier, Table, TableCatalog, TableChange}
+import org.apache.spark.sql.catalyst.plans.logical.{AppendData, LogicalPlan, SetTableProperties, UnaryNode, UnsetTableProperties}
+import org.apache.spark.sql.catalyst.trees.UnaryLike
+import org.apache.spark.sql.connector.catalog.{DelegatingCatalogExtension, Identifier, InMemoryTable, InMemoryTableCatalog, Table, TableCatalog, TableChange, V1Table}
 import org.apache.spark.sql.connector.expressions.Transform
+import org.apache.spark.sql.execution.command.LeafRunnableCommand
+import org.apache.spark.sql.execution.datasources.v2.{DataSourceV2Relation, V2SessionCatalog}
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
+import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 import org.apache.spark.util.Utils
 
@@ -40,6 +46,72 @@ class CustomCatalogSuite extends QueryTest with SharedSparkSession
 
   override def sparkConf: SparkConf =
     super.sparkConf.set("spark.sql.catalog.dummy", classOf[DummyCatalog].getName)
+
+  test("CatalogTable exists in DeltaTableV2 if use table identifier") {
+    def catalogTableExists(sqlCmd: String): Unit = {
+      val plan = spark.sql(sqlCmd).queryExecution.analyzed
+      val catalogTable = plan match {
+        case cmd: UnaryNode with DeltaCommand =>
+          cmd.getDeltaTable(cmd.child, "dummy").catalogTable
+        case AppendData(DataSourceV2Relation(table: DeltaTableV2, _, _, _, _), _, _, _, _, _) =>
+          table.catalogTable
+        case cmd: DeleteCommand =>
+          cmd.catalogTable
+        case cmd: DescribeDeltaHistoryCommand =>
+          cmd.table.catalogTable
+        case cmd: MergeIntoCommand =>
+          cmd.catalogTable
+        case cmd: RestoreTableCommand =>
+          cmd.sourceTable.catalogTable
+        case SetTableProperties(ResolvedTable(_, _, table: DeltaTableV2, _), _) =>
+          table.catalogTable
+        case UnsetTableProperties(ResolvedTable(_, _, table: DeltaTableV2, _), _, _) =>
+          table.catalogTable
+        case cmd: UpdateCommand =>
+          cmd.catalogTable
+        case cmd: WriteIntoDelta =>
+          cmd.catalogTableOpt
+      }
+      assert(catalogTable.nonEmpty)
+    }
+
+    val mergeSrcTable = "merge_src_table"
+    val tableName = "delta_commands_table"
+
+    withTable(tableName, mergeSrcTable) {
+      sql(f"CREATE TABLE $tableName (c1 int, c2 int) USING delta PARTITIONED BY (c1)")
+      // DQL
+      catalogTableExists(s"DESCRIBE DETAIL $tableName")
+      catalogTableExists(s"DESCRIBE HISTORY $tableName")
+
+      // DDL
+      catalogTableExists(s"ALTER TABLE $tableName SET TBLPROPERTIES ('a' = 'b') ")
+      catalogTableExists(s"ALTER TABLE $tableName UNSET TBLPROPERTIES ('a') ")
+
+      // DML insert
+      catalogTableExists(s"INSERT INTO $tableName VALUES (1, 1) ")
+
+      // DML merge
+      sql(s"CREATE TABLE $mergeSrcTable (c1 int, c2 int) USING delta PARTITIONED BY (c1)")
+      sql(s"INSERT INTO $mergeSrcTable VALUES (1, 1) ")
+      catalogTableExists(s"MERGE INTO $tableName USING $mergeSrcTable " +
+        s"ON ${mergeSrcTable}.c1 = ${tableName}.c1 WHEN MATCHED THEN DELETE")
+
+      // DML update
+      catalogTableExists(s"UPDATE $tableName SET c1 = 4 WHERE true ")
+
+      // DML delete
+      catalogTableExists(s"DELETE FROM $tableName WHERE true ")
+
+      // optimize
+      sql(s"INSERT INTO $tableName VALUES (1, 1) ")
+      sql(s"INSERT INTO $tableName VALUES (1, 1) ")
+      catalogTableExists(s"OPTIMIZE $tableName")
+
+      // vacuum
+      catalogTableExists(s"VACUUM $tableName")
+    }
+  }
 
   test("DESC DETAIL a delta table from DummyCatalog") {
     val tableName = "desc_detail_table"
@@ -187,6 +259,59 @@ class CustomCatalogSuite extends QueryTest with SharedSparkSession
       assert(result(0).getAs[Long]("version") == 1)
     }
   }
+
+  test("SELECT Table Changes from DummyCatalog") {
+    val dummyTableName = "dummy_table"
+    val sparkTableName = "spark_catalog.default.spark_table"
+    withTable(dummyTableName, sparkTableName) {
+      sql("SET CATALOG spark_catalog")
+      sql(f"CREATE TABLE $sparkTableName (id bigint, s string) USING delta" +
+        f" TBLPROPERTIES(delta.enableChangeDataFeed=true)")
+      sql(f"INSERT INTO $sparkTableName VALUES (0, 'a')")
+      sql(f"INSERT INTO $sparkTableName VALUES (1, 'b')")
+      sql("SET CATALOG dummy")
+      // Since the dummy catalog doesn't pass through the TBLPROPERTIES 'delta.enableChangeDataFeed'
+      // here we clone a table with the same schema as the spark table to test the table changes.
+      sql(f"CREATE TABLE $dummyTableName SHALLOW CLONE $sparkTableName")
+      // table_changes() should be able to read the table changes from the dummy catalog
+      Seq(dummyTableName, f"dummy.default.$dummyTableName").foreach { name =>
+        val rows = sql(f"SELECT * from table_changes('$name', 1)").collect()
+        assert(rows.length == 2)
+      }
+    }
+  }
+
+  test("custom catalog that adds additional table storage properties") {
+    // Reset catalog manager so that the new `spark_catalog` implementation can apply.
+    spark.sessionState.catalogManager.reset()
+    withSQLConf("spark.sql.catalog.spark_catalog" -> classOf[DummySessionCatalog].getName) {
+      withTable("t") {
+        withTempPath { path =>
+          spark.range(10).write.format("delta").save(path.getCanonicalPath)
+          sql(s"CREATE TABLE t (id LONG) USING delta LOCATION '${path.getCanonicalPath}'")
+          val t = spark.sessionState.catalogManager.v2SessionCatalog.asInstanceOf[TableCatalog]
+            .loadTable(Identifier.of(Array("default"), "t")).asInstanceOf[DeltaTableV2]
+          assert(t.deltaLog.options("fs.myKey") == "val")
+        }
+      }
+    }
+  }
+
+  test("custom catalog that generates location for managed tables") {
+    // Reset catalog manager so that the new `spark_catalog` implementation can apply.
+    spark.sessionState.catalogManager.reset()
+    withSQLConf("spark.sql.catalog.spark_catalog" -> classOf[DummySessionCatalog].getName) {
+      withTable("t") {
+        withTempPath { path =>
+          sql(s"CREATE TABLE t (id LONG) USING delta TBLPROPERTIES (fakeLoc='$path')")
+          val t = spark.sessionState.catalogManager.v2SessionCatalog.asInstanceOf[TableCatalog]
+            .loadTable(Identifier.of(Array("default"), "t"))
+          // It should be a managed table.
+          assert(!t.properties().containsKey(TableCatalog.PROP_EXTERNAL))
+        }
+      }
+    }
+  }
 }
 
 class DummyCatalog extends TableCatalog {
@@ -217,7 +342,7 @@ class DummyCatalog extends TableCatalog {
   }
   override def loadTable(ident: Identifier): Table = {
     if (!tableExists(ident)) {
-      throw new NoSuchTableException("")
+      throw new NoSuchTableException(ident)
     }
     val tablePath = getTablePath(ident.name())
     DeltaTableV2(spark = spark, path = tablePath, catalogTable = Some(createCatalogTable(ident)))
@@ -237,7 +362,8 @@ class DummyCatalog extends TableCatalog {
   }
 
   override def alterTable(ident: Identifier, changes: TableChange*): Table = {
-    throw new UnsupportedOperationException("Alter table operation is not supported.")
+    // hack hack: no-op just for testing
+    loadTable(ident)
   }
 
   override def dropTable(ident: Identifier): Boolean = {
@@ -269,5 +395,68 @@ class DummyCatalog extends TableCatalog {
       storage = CatalogStorageFormat(Some(tablePath.toUri), None, None, None, false, Map.empty),
       schema = spark.range(0).schema
     )
+  }
+}
+
+// A dummy catalog that adds additional table storage properties after the table is loaded.
+// It's only used inside `DummySessionCatalog`.
+class DummySessionCatalogInner extends DelegatingCatalogExtension {
+  override def loadTable(ident: Identifier): Table = {
+    val t = super.loadTable(ident).asInstanceOf[V1Table]
+    V1Table(t.v1Table.copy(
+      storage = t.v1Table.storage.copy(
+        properties = t.v1Table.storage.properties ++ Map("fs.myKey" -> "val")
+      )
+    ))
+  }
+}
+
+// A dummy catalog that adds a layer between DeltaCatalog and the Spark SessionCatalog,
+// to attach additional table storage properties after the table is loaded, and generates location
+// for managed tables.
+class DummySessionCatalog extends TableCatalog {
+  private var deltaCatalog: DeltaCatalog = null
+
+  override def initialize(name: String, options: CaseInsensitiveStringMap): Unit = {
+    val inner = new DummySessionCatalogInner()
+    inner.setDelegateCatalog(new V2SessionCatalog(
+      SparkSession.active.sessionState.catalogManager.v1SessionCatalog))
+    deltaCatalog = new DeltaCatalog()
+    deltaCatalog.setDelegateCatalog(inner)
+  }
+
+  override def name(): String = deltaCatalog.name()
+
+  override def listTables(namespace: Array[String]): Array[Identifier] = {
+    deltaCatalog.listTables(namespace)
+  }
+
+  override def loadTable(ident: Identifier): Table = deltaCatalog.loadTable(ident)
+
+  override def createTable(
+      ident: Identifier,
+      schema: StructType,
+      partitions: Array[Transform],
+      properties: java.util.Map[String, String]): Table = {
+    if (!properties.containsKey(TableCatalog.PROP_EXTERNAL) &&
+      !properties.containsKey(TableCatalog.PROP_LOCATION)) {
+      val newProps = new java.util.HashMap[String, String]
+      newProps.putAll(properties)
+      newProps.put(TableCatalog.PROP_LOCATION, properties.get("fakeLoc"))
+      newProps.put(TableCatalog.PROP_IS_MANAGED_LOCATION, "true")
+      deltaCatalog.createTable(ident, schema, partitions, newProps)
+    } else {
+      deltaCatalog.createTable(ident, schema, partitions, properties)
+    }
+  }
+
+  override def alterTable(ident: Identifier, changes: TableChange*): Table = {
+    deltaCatalog.alterTable(ident, changes: _*)
+  }
+
+  override def dropTable(ident: Identifier): Boolean = deltaCatalog.dropTable(ident)
+
+  override def renameTable(oldIdent: Identifier, newIdent: Identifier): Unit = {
+    deltaCatalog.renameTable(oldIdent, newIdent)
   }
 }

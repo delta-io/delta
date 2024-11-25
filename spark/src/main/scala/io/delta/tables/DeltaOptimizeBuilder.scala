@@ -17,6 +17,7 @@
 package io.delta.tables
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.DeltaTableUtils.withActiveSession
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DeltaOptimizeContext
 import org.apache.spark.sql.delta.commands.OptimizeTableCommand
@@ -81,21 +82,23 @@ class DeltaOptimizeBuilder private(table: DeltaTableV2) extends AnalysisHelper {
 
   private def execute(zOrderBy: Seq[UnresolvedAttribute]): DataFrame = {
     val sparkSession = table.spark
-    val tableId: TableIdentifier = sparkSession
-      .sessionState
-      .sqlParser
-      .parseTableIdentifier(tableIdentifier)
-    val id = Identifier.of(tableId.database.toArray, tableId.identifier)
-    val catalogPlugin = sparkSession.sessionState.catalogManager.currentCatalog
-    val catalog = catalogPlugin match {
-      case tableCatalog: TableCatalog => tableCatalog
-      case _ => throw new IllegalArgumentException(
-        s"Catalog ${catalogPlugin.name} does not support tables")
+    withActiveSession(sparkSession) {
+      val tableId: TableIdentifier = sparkSession
+        .sessionState
+        .sqlParser
+        .parseTableIdentifier(tableIdentifier)
+      val id = Identifier.of(tableId.database.toArray, tableId.identifier)
+      val catalogPlugin = sparkSession.sessionState.catalogManager.currentCatalog
+      val catalog = catalogPlugin match {
+        case tableCatalog: TableCatalog => tableCatalog
+        case _ => throw new IllegalArgumentException(
+          s"Catalog ${catalogPlugin.name} does not support tables")
+      }
+      val resolvedTable = ResolvedTable.create(catalog, id, table)
+      val optimize = OptimizeTableCommand(
+        resolvedTable, partitionFilter, DeltaOptimizeContext())(zOrderBy = zOrderBy)
+      toDataset(sparkSession, optimize)
     }
-    val resolvedTable = ResolvedTable.create(catalog, id, table)
-    val optimize = OptimizeTableCommand(
-      resolvedTable, partitionFilter, DeltaOptimizeContext())(zOrderBy = zOrderBy)
-    toDataset(sparkSession, optimize)
   }
 }
 

@@ -27,11 +27,13 @@ import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
 import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.execution.datasources.parquet.ParquetTest
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.test.SharedSparkSession
 
 class DefaultRowCommitVersionSuite extends QueryTest
   with SharedSparkSession
+  with ParquetTest
   with RowIdTestUtils {
   def expectedCommitVersionsForAllFiles(deltaLog: DeltaLog): Map[String, Long] = {
     val commitVersionForFiles = mutable.Map.empty[String, Long]
@@ -215,6 +217,28 @@ class DefaultRowCommitVersionSuite extends QueryTest
 
       deltaLog.update().allFiles.collect().foreach { f =>
         assert(f.defaultRowCommitVersion.contains(3))
+      }
+    }
+  }
+
+  test("can read default row commit versions") {
+    withRowTrackingEnabled(enabled = true) {
+      withTempDir { tempDir =>
+        spark.range(start = 0, end = 100, step = 1, numPartitions = 1)
+          .write.format("delta").mode("append").save(tempDir.getAbsolutePath)
+        spark.range(start = 100, end = 200, step = 1, numPartitions = 1)
+          .write.format("delta").mode("append").save(tempDir.getAbsolutePath)
+        spark.range(start = 200, end = 300, step = 1, numPartitions = 1)
+          .write.format("delta").mode("append").save(tempDir.getAbsolutePath)
+
+        withAllParquetReaders {
+          checkAnswer(
+            spark.read.format("delta").load(tempDir.getAbsolutePath)
+              .select("id", "_metadata.default_row_commit_version"),
+            (0L until 100L).map(Row(_, 0L)) ++
+              (100L until 200L).map(Row(_, 1L)) ++
+              (200L until 300L).map(Row(_, 2L)))
+        }
       }
     }
   }

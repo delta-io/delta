@@ -17,7 +17,6 @@
 package io.delta.kernel.deletionvectors
 
 import org.scalatest.funsuite.AnyFunSuite
-import io.delta.kernel.internal.deletionvectors.RoaringBitmapArray
 
 class RoaringBitmapArraySuite extends AnyFunSuite {
 

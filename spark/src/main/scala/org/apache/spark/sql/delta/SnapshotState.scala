@@ -65,6 +65,9 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
 
   // For implicits which re-use Encoder:
   import implicits._
+  /** Whether computedState is already computed or not */
+  @volatile protected var _computedStateTriggered: Boolean = false
+
 
   /** A map to look up transaction version by appId. */
   lazy val transactions: Map[String, Long] = setTransactions.map(t => t.appId -> t.version).toMap
@@ -114,6 +117,7 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
           throw DeltaErrors.actionNotFoundException("metadata", version)
         }
 
+        _computedStateTriggered = true
         _computedState
       }
     }
@@ -168,9 +172,8 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
   protected[delta] def numOfFilesIfKnown: Option[Long] = Some(numOfFiles)
   protected[delta] def domainMetadatasIfKnown: Option[Seq[DomainMetadata]] = Some(domainMetadata)
 
-  /** Generate a default SnapshotState of a new table, given the table metadata */
-  protected def initialState(metadata: Metadata): SnapshotState = {
-    val protocol = Protocol.forNewTable(spark, Some(metadata))
+  /** Generate a default SnapshotState of a new table given the table metadata and the protocol. */
+  protected def initialState(metadata: Metadata, protocol: Protocol): SnapshotState = {
 
     SnapshotState(
       sizeInBytes = 0L,

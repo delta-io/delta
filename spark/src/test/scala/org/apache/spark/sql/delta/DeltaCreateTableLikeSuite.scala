@@ -17,14 +17,21 @@
 package org.apache.spark.sql.delta
 
 import java.io.File
+import java.net.URI
+import java.util.UUID
 
+import org.apache.spark.sql.delta.catalog.DeltaCatalog
+import org.apache.spark.sql.delta.commands.{CreateDeltaTableCommand, TableCreationModes}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.scalatest.exceptions.TestFailedException
 
 import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.SaveMode
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
 import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.types.StructType
 
 class DeltaCreateTableLikeSuite extends QueryTest
   with SharedSparkSession
@@ -41,6 +48,9 @@ class DeltaCreateTableLikeSuite extends QueryTest
    * or not to check (assert) the specific property. Note that for checkLocation
    * a boolean value is not passed in. If checkLocation argument is None, location
    * of target table will not be checked.
+   *
+   * @param checkTargetTableByPath when true, targetTbl must be a path not table name
+   * @param checkSourceTableByPath when true, srcTbl must be a path not table name
    */
   def checkTableCopyDelta(
       srcTbl: String,
@@ -54,14 +64,14 @@ class DeltaCreateTableLikeSuite extends QueryTest
       checkLocation: Option[String] = None): Unit = {
     val src =
       if (checkSourceTableByPath) {
-        DeltaTableIdentifier(path = Some(srcTbl)).getDeltaLog(spark)
+        DeltaLog.forTable(spark, srcTbl)
       } else {
         DeltaLog.forTable(spark, TableIdentifier(srcTbl))
       }
 
     val target =
       if (checkTargetTableByPath) {
-        DeltaTableIdentifier(path = Some(targetTbl)).getDeltaLog(spark)
+        DeltaLog.forTable(spark, targetTbl)
       } else {
         DeltaLog.forTable(spark, TableIdentifier(targetTbl))
       }
@@ -274,6 +284,42 @@ class DeltaCreateTableLikeSuite extends QueryTest
     }
   }
 
+  test("concurrent create Managed Catalog table commands should not fail") {
+    withTempDir { dir =>
+      withTable("t") {
+        def getCatalogTable: CatalogTable = {
+          val storage = CatalogStorageFormat.empty.copy(
+            locationUri = Some(new URI(s"$dir/${UUID.randomUUID().toString}")))
+          val catalogTableTarget = CatalogTable(
+            identifier = TableIdentifier("t"),
+            tableType = CatalogTableType.MANAGED,
+            storage = storage,
+            provider = Some("delta"),
+            schema = new StructType().add("id", "long"))
+          new DeltaCatalog()
+            .verifyTableAndSolidify(
+              tableDesc = catalogTableTarget,
+              query = None,
+              maybeClusterBySpec = None)
+        }
+        CreateDeltaTableCommand(
+          getCatalogTable,
+          existingTableOpt = None,
+          mode = SaveMode.Ignore,
+          query = None,
+          operation = TableCreationModes.Create).run(spark)
+        assert(spark.sessionState.catalog.tableExists(TableIdentifier("t")))
+        CreateDeltaTableCommand(
+          getCatalogTable,
+          existingTableOpt = None, // Set to None to simulate concurrent table creation commands.
+          mode = SaveMode.Ignore,
+          query = None,
+          operation = TableCreationModes.Create).run(spark)
+        assert(spark.sessionState.catalog.tableExists(TableIdentifier("t")))
+      }
+    }
+  }
+
   test("CREATE TABLE LIKE where sourceTable is a json table") {
     val srcTbl = "srcTbl"
     val targetTbl = "targetTbl"
@@ -392,6 +438,42 @@ class DeltaCreateTableLikeSuite extends QueryTest
       spark.sql(s"ALTER TABLE $srcTbl RENAME COLUMN key TO key2")
       spark.sql(s"CREATE TABLE $targetTbl LIKE $srcTbl USING DELTA")
       checkTableCopyDelta(srcTbl, targetTbl)
+    }
+  }
+
+  test("CREATE TABLE LIKE where user explicitly provides table properties") {
+    val srcTbl = "srcTbl"
+    val targetTbl = "targetTbl"
+    val expectedTbl = "expectedTbl"
+    withTable(srcTbl, targetTbl, expectedTbl) {
+      createTable(srcTbl, addTblProperties = false)
+      createTable(expectedTbl, addTblProperties = false)
+      spark.sql(s"ALTER TABLE $srcTbl" +
+        " SET TBLPROPERTIES(this.is.my.key = 14, 'this.is.my.key2' = false," +
+        "'delta.appendOnly' = 'false')")
+      spark.sql(s"ALTER TABLE $expectedTbl" +
+        " SET TBLPROPERTIES(this.is.my.key = 14, 'this.is.my.key2' = false, " +
+        "'this.is.my.key3' = true, 'delta.appendOnly' = 'true')")
+      spark.sql(s"CREATE TABLE $targetTbl LIKE $srcTbl TBLPROPERTIES('this.is.my.key3' = true, " +
+        s"'delta.appendOnly' = 'true')")
+      checkTableCopyDelta(expectedTbl, targetTbl)
+    }
+  }
+
+    test("CREATE TABLE LIKE where sourceTable is a parquet table and " +
+      "user explicitly provides table properties"
+      ) {
+    val srcTbl = "srcTbl"
+    val targetTbl = "targetTbl"
+    withTable(srcTbl, targetTbl) {
+      createTable(srcTbl, format = "parquet")
+      spark.sql(s"CREATE TABLE $targetTbl LIKE $srcTbl USING DELTA " +
+        "TBLPROPERTIES('this.is.my.key3' = true)")
+      spark.sql(s"ALTER TABLE $srcTbl SET TBLPROPERTIES('this.is.my.key3' = true)")
+      val msg = intercept[TestFailedException] {
+        checkTableCopy(srcTbl, targetTbl, checkDesc = false)
+      }.getMessage
+      assert(msg.contains("provider does not match"))
     }
   }
 }

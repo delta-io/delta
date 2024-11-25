@@ -21,6 +21,7 @@ import java.io.File
 
 import org.apache.spark.sql.delta.DeltaConfigs.CHECKPOINT_INTERVAL
 import org.apache.spark.sql.delta.actions.Metadata
+import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -146,7 +147,7 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
             |)""".stripMargin)
       }
       assert(e.getMessage.contains("expects a table. Please use ALTER VIEW instead.") ||
-        e.getMessage.contains("does not support ALTER TABLE ... SET TBLPROPERTIES"))
+        e.getMessage.contains("EXPECT_TABLE_NOT_VIEW.USE_ALTER_VIEW"))
     }
   }
 
@@ -918,6 +919,85 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
     }
   }
 
+  ddlTest("CHANGE COLUMN - (unsupported) add a comment to key/value of a MapType") {
+    val df = Seq((1, 1), (2, 2)).toDF("v1", "v2")
+      .withColumn("a", map('v1, 'v2))
+    withDeltaTable(df) { tableName =>
+      checkError(
+        intercept[DeltaAnalysisException] {
+          sql(s"ALTER TABLE $tableName CHANGE COLUMN a.key COMMENT 'a comment'")
+        },
+        "DELTA_UNSUPPORTED_COMMENT_MAP_ARRAY",
+        parameters = Map("fieldPath" -> "a.key")
+      )
+      checkError(
+        intercept[DeltaAnalysisException] {
+          sql(s"ALTER TABLE $tableName CHANGE COLUMN a.value COMMENT 'a comment'")
+        },
+        "DELTA_UNSUPPORTED_COMMENT_MAP_ARRAY",
+        parameters = Map("fieldPath" -> "a.value")
+      )
+    }
+  }
+
+  ddlTest("CHANGE COLUMN - (unsupported) add a comment to element of an array") {
+    val df = Seq(1, 2).toDF("v1")
+      .withColumn("a", array('v1))
+    withDeltaTable(df) { tableName =>
+      checkError(
+        intercept[DeltaAnalysisException] {
+          sql(s"ALTER TABLE $tableName CHANGE COLUMN a.element COMMENT 'a comment'")
+        },
+        "DELTA_UNSUPPORTED_COMMENT_MAP_ARRAY",
+        parameters = Map("fieldPath" -> "a.element")
+      )
+    }
+  }
+
+  ddlTest("RENAME COLUMN - (unsupported) rename key/value of a MapType") {
+    val df = Seq((1, 1), (2, 2)).toDF("v1", "v2")
+      .withColumn("a", map('v1, 'v2))
+    withDeltaTable(df) { tableName =>
+      checkError(
+        intercept[AnalysisException] {
+          sql(s"ALTER TABLE $tableName RENAME COLUMN a.key TO key2")
+        },
+        "INVALID_FIELD_NAME",
+        parameters = Map(
+          "fieldName" -> "`a`.`key2`",
+          "path" -> "`a`"
+        )
+      )
+      checkError(
+        intercept[AnalysisException] {
+          sql(s"ALTER TABLE $tableName RENAME COLUMN a.value TO value2")
+        },
+        "INVALID_FIELD_NAME",
+        parameters = Map(
+          "fieldName" -> "`a`.`value2`",
+          "path" -> "`a`"
+        )
+      )
+    }
+  }
+
+  ddlTest("RENAME COLUMN - (unsupported) rename element of an array") {
+    val df = Seq(1, 2).toDF("v1")
+      .withColumn("a", array('v1))
+    withDeltaTable(df) { tableName =>
+      checkError(
+        intercept[AnalysisException] {
+          sql(s"ALTER TABLE $tableName RENAME COLUMN a.element TO element2")
+        },
+        "INVALID_FIELD_NAME",
+        parameters = Map(
+          "fieldName" -> "`a`.`element2`",
+          "path" -> "`a`"
+        )
+      )
+    }
+  }
+
   ddlTest("CHANGE COLUMN - change name") {
     withDeltaTable(Seq((1, "a"), (2, "b")).toDF("v1", "v2")) { tableName =>
 
@@ -927,11 +1007,17 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
 
   ddlTest("CHANGE COLUMN - incompatible") {
     withDeltaTable(Seq((1, "a"), (2, "b")).toDF("v1", "v2")) { tableName =>
-
-      assertNotSupported(
-        s"ALTER TABLE $tableName CHANGE COLUMN v1 v1 long",
-        "'v1' with type 'IntegerType (nullable = true)'",
-        "'v1' with type 'LongType (nullable = true)'")
+      checkError(
+        intercept[DeltaAnalysisException] {
+          sql(s"ALTER TABLE $tableName CHANGE COLUMN v1 v1 long")
+        },
+        "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
+        parameters = Map(
+          "fieldPath" -> "v1",
+          "oldField" -> "INT",
+          "newField" -> "BIGINT"
+        )
+      )
     }
   }
 
@@ -939,11 +1025,71 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
     val df = Seq((1, "a"), (2, "b")).toDF("v1", "v2")
       .withColumn("struct", struct("v1", "v2"))
     withDeltaTable(df) { tableName =>
+      checkError(
+        intercept[DeltaAnalysisException] {
+          sql(s"ALTER TABLE $tableName CHANGE COLUMN struct.v1 v1 long")
+        },
+        "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
+        parameters = Map(
+          "fieldPath" -> "struct.v1",
+          "oldField" -> "INT",
+          "newField" -> "BIGINT"
+        )
+      )
+    }
+  }
 
-      assertNotSupported(
-        s"ALTER TABLE $tableName CHANGE COLUMN struct.v1 v1 long",
-        "'struct.v1' with type 'IntegerType (nullable = true)'",
-        "'v1' with type 'LongType (nullable = true)'")
+  ddlTest("CHANGE COLUMN - (unsupported) change type of key of a MapType") {
+    val df = Seq((1, 1), (2, 2)).toDF("v1", "v2")
+      .withColumn("a", map('v1, 'v2))
+    withDeltaTable(df) { tableName =>
+      checkError(
+        intercept[DeltaAnalysisException] {
+          sql(s"ALTER TABLE $tableName CHANGE COLUMN a.key key long")
+        },
+        "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
+        parameters = Map(
+          "fieldPath" -> "a.key",
+          "oldField" -> "INT NOT NULL",
+          "newField" -> "BIGINT NOT NULL"
+        )
+      )
+    }
+  }
+
+  ddlTest("CHANGE COLUMN - (unsupported) change type of value of a MapType") {
+    val df = Seq((1, 1), (2, 2)).toDF("v1", "v2")
+      .withColumn("a", map('v1, 'v2))
+    withDeltaTable(df) { tableName =>
+      checkError(
+        intercept[DeltaAnalysisException] {
+          sql(s"ALTER TABLE $tableName CHANGE COLUMN a.value value long")
+        },
+        "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
+        parameters = Map(
+          "fieldPath" -> "a.value",
+          "oldField" -> "INT",
+          "newField" -> "BIGINT"
+        )
+      )
+    }
+  }
+
+  ddlTest("CHANGE COLUMN - (unsupported) change type of element of an ArrayType") {
+    val df = Seq(1).toDF("v1")
+      .withColumn("a", array('v1))
+    withDeltaTable(df) { tableName =>
+      checkError(
+        intercept[DeltaAnalysisException] {
+          sql(s"ALTER TABLE $tableName CHANGE COLUMN a.element element long")
+        },
+        "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
+        parameters = Map(
+          "fieldPath" -> "a.element",
+          "oldField" -> "INT",
+          "newField" -> "BIGINT"
+        )
+      )
     }
   }
 
@@ -1216,6 +1362,98 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
     }
   }
 
+  test("CHANGE COLUMN - (unsupported) change nullability of map key/value and array element") {
+    val df = Seq((1, 1), (2, 2))
+      .toDF("key", "value")
+      .withColumn("m", map(col("key"), col("value")))
+      .withColumn("a", array(col("value")))
+
+    withDeltaTable(df) { tableName =>
+      val schema = spark.read.table(tableName).schema
+      assert(schema("m").dataType ===
+        MapType(IntegerType, IntegerType, valueContainsNull = true))
+      assert(schema("a").dataType ===
+        ArrayType(IntegerType, containsNull = true))
+
+      // No-op actions are allowed - map keys are always non-nullable.
+      sql(s"ALTER TABLE $tableName CHANGE COLUMN m.key SET NOT NULL")
+      sql(s"ALTER TABLE $tableName CHANGE COLUMN m.value DROP NOT NULL")
+      sql(s"ALTER TABLE $tableName CHANGE COLUMN a.element DROP NOT NULL")
+
+      // Changing the nullability of map/array fields is not allowed.
+      var statement = s"ALTER TABLE $tableName CHANGE COLUMN m.key DROP NOT NULL"
+      checkError(
+        intercept[AnalysisException] { sql(statement) },
+        "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
+        parameters = Map(
+          "fieldPath" -> "m.key",
+          "oldField" -> "INT NOT NULL",
+          "newField" -> "INT"
+        )
+      )
+
+      statement = s"ALTER TABLE $tableName CHANGE COLUMN m.value SET NOT NULL"
+      checkError(
+        intercept[AnalysisException] { sql(statement) },
+        "_LEGACY_ERROR_TEMP_2330",
+        parameters = Map(
+          "fieldName" -> "m.value"
+        ),
+        context = ExpectedContext(statement, 0, statement.length - 1)
+      )
+
+      statement = s"ALTER TABLE $tableName CHANGE COLUMN a.element SET NOT NULL"
+      checkError(
+        intercept[AnalysisException] { sql(statement) },
+        "_LEGACY_ERROR_TEMP_2330",
+        parameters = Map(
+          "fieldName" -> "a.element"
+        ),
+        context = ExpectedContext(statement, 0, statement.length - 1)
+      )
+    }
+  }
+
+  ddlTest("CHANGE COLUMN - set comment on a varchar column") {
+    withDeltaTable(schema = "v varchar(1)") { tableName =>
+      sql(s"ALTER TABLE $tableName CHANGE COLUMN v COMMENT 'test comment'")
+      val expectedResult = Row("v", "string", "test comment") :: Nil
+      checkAnswer(
+        sql(s"DESCRIBE $tableName").filter("col_name = 'v'"),
+        expectedResult)
+      checkColType(spark.table(tableName).schema.head, VarcharType(1))
+      val e = intercept[DeltaInvariantViolationException] {
+        sql(s"INSERT into $tableName values ('12')")
+      }
+      assert(e.getMessage.contains("Value \"12\" exceeds char/varchar type length limitation. " +
+        "Failed check: ((v IS NULL) OR (length(v) <= 1))"))
+    }
+  }
+
+  ddlTest("CHANGE COLUMN - set comment on a char column") {
+    withDeltaTable(schema = "v char(1)") { tableName =>
+      sql(s"ALTER TABLE $tableName CHANGE COLUMN v COMMENT 'test comment'")
+      val expectedResult = Row("v", "string", "test comment") :: Nil
+      checkAnswer(
+        sql(s"DESCRIBE $tableName").filter("col_name = 'v'"),
+        expectedResult)
+      checkColType(spark.table(tableName).schema.head, CharType(1))
+    }
+  }
+
+  ddlTest("CHANGE COLUMN - set a default value for a varchar column") {
+    withDeltaTable(schema = "v varchar(1)") { tableName =>
+      sql(s"ALTER TABLE $tableName " +
+        s"SET TBLPROPERTIES('delta.feature.allowColumnDefaults' = 'supported')")
+      sql(s"ALTER TABLE $tableName CHANGE COLUMN v set default cast('a' as varchar(1))")
+      val expectedResult = Row("v", "string", null) :: Nil
+      checkAnswer(
+        sql(s"DESCRIBE $tableName").filter("col_name = 'v'"),
+        expectedResult)
+      checkColType(spark.table(tableName).schema.head, VarcharType(1))
+    }
+  }
+
   ddlTest("CHANGE COLUMN - change name (nested)") {
     val df = Seq((1, "a"), (2, "b")).toDF("v1", "v2")
       .withColumn("struct", struct("v1", "v2"))
@@ -1380,6 +1618,30 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
     }
   }
 
+  test("CHANGE COLUMN: allow to change map key from char to string type") {
+    withTable("t") {
+      sql("CREATE TABLE t(i STRING, m map<CHAR(4), INT>) USING delta")
+      sql("ALTER TABLE t CHANGE COLUMN m.key TYPE STRING")
+      assert(spark.table("t").schema(1).dataType === MapType(StringType, IntegerType))
+    }
+  }
+
+  test("CHANGE COLUMN: allow to change map value from char to string type") {
+    withTable("t") {
+      sql("CREATE TABLE t(i STRING, m map<INT, CHAR(4)>) USING delta")
+      sql("ALTER TABLE t CHANGE COLUMN m.value TYPE STRING")
+      assert(spark.table("t").schema(1).dataType === MapType(IntegerType, StringType))
+    }
+  }
+
+  test("CHANGE COLUMN: allow to change array element from char to string type") {
+    withTable("t") {
+      sql("CREATE TABLE t(i STRING, a array<CHAR(4)>) USING delta")
+      sql("ALTER TABLE t CHANGE COLUMN a.element TYPE STRING")
+      assert(spark.table("t").schema(1).dataType === ArrayType(StringType))
+    }
+  }
+
   private def checkColType(f: StructField, dt: DataType): Unit = {
     assert(f.dataType == CharVarcharUtils.replaceCharVarcharWithString(dt))
     assert(CharVarcharUtils.getRawType(f.metadata).contains(dt))
@@ -1405,6 +1667,25 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
       checkColType(spark.table("t").schema(1), VarcharType(4))
       sql("ALTER TABLE t CHANGE COLUMN c TYPE VARCHAR(5)")
       checkColType(spark.table("t").schema(1), VarcharType(5))
+    }
+  }
+
+  for (charVarcharMitigationDisabled <- BOOLEAN_DOMAIN)
+  test(s"CHANGE COLUMN: allow change from char(x) to string type " +
+    s"[charVarcharMitigationDisabled: $charVarcharMitigationDisabled]") {
+    withSQLConf(
+      DeltaSQLConf.DELTA_BYPASS_CHARVARCHAR_TO_STRING_FIX.key ->
+        charVarcharMitigationDisabled.toString) {
+      withTable("t") {
+        sql("CREATE TABLE t(i VARCHAR(4)) USING delta")
+        sql("ALTER TABLE t CHANGE COLUMN i TYPE STRING")
+        val col = spark.table("t").schema.head
+        assert(col.dataType == StringType)
+        assert(CharVarcharUtils.getRawType(col.metadata).isDefined == charVarcharMitigationDisabled)
+        if (!charVarcharMitigationDisabled) {
+          sql("INSERT INTO t VALUES ('123456789')")
+        }
+      }
     }
   }
 }
@@ -1549,7 +1830,8 @@ trait DeltaAlterTableByPathTests extends DeltaAlterTableTestBase {
   override protected def createTable(schema: String, tblProperties: Map[String, String]): String = {
       val tmpDir = Utils.createTempDir().getCanonicalPath
       val (deltaLog, snapshot) = getDeltaLogWithSnapshot(tmpDir)
-      val txn = deltaLog.startTransaction(Some(snapshot))
+      // This is a path-based table so we don't need to pass the catalogTable here
+      val txn = deltaLog.startTransaction(None, Some(snapshot))
       val metadata = Metadata(
         schemaString = StructType.fromDDL(schema).json,
         configuration = tblProperties)

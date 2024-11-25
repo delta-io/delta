@@ -26,21 +26,22 @@ package object implicits extends DeltaEncoders with RichSparkClasses {
   // Define a few implicit classes to provide the `toDF` method. These classes are not using generic
   // types to avoid touching Scala reflection.
   implicit class RichAddFileSeq(files: Seq[AddFile]) {
-    def toDF(spark: SparkSession): DataFrame = spark.implicits.localSeqToDatasetHolder(files).toDF
+    def toDF(spark: SparkSession): DataFrame = spark.implicits.localSeqToDatasetHolder(files).toDF()
 
     def toDS(spark: SparkSession): Dataset[AddFile] =
-      spark.implicits.localSeqToDatasetHolder(files).toDS
+      spark.implicits.localSeqToDatasetHolder(files).toDS()
   }
 
   implicit class RichStringSeq(strings: Seq[String]) {
-    def toDF(spark: SparkSession): DataFrame = spark.implicits.localSeqToDatasetHolder(strings).toDF
+    def toDF(spark: SparkSession): DataFrame =
+      spark.implicits.localSeqToDatasetHolder(strings).toDF()
 
     def toDF(spark: SparkSession, colNames: String*): DataFrame =
       spark.implicits.localSeqToDatasetHolder(strings).toDF(colNames: _*)
   }
 
   implicit class RichIntSeq(ints: Seq[Int]) {
-    def toDF(spark: SparkSession): DataFrame = spark.implicits.localSeqToDatasetHolder(ints).toDF
+    def toDF(spark: SparkSession): DataFrame = spark.implicits.localSeqToDatasetHolder(ints).toDF()
 
     def toDF(spark: SparkSession, colNames: String*): DataFrame =
       spark.implicits.localSeqToDatasetHolder(ints).toDF(colNames: _*)

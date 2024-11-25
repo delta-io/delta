@@ -32,6 +32,7 @@ import org.apache.spark.sql.catalyst.analysis.Analyzer
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
 import org.apache.spark.sql.catalyst.plans.logical.{LocalRelation, LogicalPlan, Project}
+import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.catalyst.util.{quoteIfNeeded, CaseInsensitiveMap}
 import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
@@ -106,7 +107,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
    * - The table writer protocol >= GeneratedColumn.MIN_WRITER_VERSION;
    * - It has a generation expression in the column metadata.
    */
-  def getGeneratedColumns(snapshot: Snapshot): Seq[StructField] = {
+  def getGeneratedColumns(snapshot: SnapshotDescriptor): Seq[StructField] = {
     if (satisfyGeneratedColumnProtocol(snapshot.protocol)) {
       snapshot.metadata.schema.partition(isGeneratedColumn)._1
     } else {
@@ -178,7 +179,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
     val allowedBaseColumns = schema
       .filterNot(_.name == fieldName) // Can't reference itself
       .filterNot(isGeneratedColumn) // Can't reference other generated columns
-    val relation = new LocalRelation(StructType(allowedBaseColumns).toAttributes)
+    val relation = new LocalRelation(toAttributes(StructType(allowedBaseColumns)))
     try {
       val analyzer: Analyzer = spark.sessionState.analyzer
       val analyzed = analyzer.execute(Project(Seq(Alias(expression, fieldName)()), relation))
@@ -201,18 +202,27 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
    */
   def validateGeneratedColumns(spark: SparkSession, schema: StructType): Unit = {
     val (generatedColumns, normalColumns) = schema.partition(isGeneratedColumn)
+    generatedColumns.foreach { c =>
+      // Generated columns cannot be variant types because the writer must be able to enforce that
+      // the <variant value> <=> <generated expression>. Variants are currently not comprable so
+      // this condition is impossible to enforce.
+      if (VariantShims.isVariantType(c.dataType)) {
+        throw DeltaErrors.generatedColumnsUnsupportedType(c.dataType)
+      }
+    }
+
     // Create a fake relation using the normal columns and add a project with generation expressions
     // on top of it to ask Spark to analyze the plan. This will help us find out the following
     // errors:
     // - Refer to a non existent column in a generation expression.
     // - Refer to a generated column in another one.
-    val relation = new LocalRelation(StructType(normalColumns).toAttributes)
+    val relation = new LocalRelation(toAttributes(StructType(normalColumns)))
     val selectExprs = generatedColumns.map { f =>
       getGenerationExpressionStr(f) match {
         case Some(exprString) =>
           val expr = parseGenerationExpression(spark, exprString)
           validateColumnReferences(spark, f.name, expr, schema)
-          new Column(expr).alias(f.name)
+          Column(expr).alias(f.name)
         case None =>
           // Should not happen
           throw DeltaErrors.expressionsNotFoundInGeneratedColumn(f.name)
@@ -257,8 +267,9 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
     }
     // Compare the columns types defined in the schema and the expression types.
     generatedColumns.zip(dfWithExprs.schema).foreach { case (column, expr) =>
-      if (column.dataType != expr.dataType) {
-        throw DeltaErrors.generatedColumnsTypeMismatch(column.name, column.dataType, expr.dataType)
+      if (!DataType.equalsIgnoreNullability(column.dataType, expr.dataType)) {
+        throw DeltaErrors.generatedColumnsExprTypeMismatch(
+          column.name, column.dataType, expr.dataType)
       }
     }
   }
@@ -267,14 +278,14 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
     val generationExprs = schema.flatMap { col =>
       getGenerationExpressionStr(col).map { exprStr =>
         val expr = parseGenerationExpression(SparkSession.active, exprStr)
-        new Column(expr).alias(col.name)
+        Column(expr).alias(col.name)
       }
     }
     if (generationExprs.isEmpty) {
       return Set.empty
     }
 
-    val df = Dataset.ofRows(SparkSession.active, new LocalRelation(schema.toAttributes))
+    val df = Dataset.ofRows(SparkSession.active, new LocalRelation(toAttributes(schema)))
     val generatedColumnsAndColumnsUsedByGeneratedColumns =
       df.select(generationExprs: _*).queryExecution.analyzed match {
         case Project(exprs, _) =>
@@ -316,7 +327,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
     val partitionGenerationExprs = partitionSchema.flatMap { col =>
       getGenerationExpressionStr(col).map { exprStr =>
         val expr = parseGenerationExpression(SparkSession.active, exprStr)
-        new Column(expr).alias(col.name)
+        Column(expr).alias(col.name)
       }
     }
     if (partitionGenerationExprs.isEmpty) {
@@ -344,7 +355,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
       }
     }
 
-    val df = Dataset.ofRows(SparkSession.active, new LocalRelation(schema.toAttributes))
+    val df = Dataset.ofRows(SparkSession.active, new LocalRelation(toAttributes(schema)))
     val extractedPartitionExprs =
       df.select(partitionGenerationExprs: _*).queryExecution.analyzed match {
         case Project(exprs, _) =>
@@ -545,7 +556,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
         case GreaterThanOrEqual(ExtractBaseColumn(nameParts, _), lit: Literal) =>
           toPartitionFilter(nameParts, _.greaterThanOrEqual(lit))
         case IsNull(ExtractBaseColumn(nameParts, _)) =>
-          toPartitionFilter(nameParts, _.isNull)
+          toPartitionFilter(nameParts, _.isNull())
         case _ => Nil
       }
     }

@@ -18,7 +18,9 @@ package org.apache.spark.sql.delta.cdc
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, RemoveFile}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
+import org.apache.spark.sql.delta.test.DeltaExcludedTestMixin
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
 import org.apache.spark.SparkConf
@@ -180,6 +182,57 @@ class UpdateCDCSuite extends UpdateSQLSuite with DeltaColumnMappingTestUtils {
         Row(4, 4, 4, "insert", 1) ::
           Row(4, 4, 4, "update_preimage", 2) ::
           Row(4, null, 4, "update_postimage", 2)  :: Nil)
+    }
+  }
+}
+
+class UpdateCDCWithDeletionVectorsSuite extends UpdateCDCSuite
+  with DeltaExcludedTestMixin
+  with DeletionVectorsTestUtils {
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    enableDeletionVectors(spark, update = true)
+  }
+
+  override def excluded: Seq[String] = super.excluded ++
+    Seq(
+      // The following two tests must fail when DV is used. Covered by another test case:
+      // "throw error when non-pinned TahoeFileIndex snapshot is used".
+      "data and partition predicates - Partition=true Skipping=false",
+      "data and partition predicates - Partition=false Skipping=false",
+      // The scan schema contains additional row index filter columns.
+      "schema pruning on finding files to update",
+      "nested schema pruning on finding files to update"
+    )
+
+  test("UPDATE with DV write CDC files explicitly") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      val log = DeltaLog.forTable(spark, path)
+      spark.range(0, 10, 1, numPartitions = 2).write.format("delta").save(path)
+      executeUpdate(s"delta.`$path`", "id = -1", "id % 4 = 0")
+
+      val latestVersion = log.update().version
+      checkAnswer(
+        CDCReader
+          .changesToBatchDF(log, latestVersion, latestVersion, spark)
+          .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
+        Row(0, "update_preimage", latestVersion) ::
+          Row(-1, "update_postimage", latestVersion) ::
+          Row(4, "update_preimage", latestVersion) ::
+          Row(-1, "update_postimage", latestVersion) ::
+          Row(8, "update_preimage", latestVersion) ::
+          Row(-1, "update_postimage", latestVersion) ::
+          Nil)
+
+      val allActions = log.getChanges(latestVersion).flatMap(_._2).toSeq
+      val addActions = allActions.collect { case f: AddFile => f }
+      val removeActions = allActions.collect { case f: RemoveFile => f }
+      val cdcActions = allActions.collect { case f: AddCDCFile => f }
+
+      assert(addActions.count(_.deletionVector != null) === 2)
+      assert(removeActions.size === 2)
+      assert(cdcActions.nonEmpty)
     }
   }
 }

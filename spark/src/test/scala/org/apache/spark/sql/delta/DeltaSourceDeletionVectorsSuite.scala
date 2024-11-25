@@ -195,7 +195,6 @@ trait DeltaSourceDeletionVectorTests extends StreamTest
        } else {
          Seq(
            // This makes it move to the next batch.
-           AssertOnQuery(waitUntilBatchProcessed(1, _)),
            AssertOnQuery { q =>
              eventually("Next batch was never processed") {
                // Ensure we only processed a single batch with the DML commands.
@@ -206,18 +205,6 @@ trait DeltaSourceDeletionVectorTests extends StreamTest
        })
 
     testStream(df)((baseActions ++ expectations): _*)
-  }
-
-  protected def waitUntilBatchProcessed(batchId: Int, currentStream: StreamExecution): Boolean = {
-    eventually("Next batch was never processed") {
-      if (!currentStream.exception.isDefined) {
-        assert(currentStream.commitLog.getLatestBatchId().get >= batchId)
-      }
-    }
-    if (currentStream.exception.isDefined) {
-      throw currentStream.exception.get
-    }
-    true
   }
 
   protected def eventually[T](message: String)(func: => T): T = {

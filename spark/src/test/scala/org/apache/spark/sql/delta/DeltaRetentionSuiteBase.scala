@@ -17,17 +17,20 @@
 package org.apache.spark.sql.delta
 
 import java.io.File
+import java.util.{Calendar, TimeZone}
 
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta.DeltaOperations.Truncate
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{CheckpointMetadata, Metadata, SidecarFile}
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.spark.sql.delta.util.FileNames.{newV2CheckpointJsonFile, newV2CheckpointParquetFile}
-import org.apache.hadoop.fs.Path
+import org.apache.commons.lang3.time.DateUtils
+import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
@@ -37,7 +40,8 @@ import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.ManualClock
 
 trait DeltaRetentionSuiteBase extends QueryTest
-  with SharedSparkSession {
+  with SharedSparkSession
+  with CoordinatedCommitsBaseSuite {
   protected val testOp = Truncate()
 
   protected override def sparkConf: SparkConf = super.sparkConf
@@ -47,6 +51,30 @@ trait DeltaRetentionSuiteBase extends QueryTest
   protected def intervalStringToMillis(str: String): Long = {
     DeltaConfigs.getMilliSeconds(
       IntervalUtils.safeStringToInterval(UTF8String.fromString(str)))
+  }
+
+  /**
+   * Returns milliseconds since epoch at 1:00am UTC of current day.
+   *
+   * Context:
+   * Most DeltaRetentionSuite tests rely on ManualClock to time travel and
+   * trigger metadata cleanup. Cleanup boundaries are determined by
+   * finding files that were modified before 00:00 of the day on which
+   * currentTime-LOG_RETENTION_PERIOD falls. This means that for a long running
+   * test started at 23:59, the number of expired files would jump suddenly
+   * in 1 minute (the expiration boundary would move by a day as soon as
+   * system clock hits 00:00 of the next day). By fixing the start time of the
+   * test to 01:00, we avoid these scenarios.
+   *
+   * This would still break if the test runs for more than 23 hours.
+   */
+  protected def getStartTimeForRetentionTest: Long = {
+    val currentTime = System.currentTimeMillis()
+    val date = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
+    date.setTimeInMillis(currentTime)
+    val dayStartTimeStamp = DateUtils.truncate(date, Calendar.DAY_OF_MONTH)
+    dayStartTimeStamp.add(Calendar.HOUR_OF_DAY, 1);
+    dayStartTimeStamp.getTimeInMillis
   }
 
   protected def getDeltaFiles(dir: File): Seq[File] =
@@ -62,8 +90,25 @@ trait DeltaRetentionSuiteBase extends QueryTest
   }
 
   protected def getDeltaVersions(dir: File): Set[Long] = {
-    getFileVersions(getDeltaFiles(dir))
+    val backfilledDeltaVersions = getFileVersions(getDeltaFiles(dir))
+    val unbackfilledDeltaVersions = getUnbackfilledDeltaVersions(dir)
+    if (coordinatedCommitsEnabledInTests) {
+      // The unbackfilled commit files (except commit 0) should be a superset of the backfilled
+      // commit files since they're always deleted together in this suite.
+      assert(
+        unbackfilledDeltaVersions.toArray.sorted.startsWith(
+          backfilledDeltaVersions.filter(_ != 0).toArray.sorted))
+    }
+    backfilledDeltaVersions
   }
+
+  protected def getUnbackfilledDeltaFiles(dir: File): Seq[File] = {
+    val commitDirPath = FileNames.commitDirPath(new Path(dir.toURI))
+    getDeltaFiles(new File(commitDirPath.toUri))
+  }
+
+  protected def getUnbackfilledDeltaVersions(dir: File): Set[Long] =
+    getFileVersions(getUnbackfilledDeltaFiles(dir))
 
   protected def getSidecarFiles(log: DeltaLog): Set[String] = {
     new java.io.File(log.sidecarDirPath.toUri)
@@ -106,6 +151,35 @@ trait DeltaRetentionSuiteBase extends QueryTest
         visitedFiled += file.getPath.toString
         fs.setTimes(file.getPath, clock.getTimeMillis(), 0)
       }
+    }
+  }
+
+  protected def setModificationTime(
+      log: DeltaLog,
+      startTime: Long,
+      version: Int,
+      dayNum: Int,
+      fs: FileSystem,
+      checkpointOnly: Boolean = false): Unit = {
+    val logDir = log.logPath.toUri.toString
+    val paths = log
+      .listFrom(version)
+      .collect { case FileNames.CheckpointFile(f, v) if v == version => f.getPath }
+      .toSeq
+    paths.foreach { cpPath =>
+      // Add some second offset so that we don't have files with same timestamps
+      fs.setTimes(cpPath, day(startTime, dayNum) + version * 1000, 0)
+    }
+    if (!checkpointOnly) {
+      val deltaPath = new Path(logDir + f"/$version%020d.json")
+      if (fs.exists(deltaPath)) {
+        // Add some second offset so that we don't have files with same timestamps
+        fs.setTimes(deltaPath, day(startTime, dayNum) + version * 1000, 0)
+      }
+      // Add the same timestamp for unbackfilled delta files as well
+      fs.listStatus(FileNames.commitDirPath(log.logPath))
+        .find(_.getPath.getName.startsWith(f"$version%020d"))
+        .foreach(f => fs.setTimes(f.getPath, day(startTime, dayNum) + version * 1000, 0))
     }
   }
 

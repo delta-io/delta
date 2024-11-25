@@ -19,6 +19,7 @@ package io.delta.tables
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.DeltaTableUtils.withActiveSession
 import org.apache.spark.sql.delta.actions.{Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.AlterTableSetPropertiesDeltaCommand
@@ -530,15 +531,16 @@ class DeltaTable private[tables](
    *
    * @since 0.8.0
    */
-  def upgradeTableProtocol(readerVersion: Int, writerVersion: Int): Unit = {
-    val alterTableCmd = AlterTableSetPropertiesDeltaCommand(
-      table,
-      DeltaConfigs.validateConfigurations(
-        Map(
-          "delta.minReaderVersion" -> readerVersion.toString,
-          "delta.minWriterVersion" -> writerVersion.toString)))
-    toDataset(sparkSession, alterTableCmd)
-  }
+  def upgradeTableProtocol(readerVersion: Int, writerVersion: Int): Unit =
+    withActiveSession(sparkSession) {
+      val alterTableCmd = AlterTableSetPropertiesDeltaCommand(
+        table,
+        DeltaConfigs.validateConfigurations(
+          Map(
+            "delta.minReaderVersion" -> readerVersion.toString,
+            "delta.minWriterVersion" -> writerVersion.toString)))
+      toDataset(sparkSession, alterTableCmd)
+    }
 
   /**
    * Modify the protocol to add a supported feature, and if the table does not support table
@@ -550,7 +552,7 @@ class DeltaTable private[tables](
    *
    * @since 2.3.0
    */
-  def addFeatureSupport(featureName: String): Unit = {
+  def addFeatureSupport(featureName: String): Unit = withActiveSession(sparkSession) {
     // Do not check for the correctness of the provided feature name. The ALTER TABLE command will
     // do that in a transaction.
     val alterTableCmd = AlterTableSetPropertiesDeltaCommand(
@@ -559,6 +561,272 @@ class DeltaTable private[tables](
         TableFeatureProtocolUtils.propertyKey(featureName) ->
           TableFeatureProtocolUtils.FEATURE_PROP_SUPPORTED))
     toDataset(sparkSession, alterTableCmd)
+  }
+
+  /**
+   * Clone a DeltaTable to a given destination to mirror the existing table's data and metadata.
+   *
+   * Specifying properties here means that the target will override any properties with the same key
+   * in the source table with the user-defined properties.
+   *
+   * An example would be
+   * {{{
+   *  io.delta.tables.DeltaTable.clone(
+   *   "/some/path/to/table",
+   *   true,
+   *   true,
+   *   Map("foo" -> "bar"))
+   * }}}
+   *
+   * @param target The path or table name to create the clone.
+   * @param isShallow Whether to create a shallow clone or a deep clone.
+   * @param replace Whether to replace the destination with the clone command.
+   * @param properties The table properties to override in the clone.
+   *
+   * @since 3.3.0
+   */
+  def clone(
+      target: String,
+      isShallow: Boolean,
+      replace: Boolean,
+      properties: Map[String, String]): DeltaTable = {
+    executeClone(
+      table,
+      target,
+      isShallow,
+      replace,
+      properties,
+      versionAsOf = None,
+      timestampAsOf = None)
+  }
+
+  /**
+   * Clone a DeltaTable to a given destination to mirror the existing table's data and metadata.
+   *
+   * An example would be
+   * {{{
+   *   io.delta.tables.DeltaTable.clone(
+   *     "/some/path/to/table",
+   *     true,
+   *     true)
+   * }}}
+   *
+   * @param target The path or table name to create the clone.
+   * @param isShallow Whether to create a shallow clone or a deep clone.
+   * @param replace Whether to replace the destination with the clone command.
+   *
+   * @since 3.3.0
+   */
+  def clone(target: String, isShallow: Boolean, replace: Boolean): DeltaTable = {
+    clone(target, isShallow, replace, properties = Map.empty[String, String])
+  }
+
+  /**
+   * Clone a DeltaTable to a given destination to mirror the existing table's data and metadata.
+   *
+   * An example would be
+   * {{{
+   *   io.delta.tables.DeltaTable.clone(
+   *     "/some/path/to/table",
+   *     true)
+   * }}}
+   *
+   * @param target The path or table name to create the clone.
+   * @param isShallow Whether to create a shallow clone or a deep clone.
+   *
+   * @since 3.3.0
+   */
+  def clone(target: String, isShallow: Boolean): DeltaTable = {
+    clone(target, isShallow, replace = false)
+  }
+
+  /**
+   * Clone a DeltaTable at a specific version to a given destination to mirror the existing
+   * table's data and metadata at that version.
+   *
+   * Specifying properties here means that the target will override any properties with the same key
+   * in the source table with the user-defined properties.
+   *
+   * An example would be
+   * {{{
+   *   io.delta.tables.DeltaTable.cloneAtVersion(
+   *     5,
+   *     "/some/path/to/table",
+   *     true,
+   *     true,
+   *     Map("foo" -> "bar"))
+   * }}}
+   *
+   * @param version The version of this table to clone from.
+   * @param target The path or table name to create the clone.
+   * @param isShallow Whether to create a shallow clone or a deep clone.
+   * @param replace Whether to replace the destination with the clone command.
+   * @param properties The table properties to override in the clone.
+   *
+   * @since 3.3.0
+   */
+  def cloneAtVersion(
+      version: Long,
+      target: String,
+      isShallow: Boolean,
+      replace: Boolean,
+      properties: Map[String, String]): DeltaTable = {
+    executeClone(
+      table,
+      target,
+      isShallow,
+      replace,
+      properties,
+      versionAsOf = Some(version),
+      timestampAsOf = None)
+  }
+
+  /**
+   * Clone a DeltaTable at a specific version to a given destination to mirror the existing
+   * table's data and metadata at that version.
+   *
+   * An example would be
+   * {{{
+   *   io.delta.tables.DeltaTable.cloneAtVersion(
+   *     5,
+   *     "/some/path/to/table",
+   *     true,
+   *     true)
+   * }}}
+   *
+   * @param version The version of this table to clone from.
+   * @param target The path or table name to create the clone.
+   * @param isShallow Whether to create a shallow clone or a deep clone.
+   * @param replace Whether to replace the destination with the clone command.
+   *
+   * @since 3.3.0
+   */
+  def cloneAtVersion(
+      version: Long,
+      target: String,
+      isShallow: Boolean,
+      replace: Boolean): DeltaTable = {
+    cloneAtVersion(version, target, isShallow, replace, properties = Map.empty[String, String])
+  }
+
+  /**
+   * Clone a DeltaTable at a specific version to a given destination to mirror the existing
+   * table's data and metadata at that version.
+   *
+   * An example would be
+   * {{{
+   *   io.delta.tables.DeltaTable.cloneAtVersion(
+   *     5,
+   *     "/some/path/to/table",
+   *     true)
+   * }}}
+   *
+   * @param version The version of this table to clone from.
+   * @param target The path or table name to create the clone.
+   * @param isShallow Whether to create a shallow clone or a deep clone.
+   *
+   * @since 3.3.0
+   */
+  def cloneAtVersion(version: Long, target: String, isShallow: Boolean): DeltaTable = {
+    cloneAtVersion(version, target, isShallow, replace = false)
+  }
+
+  /**
+   * Clone a DeltaTable at a specific timestamp to a given destination to mirror the existing
+   * table's data and metadata at that timestamp.
+   *
+   * Timestamp can be of the format yyyy-MM-dd or yyyy-MM-dd HH:mm:ss.
+   *
+   * Specifying properties here means that the target will override any properties with the same key
+   * in the source table with the user-defined properties.
+   *
+   * An example would be
+   * {{{
+   *   io.delta.tables.DeltaTable.cloneAtTimestamp(
+   *     "2019-01-01",
+   *     "/some/path/to/table",
+   *     true,
+   *     true,
+   *     Map("foo" -> "bar"))
+   * }}}
+   *
+   * @param timestamp The timestamp of this table to clone from.
+   * @param target The path or table name to create the clone.
+   * @param isShallow Whether to create a shallow clone or a deep clone.
+   * @param replace Whether to replace the destination with the clone command.
+   * @param properties The table properties to override in the clone.
+   *
+   * @since 3.3.0
+   */
+  def cloneAtTimestamp(
+      timestamp: String,
+      target: String,
+      isShallow: Boolean,
+      replace: Boolean,
+      properties: Map[String, String]): DeltaTable = {
+    executeClone(
+      table,
+      target,
+      isShallow,
+      replace,
+      properties,
+      versionAsOf = None,
+      timestampAsOf = Some(timestamp)
+    )
+  }
+
+  /**
+   * Clone a DeltaTable at a specific timestamp to a given destination to mirror the existing
+   * table's data and metadata at that timestamp.
+   *
+   * Timestamp can be of the format yyyy-MM-dd or yyyy-MM-dd HH:mm:ss.
+   *
+   * An example would be
+   * {{{
+   *   io.delta.tables.DeltaTable.cloneAtTimestamp(
+   *     "2019-01-01",
+   *     "/some/path/to/table",
+   *     true,
+   *     true)
+   * }}}
+   *
+   * @param timestamp The timestamp of this table to clone from.
+   * @param target The path or table name to create the clone.
+   * @param isShallow Whether to create a shallow clone or a deep clone.
+   * @param replace Whether to replace the destination with the clone command.
+   *
+   * @since 3.3.0
+   */
+  def cloneAtTimestamp(
+      timestamp: String,
+      target: String,
+      isShallow: Boolean,
+      replace: Boolean): DeltaTable = {
+    cloneAtTimestamp(timestamp, target, isShallow, replace, properties = Map.empty[String, String])
+  }
+
+  /**
+   * Clone a DeltaTable at a specific timestamp to a given destination to mirror the existing
+   * table's data and metadata at that timestamp.
+   *
+   * Timestamp can be of the format yyyy-MM-dd or yyyy-MM-dd HH:mm:ss.
+   *
+   * An example would be
+   * {{{
+   *   io.delta.tables.DeltaTable.cloneAtTimestamp(
+   *     "2019-01-01",
+   *     "/some/path/to/table",
+   *     true)
+   * }}}
+   *
+   * @param timestamp The timestamp of this table to clone from.
+   * @param target The path or table name to create the clone.
+   * @param isShallow Whether to create a shallow clone or a deep clone.
+   *
+   * @since 3.3.0
+   */
+  def cloneAtTimestamp(timestamp: String, target: String, isShallow: Boolean): DeltaTable = {
+    cloneAtTimestamp(timestamp, target, isShallow, replace = false)
   }
 }
 
@@ -749,9 +1017,10 @@ object DeltaTable {
   }
 
   /**
-   * Instantiate a [[DeltaTable]] object using the given table or view name. If the given
+   * Instantiate a [[DeltaTable]] object using the given table name. If the given
    * tableOrViewName is invalid (i.e. either no table exists or an existing table is not a
-   * Delta table), it throws a `not a Delta table` error.
+   * Delta table), it throws a `not a Delta table` error. Note: Passing a view name will also
+   * result in this error as views are not supported.
    *
    * The given tableOrViewName can also be the absolute path of a delta datasource (i.e.
    * delta.`path`), If so, instantiate a [[DeltaTable]] object representing the data at
@@ -769,11 +1038,12 @@ object DeltaTable {
   }
 
   /**
-   * Instantiate a [[DeltaTable]] object using the given table or view name using the given
-   * SparkSession. If the given tableOrViewName is invalid (i.e. either no table exists or an
-   * existing table is not a Delta table), it throws a `not a Delta table` error.
+   * Instantiate a [[DeltaTable]] object using the given table name using the given
+   * SparkSession. If the given tableName is invalid (i.e. either no table exists or an
+   * existing table is not a Delta table), it throws a `not a Delta table` error. Note:
+   * Passing a view name will also result in this error as views are not supported.
    *
-   * The given tableOrViewName can also be the absolute path of a delta datasource (i.e.
+   * The given tableName can also be the absolute path of a delta datasource (i.e.
    * delta.`path`), If so, instantiate a [[DeltaTable]] object representing the data at
    * the given path (consistent with the [[forPath]]).
    */

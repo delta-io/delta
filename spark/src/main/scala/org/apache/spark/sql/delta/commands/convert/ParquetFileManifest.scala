@@ -101,7 +101,8 @@ class CatalogFileManifest(
     } else {
       val partitions = spark.sessionState.catalog.listPartitions(catalogTable.identifier)
       partitions.map { partition =>
-        val partitionDir = partition.storage.locationUri.map(_.toString())
+        // Convert URI into Path first to decode special characters.
+        val partitionDir = partition.storage.locationUri.map(new Path(_).toString())
           .getOrElse {
             val partitionDir =
               PartitionUtils.getPathFragment(partition.spec, catalogTable.partitionSchema)
@@ -191,7 +192,7 @@ class MetadataLogFileManifest(
   protected def doList(): Dataset[SerializableFileStatus] = {
     import org.apache.spark.sql.delta.implicits._
 
-    val rdd = spark.sparkContext.parallelize(index.allFiles).mapPartitions { _
+    val rdd = spark.sparkContext.parallelize(index.allFiles()).mapPartitions { _
         .map(SerializableFileStatus.fromStatus)
     }
     spark.createDataset(rdd)

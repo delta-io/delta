@@ -71,6 +71,24 @@
     ],
     "sqlState" : "42837"
   },
+  "DELTA_ALTER_TABLE_CLUSTER_BY_NOT_ALLOWED" : {
+    "message" : [
+      "ALTER TABLE CLUSTER BY is supported only for Delta table with clustering."
+    ],
+    "sqlState" : "42000"
+  },
+  "DELTA_ALTER_TABLE_CLUSTER_BY_ON_PARTITIONED_TABLE_NOT_ALLOWED" : {
+    "message" : [
+      "ALTER TABLE CLUSTER BY cannot be applied to a partitioned table."
+    ],
+    "sqlState" : "42000"
+  },
+  "DELTA_ALTER_TABLE_SET_CLUSTERING_TABLE_FEATURE_NOT_ALLOWED" : {
+    "message" : [
+      "Cannot enable <tableFeature> table feature using ALTER TABLE SET TBLPROPERTIES. Please use CREATE OR REPLACE TABLE CLUSTER BY to create a Delta table with clustering."
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_AMBIGUOUS_DATA_TYPE_CHANGE" : {
     "message" : [
       "Cannot change data type of <column> from <from> to <to>. This change contains column removals and additions, therefore they are ambiguous. Please make these changes individually using ALTER TABLE [ADD | DROP | RENAME] COLUMN."
@@ -152,6 +170,13 @@
     ],
     "sqlState" : "42703"
   },
+  "DELTA_CANNOT_DROP_CHECK_CONSTRAINT_FEATURE" : {
+    "message" : [
+      "Cannot drop the CHECK constraints table feature.",
+      "The following constraints must be dropped first: <constraints>."
+    ],
+    "sqlState" : "0AKDE"
+  },
   "DELTA_CANNOT_EVALUATE_EXPRESSION" : {
     "message" : [
       "Cannot evaluate expression: <expression>"
@@ -182,11 +207,23 @@
     ],
     "sqlState" : "42809"
   },
+  "DELTA_CANNOT_MODIFY_COORDINATED_COMMITS_DEPENDENCIES" : {
+    "message" : [
+      "<Command> cannot override or unset in-commit timestamp table properties because coordinated commits is enabled in this table and depends on them. Please remove them (\"delta.enableInCommitTimestamps\", \"delta.inCommitTimestampEnablementVersion\", \"delta.inCommitTimestampEnablementTimestamp\") from the TBLPROPERTIES clause and then retry the command again."
+    ],
+    "sqlState" : "42616"
+  },
   "DELTA_CANNOT_MODIFY_TABLE_PROPERTY" : {
     "message" : [
       "The Delta table configuration <prop> cannot be specified by the user"
     ],
     "sqlState" : "42939"
+  },
+  "DELTA_CANNOT_OVERRIDE_COORDINATED_COMMITS_CONFS" : {
+    "message" : [
+      "<Command> cannot override coordinated commits configurations for an existing target table. Please remove them (\"delta.coordinatedCommits.commitCoordinator-preview\", \"delta.coordinatedCommits.commitCoordinatorConf-preview\", \"delta.coordinatedCommits.tableConf-preview\") from the TBLPROPERTIES clause and then retry the command again."
+    ],
+    "sqlState" : "42616"
   },
   "DELTA_CANNOT_RECONSTRUCT_PATH_FROM_URI" : {
     "message" : [
@@ -224,11 +261,23 @@
     ],
     "sqlState" : "22003"
   },
+  "DELTA_CANNOT_RESTORE_TIMESTAMP_EARLIER" : {
+    "message" : [
+      "Cannot restore table to timestamp (<requestedTimestamp>) as it is before the earliest version available. Please use a timestamp after (<earliestTimestamp>)."
+    ],
+    "sqlState" : "22003"
+  },
   "DELTA_CANNOT_RESTORE_TIMESTAMP_GREATER" : {
     "message" : [
       "Cannot restore table to timestamp (<requestedTimestamp>) as it is after the latest version available. Please use a timestamp before (<latestTimestamp>)"
     ],
     "sqlState" : "22003"
+  },
+  "DELTA_CANNOT_SET_COORDINATED_COMMITS_DEPENDENCIES" : {
+    "message" : [
+      "<Command> cannot set in-commit timestamp table properties together with coordinated commits, because the latter depends on the former and sets the former internally. Please remove them (\"delta.enableInCommitTimestamps\", \"delta.inCommitTimestampEnablementVersion\", \"delta.inCommitTimestampEnablementTimestamp\") from the TBLPROPERTIES clause and then retry the command again."
+    ],
+    "sqlState" : "42616"
   },
   "DELTA_CANNOT_SET_LOCATION_MULTIPLE_TIMES" : {
     "message" : [
@@ -241,6 +290,12 @@
       "Cannot change the location of a path based table."
     ],
     "sqlState" : "42613"
+  },
+  "DELTA_CANNOT_UNSET_COORDINATED_COMMITS_CONFS" : {
+    "message" : [
+      "ALTER cannot unset coordinated commits configurations. To downgrade a table from coordinated commits, please try again using `ALTER TABLE [table-name] DROP FEATURE 'coordinatedCommits-preview'`."
+    ],
+    "sqlState" : "42616"
   },
   "DELTA_CANNOT_UPDATE_ARRAY_FIELD" : {
     "message" : [
@@ -271,6 +326,12 @@
       "Cannot use all columns for partition columns"
     ],
     "sqlState" : "428FT"
+  },
+  "DELTA_CANNOT_VACUUM_LITE" : {
+    "message" : [
+      "VACUUM LITE cannot delete all eligible files as some files are not referenced by the Delta log. Please run VACUUM FULL."
+    ],
+    "sqlState" : "55000"
   },
   "DELTA_CANNOT_WRITE_INTO_VIEW" : {
     "message" : [
@@ -342,6 +403,56 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_CLUSTERING_COLUMNS_DATATYPE_NOT_SUPPORTED" : {
+    "message" : [
+      "CLUSTER BY is not supported because the following column(s): <columnsWithDataTypes> don't support data skipping."
+    ],
+    "sqlState" : "0A000"
+  },
+  "DELTA_CLUSTERING_COLUMNS_MISMATCH" : {
+    "message" : [
+      "The provided clustering columns do not match the existing table's.",
+      "- provided: <providedClusteringColumns>",
+      "- existing: <existingClusteringColumns>"
+    ],
+    "sqlState" : "42P10"
+  },
+  "DELTA_CLUSTERING_COLUMN_MISSING_STATS" : {
+    "message" : [
+      "Clustering requires clustering columns to have stats. Couldn't find clustering column(s) '<columns>' in stats schema:\n<schema>"
+    ],
+    "sqlState" : "22000"
+  },
+  "DELTA_CLUSTERING_REPLACE_TABLE_WITH_PARTITIONED_TABLE" : {
+    "message" : [
+      "Replacing a clustered Delta table with a partitioned table is not allowed."
+    ],
+    "sqlState" : "42000"
+  },
+  "DELTA_CLUSTERING_WITH_PARTITION_PREDICATE" : {
+    "message" : [
+      "OPTIMIZE command for Delta table with clustering doesn't support partition predicates. Please remove the predicates: <predicates>."
+    ],
+    "sqlState" : "0A000"
+  },
+  "DELTA_CLUSTERING_WITH_ZORDER_BY" : {
+    "message" : [
+      "OPTIMIZE command for Delta table with clustering cannot specify ZORDER BY. Please remove ZORDER BY (<zOrderBy>)."
+    ],
+    "sqlState" : "42613"
+  },
+  "DELTA_CLUSTER_BY_INVALID_NUM_COLUMNS" : {
+    "message" : [
+      "CLUSTER BY supports up to <numColumnsLimit> clustering columns, but the table has <actualNumColumns> clustering columns. Please remove the extra clustering columns."
+    ],
+    "sqlState" : "54000"
+  },
+  "DELTA_CLUSTER_BY_WITH_PARTITIONED_BY" : {
+    "message" : [
+      "Clustering and partitioning cannot both be specified. Please remove partitionedBy if you want to create a Delta table with clustering."
+    ],
+    "sqlState" : "42613"
+  },
   "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_PARTITIONED_COLUMN" : {
     "message" : [
       "Data skipping is not supported for partition column '<column>'."
@@ -366,6 +477,12 @@
     ],
     "sqlState" : "42703"
   },
+  "DELTA_COLUMN_MISSING_DATA_TYPE" : {
+    "message" : [
+      "The data type of the column <colName> was not provided."
+    ],
+    "sqlState" : "42601"
+  },
   "DELTA_COLUMN_NOT_FOUND" : {
     "message" : [
       "Unable to find the column `<columnName>` given [<columnList>]"
@@ -387,8 +504,9 @@
   "DELTA_COLUMN_PATH_NOT_NESTED" : {
     "message" : [
       "Expected <columnPath> to be a nested data type, but found <other>. Was looking for the",
-      "index of <column> in a nested field",
-      ""
+      "index of <column> in a nested field.",
+      "Schema:",
+      "<schema>"
     ],
     "sqlState" : "42704"
   },
@@ -398,11 +516,47 @@
     ],
     "sqlState" : "2200G"
   },
+  "DELTA_COMMIT_INTERMEDIATE_REDIRECT_STATE" : {
+    "message" : [
+      "Cannot handle commit of table within redirect table state '<state>'."
+    ],
+    "sqlState" : "42P01"
+  },
   "DELTA_COMPLEX_TYPE_COLUMN_CONTAINS_NULL_TYPE" : {
     "message" : [
       " Found nested NullType in column <columName> which is of <dataType>. Delta doesn't support writing NullType in complex types."
     ],
     "sqlState" : "22005"
+  },
+  "DELTA_CONCURRENT_APPEND" : {
+    "message" : [
+      "ConcurrentAppendException: Files were added to <partition> by a concurrent update. <retryMsg><conflictingCommit>\nRefer to <docLink> for more details."
+    ],
+    "sqlState" : "2D521"
+  },
+  "DELTA_CONCURRENT_DELETE_DELETE" : {
+    "message" : [
+      "ConcurrentDeleteDeleteException: This transaction attempted to delete one or more files that were deleted (for example <file>) by a concurrent update. Please try the operation again.<conflictingCommit>\nRefer to <docLink> for more details."
+    ],
+    "sqlState" : "2D521"
+  },
+  "DELTA_CONCURRENT_DELETE_READ" : {
+    "message" : [
+      "ConcurrentDeleteReadException: This transaction attempted to read one or more files that were deleted (for example <file>) by a concurrent update. Please try the operation again.<conflictingCommit>\nRefer to <docLink> for more details."
+    ],
+    "sqlState" : "2D521"
+  },
+  "DELTA_CONCURRENT_TRANSACTION" : {
+    "message" : [
+      "ConcurrentTransactionException: This error occurs when multiple streaming queries are using the same checkpoint to write into this table. Did you run multiple instances of the same streaming query at the same time?<conflictingCommit>\nRefer to <docLink> for more details."
+    ],
+    "sqlState" : "2D521"
+  },
+  "DELTA_CONCURRENT_WRITE" : {
+    "message" : [
+      "ConcurrentWriteException: A concurrent transaction has written new data since the current transaction read the table. Please try the operation again.\nRefer to <docLink> for more details."
+    ],
+    "sqlState" : "2D521"
   },
   "DELTA_CONFIGURE_SPARK_SESSION_WITH_EXTENSION_AND_CATALOG" : {
     "message" : [
@@ -428,6 +582,18 @@
     ],
     "sqlState" : "42701"
   },
+  "DELTA_CONF_OVERRIDE_NOT_SUPPORTED_IN_COMMAND" : {
+    "message" : [
+      "During <command>, configuration \"<configuration>\" cannot be set from the command. Please remove it from the TBLPROPERTIES clause and then retry the command again."
+    ],
+    "sqlState" : "42616"
+  },
+  "DELTA_CONF_OVERRIDE_NOT_SUPPORTED_IN_SESSION" : {
+    "message" : [
+      "During <command>, configuration \"<configuration>\" cannot be set from the SparkSession configurations. Please unset it by running `spark.conf.unset(\"<configuration>\")` and then retry the command again."
+    ],
+    "sqlState" : "42616"
+  },
   "DELTA_CONSTRAINT_ALREADY_EXISTS" : {
     "message" : [
       "Constraint '<constraintName>' already exists. Please delete the old constraint first.",
@@ -435,6 +601,20 @@
       "<oldConstraint>"
     ],
     "sqlState" : "42710"
+  },
+  "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH" : {
+    "message" : [
+      "Column <columnName> has data type <columnType> and cannot be altered to data type <dataType> because this column is referenced by the following check constraint(s):",
+      "<constraints>"
+    ],
+    "sqlState" : "42K09"
+  },
+  "DELTA_CONSTRAINT_DEPENDENT_COLUMN_CHANGE" : {
+    "message" : [
+      "Cannot alter column <columnName> because this column is referenced by the following check constraint(s):",
+      "<constraints>"
+    ],
+    "sqlState" : "42K09"
   },
   "DELTA_CONSTRAINT_DOES_NOT_EXIST" : {
     "message" : [
@@ -499,6 +679,18 @@
     ],
     "sqlState" : "42K03"
   },
+  "DELTA_CREATE_TABLE_IDENTIFIER_LOCATION_MISMATCH" : {
+    "message" : [
+      "Creating path-based Delta table with a different location isn't supported. Identifier: <identifier>, Location: <location>"
+    ],
+    "sqlState" : "0AKDC"
+  },
+  "DELTA_CREATE_TABLE_MISSING_TABLE_NAME_OR_LOCATION" : {
+    "message" : [
+      "Table name or location has to be specified."
+    ],
+    "sqlState" : "42601"
+  },
   "DELTA_CREATE_TABLE_SCHEME_MISMATCH" : {
     "message" : [
       "The specified schema does not match the existing schema at <path>.",
@@ -515,6 +707,23 @@
       "If your intention is to keep the existing schema, you can omit the",
       "schema from the create table command. Otherwise please ensure that",
       "the schema matches."
+    ],
+    "sqlState" : "42KD7"
+  },
+  "DELTA_CREATE_TABLE_SET_CLUSTERING_TABLE_FEATURE_NOT_ALLOWED" : {
+    "message" : [
+      "Cannot enable <tableFeature> table feature using TBLPROPERTIES. Please use CREATE OR REPLACE TABLE CLUSTER BY to create a Delta table with clustering."
+    ],
+    "sqlState" : "42000"
+  },
+  "DELTA_CREATE_TABLE_WITH_DIFFERENT_CLUSTERING" : {
+    "message" : [
+      "The specified clustering columns do not match the existing clustering columns at <path>.",
+      "== Specified ==",
+      "<specifiedColumns>",
+      "== Existing ==",
+      "<existingColumns>",
+      ""
     ],
     "sqlState" : "42KD7"
   },
@@ -598,6 +807,13 @@
     ],
     "sqlState" : "42KD8"
   },
+  "DELTA_DROP_COLUMN_ON_SINGLE_FIELD_SCHEMA" : {
+    "message" : [
+      "Cannot drop column from a schema with a single column. Schema:",
+      "<schema>"
+    ],
+    "sqlState" : "0AKDC"
+  },
   "DELTA_DUPLICATE_COLUMNS_FOUND" : {
     "message" : [
       "Found duplicate column(s) <coltype>: <duplicateCols>"
@@ -649,7 +865,7 @@
   },
   "DELTA_EXCEED_CHAR_VARCHAR_LIMIT" : {
     "message" : [
-      "Exceeds char/varchar type length limitation. Failed check: <expr>."
+      "Value \"<value>\" exceeds char/varchar type length limitation. Failed check: <expr>."
     ],
     "sqlState" : "22001"
   },
@@ -716,7 +932,7 @@
   },
   "DELTA_FAILED_TO_MERGE_FIELDS" : {
     "message" : [
-      "Failed to merge fields '<field>' and '<fieldRoot>'. <fieldChild>"
+      "Failed to merge fields '<currentField>' and '<updateField>'"
     ],
     "sqlState" : "22005"
   },
@@ -751,11 +967,25 @@
     ],
     "sqlState" : "0AKDE"
   },
+  "DELTA_FEATURE_DROP_CHECKPOINT_FAILED" : {
+    "message" : [
+      "Dropping <featureName> failed due to a failure in checkpoint creation.",
+      "Please try again later. It the issue persists, contact support."
+    ],
+    "sqlState" : "22KD0"
+  },
   "DELTA_FEATURE_DROP_CONFLICT_REVALIDATION_FAIL" : {
     "message" : [
       "Cannot drop feature because a concurrent transaction modified the table.",
       "Please try the operation again.",
       "<concurrentCommit>"
+    ],
+    "sqlState" : "0AKDE"
+  },
+  "DELTA_FEATURE_DROP_DEPENDENT_FEATURE" : {
+    "message" : [
+      "Cannot drop table feature `<feature>` because some other features (<dependentFeatures>) in this table depends on `<feature>`.",
+      "Consider dropping them first before dropping this feature."
     ],
     "sqlState" : "0AKDE"
   },
@@ -779,7 +1009,7 @@
   },
   "DELTA_FEATURE_DROP_HISTORY_TRUNCATION_NOT_ALLOWED" : {
     "message" : [
-      "History truncation is only relevant for reader features."
+      "The particular feature does not require history truncation."
     ],
     "sqlState" : "0AKDE"
   },
@@ -864,13 +1094,23 @@
       "<value>",
       "followed by the name of the column (only if that column is a struct type).",
       "e.g. mymap.key.mykey",
-      "If the column is a basic type, mymap.key or mymap.value is sufficient."
+      "If the column is a basic type, mymap.key or mymap.value is sufficient.",
+      "Schema:",
+      "<schema>"
     ],
     "sqlState" : "KD003"
   },
   "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH" : {
     "message" : [
-      "Column <columnName> is a generated column or a column used by a generated column. The data type is <columnType>. It doesn't accept data type <dataType>"
+      "Column <columnName> has data type <columnType> and cannot be altered to data type <dataType> because this column is referenced by the following generated column(s):",
+      "<generatedColumns>"
+    ],
+    "sqlState" : "42K09"
+  },
+  "DELTA_GENERATED_COLUMNS_DEPENDENT_COLUMN_CHANGE" : {
+    "message" : [
+      "Cannot alter column <columnName> because this column is referenced by the following generated column(s):",
+      "<generatedColumns>"
     ],
     "sqlState" : "42K09"
   },
@@ -886,46 +1126,151 @@
     ],
     "sqlState" : "42K09"
   },
-  "DELTA_ICEBERG_COMPAT_V1_VIOLATION" : {
+  "DELTA_ICEBERG_COMPAT_VIOLATION" : {
     "message" : [
-      "The validation of IcebergCompatV1 has failed."
+      "The validation of IcebergCompatV<version> has failed."
     ],
     "subClass" : {
+      "CHANGE_VERSION_NEED_REWRITE" : {
+        "message" : [
+          "Changing to IcebergCompatV<newVersion> requires rewriting the table. Please run REORG TABLE APPLY (UPGRADE UNIFORM ('ICEBERG_COMPAT_VERSION = <newVersion>'));",
+          "Note that REORG enables table feature IcebergCompatV<newVersion> and other Delta lake clients without that table feature support may not be able to write to the table."
+        ]
+      },
+      "COMPAT_VERSION_NOT_SUPPORTED" : {
+        "message" : [
+          "IcebergCompatVersion = <version> is not supported. Supported versions are between 1 and <maxVersion> "
+        ]
+      },
+      "DELETION_VECTORS_NOT_PURGED" : {
+        "message" : [
+          "IcebergCompatV<version> requires Deletion Vectors to be completely purged from the table. Please run the REORG TABLE APPLY (PURGE) command."
+        ]
+      },
+      "DELETION_VECTORS_SHOULD_BE_DISABLED" : {
+        "message" : [
+          "IcebergCompatV<version> requires Deletion Vectors to be disabled on the table first. Then run REORG PURGE command to purge the Deletion Vectors on the table."
+        ]
+      },
       "DISABLING_REQUIRED_TABLE_FEATURE" : {
         "message" : [
-          "IcebergCompatV1 requires feature <feature> to be supported and enabled. You cannot drop it from the table. Instead, please disable IcebergCompatV1 first."
+          "IcebergCompatV<version> requires feature <feature> to be supported and enabled. You cannot drop it from the table. Instead, please disable IcebergCompatV<version> first."
+        ]
+      },
+      "FILES_NOT_ICEBERG_COMPAT" : {
+        "message" : [
+          "Enabling Uniform Iceberg with IcebergCompatV<version> requires all files to be iceberg compatible.",
+          "There are <addFilesCount> files in table version <tableVersion> and <addFilesWithoutTag> files are not iceberg compatible, which is usually a result of concurrent write.",
+          "Please run the REORG TABLE table APPLY (UPGRADE UNIFORM (ICEBERG_COMPAT_VERSION=<version>) command again."
         ]
       },
       "INCOMPATIBLE_TABLE_FEATURE" : {
         "message" : [
-          "IcebergCompatV1 is incompatible with feature <feature>."
+          "IcebergCompatV<version> is incompatible with feature <feature>."
         ]
       },
       "MISSING_REQUIRED_TABLE_FEATURE" : {
         "message" : [
-          "IcebergCompatV1 requires feature <feature> to be supported and enabled."
+          "IcebergCompatV<version> requires feature <feature> to be supported and enabled."
         ]
       },
       "REPLACE_TABLE_CHANGE_PARTITION_NAMES" : {
         "message" : [
-          "IcebergCompatV1 doesn't support replacing partitioned tables with a differently-named partition spec, because Iceberg-Spark 1.1.0 doesn't.",
+          "IcebergCompatV<version> doesn't support replacing partitioned tables with a differently-named partition spec, because Iceberg-Spark 1.1.0 doesn't.",
           "Prev Partition Spec: <prevPartitionSpec>",
           "New Partition Spec: <newPartitionSpec>"
         ]
       },
+      "REWRITE_DATA_FAILED" : {
+        "message" : [
+          "Rewriting data to IcebergCompatV<version> failed.",
+          "Please run the REORG TABLE table APPLY (UPGRADE UNIFORM (ICEBERG_COMPAT_VERSION=<version>) command again."
+        ]
+      },
       "UNSUPPORTED_DATA_TYPE" : {
         "message" : [
-          "IcebergCompatV1 doesn't support schema with MapType or ArrayType or NullType. Your schema:",
+          "IcebergCompatV<version> does not support the data type <dataType> in your schema. Your schema:",
           "<schema>"
+        ]
+      },
+      "UNSUPPORTED_PARTITION_DATA_TYPE" : {
+        "message" : [
+          "IcebergCompatV<version> does not support the data type <dataType> for partition columns in your schema. Your partition schema:",
+          "<schema>"
+        ]
+      },
+      "VERSION_MUTUAL_EXCLUSIVE" : {
+        "message" : [
+          "Only one IcebergCompat version can be enabled, please explicitly disable all other IcebergCompat versions that are not needed."
         ]
       },
       "WRONG_REQUIRED_TABLE_PROPERTY" : {
         "message" : [
-          "IcebergCompatV1 requires table property '<key>' to be set to '<requiredValue>'. Current value: '<actualValue>'."
+          "IcebergCompatV<version> requires table property '<key>' to be set to '<requiredValue>'. Current value: '<actualValue>'."
         ]
       }
     },
     "sqlState" : "KD00E"
+  },
+  "DELTA_IDENTITY_COLUMNS_ALTER_COLUMN_NOT_SUPPORTED" : {
+    "message" : [
+      "ALTER TABLE ALTER COLUMN is not supported for IDENTITY columns."
+    ],
+    "sqlState" : "429BQ"
+  },
+  "DELTA_IDENTITY_COLUMNS_ALTER_NON_DELTA_FORMAT" : {
+    "message" : [
+      "ALTER TABLE ALTER COLUMN SYNC IDENTITY is only supported by Delta."
+    ],
+    "sqlState" : "0AKDD"
+  },
+  "DELTA_IDENTITY_COLUMNS_ALTER_NON_IDENTITY_COLUMN" : {
+    "message" : [
+      "ALTER TABLE ALTER COLUMN SYNC IDENTITY cannot be called on non IDENTITY columns."
+    ],
+    "sqlState" : "429BQ"
+  },
+  "DELTA_IDENTITY_COLUMNS_EXPLICIT_INSERT_NOT_SUPPORTED" : {
+    "message" : [
+      "Providing values for GENERATED ALWAYS AS IDENTITY column <colName> is not supported."
+    ],
+    "sqlState" : "42808"
+  },
+  "DELTA_IDENTITY_COLUMNS_ILLEGAL_STEP" : {
+    "message" : [
+      "IDENTITY column step cannot be 0."
+    ],
+    "sqlState" : "42611"
+  },
+  "DELTA_IDENTITY_COLUMNS_PARTITION_NOT_SUPPORTED" : {
+    "message" : [
+      "PARTITIONED BY IDENTITY column <colName> is not supported."
+    ],
+    "sqlState" : "42601"
+  },
+  "DELTA_IDENTITY_COLUMNS_REPLACE_COLUMN_NOT_SUPPORTED" : {
+    "message" : [
+      "ALTER TABLE REPLACE COLUMNS is not supported for table with IDENTITY columns."
+    ],
+    "sqlState" : "429BQ"
+  },
+  "DELTA_IDENTITY_COLUMNS_UNSUPPORTED_DATA_TYPE" : {
+    "message" : [
+      "DataType <dataType> is not supported for IDENTITY columns."
+    ],
+    "sqlState" : "428H2"
+  },
+  "DELTA_IDENTITY_COLUMNS_UPDATE_NOT_SUPPORTED" : {
+    "message" : [
+      "UPDATE on IDENTITY column <colName> is not supported."
+    ],
+    "sqlState" : "42808"
+  },
+  "DELTA_IDENTITY_COLUMNS_WITH_GENERATED_EXPRESSION" : {
+    "message" : [
+      "IDENTITY column cannot be specified with a generated column expression."
+    ],
+    "sqlState" : "42613"
   },
   "DELTA_ILLEGAL_FILE_FOUND" : {
     "message" : [
@@ -961,9 +1306,9 @@
   "DELTA_INCORRECT_ARRAY_ACCESS_BY_NAME" : {
     "message" : [
       "An ArrayType was found. In order to access elements of an ArrayType, specify",
-      "<rightName>",
-      "Instead of <wrongName>",
-      ""
+      "<rightName> instead of <wrongName>.",
+      "Schema:",
+      "<schema>"
     ],
     "sqlState" : "KD003"
   },
@@ -1002,6 +1347,12 @@
     ],
     "sqlState" : "42802"
   },
+  "DELTA_INVALID_AUTO_COMPACT_TYPE" : {
+    "message" : [
+      "Invalid auto-compact type: <value>. Allowed values are: <allowed>."
+    ],
+    "sqlState" : "22023"
+  },
   "DELTA_INVALID_CALENDAR_INTERVAL_EMPTY" : {
     "message" : [
       "Interval cannot be null or blank."
@@ -1022,7 +1373,10 @@
   },
   "DELTA_INVALID_CHARACTERS_IN_COLUMN_NAMES" : {
     "message" : [
-      "Found invalid character(s) among ' ,;{}()\\n\\t=' in the column names of your schema. <advice>"
+      "Found invalid character(s) among ' ,;{}()\\n\\t=' in the column names of your schema.",
+      "Invalid column names: <invalidColumnNames>.",
+      "Please use other characters and try again.",
+      "Alternatively, enable Column Mapping to keep using these characters."
     ],
     "sqlState" : "42K05"
   },
@@ -1032,6 +1386,15 @@
       "absolute path instead of <path>."
     ],
     "sqlState" : "22KD1"
+  },
+  "DELTA_INVALID_COLUMN_NAMES_WHEN_REMOVING_COLUMN_MAPPING" : {
+    "message" : [
+      "Found invalid character(s) among ' ,;{}()\\n\\t=' in the column names of your schema.",
+      "Invalid column names: <invalidColumnNames>.",
+      "Column mapping cannot be removed when there are invalid characters in the column names.",
+      "Please rename the columns to remove the invalid characters and execute this command again."
+    ],
+    "sqlState" : "42K05"
   },
   "DELTA_INVALID_COMMITTED_VERSION" : {
     "message" : [
@@ -1062,6 +1425,12 @@
       "<interval> is not a valid INTERVAL."
     ],
     "sqlState" : "22006"
+  },
+  "DELTA_INVALID_INVENTORY_SCHEMA" : {
+    "message" : [
+      "The schema for the specified INVENTORY does not contain all of the required fields. Required fields are: <expectedSchema>"
+    ],
+    "sqlState" : "42000"
   },
   "DELTA_INVALID_ISOLATION_LEVEL" : {
     "message" : [
@@ -1127,9 +1496,15 @@
   },
   "DELTA_INVALID_PROTOCOL_VERSION" : {
     "message" : [
-      "Delta protocol version is not supported by this version of Delta Lake: table requires <required>, client supports <supported>. Please upgrade to a newer release."
+      "Unsupported Delta protocol version: table \"<tableNameOrPath>\" requires reader version <readerRequired> and writer version <writerRequired>, but Delta Lake \"<deltaVersion>\" supports reader versions <supportedReaders> and writer versions <supportedWriters>. Please upgrade to a newer release."
     ],
     "sqlState" : "KD004"
+  },
+  "DELTA_INVALID_SOURCE_OFFSET_FORMAT" : {
+    "message" : [
+      "The stored source offset format is invalid"
+    ],
+    "sqlState" : "XXKDS"
   },
   "DELTA_INVALID_SOURCE_VERSION" : {
     "message" : [
@@ -1198,6 +1573,18 @@
     ],
     "sqlState" : "40000"
   },
+  "DELTA_MERGE_ADD_VOID_COLUMN" : {
+    "message" : [
+      "Cannot add column <newColumn> with type VOID. Please explicitly specify a non-void type."
+    ],
+    "sqlState" : "42K09"
+  },
+  "DELTA_MERGE_INCOMPATIBLE_DATATYPE" : {
+    "message" : [
+      "Failed to merge incompatible data types <currentDataType> and <updateDataType>"
+    ],
+    "sqlState" : "42K09"
+  },
   "DELTA_MERGE_INCOMPATIBLE_DECIMAL_TYPE" : {
     "message" : [
       "Failed to merge decimal types with incompatible <decimalRanges>"
@@ -1240,6 +1627,19 @@
     ],
     "sqlState" : "XXKDS"
   },
+  "DELTA_METADATA_ABSENT_EXISTING_CATALOG_TABLE" : {
+    "message" : [
+      "The table <tableName> already exists in the catalog but no metadata could be found for the table at the path <tablePath>.",
+      "Did you manually delete files from the _delta_log directory? If so, then you should be able to recreate it as follows. First, drop the table by running `DROP TABLE <tableNameForDropCmd>`. Then, recreate it by running the current command again."
+    ],
+    "sqlState" : "XXKDS"
+  },
+  "DELTA_METADATA_CHANGED" : {
+    "message" : [
+      "MetadataChangedException: The metadata of the Delta table has been changed by a concurrent update. Please try the operation again.<conflictingCommit>\nRefer to <docLink> for more details."
+    ],
+    "sqlState" : "2D521"
+  },
   "DELTA_MISSING_CHANGE_DATA" : {
     "message" : [
       "Error getting change data for range [<startVersion> , <endVersion>] as change data was not",
@@ -1255,6 +1655,18 @@
       "Cannot find <columName> in table columns: <columnList>"
     ],
     "sqlState" : "42703"
+  },
+  "DELTA_MISSING_COMMIT_INFO" : {
+    "message" : [
+      "This table has the feature <featureName> enabled which requires the presence of the CommitInfo action in every commit. However, the CommitInfo action is missing from commit version <version>."
+    ],
+    "sqlState" : "KD004"
+  },
+  "DELTA_MISSING_COMMIT_TIMESTAMP" : {
+    "message" : [
+      "This table has the feature <featureName> enabled which requires the presence of commitTimestamp in the CommitInfo action. However, this field has not been set in commit version <version>."
+    ],
+    "sqlState" : "KD004"
   },
   "DELTA_MISSING_DELTA_TABLE" : {
     "message" : [
@@ -1343,11 +1755,17 @@
     ],
     "sqlState" : "21506"
   },
-  "DELTA_NESTED_FIELDS_NEED_RENAME" : {
+  "DELTA_MUST_SET_ALL_COORDINATED_COMMITS_CONFS_IN_COMMAND" : {
     "message" : [
-      "Nested fields need renaming to avoid data loss. Fields:\n<fields>.\nOriginal schema:\n<schema>"
+      "During <command>, either both coordinated commits configurations (\"delta.coordinatedCommits.commitCoordinator-preview\", \"delta.coordinatedCommits.commitCoordinatorConf-preview\") are set in the command or neither of them. Missing: \"<configuration>\". Please specify this configuration in the TBLPROPERTIES clause or remove the other configuration, and then retry the command again."
     ],
-    "sqlState" : "42K05"
+    "sqlState" : "42616"
+  },
+  "DELTA_MUST_SET_ALL_COORDINATED_COMMITS_CONFS_IN_SESSION" : {
+    "message" : [
+      "During <command>, either both coordinated commits configurations (\"coordinatedCommits.commitCoordinator-preview\", \"coordinatedCommits.commitCoordinatorConf-preview\") are set in the SparkSession configurations or neither of them. Missing: \"<configuration>\". Please set this configuration in the SparkSession or unset the other configuration, and then retry the command again."
+    ],
+    "sqlState" : "42616"
   },
   "DELTA_NESTED_NOT_NULL_CONSTRAINT" : {
     "message" : [
@@ -1372,6 +1790,12 @@
   "DELTA_NON_BOOLEAN_CHECK_CONSTRAINT" : {
     "message" : [
       "CHECK constraint '<name>' (<expr>) should be a boolean expression."
+    ],
+    "sqlState" : "42621"
+  },
+  "DELTA_NON_DETERMINISTIC_EXPRESSION_IN_GENERATED_COLUMN" : {
+    "message" : [
+      "Found <expr>. A generated column cannot use a non deterministic expression."
     ],
     "sqlState" : "42621"
   },
@@ -1479,6 +1903,13 @@
     ],
     "sqlState" : "KD006"
   },
+  "DELTA_NO_REDIRECT_RULES_VIOLATED" : {
+    "message" : [
+      "Operation not allowed: <operation> cannot be performed on a table with redirect feature.",
+      "The no redirect rules are not satisfied <noRedirectRules>."
+    ],
+    "sqlState" : "42P01"
+  },
   "DELTA_NO_RELATION_TABLE" : {
     "message" : [
       "Table <tableIdent> not found"
@@ -1533,11 +1964,59 @@
     ],
     "sqlState" : "0A000"
   },
+  "DELTA_OPERATION_ON_VIEW_NOT_ALLOWED" : {
+    "message" : [
+      "Operation not allowed: <operation> cannot be performed on a view."
+    ],
+    "sqlState" : "0AKDC"
+  },
+  "DELTA_OPTIMIZE_FULL_NOT_SUPPORTED" : {
+    "message" : [
+      "OPTIMIZE FULL is only supported for clustered tables with non-empty clustering columns."
+    ],
+    "sqlState" : "42601"
+  },
   "DELTA_OVERWRITE_SCHEMA_WITH_DYNAMIC_PARTITION_OVERWRITE" : {
     "message" : [
       "'overwriteSchema' cannot be used in dynamic partition overwrite mode."
     ],
     "sqlState" : "42613"
+  },
+  "DELTA_PARSING_ANALYSIS_ERROR" : {
+    "message" : [
+      "<msg>"
+    ],
+    "sqlState" : "KD009"
+  },
+  "DELTA_PARSING_ILLEGAL_TABLE_NAME" : {
+    "message" : [
+      "Illegal table name `<tableName>`."
+    ],
+    "sqlState" : "KD009"
+  },
+  "DELTA_PARSING_INCORRECT_CLONE_HEADER" : {
+    "message" : [
+      "Incorrect CLONE header. Expected REPLACE or CREATE table."
+    ],
+    "sqlState" : "KD009"
+  },
+  "DELTA_PARSING_MISSING_TABLE_NAME_OR_PATH" : {
+    "message" : [
+      "<command> command requires a file path or table name."
+    ],
+    "sqlState" : "KD009"
+  },
+  "DELTA_PARSING_MUTUALLY_EXCLUSIVE_CLAUSES" : {
+    "message" : [
+      "<clauseOne> cannot be used together with <clauseTwo>."
+    ],
+    "sqlState" : "KD009"
+  },
+  "DELTA_PARSING_UNSUPPORTED_DATA_TYPE" : {
+    "message" : [
+      "DataType <dataType> is not supported."
+    ],
+    "sqlState" : "KD009"
   },
   "DELTA_PARTITION_COLUMN_CAST_FAILED" : {
     "message" : [
@@ -1574,6 +2053,12 @@
       "Committing to the Delta table version <version> succeeded but error while executing post-commit hook <name><message>"
     ],
     "sqlState" : "2DKD0"
+  },
+  "DELTA_PROTOCOL_CHANGED" : {
+    "message" : [
+      "ProtocolChangedException: The protocol version of the Delta table has been changed by a concurrent update. <additionalInfo><conflictingCommit>\nRefer to <docLink> for more details."
+    ],
+    "sqlState" : "2D521"
   },
   "DELTA_PROTOCOL_PROPERTY_NOT_INT" : {
     "message" : [
@@ -1616,7 +2101,7 @@
   },
   "DELTA_REPLACE_WHERE_MISMATCH" : {
     "message" : [
-      "Data written out does not match replaceWhere '<replaceWhere>'.",
+      "Written data does not conform to partial table overwrite condition or constraint '<replaceWhere>'.",
       "<message>"
     ],
     "sqlState" : "44000"
@@ -1752,7 +2237,7 @@
   },
   "DELTA_SOURCE_TABLE_IGNORE_CHANGES" : {
     "message" : [
-      "Detected a data update (for example <file>) in the source table at version <version>. This is currently not supported. If you'd like to ignore updates, set the option 'skipChangeCommits' to 'true'. If you would like the data update to be reflected, please restart this query with a fresh checkpoint directory. The source table can be found at path <dataPath>."
+      "Detected a data update (for example <file>) in the source table at version <version>. This is currently not supported. If this is going to happen regularly and you are okay to skip changes, set the option 'skipChangeCommits' to 'true'. If you would like the data update to be reflected, please restart this query with a fresh checkpoint directory. The source table can be found at path <dataPath>."
     ],
     "sqlState" : "0A000"
   },
@@ -1912,6 +2397,19 @@
     ],
     "sqlState" : "XXKDS"
   },
+  "DELTA_TABLE_INVALID_REDIRECT_STATE_TRANSITION" : {
+    "message" : [
+      "Unable to update table redirection state: Invalid state transition attempted.",
+      "The Delta table '<table>' cannot change from '<oldState>' to '<newState>'."
+    ],
+    "sqlState" : "KD007"
+  },
+  "DELTA_TABLE_INVALID_REMOVE_TABLE_REDIRECT" : {
+    "message" : [
+      "Unable to remove table redirection for <table> due to its invalid state: <currentState>."
+    ],
+    "sqlState" : "KD007"
+  },
   "DELTA_TABLE_LOCATION_MISMATCH" : {
     "message" : [
       "The location of the existing table <tableName> is <existingTableLocation>. It doesn't match the specified location <tableLocation>."
@@ -2046,6 +2544,12 @@
     ],
     "sqlState" : "XXKDS"
   },
+  "DELTA_UNIVERSAL_FORMAT_CONVERSION_FAILED" : {
+    "message" : [
+      "Failed to convert the table version <version> to the universal format <format>. <message>"
+    ],
+    "sqlState" : "KD00E"
+  },
   "DELTA_UNIVERSAL_FORMAT_VIOLATION" : {
     "message" : [
       "The validation of Universal Format (<format>) has failed: <violation>"
@@ -2107,6 +2611,12 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP" : {
+    "message" : [
+      "ALTER TABLE CHANGE COLUMN is not supported for changing column <fieldPath> from <oldField> to <newField>"
+    ],
+    "sqlState" : "0AKDC"
+  },
   "DELTA_UNSUPPORTED_ALTER_TABLE_REPLACE_COL_OP" : {
     "message" : [
       "Unsupported ALTER TABLE REPLACE COLUMNS operation. Reason: <details>",
@@ -2132,20 +2642,6 @@
       "Changing column mapping mode from '<oldMode>' to '<newMode>' is not supported."
     ],
     "sqlState" : "0AKDC"
-  },
-  "DELTA_UNSUPPORTED_COLUMN_MAPPING_PROTOCOL" : {
-    "message" : [
-      "",
-      "Your current table protocol version does not support changing column mapping modes",
-      "using <config>.",
-      "",
-      "Required Delta protocol version for column mapping:",
-      "<requiredVersion>",
-      "Your table's current Delta protocol version:",
-      "<currentVersion>",
-      "<advice>"
-    ],
-    "sqlState" : "KD004"
   },
   "DELTA_UNSUPPORTED_COLUMN_MAPPING_SCHEMA_CHANGE" : {
     "message" : [
@@ -2176,17 +2672,41 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_UNSUPPORTED_COMMENT_MAP_ARRAY" : {
+    "message" : [
+      "Can't add a comment to <fieldPath>. Adding a comment to a map key/value or array element is not supported."
+    ],
+    "sqlState" : "0AKDC"
+  },
   "DELTA_UNSUPPORTED_DATA_TYPES" : {
     "message" : [
       "Found columns using unsupported data types: <dataTypeList>. You can set '<config>' to 'false' to disable the type check. Disabling this type check may allow users to create unsupported Delta tables and should only be used when trying to read/write legacy tables."
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_UNSUPPORTED_DATA_TYPE_IN_GENERATED_COLUMN" : {
+    "message" : [
+      "<dataType> cannot be the result of a generated column"
+    ],
+    "sqlState" : "42621"
+  },
+  "DELTA_UNSUPPORTED_DEEP_CLONE" : {
+    "message" : [
+      "Deep clone is not supported by this Delta version."
+    ],
+    "sqlState" : "0A000"
+  },
   "DELTA_UNSUPPORTED_DESCRIBE_DETAIL_VIEW" : {
     "message" : [
       "<view> is a view. DESCRIBE DETAIL is only supported for tables."
     ],
     "sqlState" : "42809"
+  },
+  "DELTA_UNSUPPORTED_DROP_CLUSTERING_COLUMN" : {
+    "message" : [
+      "Dropping clustering columns (<columnList>) is not allowed."
+    ],
+    "sqlState" : "0AKDC"
   },
   "DELTA_UNSUPPORTED_DROP_COLUMN" : {
     "message" : [
@@ -2220,13 +2740,13 @@
   },
   "DELTA_UNSUPPORTED_FEATURES_FOR_READ" : {
     "message" : [
-      "Unable to read this table because it requires reader table feature(s) that are unsupported by this version of Delta Lake: <unsupported>."
+      "Unsupported Delta read feature: table \"<tableNameOrPath>\" requires reader table feature(s) that are unsupported by Delta Lake \"<deltaVersion>\": <unsupported>."
     ],
     "sqlState" : "56038"
   },
   "DELTA_UNSUPPORTED_FEATURES_FOR_WRITE" : {
     "message" : [
-      "Unable to write this table because it requires writer table feature(s) that are unsupported by this version of Delta Lake: <unsupported>."
+      "Unsupported Delta write feature: table \"<tableNameOrPath>\" requires writer table feature(s) that are unsupported by Delta Lake \"<deltaVersion>\": <unsupported>."
     ],
     "sqlState" : "56038"
   },
@@ -2363,6 +2883,20 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_UNSUPPORTED_TYPE_CHANGE_IN_PREVIEW" : {
+    "message" : [
+      "This table can't be read by this version of Delta because an unsupported type change was applied. Field <fieldPath> was changed from <fromType> to <toType>.",
+      "Please upgrade to Delta 4.0 or higher to read this table, or drop the Type Widening table feature using a client that supports reading this table:",
+      "  ALTER TABLE tableName DROP FEATURE <typeWideningFeatureName>"
+    ],
+    "sqlState" : "0AKDC"
+  },
+  "DELTA_UNSUPPORTED_TYPE_CHANGE_IN_SCHEMA" : {
+    "message" : [
+      "Unable to operate on this table because an unsupported type change was applied. Field <fieldName> was changed from <fromType> to <toType>."
+    ],
+    "sqlState" : "0AKDC"
+  },
   "DELTA_UNSUPPORTED_VACUUM_SPECIFIC_PARTITION" : {
     "message" : [
       "Please provide the base path (<baseDeltaPath>) when Vacuuming Delta tables. Vacuuming specific partitions is currently not supported."
@@ -2374,6 +2908,12 @@
       "Table implementation does not support writes: <tableName>"
     ],
     "sqlState" : "42807"
+  },
+  "DELTA_UNSUPPORTED_WRITES_WITHOUT_COORDINATOR" : {
+    "message" : [
+      "You are trying to perform writes on a table which has been registered with the commit coordinator <coordinatorName>. However, no implementation of this coordinator is available in the current environment and writes without coordinators are not allowed."
+    ],
+    "sqlState" : "0AKDC"
   },
   "DELTA_UPDATE_SCHEMA_MISMATCH_EXPRESSION" : {
     "message" : [
@@ -2465,5 +3005,82 @@
       "<config> to false."
     ],
     "sqlState" : "42939"
+  },
+  "WRONG_COLUMN_DEFAULTS_FOR_DELTA_ALTER_TABLE_ADD_COLUMN_NOT_SUPPORTED" : {
+    "message" : [
+      "Failed to execute the command because DEFAULT values are not supported when adding new",
+      "columns to previously existing Delta tables; please add the column without a default",
+      "value first, then run a second ALTER TABLE ALTER COLUMN SET DEFAULT command to apply",
+      "for future inserted rows instead."
+    ],
+    "sqlState" : "0AKDC"
+  },
+  "WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED" : {
+    "message" : [
+      "Failed to execute <commandType> command because it assigned a column DEFAULT value,",
+      "but the corresponding table feature was not enabled. Please retry the command again",
+      "after executing ALTER TABLE tableName SET",
+      "TBLPROPERTIES('delta.feature.allowColumnDefaults' = 'supported')."
+    ],
+    "sqlState" : "0AKDE"
+  },
+  "_LEGACY_ERROR_TEMP_DELTA_0001" : {
+    "message" : [
+      "Cannot use '<name>' as the name of a CHECK constraint."
+    ]
+  },
+  "_LEGACY_ERROR_TEMP_DELTA_0002" : {
+    "message" : [
+      "Cannot create bloom filter index, invalid parameter value: '<message>'."
+    ]
+  },
+  "_LEGACY_ERROR_TEMP_DELTA_0003" : {
+    "message" : [
+      "You are trying to convert a table which already has a delta log where the table properties in the catalog don't match the configuration in the delta log.",
+      "Table properties in catalog:",
+      "<tableProperties>",
+      "Delta configuration:",
+      "<configuration>",
+      "If you would like to merge the configurations (update existing fields and insert new ones), set the SQL configuration `<metadataCheckSqlConf>` to false."
+    ]
+  },
+  "_LEGACY_ERROR_TEMP_DELTA_0006" : {
+    "message" : [
+      "Inconsistent IDENTITY metadata for column <colName> detected: <hasStart>, <hasStep>, <hasInsert>"
+    ]
+  },
+  "_LEGACY_ERROR_TEMP_DELTA_0007" : {
+    "message" : [
+      "<message>"
+    ]
+  },
+  "_LEGACY_ERROR_TEMP_DELTA_0008" : {
+    "message" : [
+      "Error while searching for position of column <column>.",
+      "Schema:",
+      "<schema>",
+      "Error:",
+      "<message>"
+    ]
+  },
+  "_LEGACY_ERROR_TEMP_DELTA_0009" : {
+    "message" : [
+      "<optionalPrefixMessage>Updating nested fields is only supported for StructType."
+    ]
+  },
+  "_LEGACY_ERROR_TEMP_DELTA_0010" : {
+    "message" : [
+      "<optionalPrefixMessage>Found unsupported expression <expression> while parsing target column name parts."
+    ]
+  },
+  "_LEGACY_ERROR_TEMP_DELTA_0011" : {
+    "message" : [
+      "Failed to resolve plan."
+    ]
+  },
+  "_LEGACY_ERROR_TEMP_DELTA_0012" : {
+    "message" : [
+      "Could not resolve expression: <expression>"
+    ]
   }
 }

@@ -17,10 +17,9 @@
 package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaHistory, DeltaLog, DeltaTableIdentifier, UnresolvedDeltaPathOrIdentifier, UnresolvedPathBasedDeltaTable}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaHistory, DeltaTableIdentifier, UnresolvedDeltaPathOrIdentifier, UnresolvedPathBasedDeltaTable}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -28,6 +27,7 @@ import org.apache.spark.sql.catalyst.analysis.{MultiInstanceRelation, Unresolved
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeSet}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Project, UnaryNode}
+import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 
 object DescribeDeltaHistory {
@@ -61,7 +61,7 @@ object DescribeDeltaHistory {
 case class DescribeDeltaHistory(
     override val child: LogicalPlan,
     limit: Option[Int],
-    override val output: Seq[Attribute] = ExpressionEncoder[DeltaHistory]().schema.toAttributes)
+    override val output: Seq[Attribute] = toAttributes(ExpressionEncoder[DeltaHistory]().schema))
   extends UnaryNode
     with MultiInstanceRelation
     with DeltaCommand {
@@ -96,7 +96,7 @@ case class DescribeDeltaHistory(
 case class DescribeDeltaHistoryCommand(
     @transient table: DeltaTableV2,
     limit: Option[Int],
-    override val output: Seq[Attribute] = ExpressionEncoder[DeltaHistory]().schema.toAttributes)
+    override val output: Seq[Attribute] = toAttributes(ExpressionEncoder[DeltaHistory]().schema))
   extends LeafRunnableCommand
     with MultiInstanceRelation
     with DeltaLogging {

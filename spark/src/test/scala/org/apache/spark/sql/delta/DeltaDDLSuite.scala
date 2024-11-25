@@ -22,7 +22,8 @@ import scala.collection.JavaConverters._
 import org.apache.spark.sql.delta.schema.InvariantViolationException
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-import org.apache.hadoop.fs.Path
+import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
+import org.apache.hadoop.fs.{Path, UnsupportedFileSystemException}
 
 import org.apache.spark.SparkEnv
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
@@ -30,7 +31,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.NoSuchPartitionException
 import org.apache.spark.sql.catalyst.catalog.CatalogUtils
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{IntegerType, LongType, StringType, StructType}
 
 class DeltaDDLSuite extends DeltaDDLTestBase with SharedSparkSession
@@ -38,6 +39,35 @@ class DeltaDDLSuite extends DeltaDDLTestBase with SharedSparkSession
 
   override protected def verifyNullabilityFailure(exception: AnalysisException): Unit = {
     exception.getMessage.contains("Cannot change nullable column to non-nullable")
+  }
+
+  test("protocol-related properties are not considered during duplicate table creation") {
+    def createTable(tableName: String, location: String): Unit = {
+      sql(s"""
+             |CREATE TABLE $tableName (id INT, val STRING)
+             |USING DELTA
+             |LOCATION '$location'
+             |TBLPROPERTIES (
+             |  'delta.columnMapping.mode' = 'name',
+             |  'delta.minReaderVersion' = '2',
+             |  'delta.minWriterVersion' = '5'
+             |)""".stripMargin
+      )
+    }
+    withTempDir { dir =>
+      val table1 = "t1"
+      val table2 = "t2"
+      withTable(table1, table2) {
+        withSQLConf(DeltaSQLConf.DELTA_UPDATE_CATALOG_ENABLED.key -> "true") {
+          createTable(table1, dir.getCanonicalPath)
+          createTable(table2, dir.getCanonicalPath)
+          val catalogTable1 = spark.sessionState.catalog.getTableMetadata(TableIdentifier(table1))
+          val catalogTable2 = spark.sessionState.catalog.getTableMetadata(TableIdentifier(table2))
+          assert(catalogTable1.properties("delta.columnMapping.mode") == "name")
+          assert(catalogTable2.properties("delta.columnMapping.mode") == "name")
+        }
+      }
+    }
   }
 
   test("table creation with ambiguous paths only allowed with legacy flag") {
@@ -83,6 +113,26 @@ class DeltaDDLSuite extends DeltaDDLTestBase with SharedSparkSession
       assert(spark.table("t").collect().isEmpty)
     }
   }
+
+  test("CREATE TABLE with OPTIONS") {
+    withTempPath { path =>
+      spark.range(10).write.format("delta").save(path.getCanonicalPath)
+      withTable("t") {
+        def createTableWithOptions(simulateUC: Boolean): Unit = {
+          sql(
+            s"""
+               |CREATE TABLE t USING delta LOCATION 'fake://${path.getCanonicalPath}'
+               |${if (simulateUC) "TBLPROPERTIES (test.simulateUC=true)" else ""}
+               |OPTIONS (
+               |  fs.fake.impl='${classOf[FakeFileSystem].getName}',
+               |  fs.fake.impl.disable.cache=true)
+               |""".stripMargin)
+        }
+        intercept[UnsupportedFileSystemException](createTableWithOptions(false))
+        createTableWithOptions(true)
+      }
+    }
+  }
 }
 
 
@@ -96,7 +146,7 @@ class DeltaDDLNameColumnMappingSuite extends DeltaDDLSuite
 }
 
 
-abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
+abstract class DeltaDDLTestBase extends QueryTest with DeltaSQLTestUtils {
   import testImplicits._
 
   protected def verifyDescribeTable(tblName: String): Unit = {
@@ -133,7 +183,7 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
 
         intercept[InvariantViolationException] {
           Seq((2L, null)).toDF("a", "b")
-            .write.format("delta").mode("append").save(table.location.toString)
+            .write.format("delta").mode("append").save(table.location.getPath)
         }
       }
     }
@@ -285,7 +335,7 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
           spark.createDataFrame(
             Seq(Row(Row(2L, null), 2L)).asJava,
             schema
-          ).write.format("delta").mode("append").save(table.location.toString)
+          ).write.format("delta").mode("append").save(table.location.getPath)
         }
         verifyInvariantViolationException(e)
       }
@@ -405,6 +455,35 @@ abstract class DeltaDDLTestBase extends QueryTest with SQLTestUtils {
     fieldToAdd = "element.b" -> "string",
     updatedColumnType = "array<struct<a: int, b: string>>")
 
+  testAlterTableNestedFields("struct in nested map keys")(
+    initialColumnType = "map<map<struct<a: int>, int>, int>",
+    fieldToAdd = "key.key.b" -> "string",
+    updatedColumnType = "map<map<struct<a: int, b: string>, int>, int>")
+
+  testAlterTableNestedFields("struct in nested map values")(
+    initialColumnType = "map<int, map<int, struct<a: int>>>",
+    fieldToAdd = "value.value.b" -> "string",
+    updatedColumnType = "map<int, map<int, struct<a: int, b: string>>>")
+
+  testAlterTableNestedFields("struct in nested arrays")(
+    initialColumnType = "array<array<struct<a: int>>>",
+    fieldToAdd = "element.element.b" -> "string",
+    updatedColumnType = "array<array<struct<a: int, b: string>>>")
+
+  testAlterTableNestedFields("struct in nested array and map")(
+    initialColumnType = "array<map<int, struct<a: int>>>",
+    fieldToAdd = "element.value.b" -> "string",
+    updatedColumnType = "array<map<int, struct<a: int, b: string>>>")
+
+  testAlterTableNestedFields("struct in nested map key and array")(
+    initialColumnType = "map<array<struct<a: int>>, int>",
+    fieldToAdd = "key.element.b" -> "string",
+    updatedColumnType = "map<array<struct<a: int, b: string>>, int>")
+
+  testAlterTableNestedFields("struct in nested map value and array")(
+    initialColumnType = "map<int, array<struct<a: int>>>",
+    fieldToAdd = "value.element.b" -> "string",
+    updatedColumnType = "map<int, array<struct<a: int, b: string>>>")
 
   test("ALTER TABLE CHANGE COLUMN with nullability change in struct type - not supported") {
     withTempDir { dir =>

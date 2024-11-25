@@ -18,11 +18,11 @@ package org.apache.spark.sql.delta.deletionvectors
 
 import java.io.{IOException, ObjectInputStream}
 
-import org.apache.spark.sql.delta.DeltaErrorsBase
+import org.apache.spark.sql.delta.DeltaErrors
 import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor
+import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
-import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.util.Utils
@@ -63,7 +63,7 @@ trait StoredBitmap {
 case class DeletionVectorStoredBitmap(
     dvDescriptor: DeletionVectorDescriptor,
     tableDataPath: Option[Path] = None
-) extends StoredBitmap with DeltaLogging with DeltaErrorsBase {
+) extends StoredBitmap with DeltaLogging {
   require(tableDataPath.isDefined || !dvDescriptor.isOnDisk,
     "Table path is required for on-disk deletion vectors")
 
@@ -71,7 +71,10 @@ case class DeletionVectorStoredBitmap(
     val bitmap = if (isEmpty) {
       new RoaringBitmapArray()
     } else if (isInline) {
-      RoaringBitmapArray.readFrom(dvDescriptor.inlineData)
+      DeletionVectorUtils.deserialize(
+        dvDescriptor.inlineData,
+        tableDataPath,
+        debugInfo = Map("dvDescriptor" -> dvDescriptor))
     } else {
       assert(isOnDisk)
       dvStore.read(onDiskPath.get, dvDescriptor.offset.getOrElse(0), dvDescriptor.sizeInBytes)
@@ -87,7 +90,7 @@ case class DeletionVectorStoredBitmap(
           "deletionVectorCardinality" -> bitmap.cardinality,
           "deletionVectorDescriptor" -> dvDescriptor),
         path = tableDataPath)
-      throw deletionVectorCardinalityMismatch()
+      throw DeltaErrors.deletionVectorCardinalityMismatch()
     }
 
     bitmap
@@ -97,7 +100,7 @@ case class DeletionVectorStoredBitmap(
 
   override def cardinality: Long = dvDescriptor.cardinality
 
-  override lazy val getUniqueId: String = JsonUtils.toJson(dvDescriptor)
+  override lazy val getUniqueId: String = dvDescriptor.serializeToBase64()
 
   private def isEmpty: Boolean = dvDescriptor.isEmpty
 

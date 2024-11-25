@@ -164,7 +164,7 @@ class ShowDeltaTableColumnsSuite extends QueryTest
     withTempDir { tempDir =>
       (70.to(79).seq ++ 75.to(79).seq)
         .toDF("id")
-        .withColumn("nested", struct(struct('id + 2 as 'b, 'id + 3 as 'c) as 'sub))
+        .withColumn("nested", struct(struct('id + 2 as "b", 'id + 3 as "c") as "sub"))
         .write
         .format("delta")
         .save(tempDir.toString)

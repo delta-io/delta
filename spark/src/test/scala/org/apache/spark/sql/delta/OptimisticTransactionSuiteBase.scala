@@ -31,6 +31,7 @@ import org.apache.spark.util.Utils
 trait OptimisticTransactionSuiteBase
   extends QueryTest
     with SharedSparkSession
+    with DeltaTestUtilsBase
     with DeletionVectorsTestUtils {
 
 

@@ -65,7 +65,7 @@ class RowIndexMarkingFiltersSuite extends QueryTest with SharedSparkSession {
   } {
     test(s"deletion vector single row marked (isInline=$isInline) ($filterName filter)") {
       withTempDir { tableDir =>
-        val tablePath = stringToPath(tableDir.toString)
+        val tablePath = unescapedStringToPath(tableDir.toString)
         val dv = createDV(isInline, tablePath, 25)
 
         val rowIndexFilter = filterType.createInstance(dv, newHadoopConf, Some(tablePath))
@@ -91,7 +91,7 @@ class RowIndexMarkingFiltersSuite extends QueryTest with SharedSparkSession {
   } {
     test(s"deletion vector with multiple rows marked (isInline=$isInline) ($filterName filter)") {
       withTempDir { tableDir =>
-        val tablePath = stringToPath(tableDir.toString)
+        val tablePath = unescapedStringToPath(tableDir.toString)
         val markedRows = Seq[Long](0, 25, 35, 2000, 50000)
         val dv = createDV(isInline, tablePath, markedRows: _*)
 
@@ -140,7 +140,7 @@ class RowIndexMarkingFiltersSuite extends QueryTest with SharedSparkSession {
         writer.write(serializedBitmap)
       }
       onDiskWithAbsolutePath(
-        pathToString(dvPath.path), dvRange.length, cardinality, Some(dvRange.offset))
+        pathToEscapedString(dvPath.path), dvRange.length, cardinality, Some(dvRange.offset))
     }
   }
 

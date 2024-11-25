@@ -22,7 +22,7 @@ import java.io.InputStream
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.streaming.{JsonSchemaSerializer, PartitionAndDataSchema, SchemaTrackingLog}
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOptions, Snapshot}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOptions, SnapshotDescriptor}
 import org.apache.spark.sql.delta.actions.{Action, FileAction, Metadata, Protocol}
 import org.apache.spark.sql.delta.storage.ClosableIterator._
 import org.apache.spark.sql.delta.util.JsonUtils
@@ -91,7 +91,7 @@ case class PersistedMetadata(
   lazy val protocol: Option[Protocol] =
     protocolJson.map(Action.fromJson).map(_.asInstanceOf[Protocol])
 
-  def validateAgainstSnapshot(snapshot: Snapshot): Unit = {
+  def validateAgainstSnapshot(snapshot: SnapshotDescriptor): Unit = {
     if (snapshot.deltaLog.tableId != tableId) {
       throw DeltaErrors.incompatibleSchemaLogDeltaTable(tableId, snapshot.deltaLog.tableId)
     }
@@ -136,7 +136,7 @@ object PersistedMetadata {
 class DeltaSourceMetadataTrackingLog private(
     sparkSession: SparkSession,
     rootMetadataLocation: String,
-    sourceSnapshot: Snapshot,
+    sourceSnapshot: SnapshotDescriptor,
     sourceMetadataPathOpt: Option[String] = None,
     val initMetadataLogEagerly: Boolean = true) {
 
@@ -239,7 +239,7 @@ object DeltaSourceMetadataTrackingLog extends Logging {
   def create(
       sparkSession: SparkSession,
       rootMetadataLocation: String,
-      sourceSnapshot: Snapshot,
+      sourceSnapshot: SnapshotDescriptor,
       sourceTrackingId: Option[String] = None,
       sourceMetadataPathOpt: Option[String] = None,
       mergeConsecutiveSchemaChanges: Boolean = false,

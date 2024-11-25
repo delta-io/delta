@@ -37,6 +37,7 @@ class DeltaTestCase(ReusedSQLTestCase):
         _conf.set("spark.databricks.delta.snapshotPartitions", "2")
         _conf.set("spark.sql.shuffle.partitions", "5")
         _conf.set("delta.log.cacheSize", "3")
+        _conf.set("spark.databricks.delta.delta.log.cacheSize", "3")
         _conf.set("spark.sql.sources.parallelPartitionDiscovery.parallelism", "5")
         _conf.set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
         _conf.set("spark.sql.catalog.spark_catalog",
