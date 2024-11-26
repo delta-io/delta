@@ -53,7 +53,7 @@ public class Timer {
    * @param amount The amount to record in nanoseconds
    */
   public void record(long amount) {
-    checkArgument(amount >= 0, "Cannot record %s %s: must be >= 0", amount);
+    checkArgument(amount >= 0, "Cannot record %s: must be >= 0", amount);
     this.totalTime.add(amount);
     this.count.increment();
   }
