@@ -1098,6 +1098,52 @@ trait DeltaSQLConfBase {
       .longConf
       .createWithDefault(10)
 
+  val DELTA_ALL_FILES_IN_CRC_THRESHOLD_FILES =
+    buildConf("allFilesInCrc.thresholdNumFiles")
+      .internal()
+      .doc("Threshold of the number of AddFiles below which AddFiles will be added to CRC.")
+      .intConf
+      .createWithDefault(50)
+
+  val DELTA_ALL_FILES_IN_CRC_ENABLED =
+    buildConf("allFilesInCrc.enabled")
+      .internal()
+      .doc("When enabled, [[Snapshot.allFiles]] will be stored in the .crc file when the " +
+        "length is less than the threshold specified by " +
+        s"${DELTA_ALL_FILES_IN_CRC_THRESHOLD_FILES.key}. " +
+        "Note that this config only takes effect when incremental commits are enabled " +
+        s"(${INCREMENTAL_COMMIT_ENABLED.key})."
+      )
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_ALL_FILES_IN_CRC_VERIFICATION_MODE_ENABLED =
+    buildConf("allFilesInCrc.verificationMode.enabled")
+      .internal()
+      .doc(s"This will be effective only if ${DELTA_ALL_FILES_IN_CRC_ENABLED.key} is set. When" +
+        " enabled, We will have additional verification of the incrementally computed state by" +
+        " doing an actual state reconstruction on every commit.")
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELTA_ALL_FILES_IN_CRC_FORCE_VERIFICATION_MODE_FOR_NON_UTC_ENABLED =
+    buildConf("allFilesInCrc.verificationMode.forceOnNonUTC.enabled")
+      .internal()
+      .doc(s"This will be effective only if " +
+        s"${DELTA_ALL_FILES_IN_CRC_VERIFICATION_MODE_ENABLED.key} is not set. When enabled, we " +
+        s"will force verification of the incrementally computed state by doing an actual state " +
+        s"reconstruction on every commit for tables that are not using UTC timezone.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_ALL_FILES_IN_CRC_THRESHOLD_INDEXED_COLS =
+    buildConf("allFilesInCrc.thresholdIndexedCols")
+      .internal()
+      .doc("If the delta table is configured to collect stats on more columns than this" +
+        " threshold, then disable storage of `[[Snapshot.allFiles]]` in the .crc file.")
+      .intConf
+      .createOptional
+
   val DELTA_CHECKPOINT_THROW_EXCEPTION_WHEN_FAILED =
       buildConf("checkpoint.exceptionThrowing.enabled")
         .internal()
