@@ -16,6 +16,8 @@
 package io.delta.kernel.defaults.engine;
 
 import io.delta.kernel.engine.*;
+import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import org.apache.hadoop.conf.Configuration;
 
@@ -52,6 +54,11 @@ public class DefaultEngine implements Engine {
       String name, Map<String, String> conf) {
     return new DefaultCommitCoordinatorClientHandler(hadoopConf, name, conf);
   }
+
+  @Override
+  public List<MetricsReporter> getMetricsReporters() {
+    return Collections.singletonList(new LoggingMetricsReporter());
+  };
 
   /**
    * Create an instance of {@link DefaultEngine}.
