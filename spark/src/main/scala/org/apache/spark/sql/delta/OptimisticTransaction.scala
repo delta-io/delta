@@ -1881,7 +1881,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
     logInfo(log"Committed delta #${MDC(DeltaLogKeys.VERSION, attemptVersion)} to " +
       log"${MDC(DeltaLogKeys.PATH, deltaLog.logPath)}. Wrote " +
-      log"${MDC(DeltaLogKeys.NUM_ACTIONS, commitSize)} actions.")
+      log"${MDC(DeltaLogKeys.NUM_ACTIONS, commitSize.toLong)} actions.")
 
     deltaLog.checkpoint(currentSnapshot)
     currentSnapshot
@@ -2044,7 +2044,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
              |Detected mismatch in partition values between AddFile and table metadata but
              |commit validation was turned off.
              |To turn it back on set
-             |${MDC(DeltaLogKeys.CONFIG_KEY, DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED)}
+             |${MDC(DeltaLogKeys.CONFIG_KEY, DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key)}
              |to "true"
           """.stripMargin)
         a
@@ -2284,7 +2284,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     val actions = currentTransactionInfo.finalActionsToCommit
     logInfo(
       log"Attempting to commit version ${MDC(DeltaLogKeys.VERSION, attemptVersion)} with " +
-      log"${MDC(DeltaLogKeys.NUM_ACTIONS, actions.size)} actions with " +
+      log"${MDC(DeltaLogKeys.NUM_ACTIONS, actions.size.toLong)} actions with " +
       log"${MDC(DeltaLogKeys.ISOLATION_LEVEL, isolationLevel)} isolation level")
 
     if (readVersion > -1 && metadata.id != snapshot.metadata.id) {
@@ -2588,7 +2588,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         log"${MDC(DeltaLogKeys.NUM_ACTIONS, adds)} adds, " +
         log"${MDC(DeltaLogKeys.NUM_ACTIONS2, removes)} removes, " +
         log"${MDC(DeltaLogKeys.NUM_PREDICATES, readPredicates.size)} read predicates, " +
-        log"${MDC(DeltaLogKeys.NUM_FILES, readFiles.size)} read files"
+        log"${MDC(DeltaLogKeys.NUM_FILES, readFiles.size.toLong)} read files"
       }
 
       logInfo(logPrefix +

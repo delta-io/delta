@@ -513,17 +513,29 @@ class Snapshot(
    */
   def computeChecksum: VersionChecksum = VersionChecksum(
     txnId = None,
-    tableSizeBytes = sizeInBytes,
-    numFiles = numOfFiles,
-    numMetadata = numOfMetadata,
-    numProtocol = numOfProtocol,
     inCommitTimestampOpt = getInCommitTimestampOpt,
-    setTransactions = checksumOpt.flatMap(_.setTransactions),
-    domainMetadata = checksumOpt.flatMap(_.domainMetadata),
     metadata = metadata,
     protocol = protocol,
-    histogramOpt = checksumOpt.flatMap(_.histogramOpt),
-    allFiles = checksumOpt.flatMap(_.allFiles))
+    allFiles = checksumOpt.flatMap(_.allFiles),
+    tableSizeBytes = checksumOpt.map(_.tableSizeBytes).getOrElse(sizeInBytes),
+    numFiles = checksumOpt.map(_.numFiles).getOrElse(numOfFiles),
+    numMetadata = checksumOpt.map(_.numMetadata).getOrElse(numOfMetadata),
+    numProtocol = checksumOpt.map(_.numProtocol).getOrElse(numOfProtocol),
+    // Only return setTransactions and domainMetadata if they are either already present
+    // in the checksum or if they have already been computed in the current snapshot.
+    setTransactions = checksumOpt.flatMap(_.setTransactions)
+      .orElse {
+        Option.when(_computedStateTriggered &&
+            // Only extract it from the current snapshot if set transaction
+            // writes are enabled.
+            spark.conf.get(DeltaSQLConf.DELTA_WRITE_SET_TRANSACTIONS_IN_CRC)) {
+          setTransactions
+        }
+      },
+    domainMetadata = checksumOpt.flatMap(_.domainMetadata)
+      .orElse(Option.when(_computedStateTriggered)(domainMetadata)),
+    histogramOpt = checksumOpt.flatMap(_.histogramOpt)
+  )
 
   /** Returns the data schema of the table, used for reading stats */
   def tableSchema: StructType = metadata.dataSchema
@@ -704,6 +716,7 @@ class DummySnapshot(
 
   override protected lazy val computedState: SnapshotState = initialState(metadata, protocol)
   override protected lazy val getInCommitTimestampOpt: Option[Long] = None
+  _computedStateTriggered = true
 
   // The [[InitialSnapshot]] is not backed by any external commit-coordinator.
   override val tableCommitCoordinatorClientOpt: Option[TableCommitCoordinatorClient] = None

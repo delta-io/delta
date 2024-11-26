@@ -23,6 +23,7 @@ import io.delta.kernel.Snapshot;
 import io.delta.kernel.engine.CommitCoordinatorClientHandler;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.actions.CommitInfo;
+import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.fs.Path;
@@ -31,6 +32,7 @@ import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.TableCommitCoordinatorClientHandler;
 import io.delta.kernel.types.StructType;
+import java.util.Map;
 import java.util.Optional;
 
 /** Implementation of {@link Snapshot}. */
@@ -81,6 +83,17 @@ public class SnapshotImpl implements Snapshot {
 
   public Protocol getProtocol() {
     return protocol;
+  }
+
+  /**
+   * Get the domain metadata map from the log replay, which lazily loads and replays a history of
+   * domain metadata actions, resolving them to produce the current state of the domain metadata.
+   *
+   * @return A map where the keys are domain names and the values are {@link DomainMetadata}
+   *     objects.
+   */
+  public Map<String, DomainMetadata> getDomainMetadataMap() {
+    return logReplay.getDomainMetadataMap();
   }
 
   public CreateCheckpointIterator getCreateCheckpointIterator(Engine engine) {
