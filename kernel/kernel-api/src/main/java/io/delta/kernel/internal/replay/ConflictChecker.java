@@ -15,9 +15,10 @@
  */
 package io.delta.kernel.internal.replay;
 
+import static io.delta.kernel.internal.DeltaErrors.concurrentDomainMetadataAction;
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 import static io.delta.kernel.internal.TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED;
-import static io.delta.kernel.internal.actions.SingleAction.CONFLICT_RESOLUTION_SCHEMA;
+import static io.delta.kernel.internal.actions.SingleAction.*;
 import static io.delta.kernel.internal.util.FileNames.deltaFile;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Preconditions.checkState;
@@ -29,7 +30,9 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.ConcurrentWriteException;
 import io.delta.kernel.internal.*;
 import io.delta.kernel.internal.actions.CommitInfo;
+import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.actions.SetTransaction;
+import io.delta.kernel.internal.util.DomainMetadataUtils;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
@@ -48,6 +51,8 @@ public class ConflictChecker {
   private static final int METADATA_ORDINAL = CONFLICT_RESOLUTION_SCHEMA.indexOf("metaData");
   private static final int TXN_ORDINAL = CONFLICT_RESOLUTION_SCHEMA.indexOf("txn");
   private static final int COMMITINFO_ORDINAL = CONFLICT_RESOLUTION_SCHEMA.indexOf("commitInfo");
+  private static final int DOMAIN_METADATA_ORDINAL =
+      CONFLICT_RESOLUTION_SCHEMA.indexOf("domainMetadata");
 
   // Snapshot of the table read by the transaction that encountered the conflict
   // (a.k.a the losing transaction)
@@ -109,6 +114,7 @@ public class ConflictChecker {
             handleProtocol(batch.getColumnVector(PROTOCOL_ORDINAL));
             handleMetadata(batch.getColumnVector(METADATA_ORDINAL));
             handleTxn(batch.getColumnVector(TXN_ORDINAL));
+            handleDomainMetadata(batch.getColumnVector(DOMAIN_METADATA_ORDINAL));
           });
     } catch (IOException ioe) {
       throw new UncheckedIOException("Error reading actions from winning commits.", ioe);
@@ -187,6 +193,39 @@ public class ConflictChecker {
     for (int rowId = 0; rowId < metadataVector.getSize(); rowId++) {
       if (!metadataVector.isNullAt(rowId)) {
         throw DeltaErrors.metadataChangedException();
+      }
+    }
+  }
+
+  /**
+   * Checks whether each of the current transaction's {@link DomainMetadata} conflicts with the
+   * winning transaction at any domain.
+   *
+   * <ol>
+   *   <li>Accept the current transaction if its set of metadata domains does not overlap with the
+   *       winning transaction's set of metadata domains.
+   *   <li>Otherwise, fail the current transaction unless each conflicting domain is associated with
+   *       a domain-specific way of resolving the conflict.
+   * </ol>
+   *
+   * @param domainMetadataVector domainMetadata rows from the winning transactions
+   */
+  private void handleDomainMetadata(ColumnVector domainMetadataVector) {
+    // Build a domain metadata map from the winning transaction.
+    Map<String, DomainMetadata> winningTxnDomainMetadataMap = new HashMap<>();
+    DomainMetadataUtils.populateDomainMetadataMap(
+        domainMetadataVector, winningTxnDomainMetadataMap);
+
+    for (DomainMetadata currentTxnDM : this.transaction.getDomainMetadatas()) {
+      // For each domain metadata action in the current transaction, check if it has a conflict with
+      // the winning transaction.
+      String domainName = currentTxnDM.getDomain();
+      DomainMetadata winningTxnDM = winningTxnDomainMetadataMap.get(domainName);
+      if (winningTxnDM != null) {
+        // Conflict - check if the conflict can be resolved.
+        // Currently, we don't have any domain-specific way of resolving the conflict.
+        // Domain-specific ways of resolving the conflict can be added here (e.g. for Row Tracking).
+        throw concurrentDomainMetadataAction(currentTxnDM, winningTxnDM);
       }
     }
   }
