@@ -619,6 +619,17 @@ object Checkpoints
     if (spark.conf.get(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED)) {
       snapshot.validateChecksum(Map("context" -> "writeCheckpoint"))
     }
+    // Verify allFiles in checksum during checkpoint if we are not doing so already on every
+    // commit.
+    val allFilesInCRCEnabled = Snapshot.allFilesInCrcWritePathEnabled(spark, snapshot)
+    val shouldVerifyAllFilesInCRCEveryCommit =
+      Snapshot.allFilesInCrcVerificationEnabled(spark, snapshot)
+    if (allFilesInCRCEnabled && !shouldVerifyAllFilesInCRCEveryCommit) {
+      snapshot.checksumOpt.foreach { checksum =>
+        snapshot.validateFileListAgainstCRC(
+          checksum, contextOpt = Some("triggeredFromCheckpoint"))
+      }
+    }
 
     val hadoopConf = deltaLog.newDeltaHadoopConf()
 

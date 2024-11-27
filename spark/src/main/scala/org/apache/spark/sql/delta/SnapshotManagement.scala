@@ -1249,19 +1249,48 @@ trait SnapshotManagement { self: DeltaLog =>
       committedVersion: Long): Snapshot = {
     logInfo(
       log"Creating a new snapshot v${MDC(DeltaLogKeys.VERSION, initSegment.version)} " +
-      log"for commit version ${MDC(DeltaLogKeys.VERSION2, committedVersion)}")
+        log"for commit version ${MDC(DeltaLogKeys.VERSION2, committedVersion)}")
+    // Guard against race condition when a txn commits after this txn but before
+    // reaching createLogSegment(...) above.
+    var checksumContext = "incrementalCommit"
+    val passedChecksumIsUsable = newChecksumOpt.isDefined && committedVersion == initSegment.version
+    val snapChecksumOpt = newChecksumOpt
+      .filter(_ => passedChecksumIsUsable)
+      .orElse {
+        checksumContext = "fallbackToReadChecksumFile"
+        readChecksum(initSegment.version)
+      }
 
-    val newSnapshot = createSnapshot(
-      initSegment,
-      tableCommitCoordinatorClientOpt = tableCommitCoordinatorClientOpt,
-      catalogTableOpt = catalogTableOpt,
-      checksumOpt = newChecksumOpt
-    )
+    def createSnapshotWithCrc(checksumOpt: Option[VersionChecksum]): Snapshot = {
+      createSnapshot(
+        initSegment,
+        tableCommitCoordinatorClientOpt,
+        catalogTableOpt,
+        checksumOpt)
+    }
+
+    var newSnapshot = createSnapshotWithCrc(snapChecksumOpt)
+
+    // Skip validation in 0th commit when number of files in underlying snapshot is 0 in order to
+    // avoid state reconstruction - since there is nothing to verify from allFilesInCrc perspective.
+    val skipValidationForZerothCommit = committedVersion == 0 && newChecksumOpt.forall { crc =>
+      crc.numFiles == 0 && crc.allFiles.forall(_.isEmpty)
+    }
+    if (passedChecksumIsUsable && !skipValidationForZerothCommit &&
+        Snapshot.allFilesInCrcVerificationEnabled(spark, unsafeVolatileSnapshot)) {
+      snapChecksumOpt.collect { case crc if
+          !newSnapshot.validateFileListAgainstCRC(crc, contextOpt = Some("triggeredFromCommit")) =>
+        // If the verification for [[VersionChecksum.allFiles]] failed, then strip off `allFiles`
+        // and create the snapshot again with new CRC (without addFiles in it).
+        newSnapshot = createSnapshotWithCrc(snapChecksumOpt.map(_.copy(allFiles = None)))
+      }
+    }
+
     // Verify when enabled or when tests run to help future proof IC
     if (shouldVerifyIncrementalCommit) {
       val crcIsValid = try {
         // NOTE: Validation is a no-op with incremental commit disabled.
-        newSnapshot.validateChecksum(Map("context" -> "incrementalCommit"))
+        newSnapshot.validateChecksum(Map("context" -> checksumContext))
       } catch {
         case _: IllegalStateException if !Utils.isTesting => false
       }
@@ -1272,12 +1301,7 @@ trait SnapshotManagement { self: DeltaLog =>
         // further error triggers in this session.
         spark.sessionState.conf.setConf(DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED, false)
         spark.sessionState.conf.setConf(DeltaSQLConf.DELTA_WRITE_SET_TRANSACTIONS_IN_CRC, false)
-        return createSnapshotAfterCommit(
-          initSegment,
-          newChecksumOpt = None,
-          tableCommitCoordinatorClientOpt = tableCommitCoordinatorClientOpt,
-          catalogTableOpt,
-          committedVersion)
+        return createSnapshotWithCrc(checksumOpt = None)
       }
     }
 
