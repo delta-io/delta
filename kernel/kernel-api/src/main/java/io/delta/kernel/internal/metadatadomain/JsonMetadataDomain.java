@@ -16,8 +16,10 @@
 package io.delta.kernel.internal.metadatadomain;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.*;
+import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.DomainMetadata;
@@ -25,17 +27,18 @@ import io.delta.kernel.internal.rowtracking.RowTrackingMetadataDomain;
 import java.util.Optional;
 
 /**
- * Abstract class representing a JSON metadata domain, whose configuration string is a JSON
- * serialization of a domain object. This class provides methods to serialize and deserialize a
- * metadata domain to and from JSON. Concrete implementations, such as {@link
- * RowTrackingMetadataDomain}, should extend this class to define a specific metadata domain.
+ * Abstract class representing a metadata domain, whose configuration string is a JSON serialization
+ * of a domain object. This class provides methods to serialize and deserialize a metadata domain to
+ * and from JSON. Concrete implementations, such as {@link RowTrackingMetadataDomain}, should extend
+ * this class to define a specific metadata domain.
  */
 public abstract class JsonMetadataDomain {
-  // We explicitly set the ObjectMapper to fail on missing properties and unknown properties
+  // Configure the ObjectMapper with the same settings used in Delta-Spark
   private static final ObjectMapper OBJECT_MAPPER =
       new ObjectMapper()
-          .configure(DeserializationFeature.FAIL_ON_MISSING_CREATOR_PROPERTIES, true)
-          .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, true);
+          .registerModule(new Jdk8Module()) // To support Optional
+          .setSerializationInclusion(JsonInclude.Include.NON_ABSENT) // Exclude empty Optionals
+          .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
   /**
    * Deserializes a JSON string into an instance of the specified metadata domain.
