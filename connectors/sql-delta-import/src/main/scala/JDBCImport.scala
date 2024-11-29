@@ -51,7 +51,7 @@ class JDBCImport(jdbcUrl: String,
                  dataTransform: DataTransforms)
                 (implicit val spark: SparkSession) {
 
-  import spark.implicits._
+  import org.apache.spark.sql.delta.implicits._
 
   implicit def mapToProperties(m: Map[String, String]): Properties = {
     val properties = new Properties()
