@@ -35,7 +35,8 @@ import org.apache.spark.internal.MDC
 import org.apache.spark.sql._
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
-import org.apache.spark.sql.catalyst.expressions.AttributeReference
+import org.apache.spark.sql.catalyst.expressions.{Alias, AttributeReference, Expression, GetArrayItem, GetArrayStructFields, GetMapValue, GetStructField}
+import org.apache.spark.sql.catalyst.plans.logical.{LocalRelation, Project}
 import org.apache.spark.sql.catalyst.util.CharVarcharUtils
 import org.apache.spark.sql.functions.{col, struct}
 import org.apache.spark.sql.internal.SQLConf
@@ -1269,20 +1270,58 @@ def normalizeColumnNamesInDataType(
   // identifier with back-ticks.
   def quoteIdentifier(part: String): String = s"`${part.replace("`", "``")}`"
 
-  /**
-   * Will a column change, e.g., rename, need to be populated to the expression. This is true when
-   * the column to change itself or any of its descendent column is referenced by expression.
-   * For example:
-   *  - a, length(a) -> true
-   *  - b, (b.c + 1) -> true, because renaming b1 will need to change the expr to (b1.c + 1).
-   *  - b.c, (cast b as string) -> false, because you can change b.c to b.c1 without affecting b.
-   */
-  def containsDependentExpression(
+  private def analyzeExpression(
       spark: SparkSession,
+      expr: Expression,
+      schema: StructType): Expression = {
+    // Workaround for `exp` analyze
+    val relation = LocalRelation(schema)
+    val relationWithExp = Project(Seq(Alias(expr, "validate_column")()), relation)
+    val analyzedPlan = spark.sessionState.analyzer.execute(relationWithExp)
+    analyzedPlan.collectFirst {
+      case Project(Seq(a: Alias), _: LocalRelation) => a.child
+    }.get
+  }
+
+  /**
+   * Collects all attribute references in the given expression tree as a list of paths.
+   * In particular, generates paths for nested fields accessed using extraction expressions.
+   * For example:
+   * - GetStructField(AttributeReference("struct"), "a") -> ["struct.a"]
+   * - Size(AttributeReference("array")) -> ["array"]
+   */
+  private def collectUsedColumns(expression: Expression): Seq[Seq[String]] = {
+    val result = new collection.mutable.ArrayBuffer[Seq[String]]()
+
+    // Firstly, try to get referenced column for a child's expression.
+    // If it exists then we try to extend it by current expression.
+    // In case if we cannot extend one, we save the received column path (it's as long as possible).
+    def traverseAllPaths(exp: Expression): Option[Seq[String]] = exp match {
+      case GetStructField(child, _, Some(name)) => traverseAllPaths(child).map(_ :+ name)
+      case GetMapValue(child, key) =>
+        traverseAllPaths(key).foreach(result += _)
+        traverseAllPaths(child).map { childPath =>
+          result += childPath :+ "key"
+          childPath :+ "value"
+        }
+      case arrayExtract: GetArrayItem => traverseAllPaths(arrayExtract.child).map(_ :+ "element")
+      case arrayExtract: GetArrayStructFields =>
+        traverseAllPaths(arrayExtract.child).map(_ :+ "element" :+ arrayExtract.field.name)
+      case refCol: AttributeReference => Some(Seq(refCol.name))
+      case _ =>
+        exp.children.foreach(child => traverseAllPaths(child).foreach(result += _))
+        None
+    }
+
+    traverseAllPaths(expression).foreach(result += _)
+
+    result.toSeq
+  }
+
+  private def fallbackContainsDependentExpression(
+      expression: Expression,
       columnToChange: Seq[String],
-      exprString: String,
       resolver: Resolver): Boolean = {
-    val expression = spark.sessionState.sqlParser.parseExpression(exprString)
     expression.foreach {
       case refCol: UnresolvedAttribute =>
         // columnToChange is the referenced column or its prefix
@@ -1292,6 +1331,51 @@ def normalizeColumnNamesInDataType(
       case _ =>
     }
     false
+  }
+
+  /**
+   * Will a column change, e.g., rename, need to be populated to the expression. This is true when
+   * the column to change itself or any of its descendent column is referenced by expression.
+   * For example:
+   *  - a, length(a) -> true
+   *  - b, (b.c + 1) -> true, because renaming b1 will need to change the expr to (b1.c + 1).
+   *  - b.c, (cast b as string) -> true, because change b.c to b.c1 affects (b as string) result.
+   */
+  def containsDependentExpression(
+      spark: SparkSession,
+      columnToChange: Seq[String],
+      exprString: String,
+      schema: StructType,
+      resolver: Resolver): Boolean = {
+    val expression = spark.sessionState.sqlParser.parseExpression(exprString)
+    if (spark.sessionState.conf.getConf(
+        DeltaSQLConf.DELTA_CHANGE_COLUMN_CHECK_DEPENDENT_EXPRESSIONS_USE_V2)) {
+      try {
+        val analyzedExpr = analyzeExpression(spark, expression, schema)
+        val exprColumns = collectUsedColumns(analyzedExpr)
+        exprColumns.exists { exprColumn =>
+          // Changed column violates expression's column only when:
+          // 1) the changed column is a prefix of the referenced column,
+          // for example changing type of `col` affects `hash(col[0]) == 0`;
+          // 2) or the referenced column is a prefix of the changed column,
+          // for example changing type of `col.element` affects `concat_ws('', col) == 'abc'`;
+          // 3) or they are equal.
+          exprColumn.zip(columnToChange).forall {
+            case (exprFieldName, changedFieldName) => resolver(exprFieldName, changedFieldName)
+          }
+        }
+      } catch {
+        case NonFatal(e) =>
+          deltaAssert(
+            check = false,
+            name = "containsDependentExpression.checkV2Error",
+            msg = "Exception during dependent expression V2 checking: " + e.getMessage
+          )
+          fallbackContainsDependentExpression(expression, columnToChange, resolver)
+      }
+    } else {
+      fallbackContainsDependentExpression(expression, columnToChange, resolver)
+    }
   }
 
   /**
@@ -1402,7 +1486,7 @@ def normalizeColumnNamesInDataType(
       SchemaMergingUtils.transformColumns(schema) { (_, field, _) =>
         GeneratedColumn.getGenerationExpressionStr(field.metadata).foreach { exprStr =>
           val needsToChangeExpr = SchemaUtils.containsDependentExpression(
-            sparkSession, targetColumn, exprStr, sparkSession.sessionState.conf.resolver)
+            sparkSession, targetColumn, exprStr, schema, sparkSession.sessionState.conf.resolver)
           if (needsToChangeExpr) dependentGenCols += field.name -> exprStr
         }
         field
