@@ -87,9 +87,21 @@ case class DeltaTableV2(
       System.currentTimeMillis()
   }
 
+  private var _deltaLog: Option[DeltaLog] = None
+
+  def deltaLog: DeltaLog = _deltaLog.getOrElse {
+    val newDeltaLog = computeDeltaLog()
+    _deltaLog = Some(newDeltaLog)
+    newDeltaLog
+  }
+
+  def refreshDeltaLog(): Unit = {
+    _deltaLog = None
+  }
+
   // The loading of the DeltaLog is lazy in order to reduce the amount of FileSystem calls,
   // in cases where we will fallback to the V1 behavior.
-  lazy val deltaLog: DeltaLog = {
+  private def computeDeltaLog(): DeltaLog = {
     DeltaTableV2.withEnrichedUnsupportedTableException(catalogTable, tableIdentifier) {
       // Ideally the table storage properties should always be the same as the options load from
       // the Delta log, as Delta CREATE TABLE command guarantees it. However, custom catalogs such

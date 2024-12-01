@@ -33,9 +33,11 @@ import org.apache.spark.sql.delta.commands.columnmapping.RemoveColumnMappingComm
 import org.apache.spark.sql.delta.constraints.{CharVarcharConstraint, Constraints}
 import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsUtils
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
+import org.apache.spark.sql.delta.redirect.RedirectFeature
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.schema.SchemaUtils.transformSchema
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.sources.DeltaSQLConf.ENABLE_TABLE_REDIRECT_FEATURE
 import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.hadoop.fs.Path
 
@@ -112,9 +114,16 @@ trait AlterDeltaTableCommand extends DeltaCommand {
 case class AlterTableSetPropertiesDeltaCommand(
     table: DeltaTableV2,
     configuration: Map[String, String])
-  extends LeafRunnableCommand with AlterDeltaTableCommand with IgnoreCachedData {
+  extends LeafRunnableCommand
+    with AlterDeltaTableCommand
+    with IgnoreCachedData {
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
+    val updateRedirectProperty = !RedirectFeature.hasRedirectConfig(configuration)
+    if (updateRedirectProperty) {
+      // Invalidate the cache delta log and refresh DeltaTableV2 to trigger delta log rebuild.
+      table.refreshDeltaLog()
+    }
     val deltaLog = table.deltaLog
 
     val rowTrackingPropertyKey = DeltaConfigs.ROW_TRACKING_ENABLED.key
@@ -165,6 +174,8 @@ case class AlterTableSetPropertiesDeltaCommand(
 
       CoordinatedCommitsUtils.validateConfigurationsForAlterTableSetPropertiesDeltaCommand(
         metadata.configuration, filteredConfs)
+      // If table redirect feature is updated, validates its property.
+      RedirectFeature.validateTableRedirect(txn.snapshot, table.catalogTable, configuration)
       val newMetadata = metadata.copy(
         description = configuration.getOrElse(TableCatalog.PROP_COMMENT, metadata.description),
         configuration = metadata.configuration ++ filteredConfs)

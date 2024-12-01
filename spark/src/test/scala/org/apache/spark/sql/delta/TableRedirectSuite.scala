@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import java.io.File
 
+import com.databricks.sql.managedcatalog.{ManagedCatalogSessionCatalog, TestMode}
 import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
 import org.apache.spark.sql.delta.redirect.{
   DropRedirectInProgress,
@@ -26,15 +27,19 @@ import org.apache.spark.sql.delta.redirect.{
   PathBasedRedirectSpec,
   RedirectReaderWriter,
   RedirectReady,
+  RedirectSpec,
   RedirectState,
   RedirectWriterOnly,
-  TableRedirect
+  TableRedirect,
+  TableRedirectConfiguration
 }
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
+import org.apache.spark.sql.delta.util.JsonUtils
+import org.apache.commons.text.StringEscapeUtils
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.{QueryTest, SaveMode, SparkSession}
+import org.apache.spark.sql.{QueryTest, SaveMode}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.test.SharedSparkSession
@@ -84,15 +89,20 @@ class TableRedirectSuite extends QueryTest
     }
   }
 
-  def redirectTest(label: String)(f: (DeltaLog, File, File, CatalogTable) => Unit): Unit = {
+  def redirectTest(
+      label: String,
+      accessSource: Boolean = false
+  )(f: (DeltaLog, File, File, CatalogTable) => Unit): Unit = {
     test(s"basic table redirect: $label") {
       withTempDir { sourceTablePath =>
         withTempDir { destTablePath =>
-          withTable("t1") {
-            sql(s"CREATE external TABLE t1(c0 long)USING delta LOCATION '$sourceTablePath';")
-            val catalogTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier("t1"))
-            val deltaLog = DeltaLog.forTable(spark, new Path(sourceTablePath.getCanonicalPath))
-            f(deltaLog, sourceTablePath, destTablePath, catalogTable)
+          withSQLConf(DeltaSQLConf.ENABLE_TABLE_REDIRECT_FEATURE.key -> accessSource.toString) {
+            withTable("t1", "t2") {
+              sql(s"CREATE external TABLE t1(c0 long) USING delta LOCATION '$sourceTablePath';")
+              val catalogTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier("t1"))
+              val deltaLog = DeltaLog.forTable(spark, new Path(sourceTablePath.getCanonicalPath))
+              f(deltaLog, sourceTablePath, destTablePath, catalogTable)
+            }
           }
         }
       }
@@ -291,6 +301,76 @@ class TableRedirectSuite extends QueryTest
           sql(s"insert into delta.`$source` values(1),(2),(3),(4),(5),(6)")
           sql(s"update delta.`$source` set c0 = 100")
           sql(s"delete from delta.`$source` where c0 = 1")
+        }
+    }
+
+    def alterRedirect(
+        table: String,
+        redirectType: String,
+        redirectState: RedirectState,
+        spec: RedirectSpec,
+        noRedirectRules: Set[NoRedirectRule]
+    ): Unit = {
+      val enableConfig = TableRedirectConfiguration(
+        redirectType,
+        redirectState.name,
+        JsonUtils.toJson(spec),
+        noRedirectRules
+      )
+      val enableConfigJson = StringEscapeUtils.escapeJson(JsonUtils.toJson(enableConfig))
+      sql(s"alter table $table set TBLPROPERTIES('$featureName' = '$enableConfigJson')")
+    }
+
+    redirectTest(s"Redirect $featureName: modify table property", accessSource = true) {
+      case (_, source, dest, catalogTable) =>
+        if (!TestMode.unityCatalogTestsEnabled) {
+          val redirectSpec = new PathBasedRedirectSpec(dest.getCanonicalPath + "/_delta_log")
+          val redirectType = PathBasedRedirectSpec.REDIRECT_TYPE
+          val destPath = dest.toString
+          val srcPath = source.toString
+          sql(s"CREATE external TABLE t2(c0 long) USING delta LOCATION '$dest';")
+          sql(s"insert into t2 values(1),(2),(3),(4),(5)")
+          val destTable = s"delta.`$destPath`"
+          val srcTable = s"delta.`$srcPath`"
+          // Initialize the redirection by moving table into EnableRedirectInProgress state.
+          alterRedirect(srcTable, redirectType, EnableRedirectInProgress, redirectSpec, Set.empty)
+          alterRedirect(destTable, redirectType, EnableRedirectInProgress, redirectSpec, Set.empty)
+          // Delta log is cloned, then moves both redirect destination table and redirect source
+          // table to RedirectReady state.
+          alterRedirect(srcTable, redirectType, RedirectReady, redirectSpec, Set.empty)
+          alterRedirect(destTable, redirectType, RedirectReady, redirectSpec, Set.empty)
+          sql(s"insert into $srcTable values(1), (2), (3)")
+          sql(s"insert into $destTable values(1), (2), (3)")
+          sql(s"insert into t1 values(1), (2), (3)")
+          sql(s"insert into t2 values(1), (2), (3)")
+
+          var result = sql("select * from t1").collect()
+          assert(result.length == 17)
+          result = sql("select * from t2").collect()
+          assert(result.length == 17)
+          result = sql(s"select * from $srcTable ").collect()
+          assert(result.length == 17)
+          result = sql(s"select * from $destTable ").collect()
+          assert(result.length == 17)
+          val root = new Path(catalogTable.location)
+          val fs = root.getFileSystem(spark.sessionState.newHadoopConf())
+          var files = fs.listStatus(new Path(srcPath + "/_delta_log"))
+            .filter(_.getPath.toString.endsWith(".json"))
+          assert(files.length == 3)
+          files = fs.listStatus(new Path(destPath + "/_delta_log"))
+            .filter(_.getPath.toString.endsWith(".json"))
+          assert(files.length == 9)
+          // Drop redirection by moving both redirect destination table and redirect source table to
+          // DropRedirectInProgress.
+          alterRedirect(destTable, redirectType, DropRedirectInProgress, redirectSpec, Set.empty)
+          alterRedirect(srcTable, redirectType, DropRedirectInProgress, redirectSpec, Set.empty)
+          // Remove table redirect feature from redirect source table and verify table content.
+          sql(s"alter table $srcTable unset TBLPROPERTIES('$featureName')")
+          result = sql("select * from t1").collect()
+          assert(result.length == 0)
+          sql("insert into t1 values(1), (2), (3), (4)")
+          result = sql("select * from t1").collect()
+          assert(result.length == 4)
         }
     }
   }

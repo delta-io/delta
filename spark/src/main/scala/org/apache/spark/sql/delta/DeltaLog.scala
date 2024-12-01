@@ -915,14 +915,14 @@ object DeltaLog extends DeltaLogging {
     // scalastyle:on deltahadoopconfiguration
     val fs = rawPath.getFileSystem(hadoopConf)
     val path = fs.makeQualified(rawPath)
-    def createDeltaLog(): DeltaLog = recordDeltaOperation(
+    def createDeltaLog(tablePath: Path = path): DeltaLog = recordDeltaOperation(
       null,
       "delta.log.create",
-      Map(TAG_TAHOE_PATH -> path.getParent.toString)) {
+      Map(TAG_TAHOE_PATH -> tablePath.getParent.toString)) {
         AnalysisHelper.allowInvokingTransformsInAnalyzer {
           new DeltaLog(
-            logPath = path,
-            dataPath = path.getParent,
+            logPath = tablePath,
+            dataPath = tablePath.getParent,
             options = fileSystemOptions,
             allOptions = options,
             clock = clock,
@@ -948,7 +948,13 @@ object DeltaLog extends DeltaLogging {
       }
     }
 
-    val deltaLog = getDeltaLogFromCache()
+    var deltaLog = getDeltaLogFromCache()
+    if (spark.conf.get(DeltaSQLConf.ENABLE_TABLE_REDIRECT_FEATURE) && deltaLog.tableExists) {
+      RedirectFeature.withRedirectedLocation(spark, deltaLog, initialCatalogTable) { redirectLoc =>
+        deltaLog = createDeltaLog(redirectLoc)
+        getOrCreateCache(spark.sessionState.conf).put(redirectLoc -> fileSystemOptions, deltaLog)
+      }
+    }
     if (Option(deltaLog.sparkContext.get).map(_.isStopped).getOrElse(true)) {
       // Invalid the cached `DeltaLog` and create a new one because the `SparkContext` of the cached
       // `DeltaLog` has been stopped.

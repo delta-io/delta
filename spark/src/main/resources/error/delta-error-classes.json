@@ -2434,6 +2434,12 @@
     ],
     "sqlState" : "0AKDD"
   },
+  "DELTA_TABLE_UNRECOGNIZED_REDIRECT_SPEC" : {
+    "message" : [
+      "The Delta log contains unrecognized table redirect spec '<spec>'."
+    ],
+    "sqlState" : "42704"
+  },
   "DELTA_TARGET_TABLE_FINAL_SCHEMA_EMPTY" : {
     "message" : [
       "Target table final schema is empty."

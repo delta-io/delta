@@ -16,8 +16,12 @@
 
 package org.apache.spark.sql.delta.redirect
 
+import java.util.UUID
+
+import scala.collection.JavaConverters._
 import scala.reflect.ClassTag
 
+// scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.{
   DeltaConfig,
   DeltaConfigs,
@@ -28,13 +32,16 @@ import org.apache.spark.sql.delta.{
   RedirectWriterOnlyFeature,
   Snapshot
 }
+import org.apache.spark.sql.delta.DeltaLog.logPathFor
 import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.util.JsonUtils
 import com.fasterxml.jackson.annotation.JsonIgnore
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.scala.DefaultScalaModule
+import org.apache.hadoop.fs.Path
 
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
 /**
@@ -106,7 +113,10 @@ case object DropRedirectInProgress extends RedirectState {
  * This is the abstract class of the redirect specification, which stores the information
  * of accessing the redirect destination table.
  */
-abstract class RedirectSpec()
+abstract class RedirectSpec {
+  def isRedirectDest(logPath: String): Boolean
+  def isRedirectSource(logPath: String): Boolean
+}
 
 /**
  * The default redirect spec that is used for OSS delta.
@@ -120,7 +130,11 @@ abstract class RedirectSpec()
  *   }
  * @param tablePath this is the path where stores the redirect destination table's location.
  */
-class PathBasedRedirectSpec(val tablePath: String) extends RedirectSpec
+class PathBasedRedirectSpec(val tablePath: String) extends RedirectSpec {
+  def isRedirectDest(logPath: String): Boolean = tablePath == logPath
+
+  def isRedirectSource(logPath: String): Boolean = !isRedirectDest(logPath)
+}
 
 object PathBasedRedirectSpec {
   /**
@@ -221,6 +235,26 @@ case class TableRedirectConfiguration(
   val isInProgressState: Boolean = {
     redirectState == EnableRedirectInProgress || redirectState == DropRedirectInProgress
   }
+
+  private def isNoRedirectApp(spark: SparkSession): Boolean = {
+    noRedirectRules.exists { rule =>
+      rule.appName.exists(_.equalsIgnoreCase(spark.conf.get("spark.app.name")))
+    }
+  }
+
+  def needRedirect(spark: SparkSession, logPath: Path): Boolean = {
+    !isNoRedirectApp(spark) && !isInProgressState && spec.isRedirectSource(logPath.toUri.getPath)
+  }
+
+  def getRedirectLocation(deltaLog: DeltaLog, spark: SparkSession): Path = {
+    spec match {
+      case spec: PathBasedRedirectSpec =>
+        val location = new Path(spec.tablePath)
+        val fs = location.getFileSystem(deltaLog.newDeltaHadoopConf())
+        fs.makeQualified(location)
+      case other => throw DeltaErrors.unrecognizedRedirectSpec(other)
+    }
+  }
 }
 
 /**
@@ -238,9 +272,7 @@ class TableRedirect(val config: DeltaConfig[Option[String]]) {
    */
   def getRedirectConfiguration(deltaLogMetadata: Metadata): Option[TableRedirectConfiguration] = {
     config.fromMetaData(deltaLogMetadata).map { propertyValue =>
-      val mapper = new ObjectMapper()
-      mapper.registerModule(DefaultScalaModule)
-      mapper.readValue(propertyValue, classOf[TableRedirectConfiguration])
+      RedirectFeature.parseRedirectConfiguration(propertyValue)
     }
   }
 
@@ -292,18 +324,7 @@ class TableRedirect(val config: DeltaConfig[Option[String]]) {
 
     val currentConfig = currentConfigOpt.get
     val redirectState = currentConfig.redirectState
-    state match {
-      case RedirectReady =>
-        if (redirectState != EnableRedirectInProgress && redirectState != RedirectReady) {
-          DeltaErrors.invalidRedirectStateTransition(tableIdent, redirectState, state)
-        }
-      case DropRedirectInProgress =>
-        if (redirectState != RedirectReady) {
-          DeltaErrors.invalidRedirectStateTransition(tableIdent, redirectState, state)
-        }
-      case _ =>
-        DeltaErrors.invalidRedirectStateTransition(tableIdent, redirectState, state)
-    }
+    RedirectFeature.validateStateTransition(tableIdent, redirectState, state)
     val properties = generateRedirectMetadata(currentConfig.`type`, state, spec, noRedirectRules)
     val newConfigs = txn.metadata.configuration ++ properties
     val newMetadata = txn.metadata.copy(configuration = newConfigs)
@@ -400,6 +421,40 @@ object RedirectFeature {
     RedirectWriterOnly.isFeatureSupported(snapshot)
   }
 
+  private def getProperties(
+      spark: SparkSession,
+      deltaLog: DeltaLog,
+      initialCatalogTable: Option[CatalogTable]): Map[String, String] = {
+      deltaLog.update().getProperties.toMap
+  }
+
+  def withRedirectedLocation(
+      spark: SparkSession,
+      deltaLog: DeltaLog,
+      initialCatalogTable: Option[CatalogTable])(func: Path => Unit): Unit = {
+    val properties = getProperties(spark, deltaLog, initialCatalogTable)
+    val redirectConfiguration = getRedirectConfiguration(properties)
+    redirectConfiguration.foreach { redirectConfig =>
+      if (redirectConfig.needRedirect(spark, deltaLog.logPath)) {
+        val redirectLocation = redirectConfig.getRedirectLocation(deltaLog, spark)
+        func(redirectLocation)
+      }
+    }
+  }
+
+  def parseRedirectConfiguration(configString: String): TableRedirectConfiguration = {
+    val mapper = new ObjectMapper()
+    mapper.registerModule(DefaultScalaModule)
+    mapper.readValue(configString, classOf[TableRedirectConfiguration])
+  }
+
+  private def getRedirectConfiguration(
+      properties: Map[String, String]): Option[TableRedirectConfiguration] = {
+    properties.get(DeltaConfigs.REDIRECT_READER_WRITER.key)
+      .orElse(properties.get(DeltaConfigs.REDIRECT_WRITER_ONLY.key))
+      .map(parseRedirectConfiguration)
+  }
+
   /**
    * Determine whether the operation `op` updates the existing redirect-reader-writer or
    * redirect-writer-only table property of a table with `snapshot`.
@@ -423,6 +478,54 @@ object RedirectFeature {
       RedirectWriterOnly.getRedirectConfiguration(snapshot.metadata)
     } else {
       RedirectReaderWriter.getRedirectConfiguration(snapshot.metadata)
+    }
+  }
+
+  def hasRedirectConfig(configs: Map[String, String]): Boolean =
+    getRedirectConfiguration(configs).isDefined
+
+  def validateTableRedirect(
+      snapshot: Snapshot,
+      catalogTable: Option[CatalogTable],
+      configs: Map[String, String]
+  ): Unit = {
+    // Extract redirect configuration from the provided configs
+    val redirectConfigOpt = configs
+      .get(DeltaConfigs.REDIRECT_READER_WRITER.key).map(parseRedirectConfiguration)
+    redirectConfigOpt.foreach { redirectConfig =>
+      val currentRedirectConfigOpt = getRedirectConfiguration(snapshot)
+      val identifier = catalogTable
+        .map(_.identifier.quotedString)
+        .getOrElse(snapshot.deltaLog.logPath.toString)
+      val newState = redirectConfig.redirectState
+      // Validate state transitions based on current and new states
+      currentRedirectConfigOpt match {
+        case Some(currentConfig) =>
+          validateStateTransition(identifier, currentConfig.redirectState, newState)
+        case None if newState == DropRedirectInProgress =>
+          DeltaErrors.invalidRedirectStateTransition(identifier, newState, DropRedirectInProgress)
+        case _ => // No action required for valid transitions
+      }
+    }
+  }
+
+  // Helper method to validate state transitions
+  def validateStateTransition(
+      identifier: String,
+      currentState: RedirectState,
+      newState: RedirectState
+  ): Unit = {
+    (currentState, newState) match {
+      case (state, RedirectReady) =>
+        if (state == DropRedirectInProgress) {
+          DeltaErrors.invalidRedirectStateTransition(identifier, state, newState)
+        }
+      case (state, DropRedirectInProgress) =>
+        if (state != RedirectReady) {
+          DeltaErrors.invalidRedirectStateTransition(identifier, state, newState)
+        }
+      case (state, _) =>
+        DeltaErrors.invalidRedirectStateTransition(identifier, state, newState)
     }
   }
 }
