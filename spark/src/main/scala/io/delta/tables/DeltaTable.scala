@@ -159,8 +159,7 @@ class DeltaTable private[tables](
    * @since 0.5.0
    */
   def generate(mode: String): Unit = {
-    val tableId = table.tableIdentifier.getOrElse(s"delta.`${deltaLog.dataPath.toString}`")
-    executeGenerate(tableId, mode)
+    executeGenerate(deltaLog.dataPath.toString, table.getTableIdentifierIfExists, mode)
   }
 
   /**
