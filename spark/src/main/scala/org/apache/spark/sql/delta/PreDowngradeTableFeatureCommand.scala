@@ -268,7 +268,7 @@ case class CoordinatedCommitsPreDowngradeCommand(table: DeltaTableV2)
     }
     var postDisablementUnbackfilledCommitsPresent = false
     if (exceptionOpt.isEmpty) {
-      val snapshotAfterDisabling = table.deltaLog.update()
+      val snapshotAfterDisabling = table.update()
       assert(snapshotAfterDisabling.getTableCommitCoordinatorForWrites.isEmpty)
       postDisablementUnbackfilledCommitsPresent =
         CoordinatedCommitsUtils.unbackfilledCommitsPresent(snapshotAfterDisabling)

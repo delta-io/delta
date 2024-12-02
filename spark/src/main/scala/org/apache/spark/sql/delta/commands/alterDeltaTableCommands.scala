@@ -323,7 +323,9 @@ case class AlterTableDropFeatureDeltaCommand(
    */
   private def createCheckpointWithRetries(snapshotRefreshStartTimeTs: Long): Boolean = {
     val log = table.deltaLog
-    val snapshot = log.update(checkIfUpdatedSinceTs = Some(snapshotRefreshStartTimeTs))
+    val snapshot = log.update(
+      checkIfUpdatedSinceTs = Some(snapshotRefreshStartTimeTs),
+      catalogTableOpt = table.catalogTable)
 
     def checkpointAndVerify(snapshot: Snapshot): Boolean = {
       try {
@@ -352,9 +354,11 @@ case class AlterTableDropFeatureDeltaCommand(
       snapshotRefreshStartTs: Long,
       retryOnFailure: Boolean = false): Boolean = {
     val log = table.deltaLog
-    val snapshot = log.update(checkIfUpdatedSinceTs = Some(snapshotRefreshStartTs))
+    val snapshot = log.update(
+      checkIfUpdatedSinceTs = Some(snapshotRefreshStartTs),
+      catalogTableOpt = table.catalogTable)
     val emptyCommitTS = System.nanoTime()
-    log.startTransaction(table.catalogTable, Some(snapshot))
+    table.startTransaction(Some(snapshot))
       .commit(Nil, DeltaOperations.EmptyCommit)
 
     // retryOnFailure is temporary to avoid affecting the behavior of the legacy Drop Feature
@@ -362,7 +366,9 @@ case class AlterTableDropFeatureDeltaCommand(
     if (retryOnFailure) {
       createCheckpointWithRetries(emptyCommitTS)
     } else {
-      log.checkpoint(log.update(checkIfUpdatedSinceTs = Some(emptyCommitTS)))
+      log.checkpoint(log.update(
+        checkIfUpdatedSinceTs = Some(emptyCommitTS),
+        catalogTableOpt = table.catalogTable))
       true
     }
   }
@@ -1166,7 +1172,7 @@ case class AlterTableSetLocationDeltaCommand(
     val catalogTable = table.catalogTable.get
     val locUri = CatalogUtils.stringToURI(location)
 
-    val oldTable = table.deltaLog.update()
+    val oldTable = table.update()
     if (oldTable.version == -1) {
       throw DeltaErrors.notADeltaTableException(table.name())
     }
@@ -1174,7 +1180,8 @@ case class AlterTableSetLocationDeltaCommand(
 
     var updatedTable = catalogTable.withNewStorage(locationUri = Some(locUri))
 
-    val (_, newTable) = DeltaLog.forTableWithSnapshot(sparkSession, new Path(location))
+    val (_, newTable) =
+      DeltaLog.forTableWithSnapshot(sparkSession, updatedTable, options = Map.empty[String, String])
     if (newTable.version == -1) {
       throw DeltaErrors.notADeltaTableException(DeltaTableIdentifier(path = Some(location)))
     }
@@ -1338,7 +1345,7 @@ case class AlterTableClusterByDeltaCommand(
     ClusteredTableUtils.validateNumClusteringColumns(clusteringColumns, Some(deltaLog))
     // If the target table is not a clustered table and there are no clustering columns being added
     // (CLUSTER BY NONE), do not convert the table into a clustered table.
-    val snapshot = deltaLog.update()
+    val snapshot = table.update()
     if (clusteringColumns.isEmpty &&
       !ClusteredTableUtils.isSupported(snapshot.protocol)) {
       logInfo(log"Skipping ALTER TABLE CLUSTER BY NONE on a non-clustered table: " +

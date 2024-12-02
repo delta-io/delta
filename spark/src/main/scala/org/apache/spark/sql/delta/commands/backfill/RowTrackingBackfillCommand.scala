@@ -55,7 +55,8 @@ case class RowTrackingBackfillCommand(
 
   override def filesToBackfill(txn: OptimisticTransaction): Dataset[AddFile] =
     // Get a new snapshot after the protocol upgrade.
-    RowTrackingBackfillExecutor.getCandidateFilesToBackfill(deltaLog.update())
+    RowTrackingBackfillExecutor.getCandidateFilesToBackfill(
+      deltaLog.update(catalogTableOpt = catalogTable))
 
   override def opType: String = "delta.rowTracking.backfill"
 
@@ -67,7 +68,7 @@ case class RowTrackingBackfillCommand(
   * the current protocol cannot support write table feature.
   */
   private def upgradeProtocolIfRequired(): Unit = {
-    val snapshot = deltaLog.update()
+    val snapshot = deltaLog.update(catalogTableOpt = catalogTable)
     if (!snapshot.protocol.isFeatureSupported(RowTrackingFeature)) {
       val minProtocolAllowingWriteTableFeature = Protocol(
         snapshot.protocol.minReaderVersion,

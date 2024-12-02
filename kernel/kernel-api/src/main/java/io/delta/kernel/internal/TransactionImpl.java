@@ -32,11 +32,7 @@ import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.replay.ConflictChecker;
 import io.delta.kernel.internal.replay.ConflictChecker.TransactionRebaseState;
-import io.delta.kernel.internal.util.Clock;
-import io.delta.kernel.internal.util.ColumnMapping;
-import io.delta.kernel.internal.util.FileNames;
-import io.delta.kernel.internal.util.InCommitTimestampUtils;
-import io.delta.kernel.internal.util.VectorUtils;
+import io.delta.kernel.internal.util.*;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.kernel.utils.CloseableIterator;
@@ -73,6 +69,7 @@ public class TransactionImpl implements Transaction {
   private final Optional<SetTransaction> setTxnOpt;
   private final boolean shouldUpdateProtocol;
   private final Clock clock;
+  private final List<DomainMetadata> domainMetadatas = new ArrayList<>();
   private Metadata metadata;
   private boolean shouldUpdateMetadata;
 
@@ -118,6 +115,23 @@ public class TransactionImpl implements Transaction {
   @Override
   public StructType getSchema(Engine engine) {
     return readSnapshot.getSchema(engine);
+  }
+
+  public Optional<SetTransaction> getSetTxnOpt() {
+    return setTxnOpt;
+  }
+
+  /**
+   * Internal API to add domain metadata actions for this transaction. Visible for testing.
+   *
+   * @param domainMetadatas List of domain metadata to be added to the transaction.
+   */
+  public void addDomainMetadatas(List<DomainMetadata> domainMetadatas) {
+    this.domainMetadatas.addAll(domainMetadatas);
+  }
+
+  public List<DomainMetadata> getDomainMetadatas() {
+    return domainMetadatas;
   }
 
   @Override
@@ -221,6 +235,12 @@ public class TransactionImpl implements Transaction {
     }
     setTxnOpt.ifPresent(setTxn -> metadataActions.add(createTxnSingleAction(setTxn.toRow())));
 
+    // Check for duplicate domain metadata and if the protocol supports
+    DomainMetadataUtils.validateDomainMetadatas(domainMetadatas, protocol);
+
+    domainMetadatas.forEach(
+        dm -> metadataActions.add(createDomainMetadataSingleAction(dm.toRow())));
+
     try (CloseableIterator<Row> stageDataIter = dataActions.iterator()) {
       // Create a new CloseableIterator that will return the metadata actions followed by the
       // data actions.
@@ -263,10 +283,6 @@ public class TransactionImpl implements Transaction {
     // For now, Kernel just supports blind append.
     // Change this when read-after-write is supported.
     return true;
-  }
-
-  public Optional<SetTransaction> getSetTxnOpt() {
-    return setTxnOpt;
   }
 
   /**

@@ -27,13 +27,18 @@ import io.delta.kernel.internal.TableFeatures;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.checkpoints.SidecarFile;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.SnapshotHint;
+import io.delta.kernel.internal.util.DomainMetadataUtils;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -74,6 +79,10 @@ public class LogReplay {
     return shouldReadStats ? AddFile.SCHEMA_WITH_STATS : AddFile.SCHEMA_WITHOUT_STATS;
   }
 
+  /** Read schema when searching for just the domain metadata */
+  public static final StructType DOMAIN_METADATA_READ_SCHEMA =
+      new StructType().add("domainMetadata", DomainMetadata.FULL_SCHEMA);
+
   public static String SIDECAR_FIELD_NAME = "sidecar";
   public static String ADDFILE_FIELD_NAME = "add";
   public static String REMOVEFILE_FIELD_NAME = "remove";
@@ -109,6 +118,7 @@ public class LogReplay {
   private final Path dataPath;
   private final LogSegment logSegment;
   private final Tuple2<Protocol, Metadata> protocolAndMetadata;
+  private final Lazy<Map<String, DomainMetadata>> domainMetadataMap;
 
   public LogReplay(
       Path logPath,
@@ -122,6 +132,8 @@ public class LogReplay {
     this.dataPath = dataPath;
     this.logSegment = logSegment;
     this.protocolAndMetadata = loadTableProtocolAndMetadata(engine, snapshotHint, snapshotVersion);
+    // Lazy loading of domain metadata only when needed
+    this.domainMetadataMap = new Lazy<>(() -> loadDomainMetadataMap(engine));
   }
 
   /////////////////
@@ -138,6 +150,10 @@ public class LogReplay {
 
   public Optional<Long> getLatestTransactionIdentifier(Engine engine, String applicationId) {
     return loadLatestTransactionVersion(engine, applicationId);
+  }
+
+  public Map<String, DomainMetadata> getDomainMetadataMap() {
+    return domainMetadataMap.get();
   }
 
   /**
@@ -295,5 +311,41 @@ public class LogReplay {
     }
 
     return Optional.empty();
+  }
+
+  /**
+   * Retrieves a map of domainName to {@link DomainMetadata} from the log files.
+   *
+   * <p>Loading domain metadata requires an additional round of log replay so this is done lazily
+   * only when domain metadata is requested. We might want to merge this into {@link
+   * #loadTableProtocolAndMetadata}.
+   *
+   * @param engine The engine used to process the log files.
+   * @return A map where the keys are domain names and the values are the corresponding {@link
+   *     DomainMetadata} objects.
+   * @throws UncheckedIOException if an I/O error occurs while closing the iterator.
+   */
+  private Map<String, DomainMetadata> loadDomainMetadataMap(Engine engine) {
+    try (CloseableIterator<ActionWrapper> reverseIter =
+        new ActionsIterator(
+            engine,
+            logSegment.allLogFilesReversed(),
+            DOMAIN_METADATA_READ_SCHEMA,
+            Optional.empty() /* checkpointPredicate */)) {
+      Map<String, DomainMetadata> domainMetadataMap = new HashMap<>();
+      while (reverseIter.hasNext()) {
+        final ColumnarBatch columnarBatch = reverseIter.next().getColumnarBatch();
+        assert (columnarBatch.getSchema().equals(DOMAIN_METADATA_READ_SCHEMA));
+
+        final ColumnVector dmVector = columnarBatch.getColumnVector(0);
+
+        // We are performing a reverse log replay. This function ensures that only the first
+        // encountered domain metadata for each domain is added to the map.
+        DomainMetadataUtils.populateDomainMetadataMap(dmVector, domainMetadataMap);
+      }
+      return domainMetadataMap;
+    } catch (IOException ex) {
+      throw new UncheckedIOException("Could not close iterator", ex);
+    }
   }
 }

@@ -17,6 +17,8 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
+import java.util.{Locale, TimeZone}
+
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta.actions._
@@ -38,7 +40,7 @@ import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.internal.{MDC, MessageWithContext}
 import org.apache.spark.sql._
-import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.Utils
@@ -513,17 +515,29 @@ class Snapshot(
    */
   def computeChecksum: VersionChecksum = VersionChecksum(
     txnId = None,
-    tableSizeBytes = sizeInBytes,
-    numFiles = numOfFiles,
-    numMetadata = numOfMetadata,
-    numProtocol = numOfProtocol,
     inCommitTimestampOpt = getInCommitTimestampOpt,
-    setTransactions = checksumOpt.flatMap(_.setTransactions),
-    domainMetadata = checksumOpt.flatMap(_.domainMetadata),
     metadata = metadata,
     protocol = protocol,
-    histogramOpt = checksumOpt.flatMap(_.histogramOpt),
-    allFiles = checksumOpt.flatMap(_.allFiles))
+    allFiles = checksumOpt.flatMap(_.allFiles),
+    tableSizeBytes = checksumOpt.map(_.tableSizeBytes).getOrElse(sizeInBytes),
+    numFiles = checksumOpt.map(_.numFiles).getOrElse(numOfFiles),
+    numMetadata = checksumOpt.map(_.numMetadata).getOrElse(numOfMetadata),
+    numProtocol = checksumOpt.map(_.numProtocol).getOrElse(numOfProtocol),
+    // Only return setTransactions and domainMetadata if they are either already present
+    // in the checksum or if they have already been computed in the current snapshot.
+    setTransactions = checksumOpt.flatMap(_.setTransactions)
+      .orElse {
+        Option.when(_computedStateTriggered &&
+            // Only extract it from the current snapshot if set transaction
+            // writes are enabled.
+            spark.conf.get(DeltaSQLConf.DELTA_WRITE_SET_TRANSACTIONS_IN_CRC)) {
+          setTransactions
+        }
+      },
+    domainMetadata = checksumOpt.flatMap(_.domainMetadata)
+      .orElse(Option.when(_computedStateTriggered)(domainMetadata)),
+    histogramOpt = checksumOpt.flatMap(_.histogramOpt)
+  )
 
   /** Returns the data schema of the table, used for reading stats */
   def tableSchema: StructType = metadata.dataSchema
@@ -576,7 +590,7 @@ class Snapshot(
    * @throws IllegalStateException
    *   if the delta file for the current version is not found after backfilling.
    */
-  def ensureCommitFilesBackfilled(tableIdentifierOpt: Option[TableIdentifier]): Unit = {
+  def ensureCommitFilesBackfilled(catalogTableOpt: Option[CatalogTable]): Unit = {
     val tableCommitCoordinatorClient = getTableCommitCoordinatorForWrites.getOrElse {
       return
     }
@@ -584,7 +598,7 @@ class Snapshot(
     if (minUnbackfilledVersion <= version) {
       val hadoopConf = deltaLog.newDeltaHadoopConf()
       tableCommitCoordinatorClient.backfillToVersion(
-        tableIdentifierOpt,
+        catalogTableOpt.map(_.identifier),
         version,
         lastKnownBackfilledVersion = Some(minUnbackfilledVersion - 1))
       val fs = deltaLog.logPath.getFileSystem(hadoopConf)
@@ -651,6 +665,76 @@ object Snapshot extends DeltaLogging {
       }
     }
   }
+
+  /** Whether to write allFiles in [[VersionChecksum.allFiles]] */
+  private[delta] def allFilesInCrcWritePathEnabled(
+      spark: SparkSession,
+      snapshot: Snapshot): Boolean = {
+    // disable if config is off.
+    if (!spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_ENABLED)) return false
+
+    // Also disable if all stats (structs/json) are disabled in checkpoints.
+    // When checkpoint stats are disabled (both in terms of structs/json), then the
+    // snapshot.allFiles from state reconstruction may/may not have stats (files coming from
+    // checkpoint won't have stats and files coming from deltas will have stats).
+    // But CRC.allFiles will have stats as VersionChecksum.allFiles is created
+    // incrementally using each commit. To prevent this inconsistency, we disable the feature when
+    // both json/struct stats are disabled for checkpoint.
+    if (!Checkpoints.shouldWriteStatsAsJson(snapshot) &&
+      !Checkpoints.shouldWriteStatsAsStruct(spark.sessionState.conf, snapshot)) {
+      return false
+    }
+
+    // Disable if table is configured to collect stats on more than the default number of columns
+    // to avoid bloating the .crc file.
+    val numIndexedColsThreshold = spark.sessionState.conf
+      .getConf(DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_THRESHOLD_INDEXED_COLS)
+      .getOrElse(DataSkippingReader.DATA_SKIPPING_NUM_INDEXED_COLS_DEFAULT_VALUE)
+    val configuredNumIndexCols =
+      DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.fromMetaData(snapshot.metadata)
+    if (configuredNumIndexCols > numIndexedColsThreshold) return false
+
+    true
+  }
+
+  /**
+   * If true, force a verification of [[VersionChecksum.allFiles]] irrespective of the value of
+   * DELTA_ALL_FILES_IN_CRC_VERIFICATION_MODE_ENABLED flag (if they're written).
+   */
+  private[delta] def allFilesInCrcVerificationForceEnabled(
+      spark: SparkSession): Boolean = {
+    val forceVerificationForNonUTCEnabled = spark.sessionState.conf.getConf(
+      DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_FORCE_VERIFICATION_MODE_FOR_NON_UTC_ENABLED)
+    if (!forceVerificationForNonUTCEnabled) return false
+
+    // This is necessary because timestamps for older dates (pre-1883) are not correctly serialized
+    // in non-UTC timezones due to unusual historical offsets (e.g. -07:52:58 for LA).
+    // These serialization discrepancies can lead to spurious CRC verification failures.
+    // By forcing verification of all files in non-UTC environments, we can continue to detect and
+    // work towards fixing this issues.
+    // Note: Display Name for UTC is Etc/UTC, so we check for UTC substring in the timezone.
+    val sparkSessionTimeZone = spark.sessionState.conf.sessionLocalTimeZone
+    val defaultJVMTimeZone = TimeZone.getDefault.getID
+    val systemTimeZone = System.getProperty("user.timezone", "Etc/UTC")
+
+    val isNonUtcTimeZone = List(sparkSessionTimeZone, defaultJVMTimeZone, systemTimeZone)
+      .exists(!_.toLowerCase(Locale.ROOT).contains("utc"))
+
+    isNonUtcTimeZone
+  }
+
+  /**
+   * If true, do verification of [[VersionChecksum.allFiles]] computed by incremental commit CRC
+   * by doing state-reconstruction.
+   */
+  private[delta] def allFilesInCrcVerificationEnabled(
+      spark: SparkSession,
+      snapshot: Snapshot): Boolean = {
+    val verificationConfEnabled = spark.sessionState.conf.getConf(
+      DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_VERIFICATION_MODE_ENABLED)
+    val shouldVerify = verificationConfEnabled || allFilesInCrcVerificationForceEnabled(spark)
+    allFilesInCrcWritePathEnabled(spark, snapshot) && shouldVerify
+  }
 }
 
 /**
@@ -704,6 +788,7 @@ class DummySnapshot(
 
   override protected lazy val computedState: SnapshotState = initialState(metadata, protocol)
   override protected lazy val getInCommitTimestampOpt: Option[Long] = None
+  _computedStateTriggered = true
 
   // The [[InitialSnapshot]] is not backed by any external commit-coordinator.
   override val tableCommitCoordinatorClientOpt: Option[TableCommitCoordinatorClient] = None

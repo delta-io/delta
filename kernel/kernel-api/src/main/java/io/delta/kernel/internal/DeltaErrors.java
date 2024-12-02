@@ -18,6 +18,7 @@ package io.delta.kernel.internal;
 import static java.lang.String.format;
 
 import io.delta.kernel.exceptions.*;
+import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.DataFileStatus;
@@ -272,6 +273,24 @@ public final class DeltaErrors {
   public static KernelException invalidConfigurationValueException(
       String key, String value, String helpMessage) {
     return new InvalidConfigurationValueException(key, value, helpMessage);
+  }
+
+  public static KernelException domainMetadataUnsupported() {
+    String message =
+        "Cannot commit DomainMetadata action(s) because the feature 'domainMetadata' "
+            + "is not supported on this table.";
+    return new KernelException(message);
+  }
+
+  public static ConcurrentWriteException concurrentDomainMetadataAction(
+      DomainMetadata domainMetadataAttempt, DomainMetadata winningDomainMetadata) {
+    String message =
+        String.format(
+            "A concurrent writer added a domainMetadata action for the same domain: %s. "
+                + "No domain-specific conflict resolution is available for this domain. "
+                + "Attempted domainMetadata: %s. Winning domainMetadata: %s",
+            domainMetadataAttempt.getDomain(), domainMetadataAttempt, winningDomainMetadata);
+    return new ConcurrentWriteException(message);
   }
 
   /* ------------------------ HELPER METHODS ----------------------------- */

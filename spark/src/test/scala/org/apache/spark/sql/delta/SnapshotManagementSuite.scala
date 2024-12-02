@@ -469,7 +469,7 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
       val newLogSegment = log.snapshot.logSegment
       assert(log.getLogSegmentAfterCommit(
         log.snapshot.tableCommitCoordinatorClientOpt,
-        tableIdentifierOpt = None,
+        catalogTableOpt = None,
         oldLogSegment.checkpointProvider) === newLogSegment)
       spark.range(10).write.format("delta").mode("append").save(path)
       val fs = log.logPath.getFileSystem(log.newDeltaHadoopConf())
@@ -491,7 +491,7 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
       }
       assert(log.getLogSegmentAfterCommit(
         log.snapshot.tableCommitCoordinatorClientOpt,
-        tableIdentifierOpt = None,
+        catalogTableOpt = None,
         oldLogSegment.checkpointProvider) === log.snapshot.logSegment)
     }
   }

@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 import java.io.File
+import java.util.TimeZone
 
 import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.DeltaTestUtils._
@@ -69,13 +70,22 @@ class ChecksumSuite
     testChecksumFile(writeChecksumEnabled = false)
   }
 
+  private def setTimeZone(timeZone: String): Unit = {
+    spark.sql(s"SET spark.sql.session.timeZone = $timeZone")
+    TimeZone.setDefault(TimeZone.getTimeZone(timeZone))
+  }
+
   test("Incremental checksums: post commit snapshot should have a checksum " +
       "without triggering state reconstruction") {
     for (incrementalCommitEnabled <- BOOLEAN_DOMAIN) {
       withSQLConf(
         DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "false",
-        DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> incrementalCommitEnabled.toString) {
+        DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> incrementalCommitEnabled.toString
+      ) {
         withTempDir { tempDir =>
+          // Set the timezone to UTC to avoid triggering force verification of all files in CRC
+          // for non utc environments.
+          setTimeZone("UTC")
           val df = spark.range(1)
           df.write.format("delta").mode("append").save(tempDir.getCanonicalPath)
           val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
@@ -199,7 +209,8 @@ class ChecksumSuite
     withSQLConf(
       DeltaSQLConf.INCREMENTAL_COMMIT_VERIFY.key -> "true",
       DeltaSQLConf.DELTA_CHECKSUM_MISMATCH_IS_FATAL.key -> "false",
-      DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> "true"
+      DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> "true",
+      DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_ENABLED.key -> "false"
     ) {
       withTempDir { tempDir =>
         import testImplicits._

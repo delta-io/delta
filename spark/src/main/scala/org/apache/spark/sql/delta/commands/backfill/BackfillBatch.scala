@@ -68,8 +68,8 @@ trait BackfillBatch extends DeltaLogging {
       )
     }
 
-    logInfo(log"Batch ${MDC(DeltaLogKeys.BATCH_ID, batchId)} starting, committing " +
-      log"${MDC(DeltaLogKeys.NUM_FILES, filesInBatch.size)} candidate files")
+    logInfo(log"Batch ${MDC(DeltaLogKeys.BATCH_ID, batchId.toLong)} starting, committing " +
+      log"${MDC(DeltaLogKeys.NUM_FILES, filesInBatch.size.toLong)} candidate files")
     // This step is necessary to mark all files in this batch as "read" in the
     // child transaction object `txn` and to set the read transactions ids to be the same as the
     // parent transaction object `origTxn`, for proper conflict checking.

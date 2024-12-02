@@ -235,7 +235,9 @@ case class CreateDeltaTableCommand(
     logInfo(log"Table is path-based table: ${MDC(DeltaLogKeys.IS_PATH_TABLE, tableByPath)}. " +
       log"Update catalog with mode: ${MDC(DeltaLogKeys.OPERATION, operation)}")
     val opStartTs = TimeUnit.NANOSECONDS.toMillis(txnUsedForCommit.txnStartTimeNs)
-    val postCommitSnapshot = deltaLog.update(checkIfUpdatedSinceTs = Some(opStartTs))
+    val postCommitSnapshot = deltaLog.update(
+      checkIfUpdatedSinceTs = Some(opStartTs),
+      catalogTableOpt = Some(tableWithLocation))
     val didNotChangeMetadata = txnUsedForCommit.metadata == txnUsedForCommit.snapshot.metadata
     updateCatalog(sparkSession, tableWithLocation, postCommitSnapshot, didNotChangeMetadata)
 

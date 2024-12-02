@@ -39,6 +39,7 @@ public class TableFeatures {
               add("columnMapping");
               add("typeWidening-preview");
               add("typeWidening");
+              add(DOMAIN_METADATA_FEATURE_NAME);
             }
           });
 
@@ -56,6 +57,12 @@ public class TableFeatures {
               add("v2Checkpoint");
             }
           });
+
+  /** The feature name for domain metadata. */
+  public static final String DOMAIN_METADATA_FEATURE_NAME = "domainMetadata";
+
+  /** The minimum writer version required to support table features. */
+  public static final int TABLE_FEATURES_MIN_WRITER_VERSION = 7;
 
   ////////////////////
   // Helper Methods //
@@ -93,7 +100,7 @@ public class TableFeatures {
    *   <li>protocol writer version 1.
    *   <li>protocol writer version 2 only with appendOnly feature enabled.
    *   <li>protocol writer version 7 with {@code appendOnly}, {@code inCommitTimestamp}, {@code
-   *       columnMapping}, {@code typeWidening} feature enabled.
+   *       columnMapping}, {@code typeWidening}, {@code domainMetadata} feature enabled.
    * </ul>
    *
    * @param protocol Table protocol
@@ -125,20 +132,8 @@ public class TableFeatures {
         throw unsupportedWriterProtocol(tablePath, minWriterVersion);
       case 7:
         for (String writerFeature : protocol.getWriterFeatures()) {
-          switch (writerFeature) {
-              // Only supported writer features as of today in Kernel
-            case "appendOnly":
-              break;
-            case "inCommitTimestamp":
-              break;
-            case "columnMapping":
-              break;
-            case "typeWidening-preview":
-              break;
-            case "typeWidening":
-              break;
-            default:
-              throw unsupportedWriterFeature(tablePath, writerFeature);
+          if (!SUPPORTED_WRITER_FEATURES.contains(writerFeature)) {
+            throw unsupportedWriterFeature(tablePath, writerFeature);
           }
         }
         break;
@@ -185,6 +180,21 @@ public class TableFeatures {
         .filter(
             f -> protocol.getWriterFeatures() == null || !protocol.getWriterFeatures().contains(f))
         .collect(Collectors.toSet());
+  }
+
+  /**
+   * Checks if the table protocol supports the "domainMetadata" writer feature.
+   *
+   * @param protocol the protocol to check
+   * @return true if the "domainMetadata" feature is supported, false otherwise
+   */
+  public static boolean isDomainMetadataSupported(Protocol protocol) {
+    List<String> writerFeatures = protocol.getWriterFeatures();
+    if (writerFeatures == null) {
+      return false;
+    }
+    return writerFeatures.contains(DOMAIN_METADATA_FEATURE_NAME)
+        && protocol.getMinWriterVersion() >= TABLE_FEATURES_MIN_WRITER_VERSION;
   }
 
   /**

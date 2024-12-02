@@ -102,6 +102,9 @@ trait DeltaLogKeysBase {
   case object PATH extends LogKeyShims
   case object PATH2 extends LogKeyShims
   case object PATHS extends LogKeyShims
+  case object PATHS2 extends LogKeyShims
+  case object PATHS3 extends LogKeyShims
+  case object PATHS4 extends LogKeyShims
   case object PROTOCOL extends LogKeyShims
   case object QUERY_ID extends LogKeyShims
   case object SCHEMA extends LogKeyShims

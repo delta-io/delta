@@ -172,7 +172,10 @@ class OptimisticTransaction(
       deltaLog: DeltaLog,
       catalogTable: Option[CatalogTable],
       snapshotOpt: Option[Snapshot] = None) =
-    this(deltaLog, catalogTable, snapshotOpt.getOrElse(deltaLog.update()))
+    this(
+      deltaLog,
+      catalogTable,
+      snapshotOpt.getOrElse(deltaLog.update(catalogTableOpt = catalogTable)))
 }
 
 object CommitConflictFailure {
@@ -1727,8 +1730,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite
             // Actions of a commit which went in before ours.
             // Requires updating deltaLog to retrieve these actions, as another writer may have used
             // CommitCoordinatorClient for writing.
+            val fileProvider = DeltaCommitFileProvider(
+              deltaLog.update(catalogTableOpt = catalogTable))
             val logs = deltaLog.store.readAsIterator(
-              DeltaCommitFileProvider(deltaLog.update()).deltaFile(attemptVersion),
+              fileProvider.deltaFile(attemptVersion),
               deltaLog.newDeltaHadoopConf())
             try {
               val winningCommitActions = logs.map(Action.fromJson)
@@ -1869,14 +1874,14 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       commit,
       newChecksumOpt = None,
       preCommitLogSegment = preCommitLogSegment,
-      catalogTable.map(_.identifier))
+      catalogTable)
     if (currentSnapshot.version != attemptVersion) {
       throw DeltaErrors.invalidCommittedVersion(attemptVersion, currentSnapshot.version)
     }
 
     logInfo(log"Committed delta #${MDC(DeltaLogKeys.VERSION, attemptVersion)} to " +
       log"${MDC(DeltaLogKeys.PATH, deltaLog.logPath)}. Wrote " +
-      log"${MDC(DeltaLogKeys.NUM_ACTIONS, commitSize)} actions.")
+      log"${MDC(DeltaLogKeys.NUM_ACTIONS, commitSize.toLong)} actions.")
 
     deltaLog.checkpoint(currentSnapshot)
     currentSnapshot
@@ -2039,7 +2044,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
              |Detected mismatch in partition values between AddFile and table metadata but
              |commit validation was turned off.
              |To turn it back on set
-             |${MDC(DeltaLogKeys.CONFIG_KEY, DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED)}
+             |${MDC(DeltaLogKeys.CONFIG_KEY, DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key)}
              |to "true"
           """.stripMargin)
         a
@@ -2279,7 +2284,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     val actions = currentTransactionInfo.finalActionsToCommit
     logInfo(
       log"Attempting to commit version ${MDC(DeltaLogKeys.VERSION, attemptVersion)} with " +
-      log"${MDC(DeltaLogKeys.NUM_ACTIONS, actions.size)} actions with " +
+      log"${MDC(DeltaLogKeys.NUM_ACTIONS, actions.size.toLong)} actions with " +
       log"${MDC(DeltaLogKeys.ISOLATION_LEVEL, isolationLevel)} isolation level")
 
     if (readVersion > -1 && metadata.id != snapshot.metadata.id) {
@@ -2313,7 +2318,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       commit,
       newChecksumOpt,
       preCommitLogSegment,
-      catalogTable.map(_.identifier))
+      catalogTable)
     val postCommitReconstructionTime = System.nanoTime()
 
     // Post stats
@@ -2530,6 +2535,13 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   protected def incrementallyDeriveChecksum(
       attemptVersion: Long,
       currentTransactionInfo: CurrentTransactionInfo): Option[VersionChecksum] = {
+    // Don't include [[AddFile]]s in CRC if this commit is modifying the schema of table in some
+    // way. This is to make sure we don't carry any DROPPED column from previous CRC to this CRC
+    // forever and can start fresh from next commit.
+    // If the oldSnapshot itself is missing, we don't incrementally compute the checksum.
+    val allFilesInCrcWritePathEnabled =
+      Snapshot.allFilesInCrcWritePathEnabled(spark, snapshot) &&
+        (snapshot.version == -1 || snapshot.metadata.schema == metadata.schema)
 
     incrementallyDeriveChecksum(
       spark,
@@ -2540,7 +2552,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       protocol = currentTransactionInfo.protocol,
       operationName = currentTransactionInfo.op.name,
       txnIdOpt = Some(currentTransactionInfo.txnId),
-      previousVersionState = scala.Left(snapshot)
+      previousVersionState = scala.Left(snapshot),
+      includeAddFilesInCrc = allFilesInCrcWritePathEnabled
     ).toOption
   }
 
@@ -2583,7 +2596,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         log"${MDC(DeltaLogKeys.NUM_ACTIONS, adds)} adds, " +
         log"${MDC(DeltaLogKeys.NUM_ACTIONS2, removes)} removes, " +
         log"${MDC(DeltaLogKeys.NUM_PREDICATES, readPredicates.size)} read predicates, " +
-        log"${MDC(DeltaLogKeys.NUM_FILES, readFiles.size)} read files"
+        log"${MDC(DeltaLogKeys.NUM_FILES, readFiles.size.toLong)} read files"
       }
 
       logInfo(logPrefix +
@@ -2639,7 +2652,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     val (newPreCommitLogSegment, newCommitFileStatuses) = deltaLog.getUpdatedLogSegment(
       preCommitLogSegment,
       readSnapshotTableCommitCoordinatorClientOpt,
-      catalogTable.map(_.identifier))
+      catalogTable)
     assert(preCommitLogSegment.version + newCommitFileStatuses.size ==
       newPreCommitLogSegment.version)
     preCommitLogSegment = newPreCommitLogSegment
