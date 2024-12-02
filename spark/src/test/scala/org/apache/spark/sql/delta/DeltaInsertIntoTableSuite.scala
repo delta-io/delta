@@ -346,13 +346,12 @@ class DeltaInsertIntoSQLSuite
           .format("delta")
           .insertInto(tableName)
 
-        val result = spark.sql(s"SELECT * FROM $tableName").collect()
-        val expected = Seq(
-          Row(1, Map("event" -> Row(1, 1, null))),
-          Row(1, Map("event" -> Row(1, 1, "deprecated")))
-        )
-
-        assert(result.toSet == expected.toSet)
+        checkAnswer(
+          spark.sql(s"SELECT * FROM $tableName"),
+          Seq(
+            Row(1, Map("event" -> Row(1, 1, null))),
+            Row(1, Map("event" -> Row(1, 1, "deprecated")))
+        ))
       }
     }
   }
@@ -419,12 +418,11 @@ class DeltaInsertIntoSQLSuite
 
       withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
         sql("INSERT INTO target SELECT * FROM source")
-        val result = spark.sql(s"SELECT * FROM source").collect()
-        val expected = Seq(
-          Row(1, Map("event" -> Row(1, 1, "deprecated")))
-        )
-
-        assert(result.toSet == expected.toSet)
+        checkAnswer(
+          spark.sql(s"SELECT * FROM source"),
+          Seq(
+            Row(1, Map("event" -> Row(1, 1, "deprecated")))
+        ))
       }
     }
   }
@@ -461,12 +459,11 @@ class DeltaInsertIntoSQLSuite
 
       withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
         sql("INSERT INTO target SELECT * FROM source")
-        val result = spark.sql(s"SELECT * FROM source").collect()
-        val expected = Seq(
-          Row(1, Map("event" -> Map("subEvent" -> Row(1, 1, "deprecated"))))
-        )
-
-        assert(result.toSet == expected.toSet)
+        checkAnswer(
+          spark.sql(s"SELECT * FROM source"),
+          Seq(
+            Row(1, Map("event" -> Map("subEvent" -> Row(1, 1, "deprecated"))))
+        ))
       }
     }
   }
@@ -489,9 +486,11 @@ class DeltaInsertIntoSQLSuite
 
       sql("INSERT INTO target SELECT * FROM source")
 
-      val result = spark.sql("SELECT * FROM target").collect()
-      val expected = Seq(Row(1, Map(1 -> Row(2, 3))))
-      assert(result.toSet == expected.toSet)
+      checkAnswer(
+        spark.sql("SELECT * FROM target"),
+        Seq(
+          Row(1, Map(1 -> Row(2, 3)))
+      ))
     }
   }
 
@@ -513,9 +512,11 @@ class DeltaInsertIntoSQLSuite
 
       sql("INSERT INTO target SELECT * FROM source")
 
-      val result = spark.sql("SELECT * FROM target").collect()
-      val expected = Seq(Row(1, Map("m1" -> Row(2, 3))))
-      assert(result.toSet == expected.toSet)
+      checkAnswer(
+        spark.sql("SELECT * FROM target"),
+        Seq(
+          Row(1, Map("m1" -> Row(2, 3)))
+      ))
     }
   }
 

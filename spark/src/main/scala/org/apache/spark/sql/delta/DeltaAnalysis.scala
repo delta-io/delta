@@ -933,7 +933,7 @@ class DeltaAnalysis(session: SparkSession)
         attr
       case (s: MapType, t: MapType)
         if !DataType.equalsStructurally(s, t, ignoreNullability = true) || allowTypeWidening =>
-        // only trigger addCastsToMaps if exits differences like extra fields, renaming
+        // only trigger addCastsToMaps if exists differences like extra fields, renaming
         // Or allowTypeWidening is enabled
         addCastsToMaps(tblName, attr, s, t, allowTypeWidening)
       case _ =>
@@ -1138,24 +1138,23 @@ class DeltaAnalysis(session: SparkSession)
       sourceMapType: MapType,
       targetMapType: MapType,
       allowTypeWidening: Boolean): Expression = {
-
     val transformedKeys =
       if (sourceMapType.keyType != targetMapType.keyType) {
         // Create a transformation for the keys
         ArrayTransform(MapKeys(parent), {
           val key = NamedLambdaVariable(
-                  "key", sourceMapType.keyType, nullable = false)
+            "key", sourceMapType.keyType, nullable = false)
 
           val keyAttr = AttributeReference(
-              "key", targetMapType.keyType, nullable = false)()
+            "key", targetMapType.keyType, nullable = false)()
 
           val castedKey =
-              addCastToColumn(
-                key,
-                keyAttr,
-                tableName,
-                allowTypeWidening
-              )
+            addCastToColumn(
+              key,
+              keyAttr,
+              tableName,
+              allowTypeWidening
+            )
           LambdaFunction(castedKey, Seq(key))
         })
       } else {
@@ -1167,18 +1166,18 @@ class DeltaAnalysis(session: SparkSession)
         // Create a transformation for the values
         ArrayTransform(MapValues(parent), {
           val value = NamedLambdaVariable(
-              "value", sourceMapType.valueType, sourceMapType.valueContainsNull)
+            "value", sourceMapType.valueType, sourceMapType.valueContainsNull)
 
           val valueAttr = AttributeReference(
-              "value", targetMapType.valueType, sourceMapType.valueContainsNull)()
+            "value", targetMapType.valueType, sourceMapType.valueContainsNull)()
 
           val castedValue =
-              addCastToColumn(
-                value,
-                valueAttr,
-                tableName,
-                allowTypeWidening
-              )
+            addCastToColumn(
+              value,
+              valueAttr,
+              tableName,
+              allowTypeWidening
+            )
           LambdaFunction(castedValue, Seq(value))
         })
       } else {
