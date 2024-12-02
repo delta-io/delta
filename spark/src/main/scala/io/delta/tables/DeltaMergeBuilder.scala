@@ -22,7 +22,6 @@ import scala.collection.Map
 import org.apache.spark.sql.delta.{DeltaAnalysisException, PostHocResolveUpCast, PreprocessTableMerge, ResolveDeltaMergeInto}
 import org.apache.spark.sql.delta.DeltaTableUtils.withActiveSession
 import org.apache.spark.sql.delta.DeltaViewHelper
-import org.apache.spark.sql.delta.commands.MergeIntoCommand
 import org.apache.spark.sql.delta.util.AnalysisHelper
 
 import org.apache.spark.annotation._
@@ -30,7 +29,7 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.ExtendedAnalysisException
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
-import org.apache.spark.sql.catalyst.expressions.{AttributeReference, NamedExpression}
+import org.apache.spark.sql.catalyst.expressions.AttributeReference
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.functions.expr
 import org.apache.spark.sql.internal.SQLConf
@@ -158,6 +157,8 @@ class DeltaMergeBuilder private(
   extends AnalysisHelper
   with Logging
   {
+  private[tables] val sparkSession = targetTable.toDF.sparkSession
+  import sparkSession.RichColumn
 
   def this(
       targetTable: DeltaTable,
@@ -291,7 +292,6 @@ class DeltaMergeBuilder private(
    * @since 0.3.0
    */
   def execute(): Unit = improveUnsupportedOpError {
-    val sparkSession = targetTable.toDF.sparkSession
     withActiveSession(sparkSession) {
       // Note: We are explicitly resolving DeltaMergeInto plan rather than going to through the
       // Analyzer using `Dataset.ofRows()` because the Analyzer incorrectly resolves all
@@ -416,6 +416,7 @@ object DeltaMergeBuilder {
 class DeltaMergeMatchedActionBuilder private(
     private val mergeBuilder: DeltaMergeBuilder,
     private val matchCondition: Option[Column]) {
+  import mergeBuilder.sparkSession.RichColumn
 
   /**
    * Update the matched table rows based on the rules defined by `set`.
@@ -500,7 +501,7 @@ class DeltaMergeMatchedActionBuilder private(
   }
 
   private def toStrColumnMap(map: Map[String, String]): Map[String, Column] =
-    map.mapValues(functions.expr(_)).toMap
+    map.mapValues(functions.expr).toMap
 }
 
 object DeltaMergeMatchedActionBuilder {
@@ -530,6 +531,7 @@ object DeltaMergeMatchedActionBuilder {
 class DeltaMergeNotMatchedActionBuilder private(
     private val mergeBuilder: DeltaMergeBuilder,
     private val notMatchCondition: Option[Column]) {
+  import mergeBuilder.sparkSession.RichColumn
 
   /**
    * Insert a new row to the target table based on the rules defined by `values`.
@@ -629,6 +631,7 @@ object DeltaMergeNotMatchedActionBuilder {
 class DeltaMergeNotMatchedBySourceActionBuilder private(
     private val mergeBuilder: DeltaMergeBuilder,
     private val notMatchBySourceCondition: Option[Column]) {
+  import mergeBuilder.sparkSession.RichColumn
 
   /**
    * Update an unmatched target table row based on the rules defined by `set`.
@@ -702,7 +705,7 @@ class DeltaMergeNotMatchedBySourceActionBuilder private(
   }
 
   private def toStrColumnMap(map: Map[String, String]): Map[String, Column] =
-    map.mapValues(functions.expr(_)).toMap
+    map.mapValues(functions.expr).toMap
 }
 
 object DeltaMergeNotMatchedBySourceActionBuilder {

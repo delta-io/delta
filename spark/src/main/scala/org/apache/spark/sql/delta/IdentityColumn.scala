@@ -27,6 +27,7 @@ import org.apache.spark.sql.{Column, DataFrame, Dataset, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
 import org.apache.spark.sql.catalyst.plans.logical.{LocalRelation, LogicalPlan}
+import org.apache.spark.sql.classic.ClassicConversions._
 import org.apache.spark.sql.execution.datasources.WriteTaskStats
 import org.apache.spark.sql.functions.{array, max, min, to_json}
 import org.apache.spark.sql.types.{MetadataBuilder, StructField, StructType}

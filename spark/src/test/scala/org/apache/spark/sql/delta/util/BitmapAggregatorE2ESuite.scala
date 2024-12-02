@@ -26,6 +26,8 @@ import org.apache.spark.sql.delta.deletionvectors.{PortableRoaringBitmapArraySer
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 
 import org.apache.spark.sql.{Column, QueryTest}
+import org.apache.spark.sql.classic.ClassicConversions._
+import org.apache.spark.sql.internal.ExpressionUtils.expression
 import org.apache.spark.sql.test.SharedSparkSession
 
 class BitmapAggregatorE2ESuite extends QueryTest
@@ -198,7 +200,7 @@ object BitmapAggregatorE2ESuite {
   private[delta] def bitmapAggColumn(
       column: Column,
       format: RoaringBitmapArrayFormat.Value): Column = {
-    val func = new BitmapAggregator(column.expr, format);
+    val func = new BitmapAggregator(expression(column), format);
     Column(func.toAggregateExpression(isDistinct = false))
   }
 }

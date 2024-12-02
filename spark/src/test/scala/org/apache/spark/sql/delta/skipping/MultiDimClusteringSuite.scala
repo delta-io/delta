@@ -34,6 +34,7 @@ class MultiDimClusteringSuite extends QueryTest
   private lazy val sparkSession = spark
   // scalastyle:off sparkimplicits
   import sparkSession.implicits._
+  import sparkSession.RichColumn
   // scalastyle:on sparkimplicits
 
   test("Negative case - ZOrder clustering expression with zero columns") {

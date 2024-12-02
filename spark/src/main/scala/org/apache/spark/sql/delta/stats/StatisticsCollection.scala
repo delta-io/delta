@@ -44,6 +44,7 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.parser.{AbstractSqlParser, AstBuilder, ParseException, ParserUtils}
 import org.apache.spark.sql.catalyst.parser.SqlBaseParser.MultipartIdentifierListContext
+import org.apache.spark.sql.classic.ClassicConversions._
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.internal.SQLConf

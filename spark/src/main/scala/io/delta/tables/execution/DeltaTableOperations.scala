@@ -76,12 +76,14 @@ trait DeltaTableOperations extends AnalysisHelper { self: io.delta.tables.DeltaT
   protected def executeUpdate(
       set: Map[String, Column],
       condition: Option[Column]): Unit = improveUnsupportedOpError {
-    withActiveSession(sparkSession) {
+    val session = sparkSession
+    withActiveSession(session) {
+      import session.expression
       val assignments = set.map { case (targetColName, column) =>
-        Assignment(UnresolvedAttribute.quotedString(targetColName), column.expr)
+        Assignment(UnresolvedAttribute.quotedString(targetColName), expression(column))
       }.toSeq
       val update =
-        UpdateTable(self.toDF.queryExecution.analyzed, assignments, condition.map(_.expr))
+        UpdateTable(self.toDF.queryExecution.analyzed, assignments, condition.map(expression))
       toDataset(sparkSession, update)
     }
   }

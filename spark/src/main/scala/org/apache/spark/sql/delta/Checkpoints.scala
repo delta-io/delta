@@ -45,6 +45,7 @@ import org.apache.spark.sql.{Column, DataFrame, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{Cast, ElementAt, Literal}
+import org.apache.spark.sql.classic.ClassicConversions._
 import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.datasources.FileFormat
 import org.apache.spark.sql.execution.datasources.OutputWriter

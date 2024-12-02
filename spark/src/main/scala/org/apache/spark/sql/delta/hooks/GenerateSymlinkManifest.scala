@@ -35,6 +35,7 @@ import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.catalog.ExternalCatalogUtils
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Cast, Concat, Expression, Literal, ScalaUDF}
+import org.apache.spark.sql.classic.ClassicConversions._
 import org.apache.spark.sql.execution.datasources.InMemoryFileIndex
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.types.StringType

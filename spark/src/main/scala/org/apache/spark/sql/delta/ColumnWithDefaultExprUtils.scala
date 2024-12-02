@@ -30,6 +30,7 @@ import org.apache.spark.sql.{Column, DataFrame}
 import org.apache.spark.sql.catalyst.expressions.EqualNullSafe
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.catalyst.util.ResolveDefaultColumns._
+import org.apache.spark.sql.classic.ClassicConversions._
 import org.apache.spark.sql.execution.QueryExecution
 import org.apache.spark.sql.execution.streaming.IncrementalExecution
 import org.apache.spark.sql.types.{MetadataBuilder, StructField, StructType}
@@ -111,6 +112,7 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
       schema: StructType,
       data: DataFrame,
       nullAsDefault: Boolean): (DataFrame, Seq[Constraint], Set[String]) = {
+    val spark = queryExecution.sparkSession
     val topLevelOutputNames = CaseInsensitiveMap(data.schema.map(f => f.name -> f).toMap)
     lazy val metadataOutputNames = CaseInsensitiveMap(schema.map(f => f.name -> f).toMap)
     val constraints = mutable.ArrayBuffer[Constraint]()
@@ -123,7 +125,8 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
             val column = SchemaUtils.fieldToColumn(f)
             // Add a constraint to make sure the value provided by the user is the same as the value
             // calculated by the generation expression.
-            constraints += Constraints.Check(s"Generated Column", EqualNullSafe(column.expr, expr))
+            constraints += Constraints.Check(
+              s"Generated Column", EqualNullSafe(spark.expression(column), expr))
             Some(column)
           } else {
             Some(Column(expr).alias(f.name))

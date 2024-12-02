@@ -226,7 +226,7 @@ class MergeIntoDVsSuite extends MergeIntoDVsTests {
           tableHasDVs = true,
           targetDf = sourceDF.as("s").join(targetDFWithMetadata.as("t"), condition),
           candidateFiles = corruptedFiles,
-          condition = condition.expr
+          condition = spark.expression(condition)
         )
       }
       assert(e.getCause.getMessage.contains("Encountered a non matched file path."))

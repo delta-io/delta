@@ -41,6 +41,8 @@ import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.Literal.{FalseLiteral, TrueLiteral}
 import org.apache.spark.sql.catalyst.expressions.objects.InvokeLike
 import org.apache.spark.sql.catalyst.util.TypeUtils
+import org.apache.spark.sql.classic.ClassicConversions._
+import org.apache.spark.sql.classic.ColumnConversions.RichColumn
 import org.apache.spark.sql.execution.InSubqueryExec
 import org.apache.spark.sql.expressions.SparkUserDefinedFunction
 import org.apache.spark.sql.functions._

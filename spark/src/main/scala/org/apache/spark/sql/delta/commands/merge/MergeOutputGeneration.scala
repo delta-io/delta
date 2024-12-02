@@ -26,7 +26,9 @@ import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical._
+import org.apache.spark.sql.classic.ClassicConversions._
 import org.apache.spark.sql.functions._
+import org.apache.spark.sql.internal.ExpressionUtils.expression
 
 /**
  * Contains logic to transform the merge clauses into expressions that can be evaluated to obtain
@@ -164,8 +166,8 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
     // That is, conditionally invokes them based on whether there was a match in the outer join.
 
     // Predicates to check whether there was a match in the full outer join.
-    val ifSourceRowNull = col(SOURCE_ROW_PRESENT_COL).isNull.expr
-    val ifTargetRowNull = col(TARGET_ROW_PRESENT_COL).isNull.expr
+    val ifSourceRowNull = expression(col(SOURCE_ROW_PRESENT_COL).isNull)
+    val ifTargetRowNull = expression(col(TARGET_ROW_PRESENT_COL).isNull)
 
     val outputCols = targetWriteColNames.zipWithIndex.map { case (name, i) =>
       // Coupled with the clause conditions, the resultant possibly-nested CaseWhens can
@@ -213,7 +215,8 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
         Column(Alias(caseWhen, name)())
       }
     }
-    logDebug("writeAllChanges: join output expressions\n\t" + seqToString(outputCols.map(_.expr)))
+    logDebug("writeAllChanges: join output expressions\n\t" + seqToString(
+      outputCols.map(expression)))
     outputCols
   }.toIndexedSeq
 
@@ -421,36 +424,36 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
 
     val cdcTypeCol = outputCols.last
     val cdcArray = Column(CaseWhen(Seq(
-      EqualNullSafe(cdcTypeCol.expr, Literal(CDC_TYPE_INSERT)) -> array(
-        struct(outputCols: _*)).expr,
+      EqualNullSafe(expression(cdcTypeCol), Literal(CDC_TYPE_INSERT)) -> expression(array(
+        struct(outputCols: _*))),
 
-      EqualNullSafe(cdcTypeCol.expr, Literal(CDC_TYPE_UPDATE_POSTIMAGE)) -> array(
+      EqualNullSafe(expression(cdcTypeCol), Literal(CDC_TYPE_UPDATE_POSTIMAGE)) -> expression(array(
         struct(updatePreimageCdcOutput: _*),
-        struct(outputCols: _*)).expr,
+        struct(outputCols: _*))),
 
-      EqualNullSafe(cdcTypeCol.expr, CDC_TYPE_DELETE) -> array(
-        struct(deleteCdcOutput: _*)).expr),
+      EqualNullSafe(expression(cdcTypeCol), CDC_TYPE_DELETE) -> expression(array(
+        struct(deleteCdcOutput: _*)))),
 
       // If none of the CDC cases apply (true for purely rewritten target rows, dropped source
       // rows, etc.) just stick to the normal output.
-      array(struct(mainDataOutput: _*)).expr
+      expression(array(struct(mainDataOutput: _*)))
     ))
 
     val cdcToMainDataArray = Column(If(
       Or(
-        EqualNullSafe(col(s"packedCdc.$CDC_TYPE_COLUMN_NAME").expr,
+        EqualNullSafe(expression(col(s"packedCdc.$CDC_TYPE_COLUMN_NAME")),
           Literal(CDC_TYPE_INSERT)),
-        EqualNullSafe(col(s"packedCdc.$CDC_TYPE_COLUMN_NAME").expr,
+        EqualNullSafe(expression(col(s"packedCdc.$CDC_TYPE_COLUMN_NAME")),
           Literal(CDC_TYPE_UPDATE_POSTIMAGE))),
-      array(
+      expression(array(
         col("packedCdc"),
         struct(
           outputColNames
             .dropRight(1)
             .map { n => col(s"packedCdc.`$n`") }
             :+ Column(CDC_TYPE_NOT_CDC).as(CDC_TYPE_COLUMN_NAME): _*)
-      ).expr,
-      array(col("packedCdc")).expr
+      )),
+      expression(array(col("packedCdc")))
     ))
 
     if (deduplicateDeletes.enabled) {

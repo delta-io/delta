@@ -182,7 +182,7 @@ class DeltaTable private[tables](
    * @since 0.3.0
    */
   def delete(condition: Column): Unit = {
-    executeDelete(Some(condition.expr))
+    executeDelete(Some(_df.sparkSession.expression(condition)))
   }
 
   /**

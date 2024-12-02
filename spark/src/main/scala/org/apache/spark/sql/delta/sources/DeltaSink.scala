@@ -33,6 +33,7 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.Alias
 import org.apache.spark.sql.catalyst.types.DataTypeUtils
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
+import org.apache.spark.sql.classic.ClassicConversions._
 import org.apache.spark.sql.execution.{QueryExecution, SQLExecution}
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
@@ -198,6 +199,7 @@ case class DeltaSink(
     }
     if (!needCast) return data
 
+    import data.sparkSession.RichColumn
     val castColumns = data.columns.map { columnName =>
       val castExpr = castIfNeeded(
         fromExpression = data.col(columnName).expr,

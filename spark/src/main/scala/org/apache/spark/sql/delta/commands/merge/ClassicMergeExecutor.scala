@@ -29,6 +29,8 @@ import org.apache.spark.sql.delta.util.SetAccumulator
 import org.apache.spark.sql.{Column, Dataset, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.{And, Expression, Literal, Or}
 import org.apache.spark.sql.catalyst.plans.logical.DeltaMergeIntoClause
+import org.apache.spark.sql.classic.ClassicConversions._
+import org.apache.spark.sql.classic.ColumnConversions._
 import org.apache.spark.sql.functions.{coalesce, col, count, input_file_name, lit, monotonically_increasing_id, sum}
 
 /**
@@ -246,7 +248,7 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
    */
   protected def generateFilterForModifiedRows(): Expression = {
     val matchedExpression = if (matchedClauses.nonEmpty) {
-      And(Column(condition).expr, clauseDisjunction(matchedClauses))
+      And(condition, clauseDisjunction(matchedClauses))
     } else {
       Literal.FalseLiteral
     }
