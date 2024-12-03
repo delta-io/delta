@@ -149,10 +149,11 @@ public interface CommitCoordinatorClient {
    *
    * @param engine The {@link Engine} instance to use, if needed.
    * @param tableDescriptor The descriptor for the table.
-   * @param version The version until which the commit coordinator client should backfill.
-   * @param lastKnownBackfilledVersion The last known version that was backfilled before this API
-   *     was called. If it is {@link Optional#empty()}, then the commit coordinator client should
-   *     backfill from the beginning of the table.
+   * @param version The version (inclusive) until which the commit coordinator client should
+   *     backfill.
+   * @param lastKnownBackfilledVersion The last known version (inclusive) that was backfilled before
+   *     this API was called. If it is {@link Optional#empty()}, then the commit coordinator client
+   *     should backfill from the beginning of the table.
    * @throws IOException if there is an IO error while backfilling the commits.
    */
   void backfillToVersion(

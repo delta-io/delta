@@ -28,6 +28,8 @@ import java.util.Optional;
  * The complete descriptor of a Coordinated Commits (CC) Delta table, including its logPath, table
  * identifier, and table CC configuration.
  *
+ * <p>The table identifier is not required for path-based tables.
+ *
  * @since 3.3.0
  */
 @Evolving
