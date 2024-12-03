@@ -19,6 +19,7 @@ package io.delta.kernel;
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.types.StructType;
+import java.util.List;
 
 /**
  * Represents the snapshot of a Delta table.
@@ -36,6 +37,16 @@ public interface Snapshot {
    */
   long getVersion(Engine engine);
 
+  /**
+   * Get the names of the partition columns in the Delta table at this snapshot.
+   *
+   * <p>The partition column names are returned in the order they are defined in the Delta table
+   * schema. If the table does not define any partition columns, this method returns an empty list.
+   *
+   * @param engine {@link Engine} instance to use in Delta Kernel.
+   * @return a list of partition column names, or an empty list if the table is not partitioned.
+   */
+  List<String> getPartitionColumnNames(Engine engine);
   /**
    * Get the schema of the table at this snapshot.
    *
