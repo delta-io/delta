@@ -79,7 +79,7 @@ trait AlterDeltaTableCommand extends DeltaCommand {
   protected def checkDependentExpressions(
       sparkSession: SparkSession,
       columnParts: Seq[String],
-      newMetadata: actions.Metadata,
+      oldMetadata: actions.Metadata,
       protocol: Protocol): Unit = {
     if (!sparkSession.sessionState.conf.getConf(
       DeltaSQLConf.DELTA_ALTER_TABLE_CHANGE_COLUMN_CHECK_EXPRESSIONS)) {
@@ -87,14 +87,14 @@ trait AlterDeltaTableCommand extends DeltaCommand {
     }
     // check if the column to change is referenced by check constraints
     val dependentConstraints =
-      Constraints.findDependentConstraints(sparkSession, columnParts, newMetadata)
+      Constraints.findDependentConstraints(sparkSession, columnParts, oldMetadata)
     if (dependentConstraints.nonEmpty) {
       throw DeltaErrors.foundViolatingConstraintsForColumnChange(
         UnresolvedAttribute(columnParts).name, dependentConstraints)
     }
     // check if the column to change is referenced by any generated columns
     val dependentGenCols = SchemaUtils.findDependentGeneratedColumns(
-      sparkSession, columnParts, protocol, newMetadata.schema)
+      sparkSession, columnParts, protocol, oldMetadata.schema)
     if (dependentGenCols.nonEmpty) {
       throw DeltaErrors.foundViolatingGeneratedColumnsForColumnChange(
         UnresolvedAttribute(columnParts).name, dependentGenCols)
@@ -769,7 +769,7 @@ case class AlterTableDropColumnsDeltaCommand(
         configuration = newConfiguration
       )
       columnsToDrop.foreach { columnParts =>
-        checkDependentExpressions(sparkSession, columnParts, newMetadata, txn.protocol)
+        checkDependentExpressions(sparkSession, columnParts, metadata, txn.protocol)
       }
 
       txn.updateMetadata(newMetadata)
@@ -928,7 +928,7 @@ case class AlterTableChangeColumnDeltaCommand(
       if (newColumn.name != columnName) {
         // need to validate the changes if the column is renamed
         checkDependentExpressions(
-          sparkSession, columnPath :+ columnName, newMetadata, txn.protocol)
+          sparkSession, columnPath :+ columnName, metadata, txn.protocol)
       }
 
 
