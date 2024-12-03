@@ -22,12 +22,11 @@ import java.nio.{ByteBuffer, ByteOrder}
 import java.nio.file.Files
 
 import org.apache.spark.sql.catalyst.expressions.aggregation.BitmapAggregator
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.deletionvectors.{PortableRoaringBitmapArraySerializationFormat, RoaringBitmapArray, RoaringBitmapArrayFormat}
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 
 import org.apache.spark.sql.{Column, QueryTest}
-import org.apache.spark.sql.classic.ClassicConversions._
-import org.apache.spark.sql.internal.ExpressionUtils.expression
 import org.apache.spark.sql.test.SharedSparkSession
 
 class BitmapAggregatorE2ESuite extends QueryTest

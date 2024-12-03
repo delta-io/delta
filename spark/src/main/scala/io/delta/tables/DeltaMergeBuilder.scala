@@ -158,7 +158,6 @@ class DeltaMergeBuilder private(
   extends AnalysisHelper
   with Logging
   {
-  private[tables] val sparkSession = targetTable.toDF.sparkSession
 
   def this(
       targetTable: DeltaTable,
@@ -292,6 +291,7 @@ class DeltaMergeBuilder private(
    * @since 0.3.0
    */
   def execute(): Unit = improveUnsupportedOpError {
+    val sparkSession = targetTable.toDF.sparkSession
     withActiveSession(sparkSession) {
       // Note: We are explicitly resolving DeltaMergeInto plan rather than going to through the
       // Analyzer using `Dataset.ofRows()` because the Analyzer incorrectly resolves all
@@ -500,7 +500,7 @@ class DeltaMergeMatchedActionBuilder private(
   }
 
   private def toStrColumnMap(map: Map[String, String]): Map[String, Column] =
-    map.mapValues(functions.expr).toMap
+    map.mapValues(functions.expr(_)).toMap
 }
 
 object DeltaMergeMatchedActionBuilder {
@@ -702,7 +702,7 @@ class DeltaMergeNotMatchedBySourceActionBuilder private(
   }
 
   private def toStrColumnMap(map: Map[String, String]): Map[String, Column] =
-    map.mapValues(functions.expr).toMap
+    map.mapValues(functions.expr(_)).toMap
 }
 
 object DeltaMergeNotMatchedBySourceActionBuilder {

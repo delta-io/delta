@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.cdc.MergeCDCTests
 import org.apache.spark.sql.delta.commands.{DeletionVectorBitmapGenerator, DMLWithDeletionVectorsHelper}
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
@@ -226,7 +227,7 @@ class MergeIntoDVsSuite extends MergeIntoDVsTests {
           tableHasDVs = true,
           targetDf = sourceDF.as("s").join(targetDFWithMetadata.as("t"), condition),
           candidateFiles = corruptedFiles,
-          condition = spark.expression(condition)
+          condition = condition.expr
         )
       }
       assert(e.getCause.getMessage.contains("Encountered a non matched file path."))

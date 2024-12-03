@@ -38,7 +38,6 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.util.DateTimeUtils.{getZoneId, stringToDate, stringToTimestamp, toJavaDate, toJavaTimestamp}
 import org.apache.spark.sql.catalyst.util.quietly
-import org.apache.spark.sql.classic.ColumnConversions
 import org.apache.spark.sql.execution.streaming.MemoryStream
 
 import org.apache.spark.sql.functions.{current_timestamp, lit, struct, typedLit}
@@ -622,9 +621,8 @@ trait GeneratedColumnSuiteBase
     } else {
       s"${generatedColumnType.sql} NOT NULL"
     }
-    val generateAsSql = ColumnConversions.RichColumn(generateAsExpression).expr.sql
     test(s"validateGeneratedColumns: column type ${columnTypeString}" +
-        s" $verb expression type $generateAsSql") {
+        s" $verb expression type $generateAsExpression") {
       val f1 = StructField("nullableIntCol", IntegerType, nullable = true)
       val f2 = withGenerationExpression(
         StructField("genCol", generatedColumnType, nullable = generatedColumnNullable),

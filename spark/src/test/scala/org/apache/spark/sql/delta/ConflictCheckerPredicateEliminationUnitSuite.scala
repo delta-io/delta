@@ -163,12 +163,12 @@ class ConflictCheckerPredicateEliminationUnitSuite
   }
 
   test("udf name is not exposed") {
-    import testImplicits.toRichColumn
+    import testImplicits._
     val random = udf(() => Math.random())
       .asNondeterministic()
       .withName("sensitive_udf_name")
     checkEliminationResult(
-      predicate = simpleExpressionA && $"c" > random().expr,
+      predicate = simpleExpressionA && (col("c") > random()).expr,
       expected = PredicateElimination(
         newPredicates = Seq(simpleExpressionA),
         eliminatedPredicates = Seq("scalaudf")))

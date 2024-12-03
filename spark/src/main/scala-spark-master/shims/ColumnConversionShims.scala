@@ -20,7 +20,8 @@ import org.apache.spark.sql.classic.ClassicConversions
 import org.apache.spark.sql.classic.ColumnConversions
 
 /**
- * Conversions from a [[Column]] to an [[Expression]], and vice versa.
+ * Conversions from a [[org.apache.spark.sql.Column]] to an
+ * [[org.apache.spark.sql.catalyst.expressions.Expression]], and vice versa.
  */
 object ClassicColumnConversions
   extends ClassicConversions
