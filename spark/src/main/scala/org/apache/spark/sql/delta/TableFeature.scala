@@ -922,12 +922,69 @@ object VacuumProtocolCheckTableFeature
  * The CheckpointProtectionTableFeature can only be removed if history is truncated up to
  * at least requireCheckpointProtectionBeforeVersion.
  */
-object CheckpointProtectionTableFeature extends WriterFeature(name = "checkpointProtection") {
+object CheckpointProtectionTableFeature
+    extends WriterFeature(name = "checkpointProtection")
+    with RemovableFeature {
+  def getCheckpointProtectionVersion(snapshot: Snapshot): Long = {
+    if (!snapshot.protocol.isFeatureSupported(CheckpointProtectionTableFeature)) return 0
+    DeltaConfigs.REQUIRE_CHECKPOINT_PROTECTION_BEFORE_VERSION.fromMetaData(snapshot.metadata)
+  }
+
   def metadataWithCheckpointProtection(metadata: Metadata, version: Long): Metadata = {
     val versionPropKey = DeltaConfigs.REQUIRE_CHECKPOINT_PROTECTION_BEFORE_VERSION.key
     val versionConf = versionPropKey -> version.toString
     metadata.copy(configuration = metadata.configuration + versionConf)
   }
+
+  /** Verify whether any deltas exist between version 0 to toVersion (inclusive). */
+  private def deltasUpToVersionAreTruncated(deltaLog: DeltaLog, toVersion: Long): Boolean = {
+    deltaLog
+      .getChangeLogFiles(startVersion = 0, endVersion = toVersion, failOnDataLoss = false)
+      .map { case (_, file) => file }
+      .filter(FileNames.isDeltaFile)
+      .take(1).isEmpty
+  }
+
+  def historyPriorToCheckpointProtectionVersionIsTruncated(snapshot: Snapshot): Boolean = {
+    val checkpointProtectionVersion = getCheckpointProtectionVersion(snapshot)
+    if (checkpointProtectionVersion <= 0) return true
+
+    val deltaLog = snapshot.deltaLog
+    // In most cases, the earliest checkpoint matches the version of the earliest commit. This is
+    // not true for new tables that were never cleaned up. Furthermore, if there is no checkpoint it
+    // means history is not truncated.
+    deltaLog.findEarliestReliableCheckpoint.exists(_ >= checkpointProtectionVersion) &&
+      deltasUpToVersionAreTruncated(deltaLog, checkpointProtectionVersion - 1)
+  }
+
+  /**
+   * This is a special feature in the sense that it requires history truncation but implements it
+   * as part of its downgrade process. This is implemented like this for 2 reasons:
+   *
+   *  1. It allows us to remove the feature table property after the clean up in the preDowngrade
+   *     command is successful.
+   *  2. It does not require to scan the history for features traces as long as all history
+   *     before requireCheckpointProtectionBeforeVersion is truncated.
+   */
+  override def requiresHistoryProtection: Boolean = false
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand = {
+    CheckpointProtectionPreDowngradeCommand(table)
+  }
+
+  /** Returns true if table property is absent. */
+  override def validateRemoval(snapshot: Snapshot): Boolean = {
+    val property = DeltaConfigs.REQUIRE_CHECKPOINT_PROTECTION_BEFORE_VERSION.key
+    !snapshot.metadata.configuration.contains(property)
+  }
+
+  /**
+   * The feature uses the `requireCheckpointProtectionBeforeVersion` property. This is removed when
+   * dropping the feature but we allow it to exist in the history. This is to allow history
+   * truncation at the boundary of requireCheckpointProtectionBeforeVersion rather than the last
+   * 24 hours. Otherwise, dropping the feature would always require 24 hour waiting time.
+   */
+  override def actionUsesFeature(action: Action): Boolean = false
 }
 
 /**

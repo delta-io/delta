@@ -967,10 +967,32 @@
     ],
     "sqlState" : "0AKDE"
   },
+  "DELTA_FEATURE_CAN_ONLY_DROP_CHECKPOINT_PROTECTION_WITH_HISTORY_TRUNCATION" : {
+    "message" : [
+      "Could not drop the Checkpoint Protection feature.",
+      "This feature can only be dropped by truncating history.",
+      "Please try again with the TRUNCATE HISTORY option:",
+      "",
+      "    ALTER TABLE table_name DROP FEATURE checkpointProtection TRUNCATE HISTORY"
+    ],
+    "sqlState" : "55000"
+  },
   "DELTA_FEATURE_DROP_CHECKPOINT_FAILED" : {
     "message" : [
       "Dropping <featureName> failed due to a failure in checkpoint creation.",
       "Please try again later. It the issue persists, contact support."
+    ],
+    "sqlState" : "22KD0"
+  },
+  "DELTA_FEATURE_DROP_CHECKPOINT_PROTECTION_WAIT_FOR_RETENTION_PERIOD" : {
+    "message" : [
+      "The operation did not succeed because there are still traces of dropped features ",
+      "in the table history. CheckpointProtection cannot be dropped until these historical",
+      "versions have expired.",
+      "",
+      "To drop CheckpointProtection, please wait for the historical versions to",
+      "expire, and then repeat this command. The retention period for historical versions is",
+      "currently configured to <truncateHistoryLogRetentionPeriod>."
     ],
     "sqlState" : "22KD0"
   },

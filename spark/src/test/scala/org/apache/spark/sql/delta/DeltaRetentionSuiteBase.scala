@@ -161,7 +161,6 @@ trait DeltaRetentionSuiteBase extends QueryTest
       dayNum: Int,
       fs: FileSystem,
       checkpointOnly: Boolean = false): Unit = {
-    val logDir = log.logPath.toUri.toString
     val paths = log
       .listFrom(version)
       .collect { case FileNames.CheckpointFile(f, v) if v == version => f.getPath }
@@ -171,7 +170,7 @@ trait DeltaRetentionSuiteBase extends QueryTest
       fs.setTimes(cpPath, day(startTime, dayNum) + version * 1000, 0)
     }
     if (!checkpointOnly) {
-      val deltaPath = new Path(logDir + f"/$version%020d.json")
+      val deltaPath = new Path(log.logPath, new Path(f"$version%020d.json"))
       if (fs.exists(deltaPath)) {
         // Add some second offset so that we don't have files with same timestamps
         fs.setTimes(deltaPath, day(startTime, dayNum) + version * 1000, 0)
