@@ -297,26 +297,7 @@ trait TypeWideningInsertSchemaEvolutionTests
           metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType)))))
   )
 
-  // The next two tests document inconsistencies when handling maps. Using SQL or INSERT by position
-  // doesn't allow type evolution but using dataframe INSERT by name does.
-  testInserts("nested struct type evolution with field upcast in map")(
-    initialData = TestData(
-      "key int, m map<string, struct<x: int, y: short>>",
-      Seq("""{ "key": 1, "m": { "a": { "x": 1, "y": 2 } } }""")),
-    partitionBy = Seq("key"),
-    overwriteWhere = "key" -> 1,
-    insertData = TestData(
-      "key int, m map<string, struct<x: short, y: int>>",
-      Seq("""{ "key": 1, "m": { "a": { "x": 3, "y": 4 } } }""")),
-    expectedResult = ExpectedResult.Success(new StructType()
-      .add("key", IntegerType)
-      // Type evolution wasn't applied in the map.
-      .add("m", MapType(StringType, new StructType()
-        .add("x", IntegerType)
-        .add("y", ShortType)))),
-    excludeInserts = insertsDataframe.intersect(insertsByName)
-  )
-
+  // maps now allow type evolution for INSERT by position and name in SQL and dataframe.
   testInserts("nested struct type evolution with field upcast in map")(
     initialData = TestData(
       "key int, m map<string, struct<x: int, y: short>>",
@@ -332,7 +313,6 @@ trait TypeWideningInsertSchemaEvolutionTests
       .add("m", MapType(StringType, new StructType()
         .add("x", IntegerType)
         .add("y", IntegerType, nullable = true,
-          metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType))))),
-    includeInserts = insertsDataframe.intersect(insertsByName)
+          metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType)))))
   )
 }
