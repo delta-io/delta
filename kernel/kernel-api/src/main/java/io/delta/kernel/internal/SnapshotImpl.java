@@ -75,7 +75,7 @@ public class SnapshotImpl implements Snapshot {
 
   @Override
   public long getTimestamp(Engine engine) {
-    if (TableConfig.isICTEnabled(engine, metadata)) {
+    if (IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata)) {
       if (!inCommitTimestampOpt.isPresent()) {
         Optional<CommitInfo> commitInfoOpt =
             CommitInfo.getCommitInfoOpt(engine, logPath, logSegment.version);
