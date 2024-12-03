@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import java.util.Locale
 
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -34,7 +35,6 @@ import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
 import org.apache.spark.sql.catalyst.plans.logical.{LocalRelation, LogicalPlan, Project}
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.catalyst.util.{quoteIfNeeded, CaseInsensitiveMap}
-import org.apache.spark.sql.classic.ClassicConversions._
 import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.types._
@@ -202,7 +202,6 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
    * - The expression type is not the same as the column type.
    */
   def validateGeneratedColumns(spark: SparkSession, schema: StructType): Unit = {
-    import spark.RichColumn
     val (generatedColumns, normalColumns) = schema.partition(isGeneratedColumn)
     generatedColumns.foreach { c =>
       // Generated columns cannot be variant types because the writer must be able to enforce that

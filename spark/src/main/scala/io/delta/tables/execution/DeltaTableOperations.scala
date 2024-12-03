@@ -19,6 +19,7 @@ package io.delta.tables.execution
 import scala.collection.Map
 
 import org.apache.spark.sql.catalyst.TimeTravel
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog}
 import org.apache.spark.sql.delta.DeltaTableUtils.withActiveSession
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
@@ -78,12 +79,11 @@ trait DeltaTableOperations extends AnalysisHelper { self: io.delta.tables.DeltaT
       condition: Option[Column]): Unit = improveUnsupportedOpError {
     val session = sparkSession
     withActiveSession(session) {
-      import session.expression
       val assignments = set.map { case (targetColName, column) =>
-        Assignment(UnresolvedAttribute.quotedString(targetColName), expression(column))
+        Assignment(UnresolvedAttribute.quotedString(targetColName), column.expr)
       }.toSeq
       val update =
-        UpdateTable(self.toDF.queryExecution.analyzed, assignments, condition.map(expression))
+        UpdateTable(self.toDF.queryExecution.analyzed, assignments, condition.map(_.expr))
       toDataset(sparkSession, update)
     }
   }

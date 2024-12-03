@@ -19,6 +19,7 @@ package io.delta.tables
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.DeltaTableUtils.withActiveSession
 import org.apache.spark.sql.delta.actions.{Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
@@ -182,7 +183,7 @@ class DeltaTable private[tables](
    * @since 0.3.0
    */
   def delete(condition: Column): Unit = {
-    executeDelete(Some(_df.sparkSession.expression(condition)))
+    executeDelete(Some(condition.expr))
   }
 
   /**

@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import scala.collection.mutable
 
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.constraints.{Constraint, Constraints}
@@ -30,7 +31,6 @@ import org.apache.spark.sql.{Column, DataFrame}
 import org.apache.spark.sql.catalyst.expressions.EqualNullSafe
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.catalyst.util.ResolveDefaultColumns._
-import org.apache.spark.sql.classic.ClassicConversions._
 import org.apache.spark.sql.execution.QueryExecution
 import org.apache.spark.sql.execution.streaming.IncrementalExecution
 import org.apache.spark.sql.types.{MetadataBuilder, StructField, StructType}
@@ -126,7 +126,7 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
             // Add a constraint to make sure the value provided by the user is the same as the value
             // calculated by the generation expression.
             constraints += Constraints.Check(
-              s"Generated Column", EqualNullSafe(spark.expression(column), expr))
+              s"Generated Column", EqualNullSafe(column.expr, expr))
             Some(column)
           } else {
             Some(Column(expr).alias(f.name))

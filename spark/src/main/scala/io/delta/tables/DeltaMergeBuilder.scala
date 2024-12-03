@@ -19,6 +19,7 @@ package io.delta.tables
 import scala.collection.JavaConverters._
 import scala.collection.Map
 
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.{DeltaAnalysisException, PostHocResolveUpCast, PreprocessTableMerge, ResolveDeltaMergeInto}
 import org.apache.spark.sql.delta.DeltaTableUtils.withActiveSession
 import org.apache.spark.sql.delta.DeltaViewHelper
@@ -158,7 +159,6 @@ class DeltaMergeBuilder private(
   with Logging
   {
   private[tables] val sparkSession = targetTable.toDF.sparkSession
-  import sparkSession.RichColumn
 
   def this(
       targetTable: DeltaTable,
@@ -416,7 +416,6 @@ object DeltaMergeBuilder {
 class DeltaMergeMatchedActionBuilder private(
     private val mergeBuilder: DeltaMergeBuilder,
     private val matchCondition: Option[Column]) {
-  import mergeBuilder.sparkSession.RichColumn
 
   /**
    * Update the matched table rows based on the rules defined by `set`.
@@ -531,7 +530,6 @@ object DeltaMergeMatchedActionBuilder {
 class DeltaMergeNotMatchedActionBuilder private(
     private val mergeBuilder: DeltaMergeBuilder,
     private val notMatchCondition: Option[Column]) {
-  import mergeBuilder.sparkSession.RichColumn
 
   /**
    * Insert a new row to the target table based on the rules defined by `values`.
@@ -631,7 +629,6 @@ object DeltaMergeNotMatchedActionBuilder {
 class DeltaMergeNotMatchedBySourceActionBuilder private(
     private val mergeBuilder: DeltaMergeBuilder,
     private val notMatchBySourceCondition: Option[Column]) {
-  import mergeBuilder.sparkSession.RichColumn
 
   /**
    * Update an unmatched target table row based on the rules defined by `set`.

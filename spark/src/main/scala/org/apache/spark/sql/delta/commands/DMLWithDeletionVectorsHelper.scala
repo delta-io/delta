@@ -21,6 +21,7 @@ import java.util.UUID
 import scala.collection.generic.Sizing
 
 import org.apache.spark.sql.catalyst.expressions.aggregation.BitmapAggregator
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.{DeltaLog, DeltaParquetFileFormat, OptimisticTransaction, Snapshot}
 import org.apache.spark.sql.delta.DeltaParquetFileFormat._
 import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, FileAction}
@@ -39,7 +40,6 @@ import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Expression}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Project}
-import org.apache.spark.sql.classic.ClassicConversions._
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelationWithTable}
 import org.apache.spark.sql.execution.datasources.FileFormat.{FILE_PATH, METADATA_NAME}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
@@ -311,7 +311,6 @@ object DeletionVectorBitmapGenerator {
     target: DataFrame,
     targetDeltaLog: DeltaLog,
     deltaTxn: OptimisticTransaction) {
-    import spark.RichColumn
 
     case object CardinalityAndBitmapStruct {
       val name: String = "CardinalityAndBitmapStruct"

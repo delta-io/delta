@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.commands.merge
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, FileAction}
 import org.apache.spark.sql.delta.commands.{DeletionVectorBitmapGenerator, DMLWithDeletionVectorsHelper, MergeIntoCommandBase}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader.{CDC_TYPE_COLUMN_NAME, CDC_TYPE_NOT_CDC}
@@ -29,8 +30,7 @@ import org.apache.spark.sql.delta.util.SetAccumulator
 import org.apache.spark.sql.{Column, Dataset, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.{And, Expression, Literal, Or}
 import org.apache.spark.sql.catalyst.plans.logical.DeltaMergeIntoClause
-import org.apache.spark.sql.classic.ClassicConversions._
-import org.apache.spark.sql.classic.ColumnConversions._
+
 import org.apache.spark.sql.functions.{coalesce, col, count, input_file_name, lit, monotonically_increasing_id, sum}
 
 /**

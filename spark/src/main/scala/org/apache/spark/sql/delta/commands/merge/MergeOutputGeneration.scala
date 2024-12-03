@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.commands.merge
 
 import scala.collection.mutable
 
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.{RowCommitVersion, RowId}
 import org.apache.spark.sql.delta.commands.MergeIntoCommandBase
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -26,9 +27,7 @@ import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical._
-import org.apache.spark.sql.classic.ClassicConversions._
 import org.apache.spark.sql.functions._
-import org.apache.spark.sql.internal.ExpressionUtils.expression
 
 /**
  * Contains logic to transform the merge clauses into expressions that can be evaluated to obtain

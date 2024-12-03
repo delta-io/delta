@@ -20,6 +20,7 @@ import scala.collection.mutable
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.DMLUtils.TaggedCommitData
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -37,7 +38,6 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{And, Attribute, Expression, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.DeleteFromTable
 import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, CharVarcharUtils}
-import org.apache.spark.sql.classic.ClassicConversions._
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.execution.metric.SQLMetric
@@ -123,7 +123,6 @@ case class WriteIntoDelta(
       sparkSession: SparkSession,
       clusterBySpecOpt: Option[ClusterBySpec] = None,
       isTableReplace: Boolean = false): TaggedCommitData[Action] = {
-    import sparkSession.RichColumn
     import org.apache.spark.sql.delta.implicits._
     if (txn.readVersion > -1) {
       // This table already exists, check if the insert is valid.
