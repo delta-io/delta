@@ -1580,6 +1580,21 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_CHANGE_COLUMN_CHECK_DEPENDENT_EXPRESSIONS_USE_V2 =
+    buildConf("changeColumn.checkDependentExpressionsUseV2")
+      .internal()
+      .doc(
+        """
+          |More accurate implementation of checker for altering/renaming/dropping columns
+          |that might be referenced by constraints or generation rules.
+          |It respects nested arrays and maps, unlike the V1 checker.
+          |
+          |This is a safety switch - we should only turn this off when there is an issue with
+          |expression checking logic that prevents a valid column change from going through.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_ALTER_TABLE_DROP_COLUMN_ENABLED =
     buildConf("alterTable.dropColumn.enabled")
       .internal()
