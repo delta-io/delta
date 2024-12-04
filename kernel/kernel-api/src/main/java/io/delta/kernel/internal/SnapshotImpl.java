@@ -75,6 +75,9 @@ public class SnapshotImpl implements Snapshot {
 
   /**
    * Get the timestamp (in milliseconds since the Unix epoch) of the latest commit in this Snapshot.
+   * If the table does not yet exist (i.e. this Snapshot is being used to create the new table),
+   * this method returns -1. Note that this -1 value will never be exposed to users - either they
+   * get a valid snapshot for a table or they get an exception.
    *
    * <p>When InCommitTimestampTableFeature is enabled, the timestamp is retrieved from the
    * CommitInfo of the latest commit in this Snapshot, which can result in an IO operation.
