@@ -454,8 +454,10 @@ object StatisticsCollection extends DeltaCommand {
   }
 
   /**
-   * This method validates that the data type of data skipping column supports data skipping
-   * based on file statistics.
+   * This method validates that the data type of a data skipping column provided in
+   * DATA_SKIPPING_STATS_COLUMNS supports data skipping based on file statistics. If a struct
+   * column is specified, all its children are considered valid because stats will be collected
+   * for any supported types, and unsupported types will be ignored.
    * @param name The name of the data skipping column for validating data type.
    * @param dataType The data type of the data skipping column.
    * @param columnPaths The column paths of all valid fields.
