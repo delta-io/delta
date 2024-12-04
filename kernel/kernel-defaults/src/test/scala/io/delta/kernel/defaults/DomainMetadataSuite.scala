@@ -23,11 +23,14 @@ import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.{SnapshotImpl, TableImpl, TransactionBuilderImpl, TransactionImpl}
 import io.delta.kernel.internal.actions.{DomainMetadata, Protocol, SingleAction}
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
-import io.delta.kernel.internal.TableConfig.CHECKPOINT_INTERVAL
+import io.delta.kernel.internal.rowtracking.RowTrackingMetadataDomain
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.actions.{DomainMetadata => SparkDomainMetadata}
+import org.apache.spark.sql.delta.RowId.{
+  RowTrackingMetadataDomain => SparkRowTrackingMetadataDomain
+}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits.OptimisticTxnTestHelper
 
 import java.util.Collections
@@ -537,6 +540,86 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
             "testDomain3" -> SparkDomainMetadata("testDomain3", "", removed = false)
           )
         )
+      }
+    }
+  }
+
+  test("RowTrackingMetadataDomain can be committed and read") {
+    withTempDirAndEngine((tablePath, engine) => {
+      val rowTrackingMetadataDomain = new RowTrackingMetadataDomain(10)
+      val dmAction = rowTrackingMetadataDomain.toDomainMetadata
+
+      // The configuration string should be a JSON serialization of the rowTrackingMetadataDomain
+      assert(dmAction.getDomain === rowTrackingMetadataDomain.getDomainName)
+      assert(dmAction.getConfiguration === """{"rowIdHighWaterMark":10}""")
+
+      // Commit the DomainMetadata action and verify
+      createTableWithDomainMetadataSupported(engine, tablePath)
+      commitDomainMetadataAndVerify(
+        engine,
+        tablePath,
+        domainMetadatas = Seq(dmAction),
+        expectedValue = Map(rowTrackingMetadataDomain.getDomainName -> dmAction)
+      )
+
+      // Read the RowTrackingMetadataDomain from the table and verify
+      val table = Table.forPath(engine, tablePath)
+      val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      val rowTrackingMetadataDomainFromSnapshot =
+        RowTrackingMetadataDomain.fromSnapshot(snapshot)
+
+      assert(rowTrackingMetadataDomainFromSnapshot.isPresent)
+      assert(rowTrackingMetadataDomain === rowTrackingMetadataDomainFromSnapshot.get)
+    })
+  }
+
+  test("RowTrackingMetadataDomain Integration test - Write with Spark and read with Kernel") {
+    withTempDirAndEngine((tablePath, engine) => {
+      val tbl = "tbl"
+      withTable(tbl) {
+        // Create table with domain metadata enabled using Spark
+        spark.sql(s"CREATE TABLE $tbl (id LONG) USING delta LOCATION '$tablePath'")
+        spark.sql(
+          s"ALTER TABLE $tbl SET TBLPROPERTIES(" +
+          s"'delta.feature.domainMetadata' = 'enabled'," +
+          s"'delta.feature.rowTracking' = 'supported')"
+        )
+
+        // Append 100 rows to the table, with fresh row IDs from 0 to 99
+        // The `delta.rowTracking.rowIdHighWaterMark` should be 99
+        spark.range(0, 20).write.format("delta").mode("append").save(tablePath)
+        spark.range(20, 100).write.format("delta").mode("append").save(tablePath)
+
+        // Read the RowTrackingMetadataDomain from the table using Kernel
+        val table = Table.forPath(engine, tablePath)
+        val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+        val rowTrackingMetadataDomainRead = RowTrackingMetadataDomain.fromSnapshot(snapshot)
+
+        assert(rowTrackingMetadataDomainRead.isPresent)
+        assert(rowTrackingMetadataDomainRead.get.getRowIdHighWaterMark === 99)
+      }
+    })
+  }
+
+  test("RowTrackingMetadataDomain Integration test - Write with Kernel and read with Spark") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val tbl = "tbl"
+      withTable(tbl) {
+        // Create table and manually make changes to the row tracking metadata domain using Kernel
+        createTableWithDomainMetadataSupported(engine, tablePath)
+        val dmAction = new RowTrackingMetadataDomain(10).toDomainMetadata
+        commitDomainMetadataAndVerify(
+          engine,
+          tablePath,
+          domainMetadatas = Seq(dmAction),
+          expectedValue = Map(dmAction.getDomain -> dmAction)
+        )
+
+        // Use Spark to read the table's row tracking metadata domain and verify the result
+        val deltaLog = DeltaLog.forTable(spark, new Path(tablePath))
+        val rowTrackingMetadataDomainRead =
+          SparkRowTrackingMetadataDomain.fromSnapshot(deltaLog.snapshot)
+        assert(rowTrackingMetadataDomainRead.exists(_.rowIdHighWaterMark === 10))
       }
     }
   }
