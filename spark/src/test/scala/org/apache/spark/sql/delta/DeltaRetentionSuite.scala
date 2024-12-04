@@ -507,7 +507,7 @@ class DeltaRetentionSuite extends QueryTest
   }
 }
 
-class DeltaRetentionWithCoordinatedCommitsBatch1Suite extends DeltaRetentionSuite {
+class DeltaRetentionWithCoordinatedComm`itsBatch1Suite extends DeltaRetentionSuite {
   override val coordinatedCommitsBackfillBatchSize: Option[Int] = Some(1)
 }
 
