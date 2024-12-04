@@ -459,7 +459,10 @@ object StatisticsCollection extends DeltaCommand {
    * @param name The name of the data skipping column for validating data type.
    * @param dataType The data type of the data skipping column.
    * @param columnPaths The column paths of all valid fields.
-   * @param insideStruct Tracks if we are inside a struct, in which case all types are valid
+   * @param insideStruct Tracks if the field is inside a user-specified struct. Don't throw an
+   *                     error on ineligible skipping types inside structs as the user didn't
+   *                     specify them directly. Simply log a warning to let the user know
+   *                     statistics won't be collected on that nested field.
    */
   private def validateDataSkippingType(
       name: String,
@@ -472,7 +475,7 @@ object StatisticsCollection extends DeltaCommand {
           insideStruct = true)
       }
     case SkippingEligibleDataType(_) => columnPaths.append(name)
-    case d if insideStruct =>
+    case _ if insideStruct =>
       logWarning(s"Data skipping is not supported for column $name of type $dataType")
       columnPaths.append(name)
     case _ =>
