@@ -29,7 +29,7 @@ import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.FileSourceGeneratedMetadataStructField
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
-import org.apache.spark.sql.types.{DataType, StructType}
+import org.apache.spark.sql.types.{ArrayType, DataType, MapType, StructType}
 
 /**
  * A trait that writers into Delta can extend to update the schema and/or partitioning of the table.
@@ -309,19 +309,19 @@ object ImplicitMetadataOperation {
       currentDt: DataType,
       updateDt: DataType): Unit = (currentDt, updateDt) match {
     // we explicitly ignore the check for `StructType` here.
-    case (StructType(_), StructType(_)) =>
-
-    // FIXME: we intentionally incorporate the pattern match for `ArrayType` and `MapType`
-    //        here mainly due to the field paths for maps/arrays in constraints/generated columns
-    //        are *NOT* consistent with regular field paths,
-    //        e.g., `hash(a.arr[0].x)` vs. `hash(a.element.x)`.
-    //        this makes it hard to recurse into maps/arrays and check for the corresponding
-    //        fields - thus we can not actually block the operation even if the updated field
-    //        is being referenced by any CHECK constraints or generated columns.
-    case (from, to) =>
+    case (_: StructType, _: StructType) =>
+    case (current: ArrayType, update: ArrayType) =>
+      checkConstraintsOrGeneratedColumnsOnStructField(
+        spark, path :+ "element", protocol, metadata, current.elementType, update.elementType)
+    case (current: MapType, update: MapType) =>
+      checkConstraintsOrGeneratedColumnsOnStructField(
+        spark, path :+ "key", protocol, metadata, current.keyType, update.keyType)
+      checkConstraintsOrGeneratedColumnsOnStructField(
+        spark, path :+ "value", protocol, metadata, current.valueType, update.valueType)
+    case (_, _) =>
       if (currentDt != updateDt) {
-        checkDependentConstraints(spark, path, metadata, from, to)
-        checkDependentGeneratedColumns(spark, path, protocol, metadata, from, to)
+        checkDependentConstraints(spark, path, metadata, currentDt, updateDt)
+        checkDependentGeneratedColumns(spark, path, protocol, metadata, currentDt, updateDt)
       }
   }
 

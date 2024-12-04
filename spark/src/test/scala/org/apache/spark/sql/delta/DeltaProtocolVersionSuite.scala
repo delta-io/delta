@@ -2535,11 +2535,11 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       // Pretend retention period has passed.
       if (advanceClockPastRetentionPeriod) {
         val clockAdvanceMillis = if (truncateHistory) {
-          DeltaConfigs.getMilliSeconds(truncateHistoryRetention)
+          DeltaConfigs.getMilliSeconds(truncateHistoryRetention) + TimeUnit.HOURS.toMillis(24)
         } else {
-          deltaLog.deltaRetentionMillis(deltaLog.update().metadata)
+          deltaLog.deltaRetentionMillis(deltaLog.update().metadata) + TimeUnit.DAYS.toMillis(3)
         }
-        clock.advance(clockAdvanceMillis + TimeUnit.MINUTES.toMillis(5))
+        clock.advance(clockAdvanceMillis)
       }
 
       val dropCommand = AlterTableDropFeatureDeltaCommand(
@@ -2912,7 +2912,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           "truncateHistoryLogRetentionPeriod" -> truncateHistoryDefaultLogRetention.toString))
 
       // Advance clock.
-      clock.advance(TimeUnit.DAYS.toMillis(1) + TimeUnit.MINUTES.toMillis(5))
+      clock.advance(TimeUnit.DAYS.toMillis(1) + TimeUnit.HOURS.toMillis(24))
 
       // Generate commit.
       spark.range(120, 140).write.format("delta").mode("append").save(dir.getCanonicalPath)
@@ -2994,8 +2994,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 
       // Pretend retention period has passed.
       clock.advance(
-        deltaLog.deltaRetentionMillis(deltaLog.update().metadata) +
-        TimeUnit.MINUTES.toMillis(5))
+        deltaLog.deltaRetentionMillis(deltaLog.update().metadata) + TimeUnit.DAYS.toMillis(3))
 
       // History is now clean. We should be able to remove the feature.
       AlterTableDropFeatureDeltaCommand(
@@ -3098,8 +3097,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       spark.range(100, 120).write.format("delta").mode("append").save(dir.getCanonicalPath)
 
       // Pretend retention period has passed.
-      clock.advance(deltaLog.deltaRetentionMillis(deltaLog.update().metadata) +
-        TimeUnit.MINUTES.toMillis(5))
+      clock.advance(
+        deltaLog.deltaRetentionMillis(deltaLog.update().metadata) + TimeUnit.DAYS.toMillis(3))
 
       // Perform an unrelated metadata change.
       sql(s"ALTER TABLE delta.`${deltaLog.dataPath}` ADD COLUMN (value INT)")
@@ -3225,7 +3224,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         }
 
         // Move past retention period.
-        clock.advance(TimeUnit.HOURS.toMillis(1))
+        clock.advance(TimeUnit.HOURS.toMillis(48))
 
         sql(s"ALTER TABLE $table DROP FEATURE $featureName TRUNCATE HISTORY")
         assert(deltaLog.update().protocol === Protocol(1, 2))
@@ -3426,7 +3425,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 
       // Pretend retention period has passed.
       val clockAdvanceMillis = DeltaConfigs.getMilliSeconds(truncateHistoryDefaultLogRetention)
-      clock.advance(clockAdvanceMillis + TimeUnit.MINUTES.toMillis(5))
+      clock.advance(clockAdvanceMillis + TimeUnit.HOURS.toMillis(24))
 
       // History is now clean. We should be able to remove the feature.
       AlterTableDropFeatureDeltaCommand(
@@ -3512,11 +3511,12 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 
       // Pretend retention period has passed.
       val clockAdvanceMillis = if (truncateHistory) {
-        DeltaConfigs.getMilliSeconds(truncateHistoryDefaultLogRetention)
+        DeltaConfigs.getMilliSeconds(truncateHistoryDefaultLogRetention) +
+          TimeUnit.HOURS.toMillis(24)
       } else {
-        deltaLog.deltaRetentionMillis(deltaLog.update().metadata)
+        deltaLog.deltaRetentionMillis(deltaLog.update().metadata) + TimeUnit.DAYS.toMillis(3)
       }
-      clock.advance(clockAdvanceMillis + TimeUnit.MINUTES.toMillis(5))
+      clock.advance(clockAdvanceMillis)
 
       AlterTableDropFeatureDeltaCommand(
         table = DeltaTableV2(spark, deltaLog.dataPath),
@@ -3626,8 +3626,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 
         // Pretend retention period has passed.
         clock.advance(
-          targetLog.deltaRetentionMillis(targetLog.update().metadata) +
-            TimeUnit.MINUTES.toMillis(5))
+          targetLog.deltaRetentionMillis(targetLog.update().metadata) + TimeUnit.DAYS.toMillis(3))
 
         // History is now clean. We should be able to remove the feature.
         dropV2CheckpointsTableFeature(spark, targetLog)

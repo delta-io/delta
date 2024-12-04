@@ -36,7 +36,7 @@ import org.scalatest.GivenWhenThen
 
 import org.apache.spark.sql.{AnalysisException, Column, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.{InternalRow, TableIdentifier}
-import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.catalyst.analysis.{caseInsensitiveResolution, caseSensitiveResolution, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.expressions.{Alias, Cast, Expression}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Project}
 import org.apache.spark.sql.functions._
@@ -3048,6 +3048,100 @@ class SchemaUtilsSuite extends QueryTest
     assert(udts.map(_.getClass.getName).toSet == Set(classOf[PointUDT].getName))
   }
 
+
+  test("check if column affects given dependent expressions") {
+    val schema = StructType(Seq(
+      StructField("cArray", ArrayType(StringType)),
+      StructField("cStruct", StructType(Seq(
+        StructField("cMap", MapType(IntegerType, ArrayType(BooleanType))),
+        StructField("cMapWithComplexKey", MapType(StructType(Seq(
+          StructField("a", ArrayType(StringType)),
+          StructField("b", BooleanType)
+        )), IntegerType))
+      )))
+    ))
+    assert(
+      SchemaUtils.containsDependentExpression(
+        spark,
+        columnToChange = Seq("cArray"),
+        exprString = "cast(cStruct.cMap as string) == '{}'",
+        schema,
+        caseInsensitiveResolution) === false
+    )
+    // Extracting value from map uses key type as well.
+    assert(
+      SchemaUtils.containsDependentExpression(
+        spark,
+        columnToChange = Seq("cStruct", "cMap", "key"),
+        exprString = "cStruct.cMap['random_key'] == 'string'",
+        schema,
+        caseInsensitiveResolution) === true
+    )
+    assert(
+      SchemaUtils.containsDependentExpression(
+        spark,
+        columnToChange = Seq("cstruct"),
+        exprString = "size(cStruct.cMap) == 0",
+        schema,
+        caseSensitiveResolution) === false
+    )
+    assert(
+      SchemaUtils.containsDependentExpression(
+        spark,
+        columnToChange = Seq("cStruct", "cMap", "key"),
+        exprString = "size(cArray) == 1",
+        schema,
+        caseInsensitiveResolution) === false
+    )
+    assert(
+      SchemaUtils.containsDependentExpression(
+        spark,
+        columnToChange = Seq("cStruct", "cMap", "key"),
+        exprString = "cStruct.cMapWithComplexKey[struct(cArray, false)] == 0",
+        schema,
+        caseInsensitiveResolution) === false
+    )
+    assert(
+      SchemaUtils.containsDependentExpression(
+        spark,
+        columnToChange = Seq("cArray", "element"),
+        exprString = "cStruct.cMapWithComplexKey[struct(cArray, false)] == 0",
+        schema,
+        caseInsensitiveResolution) === true
+    )
+    assert(
+      SchemaUtils.containsDependentExpression(
+        spark,
+        columnToChange = Seq("cStruct", "cMapWithComplexKey", "key", "b"),
+        exprString = "cStruct.cMapWithComplexKey[struct(cArray, false)] == 0",
+        schema,
+        caseInsensitiveResolution) === true
+    )
+    assert(
+      SchemaUtils.containsDependentExpression(
+        spark,
+        columnToChange = Seq("cArray", "element"),
+        exprString = "concat_ws('', cArray) == 'string'",
+        schema,
+        caseInsensitiveResolution) === true
+    )
+    assert(
+      SchemaUtils.containsDependentExpression(
+        spark,
+        columnToChange = Seq("CARRAY"),
+        exprString = "cArray[0] > 'a'",
+        schema,
+        caseInsensitiveResolution) === true
+    )
+    assert(
+      SchemaUtils.containsDependentExpression(
+        spark,
+        columnToChange = Seq("CARRAY", "element"),
+        exprString = "cArray[0] > 'a'",
+        schema,
+        caseSensitiveResolution) === false
+    )
+  }
 }
 
 object UnsupportedDataType extends DataType {

@@ -20,6 +20,7 @@ import java.io.File
 import java.net.URI
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.DeltaGenerateSymlinkManifestSuiteShims._
 import org.apache.spark.sql.delta.DeltaOperations.Delete
 import org.apache.spark.sql.delta.commands.DeltaGenerateCommand
 import org.apache.spark.sql.delta.hooks.GenerateSymlinkManifest
@@ -100,16 +101,14 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
         spark.sql(s"GENERATE symlink_format_manifest FOR TABLE delta.`$dir`")
       }
 
-      assert(e.getMessage.contains("not found") ||
-        e.getMessage.contains("only supported for Delta"))
+      assert(e.getMessage.contains("is not a Delta table"))
 
       spark.range(2).write.format("parquet").mode("overwrite").save(dir.toString)
 
       e = intercept[AnalysisException] {
         spark.sql(s"GENERATE symlink_format_manifest FOR TABLE delta.`$dir`")
       }
-      assert(e.getMessage.contains("table not found") ||
-        e.getMessage.contains("only supported for Delta"))
+      assert(e.getMessage.contains("is not a Delta table"))
 
       e = intercept[AnalysisException] {
         spark.sql(s"GENERATE symlink_format_manifest FOR TABLE parquet.`$dir`")
@@ -125,7 +124,7 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
       val e = intercept[AnalysisException] {
         spark.sql(s"GENERATE symlink_format_manifest FOR TABLE v")
       }
-      assert(e.getMessage.contains("not found") || e.getMessage.contains("cannot be found"))
+      assert(e.getMessage.contains(FAILS_ON_TEMP_VIEWS_ERROR_MSG))
     }
   }
 
@@ -771,7 +770,7 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
 
   protected def generateSymlinkManifest(tablePath: String): Unit = {
     val deltaLog = DeltaLog.forTable(spark, tablePath)
-    GenerateSymlinkManifest.generateFullManifest(spark, deltaLog)
+    GenerateSymlinkManifest.generateFullManifest(spark, deltaLog, catalogTableOpt = None)
   }
 }
 

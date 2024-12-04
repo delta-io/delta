@@ -2535,6 +2535,13 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   protected def incrementallyDeriveChecksum(
       attemptVersion: Long,
       currentTransactionInfo: CurrentTransactionInfo): Option[VersionChecksum] = {
+    // Don't include [[AddFile]]s in CRC if this commit is modifying the schema of table in some
+    // way. This is to make sure we don't carry any DROPPED column from previous CRC to this CRC
+    // forever and can start fresh from next commit.
+    // If the oldSnapshot itself is missing, we don't incrementally compute the checksum.
+    val allFilesInCrcWritePathEnabled =
+      Snapshot.allFilesInCrcWritePathEnabled(spark, snapshot) &&
+        (snapshot.version == -1 || snapshot.metadata.schema == metadata.schema)
 
     incrementallyDeriveChecksum(
       spark,
@@ -2545,7 +2552,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       protocol = currentTransactionInfo.protocol,
       operationName = currentTransactionInfo.op.name,
       txnIdOpt = Some(currentTransactionInfo.txnId),
-      previousVersionState = scala.Left(snapshot)
+      previousVersionState = scala.Left(snapshot),
+      includeAddFilesInCrc = allFilesInCrcWritePathEnabled
     ).toOption
   }
 

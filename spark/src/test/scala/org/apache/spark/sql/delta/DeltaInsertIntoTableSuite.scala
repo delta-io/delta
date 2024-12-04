@@ -281,6 +281,246 @@ class DeltaInsertIntoSQLSuite
     }
   }
 
+  // Schema evolution for complex map type
+  test("insertInto schema evolution with map type - append mode: field renaming + new field") {
+    withTable("map_schema_evolution") {
+      val tableName = "map_schema_evolution"
+      val initialSchema = StructType(Seq(
+        StructField("key", IntegerType, nullable = false),
+        StructField("metrics", MapType(StringType, StructType(Seq(
+          StructField("id", IntegerType, nullable = false),
+          StructField("value", IntegerType, nullable = false)
+        ))))
+      ))
+
+      val initialData = Seq(
+        Row(1, Map("event" -> Row(1, 1)))
+      )
+
+      val initialRdd = spark.sparkContext.parallelize(initialData)
+      val initialDf = spark.createDataFrame(initialRdd, initialSchema)
+
+      // Write initial data
+      initialDf.write
+        .option("overwriteSchema", "true")
+        .mode("overwrite")
+        .format("delta")
+        .saveAsTable(tableName)
+
+      // Evolved schema with field renamed and additional field in map struct
+      val evolvedSchema = StructType(Seq(
+        StructField("renamed_key", IntegerType, nullable = false),
+        StructField("metrics", MapType(StringType, StructType(Seq(
+          StructField("id", IntegerType, nullable = false),
+          StructField("value", IntegerType, nullable = false),
+          StructField("comment", StringType, nullable = true)
+        ))))
+      ))
+
+      val evolvedData = Seq(
+        Row(1, Map("event" -> Row(1, 1, "deprecated")))
+      )
+
+      val evolvedRdd = spark.sparkContext.parallelize(evolvedData)
+      val evolvedDf = spark.createDataFrame(evolvedRdd, evolvedSchema)
+
+      // insert data without schema evolution
+      val err = intercept[AnalysisException] {
+        evolvedDf.write
+          .mode("append")
+          .format("delta")
+          .insertInto(tableName)
+      }
+      checkErrorMatchPVals(
+        exception = err,
+        "_LEGACY_ERROR_TEMP_DELTA_0007",
+        parameters = Map(
+          "message" -> "A schema mismatch detected when writing to the Delta table(.|\\n)*"
+        )
+      )
+
+      // insert data with schema evolution
+      withSQLConf("spark.databricks.delta.schema.autoMerge.enabled" -> "true") {
+        evolvedDf.write
+          .mode("append")
+          .format("delta")
+          .insertInto(tableName)
+
+        checkAnswer(
+          spark.sql(s"SELECT * FROM $tableName"),
+          Seq(
+            Row(1, Map("event" -> Row(1, 1, null))),
+            Row(1, Map("event" -> Row(1, 1, "deprecated")))
+        ))
+      }
+    }
+  }
+
+  test("not enough column in source to insert in nested map types") {
+    withTable("source", "target") {
+      sql(
+        """CREATE TABLE source (
+          |  id INT,
+          |  metrics MAP<STRING, STRUCT<id: INT, value: INT>>
+          |) USING delta""".stripMargin)
+
+      sql(
+        """CREATE TABLE target (
+          |  id INT,
+          |  metrics MAP<STRING, STRUCT<id: INT, value: INT, comment: STRING>>
+          |) USING delta""".stripMargin)
+
+      sql("INSERT INTO source VALUES (1, map('event', struct(1, 1)))")
+
+      val e = intercept[AnalysisException] {
+        sql("INSERT INTO target SELECT * FROM source")
+      }
+      checkError(
+        exception = e,
+        "DELTA_INSERT_COLUMN_ARITY_MISMATCH",
+        parameters = Map(
+          "tableName" -> "spark_catalog.default.target",
+          "columnName" -> "not enough nested fields in value",
+          "numColumns" -> "3",
+          "insertColumns" -> "2"
+        )
+      )
+    }
+  }
+
+  // not enough nested fields in value
+  test("more columns in source to insert in nested map types") {
+    withTable("source", "target") {
+      sql(
+        """CREATE TABLE source (
+          |  id INT,
+          |  metrics MAP<STRING, STRUCT<id: INT, value: INT, comment: STRING>>
+          |) USING delta""".stripMargin)
+
+      sql(
+        """CREATE TABLE target (
+          |  id INT,
+          |  metrics MAP<STRING, STRUCT<id: INT, value: INT>>
+          |) USING delta""".stripMargin)
+
+      sql("INSERT INTO source VALUES (1, map('event', struct(1, 1, 'deprecated')))")
+
+      val e = intercept[AnalysisException] {
+        sql("INSERT INTO target SELECT * FROM source")
+      }
+      checkErrorMatchPVals(
+        exception = e,
+        "_LEGACY_ERROR_TEMP_DELTA_0007",
+        parameters = Map(
+          "message" -> "A schema mismatch detected when writing to the Delta table(.|\\n)*"
+        )
+      )
+
+      withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
+        sql("INSERT INTO target SELECT * FROM source")
+        checkAnswer(
+          spark.sql(s"SELECT * FROM source"),
+          Seq(
+            Row(1, Map("event" -> Row(1, 1, "deprecated")))
+        ))
+      }
+    }
+  }
+
+  test("more columns in source to insert in nested 2-level deep map types") {
+    withTable("source", "target") {
+      sql(
+        """CREATE TABLE source (
+          |  id INT,
+          |  metrics MAP<STRING, MAP<STRING, STRUCT<id: INT, value: INT, comment: STRING>>>
+          |) USING delta""".stripMargin)
+
+      sql(
+        """CREATE TABLE target (
+          |  id INT,
+          |  metrics MAP<STRING, MAP<STRING, STRUCT<id: INT, value: INT>>>
+          |) USING delta""".stripMargin)
+
+      sql(
+        """INSERT INTO source VALUES
+         | (1, map('event', map('subEvent', struct(1, 1, 'deprecated'))))
+         """.stripMargin)
+
+      val e = intercept[AnalysisException] {
+        sql("INSERT INTO target SELECT * FROM source")
+      }
+      checkErrorMatchPVals(
+        exception = e,
+        "_LEGACY_ERROR_TEMP_DELTA_0007",
+        parameters = Map(
+          "message" -> "A schema mismatch detected when writing to the Delta table(.|\\n)*"
+        )
+      )
+
+      withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
+        sql("INSERT INTO target SELECT * FROM source")
+        checkAnswer(
+          spark.sql(s"SELECT * FROM source"),
+          Seq(
+            Row(1, Map("event" -> Map("subEvent" -> Row(1, 1, "deprecated"))))
+        ))
+      }
+    }
+  }
+
+  test("insert map type with different data type in key") {
+    withTable("source", "target") {
+      sql(
+        """CREATE TABLE source (
+          |  id INT,
+          |  metrics MAP<STRING, STRUCT<id: INT, value: INT>>
+          |) USING delta""".stripMargin)
+
+      sql(
+        """CREATE TABLE target (
+          |  id INT,
+          |  metrics MAP<INT, STRUCT<id: INT, value: INT>>
+          |) USING delta""".stripMargin)
+
+      sql("INSERT INTO source VALUES (1, map('1', struct(2, 3)))")
+
+      sql("INSERT INTO target SELECT * FROM source")
+
+      checkAnswer(
+        spark.sql("SELECT * FROM target"),
+        Seq(
+          Row(1, Map(1 -> Row(2, 3)))
+      ))
+    }
+  }
+
+  test("insert map type with different data type in value") {
+    withTable("source", "target") {
+      sql(
+        """CREATE TABLE source (
+          |  id INT,
+          |  metrics MAP<STRING, STRUCT<id: INT, value: LONG>>
+          |) USING delta""".stripMargin)
+
+      sql(
+        """CREATE TABLE target (
+          |  id INT,
+          |  metrics MAP<STRING, STRUCT<id: INT, value: INT>>
+          |) USING delta""".stripMargin)
+
+      sql("INSERT INTO source VALUES (1, map('m1', struct(2, 3L)))")
+
+      sql("INSERT INTO target SELECT * FROM source")
+
+      checkAnswer(
+        spark.sql("SELECT * FROM target"),
+        Seq(
+          Row(1, Map("m1" -> Row(2, 3)))
+      ))
+    }
+  }
+
+
   def runInsertOverwrite(
       sourceSchema: String,
       sourceRecord: String,

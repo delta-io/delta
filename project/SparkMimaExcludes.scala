@@ -27,6 +27,7 @@ object SparkMimaExcludes {
       ProblemFilters.exclude[Problem]("io.delta.sql.parser.*"),
       ProblemFilters.exclude[Problem]("io.delta.tables.execution.*"),
       ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaTable.apply"),
+      ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaTable.executeGenerate"),
       ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaTable.executeHistory"),
       ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaTable.executeVacuum"),
       ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaTable.this"),

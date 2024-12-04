@@ -2385,6 +2385,14 @@ trait DeltaErrorsBase
     )
   }
 
+  def dropCheckpointProtectionWaitForRetentionPeriod(
+      metadata: Metadata): DeltaTableFeatureException = {
+    val config = logRetentionConfig(metadata)
+    new DeltaTableFeatureException(
+      errorClass = "DELTA_FEATURE_DROP_CHECKPOINT_PROTECTION_WAIT_FOR_RETENTION_PERIOD",
+      messageParameters = Array(config.truncateHistoryRetention))
+  }
+
   def tableFeatureDropHistoryTruncationNotAllowed(): DeltaTableFeatureException = {
     new DeltaTableFeatureException(
       errorClass = "DELTA_FEATURE_DROP_HISTORY_TRUNCATION_NOT_ALLOWED",
@@ -2441,6 +2449,11 @@ trait DeltaErrorsBase
       messageParameters = Array(featureName))
   }
 
+  def canOnlyDropCheckpointProtectionWithHistoryTruncationException: DeltaTableFeatureException = {
+    new DeltaTableFeatureException(
+      errorClass = "DELTA_FEATURE_CAN_ONLY_DROP_CHECKPOINT_PROTECTION_WITH_HISTORY_TRUNCATION",
+      messageParameters = Array.empty)
+  }
   def concurrentAppendException(
       conflictingCommit: Option[CommitInfo],
       partition: String,

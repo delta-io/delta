@@ -453,9 +453,8 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
 
   override def visitGenerate(ctx: GenerateContext): LogicalPlan = withOrigin(ctx) {
     DeltaGenerateCommand(
-      modeName = ctx.modeName.getText,
-      tableId = visitTableIdentifier(ctx.table),
-      Map.empty)
+      UnresolvedTable(visitTableIdentifier(ctx.table).nameParts, DeltaGenerateCommand.COMMAND_NAME),
+      modeName = ctx.modeName.getText)
   }
 
   override def visitConvert(ctx: ConvertContext): LogicalPlan = withOrigin(ctx) {
