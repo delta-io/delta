@@ -333,7 +333,7 @@ class DeltaInsertIntoSQLSuite
       }
       checkErrorMatchPVals(
         exception = err,
-        errorClass = "_LEGACY_ERROR_TEMP_DELTA_0007",
+        "_LEGACY_ERROR_TEMP_DELTA_0007",
         parameters = Map(
           "message" -> "A schema mismatch detected when writing to the Delta table(.|\\n)*"
         )
@@ -377,7 +377,7 @@ class DeltaInsertIntoSQLSuite
       }
       checkError(
         exception = e,
-        errorClass = "DELTA_INSERT_COLUMN_ARITY_MISMATCH",
+        "DELTA_INSERT_COLUMN_ARITY_MISMATCH",
         parameters = Map(
           "tableName" -> "spark_catalog.default.target",
           "columnName" -> "not enough nested fields in value",
@@ -410,7 +410,7 @@ class DeltaInsertIntoSQLSuite
       }
       checkErrorMatchPVals(
         exception = e,
-        errorClass = "_LEGACY_ERROR_TEMP_DELTA_0007",
+        "_LEGACY_ERROR_TEMP_DELTA_0007",
         parameters = Map(
           "message" -> "A schema mismatch detected when writing to the Delta table(.|\\n)*"
         )
@@ -451,7 +451,7 @@ class DeltaInsertIntoSQLSuite
       }
       checkErrorMatchPVals(
         exception = e,
-        errorClass = "_LEGACY_ERROR_TEMP_DELTA_0007",
+        "_LEGACY_ERROR_TEMP_DELTA_0007",
         parameters = Map(
           "message" -> "A schema mismatch detected when writing to the Delta table(.|\\n)*"
         )
