@@ -30,8 +30,7 @@ import java.util.List;
 public interface Snapshot {
 
   /**
-   * Get the version of this snapshot in the table. Returns -1 if the table is empty and so has no
-   * commits.
+   * Get the version of this snapshot in the table.
    *
    * @param engine {@link Engine} instance to use in Delta Kernel.
    * @return version of this snapshot in the Delta table
@@ -50,14 +49,7 @@ public interface Snapshot {
   List<String> getPartitionColumnNames(Engine engine);
 
   /**
-   * Get the timestamp (in milliseconds since the Unix epoch) of the latest commit of this snapshot.
-   * Returns -1 if the table is empty and so has no commits.
-   *
-   * <p>When InCommitTimestampTableFeature is enabled, the timestamp is retrieved from the
-   * CommitInfo of the latest commit which can result in an IO operation.
-   *
-   * <p>For non-ICT tables, this is the same as the file modification time of the latest commit in
-   * the snapshot.
+   * Get the timestamp (in milliseconds since the Unix epoch) of the latest commit in this snapshot.
    *
    * @param engine the engine to use for IO operations
    * @return the timestamp of the latest commit

@@ -73,6 +73,15 @@ public class SnapshotImpl implements Snapshot {
     return version;
   }
 
+  /**
+   * Get the timestamp (in milliseconds since the Unix epoch) of the latest commit in this Snapshot.
+   *
+   * <p>When InCommitTimestampTableFeature is enabled, the timestamp is retrieved from the
+   * CommitInfo of the latest commit in this Snapshot, which can result in an IO operation.
+   *
+   * <p>For non-ICT tables, this is the same as the file modification time of the latest commit in
+   * this Snapshot.
+   */
   @Override
   public long getTimestamp(Engine engine) {
     if (IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata)) {
