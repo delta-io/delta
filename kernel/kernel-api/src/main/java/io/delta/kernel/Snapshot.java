@@ -47,6 +47,15 @@ public interface Snapshot {
    * @return a list of partition column names, or an empty list if the table is not partitioned.
    */
   List<String> getPartitionColumnNames(Engine engine);
+
+  /**
+   * Get the timestamp (in milliseconds since the Unix epoch) of the latest commit in this snapshot.
+   *
+   * @param engine the engine to use for IO operations
+   * @return the timestamp of the latest commit
+   */
+  long getTimestamp(Engine engine);
+
   /**
    * Get the schema of the table at this snapshot.
    *
