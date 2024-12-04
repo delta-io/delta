@@ -2535,7 +2535,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       // Pretend retention period has passed.
       if (advanceClockPastRetentionPeriod) {
         val clockAdvanceMillis = if (truncateHistory) {
-          DeltaConfigs.getMilliSeconds(truncateHistoryRetention) + TimeUnit.HOURS.toMillis(3)
+          DeltaConfigs.getMilliSeconds(truncateHistoryRetention) + TimeUnit.HOURS.toMillis(24)
         } else {
           deltaLog.deltaRetentionMillis(deltaLog.update().metadata) + TimeUnit.DAYS.toMillis(3)
         }
@@ -2912,7 +2912,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           "truncateHistoryLogRetentionPeriod" -> truncateHistoryDefaultLogRetention.toString))
 
       // Advance clock.
-      clock.advance(TimeUnit.DAYS.toMillis(1) + TimeUnit.HOURS.toMillis(3))
+      clock.advance(TimeUnit.DAYS.toMillis(1) + TimeUnit.HOURS.toMillis(24))
 
       // Generate commit.
       spark.range(120, 140).write.format("delta").mode("append").save(dir.getCanonicalPath)
@@ -3224,7 +3224,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         }
 
         // Move past retention period.
-        clock.advance(TimeUnit.HOURS.toMillis(3))
+        clock.advance(TimeUnit.HOURS.toMillis(24))
 
         sql(s"ALTER TABLE $table DROP FEATURE $featureName TRUNCATE HISTORY")
         assert(deltaLog.update().protocol === Protocol(1, 2))
@@ -3425,7 +3425,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 
       // Pretend retention period has passed.
       val clockAdvanceMillis = DeltaConfigs.getMilliSeconds(truncateHistoryDefaultLogRetention)
-      clock.advance(clockAdvanceMillis + TimeUnit.HOURS.toMillis(3))
+      clock.advance(clockAdvanceMillis + TimeUnit.HOURS.toMillis(24))
 
       // History is now clean. We should be able to remove the feature.
       AlterTableDropFeatureDeltaCommand(
@@ -3512,7 +3512,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       // Pretend retention period has passed.
       val clockAdvanceMillis = if (truncateHistory) {
         DeltaConfigs.getMilliSeconds(truncateHistoryDefaultLogRetention) +
-          TimeUnit.HOURS.toMillis(3)
+          TimeUnit.HOURS.toMillis(24)
       } else {
         deltaLog.deltaRetentionMillis(deltaLog.update().metadata) + TimeUnit.DAYS.toMillis(3)
       }
