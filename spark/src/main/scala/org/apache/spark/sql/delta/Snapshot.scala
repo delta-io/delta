@@ -147,7 +147,9 @@ class Snapshot(
                 "checkpointVersion" -> logSegment.checkpointProvider.version,
                 "durationMs" -> (System.currentTimeMillis() - startTime),
                 "exceptionMessage" -> exception.map(_.getMessage).getOrElse(""),
-                "exceptionStackTrace" -> exception.map(_.getStackTrace.mkString("\n")).getOrElse("")
+                "exceptionStackTrace" ->
+                  exception.map(_.getStackTrace.mkString("\n")).getOrElse(""),
+                "isCRCPresent" -> checksumOpt.isDefined
               )
             )
           }

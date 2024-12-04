@@ -795,11 +795,8 @@ trait ValidateChecksum extends DeltaLogging { self: Snapshot =>
       }
     }
 
-    if (spark.sessionState.conf.getConf(
-        DeltaSQLConf.USE_PROTOCOL_AND_METADATA_FROM_CHECKSUM_ENABLED)) {
-      compareAction(checksum.metadata, computedStateToCheckAgainst.metadata, "Metadata", "metadata")
-      compareAction(checksum.protocol, computedStateToCheckAgainst.protocol, "Protocol", "protocol")
-    }
+    compareAction(checksum.metadata, computedStateToCheckAgainst.metadata, "Metadata", "metadata")
+    compareAction(checksum.protocol, computedStateToCheckAgainst.protocol, "Protocol", "protocol")
     compare(
       checksum.tableSizeBytes,
       computedStateToCheckAgainst.sizeInBytes,

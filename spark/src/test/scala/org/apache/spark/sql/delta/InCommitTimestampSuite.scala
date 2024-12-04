@@ -51,6 +51,8 @@ class InCommitTimestampSuite
   override def beforeAll(): Unit = {
     super.beforeAll()
     spark.conf.set(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey, "true")
+    spark.conf.set(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key, "true")
+    spark.conf.set(DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key, "true")
   }
 
   test("Enable ICT on commit 0") {
