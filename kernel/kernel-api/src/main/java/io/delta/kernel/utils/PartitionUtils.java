@@ -23,11 +23,7 @@ import io.delta.kernel.Snapshot;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.expressions.AlwaysTrue;
 import io.delta.kernel.expressions.Predicate;
-import io.delta.kernel.internal.SnapshotImpl;
-import io.delta.kernel.internal.util.Tuple2;
-import io.delta.kernel.internal.util.VectorUtils;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.HashSet;
@@ -45,6 +41,8 @@ public class PartitionUtils {
    * @param snapshot the {@link Snapshot} to scan.
    * @param partitionPredicate the {@link Predicate} to use for filtering the partition.
    * @return true if the partition exists, false otherwise.
+   * @throws IllegalArgumentException if the predicate does not reference any partition columns or
+   *     if it references any data columns
    */
   public static boolean partitionExists(
       Engine engine, Snapshot snapshot, Predicate partitionPredicate) {
@@ -53,28 +51,10 @@ public class PartitionUtils {
     requireNonNull(partitionPredicate, "partitionPredicate is null");
 
     final Set<String> snapshotPartColNames =
-        new HashSet<>(
-            // TODO: replace with Snapshot::getPartitionColumnNames once that public API is
-            // available
-            VectorUtils.toJavaList(((SnapshotImpl) snapshot).getMetadata().getPartitionColumns()));
-    final Tuple2<Predicate, Predicate> metadataAndDataPredicates =
-        io.delta.kernel.internal.util.PartitionUtils.splitMetadataAndDataPredicates(
-            partitionPredicate, snapshotPartColNames);
-    final Predicate metadataPredicate = metadataAndDataPredicates._1;
-    final Predicate dataPredicate = metadataAndDataPredicates._2;
+        new HashSet<>(snapshot.getPartitionColumnNames(engine));
 
-    if (metadataPredicate == AlwaysTrue.ALWAYS_TRUE) {
-      throw new IllegalArgumentException(
-          String.format(
-              "Partition predicate must contain at least one partition column: %s",
-              partitionPredicate));
-    }
-
-    if (dataPredicate != AlwaysTrue.ALWAYS_TRUE) {
-      throw new IllegalArgumentException(
-          String.format(
-              "Partition predicate must contain only partition columns: %s", partitionPredicate));
-    }
+    io.delta.kernel.internal.util.PartitionUtils.validatePredicateOnlyOnPartitionColumns(
+        partitionPredicate, snapshotPartColNames);
 
     final Scan scan =
         snapshot.getScanBuilder(engine).withFilter(engine, partitionPredicate).build();
