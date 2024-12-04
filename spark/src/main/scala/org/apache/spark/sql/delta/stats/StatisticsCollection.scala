@@ -455,9 +455,11 @@ object StatisticsCollection extends DeltaCommand {
 
   /**
    * This method validates that the data type of a data skipping column provided in
-   * [[DeltaConfigs.DATA_SKIPPING_STATS_COLUMNS]] supports data skipping based on file statistics. If a struct
-   * column is specified, all its children are considered valid because stats will be collected
-   * for any supported types. For unsupported types, stats will not be collected.
+   * [[DeltaConfigs.DATA_SKIPPING_STATS_COLUMNS]] supports data skipping based on file statistics.
+   * If a struct column is specified, all its children are considered valid. This helps users
+   * who have complex nested types and wish to collect stats on all supported nested columns
+   * without specifying each field individually. At stats collection time, unsupported types will
+   * simply be skipped, so it is safe to allow those through.
    * @param name The name of the data skipping column for validating data type.
    * @param dataType The data type of the data skipping column.
    * @param columnPaths The column paths of all valid fields.
