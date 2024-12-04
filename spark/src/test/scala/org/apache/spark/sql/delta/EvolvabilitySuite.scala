@@ -94,6 +94,7 @@ class EvolvabilitySuite extends EvolvabilitySuiteBase with DeltaSQLCommandTest {
         DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "true",
         // All files verification will always fail in this test since we the extra column
         // will not be present in the `allFiles` of the CRC.
+        DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_VERIFICATION_MODE_ENABLED.key -> "false",
         DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_FORCE_VERIFICATION_MODE_FOR_NON_UTC_ENABLED.key ->
           "false"
       ) {
@@ -111,7 +112,14 @@ class EvolvabilitySuite extends EvolvabilitySuiteBase with DeltaSQLCommandTest {
 
   test("transaction log schema evolvability - streaming change data read") {
     withTempDir { dir =>
-      withSQLConf(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "true") {
+      withSQLConf(
+        DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "true",
+        // All files verification will always fail in this test since we the extra column
+        // will not be present in the `allFiles` of the CRC.
+        DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_VERIFICATION_MODE_ENABLED.key -> "false",
+        DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_FORCE_VERIFICATION_MODE_FOR_NON_UTC_ENABLED.key ->
+          "false"
+      ) {
         EvolvabilitySuiteBase.generateTransactionLogWithExtraColumn(spark, dir.getAbsolutePath)
         spark.sql(s"UPDATE delta.`${dir.getAbsolutePath}` SET value = 10")
         val query = spark.readStream.format("delta")
