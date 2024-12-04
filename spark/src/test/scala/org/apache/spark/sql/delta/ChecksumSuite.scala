@@ -210,7 +210,8 @@ class ChecksumSuite
       DeltaSQLConf.INCREMENTAL_COMMIT_VERIFY.key -> "true",
       DeltaSQLConf.DELTA_CHECKSUM_MISMATCH_IS_FATAL.key -> "false",
       DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> "true",
-      DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_ENABLED.key -> "false"
+      DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_ENABLED.key -> "false",
+      DeltaSQLConf.USE_PROTOCOL_AND_METADATA_FROM_CHECKSUM_ENABLED.key -> "true"
     ) {
       withTempDir { tempDir =>
         import testImplicits._

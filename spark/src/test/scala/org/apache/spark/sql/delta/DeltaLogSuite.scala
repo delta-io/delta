@@ -791,6 +791,62 @@ class DeltaLogSuite extends QueryTest
     }
   }
 
+  test("checksum file should contain protocol and metadata") {
+    withSQLConf(
+      DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true",
+      DeltaSQLConf.USE_PROTOCOL_AND_METADATA_FROM_CHECKSUM_ENABLED.key -> "true"
+    ) {
+      withTempDir { dir =>
+        val path = new Path("file://" + dir.getAbsolutePath)
+        val log = DeltaLog.forTable(spark, path)
+
+        val txn = log.startTransaction()
+        val files = (1 to 10).map(f => createTestAddFile(encodedPath = f.toString))
+        txn.commitManually(files: _*)
+        val metadata = log.snapshot.metadata
+        val protocol = log.snapshot.protocol
+        DeltaLog.clearCache()
+
+        val readLog = DeltaLog.forTable(spark, path)
+        val checksum = readLog.snapshot.checksumOpt.get
+        assert(checksum.metadata != null)
+        assert(checksum.protocol != null)
+        assert(checksum.metadata.equals(metadata))
+        assert(checksum.protocol.equals(protocol))
+      }
+    }
+  }
+
+  test("checksum reader should be able to read incomplete checksum file without " +
+    "protocol and metadata") {
+    withSQLConf(
+      DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true",
+      DeltaSQLConf.USE_PROTOCOL_AND_METADATA_FROM_CHECKSUM_ENABLED.key -> "true"
+    ) {
+      withTempDir { dir =>
+        val path = new Path("file://" + dir.getAbsolutePath)
+        val log = DeltaLog.forTable(spark, path)
+
+        val txn = log.startTransaction()
+        val files = (1 to 10).map(f => createTestAddFile(encodedPath = f.toString))
+        txn.commitManually(files: _*)
+        val metadata = log.snapshot.metadata
+        val protocol = log.snapshot.protocol
+        DeltaLog.clearCache()
+        val checksumFilePath = FileNames.checksumFile(log.logPath, 0L)
+        removeProtocolAndMetadataFromChecksumFile(checksumFilePath)
+
+        val readLog = DeltaLog.forTable(spark, path)
+        val checksum = readLog.snapshot.checksumOpt.get
+        assert(checksum.metadata == null)
+        assert(checksum.protocol == null)
+
+        // check we are still able to read protocol and metadata from checkpoint
+        assert(readLog.snapshot.metadata.equals(metadata))
+        assert(readLog.snapshot.protocol.equals(protocol))
+      }
+    }
+  }
 }
 
 class CoordinatedCommitsBatchBackfill1DeltaLogSuite extends DeltaLogSuite {

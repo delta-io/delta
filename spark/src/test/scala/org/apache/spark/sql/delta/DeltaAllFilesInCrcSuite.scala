@@ -50,6 +50,7 @@ class DeltaAllFilesInCrcSuite
     .set(DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_THRESHOLD_FILES.key, "10000")
     // needed for DELTA_ALL_FILES_IN_CRC_ENABLED
     .set(DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key, "true")
+    .set(DeltaSQLConf.USE_PROTOCOL_AND_METADATA_FROM_CHECKSUM_ENABLED.key, "true")
     // Turn on verification by default in the tests
     .set(DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_VERIFICATION_MODE_ENABLED.key, "true")
     // Turn off force verification for non-UTC timezones by default in the tests

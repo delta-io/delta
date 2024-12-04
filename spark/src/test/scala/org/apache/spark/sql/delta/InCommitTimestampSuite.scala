@@ -179,6 +179,8 @@ class InCommitTimestampSuite
   }
 
   test("Missing CommitInfo should result in a DELTA_MISSING_COMMIT_INFO exception") {
+    // Make sure that we don't retrieve the time from the CRC.
+    withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "false") {
     withTempDir { tempDir =>
       spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
       val deltaLog =
@@ -206,10 +208,13 @@ class InCommitTimestampSuite
           "featureName" -> InCommitTimestampTableFeature.name,
           "version" -> "1"))
     }
+    }
   }
 
   test("Missing CommitInfo.commitTimestamp should result in a " +
     "DELTA_MISSING_COMMIT_TIMESTAMP exception") {
+    // Make sure that we don't retrieve the time from the CRC.
+    withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "false") {
     withTempDir { tempDir =>
       spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
       val deltaLog =
@@ -242,6 +247,7 @@ class InCommitTimestampSuite
         e,
         "DELTA_MISSING_COMMIT_TIMESTAMP",
         parameters = Map("featureName" -> InCommitTimestampTableFeature.name, "version" -> "1"))
+    }
     }
   }
 
@@ -395,8 +401,28 @@ class InCommitTimestampSuite
     }
   }
 
+  test("snapshot.timestamp should be read from the CRC") {
+    withTempDir { tempDir =>
+      var deltaLog: DeltaLog = null
+      var timestamp = -1L
+      val usageRecords = Log4jUsageLogger.track {
+        spark.range(1).write.format("delta").save(tempDir.getAbsolutePath)
+        DeltaLog.clearCache() // Clear the post-commit snapshot from the cache.
+        deltaLog = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+        val fs = deltaLog.logPath.getFileSystem(deltaLog.newDeltaHadoopConf())
+        assert(fs.exists(FileNames.checksumFile(deltaLog.logPath, 0)))
+        timestamp = deltaLog.snapshot.timestamp
+      }
+      assert(timestamp == getInCommitTimestamp(deltaLog, 0))
+      // No explicit read.
+      assert(filterUsageRecords(usageRecords, "delta.inCommitTimestamp.read").isEmpty)
+    }
+  }
+
   test("postCommitSnapshot.timestamp should be populated by protocolMetadataAndICTReconstruction " +
      "when the table has no checkpoints") {
+    // Make sure that we don't retrieve the time from the CRC.
+    withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "false") {
     withTempDir { tempDir =>
       var deltaLog: DeltaLog = null
       var timestamp = -1L
@@ -410,10 +436,13 @@ class InCommitTimestampSuite
       // No explicit read.
       assert(filterUsageRecords(usageRecords, "delta.inCommitTimestamp.read").isEmpty)
     }
+    }
   }
 
   test("snapshot.timestamp should be populated by protocolMetadataAndICTReconstruction " +
      "during cold reads of checkpoints + deltas") {
+    // Make sure that we don't retrieve the time from the CRC.
+    withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "false") {
     withTempDir { tempDir =>
       var deltaLog: DeltaLog = null
       var timestamp = -1L
@@ -434,10 +463,13 @@ class InCommitTimestampSuite
       // No explicit read.
       assert(filterUsageRecords(usageRecords, "delta.inCommitTimestamp.read").isEmpty)
     }
+    }
   }
 
   test("snapshot.timestamp cannot be populated by protocolMetadataAndICTReconstruction " +
      "during cold reads of checkpoints") {
+    // Make sure that we don't retrieve the time from the CRC.
+    withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "false") {
     withTempDir { tempDir =>
       var deltaLog: DeltaLog = null
       var timestamp = -1L
@@ -452,9 +484,37 @@ class InCommitTimestampSuite
       assert(timestamp == getInCommitTimestamp(deltaLog, 0))
       assert(filterUsageRecords(usageRecords, "delta.inCommitTimestamp.read").length == 1)
     }
+    }
+  }
+
+  test("snapshot.timestamp is read from file when CRC doesn't have ICT and " +
+    "the latest version has a checkpoint") {
+    withTempDir { tempDir =>
+      var deltaLog: DeltaLog = null
+      var timestamp = -1L
+      spark.range(1).write.format("delta").save(tempDir.getAbsolutePath)
+      deltaLog = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+      deltaLog.createCheckpointAtVersion(0)
+      // Remove the ICT from the CRC.
+      InCommitTimestampTestUtils.overwriteICTInCrc(deltaLog, 0, None)
+      val usageRecords = Log4jUsageLogger.track {
+        DeltaLog.clearCache() // Clear the post-commit snapshot from the cache.
+        deltaLog = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+        timestamp = deltaLog.snapshot.timestamp
+      }
+      assert(deltaLog.snapshot.checkpointProvider.version == 0)
+      assert(timestamp == getInCommitTimestamp(deltaLog, 0))
+      val ictReadLog = filterUsageRecords(usageRecords, "delta.inCommitTimestamp.read").head
+      val blob = JsonUtils.fromJson[Map[String, String]](ictReadLog.blob)
+      assert(blob("version") == "0")
+      assert(blob("checkpointVersion") == "0")
+      assert(blob("isCRCPresent") == "true")
+    }
   }
 
   test("Exceptions during ICT reads from file should be logged") {
+    // Make sure that we don't retrieve the time from the CRC.
+    withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "false") {
     withTempDir { tempDir =>
       spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
       val deltaLog =
@@ -485,6 +545,7 @@ class InCommitTimestampSuite
       assert(blob("checkpointVersion") == "-1")
       assert(blob("exceptionMessage").startsWith("[DELTA_MISSING_COMMIT_INFO]"))
       assert(blob("exceptionStackTrace").contains(Snapshot.getClass.getName.stripSuffix("$")))
+    }
     }
   }
 
