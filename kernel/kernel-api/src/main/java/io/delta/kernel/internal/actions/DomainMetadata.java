@@ -120,7 +120,7 @@ public class DomainMetadata {
   @Override
   public String toString() {
     return String.format(
-        "DomainMetadata{domain='%s', configuration='%s', removed='%s'}",
+        "DomainMetadata{domain='%s', configuration='%s', removed='%b'}",
         domain, configuration, removed);
   }
 

@@ -22,7 +22,7 @@ import java.util.Optional
 
 class JsonMetadataDomainSuite extends AnyFunSuite {
 
-  test("JsonMetadataDomain can serialize/deserialize Optional fields") {
+  test("JsonMetadataDomain can be serialized/deserialized - TestJsonMetadataDomain") {
     // TestJsonMetadataDomain has two Optional<String> fields and one int primitive field
     val testMetadataDomain = new TestJsonMetadataDomain(Optional.of("value1"), Optional.empty(), 10)
 
@@ -30,11 +30,26 @@ class JsonMetadataDomainSuite extends AnyFunSuite {
     val config = testMetadataDomain.toJsonConfiguration
     assert(config === """{"field1":"value1","field3":10}""")
 
-    // Test the deserialization, missing Optional fields should be initialized as empty Optional
+    // Test the deserialization, missing Optional fields should be initialized as empty
     val deserializedDomain = TestJsonMetadataDomain.fromJsonConfiguration(config)
     assert(deserializedDomain.getField1.isPresent && deserializedDomain.getField1.get === "value1")
     assert(!deserializedDomain.getField2.isPresent)
     assert(deserializedDomain.getField3 === 10)
+    assert(deserializedDomain.equals(testMetadataDomain))
+  }
+
+  test("JsonMetadataDomain can be serialized/deserialized - RowTrackingMetadataDomain") {
+    // RowTrackingMetadataDomain is an actual production class with one field 'rowIdHighWaterMark'
+    val rowTrackingMetadataDomain = new RowTrackingMetadataDomain(10)
+
+    // Test the serialization
+    val config = rowTrackingMetadataDomain.toJsonConfiguration
+    assert(config === """{"rowIdHighWaterMark":10}""")
+
+    // Test the deserialization
+    val deserializedDomain = RowTrackingMetadataDomain.fromJsonConfiguration(config)
+    assert(deserializedDomain.getRowIdHighWaterMark === 10)
+    assert(deserializedDomain.equals(rowTrackingMetadataDomain))
   }
 
   test("JsonMetadataDomain deserialization can handle the extra 'domainName' field") {

@@ -22,12 +22,32 @@ import io.delta.kernel.internal.metadatadomain.JsonMetadataDomain;
 import java.util.Optional;
 
 /** Represents the metadata domain for row tracking. */
-public class RowTrackingMetadataDomain extends JsonMetadataDomain {
+public final class RowTrackingMetadataDomain extends JsonMetadataDomain {
 
   public static final String DOMAIN_NAME = "delta.rowTracking";
 
+  /**
+   * Creates an instance of {@link RowTrackingMetadataDomain} from a JSON configuration string.
+   *
+   * @param json the JSON configuration string
+   * @return an instance of {@link RowTrackingMetadataDomain}
+   */
+  public static RowTrackingMetadataDomain fromJsonConfiguration(String json) {
+    return JsonMetadataDomain.fromJsonConfiguration(json, RowTrackingMetadataDomain.class);
+  }
+
+  /**
+   * Creates an instance of {@link RowTrackingMetadataDomain} from a {@link SnapshotImpl}.
+   *
+   * @param snapshot the snapshot instance
+   * @return an {@link Optional} containing the {@link RowTrackingMetadataDomain} if present
+   */
+  public static Optional<RowTrackingMetadataDomain> fromSnapshot(SnapshotImpl snapshot) {
+    return JsonMetadataDomain.fromSnapshot(snapshot, RowTrackingMetadataDomain.class, DOMAIN_NAME);
+  }
+
   /** The highest assigned fresh row id for the table */
-  private long rowIdHighWaterMark;
+  private final long rowIdHighWaterMark;
 
   /**
    * Constructs a RowTrackingMetadataDomain with the specified row ID high water mark.
@@ -48,10 +68,6 @@ public class RowTrackingMetadataDomain extends JsonMetadataDomain {
     return rowIdHighWaterMark;
   }
 
-  public void setRowIdHighWaterMark(long rowIdHighWaterMark) {
-    this.rowIdHighWaterMark = rowIdHighWaterMark;
-  }
-
   @Override
   public boolean equals(Object obj) {
     if (this == obj) return true;
@@ -68,25 +84,5 @@ public class RowTrackingMetadataDomain extends JsonMetadataDomain {
   @Override
   public String toString() {
     return "RowTrackingMetadataDomain{" + "rowIdHighWaterMark=" + rowIdHighWaterMark + '}';
-  }
-
-  /**
-   * Creates an instance of {@link RowTrackingMetadataDomain} from a JSON configuration string.
-   *
-   * @param json the JSON configuration string
-   * @return an instance of {@link RowTrackingMetadataDomain}
-   */
-  public static RowTrackingMetadataDomain fromJsonConfiguration(String json) {
-    return JsonMetadataDomain.fromJsonConfiguration(json, RowTrackingMetadataDomain.class);
-  }
-
-  /**
-   * Creates an instance of {@link RowTrackingMetadataDomain} from a {@link SnapshotImpl}.
-   *
-   * @param snapshot the snapshot instance
-   * @return an {@link Optional} containing the {@link RowTrackingMetadataDomain} if present
-   */
-  public static Optional<RowTrackingMetadataDomain> fromSnapshot(SnapshotImpl snapshot) {
-    return JsonMetadataDomain.fromSnapshot(snapshot, RowTrackingMetadataDomain.class, DOMAIN_NAME);
   }
 }

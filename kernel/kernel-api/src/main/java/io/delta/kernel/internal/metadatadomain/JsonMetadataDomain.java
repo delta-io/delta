@@ -15,8 +15,10 @@
  */
 package io.delta.kernel.internal.metadatadomain;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.*;
 import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
@@ -31,6 +33,30 @@ import java.util.Optional;
  * of a domain object. This class provides methods to serialize and deserialize a metadata domain to
  * and from JSON. Concrete implementations, such as {@link RowTrackingMetadataDomain}, should extend
  * this class to define a specific metadata domain.
+ *
+ * <p>A metadata domain differs from {@link DomainMetadata}: {@link DomainMetadata} represents an
+ * action that modifies the table's state by updating the configuration of a named metadata domain.
+ * A metadata domain is a named domain used to organize configurations related to a specific table
+ * feature.
+ *
+ * <p>For example, the row tracking feature uses a {@link RowTrackingMetadataDomain} to store the
+ * highest assigned fresh row id of the table. When updated, the row tracking feature creates and
+ * commits a new {@link DomainMetadata} action to reflect the change.
+ *
+ * <p>Serialization and deserialization are handled using Jackson's annotations. By default, all
+ * public fields and getters are included in the serialization. When creating subclasses, ensure
+ * that all fields to be serialized are accessible either through public fields or getters.
+ *
+ * <p>To control this behavior:
+ *
+ * <ul>
+ *   <li>Annotate methods/fields with {@link JsonIgnore} if they should be excluded from
+ *       serialization/deserialization.
+ *   <li>Annotate constructor with {@link JsonCreator} to specify which constructor to use during
+ *       deserialization.
+ *   <li>Use {@link JsonProperty} on constructor parameters to define the JSON field names during
+ *       deserialization.
+ * </ul>
  */
 public abstract class JsonMetadataDomain {
   // Configure the ObjectMapper with the same settings used in Delta-Spark
@@ -38,7 +64,7 @@ public abstract class JsonMetadataDomain {
       new ObjectMapper()
           .registerModule(new Jdk8Module()) // To support Optional
           .setSerializationInclusion(JsonInclude.Include.NON_ABSENT) // Exclude empty Optionals
-          .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+          .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false /* state */);
 
   /**
    * Deserializes a JSON string into an instance of the specified metadata domain.
@@ -111,6 +137,6 @@ public abstract class JsonMetadataDomain {
    * @return the DomainMetadata action instance
    */
   public DomainMetadata toDomainMetadata() {
-    return new DomainMetadata(getDomainName(), toJsonConfiguration(), false);
+    return new DomainMetadata(getDomainName(), toJsonConfiguration(), false /* removed */);
   }
 }

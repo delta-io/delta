@@ -33,7 +33,7 @@ import org.apache.spark.sql.delta.RowId.{
 }
 import org.apache.spark.sql.delta.test.DeltaTestImplicits.OptimisticTxnTestHelper
 
-import java.util.{Collections, Optional}
+import java.util.Collections
 import scala.collection.JavaConverters._
 import scala.collection.immutable.Seq
 
@@ -544,47 +544,36 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
     }
   }
 
-  test(
-    "RowTrackingMetadataDomain is serializable and deserializable"
-  ) {
+  test("RowTrackingMetadataDomain can be committed and read") {
     withTempDirAndEngine((tablePath, engine) => {
-      // Create a RowTrackingMetadataDomain
       val rowTrackingMetadataDomain = new RowTrackingMetadataDomain(10)
+      val dmAction = rowTrackingMetadataDomain.toDomainMetadata
 
-      // Generate a DomainMetadata action from it.
-      val dm = rowTrackingMetadataDomain.toDomainMetadata
       // The configuration string should be a JSON serialization of the rowTrackingMetadataDomain
-      assert(dm.getDomain === rowTrackingMetadataDomain.getDomainName)
-      assert(dm.getConfiguration === """{"rowIdHighWaterMark":10}""")
+      assert(dmAction.getDomain === rowTrackingMetadataDomain.getDomainName)
+      assert(dmAction.getConfiguration === """{"rowIdHighWaterMark":10}""")
 
-      // Verify the deserialization from DomainMetadata action into concrete domain object
-      val deserializedDomain = RowTrackingMetadataDomain.fromJsonConfiguration(dm.getConfiguration)
-      assert(deserializedDomain === rowTrackingMetadataDomain)
-
-      // Verify the domainMetadata can be committed and read back
+      // Commit the DomainMetadata action and verify
       createTableWithDomainMetadataSupported(engine, tablePath)
-      // Commit the domain metadata and verify
       commitDomainMetadataAndVerify(
         engine,
         tablePath,
-        domainMetadatas = Seq(dm),
-        expectedValue = Map(rowTrackingMetadataDomain.getDomainName -> dm)
+        domainMetadatas = Seq(dmAction),
+        expectedValue = Map(rowTrackingMetadataDomain.getDomainName -> dmAction)
       )
 
-      // Read the domain metadata back from the table snapshot
+      // Read the RowTrackingMetadataDomain from the table and verify
       val table = Table.forPath(engine, tablePath)
       val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
       val rowTrackingMetadataDomainFromSnapshot =
-        RowTrackingMetadataDomain.fromSnapshot(snapshot).get
+        RowTrackingMetadataDomain.fromSnapshot(snapshot)
 
-      // Verify the domain metadata read back from the snapshot
-      assert(rowTrackingMetadataDomain === rowTrackingMetadataDomainFromSnapshot)
+      assert(rowTrackingMetadataDomainFromSnapshot.isPresent)
+      assert(rowTrackingMetadataDomain === rowTrackingMetadataDomainFromSnapshot.get)
     })
   }
 
-  test(
-    "RowTrackingMetadataDomain Integration test - Write with Spark and read with Kernel"
-  ) {
+  test("RowTrackingMetadataDomain Integration test - Write with Spark and read with Kernel") {
     withTempDirAndEngine((tablePath, engine) => {
       val tbl = "tbl"
       withTable(tbl) {
@@ -612,20 +601,18 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
     })
   }
 
-  test(
-    "RowTrackingMetadataDomain Integration test - Write with Kernel and read with Spark"
-  ) {
+  test("RowTrackingMetadataDomain Integration test - Write with Kernel and read with Spark") {
     withTempDirAndEngine { (tablePath, engine) =>
       val tbl = "tbl"
       withTable(tbl) {
         // Create table and manually make changes to the row tracking metadata domain using Kernel
         createTableWithDomainMetadataSupported(engine, tablePath)
-        val dm = new RowTrackingMetadataDomain(10).toDomainMetadata
+        val dmAction = new RowTrackingMetadataDomain(10).toDomainMetadata
         commitDomainMetadataAndVerify(
           engine,
           tablePath,
-          domainMetadatas = Seq(dm),
-          expectedValue = Map(dm.getDomain -> dm)
+          domainMetadatas = Seq(dmAction),
+          expectedValue = Map(dmAction.getDomain -> dmAction)
         )
 
         // Use Spark to read the table's row tracking metadata domain and verify the result

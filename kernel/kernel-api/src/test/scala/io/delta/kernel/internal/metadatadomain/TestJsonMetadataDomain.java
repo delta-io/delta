@@ -24,10 +24,10 @@ import java.util.Optional;
  * A test implementation of {@link JsonMetadataDomain} for testing purposes. It has two Optional
  * fields and one primitive field.
  */
-public class TestJsonMetadataDomain extends JsonMetadataDomain {
-  private Optional<String> field1;
-  private Optional<String> field2;
-  private int field3;
+final public class TestJsonMetadataDomain extends JsonMetadataDomain {
+  final private Optional<String> field1;
+  final private Optional<String> field2;
+  final private int field3;
 
   @JsonCreator
   public TestJsonMetadataDomain(
