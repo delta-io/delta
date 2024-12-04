@@ -18,10 +18,14 @@ package io.delta.kernel.metrics
 import java.util.concurrent.Callable
 import java.util.function.Supplier
 
-import io.delta.kernel.internal.metrics.Timer
+import io.delta.kernel.internal.metrics.{Counter, Timer}
 import org.scalatest.funsuite.AnyFunSuite
 
 class MetricsUtilsSuite extends AnyFunSuite {
+
+  /////////////////
+  // Timer tests //
+  ////////////////
 
   def millisToNanos(millis: Long): Long = {
     millis*1000000
@@ -142,5 +146,26 @@ class MetricsUtilsSuite extends AnyFunSuite {
     testTimer((amount, timer) => {
       catchException(() => timer.time(runnable(amount)))
     })
+  }
+
+  ///////////////////
+  // Counter tests //
+  ///////////////////
+
+  test("Counter class") {
+    val counter = new Counter()
+    assert(counter.value == 0)
+    counter.increment(0)
+    assert(counter.value == 0)
+    counter.increment()
+    assert(counter.value == 1)
+    counter.increment()
+    assert(counter.value == 2)
+    counter.increment(10)
+    assert(counter.value == 12)
+    counter.reset()
+    assert(counter.value == 0)
+    counter.increment()
+    assert(counter.value == 1)
   }
 }
