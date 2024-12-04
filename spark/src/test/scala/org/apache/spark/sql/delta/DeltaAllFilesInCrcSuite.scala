@@ -198,6 +198,7 @@ class DeltaAllFilesInCrcSuite
 
         // We will see all files in CRC verification failure.
         // This will trigger the incremental commit verification which will fail.
+        assert(filterUsageRecords(records, "delta.assertions.mismatchedAction").size === 1)
         val allFilesInCrcValidationFailureRecords =
           filterUsageRecords(records, "delta.allFilesInCrc.checksumMismatch.differentAllFiles")
         assert(allFilesInCrcValidationFailureRecords.size === 1)
@@ -210,9 +211,8 @@ class DeltaAllFilesInCrcSuite
         assert(eventData("filesCountFromStateReconstruction").toLong ===
           expectedFilesCountFromCrc + 1)
         assert(eventData("incrementalCommitCrcValidationPassed").toBoolean === false)
-        val expectedValidationFailureMessage = "Number of files - Expected: 1 Computed: 2"
         assert(eventData("errorForIncrementalCommitCrcValidation").contains(
-          expectedValidationFailureMessage))
+          "The metadata of your Delta table could not be recovered"))
       }
     }
   }
