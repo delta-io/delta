@@ -208,6 +208,31 @@ public class PartitionUtils {
   }
 
   /**
+   * Validate that the given predicate references only (and at least one) partition columns.
+   *
+   * @throws IllegalArgumentException if the predicate does not reference any partition columns or
+   *     if it references any data columns
+   */
+  public static void validatePredicateOnlyOnPartitionColumns(
+      Predicate predicate, Set<String> partitionColNames) {
+    final Tuple2<Predicate, Predicate> metadataAndDataPredicates =
+        splitMetadataAndDataPredicates(predicate, partitionColNames);
+    final Predicate metadataPredicate = metadataAndDataPredicates._1;
+    final Predicate dataPredicate = metadataAndDataPredicates._2;
+
+    if (metadataPredicate == AlwaysTrue.ALWAYS_TRUE) {
+      throw new IllegalArgumentException(
+          String.format(
+              "Partition predicate must contain at least one partition column: %s", predicate));
+    }
+
+    if (dataPredicate != AlwaysTrue.ALWAYS_TRUE) {
+      throw new IllegalArgumentException(
+          String.format("Partition predicate must contain only partition columns: %s", predicate));
+    }
+  }
+
+  /**
    * Split the given predicate into predicate on partition columns and predicate on data columns.
    *
    * @param predicate
