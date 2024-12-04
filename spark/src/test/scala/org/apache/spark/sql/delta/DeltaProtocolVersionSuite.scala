@@ -3224,7 +3224,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         }
 
         // Move past retention period.
-        clock.advance(TimeUnit.HOURS.toMillis(24))
+        clock.advance(TimeUnit.HOURS.toMillis(48))
 
         sql(s"ALTER TABLE $table DROP FEATURE $featureName TRUNCATE HISTORY")
         assert(deltaLog.update().protocol === Protocol(1, 2))
