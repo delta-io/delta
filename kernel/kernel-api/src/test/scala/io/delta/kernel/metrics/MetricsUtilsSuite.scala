@@ -28,7 +28,8 @@ class MetricsUtilsSuite extends AnyFunSuite {
   }
 
   /**
-   * @param incrementFx Function given (duration, timer) increments the timer by about duration ms
+   * @param incrementFx Function given (duration, timer) increments the timer by approximately
+   *                    duration ms
    */
   def testTimer(incrementFx: (Long, Timer) => Unit): Unit = {
     val timer = new Timer()
