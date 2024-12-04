@@ -23,7 +23,6 @@ import java.util.Optional
 class JsonMetadataDomainSuite extends AnyFunSuite {
 
   test("JsonMetadataDomain can be serialized/deserialized - TestJsonMetadataDomain") {
-    // TestJsonMetadataDomain has two Optional<String> fields and one int primitive field
     val testMetadataDomain = new TestJsonMetadataDomain(Optional.of("value1"), Optional.empty(), 10)
 
     // Test the serialization, empty Optional fields should be omitted
@@ -72,7 +71,7 @@ class JsonMetadataDomainSuite extends AnyFunSuite {
     assert(testMD1.getField3 === 10)
     assert(testMD1 === testMD2)
 
-    // Also test with a concrete metadata domain - RowTrackingMetadataDomain
+    // Also test with an actual production class - RowTrackingMetadataDomain
     val rowTrackingJson1 = """{"rowIdHighWaterMark":10}"""
     val rowTrackingJson2 = """{"domainName":"delta.rowTracking","rowIdHighWaterMark":10}"""
 
