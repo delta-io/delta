@@ -41,12 +41,12 @@ public class SnapshotMetrics {
           loadInitialDeltaActionsTimer.totalDurationNs();
 
       @Override
-      public Optional<Long> timestampToVersionResolutionDurationNs() {
+      public Optional<Long> getTimestampToVersionResolutionDurationNs() {
         return timestampToVersionResolutionDurationResult;
       }
 
       @Override
-      public long loadInitialDeltaActionsDurationNs() {
+      public long getLoadInitialDeltaActionsDurationNs() {
         return loadInitialDeltaActionsDurationResult;
       }
     };

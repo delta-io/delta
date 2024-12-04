@@ -16,6 +16,8 @@
 package io.delta.kernel.defaults.engine;
 
 import io.delta.kernel.engine.*;
+import java.util.Collections;
+import java.util.List;
 import org.apache.hadoop.conf.Configuration;
 
 /** Default implementation of {@link Engine} based on Hadoop APIs. */
@@ -45,6 +47,11 @@ public class DefaultEngine implements Engine {
   public ParquetHandler getParquetHandler() {
     return new DefaultParquetHandler(hadoopConf);
   }
+
+  @Override
+  public List<MetricsReporter> getMetricsReporters() {
+    return Collections.singletonList(new LoggingMetricsReporter());
+  };
 
   /**
    * Create an instance of {@link DefaultEngine}.

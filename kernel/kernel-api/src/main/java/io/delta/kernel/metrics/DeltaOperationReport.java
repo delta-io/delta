@@ -22,14 +22,14 @@ import java.util.UUID;
 public interface DeltaOperationReport extends MetricsReport {
 
   /** @return the path of the table */
-  String tablePath();
+  String getTablePath();
 
   /** @return a string representation of the operation this report is for */
-  String operationType();
-
-  /** @return the exception thrown if this report is for a failed operation, otherwise empty */
-  Optional<Exception> exception();
+  String getOperationType();
 
   /** @return a unique ID for this report */
-  UUID reportUUID();
+  UUID getReportUUID();
+
+  /** @return the exception thrown if this report is for a failed operation, otherwise empty */
+  Optional<Exception> getException();
 }
