@@ -380,7 +380,7 @@ case class ColumnMappingPreDowngradeCommand(table: DeltaTableV2)
     with DeltaLogging {
 
   /**
-   * We first remove the table feature property to prevent any transactions from writting data
+   * We first remove the table feature property to prevent any transactions from writing data
    * files with the physical names. This will cause any concurrent transactions to fail.
    * Then, we run RemoveColumnMappingCommand to rewrite the files rename columns.
    * Note, during the protocol downgrade phase we validate whether all invariants still hold.
@@ -422,5 +422,59 @@ case class CheckConstraintsPreDowngradeTableFeatureCommand(table: DeltaTableV2)
     val checkConstraintNames = Constraints.getCheckConstraintNames(table.initialSnapshot.metadata)
     if (checkConstraintNames.isEmpty) return false
     throw DeltaErrors.cannotDropCheckConstraintFeature(checkConstraintNames)
+  }
+}
+
+case class CheckpointProtectionPreDowngradeCommand(table: DeltaTableV2)
+    extends PreDowngradeTableFeatureCommand {
+  import org.apache.spark.sql.delta.actions.DropTableFeatureUtils._
+  import org.apache.spark.sql.delta.CheckpointProtectionTableFeature._
+
+  /**
+   * To remove the feature we need to truncate all history prior to the atomic cleanup version.
+   * For this cleanup operation we use a shorter log retention period of 24 hours as defined in
+   * (delta.dropFeatureTruncateHistory.retentionDuration). The history truncation here needs to
+   * adhere to all the invariants established by the CheckpointProtectionTableFeature, similarly
+   * to any other metadata cleanup invocations (see doc in CheckpointProtectionTableFeature and
+   * REQUIRE_CHECKPOINT_PROTECTION_BEFORE_VERSION).
+   *
+   * The pre-downgrade process here mimics the downgrade process of the legacy drop feature
+   * implementation for features with requiresHistoryProtection=true.
+   *
+   * Note, this feature can only be dropped with the TRUNCATE HISTORY option. Therefore, the
+   * removal of CheckpointProtection does not require the addition of CheckpointProtection to
+   * protect history.
+   *
+   * Always returns false since we do not perform any modifications that require history
+   * expiration. This allows the drop process to proceed immediately after we cleanup the history
+   * prior to requireCheckpointProtectionBeforeVersion.
+   */
+  override def removeFeatureTracesIfNeeded(): Boolean = {
+    val snapshot = table.initialSnapshot
+
+    if (!historyPriorToCheckpointProtectionVersionIsTruncated(snapshot)) {
+      // Add a checkpoint here to make sure we can cleanup up everything before this commit.
+      // This is because metadata cleanup operations, can only clean up to the latest checkpoint.
+      createEmptyCommitAndCheckpoint(table, System.nanoTime())
+
+      table.deltaLog.cleanUpExpiredLogs(
+        snapshot,
+        deltaRetentionMillisOpt = Some(truncateHistoryLogRetentionMillis(snapshot.metadata)),
+        cutoffTruncationGranularity = TruncationGranularity.MINUTE)
+
+      if (!historyPriorToCheckpointProtectionVersionIsTruncated(snapshot)) {
+        throw DeltaErrors.dropCheckpointProtectionWaitForRetentionPeriod(
+          table.initialSnapshot.metadata)
+      }
+    }
+
+    // If history is truncated we do not need the property anymore.
+    val property = DeltaConfigs.REQUIRE_CHECKPOINT_PROTECTION_BEFORE_VERSION.key
+    AlterTableUnsetPropertiesDeltaCommand(
+      table, Seq(property), ifExists = true, fromDropFeatureCommand = true).run(table.spark)
+
+    // We did not do any changes that require history expiration. It is ok if the removed property
+    // exists in history.
+    false
   }
 }
