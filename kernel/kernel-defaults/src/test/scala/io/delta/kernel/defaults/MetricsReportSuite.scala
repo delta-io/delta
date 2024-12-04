@@ -110,34 +110,34 @@ class MetricsReportSuite extends AnyFunSuite with TestUtils {
     val (snapshotReport, duration, exception) = getSnapshotReport(f, path, expectException)
 
     // Verify contents
-    assert(snapshotReport.tablePath == resolvePath(path))
-    assert(snapshotReport.operationType == "Snapshot")
+    assert(snapshotReport.getTablePath == resolvePath(path))
+    assert(snapshotReport.getOperationType == "Snapshot")
     exception match {
       case Some(e) =>
-        assert(snapshotReport.exception().isPresent &&
-          Objects.equals(snapshotReport.exception().get(), e))
-      case None => assert(!snapshotReport.exception().isPresent)
+        assert(snapshotReport.getException().isPresent &&
+          Objects.equals(snapshotReport.getException().get(), e))
+      case None => assert(!snapshotReport.getException().isPresent)
     }
-    assert(snapshotReport.reportUUID != null)
-    assert(Objects.equals(snapshotReport.version, expectedVersion),
-      s"Expected version $expectedVersion found ${snapshotReport.version}")
-    assert(Objects.equals(snapshotReport.providedTimestamp, expectedProvidedTimestamp))
+    assert(snapshotReport.getReportUUID != null)
+    assert(Objects.equals(snapshotReport.getVersion, expectedVersion),
+      s"Expected version $expectedVersion found ${snapshotReport.getVersion}")
+    assert(Objects.equals(snapshotReport.getProvidedTimestamp, expectedProvidedTimestamp))
 
     // Since we cannot know the actual durations of these we sanity check that they are > 0 and
     // less than the total operation duration whenever they are expected to be non-zero/non-empty
     if (expectNonEmptyTimestampToVersionResolutionDuration) {
-      assert(snapshotReport.snapshotMetrics.timestampToVersionResolutionDuration.isPresent)
-      assert(snapshotReport.snapshotMetrics.timestampToVersionResolutionDuration.get > 0)
-      assert(snapshotReport.snapshotMetrics.timestampToVersionResolutionDuration.get <
+      assert(snapshotReport.getSnapshotMetrics.getTimestampToVersionResolutionDuration.isPresent)
+      assert(snapshotReport.getSnapshotMetrics.getTimestampToVersionResolutionDuration.get > 0)
+      assert(snapshotReport.getSnapshotMetrics.getTimestampToVersionResolutionDuration.get <
         duration)
     } else {
-      assert(!snapshotReport.snapshotMetrics.timestampToVersionResolutionDuration.isPresent)
+      assert(!snapshotReport.getSnapshotMetrics.getTimestampToVersionResolutionDuration.isPresent)
     }
     if (expectNonZeroLoadProtocolAndMetadataDuration) {
-      assert(snapshotReport.snapshotMetrics.loadInitialDeltaActionsDuration > 0)
-      assert(snapshotReport.snapshotMetrics.loadInitialDeltaActionsDuration < duration)
+      assert(snapshotReport.getSnapshotMetrics.getLoadInitialDeltaActionsDuration > 0)
+      assert(snapshotReport.getSnapshotMetrics.getLoadInitialDeltaActionsDuration < duration)
     } else {
-      assert(snapshotReport.snapshotMetrics.loadInitialDeltaActionsDuration == 0)
+      assert(snapshotReport.getSnapshotMetrics.getLoadInitialDeltaActionsDuration == 0)
     }
   }
 

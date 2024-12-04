@@ -36,12 +36,12 @@ public class SnapshotMetrics {
           loadProtocolAndMetadataDuration.totalDuration();
 
       @Override
-      public Optional<Long> timestampToVersionResolutionDuration() {
+      public Optional<Long> getTimestampToVersionResolutionDuration() {
         return timestampToVersionResolutionDurationResult;
       }
 
       @Override
-      public long loadInitialDeltaActionsDuration() {
+      public long getLoadInitialDeltaActionsDuration() {
         return loadProtocolAndMetadataDurationResult;
       }
     };

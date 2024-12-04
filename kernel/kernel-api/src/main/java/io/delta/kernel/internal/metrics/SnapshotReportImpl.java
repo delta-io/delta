@@ -47,37 +47,37 @@ public class SnapshotReportImpl implements SnapshotReport {
   }
 
   @Override
-  public String tablePath() {
+  public String getTablePath() {
     return tablePath;
   }
 
   @Override
-  public String operationType() {
+  public String getOperationType() {
     return SnapshotReport.OPERATION_TYPE;
   }
 
   @Override
-  public UUID reportUUID() {
+  public UUID getReportUUID() {
     return reportUUID;
   }
 
   @Override
-  public SnapshotMetricsResult snapshotMetrics() {
+  public SnapshotMetricsResult getSnapshotMetrics() {
     return snapshotMetrics;
   }
 
   @Override
-  public Optional<Long> version() {
+  public Optional<Long> getVersion() {
     return version;
   }
 
   @Override
-  public Optional<Long> providedTimestamp() {
+  public Optional<Long> getProvidedTimestamp() {
     return providedTimestamp;
   }
 
   @Override
-  public Optional<Exception> exception() {
+  public Optional<Exception> getException() {
     return exception;
   }
 }
