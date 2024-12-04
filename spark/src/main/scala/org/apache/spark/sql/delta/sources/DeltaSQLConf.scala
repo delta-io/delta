@@ -1035,7 +1035,7 @@ trait DeltaSQLConfBase {
     buildConf("writeChecksumFile.enabled")
       .doc("Whether the checksum file can be written.")
       .booleanConf
-      .createWithDefault(false)
+      .createWithDefault(true)
 
   val INCREMENTAL_COMMIT_ENABLED =
     buildConf("incremental.commit.enabled")
