@@ -29,7 +29,8 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{functions, Column, DataFrame}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.{UnresolvedAttribute, UnresolvedRelation}
+import org.apache.spark.sql.catalyst.analysis.{UnresolvedAttribute, UnresolvedRelation, UnresolvedTable}
+import org.apache.spark.sql.catalyst.analysis.UnresolvedTableImplicits._
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.connector.catalog.Identifier
@@ -64,15 +65,13 @@ trait DeltaTableOperations extends AnalysisHelper { self: io.delta.tables.DeltaT
     toDataset(sparkSession, details)
   }
 
-  protected def executeGenerate(tblIdentifier: String, mode: String): Unit =
-    withActiveSession(sparkSession) {
-      val tableId: TableIdentifier = sparkSession
-        .sessionState
-        .sqlParser
-        .parseTableIdentifier(tblIdentifier)
-      val generate = DeltaGenerateCommand(mode, tableId, self.deltaLog.options)
-      toDataset(sparkSession, generate)
-    }
+  protected def executeGenerate(
+      path: String,
+      tableIdentifier: Option[TableIdentifier],
+      mode: String): Unit = withActiveSession(sparkSession) {
+    val generate = DeltaGenerateCommand(Option(path), tableIdentifier, mode, self.deltaLog.options)
+    toDataset(sparkSession, generate)
+  }
 
   protected def executeUpdate(
       set: Map[String, Column],
