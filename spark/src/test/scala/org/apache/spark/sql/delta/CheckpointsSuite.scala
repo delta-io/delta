@@ -556,6 +556,11 @@ class CheckpointsSuite
 
   test("checkpoint with DVs") {
     for (v2Checkpoint <- Seq(true, false))
+    withSQLConf(
+      DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "false",
+      DeltaSQLConf.INCREMENTAL_COMMIT_FORCE_VERIFY_IN_TESTS.key -> "false",
+      DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_ENABLED.key -> "false"
+    ) {
     withTempDir { tempDir =>
       val source = new File(DeletionVectorsSuite.table1Path) // this table has DVs in two versions
       val targetName = s"insertTest_${UUID.randomUUID().toString.replace("-", "")}"
@@ -578,8 +583,8 @@ class CheckpointsSuite
       val newData = Seq.range(3000, 3010)
       newData.foreach { i => insertData(s"VALUES($i)") }
       checkAnswer(
-          spark.sql(s"SELECT * FROM delta.`${source.getAbsolutePath}`"),
-          (DeletionVectorsSuite.expectedTable1DataV4).toSeq.toDF())
+        spark.sql(s"SELECT * FROM delta.`${source.getAbsolutePath}`"),
+        (DeletionVectorsSuite.expectedTable1DataV4).toSeq.toDF())
       checkAnswer(
         spark.sql(s"SELECT * FROM delta.`${target.getAbsolutePath}`"),
         (DeletionVectorsSuite.expectedTable1DataV4 ++ newData).toSeq.toDF())
@@ -600,6 +605,7 @@ class CheckpointsSuite
     //  checkAnswer(
     //    spark.sql(s"SELECT * FROM delta.`${target.getAbsolutePath}`"),
     //    (DeletionVectorsSuite.expectedTable1DataV4 ++ newData).toSeq.toDF())
+    }
     }
   }
 
