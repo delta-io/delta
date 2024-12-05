@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import java.io.File
 import java.net.URI
+import java.util.UUID
 
 import scala.concurrent.duration._
 
@@ -557,7 +558,8 @@ class CheckpointsSuite
     for (v2Checkpoint <- Seq(true, false))
     withTempDir { tempDir =>
       val source = new File(DeletionVectorsSuite.table1Path) // this table has DVs in two versions
-      val target = new File(tempDir, "insertTest")
+      val targetName = s"insertTest_${UUID.randomUUID().toString.replace("-", "")}"
+      val target = new File(tempDir, targetName)
 
       // Copy the source2 DV table to a temporary directory, so that we do updates to it
       FileUtils.copyDirectory(source, target)
@@ -926,7 +928,13 @@ class CheckpointsSuite
   for (lastCheckpointMissing <- BOOLEAN_DOMAIN)
   testDifferentCheckpoints("intermittent error while reading checkpoint should not" +
       s" stick to snapshot [lastCheckpointMissing: $lastCheckpointMissing]") { (_, _) =>
-    withTempDir { tempDir => checkIntermittentError(tempDir, lastCheckpointMissing) }
+    withTempDir { tempDir =>
+      withSQLConf(
+        DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_ENABLED.key -> "false"
+      ) {
+        checkIntermittentError(tempDir, lastCheckpointMissing)
+      }
+    }
   }
 
   test("validate metadata cleanup is not called with createCheckpointAtVersion API") {
