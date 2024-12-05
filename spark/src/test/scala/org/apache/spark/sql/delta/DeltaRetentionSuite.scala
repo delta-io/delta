@@ -38,7 +38,8 @@ import org.apache.spark.util.ManualClock
 class DeltaRetentionSuite extends QueryTest
   with DeltaRetentionSuiteBase
   with DeltaSQLTestUtils
-  with DeltaSQLCommandTest {
+  with DeltaSQLCommandTest
+  with CheckpointProtectionTestUtilsMixin {
 
   protected override def sparkConf: SparkConf = super.sparkConf
 
@@ -504,6 +505,139 @@ class DeltaRetentionSuite extends QueryTest
             Seq(CheckpointInstance.Format.V2, CheckpointInstance.Format.SINGLE))
       }
     }
+  }
+
+  test("Metadata cleanup respects requireCheckpointProtectionBeforeVersion") {
+    // Commits should be cleaned up to the latest checkpoint.
+    testRequireCheckpointProtectionBeforeVersion(
+      createNumCommitsOutsideRetentionPeriod = 8,
+      createNumCommitsWithinRetentionPeriod = 8,
+      createCheckpoints = Set(6, 8),
+      requireCheckpointProtectionBeforeVersion = 2,
+      expectedCommitsAfterCleanup = Range.inclusive(8, 15).toSet,
+      // Α checkpoint is automatically created every 10 commits.
+      expectedCheckpointsAfterCleanup = Set(8, 10))
+
+    // Commits should be cleaned up to the latest checkpoint.
+    testRequireCheckpointProtectionBeforeVersion(
+      createNumCommitsOutsideRetentionPeriod = 8,
+      createNumCommitsWithinRetentionPeriod = 8,
+      createCheckpoints = Set(6, 8),
+      requireCheckpointProtectionBeforeVersion = 6,
+      expectedCommitsAfterCleanup = Range.inclusive(8, 15).toSet,
+      // Α checkpoint is automatically created every 10 commits.
+      expectedCheckpointsAfterCleanup = Set(8, 10))
+
+    // Commits should be cleaned up to the latest checkpoint.
+    testRequireCheckpointProtectionBeforeVersion(
+      createNumCommitsOutsideRetentionPeriod = 8,
+      createNumCommitsWithinRetentionPeriod = 8,
+      createCheckpoints = Set(6, 8),
+      requireCheckpointProtectionBeforeVersion = 7,
+      expectedCommitsAfterCleanup = Range.inclusive(8, 15).toSet,
+      // Α checkpoint is automatically created every 10 commits.
+      expectedCheckpointsAfterCleanup = Set(8, 10))
+
+    // Commits should be cleaned up to the latest checkpoint.
+    testRequireCheckpointProtectionBeforeVersion(
+      createNumCommitsOutsideRetentionPeriod = 8,
+      createNumCommitsWithinRetentionPeriod = 8,
+      createCheckpoints = Set(6, 8),
+      requireCheckpointProtectionBeforeVersion = 8,
+      expectedCommitsAfterCleanup = Range.inclusive(8, 15).toSet,
+      // Α checkpoint is automatically created every 10 commits.
+      expectedCheckpointsAfterCleanup = Set(8, 10))
+
+    // Commits should be cleaned up to the checkpoint 10.
+    testRequireCheckpointProtectionBeforeVersion(
+      createNumCommitsOutsideRetentionPeriod = 10,
+      createNumCommitsWithinRetentionPeriod = 10,
+      createCheckpoints = Set(6, 8),
+      requireCheckpointProtectionBeforeVersion = 9,
+      expectedCommitsAfterCleanup = Range.inclusive(10, 19).toSet,
+      // Α checkpoint is automatically created every 10 commits.
+      expectedCheckpointsAfterCleanup = Set(10))
+
+    // Checkpoint 8 is within the retention period.
+    // Cleanup should be skipped.
+    testRequireCheckpointProtectionBeforeVersion(
+      createNumCommitsOutsideRetentionPeriod = 8,
+      createNumCommitsWithinRetentionPeriod = 8,
+      createCheckpoints = Set(6, 8),
+      requireCheckpointProtectionBeforeVersion = 9,
+      expectedCommitsAfterCleanup = Range.inclusive(0, 15).toSet,
+      // Α checkpoint is automatically created every 10 commits.
+      expectedCheckpointsAfterCleanup = Set(6, 8, 10))
+
+    // Cleanup should be skipped.
+    testRequireCheckpointProtectionBeforeVersion(
+      createNumCommitsOutsideRetentionPeriod = 8,
+      createNumCommitsWithinRetentionPeriod = 8,
+      createCheckpoints = Set(6, 8),
+      requireCheckpointProtectionBeforeVersion = 20,
+      expectedCommitsAfterCleanup = Range.inclusive(0, 15).toSet,
+      // Α checkpoint is automatically created every 10 commits.
+      expectedCheckpointsAfterCleanup = Set(6, 8, 10))
+
+    // With multiple checkpoints (8, 12, 14) within the retention period.
+    // None of these should be cleaned up.
+    testRequireCheckpointProtectionBeforeVersion(
+      createNumCommitsOutsideRetentionPeriod = 8,
+      createNumCommitsWithinRetentionPeriod = 8,
+      createCheckpoints = Set(6, 8, 12, 14),
+      requireCheckpointProtectionBeforeVersion = 8,
+      expectedCommitsAfterCleanup = Range.inclusive(8, 15).toSet,
+      // Α checkpoint is automatically created every 10 commits.
+      expectedCheckpointsAfterCleanup = Set(8, 10, 12, 14))
+
+    // With multiple checkpoints (8, 12, 14) within the retention period.
+    // requireCheckpointProtectionBeforeVersion = 9 is within the retention period.
+    // Cleanup should be skipped.
+    testRequireCheckpointProtectionBeforeVersion(
+      createNumCommitsOutsideRetentionPeriod = 8,
+      createNumCommitsWithinRetentionPeriod = 8,
+      createCheckpoints = Set(6, 8, 12, 14),
+      requireCheckpointProtectionBeforeVersion = 9,
+      expectedCommitsAfterCleanup = Range.inclusive(0, 15).toSet,
+      // Α checkpoint is automatically created every 10 commits.
+      expectedCheckpointsAfterCleanup = Set(6, 8, 10, 12, 14))
+
+    // Corner cases.
+    testRequireCheckpointProtectionBeforeVersion(
+      createNumCommitsOutsideRetentionPeriod = 2,
+      createNumCommitsWithinRetentionPeriod = 14,
+      createCheckpoints = Set(1),
+      requireCheckpointProtectionBeforeVersion = 0,
+      expectedCommitsAfterCleanup = Range.inclusive(2, 15).toSet,
+      // Α checkpoint is automatically created every 10 commits.
+      expectedCheckpointsAfterCleanup = Set(10))
+
+    testRequireCheckpointProtectionBeforeVersion(
+      createNumCommitsOutsideRetentionPeriod = 2,
+      createNumCommitsWithinRetentionPeriod = 14,
+      createCheckpoints = Set(1),
+      requireCheckpointProtectionBeforeVersion = 1,
+      expectedCommitsAfterCleanup = Range.inclusive(2, 15).toSet,
+      // Α checkpoint is automatically created every 10 commits.
+      expectedCheckpointsAfterCleanup = Set(10))
+
+    testRequireCheckpointProtectionBeforeVersion(
+      createNumCommitsOutsideRetentionPeriod = 2,
+      createNumCommitsWithinRetentionPeriod = 14,
+      createCheckpoints = Set(1),
+      requireCheckpointProtectionBeforeVersion = 2,
+      expectedCommitsAfterCleanup = Range.inclusive(2, 15).toSet,
+      // Α checkpoint is automatically created every 10 commits.
+      expectedCheckpointsAfterCleanup = Set(10))
+
+    testRequireCheckpointProtectionBeforeVersion(
+      createNumCommitsOutsideRetentionPeriod = 2,
+      createNumCommitsWithinRetentionPeriod = 14,
+      createCheckpoints = Set(1),
+      requireCheckpointProtectionBeforeVersion = 3,
+      expectedCommitsAfterCleanup = Range.inclusive(0, 15).toSet,
+      // Α checkpoint is automatically created every 10 commits.
+      expectedCheckpointsAfterCleanup = Set(1, 10))
   }
 }
 
