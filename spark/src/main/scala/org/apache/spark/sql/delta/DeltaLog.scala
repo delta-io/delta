@@ -636,7 +636,8 @@ class DeltaLog private(
    */
   protected def checkRequiredConfigurations(): Unit = {
     if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_REQUIRED_SPARK_CONFS_CHECK)) {
-      if (!spark.conf.contains(SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key)) {
+      val catalogImpl = spark.conf.get(SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key, null)
+      if (catalogImpl == null) {
         throw DeltaErrors.configureSparkSessionWithExtensionAndCatalog(None)
       }
     }
