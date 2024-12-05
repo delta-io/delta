@@ -411,6 +411,9 @@ class DeltaLogSuite extends QueryTest
           }
         }
 
+        val checksumFilePath = FileNames.checksumFile(log.logPath, log.snapshot.version)
+        removeProtocolAndMetadataFromChecksumFile(checksumFilePath)
+
         {
           // Create an incomplete checkpoint without the action and overwrite the
           // original checkpoint
