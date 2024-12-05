@@ -769,7 +769,8 @@ class CheckpointsSuite
     }
   }
 
-  def checkIntermittentError(tempDir: File, lastCheckpointMissing: Boolean): Unit = {
+  def checkIntermittentError(
+      tempDir: File, lastCheckpointMissing: Boolean, crcMissing: Boolean): Unit = {
     // Create a table with commit version 0, 1 and a checkpoint.
     val tablePath = tempDir.getAbsolutePath
     spark.range(10).write.format("delta").save(tablePath)
@@ -784,6 +785,13 @@ class CheckpointsSuite
     val fs = log.logPath.getFileSystem(conf)
     if (lastCheckpointMissing) {
       fs.delete(log.LAST_CHECKPOINT)
+    }
+    // Delete CRC file based on test configuration.
+    if (crcMissing) {
+      // Delete all CRC files
+      (0L to log.update().version).foreach { version =>
+        fs.delete(FileNames.checksumFile(log.logPath, version))
+      }
     }
 
     // In order to trigger an intermittent failure while reading checkpoint, this test corrupts
@@ -806,9 +814,36 @@ class CheckpointsSuite
     assert(fs.getFileStatus(tempPath).getLen === checkpointFileStatus.getLen)
 
     DeltaLog.clearCache()
+    if (!crcMissing) {
+      // When CRC is present, then P&M will be taken from CRC and snapshot will be initialized
+      // without needing a checkpoint. But the underlying checkpoint provider points to a
+      // corrupted checkpoint and so any query/state reconstruction on this will fail.
+      intercept[Exception] {
+        sql(s"SELECT * FROM delta.`$tablePath`").collect()
+        DeltaLog.forTable(spark, tablePath).unsafeVolatileSnapshot.validateChecksum()
+      }
+      val snapshot = DeltaLog.forTable(spark, tablePath).unsafeVolatileSnapshot
+      intercept[Exception] {
+        snapshot.allFiles.collect()
+      }
+      // Undo the corruption
+      assert(fs.delete(checkpointFileStatus.getPath, true))
+      assert(fs.rename(tempPath, checkpointFileStatus.getPath))
+
+      // Once the corruption in undone, then the queries starts passing on top of same snapshot.
+      // This tests that we have not caches the intermittent error in the underlying checkpoint
+      // provider.
+      sql(s"SELECT * FROM delta.`$tablePath`").collect()
+      assert(DeltaLog.forTable(spark, tablePath).update() === snapshot)
+      return
+    }
+    // When CRC is missing, then P&M will be taken from checkpoint which is temporarily
+    // corrupted, so we will end up creating a new snapshot without using checkpoint and the
+    // query will succeed.
     sql(s"SELECT * FROM delta.`$tablePath`").collect()
     val snapshot = DeltaLog.forTable(spark, tablePath).unsafeVolatileSnapshot
     snapshot.computeChecksum
+    snapshot.validateChecksum()
     assert(snapshot.checkpointProvider.isEmpty)
   }
 
@@ -932,7 +967,7 @@ class CheckpointsSuite
       withSQLConf(
         DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_ENABLED.key -> "false"
       ) {
-        checkIntermittentError(tempDir, lastCheckpointMissing)
+        checkIntermittentError(tempDir, lastCheckpointMissing, crcMissing = true)
       }
     }
   }
