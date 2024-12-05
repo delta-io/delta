@@ -563,6 +563,7 @@ class CheckpointsSuite
 
       // Copy the source2 DV table to a temporary directory, so that we do updates to it
       FileUtils.copyDirectory(source, target)
+      import testImplicits._
       checkAnswer(
         spark.sql(s"SELECT * FROM delta.`${source.getAbsolutePath}`"),
         (DeletionVectorsSuite.expectedTable1DataV4).toSeq.toDF())
