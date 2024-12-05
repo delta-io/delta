@@ -347,7 +347,7 @@ domainMetadata | Array[`domainMetadata`] | Live [Domain Metadata](#domain-metada
 metadata | Metadata | The table [metadata](#change-metadata) at this version. | required
 protocol | Protocol | The table [protocol](#protocol-evolution) at this version. | required
 fileSizeHistogram | FileSizeHistogram | Size distribution information of files remaining after [Action Reconciliation](#action-reconciliation). See [FileSizeHistogram](#file-size-histogram-schema) for more details. | optional
-allFiles | Array[AddFile] | All live [AddFile](#add-file-and-remove-file) actions at this version. | optional
+allFiles | Array[`add`] | All live [Add File](#add-file-and-remove-file) actions at this version. | optional
 numDeletedRecordsOpt | Long | Number of records deleted through Deletion Vectors in this table version. | optional
 numDeletionVectorsOpt | Long | Number of Deletion Vectors active in this table version. | optional
 deletedRecordCountsHistogramOpt | DeletedRecordCountsHistogram | Distribution of deleted record counts across files. See [this](#deleted-record-counts-histogram-schema) section for more details. | optional
