@@ -38,7 +38,7 @@ import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.checkpoints.*;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.ListUtils;
-import io.delta.kernel.internal.metrics.SnapshotContext;
+import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.replay.CreateCheckpointIterator;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.util.Clock;
@@ -123,7 +123,7 @@ public class SnapshotManager {
    * @return
    * @throws TableNotFoundException
    */
-  public Snapshot buildLatestSnapshot(Engine engine, SnapshotContext snapshotContext)
+  public Snapshot buildLatestSnapshot(Engine engine, SnapshotQueryContext snapshotContext)
       throws TableNotFoundException {
     return getSnapshotAtInit(engine, snapshotContext);
   }
@@ -136,7 +136,7 @@ public class SnapshotManager {
    * @return a {@link Snapshot} of the table at version {@code version}
    * @throws TableNotFoundException
    */
-  public Snapshot getSnapshotAt(Engine engine, long version, SnapshotContext snapshotContext)
+  public Snapshot getSnapshotAt(Engine engine, long version, SnapshotQueryContext snapshotContext)
       throws TableNotFoundException {
 
     Optional<LogSegment> logSegmentOpt =
@@ -177,7 +177,7 @@ public class SnapshotManager {
    * @throws TableNotFoundException
    */
   public Snapshot getSnapshotForTimestamp(
-      Engine engine, long millisSinceEpochUTC, SnapshotContext snapshotContext)
+      Engine engine, long millisSinceEpochUTC, SnapshotQueryContext snapshotContext)
       throws TableNotFoundException {
     long startTimeMillis = System.currentTimeMillis();
     long versionToRead =
@@ -211,7 +211,9 @@ public class SnapshotManager {
     SnapshotImpl snapshot =
         (SnapshotImpl)
             getSnapshotAt(
-                engine, version, SnapshotContext.forVersionSnapshot(tablePath.toString(), version));
+                engine,
+                version,
+                SnapshotQueryContext.forVersionSnapshot(tablePath.toString(), version));
 
     // Check if writing to the given table protocol version/features is supported in Kernel
     validateWriteSupportedTable(
@@ -484,7 +486,7 @@ public class SnapshotManager {
    * Load the Snapshot for this Delta table at initialization. This method uses the `lastCheckpoint`
    * file as a hint on where to start listing the transaction log directory.
    */
-  private SnapshotImpl getSnapshotAtInit(Engine engine, SnapshotContext snapshotContext)
+  private SnapshotImpl getSnapshotAtInit(Engine engine, SnapshotQueryContext snapshotContext)
       throws TableNotFoundException {
     Checkpointer checkpointer = new Checkpointer(logPath);
     Optional<CheckpointMetaData> lastCheckpointOpt = checkpointer.readLastCheckpointFile(engine);
@@ -513,7 +515,7 @@ public class SnapshotManager {
       Engine engine,
       LogSegment initialSegmentForNewSnapshot,
       Optional<Long> versionToLoadOpt,
-      SnapshotContext snapshotContext) {
+      SnapshotQueryContext snapshotContext) {
     SnapshotImpl newSnapshot =
         createSnapshot(initialSegmentForNewSnapshot, engine, snapshotContext);
 
@@ -540,7 +542,7 @@ public class SnapshotManager {
   }
 
   private SnapshotImpl createSnapshot(
-      LogSegment initSegment, Engine engine, SnapshotContext snapshotContext) {
+      LogSegment initSegment, Engine engine, SnapshotQueryContext snapshotContext) {
     final String startingFromStr =
         initSegment
             .checkpointVersionOpt

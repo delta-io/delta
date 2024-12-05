@@ -76,6 +76,11 @@ public class Timer {
     }
   }
 
+  @Override
+  public String toString() {
+    return String.format("Timer(duration=%s ns, count=%s)", totalDuration(), count());
+  }
+
   /**
    * A timing sample that carries internal state about the Timer's start position. The timing can be
    * completed by calling {@link Timed#stop()}.

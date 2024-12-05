@@ -19,49 +19,56 @@ import io.delta.kernel.metrics.SnapshotReport;
 import java.util.Optional;
 
 /** Stores the context for a given Snapshot query. Used to generate a {@link SnapshotReport} */
-public class SnapshotContext {
+public class SnapshotQueryContext {
 
-  public static SnapshotContext forLatestSnapshot(String tablePath) {
-    return new SnapshotContext(tablePath, Optional.empty(), Optional.empty());
+  public static SnapshotQueryContext forLatestSnapshot(String tablePath) {
+    return new SnapshotQueryContext(tablePath, Optional.empty(), Optional.empty());
   }
 
-  public static SnapshotContext forVersionSnapshot(String tablePath, long version) {
-    return new SnapshotContext(tablePath, Optional.of(version), Optional.empty());
+  public static SnapshotQueryContext forVersionSnapshot(String tablePath, long version) {
+    return new SnapshotQueryContext(tablePath, Optional.of(version), Optional.empty());
   }
 
-  public static SnapshotContext forTimestampSnapshot(String tablePath, long timestamp) {
-    return new SnapshotContext(tablePath, Optional.empty(), Optional.of(timestamp));
+  public static SnapshotQueryContext forTimestampSnapshot(String tablePath, long timestamp) {
+    return new SnapshotQueryContext(tablePath, Optional.empty(), Optional.of(timestamp));
   }
 
-  private Optional<Long> version;
-  private final SnapshotMetrics snapshotMetrics = new SnapshotMetrics();
   private final String tablePath;
+  private Optional<Long> version;
   private final Optional<Long> providedTimestamp;
+  private final SnapshotMetrics snapshotMetrics = new SnapshotMetrics();
 
-  private SnapshotContext(
+  private SnapshotQueryContext(
       String tablePath, Optional<Long> version, Optional<Long> providedTimestamp) {
     this.tablePath = tablePath;
     this.version = version;
     this.providedTimestamp = providedTimestamp;
   }
 
-  public Optional<Long> getVersion() {
-    return version;
-  }
-
-  public SnapshotMetrics getSnapshotMetrics() {
-    return snapshotMetrics;
-  }
-
   public String getTablePath() {
     return tablePath;
+  }
+
+  public Optional<Long> getVersion() {
+    return version;
   }
 
   public Optional<Long> getProvidedTimestamp() {
     return providedTimestamp;
   }
 
+  public SnapshotMetrics getSnapshotMetrics() {
+    return snapshotMetrics;
+  }
+
   public void setVersion(long updatedVersion) {
     version = Optional.of(updatedVersion);
+  }
+
+  @Override
+  public String toString() {
+    return String.format(
+        "SnapshotQueryContext(tablePath=%s, version=%s, providedTimestamp=%s, snapshotMetric=%s)",
+        tablePath, version, providedTimestamp, snapshotMetrics);
   }
 }

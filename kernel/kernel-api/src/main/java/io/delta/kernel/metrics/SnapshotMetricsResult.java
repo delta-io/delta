@@ -15,9 +15,6 @@
  */
 package io.delta.kernel.metrics;
 
-import static io.delta.kernel.internal.util.Preconditions.checkArgument;
-
-import io.delta.kernel.internal.metrics.SnapshotMetrics;
 import java.util.Optional;
 
 /** Stores the metrics results for a {@link SnapshotReport} */
@@ -34,28 +31,4 @@ public interface SnapshotMetricsResult {
    *     protocol and metadata). 0 if snapshot construction fails before log replay.
    */
   long loadInitialDeltaActionsDuration();
-
-  static SnapshotMetricsResult fromSnapshotMetrics(SnapshotMetrics snapshotMetrics) {
-    checkArgument(snapshotMetrics != null, "snapshotMetrics cannot be null");
-
-    return new SnapshotMetricsResult() {
-
-      final Optional<Long> timestampToVersionResolutionDuration =
-          Optional.of(snapshotMetrics.timestampToVersionResolutionDuration)
-              .filter(t -> t.count() > 0) // If the timer hasn't been called this should be None
-              .map(t -> t.totalDuration());
-      final long loadProtocolAndMetadataDuration =
-          snapshotMetrics.loadProtocolAndMetadataDuration.totalDuration();
-
-      @Override
-      public Optional<Long> timestampToVersionResolutionDuration() {
-        return timestampToVersionResolutionDuration;
-      }
-
-      @Override
-      public long loadInitialDeltaActionsDuration() {
-        return loadProtocolAndMetadataDuration;
-      }
-    };
-  }
 }

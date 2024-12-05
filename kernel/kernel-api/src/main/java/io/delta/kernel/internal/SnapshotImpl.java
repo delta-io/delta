@@ -27,7 +27,7 @@ import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.fs.Path;
-import io.delta.kernel.internal.metrics.SnapshotContext;
+import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.metrics.SnapshotReportImpl;
 import io.delta.kernel.internal.replay.CreateCheckpointIterator;
 import io.delta.kernel.internal.replay.LogReplay;
@@ -58,7 +58,7 @@ public class SnapshotImpl implements Snapshot {
       LogReplay logReplay,
       Protocol protocol,
       Metadata metadata,
-      SnapshotContext snapshotContext) {
+      SnapshotQueryContext snapshotContext) {
     this.logPath = new Path(dataPath, "_delta_log");
     this.dataPath = dataPath;
     this.version = logSegment.version;
@@ -70,9 +70,9 @@ public class SnapshotImpl implements Snapshot {
     this.snapshotReport =
         new SnapshotReportImpl(
             snapshotContext.getTablePath(),
+            snapshotContext.getSnapshotMetrics(),
             Optional.of(this.version),
             snapshotContext.getProvidedTimestamp(),
-            snapshotContext.getSnapshotMetrics(),
             Optional.empty() /* exception */);
   }
 

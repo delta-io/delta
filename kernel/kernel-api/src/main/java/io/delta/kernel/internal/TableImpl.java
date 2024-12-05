@@ -26,7 +26,7 @@ import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.fs.Path;
-import io.delta.kernel.internal.metrics.SnapshotContext;
+import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.metrics.SnapshotReportImpl;
 import io.delta.kernel.internal.snapshot.SnapshotManager;
 import io.delta.kernel.internal.util.Clock;
@@ -93,7 +93,7 @@ public class TableImpl implements Table {
 
   @Override
   public Snapshot getLatestSnapshot(Engine engine) throws TableNotFoundException {
-    SnapshotContext snapshotContext = SnapshotContext.forLatestSnapshot(tablePath);
+    SnapshotQueryContext snapshotContext = SnapshotQueryContext.forLatestSnapshot(tablePath);
     try {
       return snapshotManager.buildLatestSnapshot(engine, snapshotContext);
     } catch (Exception e) {
@@ -105,7 +105,8 @@ public class TableImpl implements Table {
   @Override
   public Snapshot getSnapshotAsOfVersion(Engine engine, long versionId)
       throws TableNotFoundException {
-    SnapshotContext snapshotContext = SnapshotContext.forVersionSnapshot(tablePath, versionId);
+    SnapshotQueryContext snapshotContext =
+        SnapshotQueryContext.forVersionSnapshot(tablePath, versionId);
     try {
       return snapshotManager.getSnapshotAt(engine, versionId, snapshotContext);
     } catch (Exception e) {
@@ -117,8 +118,8 @@ public class TableImpl implements Table {
   @Override
   public Snapshot getSnapshotAsOfTimestamp(Engine engine, long millisSinceEpochUTC)
       throws TableNotFoundException {
-    SnapshotContext snapshotContext =
-        SnapshotContext.forTimestampSnapshot(tablePath, millisSinceEpochUTC);
+    SnapshotQueryContext snapshotContext =
+        SnapshotQueryContext.forTimestampSnapshot(tablePath, millisSinceEpochUTC);
     try {
       return snapshotManager.getSnapshotForTimestamp(engine, millisSinceEpochUTC, snapshotContext);
     } catch (Exception e) {
@@ -340,13 +341,14 @@ public class TableImpl implements Table {
   }
 
   /** Creates a {@link SnapshotReport} and pushes it to any {@link MetricsReporter}s. */
-  private void recordSnapshotReport(Engine engine, SnapshotContext snapshotContext, Exception e) {
+  private void recordSnapshotReport(
+      Engine engine, SnapshotQueryContext snapshotContext, Exception e) {
     SnapshotReport snapshotReport =
         new SnapshotReportImpl(
             snapshotContext.getTablePath(),
+            snapshotContext.getSnapshotMetrics(),
             snapshotContext.getVersion(),
             snapshotContext.getProvidedTimestamp(),
-            snapshotContext.getSnapshotMetrics(),
             Optional.of(e));
     engine.getMetricsReporters().forEach(reporter -> reporter.report(snapshotReport));
   }

@@ -26,25 +26,24 @@ import java.util.UUID;
 public class SnapshotReportImpl implements SnapshotReport {
 
   private final String tablePath;
-  private final Optional<Long> version;
-  private final Optional<Long> providedTimestamp;
   private final UUID reportUUID;
   private final SnapshotMetricsResult snapshotMetrics;
+  private final Optional<Long> version;
+  private final Optional<Long> providedTimestamp;
   private final Optional<Exception> exception;
 
   public SnapshotReportImpl(
       String tablePath,
+      SnapshotMetrics snapshotMetrics,
       Optional<Long> version,
       Optional<Long> providedTimestamp,
-      SnapshotMetrics snapshotMetrics,
       Optional<Exception> exception) {
     this.tablePath = requireNonNull(tablePath);
+    this.reportUUID = UUID.randomUUID();
+    this.snapshotMetrics = requireNonNull(snapshotMetrics).captureSnapshotMetricsResult();
     this.version = requireNonNull(version);
     this.providedTimestamp = requireNonNull(providedTimestamp);
-    this.snapshotMetrics =
-        SnapshotMetricsResult.fromSnapshotMetrics(requireNonNull(snapshotMetrics));
     this.exception = requireNonNull(exception);
-    this.reportUUID = UUID.randomUUID();
   }
 
   @Override
@@ -54,17 +53,17 @@ public class SnapshotReportImpl implements SnapshotReport {
 
   @Override
   public String operationType() {
-    return OPERATION_TYPE;
-  }
-
-  @Override
-  public Optional<Exception> exception() {
-    return exception;
+    return SnapshotReport.OPERATION_TYPE;
   }
 
   @Override
   public UUID reportUUID() {
     return reportUUID;
+  }
+
+  @Override
+  public SnapshotMetricsResult snapshotMetrics() {
+    return snapshotMetrics;
   }
 
   @Override
@@ -78,7 +77,7 @@ public class SnapshotReportImpl implements SnapshotReport {
   }
 
   @Override
-  public SnapshotMetricsResult snapshotMetrics() {
-    return snapshotMetrics;
+  public Optional<Exception> exception() {
+    return exception;
   }
 }

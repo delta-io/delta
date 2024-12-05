@@ -15,10 +15,43 @@
  */
 package io.delta.kernel.internal.metrics;
 
+import io.delta.kernel.metrics.SnapshotMetricsResult;
+import java.util.Optional;
+
 /** Stores the metrics for an ongoing snapshot creation */
 public class SnapshotMetrics {
 
   public final Timer timestampToVersionResolutionDuration = new Timer();
 
   public final Timer loadProtocolAndMetadataDuration = new Timer();
+
+  public SnapshotMetricsResult captureSnapshotMetricsResult() {
+    return new SnapshotMetricsResult() {
+
+      final Optional<Long> timestampToVersionResolutionDurationResult =
+          Optional.of(timestampToVersionResolutionDuration)
+              .filter(t -> t.count() > 0) // If the timer hasn't been called this should be None
+              .map(t -> t.totalDuration());
+      final long loadProtocolAndMetadataDurationResult =
+          loadProtocolAndMetadataDuration.totalDuration();
+
+      @Override
+      public Optional<Long> timestampToVersionResolutionDuration() {
+        return timestampToVersionResolutionDurationResult;
+      }
+
+      @Override
+      public long loadInitialDeltaActionsDuration() {
+        return loadProtocolAndMetadataDurationResult;
+      }
+    };
+  }
+
+  @Override
+  public String toString() {
+    return String.format(
+        "SnapshotMetrics(timestampToVersionResolutionDuration=%s, "
+            + "loadProtocolAndMetadataDuration=%s)",
+        timestampToVersionResolutionDuration, loadProtocolAndMetadataDuration);
+  }
 }

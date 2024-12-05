@@ -31,8 +31,8 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.fs.Path;
-import io.delta.kernel.internal.metrics.SnapshotContext;
 import io.delta.kernel.internal.metrics.SnapshotMetrics;
+import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.SnapshotHint;
@@ -107,7 +107,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       // Table doesn't exist yet. Create an initial snapshot with the new schema.
       Metadata metadata = getInitialMetadata();
       Protocol protocol = getInitialProtocol();
-      SnapshotContext snapshotContext = SnapshotContext.forVersionSnapshot(tablePath, 0);
+      SnapshotQueryContext snapshotContext = SnapshotQueryContext.forVersionSnapshot(tablePath, -1);
       LogReplay logReplay =
           getEmptyLogReplay(engine, metadata, protocol, snapshotContext.getSnapshotMetrics());
       snapshot =
@@ -214,7 +214,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         LogReplay logReplay,
         Metadata metadata,
         Protocol protocol,
-        SnapshotContext snapshotContext) {
+        SnapshotQueryContext snapshotContext) {
       super(
           dataPath,
           LogSegment.empty(table.getLogPath()),
