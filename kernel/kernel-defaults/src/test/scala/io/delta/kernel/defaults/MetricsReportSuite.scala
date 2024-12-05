@@ -360,6 +360,11 @@ class MetricsReportSuite extends AnyFunSuite with TestUtils {
       override def report(report: MetricsReport): Unit = buf.append(report)
     }
 
+    private val metricsReporters = new util.ArrayList[MetricsReporter]() {{
+      addAll(baseEngine.getMetricsReporters)
+      add(metricsReporter)
+    }}
+
     override def getExpressionHandler: ExpressionHandler = baseEngine.getExpressionHandler
 
     override def getJsonHandler: JsonHandler = baseEngine.getJsonHandler
@@ -373,7 +378,7 @@ class MetricsReportSuite extends AnyFunSuite with TestUtils {
       baseEngine.getCommitCoordinatorClientHandler(name, conf)
 
     override def getMetricsReporters(): java.util.List[MetricsReporter] = {
-      java.util.Collections.singletonList(metricsReporter)
+      metricsReporters
     }
   }
 }

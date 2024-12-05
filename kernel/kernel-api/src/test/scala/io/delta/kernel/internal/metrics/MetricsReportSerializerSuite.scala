@@ -66,9 +66,9 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
     val snapshotReport1 = new SnapshotReportImpl(
       "/table/path",
       snapshotMetrics1,
-      Optional.of(1),
-      Optional.of(0),
-      Optional.of(exception)
+      Optional.of(1), // version
+      Optional.of(0), // providedTimestamp
+      Optional.of(exception) // exception
     )
 
     // Manually check expected JSON
@@ -96,9 +96,9 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
     val snapshotReport2 = new SnapshotReportImpl(
       "/table/path",
       snapshotMetrics2,
-      Optional.empty(),
-      Optional.empty(),
-      Optional.empty()
+      Optional.empty(), // version
+      Optional.empty(), // providedTimestamp
+      Optional.empty() // exception
     )
     testSnapshotReport(snapshotReport2)
   }
