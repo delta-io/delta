@@ -73,7 +73,7 @@ trait TypeWideningTableFeatureTests
     assert(clock != null, "Must call setupManualClock in tests that are using this method.")
     clock.advance(
       deltaLog.deltaRetentionMillis(deltaLog.update().metadata) +
-        TimeUnit.MINUTES.toMillis(5))
+        TimeUnit.DAYS.toMillis(3))
   }
 
   test("enable type widening at table creation then disable it") {

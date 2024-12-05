@@ -309,80 +309,9 @@ case class AlterTableDropFeatureDeltaCommand(
   extends LeafRunnableCommand
   with AlterDeltaTableCommand
   with IgnoreCachedData {
+  import org.apache.spark.sql.delta.actions.DropTableFeatureUtils._
 
-
-  val MAX_CHECKPOINT_RETRIES = 3
-  val NUMBER_OF_BARRIER_CHECKPOINTS = 3
-
-  /**
-   * Helper function for creating checkpoints. If checkpoint creation fails we retry up
-   * to [[MAX_CHECKPOINT_RETRIES]] times.
-   *
-   * @param snapshotRefreshStartTimeTs The timestamp to use as a starting point for refreshing
-   *                                   the snapshot. This value is used to improve the performance
-   *                                   of the snapshot refresh operation.
-   */
-  private def createCheckpointWithRetries(snapshotRefreshStartTimeTs: Long): Boolean = {
-    val log = table.deltaLog
-    val snapshot = log.update(
-      checkIfUpdatedSinceTs = Some(snapshotRefreshStartTimeTs),
-      catalogTableOpt = table.catalogTable)
-
-    def checkpointAndVerify(snapshot: Snapshot): Boolean = {
-      try {
-        log.checkpoint(snapshot)
-        val upperBoundVersion = Some(CheckpointInstance(version = snapshot.version + 1))
-        val lastVerifiedCheckpoint = log.findLastCompleteCheckpointBefore(upperBoundVersion)
-        lastVerifiedCheckpoint.exists(_.version == snapshot.version)
-      } catch {
-        case NonFatal(e) =>
-          recordDeltaEvent(
-            deltaLog = log,
-            opType = "dropFeature.checkpointAndVerify.error",
-            data = Map(
-              "message" -> e.getMessage,
-              "stackTrace" -> e.getStackTrace().mkString("\n")))
-          false
-      }
-    }
-
-    (1 to MAX_CHECKPOINT_RETRIES).collectFirst {
-      case _ if checkpointAndVerify(snapshot) => true
-    }.getOrElse(false)
-  }
-
-  private def createEmptyCommitAndCheckpoint(
-      snapshotRefreshStartTs: Long,
-      retryOnFailure: Boolean = false): Boolean = {
-    val log = table.deltaLog
-    val snapshot = log.update(
-      checkIfUpdatedSinceTs = Some(snapshotRefreshStartTs),
-      catalogTableOpt = table.catalogTable)
-    val emptyCommitTS = System.nanoTime()
-    table.startTransaction(Some(snapshot))
-      .commit(Nil, DeltaOperations.EmptyCommit)
-
-    // retryOnFailure is temporary to avoid affecting the behavior of the legacy Drop Feature
-    // command behavior.
-    if (retryOnFailure) {
-      createCheckpointWithRetries(emptyCommitTS)
-    } else {
-      log.checkpoint(log.update(
-        checkIfUpdatedSinceTs = Some(emptyCommitTS),
-        catalogTableOpt = table.catalogTable))
-      true
-    }
-  }
-
-  def truncateHistoryLogRetentionMillis(txn: OptimisticTransaction): Option[Long] = {
-    if (!truncateHistory) return None
-
-    val truncateHistoryLogRetention = DeltaConfigs
-      .TABLE_FEATURE_DROP_TRUNCATE_HISTORY_LOG_RETENTION
-      .fromMetaData(txn.metadata)
-
-    Some(DeltaConfigs.getMilliSeconds(truncateHistoryLogRetention))
-  }
+  private val NUMBER_OF_BARRIER_CHECKPOINTS = 3
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val removableFeature = TableFeature.featureNameToFeature(featureName) match {
@@ -401,8 +330,14 @@ case class AlterTableDropFeatureDeltaCommand(
       throw DeltaErrors.dropTableFeatureFeatureNotSupportedByProtocol(featureName)
     }
 
-    if (truncateHistory && !removableFeature.requiresHistoryProtection) {
+    val historyTruncationEligibleFeature = removableFeature.requiresHistoryProtection ||
+      removableFeature == CheckpointProtectionTableFeature
+    if (truncateHistory && !historyTruncationEligibleFeature) {
       throw DeltaErrors.tableFeatureDropHistoryTruncationNotAllowed()
+    }
+
+    if (removableFeature == CheckpointProtectionTableFeature && !truncateHistory) {
+      throw DeltaErrors.canOnlyDropCheckpointProtectionWithHistoryTruncationException
     }
 
     // Validate that the `removableFeature` is not a dependency of any other feature that is
@@ -459,7 +394,7 @@ case class AlterTableDropFeatureDeltaCommand(
         // asap. The checkpoint is based on a new commit to avoid creating a checkpoint
         // on a commit that still contains traces of the removed feature.
         // Note, the checkpoint is created in both executions of DROP FEATURE command.
-        createEmptyCommitAndCheckpoint(startTimeNs)
+        createEmptyCommitAndCheckpoint(table, startTimeNs)
 
         // If the pre-downgrade command made changes, then the table's historical versions
         // certainly still contain traces of the feature. We don't have to run an expensive
@@ -491,9 +426,11 @@ case class AlterTableDropFeatureDeltaCommand(
         // concurrent metadataCleanup during findEarliestReliableCheckpoint. Note, this
         // cleanUpExpiredLogs call truncates the cutoff at a minute granularity.
         deltaLog.cleanUpExpiredLogs(
-          snapshot,
-          truncateHistoryLogRetentionMillis(txn),
-          TruncationGranularity.MINUTE)
+          snapshotToCleanup = snapshot,
+          deltaRetentionMillisOpt =
+            if (truncateHistory) Some(truncateHistoryLogRetentionMillis(txn.metadata)) else None,
+          cutoffTruncationGranularity =
+            if (truncateHistory) TruncationGranularity.MINUTE else TruncationGranularity.DAY)
 
         val historyContainsFeature = removableFeature.historyContainsFeature(
           spark = sparkSession,
@@ -561,7 +498,7 @@ case class AlterTableDropFeatureDeltaCommand(
         (1 to NUMBER_OF_BARRIER_CHECKPOINTS).foreach { _ =>
           // This call also cleans up the logs. In most of the cases we should be able to truncate
           // the history of a previous drop feature operation.
-          if (!createEmptyCommitAndCheckpoint(startTimeNs, retryOnFailure = true)) {
+          if (!createEmptyCommitAndCheckpoint(table, startTimeNs, retryOnFailure = true)) {
             throw DeltaErrors.dropTableFeatureCheckpointFailedException(removableFeature.name)
           }
           startTimeNs = System.nanoTime()
@@ -596,7 +533,7 @@ case class AlterTableDropFeatureDeltaCommand(
       txn.commit(Nil, DeltaOperations.DropTableFeature(featureName, false))
 
       // This is a protected checkpoint.
-      if (historyBarrierIsRequired) createCheckpointWithRetries(System.nanoTime())
+      if (historyBarrierIsRequired) createCheckpointWithRetries(table, System.nanoTime())
       Nil
     }
   }
