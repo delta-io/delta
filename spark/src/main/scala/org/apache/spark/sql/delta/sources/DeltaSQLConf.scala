@@ -1160,7 +1160,7 @@ trait DeltaSQLConfBase {
               |of all the files in the latest snapshot after the commit and histograms of new
               |files added and old files removed.""".stripMargin)
       .booleanConf
-      .createWithDefault(false)
+      .createWithDefault(true)
 
   val DELTA_CHECKPOINT_THROW_EXCEPTION_WHEN_FAILED =
       buildConf("checkpoint.exceptionThrowing.enabled")
