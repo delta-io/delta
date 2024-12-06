@@ -120,29 +120,22 @@ class CheckpointsSuite
       }
       val newData = Seq.range(3000, 3010)
       newData.foreach { i => insertData(s"VALUES($i)") }
-      checkAnswer(
-        spark.sql(s"SELECT * FROM delta.`${source.getAbsolutePath}`"),
-        (DeletionVectorsSuite.expectedTable1DataV4).toSeq.toDF())
+
+      // Check the target file has checkpoint generated
+      val deltaLog = DeltaLog.forTable(spark, target.getAbsolutePath)
+
+      // Delete the commit files 0-9, so that we are forced to read the checkpoint file
+      val logPath = new Path(new File(target, "_delta_log").getAbsolutePath)
+      for (i <- 0 to 9) {
+        val file = new File(FileNames.unsafeDeltaFile(logPath, version = i).toString)
+        file.delete()
+      }
+
+      // Make sure the contents are the same
+      import testImplicits._
       checkAnswer(
         spark.sql(s"SELECT * FROM delta.`${target.getAbsolutePath}`"),
         (DeletionVectorsSuite.expectedTable1DataV4 ++ newData).toSeq.toDF())
-//
-//      // Check the target file has checkpoint generated
-//      val deltaLog = DeltaLog.forTable(spark, target.getAbsolutePath)
-//      verifyCheckpoint(deltaLog.readLastCheckpointFile(), version = 10, parts = None)
-//
-//      // Delete the commit files 0-9, so that we are forced to read the checkpoint file
-//      val logPath = new Path(new File(target, "_delta_log").getAbsolutePath)
-//      for (i <- 0 to 9) {
-//        val file = new File(FileNames.unsafeDeltaFile(logPath, version = i).toString)
-//        file.delete()
-//      }
-
-//      // Make sure the contents are the same
-//      import testImplicits._
-    //  checkAnswer(
-    //    spark.sql(s"SELECT * FROM delta.`${target.getAbsolutePath}`"),
-    //    (DeletionVectorsSuite.expectedTable1DataV4 ++ newData).toSeq.toDF())
     }
     }
   }
