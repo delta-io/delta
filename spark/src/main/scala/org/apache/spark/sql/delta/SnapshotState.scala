@@ -158,7 +158,8 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
       "domainMetadata" -> collect_set(col("domainMetadata")),
       "metadata" -> last(col("metaData"), ignoreNulls = true),
       "protocol" -> last(col("protocol"), ignoreNulls = true),
-      "fileSizeHistogram" -> lit(null).cast(FileSizeHistogram.schema)
+      "fileSizeHistogram" ->
+        FileSizeHistogramUtils.histogramAggregate(coalesce(col("add.size"), lit(-1L)).expr)
     )
   }
 
