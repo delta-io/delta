@@ -50,6 +50,7 @@ class DeltaAllFilesInCrcSuite
     .set(DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_THRESHOLD_FILES.key, "10000")
     // needed for DELTA_ALL_FILES_IN_CRC_ENABLED
     .set(DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key, "true")
+    .set(DeltaSQLConf.USE_PROTOCOL_AND_METADATA_FROM_CHECKSUM_ENABLED.key, "true")
     // Turn on verification by default in the tests
     .set(DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_VERIFICATION_MODE_ENABLED.key, "true")
     // Turn off force verification for non-UTC timezones by default in the tests
@@ -197,6 +198,7 @@ class DeltaAllFilesInCrcSuite
 
         // We will see all files in CRC verification failure.
         // This will trigger the incremental commit verification which will fail.
+        assert(filterUsageRecords(records, "delta.assertions.mismatchedAction").size === 1)
         val allFilesInCrcValidationFailureRecords =
           filterUsageRecords(records, "delta.allFilesInCrc.checksumMismatch.differentAllFiles")
         assert(allFilesInCrcValidationFailureRecords.size === 1)
@@ -209,9 +211,8 @@ class DeltaAllFilesInCrcSuite
         assert(eventData("filesCountFromStateReconstruction").toLong ===
           expectedFilesCountFromCrc + 1)
         assert(eventData("incrementalCommitCrcValidationPassed").toBoolean === false)
-        val expectedValidationFailureMessage = "Number of files - Expected: 1 Computed: 2"
         assert(eventData("errorForIncrementalCommitCrcValidation").contains(
-          expectedValidationFailureMessage))
+          "The metadata of your Delta table could not be recovered"))
       }
     }
   }

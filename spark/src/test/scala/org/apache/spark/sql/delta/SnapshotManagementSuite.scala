@@ -49,6 +49,12 @@ import org.apache.spark.storage.StorageLevel
 class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with SharedSparkSession
   with DeltaSQLCommandTest with CoordinatedCommitsBaseSuite {
 
+  protected override def sparkConf = {
+    // Disable loading protocol and metadata from checksum file. Otherwise, creating a Snapshot
+    // won't touch the checkpoint file and we won't be able to retry.
+    super.sparkConf
+      .set(DeltaSQLConf.USE_PROTOCOL_AND_METADATA_FROM_CHECKSUM_ENABLED.key, "false")
+  }
 
   /**
    * Truncate an existing checkpoint file to create a corrupt file.

@@ -150,7 +150,10 @@ class ChecksumSuite
   test("Checksum validation should happen on checkpoint") {
     withSQLConf(
       DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true",
-      DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> "true"
+      DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> "true",
+      // Disabled for this test because with it enabled, a corrupted Protocol
+      // or Metadata will trigger a failure earlier than the full validation.
+      DeltaSQLConf.USE_PROTOCOL_AND_METADATA_FROM_CHECKSUM_ENABLED.key -> "false"
     ) {
       withTempDir { tempDir =>
         spark.range(10).write.format("delta").save(tempDir.getCanonicalPath)
@@ -210,7 +213,8 @@ class ChecksumSuite
       DeltaSQLConf.INCREMENTAL_COMMIT_VERIFY.key -> "true",
       DeltaSQLConf.DELTA_CHECKSUM_MISMATCH_IS_FATAL.key -> "false",
       DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> "true",
-      DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_ENABLED.key -> "false"
+      DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_ENABLED.key -> "false",
+      DeltaSQLConf.USE_PROTOCOL_AND_METADATA_FROM_CHECKSUM_ENABLED.key -> "true"
     ) {
       withTempDir { tempDir =>
         import testImplicits._

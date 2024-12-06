@@ -1144,6 +1144,15 @@ trait DeltaSQLConfBase {
       .intConf
       .createOptional
 
+  val USE_PROTOCOL_AND_METADATA_FROM_CHECKSUM_ENABLED =
+    buildConf("readProtocolAndMetadataFromChecksum.enabled")
+      .internal()
+      .doc("If enabled, delta log snapshot will read the protocol, metadata, and ICT " +
+        "(if applicable) from the checksum file and use those to avoid a spark job over the " +
+        "checkpoint for the two rows of protocol and metadata")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_CHECKPOINT_THROW_EXCEPTION_WHEN_FAILED =
       buildConf("checkpoint.exceptionThrowing.enabled")
         .internal()

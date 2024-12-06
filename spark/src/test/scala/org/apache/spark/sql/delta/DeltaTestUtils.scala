@@ -16,7 +16,8 @@
 
 package org.apache.spark.sql.delta
 
-import java.io.File
+import java.io.{BufferedReader, File, InputStreamReader}
+import java.nio.charset.StandardCharsets.UTF_8
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 
@@ -32,6 +33,8 @@ import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.util.FileNames
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.module.scala.DefaultScalaModule
 import io.delta.tables.{DeltaTable => IODeltaTable}
 import org.apache.hadoop.fs.FileStatus
 import org.apache.hadoop.fs.Path
@@ -169,6 +172,29 @@ trait DeltaTestUtilsBase {
       r.metric == "tahoeEvent" &&
         r.tags.get("opType").contains(opType)
     }
+  }
+
+  /**
+   * Remove protocol and metadata fields from checksum file of json format
+   */
+  def removeProtocolAndMetadataFromChecksumFile(checksumFilePath : Path): Unit = {
+    // scalastyle:off deltahadoopconfiguration
+    val fs = checksumFilePath.getFileSystem(
+      SparkSession.getActiveSession.map(_.sessionState.newHadoopConf()).get
+    )
+    // scalastyle:on deltahadoopconfiguration
+    if (!fs.exists(checksumFilePath)) return
+    val stream = fs.open(checksumFilePath)
+    val reader = new BufferedReader(new InputStreamReader(stream, UTF_8))
+    val content = reader.readLine()
+    stream.close()
+    val mapper = new ObjectMapper()
+    mapper.registerModule(DefaultScalaModule)
+    val map = mapper.readValue(content, classOf[Map[String, String]])
+    val partialContent = mapper.writeValueAsString(map.-("protocol").-("metadata")) + "\n"
+    val output = fs.create(checksumFilePath, true)
+    output.write(partialContent.getBytes(UTF_8))
+    output.close()
   }
 
   protected def getfindTouchedFilesJobPlans(plans: Seq[Plans]): SparkPlan = {

@@ -57,6 +57,7 @@ trait DeltaLogKeysBase {
   case object DATA_FILTER extends LogKeyShims
   case object DATE extends LogKeyShims
   case object DELTA_COMMIT_INFO extends LogKeyShims
+  case object DELTA_METADATA extends LogKeyShims
   case object DIR extends LogKeyShims
   case object DURATION extends LogKeyShims
   case object END_INDEX extends LogKeyShims
