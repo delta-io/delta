@@ -563,6 +563,7 @@ class CheckpointsSuite
 
       // Copy the source2 DV table to a temporary directory, so that we do updates to it
       FileUtils.copyDirectory(source, target)
+      import testImplicits._
 
       if (v2Checkpoint) {
         spark.sql(s"ALTER TABLE delta.`${target.getAbsolutePath}` SET TBLPROPERTIES " +
