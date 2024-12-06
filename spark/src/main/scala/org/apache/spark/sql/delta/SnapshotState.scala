@@ -146,16 +146,6 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
    * A Map of alias to aggregations which needs to be done to calculate the `computedState`
    */
   protected def aggregationsToComputeState: Map[String, Column] = {
-    // The FileSizeHistogram computation doesn't work without whole stage codegen.
-    val avoidHistogramComputationDueToNoWholeStageCodeGen =
-      !spark.conf.get(SQLConf.WHOLESTAGE_CODEGEN_ENABLED)
-    val histogramAgg = if (
-      fileSizeHistogramEnabled && !avoidHistogramComputationDueToNoWholeStageCodeGen
-    ) {
-      FileSizeHistogramUtils.histogramAggregate(coalesce(col("add.size"), lit(-1L)).expr)
-    } else {
-      lit(null).cast(FileSizeHistogram.schema)
-    }
     Map(
       // sum may return null for empty data set.
       "sizeInBytes" -> coalesce(sum(col("add.size")), lit(0L)),
@@ -168,7 +158,7 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
       "domainMetadata" -> collect_set(col("domainMetadata")),
       "metadata" -> last(col("metaData"), ignoreNulls = true),
       "protocol" -> last(col("protocol"), ignoreNulls = true),
-      "fileSizeHistogram" -> histogramAgg
+      "fileSizeHistogram" -> lit(null).cast(FileSizeHistogram.schema)
     )
   }
 
