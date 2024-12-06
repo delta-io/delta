@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.cdc.MergeCDCTests
 import org.apache.spark.sql.delta.commands.{DeletionVectorBitmapGenerator, DMLWithDeletionVectorsHelper}
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
