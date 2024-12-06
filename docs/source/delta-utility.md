@@ -35,6 +35,8 @@ default retention threshold for the files is 7 days. To change this behavior, se
 
     VACUUM '/data/events' -- vacuum files in path-based table
 
+    VACUUM '/data/events' -- vacuum files in path-based table
+
     VACUUM delta.`/data/events/`
 
     VACUUM delta.`/data/events/` RETAIN 100 HOURS  -- vacuum files not required by versions more than 100 hours old
