@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.SparkThrowable
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.errors.QueryCompilationErrors
 
@@ -30,4 +31,9 @@ object DeltaThrowableHelperShims {
       db: Seq[String], v1TableName: TableIdentifier): Throwable = {
     QueryCompilationErrors.showColumnsWithConflictDatabasesError(db, v1TableName)
   }
+}
+
+trait DeltaThrowableConditionShim extends SparkThrowable {
+  def getCondition(): String = getErrorClass()
+  override def getErrorClass(): String
 }

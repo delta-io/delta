@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.SparkThrowable
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.errors.QueryCompilationErrors
 
@@ -32,4 +33,9 @@ object DeltaThrowableHelperShims {
       namespaceA = db,
       namespaceB = v1TableName.database.get :: Nil)
   }
+}
+
+trait DeltaThrowableConditionShim extends SparkThrowable {
+  override def getCondition(): String = getErrorClass()
+  override def getErrorClass(): String
 }
