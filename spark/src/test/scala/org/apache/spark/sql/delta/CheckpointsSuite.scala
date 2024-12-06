@@ -559,7 +559,7 @@ class CheckpointsSuite
     withSQLConf(
       DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "false",
       DeltaSQLConf.INCREMENTAL_COMMIT_FORCE_VERIFY_IN_TESTS.key -> "false",
-      DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_ENABLED.key -> "false"
+      DeltaSQLConf.DELTA_FILE_SIZE_HISTOGRAM_ENABLED.key -> "false"
     ) {
     withTempDir { tempDir =>
       val source = new File(DeletionVectorsSuite.table1Path) // this table has DVs in two versions
