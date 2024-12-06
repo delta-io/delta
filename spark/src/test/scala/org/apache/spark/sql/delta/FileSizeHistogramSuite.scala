@@ -39,12 +39,6 @@ class FileSizeHistogramSuite extends QueryTest
 
   import testImplicits._
 
-  override protected def sparkConf: SparkConf = {
-    // enable the feature in tests
-    super.sparkConf.set(DeltaSQLConf.DELTA_FILE_SIZE_HISTOGRAM_ENABLED.key, "true")
-    super.sparkConf.set(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key, "true")
-  }
-
   private def getTableName: String = "delta_tbl_" + UUID.randomUUID().toString.replace("-", "")
 
   /**
