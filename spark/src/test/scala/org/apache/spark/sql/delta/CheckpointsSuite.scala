@@ -94,11 +94,6 @@ class CheckpointsSuite
 
   test("checkpoint with DVs") {
     for (v2Checkpoint <- Seq(true, false))
-    withSQLConf(
-      DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "false",
-      DeltaSQLConf.INCREMENTAL_COMMIT_FORCE_VERIFY_IN_TESTS.key -> "false",
-      DeltaSQLConf.DELTA_FILE_SIZE_HISTOGRAM_ENABLED.key -> "false"
-    ) {
     withTempDir { tempDir =>
       val source = new File(DeletionVectorsSuite.table1Path) // this table has DVs in two versions
       val targetName = s"insertTest_${UUID.randomUUID().toString.replace("-", "")}"
@@ -136,7 +131,6 @@ class CheckpointsSuite
       checkAnswer(
         spark.sql(s"SELECT * FROM delta.`${target.getAbsolutePath}`"),
         (DeletionVectorsSuite.expectedTable1DataV4 ++ newData).toSeq.toDF())
-    }
     }
   }
 }
