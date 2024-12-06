@@ -157,6 +157,24 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
+  test("allow user specified schema if consistent: v1 source") {
+    withTempDir { inputDir =>
+      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+      withMetadata(deltaLog, StructType.fromDDL("value STRING"))
+
+      import org.apache.spark.sql.execution.datasources.DataSource
+      // User-specified schema is allowed if it's consistent with the actual Delta table schema.
+      // Here we use Spark internal APIs to trigger v1 source code path. That being said, we
+      // are not fixing end-user behavior, but advanced Spark plugins.
+      val v1DataSource = DataSource(
+        spark,
+        userSpecifiedSchema = Some(StructType.fromDDL("value STRING")),
+        className = "delta",
+        options = Map("path" -> inputDir.getCanonicalPath))
+      Dataset.ofRows(spark, StreamingRelation(v1DataSource))
+    }
+  }
+
   test("basic") {
     withTempDir { inputDir =>
       val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
