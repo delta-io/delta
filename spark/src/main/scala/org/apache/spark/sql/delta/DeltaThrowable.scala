@@ -29,4 +29,8 @@ trait DeltaThrowable extends SparkThrowable {
 
   // True if this error is an internal error.
   override def isInternalError: Boolean = DeltaThrowableHelper.isInternalError(this.getErrorClass)
+
+  def getCondition(): String = getErrorClass()
+
+  override def getErrorClass(): String
 }
