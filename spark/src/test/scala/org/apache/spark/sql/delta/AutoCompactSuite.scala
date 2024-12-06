@@ -33,9 +33,10 @@ import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.{Column, DataFrame}
+import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.expressions.Literal
+import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StringType
 import org.apache.spark.unsafe.types.UTF8String
@@ -312,10 +313,10 @@ class AutoCompactSuite extends
 
   testBothModesViaProperty("ensure no NPE in auto compact UDF with null " +
     "partition values") { dir =>
-      Seq(null, "", " ").map(UTF8String.fromString).zipWithIndex.foreach { case (partValue, i) =>
+      Seq(null, "", " ").zipWithIndex.foreach { case (partValue, i) =>
         val path = new File(dir, i.toString).getCanonicalPath
-        val df1 = spark.range(5).withColumn("part", Column(Literal(partValue, StringType)))
-        val df2 = spark.range(5, 10).withColumn("part", Column(Literal("1")))
+        val df1 = spark.range(5).withColumn("part", lit(partValue))
+        val df2 = spark.range(5, 10).withColumn("part", lit("1"))
         val isLogged = checkAutoOptimizeLogging {
           // repartition to increase number of files written
           df1.union(df2).repartition(4)
