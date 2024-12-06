@@ -199,6 +199,7 @@ object DescribeDeltaDetailCommand {
     val plan = UnresolvedPathOrIdentifier(
       path,
       tableIdentifier,
+      hadoopConf,
       CMD_NAME
     )
     DescribeDeltaDetailCommand(plan, hadoopConf)

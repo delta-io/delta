@@ -28,6 +28,7 @@ import scala.math.min
 import scala.util.control.NonFatal
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, FileAction, RemoveFile, SingleAction}
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, DeltaFileOperations, FileNames, JsonUtils}
@@ -219,7 +220,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
   // scalastyle:off argcount
   def gc(
       spark: SparkSession,
-      deltaLog: DeltaLog,
+      table: DeltaTableV2,
       dryRun: Boolean = true,
       retentionHours: Option[Double] = None,
       inventory: Option[DataFrame] = None,
@@ -227,6 +228,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       commandMetrics: Map[String, SQLMetric] = Map.empty,
       clock: Clock = new SystemClock): DataFrame = {
     // scalastyle:on argcount
+    val deltaLog = table.deltaLog
     recordDeltaOperation(deltaLog, "delta.gc") {
 
       val vacuumStartTime = System.currentTimeMillis()
@@ -236,7 +238,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
 
       import org.apache.spark.sql.delta.implicits._
 
-      val snapshot = deltaLog.update()
+      val snapshot = table.update()
       deltaLog.protocolWrite(snapshot.protocol)
 
       val snapshotTombstoneRetentionMillis = DeltaLog.tombstoneRetentionMillis(snapshot.metadata)
