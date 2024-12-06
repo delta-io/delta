@@ -59,7 +59,7 @@ import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
 import org.apache.spark.sql.catalyst.{FunctionIdentifier, TableIdentifier}
 import org.apache.spark.sql.catalyst.analysis._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedTableImplicits._
-import org.apache.spark.sql.catalyst.parser.{CompoundBody, ParseErrorListener, ParseException, ParserInterface}
+import org.apache.spark.sql.catalyst.parser.{ParseErrorListener, ParseException, ParserInterface}
 import org.apache.spark.sql.catalyst.parser.ParserUtils.{checkDuplicateClauses, string, withOrigin}
 import org.apache.spark.sql.catalyst.plans.logical.{AlterColumnSyncIdentity, AlterTableAddConstraint, AlterTableDropConstraint, AlterTableDropFeature, CloneTableStatement, LogicalPlan, RestoreTableStatement}
 import org.apache.spark.sql.catalyst.trees.Origin
