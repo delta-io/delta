@@ -166,7 +166,7 @@ You can specify multiple columns for `ZORDER BY` as a comma-separated list. Howe
 
 <Delta> table periodically and automatically compacts all the incremental updates to the Delta log into a Parquet file. This "checkpointing" allows read queries to quickly reconstruct the current state of the table (that is, which files to process, what is the current schema) without reading too many files having incremental updates.
 
-<Delta> protocol allows [splitting the checkpoint](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#checkpoints) into multiple Parquet files. This parallelizes and speeds up writing the checkpoint. In <Delta>, by default each checkpoint is written as a single Parquet file. To to use this feature, set the SQL configuration `spark.databricks.delta.checkpoint.partSize=<n>`, where `n` is the limit of number of actions (such as `AddFile`) at which <Delta> on <AS>  will start parallelizing the checkpoint and attempt to write a maximum of this many actions per checkpoint file.
+<Delta> protocol allows [splitting the checkpoint](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#checkpoints) into multiple Parquet files. This parallelizes and speeds up writing the checkpoint. In <Delta>, by default each checkpoint is written as a single Parquet file. To use this feature, set the SQL configuration `spark.databricks.delta.checkpoint.partSize=<n>`, where `n` is the limit of number of actions (such as `AddFile`) at which <Delta> on <AS>  will start parallelizing the checkpoint and attempt to write a maximum of this many actions per checkpoint file.
 
 .. note:: This feature requires no reader side configuration changes. The existing reader already supports reading a checkpoint with multiple files.
 

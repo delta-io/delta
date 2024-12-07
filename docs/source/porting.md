@@ -85,7 +85,7 @@ Please note that the Delta Lake on Spark Maven artifact has been renamed from `d
 
 <Delta> 1.2.1, 2.0.0 and 2.1.0 have a bug in their DynamoDB-based S3 multi-cluster configuration implementations where an incorrect timestamp value was written to DynamoDB. This caused [DynamoDB's TTL](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/TTL.html) feature to cleanup completed items before it was safe to do so. This has been fixed in <Delta> versions 2.0.1 and 2.1.1, and the TTL attribute has been renamed from `commitTime` to `expireTime`.
 
-If you *already* have TTL enabled on your DynamoDB table using the old attribute, you need to disable TTL for that attribute and then enable it for the new one. You may need to wait an hour between these two operations, as TTL settings changes may take some time to propagate. See the DynamoDB docs [here](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/time-to-live-ttl-before-you-start.html). If you don't do this, DyanmoDB's TTL feature will not remove any new and expired entries. There is no risk of data loss.
+If you *already* have TTL enabled on your DynamoDB table using the old attribute, you need to disable TTL for that attribute and then enable it for the new one. You may need to wait an hour between these two operations, as TTL settings changes may take some time to propagate. See the DynamoDB docs [here](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/time-to-live-ttl-before-you-start.html). If you don't do this, DynamoDB's TTL feature will not remove any new and expired entries. There is no risk of data loss.
 
 ```bash
 # Disable TTL on old attribute
