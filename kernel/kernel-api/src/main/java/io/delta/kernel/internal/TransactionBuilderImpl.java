@@ -146,8 +146,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
 
     return new TransactionImpl(
         isNewTable,
-        table.getDataPath(),
-        table.getLogPath(),
+        table.getDataPath().toString(),
+        table.getLogPath().toString(),
         snapshot,
         engineInfo,
         operation,

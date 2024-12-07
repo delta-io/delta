@@ -391,7 +391,7 @@ public class SnapshotManager {
                 // Take files until the version we want to load
                 final boolean versionWithinRange =
                     versionToLoad
-                        .map(v -> FileNames.getFileVersion(new Path(fileStatus.getPath())) <= v)
+                        .map(v -> FileNames.getFileVersion(fileStatus.getPath()) <= v)
                         .orElse(true);
 
                 if (!versionWithinRange) {
@@ -737,7 +737,7 @@ public class SnapshotManager {
                             versionToLoadOpt.orElseGet(
                                 () -> {
                                   final FileStatus lastDelta = deltas.get(deltas.size() - 1);
-                                  return FileNames.deltaVersion(new Path(lastDelta.getPath()));
+                                  return FileNames.deltaVersion(lastDelta.getPath());
                                 });
 
                         return getLogSegmentWithMaxExclusiveCheckpointVersion(
@@ -762,8 +762,7 @@ public class SnapshotManager {
     final List<FileStatus> deltasAfterCheckpoint =
         deltas.stream()
             .filter(
-                fileStatus ->
-                    FileNames.deltaVersion(new Path(fileStatus.getPath())) > newCheckpointVersion)
+                fileStatus -> FileNames.deltaVersion(fileStatus.getPath()) > newCheckpointVersion)
             .collect(Collectors.toList());
 
     logDebug(
@@ -777,7 +776,7 @@ public class SnapshotManager {
 
     final LinkedList<Long> deltaVersionsAfterCheckpoint =
         deltasAfterCheckpoint.stream()
-            .map(fileStatus -> FileNames.deltaVersion(new Path(fileStatus.getPath())))
+            .map(fileStatus -> FileNames.deltaVersion(fileStatus.getPath()))
             .collect(Collectors.toCollection(LinkedList::new));
 
     logDebug(

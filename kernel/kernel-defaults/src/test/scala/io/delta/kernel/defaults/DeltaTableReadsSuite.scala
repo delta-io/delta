@@ -851,7 +851,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
   private def generateCommits(path: String, commits: Long*): Unit = {
     commits.zipWithIndex.foreach { case (ts, i) =>
       spark.range(i*10, i*10 + 10).write.format("delta").mode("append").save(path)
-      val file = new File(FileNames.deltaFile(new Path(path, "_delta_log"), i))
+      val file = new File(FileNames.deltaFile(path + "/_delta_log", i))
       file.setLastModified(ts)
     }
   }
@@ -974,7 +974,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       }
 
       // Setup part 2 of 2: edit lastModified times
-      val logPath = new Path(dir.getCanonicalPath, "_delta_log")
+      val logPath = dir.getCanonicalPath + "/_delta_log"
 
       val delta0 = new File(FileNames.deltaFile(logPath, 0))
       val delta1 = new File(FileNames.deltaFile(logPath, 1))
@@ -1039,7 +1039,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       }
 
       (0 to 35).foreach { i =>
-        val delta = new File(FileNames.deltaFile(logPath, i))
+        val delta = new File(FileNames.deltaFile(logPath.toString, i))
         if (i >= 25) {
           delta.setLastModified(nowEpochMs + i * 1000)
         } else {

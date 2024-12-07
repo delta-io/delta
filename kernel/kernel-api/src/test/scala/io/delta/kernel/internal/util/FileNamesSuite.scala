@@ -33,12 +33,12 @@ class FileNamesSuite extends AnyFunSuite {
   }
 
   test("checkpointVersion") {
-    assert(checkpointVersion(new Path("/a/123.checkpoint.parquet")) == 123)
-    assert(checkpointVersion(new Path("/a/0.checkpoint.parquet")) == 0)
+    assert(checkpointVersion("/a/123.checkpoint.parquet") == 123)
+    assert(checkpointVersion("/a/0.checkpoint.parquet") == 0)
     assert(checkpointVersion(
-      new Path("/a/00000000000000000151.checkpoint.parquet")) == 151)
+      "/a/00000000000000000151.checkpoint.parquet") == 151)
     assert(checkpointVersion(
-      new Path("/a/999.checkpoint.0000000090.0000000099.parquet")) == 999)
+      "/a/999.checkpoint.0000000090.0000000099.parquet") == 999)
     assert(checkpointVersion("/a/000000010.checkpoint.80a083e8-7026.json") == 10)
   }
 

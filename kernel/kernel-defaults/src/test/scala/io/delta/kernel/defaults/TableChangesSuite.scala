@@ -124,7 +124,7 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
       def generateCommits(path: String, commits: Long*): Unit = {
         commits.zipWithIndex.foreach { case (ts, i) =>
           spark.range(i*10, i*10 + 10).write.format("delta").mode("append").save(path)
-          val file = new File(FileNames.deltaFile(new Path(path, "_delta_log"), i))
+          val file = new File(FileNames.deltaFile(path + "/_delta_log", i))
           file.setLastModified(ts)
         }
       }

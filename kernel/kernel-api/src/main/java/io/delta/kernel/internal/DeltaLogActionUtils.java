@@ -206,7 +206,7 @@ public class DeltaLogActionUtils {
 
     List<Long> commitVersions =
         commitFiles.stream()
-            .map(fs -> FileNames.deltaVersion(new Path(fs.getPath())))
+            .map(fs -> FileNames.deltaVersion(fs.getPath()))
             .collect(Collectors.toList());
 
     for (int i = 1; i < commitVersions.size(); i++) {
@@ -280,7 +280,7 @@ public class DeltaLogActionUtils {
           logger.debug("Ignoring non-commit file {}", fs.getPath());
           continue;
         }
-        if (FileNames.getFileVersion(new Path(fs.getPath())) > endVersion) {
+        if (FileNames.getFileVersion(fs.getPath()) > endVersion) {
           logger.debug(
               "Stopping listing found file {} with version > {}=endVersion",
               fs.getPath(),
