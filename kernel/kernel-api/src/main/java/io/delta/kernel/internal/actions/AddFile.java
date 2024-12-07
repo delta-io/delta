@@ -16,18 +16,24 @@
 package io.delta.kernel.internal.actions;
 
 import static io.delta.kernel.internal.util.InternalUtils.relativizePath;
+import static io.delta.kernel.internal.util.InternalUtils.requireNonNull;
 import static io.delta.kernel.internal.util.PartitionUtils.serializePartitionMap;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.toMap;
 
+import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.types.*;
+import io.delta.kernel.utils.DataFileStatistics;
 import io.delta.kernel.utils.DataFileStatus;
 import java.net.URI;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.stream.IntStream;
 
 /** Delta log action representing an `AddFile` */
@@ -55,12 +61,15 @@ public class AddFile {
           .add(
               "tags",
               new MapType(StringType.STRING, StringType.STRING, true /* valueContainsNull */),
-              true /* nullable */);
+              true /* nullable */)
+          .add("baseRowId", LongType.LONG, true /* nullable */)
+          .add("defaultRowCommitVersion", LongType.LONG, true /* nullable */);
 
   public static final StructType SCHEMA_WITH_STATS = SCHEMA_WITHOUT_STATS.add(JSON_STATS_FIELD);
 
   /** Full schema of the {@code add} action in the Delta Log. */
   public static final StructType FULL_SCHEMA = SCHEMA_WITH_STATS;
+
   // There are more fields which are added when row-id tracking and clustering is enabled.
   // When Kernel starts supporting row-ids and clustering, we should add those fields here.
 
@@ -92,5 +101,160 @@ public class AddFile {
     }
     // any fields not present in the valueMap are considered null
     return new GenericRow(FULL_SCHEMA, valueMap);
+  }
+
+  /**
+   * Utility to generate an {@link AddFile} action from an 'AddFile' {@link Row}.
+   *
+   * @param row the row to read
+   * @return the extracted {@link AddFile} action
+   */
+  public static AddFile fromRow(Row row) {
+    if (row == null) {
+      return null;
+    }
+    checkArgument(
+        row.getSchema().equals(FULL_SCHEMA),
+        "Expected schema: %s, found: %s",
+        FULL_SCHEMA,
+        row.getSchema());
+    return new AddFile(
+        requireNonNull(row, COL_NAME_TO_ORDINAL.get("path"), "path")
+            .getString(COL_NAME_TO_ORDINAL.get("path")),
+        requireNonNull(row, COL_NAME_TO_ORDINAL.get("partitionValues"), "partitionValues")
+            .getMap(COL_NAME_TO_ORDINAL.get("partitionValues")),
+        requireNonNull(row, COL_NAME_TO_ORDINAL.get("size"), "size")
+            .getLong(COL_NAME_TO_ORDINAL.get("size")),
+        requireNonNull(row, COL_NAME_TO_ORDINAL.get("modificationTime"), "modificationTime")
+            .getLong(COL_NAME_TO_ORDINAL.get("modificationTime")),
+        requireNonNull(row, COL_NAME_TO_ORDINAL.get("dataChange"), "dataChange")
+            .getBoolean(COL_NAME_TO_ORDINAL.get("dataChange")),
+        Optional.ofNullable(
+            row.isNullAt(COL_NAME_TO_ORDINAL.get("deletionVector"))
+                ? null
+                : DeletionVectorDescriptor.fromRow(
+                    row.getStruct(COL_NAME_TO_ORDINAL.get("deletionVector")))),
+        Optional.ofNullable(
+            row.isNullAt(COL_NAME_TO_ORDINAL.get("tags"))
+                ? null
+                : row.getMap(COL_NAME_TO_ORDINAL.get("tags"))),
+        Optional.ofNullable(
+            row.isNullAt(COL_NAME_TO_ORDINAL.get("baseRowId"))
+                ? null
+                : row.getLong(COL_NAME_TO_ORDINAL.get("baseRowId"))),
+        Optional.ofNullable(
+            row.isNullAt(COL_NAME_TO_ORDINAL.get("defaultRowCommitVersion"))
+                ? null
+                : row.getLong(COL_NAME_TO_ORDINAL.get("defaultRowCommitVersion"))),
+        Optional.ofNullable(
+            row.isNullAt(COL_NAME_TO_ORDINAL.get("stats"))
+                ? null
+                : DataFileStatistics.deserializeFromJson(
+                        row.getString(COL_NAME_TO_ORDINAL.get("stats")))
+                    .orElse(null)));
+  }
+
+  private final String path;
+  private final MapValue partitionValues;
+  private final long size;
+  private final long modificationTime;
+  private final boolean dataChange;
+  private final Optional<DeletionVectorDescriptor> deletionVector;
+  private final Optional<MapValue> tags;
+  private final Optional<Long> baseRowId;
+  private final Optional<Long> defaultRowCommitVersion;
+  private final Optional<DataFileStatistics> stats;
+
+  public AddFile(
+      String path,
+      MapValue partitionValues,
+      long size,
+      long modificationTime,
+      boolean dataChange,
+      Optional<DeletionVectorDescriptor> deletionVector,
+      Optional<MapValue> tags,
+      Optional<Long> baseRowId,
+      Optional<Long> defaultRowCommitVersion,
+      Optional<DataFileStatistics> stats) {
+    this.path = requireNonNull(path, "path is null");
+    this.partitionValues = requireNonNull(partitionValues, "partitionValues is null");
+    this.size = size;
+    this.modificationTime = modificationTime;
+    this.dataChange = dataChange;
+    this.deletionVector = deletionVector;
+    this.tags = tags;
+    this.baseRowId = baseRowId;
+    this.defaultRowCommitVersion = defaultRowCommitVersion;
+    this.stats = stats;
+  }
+
+  public Row toRow() {
+    Map<Integer, Object> valueMap = new HashMap<>();
+    valueMap.put(COL_NAME_TO_ORDINAL.get("path"), path);
+    valueMap.put(COL_NAME_TO_ORDINAL.get("partitionValues"), partitionValues);
+    valueMap.put(COL_NAME_TO_ORDINAL.get("size"), size);
+    valueMap.put(COL_NAME_TO_ORDINAL.get("modificationTime"), modificationTime);
+    valueMap.put(COL_NAME_TO_ORDINAL.get("dataChange"), dataChange);
+    deletionVector.ifPresent(dv -> valueMap.put(COL_NAME_TO_ORDINAL.get("deletionVector"), dv));
+    tags.ifPresent(tags -> valueMap.put(COL_NAME_TO_ORDINAL.get("tags"), tags));
+    baseRowId.ifPresent(rowId -> valueMap.put(COL_NAME_TO_ORDINAL.get("baseRowId"), rowId));
+    defaultRowCommitVersion.ifPresent(
+        commitVersion ->
+            valueMap.put(COL_NAME_TO_ORDINAL.get("defaultRowCommitVersion"), commitVersion));
+    stats.ifPresent(
+        stats -> valueMap.put(COL_NAME_TO_ORDINAL.get("stats"), stats.serializeAsJson()));
+    return new GenericRow(FULL_SCHEMA, valueMap);
+  }
+
+  public Optional<Long> getBaseRowId() {
+    return baseRowId;
+  }
+
+  public Optional<Long> getDefaultRowCommitVersion() {
+    return defaultRowCommitVersion;
+  }
+
+  public Optional<DataFileStatistics> getStats() {
+    return stats;
+  }
+
+  /**
+   * Creates a new AddFile instance with the specified base row ID.
+   *
+   * @param baseRowId the new base row ID to be assigned
+   * @return a new AddFile instance with the updated base row ID
+   */
+  public AddFile withNewBaseRowId(long baseRowId) {
+    return new AddFile(
+        path,
+        partitionValues,
+        size,
+        modificationTime,
+        dataChange,
+        deletionVector,
+        tags,
+        Optional.of(baseRowId),
+        defaultRowCommitVersion,
+        stats);
+  }
+
+  /**
+   * Creates a new AddFile instance with the specified default row commit version.
+   *
+   * @param defaultRowCommitVersion the new default row commit version to be assigned
+   * @return a new AddFile instance with the updated default row commit version
+   */
+  public AddFile withNewDefaultRowCommitVersion(long defaultRowCommitVersion) {
+    return new AddFile(
+        path,
+        partitionValues,
+        size,
+        modificationTime,
+        dataChange,
+        deletionVector,
+        tags,
+        baseRowId,
+        Optional.of(defaultRowCommitVersion),
+        stats);
   }
 }

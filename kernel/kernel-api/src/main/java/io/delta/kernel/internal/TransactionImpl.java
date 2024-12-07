@@ -32,6 +32,7 @@ import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.replay.ConflictChecker;
 import io.delta.kernel.internal.replay.ConflictChecker.TransactionRebaseState;
+import io.delta.kernel.internal.rowtracking.RowTracking;
 import io.delta.kernel.internal.util.*;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterable;
@@ -145,6 +146,15 @@ public class TransactionImpl implements Transaction {
       CommitInfo attemptCommitInfo = generateCommitAction(engine);
       updateMetadataWithICTIfRequired(
           engine, attemptCommitInfo.getInCommitTimestamp(), readSnapshot.getVersion(engine));
+
+      // For Row Tracking, we assign the base row ID and default row commit version to all AddFiles
+      // inside dataActions that do not have it yet. We also emit a DomainMetadata action if the
+      // row ID high watermark has changed.
+      RowTracking.emitDomainMetadataAction(protocol, readSnapshot, domainMetadatas, dataActions);
+      dataActions =
+          RowTracking.assignBaseRowIdAndDefaultRowCommitVersion(
+              protocol, readSnapshot, commitAsVersion, dataActions);
+
       int numRetries = 0;
       do {
         logger.info("Committing transaction as version = {}.", commitAsVersion);
