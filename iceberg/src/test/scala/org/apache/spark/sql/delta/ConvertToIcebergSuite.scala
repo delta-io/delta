@@ -16,68 +16,23 @@
 
 package org.apache.spark.sql.delta
 
-import java.io.{File, IOException}
-import java.net.ServerSocket
-
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.hive.conf.HiveConf.ConfVars._
 import org.scalatest.concurrent.Eventually
 import org.scalatest.time.SpanSugar._
 
-import org.apache.spark.SparkContext
 import org.apache.spark.sql.{QueryTest, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, CatalogStorageFormat}
+import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
 import org.apache.spark.sql.delta.actions.Metadata
-import org.apache.spark.sql.types.{IntegerType, StringType, StructType, StructField}
-import org.apache.spark.util.Utils
+import org.apache.spark.sql.delta.him.HIMTestSupport
+import org.apache.spark.sql.types.{IntegerType, StringType, StructField, StructType}
 
-/**
- * This test suite relies on an external Hive metastore (HMS) instance to run.
- *
- * A standalone HMS can be created using the following docker command.
- *  ************************************************************
- *  docker run -d -p 9083:9083 --env SERVICE_NAME=metastore \
- *  --name metastore-standalone apache/hive:4.0.0-beta-1
- *  ************************************************************
- *  The URL of this standalone HMS is thrift://localhost:9083
- *
- *  By default this hms will use `/opt/hive/data/warehouse` as warehouse path.
- *  Please make sure this path exists prior to running the suite.
- */
-class ConvertToIcebergSuite extends QueryTest with Eventually {
 
-  private var _sparkSession: SparkSession = null
-  private var _sparkSessionWithDelta: SparkSession = null
-  private var _sparkSessionWithIceberg: SparkSession = null
 
-  private val PORT = 9083
-  private val WAREHOUSE_PATH = "/opt/hive/data/warehouse/"
+class ConvertToIcebergSuite extends QueryTest with Eventually with HIMTestSupport {
 
   private val testTableName: String = "deltatable"
-  private var testTablePath: String = s"$WAREHOUSE_PATH$testTableName"
-
-  override def spark: SparkSession = _sparkSession
-
-  override def beforeAll(): Unit = {
-    super.beforeAll()
-    if (hmsReady(PORT)) {
-      _sparkSessionWithDelta = createSparkSessionWithDelta()
-      _sparkSessionWithIceberg = createSparkSessionWithIceberg()
-      require(!_sparkSessionWithDelta.eq(_sparkSessionWithIceberg), "separate sessions expected")
-    }
-  }
-
-  override def afterEach(): Unit = {
-    super.afterEach()
-    if (hmsReady(PORT)) {
-      _sparkSessionWithDelta.sql(s"DROP TABLE IF EXISTS $testTableName")
-    }
-    Utils.deleteRecursively(new File(testTablePath))
-  }
-
-  override def afterAll(): Unit = {
-    super.afterAll()
-    SparkContext.getActive.foreach(_.stop())
-  }
 
   test("enforceSupportInCatalog") {
     var testTable = new CatalogTable(
@@ -105,48 +60,45 @@ class ConvertToIcebergSuite extends QueryTest with Eventually {
   }
 
   test("basic test - managed table created with SQL") {
-    if (hmsReady(PORT)) {
-      runDeltaSql(
-        s"""CREATE TABLE `${testTableName}` (col1 INT) USING DELTA
-           |TBLPROPERTIES (
-           |  'delta.columnMapping.mode' = 'name',
-           |  'delta.universalFormat.enabledFormats' = 'iceberg'
-           |)""".stripMargin)
-      runDeltaSql(s"INSERT INTO `$testTableName` VALUES (123)")
-      verifyReadWithIceberg(testTableName, Seq(Row(123)))
+    withMetaStore { conf =>
+      withDeltaSparkSession(conf) { deltaSpark =>
+        deltaSpark.sql(
+          s"""CREATE TABLE `${testTableName}` (col1 INT) USING DELTA
+             |TBLPROPERTIES (
+             |  'delta.columnMapping.mode' = 'name',
+             |  'delta.universalFormat.enabledFormats' = 'iceberg'
+             |)""".stripMargin)
+        deltaSpark.sql(s"INSERT INTO `$testTableName` VALUES (123)")
+      }
+      verifyReadWithIceberg(conf, testTableName, Seq(Row(123)))
     }
   }
 
   test("basic test - catalog table created with DataFrame") {
-    if (hmsReady(PORT)) {
-      withDeltaSparkSession { deltaSpark =>
+    withMetaStore { conf =>
+      val whfolder = conf.get(METASTOREWAREHOUSE.varname)
+      val tablePath = s"$whfolder/$testTableName"
+      withDeltaSparkSession(conf) { deltaSpark =>
         withDefaultTablePropsInSQLConf {
           deltaSpark.range(10).write.format("delta")
-            .option("path", testTablePath)
+            .option("path", tablePath)
             .saveAsTable(testTableName)
         }
-      }
-      withDeltaSparkSession { deltaSpark =>
         deltaSpark.range(10, 20, 1)
           .write.format("delta").mode("append")
-          .option("path", testTablePath)
+          .option("path", tablePath)
           .saveAsTable(testTableName)
       }
-      verifyReadWithIceberg(testTableName, 0 to 19 map (Row(_)))
+      verifyReadWithIceberg(conf, testTableName, 0 to 19 map (Row(_)))
     }
   }
 
-  def runDeltaSql(sqlStr: String): Unit = {
-    withDeltaSparkSession { deltaSpark =>
-      deltaSpark.sql(sqlStr)
-    }
-  }
-
-  def verifyReadWithIceberg(tableName: String, expectedAnswer: Seq[Row]): Unit = {
-    withIcebergSparkSession { icebergSparkSession =>
+  def verifyReadWithIceberg(
+      conf: Configuration, tableName: String, expectedAnswer: Seq[Row]): Unit = {
+    withIcebergSparkSession(conf) { icebergSpark =>
       eventually(timeout(10.seconds)) {
-        icebergSparkSession.sql(s"REFRESH TABLE ${tableName}")
-        val icebergDf = icebergSparkSession.read.format("iceberg").load(tableName)
+        icebergSpark.sql(s"REFRESH TABLE ${tableName}")
+        val icebergDf = icebergSpark.read.format("iceberg").load(tableName)
         checkAnswer(icebergDf, expectedAnswer)
       }
     }
@@ -160,77 +112,63 @@ class ConvertToIcebergSuite extends QueryTest with Eventually {
     ) { f }
   }
 
-  def withDeltaSparkSession[T](f: SparkSession => T): T = {
-    withSparkSession(_sparkSessionWithDelta, f)
+  def withDeltaSparkSession[T](conf: Configuration) (f: SparkSession => T): T = {
+    val deltaSession = createSparkSessionWithDelta(conf)
+    try {
+      withSparkSession(deltaSession, f)
+    } finally {
+      deltaSession.stop()
+      deltaSession.close()
+    }
   }
 
-  def withIcebergSparkSession[T](f: SparkSession => T): T = {
-    withSparkSession(_sparkSessionWithIceberg, f)
+  def withIcebergSparkSession[T](conf: Configuration) (f: SparkSession => T): T = {
+    val icebergSession = createSparkSessionWithIceberg(conf)
+    try {
+      withSparkSession(icebergSession, f)
+    } finally {
+      icebergSession.stop()
+      icebergSession.close()
+    }
   }
 
   def withSparkSession[T](sessionToUse: SparkSession, f: SparkSession => T): T = {
     try {
       SparkSession.setDefaultSession(sessionToUse)
       SparkSession.setActiveSession(sessionToUse)
-      _sparkSession = sessionToUse
       f(sessionToUse)
     } finally {
       SparkSession.clearActiveSession()
       SparkSession.clearDefaultSession()
-      _sparkSession = null
     }
   }
 
-  protected def createSparkSessionWithDelta(): SparkSession = {
-    SparkSession.clearActiveSession()
-    SparkSession.clearDefaultSession()
+  protected def createSparkSessionWithDelta(conf: Configuration): SparkSession = {
     val sparkSession = SparkSession.builder()
       .master("local[*]")
       .appName("DeltaSession")
       .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
       .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
-      .config("hive.metastore.uris", s"thrift://localhost:$PORT")
+      .config("spark.sql.warehouse.dir", conf.get(METASTOREWAREHOUSE.varname))
+      .config("hive.metastore.uris", conf.get(METASTOREURIS.varname))
       .config("spark.sql.catalogImplementation", "hive")
       .getOrCreate()
-    SparkSession.clearActiveSession()
-    SparkSession.clearDefaultSession()
     sparkSession
   }
 
-  protected def createSparkSessionWithIceberg(): SparkSession = {
-    SparkSession.clearActiveSession()
-    SparkSession.clearDefaultSession()
+  protected def createSparkSessionWithIceberg(conf: Configuration): SparkSession = {
     val sparkSession = SparkSession.builder()
       .master("local[*]")
       .appName("IcebergSession")
       .config("spark.sql.extensions",
         "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
       .config("spark.sql.catalog.spark_catalog", "org.apache.iceberg.spark.SparkSessionCatalog")
-      .config("hive.metastore.uris", s"thrift://localhost:$PORT")
+      .config("spark.sql.warehouse.dir", conf.get(METASTOREWAREHOUSE.varname))
+      .config("hive.metastore.uris", conf.get(METASTOREURIS.varname))
       .config("spark.sql.catalogImplementation", "hive")
       .getOrCreate()
-    SparkSession.clearActiveSession()
-    SparkSession.clearDefaultSession()
     sparkSession
   }
 
-  def hmsReady(port: Int): Boolean = {
-    var ss: ServerSocket = null
-    try {
-      ss = new ServerSocket(port)
-      ss.setReuseAddress(true)
-      logWarning("No HMS detected, test suite will not run")
-      return false
-    } catch {
-      case e: IOException =>
-    } finally {
-      if (ss != null) {
-        try ss.close()
-        catch {
-          case e: IOException =>
-        }
-      }
-    }
-    true
-  }
+  override protected def spark: SparkSession = null
 }
