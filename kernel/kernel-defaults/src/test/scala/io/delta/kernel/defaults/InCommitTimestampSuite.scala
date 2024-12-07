@@ -349,7 +349,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
           "delta.enableInCommitTimestamps=true, " +
           "delta.inCommitTimestampEnablementVersion=1}}",
         metadata.getId,
-        metadata.getCreatedTime.get,
+        metadata.getCreatedTime,
         inCommitTimestamp.toString))
     }
   }
