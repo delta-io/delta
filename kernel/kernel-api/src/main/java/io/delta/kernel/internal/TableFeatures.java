@@ -19,6 +19,7 @@ package io.delta.kernel.internal;
 import static io.delta.kernel.internal.DeltaErrors.*;
 import static io.delta.kernel.internal.TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED;
 
+import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.util.ColumnMapping;
@@ -40,6 +41,7 @@ public class TableFeatures {
               add("typeWidening-preview");
               add("typeWidening");
               add(DOMAIN_METADATA_FEATURE_NAME);
+              add(ROW_TRACKING_FEATURE_NAME);
             }
           });
 
@@ -60,6 +62,9 @@ public class TableFeatures {
 
   /** The feature name for domain metadata. */
   public static final String DOMAIN_METADATA_FEATURE_NAME = "domainMetadata";
+
+  /** The feature name for row tracking. */
+  public static final String ROW_TRACKING_FEATURE_NAME = "rowTracking";
 
   /** The minimum writer version required to support table features. */
   public static final int TABLE_FEATURES_MIN_WRITER_VERSION = 7;
@@ -100,7 +105,8 @@ public class TableFeatures {
    *   <li>protocol writer version 1.
    *   <li>protocol writer version 2 only with appendOnly feature enabled.
    *   <li>protocol writer version 7 with {@code appendOnly}, {@code inCommitTimestamp}, {@code
-   *       columnMapping}, {@code typeWidening}, {@code domainMetadata} feature enabled.
+   *       columnMapping}, {@code typeWidening}, {@code domainMetadata}, {@code rowTracking} feature
+   *       enabled.
    * </ul>
    *
    * @param protocol Table protocol
@@ -195,6 +201,30 @@ public class TableFeatures {
     }
     return writerFeatures.contains(DOMAIN_METADATA_FEATURE_NAME)
         && protocol.getMinWriterVersion() >= TABLE_FEATURES_MIN_WRITER_VERSION;
+  }
+
+  /**
+   * Check if the table protocol supports the "rowTracking" writer feature.
+   *
+   * @param protocol the protocol to check
+   * @return true if the protocol supports row tracking, false otherwise
+   */
+  public static boolean isRowTrackingSupported(Protocol protocol) {
+    List<String> writerFeatures = protocol.getWriterFeatures();
+    if (writerFeatures == null) {
+      return false;
+    }
+    boolean rowTrackingSupported =
+        writerFeatures.contains(ROW_TRACKING_FEATURE_NAME)
+            && protocol.getMinWriterVersion() >= TABLE_FEATURES_MIN_WRITER_VERSION;
+    boolean domainMetadataSupported = isDomainMetadataSupported(protocol);
+
+    if (rowTrackingSupported && !domainMetadataSupported) {
+      // This should not happen. Row tracking should automatically bring in domain metadata.
+      throw new KernelException(
+          "Feature 'rowTracking' is supported but 'domainMetadata' is unsupported");
+    }
+    return rowTrackingSupported;
   }
 
   /**
