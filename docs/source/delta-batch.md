@@ -471,7 +471,7 @@ You can use `ALTER TABLE table_name ALTER COLUMN column_name SYNC IDENTITY` to s
 The following limitations exist when working with identity columns:
 - Concurrent transactions are not supported on tables with identity columns enabled.
 - You cannot partition a table by an identity column.
-- You cannot use `ALTER TABLE` to `ADD`, `REPLACE`, or `CHANGE` an identity column.
+- You cannot `ADD`, `REPLACE`, or `CHANGE` an identity column.
 - You cannot update the value of an identity column for an existing record.
   .. note:: To change the `IDENTITY` value for an existing record, you must delete the record and `INSERT` it as a new record.
 
