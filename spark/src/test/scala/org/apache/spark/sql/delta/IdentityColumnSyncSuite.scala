@@ -93,7 +93,7 @@ trait IdentityColumnSyncSuiteBase
 
       sql(s"ALTER TABLE $tblName ALTER COLUMN id SYNC IDENTITY")
       assert(getHighWaterMark(deltaLog.update(), "id").isEmpty,
-        "sync identity must not add a the high watermark that is lower " +
+        "sync identity must not add a high watermark that is lower " +
         "than the start value when it has positive increment")
 
       sql(s"INSERT INTO $tblName (value) VALUES ('d'), ('e'), ('f')")
@@ -182,7 +182,7 @@ trait IdentityColumnSyncSuiteBase
 
       sql(s"ALTER TABLE $tblName ALTER COLUMN id SYNC IDENTITY")
       assert(getHighWaterMark(deltaLog.update(), "id").isEmpty,
-        "sync identity must not add a the high watermark that is higher " +
+        "sync identity must not add a high watermark that is higher " +
         "than the start value when it has negative increment")
 
       sql(s"INSERT INTO $tblName (value) VALUES ('d'), ('e'), ('f')")
