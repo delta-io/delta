@@ -242,7 +242,7 @@ lazy val connectCommon = (project in file("spark-connect/common"))
     name := "delta-connect-common",
     commonSettings,
     crossSparkSettings(),
-    releaseSettings,
+    skipReleaseSettings,
     Compile / compile := runTaskOnlyOnSparkMaster(
       task = Compile / compile,
       taskName = "compile",
@@ -281,7 +281,7 @@ lazy val connectClient = (project in file("spark-connect/client"))
   .settings(
     name := "delta-connect-client",
     commonSettings,
-    releaseSettings,
+    skipReleaseSettings,
     Compile / compile := runTaskOnlyOnSparkMaster(
       task = Compile / compile,
       taskName = "compile",
@@ -369,7 +369,7 @@ lazy val connectServer = (project in file("spark-connect/server"))
   .settings(
     name := "delta-connect-server",
     commonSettings,
-    releaseSettings,
+    skipReleaseSettings,
     Compile / compile := runTaskOnlyOnSparkMaster(
       task = Compile / compile,
       taskName = "compile",
