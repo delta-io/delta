@@ -14,20 +14,29 @@
  * limitations under the License.
  */
 
-package io.delta.kernel.engine.coordinatedcommits.actions;
+package io.delta.kernel.internal.coordinatedcommits.actions;
 
 import io.delta.kernel.annotation.Evolving;
+import java.util.Set;
 
 /**
- * Interface for objects that represents the base information for a commit. Commits need to provide
- * an in-commit timestamp. This timestamp is used to specify the exact time the commit happened and
- * determines the target version for time-based time travel queries.
+ * Interface for protocol actions in Delta. The protocol defines the requirements that readers and
+ * writers of the table need to meet.
  *
  * @since 3.3.0
  */
 @Evolving
-public interface AbstractCommitInfo {
+public interface AbstractProtocol {
 
-  /** Get the timestamp of the commit as millis after the epoch. */
-  long getCommitTimestamp();
+  /** The minimum reader version required to read the table. */
+  int getMinReaderVersion();
+
+  /** The minimum writer version required to read the table. */
+  int getMinWriterVersion();
+
+  /** The reader features that need to be supported to read the table. */
+  Set<String> getReaderFeatures();
+
+  /** The writer features that need to be supported to write the table. */
+  Set<String> getWriterFeatures();
 }

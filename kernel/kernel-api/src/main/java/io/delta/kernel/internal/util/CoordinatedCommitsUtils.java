@@ -15,12 +15,12 @@
  */
 package io.delta.kernel.internal.util;
 
-import io.delta.kernel.engine.coordinatedcommits.actions.AbstractCommitInfo;
-import io.delta.kernel.engine.coordinatedcommits.actions.AbstractMetadata;
-import io.delta.kernel.engine.coordinatedcommits.actions.AbstractProtocol;
 import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.coordinatedcommits.actions.AbstractCommitInfo;
+import io.delta.kernel.internal.coordinatedcommits.actions.AbstractMetadata;
+import io.delta.kernel.internal.coordinatedcommits.actions.AbstractProtocol;
 import java.util.*;
 
 public class CoordinatedCommitsUtils {
