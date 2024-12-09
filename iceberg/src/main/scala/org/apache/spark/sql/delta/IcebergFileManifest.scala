@@ -47,6 +47,8 @@ class IcebergFileManifest(
 
   private var _numFiles: Option[Long] = None
 
+  private var _sizeInBytes: Option[Long] = None
+
   val basePath = table.location()
 
   val icebergSchema = table.schema()
@@ -79,6 +81,11 @@ class IcebergFileManifest(
     _numFiles.get
   }
 
+  override def sizeInBytes: Long = {
+    if (_sizeInBytes.isEmpty) getFileSparkResults()
+    _sizeInBytes.get
+  }
+
   def allFiles: Dataset[ConvertTargetFile] = {
     if (fileSparkResults.isEmpty) getFileSparkResults()
     fileSparkResults.get
@@ -109,6 +116,7 @@ class IcebergFileManifest(
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_UNSAFE_MOR_TABLE_ENABLE)
 
     var numFiles = 0L
+    var sizeInBytes = 0L
     val res = table.newScan().planFiles().iterator().asScala.grouped(schemaBatchSize).map { batch =>
       logInfo(log"Getting file statuses for a batch of " +
         log"${MDC(DeltaLogKeys.BATCH_SIZE, batch.size)} of files; " +
@@ -129,6 +137,7 @@ class IcebergFileManifest(
           Some(convertIcebergPartitionToPartitionValues(
             fileScanTask.file().partition()))
         } else None
+        sizeInBytes += fileScanTask.file().fileSizeInBytes
         (filePath, partitionValues)
       }
       val numParallelism = Math.min(Math.max(filePathWithPartValues.size, 1),
@@ -148,6 +157,7 @@ class IcebergFileManifest(
 
     fileSparkResults = Some(res.cache())
     _numFiles = Some(numFiles)
+    _sizeInBytes = Some(sizeInBytes)
   }
 
   override def close(): Unit = fileSparkResults.map(_.unpersist())
