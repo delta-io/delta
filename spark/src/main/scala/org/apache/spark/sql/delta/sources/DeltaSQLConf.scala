@@ -2240,7 +2240,7 @@ trait DeltaSQLConfBase {
           | it is not writable but still readable if this config is set to false.
           |""".stripMargin)
       .booleanConf
-      .createWithDefault(false)
+      .createWithDefault(true)
 
   ///////////
   // TESTING
