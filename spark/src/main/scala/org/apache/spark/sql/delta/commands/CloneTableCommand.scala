@@ -248,12 +248,9 @@ abstract class CloneConvertedSource(spark: SparkSession) extends CloneSource {
     }
   }
 
-  private lazy val fileStats = allFiles.select(
-      coalesce(sum("size"), lit(0L)), count(new Column("*"))).first()
+  def sizeInBytes: Long = convertTargetTable.sizeInBytes
 
-  def sizeInBytes: Long = fileStats.getLong(0)
-
-  def numOfFiles: Long = fileStats.getLong(1)
+  def numOfFiles: Long = convertTargetTable.numFiles
 
   def description: String = s"${format} table ${name}"
 
