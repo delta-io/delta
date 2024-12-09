@@ -96,8 +96,6 @@ class IcebergTable(
 
   lazy val numFiles: Long = fileManifest.numFiles
 
-  lazy val sizeInBytes: Long = fileManifest.sizeInBytes
-
   override val format: String = "iceberg"
 
   def checkConvertible(): Unit = {

@@ -64,8 +64,6 @@ class ParquetTable(
 
   override lazy val numFiles: Long = fileManifest.numFiles
 
-  override lazy val sizeInBytes: Long = fileManifest.sizeInBytes
-
   def tableSchema: StructType = fileManifest.parquetSchema.get
 
   override val format: String = "parquet"
