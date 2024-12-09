@@ -83,8 +83,19 @@ trait IdentityColumnSyncSuiteBase
   test("sync identity with values before start") {
     val tblName = getRandomTableName
     withSimpleGeneratedByDefaultTable(tblName, startsWith = 100L, incrementBy = 2L) {
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tblName))
+      assert(getHighWaterMark(deltaLog.update(), "id").isEmpty,
+        "an empty table does not have an identity high watermark")
+
       sql(s"INSERT INTO $tblName (id, value) VALUES (1, 'a'), (2, 'b'), (99, 'c')")
+      assert(getHighWaterMark(deltaLog.update(), "id").isEmpty,
+        "user inserted values do not update the high watermark")
+
       sql(s"ALTER TABLE $tblName ALTER COLUMN id SYNC IDENTITY")
+      assert(getHighWaterMark(deltaLog.update(), "id").isEmpty,
+        "sync identity must not add a the high watermark that is lower " +
+        "than the start value when it has positive increment")
+
       sql(s"INSERT INTO $tblName (value) VALUES ('d'), ('e'), ('f')")
 
       val result = spark.read.table(tblName)
@@ -161,8 +172,19 @@ trait IdentityColumnSyncSuiteBase
   test("sync identity with values before start and negative step") {
     val tblName = getRandomTableName
     withSimpleGeneratedByDefaultTable(tblName, startsWith = -10L, incrementBy = -2L) {
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tblName))
+      assert(getHighWaterMark(deltaLog.update(), "id").isEmpty,
+        "an empty table does not have an identity high watermark")
+
       sql(s"INSERT INTO $tblName (id, value) VALUES (1, 'a'), (2, 'b'), (-9, 'c')")
+      assert(getHighWaterMark(deltaLog.update(), "id").isEmpty,
+        "user inserted values do not update the high watermark")
+
       sql(s"ALTER TABLE $tblName ALTER COLUMN id SYNC IDENTITY")
+      assert(getHighWaterMark(deltaLog.update(), "id").isEmpty,
+        "sync identity must not add a the high watermark that is higher " +
+        "than the start value when it has negative increment")
+
       sql(s"INSERT INTO $tblName (value) VALUES ('d'), ('e'), ('f')")
 
       val result = spark.read.table(tblName)
