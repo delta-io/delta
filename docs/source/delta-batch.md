@@ -410,7 +410,7 @@ You can use an [EXPLAIN](https://spark.apache.org/docs/latest/sql-ref-syntax-qry
 ### Use identity columns
 .. important:: Declaring an identity column on a Delta table disables concurrent transactions. Only use identity columns in use cases where concurrent writes to the target table are not required.
 
-<Delta> identity columns are a type of generated column that assigns unique values for each record inserted into a table. The following example shows the basic syntax for declaring an identity column during a create table statement:
+<Delta> identity columns are a type of generated column that assigns unique values for each record inserted into a table. The following example shows how to declare an identity column during a create table command:
 
 .. code-language-tabs::
   ```python
