@@ -281,16 +281,22 @@ trait IdentityColumnIngestionSuiteBase extends IdentityColumnTestUtils {
     val tblName = getRandomTableName
     withIdentityColumnTable(GeneratedByDefault, tblName) {
       val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tblName))
-      val schema1 = deltaLog.snapshot.metadata.schemaString
+      val schema1 = deltaLog.update().metadata.schemaString
 
       // System generated IDENTITY value - should update schema.
       sql(s"INSERT INTO $tblName(value) VALUES (1);")
-      val schema2 = deltaLog.snapshot.metadata.schemaString
+      val snapshot2 = deltaLog.update()
+      val highWatermarkAfterGeneration = getHighWaterMark(snapshot2, "id")
+      assert(highWatermarkAfterGeneration.isDefined)
+      val schema2 = snapshot2.metadata.schemaString
       assert(schema1 != schema2)
 
       // Explicitly provided IDENTITY value - should not update schema.
       sql(s"INSERT INTO $tblName VALUES (1,1);")
-      val schema3 = deltaLog.snapshot.metadata.schemaString
+      val snapshot3 = deltaLog.update()
+      val schema3 = snapshot3.metadata.schemaString
+      val highWatermarkAfterUserInsert = getHighWaterMark(snapshot3, "id")
+      assert(highWatermarkAfterUserInsert == highWatermarkAfterGeneration)
       assert(schema2 == schema3)
     }
   }
