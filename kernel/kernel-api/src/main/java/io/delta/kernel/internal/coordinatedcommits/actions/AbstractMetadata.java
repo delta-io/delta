@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.delta.kernel.engine.coordinatedcommits.actions;
+package io.delta.kernel.internal.coordinatedcommits.actions;
 
 import io.delta.kernel.annotation.Evolving;
 import java.util.List;
