@@ -150,7 +150,9 @@ public class TransactionImpl implements Transaction {
       // If row tracking is supported, assign base row IDs and default row commit versions to any
       // AddFile or RemoveFile actions that do not yet have them. If the row ID high watermark
       // changes, emit a DomainMetadata action.
-      RowTracking.updateHighWaterMark(protocol, readSnapshot, domainMetadatas, dataActions);
+      Optional<DomainMetadata> highWaterMark =
+          RowTracking.createNewHighWaterMarkIfNeeded(protocol, readSnapshot, dataActions);
+      highWaterMark.ifPresent(domainMetadatas::add);
       dataActions =
           RowTracking.assignBaseRowIdAndDefaultRowCommitVersion(
               protocol, readSnapshot, commitAsVersion, dataActions);

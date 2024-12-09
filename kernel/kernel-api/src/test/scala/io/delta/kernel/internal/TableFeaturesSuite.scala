@@ -69,10 +69,14 @@ class TableFeaturesSuite extends AnyFunSuite {
   }
 
   Seq("appendOnly", "inCommitTimestamp", "columnMapping", "typeWidening-preview", "typeWidening",
-    "domainMetadata", "rowTracking")
-    .foreach { supportedWriterFeature =>
+    "domainMetadata", "rowTracking").foreach { supportedWriterFeature =>
     test(s"validateWriteSupported: protocol 7 with $supportedWriterFeature") {
-      checkSupported(createTestProtocol(minWriterVersion = 7, supportedWriterFeature))
+      val protocol = if (supportedWriterFeature == "rowTracking") {
+        createTestProtocol(minWriterVersion = 7, supportedWriterFeature, "domainMetadata")
+      } else {
+        createTestProtocol(minWriterVersion = 7, supportedWriterFeature)
+      }
+      checkSupported(protocol)
     }
   }
 

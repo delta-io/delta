@@ -19,7 +19,7 @@ import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.expressions.Literal
-import io.delta.kernel.internal.{SnapshotImpl, TableImpl}
+import io.delta.kernel.internal.{SnapshotImpl, TableImpl, InternalScanFileUtils}
 import io.delta.kernel.internal.actions.{AddFile, Protocol, SingleAction}
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.internal.rowtracking.RowTrackingMetadataDomain
@@ -65,21 +65,13 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
     val table = TableImpl.forPath(engine, tablePath)
     val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
 
-    val AddFileActionsBatches = snapshot.getLogReplay.getAddFilesAsColumnarBatches(
-      engine,
-      false, /* shouldReadStats */
-      Optional.empty()
-    ).asScala
-
-    val modificationTimeOrdinal = AddFile.SCHEMA_WITHOUT_STATS.indexOf("modificationTime")
-    val baseRowIdOrdinal = AddFile.SCHEMA_WITHOUT_STATS.indexOf("baseRowId")
-
-    val sortedBaseRowIds = AddFileActionsBatches
-      .flatMap(_.getRows.asScala)
-      .toSeq
-      .map(_.getStruct(0))
-      .sortBy(_.getLong(modificationTimeOrdinal))
-      .map(_.getLong(baseRowIdOrdinal))
+    val scanFileRows = collectScanFileRows(
+      snapshot.getScanBuilder(engine).build()
+    )
+    val sortedBaseRowIds = scanFileRows
+      .map(InternalScanFileUtils.getBaseRowId)
+      .map(_.orElse(-1))
+      .sorted
 
     assert(sortedBaseRowIds === expectedValue)
   }
@@ -91,24 +83,15 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
     val table = TableImpl.forPath(engine, tablePath)
     val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
 
-    val AddFileActionsBatches = snapshot.getLogReplay.getAddFilesAsColumnarBatches(
-      engine,
-      false, /* shouldReadStats */
-      Optional.empty()
-    ).asScala
+    val scanFileRows = collectScanFileRows(
+      snapshot.getScanBuilder(engine).build()
+    )
+    val sortedAddFileDefaultRowCommitVersions = scanFileRows
+      .map(InternalScanFileUtils.getDefaultRowCommitVersion)
+      .map(_.orElse(-1))
+      .sorted
 
-    val modificationTimeOrdinal = AddFile.SCHEMA_WITHOUT_STATS.indexOf("modificationTime")
-    val defaultRowCommitVersionOrdinal =
-      AddFile.SCHEMA_WITHOUT_STATS.indexOf("defaultRowCommitVersion")
-
-    val AddFileDefaultRowCommitVersionsSorted = AddFileActionsBatches
-      .flatMap(_.getRows.asScala)
-      .toSeq
-      .map(_.getStruct(0))
-      .sortBy(_.getLong(modificationTimeOrdinal))
-      .map(_.getLong(defaultRowCommitVersionOrdinal))
-
-    assert(AddFileDefaultRowCommitVersionsSorted === expectedValue)
+    assert(sortedAddFileDefaultRowCommitVersions === expectedValue)
   }
 
   private def verifyHighWatermark(engine: Engine, tablePath: String, expectedValue: Long) = {
@@ -261,7 +244,10 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
 
       assert(
         e.getMessage
-          .contains("Feature 'rowTracking' is supported but 'domainMetadata' is unsupported")
+          .contains(
+            "Feature 'rowTracking' is supported and depends on feature `domainMetadata`"
+            + "but 'domainMetadata' is unsupported"
+          )
       )
     })
   }

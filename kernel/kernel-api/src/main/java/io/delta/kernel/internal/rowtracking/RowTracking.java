@@ -24,7 +24,7 @@ import io.delta.kernel.utils.CloseableIterable;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.DataFileStatistics;
 import java.io.IOException;
-import java.util.List;
+import java.util.Optional;
 
 /** A collection of helper methods for working with row tracking. */
 public class RowTracking {
@@ -106,16 +106,12 @@ public class RowTracking {
    *
    * @param protocol the protocol to check for row tracking support
    * @param snapshot the current snapshot of the table
-   * @param domainMetadatas the list of domain metadata actions to append to if needed
    * @param dataActions the iterable of data actions that may update the high watermark
    */
-  public static void updateHighWaterMark(
-      Protocol protocol,
-      SnapshotImpl snapshot,
-      List<DomainMetadata> domainMetadatas,
-      CloseableIterable<Row> dataActions) {
+  public static Optional<DomainMetadata> createNewHighWaterMarkIfNeeded(
+      Protocol protocol, SnapshotImpl snapshot, CloseableIterable<Row> dataActions) {
     if (!TableFeatures.isRowTrackingSupported(protocol)) {
-      return;
+      return Optional.empty();
     }
 
     final long prevRowIdHighWatermark = readRowIdHighWaterMark(snapshot);
@@ -130,11 +126,9 @@ public class RowTracking {
           }
         });
 
-    // Emit a DomainMetadata action to update the high watermark if it has changed
-    if (newRowIdHighWatermark[0] != prevRowIdHighWatermark) {
-      domainMetadatas.add(
-          new RowTrackingMetadataDomain(newRowIdHighWatermark[0]).toDomainMetadata());
-    }
+    return (newRowIdHighWatermark[0] != prevRowIdHighWatermark)
+        ? Optional.of(new RowTrackingMetadataDomain(newRowIdHighWatermark[0]).toDomainMetadata())
+        : Optional.empty();
   }
 
   /**

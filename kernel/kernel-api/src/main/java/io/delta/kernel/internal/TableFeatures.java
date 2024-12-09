@@ -142,6 +142,14 @@ public class TableFeatures {
             throw unsupportedWriterFeature(tablePath, writerFeature);
           }
         }
+        // Eventually we may have a way to declare and enforce dependencies between features.
+        // By putting this check for row tracking here, it makes it easier to spot that row
+        // tracking defines such a dependency that can be implicitly checked.
+        if (isRowTrackingSupported(protocol) && !isDomainMetadataSupported(protocol)) {
+          throw new KernelException(
+              "Feature 'rowTracking' is supported and depends on feature `domainMetadata`"
+                  + "but 'domainMetadata' is unsupported");
+        }
         break;
       default:
         throw unsupportedWriterProtocol(tablePath, minWriterVersion);
@@ -195,12 +203,7 @@ public class TableFeatures {
    * @return true if the "domainMetadata" feature is supported, false otherwise
    */
   public static boolean isDomainMetadataSupported(Protocol protocol) {
-    List<String> writerFeatures = protocol.getWriterFeatures();
-    if (writerFeatures == null) {
-      return false;
-    }
-    return writerFeatures.contains(DOMAIN_METADATA_FEATURE_NAME)
-        && protocol.getMinWriterVersion() >= TABLE_FEATURES_MIN_WRITER_VERSION;
+    return isWriterFeatureSupported(protocol, DOMAIN_METADATA_FEATURE_NAME);
   }
 
   /**
@@ -210,21 +213,7 @@ public class TableFeatures {
    * @return true if the protocol supports row tracking, false otherwise
    */
   public static boolean isRowTrackingSupported(Protocol protocol) {
-    List<String> writerFeatures = protocol.getWriterFeatures();
-    if (writerFeatures == null) {
-      return false;
-    }
-    boolean rowTrackingSupported =
-        writerFeatures.contains(ROW_TRACKING_FEATURE_NAME)
-            && protocol.getMinWriterVersion() >= TABLE_FEATURES_MIN_WRITER_VERSION;
-    boolean domainMetadataSupported = isDomainMetadataSupported(protocol);
-
-    if (rowTrackingSupported && !domainMetadataSupported) {
-      // This should not happen. Row tracking should automatically bring in domain metadata.
-      throw new KernelException(
-          "Feature 'rowTracking' is supported but 'domainMetadata' is unsupported");
-    }
-    return rowTrackingSupported;
+    return isWriterFeatureSupported(protocol, ROW_TRACKING_FEATURE_NAME);
   }
 
   /**
@@ -282,5 +271,14 @@ public class TableFeatures {
     if (hasInvariants) {
       throw columnInvariantsNotSupported();
     }
+  }
+
+  private static boolean isWriterFeatureSupported(Protocol protocol, String featureName) {
+    List<String> writerFeatures = protocol.getWriterFeatures();
+    if (writerFeatures == null) {
+      return false;
+    }
+    return writerFeatures.contains(featureName)
+        && protocol.getMinWriterVersion() >= TABLE_FEATURES_MIN_WRITER_VERSION;
   }
 }

@@ -151,16 +151,6 @@ public class SnapshotImpl implements Snapshot {
     return logSegment;
   }
 
-  /**
-   * Returns the log replay object. Visible for testing, where we need to access all the active
-   * AddFiles for a snapshot.
-   *
-   * @return the {@link LogReplay} object
-   */
-  public LogReplay getLogReplay() {
-    return logReplay;
-  }
-
   public CreateCheckpointIterator getCreateCheckpointIterator(Engine engine) {
     long minFileRetentionTimestampMillis =
         System.currentTimeMillis() - TOMBSTONE_RETENTION.fromMetadata(metadata);
