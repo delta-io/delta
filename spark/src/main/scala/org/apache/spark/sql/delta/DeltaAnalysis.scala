@@ -555,16 +555,19 @@ class DeltaAnalysis(session: SparkSession)
       // command to the Delta variant. We need to add a special marker to the target table, so that
       // this rule does not convert it to v1 relation too early, as we need to keep it as a v2
       // relation to bypass the OSS MERGE resolution code in the rule `ResolveReferences`.
-      merge.targetTable.foreach {
+      merge.copy(targetTable = merge.targetTable.transform {
         // TreeNodeTag is not very reliable, but it's OK to use it here, as we will use it very
         // soon: when this rule transforms down the plan tree and hits the MERGE target table.
         // There is no chance in this rule that we will drop this tag. At the end, This rule will
         // turn MergeIntoTable into DeltaMergeInto, and convert all Delta relations inside it to
         // v1 relations (no need to clean up this tag).
-        case r: DataSourceV2Relation => r.setTagValue(DeltaRelation.KEEP_AS_V2_RELATION_TAG, ())
-        case _ =>
-      }
-      merge
+        case r: DataSourceV2Relation =>
+          // clone() won't work here as a tag doesn't affect the equality
+          // comparison and transform() ignores equal instances.
+          val newRel = r.newInstance()
+          newRel.setTagValue(DeltaRelation.KEEP_AS_V2_RELATION_TAG, ())
+          newRel
+      })
 
     case reorg @ DeltaReorgTable(resolved @ ResolvedTable(_, _, _: DeltaTableV2, _), spec) =>
       DeltaReorgTableCommand(resolved, spec)(reorg.predicates)
