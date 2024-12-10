@@ -27,6 +27,7 @@ import org.apache.spark.sql.delta.DeltaOperations.{Delete, Write}
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.DeltaVacuumSuiteShims._
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, Metadata, RemoveFile}
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.VacuumCommand
 import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -194,10 +195,10 @@ trait DeltaVacuumSuiteBase extends QueryTest
       modificationTime = clock.getTimeMillis())
   }
 
-  protected def gcTest(deltaLog: DeltaLog, clock: ManualClock)(actions: Operation*): Unit = {
+  protected def gcTest(table: DeltaTableV2, clock: ManualClock)(actions: Operation*): Unit = {
     import testImplicits._
-    val basePath = deltaLog.dataPath.toString
-    val fs = new Path(basePath).getFileSystem(deltaLog.newDeltaHadoopConf())
+    val basePath = table.deltaLog.dataPath.toString
+    val fs = new Path(basePath).getFileSystem(table.deltaLog.newDeltaHadoopConf())
     actions.foreach {
       case CreateFile(path, commit, partitionValues) =>
         Given(s"*** Writing file to $path. Commit to log: $commit")
@@ -207,13 +208,13 @@ trait DeltaVacuumSuiteBase extends QueryTest
         if (commit) {
           if (!DeltaTableUtils.isDeltaTable(spark, new Path(basePath))) {
             // initialize the table
-            val version = deltaLog.startTransaction().commitManually()
-            setCommitClock(deltaLog, version, clock)
+            val version = table.startTransaction().commitManually()
+            setCommitClock(table, version, clock)
           }
-          val txn = deltaLog.startTransaction()
+          val txn = table.startTransaction()
           val action = createFile(basePath, sanitizedPath, file, clock, partitionValues)
           val version = txn.commit(Seq(action), Write(SaveMode.Append))
-          setCommitClock(deltaLog, version, clock)
+          setCommitClock(table, version, clock)
         } else {
           createFile(basePath, path, file, clock)
         }
@@ -224,7 +225,7 @@ trait DeltaVacuumSuiteBase extends QueryTest
         assert(dir.setLastModified(clock.getTimeMillis()))
       case LogicallyDeleteFile(path) =>
         Given(s"*** Removing files")
-        val txn = deltaLog.startTransaction()
+        val txn = table.startTransaction()
         // scalastyle:off
         val metrics = Map[String, SQLMetric](
           "numRemovedFiles" -> createMetric(sparkContext, "number of files removed."),
@@ -238,7 +239,7 @@ trait DeltaVacuumSuiteBase extends QueryTest
         val version = txn.commit(
           Seq(RemoveFile(encodedPath, Option(clock.getTimeMillis()), size = size)),
           Delete(Seq(Literal.TrueLiteral)))
-        setCommitClock(deltaLog, version, clock)
+        setCommitClock(table, version, clock)
       // scalastyle:on
       case e: ExecuteVacuumInSQL =>
         Given(s"*** Executing SQL: ${e.sql}")
@@ -255,12 +256,13 @@ trait DeltaVacuumSuiteBase extends QueryTest
         }
       case GC(dryRun, expectedDf, retention) =>
         Given("*** Garbage collecting Reservoir")
-        val result = VacuumCommand.gc(spark, deltaLog, dryRun, retention, clock = clock)
+        val result = VacuumCommand.gc(spark, table, dryRun, retention, clock = clock)
         val qualified = expectedDf.map(p => fs.makeQualified(new Path(p)).toString)
         checkDatasetUnorderly(result.as[String], qualified: _*)
       case GCByInventory(dryRun, expectedDf, retention, inventory) =>
         Given("*** Garbage collecting using inventory")
-        val result = VacuumCommand.gc(spark, deltaLog, dryRun, retention, inventory, clock = clock)
+        val result =
+          VacuumCommand.gc(spark, table, dryRun, retention, inventory, clock = clock)
         val qualified = expectedDf.map(p => fs.makeQualified(new Path(p)).toString)
         checkDatasetUnorderly(result.as[String], qualified: _*)
       case ExecuteVacuumInScala(deltaTable, expectedDf, retention) =>
@@ -281,7 +283,7 @@ trait DeltaVacuumSuiteBase extends QueryTest
         clock.advance(timeToAdd)
       case ExpectFailure(action, failure, msg) =>
         Given(s"*** Expecting failure of ${failure.getName} for action: $action")
-        val e = intercept[Exception](gcTest(deltaLog, clock)(action))
+        val e = intercept[Exception](gcTest(table, clock)(action))
         assert(e.getClass === failure)
         assert(
           msg.forall(m =>
@@ -290,24 +292,23 @@ trait DeltaVacuumSuiteBase extends QueryTest
     }
   }
 
-  protected def vacuumSQLTest(tablePath: String, identifier: String) {
-    val deltaLog = DeltaLog.forTable(spark, tablePath)
+  protected def vacuumSQLTest(table: DeltaTableV2, tableName: String) {
     val committedFile = "committedFile.txt"
     val notCommittedFile = "notCommittedFile.txt"
 
-    val expectedDf = Option.when(!isLiteVacuum)(new File(tablePath, notCommittedFile).toString)
-    gcTest(deltaLog, new ManualClock())(
+    val expectedDf = Option.when(!isLiteVacuum)(new Path(table.path, notCommittedFile).toString)
+    gcTest(table, new ManualClock())(
       // Prepare the table with files with timestamp of epoch-time 0 (i.e. 01-01-1970 00:00)
       CreateFile(committedFile, commitToActionLog = true),
       CreateFile(notCommittedFile, commitToActionLog = false),
       CheckFiles(Seq(committedFile, notCommittedFile)),
 
       // Dry run should return the not committed file and but not delete files
-      ExecuteVacuumInSQL(identifier, expectedDf = expectedDf.toSeq, dryRun = true),
+      ExecuteVacuumInSQL(tableName, expectedDf = expectedDf.toSeq, dryRun = true),
       CheckFiles(Seq(committedFile, notCommittedFile)),
 
       // Actual run should not delete the committed file but delete the not-committed file
-      ExecuteVacuumInSQL(identifier, Seq(tablePath)),
+      ExecuteVacuumInSQL(tableName, Seq(table.path.toString)),
       CheckFiles(Seq(committedFile)),
       // File ts older than default retention
       // However, non committed files are not deleted by lite vacuum.
@@ -318,16 +319,16 @@ trait DeltaVacuumSuiteBase extends QueryTest
       CheckFiles(Seq(committedFile)),
 
       // Vacuum with 0 retention should actually delete the file.
-      ExecuteVacuumInSQL(identifier, Seq(tablePath), Some(0)),
+      ExecuteVacuumInSQL(tableName, Seq(table.path.toString), Some(0)),
       CheckFiles(Seq(committedFile), exist = false))
   }
 
   protected def vacuumScalaTest(deltaTable: io.delta.tables.DeltaTable, tablePath: String) {
-    val deltaLog = DeltaLog.forTable(spark, tablePath)
+    val table = DeltaTableV2(spark, new Path(tablePath), options = Map.empty, "test")
     val committedFile = "committedFile.txt"
     val notCommittedFile = "notCommittedFile.txt"
 
-    gcTest(deltaLog, new ManualClock())(
+    gcTest(table, new ManualClock())(
       // Prepare the table with files with timestamp of epoch-time 0 (i.e. 01-01-1970 00:00)
       CreateFile(committedFile, commitToActionLog = true),
       CreateFile(notCommittedFile, commitToActionLog = false),
@@ -358,8 +359,8 @@ trait DeltaVacuumSuiteBase extends QueryTest
     fs.exists(DeltaFileOperations.absolutePath(deltaLog.dataPath.toString, filePath))
   }
 
-  protected def deleteCommitFile(deltaLog: DeltaLog, version: Long) = {
-    new File(DeltaCommitFileProvider(deltaLog.update()).deltaFile(version).toUri).delete()
+  protected def deleteCommitFile(table: DeltaTableV2, version: Long) = {
+    new File(DeltaCommitFileProvider(table.update()).deltaFile(version).toUri).delete()
   }
 
   /**
@@ -370,8 +371,8 @@ trait DeltaVacuumSuiteBase extends QueryTest
     changes.flatMap(_._2).collect { case a: AddCDCFile => a }.toList
   }
 
-  protected def setCommitClock(deltaLog: DeltaLog, version: Long, clock: ManualClock) = {
-    val f = new File(DeltaCommitFileProvider(deltaLog.update()).deltaFile(version).toUri)
+  protected def setCommitClock(table: DeltaTableV2, version: Long, clock: ManualClock) = {
+    val f = new File(DeltaCommitFileProvider(table.update()).deltaFile(version).toUri)
     f.setLastModified(clock.getTimeMillis())
   }
 
@@ -502,8 +503,7 @@ trait DeltaVacuumSuiteBase extends QueryTest
   }
 }
 
-class DeltaVacuumSuite
-  extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
+class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
   import testImplicits._
 
   override def sparkConf: SparkConf = {
@@ -512,13 +512,15 @@ class DeltaVacuumSuite
 
   testQuietly("basic case - SQL command on path-based tables with direct 'path'") {
     withEnvironment { (tempDir, _) =>
-      vacuumSQLTest(tablePath = tempDir.getAbsolutePath, identifier = s"'$tempDir'")
+      val table = DeltaTableV2(spark, new Path(tempDir))
+      vacuumSQLTest(table, tableName = s"'$tempDir'")
     }
   }
 
   testQuietly("basic case - SQL command on path-based table with delta.`path`") {
     withEnvironment { (tempDir, _) =>
-      vacuumSQLTest(tablePath = tempDir.getAbsolutePath, identifier = s"delta.`$tempDir`")
+      val table = DeltaTableV2(spark, new Path(tempDir))
+      vacuumSQLTest(table, tableName = s"delta.`$tempDir`")
     }
   }
 
@@ -528,9 +530,8 @@ class DeltaVacuumSuite
       withTable(tableName) {
         import testImplicits._
         spark.emptyDataset[Int].write.format("delta").saveAsTable(tableName)
-        val tablePath =
-          new File(spark.sessionState.catalog.getTableMetadata(TableIdentifier(tableName)).location)
-        vacuumSQLTest(tablePath, tableName)
+        val table = DeltaTableV2(spark, new TableIdentifier(tableName))
+        vacuumSQLTest(table, tableName)
       }
     }
   }
@@ -543,10 +544,9 @@ class DeltaVacuumSuite
         import testImplicits._
         spark.emptyDataset[Int].write.format("delta").saveAsTable(tableName)
         createTempViewFromTable(tableName, isSQLTempView)
-        val tablePath = new File(
-          spark.sessionState.catalog.getTableMetadata(TableIdentifier(tableName)).location)
+        val table = DeltaTableV2(spark, new TableIdentifier(tableName))
         val e = intercept[AnalysisException] {
-          vacuumSQLTest(tablePath, viewName)
+          vacuumSQLTest(table, viewName)
         }
         assert(e.getMessage.contains(SQL_COMMAND_ON_TEMP_VIEW_NOT_SUPPORTED_ERROR_MSG))
       }
@@ -579,8 +579,8 @@ class DeltaVacuumSuite
 
   test("don't delete data in a non-reservoir") {
     withEnvironment { (tempDir, clock) =>
-      val deltaLog = DeltaLog.forTable(spark, tempDir, clock)
-      gcTest(deltaLog, clock)(
+      val table = DeltaTableV2(spark, tempDir, clock)
+      gcTest(table, clock)(
         CreateFile("file1.txt", commitToActionLog = false),
         CreateDirectory("abc"),
         ExpectFailure(
@@ -591,8 +591,8 @@ class DeltaVacuumSuite
 
   test("invisible files and dirs") {
     withEnvironment { (tempDir, clock) =>
-      val deltaLog = DeltaLog.forTable(spark, tempDir, clock)
-      gcTest(deltaLog, clock)(
+      val table = DeltaTableV2(spark, tempDir, clock)
+      gcTest(table, clock)(
         CreateFile("file1.txt", commitToActionLog = true),
         CreateFile("_hidden_dir/000001.text", commitToActionLog = false),
         CreateFile(".hidden.txt", commitToActionLog = false),
@@ -608,15 +608,15 @@ class DeltaVacuumSuite
     // We should be able to see inside partition directories to GC them, even if they'd normally
     // be considered invisible because of their name.
     withEnvironment { (tempDir, clock) =>
-      val deltaLog = DeltaLog.forTable(spark, tempDir, clock)
-      val txn = deltaLog.startTransaction()
+      val table = DeltaTableV2(spark, tempDir, clock)
+      val txn = table.startTransaction()
       val schema = new StructType().add("_underscore_col_", IntegerType).add("n", IntegerType)
       val metadata =
         Metadata(schemaString = schema.json, partitionColumns = Seq("_underscore_col_"))
       val version =
         txn.commit(metadata :: Nil, DeltaOperations.CreateTable(metadata, isManaged = true))
-      setCommitClock(deltaLog, version, clock)
-      gcTest(deltaLog, clock)(
+      setCommitClock(table, version, clock)
+      gcTest(table, clock)(
         CreateFile("file1.txt", commitToActionLog = true, Map("_underscore_col_" -> "10")),
         CreateFile("_underscore_col_=10/test.txt", true, Map("_underscore_col_" -> "10")),
         CheckFiles(Seq("file1.txt", "_underscore_col_=10")),
@@ -631,14 +631,14 @@ class DeltaVacuumSuite
 
   test("schema validation for vacuum by using inventory dataframe") {
     withEnvironment { (tempDir, clock) =>
-      val deltaLog = DeltaLog.forTable(spark, tempDir, clock)
-      val txn = deltaLog.startTransaction()
+      val table = DeltaTableV2(spark, tempDir, clock)
+      val txn = table.startTransaction()
       val schema = new StructType().add("_underscore_col_", IntegerType).add("n", IntegerType)
       val metadata =
         Metadata(schemaString = schema.json, partitionColumns = Seq("_underscore_col_"))
       val version =
         txn.commit(metadata :: Nil, DeltaOperations.CreateTable(metadata, isManaged = true))
-      setCommitClock(deltaLog, version, clock)
+      setCommitClock(table, version, clock)
       val inventorySchema = StructType(
         Seq(
           StructField("file", StringType),
@@ -648,7 +648,7 @@ class DeltaVacuumSuite
         ))
       val inventory = spark.createDataFrame(
         spark.sparkContext.parallelize(Seq.empty[Row]), inventorySchema)
-      gcTest(deltaLog, clock)(
+      gcTest(table, clock)(
         ExpectFailure(
           GCByInventory(dryRun = false, expectedDf = Seq(tempDir), inventory = Some(inventory)),
           classOf[DeltaAnalysisException],
@@ -663,8 +663,8 @@ class DeltaVacuumSuite
 
   test("run vacuum by using inventory dataframe") {
     withEnvironment { (tempDir, clock) =>
-      val deltaLog = DeltaLog.forTable(spark, tempDir, clock)
-      val txn = deltaLog.startTransaction()
+      val table = DeltaTableV2(spark, tempDir, clock)
+      val txn = table.startTransaction()
       val schema = new StructType().add("_underscore_col_", IntegerType).add("n", IntegerType)
 
       // Vacuum should consider partition folders even for clean up even though it starts with `_`
@@ -672,22 +672,23 @@ class DeltaVacuumSuite
         Metadata(schemaString = schema.json, partitionColumns = Seq("_underscore_col_"))
       val version =
         txn.commit(metadata :: Nil, DeltaOperations.CreateTable(metadata, isManaged = true))
-      setCommitClock(deltaLog, version, clock)
+      setCommitClock(table, version, clock)
+      val dataPath = table.deltaLog.dataPath
       // Create a Seq of Rows containing the data
       val data = Seq(
-        Row(s"${deltaLog.dataPath}", 300000L, true, 0L),
-        Row(s"${deltaLog.dataPath}/file1.txt", 300000L, false, 0L),
-        Row(s"${deltaLog.dataPath}/file2.txt", 300000L, false, 0L),
-        Row(s"${deltaLog.dataPath}/_underscore_col_=10/test.txt", 300000L, false, 0L),
-        Row(s"${deltaLog.dataPath}/_underscore_col_=10/test2.txt", 300000L, false, 0L),
+        Row(s"${dataPath}", 300000L, true, 0L),
+        Row(s"${dataPath}/file1.txt", 300000L, false, 0L),
+        Row(s"${dataPath}/file2.txt", 300000L, false, 0L),
+        Row(s"${dataPath}/_underscore_col_=10/test.txt", 300000L, false, 0L),
+        Row(s"${dataPath}/_underscore_col_=10/test2.txt", 300000L, false, 0L),
         // Below file is not within Delta table path and should be ignored by vacuum
         Row(s"/tmp/random/_underscore_col_=10/test2.txt", 300000L, false, 0L),
         // Below are Delta table root location and vacuum must safely handle them
-        Row(s"${deltaLog.dataPath}", 300000L, true, 0L)
+        Row(s"${dataPath}", 300000L, true, 0L)
       )
       val inventory = spark.createDataFrame(spark.sparkContext.parallelize(data),
         VacuumCommand.INVENTORY_SCHEMA)
-      gcTest(deltaLog, clock)(
+      gcTest(table, clock)(
         CreateFile("file1.txt", commitToActionLog = true, Map("_underscore_col_" -> "10")),
         CreateFile("file2.txt", commitToActionLog = false, Map("_underscore_col_" -> "10")),
         CreateFile("_underscore_col_=10/test.txt", true, Map("_underscore_col_" -> "10")),
@@ -696,9 +697,9 @@ class DeltaVacuumSuite
         LogicallyDeleteFile("_underscore_col_=10/test.txt"),
         AdvanceClock(defaultTombstoneInterval + 1000),
         GCByInventory(dryRun = true, expectedDf = Seq(
-          s"${deltaLog.dataPath}/file2.txt",
-          s"${deltaLog.dataPath}/_underscore_col_=10/test.txt",
-          s"${deltaLog.dataPath}/_underscore_col_=10/test2.txt"
+          s"${dataPath}/file2.txt",
+          s"${dataPath}/_underscore_col_=10/test.txt",
+          s"${dataPath}/_underscore_col_=10/test2.txt"
         ), inventory = Some(inventory)),
         GCByInventory(dryRun = false, expectedDf = Seq(tempDir), inventory = Some(inventory)),
         CheckFiles(Seq("file1.txt")),
@@ -728,19 +729,20 @@ class DeltaVacuumSuite
           .partitionBy("v1", "v2")
           .format("delta")
           .save(path)
-        val deltaLog = DeltaLog.forTable(spark, path)
+        val table = DeltaTableV2(spark, new File(path), clock)
+        val dataPath = table.deltaLog.dataPath
         val reservoirData = Seq(
-          Row(s"${deltaLog.dataPath}/file1.txt", 300000L, false, 0L),
-          Row(s"${deltaLog.dataPath}/file2.txt", 300000L, false, 0L),
-          Row(s"${deltaLog.dataPath}/_underscore_col_=10/test.txt", 300000L, false, 0L),
-          Row(s"${deltaLog.dataPath}/_underscore_col_=10/test2.txt", 300000L, false, 0L)
+          Row(s"${dataPath}/file1.txt", 300000L, false, 0L),
+          Row(s"${dataPath}/file2.txt", 300000L, false, 0L),
+          Row(s"${dataPath}/_underscore_col_=10/test.txt", 300000L, false, 0L),
+          Row(s"${dataPath}/_underscore_col_=10/test2.txt", 300000L, false, 0L)
         )
         spark.createDataFrame(
           spark.sparkContext.parallelize(reservoirData), VacuumCommand.INVENTORY_SCHEMA)
           .write
           .format("delta")
           .save(inventoryPath)
-        gcTest(deltaLog, clock)(
+        gcTest(table, clock)(
           CreateFile("file1.txt", commitToActionLog = false),
           CreateFile("file2.txt", commitToActionLog = false),
           // Delta marks dirs starting with `_` as hidden unless specified as partition folder
@@ -749,7 +751,7 @@ class DeltaVacuumSuite
           AdvanceClock(defaultTombstoneInterval + 1000)
         )
         sql(s"vacuum delta.`$path` using inventory delta.`$inventoryPath` retain 0 hours")
-        gcTest(deltaLog, clock)(
+        gcTest(table, clock)(
           CheckFiles(Seq("file1.txt", "file2.txt"), exist = false),
           // hidden files must not be dropped
           CheckFiles(Seq("_underscore_col_=10/test.txt", "_underscore_col_=10/test2.txt"))
@@ -778,19 +780,20 @@ class DeltaVacuumSuite
           .partitionBy("v1", "v2")
           .format("delta")
           .save(path)
-        val deltaLog = DeltaLog.forTable(spark, path)
+        val table = DeltaTableV2(spark, new File(path), clock)
+        val dataPath = table.deltaLog.dataPath
         val reservoirData = Seq(
-          Row(s"${deltaLog.dataPath}/file1.txt", 300000L, false, 0L),
-          Row(s"${deltaLog.dataPath}/file2.txt", 300000L, false, 0L),
-          Row(s"${deltaLog.dataPath}/_underscore_col_=10/test.txt", 300000L, false, 0L),
-          Row(s"${deltaLog.dataPath}/_underscore_col_=10/test2.txt", 300000L, false, 0L)
+          Row(s"${dataPath}/file1.txt", 300000L, false, 0L),
+          Row(s"${dataPath}/file2.txt", 300000L, false, 0L),
+          Row(s"${dataPath}/_underscore_col_=10/test.txt", 300000L, false, 0L),
+          Row(s"${dataPath}/_underscore_col_=10/test2.txt", 300000L, false, 0L)
         )
         spark.createDataFrame(
           spark.sparkContext.parallelize(reservoirData), VacuumCommand.INVENTORY_SCHEMA)
           .write
           .format("delta")
           .save(reservoirPath)
-        gcTest(deltaLog, clock)(
+        gcTest(table, clock)(
           CreateFile("file1.txt", commitToActionLog = false),
           CreateFile("file2.txt", commitToActionLog = false),
           // Delta marks dirs starting with `_` as hidden unless specified as partition folder
@@ -800,7 +803,7 @@ class DeltaVacuumSuite
         sql(s"""vacuum delta.`$path`
              |using inventory (select * from delta.`$reservoirPath`)
              |retain 0 hours""".stripMargin)
-        gcTest(deltaLog, clock)(
+        gcTest(table, clock)(
           AdvanceClock(defaultTombstoneInterval + 1000),
           CheckFiles(Seq("file1.txt", "file2.txt"), exist = false),
           // hidden files must not be dropped
@@ -813,8 +816,8 @@ class DeltaVacuumSuite
   // Since lite vacuum uses delta log, it doesn't delete empty directories.
   testFullVacuumOnly("multiple levels of empty directory deletion") {
     withEnvironment { (tempDir, clock) =>
-      val deltaLog = DeltaLog.forTable(spark, tempDir, clock)
-      gcTest(deltaLog, clock)(
+      val table = DeltaTableV2(spark, tempDir, clock)
+      gcTest(table, clock)(
         CreateFile("file1.txt", commitToActionLog = true),
         CreateFile("abc/def/file2.txt", commitToActionLog = false),
         AdvanceClock(defaultTombstoneInterval + 1000),
@@ -832,8 +835,8 @@ class DeltaVacuumSuite
 
   test("gc doesn't delete base path") {
     withEnvironment { (tempDir, clock) =>
-      val deltaLog = DeltaLog.forTable(spark, tempDir, clock)
-      gcTest(deltaLog, clock)(
+      val table = DeltaTableV2(spark, tempDir, clock)
+      gcTest(table, clock)(
         CreateFile("file1.txt", commitToActionLog = true),
         AdvanceClock(100),
         LogicallyDeleteFile("file1.txt"),
@@ -852,11 +855,11 @@ class DeltaVacuumSuite
       assert(reservoirDir.mkdirs())
       val externalDir = new File(tempDir.getAbsolutePath, "external")
       assert(externalDir.mkdirs())
-      val deltaLog = DeltaLog.forTable(spark, reservoirDir, clock)
+      val table = DeltaTableV2(spark, reservoirDir, clock)
 
       val externalFile = new File(externalDir, "file4.txt").getAbsolutePath
 
-      gcTest(deltaLog, clock)(
+      gcTest(table, clock)(
         // Create initial state
         CreateFile("file1.txt", commitToActionLog = true),
         CreateDirectory("abc"),
@@ -916,9 +919,9 @@ class DeltaVacuumSuite
 
   test("parallel file delete") {
     withEnvironment { (tempDir, clock) =>
-      val deltaLog = DeltaLog.forTable(spark, tempDir, clock)
+      val table = DeltaTableV2(spark, tempDir, clock)
       withSQLConf("spark.databricks.delta.vacuum.parallelDelete.enabled" -> "true") {
-        gcTest(deltaLog, clock)(
+        gcTest(table, clock)(
           CreateFile("file1.txt", commitToActionLog = true),
           CreateFile("file2.txt", commitToActionLog = true),
           LogicallyDeleteFile("file1.txt"),
@@ -936,8 +939,8 @@ class DeltaVacuumSuite
 
   test("retention duration must be greater than 0") {
     withEnvironment { (tempDir, clock) =>
-      val deltaLog = DeltaLog.forTable(spark, tempDir, clock)
-      gcTest(deltaLog, clock)(
+      val table = DeltaTableV2(spark, tempDir, clock)
+      gcTest(table, clock)(
         CreateFile("file1.txt", commitToActionLog = true),
         CheckFiles(Seq("file1.txt")),
         ExpectFailure(
@@ -946,7 +949,7 @@ class DeltaVacuumSuite
           Seq("Retention", "less than", "0"))
       )
       val deltaTable = io.delta.tables.DeltaTable.forPath(spark, tempDir.getAbsolutePath)
-      gcTest(deltaLog, clock)(
+      gcTest(table, clock)(
         CreateFile("file2.txt", commitToActionLog = true),
         CheckFiles(Seq("file2.txt")),
         ExpectFailure(
@@ -959,8 +962,8 @@ class DeltaVacuumSuite
 
   test("deleting directories") {
     withEnvironment { (tempDir, clock) =>
-      val deltaLog = DeltaLog.forTable(spark, tempDir, clock)
-      gcTest(deltaLog, clock)(
+      val table = DeltaTableV2(spark, tempDir, clock)
+      gcTest(table, clock)(
         CreateFile("abc/def/file1.txt", commitToActionLog = true),
         CreateFile("abc/def/file2.txt", commitToActionLog = true),
         CreateDirectory("ghi"),
@@ -977,10 +980,10 @@ class DeltaVacuumSuite
 
   test("deleting files with special characters in path") {
     withEnvironment { (tempDir, clock) =>
-      val deltaLog = DeltaLog.forTable(spark, tempDir, clock)
+      val table = DeltaTableV2(spark, tempDir, clock)
       // Non committed files are not deleted by lite vacuum.
       val expected = Option.when(!isLiteVacuum)(new File(tempDir, "abc def/#1/file2.txt").toString)
-      gcTest(deltaLog, clock)(
+      gcTest(table, clock)(
         CreateFile("abc def/#1/file1.txt", commitToActionLog = true),
         CreateFile("abc def/#1/file2.txt", commitToActionLog = false),
         CheckFiles(Seq("abc def", "abc def/#1")),
@@ -995,9 +998,9 @@ class DeltaVacuumSuite
 
   testQuietly("additional retention duration check with vacuum command") {
     withEnvironment { (tempDir, clock) =>
-      val deltaLog = DeltaLog.forTable(spark, tempDir, clock)
+      val table = DeltaTableV2(spark, tempDir, clock)
       withSQLConf("spark.databricks.delta.retentionDurationCheck.enabled" -> "true") {
-        gcTest(deltaLog, clock)(
+        gcTest(table, clock)(
           CreateFile("file1.txt", commitToActionLog = true),
           CheckFiles(Seq("file1.txt")),
           ExpectFailure(
@@ -1007,7 +1010,7 @@ class DeltaVacuumSuite
         )
       }
 
-      gcTest(deltaLog, clock)(
+      gcTest(table, clock)(
         CreateFile("file2.txt", commitToActionLog = true),
         CheckFiles(Seq("file2.txt")),
         GC(false, Seq(tempDir.toString), Some(0))
@@ -1082,8 +1085,8 @@ class DeltaVacuumSuite
   testFullVacuumOnly("gc metadata dir when uniform disabled") {
     withEnvironment { (tempDir, clock) =>
       spark.emptyDataset[Int].write.format("delta").save(tempDir)
-      val deltaLog = DeltaLog.forTable(spark, tempDir, clock)
-      gcTest(deltaLog, clock)(
+      val table = DeltaTableV2(spark, tempDir, clock)
+      gcTest(table, clock)(
         CreateDirectory("metadata"),
         CreateFile("metadata/file1.json", false),
 
@@ -1099,8 +1102,8 @@ class DeltaVacuumSuite
   test("hudi metadata dir") {
     withEnvironment { (tempDir, clock) =>
       spark.emptyDataset[Int].write.format("delta").save(tempDir)
-      val deltaLog = DeltaLog.forTable(spark, tempDir, clock)
-      gcTest(deltaLog, clock)(
+      val table = DeltaTableV2(spark, tempDir, clock)
+      gcTest(table, clock)(
         CreateDirectory(".hoodie"),
         CreateFile(".hoodie/00001.commit", false),
 
@@ -1122,6 +1125,7 @@ class DeltaVacuumSuite
   }
 
   test(s"vacuum after purging deletion vectors") {
+    import org.apache.spark.sql.delta.test.DeltaTestImplicits.DeltaTableV2ObjectTestHelper
     val tableName = "testTable"
     val clock = new ManualClock()
     withDeletionVectorsEnabled() {
@@ -1131,20 +1135,21 @@ class DeltaVacuumSuite
           // Create Delta table with 5 files of 10 rows.
           spark.range(0, 50, step = 1, numPartitions = 5)
             .write.format("delta").saveAsTable(tableName)
-          val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+          val deltaTable = DeltaTableV2(spark, TableIdentifier(tableName))
+          val deltaLog = deltaTable.deltaLog
           assertNumFiles(deltaLog, addFiles = 5, addFilesWithDVs = 0, dvFiles = 0, dataFiles = 5)
 
           // Delete 1 row from each file. DVs will be packed to one DV file.
           val deletedRows1 = Seq(0, 10, 20, 30, 40)
           val deletedRowsStr1 = deletedRows1.mkString("(", ",", ")")
           spark.sql(s"DELETE FROM $tableName WHERE id IN $deletedRowsStr1")
-          val timestampV1 = deltaLog.update().timestamp
+          val timestampV1 = deltaTable.update().timestamp
           assertNumFiles(deltaLog, addFiles = 5, addFilesWithDVs = 5, dvFiles = 1, dataFiles = 5)
 
           // Delete all rows from the first file. An ephemeral DV will still be created.
           Thread.sleep(1000) // Ensure it's been at least 1000 ms since V1
           spark.sql(s"DELETE FROM $tableName WHERE id < 10")
-          val timestampV2 = deltaLog.update().timestamp
+          val timestampV2 = deltaTable.update().timestamp
           assertNumFiles(deltaLog, addFiles = 4, addFilesWithDVs = 4, dvFiles = 2, dataFiles = 5)
           val expectedAnswerV2 = Seq.range(0, 50).filterNot(deletedRows1.contains).filterNot(_ < 10)
 
@@ -1153,7 +1158,7 @@ class DeltaVacuumSuite
           val deletedRows2 = Seq(11, 21, 31, 41)
           val deletedRowsStr2 = deletedRows2.mkString("(", ",", ")")
           spark.sql(s"DELETE FROM $tableName WHERE id IN $deletedRowsStr2")
-          val timestampV3 = deltaLog.update().timestamp
+          val timestampV3 = deltaTable.update().timestamp
           assertNumFiles(deltaLog, addFiles = 4, addFilesWithDVs = 4, dvFiles = 3, dataFiles = 5)
           val expectedAnswerV3 = expectedAnswerV2.filterNot(deletedRows2.contains)
 
@@ -1162,20 +1167,22 @@ class DeltaVacuumSuite
           purgeDVs(tableName)
 
           val numFilesAfterPurge = 4
-          val timestampV4 = deltaLog.update().timestamp
+          val timestampV4 = deltaTable.update().timestamp
           assertNumFiles(deltaLog, addFiles = numFilesAfterPurge, addFilesWithDVs = 0, dvFiles = 3,
             dataFiles = 9)
 
           // Run VACUUM with nothing expired. It should not delete anything.
           clock.setTime(System.currentTimeMillis())
-          VacuumCommand.gc(spark, deltaLog, retentionHours = Some(1), clock = clock, dryRun = false)
+          VacuumCommand.gc(
+            spark, deltaTable, retentionHours = Some(1), clock = clock, dryRun = false)
           assertNumFiles(deltaLog, addFiles = numFilesAfterPurge, addFilesWithDVs = 0, dvFiles = 3,
             dataFiles = 9)
 
           // Run VACUUM @ V1.
           // We need to add 1000 ms for local filesystems that only write modificationTimes to the s
           clock.setTime(timestampV1 + TimeUnit.HOURS.toMillis(1) + 1000)
-          VacuumCommand.gc(spark, deltaLog, retentionHours = Some(1), clock = clock, dryRun = false)
+          VacuumCommand.gc(
+            spark, deltaTable, retentionHours = Some(1), clock = clock, dryRun = false)
           assertNumFiles(deltaLog, addFiles = numFilesAfterPurge, addFilesWithDVs = 0, dvFiles = 3,
             dataFiles = 9)
 
@@ -1184,7 +1191,8 @@ class DeltaVacuumSuite
           // one more in case of lite Vacuum
           val numDVstoAdd = if (isLiteVacuum) 1 else 0
           clock.setTime(timestampV2 + TimeUnit.HOURS.toMillis(1) + 1000)
-          VacuumCommand.gc(spark, deltaLog, retentionHours = Some(1), clock = clock, dryRun = false)
+          VacuumCommand.gc(
+            spark, deltaTable, retentionHours = Some(1), clock = clock, dryRun = false)
           assertNumFiles(deltaLog, addFiles = numFilesAfterPurge, addFilesWithDVs = 0,
             dvFiles = 2 + numDVstoAdd, dataFiles = 8)
           checkAnswer(
@@ -1192,7 +1200,8 @@ class DeltaVacuumSuite
 
           // Run VACUUM @ V3. It should delete the persistent DVs from V1.
           clock.setTime(timestampV3 + TimeUnit.HOURS.toMillis(1) + 1000)
-          VacuumCommand.gc(spark, deltaLog, retentionHours = Some(1), clock = clock, dryRun = false)
+          VacuumCommand.gc(
+            spark, deltaTable, retentionHours = Some(1), clock = clock, dryRun = false)
           assertNumFiles(deltaLog, addFiles = numFilesAfterPurge, addFilesWithDVs = 0,
             dvFiles = 1 + numDVstoAdd, dataFiles = 8)
           checkAnswer(
@@ -1200,7 +1209,8 @@ class DeltaVacuumSuite
 
           // Run VACUUM @ V4. It should delete the Parquet files and DVs of V3.
           clock.setTime(timestampV4 + TimeUnit.HOURS.toMillis(1) + 1000)
-          VacuumCommand.gc(spark, deltaLog, retentionHours = Some(1), clock = clock, dryRun = false)
+          VacuumCommand.gc(
+            spark, deltaTable, retentionHours = Some(1), clock = clock, dryRun = false)
           assertNumFiles(deltaLog, addFiles = numFilesAfterPurge, addFilesWithDVs = 0,
             dvFiles = 0 + numDVstoAdd, dataFiles = 4)
           checkAnswer(
@@ -1208,7 +1218,8 @@ class DeltaVacuumSuite
 
           // Run VACUUM with zero retention period. It should not delete anything.
           clock.setTime(timestampV4 + TimeUnit.HOURS.toMillis(1) + 1000)
-          VacuumCommand.gc(spark, deltaLog, retentionHours = Some(0), clock = clock, dryRun = false)
+          VacuumCommand.gc(
+            spark, deltaTable, retentionHours = Some(0), clock = clock, dryRun = false)
           assertNumFiles(deltaLog, addFiles = numFilesAfterPurge, addFilesWithDVs = 0,
             dvFiles = 0 + numDVstoAdd, dataFiles = 4)
 
@@ -1318,8 +1329,8 @@ class DeltaVacuumSuite
         withEnvironment { (dir, clock) =>
           clock.setTime(System.currentTimeMillis())
           spark.range(2).write.format("delta").save(dir.getAbsolutePath)
-          val deltaLog = DeltaLog.forTable(spark, dir, clock)
-          setCommitClock(deltaLog, 0L, clock)
+          val table = DeltaTableV2(spark, dir, clock)
+          setCommitClock(table, 0L, clock)
           val expectedReturn = if (isDryRun) {
             // dry run returns files that will be deleted
             Seq(new Path(dir.getAbsolutePath, "file1.txt").toString)
@@ -1327,14 +1338,14 @@ class DeltaVacuumSuite
             Seq(dir.getAbsolutePath)
           }
 
-          gcTest(deltaLog, clock)(
+          gcTest(table, clock)(
             CreateFile("file1.txt", commitToActionLog = true),
             CreateFile("file2.txt", commitToActionLog = true),
             LogicallyDeleteFile("file1.txt"),
             AdvanceClock(timeGapHours * 1000 * 60 * 60),
             GC(dryRun = isDryRun, expectedReturn, Some(retentionHours))
           )
-          val deltaTable = io.delta.tables.DeltaTable.forPath(deltaLog.dataPath.toString)
+          val deltaTable = io.delta.tables.DeltaTable.forPath(table.deltaLog.dataPath.toString)
           val history = deltaTable.history()
           if (isDryRun || !loggingEnabled) {
             // We do not record stats when logging is disabled or dryRun
@@ -1357,7 +1368,7 @@ class DeltaVacuumSuite
                 (retentionHours * 60 * 60 * 1000).toString)
             assert(
               operationParamsBegin("defaultRetentionMillis") ===
-                DeltaLog.tombstoneRetentionMillis(deltaLog.snapshot.metadata).toString)
+                DeltaLog.tombstoneRetentionMillis(table.initialSnapshot.metadata).toString)
 
             assert(operationParamsEnd === Map("status" -> "COMPLETED"))
             assert(operationMetricsEnd === Map("numDeletedFiles" -> filesDeleted.toString,
@@ -1514,14 +1525,14 @@ class DeltaLiteVacuumSuite
           .mode("append")
           .save(dir.getAbsolutePath)
         val deltaTable = io.delta.tables.DeltaTable.forPath(dir.getAbsolutePath)
-        val deltaLog = DeltaLog.forTable(spark, dir.getAbsolutePath)
+        val table = DeltaTableV2(spark, new Path(dir.getAbsolutePath))
         deltaTable.delete()
         // Checkpoints will allow us to construct the table snapshot
-        deltaLog.createCheckpointAtVersion(2L)
-        deleteCommitFile(deltaLog, 0L) // delete version 0
+        table.deltaLog.createCheckpointAtVersion(2L)
+        deleteCommitFile(table, 0L) // delete version 0
 
         val e = intercept[DeltaIllegalStateException] {
-          VacuumCommand.gc(spark, deltaLog, dryRun = true, retentionHours = Some(0))
+          VacuumCommand.gc(spark, table, dryRun = true, retentionHours = Some(0))
         }
         assert(e.getMessage.contains("VACUUM LITE cannot delete all eligible files as some files" +
           " are not referenced by the Delta log. Please run VACUUM FULL."))
@@ -1540,10 +1551,10 @@ class DeltaLiteVacuumSuite
           .format("delta")
           .save(dir.getAbsolutePath)
         val deltaTable = io.delta.tables.DeltaTable.forPath(dir.getAbsolutePath)
-        val deltaLog = DeltaLog.forTable(spark, dir.getAbsolutePath)
+        val table = DeltaTableV2(spark, new Path(dir.getAbsolutePath))
         deltaTable.delete() // version 1
         // The following Vacuum saves latestCommitVersionOutsideOfRetentionWindow as 1
-        VacuumCommand.gc(spark, deltaLog, dryRun = false, retentionHours = Some(0))
+        VacuumCommand.gc(spark, table, dryRun = false, retentionHours = Some(0))
         spark.range(10)
           .write
           .format("delta")
@@ -1551,19 +1562,19 @@ class DeltaLiteVacuumSuite
           .save(dir.getAbsolutePath) // version 2
         deltaTable.delete() // version 3
         // Checkpoint will allow us to construct the table snapshot
-        deltaLog.createCheckpointAtVersion(3L)
+        table.deltaLog.createCheckpointAtVersion(3L)
         // Deleting version 0 shouldn't fail the vacuum since
         // latestCommitVersionOutsideOfRetentionWindow is already at 1
-        deleteCommitFile(deltaLog, 0L)// delete version 0.
-        VacuumCommand.gc(spark, deltaLog, dryRun = true, retentionHours = Some(0))
+        deleteCommitFile(table, 0L)// delete version 0.
+        VacuumCommand.gc(spark, table, dryRun = true, retentionHours = Some(0))
         // Since commit versions 1 and 2 are required for lite vacuum, deleting them will
         // fail the command.
         for (i <- 1 to 2) {
-          deleteCommitFile(deltaLog, i)
+          deleteCommitFile(table, i)
         }
 
         val e = intercept[DeltaIllegalStateException] {
-          VacuumCommand.gc(spark, deltaLog, dryRun = true, retentionHours = Some(0))
+          VacuumCommand.gc(spark, table, dryRun = true, retentionHours = Some(0))
         }
         assert(e.getMessage.contains("VACUUM LITE cannot delete all eligible files as some files" +
           " are not referenced by the Delta log. Please run VACUUM FULL."))
@@ -1574,9 +1585,9 @@ class DeltaLiteVacuumSuite
   test("repeated invocations for lite vacuum is a no-op and doesn't throw any exception") {
     withEnvironment { (tempDir, clock) =>
       val reservoirDir = new File(tempDir.getAbsolutePath, "reservoir")
-      val deltaLog = DeltaLog.forTable(spark, reservoirDir, clock)
+      val table = DeltaTableV2(spark, reservoirDir, clock)
 
-      gcTest(deltaLog, clock)(
+      gcTest(table, clock)(
         // create 2  files
         CreateFile("file1.txt", commitToActionLog = true),
         CreateFile("file2.txt", commitToActionLog = true),
