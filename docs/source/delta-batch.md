@@ -451,7 +451,7 @@ You can use an [EXPLAIN](https://spark.apache.org/docs/latest/sql-ref-syntax-qry
     .execute()
   ```
 
-.. note:: SQL APIs for identity columns is not supported yet.
+.. note:: SQL APIs for identity columns are not supported yet.
 
 You can optionally specify the following:
 - A starting value.
