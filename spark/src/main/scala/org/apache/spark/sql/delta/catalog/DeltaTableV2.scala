@@ -72,7 +72,12 @@ case class DeltaTableV2(
   private lazy val (rootPath, partitionFilters, timeTravelByPath) = {
     if (catalogTable.isDefined) {
       // Fast path for reducing path munging overhead
-      (new Path(catalogTable.get.location), Nil, None)
+      if (timeTravelOpt.isDefined) { // time travel option overrides catalog settings
+        (new Path(catalogTable.get.location), Nil, None)
+      } else { // retrieve time travel from catalog table stricture serde properties
+        (new Path(catalogTable.get.location), Nil,
+          DeltaDataSource.getTimeTravelVersion(catalogTable.get.storage.properties))
+      }
     } else {
       DeltaDataSource.parsePathIdentifier(spark, path.toString, options)
     }
