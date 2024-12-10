@@ -227,7 +227,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
         Optional.empty(),
         versionToLoad,
         Optional.of(
-          new MockTableCommitCoordinatorClientHandler(logPath, unbackfilledDeltaVersions))
+          new MockTableCommitCoordinatorClientHandler(logPath.toString, unbackfilledDeltaVersions))
       )
       assert(logSegmentOpt.isPresent())
 
@@ -907,7 +907,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       expectedErrorMessageContains = errMsg,
       tableCommitCoordinatorClientHandlerOpt =
         Optional.of(new MockTableCommitCoordinatorClientHandler(
-          logPath, e = new RuntimeException(errMsg)))
+          logPath.toString, e = new RuntimeException(errMsg)))
     )
   }
 }
@@ -951,7 +951,7 @@ class MockSidecarJsonHandler(sidecars: Seq[FileStatus])
 }
 
 class MockTableCommitCoordinatorClientHandler(
-  logPath: Path, versions: Seq[Long] = Seq.empty, e: Throwable = null)
+  logPath: String, versions: Seq[Long] = Seq.empty, e: Throwable = null)
   extends TableCommitCoordinatorClientHandler(null, null, null) {
   override def getCommits(
     startVersion: javaLang.Long, endVersion: javaLang.Long): GetCommitsResponse = {

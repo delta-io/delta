@@ -16,6 +16,8 @@
 
 package io.delta.kernel.internal.util;
 
+import static io.delta.kernel.internal.fs.Path.getName;
+
 import io.delta.kernel.internal.fs.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -45,15 +47,11 @@ public final class FileNames {
   public static final String SIDECAR_DIRECTORY = "_sidecars";
 
   /** Returns the delta (json format) path for a given delta file. */
-  public static String deltaFile(Path path, long version) {
+  public static String deltaFile(String path, long version) {
     return String.format("%s/%020d.json", path, version);
   }
 
   /** Returns the version for the given delta path. */
-  public static long deltaVersion(Path path) {
-    return Long.parseLong(path.getName().split("\\.")[0]);
-  }
-
   public static long deltaVersion(String path) {
     final int slashIdx = path.lastIndexOf(Path.SEPARATOR);
     final String name = path.substring(slashIdx + 1);
@@ -61,18 +59,14 @@ public final class FileNames {
   }
 
   /** Returns the version for the given checkpoint path. */
-  public static long checkpointVersion(Path path) {
-    return Long.parseLong(path.getName().split("\\.")[0]);
-  }
-
   public static long checkpointVersion(String path) {
     final int slashIdx = path.lastIndexOf(Path.SEPARATOR);
     final String name = path.substring(slashIdx + 1);
     return Long.parseLong(name.split("\\.")[0]);
   }
 
-  public static String sidecarFile(Path path, String sidecar) {
-    return String.format("%s/%s/%s", path.toString(), SIDECAR_DIRECTORY, sidecar);
+  public static String sidecarFile(String path, String sidecar) {
+    return String.format("%s/%s/%s", path, SIDECAR_DIRECTORY, sidecar);
   }
 
   /**
@@ -105,8 +99,8 @@ public final class FileNames {
   }
 
   /** Returns the path for a V2 sidecar file with a given UUID. */
-  public static Path v2CheckpointSidecarFile(Path path, String uuid) {
-    return new Path(String.format("%s/_sidecars/%s.parquet", path.toString(), uuid));
+  public static String v2CheckpointSidecarFile(String path, String uuid) {
+    return String.format("%s/_sidecars/%s.parquet", path, uuid);
   }
 
   /**
@@ -128,8 +122,9 @@ public final class FileNames {
     return output;
   }
 
-  public static boolean isCheckpointFile(String fileName) {
-    return CHECKPOINT_FILE_PATTERN.matcher(new Path(fileName).getName()).matches();
+  public static boolean isCheckpointFile(String path) {
+    String fileName = getName(path);
+    return CHECKPOINT_FILE_PATTERN.matcher(fileName).matches();
   }
 
   public static boolean isClassicCheckpointFile(String fileName) {
@@ -144,10 +139,10 @@ public final class FileNames {
     return V2_CHECKPOINT_FILE_PATTERN.matcher(fileName).matches();
   }
 
-  public static boolean isCommitFile(String fileName) {
-    String filename = new Path(fileName).getName();
-    return DELTA_FILE_PATTERN.matcher(filename).matches()
-        || UUID_DELTA_FILE_REGEX.matcher(filename).matches();
+  public static boolean isCommitFile(String path) {
+    String fileName = getName(path);
+    return DELTA_FILE_PATTERN.matcher(fileName).matches()
+        || UUID_DELTA_FILE_REGEX.matcher(fileName).matches();
   }
 
   /**
@@ -156,10 +151,11 @@ public final class FileNames {
    * compatibility in cases where new file types are added, but without an explicit protocol
    * upgrade.
    */
-  public static long getFileVersion(Path path) {
-    if (isCheckpointFile(path.getName())) {
+  public static long getFileVersion(String path) {
+    String fileName = getName(path);
+    if (isCheckpointFile(fileName)) {
       return checkpointVersion(path);
-    } else if (isCommitFile(path.getName())) {
+    } else if (isCommitFile(fileName)) {
       return deltaVersion(path);
       // } else if (isChecksumFile(path)) {
       //    checksumVersion(path);

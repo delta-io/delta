@@ -93,15 +93,15 @@ trait CoordinatedCommitsTestUtils {
       updatedActions).getCommit
   }
 
-  def getHadoopDeltaFile(logPath: Path, version: Long): Path = {
-    new Path(FileNames.deltaFile(new io.delta.kernel.internal.fs.Path(logPath.toString), version))
+  def getHadoopDeltaFile(logPath: String, version: Long): Path = {
+    new Path(FileNames.deltaFile(new io.delta.kernel.internal.fs.Path(logPath).toString, version))
   }
 
   def writeConvertToCCCommit(
     engine: Engine, logPath: Path, commit: CloseableIterator[Row], version: Long): Unit = {
     createLogPath(engine, logPath)
     engine.getJsonHandler.writeJsonFileAtomically(
-      getHadoopDeltaFile(logPath, version).toString,
+      getHadoopDeltaFile(logPath.toString, version).toString,
       commit,
       true)
   }
