@@ -112,7 +112,7 @@ The <Redshift> integration has known limitations in its behavior.
 
 ### Data consistency
 
-Whenever <Delta> generates updated manifests, it atomically overwrites existing manifest files. Therefore, <Redshift> will always see a consistent view of the data files; it will see all of the old version files or all of the new version files. However, the granularity of the consistency guarantees depends on whether or not the table is partitioned.
+Whenever <Delta> generates updated manifests, it atomically overwrites existing manifest files. Therefore, <Redshift> will always see a consistent view of the data files; it will see all the old version files or all of the new version files. However, the granularity of the consistency guarantees depends on whether the table is partitioned.
 
 - **Unpartitioned tables**: All the files names are written in one manifest file which is updated atomically. In this case <Redshift> will see full table snapshot consistency.
 
