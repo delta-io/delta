@@ -29,15 +29,13 @@ import scala.language.implicitConversions
 import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.DeltaHistoryManagerSuiteShims._
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
-import org.apache.spark.sql.delta.DeltaTestUtils.filterUsageRecords
-import org.apache.spark.sql.delta.actions.{Action, CommitInfo}
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.StatsUtils
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, JsonUtils}
-import org.apache.hadoop.fs.Path
+import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames}
 import org.scalatest.GivenWhenThen
 
 import org.apache.spark.{SparkConf, SparkException}
@@ -48,7 +46,7 @@ import org.apache.spark.sql.catalyst.util.quietly
 import org.apache.spark.sql.connector.catalog.CatalogManager
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.util.{ManualClock, Utils}
+import org.apache.spark.util.Utils
 
 /** A set of tests which we can open source after Spark 3.0 is released. */
 trait DeltaTimeTravelTests extends QueryTest
@@ -640,7 +638,7 @@ abstract class DeltaHistoryManagerBase extends DeltaTimeTravelTests
     withTable(tblName) {
       val start = 1540415658000L
       generateCommits(tblName, start, start + 20.minutes, start + 40.minutes, start + 60.minutes)
-      val deltaLog = DeltaLog.forTable(spark, getTableLocation(tblName))
+      val table = DeltaTableV2(spark, TableIdentifier(tblName))
 
       def testGetHistory(
           start: Long,
@@ -648,7 +646,7 @@ abstract class DeltaHistoryManagerBase extends DeltaTimeTravelTests
           versions: Seq[Long],
           expectedLogUpdates: Int): Unit = {
         val usageRecords = Log4jUsageLogger.track {
-          val history = deltaLog.history.getHistory(start, endOpt)
+          val history = table.deltaLog.history.getHistory(start, endOpt, table.catalogTable)
           assert(history.map(_.getVersion) == versions)
         }
         assert(filterUsageRecords(usageRecords, "deltaLog.update").size === expectedLogUpdates)
