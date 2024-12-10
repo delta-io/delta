@@ -99,7 +99,7 @@ class DeltaTable private[tables](
    * @since 0.3.0
    */
   def vacuum(retentionHours: Double): DataFrame = {
-    executeVacuum(deltaLog, Some(retentionHours), table.getTableIdentifierIfExists)
+    executeVacuum(table, Some(retentionHours))
   }
 
   /**
@@ -112,7 +112,7 @@ class DeltaTable private[tables](
    * @since 0.3.0
    */
   def vacuum(): DataFrame = {
-    executeVacuum(deltaLog, None, table.getTableIdentifierIfExists)
+    executeVacuum(table, retentionHours = None)
   }
 
   /**

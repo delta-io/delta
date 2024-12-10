@@ -99,12 +99,26 @@ trait IdentityColumnTestUtils
     checkAnswer(sql(s"SELECT * FROM $tableName ORDER BY value ASC"), expectedAnswer)
   }
 
+
+  /**
+   * Retrieves the high watermark information for the given `colName` in the metadata of
+   * given `snapshot`, if it's present. Returns None if the high watermark has not been set yet.
+   */
+  protected def getHighWaterMark(snapshot: Snapshot, colName: String): Option[Long] = {
+    val metadata = snapshot.schema(colName).metadata
+    if (metadata.contains(DeltaSourceUtils.IDENTITY_INFO_HIGHWATERMARK)) {
+      Some(metadata.getLong(DeltaSourceUtils.IDENTITY_INFO_HIGHWATERMARK))
+    } else {
+      None
+    }
+  }
+
   /**
    * Retrieves the high watermark information for the given `colName` in the metadata of
    * given `snapshot`
    */
   protected def highWaterMark(snapshot: Snapshot, colName: String): Long = {
-    snapshot.schema(colName).metadata.getLong(DeltaSourceUtils.IDENTITY_INFO_HIGHWATERMARK)
+    getHighWaterMark(snapshot, colName).get
   }
 
   /**

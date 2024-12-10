@@ -345,10 +345,11 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
       horizonHours =
         ctx.vacuumModifiers().retain().asScala.headOption.map(_.number.getText.toDouble),
       dryRun =
-        ctx.vacuumModifiers().dryRun().asScala.headOption.map(_.RUN != null).getOrElse(false),
+        ctx.vacuumModifiers().dryRun().asScala.headOption.exists(_.RUN != null),
       vacuumType = ctx.vacuumModifiers().vacuumType().asScala.headOption.map {
         t => if (t.LITE != null) "LITE" else "FULL"
-      }
+      },
+      options = Map.empty
     )
   }
 

@@ -29,9 +29,16 @@ class DeltaInsertIntoColumnOrderSuite extends DeltaInsertIntoTest {
 
   override def beforeAll(): Unit = {
     super.beforeAll()
-    spark.conf.set(DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS.key, "false")
+    spark.conf.set(DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS.key, "true")
     spark.conf.set(SQLConf.ANSI_ENABLED.key, "true")
   }
+
+  /** Collects inserts that don't support implicit casting and will fail if the input data type
+   * doesn't match the expected column type.
+   * These are all dataframe inserts that use by name resolution, except for streaming writes.
+   */
+  private val insertsWithoutImplicitCastSupport: Set[Insert] =
+    insertsByName.intersect(insertsDataframe) - StreamingInsert
 
   test("all test cases are implemented") {
     checkAllTestCasesImplemented()
@@ -68,8 +75,8 @@ class DeltaInsertIntoColumnOrderSuite extends DeltaInsertIntoTest {
       overwriteWhere = "a" -> 1,
       insertData = TestData("a long, c int, b int", Seq("""{ "a": 1, "c": 4, "b": 5 }""")),
       expectedResult = ExpectedResult.Success(expectedAnswer),
-      // Dataframe insert by name don't support implicit cast, see negative test below.
-      includeInserts = inserts -- insertsByName.intersect(insertsDataframe)
+      // Inserts that don't support implicit cast are failing, these are covered in the test below.
+      includeInserts = inserts -- insertsWithoutImplicitCastSupport
     )
   }
 
@@ -86,7 +93,7 @@ class DeltaInsertIntoColumnOrderSuite extends DeltaInsertIntoTest {
           "currentField" -> "a",
           "updateField" -> "a"
         ))}),
-    includeInserts = insertsByName.intersect(insertsDataframe)
+    includeInserts = insertsWithoutImplicitCastSupport
   )
 
   // Inserting using a different ordering for struct fields is full of surprises...
@@ -124,14 +131,17 @@ class DeltaInsertIntoColumnOrderSuite extends DeltaInsertIntoTest {
 
   for { (inserts: Set[Insert], expectedAnswer) <- Seq(
     // When there's a type mismatch and an implicit cast is required, then all inserts use position
-    // based resolution for struct fields, except for `INSERT OVERWRITE PARTITION (partition)` which
-    // uses name based resolution, and dataframe inserts by name which don't support implicit cast
-    // and fail - see negative test below.
+    // based resolution for struct fields, except for `INSERT OVERWRITE PARTITION (partition)` and
+    // streaming insert which use name based resolution, and dataframe inserts by name which don't
+    // support implicit cast and fail - see negative test below.
     insertsAppend - StreamingInsert ->
       TestData("a int, s struct <x int, y: int>",
         Seq("""{ "a": 1, "s": { "x": 2, "y": 3 } }""", """{ "a": 1, "s": { "x": 5, "y": 4 } }""")),
     insertsOverwrite - SQLInsertOverwritePartitionByPosition ->
       TestData("a int, s struct <x int, y: int>", Seq("""{ "a": 1, "s": { "x": 5, "y": 4 } }""")),
+    Set(StreamingInsert) ->
+      TestData("a int, s struct <x int, y: int>",
+        Seq("""{ "a": 1, "s": { "x": 2, "y": 3 } }""", """{ "a": 1, "s": { "x": 4, "y": 5 } }""")),
     Set(SQLInsertOverwritePartitionByPosition) ->
       TestData("a int, s struct <x int, y: int>", Seq("""{ "a": 1, "s": { "x": 4, "y": 5 } }"""))
     )
@@ -145,7 +155,8 @@ class DeltaInsertIntoColumnOrderSuite extends DeltaInsertIntoTest {
       insertData = TestData("a long, s struct <y int, x: int>",
         Seq("""{ "a": 1, "s": { "y": 5, "x": 4 } }""")),
       expectedResult = ExpectedResult.Success(expectedAnswer),
-      includeInserts = inserts -- insertsDataframe.intersect(insertsByName)
+      // Inserts that don't support implicit cast are failing, these are covered in the test below.
+      includeInserts = inserts -- insertsWithoutImplicitCastSupport
     )
   }
 
@@ -165,6 +176,6 @@ class DeltaInsertIntoColumnOrderSuite extends DeltaInsertIntoTest {
           "currentField" -> "a",
           "updateField" -> "a"
         ))}),
-    includeInserts = insertsDataframe.intersect(insertsByName)
+    includeInserts = insertsWithoutImplicitCastSupport
   )
 }

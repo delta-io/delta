@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.DeltaTableUtils.withActiveSession
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.{DeltaGenerateCommand, DescribeDeltaDetailCommand, VacuumCommand}
 import org.apache.spark.sql.delta.util.AnalysisHelper
+import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{functions, Column, DataFrame}
@@ -87,10 +88,20 @@ trait DeltaTableOperations extends AnalysisHelper { self: io.delta.tables.DeltaT
   }
 
   protected def executeVacuum(
-      deltaLog: DeltaLog,
-      retentionHours: Option[Double],
-      tableId: Option[TableIdentifier] = None): DataFrame = withActiveSession(sparkSession) {
-    VacuumCommand.gc(sparkSession, deltaLog, false, retentionHours)
+      table: DeltaTableV2,
+      retentionHours: Option[Double]): DataFrame = withActiveSession(sparkSession) {
+    val tableId = table.getTableIdentifierIfExists
+    val path = Option.when(tableId.isEmpty)(deltaLog.dataPath.toString)
+    val vacuum = VacuumTableCommand(
+      path,
+      tableId,
+      inventoryTable = None,
+      inventoryQuery = None,
+      retentionHours,
+      dryRun = false,
+      vacuumType = None,
+      deltaLog.options)
+    toDataset(sparkSession, vacuum)
     sparkSession.emptyDataFrame
   }
 

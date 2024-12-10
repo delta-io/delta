@@ -1144,6 +1144,15 @@ trait DeltaSQLConfBase {
       .intConf
       .createOptional
 
+  val USE_PROTOCOL_AND_METADATA_FROM_CHECKSUM_ENABLED =
+    buildConf("readProtocolAndMetadataFromChecksum.enabled")
+      .internal()
+      .doc("If enabled, delta log snapshot will read the protocol, metadata, and ICT " +
+        "(if applicable) from the checksum file and use those to avoid a spark job over the " +
+        "checkpoint for the two rows of protocol and metadata")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_CHECKPOINT_THROW_EXCEPTION_WHEN_FAILED =
       buildConf("checkpoint.exceptionThrowing.enabled")
         .internal()
@@ -1742,9 +1751,7 @@ trait DeltaSQLConfBase {
           |The casting behavior is governed by 'spark.sql.storeAssignmentPolicy'.
           |""".stripMargin)
       .booleanConf
-      // This feature doesn't properly support structs with missing fields and is disabled until a
-      // fix is implemented.
-      .createWithDefault(false)
+      .createWithDefault(true)
 
   val DELTA_CDF_UNSAFE_BATCH_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES =
     buildConf("changeDataFeed.unsafeBatchReadOnIncompatibleSchemaChanges.enabled")
@@ -2231,7 +2238,7 @@ trait DeltaSQLConfBase {
           | it is not writable but still readable if this config is set to false.
           |""".stripMargin)
       .booleanConf
-      .createWithDefault(false)
+      .createWithDefault(true)
 
   ///////////
   // TESTING
