@@ -169,6 +169,5 @@ lazy val root = (project in file("."))
     scalacOptions ++= Seq(
       "-deprecation",
       "-feature"
-    ),
-    java17Settings
+    )
   )
