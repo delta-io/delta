@@ -22,7 +22,7 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.RawLocalFileSystem
 
 /**
- * A local filesystem on scheme s3. Useful for testing paths on non-defualt schemes.
+ * A local filesystem on scheme s3. Useful for testing paths on non-default schemes.
  */
 class S3LikeLocalFileSystem extends RawLocalFileSystem {
   private var uri: URI = _

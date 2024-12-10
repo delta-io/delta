@@ -1214,11 +1214,11 @@ class DeltaAnalysis(session: SparkSession)
               DeltaSourceMetadataTrackingLog.fullMetadataTrackingLocation(
                 rootSchemaTrackingLocation, tableId, sourceIdOpt)
             // Make sure schema location is under checkpoint
-            if (!allowSchemaLocationOutsideOfCheckpoint &&
-              !(schemaTrackingLocation.stripPrefix("file:").stripSuffix("/") + "/")
-                .startsWith(checkpointLocation.stripPrefix("file:").stripSuffix("/") + "/")) {
-              throw DeltaErrors.schemaTrackingLocationNotUnderCheckpointLocation(
-                schemaTrackingLocation, checkpointLocation)
+            if (!allowSchemaLocationOutsideOfCheckpoint) {
+              assertSchemaTrackingLocationUnderCheckpoint(
+                checkpointLocation,
+                schemaTrackingLocation
+              )
             }
             // Save schema location for this streaming relation
             schemaLocationMap.put(streamingRelation, schemaTrackingLocation.stripSuffix("/"))
@@ -1242,6 +1242,38 @@ class DeltaAnalysis(session: SparkSession)
         }
       throw DeltaErrors.sourcesWithConflictingSchemaTrackingLocation(
         schemaLocation, oneTableWithConflict)
+    }
+  }
+
+  /**
+   * Check and assert whether the schema tracking location is under the checkpoint location.
+   *
+   * Visible for testing.
+   */
+  private[delta] def assertSchemaTrackingLocationUnderCheckpoint(
+      checkpointLocation: String,
+      schemaTrackingLocation: String): Unit = {
+    val checkpointPath = new Path(checkpointLocation)
+    // scalastyle:off deltahadoopconfiguration
+    val checkpointFs = checkpointPath.getFileSystem(session.sessionState.newHadoopConf())
+    // scalastyle:on deltahadoopconfiguration
+    val qualifiedCheckpointPath = checkpointFs.makeQualified(checkpointPath)
+    val qualifiedSchemaTrackingLocationPath = try {
+      checkpointFs.makeQualified(new Path(schemaTrackingLocation))
+    } catch {
+      case NonFatal(e) =>
+        // This can happen when the file system for the checkpoint location is completely different
+        // from that of the schema tracking location.
+        logWarning("Failed to make a qualified path for schema tracking location", e)
+        throw DeltaErrors.schemaTrackingLocationNotUnderCheckpointLocation(
+          schemaTrackingLocation, checkpointLocation)
+    }
+    // If we couldn't qualify the schema location or after relativization, the result is still an
+    // absolute path, we know the schema location is not under checkpoint.
+    if (qualifiedCheckpointPath.toUri.relativize(
+        qualifiedSchemaTrackingLocationPath.toUri).isAbsolute) {
+      throw DeltaErrors.schemaTrackingLocationNotUnderCheckpointLocation(
+        schemaTrackingLocation, checkpointLocation)
     }
   }
 

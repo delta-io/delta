@@ -20,6 +20,7 @@ import java.io.File
 import java.nio.charset.Charset
 
 import scala.collection.JavaConverters._
+import scala.util.Try
 
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.sources._
@@ -272,30 +273,158 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
     )
   }
 
-  protected def testSchemasLocationMustBeUnderCheckpoint(implicit log: DeltaLog): Unit = {
+  protected def testSchemasLocationMustBeUnderCheckpoint(
+      checkpointLocation: String,
+      schemaLocation: String,
+      expectValid: Boolean,
+      verify: DeltaAnalysisException => Boolean = _ => true)(implicit log: DeltaLog): Unit = {
     val dest = Utils.createTempDir().getCanonicalPath
-    val ckpt = getDefaultCheckpoint.toString
-    val invalidSchemaLocation = Utils.createTempDir().getCanonicalPath
 
-    // By default it should fail
-    val e = intercept[DeltaAnalysisException] {
-      readStream(schemaLocation = Some(invalidSchemaLocation))
-        .writeStream.option("checkpointLocation", ckpt).start(dest)
-    }
-    assert(e.getErrorClass == "DELTA_STREAMING_SCHEMA_LOCATION_NOT_UNDER_CHECKPOINT")
-
-    // But can be lifted with the flag
-    allowSchemaLocationOutsideCheckpoint {
-      testStream(readStream(schemaLocation = Some(invalidSchemaLocation)))(
-        StartStream(checkpointLocation = ckpt),
+    if (!expectValid) {
+      // By default it should fail
+      val e = intercept[DeltaAnalysisException] {
+        readStream(schemaLocation = Some(schemaLocation))
+          .writeStream.option("checkpointLocation", checkpointLocation).start(dest)
+      }
+      assert(e.getErrorClass == "DELTA_STREAMING_SCHEMA_LOCATION_NOT_UNDER_CHECKPOINT")
+      assert(verify(e))
+      // But can be lifted with the flag
+      allowSchemaLocationOutsideCheckpoint {
+        testStream(readStream(schemaLocation = Some(schemaLocation)))(
+          StartStream(checkpointLocation = checkpointLocation),
+          ProcessAllAvailable(),
+          CheckAnswer((-1 until 5).map(i => (i.toString, i.toString)): _*)
+        )
+      }
+    } else {
+      // Should just work
+      testStream(readStream(schemaLocation = Some(schemaLocation)))(
+        StartStream(checkpointLocation = checkpointLocation),
         ProcessAllAvailable(),
         CheckAnswer((-1 until 5).map(i => (i.toString, i.toString)): _*)
       )
     }
   }
 
-  testSchemaEvolution(s"schema location must be placed under checkpoint location") { implicit log =>
-    testSchemasLocationMustBeUnderCheckpoint
+  testSchemaEvolution("schema location not under checkpoint") { implicit log =>
+    testSchemasLocationMustBeUnderCheckpoint(
+      getDefaultCheckpoint.toString,
+      Utils.createTempDir().getCanonicalPath,
+      expectValid = false,
+      verify = e => {
+        val Array(schemaLocation, checkpointLocation) = e.getMessageParametersArray
+        // Make sure paths with interchangeable schemes are handled
+        schemaLocation.startsWith("/") && checkpointLocation.startsWith("file:")
+      }
+    )
+  }
+
+  testSchemaEvolution("schema location same as checkpoint") { implicit log =>
+    testSchemasLocationMustBeUnderCheckpoint(
+      getDefaultCheckpoint.toString,
+      getDefaultCheckpoint.toString,
+      expectValid = true
+    )
+  }
+
+  testSchemaEvolution("schema location using a different file system") { implicit log =>
+    withSQLConf(
+        "fs.s3.impl" -> classOf[S3LikeLocalFileSystem].getCanonicalName,
+        "fs.s3.impl.disable.cache" -> "true") {
+      testSchemasLocationMustBeUnderCheckpoint(
+        getDefaultCheckpoint.toString,
+        s"s3:${Utils.createTempDir().getCanonicalPath}",
+        expectValid = false
+      )
+    }
+  }
+
+  private case class SchemaLocationUnderCheckpointUnitTest(
+      checkpointLocation: String,
+      schemaLocation: String,
+      expectValid: Boolean,
+      sqlConfs: Map[String, String] = Map.empty)
+
+  private val schemaLocationUnderCheckpointUnitTests = Map(
+    "checkpoint location and schema location are the same" -> {
+      val path = Utils.createTempDir().getCanonicalPath
+      SchemaLocationUnderCheckpointUnitTest(path, path, expectValid = true)
+    },
+    "schema location is under checkpoint location" -> {
+      val checkpoint = Utils.createTempDir().getCanonicalPath
+      val schema = new File(checkpoint, "schema").getCanonicalPath
+      // Also test that file:/ scheme is treated the same.
+      SchemaLocationUnderCheckpointUnitTest(checkpoint, s"file:$schema", expectValid = true)
+    },
+    "schema location is not under checkpoint location" -> {
+      val checkpoint = Utils.createTempDir().getCanonicalPath
+      val schema = Utils.createTempDir().getCanonicalPath
+      SchemaLocationUnderCheckpointUnitTest(
+        checkpoint,
+        schema,
+        expectValid = false
+      )
+    },
+    "schema location and checkpoint location are on different file systems" -> {
+      val checkpoint = Utils.createTempDir().getCanonicalPath
+      val schema = s"s3:${Utils.createTempDir().getCanonicalPath}"
+      SchemaLocationUnderCheckpointUnitTest(
+        checkpoint,
+        schema,
+        sqlConfs = Map(
+          "fs.s3.impl" -> classOf[S3LikeLocalFileSystem].getCanonicalName,
+          "fs.s3.impl.disable.cache" -> "true"
+        ),
+        expectValid = false)
+    },
+    "schema location and checkpoint location are the same but with explicit file scheme" -> {
+      val path = Utils.createTempDir().getCanonicalPath
+      SchemaLocationUnderCheckpointUnitTest(
+        path,
+        s"file:$path",
+        expectValid = true
+      )
+    },
+    "special characters in schema location" -> {
+      val checkpoint = Utils.createTempDir().getCanonicalPath
+      val schema = s"$checkpoint/a % ^ * _ b"
+      SchemaLocationUnderCheckpointUnitTest(
+        checkpoint,
+        schema,
+        expectValid = true
+      )
+    }
+  )
+
+  schemaLocationUnderCheckpointUnitTests.foreach { case (testName, testCase) =>
+    test(s"schema / checkpoint location unit tests - $testName") {
+      val analysis = new DeltaAnalysis(spark)
+      withSQLConf(testCase.sqlConfs.toSeq: _*) {
+        val resultTry = Try(
+          analysis.assertSchemaTrackingLocationUnderCheckpoint(
+            testCase.checkpointLocation,
+            testCase.schemaLocation
+          )
+        )
+        if (testCase.expectValid) {
+          assert(resultTry.isSuccess)
+        } else {
+          assert(resultTry.isFailure)
+          val e = resultTry.failed.get
+          logInfo("Expected exception", e)
+          assert(e.isInstanceOf[DeltaAnalysisException])
+          checkError(
+            e.asInstanceOf[DeltaAnalysisException],
+            "DELTA_STREAMING_SCHEMA_LOCATION_NOT_UNDER_CHECKPOINT",
+            "22000",
+            Map(
+              "schemaTrackingLocation" -> testCase.schemaLocation,
+              "checkpointLocation" -> testCase.checkpointLocation
+            )
+          )
+        }
+      }
+    }
   }
 
   testSchemaEvolution("multiple delta source sharing same schema log is blocked") { implicit log =>
