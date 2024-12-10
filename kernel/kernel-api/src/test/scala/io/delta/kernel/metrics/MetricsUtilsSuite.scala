@@ -27,8 +27,10 @@ class MetricsUtilsSuite extends AnyFunSuite {
   // Timer tests //
   ////////////////
 
+  val NANOSECONDS_PER_MILLISECOND = 1000000
+
   def millisToNanos(millis: Long): Long = {
-    millis*1000000
+    millis*NANOSECONDS_PER_MILLISECOND
   }
 
   /**
@@ -37,29 +39,35 @@ class MetricsUtilsSuite extends AnyFunSuite {
    */
   def testTimer(incrementFx: (Long, Timer) => Unit): Unit = {
     val timer = new Timer()
+    // Verify initial values
     assert(timer.count == 0)
     assert(timer.totalDuration == 0)
 
-    val incrementAmt1 = 0
-    val paddedEndTimeOp1 = incrementAmt1 + 5 // We pad each operation by 5ms
-    incrementFx(incrementAmt1, timer)
-    assert(timer.count == 1)
-    assert(timer.totalDuration >= millisToNanos(incrementAmt1) &&
-      timer.totalDuration < millisToNanos(paddedEndTimeOp1))
+    // amt is provided in milliseconds
+    def incrementAndCheck(amt: Long): Unit = {
+      val initialCount = timer.count()
+      val initialDuration = timer.totalDuration() // in nanoseconds
 
-    val incrementAmt2 = 20
-    val paddedEndTimeOp2 = paddedEndTimeOp1 + incrementAmt2 + 5 // 30
-    incrementFx(incrementAmt2, timer)
-    assert(timer.count == 2)
-    assert(timer.totalDuration >= millisToNanos(incrementAmt1 + incrementAmt2) &&
-      timer.totalDuration < millisToNanos(paddedEndTimeOp2))
+      val startTime = System.currentTimeMillis()
+      incrementFx(amt, timer)
+      // upperLimitDuration is in milliseconds; we take the max of time elapsed vs the incrementAmt
+      val upperLimitDuration = Math.max(
+        // we pad by 1 due to rounding of nanoseconds to milliseconds for system time
+        System.currentTimeMillis() - startTime + 1,
+        amt
+      )
 
-    val incrementAmt3 = 50
-    val paddedEndTimeOp3 = paddedEndTimeOp2 + incrementAmt3 + 5 // 85
-    incrementFx(incrementAmt3, timer)
-    assert(timer.count == 3)
-    assert(timer.totalDuration >= millisToNanos(incrementAmt1 + incrementAmt2 + incrementAmt3) &&
-      timer.totalDuration < millisToNanos(paddedEndTimeOp3))
+      // check count
+      assert(timer.count == initialCount + 1)
+      // check lowerbound
+      assert(timer.totalDuration >= initialDuration + millisToNanos(amt))
+      // check upperbound
+      assert(timer.totalDuration <= initialDuration + millisToNanos(upperLimitDuration))
+    }
+
+    incrementAndCheck(0)
+    incrementAndCheck(20)
+    incrementAndCheck(50)
   }
 
   test("Timer class") {
