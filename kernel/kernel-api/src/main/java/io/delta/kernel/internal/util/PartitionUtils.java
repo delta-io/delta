@@ -26,6 +26,7 @@ import static java.util.Arrays.asList;
 import io.delta.kernel.data.*;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.engine.ExpressionHandler;
+import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.expressions.*;
 import io.delta.kernel.internal.InternalScanFileUtils;
 import io.delta.kernel.internal.fs.Path;
@@ -45,6 +46,28 @@ public class PartitionUtils {
       DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS");
 
   private PartitionUtils() {}
+
+  /**
+   * Converts an {@link ArrayValue} of partition columns name to a {@link Set} of lowercase strings.
+   *
+   * @param partitionColumnsVector an {@code ArrayValue} containing the partition column names.
+   * @return a {@code Set<String>} with each partition column name in lowercase.
+   */
+  public static Set<String> arrayValueToLowerCaseSet(ArrayValue partitionColumnsVector) {
+    final Set<String> result =
+        VectorUtils.<String>toJavaList(partitionColumnsVector).stream()
+            .map(s -> s.toLowerCase(Locale.ROOT))
+            .collect(Collectors.toSet());
+
+    if (result.size() != partitionColumnsVector.getSize()) {
+      throw new KernelException(
+          String.format(
+              "partitionColumnsVector contains duplicate partition column names: %s",
+              partitionColumnsVector));
+    }
+
+    return result;
+  }
 
   /**
    * Utility method to remove the given columns (as {@code columnsToRemove}) from the given {@code
