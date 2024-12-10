@@ -22,7 +22,7 @@ import java.util.regex.Pattern
 
 import scala.annotation.tailrec
 
-import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaLog, DeltaTestUtils}
+import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaLog, DeltaTestUtils, TypeWidening}
 import org.apache.spark.sql.delta.RowCommitVersion
 import org.apache.spark.sql.delta.RowId
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -2434,8 +2434,15 @@ class SchemaUtilsSuite extends QueryTest
     val base1 = ArrayType(new StructType().add("a", IntegerType))
     val update1 = ArrayType(new StructType().add("b", IntegerType))
 
-    assert(mergeDataTypes(
-      base1, update1, false, false, false, false, allowOverride = false) ===
+    assert(
+      mergeDataTypes(
+        current = base1,
+        update = update1,
+        allowImplicitConversions = false,
+        keepExistingType = false,
+        shouldWidenType = (_, _) => false,
+        caseSensitive = false,
+        allowOverride = false) ===
       ArrayType(new StructType().add("a", IntegerType).add("b", IntegerType)))
 
     // Map root type
@@ -2448,8 +2455,15 @@ class SchemaUtilsSuite extends QueryTest
       new StructType().add("c", IntegerType)
     )
 
-    assert(mergeDataTypes(
-      base2, update2, false, false, false, false, allowOverride = false) ===
+    assert(
+      mergeDataTypes(
+        current = base2,
+        update = update2,
+        allowImplicitConversions = false,
+        keepExistingType = false,
+        shouldWidenType = (_, _) => false,
+        caseSensitive = false,
+        allowOverride = false) ===
       MapType(
         new StructType().add("a", IntegerType).add("b", IntegerType),
         new StructType().add("b", IntegerType).add("c", IntegerType)
@@ -2461,19 +2475,33 @@ class SchemaUtilsSuite extends QueryTest
     val base1 = new StructType().add("a", IntegerType)
     val update1 = ArrayType(LongType)
 
-    assert(mergeDataTypes(
-      base1, update1, false, false, false, false, allowOverride = true) === ArrayType(LongType))
+    assert(
+      mergeDataTypes(
+        current = base1,
+        update = update1,
+        allowImplicitConversions = false,
+        keepExistingType = false,
+        shouldWidenType = (_, _) => false,
+        caseSensitive = false,
+        allowOverride = true) === ArrayType(LongType))
 
     // override nested type
     val base2 = ArrayType(new StructType().add("a", IntegerType).add("b", StringType))
     val update2 = ArrayType(new StructType().add("a", MapType(StringType, StringType)))
 
-    assert(mergeDataTypes(
-      base2, update2, false, false, false, false, allowOverride = true) ===
+    assert(
+      mergeDataTypes(
+        current = base2,
+        update = update2,
+        allowImplicitConversions = false,
+        keepExistingType = false,
+        shouldWidenType = (_, _) => false,
+        caseSensitive = false,
+        allowOverride = true) ===
       ArrayType(new StructType().add("a", MapType(StringType, StringType)).add("b", StringType)))
   }
 
-  test("keepExistingType and allowTypeWidening both true allows both widening and " +
+  test("keepExistingType and shouldWidenType both true allows both widening and " +
     "preserving non-widenable existing types") {
     val base = new StructType()
       .add("widened", ShortType)
@@ -2502,7 +2530,13 @@ class SchemaUtilsSuite extends QueryTest
       .add("array", ArrayType(StringType))
       .add("nonwidened", IntegerType)
     assert(
-      mergeSchemas(base, update, allowTypeWidening = true, keepExistingType = true) === expected
+      mergeSchemas(
+        base,
+        update,
+        shouldWidenType =
+          TypeWidening.isTypeChangeSupportedForSchemaEvolution(_, _, uniformIcebergEnabled = false),
+        keepExistingType = true
+      ) === expected
     )
   }
 

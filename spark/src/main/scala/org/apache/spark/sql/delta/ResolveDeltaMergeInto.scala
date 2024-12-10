@@ -28,7 +28,7 @@ import org.apache.spark.sql.catalyst.analysis._
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.types.{StructField, StructType}
+import org.apache.spark.sql.types.{AtomicType, StructField, StructType}
 
 /**
  * Implements logic to resolve conditions and actions in MERGE clauses and handles schema evolution.
@@ -292,12 +292,13 @@ object ResolveDeltaMergeInto {
         })
 
       val migrationSchema = filterSchema(source.schema, Seq.empty)
-      val allowTypeWidening = target.exists {
-        case DeltaTable(fileIndex) =>
-          TypeWidening.isEnabled(fileIndex.protocol, fileIndex.metadata)
-        case _ => false
-      }
 
+      val fileIndexOpt = target.collectFirst { case DeltaTable(fileIndex) => fileIndex }
+      def shouldWidenType(from: AtomicType, to: AtomicType): Boolean =
+        fileIndexOpt.exists { index =>
+          TypeWidening.isEnabled(index.protocol, index.metadata) &&
+            TypeWidening.isTypeChangeSupportedForSchemaEvolution(from, to, index.metadata)
+        }
       // The implicit conversions flag allows any type to be merged from source to target if Spark
       // SQL considers the source type implicitly castable to the target. Normally, mergeSchemas
       // enforces Parquet-level write compatibility, which would mean an INT source can't be merged
@@ -306,7 +307,7 @@ object ResolveDeltaMergeInto {
         target.schema,
         migrationSchema,
         allowImplicitConversions = true,
-        allowTypeWidening = allowTypeWidening
+        shouldWidenType = shouldWidenType
       )
     } else {
       target.schema

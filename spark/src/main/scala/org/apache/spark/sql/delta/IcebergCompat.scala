@@ -21,8 +21,10 @@ import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.internal.MDC
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.types._
 
 /**
@@ -47,7 +49,8 @@ object IcebergCompatV1 extends IcebergCompat(
     CheckAddFileHasStats,
     CheckNoPartitionEvolution,
     CheckNoListMapNullType,
-    CheckDeletionVectorDisabled
+    CheckDeletionVectorDisabled,
+    CheckTypeWideningSupported
   )
 )
 
@@ -62,7 +65,8 @@ object IcebergCompatV2 extends IcebergCompat(
     CheckTypeInV2AllowList,
     CheckPartitionDataTypeInV2AllowList,
     CheckNoPartitionEvolution,
-    CheckDeletionVectorDisabled
+    CheckDeletionVectorDisabled,
+    CheckTypeWideningSupported
   )
 )
 
@@ -104,6 +108,7 @@ case class IcebergCompat(
    *         updates need to be applied, will return None.
    */
   def enforceInvariantsAndDependencies(
+      spark: SparkSession,
       prevSnapshot: Snapshot,
       newestProtocol: Protocol,
       newestMetadata: Metadata,
@@ -190,6 +195,7 @@ case class IcebergCompat(
 
         // Apply additional checks
         val context = IcebergCompatContext(
+          spark,
           prevSnapshot,
           protocolResult.getOrElse(newestProtocol),
           metadataResult.getOrElse(newestMetadata),
@@ -301,6 +307,7 @@ object RequireColumnMapping extends RequiredDeltaTableProperty(
 }
 
 case class IcebergCompatContext(
+    spark: SparkSession,
     prevSnapshot: Snapshot,
     newestProtocol: Protocol,
     newestMetadata: Metadata,
@@ -454,6 +461,35 @@ object CheckDeletionVectorDisabled extends IcebergCompatCheck {
           throw DeltaErrors.icebergCompatDeletionVectorsShouldBeDisabledException(context.version)
         }
       }
+    }
+  }
+}
+
+/**
+ * Checks that the table didn't go through any type changes that Iceberg doesn't support. See
+ * `TypeWidening.isTypeChangeSupportedByIceberg()` for supported type changes.
+ * Note that this check covers both:
+ * - When the table had an unsupported type change applied in the past and Uniform is being enabled.
+ * - When Uniform is enabled and a new, unsupported type change is being applied.
+ */
+object CheckTypeWideningSupported extends IcebergCompatCheck {
+  override def apply(context: IcebergCompatContext): Unit = {
+    val skipCheck = context.spark.conf
+      .get(DeltaSQLConf.DELTA_TYPE_WIDENING_ALLOW_UNSUPPORTED_ICEBERG_TYPE_CHANGES.key)
+      .toBoolean
+
+    if (skipCheck || !TypeWidening.isSupported(context.newestProtocol)) return
+
+    TypeWideningMetadata.getAllTypeChanges(context.newestMetadata.schema).foreach {
+      case (fieldPath, TypeChange(_, fromType: AtomicType, toType: AtomicType, _))
+        // We ignore type changes that are not generally supported with type widening to reduce the
+        // risk of this check misfiring. These are handled by `TypeWidening.assertTableReadable()`.
+        // The error here only captures type changes that are supported in Delta but not Iceberg.
+        if TypeWidening.isTypeChangeSupported(fromType, toType) &&
+          !TypeWidening.isTypeChangeSupportedByIceberg(fromType, toType) =>
+        throw DeltaErrors.icebergCompatUnsupportedTypeWideningException(
+          context.version, fieldPath, fromType, toType)
+      case _ =>
     }
   }
 }

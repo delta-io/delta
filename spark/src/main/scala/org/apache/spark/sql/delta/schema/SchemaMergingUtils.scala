@@ -153,7 +153,7 @@ object SchemaMergingUtils {
       dataSchema: StructType,
       allowImplicitConversions: Boolean = false,
       keepExistingType: Boolean = false,
-      allowTypeWidening: Boolean = false,
+      shouldWidenType: (AtomicType, AtomicType) => Boolean = (_, _) => false,
       caseSensitive: Boolean = false): StructType = {
     checkColumnNameDuplication(dataSchema, "in the data to save", caseSensitive)
     mergeDataTypes(
@@ -161,7 +161,7 @@ object SchemaMergingUtils {
       dataSchema,
       allowImplicitConversions,
       keepExistingType,
-      allowTypeWidening,
+      shouldWidenType,
       caseSensitive,
       allowOverride = false
     ).asInstanceOf[StructType]
@@ -178,6 +178,8 @@ object SchemaMergingUtils {
    *                                 merge will succeed, because once we get to write time Spark SQL
    *                                 will support implicitly converting the int to a string.
    * @param keepExistingType Whether to keep existing types instead of trying to merge types.
+   * @param shouldWidenType Identifies the (current, update) type tuples where `current` can be
+   *                        widened to `update`, in which case `update` is used.
    * @param caseSensitive Whether we should keep field mapping case-sensitively.
    *                      This should default to false for Delta, which is case insensitive.
    * @param allowOverride Whether to let incoming type override the existing type if unmatched.
@@ -187,7 +189,7 @@ object SchemaMergingUtils {
       update: DataType,
       allowImplicitConversions: Boolean,
       keepExistingType: Boolean,
-      allowTypeWidening: Boolean,
+      shouldWidenType: (AtomicType, AtomicType) => Boolean,
       caseSensitive: Boolean,
       allowOverride: Boolean): DataType = {
     def merge(current: DataType, update: DataType): DataType = {
@@ -236,9 +238,9 @@ object SchemaMergingUtils {
             merge(currentElementType, updateElementType),
             currentContainsNull)
 
-        // If allowTypeWidening is true and supported, it takes precedence over keepExistingType
-        case (current: AtomicType, update: AtomicType) if allowTypeWidening &&
-          TypeWidening.isTypeChangeSupportedForSchemaEvolution(current, update) => update
+        // If type widening is enabled and the type can be widened, it takes precedence over
+        // keepExistingType.
+        case (current: AtomicType, update: AtomicType) if shouldWidenType(current, update) => update
 
         // Simply keeps the existing type for primitive types
         case (current, _) if keepExistingType => current

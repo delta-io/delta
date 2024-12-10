@@ -74,8 +74,40 @@ object TypeWidening {
    * Returns whether the given type change can be applied during schema evolution. Only a
    * subset of supported type changes are considered for schema evolution.
    */
-  def isTypeChangeSupportedForSchemaEvolution(fromType: AtomicType, toType: AtomicType): Boolean =
-    TypeWideningShims.isTypeChangeSupportedForSchemaEvolution(fromType, toType)
+  def isTypeChangeSupportedForSchemaEvolution(
+      fromType: AtomicType,
+      toType: AtomicType,
+      uniformIcebergEnabled: Boolean): Boolean =
+    TypeWideningShims.isTypeChangeSupportedForSchemaEvolution(fromType, toType) &&
+      (!uniformIcebergEnabled || isTypeChangeSupportedByIceberg(fromType, toType))
+
+  /**
+   * Alias for the above method extracting `uniformIcebergEnabled` value from the table metadata.
+   */
+  def isTypeChangeSupportedForSchemaEvolution(
+      fromType: AtomicType,
+      toType: AtomicType,
+      metadata: Metadata): Boolean =
+    isTypeChangeSupportedForSchemaEvolution(
+      fromType, toType, uniformIcebergEnabled = UniversalFormat.icebergEnabled(metadata))
+
+  /**
+   * Returns whether the given type change is supported by Iceberg, and by extension can be read
+   * using Uniform. See https://iceberg.apache.org/spec/#schema-evolution.
+   * Note that these are type promotions supported by Iceberg V1 & V2 (both support the same type
+   * promotions). Iceberg V3 will add support for date -> timestamp_ntz and void -> any but Uniform
+   * doesn't currently support Iceberg V3.
+   */
+  def isTypeChangeSupportedByIceberg(fromType: AtomicType, toType: AtomicType): Boolean =
+    (fromType, toType) match {
+      case (from, to) if from == to => true
+      case (from, to) if !isTypeChangeSupported(from, to) => false
+      case (from: IntegralType, to: IntegralType) => from.defaultSize <= to.defaultSize
+      case (FloatType, DoubleType) => true
+      case (from: DecimalType, to: DecimalType)
+        if from.scale == to.scale && from.precision <= to.precision => true
+      case _ => false
+    }
 
   /**
    * Asserts that the given table doesn't contain any unsupported type changes. This should never

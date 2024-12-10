@@ -180,7 +180,9 @@ case class DeltaSink(
       metadata.schema,
       dataSchema,
       allowImplicitConversions = true,
-      allowTypeWidening = canMergeSchema && TypeWidening.isEnabled(protocol, metadata)
+      shouldWidenType =
+        canMergeSchema && TypeWidening.isEnabled(protocol, metadata) &&
+          TypeWidening.isTypeChangeSupportedForSchemaEvolution(_, _, metadata)
     )
   }
 
