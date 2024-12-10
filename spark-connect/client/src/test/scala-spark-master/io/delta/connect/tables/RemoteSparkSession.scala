@@ -72,7 +72,7 @@ trait RemoteSparkSession extends BeforeAndAfterAll { self: Suite =>
     "spark-connect/server/target/scala-2.13/delta-connect-server-assembly-3.3.0-SNAPSHOT.jar"
 
   private val resources = s"$buildLocation/spark-connect/client/target/scala-2.13/resource_managed/test"
-  private val sparkConnectJar = s"$resources/spark-connect.jar"
+  private val sparkConnectJar = s"$resources/spark-connect_2.13.jar"
   private val sparkSubmit = s"$resources/spark/spark-4.0.0-preview1-bin-hadoop3/sbin/start-connect-server.sh"
 
   private lazy val server = {
