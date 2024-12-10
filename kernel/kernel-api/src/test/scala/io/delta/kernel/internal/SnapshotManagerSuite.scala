@@ -20,12 +20,11 @@ import java.{lang => javaLang}
 import scala.collection.JavaConverters._
 import scala.reflect.ClassTag
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
-import io.delta.kernel.engine.CommitCoordinatorClientHandler
-import io.delta.kernel.engine.coordinatedcommits.{Commit, CommitResponse, GetCommitsResponse}
 import io.delta.kernel.exceptions.InvalidTableException
 import io.delta.kernel.expressions.Predicate
 import io.delta.kernel.internal.actions.CommitInfo
 import io.delta.kernel.internal.checkpoints.{CheckpointInstance, SidecarFile}
+import io.delta.kernel.internal.coordinatedcommits.{Commit, CommitCoordinatorClientHandler, CommitResponse, GetCommitsResponse}
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.snapshot.{LogSegment, SnapshotManager, TableCommitCoordinatorClientHandler}
 import io.delta.kernel.internal.util.{FileNames, Utils}

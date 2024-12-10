@@ -14,16 +14,16 @@
  * limitations under the License.
  */
 
-package io.delta.kernel.engine.coordinatedcommits;
+package io.delta.kernel.internal.coordinatedcommits;
 
 import io.delta.kernel.annotation.Evolving;
-import io.delta.kernel.engine.coordinatedcommits.actions.AbstractCommitInfo;
-import io.delta.kernel.engine.coordinatedcommits.actions.AbstractMetadata;
-import io.delta.kernel.engine.coordinatedcommits.actions.AbstractProtocol;
+import io.delta.kernel.internal.coordinatedcommits.actions.AbstractCommitInfo;
+import io.delta.kernel.internal.coordinatedcommits.actions.AbstractMetadata;
+import io.delta.kernel.internal.coordinatedcommits.actions.AbstractProtocol;
 
 /**
- * A container class to inform the {@link io.delta.kernel.engine.CommitCoordinatorClientHandler}
- * about any changes in Protocol/Metadata
+ * A container class to inform the {@link CommitCoordinatorClientHandler} about any changes in
+ * Protocol/Metadata
  *
  * @since 3.3.0
  */
