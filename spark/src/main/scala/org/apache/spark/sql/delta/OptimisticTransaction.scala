@@ -44,6 +44,7 @@ import org.apache.spark.sql.delta.redirect.{RedirectFeature, TableRedirectConfig
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.stats._
+import org.apache.spark.sql.delta.stats.FileSizeHistogramUtils
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, JsonUtils}
 import org.apache.spark.sql.util.ScalaExtensions._
 import io.delta.storage.commit._
@@ -1602,6 +1603,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       var addFilesHistogram: Option[FileSizeHistogram] = None
       var removeFilesHistogram: Option[FileSizeHistogram] = None
       val assertDeletionVectorWellFormed = getAssertDeletionVectorWellFormedFunc(spark, op)
+      if (spark.conf.get(DeltaSQLConf.DELTA_FILE_SIZE_HISTOGRAM_ENABLED)) {
+        addFilesHistogram = Some(FileSizeHistogramUtils.emptyHistogram)
+        removeFilesHistogram = Some(FileSizeHistogramUtils.emptyHistogram)
+      }
       // Initialize everything needed to maintain auto-compaction stats.
       partitionsAddedToOpt = Some(new mutable.HashSet[Map[String, String]])
       val acStatsCollector = createAutoCompactStatsCollector()
@@ -1718,7 +1723,12 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         isolationLevel = Serializable.toString,
         coordinatedCommitsInfo = createCoordinatedCommitsStats(),
         numOfDomainMetadatas = numOfDomainMetadatas,
-        txnId = Some(txnId))
+        txnId = Some(txnId),
+        fileSizeHistogram =
+          postCommitSnapshot.fileSizeHistogram.map(FileSizeHistogramUtils.compress),
+        addFilesHistogram = addFilesHistogram.map(FileSizeHistogramUtils.compress),
+        removeFilesHistogram = removeFilesHistogram.map(FileSizeHistogramUtils.compress)
+      )
 
       executionObserver.transactionCommitted()
       recordDeltaEvent(deltaLog, DeltaLogging.DELTA_COMMIT_STATS_OPTYPE, data = stats)
@@ -2328,6 +2338,12 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     // variables. This is more efficient than a functional approach.
     var numAbsolutePaths = 0
     val distinctPartitions = new mutable.HashSet[Map[String, String]]
+    val (addFilesHistogram, removeFilesHistogram) =
+      if (spark.conf.get(DeltaSQLConf.DELTA_FILE_SIZE_HISTOGRAM_ENABLED)) {
+        (Some(FileSizeHistogramUtils.emptyHistogram), Some(FileSizeHistogramUtils.emptyHistogram))
+      } else {
+        (None, None)
+      }
 
     var bytesNew: Long = 0L
     var numAdd: Int = 0
@@ -2341,9 +2357,11 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         numAdd += 1
         if (a.pathAsUri.isAbsolute) numAbsolutePaths += 1
         distinctPartitions += a.partitionValues
+        addFilesHistogram.foreach(_.insert(a.size))
         if (a.dataChange) bytesNew += a.size
       case r: RemoveFile =>
         numRemove += 1
+        removeFilesHistogram.foreach(_.insert(r.size.getOrElse(0L)))
       case c: AddCDCFile =>
         numCdcFiles += 1
         cdcBytesNew += c.size
@@ -2364,6 +2382,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     val numFilesTotal = if (doCollectCommitStats) postCommitSnapshot.numOfFiles else -1L
     val sizeInBytesTotal = if (doCollectCommitStats) postCommitSnapshot.sizeInBytes else -1L
 
+    val fileSizeHistogram = postCommitSnapshot
+      .checksumOpt
+      .flatMap(_.histogramOpt)
+      .map(FileSizeHistogramUtils.compress)
     val stats = CommitStats(
       startVersion = snapshot.version,
       commitVersion = attemptVersion,
@@ -2393,6 +2415,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       numPartitionColumnsInTable = postCommitSnapshot.metadata.partitionColumns.size,
       isolationLevel = isolationLevel.toString,
       coordinatedCommitsInfo = createCoordinatedCommitsStats(),
+      addFilesHistogram = addFilesHistogram.map(FileSizeHistogramUtils.compress),
+      removeFilesHistogram = removeFilesHistogram.map(FileSizeHistogramUtils.compress),
+      fileSizeHistogram = fileSizeHistogram,
       numOfDomainMetadatas = numOfDomainMetadatas,
       txnId = Some(txnId))
     recordDeltaEvent(deltaLog, DeltaLogging.DELTA_COMMIT_STATS_OPTYPE, data = stats)
@@ -2554,6 +2579,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       operationName = currentTransactionInfo.op.name,
       txnIdOpt = Some(currentTransactionInfo.txnId),
       previousVersionState = scala.Left(snapshot),
+      mustIncludeFileSizeHistogram =
+        spark.conf.get(DeltaSQLConf.DELTA_FILE_SIZE_HISTOGRAM_ENABLED),
       includeAddFilesInCrc = allFilesInCrcWritePathEnabled
     ).toOption
   }
