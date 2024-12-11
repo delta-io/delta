@@ -293,6 +293,12 @@ public final class DeltaErrors {
     return new ConcurrentWriteException(message);
   }
 
+  public static KernelException rowIDAssignmentWithoutStats() {
+    return new KernelException(
+        "All AddFile actions must have statistics that include the number of records "
+            + "when writing to a Delta table with the 'rowTracking' table feature supported");
+  }
+
   /* ------------------------ HELPER METHODS ----------------------------- */
   private static String formatTimestamp(long millisSinceEpochUTC) {
     return new Timestamp(millisSinceEpochUTC).toInstant().toString();

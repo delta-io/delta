@@ -32,6 +32,7 @@ import io.delta.kernel.utils.FileStatus;
 import java.net.URI;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Utilities to extract information out of the scan file rows returned by {@link
@@ -86,6 +87,11 @@ public class InternalScanFileUtils {
   private static final int ADD_FILE_DATA_CHANGE_ORDINAL = ADD_FILE_SCHEMA.indexOf("dataChange");
 
   private static final int ADD_FILE_DV_ORDINAL = ADD_FILE_SCHEMA.indexOf("deletionVector");
+
+  private static final int ADD_FILE_BASE_ROW_ID_ORDINAL = ADD_FILE_SCHEMA.indexOf("baseRowId");
+
+  private static final int ADD_FILE_DEFAULT_ROW_COMMIT_VERSION =
+      ADD_FILE_SCHEMA.indexOf("defaultRowCommitVersion");
 
   private static final int TABLE_ROOT_ORDINAL = SCAN_FILE_SCHEMA.indexOf(TABLE_ROOT_COL_NAME);
 
@@ -189,5 +195,31 @@ public class InternalScanFileUtils {
    */
   public static Column getPartitionValuesParsedRefInAddFile(String partitionColName) {
     return new Column(new String[] {"add", "partitionValues_parsed", partitionColName});
+  }
+
+  /**
+   * Get the base row id from the given scan file row.
+   *
+   * @param scanFile {@link Row} representing one scan file.
+   * @return base row id if present, otherwise empty.
+   */
+  public static Optional<Long> getBaseRowId(Row scanFile) {
+    Row addFile = getAddFileEntry(scanFile);
+    return addFile.isNullAt(ADD_FILE_BASE_ROW_ID_ORDINAL)
+        ? Optional.empty()
+        : Optional.of(addFile.getLong(ADD_FILE_BASE_ROW_ID_ORDINAL));
+  }
+
+  /**
+   * Get the default row commit version from the given scan file row.
+   *
+   * @param scanFile {@link Row} representing one scan file.
+   * @return default row commit version if present, otherwise empty.
+   */
+  public static Optional<Long> getDefaultRowCommitVersion(Row scanFile) {
+    Row addFile = getAddFileEntry(scanFile);
+    return addFile.isNullAt(ADD_FILE_DEFAULT_ROW_COMMIT_VERSION)
+        ? Optional.empty()
+        : Optional.of(addFile.getLong(ADD_FILE_DEFAULT_ROW_COMMIT_VERSION));
   }
 }
