@@ -29,7 +29,7 @@ import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.FileSourceGeneratedMetadataStructField
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
-import org.apache.spark.sql.types.{ArrayType, DataType, MapType, StructType}
+import org.apache.spark.sql.types.{ArrayType, AtomicType, DataType, MapType, StructType}
 
 /**
  * A trait that writers into Delta can extend to update the schema and/or partitioning of the table.
@@ -220,10 +220,14 @@ object ImplicitMetadataOperation {
     } else {
       checkDependentExpressions(spark, txn.protocol, txn.metadata, dataSchema)
 
+      def shouldWidenType(from: AtomicType, to: AtomicType): Boolean =
+        TypeWidening.isEnabled(txn.protocol, txn.metadata) &&
+          TypeWidening.isTypeChangeSupportedForSchemaEvolution(from, to, txn.metadata)
+
       SchemaMergingUtils.mergeSchemas(
         txn.metadata.schema,
         dataSchema,
-        allowTypeWidening = TypeWidening.isEnabled(txn.protocol, txn.metadata))
+        shouldWidenType = shouldWidenType)
     }
   }
 
