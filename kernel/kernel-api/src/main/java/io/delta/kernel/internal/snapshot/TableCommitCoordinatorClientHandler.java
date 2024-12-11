@@ -17,11 +17,11 @@
 package io.delta.kernel.internal.snapshot;
 
 import io.delta.kernel.data.Row;
-import io.delta.kernel.engine.CommitCoordinatorClientHandler;
-import io.delta.kernel.engine.coordinatedcommits.CommitFailedException;
-import io.delta.kernel.engine.coordinatedcommits.CommitResponse;
-import io.delta.kernel.engine.coordinatedcommits.GetCommitsResponse;
-import io.delta.kernel.engine.coordinatedcommits.UpdatedActions;
+import io.delta.kernel.internal.coordinatedcommits.CommitCoordinatorClientHandler;
+import io.delta.kernel.internal.coordinatedcommits.CommitFailedException;
+import io.delta.kernel.internal.coordinatedcommits.CommitResponse;
+import io.delta.kernel.internal.coordinatedcommits.GetCommitsResponse;
+import io.delta.kernel.internal.coordinatedcommits.UpdatedActions;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
 import java.util.Map;

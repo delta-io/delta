@@ -14,12 +14,12 @@
  * limitations under the License.
  */
 
-package io.delta.kernel.engine.coordinatedcommits;
+package io.delta.kernel.internal.coordinatedcommits;
 
 import io.delta.kernel.annotation.Evolving;
 
 /**
- * Exception raised by {@link io.delta.kernel.engine.CommitCoordinatorClientHandler#commit}
+ * Exception raised by {@link CommitCoordinatorClientHandler#commit}
  *
  * <pre>
  *  | retryable | conflict  | meaning                                                         |

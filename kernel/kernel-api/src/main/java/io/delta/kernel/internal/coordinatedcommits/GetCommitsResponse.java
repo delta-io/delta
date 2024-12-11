@@ -14,16 +14,15 @@
  * limitations under the License.
  */
 
-package io.delta.kernel.engine.coordinatedcommits;
+package io.delta.kernel.internal.coordinatedcommits;
 
 import io.delta.kernel.annotation.Evolving;
 import java.util.List;
 import java.util.Map;
 
 /**
- * Response container for {@link io.delta.kernel.engine.CommitCoordinatorClientHandler#getCommits(
- * String, Map, Long, Long)}. Holds all the commits that have not been backfilled as per the commit
- * coordinator.
+ * Response container for {@link CommitCoordinatorClientHandler#getCommits( String, Map, Long,
+ * Long)}. Holds all the commits that have not been backfilled as per the commit coordinator.
  *
  * @since 3.3.0
  */

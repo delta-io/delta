@@ -18,6 +18,7 @@ package io.delta.kernel.test
 import io.delta.kernel.engine._
 import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch, Row}
 import io.delta.kernel.expressions.{Column, Expression, ExpressionEvaluator, Predicate, PredicateEvaluator}
+import io.delta.kernel.internal.coordinatedcommits.CommitCoordinatorClientHandler
 import io.delta.kernel.types.{DataType, StructType}
 import io.delta.kernel.utils.{CloseableIterator, DataFileStatus, FileStatus}
 
@@ -69,11 +70,6 @@ trait MockEngineUtils {
 
       override def getParquetHandler: ParquetHandler =
         Option(parquetHandler).getOrElse(
-          throw new UnsupportedOperationException("not supported in this test suite"))
-
-      override def getCommitCoordinatorClientHandler(name: String, conf: util.Map[String, String]):
-      CommitCoordinatorClientHandler =
-        Option(commitCoordinatorClientHandler).getOrElse(
           throw new UnsupportedOperationException("not supported in this test suite"))
     }
   }
