@@ -577,6 +577,15 @@ class Snapshot(
       },
     domainMetadata = checksumOpt.flatMap(_.domainMetadata)
       .orElse(Option.when(_computedStateTriggered)(domainMetadata)),
+    numDeletedRecordsOpt = checksumOpt.flatMap(_.numDeletedRecordsOpt)
+      .orElse(Option.when(_computedStateTriggered)(numDeletedRecordsOpt).flatten)
+      .filter(_ => deletionVectorMetricsEnabled),
+    numDeletionVectorsOpt = checksumOpt.flatMap(_.numDeletionVectorsOpt)
+      .orElse(Option.when(_computedStateTriggered)(numDeletionVectorsOpt).flatten)
+      .filter(_ => deletionVectorMetricsEnabled),
+    deletedRecordCountsHistogramOpt = checksumOpt.flatMap(_.deletedRecordCountsHistogramOpt)
+      .orElse(Option.when(_computedStateTriggered)(deletedRecordCountsHistogramOpt).flatten)
+      .filter(_ => deletionVectorMetricsEnabled && deletionVectorHistogramEnabled),
     histogramOpt = checksumOpt.flatMap(_.histogramOpt)
   )
 
