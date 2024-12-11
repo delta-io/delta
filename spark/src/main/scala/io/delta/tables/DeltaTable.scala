@@ -124,7 +124,7 @@ class DeltaTable private[tables](
    * @since 0.3.0
    */
   def history(limit: Int): DataFrame = {
-    executeHistory(deltaLog, Some(limit), table.getTableIdentifierIfExists)
+    executeHistory(deltaLog, Some(limit), table.catalogTable)
   }
 
   /**
@@ -134,7 +134,7 @@ class DeltaTable private[tables](
    * @since 0.3.0
    */
   def history(): DataFrame = {
-    executeHistory(deltaLog, tableId = table.getTableIdentifierIfExists)
+    executeHistory(deltaLog, catalogTable = table.catalogTable)
   }
 
   /**

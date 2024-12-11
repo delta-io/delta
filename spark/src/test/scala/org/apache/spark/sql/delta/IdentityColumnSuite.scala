@@ -396,10 +396,22 @@ trait IdentityColumnSuiteBase extends IdentityColumnTestUtils {
     val increment = 1L
     for {
       generatedAsIdentityType <- GeneratedAsIdentityType.values
+      isPartitioned <- DeltaTestUtils.BOOLEAN_DOMAIN
     } {
+      val partitionedBy = if (isPartitioned) Seq("value") else Nil
       withTable(tblName) {
-        createTableWithIdColAndIntValueCol(
-          tblName, generatedAsIdentityType, Some(initialStartsWith), Some(increment))
+        createTable(
+          tblName,
+          Seq(
+            IdentityColumnSpec(
+              generatedAsIdentityType,
+              Some(initialStartsWith),
+              Some(increment)
+            ),
+            TestColumnSpec(colName = "value", dataType = IntegerType)
+          ),
+          partitionedBy = partitionedBy
+        )
         val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tblName))
 
         // A column that has not yet generated values does not have a high watermark.
@@ -425,7 +437,7 @@ trait IdentityColumnSuiteBase extends IdentityColumnTestUtils {
                 incrementBy = Some(increment)),
               TestColumnSpec(colName = "value", dataType = StringType)
             ),
-            partitionedBy = Nil,
+            partitionedBy = partitionedBy,
             tblProperties = Map.empty
           )
           assert(getHighWaterMark(deltaLog.update(), colName = "id").isEmpty)

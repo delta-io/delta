@@ -20,6 +20,7 @@ import java.util.concurrent.TimeUnit
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaConfigs._
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.sources.DeltaSQLConf._
 
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -154,13 +155,13 @@ class DropColumnMappingFeatureSuite extends RemoveColumnMappingSuiteUtils {
     val comment = "test comment"
     sql(s"ALTER TABLE $testTableName ALTER COLUMN $logicalColumnName COMMENT '$comment'")
 
-    val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName = testTableName))
-    val originalSnapshot = deltaLog.update()
+    val table = DeltaTableV2(spark, TableIdentifier(tableName = testTableName), "")
+    val originalSnapshot = table.initialSnapshot
 
     assert(originalSnapshot.schema.head.getComment().get == comment,
       "Renamed column should preserve comment.")
     val originalFiles = getFiles(originalSnapshot)
-    val startingVersion = deltaLog.update().version
+    val startingVersion = originalSnapshot.version
 
     val e = intercept[DeltaTableFeatureException] {
       dropColumnMappingTableFeature()
@@ -177,7 +178,7 @@ class DropColumnMappingFeatureSuite extends RemoveColumnMappingSuiteUtils {
 
     verifyRewrite(
       unsetTableProperty = true,
-      deltaLog,
+      table,
       originalFiles,
       startingVersion,
       originalData = originalData,

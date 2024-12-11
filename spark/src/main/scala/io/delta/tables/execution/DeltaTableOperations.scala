@@ -30,8 +30,8 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{functions, Column, DataFrame}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.analysis.{UnresolvedAttribute, UnresolvedRelation, UnresolvedTable}
-import org.apache.spark.sql.catalyst.analysis.UnresolvedTableImplicits._
+import org.apache.spark.sql.catalyst.analysis.{UnresolvedAttribute, UnresolvedRelation}
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.connector.catalog.Identifier
@@ -54,9 +54,9 @@ trait DeltaTableOperations extends AnalysisHelper { self: io.delta.tables.DeltaT
   protected def executeHistory(
       deltaLog: DeltaLog,
       limit: Option[Int] = None,
-      tableId: Option[TableIdentifier] = None): DataFrame = withActiveSession(sparkSession) {
+      catalogTable: Option[CatalogTable] = None): DataFrame = withActiveSession(sparkSession) {
     val history = deltaLog.history
-    sparkSession.createDataFrame(history.getHistory(limit))
+    sparkSession.createDataFrame(history.getHistory(limit, catalogTable))
   }
 
   protected def executeDetails(
