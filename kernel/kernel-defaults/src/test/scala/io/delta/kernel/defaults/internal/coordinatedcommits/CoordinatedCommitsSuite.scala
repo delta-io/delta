@@ -91,7 +91,7 @@ class CoordinatedCommitsSuite extends DeltaTableWriteSuiteBase
         tableConf = handler.registerTable(
           logPath.toString,
           version - 1L,
-          CoordinatedCommitsUtils.convertMetadataToAbstractMetadata(getEmptyMetadata),
+          getEmptyMetadata,
           CoordinatedCommitsUtils.convertProtocolToAbstractProtocol(getProtocol(1, 1)))
         val tableConfString = if (tableConfToOverwrite != null) {
           tableConfToOverwrite

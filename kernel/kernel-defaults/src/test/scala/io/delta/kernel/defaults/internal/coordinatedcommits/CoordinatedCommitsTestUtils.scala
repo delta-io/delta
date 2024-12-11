@@ -43,11 +43,11 @@ trait CoordinatedCommitsTestUtils {
   def getEmptyMetadata: Metadata = {
     new Metadata(
       util.UUID.randomUUID().toString,
-      Optional.empty(),
-      Optional.empty(),
+      Optional.empty(), /* name */
+      Optional.empty(), /* description */
       new Format(),
       "",
-      null,
+      new StructType(),
       stringArrayValue(Collections.emptyList()),
       Optional.empty(),
       VectorUtils.stringStringMapValue(Collections.emptyMap())
@@ -122,9 +122,9 @@ trait CoordinatedCommitsTestUtils {
     val newMetadata = oldMetadata.withNewConfiguration(newMetadataConfiguration.asJava)
     new UpdatedActions(
       CoordinatedCommitsUtils.convertCommitInfoToAbstractCommitInfo(commitInfo),
-      CoordinatedCommitsUtils.convertMetadataToAbstractMetadata(newMetadata),
+      newMetadata,
       CoordinatedCommitsUtils.convertProtocolToAbstractProtocol(getProtocol(3, 7)),
-      CoordinatedCommitsUtils.convertMetadataToAbstractMetadata(oldMetadata),
+      oldMetadata,
       CoordinatedCommitsUtils.convertProtocolToAbstractProtocol(getProtocol(3, 7)))
   }
 
