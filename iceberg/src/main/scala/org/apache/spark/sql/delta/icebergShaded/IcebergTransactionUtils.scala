@@ -194,7 +194,7 @@ object IcebergTransactionUtils
         val logicalPartCol = partitionPath.get(i).name()
         val physicalPartKey = logicalToPhysicalPartitionNames(logicalPartCol)
         // ICEBERG_NULL_PARTITION_VALUE is referred in Iceberg lib to mark NULL partition value
-        val partValue = Option(f.partitionValues(physicalPartKey))
+        val partValue = Option(f.partitionValues.getOrElse(physicalPartKey, null))
           .getOrElse(ICEBERG_NULL_PARTITION_VALUE)
         val partitionColumnDataType = nameToDataTypes(logicalPartCol)
         val icebergPartitionValue =
