@@ -28,8 +28,8 @@ iceberg_lib_dir_name = "lib"
 iceberg_src_dir_name = "iceberg_src" # this is a git dir
 iceberg_patches_dir_name = "iceberg_src_patches"
 
-iceberg_src_commit_hash = "ede085d0f7529f24acd0c81dd0a43f7bb969b763"
-iceberg_src_branch = "main"  # only this branch will be downloaded
+iceberg_src_commit_hash = "229d8f6fcd109e6c8943ea7cbb41dab746c6d0ed"
+iceberg_src_branch = "1.6.x"  # only this branch will be downloaded
 
 # Relative to iceberg_src directory.
 # We use * because after applying the patches, a random git hash will be appended to each jar name.
