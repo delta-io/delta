@@ -386,7 +386,7 @@ The histogram bins correspond to the following ranges:
 - Bin 5: [10000, 99999] (files with 10,000-99,999 deleted records)
 - Bin 6: [100000, 999999] (files with 100,000-999,999 deleted records)
 - Bin 7: [1000000, 9999999] (files with 1,000,000-9,999,999 deleted records)
-- Bin 8: [10000000, 2147483646] (files with 10,000,000 to 2147483647 (i.e. Int.MaxValue-1 in Java) deleted records)
+- Bin 8: [10000000, 2147483646] (files with 10,000,000 to 2147483646 (i.e. Int.MaxValue-1 in Java) deleted records)
 - Bin 9: [2147483647, 9,223,372,036,854,775,807] (files with 2147483647 or more deleted records)
 
 This histogram allows analyzing the distribution of deleted records across files in a Delta table, which can be useful for monitoring and optimizing deletion patterns.
