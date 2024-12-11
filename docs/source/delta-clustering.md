@@ -103,9 +103,9 @@ In <Delta> 3.3 and above, you can force reclustering of all records in a table w
 OPTIMIZE table_name FULL;
 ```
 
-.. important:: Running `OPTIMIZE FULL` reclusters all existing data as necessary. For large tables that have not previously been clustered on the specified keys, this operation might take hours.
+.. important:: Running `OPTIMIZE FULL` reclusters all existing data as necessary. For large tables that have not previously been clustered on the specified columns, this operation might take hours.
 
-Run `OPTIMIZE FULL` when you enable clustering for the first time or change clustering keys. If you have previously run `OPTIMIZE FULL` and there has been no change to clustering keys, `OPTIMIZE FULL` runs the same as `OPTIMIZE`. Always use `OPTIMIZE FULL` to ensure that data layout reflects the current clustering keys.
+Run `OPTIMIZE FULL` when you change clustering columns. If you have previously run `OPTIMIZE FULL` and there has been no change to clustering columns, `OPTIMIZE FULL` runs the same as `OPTIMIZE`. Always use `OPTIMIZE FULL` to ensure that data layout reflects the current clustering columns.
 
 ## Read data from a clustered table
 
