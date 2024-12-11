@@ -33,7 +33,7 @@ The following <Delta> features break forward compatibility. Features are enabled
 
 ## What is a table protocol specification?
 
-Every Delta table has a protocol specification which indicates the set of features that the table supports. The protocol specification is used by applications that read or write the table to determine if they can handle all the features that the table supports. If an application does not know how to handle a feature that is listed as supported in the protocol of a table, then that application is not be able to read or write that table.
+Every Delta table has a protocol specification which indicates the set of features that the table supports. The protocol specification is used by applications that read or write the table to determine if they can handle all the features that the table supports. If an application does not know how to handle a feature that is listed as supported in the protocol of a table, then that application is not able to read or write that table.
 
 The protocol specification is separated into two components: the *read protocol* and the *write protocol*.
 
@@ -56,7 +56,7 @@ Some features require upgrading both the read protocol and the write protocol. O
 
 As an example, support for `CHECK` constraints is a write protocol feature: only writing applications need to know about `CHECK` constraints and enforce them. 
 
-In contrast, column mapping requires upgrading both the read and write protocols. Because the data is stored differently in the table, reader applications must understand column mapping so they can read the data correctly.
+In contrast, column mapping requires upgrading both the read and write protocols. Because the data is stored differently in the table, reader applications must understand column mapping, so they can read the data correctly.
 
 For more on upgrading, see [_](#upgrade).
 

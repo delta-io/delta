@@ -117,7 +117,7 @@ Sometimes you may want to replace a Delta table. For example:
 While you can delete the entire directory of a Delta table and create a new table on the same path, it's *not recommended* because:
 
 - Deleting a directory is not efficient. A directory containing very large files can take hours or even days to delete.
-- You lose all of content in the deleted files; it's hard to recover if you delete the wrong table.
+- You lose all content in the deleted files; it's hard to recover if you delete the wrong table.
 - The directory deletion is not atomic. While you are deleting the table a concurrent query reading the table can fail or see a partial table.
 
 If you don't need to change the table schema, you can [delete](delta-update.md#delete-from-a-table) data from a Delta table and insert your new data, or [update](delta-update.md#update-a-table) the table to fix the incorrect values.
@@ -184,7 +184,7 @@ You should not use [Spark caching](optimizations/delta-cache.md#delta-and-rdd-ca
 
 - You lose any data skipping that can come from additional filters added on top of the cached `DataFrame`.
 
-- The data that gets cached may not be updated if the table is accessed using a different identifier (for example, you do `spark.table(x).cache()` but then write to the table using `spark.write.save(/some/path)`.
+- The data that gets cached may not be updated if the table is accessed using a different identifier (for example, you do `spark.table(x).cache()` but then write to the table using `spark.write.save(/some/path)`).
 
 .. <Delta> replace:: Delta Lake
 .. <AS> replace:: Apache Spark

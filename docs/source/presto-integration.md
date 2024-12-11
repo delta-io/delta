@@ -113,7 +113,7 @@ The <PrestoAnd> integration has known limitations in its behavior.
 
 ### Data consistency
 
-Whenever <Delta> generates updated manifests, it atomically overwrites existing manifest files. Therefore, <PrestoAnd> will always see a consistent view of the data files; it will see all of the old version files or all of the new version files. However, the granularity of the consistency guarantees depends on whether or not the table is partitioned.
+Whenever <Delta> generates updated manifests, it atomically overwrites existing manifest files. Therefore, <PrestoAnd> will always see a consistent view of the data files; it will see all the old version files or all of the new version files. However, the granularity of the consistency guarantees depends on whether the table is partitioned.
 
 - **Unpartitioned tables**: All the files names are written in one manifest file which is updated atomically. In this case <PrestoAnd> will see full table snapshot consistency.
 
@@ -123,7 +123,7 @@ Depending on what storage system you are using for Delta tables, it is possible 
 
 ### Performance
 
-Very large numbers of files can hurt the performance of <PrestoAnd>. Hence it is recommended that you [compact the files](best-practices.md#delta-compact-files) of the table before generating the manifests. The number of files should not exceed 1000 (for the entire unpartitioned table or for each partition in a partitioned table).
+Very large numbers of files can hurt the performance of <PrestoAnd>. Hence, it is recommended that you [compact the files](best-practices.md#delta-compact-files) of the table before generating the manifests. The number of files should not exceed 1000 (for the entire unpartitioned table or for each partition in a partitioned table).
 
 ### Schema evolution
 
