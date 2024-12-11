@@ -2859,7 +2859,7 @@
   },
   "DELTA_UNSUPPORTED_SCHEMA_DURING_READ" : {
     "message" : [
-      "Delta does not support specifying the schema at read time."
+      "Delta does not support specifying the schema at read time, unless it's the same as the actual table schema."
     ],
     "sqlState" : "0AKDC"
   },
