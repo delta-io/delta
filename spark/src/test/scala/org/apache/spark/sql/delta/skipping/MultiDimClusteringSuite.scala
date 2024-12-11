@@ -21,6 +21,7 @@ import java.io.{File, FilenameFilter}
 import scala.util.Random
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf._
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
