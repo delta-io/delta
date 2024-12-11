@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.DeletedRecordCountsHistogram
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.encoders.encoderFor
@@ -45,6 +46,10 @@ object DeltaUDF {
   def stringFromMap(f: Map[String, String] => String): UserDefinedFunction =
     createUdfFromTemplateUnsafe(stringFromMapTemplate, f, udf(f))
 
+  def deletedRecordCountsHistogramFromArrayLong(
+      f: Array[Long] => DeletedRecordCountsHistogram): UserDefinedFunction =
+    createUdfFromTemplateUnsafe(deletedRecordCountsHistogramFromArrayLongTemplate, f, udf(f))
+
   def booleanFromMap(f: Map[String, String] => Boolean): UserDefinedFunction =
     createUdfFromTemplateUnsafe(booleanFromMapTemplate, f, udf(f))
 
@@ -64,6 +69,10 @@ object DeltaUDF {
 
   private lazy val stringFromMapTemplate =
     udf((_: Map[String, String]) => "").asInstanceOf[SparkUserDefinedFunction]
+
+  private lazy val deletedRecordCountsHistogramFromArrayLongTemplate =
+    udf((_: Array[Long]) => DeletedRecordCountsHistogram(Array.empty))
+      .asInstanceOf[SparkUserDefinedFunction]
 
   private lazy val booleanFromMapTemplate =
     udf((_: Map[String, String]) => true).asInstanceOf[SparkUserDefinedFunction]
