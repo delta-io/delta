@@ -563,6 +563,7 @@ class CheckpointsSuite
 
       // Copy the source2 DV table to a temporary directory, so that we do updates to it
       FileUtils.copyDirectory(source, target)
+      import testImplicits._
 
       if (v2Checkpoint) {
         spark.sql(s"ALTER TABLE delta.`${target.getAbsolutePath}` SET TBLPROPERTIES " +
@@ -571,11 +572,24 @@ class CheckpointsSuite
 
       sql(s"ALTER TABLE delta.`${target.getAbsolutePath}` " +
         s"SET TBLPROPERTIES (${DeltaConfigs.CHECKPOINT_INTERVAL.key} = 10)")
+
+      def listFiles(file: File): Seq[File] = {
+        if (file.isDirectory) {
+          file.listFiles().flatMap(listFiles)
+        } else {
+          Seq(file)
+        }
+      }
+      // scalastyle:off println
+      println("TODO: printing all files before insert")
+      listFiles(target).foreach(println)
       def insertData(data: String): Unit = {
         spark.sql(s"INSERT INTO TABLE delta.`${target.getAbsolutePath}` $data")
       }
       val newData = Seq.range(3000, 3010)
       newData.foreach { i => insertData(s"VALUES($i)") }
+      println("TODO: printing all files after insert")
+      listFiles(target).foreach(println)
 
       // Check the target file has checkpoint generated
       val deltaLog = DeltaLog.forTable(spark, target.getAbsolutePath)
@@ -595,7 +609,6 @@ class CheckpointsSuite
         (DeletionVectorsSuite.expectedTable1DataV4 ++ newData).toSeq.toDF())
     }
   }
-
 
 
   testDifferentV2Checkpoints(s"V2 Checkpoint compat file equivalency to normal V2 Checkpoint") {
