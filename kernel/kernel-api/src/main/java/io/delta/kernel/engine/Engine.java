@@ -17,8 +17,6 @@
 package io.delta.kernel.engine;
 
 import io.delta.kernel.annotation.Evolving;
-import java.util.Collections;
-import java.util.List;
 import java.util.Map;
 
 /**
@@ -78,9 +76,4 @@ public interface Engine {
    */
   CommitCoordinatorClientHandler getCommitCoordinatorClientHandler(
       String name, Map<String, String> conf);
-
-  /** Get the engine's {@link MetricsReporter} instances to push reports to. */
-  default List<MetricsReporter> getMetricsReporters() {
-    return Collections.emptyList();
-  };
 }
