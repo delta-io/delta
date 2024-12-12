@@ -120,11 +120,24 @@ class CheckpointsSuite
 
       sql(s"ALTER TABLE delta.`${target.getAbsolutePath}` " +
         s"SET TBLPROPERTIES (${DeltaConfigs.CHECKPOINT_INTERVAL.key} = 10)")
+
+      def listFiles(file: File): Seq[File] = {
+        if (file.isDirectory) {
+          file.listFiles().flatMap(listFiles)
+        } else {
+          Seq(file)
+        }
+      }
+      // scalastyle:off println
+      println("TODO: printing all files before insert")
+      listFiles(target).foreach(println)
       def insertData(data: String): Unit = {
         spark.sql(s"INSERT INTO TABLE delta.`${target.getAbsolutePath}` $data")
       }
       val newData = Seq.range(3000, 3010)
       newData.foreach { i => insertData(s"VALUES($i)") }
+      println("TODO: printing all files after insert")
+      listFiles(target).foreach(println)
 
       // Check the target file has checkpoint generated
       val deltaLog = DeltaLog.forTable(spark, target.getAbsolutePath)
