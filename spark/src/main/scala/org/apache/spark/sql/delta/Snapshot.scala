@@ -579,13 +579,13 @@ class Snapshot(
       .orElse(Option.when(_computedStateTriggered)(domainMetadata)),
     numDeletedRecordsOpt = checksumOpt.flatMap(_.numDeletedRecordsOpt)
       .orElse(Option.when(_computedStateTriggered)(numDeletedRecordsOpt).flatten)
-      .filter(_ => deletionVectorMetricsEnabled),
+      .filter(_ => deletionVectorsReadableAndMetricsEnabled),
     numDeletionVectorsOpt = checksumOpt.flatMap(_.numDeletionVectorsOpt)
       .orElse(Option.when(_computedStateTriggered)(numDeletionVectorsOpt).flatten)
-      .filter(_ => deletionVectorMetricsEnabled),
+      .filter(_ => deletionVectorsReadableAndMetricsEnabled),
     deletedRecordCountsHistogramOpt = checksumOpt.flatMap(_.deletedRecordCountsHistogramOpt)
       .orElse(Option.when(_computedStateTriggered)(deletedRecordCountsHistogramOpt).flatten)
-      .filter(_ => deletionVectorMetricsEnabled && deletionVectorHistogramEnabled),
+      .filter(_ => deletionVectorsReadableAndHistogramEnabled),
     histogramOpt = checksumOpt.flatMap(_.histogramOpt)
   )
 

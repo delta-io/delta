@@ -213,17 +213,17 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
   def deletedRecordCountsHistogramOpt: Option[DeletedRecordCountsHistogram] =
     computedState.deletedRecordCountsHistogramOpt
 
-  protected def deletionVectorMetricsEnabled: Boolean = {
+  protected def deletionVectorsReadableAndMetricsEnabled: Boolean = {
     val checksumDVMetricsEnabled =
       spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CHECKSUM_DV_METRICS_ENABLED)
     val dvsReadable = DeletionVectorUtils.deletionVectorsReadable(snapshotToScan)
     checksumDVMetricsEnabled && dvsReadable
   }
 
-  protected def deletionVectorHistogramEnabled: Boolean = {
+  protected def deletionVectorsReadableAndHistogramEnabled: Boolean = {
     val deletedRecordCountsHistogramEnabled =
       spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_DELETED_RECORD_COUNTS_HISTOGRAM_ENABLED)
-    deletionVectorMetricsEnabled && deletedRecordCountsHistogramEnabled
+    deletionVectorsReadableAndMetricsEnabled && deletedRecordCountsHistogramEnabled
   }
 
   /** Generate a default SnapshotState of a new table given the table metadata and the protocol. */
