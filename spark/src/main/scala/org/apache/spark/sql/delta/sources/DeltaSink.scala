@@ -176,13 +176,17 @@ case class DeltaSink(
 
     if (canOverwriteSchema) return dataSchema
 
+    val typeWideningMode = if (canMergeSchema && TypeWidening.isEnabled(protocol, metadata)) {
+        TypeWideningMode.TypeEvolution(
+          uniformIcebergEnabled = UniversalFormat.icebergEnabled(metadata))
+      } else {
+        TypeWideningMode.NoTypeWidening
+      }
     SchemaMergingUtils.mergeSchemas(
       metadata.schema,
       dataSchema,
       allowImplicitConversions = true,
-      shouldWidenType =
-        canMergeSchema && TypeWidening.isEnabled(protocol, metadata) &&
-          TypeWidening.isTypeChangeSupportedForSchemaEvolution(_, _, metadata)
+      typeWideningMode = typeWideningMode
     )
   }
 

@@ -68,7 +68,7 @@ object TypeWidening {
    * It is the responsibility of the caller to recurse into structs, maps and arrays.
    */
   def isTypeChangeSupported(fromType: AtomicType, toType: AtomicType): Boolean =
-    TypeWideningShims.isTypeChangeSupported(fromType, toType)
+    TypeWideningShims.isTypeChangeSupported(fromType = fromType, toType = toType)
 
   /**
    * Returns whether the given type change can be applied during schema evolution. Only a
@@ -78,18 +78,13 @@ object TypeWidening {
       fromType: AtomicType,
       toType: AtomicType,
       uniformIcebergEnabled: Boolean): Boolean =
-    TypeWideningShims.isTypeChangeSupportedForSchemaEvolution(fromType, toType) &&
-      (!uniformIcebergEnabled || isTypeChangeSupportedByIceberg(fromType, toType))
-
-  /**
-   * Alias for the above method extracting `uniformIcebergEnabled` value from the table metadata.
-   */
-  def isTypeChangeSupportedForSchemaEvolution(
-      fromType: AtomicType,
-      toType: AtomicType,
-      metadata: Metadata): Boolean =
-    isTypeChangeSupportedForSchemaEvolution(
-      fromType, toType, uniformIcebergEnabled = UniversalFormat.icebergEnabled(metadata))
+    TypeWideningShims.isTypeChangeSupportedForSchemaEvolution(
+      fromType = fromType,
+      toType = toType
+    ) && (
+      !uniformIcebergEnabled ||
+        isTypeChangeSupportedByIceberg(fromType = fromType, toType = toType)
+    )
 
   /**
    * Returns whether the given type change is supported by Iceberg, and by extension can be read

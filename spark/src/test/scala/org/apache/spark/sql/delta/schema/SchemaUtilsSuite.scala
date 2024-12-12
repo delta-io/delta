@@ -22,7 +22,7 @@ import java.util.regex.Pattern
 
 import scala.annotation.tailrec
 
-import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaLog, DeltaTestUtils, TypeWidening}
+import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaLog, DeltaTestUtils, TypeWideningMode}
 import org.apache.spark.sql.delta.RowCommitVersion
 import org.apache.spark.sql.delta.RowId
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -2433,17 +2433,16 @@ class SchemaUtilsSuite extends QueryTest
     // Array root type
     val base1 = ArrayType(new StructType().add("a", IntegerType))
     val update1 = ArrayType(new StructType().add("b", IntegerType))
-
-    assert(
+    val mergedType1 =
       mergeDataTypes(
         current = base1,
         update = update1,
         allowImplicitConversions = false,
         keepExistingType = false,
-        shouldWidenType = (_, _) => false,
+        typeWideningMode = TypeWideningMode.NoTypeWidening,
         caseSensitive = false,
-        allowOverride = false) ===
-      ArrayType(new StructType().add("a", IntegerType).add("b", IntegerType)))
+        allowOverride = false)
+    assert(mergedType1 === ArrayType(new StructType().add("a", IntegerType).add("b", IntegerType)))
 
     // Map root type
     val base2 = MapType(
@@ -2454,16 +2453,16 @@ class SchemaUtilsSuite extends QueryTest
       new StructType().add("b", IntegerType),
       new StructType().add("c", IntegerType)
     )
-
-    assert(
+    val mergedType2 =
       mergeDataTypes(
         current = base2,
         update = update2,
         allowImplicitConversions = false,
         keepExistingType = false,
-        shouldWidenType = (_, _) => false,
+        typeWideningMode = TypeWideningMode.NoTypeWidening,
         caseSensitive = false,
-        allowOverride = false) ===
+        allowOverride = false)
+    assert(mergedType2 ===
       MapType(
         new StructType().add("a", IntegerType).add("b", IntegerType),
         new StructType().add("b", IntegerType).add("c", IntegerType)
@@ -2474,34 +2473,34 @@ class SchemaUtilsSuite extends QueryTest
     // override root type
     val base1 = new StructType().add("a", IntegerType)
     val update1 = ArrayType(LongType)
-
-    assert(
+    val mergedSchema1 =
       mergeDataTypes(
         current = base1,
         update = update1,
         allowImplicitConversions = false,
         keepExistingType = false,
-        shouldWidenType = (_, _) => false,
+        typeWideningMode = TypeWideningMode.NoTypeWidening,
         caseSensitive = false,
-        allowOverride = true) === ArrayType(LongType))
+        allowOverride = true)
+    assert(mergedSchema1 === ArrayType(LongType))
 
     // override nested type
     val base2 = ArrayType(new StructType().add("a", IntegerType).add("b", StringType))
     val update2 = ArrayType(new StructType().add("a", MapType(StringType, StringType)))
-
-    assert(
+    val mergedSchema2 =
       mergeDataTypes(
         current = base2,
         update = update2,
         allowImplicitConversions = false,
         keepExistingType = false,
-        shouldWidenType = (_, _) => false,
+        typeWideningMode = TypeWideningMode.NoTypeWidening,
         caseSensitive = false,
-        allowOverride = true) ===
+        allowOverride = true)
+    assert(mergedSchema2 ===
       ArrayType(new StructType().add("a", MapType(StringType, StringType)).add("b", StringType)))
   }
 
-  test("keepExistingType and shouldWidenType both true allows both widening and " +
+  test("keepExistingType and typeWideningMode both set allows both widening and " +
     "preserving non-widenable existing types") {
     val base = new StructType()
       .add("widened", ShortType)
@@ -2529,15 +2528,15 @@ class SchemaUtilsSuite extends QueryTest
       .add("map", MapType(IntegerType, IntegerType))
       .add("array", ArrayType(StringType))
       .add("nonwidened", IntegerType)
-    assert(
+
+    val mergedSchema =
       mergeSchemas(
         base,
         update,
-        shouldWidenType =
-          TypeWidening.isTypeChangeSupportedForSchemaEvolution(_, _, uniformIcebergEnabled = false),
+        typeWideningMode = TypeWideningMode.TypeEvolution(uniformIcebergEnabled = false),
         keepExistingType = true
-      ) === expected
-    )
+      )
+    assert(mergedSchema === expected)
   }
 
   ////////////////////////////

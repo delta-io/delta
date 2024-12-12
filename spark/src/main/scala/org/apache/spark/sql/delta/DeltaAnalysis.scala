@@ -873,7 +873,7 @@ class DeltaAnalysis(session: SparkSession)
       if (i < targetAttrs.length) {
         val targetAttr = targetAttrs(i)
         addCastToColumn(attr, targetAttr, deltaTable.name(),
-          shouldWidenType = shouldWidenType(deltaTable, writeOptions)
+          typeWideningMode = getTypeWideningMode(deltaTable, writeOptions)
         )
       } else {
         attr
@@ -913,7 +913,7 @@ class DeltaAnalysis(session: SparkSession)
           throw DeltaErrors.missingColumn(attr, targetAttrs)
         }
       addCastToColumn(attr, targetAttr, deltaTable.name(),
-        shouldWidenType = shouldWidenType(deltaTable, writeOptions)
+        typeWideningMode = getTypeWideningMode(deltaTable, writeOptions)
       )
     }
     Project(project, query)
@@ -923,16 +923,17 @@ class DeltaAnalysis(session: SparkSession)
       attr: NamedExpression,
       targetAttr: NamedExpression,
       tblName: String,
-      shouldWidenType: (AtomicType, AtomicType) => Boolean): NamedExpression = {
+      typeWideningMode: TypeWideningMode): NamedExpression = {
     val expr = (attr.dataType, targetAttr.dataType) match {
       case (s, t) if s == t =>
         attr
       case (s: StructType, t: StructType) if s != t =>
-        addCastsToStructs(tblName, attr, s, t, shouldWidenType)
+        addCastsToStructs(tblName, attr, s, t, typeWideningMode)
       case (ArrayType(s: StructType, sNull: Boolean), ArrayType(t: StructType, tNull: Boolean))
-          if s != t && sNull == tNull =>
-        addCastsToArrayStructs(tblName, attr, s, t, sNull, shouldWidenType)
-      case (s: AtomicType, t: AtomicType) if shouldWidenType(t, s) =>
+        if s != t && sNull == tNull =>
+        addCastsToArrayStructs(tblName, attr, s, t, sNull, typeWideningMode)
+      case (s: AtomicType, t: AtomicType)
+        if typeWideningMode.shouldWidenType(fromType = t, toType = s) =>
         // Keep the type from the query, the target schema will be updated to widen the existing
         // type to match it.
         attr
@@ -940,7 +941,7 @@ class DeltaAnalysis(session: SparkSession)
         if !DataType.equalsStructurally(s, t, ignoreNullability = true) =>
         // only trigger addCastsToMaps if exists differences like extra fields, renaming or type
         // differences.
-        addCastsToMaps(tblName, attr, s, t, shouldWidenType)
+        addCastsToMaps(tblName, attr, s, t, typeWideningMode)
       case _ =>
         getCastFunction(attr, targetAttr.dataType, targetAttr.name)
     }
@@ -953,16 +954,20 @@ class DeltaAnalysis(session: SparkSession)
    * to `toType` before ingestion and values are written using their origin `toType` type.
    * Otherwise, the table type `fromType` is retained and values are downcasted on write.
    */
-  private def shouldWidenType(
+  private def getTypeWideningMode(
       deltaTable: DeltaTableV2,
-      writeOptions: Map[String, String]): (AtomicType, AtomicType) => Boolean = {
+      writeOptions: Map[String, String]): TypeWideningMode = {
     val options = new DeltaOptions(deltaTable.options ++ writeOptions, conf)
     val snapshot = deltaTable.initialSnapshot
     val typeWideningEnabled = TypeWidening.isEnabled(snapshot.protocol, snapshot.metadata)
     val schemaEvolutionEnabled = options.canMergeSchema
 
-    typeWideningEnabled && schemaEvolutionEnabled &&
-      TypeWidening.isTypeChangeSupportedForSchemaEvolution(_, _, snapshot.metadata)
+    if (typeWideningEnabled && schemaEvolutionEnabled) {
+      TypeWideningMode.TypeEvolution(
+        uniformIcebergEnabled = UniversalFormat.icebergEnabled(snapshot.metadata))
+    } else {
+      TypeWideningMode.NoTypeWidening
+    }
   }
 
   /**
@@ -984,7 +989,7 @@ class DeltaAnalysis(session: SparkSession)
     val existingSchemaOutput = output.take(schema.length)
     existingSchemaOutput.map(_.name) != schema.map(_.name) ||
       !SchemaUtils.isReadCompatible(schema.asNullable, existingSchemaOutput.toStructType,
-        shouldWidenType = shouldWidenType(deltaTable, writeOptions))
+        typeWideningMode = getTypeWideningMode(deltaTable, writeOptions))
   }
 
   /**
@@ -1043,7 +1048,7 @@ class DeltaAnalysis(session: SparkSession)
     !SchemaUtils.isReadCompatible(
       specifiedTargetAttrs.toStructType.asNullable,
       query.output.toStructType,
-      shouldWidenType = shouldWidenType(deltaTable, writeOptions)
+      typeWideningMode = getTypeWideningMode(deltaTable, writeOptions)
     )
   }
 
@@ -1074,44 +1079,47 @@ class DeltaAnalysis(session: SparkSession)
       parent: NamedExpression,
       source: StructType,
       target: StructType,
-      shouldWidenType: (AtomicType, AtomicType) => Boolean): NamedExpression = {
+      typeWideningMode: TypeWideningMode): NamedExpression = {
     if (source.length < target.length) {
       throw DeltaErrors.notEnoughColumnsInInsert(
         tableName, source.length, target.length, Some(parent.qualifiedName))
     }
+    // Extracts the field at a given index in the target schema. Only matches if the index is valid.
+    object TargetIndex {
+      def unapply(index: Int): Option[StructField] = target.lift(index)
+    }
+
     val fields = source.zipWithIndex.map {
-      case (StructField(name, nested: StructType, _, metadata), i) if i < target.length =>
-        target(i).dataType match {
+      case (StructField(name, nested: StructType, _, metadata), i @ TargetIndex(targetField)) =>
+        targetField.dataType match {
           case t: StructType =>
-            val subField = Alias(GetStructField(parent, i, Option(name)), target(i).name)(
+            val subField = Alias(GetStructField(parent, i, Option(name)), targetField.name)(
               explicitMetadata = Option(metadata))
-            addCastsToStructs(tableName, subField, nested, t, shouldWidenType)
+            addCastsToStructs(tableName, subField, nested, t, typeWideningMode)
           case o =>
             val field = parent.qualifiedName + "." + name
-            val targetName = parent.qualifiedName + "." + target(i).name
+            val targetName = parent.qualifiedName + "." + targetField.name
             throw DeltaErrors.cannotInsertIntoColumn(tableName, field, targetName, o.simpleString)
         }
 
-      case (StructField(name, dt: AtomicType, _, _), i)
-        if i < target.length && target(i).dataType.isInstanceOf[AtomicType] &&
-          shouldWidenType(target(i).dataType.asInstanceOf[AtomicType], dt) =>
-        val targetAttr = target(i)
+      case (StructField(name, sourceType: AtomicType, _, _),
+            i @ TargetIndex(StructField(targetName, targetType: AtomicType, _, targetMetadata)))
+          if typeWideningMode.shouldWidenType(fromType = targetType, toType = sourceType) =>
         Alias(
           GetStructField(parent, i, Option(name)),
-          targetAttr.name)(explicitMetadata = Option(targetAttr.metadata))
-      case (other, i) if i < target.length =>
-        val targetAttr = target(i)
+          targetName)(explicitMetadata = Option(targetMetadata))
+      case (sourceField, i @ TargetIndex(targetField)) =>
         Alias(
-          getCastFunction(GetStructField(parent, i, Option(other.name)),
-            targetAttr.dataType, targetAttr.name),
-          targetAttr.name)(explicitMetadata = Option(targetAttr.metadata))
+          getCastFunction(GetStructField(parent, i, Option(sourceField.name)),
+            targetField.dataType, targetField.name),
+          targetField.name)(explicitMetadata = Option(targetField.metadata))
 
-      case (other, i) =>
+      case (sourceField, i) =>
         // This is a new column, so leave to schema evolution as is. Do not lose it's name so
         // wrap with an alias
         Alias(
-          GetStructField(parent, i, Option(other.name)),
-          other.name)(explicitMetadata = Option(other.metadata))
+          GetStructField(parent, i, Option(sourceField.name)),
+          sourceField.name)(explicitMetadata = Option(sourceField.metadata))
     }
     Alias(CreateStruct(fields), parent.name)(
       parent.exprId, parent.qualifier, Option(parent.metadata))
@@ -1123,10 +1131,10 @@ class DeltaAnalysis(session: SparkSession)
       source: StructType,
       target: StructType,
       sourceNullable: Boolean,
-      shouldWidenType: (AtomicType, AtomicType) => Boolean): Expression = {
+      typeWideningMode: TypeWideningMode): Expression = {
     val structConverter: (Expression, Expression) => Expression = (_, i) =>
       addCastsToStructs(
-        tableName, Alias(GetArrayItem(parent, i), i.toString)(), source, target, shouldWidenType)
+        tableName, Alias(GetArrayItem(parent, i), i.toString)(), source, target, typeWideningMode)
     val transformLambdaFunc = {
       val elementVar = NamedLambdaVariable("elementVar", source, sourceNullable)
       val indexVar = NamedLambdaVariable("indexVar", IntegerType, false)
@@ -1151,7 +1159,7 @@ class DeltaAnalysis(session: SparkSession)
       parent: NamedExpression,
       sourceMapType: MapType,
       targetMapType: MapType,
-      shouldWidenType: (AtomicType, AtomicType) => Boolean): Expression = {
+      typeWideningMode: TypeWideningMode): Expression = {
     val transformedKeys =
       if (sourceMapType.keyType != targetMapType.keyType) {
         // Create a transformation for the keys
@@ -1167,7 +1175,7 @@ class DeltaAnalysis(session: SparkSession)
               key,
               keyAttr,
               tableName,
-              shouldWidenType
+              typeWideningMode
             )
           LambdaFunction(castedKey, Seq(key))
         })
@@ -1190,7 +1198,7 @@ class DeltaAnalysis(session: SparkSession)
               value,
               valueAttr,
               tableName,
-              shouldWidenType
+              typeWideningMode
             )
           LambdaFunction(castedValue, Seq(value))
         })

@@ -220,14 +220,17 @@ object ImplicitMetadataOperation {
     } else {
       checkDependentExpressions(spark, txn.protocol, txn.metadata, dataSchema)
 
-      def shouldWidenType(from: AtomicType, to: AtomicType): Boolean =
-        TypeWidening.isEnabled(txn.protocol, txn.metadata) &&
-          TypeWidening.isTypeChangeSupportedForSchemaEvolution(from, to, txn.metadata)
+      val typeWideningMode = if (TypeWidening.isEnabled(txn.protocol, txn.metadata)) {
+        TypeWideningMode.TypeEvolution(
+          uniformIcebergEnabled = UniversalFormat.icebergEnabled(txn.metadata))
+      } else {
+        TypeWideningMode.NoTypeWidening
+      }
 
       SchemaMergingUtils.mergeSchemas(
         txn.metadata.schema,
         dataSchema,
-        shouldWidenType = shouldWidenType)
+        typeWideningMode = typeWideningMode)
     }
   }
 

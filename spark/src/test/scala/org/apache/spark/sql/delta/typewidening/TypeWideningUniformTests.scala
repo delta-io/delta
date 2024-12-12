@@ -191,12 +191,12 @@ trait TypeWideningUniformTests extends QueryTest
 
 
   for (insert <- Set(
-    // Cover only a subset of all INSERTs. There's little value in testing all of them and it
-    // quickly gets expensive.
-    SQLInsertByPosition(SaveMode.Append),
-    SQLInsertByName(SaveMode.Append),
-    DFv1InsertInto(SaveMode.Append),
-    StreamingInsert)) {
+      // Cover only a subset of all INSERTs. There's little value in testing all of them and it
+      // quickly gets expensive.
+      SQLInsertByPosition(SaveMode.Append),
+      SQLInsertByName(SaveMode.Append),
+      DFv1InsertInto(SaveMode.Append),
+      StreamingInsert)) {
     test(s"enable uniform then apply supported type change - ${insert.name}") {
       for (testCase <- icebergSupportedTestCases) {
         Given(s"changing ${testCase.fromType.sql} -> ${testCase.toType.sql}")

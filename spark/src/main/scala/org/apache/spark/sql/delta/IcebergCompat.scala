@@ -474,9 +474,8 @@ object CheckDeletionVectorDisabled extends IcebergCompatCheck {
  */
 object CheckTypeWideningSupported extends IcebergCompatCheck {
   override def apply(context: IcebergCompatContext): Unit = {
-    val skipCheck = context.spark.conf
-      .get(DeltaSQLConf.DELTA_TYPE_WIDENING_ALLOW_UNSUPPORTED_ICEBERG_TYPE_CHANGES.key)
-      .toBoolean
+    val skipCheck = context.spark.sessionState.conf
+      .getConf(DeltaSQLConf.DELTA_TYPE_WIDENING_ALLOW_UNSUPPORTED_ICEBERG_TYPE_CHANGES)
 
     if (skipCheck || !TypeWidening.isSupported(context.newestProtocol)) return
 
@@ -489,7 +488,7 @@ object CheckTypeWideningSupported extends IcebergCompatCheck {
           !TypeWidening.isTypeChangeSupportedByIceberg(fromType, toType) =>
         throw DeltaErrors.icebergCompatUnsupportedTypeWideningException(
           context.version, fieldPath, fromType, toType)
-      case _ =>
+      case _ => () // ignore
     }
   }
 }
