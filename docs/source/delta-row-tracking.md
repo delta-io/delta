@@ -37,7 +37,7 @@ You must explicitly enable row tracking using one of the following methods:
   CREATE TABLE graduate CLONE student;
   ```
 
-- **Existing table**: In Delta 3.3 and above, set the table property `'delta.enableRowTracking' = 'true'` in the `ALTER TABLE` command.
+- **Existing table**: Available from Delta 3.3 and above, set the table property `'delta.enableRowTracking' = 'true'` in the `ALTER TABLE` command.
 
   ```sql
   ALTER TABLE grade SET TBLPROPERTIES ('delta.enableRowTracking' = 'true');
