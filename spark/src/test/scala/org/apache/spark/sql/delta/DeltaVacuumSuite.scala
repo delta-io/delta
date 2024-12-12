@@ -512,14 +512,14 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
 
   testQuietly("basic case - SQL command on path-based tables with direct 'path'") {
     withEnvironment { (tempDir, _) =>
-      val table = DeltaTableV2(spark, new Path(tempDir))
+      val table = DeltaTableV2(spark, tempDir)
       vacuumSQLTest(table, tableName = s"'$tempDir'")
     }
   }
 
   testQuietly("basic case - SQL command on path-based table with delta.`path`") {
     withEnvironment { (tempDir, _) =>
-      val table = DeltaTableV2(spark, new Path(tempDir))
+      val table = DeltaTableV2(spark, tempDir)
       vacuumSQLTest(table, tableName = s"delta.`$tempDir`")
     }
   }
