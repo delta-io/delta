@@ -64,7 +64,7 @@ case class VacuumTableCommand(
     val inventory = inventoryTable.map(sparkSession.sessionState.analyzer.execute)
         .map(p => Some(getDeltaTable(p, "VACUUM").toDf(sparkSession)))
         .getOrElse(inventoryQuery.map(sparkSession.sql))
-    VacuumCommand.gc(sparkSession, deltaTable.deltaLog, dryRun, horizonHours,
+    VacuumCommand.gc(sparkSession, deltaTable, dryRun, horizonHours,
       inventory, vacuumType).collect()
   }
 }
@@ -77,8 +77,9 @@ object VacuumTableCommand {
       inventoryQuery: Option[String],
       horizonHours: Option[Double],
       dryRun: Boolean,
-      vacuumType: Option[String]): VacuumTableCommand = {
-    val child = UnresolvedDeltaPathOrIdentifier(path, table, "VACUUM")
+      vacuumType: Option[String],
+      options: Map[String, String]): VacuumTableCommand = {
+    val child = UnresolvedDeltaPathOrIdentifier(path, table, options, "VACUUM")
     val unresolvedInventoryTable = inventoryTable.map(rt => UnresolvedTable(rt.nameParts, "VACUUM"))
     VacuumTableCommand(child, horizonHours, unresolvedInventoryTable, inventoryQuery, dryRun,
       vacuumType)

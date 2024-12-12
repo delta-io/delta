@@ -1407,6 +1407,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         readSnapshot = snapshot,
         commitInfo = Some(commitInfo),
         readRowIdHighWatermark = readRowIdHighWatermark,
+        catalogTable = catalogTable,
         domainMetadata = domainMetadata,
         op = op)
 

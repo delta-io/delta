@@ -51,7 +51,7 @@ import org.apache.hadoop.fs.{FileStatus, Path}
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{QueryTest, Row, SparkSession}
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.util.ManualClock
+import org.apache.spark.util.{ManualClock, SystemClock}
 
 class CoordinatedCommitsSuite
     extends QueryTest

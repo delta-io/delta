@@ -35,6 +35,7 @@ import org.apache.hadoop.fs.FileStatus
 
 import org.apache.spark.internal.{MDC, MessageWithContext}
 import org.apache.spark.sql.{DataFrame, SparkSession}
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{Expression, ExpressionSet, Or}
 import org.apache.spark.sql.types.StructType
 
@@ -62,6 +63,7 @@ private[delta] case class CurrentTransactionInfo(
     val readSnapshot: Snapshot,
     val commitInfo: Option[CommitInfo],
     val readRowIdHighWatermark: Long,
+    val catalogTable: Option[CatalogTable],
     val domainMetadata: Seq[DomainMetadata],
     val op: DeltaOperations.Operation) {
 
@@ -151,7 +153,8 @@ private[delta] class ConflictChecker(
     spark: SparkSession,
     initialCurrentTransactionInfo: CurrentTransactionInfo,
     winningCommitFileStatus: FileStatus,
-    isolationLevel: IsolationLevel) extends DeltaLogging with ConflictCheckerPredicateElimination {
+    isolationLevel: IsolationLevel)
+  extends DeltaLogging with ConflictCheckerPredicateElimination {
 
   protected val winningCommitVersion = FileNames.deltaVersion(winningCommitFileStatus)
   protected val startTimeMs = System.currentTimeMillis()
@@ -249,7 +252,9 @@ private[delta] class ConflictChecker(
     val newProtocol = currentTransactionInfo.protocol
     val readProtocol = currentTransactionInfo.readSnapshot.protocol
     if (TableFeature.isProtocolRemovingFeatures(newProtocol, readProtocol)) {
-      val winningSnapshot = deltaLog.getSnapshotAt(winningCommitSummary.commitVersion)
+      val winningSnapshot = deltaLog.getSnapshotAt(
+        winningCommitSummary.commitVersion,
+        catalogTableOpt = currentTransactionInfo.catalogTable)
       val isDowngradeCommitValid = TableFeature.validateFeatureRemovalAtSnapshot(
         newProtocol = newProtocol,
         oldProtocol = readProtocol,
