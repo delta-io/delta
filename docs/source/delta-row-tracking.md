@@ -11,7 +11,7 @@ Row tracking allows <Delta> to track row-level lineage in a <Delta> table. When 
 
 - **Row commit versions** record the last version of the table in which the row was modified. A row is assigned a new version whenever it is modified using a `MERGE` or `UPDATE` statement.
 
-.. note:: This feature is available in <Delta> 3.2.0 and above. This feature is in experimental support mode with [_](#limitations).
+.. note:: This feature is available in <Delta> 3.2.0 and above. Enabling this feature on existing non-empty tables is available in <Delta> 3.3.0 and above.
 
 ## Enable row tracking
 
