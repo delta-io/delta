@@ -245,8 +245,8 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
       assert(
         e.getMessage
           .contains(
-            "Feature 'rowTracking' is supported and depends on feature `domainMetadata`"
-            + "but 'domainMetadata' is unsupported"
+            "Feature 'rowTracking' is supported and depends on feature 'domainMetadata',"
+            + " but 'domainMetadata' is unsupported"
           )
       )
     })

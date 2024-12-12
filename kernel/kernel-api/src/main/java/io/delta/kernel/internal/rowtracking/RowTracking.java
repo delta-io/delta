@@ -15,6 +15,8 @@
  */
 package io.delta.kernel.internal.rowtracking;
 
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+
 import io.delta.kernel.data.Row;
 import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.SnapshotImpl;
@@ -22,9 +24,9 @@ import io.delta.kernel.internal.TableFeatures;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.kernel.utils.DataFileStatistics;
 import java.io.IOException;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicLong;
 
 /** A collection of helper methods for working with row tracking. */
 public class RowTracking {
@@ -43,7 +45,6 @@ public class RowTracking {
    * watermark and increments the watermark accordingly. If a default row commit version is missing,
    * it assigns the provided commit version.
    *
-   * @param protocol the protocol to check for row tracking support
    * @param snapshot the current snapshot of the table
    * @param commitVersion the version of the commit for default row commit version assignment
    * @param dataActions the {@link CloseableIterable} of data actions to process
@@ -51,13 +52,11 @@ public class RowTracking {
    *     versions assigned
    */
   public static CloseableIterable<Row> assignBaseRowIdAndDefaultRowCommitVersion(
-      Protocol protocol,
-      SnapshotImpl snapshot,
-      long commitVersion,
-      CloseableIterable<Row> dataActions) {
-    if (!TableFeatures.isRowTrackingSupported(protocol)) {
-      return dataActions;
-    }
+      SnapshotImpl snapshot, long commitVersion, CloseableIterable<Row> dataActions) {
+    checkArgument(
+        TableFeatures.isRowTrackingSupported(snapshot.getProtocol()),
+        "Base row ID and default row commit version are assigned "
+            + "only when feature 'rowTracking' is supported.");
 
     return new CloseableIterable<Row>() {
       @Override
@@ -68,8 +67,8 @@ public class RowTracking {
       @Override
       public CloseableIterator<Row> iterator() {
         // Used to keep track of the current high watermark as we iterate through the data actions.
-        // Use a one-element array here to allow for mutation within the lambda.
-        final long[] currRowIdHighWatermark = {readRowIdHighWaterMark(snapshot)};
+        // Use an AtomicLong to allow for updating the high watermark in the lambda.
+        final AtomicLong currRowIdHighWatermark = new AtomicLong(readRowIdHighWaterMark(snapshot));
         return dataActions
             .iterator()
             .map(
@@ -83,9 +82,9 @@ public class RowTracking {
 
                   // Assign base row ID if missing
                   if (!addFile.getBaseRowId().isPresent()) {
-                    final long numRecords = getNumRecords(addFile);
-                    addFile = addFile.withNewBaseRowId(currRowIdHighWatermark[0] + 1L);
-                    currRowIdHighWatermark[0] += numRecords;
+                    final long numRecords = getNumRecordsOrThrow(addFile);
+                    addFile = addFile.withNewBaseRowId(currRowIdHighWatermark.get() + 1L);
+                    currRowIdHighWatermark.addAndGet(numRecords);
                   }
 
                   // Assign default row commit version if missing
@@ -104,30 +103,29 @@ public class RowTracking {
    * Emits a {@link DomainMetadata} action if the row ID high watermark has changed due to newly
    * processed {@link AddFile} actions.
    *
-   * @param protocol the protocol to check for row tracking support
    * @param snapshot the current snapshot of the table
    * @param dataActions the iterable of data actions that may update the high watermark
    */
   public static Optional<DomainMetadata> createNewHighWaterMarkIfNeeded(
-      Protocol protocol, SnapshotImpl snapshot, CloseableIterable<Row> dataActions) {
-    if (!TableFeatures.isRowTrackingSupported(protocol)) {
-      return Optional.empty();
-    }
+      SnapshotImpl snapshot, CloseableIterable<Row> dataActions) {
+    checkArgument(
+        TableFeatures.isRowTrackingSupported(snapshot.getProtocol()),
+        "Row ID high watermark is updated only when feature 'rowTracking' is supported.");
 
     final long prevRowIdHighWatermark = readRowIdHighWaterMark(snapshot);
-    // Use a one-element array here to allow for mutation within the lambda.
-    final long[] newRowIdHighWatermark = {prevRowIdHighWatermark};
+    // Use an AtomicLong to allow for updating the high watermark in the lambda
+    final AtomicLong newRowIdHighWatermark = new AtomicLong(prevRowIdHighWatermark);
 
     dataActions.forEach(
         row -> {
           if (!row.isNullAt(ADD_FILE_ORDINAL)) {
-            newRowIdHighWatermark[0] +=
-                getNumRecords(AddFile.fromRow(row.getStruct(ADD_FILE_ORDINAL)));
+            newRowIdHighWatermark.addAndGet(
+                getNumRecordsOrThrow(AddFile.fromRow(row.getStruct(ADD_FILE_ORDINAL))));
           }
         });
 
-    return (newRowIdHighWatermark[0] != prevRowIdHighWatermark)
-        ? Optional.of(new RowTrackingMetadataDomain(newRowIdHighWatermark[0]).toDomainMetadata())
+    return (newRowIdHighWatermark.get() != prevRowIdHighWatermark)
+        ? Optional.of(new RowTrackingMetadataDomain(newRowIdHighWatermark.get()).toDomainMetadata())
         : Optional.empty();
   }
 
@@ -151,10 +149,7 @@ public class RowTracking {
    * @param addFile the AddFile action
    * @return the number of records
    */
-  private static long getNumRecords(AddFile addFile) {
-    return addFile
-        .getStats()
-        .map(DataFileStatistics::getNumRecords)
-        .orElseThrow(DeltaErrors::rowIDAssignmentWithoutStats);
+  private static long getNumRecordsOrThrow(AddFile addFile) {
+    return addFile.getNumRecords().orElseThrow(DeltaErrors::rowIDAssignmentWithoutStats);
   }
 }

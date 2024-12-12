@@ -19,7 +19,6 @@ package io.delta.kernel.internal;
 import static io.delta.kernel.internal.DeltaErrors.*;
 import static io.delta.kernel.internal.TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED;
 
-import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.util.ColumnMapping;
@@ -146,9 +145,7 @@ public class TableFeatures {
         // By putting this check for row tracking here, it makes it easier to spot that row
         // tracking defines such a dependency that can be implicitly checked.
         if (isRowTrackingSupported(protocol) && !isDomainMetadataSupported(protocol)) {
-          throw new KernelException(
-              "Feature 'rowTracking' is supported and depends on feature `domainMetadata`"
-                  + "but 'domainMetadata' is unsupported");
+          throw DeltaErrors.rowTrackingSupportedWithDomainMetadataUnsupported();
         }
         break;
       default:

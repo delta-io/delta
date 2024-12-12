@@ -299,6 +299,12 @@ public final class DeltaErrors {
             + "when writing to a Delta table with the 'rowTracking' table feature supported");
   }
 
+  public static KernelException rowTrackingSupportedWithDomainMetadataUnsupported() {
+    return new KernelException(
+        "Feature 'rowTracking' is supported and depends on feature 'domainMetadata',"
+            + " but 'domainMetadata' is unsupported");
+  }
+
   /* ------------------------ HELPER METHODS ----------------------------- */
   private static String formatTimestamp(long millisSinceEpochUTC) {
     return new Timestamp(millisSinceEpochUTC).toInstant().toString();

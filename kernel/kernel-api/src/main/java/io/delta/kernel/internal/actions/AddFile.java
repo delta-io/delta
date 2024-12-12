@@ -16,10 +16,8 @@
 package io.delta.kernel.internal.actions;
 
 import static io.delta.kernel.internal.util.InternalUtils.relativizePath;
-import static io.delta.kernel.internal.util.InternalUtils.requireNonNull;
 import static io.delta.kernel.internal.util.PartitionUtils.serializePartitionMap;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
-import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.toMap;
 
 import io.delta.kernel.data.MapValue;
@@ -27,12 +25,15 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.util.InternalUtils;
+import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.DataFileStatistics;
 import io.delta.kernel.utils.DataFileStatus;
 import java.net.URI;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.IntStream;
 
@@ -106,13 +107,10 @@ public class AddFile {
   /**
    * Utility to generate an {@link AddFile} action from an 'AddFile' {@link Row}.
    *
-   * @param row the row to read
-   * @return the extracted {@link AddFile} action
+   * @throws NullPointerException if row is null
    */
   public static AddFile fromRow(Row row) {
-    if (row == null) {
-      return null;
-    }
+    Objects.requireNonNull(row, "Cannot generate an AddFile action from a null row");
 
     checkArgument(
         row.getSchema().equals(FULL_SCHEMA),
@@ -121,15 +119,17 @@ public class AddFile {
         row.getSchema());
 
     return new AddFile(
-        requireNonNull(row, COL_NAME_TO_ORDINAL.get("path"), "path")
+        InternalUtils.requireNonNull(row, COL_NAME_TO_ORDINAL.get("path"), "path")
             .getString(COL_NAME_TO_ORDINAL.get("path")),
-        requireNonNull(row, COL_NAME_TO_ORDINAL.get("partitionValues"), "partitionValues")
+        InternalUtils.requireNonNull(
+                row, COL_NAME_TO_ORDINAL.get("partitionValues"), "partitionValues")
             .getMap(COL_NAME_TO_ORDINAL.get("partitionValues")),
-        requireNonNull(row, COL_NAME_TO_ORDINAL.get("size"), "size")
+        InternalUtils.requireNonNull(row, COL_NAME_TO_ORDINAL.get("size"), "size")
             .getLong(COL_NAME_TO_ORDINAL.get("size")),
-        requireNonNull(row, COL_NAME_TO_ORDINAL.get("modificationTime"), "modificationTime")
+        InternalUtils.requireNonNull(
+                row, COL_NAME_TO_ORDINAL.get("modificationTime"), "modificationTime")
             .getLong(COL_NAME_TO_ORDINAL.get("modificationTime")),
-        requireNonNull(row, COL_NAME_TO_ORDINAL.get("dataChange"), "dataChange")
+        InternalUtils.requireNonNull(row, COL_NAME_TO_ORDINAL.get("dataChange"), "dataChange")
             .getBoolean(COL_NAME_TO_ORDINAL.get("dataChange")),
         Optional.ofNullable(
             row.isNullAt(COL_NAME_TO_ORDINAL.get("deletionVector"))
@@ -178,8 +178,8 @@ public class AddFile {
       Optional<Long> baseRowId,
       Optional<Long> defaultRowCommitVersion,
       Optional<DataFileStatistics> stats) {
-    this.path = requireNonNull(path, "path is null");
-    this.partitionValues = requireNonNull(partitionValues, "partitionValues is null");
+    this.path = Objects.requireNonNull(path, "path is null");
+    this.partitionValues = Objects.requireNonNull(partitionValues, "partitionValues is null");
     this.size = size;
     this.modificationTime = modificationTime;
     this.dataChange = dataChange;
@@ -220,12 +220,11 @@ public class AddFile {
     return stats;
   }
 
-  /**
-   * Creates a new AddFile instance with the specified base row ID.
-   *
-   * @param baseRowId the new base row ID to be assigned
-   * @return a new AddFile instance with the updated base row ID
-   */
+  public Optional<Long> getNumRecords() {
+    return stats.map(DataFileStatistics::getNumRecords);
+  }
+
+  /** Creates a new AddFile instance with the specified base row ID. */
   public AddFile withNewBaseRowId(long baseRowId) {
     return new AddFile(
         path,
@@ -240,12 +239,7 @@ public class AddFile {
         stats);
   }
 
-  /**
-   * Creates a new AddFile instance with the specified default row commit version.
-   *
-   * @param defaultRowCommitVersion the new default row commit version to be assigned
-   * @return a new AddFile instance with the updated default row commit version
-   */
+  /** Creates a new AddFile instance with the specified default row commit version. */
   public AddFile withNewDefaultRowCommitVersion(long defaultRowCommitVersion) {
     return new AddFile(
         path,
@@ -257,6 +251,60 @@ public class AddFile {
         tags,
         baseRowId,
         Optional.of(defaultRowCommitVersion),
+        stats);
+  }
+
+  @Override
+  public String toString() {
+    // Explicitly convert the partitionValues and tags to Java Maps
+    Map<String, String> partitionValuesJavaMap = VectorUtils.toJavaMap(this.partitionValues);
+    Optional<Map<String, String>> tagsJavaMap = this.tags.map(VectorUtils::toJavaMap);
+
+    StringBuilder sb = new StringBuilder();
+    sb.append("AddFile{");
+    sb.append("path='").append(path).append('\'');
+    sb.append(", partitionValues=").append(partitionValuesJavaMap);
+    sb.append(", size=").append(size);
+    sb.append(", modificationTime=").append(modificationTime);
+    sb.append(", dataChange=").append(dataChange);
+    sb.append(", deletionVector=").append(deletionVector);
+    sb.append(", tags=").append(tagsJavaMap);
+    sb.append(", baseRowId=").append(baseRowId);
+    sb.append(", defaultRowCommitVersion=").append(defaultRowCommitVersion);
+    sb.append(", stats=").append(stats);
+    sb.append('}');
+    return sb.toString();
+  }
+
+  @Override
+  public boolean equals(Object obj) {
+    if (this == obj) return true;
+    if (!(obj instanceof AddFile)) return false;
+    AddFile other = (AddFile) obj;
+    return size == other.size
+        && modificationTime == other.modificationTime
+        && dataChange == other.dataChange
+        && Objects.equals(path, other.path)
+        && Objects.equals(partitionValues, other.partitionValues)
+        && Objects.equals(deletionVector, other.deletionVector)
+        && Objects.equals(tags, other.tags)
+        && Objects.equals(baseRowId, other.baseRowId)
+        && Objects.equals(defaultRowCommitVersion, other.defaultRowCommitVersion)
+        && Objects.equals(stats, other.stats);
+  }
+
+  @Override
+  public int hashCode() {
+    return Objects.hash(
+        path,
+        partitionValues,
+        size,
+        modificationTime,
+        dataChange,
+        deletionVector,
+        tags,
+        baseRowId,
+        defaultRowCommitVersion,
         stats);
   }
 }
