@@ -37,7 +37,7 @@ You must explicitly enable row tracking using one of the following methods:
   CREATE TABLE graduate CLONE student;
   ```
 
-- **Existing table**: Set the table property `'delta.enableRowTracking' = 'true'` in the `ALTER TABLE` command.
+- **Existing table**: In Delta 3.3 and above, set the table property `'delta.enableRowTracking' = 'true'` in the `ALTER TABLE` command.
 
   ```sql
   ALTER TABLE grade SET TBLPROPERTIES ('delta.enableRowTracking' = 'true');
@@ -108,7 +108,6 @@ ALTER TABLE table_name SET TBLPROPERTIES (delta.enableRowTracking = false);
 The following limitations exist:
 
 - The row ids and row commit versions metadata fields cannot be accessed while reading the [Change data feed](/delta/delta-change-data-feed.md).
-- Row Tracking can currently only be enabled when creating the table or when the table is empty. Enabling row tracking on a non-empty table is currently not supported.
 - Once the Row Tracking feature is added to the table it cannot be removed without recreating the table.
 
 .. <Delta> replace:: Delta Lake
