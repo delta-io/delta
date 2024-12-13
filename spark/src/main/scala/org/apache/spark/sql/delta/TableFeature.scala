@@ -366,6 +366,7 @@ object TableFeature {
       RowTrackingFeature,
       InCommitTimestampTableFeature,
       VariantTypeTableFeature,
+      VariantShreddingTableFeature,
       CoordinatedCommitsTableFeature,
       CheckpointProtectionTableFeature)
     if (DeltaUtils.isTesting && testingFeaturesEnabled) {
@@ -620,6 +621,16 @@ object VariantTypeTableFeature extends ReaderWriterFeature(name = "variantType-p
   override def metadataRequiresFeatureToBeEnabled(
       protocol: Protocol, metadata: Metadata, spark: SparkSession): Boolean = {
     SchemaUtils.checkForVariantTypeColumnsRecursively(metadata.schema)
+  }
+}
+
+object VariantShreddingTableFeature extends ReaderWriterFeature(name = "variantShredding-preview")
+  with FeatureAutomaticallyEnabledByMetadata {
+  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+
+  override def metadataRequiresFeatureToBeEnabled(
+      protocol: Protocol, metadata: Metadata, spark: SparkSession): Boolean = {
+    DeltaConfigs.ENABLE_VARIANT_SHREDDING.fromMetaData(metadata)
   }
 }
 
