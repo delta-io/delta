@@ -178,7 +178,7 @@ case class DeltaSink(
 
     val typeWideningMode = if (canMergeSchema && TypeWidening.isEnabled(protocol, metadata)) {
         TypeWideningMode.TypeEvolution(
-          uniformIcebergEnabled = UniversalFormat.icebergEnabled(metadata))
+          uniformIcebergCompatibleOnly = UniversalFormat.icebergEnabled(metadata))
       } else {
         TypeWideningMode.NoTypeWidening
       }

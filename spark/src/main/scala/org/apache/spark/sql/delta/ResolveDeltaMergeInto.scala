@@ -297,7 +297,7 @@ object ResolveDeltaMergeInto {
         target.collectFirst {
           case DeltaTable(index) if TypeWidening.isEnabled(index.protocol, index.metadata) =>
             TypeWideningMode.TypeEvolution(
-              uniformIcebergEnabled = UniversalFormat.icebergEnabled(index.metadata))
+              uniformIcebergCompatibleOnly = UniversalFormat.icebergEnabled(index.metadata))
         }.getOrElse(TypeWideningMode.NoTypeWidening)
 
       // The implicit conversions flag allows any type to be merged from source to target if Spark

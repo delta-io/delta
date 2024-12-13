@@ -222,7 +222,7 @@ object ImplicitMetadataOperation {
 
       val typeWideningMode = if (TypeWidening.isEnabled(txn.protocol, txn.metadata)) {
         TypeWideningMode.TypeEvolution(
-          uniformIcebergEnabled = UniversalFormat.icebergEnabled(txn.metadata))
+          uniformIcebergCompatibleOnly = UniversalFormat.icebergEnabled(txn.metadata))
       } else {
         TypeWideningMode.NoTypeWidening
       }

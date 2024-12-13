@@ -949,10 +949,11 @@ class DeltaAnalysis(session: SparkSession)
   }
 
   /**
-   * Returns a mapping of (fromType, toType) to Boolean indicating whether `fromType` is eligible to
-   * be automatically widened to `toType` when ingesting data. If it is, the table schema is updated
-   * to `toType` before ingestion and values are written using their origin `toType` type.
-   * Otherwise, the table type `fromType` is retained and values are downcasted on write.
+   * Returns the type widening mode to use for the given delta table. A type widening mode indicates
+   * for (fromType, toType) tuples whether `fromType` is eligible to be automatically widened to
+   * `toType` when ingesting data. If it is, the table schema is updated to `toType` before
+   * ingestion and values are written using their original `toType` type. Otherwise, the table type
+   * `fromType` is retained and values are downcasted on write.
    */
   private def getTypeWideningMode(
       deltaTable: DeltaTableV2,
@@ -964,7 +965,7 @@ class DeltaAnalysis(session: SparkSession)
 
     if (typeWideningEnabled && schemaEvolutionEnabled) {
       TypeWideningMode.TypeEvolution(
-        uniformIcebergEnabled = UniversalFormat.icebergEnabled(snapshot.metadata))
+        uniformIcebergCompatibleOnly = UniversalFormat.icebergEnabled(snapshot.metadata))
     } else {
       TypeWideningMode.NoTypeWidening
     }

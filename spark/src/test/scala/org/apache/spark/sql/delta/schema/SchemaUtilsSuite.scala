@@ -2533,7 +2533,7 @@ class SchemaUtilsSuite extends QueryTest
       mergeSchemas(
         base,
         update,
-        typeWideningMode = TypeWideningMode.TypeEvolution(uniformIcebergEnabled = false),
+        typeWideningMode = TypeWideningMode.TypeEvolution(uniformIcebergCompatibleOnly = false),
         keepExistingType = true
       )
     assert(mergedSchema === expected)

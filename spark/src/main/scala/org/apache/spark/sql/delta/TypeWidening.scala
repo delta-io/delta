@@ -77,12 +77,12 @@ object TypeWidening {
   def isTypeChangeSupportedForSchemaEvolution(
       fromType: AtomicType,
       toType: AtomicType,
-      uniformIcebergEnabled: Boolean): Boolean =
+      uniformIcebergCompatibleOnly: Boolean): Boolean =
     TypeWideningShims.isTypeChangeSupportedForSchemaEvolution(
       fromType = fromType,
       toType = toType
     ) && (
-      !uniformIcebergEnabled ||
+      !uniformIcebergCompatibleOnly ||
         isTypeChangeSupportedByIceberg(fromType = fromType, toType = toType)
     )
 
