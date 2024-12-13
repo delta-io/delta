@@ -14,13 +14,12 @@
  * limitations under the License.
  */
 
-package io.delta.kernel.engine;
+package io.delta.kernel.internal.coordinatedcommits;
 
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.data.Row;
-import io.delta.kernel.engine.coordinatedcommits.*;
-import io.delta.kernel.engine.coordinatedcommits.actions.AbstractMetadata;
-import io.delta.kernel.engine.coordinatedcommits.actions.AbstractProtocol;
+import io.delta.kernel.internal.coordinatedcommits.actions.AbstractMetadata;
+import io.delta.kernel.internal.coordinatedcommits.actions.AbstractProtocol;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
 import java.util.Map;
