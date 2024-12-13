@@ -14,30 +14,20 @@
  * limitations under the License.
  */
 
-package io.delta.kernel.engine.coordinatedcommits;
+package io.delta.kernel.internal.coordinatedcommits.actions;
 
 import io.delta.kernel.annotation.Evolving;
 
 /**
- * Response container for {@link io.delta.kernel.engine.CommitCoordinatorClientHandler#commit}.
+ * Interface for objects that represents the base information for a commit. Commits need to provide
+ * an in-commit timestamp. This timestamp is used to specify the exact time the commit happened and
+ * determines the target version for time-based time travel queries.
  *
  * @since 3.3.0
  */
 @Evolving
-public class CommitResponse {
+public interface AbstractCommitInfo {
 
-  private final Commit commit;
-
-  public CommitResponse(Commit commit) {
-    this.commit = commit;
-  }
-
-  /**
-   * Get the commit object.
-   *
-   * @return the commit object.
-   */
-  public Commit getCommit() {
-    return commit;
-  }
+  /** Get the timestamp of the commit as millis after the epoch. */
+  long getCommitTimestamp();
 }
