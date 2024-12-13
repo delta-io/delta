@@ -14,29 +14,30 @@
  * limitations under the License.
  */
 
-package io.delta.kernel.engine.coordinatedcommits.actions;
+package io.delta.kernel.internal.coordinatedcommits;
 
 import io.delta.kernel.annotation.Evolving;
-import java.util.Set;
 
 /**
- * Interface for protocol actions in Delta. The protocol defines the requirements that readers and
- * writers of the table need to meet.
+ * Response container for {@link CommitCoordinatorClientHandler#commit}.
  *
  * @since 3.3.0
  */
 @Evolving
-public interface AbstractProtocol {
+public class CommitResponse {
 
-  /** The minimum reader version required to read the table. */
-  int getMinReaderVersion();
+  private final Commit commit;
 
-  /** The minimum writer version required to read the table. */
-  int getMinWriterVersion();
+  public CommitResponse(Commit commit) {
+    this.commit = commit;
+  }
 
-  /** The reader features that need to be supported to read the table. */
-  Set<String> getReaderFeatures();
-
-  /** The writer features that need to be supported to write the table. */
-  Set<String> getWriterFeatures();
+  /**
+   * Get the commit object.
+   *
+   * @return the commit object.
+   */
+  public Commit getCommit() {
+    return commit;
+  }
 }

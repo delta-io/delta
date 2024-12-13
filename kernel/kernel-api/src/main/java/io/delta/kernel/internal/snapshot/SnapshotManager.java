@@ -29,13 +29,13 @@ import static java.lang.String.format;
 
 import io.delta.kernel.*;
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.engine.coordinatedcommits.Commit;
 import io.delta.kernel.exceptions.CheckpointAlreadyExistsException;
 import io.delta.kernel.exceptions.InvalidTableException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.*;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.checkpoints.*;
+import io.delta.kernel.internal.coordinatedcommits.Commit;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.ListUtils;
 import io.delta.kernel.internal.replay.CreateCheckpointIterator;
@@ -525,6 +525,8 @@ public class SnapshotManager {
             .orElse(".");
     logger.info("{}: Loading version {} {}", tablePath, initSegment.version, startingFromStr);
 
+    long startTimeMillis = System.currentTimeMillis();
+
     LogReplay logReplay =
         new LogReplay(
             logPath,
@@ -533,8 +535,6 @@ public class SnapshotManager {
             engine,
             initSegment,
             Optional.ofNullable(latestSnapshotHint.get()));
-
-    long startTimeMillis = System.currentTimeMillis();
 
     assertLogFilesBelongToTable(logPath, initSegment.allLogFilesUnsorted());
 

@@ -21,7 +21,7 @@ The following are examples of scenarios that benefit from clustering:
 
 ## Enable liquid clustering
 
-You must enable liquid clustering when creating a table. Clustering is not compatible with partitioning or `ZORDER`. Once enabled, run `OPTIMIZE` jobs as normal to incrementally cluster data. See [_](#optimize).
+You can enable liquid clustering on an existing table or during table creation. Clustering is not compatible with partitioning or `ZORDER`. Once enabled, run `OPTIMIZE` jobs as usual to incrementally cluster data. See [_](#optimize).
 
 To enable liquid clustering, add the `CLUSTER BY` phrase to a table creation statement, as in the examples below:
 
@@ -34,7 +34,8 @@ To enable liquid clustering, add the `CLUSTER BY` phrase to a table creation sta
   CREATE TABLE table1(col0 int, col1 string) USING DELTA CLUSTER BY (col0);
 
   -- Using a CTAS statement
-  CREATE TABLE table2 CLUSTER BY (col0)  -- specify clustering after table name, not in subquery
+  CREATE EXTERNAL TABLE table2 CLUSTER BY (col0)  -- specify clustering after table name, not in subquery
+  LOCATION 'table_location'
   AS SELECT * FROM table1;
   ```
 
@@ -59,6 +60,15 @@ To enable liquid clustering, add the `CLUSTER BY` phrase to a table creation sta
   ```
 
 .. warning:: Tables created with liquid clustering have `Clustering` and `DomainMetadata` table features enabled (both writer features) and use Delta writer version 7 and reader version 1. Table protocol versions cannot be downgraded. See [_](/versioning.md).
+
+You can enable liquid clustering on an existing unpartitioned Delta table using the following syntax:
+
+```sql
+ALTER TABLE <table_name>
+CLUSTER BY (<clustering_columns>)
+```
+
+.. important:: Default behavior does not apply clustering to previously written data. To force reclustering for all records, you must use `OPTIMIZE FULL`. See [_](#optimize-full).
 
 ## Choose clustering columns
 
@@ -86,6 +96,16 @@ OPTIMIZE table_name;
 ```
 
 Liquid clustering is incremental, meaning that data is only rewritten as necessary to accommodate data that needs to be clustered. Already clustered data files with different clustering columns are not rewritten.
+
+In <Delta> 3.3 and above, you can force reclustering of all records in a table with the following syntax:
+
+```sql
+OPTIMIZE table_name FULL;
+```
+
+.. important:: Running `OPTIMIZE FULL` reclusters all existing data as necessary. For large tables that have not previously been clustered on the specified columns, this operation might take hours.
+
+Run `OPTIMIZE FULL` when you change clustering columns. If you have previously run `OPTIMIZE FULL` and there has been no change to clustering columns, `OPTIMIZE FULL` runs the same as `OPTIMIZE`. Always use `OPTIMIZE FULL` to ensure that data layout reflects the current clustering columns.
 
 ## Read data from a clustered table
 
