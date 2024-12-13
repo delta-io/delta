@@ -109,7 +109,7 @@ public class TransactionImpl implements Transaction {
 
   @Override
   public List<String> getPartitionColumns(Engine engine) {
-    return VectorUtils.toJavaList(metadata.getPartitionColumns());
+    return VectorUtils.toJavaList(metadata.getPartitionColumnsArrayValue());
   }
 
   @Override
@@ -319,7 +319,7 @@ public class TransactionImpl implements Transaction {
 
   private Map<String, String> getOperationParameters() {
     if (isNewTable) {
-      List<String> partitionCols = VectorUtils.toJavaList(metadata.getPartitionColumns());
+      List<String> partitionCols = VectorUtils.toJavaList(metadata.getPartitionColumnsArrayValue());
       String partitionBy =
           partitionCols.stream()
               .map(col -> "\"" + col + "\"")

@@ -16,43 +16,25 @@
 package io.delta.kernel.internal.actions;
 
 import static io.delta.kernel.internal.util.InternalUtils.requireNonNull;
-import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
+import io.delta.kernel.annotation.Nullable;
 import io.delta.kernel.data.*;
+import io.delta.kernel.engine.coordinatedcommits.actions.AbstractMetadata;
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.types.DataTypeJsonSerDe;
+import io.delta.kernel.internal.util.PartitionUtils;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.types.*;
 import java.util.*;
 import java.util.stream.Collectors;
 
-public class Metadata {
+public class Metadata implements AbstractMetadata {
 
-  public static Metadata fromColumnVector(ColumnVector vector, int rowId) {
-    if (vector.isNullAt(rowId)) {
-      return null;
-    }
-
-    final String schemaJson =
-        requireNonNull(vector.getChild(4), rowId, "schemaString").getString(rowId);
-    StructType schema = DataTypeJsonSerDe.deserializeStructType(schemaJson);
-
-    return new Metadata(
-        requireNonNull(vector.getChild(0), rowId, "id").getString(rowId),
-        Optional.ofNullable(
-            vector.getChild(1).isNullAt(rowId) ? null : vector.getChild(1).getString(rowId)),
-        Optional.ofNullable(
-            vector.getChild(2).isNullAt(rowId) ? null : vector.getChild(2).getString(rowId)),
-        Format.fromColumnVector(requireNonNull(vector.getChild(3), rowId, "format"), rowId),
-        schemaJson,
-        schema,
-        vector.getChild(5).getArray(rowId),
-        Optional.ofNullable(
-            vector.getChild(6).isNullAt(rowId) ? null : vector.getChild(6).getLong(rowId)),
-        vector.getChild(7).getMap(rowId));
-  }
+  ///////////////////
+  // Static Fields //
+  ///////////////////
 
   public static final StructType FULL_SCHEMA =
       new StructType()
@@ -71,6 +53,41 @@ public class Metadata {
               new MapType(StringType.STRING, StringType.STRING, false),
               false /* nullable */);
 
+  ////////////////////
+  // Static Methods //
+  ////////////////////
+
+  public static Metadata fromColumnVector(ColumnVector vector, int rowId) {
+    if (vector.isNullAt(rowId)) {
+      return null;
+    }
+
+    final String schemaJson =
+        requireNonNull(vector.getChild(4), rowId, "schemaString").getString(rowId);
+
+    final StructType schema = DataTypeJsonSerDe.deserializeStructType(schemaJson);
+
+    return new Metadata(
+        requireNonNull(vector.getChild(0), rowId, "id").getString(rowId),
+        Optional.ofNullable(
+            vector.getChild(1).isNullAt(rowId) ? null : vector.getChild(1).getString(rowId)),
+        Optional.ofNullable(
+            vector.getChild(2).isNullAt(rowId) ? null : vector.getChild(2).getString(rowId)),
+        Format.fromColumnVector(requireNonNull(vector.getChild(3), rowId, "format"), rowId),
+        schemaJson,
+        schema,
+        vector.getChild(5).getArray(rowId),
+        Optional.ofNullable(
+            vector.getChild(6).isNullAt(rowId) ? null : vector.getChild(6).getLong(rowId)),
+        vector.getChild(7).getMap(rowId));
+  }
+
+  /////////////////////////////
+  // Member Fields / Methods //
+  /////////////////////////////
+
+  // Constructor Params - anything Optional is not required as per the protocol spec. //
+
   private final String id;
   private final Optional<String> name;
   private final Optional<String> description;
@@ -80,11 +97,11 @@ public class Metadata {
   private final ArrayValue partitionColumns;
   private final Optional<Long> createdTime;
   private final MapValue configurationMapValue;
+
+  // Private member fields //
+
   private final Lazy<Map<String, String>> configuration;
-  // Partition column names in lower case.
-  private final Lazy<Set<String>> partitionColNames;
-  // Logical data schema excluding partition columns
-  private final Lazy<StructType> dataSchema;
+  private final Lazy<StructType> dataSchema; // Logical data schema excluding partition columns
 
   public Metadata(
       String id,
@@ -97,27 +114,127 @@ public class Metadata {
       Optional<Long> createdTime,
       MapValue configurationMapValue) {
     this.id = requireNonNull(id, "id is null");
-    this.name = name;
+    this.name = requireNonNull(name, "name is null");
     this.description = requireNonNull(description, "description is null");
     this.format = requireNonNull(format, "format is null");
     this.schemaString = requireNonNull(schemaString, "schemaString is null");
-    this.schema = schema;
+    ;
+    this.schema = requireNonNull(schema, "schema is null");
     this.partitionColumns = requireNonNull(partitionColumns, "partitionColumns is null");
     this.createdTime = createdTime;
     this.configurationMapValue = requireNonNull(configurationMapValue, "configuration is null");
     this.configuration = new Lazy<>(() -> VectorUtils.toJavaMap(configurationMapValue));
-    this.partitionColNames = new Lazy<>(this::loadPartitionColNames);
-    this.dataSchema =
-        new Lazy<>(
-            () ->
-                new StructType(
-                    schema.fields().stream()
-                        .filter(
-                            field ->
-                                !partitionColNames
-                                    .get()
-                                    .contains(field.getName().toLowerCase(Locale.ROOT)))
-                        .collect(Collectors.toList())));
+    this.dataSchema = new Lazy<>(this::loadDataSchema);
+  }
+
+  ///////////////////////////
+  // AbstractMetadata APIs //
+  ///////////////////////////
+
+  @Override
+  public String getId() {
+    return id;
+  }
+
+  @Override
+  @Nullable
+  public String getName() {
+    return name.orElse(null);
+  }
+
+  @Override
+  @Nullable
+  public String getDescription() {
+    return description.orElse(null);
+  }
+
+  @Override
+  public String getProvider() {
+    return format.getProvider();
+  }
+
+  @Override
+  public Map<String, String> getFormatOptions() {
+    return format.getOptions();
+  }
+
+  @Override
+  public String getSchemaString() {
+    return schemaString;
+  }
+
+  @Override
+  public List<String> getPartitionColumns() {
+    return VectorUtils.toJavaList(partitionColumns);
+  }
+
+  @Override
+  public Map<String, String> getConfiguration() {
+    return Collections.unmodifiableMap(configuration.get());
+  }
+
+  public Long getCreatedTime() {
+    return createdTime.orElse(null);
+  }
+
+  ////////////////////////////////
+  // Other Kernel Metadata APIs //
+  ////////////////////////////////
+
+  public StructType getSchema() {
+    return schema;
+  }
+
+  public ArrayValue getPartitionColumnsArrayValue() {
+    return partitionColumns;
+  }
+
+  /** The logical data schema which excludes partition columns */
+  public StructType getDataSchema() {
+    return dataSchema.get();
+  }
+
+  public Format getFormat() {
+    return format;
+  }
+
+  public MapValue getConfigurationMapValue() {
+    return configurationMapValue;
+  }
+
+  /**
+   * Filter out the key-value pair matches exactly with the old properties.
+   *
+   * @param newProperties the new properties to be filtered
+   * @return the filtered properties
+   */
+  public Map<String, String> filterOutUnchangedProperties(Map<String, String> newProperties) {
+    Map<String, String> oldProperties = getConfiguration();
+    return newProperties.entrySet().stream()
+        .filter(
+            entry ->
+                !oldProperties.containsKey(entry.getKey())
+                    || !oldProperties.get(entry.getKey()).equals(entry.getValue()))
+        .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+  }
+
+  /**
+   * Encode as a {@link Row} object with the schema {@link Metadata#FULL_SCHEMA}.
+   *
+   * @return {@link Row} object with the schema {@link Metadata#FULL_SCHEMA}
+   */
+  public Row toRow() {
+    Map<Integer, Object> metadataMap = new HashMap<>();
+    metadataMap.put(0, id);
+    metadataMap.put(1, name.orElse(null));
+    metadataMap.put(2, description.orElse(null));
+    metadataMap.put(3, format.toRow());
+    metadataMap.put(4, schemaString);
+    metadataMap.put(5, partitionColumns);
+    metadataMap.put(6, createdTime.orElse(null));
+    metadataMap.put(7, configurationMapValue);
+
+    return new GenericRow(Metadata.FULL_SCHEMA, metadataMap);
   }
 
   public Metadata withNewConfiguration(Map<String, String> configuration) {
@@ -182,104 +299,18 @@ public class Metadata {
         + '}';
   }
 
-  public String getSchemaString() {
-    return schemaString;
-  }
+  ////////////////////
+  // Helper methods //
+  ////////////////////
 
-  public StructType getSchema() {
-    return schema;
-  }
+  private StructType loadDataSchema() {
+    final Set<String> partColNamesLowerCase =
+        PartitionUtils.arrayValueToLowerCaseSet(partitionColumns);
 
-  public ArrayValue getPartitionColumns() {
-    return partitionColumns;
-  }
-
-  /** Set of lowercase partition column names */
-  public Set<String> getPartitionColNames() {
-    return partitionColNames.get();
-  }
-
-  /** The logical data schema which excludes partition columns */
-  public StructType getDataSchema() {
-    return dataSchema.get();
-  }
-
-  public String getId() {
-    return id;
-  }
-
-  public Optional<String> getName() {
-    return name;
-  }
-
-  public Optional<String> getDescription() {
-    return description;
-  }
-
-  public Format getFormat() {
-    return format;
-  }
-
-  public Optional<Long> getCreatedTime() {
-    return createdTime;
-  }
-
-  public MapValue getConfigurationMapValue() {
-    return configurationMapValue;
-  }
-
-  public Map<String, String> getConfiguration() {
-    return Collections.unmodifiableMap(configuration.get());
-  }
-
-  /**
-   * Filter out the key-value pair matches exactly with the old properties.
-   *
-   * @param newProperties the new properties to be filtered
-   * @return the filtered properties
-   */
-  public Map<String, String> filterOutUnchangedProperties(Map<String, String> newProperties) {
-    Map<String, String> oldProperties = getConfiguration();
-    return newProperties.entrySet().stream()
-        .filter(
-            entry ->
-                !oldProperties.containsKey(entry.getKey())
-                    || !oldProperties.get(entry.getKey()).equals(entry.getValue()))
-        .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
-  }
-
-  /**
-   * Encode as a {@link Row} object with the schema {@link Metadata#FULL_SCHEMA}.
-   *
-   * @return {@link Row} object with the schema {@link Metadata#FULL_SCHEMA}
-   */
-  public Row toRow() {
-    Map<Integer, Object> metadataMap = new HashMap<>();
-    metadataMap.put(0, id);
-    metadataMap.put(1, name.orElse(null));
-    metadataMap.put(2, description.orElse(null));
-    metadataMap.put(3, format.toRow());
-    metadataMap.put(4, schemaString);
-    metadataMap.put(5, partitionColumns);
-    metadataMap.put(6, createdTime.orElse(null));
-    metadataMap.put(7, configurationMapValue);
-
-    return new GenericRow(Metadata.FULL_SCHEMA, metadataMap);
-  }
-
-  /** Helper method to load the partition column names. */
-  private Set<String> loadPartitionColNames() {
-    ColumnVector partitionColNameVector = partitionColumns.getElements();
-    Set<String> partitionColumnNames = new HashSet<>();
-    for (int i = 0; i < partitionColumns.getSize(); i++) {
-      checkArgument(
-          !partitionColNameVector.isNullAt(i), "Expected a non-null partition column name");
-      String partitionColName = partitionColNameVector.getString(i);
-      checkArgument(
-          partitionColName != null && !partitionColName.isEmpty(),
-          "Expected non-null and non-empty partition column name");
-      partitionColumnNames.add(partitionColName.toLowerCase(Locale.ROOT));
-    }
-    return Collections.unmodifiableSet(partitionColumnNames);
+    return new StructType(
+        schema.fields().stream()
+            .filter(
+                field -> !partColNamesLowerCase.contains(field.getName().toLowerCase(Locale.ROOT)))
+            .collect(Collectors.toList()));
   }
 }
