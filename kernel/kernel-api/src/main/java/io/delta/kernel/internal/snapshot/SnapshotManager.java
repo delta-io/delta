@@ -536,8 +536,6 @@ public class SnapshotManager {
             initSegment,
             Optional.ofNullable(latestSnapshotHint.get()));
 
-    assertLogFilesBelongToTable(logPath, initSegment.allLogFilesUnsorted());
-
     final SnapshotImpl snapshot =
         new SnapshotImpl(
             tablePath, initSegment, logReplay, logReplay.getProtocol(), logReplay.getMetadata());
@@ -548,6 +546,8 @@ public class SnapshotManager {
         System.currentTimeMillis() - startTimeMillis,
         initSegment.version,
         startingFromStr);
+
+    assertLogFilesBelongToTable(logPath, initSegment.allLogFilesUnsorted());
 
     final SnapshotHint hint =
         new SnapshotHint(
