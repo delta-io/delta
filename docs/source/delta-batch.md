@@ -760,7 +760,7 @@ In-Commit Timestamps stores modification timestamps within the commit itself, en
 - **Immutable History**: Timestamps become part of the table's permanent commit history
 - **Consistent Time Travel**: Queries using timestamp-based time travel produce reliable results even after table migration
 
-### Enabling the Feature
+#### Enabling the Feature
 This feature can be enabled by setting the table property `delta.enableInCommitTimestamps` to `true`:
 
 ```sql
