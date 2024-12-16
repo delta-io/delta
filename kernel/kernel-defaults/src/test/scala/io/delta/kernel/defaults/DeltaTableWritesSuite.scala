@@ -1005,7 +1005,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     txnBuilder.build(engine)
   }
 
-  test("create table with unsupported column mapping mode") {
+  withColumnMappingEnabled("create table with unsupported column mapping mode") {
     withTempDirAndEngine { (tablePath, engine) =>
       val ex = intercept[InvalidConfigurationValueException] {
         createTxn(engine, tablePath, isNewTable = true, testSchema, partCols = Seq.empty,
@@ -1017,7 +1017,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
-  test("create table with column mapping mode = none") {
+  withColumnMappingEnabled("create table with column mapping mode = none") {
     withTempDirAndEngine { (tablePath, engine) =>
       createTxn(engine, tablePath, isNewTable = true, testSchema, partCols = Seq.empty,
         tableProperties = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "none"))
@@ -1028,7 +1028,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
-  test("cannot update table with unsupported column mapping mode") {
+  withColumnMappingEnabled("cannot update table with unsupported column mapping mode") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
       createTxn(engine, tablePath, isNewTable = true, testSchema, Seq.empty)
@@ -1046,7 +1046,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
-  test("cannot update table with unsupported column mapping mode change") {
+  withColumnMappingEnabled("cannot update table with unsupported column mapping mode change") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
       createTxn(engine, tablePath, isNewTable = true, testSchema, partCols = Seq.empty,
@@ -1065,7 +1065,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
-  test("cannot update column mapping mode from id to name on existing table") {
+  withColumnMappingEnabled("cannot update column mapping mode from id to name on existing table") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
       val schema = new StructType()
@@ -1093,7 +1093,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
-  test("cannot update column mapping mode from name to id on existing table") {
+  withColumnMappingEnabled("cannot update column mapping mode from name to id on existing table") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
       val schema = new StructType()
@@ -1121,7 +1121,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
-  test("cannot update column mapping mode from none to id on existing table") {
+  withColumnMappingEnabled("cannot update column mapping mode from none to id on existing table") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
       val schema = new StructType()
@@ -1156,7 +1156,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     // TODO
   }
 
-  test("new table with column mapping mode = name") {
+  withColumnMappingEnabled("new table with column mapping mode = name") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
       val schema = new StructType()
@@ -1173,7 +1173,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
-  test("new table with column mapping mode = id") {
+  withColumnMappingEnabled("new table with column mapping mode = id") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
       val schema = new StructType()
@@ -1190,7 +1190,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
-  test("can update existing table to column mapping mode = name") {
+  withColumnMappingEnabled("can update existing table to column mapping mode = name") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
       val schema = new StructType()
@@ -1216,7 +1216,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
-  test("new table with column mapping mode = id and nested schema") {
+  withColumnMappingEnabled("new table with column mapping mode = id and nested schema") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
       val schema = new StructType()
@@ -1254,6 +1254,35 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       assert(meta.get(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY).toString.startsWith("col-"))
     } else {
       assert(meta.get(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY) == expPhyName)
+    }
+  }
+
+  test("ensure column mapping is disabled - for Delta 3.3 only") {
+    Seq(
+      (TableConfig.COLUMN_MAPPING_MODE.getKey, "id"),
+      (TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey, "true")
+    ).foreach { case (key, value) =>
+      withTempDirAndEngine { (tablePath, engine) =>
+        val ex = intercept[UnknownConfigurationException] {
+          createTxn(engine, tablePath, isNewTable = true, testSchema, partCols = Seq.empty,
+            tableProperties = Map(key -> value))
+            .commit(engine, emptyIterable())
+        }
+        assert(ex.getMessage.contains("Unknown configuration was specified:"))
+      }
+    }
+  }
+
+  // helper method to run columnmapping tests
+  def withColumnMappingEnabled(testName: String)(fun: => Unit): Unit = {
+    test(testName) {
+      try {
+        // this property is needed to enable column mapping
+        System.setProperty("ENABLE_COLUMN_MAPPING_TESTS", "true")
+        fun
+      } finally {
+        System.clearProperty("ENABLE_COLUMN_MAPPING_TESTS")
+      }
     }
   }
 }
