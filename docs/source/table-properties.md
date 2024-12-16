@@ -180,5 +180,6 @@ properties are set. Available Delta table properties include:
 |                                                                                           |
 | Default:   `false`                                                                        |
 +-------------------------------------------------------------------------------------------+
+
 .. <Delta> replace:: Delta Lake
 .. <AS> replace:: Apache Spark
