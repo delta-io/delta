@@ -744,10 +744,35 @@ Each time a checkpoint is written, Delta automatically cleans up log entries old
 
 ### In-Commit Timestamps
 
-Historically, Delta has relied on file modification timetamps to be the source of truth for when
-the table was modified. This becomes problematic when tables are moved from one storage location to another since the file modification timestamps change in such scenarios. To ensure that the timestamps
-used for time travel don't change in such scenarios and that timestamp-based time travel queries produce
-consistent results, the [In-Commit Timestamps](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#in-commit-timestamps) table feature was introduced in Delta 3.3. This feature can be enabled by setting the table property `delta.enableInCommitTimestamps` to `true`. See the [Versioning](./versioning) section for more details around compatibility.
+#### Overview
+Delta Lake 3.3 introduced [In-Commit Timestamps](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#in-commit-timestamps) to provide a more reliable and consistent way to track table modifications. This feature addresses limitations of the traditional approach that relied on file modification timestamps, particularly in scenarios involving data migration or replication.
+
+#### Background
+Previously, Delta Lake used file modification timestamps as the source of truth for table modifications. This approach presented several challenges:
+
+1. Data Migration Issues: When tables were moved between storage locations, file modification timestamps would change, potentially disrupting historical tracking
+2. Replication Scenarios: Timestamp inconsistencies could arise when replicating data across different environments
+3. Time Travel Reliability: These timestamp changes could affect the accuracy and consistency of time travel queries
+
+#### Feature Details
+In-Commit Timestamps stores modification timestamps within the commit itself, ensuring they remain unchanged regardless of file system operations. This provides several benefits:
+
+- **Immutable History**: Timestamps become part of the table's permanent commit history
+- **Consistent Time Travel**: Queries using timestamp-based time travel produce reliable results even after table migration
+
+### Enabling the Feature
+This feature can be enabled by setting the table property `delta.enableInCommitTimestamps` to `true`:
+
+```sql
+ALTER TABLE <table_name>
+SET TBLPROPERTIES ('delta.enableInCommitTimestamps' = 'true');
+```
+
+After enabling In-Commit Timestamps:
+- Only new write operations will include the embedded timestamps
+- File modification timestamps will continued to be used for historical commits performed before enablement
+
+See the [Versioning](./versioning) section for more details around compatibility.
 
 <a id="deltadataframewrites"></a>
 
