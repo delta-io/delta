@@ -745,10 +745,10 @@ Each time a checkpoint is written, Delta automatically cleans up log entries old
 ### In-Commit Timestamps
 
 #### Overview
-Delta Lake 3.3 introduced [In-Commit Timestamps](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#in-commit-timestamps) to provide a more reliable and consistent way to track table modifications. This feature addresses limitations of the traditional approach that relied on file modification timestamps, particularly in scenarios involving data migration or replication.
+<Delta> 3.3 introduced [In-Commit Timestamps](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#in-commit-timestamps) to provide a more reliable and consistent way to track table modifications. This feature addresses limitations of the traditional approach that relied on file modification timestamps, particularly in scenarios involving data migration or replication.
 
 #### Background
-Previously, Delta Lake used file modification timestamps as the source of truth for table modifications. This approach presented several challenges:
+Previously, <Delta> used file modification timestamps as the source of truth for table modifications. This approach presented several challenges:
 
 1. Data Migration Issues: When tables were moved between storage locations, file modification timestamps would change, potentially disrupting historical tracking
 2. Replication Scenarios: Timestamp inconsistencies could arise when replicating data across different environments
