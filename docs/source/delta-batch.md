@@ -742,6 +742,13 @@ Each time a checkpoint is written, Delta automatically cleans up log entries old
 .. note::
     Due to log entry cleanup, instances can arise where you cannot time travel to a version that is less than the retention interval. <Delta> requires all consecutive log entries since the previous checkpoint to time travel to a particular version. For example, with a table initially consisting of log entries for versions [0, 19] and a checkpoint at verison 10, if the log entry for version 0 is cleaned up, then you cannot time travel to versions [1, 9]. Increasing the table property `delta.logRetentionDuration` can help avoid these situations.
 
+### In-Commit Timestamps
+
+Historically, Delta has relied on file modification timetamps to be the source of truth for when
+the table was modified. This becomes problematic when tables are moved from one storage location to another since the file modification timestamps change in such scenarios. To ensure that the timestamps
+used for time travel don't change in such scenarios and that timestamp-based time travel queries produce
+consistent results, the [In-Commit Timestamps](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#in-commit-timestamps) table feature was introduced in Delta 3.3. This feature can be enabled by setting the table property `delta.enableInCommitTimestamps` to `true`. See the [Versioning](./versioning) section for more details around compatibility.
+
 <a id="deltadataframewrites"></a>
 
 ## Write to a table
