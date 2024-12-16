@@ -174,7 +174,7 @@ properties are set. Available Delta table properties include:
 | `true` for enabling the InCommitTimestamps table feature.                                 |
 |                                                                                           |
 |                                                                                           |
-| See [_](/presto-integration.md#step-3-update-manifests).                                  |
+| See [_](delta-batch.md#in--commit-timestamps).                                  |
 |                                                                                           |
 | Data type: `Boolean`                                                                      |
 |                                                                                           |
