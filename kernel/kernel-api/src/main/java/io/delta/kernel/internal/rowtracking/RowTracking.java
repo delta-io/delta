@@ -152,6 +152,6 @@ public class RowTracking {
    * @return the number of records
    */
   private static long getNumRecordsOrThrow(AddFile addFile) {
-    return addFile.getNumRecords().orElseThrow(DeltaErrors::rowIDAssignmentWithoutStats);
+    return addFile.getNumRecords().orElseThrow(DeltaErrors::missingNumRecordsStatsForRowTracking);
   }
 }

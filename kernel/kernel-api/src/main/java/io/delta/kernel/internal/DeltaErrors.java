@@ -293,7 +293,7 @@ public final class DeltaErrors {
     return new ConcurrentWriteException(message);
   }
 
-  public static KernelException rowIDAssignmentWithoutStats() {
+  public static KernelException missingNumRecordsStatsForRowTracking() {
     return new KernelException(
         "Cannot write to a rowTracking-supported table without 'numRecord' statistics. "
             + "Connectors are expected to populate the number of records statistics when "
