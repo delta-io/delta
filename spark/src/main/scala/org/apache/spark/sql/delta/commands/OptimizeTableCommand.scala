@@ -239,6 +239,7 @@ case class Bin(partitionValues: Map[String, String], files: Seq[AddFile])
  * @param bins The set of bins to process in this transaction
  */
 case class Batch(bins: Seq[Bin])
+
 /**
  * Optimize job which compacts small files into larger files to reduce
  * the number of files and potentially allow more efficient reads.
