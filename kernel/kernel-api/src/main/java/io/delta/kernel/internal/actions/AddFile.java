@@ -35,6 +35,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.TreeMap;
 import java.util.stream.IntStream;
 
 /** Delta log action representing an `AddFile` */
@@ -258,12 +259,13 @@ public class AddFile {
   public String toString() {
     // Explicitly convert the partitionValues and tags to Java Maps
     Map<String, String> partitionValuesJavaMap = VectorUtils.toJavaMap(this.partitionValues);
+    Map<String, String> sortedPartitionValuesJavaMap = new TreeMap<>(partitionValuesJavaMap);
     Optional<Map<String, String>> tagsJavaMap = this.tags.map(VectorUtils::toJavaMap);
 
     StringBuilder sb = new StringBuilder();
     sb.append("AddFile{");
     sb.append("path='").append(path).append('\'');
-    sb.append(", partitionValues=").append(partitionValuesJavaMap);
+    sb.append(", partitionValues=").append(sortedPartitionValuesJavaMap);
     sb.append(", size=").append(size);
     sb.append(", modificationTime=").append(modificationTime);
     sb.append(", dataChange=").append(dataChange);

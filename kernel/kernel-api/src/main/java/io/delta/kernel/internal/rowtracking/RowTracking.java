@@ -38,12 +38,11 @@ public class RowTracking {
 
   /**
    * Assigns base row IDs and default row commit versions to {@link AddFile} actions before
-   * committing. If row tracking is not supported by the given protocol, returns the input actions
-   * unchanged.
+   * committing them. This method should be called only when the 'rowTracking' feature is supported.
    *
-   * <p>When needed, it sets each {@link AddFile} action’s base row ID based on the current high
-   * watermark and increments the watermark accordingly. If a default row commit version is missing,
-   * it assigns the provided commit version.
+   * <p>It sets each {@link AddFile} action’s base row ID based on the current high watermark and
+   * increments the watermark accordingly. If a default row commit version is missing, it assigns
+   * the provided commit version.
    *
    * @param snapshot the current snapshot of the table
    * @param commitVersion the version of the commit for default row commit version assignment
@@ -100,8 +99,9 @@ public class RowTracking {
   }
 
   /**
-   * Emits a {@link DomainMetadata} action if the row ID high watermark has changed due to newly
-   * processed {@link AddFile} actions.
+   * Returns a {@link DomainMetadata} action if the row ID high watermark has changed due to newly
+   * processed {@link AddFile} actions. This method should be called only when the 'rowTracking'
+   * feature is supported.
    *
    * @param snapshot the current snapshot of the table
    * @param dataActions the iterable of data actions that may update the high watermark
@@ -119,8 +119,10 @@ public class RowTracking {
     dataActions.forEach(
         row -> {
           if (!row.isNullAt(ADD_FILE_ORDINAL)) {
-            newRowIdHighWatermark.addAndGet(
-                getNumRecordsOrThrow(AddFile.fromRow(row.getStruct(ADD_FILE_ORDINAL))));
+            AddFile addFile = AddFile.fromRow(row.getStruct(ADD_FILE_ORDINAL));
+            if (!addFile.getBaseRowId().isPresent()) {
+              newRowIdHighWatermark.addAndGet(getNumRecordsOrThrow(addFile));
+            }
           }
         });
 

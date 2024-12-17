@@ -295,8 +295,9 @@ public final class DeltaErrors {
 
   public static KernelException rowIDAssignmentWithoutStats() {
     return new KernelException(
-        "All AddFile actions must have statistics that include the number of records "
-            + "when writing to a Delta table with the 'rowTracking' table feature supported");
+        "Cannot write to a rowTracking-supported table without 'numRecord' statistics. "
+            + "Connectors are expected to populate the number of records statistics when "
+            + "writing to a Delta table with 'rowTracking' table feature supported.");
   }
 
   public static KernelException rowTrackingSupportedWithDomainMetadataUnsupported() {

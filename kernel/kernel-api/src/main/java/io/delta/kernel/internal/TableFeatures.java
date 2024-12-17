@@ -59,10 +59,8 @@ public class TableFeatures {
             }
           });
 
-  /** The feature name for domain metadata. */
   public static final String DOMAIN_METADATA_FEATURE_NAME = "domainMetadata";
 
-  /** The feature name for row tracking. */
   public static final String ROW_TRACKING_FEATURE_NAME = "rowTracking";
 
   /** The minimum writer version required to support table features. */

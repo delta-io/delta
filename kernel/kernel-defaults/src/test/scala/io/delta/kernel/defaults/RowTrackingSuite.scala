@@ -38,7 +38,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
   private def setWriterFeatureSupported(
       engine: Engine,
       tablePath: String,
-      schema: StructType = testSchema,
+      schema: StructType,
       writerFeatures: Seq[String]): Unit = {
     val protocol = new Protocol(
       3, // minReaderVersion
@@ -219,8 +219,9 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
       }
       assert(
         e.getMessage.contains(
-          "All AddFile actions must have statistics that include the number of records " +
-          "when writing to a Delta table with the 'rowTracking' table feature supported"
+          "Cannot write to a rowTracking-supported table without 'numRecord' statistics. "
+          + "Connectors are expected to populate the number of records statistics when "
+          + "writing to a Delta table with 'rowTracking' table feature supported."
         )
       )
     }
