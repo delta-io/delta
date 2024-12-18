@@ -687,7 +687,7 @@ class DeltaTable(object):
         jbuilder = self._jdt.optimize()
         return DeltaOptimizeBuilder(self._spark, jbuilder)
 
-    @classmethod
+    @classmethod  # type: ignore[arg-type]
     def _verify_type_bool(self, variable, name):
         if not isinstance(variable, bool) or variable is None:
             raise ValueError("%s needs to be a boolean but got '%s'." % (name, type(variable)))
