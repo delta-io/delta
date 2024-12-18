@@ -51,16 +51,6 @@ trait DeletionVectorUtils extends DeltaLogging {
     }
   }
 
-  /**
-   * Returns true if persistent deletion vectors are enabled and
-   * readable with the current reader version.
-   */
-  def fileIndexSupportsReadingDVs(fileIndex: FileIndex): Boolean = fileIndex match {
-    case index: TahoeFileIndex => deletionVectorsReadable(index)
-    case _: SupportsRowIndexFilters => true
-    case _ => false
-  }
-
   def deletionVectorsWritable(
       snapshot: SnapshotDescriptor,
       newProtocol: Option[Protocol] = None,
