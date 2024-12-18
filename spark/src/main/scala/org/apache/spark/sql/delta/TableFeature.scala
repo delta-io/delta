@@ -1044,7 +1044,7 @@ object TestReaderWriterMetadataAutoUpdateFeature
   }
 }
 
-private[sql] object TestRemovableWriterFeature
+object TestRemovableWriterFeature
   extends WriterFeature(name = "testRemovableWriter")
   with FeatureAutomaticallyEnabledByMetadata
   with RemovableFeature {
@@ -1093,7 +1093,7 @@ private[sql] object TestRemovableWriterFeatureWithDependency
     Set(TestRemovableReaderWriterFeature, TestRemovableWriterFeature)
 }
 
-private[sql] object TestRemovableReaderWriterFeature
+object TestRemovableReaderWriterFeature
   extends ReaderWriterFeature(name = "testRemovableReaderWriter")
     with FeatureAutomaticallyEnabledByMetadata
     with RemovableFeature {
