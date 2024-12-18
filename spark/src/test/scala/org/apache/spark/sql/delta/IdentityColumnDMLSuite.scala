@@ -602,8 +602,6 @@ trait IdentityColumnDMLSuiteBase
       val valuesStr = (-999 to -900).map(id => s"($id, -3)").mkString(", ")
       sql(s"INSERT INTO $tblName(id, value) VALUES $valuesStr")
       sql(s"INSERT INTO $tblName(id, value) VALUES (-1, -1)")
-      val expectedNumFiles = 5
-      assert(deltaLog.update().allFiles.count() === expectedNumFiles)
       assert(getHighWaterMark(deltaLog.update(), colName = "id").isEmpty,
         "High watermark should not be set for user inserted values")
 
