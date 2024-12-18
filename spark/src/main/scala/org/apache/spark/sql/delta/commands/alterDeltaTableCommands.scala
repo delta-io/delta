@@ -322,7 +322,7 @@ case class AlterTableDropFeatureDeltaCommand(
     // Check whether the protocol contains the feature in either the writer features list or
     // the reader+writer features list. Note, protocol needs to denormalized to allow dropping
     // features from legacy protocols.
-    val protocol = table.initialSnapshot.protocol
+    val protocol = table.deltaLog.update().protocol
     val protocolContainsFeatureName =
       protocol.implicitlyAndExplicitlySupportedFeatures.map(_.name).contains(featureName)
     if (!protocolContainsFeatureName) {
