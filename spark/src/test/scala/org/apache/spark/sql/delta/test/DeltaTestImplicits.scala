@@ -165,6 +165,9 @@ object DeltaTestImplicits {
     def apply(spark: SparkSession, id: TableIdentifier): DeltaTableV2 =
       dt.apply(spark, id, "test")
 
+    def apply(spark: SparkSession, tableDir: File): DeltaTableV2 =
+      dt.apply(spark, new Path(tableDir.getAbsolutePath))
+
     def apply(spark: SparkSession, tableDir: File, clock: Clock): DeltaTableV2 = {
       val tablePath = new Path(tableDir.getAbsolutePath)
       new DeltaTableV2(spark, tablePath) {

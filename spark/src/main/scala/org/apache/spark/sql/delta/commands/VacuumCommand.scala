@@ -535,7 +535,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
     // The start and the end commit versions give the range of commit files we want to look into
     // to get the list of eligible files for deletion.
     val eligibleStartCommitVersion = math.min(
-      deltaLog.update().version,
+      snapshot.version,
       latestCommitVersionOutsideOfRetentionWindowAsOfLastVacuumOpt
         .map(_ + 1).getOrElse(earliestCommitVersion))
     val eligibleEndCommitVersion = latestCommitVersionOutsideOfRetentionWindow
