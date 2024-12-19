@@ -299,6 +299,42 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
       return new ExpressionTransformResult(transformedExpression, BooleanType.BOOLEAN);
     }
 
+    @Override
+    ExpressionTransformResult visitStartsWith(final Predicate startsWith) {
+      if (startsWith.getChildren().size() != 2) {
+        throw unsupportedExpressionException(
+            startsWith,
+            "Invalid number of inputs to STARTS_WITH expression. "
+                + "Example usage: STARTS_WITH(column, 'test')");
+      }
+      ExpressionTransformResult leftResult = visit(startsWith.getChildren().get(0));
+      ExpressionTransformResult rightResult = visit(startsWith.getChildren().get(1));
+      if (!(StringType.STRING.equivalent(leftResult.outputType)
+          && StringType.STRING.equivalent(rightResult.outputType))) {
+        throw unsupportedExpressionException(
+            startsWith, "'starts with' is only supported for string type expressions");
+      }
+      // TODO: support non literal as the second input of starts with.
+      if (!(rightResult.expression instanceof Literal)) {
+        throw unsupportedExpressionException(
+            startsWith, "'starts with' expects literal as the second input");
+      }
+      Literal right = (Literal) rightResult.expression;
+      // Transforms START_WITH(a, "b") to LIKE(a, "b%") if b non-null, escaping all '%' in b.
+      return new ExpressionTransformResult(
+          new Predicate(
+              "LIKE",
+              Arrays.asList(
+                  leftResult.expression,
+                  right.getValue() == null
+                      ? right
+                      : Literal.ofString(
+                          DefaultExpressionUtils.escape(
+                                  String.valueOf(right.getValue()), /*escapeChar=*/ '%')
+                              .concat("%")))),
+          BooleanType.BOOLEAN);
+    }
+
     private Predicate validateIsPredicate(
         Expression baseExpression, ExpressionTransformResult result) {
       checkArgument(
@@ -608,6 +644,12 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
       List<Expression> children = like.getChildren();
       return LikeExpressionEvaluator.eval(
           children, children.stream().map(this::visit).collect(toList()));
+    }
+
+    @Override
+    ColumnVector visitStartsWith(final Predicate startsWith) {
+      throw new IllegalArgumentException(
+          "unexpected call for ColumnVector visitStartsWith(final Predicate startsWith)");
     }
 
     /**
