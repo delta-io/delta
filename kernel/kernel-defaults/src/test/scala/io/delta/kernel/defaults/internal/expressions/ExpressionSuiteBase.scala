@@ -39,7 +39,7 @@ trait ExpressionSuiteBase extends TestUtils with DefaultVectorTestUtils {
   }
 
   protected def like(
-                      left: Expression, right: Expression, escape: Option[Character] = None): Predicate = {
+      left: Expression, right: Expression, escape: Option[Character] = None): Predicate = {
     if (escape.isDefined && escape.get!=null) {
       like(List(left, right, Literal.ofString(escape.get.toString)))
     } else like(List(left, right))

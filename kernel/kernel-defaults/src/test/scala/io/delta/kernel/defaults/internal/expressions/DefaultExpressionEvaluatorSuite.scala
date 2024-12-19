@@ -1085,7 +1085,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
   }
 
   private def testComparator(
-                              comparator: String, left: Expression, right: Expression, expResult: BooleanJ): Unit = {
+     comparator: String, left: Expression, right: Expression, expResult: BooleanJ): Unit = {
     val expression = new Predicate(comparator, left, right)
     val batch = zeroColumnBatch(rowCount = 1)
     val outputVector = evaluator(batch.getSchema, expression, BooleanType.BOOLEAN).eval(batch)
