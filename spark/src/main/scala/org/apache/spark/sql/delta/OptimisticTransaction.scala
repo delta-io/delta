@@ -455,7 +455,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   def precommitUpdateSchemaWithIdentityHighWaterMarks(): Unit = {
     if (updatedIdentityHighWaterMarks.nonEmpty) {
       val newSchema = IdentityColumn.updateSchema(
-        metadata.schema, updatedIdentityHighWaterMarks.toSeq)
+        deltaLog,
+        metadata.schema,
+        updatedIdentityHighWaterMarks.toSeq
+      )
       val updatedMetadata = metadata.copy(schemaString = newSchema.json)
       updateMetadataAfterWrite(updatedMetadata)
     }
