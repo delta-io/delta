@@ -241,8 +241,8 @@ To use Delta Standalone with S3, you must meet the following requirements. If yo
   When writing from multiple clusters, all drivers must use this `LogStore` implementation and the same DynamoDB table and region. If some drivers use the default `LogStore` while others use this experimental `LogStore` then data loss can occur.
 
 ###### Requirements (S3 multi-cluster)
-- All of the requirements listed in the [_](#requirements-s3-single-cluster) section
-- In additon to S3 credentials, you also need DynamoDB operating permissions
+- All the requirements listed in the [_](#requirements-s3-single-cluster) section
+- In addition to S3 credentials, you also need DynamoDB operating permissions
 
 ###### Configuration (S3 multi-cluster)
 
@@ -401,7 +401,7 @@ libraryDependencies ++= Seq(
 
 ### 2. Mock situation
 
-We have a Delta table `Sales` storing sales data, but have realized all the data written on November 2021 for customer `XYZ` had incorrect `total_cost` values. Thus, we need to update all those records with the correct values. We will use a fictious distributed engine `Zappy` and Delta Standalone to update our Delta table.
+We have a Delta table `Sales` storing sales data, but have realized all the data written on November 2021 for customer `XYZ` had incorrect `total_cost` values. Thus, we need to update all those records with the correct values. We will use a fictitious distributed engine `Zappy` and Delta Standalone to update our Delta table.
 
 The sales table schema is given below.
 

@@ -43,13 +43,13 @@ Delta does not support the DStream API. We recommend [_](delta-streaming.md).
 
 ## When I use <Delta>, will I be able to port my code to other Spark platforms easily?
 
-Yes. When you use <Delta>, you are using open <AS> APIs so you can easily port your code to other Spark platforms. To port your code, replace `delta` format with `parquet` format.
+Yes. When you use <Delta>, you are using open <AS> APIs, so you can easily port your code to other Spark platforms. To port your code, replace `delta` format with `parquet` format.
 
 ## Does <Delta> support multi-table transactions?
 
 <Delta> does not support multi-table transactions and foreign keys. <Delta> supports transactions at the _table_ level.
 
-## How can I change the type of a column?
+## How can I change the type of column?
 
 Changing a column's type or dropping a column requires rewriting the table. For an example, see [Change column type](delta-batch.md#change-column-type).
 

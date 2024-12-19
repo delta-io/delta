@@ -24,7 +24,7 @@ You can enable default column values for a table by setting `delta.feature.allow
 
 ## How to use default columns in SQL commands
 
-- For SQL commands that perform table writes, such as `INSERT`, `UPDATE`, and `MERGE` commands, the `DEFAULT` keyword resolves to the most recently assigne default value for the corresponding column (or NULL if no default value exists). For instance, the following SQL command will use the default value for the second column in the table: `INSERT INTO t VALUES (16, DEFAULT);`
+- For SQL commands that perform table writes, such as `INSERT`, `UPDATE`, and `MERGE` commands, the `DEFAULT` keyword resolves to the most recently assigned default value for the corresponding column (or NULL if no default value exists). For instance, the following SQL command will use the default value for the second column in the table: `INSERT INTO t VALUES (16, DEFAULT);`
 
 - It is also possible for INSERT commands to specify lists of fewer column than the target table, in which case the engine will assign default values for the remaining columns (or NULL for any columns where no defaults yet exist).
 
