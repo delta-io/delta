@@ -32,9 +32,10 @@ class TableConfigSuite extends AnyFunSuite {
         TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.getKey -> "1",
         TableConfig.COORDINATED_COMMITS_COORDINATOR_NAME.getKey -> "{in-memory}",
         TableConfig.COORDINATED_COMMITS_COORDINATOR_CONF.getKey -> "{\"1\": \"1\"}",
-        TableConfig.COORDINATED_COMMITS_TABLE_CONF.getKey -> "{\"1\": \"1\"}",
-        TableConfig.COLUMN_MAPPING_MODE.getKey -> "name",
-        TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true").asJava)
+        TableConfig.COORDINATED_COMMITS_TABLE_CONF.getKey -> "{\"1\": \"1\"}"
+        // TableConfig.COLUMN_MAPPING_MODE.getKey -> "name",
+        // TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"
+        ).asJava)
   }
 
   test("check TableConfig.MAX_COLUMN_ID.editable is false") {

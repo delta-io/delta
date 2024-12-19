@@ -254,6 +254,20 @@ public class TableConfig<T> {
       String key = kv.getKey().toLowerCase(Locale.ROOT);
       String value = kv.getValue();
       if (key.startsWith("delta.") && VALID_PROPERTIES.containsKey(key)) {
+        // Disable `columnMapping` and `icebergCompatV2` for Delta 3.3 release
+        // There are a couple of pieces missing from fully supporting these features
+        // 1. Data path PR is not yet merged (delta-io/delta#3475), waiting on the
+        //    expression fixup which is going to affect how column mapping is done.
+        // 2. Auto enabling of the protocol version based on the current table version and
+        //    column mapping/iceberg compat v2 enabled.
+        if ((key.equalsIgnoreCase(COLUMN_MAPPING_MODE.getKey())
+                || key.equalsIgnoreCase(ICEBERG_COMPAT_V2_ENABLED.getKey()))
+            &&
+            // Ignore the check if tests are running
+            !Boolean.getBoolean("ENABLE_COLUMN_MAPPING_TESTS")) {
+          throw DeltaErrors.unknownConfigurationException(kv.getKey());
+        }
+
         TableConfig<?> tableConfig = VALID_PROPERTIES.get(key);
         if (tableConfig.editable) {
           tableConfig.validate(value);

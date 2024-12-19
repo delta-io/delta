@@ -771,7 +771,14 @@ case class AlterTableChangeColumnDeltaCommand(
             if (syncIdentity) {
               assert(oldColumn == newColumn)
               val df = txn.snapshot.deltaLog.createDataFrame(txn.snapshot, txn.filterFiles())
-              val field = IdentityColumn.syncIdentity(newColumn, df)
+              val allowLoweringHighWaterMarkForSyncIdentity = sparkSession.conf
+                .get(DeltaSQLConf.DELTA_IDENTITY_ALLOW_SYNC_IDENTITY_TO_LOWER_HIGH_WATER_MARK)
+              val field = IdentityColumn.syncIdentity(
+                deltaLog,
+                newColumn,
+                df,
+                allowLoweringHighWaterMarkForSyncIdentity
+              )
               txn.setSyncIdentity()
               txn.readWholeTable()
               field
