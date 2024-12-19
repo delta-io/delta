@@ -116,4 +116,9 @@ private[delta] trait DeltaEncoders {
   implicit def fsPartitionSpecEncoder
     : Encoder[(SerializableFileStatus, CatalogTypes.TablePartitionSpec)]
       = _fsPartitionSpecEncoder.get
+
+  private lazy val _optionalHistoryCommitEncoder =
+    new DeltaEncoder[Option[DeltaHistoryManager.Commit]]
+  implicit def optionalHistoryCommitEncoder: Encoder[Option[DeltaHistoryManager.Commit]] =
+    _optionalHistoryCommitEncoder.get
 }
