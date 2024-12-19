@@ -157,13 +157,20 @@ object IdentityColumn extends DeltaLogging {
       value
     } else {
       // An identity value follows the formula start + step * n. So n = (value - start) / step.
+      // Where n is a non-negative integer if the value respects the start.
       // Since the value doesn't follow this formula, we need to ceil n.
       // corrected value = start + step * ceil(n).
       // However, we can't cast to Double for division because it's only accurate up to 54 bits.
-      // Instead, we will do a floored division and add 1 if it's a positive step or -1 if
-      // it is a negative step.
+      // Instead, we will do a floored division and add 1.
       // start + step * ((value - start) / step + 1)
-      val stepMultiple = (valueOffset / step) + Math.signum(step).toInt
+      val quotient = valueOffset / step
+      // `valueOffset` will have the same sign as `step` if `value` respects the start.
+      val stepMultiple = if (Math.signum(valueOffset) == Math.signum(step)) {
+        Math.addExact(quotient, 1L)
+      } else {
+        // Don't add one. Otherwise, we end up rounding 2 values up, which may skip the start.
+        quotient
+      }
       Math.addExact(
         start,
         Math.multiplyExact(step, stepMultiple)

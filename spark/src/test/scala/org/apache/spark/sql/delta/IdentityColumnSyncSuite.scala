@@ -605,19 +605,29 @@ trait IdentityColumnSyncSuiteBase
     val negStart = -7L
     val posLargeStart = Long.MaxValue - 10000
     val negLargeStart = Long.MinValue + 10000
-    for (largeStart <- Seq(posStart, negStart, posLargeStart, negLargeStart)) {
+    for (start <- Seq(posStart, negStart, posLargeStart, negLargeStart)) {
+      assert(IdentityColumn.roundToNext(start = start, step = 3L, value = start) === start)
       assert(IdentityColumn.roundToNext(
-        start = largeStart, step = 3L, value = largeStart) === largeStart)
+        start = start, step = 3L, value = start + 5L) === start + 6L)
       assert(IdentityColumn.roundToNext(
-        start = largeStart, step = 3L, value = largeStart + 5L) === largeStart + 6L)
+        start = start, step = 3L, value = start + 6L) === start + 6L)
       assert(IdentityColumn.roundToNext(
-        start = largeStart, step = 3L, value = largeStart + 6L) === largeStart + 6L)
+        start = start, step = 3L, value = start - 5L) === start - 3L) // bad watermark
       assert(IdentityColumn.roundToNext(
-        start = largeStart, step = -3L, value = largeStart) === largeStart)
+        start = start, step = 3L, value = start - 7L) === start - 6L) // bad watermark
       assert(IdentityColumn.roundToNext(
-        start = largeStart, step = -3L, value = largeStart - 5L) === largeStart - 6L)
+        start = start, step = 3L, value = start - 6L) === start - 6L) // bad watermark
+      assert(IdentityColumn.roundToNext(start = start, step = -3L, value = start) === start)
       assert(IdentityColumn.roundToNext(
-        start = largeStart, step = -3L, value = largeStart - 6L) === largeStart - 6L)
+        start = start, step = -3L, value = start - 5L) === start - 6L)
+      assert(IdentityColumn.roundToNext(
+        start = start, step = -3L, value = start - 6L) === start - 6L)
+      assert(IdentityColumn.roundToNext(
+        start = start, step = -3L, value = start + 5L) === start + 3L) // bad watermark
+      assert(IdentityColumn.roundToNext(
+        start = start, step = -3L, value = start + 7L) === start + 6L) // bad watermark
+      assert(IdentityColumn.roundToNext(
+        start = start, step = -3L, value = start + 6L) === start + 6L) // bad watermark
     }
   }
 }
