@@ -760,7 +760,7 @@ Without the In-Commit Timestamp feature, <Delta> uses file modification timestam
 3. Time Travel Reliability: These timestamp changes could affect the accuracy and consistency of time travel queries
 
 #### Enabling the Feature
-This feature can be enabled by setting the table property `delta.enableInCommitTimestamps` to `true`:
+This is a [writer table feature](versioning.md#what-are-table-features) and can be enabled by setting the table property `delta.enableInCommitTimestamps` to `true`:
 
 ```sql
 ALTER TABLE <table_name>
