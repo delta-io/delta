@@ -42,68 +42,59 @@ This example provides an overview of how collations are stored in the schema. No
 Example schema
 
 ```
-|-- col2: string
-|-- col2: map
-|       |-- keyType: string
-|       |-- valueType: array
-|                    |-- elementType: map
-|                                   |-- keyType: string
-|                                   |-- valueType: map
-|                                                |-- keyType: string
-|                                                |-- valueType: struct
-|                                                             |-- f1: string
+|-- col1: string
+|-- col2: array
+|       |-- elementType: map
+|                      |-- keyType: string
+|                      |-- valueType: struct
+|                                   |-- f1: string
 ```
 
 Schema with collation information
 
 ```
 {
-  "type" : "struct",
-  "fields" : [
-    {
-      "name" : "col1",
-      "type" : "string",
-      "metadata": {
-        "__COLLATIONS": { "col1": "ICU.de_DE" }
-      }
-    },
-    {
-      "name" : "col2",
-      "type" : "map",
-      "keyType": "string"
-      "valueType": {
-        "type": "array"
-        "elementType": {
-          "type": "map"
-          "keyType: {
-            "type": "array"
-            "elementType": "string"
-          },
-          "valueType": {
-            "type": "map",
-            "keyType": "string",
-            "valueType": {
-              "type": "struct",
-              "fields": [ {
-                "name": "f1"
-                "type": "string"
-              } ],
-            },
-            "metadata": {
-              "__COLLATIONS": { "f1": "ICU.de_DE" }
+   "type":"struct",
+   "fields":[
+      {
+         "name":"col1",
+         "type":"string",
+         "metadata":{
+            "__COLLATIONS":{
+               "col1":"ICU.de_DE"
             }
-          }
-        }
+         }
+      },
+      {
+         "name":"col2",
+         "type":{
+            "type":"array",
+            "elementType":{
+               "type":"map",
+               "keyType":"string",
+               "valueType":{
+                  "type":"struct",
+                  "fields":[
+                     {
+                        "name":"f1",
+                        "type":"string",
+                        "metadata":{
+                           "__COLLATIONS":{
+                              "f1":"ICU.de_DE"
+                           }
+                        }
+                     }
+                  ]
+               }
+            }
+         },
+         "metadata":{
+            "__COLLATIONS":{
+               "col2.element.key":"ICU.en_US"
+            }
+         }
       }
-      "metadata": {
-        "__COLLATIONS": {
-          "col1.key": "ICU.en_US",
-          "col1.value.element.key": "ICU.en_US",
-          "col1.value.element.value.key": "ICU.en_US"
-        }
-      }
-    }
-  ]
+   ]
 }
 ```
 
