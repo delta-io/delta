@@ -582,6 +582,69 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       "LIKE expression has invalid escape sequence"))
   }
 
+  test("evaluate expression: starts with") {
+    val col1 = stringVector(Seq[String]("one", "two", "t%hree", "four", null, null, "%"))
+    val col2 = stringVector(Seq[String]("o", "t", "T", "4", "f", null, null))
+    val schema = new StructType()
+      .add("col1", StringType.STRING)
+      .add("col2", StringType.STRING)
+    val input = new DefaultColumnarBatch(col1.getSize, schema, Array(col1, col2))
+
+    val startsWithExpressionLiteral = startsWith(new Column("col1"), Literal.ofString("t%"))
+    val expOutputVectorLiteral =
+      booleanVector(Seq[BooleanJ](false, false, true, false, null, null, false))
+    checkBooleanVectors(new DefaultExpressionEvaluator(
+      schema, startsWithExpressionLiteral, BooleanType.BOOLEAN).eval(input), expOutputVectorLiteral)
+
+    val startsWithExpressionNullLiteral = startsWith(new Column("col1"), Literal.ofString(null))
+    val allNullVector =
+      booleanVector(Seq[BooleanJ](null, null, null, null, null, null, null))
+    checkBooleanVectors(new DefaultExpressionEvaluator(
+      schema, startsWithExpressionNullLiteral, BooleanType.BOOLEAN).eval(input), allNullVector)
+
+    // Two literal expressions on both sides
+    val startsWithExpressionAlwaysTrue = startsWith(Literal.ofString("ABC"), Literal.ofString("A"))
+    val allTrueVector = booleanVector(Seq[BooleanJ](true, true, true, true, true, true, true))
+    checkBooleanVectors(new DefaultExpressionEvaluator(
+      schema, startsWithExpressionAlwaysTrue, BooleanType.BOOLEAN).eval(input), allTrueVector)
+
+    val startsWithExpressionAlwaysFalse =
+      startsWith(Literal.ofString("ABC"), Literal.ofString("A%"))
+    val allFalseVector =
+      booleanVector(Seq[BooleanJ](false, false, false, false, false, false, false))
+    checkBooleanVectors(new DefaultExpressionEvaluator(
+      schema, startsWithExpressionAlwaysFalse, BooleanType.BOOLEAN).eval(input), allFalseVector)
+
+    val startsWithExpressionExpression = startsWith(new Column("col1"), new Column("col2"))
+    val e = intercept[UnsupportedOperationException] {
+      new DefaultExpressionEvaluator(
+        schema, startsWithExpressionExpression, BooleanType.BOOLEAN).eval(input)
+    }
+    assert(e.getMessage.contains("'starts with' expects literal as the second input"))
+
+
+    def checkUnsupportedTypes(colType: DataType, literalType: DataType): Unit = {
+      val schema = new StructType()
+        .add("col", colType)
+      val expr = startsWith(new Column("col"), Literal.ofNull(literalType))
+      val input = new DefaultColumnarBatch(5, schema,
+        Array(testColumnVector(5, colType)))
+
+      val e = intercept[UnsupportedOperationException] {
+        new DefaultExpressionEvaluator(
+          schema, expr, BooleanType.BOOLEAN).eval(input)
+      }
+      assert(e.getMessage.contains("'starts with' is only supported for string type expressions"))
+    }
+
+    checkUnsupportedTypes(BooleanType.BOOLEAN, BooleanType.BOOLEAN)
+    checkUnsupportedTypes(LongType.LONG, LongType.LONG)
+    checkUnsupportedTypes(IntegerType.INTEGER, IntegerType.INTEGER)
+    checkUnsupportedTypes(StringType.STRING, BooleanType.BOOLEAN)
+    checkUnsupportedTypes(StringType.STRING, IntegerType.INTEGER)
+    checkUnsupportedTypes(StringType.STRING, LongType.LONG)
+  }
+
   test("evaluate expression: comparators (=, <, <=, >, >=)") {
     val ASCII_MAX_CHARACTER = '\u007F'
     val UTF8_MAX_CHARACTER = new String(Character.toChars(Character.MAX_CODE_POINT))
@@ -1022,7 +1085,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
   }
 
   private def testComparator(
-    comparator: String, left: Expression, right: Expression, expResult: BooleanJ): Unit = {
+                              comparator: String, left: Expression, right: Expression, expResult: BooleanJ): Unit = {
     val expression = new Predicate(comparator, left, right)
     val batch = zeroColumnBatch(rowCount = 1)
     val outputVector = evaluator(batch.getSchema, expression, BooleanType.BOOLEAN).eval(batch)

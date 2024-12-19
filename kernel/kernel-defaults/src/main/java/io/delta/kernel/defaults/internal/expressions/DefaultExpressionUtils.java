@@ -383,4 +383,17 @@ class DefaultExpressionUtils {
       }
     };
   }
+
+  static String escape(String pattern, char escapeChar) {
+    final int len = pattern.length();
+    final StringBuilder javaPattern = new StringBuilder(len + len);
+    for (int i = 0; i < len; i++) {
+      char c = pattern.charAt(i);
+      if (c == escapeChar) {
+        javaPattern.append('\\');
+      }
+      javaPattern.append(c);
+    }
+    return javaPattern.toString();
+  }
 }
