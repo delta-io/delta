@@ -1046,7 +1046,8 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
-  withColumnMappingEnabledInTests("cannot update table with unsupported column mapping mode change") {
+  withColumnMappingEnabledInTests(
+      "cannot update table with unsupported column mapping mode change") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
       createTxn(engine, tablePath, isNewTable = true, testSchema, partCols = Seq.empty,
@@ -1065,7 +1066,8 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
-  withColumnMappingEnabledInTests("cannot update column mapping mode from id to name on existing table") {
+  withColumnMappingEnabledInTests(
+      "cannot update column mapping mode from id to name on existing table") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
       val schema = new StructType()
@@ -1093,7 +1095,8 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
-  withColumnMappingEnabledInTests("cannot update column mapping mode from name to id on existing table") {
+  withColumnMappingEnabledInTests(
+      "cannot update column mapping mode from name to id on existing table") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
       val schema = new StructType()
@@ -1121,7 +1124,8 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
-  withColumnMappingEnabledInTests("cannot update column mapping mode from none to id on existing table") {
+  withColumnMappingEnabledInTests(
+      "cannot update column mapping mode from none to id on existing table") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
       val schema = new StructType()
