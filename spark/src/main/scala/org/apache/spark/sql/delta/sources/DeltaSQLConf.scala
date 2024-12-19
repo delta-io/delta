@@ -2240,6 +2240,18 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_IDENTITY_ALLOW_SYNC_IDENTITY_TO_LOWER_HIGH_WATER_MARK =
+    buildConf("identityColumn.allowSyncIdentityToLowerHighWaterMark.enabled")
+      .internal()
+      .doc(
+        """
+          | If true, the SYNC IDENTITY command can reduce the high water mark in a Delta IDENTITY
+          | column. If false, the high water mark will only be updated if it
+          | respects the column's specified start, step, and existing high watermark value.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   ///////////
   // TESTING
   ///////////
