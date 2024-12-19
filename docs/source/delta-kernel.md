@@ -19,7 +19,7 @@ You can use this library to do the following:
 Here is an example of a simple table scan with a filter:
 
 ```java
-Engine myEngine = DefaultEngine.create() ;                  // define a engine (more details below)
+Engine myEngine = DefaultEngine.create() ;                  // define an engine (more details below)
 Table myTable = Table.forPath("/delta/table/path");         // define what table to scan
 Snapshot mySnapshot = myTable.getLatestSnapshot(myEngine);  // define which version of table to scan
 Scan myScan = mySnapshot.getScanBuilder(myEngine)           // specify the scan details
