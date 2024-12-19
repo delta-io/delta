@@ -36,7 +36,7 @@ public class TableFeatures {
             {
               add("appendOnly");
               add("inCommitTimestamp");
-              add("columnMapping");
+              // add("columnMapping"); comment for Delta 3.3
               add("typeWidening-preview");
               add("typeWidening");
               add(DOMAIN_METADATA_FEATURE_NAME);
