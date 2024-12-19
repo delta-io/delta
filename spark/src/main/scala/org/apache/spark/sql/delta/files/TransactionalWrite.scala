@@ -308,7 +308,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
       statsCollection: StatisticsCollection): Expression = {
     Dataset.ofRows(spark, LocalRelation(statsDataSchema))
       .select(to_json(statsCollection.statsCollector))
-      .queryExecution.analyzed.expressions.head
+      .queryExecution.optimizedPlan.expressions.head
   }
 
 

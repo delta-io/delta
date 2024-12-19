@@ -16,17 +16,16 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.SparkThrowable
+import org.apache.spark.sql.classic.ClassicConversions
+import org.apache.spark.sql.classic.ColumnConversions
+import org.apache.spark.sql.internal.ColumnNodeToExpressionConverter
 
 /**
- * The trait for all exceptions of Delta code path.
+ * Conversions from a [[org.apache.spark.sql.Column]] to an
+ * [[org.apache.spark.sql.catalyst.expressions.Expression]], and vice versa.
  */
-trait DeltaThrowable extends SparkThrowable with DeltaThrowableConditionShim {
-  // Portable error identifier across SQL engines
-  // If null, error class or SQLSTATE is not set
-  override def getSqlState: String =
-    DeltaThrowableHelper.getSqlState(this.getErrorClass.split('.').head)
-
-  // True if this error is an internal error.
-  override def isInternalError: Boolean = DeltaThrowableHelper.isInternalError(this.getErrorClass)
+object ClassicColumnConversions
+  extends ClassicConversions
+  with ColumnConversions {
+  override def converter: ColumnNodeToExpressionConverter = ColumnNodeToExpressionConverter
 }
