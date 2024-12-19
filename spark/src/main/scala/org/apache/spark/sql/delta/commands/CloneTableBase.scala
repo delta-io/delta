@@ -308,8 +308,10 @@ abstract class CloneTableBase(
       .toMap
     val clonedSchema =
       IdentityColumn.copySchemaWithMergedHighWaterMarks(
+        deltaLog = targetSnapshot.deltaLog,
         schemaToCopy = clonedMetadata.schema,
-        schemaWithHighWaterMarksToMerge = targetSnapshot.metadata.schema)
+        schemaWithHighWaterMarksToMerge = targetSnapshot.metadata.schema
+      )
     clonedMetadata.copy(configuration = filteredConfiguration, schemaString = clonedSchema.json)
   }
 
