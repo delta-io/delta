@@ -336,7 +336,8 @@ private[internal] class OptimisticTransactionImpl(
             actions.length,
             totalCommitAttemptTime)
         } else {
-          commitVersion = checkForConflicts(commitVersion, actions, attemptNumber, isolationLevel)
+          commitVersion = getNextCommitVersionOrFailIfConflictsDetected(
+            checkVersion = commitVersion, actions, attemptNumber, isolationLevel)
           doCommit(commitVersion, actions, isolationLevel)
         }
         tryCommit = false
@@ -408,8 +409,12 @@ private[internal] class OptimisticTransactionImpl(
    * Looks at actions that have happened since the txn started and checks for logical
    * conflicts with the read/writes. If no conflicts are found return the commit version to attempt
    * next.
+   *
+   * @throws DeltaConcurrentModificationException if the next commit version cannot be resolved
+   *                                              due to the concurrent modifications to the
+   *                                              commit log.
    */
-  private def checkForConflicts(
+  private def getNextCommitVersionOrFailIfConflictsDetected(
       checkVersion: Long,
       actions: Seq[Action],
       attemptNumber: Int,
