@@ -615,6 +615,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     checkBooleanVectors(new DefaultExpressionEvaluator(
       schema, startsWithExpressionAlwaysFalse, BooleanType.BOOLEAN).eval(input), allFalseVector)
 
+    // scalastyle:off nonascii
     val colUnicode = stringVector(Seq[String]("中文", "中", "文"))
     val schemaUnicode = new StructType().add("col", StringType.STRING)
     val inputUnicode = new DefaultColumnarBatch(colUnicode.getSize,
