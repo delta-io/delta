@@ -284,6 +284,7 @@ case class CreateDeltaTableCommand(
           txn,
           tableWithLocation,
           options,
+          sparkSession,
           schema)
       }
       var taggedCommitData = deltaWriter.writeAndReturnCommitData(
@@ -319,8 +320,11 @@ case class CreateDeltaTableCommand(
       )
       (taggedCommitData, op)
     }
-    val updatedConfiguration = UniversalFormat
-      .enforceDependenciesInConfiguration(deltaWriter.configuration, txn.snapshot)
+    val updatedConfiguration = UniversalFormat.enforceDependenciesInConfiguration(
+      sparkSession,
+      deltaWriter.configuration,
+      txn.snapshot
+    )
     val updatedWriter = deltaWriter.withNewWriterConfiguration(updatedConfiguration)
     // We are either appending/overwriting with saveAsTable or creating a new table with CTAS
     if (!hasBeenExecuted(txn, sparkSession, Some(options))) {
@@ -382,7 +386,10 @@ case class CreateDeltaTableCommand(
           getProvidedMetadata(tableWithLocation, table.schema.json)
         newMetadata = newMetadata.copy(configuration =
           UniversalFormat.enforceDependenciesInConfiguration(
-            newMetadata.configuration, txn.snapshot))
+            sparkSession,
+            newMetadata.configuration,
+            txn.snapshot
+          ))
 
         txn.updateMetadataForNewTable(newMetadata)
         protocol.foreach { protocol =>
@@ -425,6 +432,7 @@ case class CreateDeltaTableCommand(
           txn,
           tableWithLocation,
           options,
+          sparkSession,
           tableWithLocation.schema)
         // Truncate the table
         val operationTimestamp = System.currentTimeMillis()
@@ -753,6 +761,7 @@ case class CreateDeltaTableCommand(
       txn: OptimisticTransaction,
       tableDesc: CatalogTable,
       options: DeltaOptions,
+      sparkSession: SparkSession,
       schema: StructType): Unit = {
     // If a user explicitly specifies not to overwrite the schema, during a replace, we should
     // tell them that it's not supported
@@ -766,6 +775,7 @@ case class CreateDeltaTableCommand(
       // or createOrReplace a table, we blindly overwrite the metadata.
       var newMetadata = getProvidedMetadata(table, schema.json)
       val updatedConfig = UniversalFormat.enforceDependenciesInConfiguration(
+        sparkSession,
         newMetadata.configuration,
         txn.snapshot)
       newMetadata = newMetadata.copy(configuration = updatedConfig)
