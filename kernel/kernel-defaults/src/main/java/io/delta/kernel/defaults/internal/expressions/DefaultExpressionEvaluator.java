@@ -648,8 +648,7 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
 
     @Override
     ColumnVector visitStartsWith(final Predicate startsWith) {
-      throw new IllegalArgumentException(
-          "unexpected call for ColumnVector visitStartsWith(final Predicate startsWith)");
+      throw new IllegalArgumentException("Unexpected STARTS_WITH expression.");
     }
 
     /**
