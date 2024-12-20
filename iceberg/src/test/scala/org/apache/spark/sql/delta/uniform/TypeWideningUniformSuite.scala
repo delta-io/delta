@@ -18,4 +18,7 @@ package org.apache.spark.sql.delta.uniform
 
 import org.apache.spark.sql.delta.typewidening.TypeWideningUniformTests
 
+/**
+ * Suite running Uniform Iceberg + type widening tests against HMS.
+ */
 class TypeWideningUniformSuite extends TypeWideningUniformTests with WriteDeltaHMSReadIceberg
