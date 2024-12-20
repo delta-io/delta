@@ -307,12 +307,12 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
             "Invalid number of inputs to STARTS_WITH expression. "
                 + "Example usage: STARTS_WITH(column, 'test')");
       }
-      ExpressionTransformResult leftResult = visit(startsWith.getChildren().get(0));
-      ExpressionTransformResult rightResult = visit(startsWith.getChildren().get(1));
+      ExpressionTransformResult leftResult = visit(childAt(startsWith, 0));
+      ExpressionTransformResult rightResult = visit(childAt(startsWith, 1));
       if (!(StringType.STRING.equivalent(leftResult.outputType)
           && StringType.STRING.equivalent(rightResult.outputType))) {
         throw unsupportedExpressionException(
-            startsWith, "'starts with' is only supported for string type expressions");
+            startsWith, "'STARTS_WITH' is expects STRING type inputs");
       }
       // TODO: support non literal as the second input of starts with.
       if (!(rightResult.expression instanceof Literal)) {
@@ -329,7 +329,7 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
                   right.getValue() == null
                       ? right
                       : Literal.ofString(
-                          DefaultExpressionUtils.escape(
+                          LikeExpressionEvaluator.escape(
                                   String.valueOf(right.getValue()), /*escapeChar=*/ '%')
                               .concat("%")))),
           BooleanType.BOOLEAN);

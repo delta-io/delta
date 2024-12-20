@@ -104,7 +104,7 @@ import java.util.stream.Stream;
  *   <li>Name: <code>STARTS WITH</code>
  *       <ul>
  *         <li>SQL semantic: <code>expr STARTS WITH expr</code>
- *         <li>Since version: 3.3.0
+ *         <li>Since version: 3.4.0
  *       </ul>
  * </ol>
  *

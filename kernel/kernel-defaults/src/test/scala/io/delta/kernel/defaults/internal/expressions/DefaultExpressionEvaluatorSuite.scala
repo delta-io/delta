@@ -615,6 +615,16 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     checkBooleanVectors(new DefaultExpressionEvaluator(
       schema, startsWithExpressionAlwaysFalse, BooleanType.BOOLEAN).eval(input), allFalseVector)
 
+    val colUnicode = stringVector(Seq[String]("中文", "中", "文"))
+    val schemaUnicode = new StructType().add("col", StringType.STRING)
+    val inputUnicode = new DefaultColumnarBatch(colUnicode.getSize,
+      schemaUnicode, Array(colUnicode))
+    val startsWithExpressionUnicode = startsWith(new Column("col"), Literal.ofString("中"))
+    val expOutputVectorLiteralUnicode = booleanVector(Seq[BooleanJ](true, true, false))
+    checkBooleanVectors(new DefaultExpressionEvaluator(schemaUnicode,
+      startsWithExpressionUnicode,
+      BooleanType.BOOLEAN).eval(inputUnicode), expOutputVectorLiteralUnicode)
+
     val startsWithExpressionExpression = startsWith(new Column("col1"), new Column("col2"))
     val e = intercept[UnsupportedOperationException] {
       new DefaultExpressionEvaluator(
@@ -634,7 +644,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
         new DefaultExpressionEvaluator(
           schema, expr, BooleanType.BOOLEAN).eval(input)
       }
-      assert(e.getMessage.contains("'starts with' is only supported for string type expressions"))
+      assert(e.getMessage.contains("'STARTS_WITH' is expects STRING type inputs"))
     }
 
     checkUnsupportedTypes(BooleanType.BOOLEAN, BooleanType.BOOLEAN)

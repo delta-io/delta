@@ -383,17 +383,4 @@ class DefaultExpressionUtils {
       }
     };
   }
-  /** Escapes characters escapeChar in the input String */
-  static String escape(String input, char escapeChar) {
-    final int len = input.length();
-    final StringBuilder escapedString = new StringBuilder(len + len);
-    for (int i = 0; i < len; i++) {
-      char c = input.charAt(i);
-      if (c == escapeChar) {
-        escapedString.append('\\');
-      }
-      escapedString.append(c);
-    }
-    return escapedString.toString();
-  }
 }
