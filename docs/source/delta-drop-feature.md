@@ -30,7 +30,7 @@ You can drop the following Delta table features:
 - `columnMapping`. See [_](delta-column-mapping.md). Drop support for column mapping is available in <Delta> 3.3.0 and above.
 - `vacuumProtocolCheck`. See [Vacuum Protocol Check Spec](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#vacuum-protocol-check). Drop support for vacuum protocol check is available in <Delta> 3.3.0 and above.
 - `checkConstraints`. See [_](delta-constraints.md). Drop support for check constraints is available in <Delta> 3.3.0 and above.
-- `inCommitTimestamp`. See [_](delta-batch.md#in-tommit-timestamps). Drop support for In-Commit Timestamp is available in <Delta> 3.3.0 and above.
+- `inCommitTimestamp`. See [_](delta-batch.md#in-commit-timestamps). In-Commit Timestamp is available in <Delta> 3.3.0 and above.
 
 You cannot drop other [Delta table features](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#valid-feature-names-in-table-features).
 

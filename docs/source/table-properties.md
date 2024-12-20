@@ -169,6 +169,17 @@ properties are set. Available Delta table properties include:
 |                                                                                           |
 | Default: `classic`                                                                        |
 +-------------------------------------------------------------------------------------------+
+| `delta.enableInCommitTimestamps`                                                          |
+|                                                                                           |
+| `true` for enabling the InCommitTimestamps table feature.                                 |
+|                                                                                           |
+|                                                                                           |
+| See [_](delta-batch.md#in--commit-timestamps).                                  |
+|                                                                                           |
+| Data type: `Boolean`                                                                      |
+|                                                                                           |
+| Default:   `false`                                                                        |
++-------------------------------------------------------------------------------------------+
 
 .. <Delta> replace:: Delta Lake
 .. <AS> replace:: Apache Spark

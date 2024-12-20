@@ -740,6 +740,37 @@ Each time a checkpoint is written, Delta automatically cleans up log entries old
 .. note::
     Due to log entry cleanup, instances can arise where you cannot time travel to a version that is less than the retention interval. <Delta> requires all consecutive log entries since the previous checkpoint to time travel to a particular version. For example, with a table initially consisting of log entries for versions [0, 19] and a checkpoint at verison 10, if the log entry for version 0 is cleaned up, then you cannot time travel to versions [1, 9]. Increasing the table property `delta.logRetentionDuration` can help avoid these situations.
 
+### In-Commit Timestamps
+
+#### Overview
+<Delta> 3.3 introduced [In-Commit Timestamps](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#in-commit-timestamps) to provide a more reliable and consistent way to track table modification timestamps. These modification timestamps are needed for various usecases e.g. time-travel to a specific time in the past. This feature addresses limitations of the traditional approach that relied on file modification timestamps, particularly in scenarios involving data migration or replication.
+
+#### Feature Details
+In-Commit Timestamps stores modification timestamps within the commit itself, ensuring they remain unchanged regardless of file system operations. This provides several benefits:
+
+- **Immutable History**: Timestamps become part of the table's permanent commit history
+- **Consistent Time Travel**: Queries using timestamp-based time travel produce reliable results even after table migration
+
+Without the In-Commit Timestamp feature, <Delta> uses file modification timestamps as the commit timestamp. This approach has various limitations:
+
+1. Data Migration Issues: When tables were moved between storage locations, file modification timestamps would change, potentially disrupting historical tracking
+2. Replication Scenarios: Timestamp inconsistencies could arise when replicating data across different environments
+3. Time Travel Reliability: These timestamp changes could affect the accuracy and consistency of time travel queries
+
+#### Enabling the Feature
+This is a [writer table feature](versioning.md#what-are-table-features) and can be enabled by setting the table property `delta.enableInCommitTimestamps` to `true`:
+
+```sql
+ALTER TABLE <table_name>
+SET TBLPROPERTIES ('delta.enableInCommitTimestamps' = 'true');
+```
+
+After enabling In-Commit Timestamps:
+- Only new write operations will include the embedded timestamps
+- File modification timestamps will continued to be used for historical commits performed before enablement
+
+See the [Versioning](./versioning) section for more details around compatibility.
+
 <a id="deltadataframewrites"></a>
 
 ## Write to a table
