@@ -256,16 +256,16 @@ abstract class CloneTableBase(
         }
       }
 
-        recordDeltaOperation(
-          destinationTable, s"delta.${deltaOperation.name.toLowerCase()}.commit") {
-          txn.commitLarge(
-            spark,
-            actions,
-            Some(newProtocol),
-            deltaOperation,
-            context,
-            commitOpMetrics.mapValues(_.toString()).toMap)
-        }
+      recordDeltaOperation(
+        destinationTable, s"delta.${deltaOperation.name.toLowerCase()}.commit") {
+        txn.commitLarge(
+          spark,
+          actions,
+          Some(newProtocol),
+          deltaOperation,
+          context,
+          commitOpMetrics.mapValues(_.toString()).toMap)
+      }
 
       val cloneLogData = getOperationMetricsForEventRecord(opMetrics) ++ Map(
         SOURCE -> sourceName,
