@@ -94,7 +94,7 @@ For efficient listing of <Delta> metadata files on S3, set the configuration `de
     --packages io.delta:delta-spark_2.12:3.1.0,org.apache.hadoop:hadoop-aws:3.3.4 \
     --conf spark.hadoop.fs.s3a.access.key=<your-s3-access-key> \
     --conf spark.hadoop.fs.s3a.secret.key=<your-s3-secret-key> \
-    --conf "spark.hadoop.delta.enableFastS3AListFrom=true
+    --conf "spark.hadoop.delta.enableFastS3AListFrom=true"
   ```
 
 #### Configuration (S3 single-cluster)
@@ -131,8 +131,8 @@ This mode supports concurrent writes to S3 from multiple clusters and has to be 
   :depth: 1
 
 #### Requirements (S3 multi-cluster)
-- All of the requirements listed in [_](#requirements-s3-single-cluster) section
-- In additon to S3 credentials, you also need DynamoDB operating permissions
+- All the requirements listed in [_](#requirements-s3-single-cluster) section
+- In addition to S3 credentials, you also need DynamoDB operating permissions
 
 #### Quickstart (S3 multi-cluster)
 
@@ -412,9 +412,9 @@ Here are the steps to configure <Delta> on Azure Data Lake Storage Gen1.
 
    ```scala
    spark.conf.set("fs.azure.account.auth.type.<storage-account-name>.dfs.core.windows.net", "OAuth")
-   spark.conf.set("fs.azure.account.oauth.provider.type.<storage-account-name>.dfs.core.windows.net",  "org.apache.hadoop.fs.azurebfs.oauth2.ClientCredsTokenProvider")
+   spark.conf.set("fs.azure.account.oauth.provider.type.<storage-account-name>.dfs.core.windows.net", "org.apache.hadoop.fs.azurebfs.oauth2.ClientCredsTokenProvider")
    spark.conf.set("fs.azure.account.oauth2.client.id.<storage-account-name>.dfs.core.windows.net", "<application-id>")
-   spark.conf.set("fs.azure.account.oauth2.client.secret.<storage-account-name>.dfs.core.windows.net","<password>")
+   spark.conf.set("fs.azure.account.oauth2.client.secret.<storage-account-name>.dfs.core.windows.net", "<password>")
    spark.conf.set("fs.azure.account.oauth2.client.endpoint.<storage-account-name>.dfs.core.windows.net", "https://login.microsoftonline.com/<directory-id>/oauth2/token")
   ```
   where `<storage-account-name>`, `<application-id>`, `<directory-id>` and `<password>` are details of the service principal we set as requirements earlier.

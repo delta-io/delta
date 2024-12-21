@@ -20,7 +20,7 @@ For many <Delta> operations on tables, you enable integration with <AS> DataSour
 
 ## Delta table as a source
 
-When you load a Delta table as a stream source and use it in a streaming query, the query processes all of the data present in the table as well as any new data that arrives after the stream is started.
+When you load a Delta table as a stream source and use it in a streaming query, the query processes all the data present in the table as well as any new data that arrives after the stream is started.
 
 ```scala
 spark.readStream.format("delta")
@@ -58,7 +58,7 @@ Structured Streaming does not handle input that is not an append and throws an e
 - You can delete the output and checkpoint and restart the stream from the beginning.
 - You can set either of these two options:
   - `ignoreDeletes`: ignore transactions that delete data at partition boundaries.
-  - `ignoreChanges`: re-process updates if files had to be rewritten in the source table due to a data changing operation such as `UPDATE`, `MERGE INTO`, `DELETE` (within partitions), or `OVERWRITE`. Unchanged rows may still be emitted, therefore your downstream consumers should be able to handle duplicates. Deletes are not propagated downstream. `ignoreChanges` subsumes `ignoreDeletes`. Therefore if you use `ignoreChanges`, your stream will not be disrupted by either deletions or updates to the source table.
+  - `ignoreChanges`: re-process updates if files had to be rewritten in the source table due to a data changing operation such as `UPDATE`, `MERGE INTO`, `DELETE` (within partitions), or `OVERWRITE`. Unchanged rows may still be emitted, therefore your downstream consumers should be able to handle duplicates. Deletes are not propagated downstream. `ignoreChanges` subsumes `ignoreDeletes`. Therefore, if you use `ignoreChanges`, your stream will not be disrupted by either deletions or updates to the source table.
 
 #### Example
 
@@ -122,14 +122,14 @@ spark.readStream.format("delta")
 
 ### Process initial snapshot without data being dropped
 
-When using a Delta table as a stream source, the query first processes all of the data present in the table. The Delta table at this version is called the initial snapshot. By default, the Delta table's data files are processed based on which file was last modified. However, the last modification time does not necessarily represent the record event time order. 
+When using a Delta table as a stream source, the query first processes all the data present in the table. The Delta table at this version is called the initial snapshot. By default, the Delta table's data files are processed based on which file was last modified. However, the last modification time does not necessarily represent the record event time order. 
 
 In a stateful streaming query with a defined watermark, processing files by modification time can result in records being processed in the wrong order. This could lead to records dropping as late events by the watermark.
 
 You can avoid the data drop issue by enabling the following option:
 - withEventTimeOrder: Whether the initial snapshot should be processed with event time order.
 
-With event time order enabled, the event time range of initial snapshot data is divided into time buckets. Each micro batch processes a bucket by filtering data within the time range. The maxFilesPerTrigger and maxBytesPerTrigger configuration options are still applicable to control the microbatch size but only in an approximate way due to the nature of the processing.
+With event time order enabled, the event time range of initial snapshot data is divided into time buckets. Each micro batch processes a bucket by filtering data within the time range. The maxFilesPerTrigger and maxBytesPerTrigger configuration options are still applicable to control the micro batch size but only in an approximate way due to the nature of the processing.
 
 The graphic below shows this process:
 
@@ -140,7 +140,7 @@ Notable information about this feature:
 
 - The data drop issue only happens when the initial Delta snapshot of a stateful streaming query is processed in the default order.
 - You cannot change `withEventTimeOrder` once the stream query is started while the initial snapshot is still being processed. To restart with `withEventTimeOrder` changed, you need to delete the checkpoint.
-- If you are running a stream query with withEventTimeOrder enabled, you cannot downgrade it to a Delta version which doesn’t support this feature until the initial snapshot processing is completed. If you need to downgrade, you can wait for the initial snapshot to finish, or delete the checkpoint and restart the query.
+- If you are running a stream query with withEventTimeOrder enabled, you cannot downgrade it to a Delta version which doesn't support this feature until the initial snapshot processing is completed. If you need to downgrade, you can wait for the initial snapshot to finish, or delete the checkpoint and restart the query.
 - This feature is not supported in the following uncommon scenarios:
  - The event time column is a generated column and there are non-projection transformations between the Delta source and watermark.
  - There is a watermark that has more than one Delta source in the stream query.
@@ -300,7 +300,7 @@ For applications with more lenient latency requirements, you can save computing 
 
 .. note:: Available in <Delta> 2.0.0 and above.
 
-The command [foreachBatch](/structured-streaming/foreach.md) allows you to specify a function that is executed on the output of every micro-batch after arbitrary transformations in the streaming query. This allows implementating a `foreachBatch` function that can write the micro-batch output to one or more target Delta table destinations. However, `foreachBatch` does not make those writes idempotent as those write attempts lack the information of whether the batch is being re-executed or not. For example, rerunning a failed batch could result in duplicate data writes.
+The command [foreachBatch](/structured-streaming/foreach.md) allows you to specify a function that is executed on the output of every micro-batch after arbitrary transformations in the streaming query. This allows implementing a `foreachBatch` function that can write the micro-batch output to one or more target Delta table destinations. However, `foreachBatch` does not make those write idempotent as those write attempts lack the information of whether the batch is being re-executed or not. For example, rerunning a failed batch could result in duplicate data writes.
 
 To address this, Delta tables support the following `DataFrameWriter` options to make the writes idempotent:
 
