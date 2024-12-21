@@ -382,6 +382,116 @@ class DeltaTable private[tables](
   }
 
   /**
+   * Merge data from the `source` DataFrame based on the given merge `condition`. This returns
+   * a [[DeltaMergeBuilder]] object that can be used to specify the update, delete, or insert
+   * actions to be performed on rows based on whether the rows matched the condition or not.
+   *
+   * See the [[DeltaMergeBuilder]] for a full description of this operation and what combinations of
+   * update, delete and insert operations are allowed.
+   *
+   * Scala example to update a key-value Delta table with new key-values from a source DataFrame:
+   * {{{
+   *    deltaTable
+   *     .as("target")
+   *     .merge(
+   *       source.as("source"),
+   *       "target.key = source.key")
+   *     .whenMatched
+   *     .updateExpr(Map(
+   *       "value" -> "source.value"))
+   *     .whenNotMatched
+   *     .insertExpr(Map(
+   *       "key" -> "source.key",
+   *       "value" -> "source.value"))
+   *     .execute()
+   * }}}
+   *
+   * Java example to update a key-value Delta table with new key-values from a source DataFrame:
+   * {{{
+   *    deltaTable
+   *     .as("target")
+   *     .merge(
+   *       source.as("source"),
+   *       "target.key = source.key")
+   *     .whenMatched
+   *     .updateExpr(
+   *        new HashMap<String, String>() {{
+   *          put("value" -> "source.value");
+   *        }})
+   *     .whenNotMatched
+   *     .insertExpr(
+   *        new HashMap<String, String>() {{
+   *         put("key", "source.key");
+   *         put("value", "source.value");
+   *       }})
+   *     .execute();
+   * }}}
+   *
+   * @param source    source Dataframe to be merged.
+   * @param condition boolean expression as SQL formatted string.
+   *
+   * @since 4.0.0
+   */
+  def merge(source: DataFrame, condition: String): DeltaMergeBuilder = {
+    merge(source, functions.expr(condition))
+  }
+
+  /**
+   * Merge data from the `source` DataFrame based on the given merge `condition`. This returns
+   * a [[DeltaMergeBuilder]] object that can be used to specify the update, delete, or insert
+   * actions to be performed on rows based on whether the rows matched the condition or not.
+   *
+   * See the [[DeltaMergeBuilder]] for a full description of this operation and what combinations of
+   * update, delete and insert operations are allowed.
+   *
+   * Scala example to update a key-value Delta table with new key-values from a source DataFrame:
+   * {{{
+   *    deltaTable
+   *     .as("target")
+   *     .merge(
+   *       source.as("source"),
+   *       "target.key = source.key")
+   *     .whenMatched
+   *     .updateExpr(Map(
+   *       "value" -> "source.value"))
+   *     .whenNotMatched
+   *     .insertExpr(Map(
+   *       "key" -> "source.key",
+   *       "value" -> "source.value"))
+   *     .execute()
+   * }}}
+   *
+   * Java example to update a key-value Delta table with new key-values from a source DataFrame:
+   * {{{
+   *    deltaTable
+   *     .as("target")
+   *     .merge(
+   *       source.as("source"),
+   *       "target.key = source.key")
+   *     .whenMatched
+   *     .updateExpr(
+   *        new HashMap<String, String>() {{
+   *          put("value" -> "source.value")
+   *        }})
+   *     .whenNotMatched
+   *     .insertExpr(
+   *        new HashMap<String, String>() {{
+   *         put("key", "source.key");
+   *         put("value", "source.value");
+   *       }})
+   *     .execute()
+   * }}}
+   *
+   * @param source    source Dataframe to be merged.
+   * @param condition boolean expression as a Column object.
+   *
+   * @since 4.0.0
+   */
+  def merge(source: DataFrame, condition: Column): DeltaMergeBuilder = {
+    DeltaMergeBuilder(this, source, condition)
+  }
+
+  /**
    * Helper method for the restoreToVersion and restoreToTimestamp APIs.
    *
    * @param version The version number of the older version of the table to restore to.
