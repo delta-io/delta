@@ -40,6 +40,7 @@ public class TableFeatures {
               add("typeWidening-preview");
               add("typeWidening");
               add(DOMAIN_METADATA_FEATURE_NAME);
+              add(ROW_TRACKING_FEATURE_NAME);
             }
           });
 
@@ -58,8 +59,9 @@ public class TableFeatures {
             }
           });
 
-  /** The feature name for domain metadata. */
   public static final String DOMAIN_METADATA_FEATURE_NAME = "domainMetadata";
+
+  public static final String ROW_TRACKING_FEATURE_NAME = "rowTracking";
 
   /** The minimum writer version required to support table features. */
   public static final int TABLE_FEATURES_MIN_WRITER_VERSION = 7;
@@ -100,7 +102,8 @@ public class TableFeatures {
    *   <li>protocol writer version 1.
    *   <li>protocol writer version 2 only with appendOnly feature enabled.
    *   <li>protocol writer version 7 with {@code appendOnly}, {@code inCommitTimestamp}, {@code
-   *       columnMapping}, {@code typeWidening}, {@code domainMetadata} feature enabled.
+   *       columnMapping}, {@code typeWidening}, {@code domainMetadata}, {@code rowTracking} feature
+   *       enabled.
    * </ul>
    *
    * @param protocol Table protocol
@@ -135,6 +138,12 @@ public class TableFeatures {
           if (!SUPPORTED_WRITER_FEATURES.contains(writerFeature)) {
             throw unsupportedWriterFeature(tablePath, writerFeature);
           }
+        }
+        // Eventually we may have a way to declare and enforce dependencies between features.
+        // By putting this check for row tracking here, it makes it easier to spot that row
+        // tracking defines such a dependency that can be implicitly checked.
+        if (isRowTrackingSupported(protocol) && !isDomainMetadataSupported(protocol)) {
+          throw DeltaErrors.rowTrackingSupportedWithDomainMetadataUnsupported();
         }
         break;
       default:
@@ -189,12 +198,17 @@ public class TableFeatures {
    * @return true if the "domainMetadata" feature is supported, false otherwise
    */
   public static boolean isDomainMetadataSupported(Protocol protocol) {
-    List<String> writerFeatures = protocol.getWriterFeatures();
-    if (writerFeatures == null) {
-      return false;
-    }
-    return writerFeatures.contains(DOMAIN_METADATA_FEATURE_NAME)
-        && protocol.getMinWriterVersion() >= TABLE_FEATURES_MIN_WRITER_VERSION;
+    return isWriterFeatureSupported(protocol, DOMAIN_METADATA_FEATURE_NAME);
+  }
+
+  /**
+   * Check if the table protocol supports the "rowTracking" writer feature.
+   *
+   * @param protocol the protocol to check
+   * @return true if the protocol supports row tracking, false otherwise
+   */
+  public static boolean isRowTrackingSupported(Protocol protocol) {
+    return isWriterFeatureSupported(protocol, ROW_TRACKING_FEATURE_NAME);
   }
 
   /**
@@ -252,5 +266,14 @@ public class TableFeatures {
     if (hasInvariants) {
       throw columnInvariantsNotSupported();
     }
+  }
+
+  private static boolean isWriterFeatureSupported(Protocol protocol, String featureName) {
+    List<String> writerFeatures = protocol.getWriterFeatures();
+    if (writerFeatures == null) {
+      return false;
+    }
+    return writerFeatures.contains(featureName)
+        && protocol.getMinWriterVersion() >= TABLE_FEATURES_MIN_WRITER_VERSION;
   }
 }
