@@ -211,6 +211,9 @@ class DeltaHistoryManager(
         start,
         Some(end),
         deltaLog.newDeltaHadoopConf())
+      if (commits.isEmpty) {
+        throw DeltaErrors.noHistoryFound(deltaLog.logPath)
+      }
       lastCommitBeforeTimestamp(commits, time).getOrElse(commits.head)
     }
   }
@@ -710,12 +713,19 @@ object DeltaHistoryManager extends DeltaLogging {
           startVersion,
           Some(math.min(startVersion + step, end)),
           conf.value)
-        lastCommitBeforeTimestamp(commits, time).getOrElse(commits.head)
+        if (commits.isEmpty) {
+          None
+        } else {
+          Some(lastCommitBeforeTimestamp(commits, time).getOrElse(commits.head))
+        }
       }
     }.collect()
 
     // Spark should return the commits in increasing order as well
-    val commitList = monotonizeCommitTimestamps(possibleCommits)
+    val commitList = monotonizeCommitTimestamps(possibleCommits.flatten)
+    if (commitList.isEmpty) {
+      throw DeltaErrors.noHistoryFound(new Path(logPath))
+    }
     lastCommitBeforeTimestamp(commitList, time).getOrElse(commitList.head)
   }
 
