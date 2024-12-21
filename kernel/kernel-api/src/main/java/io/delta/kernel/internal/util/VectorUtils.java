@@ -21,7 +21,6 @@ import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
-import io.delta.kernel.internal.data.StructRow;
 import io.delta.kernel.types.*;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -31,6 +30,24 @@ import java.util.Map;
 public final class VectorUtils {
 
   private VectorUtils() {}
+
+  /**
+   * Converts a struct in a {@link ColumnVector} to a Java list. Java doesn't have a Tuple type so
+   * we return a list of untyped values corresponding to each element in the struct. Any nested
+   * complex types are also converted to their Java type.
+   */
+  public static List<Object> toJavaList(ColumnVector vector, int rowId) {
+    checkArgument(
+        vector.getDataType() instanceof StructType, "Expected a struct type column vector");
+
+    List<Object> values = new ArrayList<>();
+    StructType structType = (StructType) vector.getDataType();
+
+    for (int i = 0; i < structType.length(); i++) {
+      values.add(getValueAsObject(vector.getChild(i), vector.getChild(i).getDataType(), rowId));
+    }
+    return values;
+  }
 
   /**
    * Converts an {@link ArrayValue} to a Java list. Any nested complex types are also converted to
@@ -193,11 +210,10 @@ public final class VectorUtils {
       return columnVector.getString(rowId);
     } else if (dataType instanceof BinaryType) {
       return columnVector.getBinary(rowId);
-    } else if (dataType instanceof StructType) {
-      // TODO are we okay with this usage of StructRow?
-      return StructRow.fromStructVector(columnVector, rowId);
     } else if (dataType instanceof DecimalType) {
       return columnVector.getDecimal(rowId);
+    } else if (dataType instanceof StructType) {
+      return toJavaList(columnVector, rowId);
     } else if (dataType instanceof ArrayType) {
       return toJavaList(columnVector.getArray(rowId));
     } else if (dataType instanceof MapType) {
