@@ -3402,6 +3402,23 @@ trait DeltaErrorsBase
     )
   }
 
+  def icebergCompatUnsupportedTypeWideningException(
+      version: Int,
+      fieldPath: Seq[String],
+      oldType: DataType,
+      newType: DataType): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.UNSUPPORTED_TYPE_WIDENING",
+      messageParameters = Array(
+        version.toString,
+        version.toString,
+        SchemaUtils.prettyFieldName(fieldPath),
+        toSQLType(oldType),
+        toSQLType(newType)
+      )
+    )
+  }
+
   def universalFormatConversionFailedException(
       failedOnCommitVersion: Long,
       format: String,

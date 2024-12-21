@@ -68,14 +68,41 @@ object TypeWidening {
    * It is the responsibility of the caller to recurse into structs, maps and arrays.
    */
   def isTypeChangeSupported(fromType: AtomicType, toType: AtomicType): Boolean =
-    TypeWideningShims.isTypeChangeSupported(fromType, toType)
+    TypeWideningShims.isTypeChangeSupported(fromType = fromType, toType = toType)
 
   /**
    * Returns whether the given type change can be applied during schema evolution. Only a
    * subset of supported type changes are considered for schema evolution.
    */
-  def isTypeChangeSupportedForSchemaEvolution(fromType: AtomicType, toType: AtomicType): Boolean =
-    TypeWideningShims.isTypeChangeSupportedForSchemaEvolution(fromType, toType)
+  def isTypeChangeSupportedForSchemaEvolution(
+      fromType: AtomicType,
+      toType: AtomicType,
+      uniformIcebergCompatibleOnly: Boolean): Boolean =
+    TypeWideningShims.isTypeChangeSupportedForSchemaEvolution(
+      fromType = fromType,
+      toType = toType
+    ) && (
+      !uniformIcebergCompatibleOnly ||
+        isTypeChangeSupportedByIceberg(fromType = fromType, toType = toType)
+    )
+
+  /**
+   * Returns whether the given type change is supported by Iceberg, and by extension can be read
+   * using Uniform. See https://iceberg.apache.org/spec/#schema-evolution.
+   * Note that these are type promotions supported by Iceberg V1 & V2 (both support the same type
+   * promotions). Iceberg V3 will add support for date -> timestamp_ntz and void -> any but Uniform
+   * doesn't currently support Iceberg V3.
+   */
+  def isTypeChangeSupportedByIceberg(fromType: AtomicType, toType: AtomicType): Boolean =
+    (fromType, toType) match {
+      case (from, to) if from == to => true
+      case (from, to) if !isTypeChangeSupported(from, to) => false
+      case (from: IntegralType, to: IntegralType) => from.defaultSize <= to.defaultSize
+      case (FloatType, DoubleType) => true
+      case (from: DecimalType, to: DecimalType)
+        if from.scale == to.scale && from.precision <= to.precision => true
+      case _ => false
+    }
 
   /**
    * Asserts that the given table doesn't contain any unsupported type changes. This should never

@@ -1221,6 +1221,12 @@
           "<schema>"
         ]
       },
+      "UNSUPPORTED_TYPE_WIDENING" : {
+        "message" : [
+          "IcebergCompatV<version> is incompatible with a type change applied to this table:",
+          "Field <fieldPath> was changed from <prevType> to <newType>."
+        ]
+      },
       "VERSION_MUTUAL_EXCLUSIVE" : {
         "message" : [
           "Only one IcebergCompat version can be enabled, please explicitly disable all other IcebergCompat versions that are not needed."
