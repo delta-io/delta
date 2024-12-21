@@ -30,9 +30,6 @@ class TableConfigSuite extends AnyFunSuite {
         TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true",
         TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.getKey -> "1",
         TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.getKey -> "1",
-        TableConfig.COORDINATED_COMMITS_COORDINATOR_NAME.getKey -> "{in-memory}",
-        TableConfig.COORDINATED_COMMITS_COORDINATOR_CONF.getKey -> "{\"1\": \"1\"}",
-        TableConfig.COORDINATED_COMMITS_TABLE_CONF.getKey -> "{\"1\": \"1\"}",
         TableConfig.COLUMN_MAPPING_MODE.getKey -> "name",
         TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true").asJava)
   }

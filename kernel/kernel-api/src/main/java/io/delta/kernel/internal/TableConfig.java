@@ -138,52 +138,6 @@ public class TableConfig<T> {
           "needs to be a long.",
           true);
 
-  /*
-   * This table property is used to track the commit-coordinator name for this table. If this
-   * property is not set, the table will be considered as file system table and commits will be
-   * done via atomically publishing the commit file.
-   */
-  public static final TableConfig<Optional<String>> COORDINATED_COMMITS_COORDINATOR_NAME =
-      new TableConfig<>(
-          "delta.coordinatedCommits.commitCoordinator-preview",
-          null, /* default values */
-          Optional::ofNullable,
-          value -> true,
-          "The commit-coordinator name for this table. This is used to determine "
-              + "which implementation of commit-coordinator to use when committing "
-              + "to this table. If this property is not set, the table will be "
-              + "considered as file system table and commits will be done via "
-              + "atomically publishing the commit file.",
-          true);
-
-  /*
-   * This table property is used to track the configuration properties for the commit coordinator
-   * which is needed to build the commit coordinator client.
-   */
-  public static final TableConfig<Map<String, String>> COORDINATED_COMMITS_COORDINATOR_CONF =
-      new TableConfig<>(
-          "delta.coordinatedCommits.commitCoordinatorConf-preview",
-          null, /* default values */
-          JsonUtils::parseJSONKeyValueMap,
-          value -> true,
-          "A string-to-string map of configuration properties for the"
-              + " coordinated commits-coordinator.",
-          true);
-
-  /*
-   * This property is used by the commit coordinator to uniquely identify and manage the table
-   * internally.
-   */
-  public static final TableConfig<Map<String, String>> COORDINATED_COMMITS_TABLE_CONF =
-      new TableConfig<>(
-          "delta.coordinatedCommits.tableConf-preview",
-          null, /* default values */
-          JsonUtils::parseJSONKeyValueMap,
-          value -> true,
-          "A string-to-string map of configuration properties for"
-              + "  describing the table to commit-coordinator.",
-          true);
-
   /** This table property is used to control the column mapping mode. */
   public static final TableConfig<ColumnMappingMode> COLUMN_MAPPING_MODE =
       new TableConfig<>(
@@ -226,9 +180,6 @@ public class TableConfig<T> {
               addConfig(this, IN_COMMIT_TIMESTAMPS_ENABLED);
               addConfig(this, IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION);
               addConfig(this, IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP);
-              addConfig(this, COORDINATED_COMMITS_COORDINATOR_NAME);
-              addConfig(this, COORDINATED_COMMITS_COORDINATOR_CONF);
-              addConfig(this, COORDINATED_COMMITS_TABLE_CONF);
               addConfig(this, COLUMN_MAPPING_MODE);
               addConfig(this, ICEBERG_COMPAT_V2_ENABLED);
               addConfig(this, COLUMN_MAPPING_MAX_COLUMN_ID);
