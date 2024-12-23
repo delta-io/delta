@@ -55,9 +55,15 @@ import java.util.stream.Collectors;
  *       </ul>
  *   <li>Name: <code>SUBSTRING</code>
  *       <ul>
- *         <li>Semantic: <code>SUBSTRING(colExpr, pos, len)</code>. Substring starts at pos and is
- *             of length len when str is String type or returns the slice of byte array that starts
- *             at pos in byte and is of length len when str is Binary type.
+ *         <li>Semantic: <code>SUBSTRING(colExpr, pos, len)</code>. Returns the slice of byte array
+ *             or string, that starts at pos and has the length len.
+ *             <ul>
+ *               <li>pos is 1 based. If pos is negative the start is determined by counting
+ *                   characters (or bytes for BINARY) from the end.
+ *               <li>If len is less than 1 the result is empty.
+ *               <li>If len is omitted the function returns on characters or bytes starting with
+ *                   pos.
+ *             </ul>
  *         <li>Since version: 3.4.0
  *       </ul>
  * </ol>
