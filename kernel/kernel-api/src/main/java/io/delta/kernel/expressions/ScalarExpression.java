@@ -53,6 +53,13 @@ import java.util.stream.Collectors;
  *             later.
  *         <li>Since version: 3.3.0
  *       </ul>
+ *   <li>Name: <code>SUBSTRING</code>
+ *       <ul>
+ *         <li>Semantic: <code>SUBSTRING(colExpr, pos, len)</code>. Substring starts at pos and is
+ *             of length len when str is String type or returns the slice of byte array that starts
+ *             at pos in byte and is of length len when str is Binary type.
+ *         <li>Since version: 3.4.0
+ *       </ul>
  * </ol>
  *
  * @since 3.0.0

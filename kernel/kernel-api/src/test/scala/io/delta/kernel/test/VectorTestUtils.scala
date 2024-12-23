@@ -38,6 +38,20 @@ trait VectorTestUtils {
     }
   }
 
+  protected def binaryVector(values: Seq[Array[Byte]]): ColumnVector = {
+    new ColumnVector {
+      override def getDataType: DataType = BinaryType.BINARY
+
+      override def getSize: Int = values.length
+
+      override def close(): Unit = {}
+
+      override def isNullAt(rowId: Int): Boolean = values(rowId) == null
+
+      override def getBinary(rowId: Int): Array[Byte] = values(rowId)
+    }
+  }
+
   protected def timestampVector(values: Seq[Long]): ColumnVector = {
     new ColumnVector {
       override def getDataType: DataType = TimestampType.TIMESTAMP

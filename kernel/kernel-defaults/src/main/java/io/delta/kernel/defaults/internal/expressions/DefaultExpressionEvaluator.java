@@ -287,6 +287,18 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
     }
 
     @Override
+    ExpressionTransformResult visitSubstring(ScalarExpression substring) {
+      List<ExpressionTransformResult> children =
+          substring.getChildren().stream().map(this::visit).collect(toList());
+      ScalarExpression transformedExpression =
+          SubstringEvaluator.validateAndTransform(
+              substring,
+              children.stream().map(e -> e.expression).collect(toList()),
+              children.stream().map(e -> e.outputType).collect(toList()));
+      return new ExpressionTransformResult(transformedExpression, StringType.STRING);
+    }
+
+    @Override
     ExpressionTransformResult visitLike(final Predicate like) {
       List<ExpressionTransformResult> children =
           like.getChildren().stream().map(this::visit).collect(toList());
@@ -601,6 +613,13 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
           return timestampColumn.getLong(rowId) + durationMicros;
         }
       };
+    }
+
+    @Override
+    ColumnVector visitSubstring(ScalarExpression subString) {
+      List<Expression> children = subString.getChildren();
+      return SubstringEvaluator.eval(
+          children, children.stream().map(this::visit).collect(toList()));
     }
 
     @Override

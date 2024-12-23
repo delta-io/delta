@@ -773,6 +773,184 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     ofNull(DoubleType.DOUBLE)
   )
 
+  test("evaluate expression: substring") {
+    val data = Seq[String](
+      null, "one", "two", "three", "four", null, null, "seven", "eight")
+    val col1 = stringVector(data)
+    val col2 = binaryVector(data.map(str => if (str != null) str.getBytes else null))
+    val schema = new StructType()
+      .add("str_col", StringType.STRING)
+      .add("binary_col", BinaryType.BINARY)
+    val input = new DefaultColumnarBatch(col1.getSize, schema, Array(col1, col2))
+
+    def checkSubString(
+                   input: DefaultColumnarBatch,
+                   substringExpression: ScalarExpression,
+                   expOutputSeq: Seq[String]): Unit = {
+      val actOutputVector =
+        new DefaultExpressionEvaluator(
+          schema, substringExpression, StringType.STRING).eval(input)
+      val expOutputVector = stringVector(expOutputSeq);
+      checkStringVectors(actOutputVector, expOutputVector)
+    }
+
+    Seq("str_col", "binary_col").foreach(col_name => {
+      checkSubString(
+        input,
+        substring(new Column(col_name), 0),
+        Seq[String](null, "one", "two", "three", "four", null, null, "seven", "eight"))
+
+      checkSubString(
+        input,
+        substring(new Column(col_name), 1),
+        Seq[String](null, "one", "two", "three", "four", null, null, "seven", "eight"))
+
+      checkSubString(
+        input,
+        substring(new Column(col_name), 2),
+        Seq[String](null, "ne", "wo", "hree", "our", null, null, "even", "ight"))
+
+      checkSubString(
+        input,
+        substring(new Column(col_name), -1),
+        Seq[String](null, "e", "o", "e", "r", null, null, "n", "t"))
+
+      checkSubString(
+        input,
+        substring(new Column(col_name), -1000),
+        Seq[String](null, "one", "two", "three", "four", null, null, "seven", "eight"))
+
+      checkSubString(
+        input,
+        substring(new Column(col_name), 0, Option(4)),
+        Seq[String](null, "one", "two", "thre", "four", null, null, "seve", "eigh"))
+
+      checkSubString(
+        input,
+        substring(new Column(col_name), 2, Option(0)),
+        Seq[String](null, "", "", "", "", null, null, "", ""))
+
+      checkSubString(
+        input,
+        substring(new Column(col_name), 2, Option(1)),
+        Seq[String](null, "n", "w", "h", "o", null, null, "e", "i"))
+
+      checkSubString(
+        input,
+        substring(new Column(col_name), 2, Option(10000)),
+        Seq[String](null, "ne", "wo", "hree", "our", null, null, "even", "ight"))
+
+      checkSubString(
+        input,
+        substring(new Column(col_name), 1000),
+        Seq[String](null, "", "", "", "", null, null, "", ""))
+
+      checkSubString(
+        input,
+        substring(new Column(col_name), 2, Option(-10)),
+        Seq[String](null, "", "", "", "", null, null, "", ""))
+
+      checkSubString(
+        input,
+        substring(new Column(col_name), -2, Option(1)),
+        Seq[String](null, "n", "w", "e", "u", null, null, "e", "h"))
+
+      checkSubString(
+        input,
+        substring(new Column(col_name), -2, Option(2)),
+        Seq[String](null, "ne", "wo", "ee", "ur", null, null, "en", "ht"))
+
+      checkSubString(
+        input,
+        substring(new Column(col_name), -4, Option(3)),
+        Seq[String](null, "on", "tw", "hre", "fou", null, null, "eve", "igh"))
+
+      checkSubString(
+        input,
+        substring(new Column(col_name), -100, Option(95)),
+        Seq[String](null, "", "", "", "", null, null, "", ""))
+
+      checkSubString(
+        input,
+        substring(new Column(col_name), -100, Option(98)),
+        Seq[String](null, "o", "t", "thr", "fo", null, null, "sev", "eig"))
+
+      checkSubString(
+        input,
+        substring(new Column(col_name), -100, Option(108)),
+        Seq[String](null, "one", "two", "three", "four", null, null, "seven", "eight"))
+    })
+
+    def checkUnsupportedColumnTypes(colType: DataType): Unit = {
+      val schema = new StructType()
+        .add("col1", colType)
+      val batch = new DefaultColumnarBatch(5, schema, Array(testColumnVector(5, colType)))
+      val e = intercept[UnsupportedOperationException] {
+        evaluator(
+          schema,
+          new ScalarExpression("SUBSTRING",
+            util.Arrays.asList(new Column("col1"), Literal.ofInt(1))),
+          StringType.STRING
+        ).eval(batch)
+      }
+      assert(
+        e.getMessage.contains("Invalid type of first input of SUBSTRING: expects BINARY or STRING"))
+    }
+
+    checkUnsupportedColumnTypes(IntegerType.INTEGER)
+    checkUnsupportedColumnTypes(ByteType.BYTE)
+    checkUnsupportedColumnTypes(BooleanType.BOOLEAN)
+
+    val badLiteralSize = intercept[UnsupportedOperationException] {
+      evaluator(
+        schema,
+        new ScalarExpression("SUBSTRING",
+          util.Arrays.asList(
+            new Column("str_col"), Literal.ofInt(1), Literal.ofInt(1), Literal.ofInt(1))),
+        StringType.STRING
+      ).eval( new DefaultColumnarBatch(/* size= */5,
+        schema,
+        Array(
+          testColumnVector(/* size= */5, StringType.STRING),
+          testColumnVector(/* size= */5, BinaryType.BINARY))))
+    }
+    assert(
+      badLiteralSize.getMessage.contains(
+        "Invalid number of inputs to SUBSTRING expression."))
+
+    val badPosType = intercept[UnsupportedOperationException] {
+      evaluator(
+        schema,
+        new ScalarExpression("SUBSTRING",
+          util.Arrays.asList(
+            new Column("str_col"), Literal.ofBoolean(true))),
+        StringType.STRING
+      ).eval( new DefaultColumnarBatch(/* size= */5,
+        schema,
+        Array(
+          testColumnVector(/* size= */5, StringType.STRING),
+          testColumnVector(/* size= */5, BinaryType.BINARY))))
+    }
+    assert(
+      badPosType.getMessage.contains("Invalid type of second input of SUBSTRING"))
+
+    val badLenType = intercept[UnsupportedOperationException] {
+      evaluator(
+        schema,
+        new ScalarExpression("SUBSTRING",
+          util.Arrays.asList(
+            new Column("str_col"), Literal.ofInt(1), Literal.ofBoolean(true))),
+        StringType.STRING
+      ).eval( new DefaultColumnarBatch(/* size= */5,
+        schema,
+        Array(
+          testColumnVector(/* size= */5, StringType.STRING),
+          testColumnVector(/* size= */5, BinaryType.BINARY))))
+    }
+    assert(
+      badLenType.getMessage.contains("Invalid type of third input of SUBSTRING"))
+  }
+
   test("evaluate expression: comparators `byte` with other implicit types") {
     // Mapping of comparator to expected results for:
     // (byte, short), (byte, int), (byte, long), (byte, float), (byte, double)
