@@ -32,7 +32,7 @@ public class SubstringEvaluator {
       Collections.unmodifiableSet(
           new HashSet<>(Arrays.asList(StringType.STRING, BinaryType.BINARY)));
 
-  /** Validate and transform the {@code substring} expression. */
+  /** Validates and transforms the {@code substring} expression. */
   static ScalarExpression validateAndTransform(
       ScalarExpression substring,
       List<Expression> childrenExpressions,
@@ -70,8 +70,8 @@ public class SubstringEvaluator {
   }
 
   /**
-   * Evaluate the {@code substring} expression for given input column vector, builds a column vector
-   * with substring applied to each row.
+   * Evaluates the {@code substring} expression for given input column vector, builds a column
+   * vector with substring applied to each row.
    */
   static ColumnVector eval(List<ColumnVector> childrenVectors) {
     return new ColumnVector() {
