@@ -617,9 +617,8 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
 
     @Override
     ColumnVector visitSubstring(ScalarExpression subString) {
-      List<Expression> children = subString.getChildren();
       return SubstringEvaluator.eval(
-          children, children.stream().map(this::visit).collect(toList()));
+          subString.getChildren().stream().map(this::visit).collect(toList()));
     }
 
     @Override

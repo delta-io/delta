@@ -881,6 +881,19 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
         Seq[String](null, "one", "two", "three", "four", null, null, "seven", "eight"))
     })
 
+    val outputVectorForEmptyInput = evaluator(
+      schema,
+      new ScalarExpression("SUBSTRING",
+        util.Arrays.asList(
+          new Column("str_col"), Literal.ofInt(1), Literal.ofInt(1))),
+      StringType.STRING
+    ).eval( new DefaultColumnarBatch(/* size= */0,
+      schema,
+      Array(
+        testColumnVector(/* size= */0, StringType.STRING),
+        testColumnVector(/* size= */0, BinaryType.BINARY))))
+    checkStringVectors(outputVectorForEmptyInput, stringVector(Seq[String]()))
+
     def checkUnsupportedColumnTypes(colType: DataType): Unit = {
       val schema = new StructType()
         .add("col1", colType)
