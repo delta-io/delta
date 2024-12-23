@@ -53,6 +53,7 @@ public class TableFeatures {
               add("typeWidening-preview");
               add("typeWidening");
               add("vacuumProtocolCheck");
+              add("variantType");
               add("variantType-preview");
               add("v2Checkpoint");
             }
