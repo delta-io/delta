@@ -457,18 +457,12 @@ class DeltaAnalysis(session: SparkSession)
     case d @ DeleteFromTable(table, condition) if d.childrenResolved =>
       // rewrites Delta from V2 to V1
       val newTarget = stripTempViewWrapper(table).transformUp { case DeltaRelation(lr) => lr }
-      val indices = newTarget.collect {
-        case DeltaFullTable(_, index) => index
-      }
-      if (indices.isEmpty) {
-        // Not a Delta table at all, do not transform
-        d
-      } else if (indices.size == 1 && indices(0).deltaLog.tableExists) {
-        // It is a well-defined Delta table with a schema
-        DeltaDelete(newTarget, Some(condition))
-      } else {
-        // Not a well-defined Delta table
-        throw DeltaErrors.notADeltaSourceException("DELETE", Some(d))
+      newTarget.collectLeaves().headOption match {
+        case Some(DeltaFullTable(_, index)) =>
+          DeltaDelete(newTarget, Some(condition))
+        case o =>
+          // Not a Delta table at all, do not transform
+          d
       }
 
     case u @ UpdateTable(table, assignments, condition) if u.childrenResolved =>
