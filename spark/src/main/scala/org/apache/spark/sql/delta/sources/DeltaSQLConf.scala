@@ -1399,6 +1399,15 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val MDC_SORT_WITHIN_PARTITIONS =
+    SQLConf.buildConf("spark.databricks.io.skipping.mdc.sortWithinPartitions")
+      .internal()
+      .doc("If enabled, partitions are sorted on Z-order values for MDC. " +
+         "This co-locates records with the same Z-order values in row groups, " +
+         "which enables data skipping on the Parquet level.")
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_OPTIMIZE_ZORDER_COL_STAT_CHECK =
     buildConf("optimize.zorder.checkStatsCollection.enabled")
       .internal()
