@@ -19,7 +19,6 @@ import static io.delta.kernel.defaults.internal.DefaultEngineErrors.unsupportedE
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.expressions.Expression;
-import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.expressions.ScalarExpression;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.types.*;
@@ -28,9 +27,11 @@ import java.util.*;
 /** Utility methods to evaluate {@code substring} expression. */
 public class SubstringEvaluator {
 
+  private SubstringEvaluator() {}
+
+  // TODO: support binary type.
   private static final Set<DataType> SUBSTRING_SUPPORTED_TYPE =
-      Collections.unmodifiableSet(
-          new HashSet<>(Arrays.asList(StringType.STRING, BinaryType.BINARY)));
+      Collections.unmodifiableSet(new HashSet<>(Collections.singletonList(StringType.STRING)));
 
   /** Validates and transforms the {@code substring} expression. */
   static ScalarExpression validateAndTransform(
@@ -47,25 +48,17 @@ public class SubstringEvaluator {
 
     if (!SUBSTRING_SUPPORTED_TYPE.contains(childrenOutputTypes.get(0))) {
       throw unsupportedExpressionException(
-          substring, "Invalid type of first input of SUBSTRING: expects BINARY or STRING");
+          substring, "Invalid type of first input of SUBSTRING: expects STRING");
     }
 
     Expression posExpression = childrenExpressions.get(1);
-    if (!isIntegerLiteral(posExpression)) {
-      throw unsupportedExpressionException(
-          substring,
-          "Invalid type of second input of SUBSTRING: "
-              + "expects an integral numeric expression specifying the starting position.");
-    }
-
+    DefaultExpressionUtils.checkIntegerLiteral(
+        posExpression, /* context= */ "Invalid `pos` argument type for SUBSTRING", substring);
     if (childrenSize == 3) {
       Expression lengthExpression = childrenExpressions.get(2);
-      if (!isIntegerLiteral(lengthExpression)) {
-        throw unsupportedExpressionException(
-            substring, "Invalid type of third input of SUBSTRING: expects an integral numeric.");
-      }
+      DefaultExpressionUtils.checkIntegerLiteral(
+          lengthExpression, /* context= */ "Invalid `len` argument type for SUBSTRING", substring);
     }
-
     return new ScalarExpression(substring.getName(), childrenExpressions);
   }
 
@@ -92,28 +85,28 @@ public class SubstringEvaluator {
 
       @Override
       public void close() {
-        if (lengthVector.isPresent()) {
-          Utils.closeCloseables(input, positionVector, lengthVector.get());
-        } else {
-          Utils.closeCloseables(input, positionVector);
-        }
+        // Utils.closeCloseables method will ignore the null element.
+        Utils.closeCloseables(input, positionVector, lengthVector.orElse(null));
       }
 
       @Override
       public boolean isNullAt(int rowId) {
+        if (rowId < 0 || rowId >= getSize()) {
+          throw new IllegalArgumentException(
+              String.format(
+                  "Unexpected rowId %d, expected between 0 and the size of the column vector",
+                  rowId));
+        }
         return input.isNullAt(rowId);
       }
 
       @Override
       public String getString(int rowId) {
-        if (isNullAt(rowId) || rowId < 0 || rowId >= getSize()) {
+        if (isNullAt(rowId)) {
           return null;
         }
 
-        String inputString =
-            input.getDataType() == BinaryType.BINARY
-                ? new String(input.getBinary(rowId))
-                : input.getString(rowId);
+        String inputString = input.getString(rowId);
         int position = positionVector.getInt(rowId);
         Optional<Integer> length = lengthVector.map(columnVector -> columnVector.getInt(rowId));
 
@@ -145,20 +138,11 @@ public class SubstringEvaluator {
    * is not normalized, i.e. could be less than 0.
    */
   private static int buildStartPosition(String inputString, int pos) {
+    // Handles the negative position (substring("abc", -2, 1), the start position should be 1("b"))
     if (pos < 0) {
       return inputString.length() + pos;
     }
     // Pos is 1 based and pos = 0 is treated as 1.
     return Math.max(pos - 1, 0);
   }
-
-  private static boolean isIntegerLiteral(Expression expression) {
-    if (!(expression instanceof Literal)) {
-      return false;
-    }
-    Literal literal = (Literal) expression;
-    return IntegerType.INTEGER.equals(literal.getDataType());
-  }
-
-  private SubstringEvaluator() {}
 }

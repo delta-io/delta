@@ -776,12 +776,10 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
   test("evaluate expression: substring") {
     val data = Seq[String](
       null, "one", "two", "three", "four", null, null, "seven", "eight")
-    val col1 = stringVector(data)
-    val col2 = binaryVector(data.map(str => if (str != null) str.getBytes else null))
-    val schema = new StructType()
-      .add("str_col", StringType.STRING)
-      .add("binary_col", BinaryType.BINARY)
-    val input = new DefaultColumnarBatch(col1.getSize, schema, Array(col1, col2))
+    val col = stringVector(data)
+    val col_name = "str_col"
+    val schema = new StructType().add(col_name, StringType.STRING)
+    val input = new DefaultColumnarBatch(col.getSize, schema, Array(col))
 
     def checkSubString(
                    input: DefaultColumnarBatch,
@@ -794,7 +792,6 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       checkStringVectors(actOutputVector, expOutputVector)
     }
 
-    Seq("str_col", "binary_col").foreach(col_name => {
       checkSubString(
         input,
         substring(new Column(col_name), 0),
@@ -879,13 +876,12 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
         input,
         substring(new Column(col_name), -100, Option(108)),
         Seq[String](null, "one", "two", "three", "four", null, null, "seven", "eight"))
-    })
 
     val outputVectorForEmptyInput = evaluator(
       schema,
       new ScalarExpression("SUBSTRING",
         util.Arrays.asList(
-          new Column("str_col"), Literal.ofInt(1), Literal.ofInt(1))),
+          new Column(col_name), Literal.ofInt(1), Literal.ofInt(1))),
       StringType.STRING
     ).eval( new DefaultColumnarBatch(/* size= */0,
       schema,
@@ -896,36 +892,35 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
 
     def checkUnsupportedColumnTypes(colType: DataType): Unit = {
       val schema = new StructType()
-        .add("col1", colType)
+        .add(col_name, colType)
       val batch = new DefaultColumnarBatch(5, schema, Array(testColumnVector(5, colType)))
       val e = intercept[UnsupportedOperationException] {
         evaluator(
           schema,
           new ScalarExpression("SUBSTRING",
-            util.Arrays.asList(new Column("col1"), Literal.ofInt(1))),
+            util.Arrays.asList(new Column(col_name), Literal.ofInt(1))),
           StringType.STRING
         ).eval(batch)
       }
       assert(
-        e.getMessage.contains("Invalid type of first input of SUBSTRING: expects BINARY or STRING"))
+        e.getMessage.contains("Invalid type of first input of SUBSTRING: expects STRING"))
     }
 
     checkUnsupportedColumnTypes(IntegerType.INTEGER)
     checkUnsupportedColumnTypes(ByteType.BYTE)
     checkUnsupportedColumnTypes(BooleanType.BOOLEAN)
+    checkUnsupportedColumnTypes(BinaryType.BINARY)
 
     val badLiteralSize = intercept[UnsupportedOperationException] {
       evaluator(
         schema,
         new ScalarExpression("SUBSTRING",
           util.Arrays.asList(
-            new Column("str_col"), Literal.ofInt(1), Literal.ofInt(1), Literal.ofInt(1))),
+            new Column(col_name), Literal.ofInt(1), Literal.ofInt(1), Literal.ofInt(1))),
         StringType.STRING
       ).eval( new DefaultColumnarBatch(/* size= */5,
         schema,
-        Array(
-          testColumnVector(/* size= */5, StringType.STRING),
-          testColumnVector(/* size= */5, BinaryType.BINARY))))
+        Array(testColumnVector(/* size= */5, StringType.STRING))))
     }
     assert(
       badLiteralSize.getMessage.contains(
@@ -940,28 +935,22 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
         StringType.STRING
       ).eval( new DefaultColumnarBatch(/* size= */5,
         schema,
-        Array(
-          testColumnVector(/* size= */5, StringType.STRING),
-          testColumnVector(/* size= */5, BinaryType.BINARY))))
+        Array(testColumnVector(/* size= */5, StringType.STRING))))
     }
-    assert(
-      badPosType.getMessage.contains("Invalid type of second input of SUBSTRING"))
+    assert(badPosType.getMessage.contains("Invalid `pos` argument type for SUBSTRING"))
 
     val badLenType = intercept[UnsupportedOperationException] {
       evaluator(
         schema,
         new ScalarExpression("SUBSTRING",
           util.Arrays.asList(
-            new Column("str_col"), Literal.ofInt(1), Literal.ofBoolean(true))),
+            new Column(col_name), Literal.ofInt(1), Literal.ofBoolean(true))),
         StringType.STRING
       ).eval( new DefaultColumnarBatch(/* size= */5,
         schema,
-        Array(
-          testColumnVector(/* size= */5, StringType.STRING),
-          testColumnVector(/* size= */5, BinaryType.BINARY))))
+        Array(testColumnVector(/* size= */5, StringType.STRING))))
     }
-    assert(
-      badLenType.getMessage.contains("Invalid type of third input of SUBSTRING"))
+    assert(badLenType.getMessage.contains("Invalid `len` argument type for SUBSTRING"))
   }
 
   test("evaluate expression: comparators `byte` with other implicit types") {
