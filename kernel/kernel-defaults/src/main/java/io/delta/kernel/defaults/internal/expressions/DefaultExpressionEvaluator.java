@@ -302,12 +302,12 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
     @Override
     ExpressionTransformResult visitStartsWith(Predicate startsWith) {
       List<ExpressionTransformResult> children =
-              startsWith.getChildren().stream().map(this::visit).collect(toList());
+          startsWith.getChildren().stream().map(this::visit).collect(toList());
       Predicate transformedExpression =
-              StartsWithExpressionEvaluator.validateAndTransform(
-                      startsWith,
-                      children.stream().map(e -> e.expression).collect(toList()),
-                      children.stream().map(e -> e.outputType).collect(toList()));
+          StartsWithExpressionEvaluator.validateAndTransform(
+              startsWith,
+              children.stream().map(e -> e.expression).collect(toList()),
+              children.stream().map(e -> e.outputType).collect(toList()));
       return new ExpressionTransformResult(transformedExpression, BooleanType.BOOLEAN);
     }
 
@@ -623,8 +623,9 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
     }
 
     @Override
-    ColumnVector visitStartsWith(Predicate predicate) {
-      return null;
+    ColumnVector visitStartsWith(Predicate startsWith) {
+      return StartsWithExpressionEvaluator.eval(
+          startsWith.getChildren().stream().map(this::visit).collect(toList()));
     }
 
     /**

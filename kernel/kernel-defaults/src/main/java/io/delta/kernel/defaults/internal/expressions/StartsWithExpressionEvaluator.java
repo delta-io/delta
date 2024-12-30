@@ -15,6 +15,8 @@
  */
 package io.delta.kernel.defaults.internal.expressions;
 
+import static io.delta.kernel.defaults.internal.DefaultEngineErrors.unsupportedExpressionException;
+
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.Literal;
@@ -23,35 +25,67 @@ import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.types.BooleanType;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StringType;
-
 import java.util.List;
-import java.util.Objects;
-
-import static io.delta.kernel.defaults.internal.DefaultEngineErrors.unsupportedExpressionException;
 
 public class StartsWithExpressionEvaluator {
 
-    /** Validates and transforms the {@code starts_with} expression. */
-    static Predicate validateAndTransform(
-            Predicate startsWith,
-            List<Expression> childrenExpressions,
-            List<DataType> childrenOutputTypes) {
-        if (childrenExpressions.size() != 2) {
-            throw unsupportedExpressionException(
-                    startsWith,
-                    "Invalid number of inputs to STARTS_WITH expression. "
-                            + "Example usage: STARTS_WITH(column, 'test')");
-        }
-        if (!(StringType.STRING.equivalent(childrenOutputTypes.get(0))
-                && StringType.STRING.equivalent(childrenOutputTypes.get(1)))) {
-            throw unsupportedExpressionException(
-                    startsWith, "'STARTS_WITH' is expects STRING type inputs");
-        }
-        // TODO: support non literal as the second input of starts with.
-        if (!(childrenExpressions.get(1) instanceof Literal)) {
-            throw unsupportedExpressionException(
-                    startsWith, "'starts with' expects literal as the second input");
-        }
-        return new Predicate(startsWith.getName(), childrenExpressions);
+  /** Validates and transforms the {@code starts_with} expression. */
+  static Predicate validateAndTransform(
+      Predicate startsWith,
+      List<Expression> childrenExpressions,
+      List<DataType> childrenOutputTypes) {
+    if (childrenExpressions.size() != 2) {
+      throw unsupportedExpressionException(
+          startsWith,
+          "Invalid number of inputs to STARTS_WITH expression. "
+              + "Example usage: STARTS_WITH(column, 'test')");
     }
+    if (!(StringType.STRING.equivalent(childrenOutputTypes.get(0))
+        && StringType.STRING.equivalent(childrenOutputTypes.get(1)))) {
+      throw unsupportedExpressionException(
+          startsWith, "'STARTS_WITH' is expects STRING type inputs");
+    }
+    // TODO: support non literal as the second input of starts with.
+    if (!(childrenExpressions.get(1) instanceof Literal)) {
+      throw unsupportedExpressionException(
+          startsWith, "'starts with' expects literal as the second input");
+    }
+    return new Predicate(startsWith.getName(), childrenExpressions);
+  }
+
+  static ColumnVector eval(List<ColumnVector> childrenVectors) {
+    return new ColumnVector() {
+      final ColumnVector left = childrenVectors.get(0);
+      final ColumnVector right = childrenVectors.get(1);
+
+      @Override
+      public DataType getDataType() {
+        return BooleanType.BOOLEAN;
+      }
+
+      @Override
+      public int getSize() {
+        return left.getSize();
+      }
+
+      @Override
+      public void close() {
+        Utils.closeCloseables(left, right);
+      }
+
+      @Override
+      public boolean getBoolean(int rowId) {
+        if (isNullAt(rowId)) {
+          // The return value is undefined and can be anything, if the slot for rowId is null.
+          return false;
+        }
+        return left.getString(rowId).startsWith(right.getString(rowId));
+      }
+
+      @Override
+      public boolean isNullAt(int rowId) {
+        return left.isNullAt(rowId) || right.isNullAt(rowId);
+      }
+    };
+  }
 }
