@@ -101,6 +101,11 @@ import java.util.stream.Stream;
  *         <li>SQL semantic: <code>expr1 IS NOT DISTINCT FROM expr2</code>
  *         <li>Since version: 3.3.0
  *       </ul>
+ *   <li>Name: <code>STARTS_WITH</code>
+ *       <ul>
+ *         <li>SQL semantic: <code>expr STARTS_WITH expr</code>
+ *         <li>Since version: 3.4.0
+ *       </ul>
  * </ol>
  *
  * @since 3.0.0
