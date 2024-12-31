@@ -33,6 +33,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.FileSizeHistogram
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
+import org.apache.spark.sql.util.ScalaExtensions._
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.hadoop.fs.FileStatus
 import org.apache.hadoop.fs.Path
@@ -136,6 +137,8 @@ trait RecordChecksum extends DeltaLogging {
    *                             `versionToCompute - 1` or a snapshot. Note that the snapshot may
    *                             belong to any version and this method will only use the snapshot if
    *                             it corresponds to `versionToCompute - 1`.
+   * @param mustIncludeFileSizeHistogram True if the new checksum must include a file size
+   *                                     histogram
    * @param includeAddFilesInCrc True if the new checksum should include a [[AddFile]]s.
    * @return Either the new checksum or an error code string if the checksum could not be computed.
    */
@@ -150,6 +153,7 @@ trait RecordChecksum extends DeltaLogging {
       operationName: String,
       txnIdOpt: Option[String],
       previousVersionState: Either[Snapshot, VersionChecksum],
+      mustIncludeFileSizeHistogram: Boolean,
       includeAddFilesInCrc: Boolean
   ): Either[String, VersionChecksum] = {
     // scalastyle:on argcount
@@ -192,6 +196,9 @@ trait RecordChecksum extends DeltaLogging {
         val oldCrcFiltered = oldCrcOpt
           .filterNot(_.metadata == null)
           .filterNot(_.protocol == null)
+          // If the old CRC doesn't have file size histogram, we can't use it to generate new CRC
+          // in case `mustIncludeFileSizeHistogram` is set.
+          .filterNot(_.histogramOpt.isEmpty && mustIncludeFileSizeHistogram)
 
         val oldCrc = oldCrcFiltered.getOrElse {
           return Left("OLD_CRC_INCOMPLETE")
@@ -247,6 +254,12 @@ trait RecordChecksum extends DeltaLogging {
     var numFiles = oldVersionChecksum.numFiles
     var protocol = oldVersionChecksum.protocol
     var metadata = oldVersionChecksum.metadata
+    val histogramOpt =
+      Option.when (spark.conf.get(DeltaSQLConf.DELTA_FILE_SIZE_HISTOGRAM_ENABLED)) {
+        oldVersionChecksum.histogramOpt.map { h =>
+          FileSizeHistogram(h.sortedBinBoundaries, h.fileCounts.clone(), h.totalBytes.clone())
+        }
+      }.flatten
 
     var inCommitTimestamp : Option[Long] = None
     actions.foreach {
@@ -254,6 +267,7 @@ trait RecordChecksum extends DeltaLogging {
         tableSizeBytes += a.size
         numFiles += 1
 
+        histogramOpt.foreach(_.insert(a.size))
 
       // extendedFileMetadata == true implies fields partitionValues, size, and tags are present
       case r: RemoveFile if r.extendedFileMetadata == Some(true) =>
@@ -261,6 +275,7 @@ trait RecordChecksum extends DeltaLogging {
         tableSizeBytes -= size
         numFiles -= 1
 
+        histogramOpt.foreach(_.remove(size))
 
       case r: RemoveFile =>
         // Report the failure to usage logs.
@@ -367,7 +382,7 @@ trait RecordChecksum extends DeltaLogging {
       setTransactions = setTransactions,
       domainMetadata = domainMetadata,
       allFiles = allFiles,
-      histogramOpt = None
+      histogramOpt = histogramOpt
     ))
   }
 
@@ -793,6 +808,32 @@ trait ValidateChecksum extends DeltaLogging { self: Snapshot =>
         errorMap += ("domainMetadata" -> "domainMetadata mismatch")
         detailedErrorMapForUsageLogs += ("domainMetadata" -> JsonUtils.toJson(eventData))
       }
+    }
+    def compareFileSizeHistogram(
+        expectedOpt: Option[FileSizeHistogram],
+        foundOpt: Option[FileSizeHistogram]): Unit = {
+      val result = new ArrayBuffer[String]()
+      expectedOpt.zip(foundOpt).foreach {
+        // Only check if both expected and found are present. Missing histograms can happen
+        // when a commit is written by older writers or when histograms have been disabled in
+        // the Spark session conf.
+        case (expected, found) =>
+          if (!expected.sortedBinBoundaries.equals(found.sortedBinBoundaries)) {
+            result.append(s"FileSizeHistogram mismatch in sorted boundaries")
+          }
+          if (!java.util.Arrays.equals(expected.totalBytes, found.totalBytes)) {
+            result.append(s"FileSizeHistogram mismatch in file sizes")
+          }
+          if (!java.util.Arrays.equals(expected.fileCounts, found.fileCounts)) {
+            result.append(s"FileSizeHistogram mismatch in file counts")
+          }
+      }
+      if (result.nonEmpty) {
+        errorMap += ("fileSizeHistogram" -> result.mkString("\n"))
+      }
+    }
+    if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_FILE_SIZE_HISTOGRAM_ENABLED)) {
+      compareFileSizeHistogram(checksum.histogramOpt, computedStateToCheckAgainst.fileSizeHistogram)
     }
 
     compareAction(checksum.metadata, computedStateToCheckAgainst.metadata, "Metadata", "metadata")

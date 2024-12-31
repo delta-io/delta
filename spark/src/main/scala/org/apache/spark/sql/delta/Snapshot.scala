@@ -577,7 +577,10 @@ class Snapshot(
       },
     domainMetadata = checksumOpt.flatMap(_.domainMetadata)
       .orElse(Option.when(_computedStateTriggered)(domainMetadata)),
-    histogramOpt = checksumOpt.flatMap(_.histogramOpt)
+    histogramOpt = Option.when(fileSizeHistogramEnabled) {
+      checksumOpt.flatMap(_.histogramOpt)
+        .orElse(Option.when(_computedStateTriggered)(fileSizeHistogram).flatten)
+    }.flatten
   )
 
   /** Returns the data schema of the table, used for reading stats */
