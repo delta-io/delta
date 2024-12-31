@@ -22,6 +22,7 @@ import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.{AlterTableSetPropertiesDeltaCommand, AlterTableUnsetPropertiesDeltaCommand, DeltaReorgTableCommand, DeltaReorgTableMode, DeltaReorgTableSpec}
+import org.apache.spark.sql.delta.commands.ReorgTableCommand
 import org.apache.spark.sql.delta.commands.columnmapping.RemoveColumnMappingCommand
 import org.apache.spark.sql.delta.commands.optimize.OptimizeMetrics
 import org.apache.spark.sql.delta.constraints.Constraints
@@ -125,6 +126,52 @@ case class TestLegacyReaderWriterFeaturePreDowngradeCommand(table: DeltaTableV2)
     val properties = Seq(TestRemovableLegacyReaderWriterFeature.TABLE_PROP_KEY)
     AlterTableUnsetPropertiesDeltaCommand(
       table, properties, ifExists = true, fromDropFeatureCommand = true).run(table.spark)
+    true
+  }
+}
+
+class DeletionVectorsRemovalMetrics(
+    val numDeletionVectorsToRemove: Long,
+    val numDeletionVectorRowsToRemove: Long,
+    var downgradeTimeMs: Long = 0L)
+
+case class DeletionVectorsPreDowngradeCommand(table: DeltaTableV2)
+  extends PreDowngradeTableFeatureCommand
+  with DeltaLogging {
+
+  /**
+   * We first remove the table feature property to prevent any transactions from committing
+   * new DVs. This will cause any concurrent transactions tox fail. Then, we run PURGE
+   * to remove existing DVs from the latest snapshot.
+   * Note, during the protocol downgrade phase we validate whether all invariants still hold.
+   * This should detect if any concurrent txns enabled the feature and/or added DVs again.
+   *
+   * @return Returns true if it removed DV metadata property and/or DVs. False otherwise.
+   */
+  override def removeFeatureTracesIfNeeded(): Boolean = {
+    // Latest snapshot looks clean. No action is required. We may proceed
+    // to the protocol downgrade phase.
+    if (DeletionVectorsTableFeature.validateRemoval(table.initialSnapshot)) return false
+
+    val startTimeNs = System.nanoTime()
+    val properties = Seq(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key)
+    AlterTableUnsetPropertiesDeltaCommand(
+      table, properties, ifExists = true, fromDropFeatureCommand = true).run(table.spark)
+
+    val snapshot = table.update()
+    val metrics = new DeletionVectorsRemovalMetrics(
+      numDeletionVectorsToRemove = snapshot.numDeletionVectorsOpt.getOrElse(0L),
+      numDeletionVectorRowsToRemove = snapshot.numDeletedRecordsOpt.getOrElse(0L))
+
+    ReorgTableCommand(table)(Nil).run(table.spark)
+
+    metrics.downgradeTimeMs =
+      TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTimeNs)
+
+    recordDeltaEvent(
+      table.deltaLog,
+      opType = "delta.deletionVectorsFeatureRemovalMetrics",
+      data = metrics)
     true
   }
 }
