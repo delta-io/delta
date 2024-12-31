@@ -1205,6 +1205,22 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  /**
+   * Internal config to bypass check that prevents applying type changes that are not supported by
+   * Iceberg when Uniform is enabled with Iceberg compatibility.
+   */
+  val DELTA_TYPE_WIDENING_ALLOW_UNSUPPORTED_ICEBERG_TYPE_CHANGES =
+    buildConf("typeWidening.allowUnsupportedIcebergTypeChanges")
+      .internal()
+      .doc(
+        """
+          |By default, type changes that aren't supported by Iceberg are rejected when Uniform is
+          |enabled with Iceberg compatibility. This config allows bypassing this restriction, but
+          |reading the affected column with Iceberg clients will likely fail or behave erratically.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_IS_DELTA_TABLE_THROW_ON_ERROR =
     buildConf("isDeltaTable.throwOnError")
       .internal()

@@ -122,6 +122,23 @@ trait TypeWideningInsertSchemaEvolutionTests
       Seq(1, 2).toDF("a").select($"a".cast(ShortType)))
   }
 
+  test("INSERT - type widening is triggered when schema evolution is enabled via option") {
+    val tableName = "type_widening_insert_into_table"
+    withTable(tableName) {
+      sql(s"CREATE TABLE $tableName (a short) USING DELTA")
+      Seq(1, 2).toDF("a")
+        .write
+        .format("delta")
+        .mode("append")
+        .option("mergeSchema", "true")
+        .insertInto(tableName)
+
+      val result = spark.read.format("delta").table(tableName)
+      assert(result.schema("a").dataType === IntegerType)
+      checkAnswer(result, Seq(1, 2).toDF("a"))
+    }
+  }
+
   /**
    * Short-hand to create a logical plan to insert into the table. This captures the state of the
    * table at the time the method is called, e.p. the type widening property value that will be used
