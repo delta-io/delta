@@ -19,12 +19,10 @@ import static io.delta.kernel.internal.util.InternalUtils.relativizePath;
 import static io.delta.kernel.internal.util.PartitionUtils.serializePartitionMap;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.VectorUtils.toJavaMap;
-import static java.util.stream.Collectors.toMap;
 
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.expressions.Literal;
-import io.delta.kernel.internal.data.DelegateRow;
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.VectorUtils;
@@ -32,8 +30,11 @@ import io.delta.kernel.types.*;
 import io.delta.kernel.utils.DataFileStatistics;
 import io.delta.kernel.utils.DataFileStatus;
 import java.net.URI;
-import java.util.*;
-import java.util.stream.IntStream;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.TreeMap;
 
 /** Delta log action representing an `AddFile` */
 public class AddFile extends RowBackedAction {
@@ -72,11 +73,6 @@ public class AddFile extends RowBackedAction {
   // There are more fields which are added when row-id tracking and clustering is enabled.
   // When Kernel starts supporting row-ids and clustering, we should add those fields here.
 
-  private static final Map<String, Integer> COL_NAME_TO_ORDINAL =
-      IntStream.range(0, FULL_SCHEMA.length())
-          .boxed()
-          .collect(toMap(i -> FULL_SCHEMA.at(i).getName(), i -> i));
-
   /**
    * Utility to generate {@link AddFile} action instance from the given {@link DataFileStatus} and
    * partition values.
@@ -86,32 +82,24 @@ public class AddFile extends RowBackedAction {
       DataFileStatus dataFileStatus,
       Map<String, Literal> partitionValues,
       boolean dataChange) {
-    Path filePath = new Path(dataFileStatus.getPath());
+    Row row =
+        createAddFileRow(
+            relativizePath(new Path(dataFileStatus.getPath()), tableRoot).toUri().toString(),
+            serializePartitionMap(partitionValues),
+            dataFileStatus.getSize(),
+            dataFileStatus.getModificationTime(),
+            dataChange,
+            Optional.empty(), // deletionVector
+            Optional.empty(), // tags
+            Optional.empty(), // baseRowId
+            Optional.empty(), // defaultRowCommitVersion
+            dataFileStatus.getStatistics());
 
-    return new AddFile(
-        relativizePath(filePath, tableRoot).toUri().toString(),
-        serializePartitionMap(partitionValues),
-        dataFileStatus.getSize(),
-        dataFileStatus.getModificationTime(),
-        dataChange,
-        Optional.empty(), // deletionVector
-        Optional.empty(), // tags
-        Optional.empty(), // baseRowId
-        Optional.empty(), // defaultRowCommitVersion
-        dataFileStatus.getStatistics());
+    return new AddFile(row);
   }
 
-  /** Constructs an {@link AddFile} action from the given 'AddFile' {@link Row}. */
-  public AddFile(Row row) {
-    super(row);
-  }
-
-  /**
-   * Constructs an {@link AddFile} action from the given fields. Internally, this creates a new
-   * {@link GenericRow} with the given fields and return a new {@link AddFile} instance backed by
-   * it.
-   */
-  public AddFile(
+  /** Utility to generate an 'AddFile' row from the given fields. */
+  public static Row createAddFileRow(
       String path,
       MapValue partitionValues,
       long size,
@@ -122,29 +110,30 @@ public class AddFile extends RowBackedAction {
       Optional<Long> baseRowId,
       Optional<Long> defaultRowCommitVersion,
       Optional<DataFileStatistics> stats) {
-    super(
-        new GenericRow(
-            FULL_SCHEMA,
-            new HashMap<Integer, Object>() {
-              {
-                // TODO - Add support for DeletionVectorDescriptor
-                checkArgument(
-                    !deletionVector.isPresent(),
-                    "DeletionVectorDescriptor currently doesn't have a way to convert to a Row");
 
-                put(COL_NAME_TO_ORDINAL.get("path"), path);
-                put(COL_NAME_TO_ORDINAL.get("partitionValues"), partitionValues);
-                put(COL_NAME_TO_ORDINAL.get("size"), size);
-                put(COL_NAME_TO_ORDINAL.get("modificationTime"), modificationTime);
-                put(COL_NAME_TO_ORDINAL.get("dataChange"), dataChange);
-                tags.ifPresent(tags -> put(COL_NAME_TO_ORDINAL.get("tags"), tags));
-                baseRowId.ifPresent(id -> put(COL_NAME_TO_ORDINAL.get("baseRowId"), id));
-                defaultRowCommitVersion.ifPresent(
-                    version -> put(COL_NAME_TO_ORDINAL.get("defaultRowCommitVersion"), version));
-                stats.ifPresent(
-                    stats -> put(COL_NAME_TO_ORDINAL.get("stats"), stats.serializeAsJson()));
-              }
-            }));
+    checkArgument(path != null, "path is not nullable");
+    checkArgument(partitionValues != null, "partitionValues is not nullable");
+    // TODO - Add support for DeletionVectorDescriptor
+    checkArgument(!deletionVector.isPresent(), "DeletionVectorDescriptor is unsupported");
+
+    Map<Integer, Object> fieldMap = new HashMap<>();
+    fieldMap.put(FULL_SCHEMA.indexOf("path"), path);
+    fieldMap.put(FULL_SCHEMA.indexOf("partitionValues"), partitionValues);
+    fieldMap.put(FULL_SCHEMA.indexOf("size"), size);
+    fieldMap.put(FULL_SCHEMA.indexOf("modificationTime"), modificationTime);
+    fieldMap.put(FULL_SCHEMA.indexOf("dataChange"), dataChange);
+    tags.ifPresent(tag -> fieldMap.put(FULL_SCHEMA.indexOf("tags"), tag));
+    baseRowId.ifPresent(id -> fieldMap.put(FULL_SCHEMA.indexOf("baseRowId"), id));
+    defaultRowCommitVersion.ifPresent(
+        version -> fieldMap.put(FULL_SCHEMA.indexOf("defaultRowCommitVersion"), version));
+    stats.ifPresent(stat -> fieldMap.put(FULL_SCHEMA.indexOf("stats"), stat.serializeAsJson()));
+
+    return new GenericRow(FULL_SCHEMA, fieldMap);
+  }
+
+  /** Constructs an {@link AddFile} action from the given 'AddFile' {@link Row}. */
+  public AddFile(Row row) {
+    super(row);
   }
 
   @Override
@@ -153,77 +142,60 @@ public class AddFile extends RowBackedAction {
   }
 
   public String getPath() {
-    return row.getString(COL_NAME_TO_ORDINAL.get("path"));
+    return (String) getValueAsObject("path");
   }
 
   public MapValue getPartitionValues() {
-    return row.getMap(COL_NAME_TO_ORDINAL.get("partitionValues"));
+    return (MapValue) getValueAsObject("partitionValues");
   }
 
   public long getSize() {
-    return row.getLong(COL_NAME_TO_ORDINAL.get("size"));
+    return (long) getValueAsObject("size");
   }
 
   public long getModificationTime() {
-    return row.getLong(COL_NAME_TO_ORDINAL.get("modificationTime"));
+    return (long) getValueAsObject("modificationTime");
   }
 
   public boolean getDataChange() {
-    return row.getBoolean(COL_NAME_TO_ORDINAL.get("dataChange"));
+    return (boolean) getValueAsObject("dataChange");
   }
 
   public Optional<DeletionVectorDescriptor> getDeletionVector() {
-    int ordinal = COL_NAME_TO_ORDINAL.get("deletionVector");
-    return Optional.ofNullable(
-        row.isNullAt(ordinal) ? null : DeletionVectorDescriptor.fromRow(row.getStruct(ordinal)));
+    return Optional.ofNullable((Row) getValueAsObject("deletionVector"))
+        .map(DeletionVectorDescriptor::fromRow);
   }
 
   public Optional<MapValue> getTags() {
-    int ordinal = COL_NAME_TO_ORDINAL.get("tags");
-    return Optional.ofNullable(row.isNullAt(ordinal) ? null : row.getMap(ordinal));
+    return Optional.ofNullable((MapValue) getValueAsObject("tags"));
   }
 
   public Optional<Long> getBaseRowId() {
-    int ordinal = COL_NAME_TO_ORDINAL.get("baseRowId");
-    return Optional.ofNullable(row.isNullAt(ordinal) ? null : row.getLong(ordinal));
+    return Optional.ofNullable((Long) getValueAsObject("baseRowId"));
   }
 
   public Optional<Long> getDefaultRowCommitVersion() {
-    int ordinal = COL_NAME_TO_ORDINAL.get("defaultRowCommitVersion");
-    return Optional.ofNullable(row.isNullAt(ordinal) ? null : row.getLong(ordinal));
+    return Optional.ofNullable((Long) getValueAsObject("defaultRowCommitVersion"));
   }
 
   public Optional<DataFileStatistics> getStats() {
-    int ordinal = COL_NAME_TO_ORDINAL.get("stats");
-    return Optional.ofNullable(
-        row.isNullAt(ordinal)
-            ? null
-            : DataFileStatistics.deserializeFromJson(row.getString(ordinal)).orElse(null));
+    return Optional.ofNullable((String) getValueAsObject("stats"))
+        .flatMap(DataFileStatistics::deserializeFromJson);
   }
 
   public Optional<Long> getNumRecords() {
-    return this.getStats().map(DataFileStatistics::getNumRecords);
+    return getStats().map(DataFileStatistics::getNumRecords);
   }
 
-  /**
-   * Returns a new {@link AddFile} with the provided baseRowId. Under the hood, this is achieved by
-   * creating a new {@link DelegateRow} with the baseRowId overridden.
-   */
+  /** Returns a new {@link AddFile} with the provided baseRowId. */
   public AddFile withNewBaseRowId(long baseRowId) {
-    Map<Integer, Object> overrides =
-        Collections.singletonMap(COL_NAME_TO_ORDINAL.get("baseRowId"), baseRowId);
-    return new AddFile(new DelegateRow(row, overrides));
+    return new AddFile(createRowWithOverriddenValue("baseRowId", baseRowId));
   }
 
-  /**
-   * Returns a new {@link AddFile} with the provided defaultRowCommitVersion. Under the hood, this
-   * is achieved by creating a new {@link DelegateRow} with the defaultRowCommitVersion overridden.
-   */
+  /** Returns a new {@link AddFile} with the provided defaultRowCommitVersion. */
   public AddFile withNewDefaultRowCommitVersion(long defaultRowCommitVersion) {
-    Map<Integer, Object> overrides =
-        Collections.singletonMap(
-            COL_NAME_TO_ORDINAL.get("defaultRowCommitVersion"), defaultRowCommitVersion);
-    return new AddFile(new DelegateRow(row, overrides));
+    return new AddFile(
+        createRowWithOverriddenValue("defaultRowCommitVersion", defaultRowCommitVersion));
   }
 
   @Override

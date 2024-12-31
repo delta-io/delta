@@ -16,15 +16,17 @@
 package io.delta.kernel.internal.actions
 
 import org.scalatest.funsuite.AnyFunSuite
+
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.data.Row
+import io.delta.kernel.internal.actions.AddFile.createAddFileRow
 import io.delta.kernel.internal.util.VectorUtils
 import io.delta.kernel.internal.util.VectorUtils.stringStringMapValue
 import io.delta.kernel.utils.DataFileStatistics.deserializeFromJson
 
 import java.util.Optional
-import java.lang.{Long => JLong, Boolean => JBoolean}
+import java.lang.{Boolean => JBoolean, Long => JLong}
 
 class AddFileSuite extends AnyFunSuite {
 
@@ -48,7 +50,7 @@ class AddFileSuite extends AnyFunSuite {
       case None => Optional.empty()
     }
 
-    new AddFile(
+    createAddFileRow(
       path,
       stringStringMapValue(partitionValues.asJava),
       size.asInstanceOf[JLong],
@@ -59,7 +61,7 @@ class AddFileSuite extends AnyFunSuite {
       toJavaOptional(baseRowId.asInstanceOf[Option[JLong]]),
       toJavaOptional(defaultRowCommitVersion.asInstanceOf[Option[JLong]]),
       deserializeFromJson(stats.getOrElse(""))
-    ).toRow
+    )
   }
 
   test("getters can read AddFile's fields from the backing row") {
@@ -122,13 +124,13 @@ class AddFileSuite extends AnyFunSuite {
     }
   }
 
-  test("toString prints all fields of AddFile with partitionValues / tags in sorted order") {
+  test("toString() prints all fields of AddFile with partitionValues / tags in sorted order") {
     val addFileRow = generateTestAddFileRow(
       path = "test/path",
-      partitionValues = Map("b" -> "2", "a" -> "1"),
+      partitionValues = Map("b" -> "2", "a" -> "1", "c" -> "3"),
       size = 100L,
       modificationTime = 1234L,
-      dataChange = true,
+      dataChange = false,
       tags = Option(Map("tag1" -> "value1", "tag2" -> "value2")),
       baseRowId = Option(12345L),
       defaultRowCommitVersion = Option(67890L),
@@ -137,10 +139,10 @@ class AddFileSuite extends AnyFunSuite {
     val addFile = new AddFile(addFileRow)
     val expectedString = "AddFile{" +
       "path='test/path', " +
-      "partitionValues={a=1, b=2}, " +
+      "partitionValues={a=1, b=2, c=3}, " +
       "size=100, " +
       "modificationTime=1234, " +
-      "dataChange=true, " +
+      "dataChange=false, " +
       "deletionVector=Optional.empty, " +
       "tags=Optional[{tag1=value1, tag2=value2}], " +
       "baseRowId=Optional[12345], " +
@@ -149,13 +151,11 @@ class AddFileSuite extends AnyFunSuite {
     assert(addFile.toString == expectedString)
   }
 
-  test("equals compares AddFile instances correctly") {
+  test("equals() compares AddFile instances correctly") {
     val addFileRow1 = generateTestAddFileRow(
       path = "test/path",
-      partitionValues = Map("a" -> "1"),
       size = 100L,
-      modificationTime = 1234L,
-      tags = Option(Map("tag1" -> "value1")),
+      partitionValues = Map("a" -> "1"),
       baseRowId = Option(12345L),
       stats = Option("{\"numRecords\":100}")
     )
@@ -163,33 +163,42 @@ class AddFileSuite extends AnyFunSuite {
     // Create an identical AddFile
     val addFileRow2 = generateTestAddFileRow(
       path = "test/path",
-      partitionValues = Map("a" -> "1"),
       size = 100L,
-      modificationTime = 1234L,
-      tags = Option(Map("tag1" -> "value1")),
+      partitionValues = Map("a" -> "1"),
       baseRowId = Option(12345L),
       stats = Option("{\"numRecords\":100}")
     )
 
-    // Create a different AddFile
-    val addFileRow3 = generateTestAddFileRow(
+    // Create a AddFile with different path
+    val addFileRowDiffPath = generateTestAddFileRow(
       path = "different/path",
-      partitionValues = Map("a" -> "1"),
       size = 100L,
-      modificationTime = 1234L,
-      tags = Option(Map("tag1" -> "value1")),
+      partitionValues = Map("a" -> "1"),
+      baseRowId = Option(12345L),
+      stats = Option("{\"numRecords\":100}")
+    )
+
+    // Create a AddFile with different partition values, which is handled specially in equals()
+    val addFileRowDiffPartition = generateTestAddFileRow(
+      path = "test/path",
+      size = 100L,
+      partitionValues = Map("x" -> "0"),
       baseRowId = Option(12345L),
       stats = Option("{\"numRecords\":100}")
     )
 
     val addFile1 = new AddFile(addFileRow1)
     val addFile2 = new AddFile(addFileRow2)
-    val addFile3 = new AddFile(addFileRow3)
+    val addFileDiffPath = new AddFile(addFileRowDiffPath)
+    val addFileDiffPartition = new AddFile(addFileRowDiffPartition)
 
     // Test equality
-    assert(addFile1 == addFile2)
-    assert(addFile1 != addFile3)
-    assert(addFile2 != addFile3)
+    assert(addFile1 === addFile2)
+    assert(addFile1 != addFileDiffPath)
+    assert(addFile1 != addFileDiffPartition)
+    assert(addFile2 != addFileDiffPath)
+    assert(addFile2 != addFileDiffPartition)
+    assert(addFileDiffPath != addFileDiffPartition)
 
     // Test null and different type
     assert(!addFile1.equals(null))
@@ -199,20 +208,16 @@ class AddFileSuite extends AnyFunSuite {
   test("hashCode is consistent with equals") {
     val addFileRow1 = generateTestAddFileRow(
       path = "test/path",
-      partitionValues = Map("a" -> "1"),
       size = 100L,
-      modificationTime = 1234L,
-      tags = Option(Map("tag1" -> "value1")),
+      partitionValues = Map("a" -> "1"),
       baseRowId = Option(12345L),
       stats = Option("{\"numRecords\":100}")
     )
 
     val addFileRow2 = generateTestAddFileRow(
       path = "test/path",
-      partitionValues = Map("a" -> "1"),
       size = 100L,
-      modificationTime = 1234L,
-      tags = Option(Map("tag1" -> "value1")),
+      partitionValues = Map("a" -> "1"),
       baseRowId = Option(12345L),
       stats = Option("{\"numRecords\":100}")
     )
@@ -221,9 +226,9 @@ class AddFileSuite extends AnyFunSuite {
     val addFile2 = new AddFile(addFileRow2)
 
     // Equal objects should have equal hash codes
-    assert(addFile1.hashCode == addFile2.hashCode)
+    assert(addFile1.hashCode === addFile2.hashCode)
 
     // Hash code should be consistent across multiple calls
-    assert(addFile1.hashCode == addFile1.hashCode)
+    assert(addFile1.hashCode === addFile1.hashCode)
   }
 }

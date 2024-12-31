@@ -15,8 +15,6 @@
  */
 package io.delta.kernel.internal.data;
 
-import static java.util.Objects.requireNonNull;
-
 import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
@@ -24,6 +22,7 @@ import io.delta.kernel.types.*;
 import java.math.BigDecimal;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * This wraps an existing {@link Row} and allows overriding values for some particular ordinals.
@@ -41,8 +40,8 @@ public class DelegateRow implements Row {
   private final Map<Integer, Object> overrides;
 
   public DelegateRow(Row row, Map<Integer, Object> overrides) {
-    requireNonNull(row, "row is null");
-    requireNonNull(overrides, "map of overrides is null");
+    Objects.requireNonNull(row, "row is null");
+    Objects.requireNonNull(overrides, "map of overrides is null");
 
     if (row instanceof DelegateRow) {
       // If the row is already a delegation of another row, we merge the overrides and keep only
@@ -198,7 +197,7 @@ public class DelegateRow implements Row {
     if (!expDataType.isAssignableFrom(actualDataType.getClass())) {
       String msg =
           String.format(
-              "Trying to access a `%s` value from vector of type `%s`", accessType, actualDataType);
+              "Fail to access a '%s' value from a field of type '%s'", accessType, actualDataType);
       throw new UnsupportedOperationException(msg);
     }
   }

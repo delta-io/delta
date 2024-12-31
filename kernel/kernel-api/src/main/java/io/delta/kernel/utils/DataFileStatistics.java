@@ -114,7 +114,7 @@ public class DataFileStatistics {
   public static Optional<DataFileStatistics> deserializeFromJson(String json) {
     Map<String, String> keyValueMap = JsonUtils.parseJSONKeyValueMap(json);
 
-    // For now just deserialize the number of records which will be used by row tracking.
+    // For now just deserialize the number of records
     String numRecordsStr = keyValueMap.get("numRecords");
     if (numRecordsStr == null) {
       return Optional.empty();
