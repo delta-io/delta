@@ -29,10 +29,6 @@ public class SubstringEvaluator {
 
   private SubstringEvaluator() {}
 
-  // TODO: support binary type.
-  private static final Set<DataType> SUBSTRING_SUPPORTED_TYPE =
-      Collections.unmodifiableSet(new HashSet<>(Collections.singletonList(StringType.STRING)));
-
   /** Validates and transforms the {@code substring} expression. */
   static ScalarExpression validateAndTransform(
       ScalarExpression substring,
@@ -46,7 +42,8 @@ public class SubstringEvaluator {
               + "Example usage: SUBSTRING(column, pos), SUBSTRING(column, pos, len)");
     }
 
-    if (!SUBSTRING_SUPPORTED_TYPE.contains(childrenOutputTypes.get(0))) {
+    // TODO: support binary type.
+    if (!StringType.STRING.equals(childrenOutputTypes.get(0))) {
       throw unsupportedExpressionException(
           substring, "Invalid type of first input of SUBSTRING: expects STRING");
     }
@@ -109,33 +106,32 @@ public class SubstringEvaluator {
         String inputString = input.getString(rowId);
         int position = positionVector.getInt(rowId);
         Optional<Integer> length = lengthVector.map(columnVector -> columnVector.getInt(rowId));
-
-        if (position > inputString.length()) {
+        if (position > inputString.length() || (length.isPresent() && length.get() < 1)) {
           return "";
         }
-
         int startPosition = buildStartPosition(inputString, position);
-
-        if (!length.isPresent()) {
-          return inputString.substring(Math.max(startPosition, 0));
-        }
-
-        if (length.get() < 1) {
-          return "";
-        }
-
         int startIndex = Math.max(startPosition, 0);
-        // endIndex should be less than the length of input string, but positive.
-        // e.g. Substring("aaa", -100, 95), should be read as Substring("aaa", 0, 0)
-        int endIndex = Math.min(inputString.length(), Math.max(startPosition + length.get(), 0));
-        return inputString.substring(startIndex, endIndex);
+        return length
+            .map(
+                len -> {
+                  // endIndex should be less than the length of input string, but positive.
+                  // e.g. Substring("aaa", -100, 95), should be read as Substring("aaa", 0, 0)
+                  int endIndex = Math.min(inputString.length(), Math.max(startPosition + len, 0));
+                  return inputString.substring(startIndex, endIndex);
+                })
+            .orElse(inputString.substring(startIndex));
       }
     };
   }
 
   /**
-   * Returns the index of the start position given inputString and parameter pos. The return value
-   * is not normalized, i.e. could be less than 0.
+   * Computes the start position following Hive and SQL's one-based indexing for substring.
+   *
+   * @param pos, pos can be positive, in which case the startIndex is computed from the left end of
+   *     the string. Otherwise, the startIndex is computed from the right end of the string.
+   * @return the position of inputString to compute the substring. The returned value can fall
+   *     beyond the input index valid range. For example, pos could be larger than the inputString's
+   *     length or inputString.length() + pos could be negative.
    */
   private static int buildStartPosition(String inputString, int pos) {
     // Handles the negative position (substring("abc", -2, 1), the start position should be 1("b"))

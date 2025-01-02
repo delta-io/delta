@@ -842,6 +842,11 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
         substring(new Column(col_name), 1000),
         Seq[String](null, "", "", "", "", null, null, "", ""))
 
+     checkSubString(
+        input,
+        substring(new Column(col_name), 1000, Option(10000)),
+        Seq[String](null, "", "", "", "", null, null, "", ""))
+
       checkSubString(
         input,
         substring(new Column(col_name), 2, Option(-10)),
@@ -875,6 +880,26 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       checkSubString(
         input,
         substring(new Column(col_name), -100, Option(108)),
+        Seq[String](null, "one", "two", "three", "four", null, null, "seven", "eight"))
+
+      checkSubString(
+        input,
+        substring(new Column(col_name), 2147483647, Option(10000)),
+        Seq[String](null, "", "", "", "", null, null, "", ""))
+
+      checkSubString(
+        input,
+        substring(new Column(col_name), 2147483647),
+        Seq[String](null, "", "", "", "", null, null, "", ""))
+
+      checkSubString(
+        input,
+        substring(new Column(col_name), -2147483648, Option(10000)),
+        Seq[String](null, "", "", "", "", null, null, "", ""))
+
+      checkSubString(
+        input,
+        substring(new Column(col_name), -2147483648),
         Seq[String](null, "one", "two", "three", "four", null, null, "seven", "eight"))
 
     val outputVectorForEmptyInput = evaluator(
