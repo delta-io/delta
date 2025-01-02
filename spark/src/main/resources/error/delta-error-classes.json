@@ -845,6 +845,12 @@
     ],
     "sqlState" : "42601"
   },
+  "DELTA_DV_HISTOGRAM_DESERIALIZATON" : {
+    "message" : [
+      "Could not deserialize the deleted record counts histogram during table integrity verification."
+    ],
+    "sqlState" : "22000"
+  },
   "DELTA_DYNAMIC_PARTITION_OVERWRITE_DISABLED" : {
     "message" : [
       "Dynamic partition overwrite mode is specified by session config or write options, but it is disabled by `delta.dynamicPartitionOverwrite.enabled=false`."
