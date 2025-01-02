@@ -109,7 +109,7 @@ class NonFateSharingFuture[T](pool: DeltaThreadPool)(f: SparkSession => T)
       try {
         val result = Some(ThreadUtils.awaitResult(future, timeout))
         // no reason to keep the reference to the calling session anymore
-        futureOpt = Some(Tuple2(null, future))
+        futureOpt = Some(null, future)
         result
       } catch {
         // NOTE: ThreadUtils.awaitResult wraps all non-fatal exceptions other than TimeoutException
