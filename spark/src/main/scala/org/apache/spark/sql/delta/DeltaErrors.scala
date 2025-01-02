@@ -447,6 +447,13 @@ trait DeltaErrorsBase
         DeltaConfigs.CHANGE_DATA_FEED.key))
   }
 
+  def deletedRecordCountsHistogramDeserializationException(): Throwable = {
+    new DeltaChecksumException(
+      errorClass = "DELTA_DV_HISTOGRAM_DESERIALIZATON",
+      messageParameters = Array.empty,
+      pos = 0)
+  }
+
   /**
    * Throwable used for invalid CDC 'start' and 'end' options, where end < start
    */

@@ -1153,6 +1153,25 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_CHECKSUM_DV_METRICS_ENABLED =
+    buildConf("checksumDVMetrics.enabled")
+      .internal()
+      .doc(s"""When enabled, each delta transaction includes vector metrics in the checksum.
+              |Only applies to tables that use Deletion Vectors."""
+        .stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_DELETED_RECORD_COUNTS_HISTOGRAM_ENABLED =
+    buildConf("checksumDeletedRecordCountsHistogramMetrics.enabled")
+      .internal()
+      .doc(s"""When enabled, each delta transaction includes in the checksum the deleted
+              |record count distribution histogram for all the files. To enable this feature
+              |${DELTA_CHECKSUM_DV_METRICS_ENABLED.key} needs to be enabled as well. Only
+              |applies to tables that use Deletion Vectors.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_CHECKPOINT_THROW_EXCEPTION_WHEN_FAILED =
       buildConf("checkpoint.exceptionThrowing.enabled")
         .internal()
