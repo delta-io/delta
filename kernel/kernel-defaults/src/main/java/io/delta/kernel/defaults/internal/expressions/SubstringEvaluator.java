@@ -106,7 +106,8 @@ public class SubstringEvaluator {
         String inputString = input.getString(rowId);
         int position = positionVector.getInt(rowId);
         Optional<Integer> length = lengthVector.map(columnVector -> columnVector.getInt(rowId));
-        if (position > inputString.length() || (length.isPresent() && length.get() < 1)) {
+        if (position > getStringLengthWithCodePoint(inputString)
+            || (length.isPresent() && length.get() < 1)) {
           return "";
         }
         int startPosition = buildStartPosition(inputString, position);
@@ -116,10 +117,13 @@ public class SubstringEvaluator {
                 len -> {
                   // endIndex should be less than the length of input string, but positive.
                   // e.g. Substring("aaa", -100, 95), should be read as Substring("aaa", 0, 0)
-                  int endIndex = Math.min(inputString.length(), Math.max(startPosition + len, 0));
-                  return inputString.substring(startIndex, endIndex);
+                  int endIndex =
+                      Math.min(
+                          getStringLengthWithCodePoint(inputString),
+                          Math.max(startPosition + len, 0));
+                  return subStringWithCodePoint(inputString, startIndex, Optional.of(endIndex));
                 })
-            .orElse(inputString.substring(startIndex));
+            .orElse(subStringWithCodePoint(inputString, startIndex, Optional.empty()));
       }
     };
   }
@@ -136,9 +140,20 @@ public class SubstringEvaluator {
   private static int buildStartPosition(String inputString, int pos) {
     // Handles the negative position (substring("abc", -2, 1), the start position should be 1("b"))
     if (pos < 0) {
-      return inputString.length() + pos;
+      return getStringLengthWithCodePoint(inputString) + pos;
     }
     // Pos is 1 based and pos = 0 is treated as 1.
     return Math.max(pos - 1, 0);
+  }
+
+  /** Returns code point based string length for handling surrogate pairs. */
+  private static int getStringLengthWithCodePoint(String s) {
+    return s.codePointCount(/* beginIndex = */ 0, s.length());
+  }
+
+  private static String subStringWithCodePoint(String s, int start, Optional<Integer> end) {
+    int startIndex = s.offsetByCodePoints(/* beginIndex = */ 0, start);
+    return end.map(e -> s.substring(startIndex, s.offsetByCodePoints(0, e)))
+        .orElse(s.substring(startIndex));
   }
 }
