@@ -106,8 +106,7 @@ public class SubstringEvaluator {
         String inputString = input.getString(rowId);
         int position = positionVector.getInt(rowId);
         Optional<Integer> length = lengthVector.map(columnVector -> columnVector.getInt(rowId));
-        if (position > getStringLength(inputString)
-            || (length.isPresent() && length.get() < 1)) {
+        if (position > getStringLength(inputString) || (length.isPresent() && length.get() < 1)) {
           return "";
         }
         int startPosition = buildStartPosition(inputString, position);
@@ -118,9 +117,7 @@ public class SubstringEvaluator {
                   // endIndex should be less than the length of input string, but positive.
                   // e.g. Substring("aaa", -100, 95), should be read as Substring("aaa", 0, 0)
                   int endIndex =
-                      Math.min(
-                          getStringLength(inputString),
-                          Math.max(startPosition + len, 0));
+                      Math.min(getStringLength(inputString), Math.max(startPosition + len, 0));
                   return getSubstring(inputString, startIndex, Optional.of(endIndex));
                 })
             .orElse(getSubstring(inputString, startIndex, Optional.empty()));
