@@ -631,7 +631,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       new DefaultExpressionEvaluator(
         schema, startsWithExpressionExpression, BooleanType.BOOLEAN).eval(input)
     }
-    assert(e.getMessage.contains("'starts with' expects literal as the second input"))
+    assert(e.getMessage.contains("'STARTS_WITH' expects literal as the second input"))
 
 
     def checkUnsupportedTypes(colType: DataType, literalType: DataType): Unit = {
@@ -645,7 +645,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
         new DefaultExpressionEvaluator(
           schema, expr, BooleanType.BOOLEAN).eval(input)
       }
-      assert(e.getMessage.contains("'STARTS_WITH' is expects STRING type inputs"))
+      assert(e.getMessage.contains("'STARTS_WITH' expects STRING type inputs"))
     }
 
     checkUnsupportedTypes(BooleanType.BOOLEAN, BooleanType.BOOLEAN)

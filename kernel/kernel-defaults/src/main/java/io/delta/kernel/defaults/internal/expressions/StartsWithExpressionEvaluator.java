@@ -15,16 +15,14 @@
  */
 package io.delta.kernel.defaults.internal.expressions;
 
-import static io.delta.kernel.defaults.internal.DefaultEngineErrors.unsupportedExpressionException;
+import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.*;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.expressions.Expression;
-import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.types.BooleanType;
 import io.delta.kernel.types.DataType;
-import io.delta.kernel.types.StringType;
 import java.util.List;
 
 public class StartsWithExpressionEvaluator {
@@ -34,22 +32,20 @@ public class StartsWithExpressionEvaluator {
       Predicate startsWith,
       List<Expression> childrenExpressions,
       List<DataType> childrenOutputTypes) {
-    if (childrenExpressions.size() != 2) {
-      throw unsupportedExpressionException(
-          startsWith,
-          "Invalid number of inputs to STARTS_WITH expression. "
-              + "Example usage: STARTS_WITH(column, 'test')");
+    checkArgsCount(
+        startsWith,
+        /* expectedCount= */ 2,
+        startsWith.getName(),
+        "Example usage: STARTS_WITH(column, 'test')");
+    for (DataType dataType : childrenOutputTypes) {
+      checkIsStringType(dataType, startsWith, "'STARTS_WITH' expects STRING type inputs");
     }
-    if (!(StringType.STRING.equivalent(childrenOutputTypes.get(0))
-        && StringType.STRING.equivalent(childrenOutputTypes.get(1)))) {
-      throw unsupportedExpressionException(
-          startsWith, "'STARTS_WITH' is expects STRING type inputs");
-    }
+
     // TODO: support non literal as the second input of starts with.
-    if (!(childrenExpressions.get(1) instanceof Literal)) {
-      throw unsupportedExpressionException(
-          startsWith, "'starts with' expects literal as the second input");
-    }
+    checkIsLiteral(
+        childrenExpressions.get(1),
+        startsWith,
+        "'STARTS_WITH' expects literal as the second input");
     return new Predicate(startsWith.getName(), childrenExpressions);
   }
 
