@@ -761,7 +761,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       lessThan(col("a"), ofInt(1)),
       greaterThan(col("a"), ofInt(1)),
       not(equals(col("a"), ofInt(1))),
-      notEquals(col("a"), ofInt(1)),
+      notEquals(col("a"), ofInt(1))
     ),
     misses = Seq(
       AlwaysFalse.ALWAYS_FALSE,
