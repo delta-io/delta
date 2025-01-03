@@ -1080,7 +1080,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       checkResults(
         predicate = nullSafeEquals(col("value"), ofNull(STRING)),
         expNumPartitions = 3,
-        expNumFiles = 3) // should be 3 once <=> is supported
+        expNumFiles = 3)
 
       checkResults(
         predicate = equals(col("value"), ofString("a")),
@@ -1089,8 +1089,8 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
 
       checkResults(
         predicate = nullSafeEquals(col("value"), ofString("a")),
-        expNumPartitions = 2, // should be 2 once <=> is supported
-        expNumFiles = 2) // should be 2 once <=> is supported
+        expNumPartitions = 2,
+        expNumFiles = 2)
 
       checkResults(
         predicate = notEquals(col("value"), ofString("a")),
@@ -1104,8 +1104,8 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
 
       checkResults(
         predicate = nullSafeEquals(col("value"), ofString("b")),
-        expNumPartitions = 1, // should be 1 once <=> is supported
-        expNumFiles = 1) // should be 1 once <=> is supported
+        expNumPartitions = 1,
+        expNumFiles = 1)
 
       // Conditions on both, partition keys and values
       /*
