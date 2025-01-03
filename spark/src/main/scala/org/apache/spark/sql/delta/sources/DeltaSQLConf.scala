@@ -1153,6 +1153,25 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_CHECKSUM_DV_METRICS_ENABLED =
+    buildConf("checksumDVMetrics.enabled")
+      .internal()
+      .doc(s"""When enabled, each delta transaction includes vector metrics in the checksum.
+              |Only applies to tables that use Deletion Vectors."""
+        .stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_DELETED_RECORD_COUNTS_HISTOGRAM_ENABLED =
+    buildConf("checksumDeletedRecordCountsHistogramMetrics.enabled")
+      .internal()
+      .doc(s"""When enabled, each delta transaction includes in the checksum the deleted
+              |record count distribution histogram for all the files. To enable this feature
+              |${DELTA_CHECKSUM_DV_METRICS_ENABLED.key} needs to be enabled as well. Only
+              |applies to tables that use Deletion Vectors.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_CHECKPOINT_THROW_EXCEPTION_WHEN_FAILED =
       buildConf("checkpoint.exceptionThrowing.enabled")
         .internal()
@@ -1202,6 +1221,22 @@ trait DeltaSQLConfBase {
            | Disables check that ensures a table doesn't contain any unsupported type change when
            | reading it.
            |""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
+  /**
+   * Internal config to bypass check that prevents applying type changes that are not supported by
+   * Iceberg when Uniform is enabled with Iceberg compatibility.
+   */
+  val DELTA_TYPE_WIDENING_ALLOW_UNSUPPORTED_ICEBERG_TYPE_CHANGES =
+    buildConf("typeWidening.allowUnsupportedIcebergTypeChanges")
+      .internal()
+      .doc(
+        """
+          |By default, type changes that aren't supported by Iceberg are rejected when Uniform is
+          |enabled with Iceberg compatibility. This config allows bypassing this restriction, but
+          |reading the affected column with Iceberg clients will likely fail or behave erratically.
+          |""".stripMargin)
       .booleanConf
       .createWithDefault(false)
 

@@ -450,7 +450,7 @@ trait UniversalFormatMiscSuiteBase extends IcebergCompatUtilsBase {
       // The enforce is not lossy. It will do nothing if there is no Universal related key.
 
       def getUpdatedConfiguration(conf: Map[String, String]): Map[String, String] =
-        UniversalFormat.enforceDependenciesInConfiguration(conf, snapshot)
+        UniversalFormat.enforceDependenciesInConfiguration(spark, conf, snapshot)
 
       var updatedConfiguration = getUpdatedConfiguration(configurationUnderTest)
       assert(configurationUnderTest == configurationUnderTest)
