@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.icebergShaded
 
 import java.nio.ByteBuffer
 import java.time.Instant
+import java.time.format.DateTimeParseException
 
 import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
@@ -26,6 +27,8 @@ import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaConfig, DeltaConfigs
 import org.apache.spark.sql.delta.DeltaConfigs.parseCalendarInterval
 import org.apache.spark.sql.delta.actions.{AddFile, FileAction, RemoveFile}
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.util.PartitionUtils.{timestampPartitionPattern, utcFormatter}
+import org.apache.spark.sql.delta.util.TimestampFormatter
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import shadedForDelta.org.apache.iceberg.{DataFile, DataFiles, FileFormat, PartitionSpec, Schema => IcebergSchema}
@@ -207,6 +210,9 @@ object IcebergTransactionUtils
     builder
   }
 
+  private lazy val timestampFormatter =
+    TimestampFormatter(timestampPartitionPattern, java.util.TimeZone.getDefault)
+
   /**
    * Follows deserialization as specified here
    * https://github.com/delta-io/delta/blob/master/PROTOCOL.md#Partition-Value-Serialization
@@ -235,11 +241,23 @@ object IcebergTransactionUtils
       case _: TimestampNTZType =>
         java.sql.Timestamp.valueOf(partitionVal).getNanos/1000.asInstanceOf[Long]
       case _: TimestampType =>
-        Instant.parse(partitionVal).getNano/1000.asInstanceOf[Long]
+        try {
+          getMicrosSinceEpoch(partitionVal)
+        } catch {
+          case _: DateTimeParseException =>
+            // In case of non-ISO timestamps, parse and interpret the timestamp as system time
+            // and then convert to UTC
+            val utcInstant = utcFormatter.format(timestampFormatter.parse(partitionVal))
+            getMicrosSinceEpoch(utcInstant)
+        }
       case _ =>
         throw DeltaErrors.universalFormatConversionFailedException(
           version, "iceberg", "Unexpected partition data type " + elemType)
     }
+  }
+
+  private def getMicrosSinceEpoch(instant: String): Long = {
+    Instant.parse(instant).getNano/1000.asInstanceOf[Long]
   }
 
   private def getMetricsForIcebergDataFile(

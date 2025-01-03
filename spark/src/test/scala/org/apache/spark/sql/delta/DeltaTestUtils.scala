@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta
 
 import java.io.{BufferedReader, File, InputStreamReader}
 import java.nio.charset.StandardCharsets.UTF_8
-import java.util.Locale
+import java.util.{Locale, TimeZone}
 import java.util.concurrent.ConcurrentHashMap
 
 import scala.collection.JavaConverters._
@@ -450,6 +450,16 @@ object DeltaTestUtils extends DeltaTestUtilsBase {
     // Just a more readable version of `lteq`.
     def fulfillsVersionRequirements(actual: Protocol, requirement: Protocol): Boolean =
       lteq(requirement, actual)
+  }
+
+  def withTimeZone(zone: String)(f: => Unit): Unit = {
+    val currentDefault = TimeZone.getDefault
+    try {
+      TimeZone.setDefault(TimeZone.getTimeZone(zone))
+      f
+    } finally {
+      TimeZone.setDefault(currentDefault)
+    }
   }
 }
 

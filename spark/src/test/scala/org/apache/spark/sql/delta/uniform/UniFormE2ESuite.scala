@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.uniform
 
+import org.apache.spark.sql.delta.DeltaTestUtils.withTimeZone
+import org.apache.spark.sql.delta.sources.DeltaSQLConf.UTC_TIMESTAMP_PARTITION_VALUES
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.types._
 
@@ -105,6 +107,31 @@ abstract class UniFormE2EIcebergSuiteBase extends UniFormE2ETest {
       // Verify against Delta read and Iceberg read
       checkAnswer(spark.sql(verificationQuery), Seq(Row(123)))
       checkAnswer(createReaderSparkSession.sql(verificationQuery), Seq(Row(123)))
+    }
+  }
+
+  test("Insert Partitioned Table - UTC Adjustment for Non-ISO Timestamp Partition values") {
+    withTable(testTableName) {
+      withTimeZone("GMT-8") {
+        withSQLConf(UTC_TIMESTAMP_PARTITION_VALUES.key -> "false") {
+          write(
+            s"""CREATE TABLE $testTableName (id int, ts timestamp, col1 INT)
+               | USING DELTA
+               | PARTITIONED BY (id, ts)
+               | TBLPROPERTIES (
+               |  'delta.columnMapping.mode' = 'name',
+               |  'delta.enableIcebergCompatV2' = 'true',
+               |  'delta.universalFormat.enabledFormats' = 'iceberg'
+               |)""".stripMargin)
+          write(s"INSERT INTO $testTableName" +
+            s" VALUES (1, timestamp'2021-06-30 00:00:00.123456', 123)")
+          val verificationQuery = s"SELECT col1 FROM $testTableName " +
+            s"where id=1 and ts=TIMESTAMP'2021-06-30 08:00:00.123456UTC'"
+          // Verify against Delta read and Iceberg read
+          checkAnswer(spark.sql(verificationQuery), Seq(Row(123)))
+          checkAnswer(createReaderSparkSession.sql(verificationQuery), Seq(Row(123)))
+        }
+      }
     }
   }
 

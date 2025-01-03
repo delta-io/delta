@@ -34,6 +34,7 @@ import org.apache.spark.{SparkConf, SparkContext, SparkException, SparkThrowable
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row, SaveMode}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.parser.ParseException
+import org.apache.spark.sql.delta.DeltaTestUtils.withTimeZone
 import org.apache.spark.sql.functions.{lit, struct}
 import org.apache.spark.sql.internal.{LegacyBehaviorPolicy, SQLConf}
 import org.apache.spark.sql.internal.SQLConf.{LEAF_NODE_DEFAULT_PARALLELISM, PARTITION_OVERWRITE_MODE, PartitionOverwriteMode}
@@ -1464,16 +1465,6 @@ abstract class DeltaInsertIntoTests(
 
         checkAnswer(sql(s"SELECT count(distinct(ts)) from $t1"), Seq(Row(2)))
       }
-    }
-  }
-
-  private def withTimeZone(zone: String)(f: => Unit): Unit = {
-    val currentDefault = TimeZone.getDefault
-    try {
-      TimeZone.setDefault(TimeZone.getTimeZone(zone))
-      f
-    } finally {
-      TimeZone.setDefault(currentDefault)
     }
   }
 
