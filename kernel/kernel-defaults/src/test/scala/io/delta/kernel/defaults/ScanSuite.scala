@@ -187,6 +187,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       greaterThanOrEqual(ofInt(1), col("a")), // 1 >= a
       greaterThanOrEqual(ofInt(2), col("a")), // 2 >= a
       lessThanOrEqual(ofInt(0), col("a")), // 0 <= a
+      // note <=> is not supported yet but these should still be hits once supported
       nullSafeEquals(col("a"), ofInt(1)), // a <=> 1
       nullSafeEquals(ofInt(1), col("a")), // 1 <=> a
       not(nullSafeEquals(col("a"), ofInt(2))), // NOT a <=> 2
@@ -206,6 +207,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       lessThanOrEqual(ofInt(2), col("a")), // 2 <= a
       greaterThanOrEqual(ofInt(0), col("a")), // 0 >= a
       not(equals(col("a"), ofInt(1))), // NOT a = 1
+      not(equals(ofInt(1), col("a"))), // NOT 1 = a
       not(nullSafeEquals(col("a"), ofInt(1))), // NOT a <=> 1
       nullSafeEquals(col("a"), ofInt(2)) // a <=> 2
     )
