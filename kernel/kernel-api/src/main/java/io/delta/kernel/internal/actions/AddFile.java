@@ -34,7 +34,6 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.TreeMap;
 
 /** Delta log action representing an `AddFile` */
 public class AddFile extends RowBackedAction {
@@ -205,22 +204,16 @@ public class AddFile extends RowBackedAction {
 
   @Override
   public String toString() {
-    // Convert the partitionValues and tags to Java Maps and make them sorted by key.
-    Map<String, String> partitionValuesJavaMap = toJavaMap(getPartitionValues());
-    Map<String, String> sortedPartitionValuesJavaMap = new TreeMap<>(partitionValuesJavaMap);
-
-    Optional<Map<String, String>> tagsJavaMap = getTags().map(VectorUtils::toJavaMap);
-    Optional<Map<String, String>> sortedTagsJavaMap = tagsJavaMap.map(TreeMap::new);
-
+    // No specific ordering is guaranteed for partitionValues and tags in the returned string
     StringBuilder sb = new StringBuilder();
     sb.append("AddFile{");
     sb.append("path='").append(getPath()).append('\'');
-    sb.append(", partitionValues=").append(sortedPartitionValuesJavaMap);
+    sb.append(", partitionValues=").append(toJavaMap(getPartitionValues()));
     sb.append(", size=").append(getSize());
     sb.append(", modificationTime=").append(getModificationTime());
     sb.append(", dataChange=").append(getDataChange());
     sb.append(", deletionVector=").append(getDeletionVector());
-    sb.append(", tags=").append(sortedTagsJavaMap);
+    sb.append(", tags=").append(getTags().map(VectorUtils::toJavaMap));
     sb.append(", baseRowId=").append(getBaseRowId());
     sb.append(", defaultRowCommitVersion=").append(getDefaultRowCommitVersion());
     sb.append(", stats=").append(getStats());

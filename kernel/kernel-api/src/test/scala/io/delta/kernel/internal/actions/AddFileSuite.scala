@@ -123,14 +123,14 @@ class AddFileSuite extends AnyFunSuite {
     }
   }
 
-  test("toString() prints all fields of AddFile with partitionValues / tags in sorted order") {
+  test("toString() prints all fields of AddFile") {
     val addFileRow = generateTestAddFileRow(
       path = "test/path",
-      partitionValues = Map("b" -> "2", "a" -> "1", "c" -> "3"),
+      partitionValues = Map("col1" -> "val1"),
       size = 100L,
       modificationTime = 1234L,
       dataChange = false,
-      tags = Option(Map("tag1" -> "value1", "tag2" -> "value2")),
+      tags = Option(Map("tag1" -> "value1")),
       baseRowId = Option(12345L),
       defaultRowCommitVersion = Option(67890L),
       stats = Option("{\"numRecords\":10000}")
@@ -138,12 +138,12 @@ class AddFileSuite extends AnyFunSuite {
     val addFile = new AddFile(addFileRow)
     val expectedString = "AddFile{" +
       "path='test/path', " +
-      "partitionValues={a=1, b=2, c=3}, " +
+      "partitionValues={col1=val1}, " +
       "size=100, " +
       "modificationTime=1234, " +
       "dataChange=false, " +
       "deletionVector=Optional.empty, " +
-      "tags=Optional[{tag1=value1, tag2=value2}], " +
+      "tags=Optional[{tag1=value1}], " +
       "baseRowId=Optional[12345], " +
       "defaultRowCommitVersion=Optional[67890], " +
       "stats=Optional[{\"numRecords\":10000}]}"
