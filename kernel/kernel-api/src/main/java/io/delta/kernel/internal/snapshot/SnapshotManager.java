@@ -21,7 +21,6 @@ import static io.delta.kernel.internal.TableConfig.EXPIRED_LOG_CLEANUP_ENABLED;
 import static io.delta.kernel.internal.TableConfig.LOG_RETENTION;
 import static io.delta.kernel.internal.TableFeatures.validateWriteSupportedTable;
 import static io.delta.kernel.internal.checkpoints.Checkpointer.findLastCompleteCheckpointBefore;
-import static io.delta.kernel.internal.fs.Path.getName;
 import static io.delta.kernel.internal.replay.LogReplayUtils.assertLogFilesBelongToTable;
 import static io.delta.kernel.internal.snapshot.MetadataCleanup.cleanupExpiredLogs;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
@@ -44,7 +43,6 @@ import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.util.Clock;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.Tuple2;
-import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import java.io.*;
 import java.nio.file.FileAlreadyExistsException;
@@ -65,11 +63,13 @@ public class SnapshotManager {
 
   private final Path logPath;
   private final Path tablePath;
+  private final LogFileLister logFileLister;
 
   public SnapshotManager(Path logPath, Path tablePath) {
     this.latestSnapshotHint = new AtomicReference<>();
     this.logPath = logPath;
     this.tablePath = tablePath;
+    this.logFileLister = new LogFileLister(tablePath, logPath);
   }
 
   private static final Logger logger = LoggerFactory.getLogger(SnapshotManager.class);
@@ -266,117 +266,6 @@ public class SnapshotManager {
         });
   }
 
-  /** Get an iterator of files in the _delta_log directory starting with the startVersion. */
-  private CloseableIterator<FileStatus> listFrom(Engine engine, long startVersion)
-      throws IOException {
-    logger.debug("{}: startVersion: {}", tablePath, startVersion);
-    return wrapEngineExceptionThrowsIO(
-        () -> engine.getFileSystemClient().listFrom(FileNames.listingPrefix(logPath, startVersion)),
-        "Listing from %s",
-        FileNames.listingPrefix(logPath, startVersion));
-  }
-
-  /**
-   * Returns true if the given file name is delta log files. Delta log files can be delta commit
-   * file (e.g., 000000000.json), or checkpoint file. (e.g.,
-   * 000000001.checkpoint.00001.00003.parquet)
-   *
-   * @param fileName Name of the file (not the full path)
-   * @return Boolean Whether the file is delta log files
-   */
-  private boolean isDeltaCommitOrCheckpointFile(String fileName) {
-    return FileNames.isCheckpointFile(fileName) || FileNames.isCommitFile(fileName);
-  }
-
-  /**
-   * Returns an iterator containing a list of files found in the _delta_log directory starting with
-   * the startVersion. Returns None if no files are found or the directory is missing.
-   */
-  private Optional<CloseableIterator<FileStatus>> listFromOrNone(Engine engine, long startVersion) {
-    // LIST the directory, starting from the provided lower bound (treat missing dir as empty).
-    // NOTE: "empty/missing" is _NOT_ equivalent to "contains no useful commit files."
-    try {
-      CloseableIterator<FileStatus> results = listFrom(engine, startVersion);
-      if (results.hasNext()) {
-        return Optional.of(results);
-      } else {
-        return Optional.empty();
-      }
-    } catch (FileNotFoundException e) {
-      return Optional.empty();
-    } catch (IOException io) {
-      throw new UncheckedIOException("Failed to list the files in delta log", io);
-    }
-  }
-
-  /**
-   * Returns the delta files and checkpoint files starting from the given `startVersion`.
-   * `versionToLoad` is an optional parameter to set the max bound. It's usually used to load a
-   * table snapshot for a specific version. If no delta or checkpoint files exist below the
-   * versionToLoad and at least one delta file exists, throws an exception that the state is not
-   * reconstructable.
-   *
-   * @param startVersion the version to start. Inclusive.
-   * @param versionToLoad the optional parameter to set the max version we should return. Inclusive.
-   *     Must be >= startVersion if provided.
-   * @return Some array of files found (possibly empty, if no usable commit files are present), or
-   *     None if the listing returned no files at all.
-   */
-  protected final Optional<List<FileStatus>> listDeltaAndCheckpointFiles(
-      Engine engine, long startVersion, Optional<Long> versionToLoad) {
-    versionToLoad.ifPresent(
-        v ->
-            checkArgument(
-                v >= startVersion,
-                "versionToLoad=%s provided is less than startVersion=%s",
-                v,
-                startVersion));
-    logger.debug("startVersion: {}, versionToLoad: {}", startVersion, versionToLoad);
-
-    return listFromOrNone(engine, startVersion)
-        .map(
-            fileStatusesIter -> {
-              final List<FileStatus> output = new ArrayList<>();
-
-              while (fileStatusesIter.hasNext()) {
-                final FileStatus fileStatus = fileStatusesIter.next();
-                final String fileName = getName(fileStatus.getPath());
-
-                // Pick up all checkpoint and delta files
-                if (!isDeltaCommitOrCheckpointFile(fileName)) {
-                  continue;
-                }
-
-                // Checkpoint files of 0 size are invalid but may be ignored silently when read,
-                // hence we drop them so that we never pick up such checkpoints.
-                if (FileNames.isCheckpointFile(fileName) && fileStatus.getSize() == 0) {
-                  continue;
-                }
-                // Take files until the version we want to load
-                final boolean versionWithinRange =
-                    versionToLoad
-                        .map(v -> FileNames.getFileVersion(new Path(fileStatus.getPath())) <= v)
-                        .orElse(true);
-
-                if (!versionWithinRange) {
-                  // If we haven't taken any files yet and the first file we see is greater
-                  // than the versionToLoad then the versionToLoad is not reconstructable
-                  // from the existing logs
-                  if (output.isEmpty()) {
-                    long earliestVersion =
-                        DeltaHistoryManager.getEarliestRecreatableCommit(engine, logPath);
-                    throw DeltaErrors.versionBeforeFirstAvailableCommit(
-                        tablePath.toString(), versionToLoad.get(), earliestVersion);
-                  }
-                  break;
-                }
-                output.add(fileStatus);
-              }
-
-              return output;
-            });
-  }
-
   /**
    * Load the Snapshot for this Delta table at initialization. This method uses the `lastCheckpoint`
    * file as a hint on where to start listing the transaction log directory.
@@ -509,7 +398,7 @@ public class SnapshotManager {
 
     long startTimeMillis = System.currentTimeMillis();
     final Optional<List<FileStatus>> newFiles =
-        listDeltaAndCheckpointFiles(engine, startVersion, versionToLoad);
+        logFileLister.listDeltaAndCheckpointFiles(engine, startVersion, versionToLoad);
     logger.info(
         "{}: Took {}ms to list the files after starting checkpoint",
         tablePath,
