@@ -20,7 +20,6 @@ import org.scalatest.funsuite.AnyFunSuite
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.data.Row
-import io.delta.kernel.internal.actions.AddFile.createAddFileRow
 import io.delta.kernel.internal.util.VectorUtils
 import io.delta.kernel.internal.util.VectorUtils.stringStringMapValue
 import io.delta.kernel.utils.DataFileStatistics.deserializeFromJson
@@ -50,7 +49,7 @@ class AddFileSuite extends AnyFunSuite {
       case None => Optional.empty()
     }
 
-    createAddFileRow(
+    AddFile.createAddFileRow(
       path,
       stringStringMapValue(partitionValues.asJava),
       size.asInstanceOf[JLong],

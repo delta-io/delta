@@ -131,56 +131,61 @@ public class AddFile extends RowBackedAction {
     return new GenericRow(FULL_SCHEMA, fieldMap);
   }
 
+  ////////////////////////////////////
+  // Constructor and Member Methods //
+  ////////////////////////////////////
+
   /** Constructs an {@link AddFile} action from the given 'AddFile' {@link Row}. */
   public AddFile(Row row) {
-    super(row);
-  }
-
-  @Override
-  protected StructType getFullSchema() {
-    return FULL_SCHEMA;
+    super(row, FULL_SCHEMA);
   }
 
   public String getPath() {
-    return (String) getValueAsObject("path");
+    return row.getString(getFieldIndex("path"));
   }
 
   public MapValue getPartitionValues() {
-    return (MapValue) getValueAsObject("partitionValues");
+    return row.getMap(getFieldIndex("partitionValues"));
   }
 
   public long getSize() {
-    return (long) getValueAsObject("size");
+    return row.getLong(getFieldIndex("size"));
   }
 
   public long getModificationTime() {
-    return (long) getValueAsObject("modificationTime");
+    return row.getLong(getFieldIndex("modificationTime"));
   }
 
   public boolean getDataChange() {
-    return (boolean) getValueAsObject("dataChange");
+    return row.getBoolean(getFieldIndex("dataChange"));
   }
 
   public Optional<DeletionVectorDescriptor> getDeletionVector() {
-    return Optional.ofNullable((Row) getValueAsObject("deletionVector"))
-        .map(DeletionVectorDescriptor::fromRow);
+    int index = getFieldIndex("deletionVector");
+    return Optional.ofNullable(
+        row.isNullAt(index) ? null : DeletionVectorDescriptor.fromRow(row.getStruct(index)));
   }
 
   public Optional<MapValue> getTags() {
-    return Optional.ofNullable((MapValue) getValueAsObject("tags"));
+    int index = getFieldIndex("tags");
+    return Optional.ofNullable(row.isNullAt(index) ? null : row.getMap(index));
   }
 
   public Optional<Long> getBaseRowId() {
-    return Optional.ofNullable((Long) getValueAsObject("baseRowId"));
+    int index = getFieldIndex("baseRowId");
+    return Optional.ofNullable(row.isNullAt(index) ? null : row.getLong(index));
   }
 
   public Optional<Long> getDefaultRowCommitVersion() {
-    return Optional.ofNullable((Long) getValueAsObject("defaultRowCommitVersion"));
+    int index = getFieldIndex("defaultRowCommitVersion");
+    return Optional.ofNullable(row.isNullAt(index) ? null : row.getLong(index));
   }
 
   public Optional<DataFileStatistics> getStats() {
-    return Optional.ofNullable((String) getValueAsObject("stats"))
-        .flatMap(DataFileStatistics::deserializeFromJson);
+    int index = getFieldIndex("stats");
+    return row.isNullAt(index)
+        ? Optional.empty()
+        : DataFileStatistics.deserializeFromJson(row.getString(index));
   }
 
   public Optional<Long> getNumRecords() {
@@ -189,13 +194,13 @@ public class AddFile extends RowBackedAction {
 
   /** Returns a new {@link AddFile} with the provided baseRowId. */
   public AddFile withNewBaseRowId(long baseRowId) {
-    return new AddFile(createRowWithOverriddenValue("baseRowId", baseRowId));
+    return new AddFile(toRowWithOverriddenValue("baseRowId", baseRowId));
   }
 
   /** Returns a new {@link AddFile} with the provided defaultRowCommitVersion. */
   public AddFile withNewDefaultRowCommitVersion(long defaultRowCommitVersion) {
     return new AddFile(
-        createRowWithOverriddenValue("defaultRowCommitVersion", defaultRowCommitVersion));
+        toRowWithOverriddenValue("defaultRowCommitVersion", defaultRowCommitVersion));
   }
 
   @Override

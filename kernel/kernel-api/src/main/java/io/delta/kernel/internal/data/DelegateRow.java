@@ -15,6 +15,8 @@
  */
 package io.delta.kernel.internal.data;
 
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+
 import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
@@ -192,21 +194,19 @@ public class DelegateRow implements Row {
 
   private void throwIfUnsafeAccess(
       int ordinal, Class<? extends DataType> expDataType, String accessType) {
+    final StructType schema = row.getSchema();
+    checkArgument(
+        ordinal >= 0 && ordinal < schema.length(),
+        "Invalid ordinal %d for schema with length %d",
+        ordinal,
+        schema.length());
 
-    DataType actualDataType = dataType(ordinal);
+    DataType actualDataType = schema.at(ordinal).getDataType();
     if (!expDataType.isAssignableFrom(actualDataType.getClass())) {
       String msg =
           String.format(
               "Fail to access a '%s' value from a field of type '%s'", accessType, actualDataType);
       throw new UnsupportedOperationException(msg);
     }
-  }
-
-  private DataType dataType(int ordinal) {
-    if (row.getSchema().length() <= ordinal) {
-      throw new IllegalArgumentException("invalid ordinal: " + ordinal);
-    }
-
-    return row.getSchema().at(ordinal).getDataType();
   }
 }
