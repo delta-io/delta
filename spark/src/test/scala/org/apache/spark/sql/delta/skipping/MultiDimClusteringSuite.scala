@@ -148,6 +148,90 @@ class MultiDimClusteringSuite extends QueryTest
     }
   }
 
+  test("ensure records in each partition are sorted according to Z-order values") {
+    withSQLConf(
+      MDC_SORT_WITHIN_PARTITIONS.key -> "true",
+      MDC_ADD_NOISE.key -> "false") {
+      val data = Seq(
+        // "c1" -> "c2", // (rangeId_c1, rangeId_c2) -> ZOrder (decimal Z-Order)
+        "a" -> 20, "a" -> 20, // (0, 1) -> 0x01 (1)
+        "b" -> 20, // (1, 1) -> 0x03 (3)
+        "c" -> 30, // (2, 2) -> 0x0C (12)
+        "d" -> 70, // (3, 3) -> 0x0F (15)
+        "e" -> 90, "e" -> 90, "e" -> 90, // (4, 4) -> 0x30 (48)
+        "f" -> 200, // (5, 5) -> 0x33 (51)
+        "g" -> 10, // (6, 0) -> 0x28 (40)
+        "h" -> 20) // (7, 1) -> 0x2B (43)
+
+      // Randomize the data. Use seed for deterministic input.
+      val inputDf = new Random(seed = 101).shuffle(data)
+          .toDF("c1", "c2")
+
+      // Cluster the data, range partition into one partition, and sort.
+      val outputDf = MultiDimClustering.cluster(
+        inputDf,
+        approxNumPartitions = 1,
+        colNames = Seq("c1", "c2"),
+        curve = "zorder")
+
+      // Check that dataframe is sorted.
+      checkAnswer(
+        outputDf,
+        Seq(
+          "a" -> 20, "a" -> 20,
+          "b" -> 20,
+          "c" -> 30,
+          "d" -> 70,
+          "g" -> 10,
+          "h" -> 20,
+          "e" -> 90, "e" -> 90, "e" -> 90,
+          "f" -> 200
+        ).toDF("c1", "c2").collect())
+    }
+  }
+
+  test("ensure records in each partition are sorted according to Hilbert curve values") {
+    withSQLConf(
+      MDC_SORT_WITHIN_PARTITIONS.key -> "true",
+      MDC_ADD_NOISE.key -> "false") {
+      val data = Seq(
+        // "c1" -> "c2", // (rangeId_c1, rangeId_c2) -> Decimal Hilbert index
+        "a" -> 20, "a" -> 20, // (0, 1) -> 3
+        "b" -> 20, // (1, 1) -> 2
+        "c" -> 30, // (2, 2) -> 8
+        "d" -> 70, // (3, 3) -> 10
+        "e" -> 90, "e" -> 90, "e" -> 90, // (4, 4) -> 32
+        "f" -> 200, // (5, 5) -> 34
+        "g" -> 10, // (6, 0) -> 20
+        "h" -> 20) // (7, 1) -> 22
+
+      // Randomize the data. Use seed for deterministic input.
+      val inputDf = new Random(seed = 101).shuffle(data)
+          .toDF("c1", "c2")
+
+      // Cluster the data, range partition into one partition, and sort.
+      val outputDf = MultiDimClustering.cluster(
+        inputDf,
+        approxNumPartitions = 1,
+        colNames = Seq("c1", "c2"),
+        curve = "hilbert")
+
+      // Check that dataframe is sorted.
+      checkAnswer(
+        outputDf,
+        Seq(
+          "b" -> 20,
+          "a" -> 20, "a" -> 20,
+          "c" -> 30,
+          "d" -> 70,
+          "g" -> 10,
+          "h" -> 20,
+          "e" -> 90, "e" -> 90, "e" -> 90,
+          "f" -> 200
+        ).toDF("c1", "c2").collect())
+    }
+  }
+
   test("noise is helpful in skew handling") {
     Seq("zorder", "hilbert").foreach { curve =>
       Seq("true", "false").foreach { addNoise =>
