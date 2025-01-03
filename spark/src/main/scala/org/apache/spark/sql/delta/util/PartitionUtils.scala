@@ -119,7 +119,7 @@ object PartitionSpec {
 
 private[delta] object PartitionUtils {
 
-  lazy val timestampPartitionPattern = "yyyy-MM-dd HH:mm:ss[.S]"
+  lazy val timestampPartitionPattern = "yyyy-MM-dd HH:mm:ss[.SSSSSS][.S]"
   lazy val utcFormatter = TimestampFormatter("yyyy-MM-dd'T'HH:mm:ss.SSSSSSz", ZoneId.of("Z"))
 
   case class PartitionValues(columnNames: Seq[String], literals: Seq[Literal])
