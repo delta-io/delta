@@ -138,6 +138,7 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
         case ">=":
         case "<":
         case "<=":
+        case "<=>":
         case "IS NOT DISTINCT FROM":
           return new ExpressionTransformResult(
               transformBinaryComparator(predicate), BooleanType.BOOLEAN);
@@ -451,6 +452,7 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
               argResults.leftResult,
               argResults.rightResult,
               (compareResult) -> (compareResult <= 0));
+        case "<=>":
         case "IS NOT DISTINCT FROM":
           return nullSafeComparatorVector(
               argResults.leftResult,

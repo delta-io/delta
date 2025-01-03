@@ -187,15 +187,11 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       greaterThanOrEqual(ofInt(1), col("a")), // 1 >= a
       greaterThanOrEqual(ofInt(2), col("a")), // 2 >= a
       lessThanOrEqual(ofInt(0), col("a")), // 0 <= a
-      // note <=> is not supported yet but these should still be hits once supported
       nullSafeEquals(col("a"), ofInt(1)), // a <=> 1
       nullSafeEquals(ofInt(1), col("a")), // 1 <=> a
       not(nullSafeEquals(col("a"), ofInt(2))), // NOT a <=> 2
       // MOVE BELOW EXPRESSIONS TO MISSES ONCE SUPPORTED BY DATA SKIPPING
-      not(nullSafeEquals(col("a"), ofInt(1))), // NOT a <=> 1
-      nullSafeEquals(col("a"), ofInt(2)), // a <=> 2
       notEquals(col("a"), ofInt(1)), // a != 1
-      nullSafeEquals(col("a"), ofInt(2)), // a <=> 2
       notEquals(ofInt(1), col("a")) // 1 != a
     ),
     misses = Seq(
@@ -210,7 +206,8 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       lessThanOrEqual(ofInt(2), col("a")), // 2 <= a
       greaterThanOrEqual(ofInt(0), col("a")), // 0 >= a
       not(equals(col("a"), ofInt(1))), // NOT a = 1
-      not(equals(ofInt(1), col("a"))) // NOT 1 = a
+      not(nullSafeEquals(col("a"), ofInt(1))), // NOT a <=> 1
+      nullSafeEquals(col("a"), ofInt(2)) // a <=> 2
     )
   )
 
@@ -763,14 +760,11 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       greaterThan(col("a"), ofInt(1)),
       not(equals(col("a"), ofInt(1))),
       notEquals(col("a"), ofInt(1)),
-      nullSafeEquals(col("a"), ofInt(1)),
-
-      // MOVE BELOW EXPRESSIONS TO MISSES ONCE SUPPORTED BY DATA SKIPPING
-      // This can be optimized to `IsNotNull(a)` (done by NullPropagation in Spark)
-      not(nullSafeEquals(col("a"), ofNull(INTEGER)))
     ),
     misses = Seq(
       AlwaysFalse.ALWAYS_FALSE,
+      nullSafeEquals(col("a"), ofInt(1)),
+      not(nullSafeEquals(col("a"), ofNull(INTEGER))),
       isNotNull(col("a"))
     )
   )
@@ -1054,10 +1048,9 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
         expNumPartitions = 1,
         expNumFiles = 3) // 3 files with key = null
 
-      /*
-      NOT YET SUPPORTED EXPRESSIONS
+
       checkResults(
-        predicate = nullSafeEquals(col("key"), ofNull(string)),
+        predicate = nullSafeEquals(col("key"), ofNull(STRING)),
         expNumPartitions = 1,
         expNumFiles = 3) // 3 files with key = null
 
@@ -1070,7 +1063,6 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
         predicate = nullSafeEquals(col("key"), ofString("b")),
         expNumPartitions = 1,
         expNumFiles = 1) // 1 files with key <=> 'b'
-      */
 
       // Conditions on partitions keys and values
       checkResults(
@@ -1086,7 +1078,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       checkResults(
         predicate = nullSafeEquals(col("value"), ofNull(STRING)),
         expNumPartitions = 3,
-        expNumFiles = 5) // should be 3 once <=> is supported
+        expNumFiles = 3) // should be 3 once <=> is supported
 
       checkResults(
         predicate = equals(col("value"), ofString("a")),
@@ -1095,8 +1087,8 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
 
       checkResults(
         predicate = nullSafeEquals(col("value"), ofString("a")),
-        expNumPartitions = 3, // should be 2 once <=> is supported
-        expNumFiles = 5) // should be 2 once <=> is supported
+        expNumPartitions = 2, // should be 2 once <=> is supported
+        expNumFiles = 2) // should be 2 once <=> is supported
 
       checkResults(
         predicate = notEquals(col("value"), ofString("a")),
@@ -1110,8 +1102,8 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
 
       checkResults(
         predicate = nullSafeEquals(col("value"), ofString("b")),
-        expNumPartitions = 3, // should be 1 once <=> is supported
-        expNumFiles = 5) // should be 1 once <=> is supported
+        expNumPartitions = 1, // should be 1 once <=> is supported
+        expNumFiles = 1) // should be 1 once <=> is supported
 
       // Conditions on both, partition keys and values
       /*
