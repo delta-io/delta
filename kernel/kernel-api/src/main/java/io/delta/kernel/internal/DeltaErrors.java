@@ -33,7 +33,12 @@ import java.util.function.Supplier;
 public final class DeltaErrors {
   private DeltaErrors() {}
 
-  public static KernelException versionBeforeFirstAvailableCommit(
+  public static KernelException missingCheckpoint(String tablePath, long checkpointVersion) {
+    return new InvalidTableException(
+        tablePath, String.format("Missing checkpoint at version %s", checkpointVersion));
+  }
+
+  public static KernelException versionToLoadBeforeFirstAvailableCommit(
       String tablePath, long versionToLoad, long earliestVersion) {
     String message =
         String.format(
@@ -44,7 +49,7 @@ public final class DeltaErrors {
     return new KernelException(message);
   }
 
-  public static KernelException versionAfterLatestCommit(
+  public static KernelException versionToLoadAfterLatestCommit(
       String tablePath, long versionToLoad, long latestVersion) {
     String message =
         String.format(
