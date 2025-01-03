@@ -15,12 +15,14 @@
  */
 package io.delta.kernel.defaults.internal.expressions;
 
+import static io.delta.kernel.defaults.internal.DefaultEngineErrors.unsupportedExpressionException;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.expressions.Expression;
+import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.types.*;
 import java.math.BigDecimal;
@@ -382,5 +384,22 @@ class DefaultExpressionUtils {
         return lastLookupVector;
       }
     };
+  }
+
+  /**
+   * Checks if the specific expression is an integer literal, throws {@code
+   * unsupportedExpressionException} if not.
+   *
+   * @param expr, expression to be checked.
+   * @param context string describing the context, used for constructing error message.
+   * @param baseExpression expression whose evaluation triggers this check. Uued for constructing
+   *     error message.
+   */
+  static void checkIntegerLiteral(Expression expr, String context, Expression baseExpression) {
+    if ((expr instanceof Literal) && IntegerType.INTEGER.equals(((Literal) expr).getDataType())) {
+      return;
+    }
+    throw unsupportedExpressionException(
+        baseExpression, String.format("%s, expects an integral numeric", context));
   }
 }
