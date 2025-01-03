@@ -18,7 +18,6 @@ package io.delta.kernel.test
 import io.delta.kernel.engine._
 import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch, Row}
 import io.delta.kernel.expressions.{Column, Expression, ExpressionEvaluator, Predicate, PredicateEvaluator}
-import io.delta.kernel.internal.coordinatedcommits.CommitCoordinatorClientHandler
 import io.delta.kernel.types.{DataType, StructType}
 import io.delta.kernel.utils.{CloseableIterator, DataFileStatus, FileStatus}
 
@@ -53,8 +52,7 @@ trait MockEngineUtils {
     fileSystemClient: FileSystemClient = null,
     jsonHandler: JsonHandler = null,
     parquetHandler: ParquetHandler = null,
-    expressionHandler: ExpressionHandler = null,
-    commitCoordinatorClientHandler: CommitCoordinatorClientHandler = null): Engine = {
+    expressionHandler: ExpressionHandler = null): Engine = {
     new Engine() {
       override def getExpressionHandler: ExpressionHandler =
         Option(expressionHandler).getOrElse(
