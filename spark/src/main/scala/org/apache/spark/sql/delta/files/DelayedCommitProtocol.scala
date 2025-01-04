@@ -71,8 +71,6 @@ class DelayedCommitProtocol(
   // since there's no guarantee the stats will exist.
   @transient val addedStatuses = new ArrayBuffer[AddFile]
 
-  val timestampPartitionPattern = "yyyy-MM-dd HH:mm:ss[.SSSSSS][.S]"
-
   // Constants for CDC partition manipulation. Used only in newTaskTempFile(), but we define them
   // here to avoid building a new redundant regex for every file.
   protected val cdcPartitionFalse = s"${CDC_PARTITION_COL}=false"
@@ -145,7 +143,7 @@ class DelayedCommitProtocol(
 
     val dateFormatter = DateFormatter()
     val timestampFormatter =
-      TimestampFormatter(timestampPartitionPattern, java.util.TimeZone.getDefault)
+      TimestampFormatter(PartitionUtils.timestampPartitionPattern, java.util.TimeZone.getDefault)
 
     /**
      * ToDo: Remove the use of this PartitionUtils API with type inference logic
