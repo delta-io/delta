@@ -23,6 +23,7 @@ import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.defaults.engine.DefaultExpressionHandler;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.types.DataType;
+import io.delta.kernel.types.StringType;
 import java.util.*;
 
 /**
@@ -92,6 +93,8 @@ final class ImplicitCastExpression implements Expression {
         return new LongUpConverter(outputType, input);
       case "float":
         return new FloatUpConverter(outputType, input);
+      case "string":
+        return new StringUpConverter(outputType, input);
       default:
         throw new UnsupportedOperationException(
             format("Cast from %s is not supported", fromTypeStr));
@@ -117,6 +120,11 @@ final class ImplicitCastExpression implements Expression {
    */
   static boolean canCastTo(DataType from, DataType to) {
     // TODO: The type name should be a first class method on `DataType` instead of getting it
+    // This separate check is needed since both collated and non-collated StringTypes
+    // have same toString ("string")
+    if (from instanceof StringType && to instanceof StringType) {
+      return true;
+    }
     // using the `toString`.
     String fromStr = from.toString();
     String toStr = to.toString();
@@ -257,6 +265,17 @@ final class ImplicitCastExpression implements Expression {
     @Override
     public double getDouble(int rowId) {
       return inputVector.getFloat(rowId);
+    }
+  }
+
+  private static class StringUpConverter extends UpConverter {
+    StringUpConverter(DataType targetType, ColumnVector inputVector) {
+      super(targetType, inputVector);
+    }
+
+    @Override
+    public String getString(int rowId) {
+      return inputVector.getString(rowId);
     }
   }
 }

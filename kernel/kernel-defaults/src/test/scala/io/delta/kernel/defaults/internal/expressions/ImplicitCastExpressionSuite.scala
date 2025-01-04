@@ -42,7 +42,13 @@ class ImplicitCastExpressionSuite extends AnyFunSuite with TestUtils {
 
     (LongType.LONG, FloatType.FLOAT),
     (LongType.LONG, DoubleType.DOUBLE),
-    (FloatType.FLOAT, DoubleType.DOUBLE))
+    (FloatType.FLOAT, DoubleType.DOUBLE),
+
+    (StringType.STRING, StringType.STRING),
+    (StringType.STRING, new StringType(CollationIdentifier.fromString("SPARK.UTF8_LCASE"))),
+    (new StringType(CollationIdentifier.fromString("SPARK.UTF8_LCASE")), StringType.STRING),
+    (new StringType(CollationIdentifier.fromString("SPARK.UTF8_LCASE")),
+      new StringType(CollationIdentifier.fromString("SPARK.UTF8_LCASE"))))
 
   test("can cast to") {
     Seq.range(0, ALL_TYPES.length).foreach { fromTypeIdx =>
@@ -56,7 +62,17 @@ class ImplicitCastExpressionSuite extends AnyFunSuite with TestUtils {
   }
 
   allowedCasts.foreach { castPair =>
-    test(s"eval cast expression: ${castPair._1} -> ${castPair._2}") {
+    val toString1 = castPair._1 match {
+      case stringType: StringType =>
+        stringType + " " + stringType.getCollationIdentifier.toString
+      case other => other.toString
+    }
+    val toString2 = castPair._2 match {
+      case stringType: StringType =>
+        stringType + " " + stringType.getCollationIdentifier.toString
+      case other => other.toString
+    }
+    test(s"eval cast expression: $toString1 -> $toString2") {
       val fromType = castPair._1
       val toType = castPair._2
       val inputVector = testData(87, fromType, (rowId) => rowId % 7 == 0)
@@ -101,6 +117,11 @@ class ImplicitCastExpressionSuite extends AnyFunSuite with TestUtils {
       override def getDouble(rowId: Int): Double = {
         assert(dataType === DoubleType.DOUBLE)
         generateValue(rowId)
+      }
+
+      override def getString(rowId: Int): String = {
+        assert(dataType.isInstanceOf[StringType])
+        generateValue(rowId).toString
       }
     }
   }

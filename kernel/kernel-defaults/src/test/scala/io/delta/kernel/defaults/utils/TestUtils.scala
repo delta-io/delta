@@ -315,6 +315,7 @@ trait TestUtils extends Assertions with SQLHelper {
     TimestampType.TIMESTAMP,
     TimestampNTZType.TIMESTAMP_NTZ,
     StringType.STRING,
+    new StringType(CollationIdentifier.fromString("SPARK.UTF8_LCASE")),
     BinaryType.BINARY,
     new DecimalType(10, 5)
   )
@@ -589,7 +590,7 @@ trait TestUtils extends Assertions with SQLHelper {
       case LongType.LONG => rowId % 25 == 0
       case FloatType.FLOAT => rowId % 5 == 0
       case DoubleType.DOUBLE => rowId % 10 == 0
-      case StringType.STRING => rowId % 2 == 0
+      case _: StringType => rowId % 2 == 0
       case BinaryType.BINARY => rowId % 3 == 0
       case DateType.DATE => rowId % 5 == 0
       case TimestampType.TIMESTAMP => rowId % 3 == 0
@@ -610,7 +611,7 @@ trait TestUtils extends Assertions with SQLHelper {
       case LongType.LONG => rowId * 287623L / 91
       case FloatType.FLOAT => rowId * 7651.2323f / 91
       case DoubleType.DOUBLE => rowId * 23423.23d / 17
-      case StringType.STRING => (rowId % 19).toString
+      case _: StringType => (rowId % 19).toString
       case BinaryType.BINARY => Array[Byte]((rowId % 21).toByte, (rowId % 7 - 1).toByte)
       case DateType.DATE => (rowId * 28234) % 2876
       case TimestampType.TIMESTAMP => (rowId * 2342342L) % 23
