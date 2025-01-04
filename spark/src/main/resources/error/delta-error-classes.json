@@ -845,6 +845,12 @@
     ],
     "sqlState" : "42601"
   },
+  "DELTA_DV_HISTOGRAM_DESERIALIZATON" : {
+    "message" : [
+      "Could not deserialize the deleted record counts histogram during table integrity verification."
+    ],
+    "sqlState" : "22000"
+  },
   "DELTA_DYNAMIC_PARTITION_OVERWRITE_DISABLED" : {
     "message" : [
       "Dynamic partition overwrite mode is specified by session config or write options, but it is disabled by `delta.dynamicPartitionOverwrite.enabled=false`."
@@ -1219,6 +1225,12 @@
         "message" : [
           "IcebergCompatV<version> does not support the data type <dataType> for partition columns in your schema. Your partition schema:",
           "<schema>"
+        ]
+      },
+      "UNSUPPORTED_TYPE_WIDENING" : {
+        "message" : [
+          "IcebergCompatV<version> is incompatible with a type change applied to this table:",
+          "Field <fieldPath> was changed from <prevType> to <newType>."
         ]
       },
       "VERSION_MUTUAL_EXCLUSIVE" : {

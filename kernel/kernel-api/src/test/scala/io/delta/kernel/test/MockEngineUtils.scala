@@ -52,8 +52,7 @@ trait MockEngineUtils {
     fileSystemClient: FileSystemClient = null,
     jsonHandler: JsonHandler = null,
     parquetHandler: ParquetHandler = null,
-    expressionHandler: ExpressionHandler = null,
-    commitCoordinatorClientHandler: CommitCoordinatorClientHandler = null): Engine = {
+    expressionHandler: ExpressionHandler = null): Engine = {
     new Engine() {
       override def getExpressionHandler: ExpressionHandler =
         Option(expressionHandler).getOrElse(
@@ -69,11 +68,6 @@ trait MockEngineUtils {
 
       override def getParquetHandler: ParquetHandler =
         Option(parquetHandler).getOrElse(
-          throw new UnsupportedOperationException("not supported in this test suite"))
-
-      override def getCommitCoordinatorClientHandler(name: String, conf: util.Map[String, String]):
-      CommitCoordinatorClientHandler =
-        Option(commitCoordinatorClientHandler).getOrElse(
           throw new UnsupportedOperationException("not supported in this test suite"))
     }
   }

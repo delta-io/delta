@@ -20,9 +20,9 @@ import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaTableUtils.withActiveSession
-import org.apache.spark.sql.delta.actions.{Protocol, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
-import org.apache.spark.sql.delta.commands.AlterTableSetPropertiesDeltaCommand
+import org.apache.spark.sql.delta.commands.{AlterTableDropFeatureDeltaCommand, AlterTableSetPropertiesDeltaCommand}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import io.delta.tables.execution._
 import org.apache.hadoop.fs.Path
@@ -98,7 +98,7 @@ class DeltaTable private[tables](
    * @since 0.3.0
    */
   def vacuum(retentionHours: Double): DataFrame = {
-    executeVacuum(deltaLog, Some(retentionHours), table.getTableIdentifierIfExists)
+    executeVacuum(table, Some(retentionHours))
   }
 
   /**
@@ -111,7 +111,7 @@ class DeltaTable private[tables](
    * @since 0.3.0
    */
   def vacuum(): DataFrame = {
-    executeVacuum(deltaLog, None, table.getTableIdentifierIfExists)
+    executeVacuum(table, retentionHours = None)
   }
 
   /**
@@ -123,7 +123,7 @@ class DeltaTable private[tables](
    * @since 0.3.0
    */
   def history(limit: Int): DataFrame = {
-    executeHistory(deltaLog, Some(limit), table.getTableIdentifierIfExists)
+    executeHistory(deltaLog, Some(limit), table.catalogTable)
   }
 
   /**
@@ -133,7 +133,7 @@ class DeltaTable private[tables](
    * @since 0.3.0
    */
   def history(): DataFrame = {
-    executeHistory(deltaLog, tableId = table.getTableIdentifierIfExists)
+    executeHistory(deltaLog, catalogTable = table.catalogTable)
   }
 
   /**
@@ -560,6 +560,73 @@ class DeltaTable private[tables](
         TableFeatureProtocolUtils.propertyKey(featureName) ->
           TableFeatureProtocolUtils.FEATURE_PROP_SUPPORTED))
     toDataset(sparkSession, alterTableCmd)
+  }
+
+  private def executeDropFeature(featureName: String, truncateHistory: Option[Boolean]): Unit = {
+    val alterTableCmd = AlterTableDropFeatureDeltaCommand(
+      table = table,
+      featureName = featureName,
+      truncateHistory = truncateHistory.getOrElse(false))
+    toDataset(sparkSession, alterTableCmd)
+  }
+
+  /**
+   * Modify the protocol to drop a supported feature. The operation always normalizes the
+   * resulting protocol. Protocol normalization is the process of converting a table features
+   * protocol to the weakest possible form. This primarily refers to converting a table features
+   * protocol to a legacy protocol. A table features protocol can be represented with the legacy
+   * representation only when the feature set of the former exactly matches a legacy protocol.
+   * Normalization can also decrease the reader version of a table features protocol when it is
+   * higher than necessary. For example:
+   *
+   * (1, 7, None, {AppendOnly, Invariants, CheckConstraints}) -> (1, 3)
+   * (3, 7, None, {RowTracking}) -> (1, 7, RowTracking)
+   *
+   * The dropFeatureSupport method can be used as follows:
+   * {{{
+   *   io.delta.tables.DeltaTable.dropFeatureSupport("rowTracking")
+   * }}}
+   *
+   * See online documentation for more details.
+   *
+   * @param featureName The name of the feature to drop.
+   * @param truncateHistory Whether to truncate history before downgrading the protocol.
+   * @return None.
+   * @since 3.4.0
+   */
+  def dropFeatureSupport(
+      featureName: String,
+      truncateHistory: Boolean): Unit = withActiveSession(sparkSession) {
+    executeDropFeature(featureName, Some(truncateHistory))
+  }
+
+  /**
+   * Modify the protocol to drop a supported feature. The operation always normalizes the
+   * resulting protocol. Protocol normalization is the process of converting a table features
+   * protocol to the weakest possible form. This primarily refers to converting a table features
+   * protocol to a legacy protocol. A table features protocol can be represented with the legacy
+   * representation only when the feature set of the former exactly matches a legacy protocol.
+   * Normalization can also decrease the reader version of a table features protocol when it is
+   * higher than necessary. For example:
+   *
+   * (1, 7, None, {AppendOnly, Invariants, CheckConstraints}) -> (1, 3)
+   * (3, 7, None, {RowTracking}) -> (1, 7, RowTracking)
+   *
+   * The dropFeatureSupport method can be used as follows:
+   * {{{
+   *   io.delta.tables.DeltaTable.dropFeatureSupport("rowTracking")
+   * }}}
+   *
+   * Note, this command will not truncate history.
+   *
+   * See online documentation for more details.
+   *
+   * @param featureName The name of the feature to drop.
+   * @return None.
+   * @since 3.4.0
+   */
+  def dropFeatureSupport(featureName: String): Unit = withActiveSession(sparkSession) {
+    executeDropFeature(featureName, None)
   }
 
   /**

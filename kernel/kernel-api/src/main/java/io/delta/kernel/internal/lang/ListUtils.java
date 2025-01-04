@@ -32,10 +32,6 @@ public final class ListUtils {
     return new Tuple2<>(partitionMap.get(true), partitionMap.get(false));
   }
 
-  public static <T> T last(List<T> list) {
-    return list.get(list.size() - 1);
-  }
-
   /** Remove once supported JDK (build) version is 21 or above */
   public static <T> T getFirst(List<T> list) {
     if (list.isEmpty()) {

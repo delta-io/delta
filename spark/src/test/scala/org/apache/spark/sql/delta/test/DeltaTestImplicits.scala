@@ -164,6 +164,16 @@ object DeltaTestImplicits {
     /** Convenience overload that omits the cmd arg (which is not helpful in tests). */
     def apply(spark: SparkSession, id: TableIdentifier): DeltaTableV2 =
       dt.apply(spark, id, "test")
+
+    def apply(spark: SparkSession, tableDir: File): DeltaTableV2 =
+      dt.apply(spark, new Path(tableDir.getAbsolutePath))
+
+    def apply(spark: SparkSession, tableDir: File, clock: Clock): DeltaTableV2 = {
+      val tablePath = new Path(tableDir.getAbsolutePath)
+      new DeltaTableV2(spark, tablePath) {
+        override lazy val deltaLog: DeltaLog = DeltaLog.forTable(spark, tablePath, clock)
+      }
+    }
   }
 
   implicit class DeltaTableV2TestHelper(deltaTable: DeltaTableV2) {

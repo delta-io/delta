@@ -729,10 +729,11 @@ object UnresolvedPathOrIdentifier {
   def apply(
       path: Option[String],
       tableIdentifier: Option[TableIdentifier],
+      options: Map[String, String],
       cmd: String): LogicalPlan = {
     (path, tableIdentifier) match {
       case (_, Some(t)) => UnresolvedTable(t.nameParts, cmd)
-      case (Some(p), None) => UnresolvedPathBasedTable(p, Map.empty, cmd)
+      case (Some(p), None) => UnresolvedPathBasedTable(p, options, cmd)
       case _ => throw new IllegalArgumentException(
         s"At least one of path or tableIdentifier must be provided to $cmd")
     }

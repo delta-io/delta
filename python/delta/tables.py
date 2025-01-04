@@ -594,6 +594,35 @@ class DeltaTable(object):
         DeltaTable._verify_type_str(featureName, "featureName")
         self._jdt.addFeatureSupport(featureName)
 
+    @since(3.4)  # type: ignore[arg-type]
+    def dropFeatureSupport(self, featureName: str, truncateHistory: Optional[bool] = None) -> None:
+        """
+        Modify the protocol to drop a supported feature. The operation always normalizes the
+        resulting protocol. Protocol normalization is the process of converting a table features
+        protocol to the weakest possible form. This primarily refers to converting a table features
+        protocol to a legacy protocol. A table features protocol can be represented with the legacy
+        representation only when the feature set of the former exactly matches a legacy protocol.
+        Normalization can also decrease the reader version of a table features protocol when it is
+        higher than necessary. For example:
+
+        (1, 7, None, {AppendOnly, Invariants, CheckConstraints}) -> (1, 3)
+        (3, 7, None, {RowTracking}) -> (1, 7, RowTracking)
+
+        The dropFeatureSupport method can be used as follows:
+        delta.tables.DeltaTable.dropFeatureSupport("rowTracking")
+
+        :param featureName: The name of the feature to drop.
+        :param truncateHistory: Optional value whether to truncate history. If not specified,
+                                the history is not truncated.
+        :return: None.
+        """
+        DeltaTable._verify_type_str(featureName, "featureName")
+        if truncateHistory is None:
+            self._jdt.dropFeatureSupport(featureName)
+        else:
+            DeltaTable._verify_type_bool(truncateHistory, "truncateHistory")
+            self._jdt.dropFeatureSupport(featureName, truncateHistory)
+
     @since(1.2)  # type: ignore[arg-type]
     def restoreToVersion(self, version: int) -> DataFrame:
         """
@@ -601,7 +630,7 @@ class DeltaTable(object):
 
         Example::
 
-            io.delta.tables.DeltaTable.restoreToVersion(1)
+            delta.tables.DeltaTable.restoreToVersion(1)
 
         :param version: target version of restored table
         :return: Dataframe with metrics of restore operation.
@@ -622,8 +651,8 @@ class DeltaTable(object):
 
         Example::
 
-            io.delta.tables.DeltaTable.restoreToTimestamp('2021-01-01')
-            io.delta.tables.DeltaTable.restoreToTimestamp('2021-01-01 01:01:01')
+            delta.tables.DeltaTable.restoreToTimestamp('2021-01-01')
+            delta.tables.DeltaTable.restoreToTimestamp('2021-01-01 01:01:01')
 
         :param timestamp: target timestamp of restored table
         :return: Dataframe with metrics of restore operation.
@@ -657,6 +686,11 @@ class DeltaTable(object):
         """
         jbuilder = self._jdt.optimize()
         return DeltaOptimizeBuilder(self._spark, jbuilder)
+
+    @classmethod  # type: ignore[arg-type]
+    def _verify_type_bool(self, variable: bool, name: str) -> None:
+        if not isinstance(variable, bool) or variable is None:
+            raise ValueError("%s needs to be a boolean but got '%s'." % (name, type(variable)))
 
     @staticmethod  # type: ignore[arg-type]
     def _verify_type_str(variable: str, name: str) -> None:

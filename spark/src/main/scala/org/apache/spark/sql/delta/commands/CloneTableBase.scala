@@ -256,16 +256,16 @@ abstract class CloneTableBase(
         }
       }
 
-        recordDeltaOperation(
-          destinationTable, s"delta.${deltaOperation.name.toLowerCase()}.commit") {
-          txn.commitLarge(
-            spark,
-            actions,
-            Some(newProtocol),
-            deltaOperation,
-            context,
-            commitOpMetrics.mapValues(_.toString()).toMap)
-        }
+      recordDeltaOperation(
+        destinationTable, s"delta.${deltaOperation.name.toLowerCase()}.commit") {
+        txn.commitLarge(
+          spark,
+          actions,
+          Some(newProtocol),
+          deltaOperation,
+          context,
+          commitOpMetrics.mapValues(_.toString()).toMap)
+      }
 
       val cloneLogData = getOperationMetricsForEventRecord(opMetrics) ++ Map(
         SOURCE -> sourceName,
@@ -308,8 +308,10 @@ abstract class CloneTableBase(
       .toMap
     val clonedSchema =
       IdentityColumn.copySchemaWithMergedHighWaterMarks(
+        deltaLog = targetSnapshot.deltaLog,
         schemaToCopy = clonedMetadata.schema,
-        schemaWithHighWaterMarksToMerge = targetSnapshot.metadata.schema)
+        schemaWithHighWaterMarksToMerge = targetSnapshot.metadata.schema
+      )
     clonedMetadata.copy(configuration = filteredConfiguration, schemaString = clonedSchema.json)
   }
 

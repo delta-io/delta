@@ -13,6 +13,8 @@
       - [Sidecar Files](#sidecar-files)
     - [Log Compaction Files](#log-compaction-files)
     - [Last Checkpoint File](#last-checkpoint-file)
+    - [Version Checksum File](#version-checksum-file)
+      - [File Size Histogram Schema](#file-size-histogram-schema)
   - [Actions](#actions)
     - [Change Metadata](#change-metadata)
       - [Format Specification](#format-specification)
@@ -320,6 +322,98 @@ The last checkpoint file can help reduce the cost of constructing the latest sna
 
 Rather than list the entire directory, readers can locate a recent checkpoint by looking at the `_delta_log/_last_checkpoint` file.
 Due to the zero-padded encoding of the files in the log, the version id of this recent checkpoint can be used on storage systems that support lexicographically-sorted, paginated directory listing to enumerate any delta files or newer checkpoints that comprise more recent versions of the table.
+
+### Version Checksum File
+
+The Delta transaction log must remain an append-only log. To enable the detection of non-compliant modifications to Delta files, writers can optionally emit an auxiliary file with every commit, which contains important information about the state of the table as of that version. This file is referred to as the **Version Checksum** and can be used to validate the integrity of the table.
+
+### Version Checksum File Schema
+
+A Version Checksum file must have the following properties:
+- Be named `{version}.crc` where `version` is zero-padded to 20 digits (e.g., `00000000000000000001.crc`)
+- Be stored directly in the `_delta_log` directory alongside Delta log files
+- Contain exactly one JSON object with the following schema:
+
+Field Name | Data Type | Description | optional/required
+-|-|-|-
+txnId | String | A unique identifier for the transaction that produced this commit. | optional
+tableSizeBytes | Long | Total size of the table in bytes, calculated as the sum of the `size` field of all live `add` actions. | required
+numFiles | Long | Number of live `add` actions in this table version after Action Reconciliation. | required
+numMetadata | Long | Number of `metaData` actions. Must be 1. | required
+numProtocol | Long | Number of `protocol` actions. Must be 1. | required
+inCommitTimestampOpt | Long | The in-commit timestamp of this version. Present if and only if [In-Commit Timestamps](#in-commit-timestamps) are enabled. | optional
+setTransactions | Array[`txn`] | Live [Transaction Identifier](#transaction-identifiers) actions at this version. | optional
+domainMetadata | Array[`domainMetadata`] | Live [Domain Metadata](#domain-metadata) actions at this version, excluding tombstones. | optional
+metadata | Metadata | The table [metadata](#change-metadata) at this version. | required
+protocol | Protocol | The table [protocol](#protocol-evolution) at this version. | required
+fileSizeHistogram | FileSizeHistogram | Size distribution information of files remaining after [Action Reconciliation](#action-reconciliation). See [FileSizeHistogram](#file-size-histogram-schema) for more details. | optional
+allFiles | Array[`add`] | All live [Add File](#add-file-and-remove-file) actions at this version. | optional
+numDeletedRecordsOpt | Long | Number of records deleted through Deletion Vectors in this table version. | optional
+numDeletionVectorsOpt | Long | Number of Deletion Vectors active in this table version. | optional
+deletedRecordCountsHistogramOpt | DeletedRecordCountsHistogram | Distribution of deleted record counts across files. See [this](#deleted-record-counts-histogram-schema) section for more details. | optional
+
+##### File Size Histogram Schema
+
+The `FileSizeHistogram` object represents a histogram tracking file counts and total bytes across different size ranges. It has the following schema:
+
+Field Name | Data Type | Description | optional/required
+-|-|-|-
+sortedBinBoundaries | Array[Long] | A sorted array of bin boundaries where each element represents the start of a bin (inclusive) and the next element represents the end of the bin (exclusive). The first element must be 0. | required
+fileCounts | Array[Long] | Count of files in each bin. Length must match `sortedBinBoundaries`. | required
+totalBytes | Array[Long] | Total bytes of files in each bin. Length must match `sortedBinBoundaries`. | required
+
+Each index `i` in these arrays corresponds to a size range from `sortedBinBoundaries[i]` (inclusive) up to but not including `sortedBinBoundaries[i+1]`. The last bin ends at positive infinity. For example, given boundaries `[0, 1024, 4096]`:
+- Bin 0 contains files of size [0, 1024) bytes
+- Bin 1 contains files of size [1024, 4096) bytes
+- Bin 2 contains files of size [4096, ∞) bytes
+
+The arrays `fileCounts` and `totalBytes` store the number of files and their total size respectively that fall into each bin. This data structure enables efficient analysis of file size distributions in Delta tables.
+
+### Deleted Record Counts Histogram Schema
+
+The `DeletedRecordCountsHistogram` object represents a histogram tracking the distribution of deleted record counts across files in the table. Each bin in the histogram represents a range of deletion counts and stores the number of files having that many deleted records.
+
+Field Name | Data Type | Description | optional/required
+-|-|-|-
+deletedRecordCounts | Array[Long] | Array of size 10 where each element represents the count of files falling into a specific deletion count range. | required
+
+The histogram bins correspond to the following ranges:
+- Bin 0: [0, 0] (files with no deletions)
+- Bin 1: [1, 9] (files with 1-9 deleted records)
+- Bin 2: [10, 99] (files with 10-99 deleted records)
+- Bin 3: [100, 999] (files with 100-999 deleted records) 
+- Bin 4: [1000, 9999] (files with 1,000-9,999 deleted records)
+- Bin 5: [10000, 99999] (files with 10,000-99,999 deleted records)
+- Bin 6: [100000, 999999] (files with 100,000-999,999 deleted records)
+- Bin 7: [1000000, 9999999] (files with 1,000,000-9,999,999 deleted records)
+- Bin 8: [10000000, 2147483646] (files with 10,000,000 to 2147483646 (i.e. Int.MaxValue-1 in Java) deleted records)
+- Bin 9: [2147483647, ∞) (files with 2147483647 or more deleted records)
+
+This histogram allows analyzing the distribution of deleted records across files in a Delta table, which can be useful for monitoring and optimizing deletion patterns.
+
+#### State Validation
+
+Readers can validate table state integrity at a particular version by:
+1. Reading the Version Checksum file for that version
+2. Independently computing the same metrics by performing [Action Reconciliation](#action-reconciliation) on the table state
+3. Comparing the computed values against those recorded in the Version Checksum
+
+If any discrepancy is found between computed and recorded values, the table state at that version should be considered potentially corrupted.
+
+### Writer Requirements
+
+- Writers SHOULD produce a Version Checksum file for each commit
+- Writers MUST ensure all metrics in the Version Checksum accurately reflect table state after Action Reconciliation
+- Writers MUST write the Version Checksum file only after successfully writing the corresponding Delta log entry
+- Writers MUST NOT overwrite existing Version Checksum files
+
+### Reader Requirements
+
+- Readers MAY use Version Checksums to validate table state integrity
+- If performing validation, readers SHOULD verify all required fields match computed values
+- If validation fails, readers SHOULD surface the discrepancy to users via error messaging
+- Readers MUST continue functioning if Version Checksum files are missing
+
 
 ## Actions
 Actions modify the state of the table and they are stored both in delta files and in checkpoints.

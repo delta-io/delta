@@ -19,8 +19,10 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
+import io.delta.kernel.internal.util.JsonUtils;
 import java.util.Collections;
 import java.util.Map;
+import java.util.Optional;
 
 /** Statistics about data file in a Delta Lake table. */
 public class DataFileStatistics {
@@ -100,5 +102,27 @@ public class DataFileStatistics {
     // https://github.com/delta-io/delta/pull/3342. The PR is pending on a decision.
     // For now just serialize the number of records.
     return "{\"numRecords\":" + numRecords + "}";
+  }
+
+  /**
+   * Deserialize the statistics from a JSON string. For now only the number of records is
+   * deserialized, the rest of the statistics are not supported yet.
+   *
+   * @param json Data statistics JSON string to deserialize.
+   * @return An {@link Optional} containing the deserialized {@link DataFileStatistics} if present.
+   */
+  public static Optional<DataFileStatistics> deserializeFromJson(String json) {
+    Map<String, String> keyValueMap = JsonUtils.parseJSONKeyValueMap(json);
+
+    // For now just deserialize the number of records
+    String numRecordsStr = keyValueMap.get("numRecords");
+    if (numRecordsStr == null) {
+      return Optional.empty();
+    }
+    long numRecords = Long.parseLong(numRecordsStr);
+    DataFileStatistics stats =
+        new DataFileStatistics(
+            numRecords, Collections.emptyMap(), Collections.emptyMap(), Collections.emptyMap());
+    return Optional.of(stats);
   }
 }

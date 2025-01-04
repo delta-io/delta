@@ -147,7 +147,9 @@ class Snapshot(
                 "checkpointVersion" -> logSegment.checkpointProvider.version,
                 "durationMs" -> (System.currentTimeMillis() - startTime),
                 "exceptionMessage" -> exception.map(_.getMessage).getOrElse(""),
-                "exceptionStackTrace" -> exception.map(_.getStackTrace.mkString("\n")).getOrElse("")
+                "exceptionStackTrace" ->
+                  exception.map(_.getStackTrace.mkString("\n")).getOrElse(""),
+                "isCRCPresent" -> checksumOpt.isDefined
               )
             )
           }
@@ -378,6 +380,41 @@ class Snapshot(
   override def protocol: Protocol = _reconstructedProtocolMetadataAndICT.protocol
 
   /**
+   * Tries to retrieve the protocol, metadata, and in-commit-timestamp (if needed) from the
+   * checksum file. If the checksum file is not present or if the protocol or metadata is missing
+   * this will return None.
+   */
+  protected def getProtocolMetadataAndIctFromCrc():
+    Option[Array[ReconstructedProtocolMetadataAndICT]] = {
+      if (!spark.sessionState.conf.getConf(
+          DeltaSQLConf.USE_PROTOCOL_AND_METADATA_FROM_CHECKSUM_ENABLED)) {
+        return None
+      }
+      checksumOpt.map(c => (c.protocol, c.metadata, c.inCommitTimestampOpt)).flatMap {
+        case (p: Protocol, m: Metadata, ict: Option[Long]) =>
+          Some(Array((p, null, None), (null, m, None), (null, null, ict))
+            .map(ReconstructedProtocolMetadataAndICT.tupled))
+
+        case (p, m, _) if p != null || m != null =>
+          // One was missing from the .crc file... warn and fall back to an optimized query
+          val protocolStr = Option(p).map(_.toString).getOrElse("null")
+          val metadataStr = Option(m).map(_.toString).getOrElse("null")
+          recordDeltaEvent(
+            deltaLog,
+            opType = "delta.assertions.missingEitherProtocolOrMetadataFromChecksum",
+            data = Map(
+              "version" -> version.toString, "protocol" -> protocolStr, "source" -> metadataStr))
+          logWarning(log"Either protocol or metadata is null from checksum; " +
+            log"version:${MDC(DeltaLogKeys.VERSION, version)} " +
+            log"protocol:${MDC(DeltaLogKeys.PROTOCOL, protocolStr)} " +
+            log"metadata:${MDC(DeltaLogKeys.DELTA_METADATA, metadataStr)}")
+          None
+
+        case _ => None // both missing... fall back to an optimized query
+      }
+  }
+
+  /**
    * Pulls the protocol and metadata of the table from the files that are used to compute the
    * Snapshot directly--without triggering a full state reconstruction. This is important, because
    * state reconstruction depends on protocol and metadata for correctness.
@@ -393,6 +430,10 @@ class Snapshot(
   protected def protocolMetadataAndICTReconstruction():
       Array[ReconstructedProtocolMetadataAndICT] = {
     import implicits._
+
+    getProtocolMetadataAndIctFromCrc().foreach { protocolMetadataAndIctFromCrc =>
+      return protocolMetadataAndIctFromCrc
+    }
 
     val schemaToUse = Action.logSchema(Set("protocol", "metaData", "commitInfo"))
     val checkpointOpt = checkpointProvider.topLevelFileIndex.map { index =>
@@ -536,6 +577,15 @@ class Snapshot(
       },
     domainMetadata = checksumOpt.flatMap(_.domainMetadata)
       .orElse(Option.when(_computedStateTriggered)(domainMetadata)),
+    numDeletedRecordsOpt = checksumOpt.flatMap(_.numDeletedRecordsOpt)
+      .orElse(Option.when(_computedStateTriggered)(numDeletedRecordsOpt).flatten)
+      .filter(_ => deletionVectorsReadableAndMetricsEnabled),
+    numDeletionVectorsOpt = checksumOpt.flatMap(_.numDeletionVectorsOpt)
+      .orElse(Option.when(_computedStateTriggered)(numDeletionVectorsOpt).flatten)
+      .filter(_ => deletionVectorsReadableAndMetricsEnabled),
+    deletedRecordCountsHistogramOpt = checksumOpt.flatMap(_.deletedRecordCountsHistogramOpt)
+      .orElse(Option.when(_computedStateTriggered)(deletedRecordCountsHistogramOpt).flatten)
+      .filter(_ => deletionVectorsReadableAndHistogramEnabled),
     histogramOpt = checksumOpt.flatMap(_.histogramOpt)
   )
 
