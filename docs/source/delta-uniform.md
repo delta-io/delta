@@ -86,7 +86,7 @@ You can enable UniForm Hudi on an existing table using the following syntax:
 ALTER TABLE table_name SET TBLPROPERTIES ('delta.universalFormat.enabledFormats' = 'hudi');
 ```
 
-.. note:: This syntax requires [_](delta-column-mapping.md) to be enabled on the table prior to running on Delta 3.1. This syntax also works to upgrade from the IcbergCompatV1. It may rewrite existing files to make those Iceberg compatible, and it automatically disables and purges Deletion Vectors from the table.
+.. note:: This syntax requires [_](delta-column-mapping.md) to be enabled on the table prior to running on Delta 3.1. This syntax also works to upgrade from the IcebergCompatV1. It may rewrite existing files to make those Iceberg compatible, and it automatically disables and purges Deletion Vectors from the table.
 
 .. important:: When you first enable UniForm, asynchronous metadata generation begins. This task must complete before external clients can query the table using Iceberg or Hudi. See [_](#status).
 

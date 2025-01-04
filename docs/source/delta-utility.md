@@ -107,7 +107,7 @@ you can turn off this safety check by setting the Spark configuration property
 
 #### Inventory Table
 
-An inventory table contains a list of file paths together with their size, type (directory or not), and the last modification time. When an INVENTORY option is provided, VACUUM will consider the files listed there instead of  doing the full listing of the table directory, which can be time consuming for very large tables. The inventory table can be specified as a delta table or a spark SQL query that gives the expected table schema. The schema should be as follows:
+An inventory table contains a list of file paths together with their size, type (directory or not), and the last modification time. When an INVENTORY option is provided, VACUUM will consider the files listed there instead of  doing the full listing of the table directory, which can be time-consuming for very large tables. The inventory table can be specified as a delta table or a spark SQL query that gives the expected table schema. The schema should be as follows:
 
 | Column Name      | Type    | Description                             |
 | -----------------| ------- | --------------------------------------- |
@@ -121,7 +121,7 @@ An inventory table contains a list of file paths together with their size, type 
 ## Retrieve Delta table history
 
 You can retrieve information on the operations, user, timestamp, and so on for each write to a Delta table
-by running the `history` command. The operations are returned in reverse chronological order. By default table history is retained for 30 days.
+by running the `history` command. The operations are returned in reverse chronological order. By default, table history is retained for 30 days.
 
 .. code-language-tabs::
 
@@ -422,7 +422,7 @@ Convert a Parquet table to a Delta table in-place. This command lists all the fi
 
 By default, this command will collect per-file statistics (e.g. minimum and maximum values for each column). These statistics will be used at query time to provide faster queries. You can disable this statistics collection in the SQL API using `NO STATISTICS`.
 
-.. note:: If a Parquet table was created by Structured Streaming, the listing of files can be avoided by using the `_spark_metadata` sub-directory as the source of truth for files contained in the table setting the SQL configuration `spark.databricks.delta.convert.useMetadataLog` to `true`.
+.. note:: If a Parquet table was created by Structured Streaming, the listing of files can be avoided by using the `_spark_metadata` subdirectory as the source of truth for files contained in the table setting the SQL configuration `spark.databricks.delta.convert.useMetadataLog` to `true`.
 
 .. code-language-tabs::
 

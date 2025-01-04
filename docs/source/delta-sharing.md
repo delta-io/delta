@@ -44,7 +44,7 @@ A profile file is provided by the data provider to the data recipient.
   df = spark.read.format("deltaSharing").load(table_path)
   ```
   ```scala
-  // A table path is the profile file path followed by `#` and the fully qualified name 
+  // A table path is the profile file path followed by `#` and the fully qualified name
   // of a table (`<share-name>.<schema-name>.<table-name>`).
   val tablePath = "<profile-file-path>#<share-name>.<schema-name>.<table-name>"
   val df = spark.read.format("deltaSharing").load(tablePath)

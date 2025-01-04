@@ -53,7 +53,7 @@ You can create tables in the following ways.
     ```
 
 
-SQL also supports creating a table at a path, without creating an entry in the Hive metastore.
+- SQL also supports creating a table at a path, without creating an entry in the Hive metastore.
 
   .. code-language-tabs::
 
@@ -725,7 +725,7 @@ To time travel to a previous version, you must retain _both_ the log and the dat
 
 The data files backing a Delta table are _never_ deleted automatically; data files are deleted only when you run [VACUUM](delta-utility.md#delta-vacuum). `VACUUM` _does not_ delete Delta log files; log files are automatically cleaned up after checkpoints are written.
 
-By default you can time travel to a Delta table up to 30 days old unless you have:
+By default, you can time travel to a Delta table up to 30 days old unless you have:
 
 - Run `VACUUM` on your Delta table.
 - Changed the data or log file retention periods using the following [table properties](#table-properties):
@@ -740,7 +740,7 @@ Each time a checkpoint is written, Delta automatically cleans up log entries old
     To access 30 days of historical data even if you run `VACUUM` on the Delta table, set `delta.deletedFileRetentionDuration = "interval 30 days"`. This setting may cause your storage costs to go up.
 
 .. note::
-    Due to log entry cleanup, instances can arise where you cannot time travel to a version that is less than the retention interval. <Delta> requires all consecutive log entries since the previous checkpoint to time travel to a particular version. For example, with a table initially consisting of log entries for versions [0, 19] and a checkpoint at verison 10, if the log entry for version 0 is cleaned up, then you cannot time travel to versions [1, 9]. Increasing the table property `delta.logRetentionDuration` can help avoid these situations.
+    Due to log entry cleanup, instances can arise where you cannot time travel to a version that is less than the retention interval. <Delta> requires all consecutive log entries since the previous checkpoint to time travel to a particular version. For example, with a table initially consisting of log entries for versions [0, 19] and a checkpoint at version 10, if the log entry for version 0 is cleaned up, then you cannot time travel to versions [1, 9]. Increasing the table property `delta.logRetentionDuration` can help avoid these situations.
 
 <a id="deltadataframewrites"></a>
 
@@ -1451,7 +1451,7 @@ pyspark --conf "spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension" --
 
 ## Configure storage credentials
 
-<Delta> uses Hadoop FileSystem APIs to access the storage systems. The credentails for storage systems usually can be set through Hadoop configurations. <Delta> provides multiple ways to set Hadoop configurations similar to <AS>.
+<Delta> uses Hadoop FileSystem APIs to access the storage systems. The credentials for storage systems usually can be set through Hadoop configurations. <Delta> provides multiple ways to set Hadoop configurations similar to <AS>.
 
 ### Spark configurations
 
@@ -1469,7 +1469,7 @@ Spark SQL will pass all of the current [SQL session configurations](http://spark
 
 Besides setting Hadoop file system configurations through the Spark (cluster) configurations or SQL session configurations, Delta supports reading Hadoop file system configurations from `DataFrameReader` and `DataFrameWriter` options (that is, option keys that start with the `fs.` prefix) when the table is read or written, by using `DataFrameReader.load(path)` or `DataFrameWriter.save(path)`.
 
-For example, you can pass your storage credentails through DataFrame options:
+For example, you can pass your storage credentials through DataFrame options:
 
 
 .. code-language-tabs::
