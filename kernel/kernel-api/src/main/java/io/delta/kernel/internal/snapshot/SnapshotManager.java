@@ -199,6 +199,7 @@ public class SnapshotManager {
         tablePath,
         System.currentTimeMillis() - startTimeMillis,
         millisSinceEpochUTC);
+    // We update the query context version as soon as we resolve timestamp --> version
     snapshotContext.setVersion(versionToRead);
 
     return getSnapshotAt(engine, versionToRead, snapshotContext);
@@ -549,6 +550,13 @@ public class SnapshotManager {
             .map(v -> format("starting from checkpoint version %s.", v))
             .orElse(".");
     logger.info("{}: Loading version {} {}", tablePath, initSegment.version, startingFromStr);
+    // We update the query context version with the resolved version from the log segment listing.
+    // Note: This is a no-op for time-travel queries since the version has already been set either
+    // upon the query context creation (for by-version queries) or after timestamp --> version
+    // resolution (for by-timestamp queries).
+    // We set the version here to ensure that in the case of coordinated commits it is updated
+    // for the initial directory-based snapshot construction, AND the snapshot construction
+    // that includes unbackfilled commits from the commit coordinator
     snapshotContext.setVersion(initSegment.version);
 
     LogReplay logReplay =

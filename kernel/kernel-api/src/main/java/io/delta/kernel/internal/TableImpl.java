@@ -343,13 +343,7 @@ public class TableImpl implements Table {
   /** Creates a {@link SnapshotReport} and pushes it to any {@link MetricsReporter}s. */
   private void recordSnapshotReport(
       Engine engine, SnapshotQueryContext snapshotContext, Exception e) {
-    SnapshotReport snapshotReport =
-        new SnapshotReportImpl(
-            snapshotContext.getTablePath(),
-            snapshotContext.getSnapshotMetrics(),
-            snapshotContext.getVersion(),
-            snapshotContext.getProvidedTimestamp(),
-            Optional.of(e));
+    SnapshotReport snapshotReport = SnapshotReportImpl.forError(snapshotContext, e);
     engine.getMetricsReporters().forEach(reporter -> reporter.report(snapshotReport));
   }
 }

@@ -67,13 +67,7 @@ public class SnapshotImpl implements Snapshot {
     this.protocol = protocol;
     this.metadata = metadata;
     this.inCommitTimestampOpt = Optional.empty();
-    this.snapshotReport =
-        new SnapshotReportImpl(
-            snapshotContext.getTablePath(),
-            snapshotContext.getSnapshotMetrics(),
-            Optional.of(this.version),
-            snapshotContext.getProvidedTimestamp(),
-            Optional.empty() /* exception */);
+    this.snapshotReport = SnapshotReportImpl.forSuccess(snapshotContext);
   }
 
   /////////////////

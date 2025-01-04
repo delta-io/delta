@@ -25,6 +25,35 @@ import java.util.UUID;
 /** A basic POJO implementation of {@link SnapshotReport} for creating them */
 public class SnapshotReportImpl implements SnapshotReport {
 
+  /**
+   * Creates a {@link SnapshotReport} for a failed snapshot query.
+   *
+   * @param snapshotContext context/metadata about the snapshot query
+   * @param e the exception that was thrown
+   */
+  public static SnapshotReport forError(SnapshotQueryContext snapshotContext, Exception e) {
+    return new SnapshotReportImpl(
+        snapshotContext.getTablePath(),
+        snapshotContext.getSnapshotMetrics(),
+        snapshotContext.getVersion(),
+        snapshotContext.getProvidedTimestamp(),
+        Optional.of(e));
+  }
+
+  /**
+   * Creates a {@link SnapshotReport} for a successful snapshot query.
+   *
+   * @param snapshotContext context/metadata about the snapshot query
+   */
+  public static SnapshotReport forSuccess(SnapshotQueryContext snapshotContext) {
+    return new SnapshotReportImpl(
+        snapshotContext.getTablePath(),
+        snapshotContext.getSnapshotMetrics(),
+        snapshotContext.getVersion(),
+        snapshotContext.getProvidedTimestamp(),
+        Optional.empty() /* exception */);
+  }
+
   private final String tablePath;
   private final UUID reportUUID;
   private final SnapshotMetricsResult snapshotMetrics;
@@ -32,7 +61,7 @@ public class SnapshotReportImpl implements SnapshotReport {
   private final Optional<Long> providedTimestamp;
   private final Optional<Exception> exception;
 
-  public SnapshotReportImpl(
+  private SnapshotReportImpl(
       String tablePath,
       SnapshotMetrics snapshotMetrics,
       Optional<Long> version,
