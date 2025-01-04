@@ -16,12 +16,13 @@
 package io.delta.kernel.internal.util
 
 import scala.collection.JavaConverters._
-
-import io.delta.kernel.expressions.Column
-import io.delta.kernel.internal.skipping.DataSkippingUtils
+import io.delta.kernel.expressions.{And, CollatedPredicate, Column, Literal, Or, Predicate}
+import io.delta.kernel.internal.skipping.{CollatedDataSkippingPredicate, DataSkippingUtils, DefaultDataSkippingPredicate}
 import io.delta.kernel.types.IntegerType.INTEGER
-import io.delta.kernel.types.{DataType, StructField, StructType}
+import io.delta.kernel.types.{CollationIdentifier, DataType, StringType, StructField, StructType}
 import org.scalatest.funsuite.AnyFunSuite
+
+import java.util
 
 class DataSkippingUtilsSuite extends AnyFunSuite {
 
@@ -166,5 +167,293 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
       Set(),
       new StructType()
     )
+  }
+
+  val defaultCollationIdentifier =
+    CollationIdentifier.fromString("SPARK.UTF8_BINARY")
+  val unicodeCollationIdentifier =
+    CollationIdentifier.fromString("ICU.UNICODE")
+  val MIN = "minValues"
+  val MAX = "maxValues"
+
+  test("constructDataSkippingFilter - with collated predicates resulting in empty predicate") {
+    Seq(
+      // (predicate, schema)
+      (
+        new CollatedPredicate(
+          "<",
+          new Column("a1"),
+          new Column("a2"),
+          defaultCollationIdentifier),
+        new StructType()
+          .add("a1", StringType.STRING)
+          .add("a2", StringType.STRING)
+      ),
+      (
+        new Or(
+          new CollatedPredicate(
+            "<",
+            new Column("a1"),
+            new Column("a2"),
+            defaultCollationIdentifier),
+          new CollatedPredicate(
+            "<",
+            Literal.ofString("a"),
+            new Column("a2"),
+            defaultCollationIdentifier)),
+        new StructType()
+          .add("a1", StringType.STRING)
+          .add("a2", StringType.STRING)
+      ),
+      (
+        new And(
+          new CollatedPredicate(
+            "<",
+            new Column("a1"),
+            new Column("a2"),
+            defaultCollationIdentifier),
+          new CollatedPredicate(
+            "<",
+            new Column("a1"),
+            new Column("a3"),
+            defaultCollationIdentifier)),
+        new StructType()
+          .add("a1", StringType.STRING)
+          .add("a2", StringType.STRING)
+          .add("a3", StringType.STRING)
+      )
+    ).foreach {
+      case (predicate, schema) =>
+        assert(!DataSkippingUtils.constructDataSkippingFilter(predicate, schema).isPresent)
+    }
+  }
+
+  test("constructDataSkippingFilter - with collated predicates") {
+    Seq(
+      // (predicate, schema, dataSkippingPredicate)
+      (
+        new CollatedPredicate(
+          ">",
+          Literal.ofString("a"),
+          new Column("a1"),
+          defaultCollationIdentifier),
+        new StructType()
+          .add("a1", StringType.STRING),
+        new DefaultDataSkippingPredicate(
+          "<",
+          List(new Column(Array(MIN, "a1")),
+          Literal.ofString("a")).asJava,
+          new util.HashSet(),
+          new util.HashMap())
+      ),
+      (
+        new CollatedPredicate(
+          ">",
+          Literal.ofString("a"),
+          new Column("a1"),
+          unicodeCollationIdentifier),
+        new StructType()
+          .add("a1", StringType.STRING),
+        new CollatedDataSkippingPredicate(
+          "<",
+          new Column(Array(MIN, "a1")),
+          Literal.ofString("a"),
+          unicodeCollationIdentifier)
+      ),
+      (
+        new CollatedPredicate(
+          "=",
+          Literal.ofString("a"),
+          new Column("a1"),
+          defaultCollationIdentifier),
+        new StructType()
+          .add("a1", StringType.STRING),
+        new DefaultDataSkippingPredicate(
+          "AND",
+          new DefaultDataSkippingPredicate(
+            "<=",
+            List(new Column(Array(MIN, "a1")),
+            Literal.ofString("a")).asJava,
+            new util.HashSet(),
+            new util.HashMap()),
+          new DefaultDataSkippingPredicate(
+            ">=",
+            List(new Column(Array(MAX, "a1")),
+            Literal.ofString("a")).asJava,
+            new util.HashSet(),
+            new util.HashMap()))
+      ),
+      (
+        new CollatedPredicate(
+          "=",
+          Literal.ofString("a"),
+          new Column("a1"),
+          unicodeCollationIdentifier),
+        new StructType()
+          .add("a1", StringType.STRING),
+        new DefaultDataSkippingPredicate(
+          "AND",
+          new CollatedDataSkippingPredicate(
+            "<=",
+            new Column(Array(MIN, "a1")),
+            Literal.ofString("a"),
+            unicodeCollationIdentifier),
+          new CollatedDataSkippingPredicate(
+            ">=",
+            new Column(Array(MAX, "a1")),
+            Literal.ofString("a"),
+            unicodeCollationIdentifier))
+      ),
+      (
+        new And(
+          new CollatedPredicate(
+            "<",
+            new Column("a1"),
+            Literal.ofString("a"),
+            unicodeCollationIdentifier),
+          new Predicate("<",
+            new Column("a1"),
+            Literal.ofString("a"))),
+        new StructType()
+          .add("a1", StringType.STRING),
+        new DefaultDataSkippingPredicate(
+          "AND",
+          new CollatedDataSkippingPredicate(
+            "<",
+            new Column(Array(MIN, "a1")),
+            Literal.ofString("a"),
+            unicodeCollationIdentifier),
+          new DefaultDataSkippingPredicate(
+            "<",
+            List(
+              new Column(Array(
+                MIN,
+                "a1")),
+              Literal.ofString("a")).asJava,
+            new util.HashSet(),
+            new util.HashMap()))
+      ),
+      (
+        new Or(
+          new CollatedPredicate(
+            "<",
+            new Column("a1"),
+            Literal.ofString("a"),
+            unicodeCollationIdentifier),
+          new Predicate("<",
+            new Column("a1"),
+            Literal.ofString("a"))),
+        new StructType()
+          .add("a1", StringType.STRING),
+        new DefaultDataSkippingPredicate(
+          "OR",
+          new CollatedDataSkippingPredicate(
+            "<",
+            new Column(Array(MIN, "a1")),
+            Literal.ofString("a"),
+            unicodeCollationIdentifier),
+          new DefaultDataSkippingPredicate(
+            "<",
+            List(
+              new Column(Array(
+                MIN,
+                "a1")),
+              Literal.ofString("a")).asJava,
+            new util.HashSet(),
+            new util.HashMap()))
+      ),
+      (
+        new Predicate(
+          "NOT",
+          new CollatedPredicate(
+            "<",
+            new Column("a1"),
+            Literal.ofString("a"),
+            unicodeCollationIdentifier)),
+        new StructType()
+          .add("a1", StringType.STRING),
+        new CollatedDataSkippingPredicate(
+          ">=",
+          new Column(Array(MAX, "a1")),
+          Literal.ofString("a"),
+          unicodeCollationIdentifier)
+      ),
+      (
+        new Predicate(
+          "NOT",
+          new CollatedPredicate(
+            "=",
+            Literal.ofString("a"),
+            new Column("a1"),
+            unicodeCollationIdentifier)),
+        new StructType()
+          .add("a1", StringType.STRING),
+        new DefaultDataSkippingPredicate(
+          "OR",
+          new CollatedDataSkippingPredicate(
+            "<",
+            new Column(Array(MIN, "a1")),
+            Literal.ofString("a"),
+            unicodeCollationIdentifier),
+          new CollatedDataSkippingPredicate(
+            ">",
+            new Column(Array(MAX, "a1")),
+            Literal.ofString("a"),
+            unicodeCollationIdentifier))
+      ),
+      (
+        new Predicate(
+          "NOT",
+          new And(
+            new CollatedPredicate(
+              "<",
+              new Column("a1"),
+              Literal.ofString("a"),
+              unicodeCollationIdentifier),
+            new Predicate("<",
+              new Column("a1"),
+              Literal.ofString("a")))),
+        new StructType()
+          .add("a1", StringType.STRING),
+        new Or(
+          new CollatedDataSkippingPredicate(
+            ">=",
+            new Column(Array(MAX, "a1")),
+            Literal.ofString("a"),
+            unicodeCollationIdentifier),
+          new DefaultDataSkippingPredicate(
+            ">=",
+            List(
+              new Column(Array(
+                MAX,
+                "a1")),
+              Literal.ofString("a")).asJava,
+            new util.HashSet(),
+            new util.HashMap()))
+      ),
+      (
+        new And(
+          new CollatedPredicate(
+            "<",
+            new Column("a1"),
+            Literal.ofString("a"),
+            unicodeCollationIdentifier),
+          new Predicate("<",
+            new Column("a1"),
+            new Column("a2"))),
+        new StructType()
+          .add("a1", StringType.STRING)
+          .add("a2", StringType.STRING),
+        new CollatedDataSkippingPredicate(
+          "<",
+          new Column(Array(MIN, "a1")),
+          Literal.ofString("a"),
+          unicodeCollationIdentifier)
+      )
+    ).foreach {
+      case (predicate, schema, dataSkippingPredicate) =>
+        assert(DataSkippingUtils.constructDataSkippingFilter(predicate, schema).get().toString
+        .equals(dataSkippingPredicate.toString))
+    }
   }
 }

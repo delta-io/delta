@@ -84,6 +84,42 @@ public class StatsSchemaHelper {
     return statsSchema;
   }
 
+  /**
+   * Appends collated stats schema for referenced columns.
+   *
+   * <p>Here is an example of a data schema, referenced columns, and the schema of the statistics
+   * that would be collected.
+   *
+   * <p>Data Schema: {{{ |-- a: string (nullable = true) | |-- b: string (nullable = true) | | |--
+   * c: long (nullable = true) }}}
+   *
+   * <p>Referenced {@link Column} is just a {@link Column} "a" with "SPARK.UTF8_LCASE" collation.
+   *
+   * <p>Collected Collated Statistics: {{{ |-- statsWithCollation: struct (nullable = true) | |--
+   * SPARK_UTF8_LCASE: struct (nullable = true) | | |-- minValues: struct (nullable = true) | | |
+   * |-- a: StringType (nullable = true) | | |-- maxValues: struct (nullable = true) | | | |-- a:
+   * StringType (nullable = true) }}}
+   */
+  public static StructType appendCollatedStatsSchema(
+      StructType dataSchema, Map<CollationIdentifier, Set<Column>> collatedReferencedCols) {
+    StructType collatedStatsSchema = new StructType();
+    for (Map.Entry<CollationIdentifier, Set<Column>> entry : collatedReferencedCols.entrySet()) {
+      StructType statsSchema =
+          DataSkippingUtils.pruneStatsSchema(getMinMaxStatsSchema(dataSchema), entry.getValue());
+      if (statsSchema.length() > 0) {
+        collatedStatsSchema =
+            collatedStatsSchema.add(
+                entry.getKey().toString(),
+                new StructType().add(MIN, statsSchema, true).add(MAX, statsSchema, true),
+                true);
+      }
+    }
+    if (collatedStatsSchema.length() > 0) {
+      return dataSchema.add(STATS_WITH_COLLATION, collatedStatsSchema, true);
+    }
+    return dataSchema;
+  }
+
   //////////////////////////////////////////////////////////////////////////////////
   // Instance fields and public methods
   //////////////////////////////////////////////////////////////////////////////////
@@ -189,6 +225,15 @@ public class StatsSchemaHelper {
   }
 
   /**
+   * Returns true if the given column is skipping-eligible using collated min/max statistics. This
+   * means the column exists, is a leaf column, and is of a StringType.
+   */
+  public boolean isSkippingEligibleCollatedMinMaxColumn(Column column) {
+    return logicalToDataType.containsKey(column)
+        && logicalToDataType.get(column) instanceof StringType;
+  }
+
+  /**
    * Returns true if the given column is skipping-eligible using null count statistics. This means
    * the column exists and is a leaf column as we only collect stats for leaf columns.
    */
@@ -205,6 +250,7 @@ public class StatsSchemaHelper {
   private static final String MIN = "minValues";
   private static final String MAX = "maxValues";
   private static final String NULL_COUNT = "nullCount";
+  private static final String STATS_WITH_COLLATION = "statsWithCollation";
 
   private static final Set<String> SKIPPING_ELIGIBLE_TYPE_NAMES =
       new HashSet<String>() {

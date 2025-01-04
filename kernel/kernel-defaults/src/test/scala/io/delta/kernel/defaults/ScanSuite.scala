@@ -1335,6 +1335,135 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
     }
   }
 
+  test("data skipping - collated predicates") {
+    def checkResults(predicate: Predicate, expNumFiles: Long): Unit = {
+      val snapshot = latestSnapshot(goldenTablePath("data-skipping-basic-stats-all-types"))
+      val scanFiles = collectScanFileRows(
+        snapshot.getScanBuilder(defaultEngine)
+          .withFilter(defaultEngine, predicate)
+          .build())
+      assert(scanFiles.length == expNumFiles,
+        s"Expected $expNumFiles but found ${scanFiles.length} for $predicate")
+    }
+
+    val defaultCollationIdentifier = CollationIdentifier.fromString("SPARK.UTF8_BINARY")
+    val unicodeCollationIdentifier = CollationIdentifier.fromString("ICU.UNICODE")
+
+    // DefaultEngine should ignore collated predicates (except for UTF8_BINARY collation),
+    // but still perform file pruning with the remaining predicates
+    checkResults(
+      new Predicate(
+        "<",
+        new Column("as_string"),
+        Literal.ofString("0")),
+      0)
+
+    checkResults(
+      new CollatedPredicate(
+        "<",
+        new Column("as_string"),
+        Literal.ofString("0"),
+        defaultCollationIdentifier),
+      0)
+
+    checkResults(
+      new CollatedPredicate(
+        "<",
+        new Column("as_string"),
+        Literal.ofString("0"),
+        unicodeCollationIdentifier),
+      1)
+
+    checkResults(
+      new And(
+        new Predicate(
+          "<",
+          new Column("as_string"),
+          Literal.ofString("0")),
+        new CollatedPredicate(
+          "<",
+          new Column("as_string"),
+          Literal.ofString("0"),
+          unicodeCollationIdentifier)),
+      0)
+
+    checkResults(
+      new Or(
+        new Predicate(
+          "<",
+          new Column("as_string"),
+          Literal.ofString("0")),
+        new CollatedPredicate(
+          "<",
+          new Column("as_string"),
+          Literal.ofString("0"),
+          unicodeCollationIdentifier)),
+      1)
+
+    checkResults(
+      new Or(
+        new Predicate(
+          "<",
+          new Column("as_string"),
+          Literal.ofString("0")),
+        new CollatedPredicate(
+          ">",
+          new Column("as_string"),
+          Literal.ofString("0"),
+          defaultCollationIdentifier)),
+      0)
+
+    checkResults(
+      new Predicate(
+        "NOT",
+        new CollatedPredicate(
+          "=",
+          new Column("as_string"),
+          Literal.ofString("0"),
+          defaultCollationIdentifier)),
+      0)
+
+    checkResults(
+      new Predicate(
+        "NOT",
+        new CollatedPredicate(
+          "=",
+          Literal.ofString("0"),
+          new Column("as_string"),
+          defaultCollationIdentifier)),
+      0)
+
+    checkResults(
+      new Predicate(
+        "NOT",
+        new CollatedPredicate(
+          "=",
+          Literal.ofString("0"),
+          new Column("as_string"),
+          unicodeCollationIdentifier)),
+      1)
+
+    checkResults(
+      new Predicate(
+        "NOT",
+        new CollatedPredicate(
+          ">",
+          Literal.ofString("0"),
+          new Column("as_string"),
+          defaultCollationIdentifier)),
+      1)
+
+    checkResults(
+      new Predicate(
+        "NOT",
+        new CollatedPredicate(
+          ">",
+          Literal.ofString("0"),
+          new Column("as_string"),
+          unicodeCollationIdentifier)),
+      1)
+  }
+
   test("data skipping - non-eligible min/max data skipping types all nulls in file") {
     withTempDir { tempDir =>
       val schema = SparkStructType.fromDDL("`id` INT, `arr_col` ARRAY<INT>, " +
