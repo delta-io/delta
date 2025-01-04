@@ -58,17 +58,15 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
   }
 
   test("SnapshotReport serializer") {
-    val snapshotMetrics1 = new SnapshotMetrics()
-    snapshotMetrics1.timestampToVersionResolutionDuration.record(10)
-    snapshotMetrics1.loadProtocolAndMetadataDuration.record(1000)
+    val snapshotContext1 = SnapshotQueryContext.forTimestampSnapshot("/table/path", 0)
+    snapshotContext1.getSnapshotMetrics.timestampToVersionResolutionDuration.record(10)
+    snapshotContext1.getSnapshotMetrics.loadInitialDeltaActionsDuration.record(1000)
+    snapshotContext1.setVersion(1)
     val exception = new RuntimeException("something something failed")
 
-    val snapshotReport1 = new SnapshotReportImpl(
-      "/table/path",
-      snapshotMetrics1,
-      Optional.of(1), // version
-      Optional.of(0), // providedTimestamp
-      Optional.of(exception) // exception
+    val snapshotReport1 = SnapshotReportImpl.forError(
+      snapshotContext1,
+      exception
     )
 
     // Manually check expected JSON
@@ -91,15 +89,9 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
     // Check with test function
     testSnapshotReport(snapshotReport1)
 
-    // Empty options for all possible fields
-    val snapshotMetrics2 = new SnapshotMetrics()
-    val snapshotReport2 = new SnapshotReportImpl(
-      "/table/path",
-      snapshotMetrics2,
-      Optional.empty(), // version
-      Optional.empty(), // providedTimestamp
-      Optional.empty() // exception
-    )
+    // Empty options for all possible fields (version, providedTimestamp and exception)
+    val snapshotContext2 = SnapshotQueryContext.forLatestSnapshot("/table/path")
+    val snapshotReport2 = SnapshotReportImpl.forSuccess(snapshotContext2)
     testSnapshotReport(snapshotReport2)
   }
 }
