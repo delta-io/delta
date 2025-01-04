@@ -33,7 +33,11 @@ public class RemoveFile {
           .add("size", LongType.LONG, true /* nullable*/)
           .add("stats", StringType.STRING, true /* nullable */)
           .add("tags", new MapType(StringType.STRING, StringType.STRING, true), true /* nullable */)
-          .add("deletionVector", DeletionVectorDescriptor.READ_SCHEMA, true /* nullable */);
-  // There are more fields which are added when row-id tracking is enabled. When Kernel
-  // starts supporting row-ids, we should add those fields here.
+          .add("deletionVector", DeletionVectorDescriptor.READ_SCHEMA, true /* nullable */)
+          .add("baseRowId", LongType.LONG, true /* nullable */)
+          .add("defaultRowCommitVersion", LongType.LONG, true /* nullable */);
+  // TODO: Currently, Kernel doesn't create RemoveFile actions internally, nor provides APIs for
+  //  connectors to generate and commit them. Once we have the need for this, we should ensure
+  //  that the baseRowId and defaultRowCommitVersion fields of RemoveFile actions are correctly
+  //  populated to match the corresponding AddFile actions.
 }
