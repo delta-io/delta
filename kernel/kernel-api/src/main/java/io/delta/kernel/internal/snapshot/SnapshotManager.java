@@ -160,7 +160,6 @@ public class SnapshotManager {
   public Snapshot getSnapshotForTimestamp(
       Engine engine, long millisSinceEpochUTC, SnapshotQueryContext snapshotContext)
       throws TableNotFoundException {
-    long startTimeMillis = System.currentTimeMillis();
     long versionToRead =
         snapshotContext
             .getSnapshotMetrics()
@@ -176,9 +175,9 @@ public class SnapshotManager {
                             false /* canReturnEarliestCommit */)
                         .getVersion());
     logger.info(
-        "{}: Took {}ms to fetch version at timestamp {}",
+        "{}: Took {}ns to fetch version at timestamp {}",
         tablePath,
-        System.currentTimeMillis() - startTimeMillis,
+        snapshotContext.getSnapshotMetrics().timestampToVersionResolutionDuration.totalDuration(),
         millisSinceEpochUTC);
     // We update the query context version as soon as we resolve timestamp --> version
     snapshotContext.setVersion(versionToRead);
