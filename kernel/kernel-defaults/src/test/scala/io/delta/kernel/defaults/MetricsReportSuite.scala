@@ -23,7 +23,7 @@ import scala.collection.mutable.ArrayBuffer
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.defaults.utils.TestUtils
-import io.delta.kernel.engine.{CommitCoordinatorClientHandler, Engine, ExpressionHandler, FileSystemClient, JsonHandler, MetricsReporter, ParquetHandler}
+import io.delta.kernel.engine.{Engine, ExpressionHandler, FileSystemClient, JsonHandler, MetricsReporter, ParquetHandler}
 import io.delta.kernel.metrics.{MetricsReport, SnapshotReport}
 import io.delta.kernel.{Snapshot, Table}
 import io.delta.kernel.internal.fs.Path
@@ -72,8 +72,6 @@ class MetricsReportSuite extends AnyFunSuite with TestUtils {
       }, Option.empty)
     }
 
-    // scalastyle:off
-    println(exception)
     val snapshotReports = metricsReports.filter(_.isInstanceOf[SnapshotReport])
     assert(snapshotReports.length == 1, "Expected exactly 1 SnapshotReport")
     (snapshotReports.head.asInstanceOf[SnapshotReport], timer.totalDuration(), exception)
@@ -413,10 +411,6 @@ class MetricsReportSuite extends AnyFunSuite with TestUtils {
     override def getFileSystemClient: FileSystemClient = baseEngine.getFileSystemClient
 
     override def getParquetHandler: ParquetHandler = baseEngine.getParquetHandler
-
-    override def getCommitCoordinatorClientHandler(
-      name: String, conf: util.Map[String, String]): CommitCoordinatorClientHandler =
-      baseEngine.getCommitCoordinatorClientHandler(name, conf)
 
     override def getMetricsReporters(): java.util.List[MetricsReporter] = {
       java.util.Collections.singletonList(metricsReporter)
