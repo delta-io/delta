@@ -37,7 +37,7 @@ default retention threshold for the files is 7 days. To change this behavior, se
     VACUUM eventsTable LITE   -- This VACUUM in ‘LITE’ mode runs faster.  
                               -- Instead of finding all files in the table directory, `VACUUM LITE` uses the Delta transaction log to identify and remove files no longer referenced by any table versions within the retention duration.  
                               -- If `VACUUM LITE` cannot be completed because the Delta log has been pruned a `DELTA_CANNOT_VACUUM_LITE` exception is raised.  
-                              -- This mode is available only in <Delta> 3.3 and above.
+                              -- This mode is available only in Delta 3.3 and above.
 
     VACUUM '/data/events' -- vacuum files in path-based table
 

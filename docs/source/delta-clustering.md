@@ -33,7 +33,7 @@ To enable liquid clustering, add the `CLUSTER BY` phrase to a table creation sta
   -- Create an empty table
   CREATE TABLE table1(col0 int, col1 string) USING DELTA CLUSTER BY (col0);
 
-  -- Using a CTAS statement
+  -- Using a CTAS statement (Delta 3.3+)
   CREATE EXTERNAL TABLE table2 CLUSTER BY (col0)  -- specify clustering after table name, not in subquery
   LOCATION 'table_location'
   AS SELECT * FROM table1;
@@ -61,14 +61,14 @@ To enable liquid clustering, add the `CLUSTER BY` phrase to a table creation sta
 
 .. warning:: Tables created with liquid clustering have `Clustering` and `DomainMetadata` table features enabled (both writer features) and use Delta writer version 7 and reader version 1. Table protocol versions cannot be downgraded. See [_](/versioning.md).
 
-You can enable liquid clustering on an existing unpartitioned Delta table using the following syntax:
+In <Delta> 3.3 and above you can enable liquid clustering on an existing unpartitioned Delta table using the following syntax:
 
 ```sql
 ALTER TABLE <table_name>
 CLUSTER BY (<clustering_columns>)
 ```
 
-.. important:: Default behavior does not apply clustering to previously written data. To force reclustering for all records, you must use `OPTIMIZE FULL`. See [_](#optimize-full).
+.. important:: Default behavior does not apply clustering to previously written data. To force reclustering for all records, you must use `OPTIMIZE FULL`. See [_](#recluster-entire-table).
 
 ## Choose clustering columns
 
@@ -96,6 +96,8 @@ OPTIMIZE table_name;
 ```
 
 Liquid clustering is incremental, meaning that data is only rewritten as necessary to accommodate data that needs to be clustered. Already clustered data files with different clustering columns are not rewritten.
+
+### Recluster entire table
 
 In <Delta> 3.3 and above, you can force reclustering of all records in a table with the following syntax:
 
