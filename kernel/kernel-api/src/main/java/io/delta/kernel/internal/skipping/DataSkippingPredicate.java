@@ -16,48 +16,22 @@
 package io.delta.kernel.internal.skipping;
 
 import io.delta.kernel.expressions.Column;
-import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.Predicate;
-import java.util.*;
+import io.delta.kernel.types.CollationIdentifier;
+import java.util.Map;
+import java.util.Set;
 
-/** A {@link Predicate} with a set of columns referenced by the expression. */
-public class DataSkippingPredicate extends Predicate {
-
-  /** Set of {@link Column}s referenced by the predicate or any of its child expressions */
-  private final Set<Column> referencedCols;
+/** Base interface for all file pruning predicates. */
+public interface DataSkippingPredicate {
+  /** @return set of {@link Column}s referenced by the predicate or any of its child expressions */
+  Set<Column> getReferencedCols();
 
   /**
-   * @param name the predicate name
-   * @param children list of expressions that are input to this predicate.
-   * @param referencedCols set of columns referenced by this predicate or any of its child
+   * @return set of collated {@link Column}s referenced by the predicate or any of its child
    *     expressions
    */
-  DataSkippingPredicate(String name, List<Expression> children, Set<Column> referencedCols) {
-    super(name, children);
-    this.referencedCols = Collections.unmodifiableSet(referencedCols);
-  }
+  Map<CollationIdentifier, Set<Column>> getReferencedCollatedCols();
 
-  /**
-   * Constructor for a binary {@link DataSkippingPredicate} where both children are instances of
-   * {@link DataSkippingPredicate}.
-   *
-   * @param name the predicate name
-   * @param left left input to this predicate
-   * @param right right input to this predicate
-   */
-  DataSkippingPredicate(String name, DataSkippingPredicate left, DataSkippingPredicate right) {
-    this(
-        name,
-        Arrays.asList(left, right),
-        new HashSet<Column>() {
-          {
-            addAll(left.getReferencedCols());
-            addAll(right.getReferencedCols());
-          }
-        });
-  }
-
-  public Set<Column> getReferencedCols() {
-    return referencedCols;
-  }
+  /** @return {@link DataSkippingPredicate} as {@link Predicate} */
+  Predicate asPredicate();
 }
