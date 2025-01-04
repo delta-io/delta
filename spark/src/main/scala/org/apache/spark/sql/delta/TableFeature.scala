@@ -365,6 +365,7 @@ object TableFeature {
       V2CheckpointTableFeature,
       RowTrackingFeature,
       InCommitTimestampTableFeature,
+      VariantTypePreviewTableFeature,
       VariantTypeTableFeature,
       CoordinatedCommitsTableFeature,
       CheckpointProtectionTableFeature)
@@ -615,13 +616,28 @@ object RedirectWriterOnlyFeature extends WriterFeature(name = "redirectWriterOnl
   override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
 }
 
-object VariantTypeTableFeature extends ReaderWriterFeature(name = "variantType-preview")
+object VariantTypePreviewTableFeature extends ReaderWriterFeature(name = "variantType-preview")
     with FeatureAutomaticallyEnabledByMetadata {
   override def metadataRequiresFeatureToBeEnabled(
       protocol: Protocol, metadata: Metadata, spark: SparkSession): Boolean = {
-    SchemaUtils.checkForVariantTypeColumnsRecursively(metadata.schema)
+    SchemaUtils.checkForVariantTypeColumnsRecursively(metadata.schema) &&
+      // Do not require the 'variantType-preview' table feature to be enabled if the 'variantType'
+      // table feature is enabled so tables with 'variantType' can be read.
+      !protocol.isFeatureSupported(VariantTypeTableFeature)
   }
 }
+
+/**
+ * Stable feature for variant. The stable feature isn't enabled automatically yet when variants
+ * are present in the table schema. The feature spec is finalized though and by supporting the
+ * stable feature here we guarantee that this version can already read any table created in the
+ * future.
+ *
+ * Note: Users can manually add both the preview and stable features to a table using ADD FEATURE,
+ * although that's undocumented. This is allowed: the two feature specifications are compatible and
+ * supported.
+ */
+object VariantTypeTableFeature extends ReaderWriterFeature(name = "variantType")
 
 object DeletionVectorsTableFeature
   extends ReaderWriterFeature(name = "deletionVectors")

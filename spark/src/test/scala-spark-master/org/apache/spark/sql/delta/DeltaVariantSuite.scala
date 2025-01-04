@@ -47,12 +47,30 @@ class DeltaVariantSuite
     deltaLog.unsafeVolatileSnapshot.protocol
   }
 
+  private def assertVariantTypeTableFeatures(
+      tableName: String,
+      expectPreviewFeature: Boolean,
+      expectStableFeature: Boolean): Unit = {
+    val features = getProtocolForTable("tbl").readerAndWriterFeatures
+    if (expectPreviewFeature) {
+      assert(features.contains(VariantTypePreviewTableFeature))
+    } else {
+      assert(!features.contains(VariantTypePreviewTableFeature))
+    }
+    if (expectStableFeature) {
+      assert(features.contains(VariantTypeTableFeature))
+    } else {
+      assert(!features.contains(VariantTypeTableFeature))
+    }
+  }
+
   test("create a new table with Variant, higher protocol and feature should be picked.") {
     withTable("tbl") {
       sql("CREATE TABLE tbl(s STRING, v VARIANT) USING DELTA")
       sql("INSERT INTO tbl (SELECT 'foo', parse_json(cast(id + 99 as string)) FROM range(1))")
       assert(spark.table("tbl").selectExpr("v::int").head == Row(99))
-      assert(getProtocolForTable("tbl").readerAndWriterFeatures.contains(VariantTypeTableFeature))
+      assertVariantTypeTableFeatures(
+        "tbl", expectPreviewFeature = true, expectStableFeature = false)
     }
   }
 
@@ -63,7 +81,10 @@ class DeltaVariantSuite
 
       val deltaLog = DeltaLog.forTable(spark, TableIdentifier("tbl"))
       assert(
-        !deltaLog.unsafeVolatileSnapshot.protocol.isFeatureSupported(VariantTypeTableFeature),
+        !deltaLog.unsafeVolatileSnapshot.protocol.isFeatureSupported(
+          VariantTypePreviewTableFeature) &&
+        !deltaLog.unsafeVolatileSnapshot.protocol.isFeatureSupported(
+          VariantTypeTableFeature),
         s"Table tbl contains VariantTypeFeature descriptor when its not supposed to"
       )
     }
@@ -102,7 +123,7 @@ class DeltaVariantSuite
         e,
         "DELTA_FEATURES_REQUIRE_MANUAL_ENABLEMENT",
         parameters = Map(
-          "unsupportedFeatures" -> VariantTypeTableFeature.name,
+          "unsupportedFeatures" -> VariantTypePreviewTableFeature.name,
           "supportedFeatures" -> currentFeatures
         )
       )
@@ -112,11 +133,28 @@ class DeltaVariantSuite
 
       assert(
         getProtocolForTable("tbl") ==
-        VariantTypeTableFeature.minProtocolVersion
-          .withFeature(VariantTypeTableFeature)
+        VariantTypePreviewTableFeature.minProtocolVersion
+          .withFeature(VariantTypePreviewTableFeature)
           .withFeature(InvariantsTableFeature)
           .withFeature(AppendOnlyTableFeature)
       )
+    }
+  }
+
+  test("variant stable and preview features can be supported simultaneously and read") {
+    withTable("tbl") {
+      sql("CREATE TABLE tbl(v VARIANT) USING delta")
+      sql("INSERT INTO tbl (SELECT parse_json(cast(id + 99 as string)) FROM range(1))")
+      assert(spark.table("tbl").selectExpr("v::int").head == Row(99))
+      assertVariantTypeTableFeatures(
+        "tbl", expectPreviewFeature = true, expectStableFeature = false)
+      sql(
+        s"ALTER TABLE tbl " +
+        s"SET TBLPROPERTIES('delta.feature.variantType' = 'supported')"
+      )
+      assertVariantTypeTableFeatures(
+        "tbl", expectPreviewFeature = true, expectStableFeature = true)
+      assert(spark.table("tbl").selectExpr("v::int").head == Row(99))
     }
   }
 
@@ -267,7 +305,8 @@ class DeltaVariantSuite
         .selectExpr("tableFeatures")
         .collect()(0)
         .getAs[MutableSeq[String]](0)
-      assert(tableFeatures.find(f => f == VariantTypeTableFeature.name).nonEmpty)
+      assert(tableFeatures.find(f => f == VariantTypePreviewTableFeature.name).nonEmpty)
+      assert(tableFeatures.find(f => f == VariantTypeTableFeature.name).isEmpty)
     }
   }
 
