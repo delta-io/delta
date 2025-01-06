@@ -793,45 +793,45 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       checkStringVectors(actOutputVector, expOutputVector)
     }
 
-      checkSubString(
-        input,
-        substring(new Column(col_name), 0),
-        // scalastyle:off nonascii
-        Seq[String](null, "one", "two", "three", "four", null, null, "seven", "eight", "😉", "ë"))
+    checkSubString(
+      input,
+      substring(new Column(col_name), 0),
+      // scalastyle:off nonascii
+      Seq[String](null, "one", "two", "three", "four", null, null, "seven", "eight", "😉", "ë"))
 
-      checkSubString(
-        input,
-        substring(new Column(col_name), 1),
-        // scalastyle:off nonascii
-        Seq[String](null, "one", "two", "three", "four", null, null, "seven", "eight", "😉", "ë"))
+    checkSubString(
+      input,
+      substring(new Column(col_name), 1),
+      // scalastyle:off nonascii
+      Seq[String](null, "one", "two", "three", "four", null, null, "seven", "eight", "😉", "ë"))
 
-      checkSubString(
-        input,
-        substring(new Column(col_name), 2),
-        Seq[String](null, "ne", "wo", "hree", "our", null, null, "even", "ight", "", "̈"))
+    checkSubString(
+      input,
+      substring(new Column(col_name), 2),
+      Seq[String](null, "ne", "wo", "hree", "our", null, null, "even", "ight", "", "̈"))
 
-      checkSubString(
-        input,
-        substring(new Column(col_name), -1),
-        // scalastyle:off nonascii
-        Seq[String](null, "e", "o", "e", "r", null, null, "n", "t", "😉", "̈"))
+    checkSubString(
+      input,
+      substring(new Column(col_name), -1),
+      // scalastyle:off nonascii
+      Seq[String](null, "e", "o", "e", "r", null, null, "n", "t", "😉", "̈"))
 
-      checkSubString(
-        input,
-        substring(new Column(col_name), -1000),
-        // scalastyle:off nonascii
-        Seq[String](null, "one", "two", "three", "four", null, null, "seven", "eight", "😉", "ë"))
+    checkSubString(
+      input,
+      substring(new Column(col_name), -1000),
+      // scalastyle:off nonascii
+      Seq[String](null, "one", "two", "three", "four", null, null, "seven", "eight", "😉", "ë"))
 
-      checkSubString(
-        input,
-        substring(new Column(col_name), 0, Option(4)),
-        // scalastyle:off nonascii
-        Seq[String](null, "one", "two", "thre", "four", null, null, "seve", "eigh", "😉", "ë"))
+    checkSubString(
+      input,
+      substring(new Column(col_name), 0, Option(4)),
+      // scalastyle:off nonascii
+      Seq[String](null, "one", "two", "thre", "four", null, null, "seve", "eigh", "😉", "ë"))
 
-      checkSubString(
-        input,
-        substring(new Column(col_name), 2, Option(0)),
-        Seq[String](null, "", "", "", "", null, null, "", "", "", ""))
+    checkSubString(
+      input,
+      substring(new Column(col_name), 2, Option(0)),
+      Seq[String](null, "", "", "", "", null, null, "", "", "", ""))
 
     checkSubString(
       input,
@@ -839,83 +839,83 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       // scalastyle:off nonascii
       Seq[String](null, "o", "t", "t", "f", null, null, "s", "e", "😉", "e"))
 
-      checkSubString(
-        input,
-        substring(new Column(col_name), 2, Option(1)),
-        Seq[String](null, "n", "w", "h", "o", null, null, "e", "i", "", "̈"))
+    checkSubString(
+      input,
+      substring(new Column(col_name), 2, Option(1)),
+      Seq[String](null, "n", "w", "h", "o", null, null, "e", "i", "", "̈"))
 
-      checkSubString(
-        input,
-        substring(new Column(col_name), 2, Option(10000)),
-        Seq[String](null, "ne", "wo", "hree", "our", null, null, "even", "ight", "", "̈"))
+    checkSubString(
+      input,
+      substring(new Column(col_name), 2, Option(10000)),
+      Seq[String](null, "ne", "wo", "hree", "our", null, null, "even", "ight", "", "̈"))
 
-      checkSubString(
-        input,
-        substring(new Column(col_name), 1000),
-        Seq[String](null, "", "", "", "", null, null, "", "", "", ""))
+    checkSubString(
+      input,
+      substring(new Column(col_name), 1000),
+      Seq[String](null, "", "", "", "", null, null, "", "", "", ""))
 
-     checkSubString(
-        input,
-        substring(new Column(col_name), 1000, Option(10000)),
-        Seq[String](null, "", "", "", "", null, null, "", "", "", ""))
+    checkSubString(
+      input,
+      substring(new Column(col_name), 1000, Option(10000)),
+      Seq[String](null, "", "", "", "", null, null, "", "", "", ""))
 
-      checkSubString(
-        input,
-        substring(new Column(col_name), 2, Option(-10)),
-        Seq[String](null, "", "", "", "", null, null, "", "", "", ""))
+    checkSubString(
+      input,
+      substring(new Column(col_name), 2, Option(-10)),
+      Seq[String](null, "", "", "", "", null, null, "", "", "", ""))
 
-      checkSubString(
-        input,
-        substring(new Column(col_name), -2, Option(1)),
-        Seq[String](null, "n", "w", "e", "u", null, null, "e", "h", "", "e"))
+    checkSubString(
+      input,
+      substring(new Column(col_name), -2, Option(1)),
+      Seq[String](null, "n", "w", "e", "u", null, null, "e", "h", "", "e"))
 
-      checkSubString(
-        input,
-        substring(new Column(col_name), -2, Option(2)),
-        // scalastyle:off nonascii
-        Seq[String](null, "ne", "wo", "ee", "ur", null, null, "en", "ht", "😉", "ë"))
+    checkSubString(
+      input,
+      substring(new Column(col_name), -2, Option(2)),
+      // scalastyle:off nonascii
+      Seq[String](null, "ne", "wo", "ee", "ur", null, null, "en", "ht", "😉", "ë"))
 
-      checkSubString(
-        input,
-        substring(new Column(col_name), -4, Option(3)),
-        Seq[String](null, "on", "tw", "hre", "fou", null, null, "eve", "igh", "", "e"))
+    checkSubString(
+      input,
+      substring(new Column(col_name), -4, Option(3)),
+      Seq[String](null, "on", "tw", "hre", "fou", null, null, "eve", "igh", "", "e"))
 
-      checkSubString(
-        input,
-        substring(new Column(col_name), -100, Option(95)),
-        Seq[String](null, "", "", "", "", null, null, "", "", "", ""))
+    checkSubString(
+      input,
+      substring(new Column(col_name), -100, Option(95)),
+      Seq[String](null, "", "", "", "", null, null, "", "", "", ""))
 
-      checkSubString(
-        input,
-        substring(new Column(col_name), -100, Option(98)),
-        Seq[String](null, "o", "t", "thr", "fo", null, null, "sev", "eig", "", ""))
+    checkSubString(
+      input,
+      substring(new Column(col_name), -100, Option(98)),
+      Seq[String](null, "o", "t", "thr", "fo", null, null, "sev", "eig", "", ""))
 
-      checkSubString(
-        input,
-        substring(new Column(col_name), -100, Option(108)),
-        // scalastyle:off nonascii
-        Seq[String](null, "one", "two", "three", "four", null, null, "seven", "eight", "😉", "ë"))
+    checkSubString(
+      input,
+      substring(new Column(col_name), -100, Option(108)),
+      // scalastyle:off nonascii
+      Seq[String](null, "one", "two", "three", "four", null, null, "seven", "eight", "😉", "ë"))
 
-      checkSubString(
-        input,
-        substring(new Column(col_name), 2147483647, Option(10000)),
-        Seq[String](null, "", "", "", "", null, null, "", "", "", ""))
+    checkSubString(
+      input,
+      substring(new Column(col_name), 2147483647, Option(10000)),
+      Seq[String](null, "", "", "", "", null, null, "", "", "", ""))
 
-      checkSubString(
-        input,
-        substring(new Column(col_name), 2147483647),
-        Seq[String](null, "", "", "", "", null, null, "", "", "", ""))
+    checkSubString(
+      input,
+      substring(new Column(col_name), 2147483647),
+      Seq[String](null, "", "", "", "", null, null, "", "", "", ""))
 
-      checkSubString(
-        input,
-        substring(new Column(col_name), -2147483648, Option(10000)),
-        Seq[String](null, "", "", "", "", null, null, "", "", "", ""))
+    checkSubString(
+      input,
+      substring(new Column(col_name), -2147483648, Option(10000)),
+      Seq[String](null, "", "", "", "", null, null, "", "", "", ""))
 
-      checkSubString(
-        input,
-        substring(new Column(col_name), -2147483648),
-        // scalastyle:off nonascii
-        Seq[String](null, "one", "two", "three", "four", null, null, "seven", "eight", "😉", "ë"))
+    checkSubString(
+      input,
+      substring(new Column(col_name), -2147483648),
+      // scalastyle:off nonascii
+      Seq[String](null, "one", "two", "three", "four", null, null, "seven", "eight", "😉", "ë"))
 
     val outputVectorForEmptyInput = evaluator(
       schema,
