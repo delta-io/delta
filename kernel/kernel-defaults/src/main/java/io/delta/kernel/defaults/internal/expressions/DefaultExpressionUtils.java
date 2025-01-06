@@ -401,4 +401,28 @@ class DefaultExpressionUtils {
               baseExpression, String.format("%s, expects an integral numeric", context));
     }
   }
+
+  /**
+   * Checks the argument count of an expression. throws {@code unsupportedExpressionException} if
+   * argument count mismatched.
+   */
+  static void checkArgsCount(Expression expr, int expectedCount, String exprName, String context) {
+    if (expr.getChildren().size() != expectedCount) {
+      throw unsupportedExpressionException(
+          expr, String.format("Invalid number of inputs of %s expression, %s", exprName, context));
+    }
+  }
+
+  static void checkIsStringType(DataType dataType, Expression parentExpr, String errorMessage) {
+    if (StringType.STRING.equals(dataType)) {
+      return;
+    }
+    throw unsupportedExpressionException(parentExpr, errorMessage);
+  }
+
+  static void checkIsLiteral(Expression expr, Expression parentExpr, String errorMessage) {
+    if (!(expr instanceof Literal)) {
+      throw unsupportedExpressionException(parentExpr, errorMessage);
+    }
+  }
 }

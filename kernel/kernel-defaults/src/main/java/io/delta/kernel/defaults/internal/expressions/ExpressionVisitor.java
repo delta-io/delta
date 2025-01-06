@@ -65,6 +65,8 @@ abstract class ExpressionVisitor<R> {
 
   abstract R visitLike(Predicate predicate);
 
+  abstract R visitStartsWith(Predicate predicate);
+
   final R visit(Expression expression) {
     if (expression instanceof PartitionValueExpression) {
       return visitPartitionValue((PartitionValueExpression) expression);
@@ -117,6 +119,8 @@ abstract class ExpressionVisitor<R> {
         return visitSubstring(expression);
       case "LIKE":
         return visitLike(new Predicate(name, children));
+      case "STARTS_WITH":
+        return visitStartsWith(new Predicate(name, children));
       default:
         throw new UnsupportedOperationException(
             String.format("Scalar expression `%s` is not supported.", name));
