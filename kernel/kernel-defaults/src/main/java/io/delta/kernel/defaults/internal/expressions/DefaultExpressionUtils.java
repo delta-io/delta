@@ -405,9 +405,8 @@ class DefaultExpressionUtils {
   }
 
   static void checkIsLiteral(Expression expr, Expression parentExpr, String errorMessage) {
-    if (expr instanceof Literal) {
-      return;
+    if (!(expr instanceof Literal)) {
+      throw unsupportedExpressionException(parentExpr, errorMessage);
     }
-    throw unsupportedExpressionException(parentExpr, errorMessage);
   }
 }
