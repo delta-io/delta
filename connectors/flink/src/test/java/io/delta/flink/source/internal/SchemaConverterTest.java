@@ -5,7 +5,6 @@ import java.util.stream.Stream;
 
 import org.apache.flink.table.types.logical.ArrayType;
 import org.apache.flink.table.types.logical.BigIntType;
-import org.apache.flink.table.types.logical.BinaryType;
 import org.apache.flink.table.types.logical.BooleanType;
 import org.apache.flink.table.types.logical.DateType;
 import org.apache.flink.table.types.logical.DecimalType;
@@ -18,6 +17,7 @@ import org.apache.flink.table.types.logical.RowType;
 import org.apache.flink.table.types.logical.SmallIntType;
 import org.apache.flink.table.types.logical.TimestampType;
 import org.apache.flink.table.types.logical.TinyIntType;
+import org.apache.flink.table.types.logical.VarBinaryType;
 import org.apache.flink.table.types.logical.VarCharType;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -71,7 +71,7 @@ public class SchemaConverterTest {
             Arguments.of(new io.delta.standalone.types.ByteType(), new TinyIntType()),
             Arguments.of(new io.delta.standalone.types.ShortType(), new SmallIntType()),
             Arguments.of(new io.delta.standalone.types.LongType(), new BigIntType()),
-            Arguments.of(new io.delta.standalone.types.BinaryType(), new BinaryType()),
+            Arguments.of(new io.delta.standalone.types.BinaryType(), new VarBinaryType(VarBinaryType.MAX_LENGTH)),
             Arguments.of(new io.delta.standalone.types.TimestampType(), new TimestampType()),
             Arguments.of(new io.delta.standalone.types.DateType(), new DateType()),
             Arguments.of(
@@ -163,7 +163,7 @@ public class SchemaConverterTest {
                     new io.delta.standalone.types.ShortType(),
                     true
                 ),
-                new MapType(new BinaryType(), new SmallIntType())),
+                new MapType(new VarBinaryType(VarBinaryType.MAX_LENGTH), new SmallIntType())),
             Arguments.of(
                 new io.delta.standalone.types.MapType(
                     new io.delta.standalone.types.StringType(),
