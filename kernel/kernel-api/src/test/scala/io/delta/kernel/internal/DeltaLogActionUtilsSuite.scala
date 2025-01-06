@@ -27,6 +27,8 @@ import org.scalatest.funsuite.AnyFunSuite
 import io.delta.kernel.internal.DeltaLogActionUtils.{getCommitFilesForVersionRange, verifyDeltaVersions}
 import io.delta.kernel.test.MockFileSystemClientUtils
 
+import java.util.Optional
+
 class DeltaLogActionUtilsSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
   //////////////////////////////////////////////////////////////////////////////////
@@ -44,14 +46,14 @@ class DeltaLogActionUtilsSuite extends AnyFunSuite with MockFileSystemClientUtil
     verifyDeltaVersions(
       getCommitFiles(Seq(1, 2, 3)),
       1,
-      3,
+      Optional.of(3),
       dataPath
     )
     // Only one version provided
     verifyDeltaVersions(
       getCommitFiles(Seq(1)),
       1,
-      1,
+      Optional.of(1),
       dataPath
     )
     // Non-contiguous versions
@@ -59,7 +61,7 @@ class DeltaLogActionUtilsSuite extends AnyFunSuite with MockFileSystemClientUtil
       verifyDeltaVersions(
         getCommitFiles(Seq(1, 3, 4)),
         1,
-        4,
+        Optional.of(4),
         dataPath
       )
     }
@@ -68,7 +70,7 @@ class DeltaLogActionUtilsSuite extends AnyFunSuite with MockFileSystemClientUtil
       verifyDeltaVersions(
         getCommitFiles(Seq(1, 2, 3)),
         0,
-        3,
+        Optional.of(3),
         dataPath
       )
     }
@@ -76,7 +78,7 @@ class DeltaLogActionUtilsSuite extends AnyFunSuite with MockFileSystemClientUtil
       verifyDeltaVersions(
         getCommitFiles(Seq(1, 2, 3)),
         1,
-        4,
+        Optional.of(4),
         dataPath
       )
     }
@@ -85,7 +87,7 @@ class DeltaLogActionUtilsSuite extends AnyFunSuite with MockFileSystemClientUtil
       verifyDeltaVersions(
         getCommitFiles(Seq()),
         1,
-        4,
+        Optional.of(4),
         dataPath
       )
     }
@@ -94,7 +96,7 @@ class DeltaLogActionUtilsSuite extends AnyFunSuite with MockFileSystemClientUtil
       verifyDeltaVersions(
         getCommitFiles(Seq(1, 1, 2)),
         1,
-        4,
+        Optional.of(4),
         dataPath
       )
     }
@@ -102,7 +104,7 @@ class DeltaLogActionUtilsSuite extends AnyFunSuite with MockFileSystemClientUtil
       verifyDeltaVersions(
         getCommitFiles(Seq(1, 4, 3, 2)),
         1,
-        2,
+        Optional.of(2),
         dataPath
       )
     }
