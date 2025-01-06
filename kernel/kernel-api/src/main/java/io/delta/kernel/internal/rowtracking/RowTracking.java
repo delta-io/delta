@@ -34,17 +34,20 @@ public class RowTracking {
     // Empty constructor to prevent instantiation of this class
   }
 
-  private static final int ADD_FILE_ORDINAL = SingleAction.FULL_SCHEMA.indexOf("add");
-
   /**
-   * Assigns base row IDs and default row commit versions to {@link AddFile} actions prior to
-   * commit. This method should only be called when the 'rowTracking' feature is supported.
+   * Assigns base row IDs and default row commit versions to {@link AddFile} actions in the provided
+   * {@code dataActions}. This method should be called when processing data actions during commit
+   * preparation and before the actual commit.
+   *
+   * <p>This method should be called exactly once per transaction during commit preparation, i.e.,
+   * not for each commit attempt. And it should only be called when the 'rowTracking' feature is
+   * supported.
    *
    * <p>For {@link AddFile} actions missing a base row ID, assigns the current row ID high watermark
    * plus 1. The high watermark is then incremented by the number of records in the file. For
    * actions missing a default row commit version, assigns the specified commit version.
    *
-   * @param snapshot the current snapshot of the table
+   * @param snapshot the snapshot of the table that this transaction is reading at
    * @param commitVersion the version of the commit for default row commit version assignment
    * @param dataActions the {@link CloseableIterable} of data actions to process
    * @return an {@link CloseableIterable} of data actions with base row IDs and default row commit
@@ -73,11 +76,11 @@ public class RowTracking {
             .map(
                 row -> {
                   // Non-AddFile actions are returned unchanged
-                  if (row.isNullAt(ADD_FILE_ORDINAL)) {
+                  if (row.isNullAt(SingleAction.ADD_FILE_ORDINAL)) {
                     return row;
                   }
 
-                  AddFile addFile = new AddFile(row.getStruct(ADD_FILE_ORDINAL));
+                  AddFile addFile = new AddFile(row.getStruct(SingleAction.ADD_FILE_ORDINAL));
 
                   // Assign base row ID if missing
                   if (!addFile.getBaseRowId().isPresent()) {
@@ -99,10 +102,12 @@ public class RowTracking {
 
   /**
    * Returns a {@link DomainMetadata} action if the row ID high watermark has changed due to newly
-   * processed {@link AddFile} actions. This method should be called only when the 'rowTracking'
-   * feature is supported.
+   * processed {@link AddFile} actions.
    *
-   * @param snapshot the current snapshot of the table
+   * <p>This method should be called during commit preparation to prepare the domain metadata
+   * actions for commit. It should be called only when the 'rowTracking' feature is supported.
+   *
+   * @param snapshot the snapshot of the table that this transaction is reading at
    * @param dataActions the iterable of data actions that may update the high watermark
    */
   public static Optional<DomainMetadata> createNewHighWaterMarkIfNeeded(
@@ -117,8 +122,8 @@ public class RowTracking {
 
     dataActions.forEach(
         row -> {
-          if (!row.isNullAt(ADD_FILE_ORDINAL)) {
-            AddFile addFile = new AddFile(row.getStruct(ADD_FILE_ORDINAL));
+          if (!row.isNullAt(SingleAction.ADD_FILE_ORDINAL)) {
+            AddFile addFile = new AddFile(row.getStruct(SingleAction.ADD_FILE_ORDINAL));
             if (!addFile.getBaseRowId().isPresent()) {
               newRowIdHighWatermark.addAndGet(getNumRecordsOrThrow(addFile));
             }
@@ -134,7 +139,7 @@ public class RowTracking {
    * Reads the current row ID high watermark from the snapshot, or returns a default value if
    * missing.
    */
-  public static long readRowIdHighWaterMark(SnapshotImpl snapshot) {
+  private static long readRowIdHighWaterMark(SnapshotImpl snapshot) {
     return RowTrackingMetadataDomain.fromSnapshot(snapshot)
         .map(RowTrackingMetadataDomain::getRowIdHighWaterMark)
         .orElse(RowTrackingMetadataDomain.MISSING_ROW_ID_HIGH_WATERMARK);

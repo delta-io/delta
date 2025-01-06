@@ -198,7 +198,6 @@ public class InternalScanFileUtils {
     return new Column(new String[] {"add", "partitionValues_parsed", partitionColName});
   }
 
-  /** Get the base row id from the given scan file row. */
   public static Optional<Long> getBaseRowId(Row scanFile) {
     Row addFile = getAddFileEntry(scanFile);
     return addFile.isNullAt(ADD_FILE_BASE_ROW_ID_ORDINAL)
@@ -206,7 +205,6 @@ public class InternalScanFileUtils {
         : Optional.of(addFile.getLong(ADD_FILE_BASE_ROW_ID_ORDINAL));
   }
 
-  /** Get the default row commit version from the given scan file row. */
   public static Optional<Long> getDefaultRowCommitVersion(Row scanFile) {
     Row addFile = getAddFileEntry(scanFile);
     return addFile.isNullAt(ADD_FILE_DEFAULT_ROW_COMMIT_VERSION_ORDINAL)
