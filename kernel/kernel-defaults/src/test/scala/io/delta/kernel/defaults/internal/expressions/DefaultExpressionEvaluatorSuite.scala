@@ -616,15 +616,26 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       schema, startsWithExpressionAlwaysFalse, BooleanType.BOOLEAN).eval(input), allFalseVector)
 
     // scalastyle:off nonascii
-    val colSurrogatePair = stringVector(Seq[String]("💕😉💕", "😉💕", "💕"))
+    val colUnicode = stringVector(Seq[String]("中文", "中", "文"))
     val schemaUnicode = new StructType().add("col", StringType.STRING)
-    val inputUnicode = new DefaultColumnarBatch(colSurrogatePair.getSize,
+    val inputUnicode = new DefaultColumnarBatch(colUnicode.getSize,
+      schemaUnicode, Array(colUnicode))
+    val startsWithExpressionUnicode = startsWith(new Column("col"), Literal.ofString("中"))
+    val expOutputVectorLiteralUnicode = booleanVector(Seq[BooleanJ](true, true, false))
+    checkBooleanVectors(new DefaultExpressionEvaluator(schemaUnicode,
+      startsWithExpressionUnicode,
+      BooleanType.BOOLEAN).eval(inputUnicode), expOutputVectorLiteralUnicode)
+
+    // scalastyle:off nonascii
+    val colSurrogatePair = stringVector(Seq[String]("💕😉💕", "😉💕", "💕"))
+    val schemaSurrogatePair = new StructType().add("col", StringType.STRING)
+    val inputSurrogatePair = new DefaultColumnarBatch(colSurrogatePair.getSize,
       schemaUnicode, Array(colSurrogatePair))
     val startsWithExpressionSurrogatePair = startsWith(new Column("col"), Literal.ofString("💕"))
     val expOutputVectorLiteralSurrogatePair = booleanVector(Seq[BooleanJ](true, false, true))
-    checkBooleanVectors(new DefaultExpressionEvaluator(schemaUnicode,
+    checkBooleanVectors(new DefaultExpressionEvaluator(schemaSurrogatePair,
       startsWithExpressionSurrogatePair,
-      BooleanType.BOOLEAN).eval(inputUnicode), expOutputVectorLiteralSurrogatePair)
+      BooleanType.BOOLEAN).eval(inputSurrogatePair), expOutputVectorLiteralSurrogatePair)
 
     val startsWithExpressionExpression = startsWith(new Column("col1"), new Column("col2"))
     val e = intercept[UnsupportedOperationException] {
