@@ -387,6 +387,22 @@ class DefaultExpressionUtils {
   }
 
   /**
+   * Checks if the specific expression is an integer literal, throws {@link
+   * UnsupportedOperationException} if not.
+   *
+   * @param expr, expression to be checked.
+   * @param context string describing the context, used for constructing error message.
+   * @param baseExpression expression whose evaluation triggers this check. Used for constructing
+   *     error message.
+   */
+  static void checkIntegerLiteral(Expression expr, String context, Expression baseExpression) {
+    if (!(expr instanceof Literal) || !IntegerType.INTEGER.equals(((Literal) expr).getDataType())) {
+      throw unsupportedExpressionException(
+          baseExpression, String.format("%s, expects an integral numeric", context));
+    }
+  }
+
+  /**
    * Checks the argument count of an expression. throws {@code unsupportedExpressionException} if
    * argument count mismatched.
    */
