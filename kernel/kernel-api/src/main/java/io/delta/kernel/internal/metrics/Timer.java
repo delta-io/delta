@@ -20,11 +20,15 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import java.util.Optional;
 import java.util.concurrent.Callable;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.function.Supplier;
 
 /** A timer class for measuring the duration of operations in nanoseconds */
 public class Timer {
+
+  private static long NANOS_PER_MILLISECOND = 1000000;
+
   private final LongAdder count = new LongAdder();
   private final LongAdder totalTime = new LongAdder();
 
@@ -34,8 +38,13 @@ public class Timer {
   }
 
   /** @return the total duration that was recorded in nanoseconds */
-  public long totalDuration() {
+  public long totalDurationNs() {
     return totalTime.longValue();
+  }
+
+  /** @return the total duration that was recorded in milliseconds */
+  public long totalDurationMs() {
+    return TimeUnit.NANOSECONDS.toMillis(totalDurationNs());
   }
 
   /**
@@ -43,7 +52,7 @@ public class Timer {
    *     to record a duration at least once. If the timer has not been used, returns empty.
    */
   public Optional<Long> totalDurationIfRecorded() {
-    return count() > 0 ? Optional.of(totalDuration()) : Optional.empty();
+    return count() > 0 ? Optional.of(totalDurationNs()) : Optional.empty();
   }
 
   /**
@@ -87,7 +96,7 @@ public class Timer {
 
   @Override
   public String toString() {
-    return String.format("Timer(duration=%s ns, count=%s)", totalDuration(), count());
+    return String.format("Timer(duration=%s ns, count=%s)", totalDurationNs(), count());
   }
 
   /**

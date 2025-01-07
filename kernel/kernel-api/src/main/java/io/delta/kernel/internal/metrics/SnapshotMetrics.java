@@ -28,25 +28,26 @@ import java.util.Optional;
  */
 public class SnapshotMetrics {
 
-  public final Timer timestampToVersionResolutionDuration = new Timer();
+  public final Timer timestampToVersionResolutionTimer = new Timer();
 
-  public final Timer loadInitialDeltaActionsDuration = new Timer();
+  public final Timer loadInitialDeltaActionsTimer = new Timer();
 
   public SnapshotMetricsResult captureSnapshotMetricsResult() {
     return new SnapshotMetricsResult() {
 
       final Optional<Long> timestampToVersionResolutionDurationResult =
           timestampToVersionResolutionDuration.totalDurationIfRecorded();
+          timestampToVersionResolutionTimer.totalDurationIfRecorded();
       final long loadInitialDeltaActionsDurationResult =
-          loadInitialDeltaActionsDuration.totalDuration();
+          loadInitialDeltaActionsTimer.totalDurationNs();
 
       @Override
-      public Optional<Long> timestampToVersionResolutionDuration() {
+      public Optional<Long> timestampToVersionResolutionDurationNs() {
         return timestampToVersionResolutionDurationResult;
       }
 
       @Override
-      public long loadInitialDeltaActionsDuration() {
+      public long loadInitialDeltaActionsDurationNs() {
         return loadInitialDeltaActionsDurationResult;
       }
     };
@@ -55,8 +56,8 @@ public class SnapshotMetrics {
   @Override
   public String toString() {
     return String.format(
-        "SnapshotMetrics(timestampToVersionResolutionDuration=%s, "
-            + "loadInitialDeltaActionsDuration=%s)",
-        timestampToVersionResolutionDuration, loadInitialDeltaActionsDuration);
+        "SnapshotMetrics(timestampToVersionResolutionTimer=%s, "
+            + "loadInitialDeltaActionsTimer=%s)",
+        timestampToVersionResolutionTimer, loadInitialDeltaActionsTimer);
   }
 }

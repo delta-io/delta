@@ -134,7 +134,7 @@ public class LogReplay {
     this.dataPath = dataPath;
     this.logSegment = logSegment;
     this.protocolAndMetadata =
-        snapshotMetrics.loadInitialDeltaActionsDuration.time(
+        snapshotMetrics.loadInitialDeltaActionsTimer.time(
             () -> loadTableProtocolAndMetadata(engine, snapshotHint, snapshotVersion));
     // Lazy loading of domain metadata only when needed
     this.domainMetadataMap = new Lazy<>(() -> loadDomainMetadataMap(engine));

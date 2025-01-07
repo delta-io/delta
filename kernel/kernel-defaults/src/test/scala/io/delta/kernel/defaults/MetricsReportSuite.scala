@@ -74,7 +74,6 @@ class MetricsReportSuite extends AnyFunSuite with TestUtils {
 
     val snapshotReports = metricsReports.filter(_.isInstanceOf[SnapshotReport])
     assert(snapshotReports.length == 1, "Expected exactly 1 SnapshotReport")
-    (snapshotReports.head.asInstanceOf[SnapshotReport], timer.totalDuration(), exception)
   }
 
   /**
@@ -88,12 +87,12 @@ class MetricsReportSuite extends AnyFunSuite with TestUtils {
    * @param expectedVersion the expected version for the SnapshotReport
    * @param expectedProvidedTimestamp the expected providedTimestamp for the SnapshotReport
    * @param expectNonEmptyTimestampToVersionResolutionDuration whether we expect
-   *                                                           timestampToVersionResolutionDuration
+   *                                                           timestampToVersionResolutionDurationNs
    *                                                           to be non-empty (should be true
    *                                                           for any time-travel by timestamp
    *                                                           queries)
    * @param expectNonZeroLoadProtocolAndMetadataDuration whether we expect
-   *                                                     loadInitialDeltaActionsDuration to be
+   *                                                     loadInitialDeltaActionsDurationNs to be
    *                                                     non-zero (should be true except when an
    *                                                     exception is thrown before log replay)
    */
@@ -126,18 +125,18 @@ class MetricsReportSuite extends AnyFunSuite with TestUtils {
     // Since we cannot know the actual durations of these we sanity check that they are > 0 and
     // less than the total operation duration whenever they are expected to be non-zero/non-empty
     if (expectNonEmptyTimestampToVersionResolutionDuration) {
-      assert(snapshotReport.snapshotMetrics.timestampToVersionResolutionDuration.isPresent)
-      assert(snapshotReport.snapshotMetrics.timestampToVersionResolutionDuration.get > 0)
-      assert(snapshotReport.snapshotMetrics.timestampToVersionResolutionDuration.get <
+      assert(snapshotReport.snapshotMetrics.timestampToVersionResolutionDurationNs.isPresent)
+      assert(snapshotReport.snapshotMetrics.timestampToVersionResolutionDurationNs.get > 0)
+      assert(snapshotReport.snapshotMetrics.timestampToVersionResolutionDurationNs.get <
         duration)
     } else {
-      assert(!snapshotReport.snapshotMetrics.timestampToVersionResolutionDuration.isPresent)
+      assert(!snapshotReport.snapshotMetrics.timestampToVersionResolutionDurationNs.isPresent)
     }
     if (expectNonZeroLoadProtocolAndMetadataDuration) {
-      assert(snapshotReport.snapshotMetrics.loadInitialDeltaActionsDuration > 0)
-      assert(snapshotReport.snapshotMetrics.loadInitialDeltaActionsDuration < duration)
+      assert(snapshotReport.snapshotMetrics.loadInitialDeltaActionsDurationNs > 0)
+      assert(snapshotReport.snapshotMetrics.loadInitialDeltaActionsDurationNs < duration)
     } else {
-      assert(snapshotReport.snapshotMetrics.loadInitialDeltaActionsDuration == 0)
+      assert(snapshotReport.snapshotMetrics.loadInitialDeltaActionsDurationNs == 0)
     }
   }
 
@@ -219,13 +218,15 @@ class MetricsReportSuite extends AnyFunSuite with TestUtils {
         expectNonZeroLoadProtocolAndMetadataDuration = false
       )
 
-      // Test getSnapshotAsOfTimestamp with timestamp=0 (does not exist)
+      // Test getSnapshotAsOfTimestamp with timestamp=currentTime (does not exist)
+      // This fails during timestamp -> version resolution
+      val currentTimeMillis = System.currentTimeMillis
       checkSnapshotReport(
-        (table, engine) => table.getSnapshotAsOfTimestamp(engine, System.currentTimeMillis),
+        (table, engine) => table.getSnapshotAsOfTimestamp(engine, currentTimeMillis),
         path,
         expectException = true,
         expectedVersion = Optional.empty(),
-        expectedProvidedTimestamp = Optional.of(System.currentTimeMillis),
+        expectedProvidedTimestamp = Optional.of(currentTimeMillis),
         expectNonEmptyTimestampToVersionResolutionDuration = true,
         expectNonZeroLoadProtocolAndMetadataDuration = false
       )

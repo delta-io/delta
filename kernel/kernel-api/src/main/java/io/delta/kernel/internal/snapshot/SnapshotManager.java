@@ -163,7 +163,7 @@ public class SnapshotManager {
     long versionToRead =
         snapshotContext
             .getSnapshotMetrics()
-            .timestampToVersionResolutionDuration
+            .timestampToVersionResolutionTimer
             .time(
                 () ->
                     DeltaHistoryManager.getActiveCommitAtTimestamp(
@@ -175,9 +175,9 @@ public class SnapshotManager {
                             false /* canReturnEarliestCommit */)
                         .getVersion());
     logger.info(
-        "{}: Took {}ns to fetch version at timestamp {}",
+        "{}: Took {} ms to fetch version at timestamp {}",
         tablePath,
-        snapshotContext.getSnapshotMetrics().timestampToVersionResolutionDuration.totalDuration(),
+        snapshotContext.getSnapshotMetrics().timestampToVersionResolutionTimer.totalDurationMs(),
         millisSinceEpochUTC);
     // We update the query context version as soon as we resolve timestamp --> version
     snapshotContext.setVersion(versionToRead);
