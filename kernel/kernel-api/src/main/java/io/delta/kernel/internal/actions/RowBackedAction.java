@@ -40,8 +40,8 @@ public abstract class RowBackedAction {
   }
 
   /**
-   * Returns the index of the field with the given name in the full schema of the row. Throws an
-   * {@link IllegalArgumentException} if the field is not found.
+   * Returns the index of the field with the given name in the schema of the row. Throws an {@link
+   * IllegalArgumentException} if the field is not found.
    */
   protected int getFieldIndex(String fieldName) {
     int index = row.getSchema().indexOf(fieldName);
@@ -50,7 +50,7 @@ public abstract class RowBackedAction {
   }
 
   /**
-   * Returns the index of the field with the given name in the full schema of the row, or {@link
+   * Returns the index of the field with the given name in the schema of the row, or {@link
    * Optional#empty()} if the field is not found. This should be used when the underlying row may or
    * may not contain that field.
    */
