@@ -67,6 +67,7 @@ private[spark] class TestClientForDeltaFormatSharing(
     TimestampNTZTableFeature,
     TypeWideningPreviewTableFeature,
     TypeWideningTableFeature,
+    VariantTypePreviewTableFeature,
     VariantTypeTableFeature
   ).map(_.name)
 
