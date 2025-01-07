@@ -34,7 +34,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
     }
   }
 
-  def testSnapshotReport(snapshotReport: SnapshotReport): Unit = {
+  private def testSnapshotReport(snapshotReport: SnapshotReport): Unit = {
     val timestampToVersionResolutionDuration = optionToString(
       snapshotReport.getSnapshotMetrics().getTimestampToVersionResolutionDuration())
     val loadProtocolAndMetadataDuration =
