@@ -74,6 +74,7 @@ class MetricsReportSuite extends AnyFunSuite with TestUtils {
 
     val snapshotReports = metricsReports.filter(_.isInstanceOf[SnapshotReport])
     assert(snapshotReports.length == 1, "Expected exactly 1 SnapshotReport")
+    (snapshotReports.head.asInstanceOf[SnapshotReport], timer.totalDurationNs(), exception)
   }
 
   /**
@@ -110,7 +111,7 @@ class MetricsReportSuite extends AnyFunSuite with TestUtils {
 
     // Verify contents
     assert(snapshotReport.tablePath == resolvePath(path))
-    assert(snapshotReport.operationType == "SNAPSHOT")
+    assert(snapshotReport.operationType == "Snapshot")
     exception match {
       case Some(e) =>
         assert(snapshotReport.exception().isPresent &&

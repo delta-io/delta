@@ -36,7 +36,6 @@ public class SnapshotMetrics {
     return new SnapshotMetricsResult() {
 
       final Optional<Long> timestampToVersionResolutionDurationResult =
-          timestampToVersionResolutionDuration.totalDurationIfRecorded();
           timestampToVersionResolutionTimer.totalDurationIfRecorded();
       final long loadInitialDeltaActionsDurationResult =
           loadInitialDeltaActionsTimer.totalDurationNs();

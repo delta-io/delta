@@ -43,6 +43,6 @@ public interface SnapshotReport extends DeltaOperationReport {
 
   @Override
   default String operationType() {
-    return DeltaOperationReport.OperationType.SNAPSHOT.toString();
+    return "Snapshot";
   }
 }
