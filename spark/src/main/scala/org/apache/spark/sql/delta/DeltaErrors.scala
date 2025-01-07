@@ -447,6 +447,13 @@ trait DeltaErrorsBase
         DeltaConfigs.CHANGE_DATA_FEED.key))
   }
 
+  def deletedRecordCountsHistogramDeserializationException(): Throwable = {
+    new DeltaChecksumException(
+      errorClass = "DELTA_DV_HISTOGRAM_DESERIALIZATON",
+      messageParameters = Array.empty,
+      pos = 0)
+  }
+
   /**
    * Throwable used for invalid CDC 'start' and 'end' options, where end < start
    */
@@ -3399,6 +3406,23 @@ trait DeltaErrorsBase
     new DeltaUnsupportedOperationException(
       errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.WRONG_REQUIRED_TABLE_PROPERTY",
       messageParameters = Array(version.toString, version.toString, key, requiredValue, actualValue)
+    )
+  }
+
+  def icebergCompatUnsupportedTypeWideningException(
+      version: Int,
+      fieldPath: Seq[String],
+      oldType: DataType,
+      newType: DataType): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.UNSUPPORTED_TYPE_WIDENING",
+      messageParameters = Array(
+        version.toString,
+        version.toString,
+        SchemaUtils.prettyFieldName(fieldPath),
+        toSQLType(oldType),
+        toSQLType(newType)
+      )
     )
   }
 

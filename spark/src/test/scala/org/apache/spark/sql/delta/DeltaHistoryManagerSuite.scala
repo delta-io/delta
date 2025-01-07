@@ -27,17 +27,16 @@ import scala.concurrent.duration._
 import scala.language.implicitConversions
 
 import com.databricks.spark.util.Log4jUsageLogger
+import org.apache.spark.sql.delta.DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED
 import org.apache.spark.sql.delta.DeltaHistoryManagerSuiteShims._
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
-import org.apache.spark.sql.delta.DeltaTestUtils.filterUsageRecords
-import org.apache.spark.sql.delta.actions.{Action, CommitInfo}
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.StatsUtils
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, JsonUtils}
-import org.apache.hadoop.fs.Path
+import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames}
 import org.scalatest.GivenWhenThen
 
 import org.apache.spark.{SparkConf, SparkException}
@@ -48,7 +47,7 @@ import org.apache.spark.sql.catalyst.util.quietly
 import org.apache.spark.sql.connector.catalog.CatalogManager
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.util.{ManualClock, Utils}
+import org.apache.spark.util.Utils
 
 /** A set of tests which we can open source after Spark 3.0 is released. */
 trait DeltaTimeTravelTests extends QueryTest
@@ -640,7 +639,7 @@ abstract class DeltaHistoryManagerBase extends DeltaTimeTravelTests
     withTable(tblName) {
       val start = 1540415658000L
       generateCommits(tblName, start, start + 20.minutes, start + 40.minutes, start + 60.minutes)
-      val deltaLog = DeltaLog.forTable(spark, getTableLocation(tblName))
+      val table = DeltaTableV2(spark, TableIdentifier(tblName))
 
       def testGetHistory(
           start: Long,
@@ -648,7 +647,7 @@ abstract class DeltaHistoryManagerBase extends DeltaTimeTravelTests
           versions: Seq[Long],
           expectedLogUpdates: Int): Unit = {
         val usageRecords = Log4jUsageLogger.track {
-          val history = deltaLog.history.getHistory(start, endOpt)
+          val history = table.deltaLog.history.getHistory(start, endOpt, table.catalogTable)
           assert(history.map(_.getVersion) == versions)
         }
         assert(filterUsageRecords(usageRecords, "deltaLog.update").size === expectedLogUpdates)
@@ -660,6 +659,54 @@ abstract class DeltaHistoryManagerBase extends DeltaTimeTravelTests
       testGetHistory(start = 1, endOpt = Some(5), versions = Seq(3, 2, 1), expectedLogUpdates = 1)
       testGetHistory(start = 4, endOpt = None, versions = Seq.empty, expectedLogUpdates = 1)
       testGetHistory(start = 2, endOpt = Some(1), versions = Seq.empty, expectedLogUpdates = 0)
+    }
+  }
+
+  test("getCommitFromNonICTRange should handle empty history by throwing proper error") {
+    val tblName = "delta_table"
+    withTable(tblName) {
+      val start = 1540415658000L
+      generateCommits(tblName, start)
+      val deltaLog = DeltaLog.forTable(spark, getTableLocation(tblName))
+
+      val deltaFile = new File(FileNames.unsafeDeltaFile(deltaLog.logPath, 0).toUri)
+      assert(deltaFile.delete(), "Failed to delete delta log file")
+
+      val e = intercept[DeltaAnalysisException] {
+        deltaLog.history.getCommitFromNonICTRange(0, 1, start)
+      }
+
+      assert(e.getMessage.contains("DELTA_NO_COMMITS_FOUND"))
+      assert(e.getMessage.contains(deltaLog.logPath.toString))
+    }
+  }
+
+  test("parallel search handles empty commits in a partition correctly") {
+    if (coordinatedCommitsBackfillBatchSize.isDefined) {
+      cancel("This test is not compatible with coordinated commits backfill timestamps.")
+    }
+    val tblName = "delta_table"
+    withTable(tblName) {
+      // Small threshold to trigger parallel search
+      withSQLConf(
+          DeltaSQLConf.DELTA_HISTORY_PAR_SEARCH_THRESHOLD.key -> "3",
+          IN_COMMIT_TIMESTAMPS_ENABLED.key -> "false") {
+        val start = 1540415658000L
+        // Generate 10 commits which will be processed in parallel due to threshold=3
+        val timestamps = (0 to 9).map(i => start + (i * 20).minutes)
+        generateCommits(tblName, timestamps: _*)
+        val table = DeltaTableV2(spark, TableIdentifier(tblName))
+        val deltaLog = table.deltaLog
+
+        // Delete all files in first partition to simulate concurrent metadata cleanup
+        val deltaFiles = (0 to 4).map { version =>
+          new File(FileNames.unsafeDeltaFile(deltaLog.logPath, version).toUri)
+        }
+        deltaFiles.foreach(f =>
+          assert(f.delete(), s"Failed to delete delta log file ${f.getPath}"))
+        assert(
+          deltaLog.history.getCommitFromNonICTRange(0, 9, start + (7 * 20).minutes).version == 7)
+      }
     }
   }
 }

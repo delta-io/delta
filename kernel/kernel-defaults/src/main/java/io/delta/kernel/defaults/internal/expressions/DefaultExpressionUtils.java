@@ -15,12 +15,14 @@
  */
 package io.delta.kernel.defaults.internal.expressions;
 
+import static io.delta.kernel.defaults.internal.DefaultEngineErrors.unsupportedExpressionException;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.expressions.Expression;
+import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.types.*;
 import java.math.BigDecimal;
@@ -382,5 +384,29 @@ class DefaultExpressionUtils {
         return lastLookupVector;
       }
     };
+  }
+
+  /**
+   * Checks the argument count of an expression. throws {@code unsupportedExpressionException} if
+   * argument count mismatched.
+   */
+  static void checkArgsCount(Expression expr, int expectedCount, String exprName, String context) {
+    if (expr.getChildren().size() != expectedCount) {
+      throw unsupportedExpressionException(
+          expr, String.format("Invalid number of inputs of %s expression, %s", exprName, context));
+    }
+  }
+
+  static void checkIsStringType(DataType dataType, Expression parentExpr, String errorMessage) {
+    if (StringType.STRING.equals(dataType)) {
+      return;
+    }
+    throw unsupportedExpressionException(parentExpr, errorMessage);
+  }
+
+  static void checkIsLiteral(Expression expr, Expression parentExpr, String errorMessage) {
+    if (!(expr instanceof Literal)) {
+      throw unsupportedExpressionException(parentExpr, errorMessage);
+    }
   }
 }

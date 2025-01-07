@@ -1144,6 +1144,34 @@ trait DeltaSQLConfBase {
       .intConf
       .createOptional
 
+  val USE_PROTOCOL_AND_METADATA_FROM_CHECKSUM_ENABLED =
+    buildConf("readProtocolAndMetadataFromChecksum.enabled")
+      .internal()
+      .doc("If enabled, delta log snapshot will read the protocol, metadata, and ICT " +
+        "(if applicable) from the checksum file and use those to avoid a spark job over the " +
+        "checkpoint for the two rows of protocol and metadata")
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_CHECKSUM_DV_METRICS_ENABLED =
+    buildConf("checksumDVMetrics.enabled")
+      .internal()
+      .doc(s"""When enabled, each delta transaction includes vector metrics in the checksum.
+              |Only applies to tables that use Deletion Vectors."""
+        .stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_DELETED_RECORD_COUNTS_HISTOGRAM_ENABLED =
+    buildConf("checksumDeletedRecordCountsHistogramMetrics.enabled")
+      .internal()
+      .doc(s"""When enabled, each delta transaction includes in the checksum the deleted
+              |record count distribution histogram for all the files. To enable this feature
+              |${DELTA_CHECKSUM_DV_METRICS_ENABLED.key} needs to be enabled as well. Only
+              |applies to tables that use Deletion Vectors.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_CHECKPOINT_THROW_EXCEPTION_WHEN_FAILED =
       buildConf("checkpoint.exceptionThrowing.enabled")
         .internal()
@@ -1193,6 +1221,22 @@ trait DeltaSQLConfBase {
            | Disables check that ensures a table doesn't contain any unsupported type change when
            | reading it.
            |""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
+  /**
+   * Internal config to bypass check that prevents applying type changes that are not supported by
+   * Iceberg when Uniform is enabled with Iceberg compatibility.
+   */
+  val DELTA_TYPE_WIDENING_ALLOW_UNSUPPORTED_ICEBERG_TYPE_CHANGES =
+    buildConf("typeWidening.allowUnsupportedIcebergTypeChanges")
+      .internal()
+      .doc(
+        """
+          |By default, type changes that aren't supported by Iceberg are rejected when Uniform is
+          |enabled with Iceberg compatibility. This config allows bypassing this restriction, but
+          |reading the affected column with Iceberg clients will likely fail or behave erratically.
+          |""".stripMargin)
       .booleanConf
       .createWithDefault(false)
 
@@ -1742,9 +1786,7 @@ trait DeltaSQLConfBase {
           |The casting behavior is governed by 'spark.sql.storeAssignmentPolicy'.
           |""".stripMargin)
       .booleanConf
-      // This feature doesn't properly support structs with missing fields and is disabled until a
-      // fix is implemented.
-      .createWithDefault(false)
+      .createWithDefault(true)
 
   val DELTA_CDF_UNSAFE_BATCH_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES =
     buildConf("changeDataFeed.unsafeBatchReadOnIncompatibleSchemaChanges.enabled")
@@ -2229,6 +2271,18 @@ trait DeltaSQLConfBase {
           | The umbrella config to turn on/off the IDENTITY column support.
           | If true, enable Delta IDENTITY column write support. If a table has an IDENTITY column,
           | it is not writable but still readable if this config is set to false.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_IDENTITY_ALLOW_SYNC_IDENTITY_TO_LOWER_HIGH_WATER_MARK =
+    buildConf("identityColumn.allowSyncIdentityToLowerHighWaterMark.enabled")
+      .internal()
+      .doc(
+        """
+          | If true, the SYNC IDENTITY command can reduce the high water mark in a Delta IDENTITY
+          | column. If false, the high water mark will only be updated if it
+          | respects the column's specified start, step, and existing high watermark value.
           |""".stripMargin)
       .booleanConf
       .createWithDefault(false)

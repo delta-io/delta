@@ -456,7 +456,10 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   def precommitUpdateSchemaWithIdentityHighWaterMarks(): Unit = {
     if (updatedIdentityHighWaterMarks.nonEmpty) {
       val newSchema = IdentityColumn.updateSchema(
-        metadata.schema, updatedIdentityHighWaterMarks.toSeq)
+        deltaLog,
+        metadata.schema,
+        updatedIdentityHighWaterMarks.toSeq
+      )
       val updatedMetadata = metadata.copy(schemaString = newSchema.json)
       updateMetadataAfterWrite(updatedMetadata)
     }
@@ -1408,6 +1411,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         readSnapshot = snapshot,
         commitInfo = Some(commitInfo),
         readRowIdHighWatermark = readRowIdHighWatermark,
+        catalogTable = catalogTable,
         domainMetadata = domainMetadata,
         op = op)
 
@@ -1970,6 +1974,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
     val (protocolUpdate1, metadataUpdate1) =
       UniversalFormat.enforceInvariantsAndDependencies(
+        spark,
         // Note: if this txn has no protocol or metadata updates, then `prev` will equal `newest`.
         snapshot,
         newestProtocol = protocol, // Note: this will try to use `newProtocol`

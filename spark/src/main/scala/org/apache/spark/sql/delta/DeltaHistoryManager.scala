@@ -40,6 +40,7 @@ import org.apache.hadoop.fs.{FileStatus, Path}
 import org.apache.spark.SparkEnv
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.util.{SerializableConfiguration, ThreadUtils}
 
@@ -68,12 +69,23 @@ class DeltaHistoryManager(
    * Returns the information of the latest `limit` commits made to this table in reverse
    * chronological order.
    */
+  def getHistory(
+      limitOpt: Option[Int],
+      catalogTableOpt: Option[CatalogTable]): Seq[DeltaHistory] = {
+    val snapshot = deltaLog.update(catalogTableOpt = catalogTableOpt)
+    val listStart = limitOpt
+      .map { limit => math.max(snapshot.version - limit + 1, 0) }
+      .getOrElse(getEarliestDeltaFile(deltaLog))
+    getHistory(listStart, end = Some(snapshot.version), catalogTableOpt)
+  }
+
+  /**
+   * Returns the information of the latest `limit` commits made to this table in reverse
+   * chronological order. This version does not take in a catalog table and should only be
+   * used in testing.
+   */
   def getHistory(limitOpt: Option[Int]): Seq[DeltaHistory] = {
-    val snapshot = deltaLog.update()
-    val listStart = limitOpt.map { limit =>
-      math.max(snapshot.version - limit + 1, 0)
-    }.getOrElse(getEarliestDeltaFile(deltaLog))
-    getHistory(listStart, end = Some(snapshot.version))
+    getHistory(limitOpt, catalogTableOpt = None)
   }
 
   /**
@@ -136,10 +148,12 @@ class DeltaHistoryManager(
    * chronological order. If `end` is `None`, we return all commits from start to now.
    * @param start The start of the commit range, inclusive.
    * @param end The end of the commit range, inclusive.
+   * @param catalogTableOpt the catalog table associated with the Delta table.
    */
   def getHistory(
       start: Long,
-      end: Option[Long] = None): Seq[DeltaHistory] = {
+      end: Option[Long],
+      catalogTableOpt: Option[CatalogTable] = None): Seq[DeltaHistory] = {
     val currentSnapshot = deltaLog.unsafeVolatileSnapshot
     val (snapshotNewerThanResolvedEnd, resolvedEnd) = end match {
         case Some(endInclusive) if currentSnapshot.version >= endInclusive =>
@@ -148,7 +162,7 @@ class DeltaHistoryManager(
         case _ =>
           // Either end doesn't exist or the currently cached snapshot isn't new enough to
           // satisfy it.
-          val snapshot = deltaLog.update()
+          val snapshot = deltaLog.update(catalogTableOpt = catalogTableOpt)
           val endInclusive = end.getOrElse(snapshot.version).min(snapshot.version)
           (snapshot, endInclusive)
       }
@@ -197,6 +211,9 @@ class DeltaHistoryManager(
         start,
         Some(end),
         deltaLog.newDeltaHadoopConf())
+      if (commits.isEmpty) {
+        throw DeltaErrors.noHistoryFound(deltaLog.logPath)
+      }
       lastCommitBeforeTimestamp(commits, time).getOrElse(commits.head)
     }
   }
@@ -696,12 +713,19 @@ object DeltaHistoryManager extends DeltaLogging {
           startVersion,
           Some(math.min(startVersion + step, end)),
           conf.value)
-        lastCommitBeforeTimestamp(commits, time).getOrElse(commits.head)
+        if (commits.isEmpty) {
+          None
+        } else {
+          Some(lastCommitBeforeTimestamp(commits, time).getOrElse(commits.head))
+        }
       }
     }.collect()
 
     // Spark should return the commits in increasing order as well
-    val commitList = monotonizeCommitTimestamps(possibleCommits)
+    val commitList = monotonizeCommitTimestamps(possibleCommits.flatten)
+    if (commitList.isEmpty) {
+      throw DeltaErrors.noHistoryFound(new Path(logPath))
+    }
     lastCommitBeforeTimestamp(commitList, time).getOrElse(commitList.head)
   }
 

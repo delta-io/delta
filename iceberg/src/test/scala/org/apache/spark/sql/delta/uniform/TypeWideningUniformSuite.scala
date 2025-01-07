@@ -1,5 +1,5 @@
 /*
- * Copyright (2024) The Delta Lake Project Authors.
+ * Copyright (2021) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,30 +14,11 @@
  * limitations under the License.
  */
 
-package io.delta.kernel.engine.coordinatedcommits;
+package org.apache.spark.sql.delta.uniform
 
-import io.delta.kernel.annotation.Evolving;
+import org.apache.spark.sql.delta.typewidening.TypeWideningUniformTests
 
 /**
- * Response container for {@link io.delta.kernel.engine.CommitCoordinatorClientHandler#commit}.
- *
- * @since 3.3.0
+ * Suite running Uniform Iceberg + type widening tests against HMS.
  */
-@Evolving
-public class CommitResponse {
-
-  private final Commit commit;
-
-  public CommitResponse(Commit commit) {
-    this.commit = commit;
-  }
-
-  /**
-   * Get the commit object.
-   *
-   * @return the commit object.
-   */
-  public Commit getCommit() {
-    return commit;
-  }
-}
+class TypeWideningUniformSuite extends TypeWideningUniformTests with WriteDeltaHMSReadIceberg
