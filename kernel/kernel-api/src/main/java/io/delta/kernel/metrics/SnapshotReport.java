@@ -20,8 +20,6 @@ import java.util.Optional;
 /** Defines the metadata and metrics for a snapshot construction {@link MetricsReport} */
 public interface SnapshotReport extends DeltaOperationReport {
 
-  String OPERATION_TYPE = "Snapshot";
-
   /**
    * For a time-travel by version query, this is the version provided. For a time-travel by
    * timestamp query, this is the version resolved from the provided timestamp. For a latest
@@ -42,4 +40,9 @@ public interface SnapshotReport extends DeltaOperationReport {
 
   /** @return the metrics for this snapshot construction */
   SnapshotMetricsResult snapshotMetrics();
+
+  @Override
+  default String operationType() {
+    return DeltaOperationReport.OperationType.SNAPSHOT.toString();
+  }
 }

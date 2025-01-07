@@ -36,9 +36,7 @@ public class SnapshotMetrics {
     return new SnapshotMetricsResult() {
 
       final Optional<Long> timestampToVersionResolutionDurationResult =
-          Optional.of(timestampToVersionResolutionDuration)
-              .filter(t -> t.count() > 0) // If the timer hasn't been called this should be None
-              .map(t -> t.totalDuration());
+          timestampToVersionResolutionDuration.totalDurationIfRecorded();
       final long loadInitialDeltaActionsDurationResult =
           loadInitialDeltaActionsDuration.totalDuration();
 

@@ -97,7 +97,7 @@ public class TableImpl implements Table {
     try {
       return snapshotManager.buildLatestSnapshot(engine, snapshotContext);
     } catch (Exception e) {
-      recordSnapshotReport(engine, snapshotContext, e);
+      recordSnapshotErrorReport(engine, snapshotContext, e);
       throw e;
     }
   }
@@ -110,7 +110,7 @@ public class TableImpl implements Table {
     try {
       return snapshotManager.getSnapshotAt(engine, versionId, snapshotContext);
     } catch (Exception e) {
-      recordSnapshotReport(engine, snapshotContext, e);
+      recordSnapshotErrorReport(engine, snapshotContext, e);
       throw e;
     }
   }
@@ -123,7 +123,7 @@ public class TableImpl implements Table {
     try {
       return snapshotManager.getSnapshotForTimestamp(engine, millisSinceEpochUTC, snapshotContext);
     } catch (Exception e) {
-      recordSnapshotReport(engine, snapshotContext, e);
+      recordSnapshotErrorReport(engine, snapshotContext, e);
       throw e;
     }
   }
@@ -341,7 +341,7 @@ public class TableImpl implements Table {
   }
 
   /** Creates a {@link SnapshotReport} and pushes it to any {@link MetricsReporter}s. */
-  private void recordSnapshotReport(
+  private void recordSnapshotErrorReport(
       Engine engine, SnapshotQueryContext snapshotContext, Exception e) {
     SnapshotReport snapshotReport = SnapshotReportImpl.forError(snapshotContext, e);
     engine.getMetricsReporters().forEach(reporter -> reporter.report(snapshotReport));

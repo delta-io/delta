@@ -111,7 +111,7 @@ class MetricsReportSuite extends AnyFunSuite with TestUtils {
 
     // Verify contents
     assert(snapshotReport.tablePath == resolvePath(path))
-    assert(snapshotReport.operationType == "Snapshot")
+    assert(snapshotReport.operationType == "SNAPSHOT")
     exception match {
       case Some(e) =>
         assert(snapshotReport.exception().isPresent &&

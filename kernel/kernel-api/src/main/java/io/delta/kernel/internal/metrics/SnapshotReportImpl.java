@@ -81,11 +81,6 @@ public class SnapshotReportImpl implements SnapshotReport {
   }
 
   @Override
-  public String operationType() {
-    return SnapshotReport.OPERATION_TYPE;
-  }
-
-  @Override
   public UUID reportUUID() {
     return reportUUID;
   }

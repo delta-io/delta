@@ -18,6 +18,7 @@ package io.delta.kernel.internal.metrics;
 
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
+import java.util.Optional;
 import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.function.Supplier;
@@ -35,6 +36,14 @@ public class Timer {
   /** @return the total duration that was recorded in nanoseconds */
   public long totalDuration() {
     return totalTime.longValue();
+  }
+
+  /**
+   * @return An optional storing the total duration recorded in the timer if the timer has been used
+   *     to record a duration at least once. If the timer has not been used, returns empty.
+   */
+  public Optional<Long> totalDurationIfRecorded() {
+    return count() > 0 ? Optional.of(totalDuration()) : Optional.empty();
   }
 
   /**

@@ -18,17 +18,27 @@ package io.delta.kernel.internal.metrics;
 import io.delta.kernel.metrics.SnapshotReport;
 import java.util.Optional;
 
-/** Stores the context for a given Snapshot query. Used to generate a {@link SnapshotReport} */
+/**
+ * Stores the context for a given Snapshot query. This includes information about the query
+ * parameters (i.e. table path, time travel parameters), updated state as the snapshot query
+ * progresses (i.e. resolved version), and metrics.
+ *
+ * <p>This is used to generate a {@link SnapshotReport}. It exists from snapshot query initiation
+ * until either successful snapshot construction or failure.
+ */
 public class SnapshotQueryContext {
 
+  /** Creates a {@link SnapshotQueryContext} for a Snapshot created by a latest snapshot query */
   public static SnapshotQueryContext forLatestSnapshot(String tablePath) {
     return new SnapshotQueryContext(tablePath, Optional.empty(), Optional.empty());
   }
 
+  /** Creates a {@link SnapshotQueryContext} for a Snapshot created by a AS OF VERSION query */
   public static SnapshotQueryContext forVersionSnapshot(String tablePath, long version) {
     return new SnapshotQueryContext(tablePath, Optional.of(version), Optional.empty());
   }
 
+  /** Creates a {@link SnapshotQueryContext} for a Snapshot created by a AS OF TIMESTAMP query */
   public static SnapshotQueryContext forTimestampSnapshot(String tablePath, long timestamp) {
     return new SnapshotQueryContext(tablePath, Optional.empty(), Optional.of(timestamp));
   }
@@ -38,10 +48,17 @@ public class SnapshotQueryContext {
   private final Optional<Long> providedTimestamp;
   private final SnapshotMetrics snapshotMetrics = new SnapshotMetrics();
 
+  /**
+   * @param tablePath the table path for the table being queried
+   * @param providedVersion the provided version for a time-travel-by-version query, empty if this
+   *     is not a time-travel-by-version query
+   * @param providedTimestamp the provided timestamp for a time-travel-by-timestamp query, empty if
+   *     this is not a time-travel-by-timestamp query
+   */
   private SnapshotQueryContext(
-      String tablePath, Optional<Long> version, Optional<Long> providedTimestamp) {
+      String tablePath, Optional<Long> providedVersion, Optional<Long> providedTimestamp) {
     this.tablePath = tablePath;
-    this.version = version;
+    this.version = providedVersion;
     this.providedTimestamp = providedTimestamp;
   }
 
@@ -61,6 +78,12 @@ public class SnapshotQueryContext {
     return snapshotMetrics;
   }
 
+  /**
+   * Updates the {@code version} stored in this snapshot context. This version should be updated
+   * upon version resolution for non time-travel-by-version queries. For latest snapshot queries
+   * this is after log segment construction. For time-travel by timestamp queries this is after
+   * timestamp to version resolution.
+   */
   public void setVersion(long updatedVersion) {
     version = Optional.of(updatedVersion);
   }

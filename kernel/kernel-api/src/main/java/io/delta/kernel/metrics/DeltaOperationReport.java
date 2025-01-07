@@ -32,4 +32,8 @@ public interface DeltaOperationReport extends MetricsReport {
 
   /** @return a unique ID for this report */
   UUID reportUUID();
+
+  enum OperationType {
+    SNAPSHOT;
+  }
 }
