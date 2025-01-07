@@ -88,10 +88,10 @@ class MetricsReportSuite extends AnyFunSuite with TestUtils {
    * @param expectedVersion the expected version for the SnapshotReport
    * @param expectedProvidedTimestamp the expected providedTimestamp for the SnapshotReport
    * @param expectNonEmptyTimestampToVersionResolutionDuration whether we expect
-   *                                                           timestampToVersionResolutionDurationNs
-   *                                                           to be non-empty (should be true
-   *                                                           for any time-travel by timestamp
-   *                                                           queries)
+   *                                                           timestampToVersionResolution-
+   *                                                           DurationNs to be non-empty (should
+   *                                                           be true for any time-travel by
+   *                                                           timestamp queries)
    * @param expectNonZeroLoadProtocolAndMetadataDuration whether we expect
    *                                                     loadInitialDeltaActionsDurationNs to be
    *                                                     non-zero (should be true except when an
