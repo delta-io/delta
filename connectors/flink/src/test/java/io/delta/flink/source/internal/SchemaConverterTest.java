@@ -71,7 +71,9 @@ public class SchemaConverterTest {
             Arguments.of(new io.delta.standalone.types.ByteType(), new TinyIntType()),
             Arguments.of(new io.delta.standalone.types.ShortType(), new SmallIntType()),
             Arguments.of(new io.delta.standalone.types.LongType(), new BigIntType()),
-            Arguments.of(new io.delta.standalone.types.BinaryType(), new VarBinaryType(VarBinaryType.MAX_LENGTH)),
+            Arguments.of(
+                new io.delta.standalone.types.BinaryType(),
+                new VarBinaryType(VarBinaryType.MAX_LENGTH)),
             Arguments.of(new io.delta.standalone.types.TimestampType(), new TimestampType()),
             Arguments.of(new io.delta.standalone.types.DateType(), new DateType()),
             Arguments.of(
