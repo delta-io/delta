@@ -64,6 +64,8 @@ public class TableFeatures {
 
   public static final String ROW_TRACKING_FEATURE_NAME = "rowTracking";
 
+  public static final String INVARIANTS_FEATURE_NAME = "invariants";
+
   /** The minimum writer version required to support table features. */
   public static final int TABLE_FEATURES_MIN_WRITER_VERSION = 7;
 
@@ -136,10 +138,15 @@ public class TableFeatures {
         throw unsupportedWriterProtocol(tablePath, minWriterVersion);
       case 7:
         for (String writerFeature : protocol.getWriterFeatures()) {
+          // For version 7, we allow 'invariants' to be present in the protocol's writerFeatures
+          // to unblock certain use cases, provided that no invariants are defined in the schema.
+          if (writerFeature.equals(INVARIANTS_FEATURE_NAME)) continue;
           if (!SUPPORTED_WRITER_FEATURES.contains(writerFeature)) {
             throw unsupportedWriterFeature(tablePath, writerFeature);
           }
         }
+        validateNoInvariants(tableSchema);
+
         // Eventually we may have a way to declare and enforce dependencies between features.
         // By putting this check for row tracking here, it makes it easier to spot that row
         // tracking defines such a dependency that can be implicitly checked.
