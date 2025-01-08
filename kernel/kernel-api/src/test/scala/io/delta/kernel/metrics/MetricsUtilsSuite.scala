@@ -41,11 +41,11 @@ class MetricsUtilsSuite extends AnyFunSuite {
     val timer = new Timer()
     // Verify initial values
     assert(timer.count == 0)
-    assert(timer.totalDuration == 0)
+    assert(timer.totalDurationNs == 0)
 
     def incrementAndCheck(amtMillis: Long): Unit = {
       val initialCount = timer.count()
-      val initialDuration = timer.totalDuration() // in nanoseconds
+      val initialDuration = timer.totalDurationNs() // in nanoseconds
 
       val startTime = System.currentTimeMillis()
       incrementFx(amtMillis, timer)
@@ -59,9 +59,9 @@ class MetricsUtilsSuite extends AnyFunSuite {
       // check count
       assert(timer.count == initialCount + 1)
       // check lowerbound
-      assert(timer.totalDuration >= initialDuration + millisToNanos(amtMillis))
+      assert(timer.totalDurationNs >= initialDuration + millisToNanos(amtMillis))
       // check upperbound
-      assert(timer.totalDuration <= initialDuration + millisToNanos(upperLimitDuration))
+      assert(timer.totalDurationNs <= initialDuration + millisToNanos(upperLimitDuration))
     }
 
     incrementAndCheck(0)

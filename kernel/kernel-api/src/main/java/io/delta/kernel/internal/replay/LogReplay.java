@@ -28,6 +28,7 @@ import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.checkpoints.SidecarFile;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
+import io.delta.kernel.internal.metrics.SnapshotMetrics;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.SnapshotHint;
 import io.delta.kernel.internal.util.DomainMetadataUtils;
@@ -126,12 +127,15 @@ public class LogReplay {
       long snapshotVersion,
       Engine engine,
       LogSegment logSegment,
-      Optional<SnapshotHint> snapshotHint) {
+      Optional<SnapshotHint> snapshotHint,
+      SnapshotMetrics snapshotMetrics) {
     assertLogFilesBelongToTable(logPath, logSegment.allLogFilesUnsorted());
 
     this.dataPath = dataPath;
     this.logSegment = logSegment;
-    this.protocolAndMetadata = loadTableProtocolAndMetadata(engine, snapshotHint, snapshotVersion);
+    this.protocolAndMetadata =
+        snapshotMetrics.loadInitialDeltaActionsTimer.time(
+            () -> loadTableProtocolAndMetadata(engine, snapshotHint, snapshotVersion));
     // Lazy loading of domain metadata only when needed
     this.domainMetadataMap = new Lazy<>(() -> loadDomainMetadataMap(engine));
   }
@@ -154,6 +158,10 @@ public class LogReplay {
 
   public Map<String, DomainMetadata> getDomainMetadataMap() {
     return domainMetadataMap.get();
+  }
+
+  public long getVersion() {
+    return logSegment.version;
   }
 
   /**
