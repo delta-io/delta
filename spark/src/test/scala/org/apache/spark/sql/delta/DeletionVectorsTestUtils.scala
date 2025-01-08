@@ -21,6 +21,8 @@ import java.util.UUID
 
 import org.apache.spark.sql.delta.DeltaOperations.Truncate
 import org.apache.spark.sql.delta.actions.{Action, AddFile, DeletionVectorDescriptor, RemoveFile}
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.commands.AlterTableDropFeatureDeltaCommand
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
@@ -71,6 +73,15 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession with De
       thunk
     }
   }
+
+  def dropDVTableFeature(
+      spark: SparkSession,
+      log: DeltaLog,
+      truncateHistory: Boolean): Unit =
+    AlterTableDropFeatureDeltaCommand(
+      DeltaTableV2(spark, log.dataPath),
+      DeletionVectorsTableFeature.name,
+      truncateHistory = truncateHistory).run(spark)
 
   /** Helper to run 'fn' with a temporary Delta table. */
   def withTempDeltaTable(
