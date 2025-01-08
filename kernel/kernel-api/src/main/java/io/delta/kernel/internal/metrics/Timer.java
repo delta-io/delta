@@ -26,9 +26,7 @@ import java.util.function.Supplier;
 
 /** A timer class for measuring the duration of operations in nanoseconds */
 public class Timer {
-
-  private static long NANOS_PER_MILLISECOND = 1000000;
-
+  
   private final LongAdder count = new LongAdder();
   private final LongAdder totalTime = new LongAdder();
 
