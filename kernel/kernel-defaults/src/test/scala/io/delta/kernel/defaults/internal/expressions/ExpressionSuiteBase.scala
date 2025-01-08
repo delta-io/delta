@@ -38,6 +38,14 @@ trait ExpressionSuiteBase extends TestUtils with DefaultVectorTestUtils {
     new Or(left, right)
   }
 
+  protected def substring(expr: Expression, pos: Int, len: Option[Int] = None): ScalarExpression = {
+    var children = List(expr, Literal.ofInt(pos))
+    if(len.isDefined) {
+     children = children :+ Literal.ofInt(len.get)
+    }
+    new ScalarExpression("substring", children.asJava)
+  }
+
   protected def like(
       left: Expression, right: Expression, escape: Option[Character] = None): Predicate = {
     if (escape.isDefined && escape.get!=null) {
@@ -47,6 +55,10 @@ trait ExpressionSuiteBase extends TestUtils with DefaultVectorTestUtils {
 
   protected def like(children: List[Expression]): Predicate = {
     new Predicate("like", children.asJava)
+  }
+
+  protected def startsWith(left: Expression, right: Expression): Predicate = {
+    new Predicate("starts_with", left, right)
   }
 
   protected def comparator(symbol: String, left: Expression, right: Expression): Predicate = {
@@ -79,4 +91,22 @@ trait ExpressionSuiteBase extends TestUtils with DefaultVectorTestUtils {
       }
     }
   }
+
+  protected def checkStringVectors(actual: ColumnVector, expected: ColumnVector): Unit = {
+    assert(actual.getDataType === StringType.STRING)
+    assert(actual.getDataType === expected.getDataType)
+    assert(actual.getSize === expected.getSize)
+    Seq.range(0, actual.getSize).foreach { rowId =>
+      assert(actual.isNullAt(rowId) === expected.isNullAt(rowId))
+      if (!actual.isNullAt(rowId)) {
+        assert(
+          actual.getString(rowId) === expected.getString(rowId),
+          s"unexpected value at $rowId: " +
+            s"expected: ${expected.getString(rowId)} " +
+            s"actual: ${actual.getString(rowId)} "
+        )
+      }
+    }
+  }
+
 }

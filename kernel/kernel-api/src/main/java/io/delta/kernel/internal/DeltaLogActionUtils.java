@@ -28,6 +28,7 @@ import io.delta.kernel.expressions.ExpressionEvaluator;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.lang.ListUtils;
 import io.delta.kernel.internal.replay.ActionsIterator;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.types.*;
@@ -111,7 +112,7 @@ public class DeltaLogActionUtils {
 
     // Verify commit files found
     // (check that they are continuous and start with startVersion and end with endVersion)
-    verifyDeltaVersions(commitFiles, startVersion, endVersion, tablePath);
+    verifyDeltaVersions(commitFiles, startVersion, Optional.of(endVersion), tablePath);
 
     return commitFiles;
   }
@@ -191,20 +192,19 @@ public class DeltaLogActionUtils {
 
   /**
    * Given a list of delta versions, verifies that they are (1) contiguous (2) versions starts with
-   * expectedStartVersion and (3) end with expectedEndVersion. Throws an exception if any of these
-   * are not true.
+   * expectedStartVersion and (3) end with expectedEndVersionOpt, if provided. Throws an exception
+   * if any of these are not true.
    *
    * <p>Public to expose for testing only.
    *
    * @param commitFiles in sorted increasing order according to the commit version
    */
-  static void verifyDeltaVersions(
+  public static void verifyDeltaVersions(
       List<FileStatus> commitFiles,
       long expectedStartVersion,
-      long expectedEndVersion,
+      Optional<Long> expectedEndVersionOpt,
       Path tablePath) {
-
-    List<Long> commitVersions =
+    final List<Long> commitVersions =
         commitFiles.stream()
             .map(fs -> FileNames.deltaVersion(new Path(fs.getPath())))
             .collect(Collectors.toList());
@@ -225,15 +225,13 @@ public class DeltaLogActionUtils {
           commitVersions.isEmpty() ? Optional.empty() : Optional.of(commitVersions.get(0)));
     }
 
-    if (commitVersions.isEmpty()
-        || !Objects.equals(commitVersions.get(commitVersions.size() - 1), expectedEndVersion)) {
-      throw endVersionNotFound(
-          tablePath.toString(),
-          expectedEndVersion,
-          commitVersions.isEmpty()
-              ? Optional.empty()
-              : Optional.of(commitVersions.get(commitVersions.size() - 1)));
-    }
+    expectedEndVersionOpt.ifPresent(
+        expectedEndVersion -> {
+          if (!Objects.equals(ListUtils.getLast(commitVersions), expectedEndVersion)) {
+            throw endVersionNotFound(
+                tablePath.toString(), expectedEndVersion, ListUtils.getLast(commitVersions));
+          }
+        });
   }
 
   /**

@@ -287,6 +287,18 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
     }
 
     @Override
+    ExpressionTransformResult visitSubstring(ScalarExpression substring) {
+      List<ExpressionTransformResult> children =
+          substring.getChildren().stream().map(this::visit).collect(toList());
+      ScalarExpression transformedExpression =
+          SubstringEvaluator.validateAndTransform(
+              substring,
+              children.stream().map(e -> e.expression).collect(toList()),
+              children.stream().map(e -> e.outputType).collect(toList()));
+      return new ExpressionTransformResult(transformedExpression, StringType.STRING);
+    }
+
+    @Override
     ExpressionTransformResult visitLike(final Predicate like) {
       List<ExpressionTransformResult> children =
           like.getChildren().stream().map(this::visit).collect(toList());
@@ -296,6 +308,18 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
               children.stream().map(e -> e.expression).collect(toList()),
               children.stream().map(e -> e.outputType).collect(toList()));
 
+      return new ExpressionTransformResult(transformedExpression, BooleanType.BOOLEAN);
+    }
+
+    @Override
+    ExpressionTransformResult visitStartsWith(Predicate startsWith) {
+      List<ExpressionTransformResult> children =
+          startsWith.getChildren().stream().map(this::visit).collect(toList());
+      Predicate transformedExpression =
+          StartsWithExpressionEvaluator.validateAndTransform(
+              startsWith,
+              children.stream().map(e -> e.expression).collect(toList()),
+              children.stream().map(e -> e.outputType).collect(toList()));
       return new ExpressionTransformResult(transformedExpression, BooleanType.BOOLEAN);
     }
 
@@ -604,10 +628,22 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
     }
 
     @Override
+    ColumnVector visitSubstring(ScalarExpression subString) {
+      return SubstringEvaluator.eval(
+          subString.getChildren().stream().map(this::visit).collect(toList()));
+    }
+
+    @Override
     ColumnVector visitLike(final Predicate like) {
       List<Expression> children = like.getChildren();
       return LikeExpressionEvaluator.eval(
           children, children.stream().map(this::visit).collect(toList()));
+    }
+
+    @Override
+    ColumnVector visitStartsWith(Predicate startsWith) {
+      return StartsWithExpressionEvaluator.eval(
+          startsWith.getChildren().stream().map(this::visit).collect(toList()));
     }
 
     /**

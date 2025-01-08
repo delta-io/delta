@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.hadoop.fs.Path
 
 import org.apache.spark.{DebugFilesystem, SparkThrowable}
 import org.apache.spark.sql.{DataFrame, QueryTest, SaveMode}
@@ -221,10 +222,11 @@ trait DeltaInsertIntoTest extends QueryTest with DeltaDMLTestUtils with DeltaSQL
     val isSQL: Boolean = false
     def runInsert(columns: Seq[String], whereCol: String, whereValue: Int): Unit = {
       val tablePath = DeltaLog.forTable(spark, TableIdentifier("target")).dataPath
+      val checkpointLocation = new Path(tablePath, "_checkpoint")
       val query = spark.readStream
         .table("source")
         .writeStream
-        .option("checkpointLocation", tablePath.toString)
+        .option("checkpointLocation", checkpointLocation.toString)
         .format("delta")
         .trigger(Trigger.AvailableNow())
         .toTable("target")
