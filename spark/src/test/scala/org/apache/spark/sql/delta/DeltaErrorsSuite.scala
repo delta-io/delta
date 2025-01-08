@@ -756,16 +756,6 @@ trait DeltaErrorsSuiteBase
     }
     {
       val e = intercept[DeltaIllegalArgumentException] {
-        throw DeltaErrors.unsupportedGenerateModeException("modeName")
-      }
-      import org.apache.spark.sql.delta.commands.DeltaGenerateCommand
-      val supportedModes = DeltaGenerateCommand.modeNameToGenerationFunc.keys.toSeq.mkString(", ")
-      checkErrorMessage(e, None, None,
-        Some(s"Specified mode 'modeName' is not supported. " +
-        s"Supported modes are: $supportedModes"))
-    }
-    {
-      val e = intercept[DeltaIllegalArgumentException] {
         throw DeltaErrors.unsupportedColumnMappingModeException("modeName")
       }
       val supportedModes = DeltaColumnMapping.supportedModes.map(_.name).toSeq.mkString(", ")
@@ -775,6 +765,16 @@ trait DeltaErrorsSuiteBase
         sqlStateOpt = Some("0AKDC"),
         errMsgOpt = Some(s"Specified mode 'modeName' is not supported. " +
           s"Supported modes are: $supportedModes"))
+    }
+    {
+      val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.unsupportedGenerateModeException("modeName")
+      }
+      import org.apache.spark.sql.delta.commands.DeltaGenerateCommand
+      val supportedModes = DeltaGenerateCommand.modeNameToGenerationFunc.keys.toSeq.mkString(", ")
+      checkErrorMessage(e, None, None,
+        Some(s"Specified mode 'modeName' is not supported. " +
+        s"Supported modes are: $supportedModes"))
     }
     {
       import org.apache.spark.sql.delta.DeltaOptions.EXCLUDE_REGEX_OPTION
