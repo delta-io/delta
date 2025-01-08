@@ -295,7 +295,7 @@ public final class DeltaErrors {
 
   public static KernelException missingNumRecordsStatsForRowTracking() {
     return new KernelException(
-        "Cannot write to a rowTracking-supported table without 'numRecord' statistics. "
+        "Cannot write to a rowTracking-supported table without 'numRecords' statistics. "
             + "Connectors are expected to populate the number of records statistics when "
             + "writing to a Delta table with 'rowTracking' table feature supported.");
   }
