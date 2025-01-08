@@ -2093,4 +2093,17 @@ class DeltaColumnMappingSuite extends QueryTest
       }
     }
   }
+
+  test("Illegal null value specified for delta.columnMapping.mode option") {
+    withTempPath { tempPath =>
+      val ex = intercept[DeltaIllegalArgumentException] {
+        spark.range(10).write.mode("overwrite").format("delta").
+          option("delta.columnMapping.mode", null).save(tempPath.toString)
+      }
+      val supportedModes = DeltaColumnMapping.supportedModes.map(_.name).toSeq.mkString(", ")
+      assert(ex.getErrorClass === "DELTA_MODE_NOT_SUPPORTED")
+      assert(ex.getMessage.contains("Specified mode 'null' is not supported. " +
+        s"Supported modes are: $supportedModes"))
+    }
+  }
 }
