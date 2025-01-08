@@ -26,7 +26,7 @@ import java.util.function.Supplier;
 
 /** A timer class for measuring the duration of operations in nanoseconds */
 public class Timer {
-  
+
   private final LongAdder count = new LongAdder();
   private final LongAdder totalTime = new LongAdder();
 
