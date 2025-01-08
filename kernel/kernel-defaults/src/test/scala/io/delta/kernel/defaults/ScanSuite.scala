@@ -209,6 +209,8 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       not(equals(col("a"), ofInt(1))), // NOT a = 1
       not(equals(ofInt(1), col("a"))), // NOT 1 = a
       not(nullSafeEquals(col("a"), ofInt(1))), // NOT a <=> 1
+      not(nullSafeEquals(ofInt(1), col("a"))), // NOT 1 <=> a
+      nullSafeEquals(ofInt(2), col("a")), // 2 <=> a
       nullSafeEquals(col("a"), ofInt(2)) // a <=> 2
     )
   )
@@ -1083,12 +1085,22 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
         expNumFiles = 3)
 
       checkResults(
+        predicate = nullSafeEquals(ofNull(STRING), col("value")),
+        expNumPartitions = 3,
+        expNumFiles = 3)
+
+      checkResults(
         predicate = equals(col("value"), ofString("a")),
         expNumPartitions = 3, // should be 2 if we can correctly skip "value = 'a'" for nulls
         expNumFiles = 4) // should be 2 if we can correctly skip "value = 'a'" for nulls
 
       checkResults(
         predicate = nullSafeEquals(col("value"), ofString("a")),
+        expNumPartitions = 2,
+        expNumFiles = 2)
+
+      checkResults(
+        predicate = nullSafeEquals(ofString("a"), col("value")),
         expNumPartitions = 2,
         expNumFiles = 2)
 

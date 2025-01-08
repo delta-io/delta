@@ -452,7 +452,6 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
               argResults.leftResult,
               argResults.rightResult,
               (compareResult) -> (compareResult <= 0));
-        case "<=>":
         case "IS NOT DISTINCT FROM":
           return nullSafeComparatorVector(
               argResults.leftResult,

@@ -255,7 +255,7 @@ public class DataSkippingUtils {
       case "<=":
       case ">":
       case ">=":
-      case "<=>":
+      case "IS NOT DISTINCT FROM":
         Expression left = getLeft(dataFilters);
         Expression right = getRight(dataFilters);
 
@@ -321,7 +321,7 @@ public class DataSkippingUtils {
         return Optional.of(
             constructBinaryDataSkippingPredicate(
                 ">=", schemaHelper.getMaxColumn(leftCol), rightLit));
-      case "<=>":
+      case "IS NOT DISTINCT FROM":
         return constructDataSkippingFilter(rewriteEqualNullSafe(leftCol, rightLit), schemaHelper);
       default:
         throw new IllegalArgumentException(
@@ -350,7 +350,7 @@ public class DataSkippingUtils {
           put("<=", ">=");
           put(">", "<");
           put(">=", "<=");
-          put("<=>", "<=>");
+          put("IS NOT DISTINCT FROM", "IS NOT DISTINCT FROM");
         }
       };
 
@@ -438,7 +438,7 @@ public class DataSkippingUtils {
       case ">=":
         return constructDataSkippingFilter(
             new Predicate("<", childPredicate.getChildren()), schemaHelper);
-      case "<=>":
+      case "IS NOT DISTINCT FROM":
         return constructDataSkippingFiltersForNotEqual(
             childPredicate,
             schemaHelper,
@@ -532,13 +532,14 @@ public class DataSkippingUtils {
         "AND", new Predicate("IS_NOT_NULL", leftCol), new Predicate("=", leftCol, rightLit));
   }
 
-  /** Helper method for building DataSkippingPredicate for NOT =/<=> */
+  /** Helper method for building DataSkippingPredicate for NOT =/IS NOT DISTINCT FROM */
   private static Optional<DataSkippingPredicate> constructDataSkippingFiltersForNotEqual(
       Predicate equalPredicate,
       StatsSchemaHelper schemaHelper,
       BiFunction<Column, Literal, Optional<DataSkippingPredicate>> buildDataSkippingPredicateFunc) {
-    if (!"=".equals(equalPredicate.getName()) && !"<=>".equals(equalPredicate.getName())) {
-      throw new IllegalArgumentException("Expects predicate to be = or <=>");
+    if (!"=".equals(equalPredicate.getName())
+        && !"IS NOT DISTINCT FROM".equals(equalPredicate.getName())) {
+      throw new IllegalArgumentException("Expects predicate to be = or IS NOT DISTINCT FROM");
     }
     Expression leftChild = getLeft(equalPredicate);
     Expression rightChild = getRight(equalPredicate);
