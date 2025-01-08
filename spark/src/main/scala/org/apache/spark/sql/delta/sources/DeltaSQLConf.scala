@@ -153,8 +153,8 @@ trait DeltaSQLConfBase {
     buildConf("snapshotPartitionBytes")
       .internal()
       .doc("Number of bytes of index files to put in each partition when building a Delta Lake " +
-        "snapshot. This can be used to dynamically set the number of partitions for state" +
-        "reconstruction based on the size of the file indices.")
+        "snapshot. This can be used to dynamically set the number of partitions used for a Delta" +
+        "Lake snapshot based on the size of the file indices.")
       .bytesConf(ByteUnit.BYTE)
       .checkValue(n => n > 0, "Delta snapshot partition bytes must be positive.")
       .createOptional
