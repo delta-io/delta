@@ -79,6 +79,7 @@ public class SnapshotReportImpl implements SnapshotReport {
   public String getTablePath() {
     return tablePath;
   }
+
   @Override
   public UUID getReportUUID() {
     return reportUUID;

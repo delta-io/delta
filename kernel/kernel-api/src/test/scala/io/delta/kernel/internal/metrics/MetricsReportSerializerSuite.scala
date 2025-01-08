@@ -36,9 +36,9 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
 
   private def testSnapshotReport(snapshotReport: SnapshotReport): Unit = {
     val timestampToVersionResolutionDuration = optionToString(
-      snapshotReport.getSnapshotMetrics().getTimestampToVersionResolutionDuration())
+      snapshotReport.getSnapshotMetrics().getTimestampToVersionResolutionDurationNs())
     val loadProtocolAndMetadataDuration =
-      snapshotReport.getSnapshotMetrics().getLoadInitialDeltaActionsDuration()
+      snapshotReport.getSnapshotMetrics().getLoadInitialDeltaActionsDurationNs()
     val exception: Optional[String] = snapshotReport.getException().map(_.toString)
     val expectedJson =
       s"""
@@ -49,8 +49,8 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |"version":${optionToString(snapshotReport.getVersion())},
          |"providedTimestamp":${optionToString(snapshotReport.getProvidedTimestamp())},
          |"snapshotMetrics":{
-         |"timestampToVersionResolutionDuration":${timestampToVersionResolutionDuration},
-         |"loadInitialDeltaActionsDuration":${loadProtocolAndMetadataDuration}
+         |"timestampToVersionResolutionDurationNs":${timestampToVersionResolutionDuration},
+         |"loadInitialDeltaActionsDurationNs":${loadProtocolAndMetadataDuration}
          |}
          |}
          |""".stripMargin.replaceAll("\n", "")
@@ -59,8 +59,8 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
 
   test("SnapshotReport serializer") {
     val snapshotContext1 = SnapshotQueryContext.forTimestampSnapshot("/table/path", 0)
-    snapshotContext1.getSnapshotMetrics.timestampToVersionResolutionDuration.record(10)
-    snapshotContext1.getSnapshotMetrics.loadInitialDeltaActionsDuration.record(1000)
+    snapshotContext1.getSnapshotMetrics.timestampToVersionResolutionTimer.record(10)
+    snapshotContext1.getSnapshotMetrics.loadInitialDeltaActionsTimer.record(1000)
     snapshotContext1.setVersion(1)
     val exception = new RuntimeException("something something failed")
 
@@ -79,8 +79,8 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
         |"version":1,
         |"providedTimestamp":0,
         |"snapshotMetrics":{
-        |"timestampToVersionResolutionDuration":10,
-        |"loadInitialDeltaActionsDuration":1000
+        |"timestampToVersionResolutionDurationNs":10,
+        |"loadInitialDeltaActionsDurationNs":1000
         |}
         |}
         |""".stripMargin.replaceAll("\n", "")
