@@ -136,7 +136,7 @@ public class AddFile extends RowBackedAction {
 
   /** Constructs an {@link AddFile} action from the given 'AddFile' {@link Row}. */
   public AddFile(Row row) {
-    super(row, FULL_SCHEMA);
+    super(row);
   }
 
   public String getPath() {
@@ -181,10 +181,12 @@ public class AddFile extends RowBackedAction {
   }
 
   public Optional<DataFileStatistics> getStats() {
-    int index = getFieldIndex("stats");
-    return row.isNullAt(index)
-        ? Optional.empty()
-        : DataFileStatistics.deserializeFromJson(row.getString(index));
+    return getFieldIndexOpt("stats")
+        .flatMap(
+            index ->
+                row.isNullAt(index)
+                    ? Optional.empty()
+                    : DataFileStatistics.deserializeFromJson(row.getString(index)));
   }
 
   public Optional<Long> getNumRecords() {

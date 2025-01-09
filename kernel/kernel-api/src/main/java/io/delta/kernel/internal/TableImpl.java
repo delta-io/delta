@@ -26,8 +26,11 @@ import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.metrics.SnapshotQueryContext;
+import io.delta.kernel.internal.metrics.SnapshotReportImpl;
 import io.delta.kernel.internal.snapshot.SnapshotManager;
 import io.delta.kernel.internal.util.Clock;
+import io.delta.kernel.metrics.SnapshotReport;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
@@ -90,19 +93,39 @@ public class TableImpl implements Table {
 
   @Override
   public Snapshot getLatestSnapshot(Engine engine) throws TableNotFoundException {
-    return snapshotManager.buildLatestSnapshot(engine);
+    SnapshotQueryContext snapshotContext = SnapshotQueryContext.forLatestSnapshot(tablePath);
+    try {
+      return snapshotManager.buildLatestSnapshot(engine, snapshotContext);
+    } catch (Exception e) {
+      recordSnapshotErrorReport(engine, snapshotContext, e);
+      throw e;
+    }
   }
 
   @Override
   public Snapshot getSnapshotAsOfVersion(Engine engine, long versionId)
       throws TableNotFoundException {
-    return snapshotManager.getSnapshotAt(engine, versionId);
+    SnapshotQueryContext snapshotContext =
+        SnapshotQueryContext.forVersionSnapshot(tablePath, versionId);
+    try {
+      return snapshotManager.getSnapshotAt(engine, versionId, snapshotContext);
+    } catch (Exception e) {
+      recordSnapshotErrorReport(engine, snapshotContext, e);
+      throw e;
+    }
   }
 
   @Override
   public Snapshot getSnapshotAsOfTimestamp(Engine engine, long millisSinceEpochUTC)
       throws TableNotFoundException {
-    return snapshotManager.getSnapshotForTimestamp(engine, millisSinceEpochUTC);
+    SnapshotQueryContext snapshotContext =
+        SnapshotQueryContext.forTimestampSnapshot(tablePath, millisSinceEpochUTC);
+    try {
+      return snapshotManager.getSnapshotForTimestamp(engine, millisSinceEpochUTC, snapshotContext);
+    } catch (Exception e) {
+      recordSnapshotErrorReport(engine, snapshotContext, e);
+      throw e;
+    }
   }
 
   @Override
@@ -315,5 +338,12 @@ public class TableImpl implements Table {
 
     logger.info("{}: Reading the commit files with readSchema {}", tablePath, readSchema);
     return DeltaLogActionUtils.readCommitFiles(engine, commitFiles, readSchema);
+  }
+
+  /** Creates a {@link SnapshotReport} and pushes it to any {@link MetricsReporter}s. */
+  private void recordSnapshotErrorReport(
+      Engine engine, SnapshotQueryContext snapshotContext, Exception e) {
+    SnapshotReport snapshotReport = SnapshotReportImpl.forError(snapshotContext, e);
+    engine.getMetricsReporters().forEach(reporter -> reporter.report(snapshotReport));
   }
 }

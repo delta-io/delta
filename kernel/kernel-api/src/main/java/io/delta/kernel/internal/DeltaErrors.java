@@ -288,6 +288,19 @@ public final class DeltaErrors {
     return new ConcurrentWriteException(message);
   }
 
+  public static KernelException missingNumRecordsStatsForRowTracking() {
+    return new KernelException(
+        "Cannot write to a rowTracking-supported table without 'numRecords' statistics. "
+            + "Connectors are expected to populate the number of records statistics when "
+            + "writing to a Delta table with 'rowTracking' table feature supported.");
+  }
+
+  public static KernelException rowTrackingSupportedWithDomainMetadataUnsupported() {
+    return new KernelException(
+        "Feature 'rowTracking' is supported and depends on feature 'domainMetadata',"
+            + " but 'domainMetadata' is unsupported");
+  }
+
   /* ------------------------ HELPER METHODS ----------------------------- */
   private static String formatTimestamp(long millisSinceEpochUTC) {
     return new Timestamp(millisSinceEpochUTC).toInstant().toString();

@@ -16,20 +16,19 @@
 package io.delta.kernel.metrics;
 
 import java.util.Optional;
-import java.util.UUID;
 
-/** Defines the common fields that are shared by reports for Delta operations */
-public interface DeltaOperationReport extends MetricsReport {
+/** Stores the metrics results for a {@link SnapshotReport} */
+public interface SnapshotMetricsResult {
 
-  /** @return the path of the table */
-  String getTablePath();
+  /**
+   * @return the duration (ns) to resolve the provided timestamp to a table version for timestamp
+   *     time-travel queries. Empty for time-travel by version or non-time-travel queries.
+   */
+  Optional<Long> getTimestampToVersionResolutionDurationNs();
 
-  /** @return a string representation of the operation this report is for */
-  String getOperationType();
-
-  /** @return a unique ID for this report */
-  UUID getReportUUID();
-
-  /** @return the exception thrown if this report is for a failed operation, otherwise empty */
-  Optional<Exception> getException();
+  /**
+   * @return the duration (ns) to load the initial delta actions for the snapshot (such as the table
+   *     protocol and metadata). 0 if snapshot construction fails before log replay.
+   */
+  long getLoadInitialDeltaActionsDurationNs();
 }
