@@ -246,9 +246,11 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
   test("empty _delta_log folder") {
     withTempDir { dir =>
       new File(dir, "_delta_log").mkdirs()
-      intercept[TableNotFoundException] {
+      val exMsg = intercept[TableNotFoundException] {
         latestSnapshot(dir.getAbsolutePath)
-      }
+      }.getMessage
+
+      assert(exMsg.contains("No delta files found in the directory"))
     }
   }
 
