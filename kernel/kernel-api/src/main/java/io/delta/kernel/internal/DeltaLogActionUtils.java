@@ -112,7 +112,7 @@ public class DeltaLogActionUtils {
 
     // Verify commit files found
     // (check that they are continuous and start with startVersion and end with endVersion)
-    verifyDeltaVersions(commitFiles, startVersion, Optional.of(endVersion), tablePath);
+    verifyDeltaVersions(commitFiles, startVersion, endVersion, tablePath);
 
     return commitFiles;
   }
@@ -192,19 +192,20 @@ public class DeltaLogActionUtils {
 
   /**
    * Given a list of delta versions, verifies that they are (1) contiguous (2) versions starts with
-   * expectedStartVersion and (3) end with expectedEndVersionOpt, if provided. Throws an exception
-   * if any of these are not true.
+   * expectedStartVersion and (3) end with expectedEndVersion. Throws an exception if any of these
+   * are not true.
    *
    * <p>Public to expose for testing only.
    *
    * @param commitFiles in sorted increasing order according to the commit version
    */
-  public static void verifyDeltaVersions(
+  static void verifyDeltaVersions(
       List<FileStatus> commitFiles,
       long expectedStartVersion,
-      Optional<Long> expectedEndVersionOpt,
+      long expectedEndVersion,
       Path tablePath) {
-    final List<Long> commitVersions =
+
+    List<Long> commitVersions =
         commitFiles.stream()
             .map(fs -> FileNames.deltaVersion(new Path(fs.getPath())))
             .collect(Collectors.toList());
@@ -225,13 +226,10 @@ public class DeltaLogActionUtils {
           commitVersions.isEmpty() ? Optional.empty() : Optional.of(commitVersions.get(0)));
     }
 
-    expectedEndVersionOpt.ifPresent(
-        expectedEndVersion -> {
-          if (!Objects.equals(ListUtils.getLast(commitVersions), expectedEndVersion)) {
-            throw endVersionNotFound(
-                tablePath.toString(), expectedEndVersion, ListUtils.getLast(commitVersions));
-          }
-        });
+    if (!Objects.equals(ListUtils.getLast(commitVersions), expectedEndVersion)) {
+      throw endVersionNotFound(
+          tablePath.toString(), expectedEndVersion, ListUtils.getLast(commitVersions));
+    }
   }
 
   /**

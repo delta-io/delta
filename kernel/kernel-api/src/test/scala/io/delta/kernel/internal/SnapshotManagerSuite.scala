@@ -34,6 +34,90 @@ import org.scalatest.funsuite.AnyFunSuite
 
 class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
+  test("verifyDeltaVersions") {
+    // empty array
+    SnapshotManager.verifyDeltaVersions(
+      Collections.emptyList(),
+      Optional.empty(),
+      Optional.empty(),
+      new Path("/path/to/table"))
+    // contiguous versions
+    SnapshotManager.verifyDeltaVersions(
+      Arrays.asList(1, 2, 3),
+      Optional.empty(),
+      Optional.empty(),
+      new Path("/path/to/table"))
+    // contiguous versions with correct `expectedStartVersion` and `expectedStartVersion`
+    SnapshotManager.verifyDeltaVersions(
+      Arrays.asList(1, 2, 3),
+      Optional.empty(),
+      Optional.of(3),
+      new Path("/path/to/table"))
+    SnapshotManager.verifyDeltaVersions(
+      Arrays.asList(1, 2, 3),
+      Optional.of(1),
+      Optional.empty(),
+      new Path("/path/to/table"))
+    SnapshotManager.verifyDeltaVersions(
+      Arrays.asList(1, 2, 3),
+      Optional.of(1),
+      Optional.of(3),
+      new Path("/path/to/table"))
+    // `expectedStartVersion` or `expectedEndVersion` doesn't match
+    intercept[IllegalArgumentException] {
+      SnapshotManager.verifyDeltaVersions(
+        Arrays.asList(1, 2),
+        Optional.of(0),
+        Optional.empty(),
+        new Path("/path/to/table"))
+    }
+    intercept[IllegalArgumentException] {
+      SnapshotManager.verifyDeltaVersions(
+        Arrays.asList(1, 2),
+        Optional.empty(),
+        Optional.of(3),
+        new Path("/path/to/table"))
+    }
+    intercept[IllegalArgumentException] {
+      SnapshotManager.verifyDeltaVersions(
+        Collections.emptyList(),
+        Optional.of(0),
+        Optional.empty(),
+        new Path("/path/to/table"))
+    }
+    intercept[IllegalArgumentException] {
+      SnapshotManager.verifyDeltaVersions(
+        Collections.emptyList(),
+        Optional.empty(),
+        Optional.of(3),
+        new Path("/path/to/table"))
+    }
+    // non contiguous versions
+    intercept[InvalidTableException] {
+      SnapshotManager.verifyDeltaVersions(
+        Arrays.asList(1, 3),
+        Optional.empty(),
+        Optional.empty(),
+        new Path("/path/to/table"))
+    }
+    // duplicates in versions
+    intercept[InvalidTableException] {
+      SnapshotManager.verifyDeltaVersions(
+        Arrays.asList(1, 2, 2, 3),
+        Optional.empty(),
+        Optional.empty(),
+        new Path("/path/to/table"))
+    }
+    // unsorted versions
+    intercept[InvalidTableException] {
+      SnapshotManager.verifyDeltaVersions(
+        Arrays.asList(3, 2, 1),
+        Optional.empty(),
+        Optional.empty(),
+        new Path("/path/to/table"))
+    }
+  }
+
   //////////////////////////////////////////////////////////////////////////////////
   // getLogSegmentForVersion tests
   //////////////////////////////////////////////////////////////////////////////////
