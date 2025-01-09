@@ -431,8 +431,16 @@ public class SnapshotManager {
       Optional<Long> versionToLoadOpt,
       List<FileStatus> newFiles) {
     if (newFiles.isEmpty()) {
-      throw new TableNotFoundException(
-          tablePath.toString(), format("No delta files found in the directory: %s", logPath));
+      if (startCheckpointOpt.isPresent()) {
+        // We either (a) determined this checkpoint version from the _LAST_CHECKPOINT file, or (b)
+        // found the last complete checkpoint before our versionToLoad. In either case, we didn't
+        // see the checkpoint file in the listing.
+        throw DeltaErrors.missingCheckpoint(tablePath.toString(), startCheckpointOpt.get());
+      } else {
+        // No files found even when listing from 0 => empty directory => table does not exist yet.
+        throw new TableNotFoundException(
+            tablePath.toString(), format("No delta files found in the directory: %s", logPath));
+      }
     }
 
     logDebug(
