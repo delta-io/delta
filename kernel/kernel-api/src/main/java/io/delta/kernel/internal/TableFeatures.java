@@ -138,14 +138,14 @@ public class TableFeatures {
         throw unsupportedWriterProtocol(tablePath, minWriterVersion);
       case 7:
         for (String writerFeature : protocol.getWriterFeatures()) {
-          // For version 7, we allow 'invariants' to be present in the protocol's writerFeatures
-          // to unblock certain use cases, provided that no invariants are defined in the schema.
-          if (writerFeature.equals(INVARIANTS_FEATURE_NAME)) continue;
-          if (!SUPPORTED_WRITER_FEATURES.contains(writerFeature)) {
+          if (writerFeature.equals(INVARIANTS_FEATURE_NAME)) {
+            // For version 7, we allow 'invariants' to be present in the protocol's writerFeatures
+            // to unblock certain use cases, provided that no invariants are defined in the schema.
+            validateNoInvariants(tableSchema);
+          } else if (!SUPPORTED_WRITER_FEATURES.contains(writerFeature)) {
             throw unsupportedWriterFeature(tablePath, writerFeature);
           }
         }
-        validateNoInvariants(tableSchema);
 
         // Eventually we may have a way to declare and enforce dependencies between features.
         // By putting this check for row tracking here, it makes it easier to spot that row
