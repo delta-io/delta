@@ -51,6 +51,7 @@ import java.util.*;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
+import java.util.stream.LongStream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -76,6 +77,42 @@ public class SnapshotManager {
   /////////////////
   // Public APIs //
   /////////////////
+
+  /**
+   * - Verify the versions are contiguous. - Verify the versions start with `expectedStartVersion`
+   * if it's specified. - Verify the versions end with `expectedEndVersion` if it's specified.
+   */
+  public static void verifyDeltaVersions(
+      List<Long> versions,
+      Optional<Long> expectedStartVersion,
+      Optional<Long> expectedEndVersion,
+      Path tablePath) {
+    if (!versions.isEmpty()) {
+      List<Long> contVersions =
+          LongStream.rangeClosed(versions.get(0), versions.get(versions.size() - 1))
+              .boxed()
+              .collect(Collectors.toList());
+      if (!contVersions.equals(versions)) {
+        throw new InvalidTableException(
+            tablePath.toString(),
+            String.format("Missing delta files: versions are not continuous: (%s)", versions));
+      }
+    }
+    expectedStartVersion.ifPresent(
+        v -> {
+          checkArgument(
+              !versions.isEmpty() && Objects.equals(versions.get(0), v),
+              "Did not get the first delta file version %s to compute Snapshot",
+              v);
+        });
+    expectedEndVersion.ifPresent(
+        v -> {
+          checkArgument(
+              !versions.isEmpty() && Objects.equals(versions.get(versions.size() - 1), v),
+              "Did not get the last delta file version %s to compute Snapshot",
+              v);
+        });
+  }
 
   /**
    * Construct the latest snapshot for given table.
@@ -624,10 +661,18 @@ public class SnapshotManager {
                         .map(x -> new Path(x.getPath()).getName())
                         .toArray())));
 
+    final LinkedList<Long> deltaVersionsAfterCheckpoint =
+        deltasAfterCheckpoint.stream()
+            .map(fileStatus -> FileNames.deltaVersion(new Path(fileStatus.getPath())))
+            .collect(Collectors.toCollection(LinkedList::new));
+
+    logDebug(
+        () -> format("deltaVersions: %s", Arrays.toString(deltaVersionsAfterCheckpoint.toArray())));
+
     final long newVersion =
-        deltasAfterCheckpoint.isEmpty()
+        deltaVersionsAfterCheckpoint.isEmpty()
             ? newCheckpointOpt.get().version
-            : FileNames.deltaVersion(new Path(ListUtils.getLast(deltasAfterCheckpoint).getPath()));
+            : deltaVersionsAfterCheckpoint.getLast();
 
     // There should be a delta file present for the newVersion that we are loading
     // (Even if `deltasAfterCheckpoint` is empty, `deltas` should not be)
@@ -645,14 +690,11 @@ public class SnapshotManager {
             });
 
     // We may just be getting a checkpoint file after the filtering
-    if (!deltasAfterCheckpoint.isEmpty()) {
-      final long firstDeltaVersionAfterCheckpoint =
-          FileNames.deltaVersion(new Path(deltasAfterCheckpoint.get(0).getPath()));
-
+    if (!deltaVersionsAfterCheckpoint.isEmpty()) {
       // If we have deltas after the checkpoint, the first file should be 1 greater than our
       // last checkpoint version. If no checkpoint is present, this means the first delta file
       // should be version 0.
-      if (firstDeltaVersionAfterCheckpoint != newCheckpointVersion + 1) {
+      if (deltaVersionsAfterCheckpoint.getFirst() != newCheckpointVersion + 1) {
         throw new InvalidTableException(
             tablePath.toString(),
             String.format(
@@ -663,10 +705,10 @@ public class SnapshotManager {
           "Verified delta files are contiguous from version {} to {}",
           newCheckpointVersion + 1,
           newVersion);
-      DeltaLogActionUtils.verifyDeltaVersions(
-          deltasAfterCheckpoint,
-          newCheckpointVersion + 1 /* expected first version */,
-          versionToLoadOpt /* expected end version */,
+      verifyDeltaVersions(
+          deltaVersionsAfterCheckpoint,
+          Optional.of(newCheckpointVersion + 1),
+          versionToLoadOpt,
           tablePath);
     }
 
