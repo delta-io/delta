@@ -116,17 +116,12 @@ public final class DeltaErrors {
   }
 
   public static KernelException endVersionNotFound(
-      String tablePath, long endVersionRequested, Optional<Long> latestAvailableVersion) {
+      String tablePath, long endVersionRequested, long latestAvailableVersion) {
     String message =
         String.format(
             "%s: Requested table changes ending with endVersion=%d but no log file found for "
-                + "version %d%s",
-            tablePath,
-            endVersionRequested,
-            endVersionRequested,
-            latestAvailableVersion
-                .map(version -> String.format(". Latest available version is %d", version))
-                .orElse(""));
+                + "version %d. Latest available version is %d",
+            tablePath, endVersionRequested, endVersionRequested, latestAvailableVersion);
     return new KernelException(message);
   }
 

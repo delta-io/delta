@@ -28,6 +28,7 @@ import io.delta.kernel.expressions.ExpressionEvaluator;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.lang.ListUtils;
 import io.delta.kernel.internal.replay.ActionsIterator;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.types.*;
@@ -228,11 +229,7 @@ public class DeltaLogActionUtils {
     if (commitVersions.isEmpty()
         || !Objects.equals(commitVersions.get(commitVersions.size() - 1), expectedEndVersion)) {
       throw endVersionNotFound(
-          tablePath.toString(),
-          expectedEndVersion,
-          commitVersions.isEmpty()
-              ? Optional.empty()
-              : Optional.of(commitVersions.get(commitVersions.size() - 1)));
+          tablePath.toString(), expectedEndVersion, ListUtils.getLast(commitVersions));
     }
   }
 
