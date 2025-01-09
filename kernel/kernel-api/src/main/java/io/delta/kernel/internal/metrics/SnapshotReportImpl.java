@@ -20,10 +20,9 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.metrics.SnapshotMetricsResult;
 import io.delta.kernel.metrics.SnapshotReport;
 import java.util.Optional;
-import java.util.UUID;
 
 /** A basic POJO implementation of {@link SnapshotReport} for creating them */
-public class SnapshotReportImpl implements SnapshotReport {
+public class SnapshotReportImpl extends DeltaOperationReportImpl implements SnapshotReport {
 
   /**
    * Creates a {@link SnapshotReport} for a failed snapshot query.
@@ -54,12 +53,9 @@ public class SnapshotReportImpl implements SnapshotReport {
         Optional.empty() /* exception */);
   }
 
-  private final String tablePath;
-  private final UUID reportUUID;
   private final SnapshotMetricsResult snapshotMetrics;
   private final Optional<Long> version;
   private final Optional<Long> providedTimestamp;
-  private final Optional<Exception> exception;
 
   private SnapshotReportImpl(
       String tablePath,
@@ -67,22 +63,10 @@ public class SnapshotReportImpl implements SnapshotReport {
       Optional<Long> version,
       Optional<Long> providedTimestamp,
       Optional<Exception> exception) {
-    this.tablePath = requireNonNull(tablePath);
-    this.reportUUID = UUID.randomUUID();
+    super(tablePath, exception);
     this.snapshotMetrics = requireNonNull(snapshotMetrics).captureSnapshotMetricsResult();
     this.version = requireNonNull(version);
     this.providedTimestamp = requireNonNull(providedTimestamp);
-    this.exception = requireNonNull(exception);
-  }
-
-  @Override
-  public String getTablePath() {
-    return tablePath;
-  }
-
-  @Override
-  public UUID getReportUUID() {
-    return reportUUID;
   }
 
   @Override
@@ -98,10 +82,5 @@ public class SnapshotReportImpl implements SnapshotReport {
   @Override
   public Optional<Long> getProvidedTimestamp() {
     return providedTimestamp;
-  }
-
-  @Override
-  public Optional<Exception> getException() {
-    return exception;
   }
 }
