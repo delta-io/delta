@@ -15,9 +15,21 @@
  */
 package io.delta.kernel.metrics;
 
+import com.fasterxml.jackson.annotation.JsonPropertyOrder;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import java.util.Optional;
 
 /** Defines the metadata and metrics for a snapshot construction {@link MetricsReport} */
+@JsonSerialize(as = SnapshotReport.class)
+@JsonPropertyOrder({
+  "tablePath",
+  "operationType",
+  "reportUUID",
+  "exception",
+  "version",
+  "providedTimestamp",
+  "snapshotMetrics"
+})
 public interface SnapshotReport extends DeltaOperationReport {
 
   /**
@@ -30,19 +42,19 @@ public interface SnapshotReport extends DeltaOperationReport {
    *
    * @return the version of the snapshot
    */
-  Optional<Long> version();
+  Optional<Long> getVersion();
 
   /**
    * @return the timestamp provided for time-travel, empty if this is not a timestamp-based
    *     time-travel query
    */
-  Optional<Long> providedTimestamp();
+  Optional<Long> getProvidedTimestamp();
 
   /** @return the metrics for this snapshot construction */
-  SnapshotMetricsResult snapshotMetrics();
+  SnapshotMetricsResult getSnapshotMetrics();
 
   @Override
-  default String operationType() {
+  default String getOperationType() {
     return "Snapshot";
   }
 }

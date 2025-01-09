@@ -110,34 +110,34 @@ class MetricsReportSuite extends AnyFunSuite with TestUtils {
     val (snapshotReport, duration, exception) = getSnapshotReport(f, path, expectException)
 
     // Verify contents
-    assert(snapshotReport.tablePath == resolvePath(path))
-    assert(snapshotReport.operationType == "Snapshot")
+    assert(snapshotReport.getTablePath == resolvePath(path))
+    assert(snapshotReport.getOperationType == "Snapshot")
     exception match {
       case Some(e) =>
-        assert(snapshotReport.exception().isPresent &&
-          Objects.equals(snapshotReport.exception().get(), e))
-      case None => assert(!snapshotReport.exception().isPresent)
+        assert(snapshotReport.getException().isPresent &&
+          Objects.equals(snapshotReport.getException().get(), e))
+      case None => assert(!snapshotReport.getException().isPresent)
     }
-    assert(snapshotReport.reportUUID != null)
-    assert(Objects.equals(snapshotReport.version, expectedVersion),
-      s"Expected version $expectedVersion found ${snapshotReport.version}")
-    assert(Objects.equals(snapshotReport.providedTimestamp, expectedProvidedTimestamp))
+    assert(snapshotReport.getReportUUID != null)
+    assert(Objects.equals(snapshotReport.getVersion, expectedVersion),
+      s"Expected version $expectedVersion found ${snapshotReport.getVersion}")
+    assert(Objects.equals(snapshotReport.getProvidedTimestamp, expectedProvidedTimestamp))
 
     // Since we cannot know the actual durations of these we sanity check that they are > 0 and
     // less than the total operation duration whenever they are expected to be non-zero/non-empty
     if (expectNonEmptyTimestampToVersionResolutionDuration) {
-      assert(snapshotReport.snapshotMetrics.timestampToVersionResolutionDurationNs.isPresent)
-      assert(snapshotReport.snapshotMetrics.timestampToVersionResolutionDurationNs.get > 0)
-      assert(snapshotReport.snapshotMetrics.timestampToVersionResolutionDurationNs.get <
+      assert(snapshotReport.getSnapshotMetrics.getTimestampToVersionResolutionDurationNs.isPresent)
+      assert(snapshotReport.getSnapshotMetrics.getTimestampToVersionResolutionDurationNs.get > 0)
+      assert(snapshotReport.getSnapshotMetrics.getTimestampToVersionResolutionDurationNs.get <
         duration)
     } else {
-      assert(!snapshotReport.snapshotMetrics.timestampToVersionResolutionDurationNs.isPresent)
+      assert(!snapshotReport.getSnapshotMetrics.getTimestampToVersionResolutionDurationNs.isPresent)
     }
     if (expectNonZeroLoadProtocolAndMetadataDuration) {
-      assert(snapshotReport.snapshotMetrics.loadInitialDeltaActionsDurationNs > 0)
-      assert(snapshotReport.snapshotMetrics.loadInitialDeltaActionsDurationNs < duration)
+      assert(snapshotReport.getSnapshotMetrics.getLoadInitialDeltaActionsDurationNs > 0)
+      assert(snapshotReport.getSnapshotMetrics.getLoadInitialDeltaActionsDurationNs < duration)
     } else {
-      assert(snapshotReport.snapshotMetrics.loadInitialDeltaActionsDurationNs == 0)
+      assert(snapshotReport.getSnapshotMetrics.getLoadInitialDeltaActionsDurationNs == 0)
     }
   }
 
@@ -406,6 +406,11 @@ class MetricsReportSuite extends AnyFunSuite with TestUtils {
       override def report(report: MetricsReport): Unit = buf.append(report)
     }
 
+    private val metricsReporters = new util.ArrayList[MetricsReporter]() {{
+      addAll(baseEngine.getMetricsReporters)
+      add(metricsReporter)
+    }}
+
     override def getExpressionHandler: ExpressionHandler = baseEngine.getExpressionHandler
 
     override def getJsonHandler: JsonHandler = baseEngine.getJsonHandler
@@ -415,7 +420,7 @@ class MetricsReportSuite extends AnyFunSuite with TestUtils {
     override def getParquetHandler: ParquetHandler = baseEngine.getParquetHandler
 
     override def getMetricsReporters(): java.util.List[MetricsReporter] = {
-      java.util.Collections.singletonList(metricsReporter)
+      metricsReporters
     }
   }
 }

@@ -24,11 +24,11 @@ public interface SnapshotMetricsResult {
    * @return the duration (ns) to resolve the provided timestamp to a table version for timestamp
    *     time-travel queries. Empty for time-travel by version or non-time-travel queries.
    */
-  Optional<Long> timestampToVersionResolutionDurationNs();
+  Optional<Long> getTimestampToVersionResolutionDurationNs();
 
   /**
    * @return the duration (ns) to load the initial delta actions for the snapshot (such as the table
    *     protocol and metadata). 0 if snapshot construction fails before log replay.
    */
-  long loadInitialDeltaActionsDurationNs();
+  long getLoadInitialDeltaActionsDurationNs();
 }
