@@ -661,17 +661,17 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       singularCheckpointFileStatuses(Seq(10L))
     testExpectedError[InvalidTableException](
       fileList,
-      expectedErrorMessageContains = "versions are not continuous: ([11, 13])"
+      expectedErrorMessageContains = "versions are not contiguous: ([11, 13])"
     )
     testExpectedError[InvalidTableException](
       fileList,
       startCheckpoint = Optional.of(10),
-      expectedErrorMessageContains = "versions are not continuous: ([11, 13])"
+      expectedErrorMessageContains = "versions are not contiguous: ([11, 13])"
     )
     testExpectedError[InvalidTableException](
       fileList,
       versionToLoad = Optional.of(13),
-      expectedErrorMessageContains = "versions are not continuous: ([11, 13])"
+      expectedErrorMessageContains = "versions are not contiguous: ([11, 13])"
     )
   }
 
@@ -750,7 +750,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
     )
     testExpectedError[InvalidTableException](
       deltaFileStatuses((0L until 5L) ++ (6L until 9L)),
-      expectedErrorMessageContains = "are not continuous"
+      expectedErrorMessageContains = "are not contiguous"
     )
     // corrupt incomplete multi-part checkpoint
     val corruptedCheckpointStatuses = FileNames.checkpointFileWithParts(logPath, 10, 5).asScala
