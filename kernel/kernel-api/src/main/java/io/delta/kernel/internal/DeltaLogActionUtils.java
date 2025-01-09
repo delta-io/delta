@@ -226,8 +226,7 @@ public class DeltaLogActionUtils {
           commitVersions.isEmpty() ? Optional.empty() : Optional.of(commitVersions.get(0)));
     }
 
-    if (commitVersions.isEmpty()
-        || !Objects.equals(commitVersions.get(commitVersions.size() - 1), expectedEndVersion)) {
+    if (!Objects.equals(ListUtils.getLast(commitVersions), expectedEndVersion)) {
       throw endVersionNotFound(
           tablePath.toString(), expectedEndVersion, ListUtils.getLast(commitVersions));
     }
