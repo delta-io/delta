@@ -850,7 +850,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
   }
 
   test("getLogSegmentForVersion: corrupt _last_checkpoint with empty delta log") {
-    val exMsg = intercept[TableNotFoundException] {
+    val exMsg = intercept[InvalidTableException] {
       snapshotManager.getLogSegmentForVersion(
         createMockFSListFromEngine(Seq.empty),
         Optional.of(1),
@@ -858,7 +858,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       )
     }.getMessage
 
-    assert(exMsg.contains("No delta files found in the directory"))
+    assert(exMsg.contains("Missing checkpoint at version 1"))
   }
 }
 
