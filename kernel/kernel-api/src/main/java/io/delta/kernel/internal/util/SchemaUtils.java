@@ -206,13 +206,17 @@ public class SchemaUtils {
    * pairs. Columns with dots in their names are escaped with backticks. For example, a schema like:
    *
    * <pre>
-   *   | - a
-   *   | | - 1
-   *   | | - 2
-   *   | - b
-   *   | - c
-   *   | | - `foo.bar`
-   *   |   | - 3
+   *   | - a: INTEGER
+   *   | - b: STRUCT
+   *   |     | - 1: INTEGER
+   *   |     | - 2: STRING
+   *   | - c: STRUCT
+   *   |     | - `foo.bar`: STRUCT
+   *   |         | - 3: INTEGER
+   *   | - d: ARRAY<STRING>
+   *   | - e: MAP<INTEGER, STRING>
+   *   | - f: ARRAY<STRUCT<4: INTEGER>>
+   *   | - g: MAP<STRUCT<5: INTEGER>, STRUCT<`zip.zap`: STRING>>
    * </pre>
    *
    * will return:
@@ -220,12 +224,19 @@ public class SchemaUtils {
    * <pre>
    * [
    *   ("a", <field a>),
-   *   ("a.1", <field 1>),
-   *   ("a.2", <field 2>),
    *   ("b", <field b>),
+   *   ("b.1", <field 1>),
+   *   ("b.2", <field 2>),
    *   ("c", <field c>),
    *   ("c.`foo.bar`", <field `foo.bar`>),
-   *   ("c.`foo.bar`.3", <field 3>)
+   *   ("c.`foo.bar`.3", <field 3>),
+   *   ("d", <field d>),
+   *   ("e", <field e>),
+   *   ("f", <field f>),
+   *   ("f.element.4", <field 4>),
+   *   ("g", <field g>),
+   *   ("g.key.5", <field 5>),
+   *   ("g.value.`zip.zap`", <field `zip.zap`>)
    * ]
    * </pre>
    */

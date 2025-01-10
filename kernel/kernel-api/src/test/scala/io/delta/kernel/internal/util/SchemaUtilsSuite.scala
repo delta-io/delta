@@ -77,17 +77,17 @@ class SchemaUtilsSuite extends AnyFunSuite {
     }
     {
       // is subset, nested
-      val schema = new StructType(Arrays.asList(field_b, field_b_1, field_b_2))
+      val schema = new StructType(Arrays.asList(field_b))
       assert(SchemaUtils.isSuperset(complexSchema, schema), "case 'nested' failed")
     }
     {
       // is subset, array
-      val schema = new StructType(Arrays.asList(field_f, field_f_4))
+      val schema = new StructType(Arrays.asList(field_f))
       assert(SchemaUtils.isSuperset(complexSchema, schema), "case 'array' failed")
     }
     {
       // is subset, map
-      val schema = new StructType(Arrays.asList(field_g_5, field_g_zipzap, field_g))
+      val schema = new StructType(Arrays.asList(field_g))
       assert(SchemaUtils.isSuperset(complexSchema, schema), "case 'map' failed")
     }
     {
