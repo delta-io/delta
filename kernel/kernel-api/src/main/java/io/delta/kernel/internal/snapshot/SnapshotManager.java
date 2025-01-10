@@ -435,6 +435,7 @@ public class SnapshotManager {
         // We either (a) determined this checkpoint version from the _LAST_CHECKPOINT file, or (b)
         // found the last complete checkpoint before our versionToLoad. In either case, we didn't
         // see the checkpoint file in the listing.
+        // TODO: for case (a), re-load the delta log but ignore the _LAST_CHECKPOINT file.
         throw DeltaErrors.missingCheckpoint(tablePath.toString(), startCheckpointOpt.get());
       } else {
         // No files found even when listing from 0 => empty directory => table does not exist yet.
