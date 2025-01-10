@@ -165,7 +165,8 @@ object CoordinatedCommitsUtils extends DeltaLogging {
       protocol: Protocol,
       failIfImplUnavailable: Boolean): Option[CommitCoordinatorClient] = {
     metadata.coordinatedCommitsCoordinatorName.flatMap { commitCoordinatorStr =>
-      assert(protocol.isFeatureSupported(CoordinatedCommitsTableFeature))
+      assert(protocol.isFeatureSupported(CoordinatedCommitsTableFeature),
+        "coordinated commits table feature is not supported")
       val coordinatorConf = metadata.coordinatedCommitsCoordinatorConf
       val coordinatorOpt = CommitCoordinatorProvider.getCommitCoordinatorClientOpt(
         commitCoordinatorStr, coordinatorConf, spark)
