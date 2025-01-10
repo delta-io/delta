@@ -30,10 +30,13 @@ import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.metrics.TransactionMetrics;
+import io.delta.kernel.internal.metrics.TransactionReportImpl;
 import io.delta.kernel.internal.replay.ConflictChecker;
 import io.delta.kernel.internal.replay.ConflictChecker.TransactionRebaseState;
 import io.delta.kernel.internal.rowtracking.RowTracking;
 import io.delta.kernel.internal.util.*;
+import io.delta.kernel.metrics.TransactionReport;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.kernel.utils.CloseableIterator;
@@ -138,9 +141,31 @@ public class TransactionImpl implements Transaction {
   @Override
   public TransactionCommitResult commit(Engine engine, CloseableIterable<Row> dataActions)
       throws ConcurrentWriteException {
+    checkState(!closed, "Transaction is already attempted to commit. Create a new transaction.");
+    TransactionMetrics transactionMetrics = new TransactionMetrics();
     try {
-      checkState(!closed, "Transaction is already attempted to commit. Create a new transaction.");
+      TransactionCommitResult result =
+          transactionMetrics.totalCommitTimer.time(
+              () -> commitWithRetry(engine, dataActions, transactionMetrics));
+      recordTransactionReport(
+          engine,
+          Optional.of(result.getVersion()) /* committedVersion */,
+          transactionMetrics,
+          Optional.empty() /* exception */);
+      return result;
+    } catch (Exception e) {
+      recordTransactionReport(
+          engine,
+          Optional.empty() /* committedVersion */,
+          transactionMetrics,
+          Optional.of(e) /* exception */);
+      throw e;
+    }
+  }
 
+  private TransactionCommitResult commitWithRetry(
+      Engine engine, CloseableIterable<Row> dataActions, TransactionMetrics transactionMetrics) {
+    try {
       long commitAsVersion = readSnapshot.getVersion(engine) + 1;
       // Generate the commit action with the inCommitTimestamp if ICT is enabled.
       CommitInfo attemptCommitInfo = generateCommitAction(engine);
@@ -160,9 +185,11 @@ public class TransactionImpl implements Transaction {
 
       int numRetries = 0;
       do {
+        transactionMetrics.commitAttemptsCounter.increment();
         logger.info("Committing transaction as version = {}.", commitAsVersion);
         try {
-          return doCommit(engine, commitAsVersion, attemptCommitInfo, dataActions);
+          return doCommit(
+              engine, commitAsVersion, attemptCommitInfo, dataActions, transactionMetrics);
         } catch (FileAlreadyExistsException fnfe) {
           logger.info(
               "Concurrent write detected when committing as version = {}. "
@@ -230,7 +257,8 @@ public class TransactionImpl implements Transaction {
       Engine engine,
       long commitAsVersion,
       CommitInfo attemptCommitInfo,
-      CloseableIterable<Row> dataActions)
+      CloseableIterable<Row> dataActions,
+      TransactionMetrics transactionMetrics)
       throws FileAlreadyExistsException {
     List<Row> metadataActions = new ArrayList<>();
     metadataActions.add(createCommitInfoSingleAction(attemptCommitInfo.toRow()));
@@ -270,6 +298,9 @@ public class TransactionImpl implements Transaction {
         }
       }
 
+      // Counters may be partially incremented from previous tries, reset the action counters to 0
+      transactionMetrics.resetActionCounters();
+
       // Write the staged data to a delta file
       wrapEngineExceptionThrowsIO(
           () -> {
@@ -277,7 +308,16 @@ public class TransactionImpl implements Transaction {
                 .getJsonHandler()
                 .writeJsonFileAtomically(
                     FileNames.deltaFile(logPath, commitAsVersion),
-                    dataAndMetadataActions,
+                    dataAndMetadataActions.map(
+                        action -> {
+                          transactionMetrics.totalActionsCounter.increment();
+                          if (!action.isNullAt(ADD_FILE_ORDINAL)) {
+                            transactionMetrics.addFilesCounter.increment();
+                          } else if (!action.isNullAt(REMOVE_FILE_ORDINAL)) {
+                            transactionMetrics.removeFilesCounter.increment();
+                          }
+                          return action;
+                        }),
                     false /* overwrite */);
             return null;
           },
@@ -340,6 +380,23 @@ public class TransactionImpl implements Transaction {
       return Collections.singletonMap("partitionBy", partitionBy);
     }
     return Collections.emptyMap();
+  }
+
+  private void recordTransactionReport(
+      Engine engine,
+      Optional<Long> committedVersion,
+      TransactionMetrics transactionMetrics,
+      Optional<Exception> exception) {
+    TransactionReport transactionReport =
+        new TransactionReportImpl(
+            dataPath.toString() /* tablePath */,
+            operation.toString(),
+            engineInfo,
+            committedVersion,
+            transactionMetrics,
+            readSnapshot.getSnapshotReport(),
+            exception);
+    engine.getMetricsReporters().forEach(reporter -> reporter.report(transactionReport));
   }
 
   /**
