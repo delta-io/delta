@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import scala.collection.mutable
 
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
