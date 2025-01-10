@@ -138,7 +138,6 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
         case ">=":
         case "<":
         case "<=":
-        case "<=>":
         case "IS NOT DISTINCT FROM":
           return new ExpressionTransformResult(
               transformBinaryComparator(predicate), BooleanType.BOOLEAN);

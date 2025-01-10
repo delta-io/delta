@@ -19,6 +19,7 @@ import static io.delta.kernel.internal.DeltaErrors.wrapEngineException;
 import static io.delta.kernel.internal.InternalScanFileUtils.ADD_FILE_ORDINAL;
 import static io.delta.kernel.internal.InternalScanFileUtils.ADD_FILE_STATS_ORDINAL;
 import static io.delta.kernel.internal.util.ExpressionUtils.*;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
@@ -537,10 +538,10 @@ public class DataSkippingUtils {
       Predicate equalPredicate,
       StatsSchemaHelper schemaHelper,
       BiFunction<Column, Literal, Optional<DataSkippingPredicate>> buildDataSkippingPredicateFunc) {
-    if (!"=".equals(equalPredicate.getName())
-        && !"IS NOT DISTINCT FROM".equals(equalPredicate.getName())) {
-      throw new IllegalArgumentException("Expects predicate to be = or IS NOT DISTINCT FROM");
-    }
+    checkArgument(
+        "=".equals(equalPredicate.getName())
+            || "IS NOT DISTINCT FROM".equals(equalPredicate.getName()),
+        "Expects predicate to be = or IS NOT DISTINCT FROM");
     Expression leftChild = getLeft(equalPredicate);
     Expression rightChild = getRight(equalPredicate);
     if (rightChild instanceof Column && leftChild instanceof Literal) {
