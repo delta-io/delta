@@ -20,6 +20,7 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.DeltaErrors;
+import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.types.*;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -31,6 +32,28 @@ import java.util.stream.Collectors;
 public class SchemaUtils {
 
   private SchemaUtils() {}
+
+  /** Checks if the {@code supersetSchema} is a superset of the {@code subsetSchema}. */
+  public static boolean isSuperset(StructType supersetSchema, StructType subsetSchema) {
+    final Map<String, StructField> supersetFieldsMap =
+        flattenNestedFields(supersetSchema).stream()
+            .collect(Collectors.toMap(x -> x._1, x -> x._2));
+    final List<Tuple2<String, StructField>> subsetNameFields = flattenNestedFields(subsetSchema);
+
+    for (Tuple2<String, StructField> subsetNameField : subsetNameFields) {
+      if (!supersetFieldsMap.containsKey(subsetNameField._1)) {
+        return false;
+      }
+
+      final StructField supersetField = supersetFieldsMap.get(subsetNameField._1);
+
+      if (!supersetField.getDataType().equivalent(subsetNameField._2.getDataType())) {
+        return false;
+      }
+    }
+
+    return true;
+  }
 
   /**
    * Validate the schema. This method checks if the schema has no duplicate columns, the names
@@ -45,7 +68,8 @@ public class SchemaUtils {
   public static void validateSchema(StructType schema, boolean isColumnMappingEnabled) {
     checkArgument(schema.length() > 0, "Schema should contain at least one column");
 
-    List<String> flattenColNames = flattenNestedFieldNames(schema);
+    List<String> flattenColNames =
+        flattenNestedFields(schema).stream().map(x -> x._1).collect(Collectors.toList());
 
     // check there are no duplicate column names in the schema
     Set<String> uniqueColNames =
@@ -178,7 +202,8 @@ public class SchemaUtils {
   }
 
   /**
-   * Returns all column names in this schema as a flat list. For example, a schema like:
+   * Returns all fields in this schema as a flat list of (full logical column name path, field)
+   * pairs. Columns with dots in their names are escaped with backticks. For example, a schema like:
    *
    * <pre>
    *   | - a
@@ -186,48 +211,61 @@ public class SchemaUtils {
    *   | | - 2
    *   | - b
    *   | - c
-   *   | | - nest
+   *   | | - `foo.bar`
    *   |   | - 3
-   *   will get flattened to: "a", "a.1", "a.2", "b", "c", "c.nest", "c.nest.3"
+   * </pre>
+   *
+   * will return:
+   *
+   * <pre>
+   * [
+   *   ("a", <field a>),
+   *   ("a.1", <field 1>),
+   *   ("a.2", <field 2>),
+   *   ("b", <field b>),
+   *   ("c", <field c>),
+   *   ("c.`foo.bar`", <field `foo.bar`>),
+   *   ("c.`foo.bar`.3", <field 3>)
+   * ]
    * </pre>
    */
-  private static List<String> flattenNestedFieldNames(StructType schema) {
-    List<String> fieldNames = new ArrayList<>();
+  @VisibleForTesting
+  public static List<Tuple2<String, StructField>> flattenNestedFields(StructType schema) {
+    final List<Tuple2<String, StructField>> fieldPathPairs = new ArrayList<>();
     for (StructField field : schema.fields()) {
-      String escapedName = escapeDots(field.getName());
-      fieldNames.add(escapedName);
-      fieldNames.addAll(flattenNestedFieldNamesRecursive(escapedName, field.getDataType()));
+      final String escapedName = escapeDots(field.getName());
+      fieldPathPairs.add(new Tuple2<>(escapedName, field));
+      fieldPathPairs.addAll(flattenNestedFieldRecursive(escapedName, field.getDataType()));
     }
-    return fieldNames;
+    return fieldPathPairs;
   }
 
-  private static List<String> flattenNestedFieldNamesRecursive(String prefix, DataType type) {
-    List<String> fieldNames = new ArrayList<>();
+  private static List<Tuple2<String, StructField>> flattenNestedFieldRecursive(
+      String prefix, DataType type) {
+    final List<Tuple2<String, StructField>> fieldPathPairs = new ArrayList<>();
     if (type instanceof StructType) {
       for (StructField field : ((StructType) type).fields()) {
-        String escapedName = escapeDots(field.getName());
-        fieldNames.add(prefix + "." + escapedName);
-        fieldNames.addAll(
-            flattenNestedFieldNamesRecursive(prefix + "." + escapedName, field.getDataType()));
+        final String escapedName = escapeDots(field.getName());
+        final String fullPath = prefix + "." + escapedName;
+        fieldPathPairs.add(new Tuple2<>(fullPath, field));
+        fieldPathPairs.addAll(flattenNestedFieldRecursive(fullPath, field.getDataType()));
       }
     } else if (type instanceof ArrayType) {
-      fieldNames.addAll(
-          flattenNestedFieldNamesRecursive(
-              prefix + ".element", ((ArrayType) type).getElementType()));
+      fieldPathPairs.addAll(
+          flattenNestedFieldRecursive(prefix + ".element", ((ArrayType) type).getElementType()));
     } else if (type instanceof MapType) {
-      MapType mapType = (MapType) type;
-      fieldNames.addAll(flattenNestedFieldNamesRecursive(prefix + ".key", mapType.getKeyType()));
-      fieldNames.addAll(
-          flattenNestedFieldNamesRecursive(prefix + ".value", mapType.getValueType()));
+      final MapType mapType = (MapType) type;
+      fieldPathPairs.addAll(flattenNestedFieldRecursive(prefix + ".key", mapType.getKeyType()));
+      fieldPathPairs.addAll(flattenNestedFieldRecursive(prefix + ".value", mapType.getValueType()));
     }
-    return fieldNames;
+    return fieldPathPairs;
   }
 
   private static String escapeDots(String name) {
     return name.contains(".") ? "`" + name + "`" : name;
   }
 
-  protected static void validParquetColumnNames(List<String> columnNames) {
+  private static void validParquetColumnNames(List<String> columnNames) {
     for (String name : columnNames) {
       // ,;{}()\n\t= and space are special characters in Parquet schema
       if (name.matches(".*[ ,;{}()\n\t=].*")) {
@@ -242,7 +280,7 @@ public class SchemaUtils {
    *
    * @param dataType the data type to validate
    */
-  protected static void validateSupportedType(DataType dataType) {
+  private static void validateSupportedType(DataType dataType) {
     if (dataType instanceof BooleanType
         || dataType instanceof ByteType
         || dataType instanceof ShortType

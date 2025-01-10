@@ -18,9 +18,11 @@ package io.delta.kernel.internal.util
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.util.SchemaUtils.validateSchema
 import io.delta.kernel.types.IntegerType.INTEGER
-import io.delta.kernel.types.{ArrayType, MapType, StringType, StructType}
+import io.delta.kernel.types.StringType.STRING
+import io.delta.kernel.types.{ArrayType, MapType, StringType, StructField, StructType}
 import org.scalatest.funsuite.AnyFunSuite
 
+import java.util.Arrays
 import java.util.Locale
 
 class SchemaUtilsSuite extends AnyFunSuite {
@@ -31,6 +33,105 @@ class SchemaUtilsSuite extends AnyFunSuite {
     val msg = e.getMessage.toLowerCase(Locale.ROOT)
     assert(shouldContain.map(_.toLowerCase(Locale.ROOT)).forall(msg.contains),
       s"Error message '$msg' didn't contain: $shouldContain")
+  }
+
+  private val field_a = new StructField("a", INTEGER, true)
+  private val field_b_1 = new StructField("1", INTEGER, true)
+  private val field_b_2 = new StructField("2", STRING, true)
+  private val field_b =
+    new StructField("b", new StructType(Arrays.asList(field_b_1, field_b_2)), true)
+  private val field_c_foobar_3 = new StructField("3", INTEGER, true)
+  private val field_c_foobar =
+    new StructField("foo.bar", new StructType(Arrays.asList(field_c_foobar_3)), true)
+  private val field_c = new StructField("c", new StructType(Arrays.asList(field_c_foobar)), true)
+  private val field_d = new StructField("d", new ArrayType(STRING, true), true)
+  private val field_e = new StructField("e", new MapType(INTEGER, STRING, true), true)
+  private val field_f_4 = new StructField("4", INTEGER, true)
+  private val field_f =
+    new StructField("f", new ArrayType(new StructType(Arrays.asList(field_f_4)), true), true)
+  private val field_g_5 = new StructField("5", INTEGER, true)
+  private val field_g_zipzap = new StructField("zip.zap", STRING, true)
+  private val field_g = new StructField("g", new MapType(
+    new StructType(Arrays.asList(field_g_5)),
+    new StructType(Arrays.asList(field_g_zipzap)), true), true)
+  private val complexSchema =
+    new StructType(Arrays.asList(field_a, field_b, field_c, field_d, field_e, field_f, field_g))
+
+  //////////////////////
+  // isSuperset tests //
+  //////////////////////
+
+  test("isSuperset") {
+    {
+      // is subset, empty
+      assert(SchemaUtils.isSuperset(complexSchema, new StructType()), "case 'empty' failed")
+    }
+    {
+      // is subset, simple
+      val schema = new StructType(Arrays.asList(field_a))
+      assert(SchemaUtils.isSuperset(complexSchema, schema), "case 'simple' failed")
+    }
+    {
+      // is subset, itself
+      assert(SchemaUtils.isSuperset(complexSchema, complexSchema), "case 'itself' failed")
+    }
+    {
+      // is subset, nested
+      val schema = new StructType(Arrays.asList(field_b, field_b_1, field_b_2))
+      assert(SchemaUtils.isSuperset(complexSchema, schema), "case 'nested' failed")
+    }
+    {
+      // is subset, array
+      val schema = new StructType(Arrays.asList(field_f, field_f_4))
+      assert(SchemaUtils.isSuperset(complexSchema, schema), "case 'array' failed")
+    }
+    {
+      // is subset, map
+      val schema = new StructType(Arrays.asList(field_g_5, field_g_zipzap, field_g))
+      assert(SchemaUtils.isSuperset(complexSchema, schema), "case 'map' failed")
+    }
+    {
+      // is subset, different order
+      val schema = new StructType(Arrays.asList(field_e, field_d, field_c, field_b, field_a))
+      assert(SchemaUtils.isSuperset(complexSchema, schema), "case 'different order' failed")
+    }
+    {
+      // is not subset, new field
+      val schema = new StructType().add("new_field", INTEGER)
+      assert(!SchemaUtils.isSuperset(complexSchema, schema), "case 'new field' failed")
+    }
+    {
+      // is not subset, different type
+      val schema = new StructType().add("a", STRING)
+      assert(!SchemaUtils.isSuperset(complexSchema, schema), "case 'different type' failed")
+    }
+  }
+
+  ///////////////////////////////
+  // flattenNestedFields tests //
+  ///////////////////////////////
+
+  test("flattenNestedFields") {
+    val result = SchemaUtils.flattenNestedFields(complexSchema)
+
+    val expected = java.util.Arrays.asList(
+      new Tuple2("a", field_a),
+      new Tuple2("b", field_b),
+      new Tuple2("b.1", field_b_1),
+      new Tuple2("b.2", field_b_2),
+      new Tuple2("c", field_c),
+      new Tuple2("c.`foo.bar`", field_c_foobar),
+      new Tuple2("c.`foo.bar`.3", field_c_foobar_3),
+      new Tuple2("d", field_d),
+      new Tuple2("e", field_e),
+      new Tuple2("f", field_f),
+      new Tuple2("f.element.4", field_f_4),
+      new Tuple2("g", field_g),
+      new Tuple2("g.key.5", field_g_5),
+      new Tuple2("g.value.`zip.zap`", field_g_zipzap)
+    )
+
+    assert(result === expected)
   }
 
   ///////////////////////////////////////////////////////////////////////////

@@ -18,6 +18,7 @@ package io.delta.kernel.types;
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.types.DataTypeJsonSerDe;
+import io.delta.kernel.internal.util.SchemaUtils;
 import io.delta.kernel.internal.util.Tuple2;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -119,6 +120,16 @@ public final class StructType extends DataType {
    */
   public String toJson() {
     return DataTypeJsonSerDe.serializeStructType(this);
+  }
+
+  /** Checks if this schema is a superset of the given schema. */
+  public boolean isSupersetOf(StructType other) {
+    return SchemaUtils.isSuperset(this, other);
+  }
+
+  /** Checks if this schema is a subset of the given schema. */
+  public boolean isSubsetOf(StructType other) {
+    return SchemaUtils.isSuperset(other, this);
   }
 
   @Override
