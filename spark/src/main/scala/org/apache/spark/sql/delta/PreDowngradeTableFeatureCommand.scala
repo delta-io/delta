@@ -129,6 +129,59 @@ case class TestLegacyReaderWriterFeaturePreDowngradeCommand(table: DeltaTableV2)
   }
 }
 
+class DeletionVectorsRemovalMetrics(
+    val numDeletionVectorsToRemove: Long,
+    val numDeletionVectorRowsToRemove: Long,
+    var downgradeTimeMs: Long = 0L)
+
+case class DeletionVectorsPreDowngradeCommand(table: DeltaTableV2)
+  extends PreDowngradeTableFeatureCommand
+  with DeltaLogging {
+
+  /**
+   * We first remove the table feature property to prevent any transactions from committing
+   * new DVs. This will cause any concurrent transactions tox fail. Then, we run PURGE
+   * to remove existing DVs from the latest snapshot.
+   * Note, during the protocol downgrade phase we validate whether all invariants still hold.
+   * This should detect if any concurrent txns enabled the feature and/or added DVs again.
+   *
+   * @return Returns true if it removed DV metadata property and/or DVs. False otherwise.
+   */
+  override def removeFeatureTracesIfNeeded(): Boolean = {
+    // Latest snapshot looks clean. No action is required. We may proceed
+    // to the protocol downgrade phase.
+    if (DeletionVectorsTableFeature.validateRemoval(table.initialSnapshot)) return false
+
+    val startTimeNs = System.nanoTime()
+    val properties = Seq(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key)
+    AlterTableUnsetPropertiesDeltaCommand(
+      table, properties, ifExists = true, fromDropFeatureCommand = true).run(table.spark)
+
+    val snapshot = table.update()
+    val metrics = new DeletionVectorsRemovalMetrics(
+      numDeletionVectorsToRemove = snapshot.numDeletionVectorsOpt.getOrElse(0L),
+      numDeletionVectorRowsToRemove = snapshot.numDeletedRecordsOpt.getOrElse(0L))
+
+    // Wrap `table` in a ResolvedTable that can be passed to DeltaReorgTableCommand. The catalog &
+    // table ID won't be used by DeltaReorgTableCommand.
+    import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
+    val catalog = table.spark.sessionState.catalogManager.currentCatalog.asTableCatalog
+    val tableId = Seq(table.name()).asIdentifier
+
+    DeltaReorgTableCommand(target = ResolvedTable.create(catalog, tableId, table))(Nil)
+      .run(table.spark)
+
+    metrics.downgradeTimeMs =
+      TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTimeNs)
+
+    recordDeltaEvent(
+      table.deltaLog,
+      opType = "delta.deletionVectorsFeatureRemovalMetrics",
+      data = metrics)
+    true
+  }
+}
+
 case class V2CheckpointPreDowngradeCommand(table: DeltaTableV2)
   extends PreDowngradeTableFeatureCommand
   with DeltaLogging {
