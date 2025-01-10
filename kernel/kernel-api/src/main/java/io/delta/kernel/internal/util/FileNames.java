@@ -150,6 +150,10 @@ public final class FileNames {
         || UUID_DELTA_FILE_REGEX.matcher(filename).matches();
   }
 
+  public static boolean isDeltaCommitOrCheckpointFile(String fileName) {
+    return isCommitFile(fileName) || isCheckpointFile(fileName);
+  }
+
   /**
    * Get the version of the checkpoint, checksum or delta file. Throws an error if an unexpected
    * file type is seen. These unexpected files should be filtered out to ensure forward
