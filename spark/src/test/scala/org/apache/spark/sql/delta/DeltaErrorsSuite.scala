@@ -756,6 +756,18 @@ trait DeltaErrorsSuiteBase
     }
     {
       val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.unsupportedColumnMappingModeException("modeName")
+      }
+      val supportedModes = DeltaColumnMapping.supportedModes.map(_.name).toSeq.mkString(", ")
+      checkErrorMessage(
+        e,
+        errClassOpt = Some("DELTA_MODE_NOT_SUPPORTED"),
+        sqlStateOpt = Some("0AKDC"),
+        errMsgOpt = Some(s"Specified mode 'modeName' is not supported. " +
+          s"Supported modes are: $supportedModes"))
+    }
+    {
+      val e = intercept[DeltaIllegalArgumentException] {
         throw DeltaErrors.unsupportedGenerateModeException("modeName")
       }
       import org.apache.spark.sql.delta.commands.DeltaGenerateCommand
