@@ -2553,8 +2553,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       deltaLog,
       attemptVersion,
       actions = currentTransactionInfo.finalActionsToCommit,
-      metadata = currentTransactionInfo.metadata,
-      protocol = currentTransactionInfo.protocol,
       operationName = currentTransactionInfo.op.name,
       txnIdOpt = Some(currentTransactionInfo.txnId),
       previousVersionState = scala.Left(snapshot),

@@ -139,8 +139,6 @@ trait RecordChecksum extends DeltaLogging {
    * @param deltaLog The DeltaLog
    * @param versionToCompute The version for which we want to compute the checksum
    * @param actions The actions corresponding to the version `versionToCompute`
-   * @param metadata The metadata corresponding to the version `versionToCompute`
-   * @param protocol The protocol corresponding to the version `versionToCompute`
    * @param operationName The operation name corresponding to the version `versionToCompute`
    * @param txnIdOpt The transaction identifier for the version `versionToCompute`
    * @param previousVersionState Contains either the versionChecksum corresponding to
@@ -156,8 +154,6 @@ trait RecordChecksum extends DeltaLogging {
       deltaLog: DeltaLog,
       versionToCompute: Long,
       actions: Seq[Action],
-      metadata: Metadata,
-      protocol: Protocol,
       operationName: String,
       txnIdOpt: Option[String],
       previousVersionState: Either[Snapshot, VersionChecksum],
@@ -213,6 +209,10 @@ trait RecordChecksum extends DeltaLogging {
     // Incrementally compute the new version checksum, if the old one is available.
     val ignoreAddFilesInOperation =
       RecordChecksum.operationNamesWhereAddFilesIgnoredForIncrementalCrc.contains(operationName)
+    val protocol =
+      actions.collectFirst { case p: Protocol => p }.getOrElse(oldVersionChecksum.protocol)
+    val metadata =
+      actions.collectFirst { case m: Metadata => m }.getOrElse(oldVersionChecksum.metadata)
     val persistentDVsOnTableReadable =
       DeletionVectorUtils.deletionVectorsReadable(protocol, metadata)
     val persistentDVsOnTableWritable =
