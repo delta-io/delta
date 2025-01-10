@@ -15,7 +15,16 @@
  */
 package io.delta.kernel.metrics;
 
+import com.fasterxml.jackson.annotation.JsonPropertyOrder;
+
 /** Stores the metrics results for a {@link TransactionReport} */
+@JsonPropertyOrder({
+  "totalCommitDuration",
+  "numCommitAttempts",
+  "numAddFiles",
+  "numRemoveFiles",
+  "numTotalActions"
+})
 public interface TransactionMetricsResult {
 
   /** @return the total duration (ns) this transaction spent committing or trying to commit */
@@ -26,19 +35,19 @@ public interface TransactionMetricsResult {
 
   /**
    * @return the number of add files committed in this transaction. for a failed transaction this
-   *    metric may be incomplete.
+   *     metric may be incomplete.
    */
   long getNumAddFiles();
 
   /**
    * @return the number of remove files committed in this transaction. for a failed transaction this
-   *    metric may be incomplete.
+   *     metric may be incomplete.
    */
   long getNumRemoveFiles();
 
   /**
    * @return the total number of delta actions committed in this transaction. for a failed
-   *    transaction this metric may be incomplete.
+   *     transaction this metric may be incomplete.
    */
   long getNumTotalActions();
 }

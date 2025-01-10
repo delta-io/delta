@@ -15,21 +15,36 @@
  */
 package io.delta.kernel.metrics;
 
+import com.fasterxml.jackson.annotation.JsonPropertyOrder;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import java.util.Optional;
 import java.util.UUID;
 
 /** Defines the metadata and metrics for a transaction {@link MetricsReport} */
+@JsonSerialize(as = TransactionReport.class)
+@JsonPropertyOrder({
+  "tablePath",
+  "operationType",
+  "reportUUID",
+  "exception",
+  "operation",
+  "engineInfo",
+  "snapshotVersion",
+  "snapshotReportUUID",
+  "committedVersion",
+  "transactionMetrics"
+})
 public interface TransactionReport extends DeltaOperationReport {
 
   /**
    * @return The {@link io.delta.kernel.Operation} provided when the transaction was created using
-   * {@link io.delta.kernel.Table#createTransactionBuilder}.
+   *     {@link io.delta.kernel.Table#createTransactionBuilder}.
    */
   String getOperation();
 
   /**
-   * @return The engineInfo provided when the transaction was created using
-   * {@link io.delta.kernel.Table#createTransactionBuilder}.
+   * @return The engineInfo provided when the transaction was created using {@link
+   *     io.delta.kernel.Table#createTransactionBuilder}.
    */
   String getEngineInfo();
 
@@ -45,7 +60,7 @@ public interface TransactionReport extends DeltaOperationReport {
 
   /**
    * @return the {@link SnapshotReport#getReportUUID} of the SnapshotReport for the transaction's
-   * snapshot construction. Empty for a new table transaction.
+   *     snapshot construction. Empty for a new table transaction.
    */
   Optional<UUID> getSnapshotReportUUID();
 
