@@ -35,24 +35,56 @@ public class SchemaUtils {
 
   /** Checks if the {@code supersetSchema} is a superset of the {@code subsetSchema}. */
   public static boolean isSuperset(StructType supersetSchema, StructType subsetSchema) {
-    final Map<String, StructField> supersetFieldsMap =
-        flattenNestedFields(supersetSchema).stream()
-            .collect(Collectors.toMap(x -> x._1, x -> x._2));
-    final List<Tuple2<String, StructField>> subsetNameFields = flattenNestedFields(subsetSchema);
-
-    for (Tuple2<String, StructField> subsetNameField : subsetNameFields) {
-      if (!supersetFieldsMap.containsKey(subsetNameField._1)) {
+    for (StructField subsetField : subsetSchema.fields()) {
+      final StructField supersetField = supersetSchema.get(subsetField.getName());
+      if (supersetField == null) {
         return false;
       }
-
-      final StructField supersetField = supersetFieldsMap.get(subsetNameField._1);
-
-      if (!supersetField.getDataType().equivalent(subsetNameField._2.getDataType())) {
+      if (!isDataTypeSuperset(supersetField.getDataType(), subsetField.getDataType())) {
         return false;
       }
     }
-
     return true;
+  }
+
+  /**
+   * Recursively checks if {@code supersetType} can contain {@code subsetType}. Examples:
+   *
+   * <ul>
+   *   <li>If both are {@code StructType}, compare fields recursively.
+   *   <li>If both are {@code ArrayType}, compare element types.
+   *   <li>If both are {@code MapType}, compare key & value types.
+   *   <li>Otherwise, use the standard {@link StructType#equivalent} check.
+   * </ul>
+   */
+  @VisibleForTesting
+  public static boolean isDataTypeSuperset(DataType supersetType, DataType subsetType) {
+    if (subsetType instanceof StructType) {
+      if (!(supersetType instanceof StructType)) {
+        return false;
+      }
+      StructType supersetStruct = (StructType) supersetType;
+      StructType subsetStruct = (StructType) subsetType;
+      return isSuperset(supersetStruct, subsetStruct);
+    } else if (subsetType instanceof ArrayType) {
+      if (!(supersetType instanceof ArrayType)) {
+        return false;
+      }
+      final ArrayType supersetArray = (ArrayType) supersetType;
+      final ArrayType subsetArray = (ArrayType) subsetType;
+      return isDataTypeSuperset(supersetArray.getElementType(), subsetArray.getElementType());
+    } else if (subsetType instanceof MapType) {
+      if (!(supersetType instanceof MapType)) {
+        return false;
+      }
+      final MapType supersetMap = (MapType) supersetType;
+      final MapType subsetMap = (MapType) subsetType;
+      if (!isDataTypeSuperset(supersetMap.getKeyType(), subsetMap.getKeyType())) {
+        return false;
+      }
+      return isDataTypeSuperset(supersetMap.getValueType(), subsetMap.getValueType());
+    }
+    return supersetType.equals(subsetType);
   }
 
   /**
@@ -68,8 +100,7 @@ public class SchemaUtils {
   public static void validateSchema(StructType schema, boolean isColumnMappingEnabled) {
     checkArgument(schema.length() > 0, "Schema should contain at least one column");
 
-    List<String> flattenColNames =
-        flattenNestedFields(schema).stream().map(x -> x._1).collect(Collectors.toList());
+    List<String> flattenColNames = flattenNestedFieldNames(schema);
 
     // check there are no duplicate column names in the schema
     Set<String> uniqueColNames =
@@ -202,81 +233,56 @@ public class SchemaUtils {
   }
 
   /**
-   * Returns all fields in this schema as a flat list of (full logical column name path, field)
-   * pairs. Columns with dots in their names are escaped with backticks. For example, a schema like:
+   * Returns all column names in this schema as a flat list. For example, a schema like:
    *
    * <pre>
-   *   | - a: INTEGER
-   *   | - b: STRUCT
-   *   |     | - 1: INTEGER
-   *   |     | - 2: STRING
-   *   | - c: STRUCT
-   *   |     | - `foo.bar`: STRUCT
-   *   |         | - 3: INTEGER
-   *   | - d: ARRAY<STRING>
-   *   | - e: MAP<INTEGER, STRING>
-   *   | - f: ARRAY<STRUCT<4: INTEGER>>
-   *   | - g: MAP<STRUCT<5: INTEGER>, STRUCT<`zip.zap`: STRING>>
-   * </pre>
-   *
-   * will return:
-   *
-   * <pre>
-   * [
-   *   ("a", <field a>),
-   *   ("b", <field b>),
-   *   ("b.1", <field 1>),
-   *   ("b.2", <field 2>),
-   *   ("c", <field c>),
-   *   ("c.`foo.bar`", <field `foo.bar`>),
-   *   ("c.`foo.bar`.3", <field 3>),
-   *   ("d", <field d>),
-   *   ("e", <field e>),
-   *   ("f", <field f>),
-   *   ("f.element.4", <field 4>),
-   *   ("g", <field g>),
-   *   ("g.key.5", <field 5>),
-   *   ("g.value.`zip.zap`", <field `zip.zap`>)
-   * ]
+   *   | - a
+   *   | | - 1
+   *   | | - 2
+   *   | - b
+   *   | - c
+   *   | | - nest
+   *   |   | - 3
+   *   will get flattened to: "a", "a.1", "a.2", "b", "c", "c.nest", "c.nest.3"
    * </pre>
    */
-  @VisibleForTesting
-  public static List<Tuple2<String, StructField>> flattenNestedFields(StructType schema) {
-    final List<Tuple2<String, StructField>> fieldPathPairs = new ArrayList<>();
+  private static List<String> flattenNestedFieldNames(StructType schema) {
+    List<String> fieldNames = new ArrayList<>();
     for (StructField field : schema.fields()) {
-      final String escapedName = escapeDots(field.getName());
-      fieldPathPairs.add(new Tuple2<>(escapedName, field));
-      fieldPathPairs.addAll(flattenNestedFieldRecursive(escapedName, field.getDataType()));
+      String escapedName = escapeDots(field.getName());
+      fieldNames.add(escapedName);
+      fieldNames.addAll(flattenNestedFieldNamesRecursive(escapedName, field.getDataType()));
     }
-    return fieldPathPairs;
+    return fieldNames;
   }
 
-  private static List<Tuple2<String, StructField>> flattenNestedFieldRecursive(
-      String prefix, DataType type) {
-    final List<Tuple2<String, StructField>> fieldPathPairs = new ArrayList<>();
+  private static List<String> flattenNestedFieldNamesRecursive(String prefix, DataType type) {
+    List<String> fieldNames = new ArrayList<>();
     if (type instanceof StructType) {
       for (StructField field : ((StructType) type).fields()) {
-        final String escapedName = escapeDots(field.getName());
-        final String fullPath = prefix + "." + escapedName;
-        fieldPathPairs.add(new Tuple2<>(fullPath, field));
-        fieldPathPairs.addAll(flattenNestedFieldRecursive(fullPath, field.getDataType()));
+        String escapedName = escapeDots(field.getName());
+        fieldNames.add(prefix + "." + escapedName);
+        fieldNames.addAll(
+            flattenNestedFieldNamesRecursive(prefix + "." + escapedName, field.getDataType()));
       }
     } else if (type instanceof ArrayType) {
-      fieldPathPairs.addAll(
-          flattenNestedFieldRecursive(prefix + ".element", ((ArrayType) type).getElementType()));
+      fieldNames.addAll(
+          flattenNestedFieldNamesRecursive(
+              prefix + ".element", ((ArrayType) type).getElementType()));
     } else if (type instanceof MapType) {
-      final MapType mapType = (MapType) type;
-      fieldPathPairs.addAll(flattenNestedFieldRecursive(prefix + ".key", mapType.getKeyType()));
-      fieldPathPairs.addAll(flattenNestedFieldRecursive(prefix + ".value", mapType.getValueType()));
+      MapType mapType = (MapType) type;
+      fieldNames.addAll(flattenNestedFieldNamesRecursive(prefix + ".key", mapType.getKeyType()));
+      fieldNames.addAll(
+          flattenNestedFieldNamesRecursive(prefix + ".value", mapType.getValueType()));
     }
-    return fieldPathPairs;
+    return fieldNames;
   }
 
   private static String escapeDots(String name) {
     return name.contains(".") ? "`" + name + "`" : name;
   }
 
-  private static void validParquetColumnNames(List<String> columnNames) {
+  protected static void validParquetColumnNames(List<String> columnNames) {
     for (String name : columnNames) {
       // ,;{}()\n\t= and space are special characters in Parquet schema
       if (name.matches(".*[ ,;{}()\n\t=].*")) {
@@ -291,7 +297,7 @@ public class SchemaUtils {
    *
    * @param dataType the data type to validate
    */
-  private static void validateSupportedType(DataType dataType) {
+  protected static void validateSupportedType(DataType dataType) {
     if (dataType instanceof BooleanType
         || dataType instanceof ByteType
         || dataType instanceof ShortType

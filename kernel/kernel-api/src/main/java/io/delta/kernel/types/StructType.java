@@ -94,7 +94,14 @@ public final class StructType extends DataType {
     return fieldAndOrdinal != null ? fieldAndOrdinal._2 : -1;
   }
 
+  /** @return the field with the given name, or null if not found */
   public StructField get(String fieldName) {
+    final Tuple2<StructField, Integer> fieldAndOrdinal = nameToFieldAndOrdinal.get(fieldName);
+
+    if (fieldAndOrdinal == null) {
+      return null;
+    }
+
     return nameToFieldAndOrdinal.get(fieldName)._1;
   }
 
