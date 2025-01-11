@@ -33,6 +33,16 @@ import java.util.function.Supplier;
 public final class DeltaErrors {
   private DeltaErrors() {}
 
+  public static KernelException invalidReadSchema(
+      String tablePath, StructType readSchema, StructType tableSchema) {
+    String msg =
+        String.format(
+            "%s: Read schema is not a subset of the table schema."
+                + "\nRead schema:\n%s\nTable schema:\n%s",
+            tablePath, readSchema, tableSchema);
+    return new KernelException(msg);
+  }
+
   public static KernelException versionBeforeFirstAvailableCommit(
       String tablePath, long versionToLoad, long earliestVersion) {
     String message =
