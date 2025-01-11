@@ -32,6 +32,12 @@ import java.util.Objects;
 public final class DecimalType extends DataType {
   public static final DecimalType USER_DEFAULT = new DecimalType(10, 0);
 
+  // Smallest decimal types that can hold all values for the given primitive types.
+  public static final DecimalType BYTE_DECIMAL = new DecimalType(3, 0);
+  public static final DecimalType SHORT_DECIMAL = new DecimalType(5, 0);
+  public static final DecimalType INT_DECIMAL = new DecimalType(10, 0);
+  public static final DecimalType LONG_DECIMAL = new DecimalType(20, 0);
+
   private final int precision;
   private final int scale;
 
