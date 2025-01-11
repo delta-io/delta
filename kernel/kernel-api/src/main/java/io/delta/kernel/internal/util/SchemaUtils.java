@@ -20,7 +20,6 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.DeltaErrors;
-import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.types.*;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -32,6 +31,10 @@ import java.util.stream.Collectors;
 public class SchemaUtils {
 
   private SchemaUtils() {}
+
+  /////////////////
+  // Public APIs //
+  /////////////////
 
   /** Checks if the {@code supersetSchema} is a superset of the {@code subsetSchema}. */
   public static boolean isSuperset(StructType supersetSchema, StructType subsetSchema) {
@@ -45,46 +48,6 @@ public class SchemaUtils {
       }
     }
     return true;
-  }
-
-  /**
-   * Recursively checks if {@code supersetType} can contain {@code subsetType}. Examples:
-   *
-   * <ul>
-   *   <li>If both are {@code StructType}, compare fields recursively.
-   *   <li>If both are {@code ArrayType}, compare element types.
-   *   <li>If both are {@code MapType}, compare key & value types.
-   *   <li>Otherwise, use the standard {@link StructType#equivalent} check.
-   * </ul>
-   */
-  @VisibleForTesting
-  public static boolean isDataTypeSuperset(DataType supersetType, DataType subsetType) {
-    if (subsetType instanceof StructType) {
-      if (!(supersetType instanceof StructType)) {
-        return false;
-      }
-      StructType supersetStruct = (StructType) supersetType;
-      StructType subsetStruct = (StructType) subsetType;
-      return isSuperset(supersetStruct, subsetStruct);
-    } else if (subsetType instanceof ArrayType) {
-      if (!(supersetType instanceof ArrayType)) {
-        return false;
-      }
-      final ArrayType supersetArray = (ArrayType) supersetType;
-      final ArrayType subsetArray = (ArrayType) subsetType;
-      return isDataTypeSuperset(supersetArray.getElementType(), subsetArray.getElementType());
-    } else if (subsetType instanceof MapType) {
-      if (!(supersetType instanceof MapType)) {
-        return false;
-      }
-      final MapType supersetMap = (MapType) supersetType;
-      final MapType subsetMap = (MapType) subsetType;
-      if (!isDataTypeSuperset(supersetMap.getKeyType(), subsetMap.getKeyType())) {
-        return false;
-      }
-      return isDataTypeSuperset(supersetMap.getValueType(), subsetMap.getValueType());
-    }
-    return supersetType.equals(subsetType);
   }
 
   /**
@@ -232,6 +195,49 @@ public class SchemaUtils {
     return -1;
   }
 
+  ////////////////////
+  // Helper methods //
+  ////////////////////
+
+  /**
+   * Recursively checks if {@code supersetType} can contain {@code subsetType}. Examples:
+   *
+   * <ul>
+   *   <li>If both are {@code StructType}, compare fields recursively.
+   *   <li>If both are {@code ArrayType}, compare element types.
+   *   <li>If both are {@code MapType}, compare key & value types.
+   *   <li>Otherwise, use the standard {@link StructType#equivalent} check.
+   * </ul>
+   */
+  private static boolean isDataTypeSuperset(DataType supersetType, DataType subsetType) {
+    if (subsetType instanceof StructType) {
+      if (!(supersetType instanceof StructType)) {
+        return false;
+      }
+      StructType supersetStruct = (StructType) supersetType;
+      StructType subsetStruct = (StructType) subsetType;
+      return isSuperset(supersetStruct, subsetStruct);
+    } else if (subsetType instanceof ArrayType) {
+      if (!(supersetType instanceof ArrayType)) {
+        return false;
+      }
+      final ArrayType supersetArray = (ArrayType) supersetType;
+      final ArrayType subsetArray = (ArrayType) subsetType;
+      return isDataTypeSuperset(supersetArray.getElementType(), subsetArray.getElementType());
+    } else if (subsetType instanceof MapType) {
+      if (!(supersetType instanceof MapType)) {
+        return false;
+      }
+      final MapType supersetMap = (MapType) supersetType;
+      final MapType subsetMap = (MapType) subsetType;
+      if (!isDataTypeSuperset(supersetMap.getKeyType(), subsetMap.getKeyType())) {
+        return false;
+      }
+      return isDataTypeSuperset(supersetMap.getValueType(), subsetMap.getValueType());
+    }
+    return supersetType.equals(subsetType);
+  }
+
   /**
    * Returns all column names in this schema as a flat list. For example, a schema like:
    *
@@ -282,7 +288,7 @@ public class SchemaUtils {
     return name.contains(".") ? "`" + name + "`" : name;
   }
 
-  protected static void validParquetColumnNames(List<String> columnNames) {
+  private static void validParquetColumnNames(List<String> columnNames) {
     for (String name : columnNames) {
       // ,;{}()\n\t= and space are special characters in Parquet schema
       if (name.matches(".*[ ,;{}()\n\t=].*")) {
@@ -297,7 +303,7 @@ public class SchemaUtils {
    *
    * @param dataType the data type to validate
    */
-  protected static void validateSupportedType(DataType dataType) {
+  private static void validateSupportedType(DataType dataType) {
     if (dataType instanceof BooleanType
         || dataType instanceof ByteType
         || dataType instanceof ShortType
