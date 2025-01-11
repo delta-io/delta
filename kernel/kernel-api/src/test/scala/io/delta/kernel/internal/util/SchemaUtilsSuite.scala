@@ -186,7 +186,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
         new StructField("zip.zap", new StructType(Arrays.asList(field_g_value_zipzap_6)), true)
       val field_g_with_subset_value = new StructField("g", new MapType(
         new StructType(Arrays.asList(field_g_key_5)),
-        new StructType(Arrays.asList(field_g_value_zipzap_excluding_7)), // <-- value has bad field
+        new StructType(Arrays.asList(field_g_value_zipzap_excluding_7)), // <-- selecting subset
         true), true)
       val schema = new StructType(Arrays.asList(field_g_with_subset_value))
       assert(SchemaUtils.isSuperset(complexSchema, schema))
