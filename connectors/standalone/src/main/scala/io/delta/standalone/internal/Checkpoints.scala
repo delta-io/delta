@@ -26,6 +26,7 @@ import com.github.mjakubowski84.parquet4s.ParquetWriter
 import io.delta.storage.CloseableIterator
 import org.apache.hadoop.fs.Path
 import org.apache.parquet.hadoop.metadata.CompressionCodecName
+import org.apache.parquet.hadoop.ParquetOutputFormat
 
 import io.delta.standalone.internal.actions.SingleAction
 import io.delta.standalone.internal.exception.DeltaErrors
@@ -254,8 +255,10 @@ private[internal] object Checkpoints extends Logging {
         path
       }
 
+    val compressName = deltaLog.hadoopConf.get(
+      ParquetOutputFormat.COMPRESSION, CompressionCodecName.SNAPPY.name);
     val writerOptions = ParquetWriter.Options(
-      compressionCodecName = CompressionCodecName.SNAPPY,
+      compressionCodecName = CompressionCodecName.fromConf(compressName),
       timeZone = deltaLog.timezone,
       hadoopConf = deltaLog.hadoopConf
     )
