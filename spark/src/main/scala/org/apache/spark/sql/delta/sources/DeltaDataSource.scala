@@ -75,9 +75,6 @@ class DeltaDataSource
       schema: Option[StructType],
       providerName: String,
       parameters: Map[String, String]): (String, StructType) = {
-    if (schema.nonEmpty && schema.get.nonEmpty) {
-      throw DeltaErrors.specifySchemaAtReadTimeException
-    }
     val path = parameters.getOrElse("path", {
       throw DeltaErrors.pathNotSpecifiedException
     })
@@ -106,6 +103,10 @@ class DeltaDataSource
           mergeConsecutiveSchemaChanges = shouldMergeConsecutiveSchemas)
         .flatMap(_.getCurrentTrackedMetadata.map(_.dataSchema))
         .getOrElse(snapshot.schema)
+    }
+
+    if (schema.nonEmpty && !DataType.equalsIgnoreCompatibleNullability(readSchema, schema.get)) {
+      throw DeltaErrors.specifySchemaAtReadTimeException
     }
 
     val schemaToUse = DeltaColumnMapping.dropColumnMappingMetadata(

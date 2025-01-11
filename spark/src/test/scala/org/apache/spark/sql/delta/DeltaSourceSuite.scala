@@ -142,9 +142,17 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
-  test("disallow user specified schema") {
+  test("disallow user specified schema if inconsistent") {
     withTempDir { inputDir =>
-      new File(inputDir, "_delta_log").mkdir()
+      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+      withMetadata(deltaLog, StructType.fromDDL("value STRING"))
+
+      // User-specified schema is allowed if it's consistent with the actual Delta table schema.
+      spark.readStream
+        .schema(StructType.fromDDL("value STRING"))
+        .format("delta")
+        .load(inputDir.getCanonicalPath)
+
       val e = intercept[AnalysisException] {
         spark.readStream
           .schema(StructType.fromDDL("a INT, b STRING"))
