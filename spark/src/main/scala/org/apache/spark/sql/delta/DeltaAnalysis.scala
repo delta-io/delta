@@ -265,12 +265,7 @@ class DeltaAnalysis(session: SparkSession)
       }
       DeltaDynamicPartitionOverwriteCommand(r, d, adjustedQuery, o.writeOptions, o.isByName)
 
-    // Pull out the partition filter that may be part of the FileIndex. This can happen when someone
-    // queries a Delta table such as spark.read.format("delta").load("/some/table/partition=2")
-    case l @ DeltaTable(index: TahoeLogFileIndex) if index.partitionFilters.nonEmpty =>
-      Filter(
-        index.partitionFilters.reduce(And),
-        DeltaTableUtils.replaceFileIndex(l, index.copy(partitionFilters = Nil)))
+    case ResolveDeltaTableWithPartitionFilters(plan) => plan
 
     // SQL CDC table value functions "table_changes" and "table_changes_by_path"
     case stmt: CDCStatementBase if stmt.functionArgs.forall(_.resolved) =>
@@ -442,10 +437,7 @@ class DeltaAnalysis(session: SparkSession)
 
     case d: DescribeDeltaHistory if d.childrenResolved => d.toCommand
 
-    // This rule falls back to V1 nodes, since we don't have a V2 reader for Delta right now
-    case dsv2 @ DataSourceV2Relation(d: DeltaTableV2, _, _, _, options)
-        if dsv2.getTagValue(DeltaRelation.KEEP_AS_V2_RELATION_TAG).isEmpty =>
-      DeltaRelation.fromV2Relation(d, dsv2, options)
+    case FallbackToV1DeltaRelation(v1Relation) => v1Relation
 
     case ResolvedTable(_, _, d: DeltaTableV2, _) if d.catalogTable.isEmpty && !d.tableExists =>
       // This is DDL on a path based table that doesn't exist. CREATE will not hit this path, most
