@@ -3130,6 +3130,38 @@ trait DeltaErrorsBase
     )
   }
 
+  def cannotContinueStreamingTypeWidening(
+      previousSchemaChangeVersion: Long,
+      currentSchemaChangeVersion: Long,
+      checkpointHash: Int,
+      allowAllSqlConfKey: String,
+      wideningTypeChanges: Seq[TypeChange]): Throwable = {
+
+    val wideningTypeChangesStr = wideningTypeChanges.map { change =>
+        s"  ${SchemaUtils.prettyFieldName(change.fieldPath)}: ${change.fromType.sql} -> " +
+        s"${change.toType.sql}"
+      }.mkString("\n")
+
+    new DeltaRuntimeException(
+      errorClass = "DELTA_STREAMING_CANNOT_CONTINUE_PROCESSING_TYPE_WIDENING",
+      messageParameters = Array(
+        previousSchemaChangeVersion.toString,
+        currentSchemaChangeVersion.toString,
+        wideningTypeChangesStr,
+        currentSchemaChangeVersion.toString,
+        // Allow this stream to pass for this particular version
+        s"$allowAllSqlConfKey.ckpt_$checkpointHash",
+        currentSchemaChangeVersion.toString,
+        // Allow this stream to pass
+        s"$allowAllSqlConfKey.ckpt_$checkpointHash",
+        "always",
+        // Allow all streams to pass
+        allowAllSqlConfKey,
+        "always"
+      )
+    )
+  }
+
   def cannotReconstructPathFromURI(uri: String): Throwable =
     new DeltaRuntimeException(
       errorClass = "DELTA_CANNOT_RECONSTRUCT_PATH_FROM_URI",

@@ -437,41 +437,121 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
   }
 }
 
-object NonAdditiveSchemaChangeTypes {
-  // Rename -> caused by a single column rename
-  val SCHEMA_CHANGE_RENAME = "RENAME COLUMN"
-  // Drop -> caused by a single column drop
-  val SCHEMA_CHANGE_DROP = "DROP COLUMN"
-  // A combination of rename and drop columns -> can be caused by a complete overwrite
-  val SCHEMA_CHANGE_RENAME_AND_DROP = "RENAME AND DROP COLUMN"
-}
-
 object DeltaSourceMetadataEvolutionSupport {
+  /**
+   * Defining the different combinations of non-additive schema changes to detect them and allow
+   * users to vet and unblock them using a corresponding SQL conf:
+   * - dropping columns
+   * - renaming columns
+   * - widening data types
+   */
+  private sealed trait SchemaChangeType {
+    val name: String
+    val sqlConfUnblock: String
+    val isRename: Boolean
+    val isDrop: Boolean
+    val isTypeWidening: Boolean
+  }
+
+  // Single types of schema change, typically caused by a single ALTER TABLE operation.
+  private case object SchemaChangeRename extends SchemaChangeType {
+    override val name = "RENAME COLUMN"
+    override val sqlConfUnblock = "allowSourceColumnRename"
+    override val (isRename, isDrop, isTypeWidening) = (true, false, false)
+  }
+  private case object SchemaChangeDrop extends SchemaChangeType {
+    override val name = "DROP COLUMN"
+    override val sqlConfUnblock = "allowSourceColumnDrop"
+    override val (isRename, isDrop, isTypeWidening) = (false, true, false)
+  }
+  private case object SchemaChangeTypeWidening extends SchemaChangeType {
+    override val name = "TYPE WIDENING"
+    override val sqlConfUnblock = "allowSourceTypeWidening"
+    override val (isRename, isDrop, isTypeWidening) = (false, false, true)
+  }
+
+  // Combinations of rename, drop and type change -> can be caused by a complete overwrite.
+  private case object SchemaChangeRenameAndDrop extends SchemaChangeType {
+    override val name = "RENAME AND DROP COLUMN"
+    override val sqlConfUnblock = "allowSourceColumnRenameAndDrop"
+    override val (isRename, isDrop, isTypeWidening) = (true, true, false)
+  }
+  private case object SchemaChangeRenameAndTypeWidening extends SchemaChangeType {
+    override val name = "RENAME AND TYPE WIDENING"
+    override val sqlConfUnblock = "allowSourceColumnRenameAndTypeWidening"
+    override val (isRename, isDrop, isTypeWidening) = (true, false, true)
+  }
+  private case object SchemaChangeDropAndTypeWidening extends SchemaChangeType {
+    override val name = "DROP AND TYPE WIDENING"
+    override val sqlConfUnblock = "allowSourceColumnDropAndTypeWidening"
+    override val (isRename, isDrop, isTypeWidening) = (false, true, true)
+  }
+  private case object SchemaChangeRenameAndDropAndTypeWidening extends SchemaChangeType {
+    override val name = "RENAME, DROP AND TYPE WIDENING"
+    override val sqlConfUnblock = "allowSourceColumnRenameAndDropAndTypeWidening"
+    override val (isRename, isDrop, isTypeWidening) = (true, true, true)
+  }
+
+  private val SQL_CONF_UNBLOCK_ALL: String = SchemaChangeRenameAndDropAndTypeWidening.sqlConfUnblock
+
+  private final val allSchemaChangeTypes = Seq(
+    SchemaChangeDrop,
+    SchemaChangeRename,
+    SchemaChangeTypeWidening,
+    SchemaChangeRenameAndDrop,
+    SchemaChangeRenameAndTypeWidening,
+    SchemaChangeDropAndTypeWidening,
+    SchemaChangeRenameAndDropAndTypeWidening
+  )
 
   /**
    * Determine the non-additive schema change type for an incoming schema change. None if it's
    * additive.
    */
   private def determineNonAdditiveSchemaChangeType(
-      newSchema: StructType, oldSchema: StructType): Option[String] = {
+      spark: SparkSession,
+      newSchema: StructType, oldSchema: StructType): Option[SchemaChangeType] = {
     val isRenameColumn = DeltaColumnMapping.isRenameColumnOperation(newSchema, oldSchema)
     val isDropColumn = DeltaColumnMapping.isDropColumnOperation(newSchema, oldSchema)
-    if (isRenameColumn && isDropColumn) {
-      Some(NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_RENAME_AND_DROP)
-    } else if (isRenameColumn) {
-      Some(NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_RENAME)
-    } else if (isDropColumn) {
-      Some(NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_DROP)
-    } else {
-      None
+    // If checking type changes is disabled - to revert to historical behavior - then type widening
+    // is not considered a non-additive schema change and are allowed to propagate without user
+    // action.
+    val isTypeWidening = allowTypeWidening(spark) && !bypassTypeChangeCheck(spark) &&
+      TypeWidening.containsWideningTypeChanges(from = oldSchema, to = newSchema)
+    allSchemaChangeTypes.find { c =>
+      (c.isDrop, c.isRename, c.isTypeWidening) == (isDropColumn, isRenameColumn, isTypeWidening)
     }
+  }
+
+  /** Retrieves the corresponding SQL confs that allow unblocking the given schema change. */
+  private def getUnblockingConfs(change: SchemaChangeType): Seq[String] = {
+    allSchemaChangeTypes.filter { c =>
+      (!change.isDrop || c.isDrop) &&
+      (!change.isRename || c.isRename) &&
+      (!change.isTypeWidening || c.isTypeWidening)
+    }.map(_.sqlConfUnblock)
   }
 
   def getCheckpointHash(path: String): Int = path.hashCode
 
-  final val SQL_CONF_UNBLOCK_ALL = "allowSourceColumnRenameAndDrop"
-  final val SQL_CONF_UNBLOCK_RENAME = "allowSourceColumnRename"
-  final val SQL_CONF_UNBLOCK_DROP = "allowSourceColumnDrop"
+  /**
+   * Whether to accept widening type changes:
+   *   - when true, widening type changes cause the stream to fail, requesting user to review and
+   *     unblock them via a SQL conf.
+   *   - when false, widening type changes are rejected without possibility to unblock, similar to
+   *     any other arbitrary type change.
+   */
+  def allowTypeWidening(spark: SparkSession): Boolean = {
+    spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_ALLOW_TYPE_WIDENING_STREAMING_SOURCE)
+  }
+
+  /**
+   * We historically allowed any type changes to go through when schema tracking was enabled. This
+   * config allows reverting to that behavior.
+   */
+  def bypassTypeChangeCheck(spark: SparkSession): Boolean =
+    spark.sessionState.conf.getConf(
+      DeltaSQLConf.DELTA_TYPE_WIDENING_BYPASS_STREAMING_TYPE_CHANGE_CHECK)
 
   // scalastyle:off
   /**
@@ -520,52 +600,79 @@ object DeltaSourceMetadataEvolutionSupport {
     val previousSchemaChangeVersion = previousSchema.deltaCommitVersion
     // The end version of a possible series of consecutive schema changes.
     val currentSchemaChangeVersion = currentSchema.deltaCommitVersion
-    val confPairsToAllowAllSchemaChange =
-      getConfPairsToAllowSchemaChange(SQL_CONF_UNBLOCK_ALL, currentSchemaChangeVersion)
+
+    checkIncompatibleSchemaChange(
+      spark,
+      previousSchema = previousSchema.dataSchema,
+      currentSchema = currentSchema.dataSchema,
+      currentSchemaChangeVersion
+    )
 
     determineNonAdditiveSchemaChangeType(
-      currentSchema.dataSchema, previousSchema.dataSchema).foreach {
-      case NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_DROP =>
-        val validConfKeysValuePair =
-          getConfPairsToAllowSchemaChange(SQL_CONF_UNBLOCK_DROP, currentSchemaChangeVersion) ++
-            confPairsToAllowAllSchemaChange
+      spark, currentSchema.dataSchema, previousSchema.dataSchema).foreach { change =>
+      val confs = getUnblockingConfs(change)
+
+      val validConfKeysValuePair =
+        confs.flatMap(getConfPairsToAllowSchemaChange(_, currentSchemaChangeVersion))
+
         if (!validConfKeysValuePair.exists(p => getConf(p._1).contains(p._2))) {
           // Throw error to prompt user to set the correct confs
-          throw DeltaErrors.cannotContinueStreamingPostSchemaEvolution(
-            NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_DROP,
-            previousSchemaChangeVersion,
-            currentSchemaChangeVersion,
-            checkpointHash,
-            SQL_CONF_UNBLOCK_ALL,
-            SQL_CONF_UNBLOCK_DROP)
-        }
-      case NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_RENAME =>
-        val validConfKeysValuePair =
-          getConfPairsToAllowSchemaChange(SQL_CONF_UNBLOCK_RENAME, currentSchemaChangeVersion) ++
-            confPairsToAllowAllSchemaChange
-        if (!validConfKeysValuePair.exists(p => getConf(p._1).contains(p._2))) {
-          // Throw error to prompt user to set the correct confs
-          throw DeltaErrors.cannotContinueStreamingPostSchemaEvolution(
-            NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_RENAME,
-            previousSchemaChangeVersion,
-            currentSchemaChangeVersion,
-            checkpointHash,
-            SQL_CONF_UNBLOCK_ALL,
-            SQL_CONF_UNBLOCK_RENAME)
-        }
-      case NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_RENAME_AND_DROP =>
-        val validConfKeysValuePair = confPairsToAllowAllSchemaChange
-        if (!validConfKeysValuePair.exists(p => getConf(p._1).contains(p._2))) {
-          // Throw error to prompt user to set the correct confs
-          throw DeltaErrors.cannotContinueStreamingPostSchemaEvolution(
-            NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_RENAME_AND_DROP,
-            previousSchemaChangeVersion,
-            currentSchemaChangeVersion,
-            checkpointHash,
-            SQL_CONF_UNBLOCK_ALL,
-            SQL_CONF_UNBLOCK_ALL)
+          change match {
+            case SchemaChangeTypeWidening =>
+              val wideningTypeChanges = TypeWideningMetadata.collectTypeChanges(
+                from = previousSchema.dataSchema,
+                to = currentSchema.dataSchema
+              )
+              throw DeltaErrors.cannotContinueStreamingTypeWidening(
+                previousSchemaChangeVersion,
+                currentSchemaChangeVersion,
+                checkpointHash,
+                change.sqlConfUnblock,
+                wideningTypeChanges)
+
+            case _ =>
+              throw DeltaErrors.cannotContinueStreamingPostSchemaEvolution(
+                change.name,
+                previousSchemaChangeVersion,
+                currentSchemaChangeVersion,
+                checkpointHash,
+                SQL_CONF_UNBLOCK_ALL,
+                change.sqlConfUnblock)
+          }
         }
     }
   }
 
+  /**
+   * Checks that the new schema only contains column rename/drop and widening type changes compared
+   * to the previous schema. That is, rejects any non-widening type changes.
+   */
+  private def checkIncompatibleSchemaChange(
+      spark: SparkSession,
+      previousSchema: StructType,
+      currentSchema: StructType,
+      currentSchemaChangeVersion: Long): Unit = {
+    if (bypassTypeChangeCheck(spark)) return
+
+    val incompatibleSchema =
+      !SchemaUtils.isReadCompatible(
+        previousSchema,
+        currentSchema,
+        forbidTightenNullability = true,
+        // We want to accept dropped/renamed columns that will manifest as missing columns.
+        allowMissingColumns = true,
+        allowMissingStructFields = true,
+        typeWideningMode =
+          if (allowTypeWidening(spark)) TypeWideningMode.AllTypeWidening
+          else TypeWideningMode.NoTypeWidening
+      )
+    if (incompatibleSchema) {
+      throw DeltaErrors.schemaChangedException(
+        previousSchema,
+        currentSchema,
+        retryable = false,
+        Some(currentSchemaChangeVersion),
+        includeStartingVersionOrTimestampMessage = false)
+    }
+  }
 }

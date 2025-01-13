@@ -2715,6 +2715,30 @@ trait DeltaErrorsSuiteBase
       assert(!e.additionalProperties("detectedDuringStreaming").toBoolean)
     }
     {
+      val e = intercept[DeltaRuntimeException] {
+        throw DeltaErrors.cannotContinueStreamingTypeWidening(
+          previousSchemaChangeVersion = 0,
+          currentSchemaChangeVersion = 1,
+          allowAllSqlConfKey = "spark.databricks.delta.streaming.allowSourceTypeWidening",
+          checkpointHash = 15,
+          wideningTypeChanges = Seq(TypeChange(None, IntegerType, LongType, Seq("a"))))
+      }
+      checkError(e,
+        "DELTA_STREAMING_CANNOT_CONTINUE_PROCESSING_TYPE_CHANGE",
+        parameters = Map(
+          "previousSchemaChangeVersion" -> "0",
+          "currentSchemaChangeVersion" -> "1",
+          "wideningTypeChanges" -> "  a: INT -> LONG",
+          "allowCkptVerKey" -> "spark.databricks.delta.streaming.allowSourceTypeWidening.ckpt_15",
+          "allowCkptVerValue" -> "1",
+          "allowCkptKey" -> "spark.databricks.delta.streaming.allowSourceTypeWidening.ckpt_15",
+          "allowCkptValue" -> "always",
+          "allowAllKey" -> "spark.databricks.delta.streaming.allowSourceTypeWidening",
+          "allowAllValue" -> "always"
+        )
+      )
+    }
+    {
       val e = intercept[DeltaUnsupportedOperationException] {
         throw DeltaErrors.blockColumnMappingAndCdcOperation(DeltaOperations.ManualUpdate)
       }

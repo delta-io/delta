@@ -40,6 +40,12 @@ object TypeWideningMode {
     override def shouldWidenType(fromType: AtomicType, toType: AtomicType): Boolean = false
   }
 
+  /** All supported type widening changes are allowed. */
+  case object AllTypeWidening extends TypeWideningMode {
+    override def shouldWidenType(fromType: AtomicType, toType: AtomicType): Boolean =
+      TypeWidening.isTypeChangeSupported(fromType = fromType, toType = toType)
+  }
+
   /**
    * Type changes that are eligible to be applied automatically during schema evolution are allowed.
    * Can be restricted to only type changes supported by Iceberg.

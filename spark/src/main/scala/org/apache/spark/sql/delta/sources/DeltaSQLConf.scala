@@ -1224,6 +1224,22 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_ALLOW_TYPE_WIDENING_STREAMING_SOURCE =
+    buildConf("typeWidening.allowTypeChangeStreamingDeltaSource")
+      .doc("Accept incoming widening type changes when streaming from a Delta source.")
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_TYPE_WIDENING_BYPASS_STREAMING_TYPE_CHANGE_CHECK =
+    buildConf("typeWidening.bypassStreamingTypeChangeCheck")
+      .doc("Controls the check performed when a type change is detected when streaming from a " +
+        "Delta source. This check fails the streaming query in case a type change may impact the " +
+        "semantics of the query and requests user intervention.")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
   /**
    * Internal config to bypass check that prevents applying type changes that are not supported by
    * Iceberg when Uniform is enabled with Iceberg compatibility.

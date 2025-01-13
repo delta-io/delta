@@ -140,7 +140,11 @@ private[delta] object TypeWideningMetadata extends DeltaLogging {
     val changesToRecord = mutable.Buffer.empty[TypeChange]
     val schemaWithMetadata = SchemaMergingUtils.transformColumns(schema, oldSchema) {
       case (_, newField, Some(oldField), _) =>
-        var typeChanges = collectTypeChanges(oldField.dataType, newField.dataType)
+        var typeChanges = collectTypeChanges(
+          oldField.dataType,
+          newField.dataType,
+          logNonWideningChanges = true
+        )
         // The version field isn't used anymore but we need to populate it in case the table uses
         // the preview feature, as preview clients may then rely on the field being present.
         if (txn.protocol.isFeatureSupported(TypeWideningPreviewTableFeature)) {
@@ -172,22 +176,47 @@ private[delta] object TypeWideningMetadata extends DeltaLogging {
   }
 
   /**
+   * Recursively compare `from` and `to` to collect all primitive type widening changes, including
+   * in nested structs, maps and arrays.
+   */
+  def collectTypeChanges(from: StructType, to: StructType): Seq[TypeChange] = {
+    val changes = mutable.Buffer.empty[TypeChange]
+
+    SchemaMergingUtils.transformColumns(schema = to, other = from) {
+      case (path, newField, Some(oldField), _) =>
+        changes ++= collectTypeChanges(
+          oldField.dataType,
+          newField.dataType,
+          logNonWideningChanges = false
+        ).map { change =>
+          change.copy(fieldPath = path ++ Seq(newField.name) ++ change.fieldPath)
+        }
+        newField
+      case (_, field, _, _) => field
+    }
+    changes
+  }
+
+  /**
    * Recursively collect primitive type changes inside nested maps and arrays between `fromType` and
    * `toType`.
    */
-  private def collectTypeChanges(fromType: DataType, toType: DataType)
-    : Seq[TypeChange] = (fromType, toType) match {
+  private def collectTypeChanges(
+      fromType: DataType,
+      toType: DataType,
+      logNonWideningChanges: Boolean): Seq[TypeChange] = (fromType, toType) match {
     case (from: MapType, to: MapType) =>
-      collectTypeChanges(from.keyType, to.keyType).map { typeChange =>
+      collectTypeChanges(from.keyType, to.keyType, logNonWideningChanges).map { typeChange =>
         typeChange.copy(fieldPath = "key" +: typeChange.fieldPath)
       } ++
-      collectTypeChanges(from.valueType, to.valueType).map { typeChange =>
+      collectTypeChanges(from.valueType, to.valueType, logNonWideningChanges).map { typeChange =>
         typeChange.copy(fieldPath = "value" +: typeChange.fieldPath)
       }
     case (from: ArrayType, to: ArrayType) =>
-      collectTypeChanges(from.elementType, to.elementType).map { typeChange =>
-        typeChange.copy(fieldPath = "element" +: typeChange.fieldPath)
-      }
+      collectTypeChanges(from.elementType, to.elementType, logNonWideningChanges)
+        .map { typeChange =>
+          typeChange.copy(fieldPath = "element" +: typeChange.fieldPath)
+        }
     case (fromType: AtomicType, toType: AtomicType) if fromType != toType &&
         TypeWidening.isTypeChangeSupported(fromType, toType) =>
       Seq(TypeChange(
@@ -202,7 +231,7 @@ private[delta] object TypeWideningMetadata extends DeltaLogging {
     case (fromType: AtomicType, toType: AtomicType) if isStringTypeChange(fromType, toType) =>
       Seq.empty
     case (_: AtomicType, _: AtomicType) =>
-      deltaAssert(fromType == toType,
+      deltaAssert(!logNonWideningChanges || fromType == toType,
         name = "typeWidening.unexpectedTypeChange",
         msg = s"Trying to apply an unsupported type change: $fromType to $toType",
         data = Map(

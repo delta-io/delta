@@ -1959,7 +1959,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
             (s"${DeltaSQLConf.SQL_CONF_PREFIX}.streaming.$allow.ckpt_$ckptHash", ver.toString)
         )
       ).foreach { case (changeSchema, getConfKV) =>
-        testStreamFlow(changeSchema, NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_DROP, getConfKV)
+        testStreamFlow(changeSchema, schemaChangeType = "DROP COLUMN", getConfKV)
       }
     }
 
@@ -1981,7 +1981,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
             (s"${DeltaSQLConf.SQL_CONF_PREFIX}.streaming.$allow.ckpt_$ckptHash", ver.toString)
         )
       ).foreach { case (changeSchema, getConfKV) =>
-        testStreamFlow(changeSchema, NonAdditiveSchemaChangeTypes.SCHEMA_CHANGE_RENAME, getConfKV)
+        testStreamFlow(changeSchema, schemaChangeType = "RENAME COLUMN", getConfKV)
       }
     }
   }
