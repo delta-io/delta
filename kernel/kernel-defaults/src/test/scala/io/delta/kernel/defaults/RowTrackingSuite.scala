@@ -296,7 +296,45 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
   }
 
   test("Integration test - Write table with Spark then write with Kernel") {
-    // TODO: Implement this test. Creating and writing a table using Spark with row tracking also
-    //  enables the 'invariants' feature, which is not yet supported by the Kernel.
+    withTempDirAndEngine((tablePath, engine) => {
+      val tbl = "tbl"
+      withTable(tbl) {
+        spark.sql(
+          s"""CREATE TABLE $tbl (id LONG) USING delta
+             |LOCATION '$tablePath'
+             |TBLPROPERTIES (
+             |  'delta.feature.domainMetadata' = 'enabled',
+             |  'delta.feature.rowTracking' = 'supported'
+             |)
+             |""".stripMargin
+        )
+
+        // Write to the table using delta-spark
+        spark.range(0, 20).write.format("delta").mode("append").save(tablePath) // version 1
+        spark.range(20, 100).write.format("delta").mode("append").save(tablePath) // version 2
+
+        // Verify the table state
+        verifyBaseRowIDs(engine, tablePath, Seq(0, 20))
+        verifyDefaultRowCommitVersion(engine, tablePath, Seq(1, 2))
+        verifyHighWatermark(engine, tablePath, 99)
+
+        // Write to the table using Kernel
+        val schema = new StructType().add("id", LONG)
+        val dataBatch1 = generateData(schema, Seq.empty, Map.empty, 100, 1) // 100 rows
+        val dataBatch2 = generateData(schema, Seq.empty, Map.empty, 200, 1) // 200 rows
+        val dataBatch3 = generateData(schema, Seq.empty, Map.empty, 400, 1) // 400 rows
+        appendData(
+          engine,
+          tablePath,
+          schema = schema,
+          data = Seq(dataBatch1, dataBatch2, dataBatch3).map(Map.empty[String, Literal] -> _)
+        ) // version 3
+
+        // Verify the table state
+        verifyBaseRowIDs(engine, tablePath, Seq(0, 20, 100, 200, 400))
+        verifyDefaultRowCommitVersion(engine, tablePath, Seq(1, 2, 3, 3, 3))
+        verifyHighWatermark(engine, tablePath, 799)
+      }
+    })
   }
 }
