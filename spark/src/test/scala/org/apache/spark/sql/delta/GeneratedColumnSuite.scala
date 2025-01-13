@@ -622,7 +622,7 @@ trait GeneratedColumnSuiteBase
       s"${generatedColumnType.sql} NOT NULL"
     }
     test(s"validateGeneratedColumns: column type ${columnTypeString}" +
-        s" $verb expression type ${generateAsExpression.expr.sql}") {
+        s" $verb expression type $generateAsExpression") {
       val f1 = StructField("nullableIntCol", IntegerType, nullable = true)
       val f2 = withGenerationExpression(
         StructField("genCol", generatedColumnType, nullable = generatedColumnNullable),
