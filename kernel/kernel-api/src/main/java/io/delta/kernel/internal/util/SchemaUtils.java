@@ -43,7 +43,7 @@ public class SchemaUtils {
       if (supersetField == null) {
         return false;
       }
-      if (!isDataTypeSuperset(supersetField.getDataType(), subsetField.getDataType())) {
+      if (!isSupersetOrEquivalent(supersetField.getDataType(), subsetField.getDataType())) {
         return false;
       }
     }
@@ -200,7 +200,8 @@ public class SchemaUtils {
   ////////////////////
 
   /**
-   * Recursively checks if {@code supersetType} can contain {@code subsetType}. Examples:
+   * Recursively checks if {@code supersetType} is equivalent to {@code subsetType} (if applicable)
+   * or if {@code supersetType} is a superset of {@code subsetType}.
    *
    * <ul>
    *   <li>If both are {@code StructType}, compare fields recursively.
@@ -209,7 +210,7 @@ public class SchemaUtils {
    *   <li>Otherwise, use the standard {@link StructType#equivalent} check.
    * </ul>
    */
-  private static boolean isDataTypeSuperset(DataType supersetType, DataType subsetType) {
+  private static boolean isSupersetOrEquivalent(DataType supersetType, DataType subsetType) {
     if (subsetType instanceof StructType) {
       if (!(supersetType instanceof StructType)) {
         return false;
@@ -223,19 +224,19 @@ public class SchemaUtils {
       }
       final ArrayType supersetArray = (ArrayType) supersetType;
       final ArrayType subsetArray = (ArrayType) subsetType;
-      return isDataTypeSuperset(supersetArray.getElementType(), subsetArray.getElementType());
+      return isSupersetOrEquivalent(supersetArray.getElementType(), subsetArray.getElementType());
     } else if (subsetType instanceof MapType) {
       if (!(supersetType instanceof MapType)) {
         return false;
       }
       final MapType supersetMap = (MapType) supersetType;
       final MapType subsetMap = (MapType) subsetType;
-      if (!isDataTypeSuperset(supersetMap.getKeyType(), subsetMap.getKeyType())) {
+      if (!isSupersetOrEquivalent(supersetMap.getKeyType(), subsetMap.getKeyType())) {
         return false;
       }
-      return isDataTypeSuperset(supersetMap.getValueType(), subsetMap.getValueType());
+      return isSupersetOrEquivalent(supersetMap.getValueType(), subsetMap.getValueType());
     }
-    return supersetType.equals(subsetType);
+    return supersetType.equivalent(subsetType);
   }
 
   /**
