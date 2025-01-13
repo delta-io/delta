@@ -22,6 +22,11 @@ import org.apache.spark.sql.classic.ColumnConversions
 /**
  * Conversions from a [[org.apache.spark.sql.Column]] to an
  * [[org.apache.spark.sql.catalyst.expressions.Expression]], and vice versa.
+ *
+ * @note [[org.apache.spark.sql.internal.ExpressionUtils#expression]] is a cheap alternative for
+ *       [[org.apache.spark.sql.Column]] to [[org.apache.spark.sql.catalyst.expressions.Expression]]
+ *       conversions. However this can only be used when the produced expression is used in a Column
+ *       later on.
  */
 object ClassicColumnConversions
   extends ClassicConversions
