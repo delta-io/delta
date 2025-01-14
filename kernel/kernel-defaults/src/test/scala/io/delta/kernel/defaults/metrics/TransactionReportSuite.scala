@@ -127,7 +127,7 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
     assert(transactionReport.getOperation == operation.toString)
     assert(transactionReport.getEngineInfo == engineInfo)
 
-    assert(transactionReport.getSnapshotVersion == expectedSnapshotVersion)
+    assert(transactionReport.getBaseSnapshotVersion == expectedSnapshotVersion)
     if (expectedSnapshotVersion < 0) {
       // This was for a new table, there is no corresponding SnapshotReport
       assert(!transactionReport.getSnapshotReportUUID.isPresent)
@@ -141,8 +141,8 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
 
     // Since we cannot know the actual duration of commit we sanity check that they are > 0 and
     // less than the total operation duration
-    assert(transactionReport.getTransactionMetrics.getTotalCommitDuration > 0)
-    assert(transactionReport.getTransactionMetrics.getTotalCommitDuration < duration)
+    assert(transactionReport.getTransactionMetrics.getTotalCommitDurationNs > 0)
+    assert(transactionReport.getTransactionMetrics.getTotalCommitDurationNs < duration)
 
     assert(transactionReport.getTransactionMetrics.getNumCommitAttempts == expectedNumAttempts)
     assert(transactionReport.getTransactionMetrics.getNumAddFiles == expectedNumAddFiles)

@@ -19,7 +19,7 @@ import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 
 /** Stores the metrics results for a {@link TransactionReport} */
 @JsonPropertyOrder({
-  "totalCommitDuration",
+  "totalCommitDurationNs",
   "numCommitAttempts",
   "numAddFiles",
   "numRemoveFiles",
@@ -28,25 +28,25 @@ import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 public interface TransactionMetricsResult {
 
   /** @return the total duration (ns) this transaction spent committing or trying to commit */
-  long getTotalCommitDuration();
+  long getTotalCommitDurationNs();
 
   /** @return the total number of commit attempts this transaction made */
   long getNumCommitAttempts();
 
   /**
-   * @return the number of add files committed in this transaction. for a failed transaction this
+   * @return the number of add files committed in this transaction. For a failed transaction this
    *     metric may be incomplete.
    */
   long getNumAddFiles();
 
   /**
-   * @return the number of remove files committed in this transaction. for a failed transaction this
+   * @return the number of remove files committed in this transaction. For a failed transaction this
    *     metric may be incomplete.
    */
   long getNumRemoveFiles();
 
   /**
-   * @return the total number of delta actions committed in this transaction. for a failed
+   * @return the total number of delta actions committed in this transaction. For a failed
    *     transaction this metric may be incomplete.
    */
   long getNumTotalActions();

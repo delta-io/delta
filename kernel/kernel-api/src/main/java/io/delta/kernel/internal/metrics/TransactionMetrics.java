@@ -38,7 +38,10 @@ public class TransactionMetrics {
   public final Counter totalActionsCounter = new Counter();
 
   /**
-   * Resets the action counters (addFilesCounter, removeFilesCounter and totalActionsCounter) to 0
+   * Resets the action counters (addFilesCounter, removeFilesCounter and totalActionsCounter) to 0.
+   * Action counters may be partially incremented if an action iterator is not read to completion
+   * (i.e. if an exception interrupts a file write). This allows us to reset the counters so that we
+   * can increment them correctly from 0 on a retry.
    */
   public void resetActionCounters() {
     addFilesCounter.reset();
@@ -49,15 +52,15 @@ public class TransactionMetrics {
   public TransactionMetricsResult captureTransactionMetricsResult() {
     return new TransactionMetricsResult() {
 
-      final long totalCommitDuration = totalCommitTimer.totalDurationNs();
+      final long totalCommitDurationNs = totalCommitTimer.totalDurationNs();
       final long numCommitAttempts = commitAttemptsCounter.value();
       final long numAddFiles = addFilesCounter.value();
       final long numRemoveFiles = removeFilesCounter.value();
       final long numTotalActions = totalActionsCounter.value();
 
       @Override
-      public long getTotalCommitDuration() {
-        return totalCommitDuration;
+      public long getTotalCommitDurationNs() {
+        return totalCommitDurationNs;
       }
 
       @Override

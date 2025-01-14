@@ -29,7 +29,7 @@ import java.util.UUID;
   "exception",
   "operation",
   "engineInfo",
-  "snapshotVersion",
+  "baseSnapshotVersion",
   "snapshotReportUUID",
   "committedVersion",
   "transactionMetrics"
@@ -56,7 +56,7 @@ public interface TransactionReport extends DeltaOperationReport {
    *
    * @return the table version of the snapshot the transaction was started from
    */
-  long getSnapshotVersion();
+  long getBaseSnapshotVersion();
 
   /**
    * @return the {@link SnapshotReport#getReportUUID} of the SnapshotReport for the transaction's
@@ -65,7 +65,7 @@ public interface TransactionReport extends DeltaOperationReport {
   Optional<UUID> getSnapshotReportUUID();
 
   /**
-   * @return the version committed to the table in this transaction. empty for a failed transaction.
+   * @return the version committed to the table in this transaction. Empty for a failed transaction.
    */
   Optional<Long> getCommittedVersion();
 

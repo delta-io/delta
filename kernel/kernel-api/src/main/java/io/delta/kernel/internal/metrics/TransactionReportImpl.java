@@ -74,7 +74,7 @@ public class TransactionReportImpl extends DeltaOperationReportImpl implements T
   }
 
   @Override
-  public long getSnapshotVersion() {
+  public long getBaseSnapshotVersion() {
     return snapshotVersion;
   }
 

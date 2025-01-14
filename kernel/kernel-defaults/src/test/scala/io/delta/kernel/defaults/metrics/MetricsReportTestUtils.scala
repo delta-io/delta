@@ -63,13 +63,13 @@ trait MetricsReportTestUtils extends TestUtils {
   class EngineWithInMemoryMetricsReporter(buf: ArrayBuffer[MetricsReport], baseEngine: Engine)
     extends Engine {
 
-    private val metricsReporter = new MetricsReporter {
+    private val inMemoryMetricsReporter = new MetricsReporter {
       override def report(report: MetricsReport): Unit = buf.append(report)
     }
 
     private val metricsReporters = new util.ArrayList[MetricsReporter]() {{
       addAll(baseEngine.getMetricsReporters)
-      add(metricsReporter)
+      add(inMemoryMetricsReporter)
     }}
 
     override def getExpressionHandler: ExpressionHandler = baseEngine.getExpressionHandler

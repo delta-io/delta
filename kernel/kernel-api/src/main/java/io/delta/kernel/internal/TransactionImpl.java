@@ -298,7 +298,7 @@ public class TransactionImpl implements Transaction {
         }
       }
 
-      // Counters may be partially incremented from previous tries, reset the action counters to 0
+      // Action counters may be partially incremented from previous tries, reset the counters to 0
       transactionMetrics.resetActionCounters();
 
       // Write the staged data to a delta file
