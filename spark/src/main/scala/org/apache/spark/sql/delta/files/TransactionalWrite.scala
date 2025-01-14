@@ -109,7 +109,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
    * constraints that should be respected. If any constraints are returned, the caller should apply
    * these constraints when writing data.
    *
-   * Note: The output attributes of the DataFrame may not match the attributes we return as the
+   * Note: The schema of the DataFrame may not match the attributes we return as the
    * output schema. This is because streaming queries create `IncrementalExecution`, which cannot be
    * further modified. We can however have the Parquet writer use the physical plan from
    * `IncrementalExecution` and the output schema provided through the attributes.
