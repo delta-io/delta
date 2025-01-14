@@ -1,3 +1,19 @@
+/*
+ * Copyright (2021) The Delta Lake Project Authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.apache.spark.sql.delta.sources
 
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaTestUtilsBase, DeltaThrowable}
@@ -169,9 +185,9 @@ class DeltaSourceMetadataEvolutionSupportSuite
     toDDL = "b int",
     toPhysicalNames = Map(Seq("b") -> "x"),
     expectedResult = expectColumnMappingChangeBlocked("RENAME COLUMN"),
-    // We don't block the type change itself: either the user treats 'b' as a nwe column and the type
-    // change doesn't matter downstream, or 'b' is already in use in which case its type can already
-    // be arbitrary.
+    // We don't block the type change itself: either the user treats 'b' as a nwe column and the
+    // type change doesn't matter downstream, or 'b' is already in use in which case its type can
+    // already be arbitrary.
     unblock = Seq(
       "allowSourceColumnRename",
       "allowSourceColumnRenameAndDrop",
@@ -185,9 +201,9 @@ class DeltaSourceMetadataEvolutionSupportSuite
     fromPhysicalNames = Map(Seq("a") -> "x"),
     toDDL = "b string",
     toPhysicalNames = Map(Seq("b") -> "x"),
-    // We don't block the type change itself: either the user treats 'b' as a nwe column and the type
-    // change doesn't matter downstream, or 'b' is already in use in which case its type can already
-    // be arbitrary.
+    // We don't block the type change itself: either the user treats 'b' as a nwe column and the
+    // type change doesn't matter downstream, or 'b' is already in use in which case its type can
+    // already be arbitrary.
     expectedResult = expectColumnMappingChangeBlocked("RENAME COLUMN"),
     unblock = Seq(
       "allowSourceColumnRename",

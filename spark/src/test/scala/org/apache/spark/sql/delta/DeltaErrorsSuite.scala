@@ -2724,11 +2724,11 @@ trait DeltaErrorsSuiteBase
           wideningTypeChanges = Seq(TypeChange(None, IntegerType, LongType, Seq("a"))))
       }
       checkError(e,
-        "DELTA_STREAMING_CANNOT_CONTINUE_PROCESSING_TYPE_CHANGE",
+        "DELTA_STREAMING_CANNOT_CONTINUE_PROCESSING_TYPE_WIDENING",
         parameters = Map(
           "previousSchemaChangeVersion" -> "0",
           "currentSchemaChangeVersion" -> "1",
-          "wideningTypeChanges" -> "  a: INT -> LONG",
+          "wideningTypeChanges" -> "  a: INT -> BIGINT",
           "allowCkptVerKey" -> "spark.databricks.delta.streaming.allowSourceTypeWidening.ckpt_15",
           "allowCkptVerValue" -> "1",
           "allowCkptKey" -> "spark.databricks.delta.streaming.allowSourceTypeWidening.ckpt_15",

@@ -194,7 +194,7 @@ private[delta] object TypeWideningMetadata extends DeltaLogging {
         newField
       case (_, field, _, _) => field
     }
-    changes
+    changes.toSeq
   }
 
   /**
