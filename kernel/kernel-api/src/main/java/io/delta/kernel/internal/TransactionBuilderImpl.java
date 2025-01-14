@@ -57,6 +57,13 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   private Optional<SetTransaction> setTxnOpt = Optional.empty();
   private Optional<Map<String, String>> tableProperties = Optional.empty();
 
+  /**
+   * Number of retries for concurrent write exceptions to resolve conflicts and retry commit. In
+   * Delta-Spark, for historical reasons the number of retries is really high (10m). We are starting
+   * with a lower number by default for now. If this is not sufficient we can update it.
+   */
+  private int maxRetries = 200;
+
   public TransactionBuilderImpl(TableImpl table, String engineInfo, Operation operation) {
     this.table = table;
     this.engineInfo = engineInfo;
@@ -92,6 +99,12 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   @Override
   public TransactionBuilder withTableProperties(Engine engine, Map<String, String> properties) {
     this.tableProperties = Optional.of(new HashMap<>(properties));
+    return this;
+  }
+
+  @Override
+  public TransactionBuilder withMaxRetries(int maxRetries) {
+    this.maxRetries = maxRetries;
     return this;
   }
 
@@ -161,6 +174,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         setTxnOpt,
         shouldUpdateMetadata,
         shouldUpdateProtocol,
+        maxRetries,
         table.getClock());
   }
 
