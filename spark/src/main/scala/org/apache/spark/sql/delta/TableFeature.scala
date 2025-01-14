@@ -20,6 +20,7 @@ import java.util.Locale
 
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
 import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsUtils
 import org.apache.spark.sql.delta.redirect.{RedirectReaderWriter, RedirectWriterOnly}
@@ -641,6 +642,7 @@ object VariantTypeTableFeature extends ReaderWriterFeature(name = "variantType")
 
 object DeletionVectorsTableFeature
   extends ReaderWriterFeature(name = "deletionVectors")
+  with RemovableFeature
   with FeatureAutomaticallyEnabledByMetadata {
   override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
 
@@ -650,6 +652,27 @@ object DeletionVectorsTableFeature
       spark: SparkSession): Boolean = {
     DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.fromMetaData(metadata)
   }
+
+  override def validateRemoval(snapshot: Snapshot): Boolean = {
+    val dvsWritable = DeletionVectorUtils.deletionVectorsWritable(snapshot)
+    val dvsExist = snapshot.numDeletionVectorsOpt.getOrElse(0L) > 0
+
+    !(dvsWritable || dvsExist)
+  }
+
+  override def actionUsesFeature(action: Action): Boolean = {
+    action match {
+      case m: Metadata => DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.fromMetaData(m)
+      case a: AddFile => a.deletionVector != null
+      case r: RemoveFile => r.deletionVector != null
+      // In general, CDC actions do not contain DVs. We added this for safety.
+      case cdc: AddCDCFile => cdc.deletionVector != null
+      case _ => false
+    }
+  }
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    DeletionVectorsPreDowngradeCommand(table)
 }
 
 object RowTrackingFeature extends WriterFeature(name = "rowTracking")
