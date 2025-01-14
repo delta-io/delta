@@ -19,11 +19,9 @@
 package io.delta.standalone.internal;
 
 import java.lang.reflect.Constructor;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
-import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.internal.types.DataTypeJsonSerDe;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -140,11 +138,7 @@ public class KernelSnapshotWrapper implements io.delta.standalone.Snapshot {
         );
 
         // Convert the partition columns from a ColumnVector to a List<String>
-        ColumnVector partitionsVec = kernelMetadata.getPartitionColumns().getElements();
-        ArrayList<String> partitionColumns = new ArrayList<String>(partitionsVec.getSize());
-        for(int i = 0; i < partitionsVec.getSize(); i++) {
-            partitionColumns.add(partitionsVec.getString(i));
-        }
+        final List<String> partitionColumns = kernelMetadata.getPartitionColumns();
 
         // Convert over the schema StructType
         List<io.delta.kernel.types.StructField> kernelFields = kernelMetadata.getSchema().fields();
@@ -186,8 +180,8 @@ public class KernelSnapshotWrapper implements io.delta.standalone.Snapshot {
 
         return new Metadata(
             kernelMetadata.getId(),
-            kernelMetadata.getName().orElse(null),
-            kernelMetadata.getDescription().orElse(null),
+            kernelMetadata.getName(),
+            kernelMetadata.getDescription(),
             format,
             partitionColumns,
             kernelMetadata.getConfiguration(),
