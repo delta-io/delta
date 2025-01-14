@@ -35,6 +35,46 @@ public class TableConfig<T> {
   //////////////////
 
   /**
+   * The commit coordinator name for this table. If this property is not set, the table will be
+   * considered a file system table and commits will be done via atomically publishing the commit
+   * file.
+   */
+  public static final TableConfig<Optional<String>> COMMIT_COORDINATOR_NAME =
+      new TableConfig<>(
+          "delta.coordinatedCommits.commitCoordinator-preview",
+          null, /* default value */
+          Optional::ofNullable,
+          value -> true,
+          "Needs to be a string.",
+          true);
+
+  /**
+   * The configuration properties for the commit coordinator which is needed to build the commit
+   * coordinator client.
+   */
+  public static final TableConfig<Map<String, String>> COMMIT_COORDINATOR_CONF =
+      new TableConfig<>(
+          "delta.coordinatedCommits.commitCoordinatorConf-preview",
+          null, /* default values */
+          JsonUtils::parseJSONKeyValueMap,
+          value -> true,
+          "Needs to be a string-to-string map of configuration properties.",
+          true);
+
+  /**
+   * The properties used to uniquely identify and describe this Delta table to the commit
+   * coordinator.
+   */
+  public static final TableConfig<Map<String, String>> COORDINATED_COMMITS_TABLE_CONF =
+      new TableConfig<>(
+          "delta.coordinatedCommits.tableConf-preview",
+          null, /* default values */
+          JsonUtils::parseJSONKeyValueMap,
+          value -> true,
+          "Needs to be a string-to-string map of properties.",
+          true);
+
+  /**
    * The shortest duration we have to keep logically deleted data files around before deleting them
    * physically.
    *
