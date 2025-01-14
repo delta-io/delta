@@ -1232,7 +1232,9 @@ trait DescribeDeltaHistorySuiteBase
   Seq("true", "false").foreach { enableArbitraryRW =>
     testReplaceWhere(s"replaceWhere on partition column " +
         s"- arbitraryReplaceWhere=${enableArbitraryRW}") { (enableCDF, enableStats) =>
-      withSQLConf(DeltaSQLConf.REPLACEWHERE_DATACOLUMNS_ENABLED.key -> enableArbitraryRW) {
+      withSQLConf(
+          DeltaSQLConf.REPLACEWHERE_DATACOLUMNS_ENABLED.key -> enableArbitraryRW,
+          DeltaSQLConf.OVERWRITE_REMOVE_METRICS_ENABLED.key -> "true") {
         withTable("tbl") {
           // create a table with one row
           spark.range(10)
@@ -1299,7 +1301,7 @@ trait DescribeDeltaHistorySuiteBase
                 "numOutputBytes" -> numAddedBytesExpected.toString
               ),
               getOperationMetrics(deltaTable.history(1)),
-              DeltaOperationMetrics.WRITE
+              DeltaOperationMetrics.WRITE ++ DeltaOperationMetrics.OVERWRITE_REMOVES
             )
           }
         }
@@ -1310,7 +1312,8 @@ trait DescribeDeltaHistorySuiteBase
   test("replaceWhere metrics turned off - reverts to old behavior") {
     withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true",
         DeltaSQLConf.DELTA_COLLECT_STATS.key -> "false",
-        DeltaSQLConf.REPLACEWHERE_METRICS_ENABLED.key -> "false") {
+        DeltaSQLConf.REPLACEWHERE_METRICS_ENABLED.key -> "false",
+        DeltaSQLConf.OVERWRITE_REMOVE_METRICS_ENABLED.key -> "false") {
       withTable("tbl") {
         // create a table with one row
         spark.range(10)
@@ -1344,8 +1347,34 @@ trait DescribeDeltaHistorySuiteBase
     }
   }
 
+  test("enable remove metrics in insert with overwrite") {
+    withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true",
+        DeltaSQLConf.DELTA_COLLECT_STATS.key -> "false",
+        DeltaSQLConf.REPLACEWHERE_METRICS_ENABLED.key -> "false",
+        DeltaSQLConf.OVERWRITE_REMOVE_METRICS_ENABLED.key -> "true") {
+      withTable("tbl") {
+        spark.range(10).repartition(4).write.format("delta").saveAsTable("tbl")
+        spark.range(20).repartition(2).write.format("delta").mode("overwrite").saveAsTable("tbl")
+        val deltaTable = io.delta.tables.DeltaTable.forName("tbl")
+        val operationMetrics = getOperationMetrics(deltaTable.history(1))
+        checkOperationMetrics(
+          Map(
+            "numFiles" -> "2",
+            "numOutputRows" -> "20",
+            "numRemovedFiles" -> "4"
+          ),
+          operationMetrics,
+          DeltaOperationMetrics.WRITE ++ DeltaOperationMetrics.OVERWRITE_REMOVES
+        )
+        assert(operationMetrics("numRemovedBytes").toLong > 0)
+      }
+    }
+  }
+
   test("operation metrics - create table - v2") {
-    withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true") {
+    withSQLConf(
+        DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true",
+        DeltaSQLConf.OVERWRITE_REMOVE_METRICS_ENABLED.key -> "true") {
       val tblName = "tblName"
       withTable(tblName) {
         // Create
@@ -1369,7 +1398,11 @@ trait DescribeDeltaHistorySuiteBase
         )
         operationMetrics = getOperationMetrics(deltaTable.history(1))
         assert(operationMetrics("numOutputBytes").toLong > 0)
-        checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.WRITE)
+        checkOperationMetrics(
+          expectedMetrics,
+          operationMetrics,
+          DeltaOperationMetrics.WRITE ++ DeltaOperationMetrics.OVERWRITE_REMOVES
+        )
 
         // create or replace
         spark.range(70).writeTo(tblName).using("delta").createOrReplace()
@@ -1380,7 +1413,11 @@ trait DescribeDeltaHistorySuiteBase
         )
         operationMetrics = getOperationMetrics(deltaTable.history(1))
         assert(operationMetrics("numOutputBytes").toLong > 0)
-        checkOperationMetrics(expectedMetrics, operationMetrics, DeltaOperationMetrics.WRITE)
+        checkOperationMetrics(
+          expectedMetrics,
+          operationMetrics,
+          DeltaOperationMetrics.WRITE ++ DeltaOperationMetrics.OVERWRITE_REMOVES
+        )
       }
     }
   }
