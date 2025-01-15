@@ -154,41 +154,21 @@ public class TransactionImpl implements Transaction {
                 readSnapshot, commitAsVersion, dataActions);
       }
 
-      int numRetries = 0;
-      do {
+      int numTries = 0;
+      while (numTries <= maxRetries) { // leq because the first is a try, not a retry
         logger.info("Committing transaction as version = {}.", commitAsVersion);
         try {
           return doCommit(engine, commitAsVersion, attemptCommitInfo, dataActions);
         } catch (FileAlreadyExistsException fnfe) {
-          if (numRetries >= maxRetries) {
-            logger.info(
-                "Concurrent write detected when committing as version = {}. ", commitAsVersion);
-          } else {
-            logger.info(
-                "Concurrent write detected when committing as version = {}. "
-                    + "Trying to resolve conflicts and retry commit.",
-                commitAsVersion);
-            TransactionRebaseState rebaseState =
-                ConflictChecker.resolveConflicts(engine, readSnapshot, commitAsVersion, this);
-            long newCommitAsVersion = rebaseState.getLatestVersion() + 1;
-            checkArgument(
-                commitAsVersion < newCommitAsVersion,
-                "New commit version %d should be greater than the previous commit "
-                    + "attempt version %d.",
-                newCommitAsVersion,
-                commitAsVersion);
-            commitAsVersion = newCommitAsVersion;
-            Optional<Long> updatedInCommitTimestamp =
-                getUpdatedInCommitTimestampAfterConflict(
-                    rebaseState.getLatestCommitTimestamp(),
-                    attemptCommitInfo.getInCommitTimestamp());
-            updateMetadataWithICTIfRequired(
-                engine, updatedInCommitTimestamp, rebaseState.getLatestVersion());
-            attemptCommitInfo.setInCommitTimestamp(updatedInCommitTimestamp);
+          logger.info(
+              "Concurrent write detected when committing as version = {}. ", commitAsVersion);
+          if (numTries < maxRetries) {
+            // only try and resolve conflicts if we're going to retry
+            commitAsVersion = resolveConflicts(engine, commitAsVersion, attemptCommitInfo);
           }
         }
-        numRetries++;
-      } while (numRetries <= maxRetries);
+        numTries++;
+      }
     } finally {
       closed = true;
     }
@@ -196,6 +176,25 @@ public class TransactionImpl implements Transaction {
     // we have exhausted the number of retries, give up.
     logger.info("Exhausted maximum retries ({}) for committing transaction.", maxRetries);
     throw new ConcurrentWriteException();
+  }
+
+  private long resolveConflicts(Engine engine, long commitAsVersion, CommitInfo attemptCommitInfo) {
+    logger.info("Trying to resolve conflicts and retry commit.");
+    TransactionRebaseState rebaseState =
+        ConflictChecker.resolveConflicts(engine, readSnapshot, commitAsVersion, this);
+    long newCommitAsVersion = rebaseState.getLatestVersion() + 1;
+    checkArgument(
+        commitAsVersion < newCommitAsVersion,
+        "New commit version %d should be greater than the previous commit " + "attempt version %d.",
+        newCommitAsVersion,
+        commitAsVersion);
+    Optional<Long> updatedInCommitTimestamp =
+        getUpdatedInCommitTimestampAfterConflict(
+            rebaseState.getLatestCommitTimestamp(), attemptCommitInfo.getInCommitTimestamp());
+    updateMetadataWithICTIfRequired(
+        engine, updatedInCommitTimestamp, rebaseState.getLatestVersion());
+    attemptCommitInfo.setInCommitTimestamp(updatedInCommitTimestamp);
+    return newCommitAsVersion;
   }
 
   private void updateMetadata(Metadata metadata) {
