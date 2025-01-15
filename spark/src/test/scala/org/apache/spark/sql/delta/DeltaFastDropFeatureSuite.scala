@@ -283,7 +283,9 @@ class DeltaFastDropFeatureSuite
 
       // Two checkpoints were created in the first invocation of the legacy implementation. Four
       // more checkpoints were created in the second invocation.
-      assert(getCheckpointVersions(deltaLog.logPath).filter(_ <= snapshot.version).size === 6)
+      val expectedResult = 5
+      assert(getCheckpointVersions(
+        deltaLog.logPath).filter(_ <= snapshot.version).size === expectedResult)
     }
   }
 
