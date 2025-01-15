@@ -123,11 +123,11 @@ class TableFeaturesSuite extends AnyFunSuite {
   def createTestProtocol(minWriterVersion: Int, writerFeatures: String*): Protocol = {
     new Protocol(
       // minReaderVersion - it doesn't matter as the read fails anyway before the writer check
-      0,
+      1,
       minWriterVersion,
       // reader features - it doesn't matter as the read fails anyway before the writer check
-      Collections.emptyList(),
-      writerFeatures.toSeq.asJava
+      Collections.emptySet(),
+      writerFeatures.toSet.asJava
     )
   }
 
