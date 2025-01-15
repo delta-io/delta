@@ -16,9 +16,10 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.catalyst.expressions.And
-import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Filter}
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
+
+import org.apache.spark.sql.catalyst.expressions.And
+import org.apache.spark.sql.catalyst.plans.logical.{Filter, LogicalPlan}
 
 /**
  * Pull out the partition filter that may be part of the FileIndex. This can happen when someone
