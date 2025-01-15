@@ -215,8 +215,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         .commit(engine, emptyIterable())
 
       // Create txn1 with config changes
-      val txn1 = createWriteTxnBuilder(
-        Table.forPath(engine, tablePath))
+      val txn1 = createWriteTxnBuilder(table)
         .withTableProperties(engine, Map(TableConfig.CHECKPOINT_INTERVAL.getKey -> "2").asJava)
         .withMaxRetries(0)
         .build(engine)

@@ -104,6 +104,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
 
   @Override
   public TransactionBuilder withMaxRetries(int maxRetries) {
+    checkArgument(maxRetries >= 0, "maxRetries must be >= 0");
     this.maxRetries = maxRetries;
     return this;
   }
