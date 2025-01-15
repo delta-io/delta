@@ -225,8 +225,8 @@ class DeltaFastDropFeatureSuite
         dropTableFeature(deltaLog, TestRemovableReaderWriterFeature, truncateHistory = true)
       }
       checkError(
-        exception = e,
-        condition = "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
+        e,
+        "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
         parameters = Map(
           "feature" -> TestRemovableReaderWriterFeature.name,
           "logRetentionPeriodKey" -> "delta.logRetentionDuration",
@@ -262,8 +262,8 @@ class DeltaFastDropFeatureSuite
         dropTableFeature(deltaLog, TestRemovableReaderWriterFeature, truncateHistory = true)
       }
       checkError(
-        exception = e,
-        condition = "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
+        e,
+        "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
         parameters = Map(
           "feature" -> TestRemovableReaderWriterFeature.name,
           "logRetentionPeriodKey" -> "delta.logRetentionDuration",
@@ -468,12 +468,5 @@ class DeltaFastDropFeatureSuite
       // No other commits should have been truncated.
       assert(getDeltaVersions(deltaLog.logPath).min === deltaVersionsBeforeDrop.min)
     }
-  }
-}
-
-class DeltaFastDropFeatureSuiteEdge extends DeltaFastDropFeatureSuite {
-  override def beforeAll(): Unit = {
-    super.beforeAll()
-    spark.conf.set(DeltaSQLConf.DELTA_ASYNC_CHECKPOINT_ENABLED.key, true.toString)
   }
 }
