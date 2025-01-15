@@ -81,6 +81,7 @@ val tezVersionForHive2 = "0.8.4"
 
 val protoVersion = "3.25.1"
 val grpcVersion = "1.62.2"
+val awsSdkVersion = "2.29.44"
 
 scalaVersion := default_scala_version.value
 
@@ -424,7 +425,7 @@ lazy val spark = (project in file("spark"))
       "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
       "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
       // For DynamoDBCommitStore
-      "com.amazonaws" % "aws-java-sdk" % "1.12.262" % "provided",
+      "software.amazon.awssdk" % "aws-sdk-java" % awsSdkVersion % "provided",
 
       // Test deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
@@ -722,8 +723,7 @@ lazy val storageS3DynamoDB = (project in file("storage-s3-dynamodb"))
     // Test / publishArtifact := true,
 
     libraryDependencies ++= Seq(
-      "software.amazon.awssdk" % "s3" % "2.23.19" % "provided",
-      "software.amazon.awssdk" % "dynamodb" % "2.23.19" % "provided",
+      "software.amazon.awssdk" % "aws-sdk-java" % awsSdkVersion % "provided",
 
       // Test Deps
       "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "test", // RemoteFileChangedException

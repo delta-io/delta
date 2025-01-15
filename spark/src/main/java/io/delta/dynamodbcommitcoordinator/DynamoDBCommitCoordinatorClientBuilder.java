@@ -16,17 +16,19 @@
 
 package io.delta.dynamodbcommitcoordinator;
 
-import com.amazonaws.auth.AWSCredentialsProvider;
-import com.amazonaws.services.dynamodbv2.AmazonDynamoDB;
-import com.amazonaws.services.dynamodbv2.AmazonDynamoDBClient;
 import org.apache.spark.sql.delta.coordinatedcommits.CommitCoordinatorBuilder;
 import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import io.delta.storage.commit.CommitCoordinatorClient;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.SparkSession;
 import scala.collection.immutable.Map;
+import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
+import software.amazon.awssdk.http.apache.ApacheHttpClient;
+import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
+import software.amazon.awssdk.services.dynamodb.DynamoDbClientBuilder;
 
 import java.io.IOException;
+import java.net.URI;
 
 public class DynamoDBCommitCoordinatorClientBuilder implements CommitCoordinatorBuilder {
 
@@ -66,7 +68,7 @@ public class DynamoDBCommitCoordinatorClientBuilder implements CommitCoordinator
         boolean skipPathCheck = Boolean.parseBoolean(
                 spark.conf().get(DeltaSQLConf.COORDINATED_COMMITS_DDB_SKIP_PATH_CHECK().key()));
         try {
-            AmazonDynamoDB ddbClient = createAmazonDDBClient(
+            DynamoDbClient ddbClient = createAmazonDDBClient(
                     dynamoDBEndpoint,
                     awsCredentialsProviderName,
                     spark.sessionState().newHadoopConf()
@@ -88,7 +90,7 @@ public class DynamoDBCommitCoordinatorClientBuilder implements CommitCoordinator
     protected DynamoDBCommitCoordinatorClient getDynamoDBCommitCoordinatorClient(
             String coordinatedCommitsTableName,
             String dynamoDBEndpoint,
-            AmazonDynamoDB ddbClient,
+            DynamoDbClient ddbClient,
             long backfillBatchSize,
             int readCapacityUnits,
             int writeCapacityUnits,
@@ -105,15 +107,22 @@ public class DynamoDBCommitCoordinatorClientBuilder implements CommitCoordinator
         );
     }
 
-    protected AmazonDynamoDB createAmazonDDBClient(
+    protected DynamoDbClient createAmazonDDBClient(
             String endpoint,
             String credentialProviderName,
             Configuration hadoopConf
     ) throws ReflectiveOperationException {
-        AWSCredentialsProvider awsCredentialsProvider =
+        AwsCredentialsProvider awsCredentialsProvider =
                 ReflectionUtils.createAwsCredentialsProvider(credentialProviderName, hadoopConf);
-        AmazonDynamoDBClient client = new AmazonDynamoDBClient(awsCredentialsProvider);
-        client.setEndpoint(endpoint);
-        return client;
+
+        DynamoDbClientBuilder builder = DynamoDbClient.builder()
+                .credentialsProvider(awsCredentialsProvider)
+                .httpClient(ApacheHttpClient.builder().build());
+
+        if (endpoint != null) {
+            builder.endpointOverride(URI.create(endpoint));
+        }
+
+        return builder.build();
     }
 }
