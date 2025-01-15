@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
+
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 
