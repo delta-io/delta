@@ -28,6 +28,7 @@ import org.apache.spark.sql.delta.commands.optimize.OptimizeMetrics
 import org.apache.spark.sql.delta.constraints.Constraints
 import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsUtils
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.util.ScalaExtensions._
 
@@ -253,7 +254,6 @@ case class DeletionVectorsPreDowngradeCommand(table: DeltaTableV2)
 
     DeltaReorgTableCommand(target = ResolvedTable.create(catalog, tableId, table))(Nil)
       .run(table.spark)
-    */
   }
 
   /**
