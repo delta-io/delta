@@ -528,10 +528,10 @@ class DeltaFastDropFeatureSuite
             case "getSnapshotAt" => deltaLog.getSnapshotAt(versionBeforeRemoval)
             case "restoreToVersion" => table.restoreToVersion(versionBeforeRemoval)
             case "restoreToTS" => table.restoreToTimestamp(tsBeforeRemoval)
-            case "cloneAtVersion" => withTempDir { d =>
-              table.cloneAtVersion(versionBeforeRemoval.toInt, d.getCanonicalPath) }
+            case "cloneAtVersion" => withTempDir { d => table.cloneAtVersion(
+              versionBeforeRemoval.toInt, d.getCanonicalPath, isShallow = false) }
             case "cloneAtTS" => withTempDir { d =>
-              table.cloneAtTimestamp(tsBeforeRemoval, d.getCanonicalPath) }
+              table.cloneAtTimestamp(tsBeforeRemoval, d.getCanonicalPath, isShallow = false) }
             case "sparkVersion" => spark.read.format("delta")
               .option("versionAsOf", versionBeforeRemoval).load(dir.getCanonicalPath)
             case "sparkTS" => spark.read.format("delta")
