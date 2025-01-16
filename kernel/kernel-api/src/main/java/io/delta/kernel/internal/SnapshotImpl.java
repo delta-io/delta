@@ -113,8 +113,8 @@ public class SnapshotImpl implements Snapshot {
 
   @Override
   public ScanBuilder getScanBuilder(Engine engine) {
-    // TODO when we add ScanReport we will pass the SnapshotReport downstream here
-    return new ScanBuilderImpl(dataPath, protocol, metadata, getSchema(engine), logReplay, engine);
+    return new ScanBuilderImpl(
+        dataPath, protocol, metadata, getSchema(engine), logReplay, engine, snapshotReport);
   }
 
   ///////////////////

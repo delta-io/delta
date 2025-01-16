@@ -28,6 +28,7 @@ import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.checkpoints.SidecarFile;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
+import io.delta.kernel.internal.metrics.ScanMetrics;
 import io.delta.kernel.internal.metrics.SnapshotMetrics;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.SnapshotHint;
@@ -178,14 +179,17 @@ public class LogReplay {
    * </ol>
    */
   public CloseableIterator<FilteredColumnarBatch> getAddFilesAsColumnarBatches(
-      Engine engine, boolean shouldReadStats, Optional<Predicate> checkpointPredicate) {
+      Engine engine,
+      boolean shouldReadStats,
+      Optional<Predicate> checkpointPredicate,
+      ScanMetrics scanMetrics) {
     final CloseableIterator<ActionWrapper> addRemoveIter =
         new ActionsIterator(
             engine,
             logSegment.allLogFilesReversed(),
             getAddRemoveReadSchema(shouldReadStats),
             checkpointPredicate);
-    return new ActiveAddFilesIterator(engine, addRemoveIter, dataPath);
+    return new ActiveAddFilesIterator(engine, addRemoveIter, dataPath, scanMetrics);
   }
 
   ////////////////////

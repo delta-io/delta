@@ -117,6 +117,10 @@ trait TestUtils extends Assertions with SQLHelper {
     def toPath: String = column.getNames.mkString(".")
   }
 
+  implicit class JavaOptionalOps[T](optional: Optional[T]) {
+    def toScala: Option[T] = if (optional.isPresent) Some(optional.get()) else None
+  }
+
   implicit object ResourceLoader {
     lazy val classLoader: ClassLoader = ResourceLoader.getClass.getClassLoader
   }
