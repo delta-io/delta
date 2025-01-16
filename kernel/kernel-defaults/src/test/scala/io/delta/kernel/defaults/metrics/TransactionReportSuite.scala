@@ -115,7 +115,7 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         ), generateCommitActions, expectException)
 
     // Verify contents
-    assert(transactionReport.getTablePath == resolvePath(path))
+    assert(transactionReport.getTablePath == defaultEngine.getFileSystemClient.resolvePath(path))
     assert(transactionReport.getOperationType == "Transaction")
     exception match {
       case Some(e) =>

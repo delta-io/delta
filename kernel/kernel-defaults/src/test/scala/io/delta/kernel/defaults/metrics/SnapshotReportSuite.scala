@@ -93,7 +93,7 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
     val (snapshotReport, duration, exception) = getSnapshotReport(f, path, expectException)
 
     // Verify contents
-    assert(snapshotReport.getTablePath == resolvePath(path))
+    assert(snapshotReport.getTablePath == defaultEngine.getFileSystemClient.resolvePath(path))
     assert(snapshotReport.getOperationType == "Snapshot")
     exception match {
       case Some(e) =>

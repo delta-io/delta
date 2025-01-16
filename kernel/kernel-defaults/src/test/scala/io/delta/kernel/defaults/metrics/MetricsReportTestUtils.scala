@@ -52,10 +52,6 @@ trait MetricsReportTestUtils extends TestUtils {
     }
   }
 
-  def resolvePath(path: String): String = {
-    defaultEngine.getFileSystemClient.resolvePath(path)
-  }
-
   /**
    * Wraps an {@link Engine} to implement the metrics reporter such that it appends any reports
    * to the provided in memory buffer.
