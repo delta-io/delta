@@ -431,6 +431,15 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val UNSUPPORTED_TESTING_FEATURES_ENABLED =
+    buildConf("tableFeatures.dev.unsupportedTableFeatures.enabled")
+      .internal()
+      .doc(
+        """When turned on, it emulates the existence of unsupported features by the client.
+          |This config is only used for testing purposes.""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   val FAST_DROP_FEATURE_ENABLED =
     buildConf("tableFeatures.dev.fastDropFeature.enabled")
       .internal()

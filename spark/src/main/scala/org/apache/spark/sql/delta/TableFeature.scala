@@ -328,6 +328,8 @@ sealed abstract class LegacyReaderWriterFeature(
   with ReaderWriterFeatureType
 
 object TableFeature {
+  val isTesting = DeltaUtils.isTesting
+
   /**
    * All table features recognized by this client. Update this set when you added a new Table
    * Feature.
@@ -370,7 +372,7 @@ object TableFeature {
       VariantTypeTableFeature,
       CoordinatedCommitsTableFeature,
       CheckpointProtectionTableFeature)
-    if (DeltaUtils.isTesting && testingFeaturesEnabled) {
+    if (isTesting && testingFeaturesEnabled) {
       features ++= Set(
         RedirectReaderWriterFeature,
         RedirectWriterOnlyFeature,
@@ -379,6 +381,7 @@ object TableFeature {
         TestWriterFeature,
         TestWriterMetadataNoAutoUpdateFeature,
         TestReaderWriterFeature,
+        TestUnsupportedReaderWriterFeature,
         TestReaderWriterMetadataAutoUpdateFeature,
         TestReaderWriterMetadataNoAutoUpdateFeature,
         TestRemovableWriterFeature,
@@ -395,6 +398,10 @@ object TableFeature {
     require(features.size == featureMap.size, "Lowercase feature names must not duplicate.")
     featureMap
   }
+
+  /** Test only features that appear unsupported in order to test protocol validations. */
+  def testUnsupportedFeatures: Set[TableFeature] =
+    if (isTesting) Set(TestUnsupportedReaderWriterFeature) else Set.empty
 
   private val allDependentFeaturesMap: Map[TableFeature, Set[TableFeature]] = {
     val dependentFeatureTuples =
@@ -1102,6 +1109,19 @@ object TestRemovableWriterFeature
 
   override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
     TestWriterFeaturePreDowngradeCommand(table)
+
+  override def actionUsesFeature(action: Action): Boolean = false
+}
+
+/** Test feature that appears unsupported and it is used for testing protocol checks. */
+object TestUnsupportedReaderWriterFeature
+    extends ReaderWriterFeature(name = "testUnsupportedReaderWriter")
+    with RemovableFeature {
+
+  override def validateRemoval(snapshot: Snapshot): Boolean = true
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    TestUnsupportedReaderWriterFeaturePreDowngradeCommand(table)
 
   override def actionUsesFeature(action: Action): Boolean = false
 }
