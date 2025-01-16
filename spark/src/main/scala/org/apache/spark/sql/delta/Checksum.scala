@@ -213,6 +213,8 @@ trait RecordChecksum extends DeltaLogging {
     // Incrementally compute the new version checksum, if the old one is available.
     val ignoreAddFilesInOperation =
       RecordChecksum.operationNamesWhereAddFilesIgnoredForIncrementalCrc.contains(operationName)
+    val ignoreRemoveFilesInOperation =
+      RecordChecksum.operationNamesWhereRemoveFilesIgnoredForIncrementalCrc.contains(operationName)
     val persistentDVsOnTableReadable =
       DeletionVectorUtils.deletionVectorsReadable(protocol, metadata)
     val persistentDVsOnTableWritable =
@@ -226,6 +228,7 @@ trait RecordChecksum extends DeltaLogging {
       oldSnapshot,
       actions,
       ignoreAddFilesInOperation,
+      ignoreRemoveFilesInOperation,
       includeAddFilesInCrc,
       persistentDVsOnTableReadable,
       persistentDVsOnTableWritable
@@ -244,6 +247,8 @@ trait RecordChecksum extends DeltaLogging {
    * @param actions used to incrementally compute new checksum.
    * @param ignoreAddFiles for transactions whose add file actions refer to already-existing files
    *                       e.g., [[DeltaOperations.ComputeStats]] transactions.
+   * @param ignoreRemoveFiles for transactions that generate RemoveFiles for auxiliary files
+   *                          e.g., [[DeltaOperations.AddDeletionVectorsTombstones]].
    * @param persistentDVsOnTableReadable Indicates whether commands modifying this table are allowed
    *                                      to read deletion vectors.
    * @param persistentDVsOnTableWritable Indicates whether commands modifying this table are allowed
@@ -260,6 +265,7 @@ trait RecordChecksum extends DeltaLogging {
       oldSnapshot: Option[Snapshot],
       actions: Seq[Action],
       ignoreAddFiles: Boolean,
+      ignoreRemoveFiles: Boolean,
       includeAllFilesInCRC: Boolean,
       persistentDVsOnTableReadable: Boolean,
       persistentDVsOnTableWritable: Boolean
@@ -318,6 +324,8 @@ trait RecordChecksum extends DeltaLogging {
         numDeletedRecordsOpt = numDeletedRecordsOpt.map(_ + dvCardinality)
         numDeletionVectorsOpt = numDeletionVectorsOpt.map(_ + dvCount)
         deletedRecordCountsHistogramOpt.foreach(_.insert(dvCardinality))
+
+      case _: RemoveFile if ignoreRemoveFiles => ()
 
       // extendedFileMetadata == true implies fields partitionValues, size, and tags are present
       case r: RemoveFile if r.extendedFileMetadata == Some(true) =>
@@ -597,13 +605,20 @@ trait RecordChecksum extends DeltaLogging {
 
 object RecordChecksum {
   // Operations where we should ignore AddFiles in the incremental checksum computation.
-  val operationNamesWhereAddFilesIgnoredForIncrementalCrc = Set(
+  private[delta] val operationNamesWhereAddFilesIgnoredForIncrementalCrc = Set(
     // The transaction that computes stats is special -- it re-adds files that already exist, in
     // order to update their min/max stats. We should not count those against the totals.
     DeltaOperations.ComputeStats(Seq.empty).name,
     // Backfill/Tagging re-adds existing AddFiles without changing the underlying data files.
     // Incremental commits should ignore backfill commits.
     DeltaOperations.RowTrackingBackfill().name
+  )
+
+  // Operations where we should ignore RemoveFiles in the incremental checksum computation.
+  private[delta] val operationNamesWhereRemoveFilesIgnoredForIncrementalCrc = Set(
+    // Deletion vector tombstones are only required to protect DVs from vacuum. They should be
+    // ignored in checksum calculation.
+    DeltaOperations.AddDeletionVectorsTombstones.name
   )
 }
 

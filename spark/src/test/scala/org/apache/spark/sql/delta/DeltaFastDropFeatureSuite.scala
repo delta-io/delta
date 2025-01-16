@@ -20,14 +20,22 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.concurrent.TimeUnit
 
-import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
-import org.apache.spark.sql.delta.actions.Protocol
+// scalastyle:off import.ordering.noEmptyLine
+import com.databricks.sql.acl.CheckPermissions
+import org.apache.spark.sql.delta.actions.{Action, AddFile, DeletionVectorDescriptor, Protocol, RemoveFile}
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.commands.AlterTableUnsetPropertiesDeltaCommand
+import org.apache.spark.sql.delta.commands.DeltaReorgTableCommand
+import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-import org.apache.spark.sql.delta.util.FileNames
+import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.SparkException
+import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.functions.{col, not}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.ManualClock
 
@@ -41,6 +49,7 @@ class DeltaFastDropFeatureSuite
   override def beforeAll(): Unit = {
     super.beforeAll()
     spark.conf.set(DeltaSQLConf.FAST_DROP_FEATURE_ENABLED.key, true.toString)
+    spark.conf.set(DeltaSQLConf.FAST_DROP_FEATURE_GENERATE_DV_TOMBSTONES.key, true.toString)
     enableDeletionVectors(spark, false, false, false)
   }
 
@@ -91,12 +100,13 @@ class DeltaFastDropFeatureSuite
 
   protected def setModificationTimes(
       log: DeltaLog,
+      startTime: Long = System.currentTimeMillis(),
       startVersion: Long,
       endVersion: Long,
       daysToAdd: Int): Unit = {
     val fs = log.logPath.getFileSystem(log.newDeltaHadoopConf())
     for (version <- startVersion to endVersion) {
-      setModificationTime(log, System.currentTimeMillis(), version.toInt, daysToAdd, fs)
+      setModificationTime(log, startTime, version.toInt, daysToAdd, fs)
     }
   }
 
@@ -573,6 +583,346 @@ class DeltaFastDropFeatureSuite
         val targetTable = io.delta.tables.DeltaTable.forPath(dir.getCanonicalPath)
         assert(targetTable.toDF.as[Long].collect().sorted === Seq.range(0, 40))
       }
+    }
+  }
+
+  private def createTableWithDeletionVectors(deltaLog: DeltaLog): Unit = {
+    withSQLConf(
+        DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey -> true.toString,
+        DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS.key -> true.toString) {
+      val dir = deltaLog.dataPath
+      val targetDF = spark.range(start = 0, end = 100, step = 1, numPartitions = 4)
+      targetDF.write.format("delta").save(dir.toString)
+
+      val targetTable = io.delta.tables.DeltaTable.forPath(dir.toString)
+
+      // Add some DVs.
+      targetTable.delete("id < 5 or id >= 95")
+
+      // Add some more DVs for the same set of files.
+      targetTable.delete("id < 10 or id >= 90")
+
+      // Assert that DVs exist.
+      assert(deltaLog.update().numDeletionVectorsOpt === Some(2L))
+    }
+  }
+
+  private def dropDeletionVectors(deltaLog: DeltaLog, truncateHistory: Boolean = false): Unit = {
+    sql(s"""ALTER TABLE delta.`${deltaLog.dataPath}`
+         |DROP FEATURE deletionVectors
+         |${if (truncateHistory) "TRUNCATE HISTORY" else ""}
+         |""".stripMargin)
+
+    val snapshot = deltaLog.update()
+    val protocol = snapshot.protocol
+    assert(snapshot.numDeletionVectorsOpt.getOrElse(0L) === 0)
+    assert(snapshot.numDeletedRecordsOpt.getOrElse(0L) === 0)
+    assert(truncateHistory ||
+      !protocol.readerFeatureNames.contains(DeletionVectorsTableFeature.name))
+  }
+
+  private def validateTombstones(log: DeltaLog): Unit = {
+    import org.apache.spark.sql.delta.implicits._
+
+    val snapshot = log.update()
+    val dvPath = DeletionVectorDescriptor.urlEncodedPath(col("deletionVector"), log.dataPath)
+    val isDVTombstone = DeletionVectorDescriptor.isDeletionVectorPath(col("path"))
+    val isInlineDeletionVector = DeletionVectorDescriptor.isInline(col("deletionVector"))
+
+    val uniqueDvsFromParquetRemoveFiles = snapshot
+      .tombstones
+      .filter("deletionVector IS NOT NULL")
+      .filter(not(isInlineDeletionVector))
+      .filter(not(isDVTombstone))
+      .select(dvPath)
+      .distinct()
+      .as[String]
+
+    val dvTombstones = snapshot
+      .tombstones
+      .filter(isDVTombstone)
+      .select("path")
+      .as[String]
+
+    val dvTombstonesSet = dvTombstones.collect().toSet
+
+    assert(dvTombstonesSet.nonEmpty)
+    assert(uniqueDvsFromParquetRemoveFiles.collect().toSet === dvTombstonesSet)
+  }
+
+  for (withCommitLarge <- BOOLEAN_DOMAIN)
+  test("DV tombstones are created when dropping DVs" +
+      s"withCommitLarge: $withCommitLarge") {
+    val threshold = if (withCommitLarge) 0 else 10000
+    withSQLConf(
+        DeltaSQLConf.FAST_DROP_FEATURE_DV_TOMBSTONE_COUNT_THRESHOLD.key -> threshold.toString) {
+      withTempPath { dir =>
+        val deltaLog = DeltaLog.forTable(spark, dir.getAbsolutePath)
+        createTableWithDeletionVectors(deltaLog)
+        dropDeletionVectors(deltaLog)
+        validateTombstones(deltaLog)
+
+        val targetTable = io.delta.tables.DeltaTable.forPath(dir.toString)
+        assert(targetTable.toDF.collect().length === 80)
+        // DV Tombstones are recorded in the snapshot state.
+        assert(deltaLog.update().numOfRemoves === 8)
+      }
+    }
+  }
+
+  test("DV tombstones are generated when no action is taken in pre-downgrade") {
+    withTempPath { dir =>
+      val deltaLog = DeltaLog.forTable(spark, dir.getAbsolutePath)
+      createTableWithDeletionVectors(deltaLog)
+
+      // Remove all DV traces in advance. Table will look clean in DROP FEATURE.
+      val table = DeltaTableV2(spark, deltaLog.dataPath)
+      val properties = Seq(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key)
+      AlterTableUnsetPropertiesDeltaCommand(table, properties, ifExists = true).run(spark)
+
+      import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
+      val catalog = spark.sessionState.catalogManager.currentCatalog.asTableCatalog
+      val tableId = Seq(table.name()).asIdentifier
+      DeltaReorgTableCommand(ResolvedTable.create(catalog, tableId, table))(Nil).run(spark)
+      assert(deltaLog.update().numDeletedRecordsOpt.forall(_ == 0))
+
+      dropDeletionVectors(deltaLog)
+      validateTombstones(deltaLog)
+    }
+  }
+
+  test("We only create missing DV tombstones when dropping DVs") {
+    withTempPath { dir =>
+      val deltaLog = DeltaLog.forTable(spark, dir.getAbsolutePath)
+      createTableWithDeletionVectors(deltaLog)
+      dropDeletionVectors(deltaLog)
+      validateTombstones(deltaLog)
+
+      // Re enable the feature and add more DVs. The delete touches a new file as well as a file
+      // that already contains a DV within the retention period.
+      sql(
+        s"""ALTER TABLE delta.`${dir.getAbsolutePath}`
+           |SET TBLPROPERTIES (
+           |delta.feature.${DeletionVectorsTableFeature.name} = 'enabled',
+           |${DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key} = 'true'
+           |)""".stripMargin)
+
+      withSQLConf(DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS.key -> true.toString) {
+        val targetTable = io.delta.tables.DeltaTable.forPath(dir.toString)
+        targetTable.delete("id > 20 and id <= 30")
+        assert(deltaLog.update().numDeletionVectorsOpt === Some(2L))
+      }
+
+      sql(s"ALTER TABLE delta.`${dir.getAbsolutePath}` DROP FEATURE deletionVectors")
+
+      validateTombstones(deltaLog)
+    }
+  }
+
+  test("We do not create tombstones when there are no RemoveFiles within the retention period") {
+    withTempPath { dir =>
+      val clock = new ManualClock(System.currentTimeMillis())
+      val deltaLog = DeltaLog.forTable(spark, new Path(dir.getAbsolutePath), clock)
+      createTableWithDeletionVectors(deltaLog)
+
+      // Pretend tombstone retention period has passed (default 1 week).
+      val clockAdvanceMillis = DeltaLog.tombstoneRetentionMillis(deltaLog.update().metadata)
+      clock.advance(clockAdvanceMillis + TimeUnit.DAYS.toMillis(3))
+
+      dropDeletionVectors(deltaLog)
+
+      assert(deltaLog.update().tombstones.collect().forall(_.isDVTombstone == false))
+    }
+  }
+
+  test("We create DV tombstones when mixing drop feature implementations") {
+    // When using the TRUNCATE HISTORY option we fallback to the legacy implementation.
+    withTempDir { dir =>
+      val deltaLog = DeltaLog.forTable(spark, dir.getAbsolutePath)
+      createTableWithDeletionVectors(deltaLog)
+
+      val e = intercept[DeltaTableFeatureException] {
+        dropDeletionVectors(deltaLog, truncateHistory = true)
+      }
+      checkError(
+        exception = e,
+        condition = "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
+        parameters = Map(
+          "feature" -> "deletionVectors",
+          "logRetentionPeriodKey" -> "delta.logRetentionDuration",
+          "logRetentionPeriod" -> "30 days",
+          "truncateHistoryLogRetentionPeriod" -> "24 hours"))
+
+      validateTombstones(deltaLog)
+      dropDeletionVectors(deltaLog, truncateHistory = false)
+      validateTombstones(deltaLog)
+    }
+  }
+
+  test("DV tombstones are not created for inline DVs") {
+    withSQLConf(
+        DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey -> true.toString) {
+      withTempPath { dir =>
+        val deltaLog = DeltaLog.forTable(spark, dir.getAbsolutePath)
+        val targetTable = () => io.delta.tables.DeltaTable.forPath(dir.toString)
+
+        spark.range(start = 0, end = 100, step = 1, numPartitions = 1)
+          .write.format("delta").save(dir.toString)
+
+        def removeRowsWithInlineDV(add: AddFile, markedRows: Long*): (AddFile, RemoveFile) = {
+          val bitmap = RoaringBitmapArray(markedRows: _*)
+          val serializedBitmap = bitmap.serializeAsByteArray(RoaringBitmapArrayFormat.Portable)
+          val cardinality = markedRows.size
+          val dv = DeletionVectorDescriptor.inlineInLog(serializedBitmap, cardinality)
+
+          add.removeRows(
+            deletionVector = dv,
+            updateStats = true)
+        }
+
+        // There should be a single AddFile.
+        val snapshot = deltaLog.update()
+        val addFile = snapshot.allFiles.first()
+        val (newAddFile, newRemoveFile) = removeRowsWithInlineDV(addFile, 3, 34, 67)
+        val actionsToCommit: Seq[Action] = Seq(newAddFile, newRemoveFile)
+
+        deltaLog.startTransaction(catalogTableOpt = None, snapshotOpt = Some(snapshot))
+          .commit(actionsToCommit, new DeltaOperations.TestOperation)
+
+        // Verify the table is
+        assert(deltaLog.update().numDeletedRecordsOpt.exists(_ === 3))
+        assert(deltaLog.update().numDeletionVectorsOpt.exists(_ === 1))
+
+        assert(targetTable().toDF.collect().length === 97)
+
+        dropDeletionVectors(deltaLog)
+        // No DV tombstones should be have been created.
+        assert(deltaLog.update().tombstones.collect().forall(_.isDVTombstone == false))
+
+        assert(targetTable().toDF.collect().length === 97)
+        assert(deltaLog.update().numDeletedRecordsOpt.forall(_ === 0))
+        assert(deltaLog.update().numDeletionVectorsOpt.forall(_ === 0))
+      }
+    }
+  }
+
+  for (generateDVTombstones <- BOOLEAN_DOMAIN)
+  test(s"Vacuum does not delete deletion vector files." +
+      s"generateDVTombstones: $generateDVTombstones") {
+    val targetDF = spark.range(start = 0, end = 100, step = 1, numPartitions = 4)
+    withSQLConf(
+        DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey -> true.toString,
+        DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS.key -> true.toString,
+        DeltaSQLConf.DELTA_DELETION_VECTORS_CACHE_ENABLED.key -> false.toString,
+        DeltaSQLConf.FAST_DROP_FEATURE_GENERATE_DV_TOMBSTONES.key -> generateDVTombstones.toString,
+        // With this config we pretend the client does not support DVs. Therefore, it will not
+        // discover DVs from the RemoveFile actions.
+        DeltaSQLConf.FAST_DROP_FEATURE_DV_DISCOVERY_IN_VACUUM_DISABLED.key -> true.toString) {
+      withTempPath { dir =>
+        val targetLog = DeltaLog.forTable(spark, dir.getAbsolutePath)
+        targetDF.write.format("delta").save(dir.toString)
+        val targetTable = io.delta.tables.DeltaTable.forPath(dir.toString)
+
+        // Add some DVs.
+        targetTable.delete("id < 5 or id >= 95")
+        val versionWithDVs = targetLog.update().version
+
+        // Unfortunately, there is no point in advancing the clock because the deletion timestamps
+        // in the RemoveFiles do not use the clock. Instead, we set the creation time back 10 days
+        // to all files created so far. These will be eligible for vacuum.
+        val fs = targetLog.logPath.getFileSystem(targetLog.newDeltaHadoopConf())
+        val allFiles = DeltaFileOperations.localListDirs(
+          hadoopConf = targetLog.newDeltaHadoopConf(),
+          dirs = Seq(dir.getCanonicalPath),
+          recursive = false)
+        allFiles.foreach { p =>
+          fs.setTimes(p.getHadoopPath, System.currentTimeMillis() - TimeUnit.DAYS.toMillis(10), 0)
+        }
+
+        // Add new DVs for the same set of files.
+        targetTable.delete("id < 10 or id >= 90")
+
+        // Assert that DVs exist.
+        assert(targetLog.update().numDeletionVectorsOpt === Some(2L))
+
+        sql(s"ALTER TABLE delta.`${dir.getAbsolutePath}` DROP FEATURE deletionVectors")
+
+        val snapshot = targetLog.update()
+        val protocol = snapshot.protocol
+        assert(snapshot.numDeletionVectorsOpt.getOrElse(0L) === 0)
+        assert(snapshot.numDeletedRecordsOpt.getOrElse(0L) === 0)
+        assert(!protocol.readerFeatureNames.contains(DeletionVectorsTableFeature.name))
+
+        targetTable.delete("id < 15 or id >= 85")
+
+        // The DV files are outside the retention period. However, the DVs are still referenced in
+        // the history. Normally we should not delete any DVs.
+        sql(s"VACUUM '${dir.getAbsolutePath}'")
+
+        val query =
+          sql(s"SELECT * FROM delta.`${dir.getAbsolutePath}` VERSION AS OF $versionWithDVs")
+
+        if (generateDVTombstones) {
+          // At version 1 we only deleted 10 rows.
+          assert(query.collect().length === 90)
+        } else {
+          val e = intercept[SparkException] {
+            query.collect()
+          }
+          val msg = e.getCause.getMessage
+          assert(msg.contains("RowIndexFilterFileNotFoundException") ||
+            msg.contains(".bin does not exist"))
+        }
+      }
+    }
+  }
+
+  test("DV tombstones do not generate CDC") {
+    import org.apache.spark.sql.delta.commands.cdc.CDCReader
+    withTempPath { dir =>
+      withSQLConf(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> true.toString) {
+        val deltaLog = DeltaLog.forTable(spark, dir.getAbsolutePath)
+        createTableWithDeletionVectors(deltaLog)
+        val versionBeforeDrop = deltaLog.update().version
+        dropDeletionVectors(deltaLog)
+
+        val deleteCountInDropFeature = CDCReader
+          .changesToBatchDF(deltaLog, versionBeforeDrop + 1, deltaLog.update().version, spark)
+          .filter(s"${CDCReader.CDC_TYPE_COLUMN_NAME} = '${CDCReader.CDC_TYPE_DELETE_STRING}'")
+          .count()
+        assert(deleteCountInDropFeature === 0)
+      }
+    }
+  }
+
+  for (incrementalCommitEnabled <- BOOLEAN_DOMAIN)
+  test("Checksum computation does not take into account DV tombstones" +
+      s"incrementalCommitEnabled: $incrementalCommitEnabled") {
+    withTempPaths(2) { dirs =>
+      val checksumWithDVTombstones =
+        withSQLConf(
+            DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> incrementalCommitEnabled.toString,
+            DeltaSQLConf.FAST_DROP_FEATURE_GENERATE_DV_TOMBSTONES.key -> true.toString) {
+          val deltaLog = DeltaLog.forTable(spark, dirs.head.getAbsolutePath)
+          createTableWithDeletionVectors(deltaLog)
+          dropDeletionVectors(deltaLog)
+          val snapshot = deltaLog.update()
+          snapshot.checksumOpt.getOrElse(snapshot.computeChecksum)
+        }
+
+      val checksumWithoutDVTombstones =
+        withSQLConf(
+            DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> incrementalCommitEnabled.toString,
+            DeltaSQLConf.FAST_DROP_FEATURE_GENERATE_DV_TOMBSTONES.key -> false.toString) {
+          val deltaLog = DeltaLog.forTable(spark, dirs.last.getAbsolutePath)
+          createTableWithDeletionVectors(deltaLog)
+          dropDeletionVectors(deltaLog)
+          val snapshot = deltaLog.update()
+          snapshot.checksumOpt.getOrElse(snapshot.computeChecksum)
+        }
+
+      // DV tombstones do not affect the number of files.
+      assert(checksumWithoutDVTombstones.numFiles === checksumWithDVTombstones.numFiles)
     }
   }
 }

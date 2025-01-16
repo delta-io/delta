@@ -385,9 +385,9 @@ case class AlterTableDropFeatureDeltaCommand(
       // Note, for features that cannot be disabled we solely rely for correctness on
       // validateRemoval.
       val requiresHistoryValidation = removableFeature.requiresHistoryProtection
-      val startTimeNs = System.nanoTime()
+      val startTimeNs = table.deltaLog.clock.nanoTime()
       val preDowngradeMadeChanges =
-        removableFeature.preDowngradeCommand(table).removeFeatureTracesIfNeeded()
+        removableFeature.preDowngradeCommand(table).removeFeatureTracesIfNeeded(sparkSession)
       if (requiresHistoryValidation) {
         // Generate a checkpoint after the cleanup that is based on commits that do not use
         // the feature. This intends to help slow-moving tables to qualify for history truncation
@@ -483,7 +483,7 @@ case class AlterTableDropFeatureDeltaCommand(
     val deltaLog = table.deltaLog
     recordDeltaOperation(deltaLog, "delta.ddl.alter.dropFeatureWithCheckpointProtection") {
       var startTimeNs = System.nanoTime()
-      removableFeature.preDowngradeCommand(table).removeFeatureTracesIfNeeded()
+      removableFeature.preDowngradeCommand(table).removeFeatureTracesIfNeeded(sparkSession)
 
       // Create and validate the barrier checkpoints. The checkpoint are created on top of
       // empty commits. However, this is not guaranteed. Other txns might interleave the empty
