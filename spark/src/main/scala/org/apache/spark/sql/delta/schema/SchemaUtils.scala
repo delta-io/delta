@@ -31,6 +31,7 @@ import org.apache.spark.sql.delta.schema.SchemaMergingUtils._
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
 import org.apache.spark.sql.delta.sources.{DeltaSQLConf, DeltaStreamUtils}
 import org.apache.spark.sql.util.ScalaExtensions._
+
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql._
 import org.apache.spark.sql.AnalysisException
