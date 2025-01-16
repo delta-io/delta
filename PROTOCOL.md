@@ -488,7 +488,8 @@ That means specifically that for any commit…
  - it is **legal** for the same `path` to occur in an `add` action and a `remove` action, but with two different `dvId`s.
  - it is **legal** for the same `path` to be added and/or removed and also occur in a `cdc` action.
  - it is **illegal** for the same `path` to be occur twice with different `dvId`s within each set of `add` or `remove` actions.
- - it is **illegal** for the same `path` to occur more than once in a snapshot list of `add` actions.
+ - it is **illegal** for a `path` to occur in an `add` action that already occurs with a different `dvId` in the list of `add` actions from the snapshot of the version immediately preceeding the commit, unless the commit also contains a remove for the later combination.
+ - it is **legal** to commit an existing `path` and `dvId` combination again (this allows metadata updates).
 
 The `dataChange` flag on either an `add` or a `remove` can be set to `false` to indicate that an action when combined with other actions in the same atomic version only rearranges existing data or adds new statistics.
 For example, streaming queries that are tailing the transaction log can use this flag to skip actions that would not affect the final results.
