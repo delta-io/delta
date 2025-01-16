@@ -219,7 +219,7 @@ object DeletionVectorDescriptor {
   final val UUID_DV_MARKER: String = "u"
 
   private final val deletionVectorFileNameRegex =
-    raw"${DELETION_VECTOR_FILE_NAME_CORE}_([^.]+)\.bin".r
+    raw"${new Path(DELETION_VECTOR_FILE_NAME_CORE).toUri}_([^.]+)\.bin".r
   private final val deletionVectorFileNamePattern = deletionVectorFileNameRegex.pattern
 
   final lazy val STRUCT_TYPE: StructType =
