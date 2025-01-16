@@ -162,6 +162,7 @@
         <module name="EmptyCatchBlock">
             <property name="exceptionVariableName" value="expected"/>
         </module>
+        <module name="CommentsIndentation"/>
         <module name="UnusedImports"/>
         <module name="RedundantImport"/>
         <module name="RedundantModifier"/>
@@ -176,6 +177,40 @@
         <module name="RegexpSinglelineJava">
             <property name="format" value="new (java\.lang\.)?(Byte|Integer|Long|Short)\("/>
             <property name="message" value="Use static factory 'valueOf' or 'parseXXX' instead of the deprecated constructors." />
+        </module>
+        <module name="Indentation">
+            <property name="basicOffset" value="4"/>
+            <property name="braceAdjustment" value="0"/>
+            <property name="caseIndent" value="4"/>
+            <property name="throwsIndent" value="4"/>
+            <property name="lineWrappingIndentation" value="4"/>
+            <property name="arrayInitIndent" value="4"/>
+        </module>
+
+        <module name="LeftCurly"/>
+        <module name="RightCurly"/>
+
+        <!--
+        We use the following import order:
+        import java.*
+        import javax.*
+        <blank line>
+        import scala.*
+        <blank line>
+        import all other imports
+        <blank line>
+        import io.delta.kernel.*
+        import io.delta.kernel.internal.*
+        <blank line>
+        import io.delta.kernel.defaults.*
+        import io.delta.kernel.defaults.internal.*
+        -->
+        <module name="ImportOrder">
+            <property name="separated" value="true"/>
+            <property name="ordered" value="true"/>
+            <property name="groups"
+                      value="java,javax,scala,*,io.delta.kernel,io.delta.kernel.internal,io.delta.kernel.defaults,io.delta.kernel.defaults.internal"/>
+            <property name="option" value="under"/>
         </module>
 
         <!--

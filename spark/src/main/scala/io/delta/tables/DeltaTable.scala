@@ -641,30 +641,17 @@ class DeltaTable private[tables](
    *  io.delta.tables.DeltaTable.clone(
    *   "/some/path/to/table",
    *   true,
-   *   true,
    *   Map("foo" -> "bar"))
    * }}}
    *
    * @param target The path or table name to create the clone.
-   * @param isShallow Whether to create a shallow clone or a deep clone.
    * @param replace Whether to replace the destination with the clone command.
    * @param properties The table properties to override in the clone.
    *
    * @since 3.3.0
    */
-  def clone(
-      target: String,
-      isShallow: Boolean,
-      replace: Boolean,
-      properties: Map[String, String]): DeltaTable = {
-    executeClone(
-      table,
-      target,
-      isShallow,
-      replace,
-      properties,
-      versionAsOf = None,
-      timestampAsOf = None)
+  def clone(target: String, replace: Boolean, properties: Map[String, String]): DeltaTable = {
+    executeClone(table, target, replace, properties)
   }
 
   /**
@@ -672,20 +659,16 @@ class DeltaTable private[tables](
    *
    * An example would be
    * {{{
-   *   io.delta.tables.DeltaTable.clone(
-   *     "/some/path/to/table",
-   *     true,
-   *     true)
+   *  io.delta.tables.DeltaTable.clone("/some/path/to/table", true)
    * }}}
    *
    * @param target The path or table name to create the clone.
-   * @param isShallow Whether to create a shallow clone or a deep clone.
    * @param replace Whether to replace the destination with the clone command.
    *
    * @since 3.3.0
    */
-  def clone(target: String, isShallow: Boolean, replace: Boolean): DeltaTable = {
-    clone(target, isShallow, replace, properties = Map.empty[String, String])
+  def clone(target: String, replace: Boolean): DeltaTable = {
+    clone(target, replace, properties = Map.empty)
   }
 
   /**
@@ -693,18 +676,15 @@ class DeltaTable private[tables](
    *
    * An example would be
    * {{{
-   *   io.delta.tables.DeltaTable.clone(
-   *     "/some/path/to/table",
-   *     true)
+   *  io.delta.tables.DeltaTable.clone("/some/path/to/table")
    * }}}
    *
    * @param target The path or table name to create the clone.
-   * @param isShallow Whether to create a shallow clone or a deep clone.
    *
    * @since 3.3.0
    */
-  def clone(target: String, isShallow: Boolean): DeltaTable = {
-    clone(target, isShallow, replace = false)
+  def clone(target: String): DeltaTable = {
+    clone(target, replace = false)
   }
 
   /**
@@ -716,17 +696,15 @@ class DeltaTable private[tables](
    *
    * An example would be
    * {{{
-   *   io.delta.tables.DeltaTable.cloneAtVersion(
-   *     5,
-   *     "/some/path/to/table",
-   *     true,
-   *     true,
-   *     Map("foo" -> "bar"))
+   *  io.delta.tables.DeltaTable.cloneAtVersion(
+   *   5,
+   *   "/some/path/to/table",
+   *   true,
+   *   Map("foo" -> "bar"))
    * }}}
    *
    * @param version The version of this table to clone from.
    * @param target The path or table name to create the clone.
-   * @param isShallow Whether to create a shallow clone or a deep clone.
    * @param replace Whether to replace the destination with the clone command.
    * @param properties The table properties to override in the clone.
    *
@@ -735,17 +713,9 @@ class DeltaTable private[tables](
   def cloneAtVersion(
       version: Long,
       target: String,
-      isShallow: Boolean,
       replace: Boolean,
       properties: Map[String, String]): DeltaTable = {
-    executeClone(
-      table,
-      target,
-      isShallow,
-      replace,
-      properties,
-      versionAsOf = Some(version),
-      timestampAsOf = None)
+    executeClone(table, target, replace, properties, versionAsOf = Some(version))
   }
 
   /**
@@ -754,26 +724,17 @@ class DeltaTable private[tables](
    *
    * An example would be
    * {{{
-   *   io.delta.tables.DeltaTable.cloneAtVersion(
-   *     5,
-   *     "/some/path/to/table",
-   *     true,
-   *     true)
+   *  io.delta.tables.DeltaTable.cloneAtVersion(5, "/some/path/to/table", true)
    * }}}
    *
    * @param version The version of this table to clone from.
    * @param target The path or table name to create the clone.
-   * @param isShallow Whether to create a shallow clone or a deep clone.
    * @param replace Whether to replace the destination with the clone command.
    *
    * @since 3.3.0
    */
-  def cloneAtVersion(
-      version: Long,
-      target: String,
-      isShallow: Boolean,
-      replace: Boolean): DeltaTable = {
-    cloneAtVersion(version, target, isShallow, replace, properties = Map.empty[String, String])
+  def cloneAtVersion(version: Long, target: String, replace: Boolean): DeltaTable = {
+    cloneAtVersion(version, target, replace, properties = Map.empty)
   }
 
   /**
@@ -782,23 +743,19 @@ class DeltaTable private[tables](
    *
    * An example would be
    * {{{
-   *   io.delta.tables.DeltaTable.cloneAtVersion(
-   *     5,
-   *     "/some/path/to/table",
-   *     true)
+   *  io.delta.tables.DeltaTable.cloneAtVersion(5, "/some/path/to/table")
    * }}}
    *
    * @param version The version of this table to clone from.
    * @param target The path or table name to create the clone.
-   * @param isShallow Whether to create a shallow clone or a deep clone.
    *
    * @since 3.3.0
    */
-  def cloneAtVersion(version: Long, target: String, isShallow: Boolean): DeltaTable = {
-    cloneAtVersion(version, target, isShallow, replace = false)
+  def cloneAtVersion(version: Long, target: String): DeltaTable = {
+    cloneAtVersion(version, target, replace = false)
   }
 
-  /**
+   /**
    * Clone a DeltaTable at a specific timestamp to a given destination to mirror the existing
    * table's data and metadata at that timestamp.
    *
@@ -809,17 +766,15 @@ class DeltaTable private[tables](
    *
    * An example would be
    * {{{
-   *   io.delta.tables.DeltaTable.cloneAtTimestamp(
-   *     "2019-01-01",
-   *     "/some/path/to/table",
-   *     true,
-   *     true,
-   *     Map("foo" -> "bar"))
+   *  io.delta.tables.DeltaTable.cloneAtTimestamp(
+   *   "2019-01-01",
+   *   "/some/path/to/table",
+   *   true,
+   *   Map("foo" -> "bar"))
    * }}}
    *
    * @param timestamp The timestamp of this table to clone from.
    * @param target The path or table name to create the clone.
-   * @param isShallow Whether to create a shallow clone or a deep clone.
    * @param replace Whether to replace the destination with the clone command.
    * @param properties The table properties to override in the clone.
    *
@@ -828,18 +783,9 @@ class DeltaTable private[tables](
   def cloneAtTimestamp(
       timestamp: String,
       target: String,
-      isShallow: Boolean,
       replace: Boolean,
       properties: Map[String, String]): DeltaTable = {
-    executeClone(
-      table,
-      target,
-      isShallow,
-      replace,
-      properties,
-      versionAsOf = None,
-      timestampAsOf = Some(timestamp)
-    )
+    executeClone(table, target, replace, properties, timestampAsOf = Some(timestamp))
   }
 
   /**
@@ -850,26 +796,17 @@ class DeltaTable private[tables](
    *
    * An example would be
    * {{{
-   *   io.delta.tables.DeltaTable.cloneAtTimestamp(
-   *     "2019-01-01",
-   *     "/some/path/to/table",
-   *     true,
-   *     true)
+   *  io.delta.tables.DeltaTable.cloneAtTimestamp("2019-01-01", "/some/path/to/table", true)
    * }}}
    *
    * @param timestamp The timestamp of this table to clone from.
    * @param target The path or table name to create the clone.
-   * @param isShallow Whether to create a shallow clone or a deep clone.
    * @param replace Whether to replace the destination with the clone command.
    *
    * @since 3.3.0
    */
-  def cloneAtTimestamp(
-      timestamp: String,
-      target: String,
-      isShallow: Boolean,
-      replace: Boolean): DeltaTable = {
-    cloneAtTimestamp(timestamp, target, isShallow, replace, properties = Map.empty[String, String])
+  def cloneAtTimestamp(timestamp: String, target: String, replace: Boolean): DeltaTable = {
+    cloneAtTimestamp(timestamp, target, replace, properties = Map.empty)
   }
 
   /**
@@ -880,20 +817,16 @@ class DeltaTable private[tables](
    *
    * An example would be
    * {{{
-   *   io.delta.tables.DeltaTable.cloneAtTimestamp(
-   *     "2019-01-01",
-   *     "/some/path/to/table",
-   *     true)
+   *  io.delta.tables.DeltaTable.cloneAtTimestamp("2019-01-01", "/some/path/to/table")
    * }}}
    *
    * @param timestamp The timestamp of this table to clone from.
    * @param target The path or table name to create the clone.
-   * @param isShallow Whether to create a shallow clone or a deep clone.
    *
    * @since 3.3.0
    */
-  def cloneAtTimestamp(timestamp: String, target: String, isShallow: Boolean): DeltaTable = {
-    cloneAtTimestamp(timestamp, target, isShallow, replace = false)
+  def cloneAtTimestamp(timestamp: String, target: String): DeltaTable = {
+    cloneAtTimestamp(timestamp, target, replace = false)
   }
 }
 

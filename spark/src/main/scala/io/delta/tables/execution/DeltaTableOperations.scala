@@ -126,16 +126,11 @@ trait DeltaTableOperations extends AnalysisHelper { self: io.delta.tables.DeltaT
   protected def executeClone(
       table: DeltaTableV2,
       target: String,
-      isShallow: Boolean,
       replace: Boolean,
       properties: Map[String, String],
       versionAsOf: Option[Long] = None,
       timestampAsOf: Option[String] = None
   ): io.delta.tables.DeltaTable = withActiveSession(sparkSession) {
-    if (!isShallow) {
-      throw DeltaErrors.unsupportedDeepCloneException()
-    }
-
     val sourceIdentifier = table.getTableIdentifierIfExists.map(id =>
       Identifier.of(id.database.toArray, id.table))
     val sourceRelation = DataSourceV2Relation.create(table, None, sourceIdentifier)

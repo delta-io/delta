@@ -419,42 +419,6 @@ trait IdentityColumnIngestionSuiteBase extends IdentityColumnTestUtils {
     }
   }
 
-  test("Appending from a source table with a high water mark should not update" +
-    " the target table's high water mark") {
-    withSrcAndDestTables(
-      isSrcDataSubsetOfTgt = false,
-      positiveStep = true,
-      expectValidHighWaterMark = false) { (srcTblName, tgtTblName) =>
-      val tgtDeltaLog = DeltaLog.forTable(spark, TableIdentifier(tgtTblName))
-      // dataframe v2
-      spark.table(srcTblName).writeTo(tgtTblName).append()
-      assert(getHighWaterMark(tgtDeltaLog.update(), colName = "id").isEmpty,
-        "High watermark should not be set for user inserted data.")
-
-      // v1
-      spark.table(srcTblName).write.format("delta").mode("append").saveAsTable(tgtTblName)
-      assert(getHighWaterMark(tgtDeltaLog.update(), colName = "id").isEmpty,
-        "High watermark should not be set for user inserted data.")
-
-      spark.table(srcTblName).write.insertInto(tgtTblName)
-      assert(getHighWaterMark(tgtDeltaLog.update(), colName = "id").isEmpty,
-        "High watermark should not be set for user inserted data.")
-
-      // SQL
-      sql(s"INSERT INTO $tgtTblName SELECT * FROM $srcTblName")
-      assert(getHighWaterMark(tgtDeltaLog.update(), colName = "id").isEmpty,
-        "High watermark should not be set for user inserted data.")
-
-      sql(s"INSERT INTO $tgtTblName BY NAME SELECT * FROM $srcTblName")
-      assert(getHighWaterMark(tgtDeltaLog.update(), colName = "id").isEmpty,
-        "High watermark should not be set for user inserted data.")
-
-      sql(s"INSERT INTO $tgtTblName(id, value) SELECT id, value FROM $srcTblName")
-      assert(getHighWaterMark(tgtDeltaLog.update(), colName = "id").isEmpty,
-        "High watermark should not be set for user inserted data.")
-    }
-  }
-
   for {
     cdfEnabled <- DeltaTestUtils.BOOLEAN_DOMAIN
     isSrcDataSubsetOfTgt <- DeltaTestUtils.BOOLEAN_DOMAIN

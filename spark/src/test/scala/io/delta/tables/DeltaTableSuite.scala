@@ -437,7 +437,7 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
 
       val srcTable =
         io.delta.tables.DeltaTable.forPath(spark, srcDir, fakeFileSystemOptions)
-      srcTable.clone(dstDir, isShallow = true)
+      srcTable.clone(dstDir)
 
       val srcLog = DeltaLog.forTable(spark, new Path(srcDir), fakeFileSystemOptions)
       val dstLog = DeltaLog.forTable(spark, new Path(dstDir), fakeFileSystemOptions)
@@ -475,7 +475,7 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
           io.delta.tables.DeltaTable.forPath(spark, srcDir, fakeFileSystemOptions)
 
         if (cloneWithVersion) {
-          srcTable.cloneAtVersion(0, dstDir, isShallow = true)
+          srcTable.cloneAtVersion(0, dstDir)
         } else {
           // clone with timestamp.
           //
@@ -488,7 +488,7 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
           val logPath = new Path(srcDir, "_delta_log")
           val file = new File(FileNames.unsafeDeltaFile(logPath, 0).toString)
           assert(file.setLastModified(time))
-          srcTable.cloneAtTimestamp(desiredTime, dstDir, isShallow = true)
+          srcTable.cloneAtTimestamp(desiredTime, dstDir)
         }
 
         val dstLog = DeltaLog.forTable(spark, new Path(dstDir), fakeFileSystemOptions)

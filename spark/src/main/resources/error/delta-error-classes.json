@@ -2724,12 +2724,6 @@
     ],
     "sqlState" : "42621"
   },
-  "DELTA_UNSUPPORTED_DEEP_CLONE" : {
-    "message" : [
-      "Deep clone is not supported by this Delta version."
-    ],
-    "sqlState" : "0A000"
-  },
   "DELTA_UNSUPPORTED_DESCRIBE_DETAIL_VIEW" : {
     "message" : [
       "<view> is a view. DESCRIBE DETAIL is only supported for tables."

@@ -20,8 +20,7 @@ case class OptimisticTransactionPhases(
     initialPhase: ExecutionPhaseLock,
     preparePhase: ExecutionPhaseLock,
     commitPhase: ExecutionPhaseLock,
-    backfillPhase: ExecutionPhaseLock,
-    postCommitPhase: ExecutionPhaseLock)
+    backfillPhase: ExecutionPhaseLock)
 
 object OptimisticTransactionPhases {
 
@@ -31,7 +30,6 @@ object OptimisticTransactionPhases {
   final val PREPARE_PHASE_LABEL = PREFIX + "PREPARE"
   final val COMMIT_PHASE_LABEL = PREFIX + "COMMIT"
   final val BACKFILL_PHASE_LABEL = PREFIX + "BACKFILL"
-  final val POST_COMMIT_PHASE_LABEL = PREFIX + "POST_COMMIT"
 
   def forName(txnName: String): OptimisticTransactionPhases = {
 
@@ -42,7 +40,6 @@ object OptimisticTransactionPhases {
       initialPhase = ExecutionPhaseLock(toTxnPhaseLabel(INITIAL_PHASE_LABEL)),
       preparePhase = ExecutionPhaseLock(toTxnPhaseLabel(PREPARE_PHASE_LABEL)),
       commitPhase = ExecutionPhaseLock(toTxnPhaseLabel(COMMIT_PHASE_LABEL)),
-      backfillPhase = ExecutionPhaseLock(toTxnPhaseLabel(BACKFILL_PHASE_LABEL)),
-      postCommitPhase = ExecutionPhaseLock(toTxnPhaseLabel(POST_COMMIT_PHASE_LABEL)))
+      backfillPhase = ExecutionPhaseLock(toTxnPhaseLabel(BACKFILL_PHASE_LABEL)))
   }
 }

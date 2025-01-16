@@ -66,6 +66,86 @@ trait S3SingleDriverLogStoreSuiteBase extends LogStoreSuiteBase {
     }
   }
 
+  test("cache works") {
+    withTempDir { dir =>
+      val store = createLogStore(spark)
+      val deltas =
+        Seq(0, 1, 2, 3, 4).map(i => FileNames.unsafeDeltaFile(new Path(dir.toURI), i))
+      store.write(deltas(0), Iterator("zero"), overwrite = false, sessionHadoopConf)
+      store.write(deltas(1), Iterator("one"), overwrite = false, sessionHadoopConf)
+      store.write(deltas(2), Iterator("two"), overwrite = false, sessionHadoopConf)
+
+      // delete delta file 2 from file system
+      val fs = new Path(dir.getCanonicalPath).getFileSystem(sessionHadoopConf)
+      fs.delete(deltas(2), true)
+
+      // file system listing doesn't see file 2
+      checkFileSystemList(fs, deltas(0), Seq(0, 1))
+
+      // can't re-write because cache says it still exists
+      intercept[java.nio.file.FileAlreadyExistsException] {
+        store.write(deltas(2), Iterator("two"), overwrite = false, sessionHadoopConf)
+      }
+
+      // log store list still sees file 2 as it's cached
+      checkLogStoreList(store, deltas(0), Seq(0, 1, 2), sessionHadoopConf)
+
+      if (canInvalidateCache) {
+        // clear the cache
+        store.invalidateCache()
+
+        // log store list doesn't see file 2 anymore
+        checkLogStoreList(store, deltas(0), Seq(0, 1), sessionHadoopConf)
+
+        // write a new file 2
+        store.write(deltas(2), Iterator("two"), overwrite = false, sessionHadoopConf)
+      }
+
+      // add a file 3 to cache only
+      store.write(deltas(3), Iterator("three"), overwrite = false, sessionHadoopConf)
+      fs.delete(deltas(3), true)
+
+      // log store listing returns a union of:
+      // 1) file system listing: 0, 1, 2
+      // 2a) cache listing - canInvalidateCache=true: 2, 3
+      // 2b) cache listing - canInvalidateCache=false: 0, 1, 2, 3
+      checkLogStoreList(store, deltas(0), Seq(0, 1, 2, 3), sessionHadoopConf)
+    }
+  }
+
+  test("cache works correctly when writing an initial log version") {
+    withTempDir { rootDir =>
+      val dir = new File(rootDir, "_delta_log")
+      dir.mkdir()
+      val store = createLogStore(spark)
+      val deltas =
+        Seq(0, 1, 2).map(i => FileNames.unsafeDeltaFile(new Path(dir.toURI), i))
+      store.write(deltas(0), Iterator("log version 0"), overwrite = false, sessionHadoopConf)
+      store.write(deltas(1), Iterator("log version 1"), overwrite = false, sessionHadoopConf)
+      store.write(deltas(2), Iterator("log version 2"), overwrite = false, sessionHadoopConf)
+
+      val fs = new Path(dir.getCanonicalPath).getFileSystem(sessionHadoopConf)
+      // delete all log files
+      fs.delete(deltas(2), true)
+      fs.delete(deltas(1), true)
+      fs.delete(deltas(0), true)
+
+      // can't write a new version 1 as it's in cache
+      intercept[java.nio.file.FileAlreadyExistsException] {
+        store.write(deltas(1), Iterator("new log version 1"), overwrite = false, sessionHadoopConf)
+      }
+
+      // all three log files still in cache
+      checkLogStoreList(store, deltas(0), Seq(0, 1, 2), sessionHadoopConf)
+
+      // can write a new version 0 as it's the initial version of the log
+      store.write(deltas(0), Iterator("new log version 0"), overwrite = false, sessionHadoopConf)
+
+      // writing a new initial version invalidates all files in that log
+      checkLogStoreList(store, deltas(0), Seq(0), sessionHadoopConf)
+    }
+  }
+
   protected def shouldUseRenameToWriteCheckpoint: Boolean = false
 
   /**

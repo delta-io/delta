@@ -60,7 +60,6 @@ trait BackfillCommand extends LeafRunnableCommand with DeltaCommand {
       txn.executionObserver.preparingCommit()
       txn.executionObserver.beginDoCommit()
       txn.executionObserver.beginBackfill()
-      txn.executionObserver.beginPostCommit()
       val maxNumFilesPerCommit =
         spark.conf.get(DeltaSQLConf.DELTA_BACKFILL_MAX_NUM_FILES_PER_COMMIT)
       val metricsOpType = "delta.backfill.materialization.trackerMetrics"

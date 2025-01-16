@@ -46,7 +46,6 @@ import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
 import org.apache.spark.sql.types._
 import org.apache.spark.util.{SystemClock, ThreadUtils}
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.spark.sql.delta.actions.InMemoryLogReplay.UniqueFileActionTuple
 
 /** Base class defining abstract optimize command */
 abstract class OptimizeTableCommandBase extends RunnableCommand with DeltaCommand {
@@ -454,17 +453,12 @@ class OptimizeExecutor(
       val metrics = createMetrics(sparkSession.sparkContext, addedFiles, removedFiles, removedDVs)
       commitAndRetry(txn, getOperation(), updates, metrics) { newTxn =>
         val newPartitionSchema = newTxn.metadata.partitionSchema
-        // Note: When checking if the candidate set is the same, we need to consider (Path, DV)
-        //       as the key.
-        val candidateSetOld = filesToProcess.
-          map(f => UniqueFileActionTuple(f.pathAsUri, f.getDeletionVectorUniqueId)).toSet
-
+        val candidateSetOld = filesToProcess.map(_.path).toSet
         // We specifically don't list the files through the transaction since we are potentially
         // only processing a subset of them below. If the transaction is still valid, we will
         // register the files and predicate below
         val candidateSetNew =
-          newTxn.snapshot.filesForScan(partitionPredicate).files
-            .map(f => UniqueFileActionTuple(f.pathAsUri, f.getDeletionVectorUniqueId)).toSet
+          newTxn.snapshot.filesForScan(partitionPredicate).files.map(_.path).toSet
 
         // As long as all of the files that we compacted are still part of the table,
         // and the partitioning has not changed it is valid to continue to try

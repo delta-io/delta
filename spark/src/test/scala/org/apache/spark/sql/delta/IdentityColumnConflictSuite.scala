@@ -162,7 +162,7 @@ trait IdentityColumnConflictSuiteBase
       if (currentTxn.isInstanceOf[RowTrackingEnablementOnlyTestCase]) {
         txnObserver.setNextObserver(metadataUpdateObserver, autoAdvance = true)
         unblockAllPhases(txnObserver)
-        txnObserver.phases.postCommitPhase.exitBarrier.unblock()
+        txnObserver.phases.backfillPhase.exitBarrier.unblock()
         txnObserver = metadataUpdateObserver
       }
 

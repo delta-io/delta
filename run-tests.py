@@ -25,7 +25,7 @@ import argparse
 # Define groups of subprojects that can be tested separately from other groups.
 # As of now, we have only defined project groups in the SBT build, so these must match
 # the group names defined in build.sbt.
-valid_project_groups = ["spark", "kernel", "spark-python"]
+valid_project_groups = ["spark", "kernel"]
 
 
 def get_args():
@@ -228,8 +228,13 @@ if __name__ == "__main__":
     if os.getenv("USE_DOCKER") is not None:
         test_env_image_tag = pull_or_build_docker_image(root_dir)
         run_tests_in_docker(test_env_image_tag, args.group)
-    elif args.group == "spark-python":
-        run_python_tests(root_dir)
     else:
         scala_version = os.getenv("SCALA_VERSION")
         run_sbt_tests(root_dir, args.group, args.coverage, scala_version, args.shard)
+
+        # Python tests are run only when spark group of projects are being tested.
+        is_testing_spark_group = args.group is None or args.group == "spark"
+        # Python tests are skipped when using Scala 2.13 as PySpark doesn't support it.
+        is_testing_scala_212 = scala_version is None or scala_version.startswith("2.12")
+        if is_testing_spark_group and is_testing_scala_212:
+            run_python_tests(root_dir)
