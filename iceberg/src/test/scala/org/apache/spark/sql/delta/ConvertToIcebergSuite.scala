@@ -25,10 +25,14 @@ import org.scalatest.time.SpanSugar._
 import org.apache.spark.SparkContext
 import org.apache.spark.sql.{QueryTest, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, CatalogStorageFormat}
-import org.apache.spark.sql.delta.actions.Metadata
-import org.apache.spark.sql.types.{IntegerType, StringType, StructType, StructField}
+import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
+import org.apache.spark.sql.delta.actions.{Metadata, RemoveFile}
+import org.apache.spark.sql.delta.implicits._
+import org.apache.spark.sql.delta.icebergShaded.IcebergTransactionUtils
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.types.{IntegerType, StringType, StructField, StructType}
 import org.apache.spark.util.Utils
+import shadedForDelta.org.apache.iceberg.{Table, TableProperties}
 
 /**
  * This test suite relies on an external Hive metastore (HMS) instance to run.
@@ -110,7 +114,8 @@ class ConvertToIcebergSuite extends QueryTest with Eventually {
         s"""CREATE TABLE `${testTableName}` (col1 INT) USING DELTA
            |TBLPROPERTIES (
            |  'delta.columnMapping.mode' = 'name',
-           |  'delta.universalFormat.enabledFormats' = 'iceberg'
+           |  'delta.universalFormat.enabledFormats' = 'iceberg',
+           |  'delta.enableIcebergCompatV2' = 'true'
            |)""".stripMargin)
       runDeltaSql(s"INSERT INTO `$testTableName` VALUES (123)")
       verifyReadWithIceberg(testTableName, Seq(Row(123)))
@@ -123,6 +128,7 @@ class ConvertToIcebergSuite extends QueryTest with Eventually {
         withDefaultTablePropsInSQLConf {
           deltaSpark.range(10).write.format("delta")
             .option("path", testTablePath)
+            .option("delta.enableIcebergCompatV2", "true")
             .saveAsTable(testTableName)
         }
       }
@@ -130,14 +136,152 @@ class ConvertToIcebergSuite extends QueryTest with Eventually {
         deltaSpark.range(10, 20, 1)
           .write.format("delta").mode("append")
           .option("path", testTablePath)
+          .option("delta.enableIcebergCompatV2", "true")
           .saveAsTable(testTableName)
       }
       verifyReadWithIceberg(testTableName, 0 to 19 map (Row(_)))
     }
   }
 
-  def runDeltaSql(sqlStr: String): Unit = {
+  test("Expire Snapshots") {
+    if (hmsReady(PORT)) {
+      runDeltaSql(
+        s"""CREATE TABLE `${testTableName}` (col1 INT) USING DELTA
+           |TBLPROPERTIES (
+           |  'delta.columnMapping.mode' = 'name',
+           |  'delta.universalFormat.enabledFormats' = 'iceberg',
+           |  'delta.enableIcebergCompatV2' = 'true'
+           |
+           |)""".stripMargin)
+
+      val icebergTable = loadIcebergTable()
+      icebergTable.updateProperties().set(TableProperties.MAX_SNAPSHOT_AGE_MS, "1").commit()
+
+      for (i <- 0 to 7) {
+        runDeltaSql(s"INSERT INTO ${testTableName} VALUES (${i})",
+          DeltaSQLConf.DELTA_UNIFORM_ICEBERG_SYNC_CONVERT_ENABLED.key -> "true")
+      }
+
+      // Sleep past snapshot retention duration
+      Thread.sleep(5)
+      withIcebergSparkSession { icebergSpark => {
+        icebergSpark.sql(s"REFRESH TABLE $testTableName")
+        val manifestListsBeforeExpiration = manifestListLocations(icebergSpark)
+        assert(manifestListsBeforeExpiration.length == 8)
+        val manifestsBeforeExpiration = manifestLocations(icebergSpark)
+
+        // Trigger snapshot expiration
+        runDeltaSql(s"OPTIMIZE ${testTableName}")
+        icebergSpark.sql(s"REFRESH TABLE $testTableName")
+
+        // Manifest lists from earlier snapshots should be cleaned up
+        val manifestListsAfterExpiration = manifestListLocations(icebergSpark)
+        assert(manifestListsAfterExpiration.length == 1)
+        assertAllFilesDeleted(icebergTable, manifestListsBeforeExpiration)
+
+        // Unreachable manifests should be cleaned up
+        val manifestsAfterExpiration = manifestLocations(icebergSpark)
+
+        val unreachableManifests = manifestsBeforeExpiration.diff(manifestsAfterExpiration)
+        assertAllFilesDeleted(icebergTable, unreachableManifests)
+      }}
+
+      withDeltaSparkSession(deltaSparkSession => {
+        val deltaLog = DeltaLog.forTable(deltaSparkSession, testTablePath)
+        val logicallyRemovedDataFiles = deltaLog.getChanges(9).toArray.head._2.collect {
+          case removeFile: RemoveFile => removeFile.absolutePath(deltaLog)
+        }
+
+        // The data files must not be cleaned up
+        withIcebergSparkSession(_ => {
+          val table = loadIcebergTable()
+          logicallyRemovedDataFiles.foreach(
+            file => assert(table.io().newInputFile(file.toString).exists()))
+        })
+      })
+    }
+  }
+
+  test("Expire Snapshots doesn't cleanup in case the data/metadata locations are the same") {
+    if (hmsReady(PORT)) {
+      runDeltaSql(
+        s"""CREATE TABLE `${testTableName}` (col1 INT) USING DELTA
+           |TBLPROPERTIES (
+           |  'delta.columnMapping.mode' = 'name',
+           |  'delta.universalFormat.enabledFormats' = 'iceberg',
+           |  'delta.enableIcebergCompatV2' = 'true'
+           |
+           |)""".stripMargin)
+
+      val icebergTable = loadIcebergTable()
+      icebergTable.updateProperties()
+        .set(TableProperties.MAX_SNAPSHOT_AGE_MS, "1")
+        .set(TableProperties.WRITE_METADATA_LOCATION, icebergTable.location())
+        .commit()
+
+      for (i <- 0 to 7) {
+        runDeltaSql(s"INSERT INTO ${testTableName} VALUES (${i})",
+          DeltaSQLConf.DELTA_UNIFORM_ICEBERG_SYNC_CONVERT_ENABLED.key -> "true")
+      }
+
+      // Sleep past snapshot retention duration
+      Thread.sleep(5)
+
+      withIcebergSparkSession { icebergSpark => {
+        icebergSpark.sql(s"REFRESH TABLE $testTableName")
+        val manifestListsBeforeExpiration = manifestListLocations(icebergSpark)
+        assert(manifestListsBeforeExpiration.length == 8)
+
+        // Trigger snapshot expiration
+        runDeltaSql(s"OPTIMIZE ${testTableName}")
+        icebergSpark.sql(s"REFRESH TABLE $testTableName")
+
+        // Manifest lists from earlier snapshots should not be cleaned up
+        val manifestListsAfterExpiration = manifestListLocations(icebergSpark)
+        manifestListsAfterExpiration.foreach(
+          file => assert(icebergTable.io().newInputFile(file).exists()))
+      }
+    }
+  }
+}
+
+  private def manifestListLocations(icebergSparkSession: SparkSession): Array[String] = {
+    icebergSparkSession
+      .sql(s"SELECT * FROM default.${testTableName}.snapshots")
+      .select("manifest_list")
+      .as[String]
+      .collect()
+  }
+
+  private def manifestLocations(icebergSparkSession: SparkSession): Array[String] = {
+    icebergSparkSession
+      .sql(s"SELECT * FROM default.${testTableName}.manifests")
+      .select("path")
+      .as[String]
+      .collect()
+  }
+
+  private def loadIcebergTable(): shadedForDelta.org.apache.iceberg.Table = {
+    withDeltaSparkSession { deltaSpark => {
+      val log = DeltaLog.forTable(deltaSpark, testTablePath)
+      val hiveCatalog = IcebergTransactionUtils.createHiveCatalog(
+        log.newDeltaHadoopConf()
+      )
+      val table = hiveCatalog.loadTable(
+        shadedForDelta.org.apache.iceberg.catalog.TableIdentifier
+          .of("default", testTableName)
+      )
+      table
+    }}
+  }
+
+  private def assertAllFilesDeleted(icebergTable: Table, files: Array[String]): Unit = {
+    files.foreach(file => assert(!icebergTable.io().newInputFile(file).exists()))
+  }
+
+  def runDeltaSql(sqlStr: String, conf: (String, String)*): Unit = {
     withDeltaSparkSession { deltaSpark =>
+      conf.foreach(c => deltaSpark.conf.set(c._1, c._2))
       deltaSpark.sql(sqlStr)
     }
   }
