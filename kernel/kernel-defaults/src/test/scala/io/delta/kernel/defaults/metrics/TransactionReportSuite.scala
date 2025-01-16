@@ -41,14 +41,14 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
    * is expected to be emitted, and at most one [[SnapshotReport]]. Also times and returns the
    * duration it takes for [[Transaction#commit]] to finish.
    *
-   * @param getTransaction given an engine return a started [[Transaction]]
+   * @param createTransaction given an engine return a started [[Transaction]]
    * @param generateCommitActions given a [[Transaction]] and engine generates actions to commit
    * @param expectException whether we expect committing to throw an exception, which if so, is
    *                        caught and returned with the other results
    * @return (TransactionReport, durationToCommit, SnapshotReportIfPresent, ExceptionIfThrown)
    */
   def getTransactionAndSnapshotReport(
-    getTransaction: Engine => Transaction,
+    createTransaction: Engine => Transaction,
     generateCommitActions: (Transaction, Engine) => CloseableIterable[Row],
     expectException: Boolean
   ): (TransactionReport, Long, Option[SnapshotReport], Option[Exception]) = {
@@ -56,7 +56,7 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
 
     val (metricsReports, exception) = collectMetricsReports(
       engine => {
-        val transaction = getTransaction(engine)
+        val transaction = createTransaction(engine)
         val actionsToCommit = generateCommitActions(transaction, engine)
         timer.time(() => transaction.commit(engine, actionsToCommit)) // Time the actual operation
       },
@@ -79,7 +79,7 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
    * @param generateCommitActions function to generate commit actions from a transaction and engine
    * @param path table path to commit to
    * @param expectException whether we expect committing to throw an exception
-   * @param expectedSnapshotVersion expected snapshot version for the transaction
+   * @param expectedBaseSnapshotVersion expected snapshot version for the transaction
    * @param expectedNumAddFiles expected number of add files recorded in the metrics
    * @param expectedNumRemoveFiles expected number of remove files recorded in the metrics
    * @param expectedNumTotalActions expected number of total actions recorded in the metrics
@@ -94,7 +94,7 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
     generateCommitActions: (Transaction, Engine) => CloseableIterable[Row],
     path: String,
     expectException: Boolean,
-    expectedSnapshotVersion: Long,
+    expectedBaseSnapshotVersion: Long,
     expectedNumAddFiles: Long = 0,
     expectedNumRemoveFiles: Long = 0,
     expectedNumTotalActions: Long = 0,
@@ -127,13 +127,13 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
     assert(transactionReport.getOperation == operation.toString)
     assert(transactionReport.getEngineInfo == engineInfo)
 
-    assert(transactionReport.getBaseSnapshotVersion == expectedSnapshotVersion)
-    if (expectedSnapshotVersion < 0) {
+    assert(transactionReport.getBaseSnapshotVersion == expectedBaseSnapshotVersion)
+    if (expectedBaseSnapshotVersion < 0) {
       // This was for a new table, there is no corresponding SnapshotReport
       assert(!transactionReport.getSnapshotReportUUID.isPresent)
     } else {
       assert(snapshotReportOpt.exists { snapshotReport =>
-        snapshotReport.getVersion.toScala.contains(expectedSnapshotVersion) &&
+        snapshotReport.getVersion.toScala.contains(expectedBaseSnapshotVersion) &&
           transactionReport.getSnapshotReportUUID.toScala.contains(snapshotReport.getReportUUID)
       })
     }
@@ -170,7 +170,7 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         generateCommitActions = generateAppendActions(fileStatusIter1),
         path,
         expectException = false,
-        expectedSnapshotVersion = 0,
+        expectedBaseSnapshotVersion = 0,
         expectedNumAddFiles = 1,
         expectedNumTotalActions = 2, // commitInfo + addFile
         expectedCommitVersion = Some(1)
@@ -181,7 +181,7 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         generateCommitActions = generateAppendActions(fileStatusIter2),
         path,
         expectException = false,
-        expectedSnapshotVersion = 1,
+        expectedBaseSnapshotVersion = 1,
         expectedNumAddFiles = 2,
         expectedNumTotalActions = 3, // commitInfo + addFile
         expectedCommitVersion = Some(2),
@@ -194,7 +194,7 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         generateCommitActions = (_, _) => CloseableIterable.emptyIterable(),
         path,
         expectException = false,
-        expectedSnapshotVersion = 2,
+        expectedBaseSnapshotVersion = 2,
         expectedNumTotalActions = 2, // metadata, commitInfo
         expectedCommitVersion = Some(3),
         buildTransaction = (transBuilder, engine) => {
@@ -214,7 +214,7 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         generateCommitActions = (_, _) => CloseableIterable.emptyIterable(),
         path,
         expectException = false,
-        expectedSnapshotVersion = -1,
+        expectedBaseSnapshotVersion = -1,
         expectedNumTotalActions = 3, // protocol, metadata, commitInfo
         expectedCommitVersion = Some(0),
         buildTransaction = (transBuilder, engine) => {
@@ -229,7 +229,7 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         generateCommitActions = generateAppendActions(fileStatusIter2),
         path,
         expectException = false,
-        expectedSnapshotVersion = 0,
+        expectedBaseSnapshotVersion = 0,
         expectedNumAddFiles = 2,
         expectedNumTotalActions = 3, // commitInfo + addFile
         expectedCommitVersion = Some(1)
@@ -245,7 +245,7 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         generateCommitActions = generateAppendActions(fileStatusIter1),
         path,
         expectException = false,
-        expectedSnapshotVersion = -1,
+        expectedBaseSnapshotVersion = -1,
         expectedNumAddFiles = 1,
         expectedNumTotalActions = 4, // protocol, metadata, commitInfo
         expectedCommitVersion = Some(0),
@@ -279,7 +279,7 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
           )),
         path,
         expectException = false,
-        expectedSnapshotVersion = 0,
+        expectedBaseSnapshotVersion = 0,
         expectedNumRemoveFiles = 1,
         expectedNumTotalActions = 2, // commitInfo + removeFile
         expectedCommitVersion = Some(1)
@@ -300,7 +300,7 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         },
         path,
         expectException = false,
-        expectedSnapshotVersion = 0,
+        expectedBaseSnapshotVersion = 0,
         expectedNumAddFiles = 1,
         expectedNumTotalActions = 2, // commitInfo + removeFile
         expectedCommitVersion = Some(2),
@@ -322,7 +322,7 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         },
         path,
         expectException = true,
-        expectedSnapshotVersion = 0
+        expectedBaseSnapshotVersion = 0
       )
     }
   }
@@ -355,15 +355,15 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         generateCommitActions = actionsIterableWithConcurrentAppend,
         path,
         expectException = true,
-        expectedSnapshotVersion = 0,
+        expectedBaseSnapshotVersion = 0,
         expectedNumAttempts = 200
       )
     }
   }
 
-  ///////////////////////////
+  /////////////////////
   // Test Constants //
-  ///////////////////////////
+  ////////////////////
 
   private def fileStatusIter1 = Utils.toCloseableIterator(
     Seq(new DataFileStatus("/path/to/file", 100, 100, Optional.empty())).iterator.asJava

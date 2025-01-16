@@ -34,6 +34,17 @@ public class TransactionReportImpl extends DeltaOperationReportImpl implements T
   private final Optional<Long> committedVersion;
   private final TransactionMetricsResult transactionMetrics;
 
+  /**
+   * @param tablePath the path of the table for the transaction
+   * @param operation the operation provided by the connector when the transaction was created
+   * @param engineInfo the engineInfo provided by the connector when the transaction was created
+   * @param committedVersion the version committed to the table. Empty for a failed transaction.
+   * @param transactionMetrics the metrics for the transaction
+   * @param snapshotReport the SnapshotReport for the base snapshot of this transaction. Note, in
+   *     the case of a new table (when version = -1), this SnapshotReport is just a placeholder and
+   *     was never emitted to the engine's metrics reporters.
+   * @param exception the exception thrown. Empty for a successful transaction.
+   */
   public TransactionReportImpl(
       String tablePath,
       String operation,
