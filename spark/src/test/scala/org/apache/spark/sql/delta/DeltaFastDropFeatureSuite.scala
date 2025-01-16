@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 import java.io.File
+import java.text.SimpleDateFormat
 import java.util.concurrent.TimeUnit
 
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
@@ -48,13 +49,16 @@ class DeltaFastDropFeatureSuite
   protected def createTableWithFeature(
       deltaLog: DeltaLog,
       feature: TableFeature,
-      featurePropertyEnablement: String): Unit = {
+      featurePropertyEnablement: Option[String] = None): Unit = {
+    val props = Seq(s"delta.feature.${feature.name} = 'supported'") ++ featurePropertyEnablement
+
     sql(
       s"""CREATE TABLE delta.`${deltaLog.dataPath}` (id bigint) USING delta
          |TBLPROPERTIES (
-         |delta.feature.${feature.name} = 'supported',
-         |$featurePropertyEnablement
+         |${props.mkString(",")}
          |)""".stripMargin)
+
+    assert(deltaLog.update().protocol.readerAndWriterFeatures.contains(feature))
   }
 
   protected def dropTableFeature(
@@ -67,6 +71,12 @@ class DeltaFastDropFeatureSuite
          |${if (truncateHistory) "TRUNCATE HISTORY" else ""}""".stripMargin
 
     sql(dropFeatureSQL)
+
+    val snapshot = deltaLog.update()
+    assert(!snapshot.protocol.readerAndWriterFeatures.contains(feature))
+    assert(truncateHistory ||
+      !feature.asInstanceOf[RemovableFeature].requiresHistoryProtection ||
+      snapshot.protocol.readerAndWriterFeatures.contains(CheckpointProtectionTableFeature))
   }
 
   protected def getLogFiles(dir: File): Seq[File] = Nil
@@ -90,17 +100,20 @@ class DeltaFastDropFeatureSuite
     }
   }
 
+  protected def addData(dir: File, start: Int, end: Int): Unit =
+    spark.range(start, end).write.format("delta").mode("append").save(dir.getCanonicalPath)
+
   test("Dropping reader+writer feature") {
     withTempDir { dir =>
       val deltaLog = DeltaLog.forTable(spark, dir.getAbsolutePath)
 
       createTableWithFeature(deltaLog,
         TestRemovableReaderWriterFeature,
-        s"${TestRemovableReaderWriterFeature.TABLE_PROP_KEY} = 'true'")
+        Some(s"${TestRemovableReaderWriterFeature.TABLE_PROP_KEY} = 'true'"))
 
       // Add some data. This is optional to create a more realistic scenario.
-      spark.range(0, 20).write.format("delta").mode("append").save(dir.getCanonicalPath)
-      spark.range(20, 40).write.format("delta").mode("append").save(dir.getCanonicalPath)
+      addData(dir, start = 0, end = 20)
+      addData(dir, start = 20, end = 40)
 
       dropTableFeature(deltaLog, TestRemovableReaderWriterFeature)
 
@@ -119,11 +132,11 @@ class DeltaFastDropFeatureSuite
 
       createTableWithFeature(deltaLog,
         TestRemovableWriterFeature,
-        s"${TestRemovableReaderWriterFeature.TABLE_PROP_KEY} = 'true'")
+        Some(s"${TestRemovableReaderWriterFeature.TABLE_PROP_KEY} = 'true'"))
 
       // Add some data. This is optional to create a more realistic scenario.
-      spark.range(0, 20).write.format("delta").mode("append").save(dir.getCanonicalPath)
-      spark.range(20, 40).write.format("delta").mode("append").save(dir.getCanonicalPath)
+      addData(dir, start = 0, end = 20)
+      addData(dir, start = 20, end = 40)
 
       dropTableFeature(deltaLog, TestRemovableWriterFeature)
 
@@ -151,8 +164,8 @@ class DeltaFastDropFeatureSuite
         assert(deltaLog.update().protocol === Protocol(2, 5))
 
         // Add some data. This is optional to create a more realistic scenario.
-        spark.range(0, 20).write.format("delta").mode("append").save(dir.getCanonicalPath)
-        spark.range(20, 40).write.format("delta").mode("append").save(dir.getCanonicalPath)
+        addData(dir, start = 0, end = 20)
+        addData(dir, start = 20, end = 40)
 
         dropTableFeature(deltaLog, ColumnMappingTableFeature)
 
@@ -177,11 +190,11 @@ class DeltaFastDropFeatureSuite
 
       createTableWithFeature(deltaLog,
         TestRemovableReaderWriterFeature,
-        s"${TestRemovableReaderWriterFeature.TABLE_PROP_KEY} = 'true'")
+        Some(s"${TestRemovableReaderWriterFeature.TABLE_PROP_KEY} = 'true'"))
 
       // Add some data. This is optional to create a more realistic scenario.
-      spark.range(0, 20).write.format("delta").mode("append").save(dir.getCanonicalPath)
-      spark.range(20, 40).write.format("delta").mode("append").save(dir.getCanonicalPath)
+      addData(dir, start = 0, end = 20)
+      addData(dir, start = 20, end = 40)
 
       sql(
         s"""ALTER TABLE delta.`${dir.getCanonicalPath}` SET TBLPROPERTIES (
@@ -191,7 +204,7 @@ class DeltaFastDropFeatureSuite
       dropTableFeature(deltaLog, TestRemovableReaderWriterFeature)
 
       // Add some data. This is optional to create a more realistic scenario.
-      spark.range(40, 60).write.format("delta").mode("append").save(dir.getCanonicalPath)
+      addData(dir, start = 40, end = 60)
 
       dropTableFeature(deltaLog, VacuumProtocolCheckTableFeature)
 
@@ -215,11 +228,11 @@ class DeltaFastDropFeatureSuite
 
       createTableWithFeature(deltaLog,
         TestRemovableReaderWriterFeature,
-        s"${TestRemovableReaderWriterFeature.TABLE_PROP_KEY} = 'true'")
+        Some( s"${TestRemovableReaderWriterFeature.TABLE_PROP_KEY} = 'true'"))
 
       // Add some data. This is optional to create a more realistic scenario.
-      spark.range(0, 20).write.format("delta").mode("append").save(dir.getCanonicalPath)
-      spark.range(20, 40).write.format("delta").mode("append").save(dir.getCanonicalPath)
+      addData(dir, start = 0, end = 20)
+      addData(dir, start = 20, end = 40)
 
       val e = intercept[DeltaTableFeatureException] {
         dropTableFeature(deltaLog, TestRemovableReaderWriterFeature, truncateHistory = true)
@@ -252,11 +265,11 @@ class DeltaFastDropFeatureSuite
 
       createTableWithFeature(deltaLog,
         TestRemovableReaderWriterFeature,
-        s"${TestRemovableReaderWriterFeature.TABLE_PROP_KEY} = 'true'")
+        Some(s"${TestRemovableReaderWriterFeature.TABLE_PROP_KEY} = 'true'"))
 
       // Add some data. This is optional to create a more realistic scenario.
-      spark.range(0, 20).write.format("delta").mode("append").save(dir.getCanonicalPath)
-      spark.range(20, 40).write.format("delta").mode("append").save(dir.getCanonicalPath)
+      addData(dir, start = 0, end = 20)
+      addData(dir, start = 20, end = 40)
 
       val e = intercept[DeltaTableFeatureException] {
         dropTableFeature(deltaLog, TestRemovableReaderWriterFeature, truncateHistory = true)
@@ -296,17 +309,17 @@ class DeltaFastDropFeatureSuite
 
       createTableWithFeature(deltaLog,
         TestRemovableReaderWriterFeature,
-        s"${TestRemovableReaderWriterFeature.TABLE_PROP_KEY} = 'true'")
+        Some(s"${TestRemovableReaderWriterFeature.TABLE_PROP_KEY} = 'true'"))
 
       // Add some data. This is optional to create a more realistic scenario.
-      spark.range(0, 20).write.format("delta").mode("append").save(dir.getCanonicalPath)
-      spark.range(20, 40).write.format("delta").mode("append").save(dir.getCanonicalPath)
+      addData(dir, start = 0, end = 20)
+      addData(dir, start = 20, end = 40)
 
       // Adds the CheckpointProtectionTableFeature.
       dropTableFeature(deltaLog, TestRemovableReaderWriterFeature)
 
       // More data. This is optional to create a more realistic scenario.
-      spark.range(40, 60).write.format("delta").mode("append").save(dir.getCanonicalPath)
+      addData(dir, start = 40, end = 60)
 
       val checkpointProtectionVersion =
         CheckpointProtectionTableFeature.getCheckpointProtectionVersion(deltaLog.update())
@@ -339,11 +352,11 @@ class DeltaFastDropFeatureSuite
 
       createTableWithFeature(deltaLog,
         TestRemovableReaderWriterFeature,
-        s"${TestRemovableReaderWriterFeature.TABLE_PROP_KEY} = 'true'")
+        Some(s"${TestRemovableReaderWriterFeature.TABLE_PROP_KEY} = 'true'"))
 
       // Add some data. This is optional to create a more realistic scenario.
-      spark.range(0, 20).write.format("delta").mode("append").save(dir.getCanonicalPath)
-      spark.range(20, 40).write.format("delta").mode("append").save(dir.getCanonicalPath)
+      addData(dir, start = 0, end = 20)
+      addData(dir, start = 20, end = 40)
 
       // Adds the CheckpointProtectionTableFeature.
       dropTableFeature(deltaLog, TestRemovableReaderWriterFeature)
@@ -370,17 +383,17 @@ class DeltaFastDropFeatureSuite
 
       createTableWithFeature(deltaLog,
         TestRemovableReaderWriterFeature,
-        s"${TestRemovableReaderWriterFeature.TABLE_PROP_KEY} = 'true'")
+        Some(s"${TestRemovableReaderWriterFeature.TABLE_PROP_KEY} = 'true'"))
 
       // Add some data. This is optional to create a more realistic scenario.
-      spark.range(0, 20).write.format("delta").mode("append").save(dir.getCanonicalPath)
-      spark.range(20, 40).write.format("delta").mode("append").save(dir.getCanonicalPath)
+      addData(dir, start = 0, end = 20)
+      addData(dir, start = 20, end = 40)
 
       // Adds the CheckpointProtectionTableFeature.
       dropTableFeature(deltaLog, TestRemovableReaderWriterFeature)
 
       // More data. This is optional to create a more realistic scenario.
-      spark.range(40, 60).write.format("delta").mode("append").save(dir.getCanonicalPath)
+      addData(dir, start = 40, end = 60)
       deltaLog.checkpoint(deltaLog.update())
 
       val e1 = intercept[DeltaTableFeatureException] {
@@ -412,11 +425,11 @@ class DeltaFastDropFeatureSuite
 
       createTableWithFeature(deltaLog,
         TestRemovableReaderWriterFeature,
-        s"${TestRemovableReaderWriterFeature.TABLE_PROP_KEY} = 'true'")
+        Some(s"${TestRemovableReaderWriterFeature.TABLE_PROP_KEY} = 'true'"))
 
       // Add some data. This is optional to create a more realistic scenario.
-      spark.range(0, 20).write.format("delta").mode("append").save(dir.getCanonicalPath)
-      spark.range(20, 40).write.format("delta").mode("append").save(dir.getCanonicalPath)
+      addData(dir, start = 0, end = 20)
+      addData(dir, start = 20, end = 40)
 
       // Adds the CheckpointProtectionTableFeature.
       dropTableFeature(deltaLog, TestRemovableReaderWriterFeature)
@@ -428,9 +441,9 @@ class DeltaFastDropFeatureSuite
 
       // More data and checkpoints. Data is optional but the checkpoints are used
       // to cleanup the logs below.
-      spark.range(40, 60).write.format("delta").mode("append").save(dir.getCanonicalPath)
+      addData(dir, start = 40, end = 60)
       deltaLog.checkpoint(deltaLog.update())
-      spark.range(60, 80).write.format("delta").mode("append").save(dir.getCanonicalPath)
+      addData(dir, start = 60, end = 80)
       deltaLog.checkpoint(deltaLog.update())
 
       val v2 = deltaLog.update().version
@@ -439,8 +452,8 @@ class DeltaFastDropFeatureSuite
       deltaLog.cleanUpExpiredLogs(deltaLog.update())
 
       // Add some data. This is optional to create a more realistic scenario.
-      spark.range(80, 100).write.format("delta").mode("append").save(dir.getCanonicalPath)
-      spark.range(100, 120).write.format("delta").mode("append").save(dir.getCanonicalPath)
+      addData(dir, start = 80, end = 100)
+      addData(dir, start = 100, end = 120)
 
       val v3 = deltaLog.update().version
       setModificationTimes(deltaLog, startVersion = v2 + 1, endVersion = v3, daysToAdd = 32)
@@ -448,8 +461,8 @@ class DeltaFastDropFeatureSuite
       clock.advance(TimeUnit.HOURS.toMillis(48))
 
       // Add some data. This is optional to create a more realistic scenario.
-      spark.range(120, 140).write.format("delta").mode("append").save(dir.getCanonicalPath)
-      spark.range(140, 160).write.format("delta").mode("append").save(dir.getCanonicalPath)
+      addData(dir, start = 120, end = 140)
+      addData(dir, start = 140, end = 160)
 
       // At this point history before the atomic cleanup version should already be clean.
       val deltaVersionsBeforeDrop = getDeltaVersions(deltaLog.logPath)
@@ -469,6 +482,101 @@ class DeltaFastDropFeatureSuite
 
       // No other commits should have been truncated.
       assert(getDeltaVersions(deltaLog.logPath).min === deltaVersionsBeforeDrop.min)
+    }
+  }
+
+  for (timeTravelMethod <- Seq("restoreSQL", "restoreSQLTS", "selectSQL", "selectSQLTS",
+                               "getSnapshotAt", "restoreToVersion", "restoreToTS",
+                               "cloneAtVersion", "cloneAtTS", "sparkVersion", "sparkTS"))
+  test(s"Protocol is validated when time traveling - time-travel method: $timeTravelMethod") {
+    withTempDir { dir =>
+      def getTimestampForVersion(version: Long): String = {
+        val logPath = new Path(dir.getCanonicalPath, "_delta_log")
+        val file = new File(new Path(logPath, f"$version%020d.json").toString)
+        val sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS")
+        sdf.format(file.lastModified())
+      }
+
+      val deltaLog = DeltaLog.forTable(spark, dir.getCanonicalPath)
+      createTableWithFeature(deltaLog, TestUnsupportedReaderWriterFeature)
+
+      // Add some data. This is optional to create a more realistic scenario.
+      addData(dir, start = 0, end = 20)
+      addData(dir, start = 20, end = 40)
+
+      val versionBeforeRemoval = deltaLog.update().version
+      val tsBeforeRemoval = getTimestampForVersion(versionBeforeRemoval)
+
+      // Adds the CheckpointProtectionTableFeature.
+      dropTableFeature(deltaLog, TestUnsupportedReaderWriterFeature)
+
+      // More data. This is optional to create a more realistic scenario.
+      addData(dir, start = 40, end = 60)
+      addData(dir, start = 60, end = 80)
+
+      withSQLConf(DeltaSQLConf.UNSUPPORTED_TESTING_FEATURES_ENABLED.key -> true.toString) {
+        val e = intercept[DeltaUnsupportedTableFeatureException] {
+          val table = io.delta.tables.DeltaTable.forPath(dir.toString)
+          DeltaLog.clearCache()
+          val tablePath = s"delta.`${dir.getCanonicalPath}`"
+          timeTravelMethod match {
+            case "restoreSQL" => sql(s"RESTORE $tablePath TO VERSION AS OF $versionBeforeRemoval")
+            case "restoreSQLTS" => sql(s"RESTORE $tablePath TO TIMESTAMP AS OF '$tsBeforeRemoval'")
+            case "selectSQL" => sql(s"SELECT * FROM $tablePath VERSION AS OF $versionBeforeRemoval")
+            case "selectSQLTS" =>
+              sql(s"SELECT * FROM $tablePath TIMESTAMP AS OF '$tsBeforeRemoval'")
+            case "getSnapshotAt" => deltaLog.getSnapshotAt(versionBeforeRemoval)
+            case "restoreToVersion" => table.restoreToVersion(versionBeforeRemoval)
+            case "restoreToTS" => table.restoreToTimestamp(tsBeforeRemoval)
+            case "cloneAtVersion" => withTempDir { d =>
+              table.cloneAtVersion(versionBeforeRemoval.toInt, d.getCanonicalPath) }
+            case "cloneAtTS" => withTempDir { d =>
+              table.cloneAtTimestamp(tsBeforeRemoval, d.getCanonicalPath) }
+            case "sparkVersion" => spark.read.format("delta")
+              .option("versionAsOf", versionBeforeRemoval).load(dir.getCanonicalPath)
+            case "sparkTS" => spark.read.format("delta")
+              .option("timestampAsOf", tsBeforeRemoval).load(dir.getCanonicalPath)
+            case _ => assert(false, "non existent time travel method.")
+          }
+        }
+        assert(e.getErrorClass === "DELTA_UNSUPPORTED_FEATURES_FOR_READ")
+      }
+    }
+  }
+
+  for (downgradeAllowed <- BOOLEAN_DOMAIN)
+  test(s"Restore table works with fast drop feature - downgradeAllowed: $downgradeAllowed") {
+    withSQLConf(
+        DeltaSQLConf.RESTORE_TABLE_PROTOCOL_DOWNGRADE_ALLOWED.key -> downgradeAllowed.toString) {
+      withTempDir { dir =>
+        import org.apache.spark.sql.delta.implicits._
+
+        val deltaLog = DeltaLog.forTable(spark, dir.getCanonicalPath)
+        createTableWithFeature(deltaLog, TestRemovableReaderWriterFeature)
+
+        // Add some data.
+        addData(dir, start = 0, end = 20)
+        addData(dir, start = 20, end = 40)
+
+        val versionBeforeRemoval = deltaLog.update().version
+
+        // Adds the CheckpointProtectionTableFeature.
+        dropTableFeature(deltaLog, TestRemovableReaderWriterFeature)
+
+        // More data. This is optional to create a more realistic scenario.
+        addData(dir, start = 40, end = 60)
+        addData(dir, start = 60, end = 80)
+
+        sql(s"RESTORE delta.`${dir.getCanonicalPath}` TO VERSION AS OF $versionBeforeRemoval")
+
+        val protocol = deltaLog.update().protocol
+        assert(protocol.readerAndWriterFeatures.contains(TestRemovableReaderWriterFeature))
+        assert(protocol.readerAndWriterFeatures
+          .contains(CheckpointProtectionTableFeature) === !downgradeAllowed)
+
+        val targetTable = io.delta.tables.DeltaTable.forPath(dir.getCanonicalPath)
+        assert(targetTable.toDF.as[Long].collect().sorted === Seq.range(0, 40))
+      }
     }
   }
 }
