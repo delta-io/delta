@@ -470,7 +470,7 @@ trait DeltaSQLConfBase {
       .createWithDefaultFunction(() => SQLConf.get.getConf(DeltaSQLConf.FAST_DROP_FEATURE_ENABLED))
 
   val FAST_DROP_FEATURE_DV_TOMBSTONE_COUNT_THRESHOLD =
-    buildConf("tableFeatures.dev.fastDropFeature.DVTombstoneCountThreshold")
+    buildConf("tableFeatures.dev.fastDropFeature.dvTombstoneCountThreshold")
       .doc(
         """The maximum number of DV tombstones we are allowed store to memory when dropping
           |deletion vectors. When the resulting number of DV tombstones is higher, we use
