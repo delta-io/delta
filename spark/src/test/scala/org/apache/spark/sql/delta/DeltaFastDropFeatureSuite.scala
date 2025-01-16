@@ -21,7 +21,6 @@ import java.text.SimpleDateFormat
 import java.util.concurrent.TimeUnit
 
 // scalastyle:off import.ordering.noEmptyLine
-import com.databricks.sql.acl.CheckPermissions
 import org.apache.spark.sql.delta.actions.{Action, AddFile, DeletionVectorDescriptor, Protocol, RemoveFile}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.AlterTableUnsetPropertiesDeltaCommand
@@ -35,6 +34,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.SparkException
 import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.catalyst.analysis.ResolvedTable
 import org.apache.spark.sql.functions.{col, not}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.ManualClock
@@ -745,8 +745,8 @@ class DeltaFastDropFeatureSuite
         dropDeletionVectors(deltaLog, truncateHistory = true)
       }
       checkError(
-        exception = e,
-        condition = "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
+        e,
+        "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
         parameters = Map(
           "feature" -> "deletionVectors",
           "logRetentionPeriodKey" -> "delta.logRetentionDuration",
@@ -813,7 +813,6 @@ class DeltaFastDropFeatureSuite
     withSQLConf(
         DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey -> true.toString,
         DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS.key -> true.toString,
-        DeltaSQLConf.DELTA_DELETION_VECTORS_CACHE_ENABLED.key -> false.toString,
         DeltaSQLConf.FAST_DROP_FEATURE_GENERATE_DV_TOMBSTONES.key -> generateDVTombstones.toString,
         // With this config we pretend the client does not support DVs. Therefore, it will not
         // discover DVs from the RemoveFile actions.
@@ -899,27 +898,27 @@ class DeltaFastDropFeatureSuite
   test("Checksum computation does not take into account DV tombstones" +
       s"incrementalCommitEnabled: $incrementalCommitEnabled") {
     withTempPaths(2) { dirs =>
-      val checksumWithDVTombstones =
-        withSQLConf(
-            DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> incrementalCommitEnabled.toString,
-            DeltaSQLConf.FAST_DROP_FEATURE_GENERATE_DV_TOMBSTONES.key -> true.toString) {
-          val deltaLog = DeltaLog.forTable(spark, dirs.head.getAbsolutePath)
-          createTableWithDeletionVectors(deltaLog)
-          dropDeletionVectors(deltaLog)
-          val snapshot = deltaLog.update()
-          snapshot.checksumOpt.getOrElse(snapshot.computeChecksum)
-        }
+      var checksumWithDVTombstones: VersionChecksum = null
+      withSQLConf(
+          DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> incrementalCommitEnabled.toString,
+          DeltaSQLConf.FAST_DROP_FEATURE_GENERATE_DV_TOMBSTONES.key -> true.toString) {
+        val deltaLog = DeltaLog.forTable(spark, dirs.head.getAbsolutePath)
+        createTableWithDeletionVectors(deltaLog)
+        dropDeletionVectors(deltaLog)
+        val snapshot = deltaLog.update()
+        checksumWithDVTombstones = snapshot.checksumOpt.getOrElse(snapshot.computeChecksum)
+      }
 
-      val checksumWithoutDVTombstones =
-        withSQLConf(
-            DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> incrementalCommitEnabled.toString,
-            DeltaSQLConf.FAST_DROP_FEATURE_GENERATE_DV_TOMBSTONES.key -> false.toString) {
-          val deltaLog = DeltaLog.forTable(spark, dirs.last.getAbsolutePath)
-          createTableWithDeletionVectors(deltaLog)
-          dropDeletionVectors(deltaLog)
-          val snapshot = deltaLog.update()
-          snapshot.checksumOpt.getOrElse(snapshot.computeChecksum)
-        }
+      var checksumWithoutDVTombstones: VersionChecksum = null
+      withSQLConf(
+          DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> incrementalCommitEnabled.toString,
+          DeltaSQLConf.FAST_DROP_FEATURE_GENERATE_DV_TOMBSTONES.key -> false.toString) {
+        val deltaLog = DeltaLog.forTable(spark, dirs.last.getAbsolutePath)
+        createTableWithDeletionVectors(deltaLog)
+        dropDeletionVectors(deltaLog)
+        val snapshot = deltaLog.update()
+        checksumWithoutDVTombstones = snapshot.checksumOpt.getOrElse(snapshot.computeChecksum)
+      }
 
       // DV tombstones do not affect the number of files.
       assert(checksumWithoutDVTombstones.numFiles === checksumWithDVTombstones.numFiles)
