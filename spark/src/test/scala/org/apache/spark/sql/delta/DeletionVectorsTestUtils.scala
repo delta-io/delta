@@ -51,6 +51,13 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession with De
     spark.conf.set(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS.key, merge.toString)
   }
 
+  /** Disable persistent deletion vectors in new tables and all supported DML commands. */
+  def disableDeletionVectors(conf: RuntimeConfig): Unit = {
+    conf.set(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey, false.toString)
+    conf.set(DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS.key, false.toString)
+    conf.set(DeltaSQLConf.UPDATE_USE_PERSISTENT_DELETION_VECTORS.key, false.toString)
+  }
+
   def enableDeletionVectorsForAllSupportedOperations(spark: SparkSession): Unit =
     enableDeletionVectors(spark, delete = true, update = true)
 
