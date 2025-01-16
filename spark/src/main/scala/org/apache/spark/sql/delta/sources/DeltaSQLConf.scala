@@ -431,15 +431,6 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
-  val UNSUPPORTED_TESTING_FEATURES_ENABLED =
-    buildConf("tableFeatures.dev.unsupportedTableFeatures.enabled")
-      .internal()
-      .doc(
-        """When turned on, it emulates the existence of unsupported features by the client.
-          |This config is only used for testing purposes.""".stripMargin)
-      .booleanConf
-      .createWithDefault(false)
-
   val FAST_DROP_FEATURE_ENABLED =
     buildConf("tableFeatures.dev.fastDropFeature.enabled")
       .internal()
@@ -1350,16 +1341,6 @@ trait DeltaSQLConfBase {
         """
           |When enabled, replaceWhere on arbitrary expression and arbitrary columns will produce
           |results for CDF. If disabled, it will fall back to the old behavior.""".stripMargin)
-      .booleanConf
-      .createWithDefault(true)
-
-  val OVERWRITE_REMOVE_METRICS_ENABLED =
-    buildConf("insertOverwrite.removeMetrics.enabled")
-      .internal()
-      .doc(
-        """
-          |When enabled, insert operations in overwrite mode will add metrics describing
-          |removed data to table's history""".stripMargin)
       .booleanConf
       .createWithDefault(true)
 
@@ -2305,6 +2286,20 @@ trait DeltaSQLConfBase {
           |""".stripMargin)
       .booleanConf
       .createWithDefault(false)
+
+  ///////////
+  // VARIANT
+  ///////////////////
+  val FORCE_USE_PREVIEW_VARIANT_FEATURE = buildConf("variant.forceUsePreviewTableFeature")
+    .internal()
+    .doc(
+      """
+        | If true, creating new tables with variant columns only attaches the 'variantType-preview'
+        | table feature. Attempting to operate on existing tables created with the stable feature
+        | does not require that the preview table feature be present.
+        |""".stripMargin)
+    .booleanConf
+    .createWithDefault(false)
 
   ///////////
   // TESTING

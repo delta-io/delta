@@ -23,7 +23,6 @@ import org.apache.spark.sql.delta.OptimisticTransaction
 import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.actions.AddCDCFile
 import org.apache.spark.sql.delta.actions.AddFile
-import org.apache.spark.sql.delta.actions.RemoveFile
 import org.apache.spark.sql.delta.commands.DMLUtils.TaggedCommitData
 import org.apache.spark.sql.delta.constraints.Constraint
 import org.apache.spark.sql.delta.constraints.Constraints.Check
@@ -77,43 +76,6 @@ trait WriteIntoDeltaLike {
 
 
 
-  // Helper for creating a SQLMetric and setting its value, since it isn't valid to create a
-  // SQLMetric with a positive `initValue`.
-  private def createSumMetricWithValue(
-      spark: SparkSession,
-      name: String,
-      value: Long): SQLMetric = {
-    val metric = new SQLMetric("sum")
-    metric.register(spark.sparkContext, Some(name))
-    metric.set(value)
-    metric
-  }
-
-  /**
-   * Overwrite mode produces extra delete metrics that are registered here.
-   * @param deleteActions - RemoveFiles added by Delete job
-   */
-  protected def registerOverwriteRemoveMetrics(
-      spark: SparkSession,
-      txn: OptimisticTransaction,
-      deleteActions: Seq[Action]): Unit = {
-    var numRemovedFiles = 0
-    var numRemovedBytes = 0L
-    deleteActions.foreach {
-      case action: RemoveFile =>
-        numRemovedFiles += 1
-        numRemovedBytes += action.getFileSize
-      case _ => () // do nothing
-    }
-    val sqlMetrics = Map(
-      "numRemovedFiles" -> createSumMetricWithValue(
-        spark, "number of files removed", numRemovedFiles),
-      "numRemovedBytes" -> createSumMetricWithValue(
-        spark, "number of bytes removed", numRemovedBytes)
-    )
-    txn.registerSQLMetrics(spark, sqlMetrics)
-  }
-
   /**
    * Replace where operationMetrics need to be recorded separately.
    * @param newFiles - AddFile and AddCDCFile added by write job
@@ -160,23 +122,32 @@ trait WriteIntoDeltaLike {
       case _ =>
     }
 
+    // Helper for creating a SQLMetric and setting its value, since it isn't valid to create a
+    // SQLMetric with a positive `initValue`.
+    def createSumMetricWithValue(name: String, value: Long): SQLMetric = {
+      val metric = new SQLMetric("sum")
+      metric.register(spark.sparkContext, Some(name))
+      metric.set(value)
+      metric
+    }
+
     var sqlMetrics = Map(
-      "numFiles" -> createSumMetricWithValue(spark, "number of files written", numFiles),
-      "numOutputBytes" -> createSumMetricWithValue(spark, "number of output bytes", numOutputBytes),
+      "numFiles" -> createSumMetricWithValue("number of files written", numFiles),
+      "numOutputBytes" -> createSumMetricWithValue("number of output bytes", numOutputBytes),
       "numAddedChangeFiles" -> createSumMetricWithValue(
-        spark, "number of change files added", numAddedChangedFiles)
+        "number of change files added", numAddedChangedFiles)
     )
     if (hasRowLevelMetrics) {
       sqlMetrics ++= Map(
         "numOutputRows" -> createSumMetricWithValue(
-          spark, "number of rows added", numNewRows + numCopiedRows),
-        "numCopiedRows" -> createSumMetricWithValue(spark, "number of copied rows", numCopiedRows)
+          "number of rows added", numNewRows + numCopiedRows),
+        "numCopiedRows" -> createSumMetricWithValue("number of copied rows", numCopiedRows)
       )
     } else {
       // this will get filtered out in DeltaOperations.WRITE transformMetrics
       sqlMetrics ++= Map(
-        "numOutputRows" -> createSumMetricWithValue(spark, "number of rows added", 0L),
-        "numCopiedRows" -> createSumMetricWithValue(spark, "number of copied rows", 0L)
+        "numOutputRows" -> createSumMetricWithValue("number of rows added", 0L),
+        "numCopiedRows" -> createSumMetricWithValue("number of copied rows", 0L)
       )
     }
     txn.registerSQLMetrics(spark, sqlMetrics)

@@ -571,9 +571,7 @@ The following is an example `remove` action.
 ```
 
 ### Add CDC File
-The `cdc` action is used to add a [file](#change-data-files) containing only the data that was changed as part of the transaction. The `cdc` action is allowed to add a [Data File](#data-files) that is also added by an `add` action, when it does not contain any copied rows and the `_change_type` column is filled for all rows.
-
-When change data readers encounter a `cdc` action in a particular Delta table version, they must read the changes made in that version exclusively using the `cdc` files. If a version has no `cdc` action, then the data in `add` and `remove` actions are read as inserted and deleted rows, respectively.
+The `cdc` action is used to add a [file](#change-data-files) containing only the data that was changed as part of the transaction. When change data readers encounter a `cdc` action in a particular Delta table version, they must read the changes made in that version exclusively using the `cdc` files. If a version has no `cdc` action, then the data in `add` and `remove` actions are read as inserted and deleted rows, respectively.
 
 The schema of the `cdc` action is as follows:
 
@@ -619,7 +617,7 @@ Specifically, to read the row-level changes made in a version, the following str
 
 ##### Note for non-change data readers
 
-In a table with Change Data Feed enabled, the data Parquet files referenced by `add` and `remove` actions are allowed to contain an extra column `_change_type`. This column is not present in the table's schema. When accessing these files, readers should disregard this column and only process columns defined within the table's schema.
+In a table with Change Data Feed enabled, the data Parquet files referenced by `add` and `remove` actions are allowed to contain an extra column `_change_type`. This column is not present in the table's schema and will consistently have a `null` value. When accessing these files, readers should disregard this column and only process columns defined within the table's schema.
 
 ### Transaction Identifiers
 Incremental processing systems (e.g., streaming systems) that track progress using their own application-specific versions need to record what progress has been made, in order to avoid duplicating data in the face of failures and retries during a write.
@@ -1602,7 +1600,7 @@ the `cutoffCommit`, because a commit exactly at midnight is an acceptable cutoff
 2. Identify the newest checkpoint that is not newer than the `cutOffCommit`. A checkpoint at the `cutOffCommit` is ideal, but an older one will do. Lets call it `cutOffCheckpoint`.
 We need to preserve the `cutOffCheckpoint` and all commits after it, because we need them to enable
 time travel for commits between `cutOffCheckpoint` and the next available checkpoint.
-3. Delete all [delta log entries](#delta-log-entries) and [checkpoint files](#checkpoints) before the
+3. Delete all [delta log entries](#delta-log-entries and [checkpoint files](#checkpoints) before the
 `cutOffCheckpoint` checkpoint. Also delete all the [log compaction files](#log-compaction-files) having
 startVersion <= `cutOffCheckpoint`'s version.
 4. Now read all the available [checkpoints](#checkpoints-1) in the _delta_log directory and identify

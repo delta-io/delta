@@ -29,18 +29,9 @@ import java.util.Optional;
  * database)
  */
 public class MemoryLogStore extends BaseExternalLogStore {
-    public static String IS_DELTA_LOG_PATH_OVERRIDE_KEY =
-        "spark.hadoop.io.delta.storage.MemoryLogStore.isDeltaLogPath.alwaysTrue";
-
-    public static int numGetLatestExternalEntryCalls = 0;
-
     public MemoryLogStore(Configuration hadoopConf) {
         super(hadoopConf);
     }
-
-    ///////////////////
-    // API Overrides //
-    ///////////////////
 
     @Override
     protected void putExternalEntry(
@@ -78,8 +69,6 @@ public class MemoryLogStore extends BaseExternalLogStore {
 
     @Override
     protected Optional<ExternalCommitEntry> getLatestExternalEntry(Path tablePath) {
-        numGetLatestExternalEntryCalls++;
-
         final Path fixedTablePath = new Path(fixPathSchema(tablePath.toString()));
         return hashMap
             .values()
@@ -87,19 +76,6 @@ public class MemoryLogStore extends BaseExternalLogStore {
             .filter(item -> item.tablePath.equals(fixedTablePath))
             .max(Comparator.comparing(ExternalCommitEntry::absoluteFilePath));
     }
-
-    @Override
-    protected boolean isDeltaLogPath(Path normalizedPath) {
-        if (initHadoopConf().getBoolean(IS_DELTA_LOG_PATH_OVERRIDE_KEY, false)) {
-            return true; // hardcoded to return true
-        } else {
-            return super.isDeltaLogPath(normalizedPath); // only return true if in _delta_log folder
-        }
-    }
-
-    ////////////////////
-    // Static Helpers //
-    ////////////////////
 
     /**
      * ExternalLogStoreSuite sometimes uses "failing:" scheme prefix to inject errors during tests

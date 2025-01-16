@@ -347,9 +347,6 @@ case class WriteIntoDelta(
     if (replaceWhere.nonEmpty && replaceOnDataColsEnabled &&
         sparkSession.conf.get(DeltaSQLConf.REPLACEWHERE_METRICS_ENABLED)) {
       registerReplaceWhereMetrics(sparkSession, txn, newFiles, deletedFiles)
-    } else if (mode == SaveMode.Overwrite &&
-        sparkSession.conf.get(DeltaSQLConf.OVERWRITE_REMOVE_METRICS_ENABLED)) {
-      registerOverwriteRemoveMetrics(sparkSession, txn, deletedFiles)
     }
 
     val fileActions = if (rearrangeOnly) {

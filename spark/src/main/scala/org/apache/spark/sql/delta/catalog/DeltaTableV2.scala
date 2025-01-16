@@ -97,7 +97,7 @@ case class DeltaTableV2(
       // as Unity Catalog may add more table storage properties on the fly. We should respect it
       // and merge the table storage properties and Delta options.
       val dataSourceOptions = if (catalogTable.isDefined) {
-        // To be safe, here we only extract file system options from table storage properties and
+        // To be safe, here we only extra file system options from table storage properties and
         // the original `options` has higher priority than the table storage properties.
         val fileSystemOptions = catalogTable.get.storage.properties.filter { case (k, _) =>
           DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)

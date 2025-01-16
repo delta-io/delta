@@ -600,33 +600,6 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
   )
 
   testSkipping(
-    "indexed column names - naming a nested column allows nested complex types",
-    """{
-      "a": {
-        "b": [1, 2, 3],
-        "c": [4, 5, 6],
-        "d": 7,
-        "e": 8,
-        "f": {
-          "g": 9
-        }
-      },
-      "i": 10
-    }""".replace("\n", ""),
-    hits = Seq(
-      "i < 0",
-      "a.d > 6",
-      "a.f.g < 10"
-    ),
-    misses = Seq(
-      "a.d < 0",
-      "a.e < 0",
-      "a.f.g < 0"
-    ),
-    deltaStatsColNamesOpt = Some("a")
-  )
-
-  testSkipping(
     "indexed column names - index only a subset of leaf columns",
     """{
       "a": 1,
