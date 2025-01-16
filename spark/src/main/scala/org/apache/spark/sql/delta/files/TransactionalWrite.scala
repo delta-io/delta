@@ -141,10 +141,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
       assert(
         normalizedData == dataWithDefaultExprs,
         "should not change data when there is no generate column")
-      // Ideally, we should use `normalizedData`. But it may use `QueryExecution` rather than
-      // `IncrementalExecution`. So we use the input `data` and leverage the `nullableOutput`
-      // below to fix the column names.
-      data.queryExecution
+      normalizedData.queryExecution
     }
     val nullableOutput = makeOutputNullable(cleanedData.queryExecution.analyzed.output)
     val columnMapping = metadata.columnMappingMode
