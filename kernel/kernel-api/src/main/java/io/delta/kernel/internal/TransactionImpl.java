@@ -179,14 +179,16 @@ public class TransactionImpl implements Transaction {
         domainMetadatas =
             RowTracking.updateRowIdHighWatermarkIfNeeded(
                 readSnapshot,
+                protocol,
                 Optional.empty() /* winningTxnRowIdHighWatermark */,
                 dataActions,
                 domainMetadatas);
         dataActions =
             RowTracking.assignBaseRowIdAndDefaultRowCommitVersion(
                 readSnapshot,
+                protocol,
                 Optional.empty() /* winningTxnRowIdHighWatermark */,
-                Optional.empty() /*prevCommitVersion*/,
+                Optional.empty() /* prevCommitVersion */,
                 commitAsVersion,
                 dataActions);
       }

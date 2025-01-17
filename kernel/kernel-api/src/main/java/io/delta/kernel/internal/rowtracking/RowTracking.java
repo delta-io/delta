@@ -15,9 +15,12 @@
  */
 package io.delta.kernel.internal.rowtracking;
 
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+
 import io.delta.kernel.data.Row;
 import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.SnapshotImpl;
+import io.delta.kernel.internal.TableFeatures;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.kernel.utils.CloseableIterator;
@@ -48,6 +51,7 @@ public class RowTracking {
    * </ol>
    *
    * @param snapshot the snapshot of the table that this transaction is reading from
+   * @param protocol the (updated, if any) protocol that will result from this txn
    * @param winningTxnRowIdHighWatermark the latest row ID high watermark from the winning
    *     transactions. Should be empty for initial assignment and present for conflict resolution.
    * @param prevCommitVersion the commit version used by this transaction in the previous commit
@@ -59,10 +63,16 @@ public class RowTracking {
    */
   public static CloseableIterable<Row> assignBaseRowIdAndDefaultRowCommitVersion(
       SnapshotImpl snapshot,
+      Protocol protocol,
       Optional<Long> winningTxnRowIdHighWatermark,
       Optional<Long> prevCommitVersion,
       long commitVersion,
       CloseableIterable<Row> dataActions) {
+    checkArgument(
+        TableFeatures.isRowTrackingSupported(protocol),
+        "Base row ID and default row commit version are assigned "
+            + "only when feature 'rowTracking' is supported.");
+
     return new CloseableIterable<Row>() {
       @Override
       public void close() throws IOException {
@@ -79,6 +89,14 @@ public class RowTracking {
         // assign baseRowIds. Use an AtomicLong to allow for updating in the lambda.
         final AtomicLong currRowIdHighWatermark =
             new AtomicLong(winningTxnRowIdHighWatermark.orElse(prevRowIdHighWatermark));
+
+        // The row ID high watermark must increase monotonically, so the winning transaction's high
+        // watermark must be greater than or equal to the high watermark from the current
+        // transaction's read snapshot.
+        checkArgument(
+            currRowIdHighWatermark.get() >= prevRowIdHighWatermark,
+            "The current row ID high watermark must be greater than or equal to "
+                + "the high watermark from the transaction's read snapshot");
 
         return dataActions
             .iterator()
@@ -122,6 +140,7 @@ public class RowTracking {
    * ID assignment or conflict resolution to reflect the change to the row ID high watermark.
    *
    * @param snapshot the snapshot of the table that this transaction is reading at
+   * @param protocol the (updated, if any) protocol that will result from this txn
    * @param winningTxnRowIdHighWatermark the latest row ID high watermark from the winning
    *     transaction. Should be empty for initial assignment and present for conflict resolution.
    * @param dataActions the data actions that this losing transaction was trying to commit
@@ -130,12 +149,16 @@ public class RowTracking {
    */
   public static List<DomainMetadata> updateRowIdHighWatermarkIfNeeded(
       SnapshotImpl snapshot,
+      Protocol protocol,
       Optional<Long> winningTxnRowIdHighWatermark,
       CloseableIterable<Row> dataActions,
       List<DomainMetadata> domainMetadatas) {
+    checkArgument(
+        TableFeatures.isRowTrackingSupported(protocol),
+        "Row ID high watermark is updated only when feature 'rowTracking' is supported.");
 
     // Filter out existing row tracking domainMetadata action, if any
-    List<DomainMetadata> newDomainMetadatas =
+    List<DomainMetadata> nonRowTrackingDomainMetadatas =
         domainMetadatas.stream()
             .filter(dm -> !dm.getDomain().equals(RowTrackingMetadataDomain.DOMAIN_NAME))
             .collect(Collectors.toList());
@@ -149,6 +172,14 @@ public class RowTracking {
     final AtomicLong currRowIdHighWatermark =
         new AtomicLong(winningTxnRowIdHighWatermark.orElse(prevRowIdHighWatermark));
 
+    // The row ID high watermark must increase monotonically, so the winning transaction's high
+    // watermark (if present) must be greater than or equal to the high watermark from the
+    // current transaction's read snapshot.
+    checkArgument(
+        currRowIdHighWatermark.get() >= prevRowIdHighWatermark,
+        "The current row ID high watermark must be greater than or equal to "
+            + "the high watermark from the transaction's read snapshot");
+
     dataActions.forEach(
         row -> {
           if (!row.isNullAt(SingleAction.ADD_FILE_ORDINAL)) {
@@ -161,11 +192,11 @@ public class RowTracking {
         });
 
     if (currRowIdHighWatermark.get() != prevRowIdHighWatermark) {
-      newDomainMetadatas.add(
+      nonRowTrackingDomainMetadatas.add(
           new RowTrackingMetadataDomain(currRowIdHighWatermark.get()).toDomainMetadata());
     }
 
-    return newDomainMetadatas;
+    return nonRowTrackingDomainMetadatas;
   }
 
   /**

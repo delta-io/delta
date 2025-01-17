@@ -148,12 +148,14 @@ public class ConflictChecker {
       updatedDomainMetadatas =
           RowTracking.updateRowIdHighWatermarkIfNeeded(
               snapshot,
+              transaction.getProtocol(),
               lastWinningRowIdHighWatermark,
               attemptDataActions,
               transaction.getDomainMetadatas());
       updatedDataActions =
           RowTracking.assignBaseRowIdAndDefaultRowCommitVersion(
               snapshot,
+              transaction.getProtocol(),
               lastWinningRowIdHighWatermark,
               Optional.of(attemptVersion),
               lastWinningVersion + 1,
