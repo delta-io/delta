@@ -104,9 +104,8 @@ class ChecksumReadWriteSuite extends AnyFunSuite with MockEngineUtils {
     assert(metadataRow.getString(Metadata.FULL_SCHEMA.indexOf("id")) == metadata.getId)
     assert(Optional.ofNullable(
       metadataRow.getString(Metadata.FULL_SCHEMA.indexOf("name"))) == metadata.getName)
-    assert(Optional.ofNullable(
-      metadataRow.getString(Metadata.FULL_SCHEMA.indexOf("description"))
-    ) == metadata.getDescription)
+    assert(Optional.ofNullable(metadataRow.getString(Metadata.FULL_SCHEMA.indexOf("description")))
+      == metadata.getDescription)
     assert(
       metadataRow.getStruct(
         Metadata.FULL_SCHEMA.indexOf("format")
