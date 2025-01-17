@@ -356,7 +356,8 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         path,
         expectException = true,
         expectedBaseSnapshotVersion = 0,
-        expectedNumAttempts = 200
+        expectedNumAttempts = 6, // 1 first try + 6 retries
+        buildTransaction = (builder, engine) => builder.withMaxRetries(5).build(engine)
       )
     }
   }
