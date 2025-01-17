@@ -49,6 +49,11 @@ public final class FileNames {
     return String.format("%s/%020d.json", path, version);
   }
 
+  /** Returns the path to the checksum file for the given version. */
+  public static Path checksumFile(Path path, long version) {
+    return new Path(path, String.format("%020d.crc", version));
+  }
+
   /** Returns the version for the given delta path. */
   public static long deltaVersion(Path path) {
     return Long.parseLong(path.getName().split("\\.")[0]);

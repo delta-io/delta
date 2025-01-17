@@ -18,17 +18,35 @@ package io.delta.kernel.internal.snapshot;
 
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
+import java.util.OptionalLong;
 
 /** Contains summary information of a {@link io.delta.kernel.Snapshot}. */
 public class SnapshotHint {
   private final long version;
   private final Protocol protocol;
   private final Metadata metadata;
+  private final OptionalLong tableSizeBytes;
+  private final OptionalLong numFiles;
 
   public SnapshotHint(long version, Protocol protocol, Metadata metadata) {
     this.version = version;
     this.protocol = protocol;
     this.metadata = metadata;
+    this.tableSizeBytes = OptionalLong.empty();
+    this.numFiles = OptionalLong.empty();
+  }
+
+  public SnapshotHint(
+      long version,
+      Protocol protocol,
+      Metadata metadata,
+      OptionalLong tableSizeBytes,
+      OptionalLong numFiles) {
+    this.version = version;
+    this.protocol = protocol;
+    this.metadata = metadata;
+    this.tableSizeBytes = tableSizeBytes;
+    this.numFiles = numFiles;
   }
 
   public long getVersion() {
@@ -41,5 +59,13 @@ public class SnapshotHint {
 
   public Metadata getMetadata() {
     return metadata;
+  }
+
+  public OptionalLong getTableSizeBytes() {
+    return tableSizeBytes;
+  }
+
+  public OptionalLong getNumFiles() {
+    return numFiles;
   }
 }
