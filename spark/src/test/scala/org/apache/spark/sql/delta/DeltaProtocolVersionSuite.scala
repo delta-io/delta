@@ -30,6 +30,7 @@ import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.{AlterTableDropFeatureDeltaCommand, AlterTableSetPropertiesDeltaCommand, AlterTableUnsetPropertiesDeltaCommand}
+import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.coordinatedcommits._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -54,7 +55,8 @@ import org.apache.spark.util.ManualClock
 
 trait DeltaProtocolVersionSuiteBase extends QueryTest
   with SharedSparkSession
-  with DeltaSQLCommandTest {
+  with DeltaSQLCommandTest
+  with DeletionVectorsTestUtils {
 
   // `.schema` generates NOT NULL columns which requires writer protocol 2. We convert all to
   // NULLable to avoid silent writer protocol version bump.
@@ -3407,6 +3409,96 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       featuresToRemove = Seq(TestRemovableWriterFeature),
       expectedDowngradedProtocol = protocolWithReaderFeature(TestRemovableReaderWriterFeature))
   }
+
+  for {
+    truncateHistory <- BOOLEAN_DOMAIN
+    enableCDF <- if (truncateHistory) Seq(false) else BOOLEAN_DOMAIN
+  } test(s"Remove Deletion Vectors feature " +
+      s"truncateHistory: $truncateHistory, enableCDF: $enableCDF") {
+    val targetDF = spark.range(start = 0, end = 100, step = 1, numPartitions = 2)
+    withSQLConf(
+        DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey -> "true",
+        DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> enableCDF.toString) {
+      withTempPath { dir =>
+        val clock = new ManualClock(System.currentTimeMillis())
+        val targetLog = DeltaLog.forTable(spark, dir, clock)
+        val defaultRetentionPeriod =
+          DeltaConfigs.LOG_RETENTION.fromMetaData(targetLog.update().metadata).toString
+
+        targetDF.write.format("delta").save(dir.toString)
+
+        val targetTable = io.delta.tables.DeltaTable.forPath(dir.toString)
+
+        // Add some DVs.
+        targetTable.delete("id >= 90")
+
+        // Assert that DVs exist.
+        val preDowngradeSnapshot = targetLog.update()
+        assert(DeletionVectorUtils.deletionVectorsWritable(preDowngradeSnapshot))
+        assert(preDowngradeSnapshot.numDeletionVectorsOpt === Some(1L))
+
+        // Attempting to drop Deletion Vectors feature will prohibit adding new DVs and remove
+        // all DVs from the latest snapshot, but ultimately fail, because history will still
+        // contain traces of the feature. For this reason, we have to wait for the retention period
+        // to be over before we can downgrade the protocol.
+        val e1 = intercept[DeltaTableFeatureException] {
+          dropDVTableFeature(spark, targetLog, truncateHistory = false)
+        }
+        checkError(
+          e1,
+          "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
+          parameters = Map(
+            "feature" -> DeletionVectorsTableFeature.name,
+            "logRetentionPeriodKey" -> "delta.logRetentionDuration",
+            "logRetentionPeriod" -> defaultRetentionPeriod,
+            "truncateHistoryLogRetentionPeriod" -> truncateHistoryDefaultLogRetention.toString))
+
+        val postCleanupSnapshot = targetLog.update()
+        assert(!DeletionVectorUtils.deletionVectorsWritable(postCleanupSnapshot))
+        assert(postCleanupSnapshot.numDeletionVectorsOpt.getOrElse(0L) === 0)
+        assert(postCleanupSnapshot.numDeletedRecordsOpt.getOrElse(0L) === 0)
+
+        spark.range(100, 120).write.format("delta").mode("append").save(dir.getCanonicalPath)
+        spark.range(120, 140).write.format("delta").mode("append").save(dir.getCanonicalPath)
+
+        // Table still contains historical data with DVs. Attempt should fail.
+        val e2 = intercept[DeltaTableFeatureException] {
+          dropDVTableFeature(spark, targetLog, truncateHistory = false)
+        }
+        checkError(
+          e2,
+          "DELTA_FEATURE_DROP_HISTORICAL_VERSIONS_EXIST",
+          parameters = Map(
+            "feature" -> DeletionVectorsTableFeature.name,
+            "logRetentionPeriodKey" -> "delta.logRetentionDuration",
+            "logRetentionPeriod" -> defaultRetentionPeriod,
+            "truncateHistoryLogRetentionPeriod" -> truncateHistoryDefaultLogRetention.toString))
+
+        // Pretend retention period has passed.
+        val clockAdvanceMillis = if (truncateHistory) {
+          DeltaConfigs.getMilliSeconds(truncateHistoryDefaultLogRetention) +
+            TimeUnit.HOURS.toMillis(24)
+        } else {
+          targetLog.deltaRetentionMillis(targetLog.update().metadata) + TimeUnit.DAYS.toMillis(3)
+        }
+        clock.advance(clockAdvanceMillis)
+
+        // Cleanup logs.
+        targetLog.cleanUpExpiredLogs(targetLog.update())
+
+        // History is now clean. We should be able to remove the feature.
+        dropDVTableFeature(spark, targetLog, truncateHistory)
+
+        val postDowngradeSnapshot = targetLog.update()
+        val protocol = postDowngradeSnapshot.protocol
+        assert(!DeletionVectorUtils.deletionVectorsWritable(postDowngradeSnapshot))
+        assert(postDowngradeSnapshot.numDeletionVectorsOpt.getOrElse(0L) === 0)
+        assert(postDowngradeSnapshot.numDeletedRecordsOpt.getOrElse(0L) === 0)
+        assert(!protocol.readerFeatureNames.contains(DeletionVectorsTableFeature.name))
+      }
+    }
+  }
+
 
   test("Can drop reader+writer feature when there is nothing to clean") {
     withTempPath { dir =>

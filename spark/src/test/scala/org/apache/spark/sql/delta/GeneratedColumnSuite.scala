@@ -622,7 +622,7 @@ trait GeneratedColumnSuiteBase
       s"${generatedColumnType.sql} NOT NULL"
     }
     test(s"validateGeneratedColumns: column type ${columnTypeString}" +
-        s" $verb expression type ${generateAsExpression.expr.sql}") {
+        s" $verb expression type $generateAsExpression") {
       val f1 = StructField("nullableIntCol", IntegerType, nullable = true)
       val f2 = withGenerationExpression(
         StructField("genCol", generatedColumnType, nullable = generatedColumnNullable),
@@ -1263,6 +1263,18 @@ trait GeneratedColumnSuiteBase
         .collect()
         .toSeq
       assert("foo" :: Nil == comments)
+    }
+  }
+
+  test("generation expression allows timestampdiff & timestampadd") {
+    withTableName("generation_expression_timestamp_diff_add") { tableName =>
+      createTable(
+        tableName,
+        path = None,
+        schemaString = "c1 TIMESTAMP, c2 TIMESTAMP, c3 BIGINT, c4 TIMESTAMP",
+        generatedColumns =
+          Map("c3" -> "timestampdiff(MONTH, c1, c2)", "c4" -> "timestampadd(MONTH, 1, c1)"),
+        partitionColumns = Seq.empty)
     }
   }
 

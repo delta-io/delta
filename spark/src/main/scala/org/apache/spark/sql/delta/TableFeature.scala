@@ -20,6 +20,7 @@ import java.util.Locale
 
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
 import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsUtils
 import org.apache.spark.sql.delta.redirect.{RedirectReaderWriter, RedirectWriterOnly}
@@ -327,6 +328,8 @@ sealed abstract class LegacyReaderWriterFeature(
   with ReaderWriterFeatureType
 
 object TableFeature {
+  val isTesting = DeltaUtils.isTesting
+
   /**
    * All table features recognized by this client. Update this set when you added a new Table
    * Feature.
@@ -369,7 +372,7 @@ object TableFeature {
       VariantTypeTableFeature,
       CoordinatedCommitsTableFeature,
       CheckpointProtectionTableFeature)
-    if (DeltaUtils.isTesting && testingFeaturesEnabled) {
+    if (isTesting && testingFeaturesEnabled) {
       features ++= Set(
         RedirectReaderWriterFeature,
         RedirectWriterOnlyFeature,
@@ -378,6 +381,7 @@ object TableFeature {
         TestWriterFeature,
         TestWriterMetadataNoAutoUpdateFeature,
         TestReaderWriterFeature,
+        TestUnsupportedReaderWriterFeature,
         TestReaderWriterMetadataAutoUpdateFeature,
         TestReaderWriterMetadataNoAutoUpdateFeature,
         TestRemovableWriterFeature,
@@ -394,6 +398,10 @@ object TableFeature {
     require(features.size == featureMap.size, "Lowercase feature names must not duplicate.")
     featureMap
   }
+
+  /** Test only features that appear unsupported in order to test protocol validations. */
+  def testUnsupportedFeatures: Set[TableFeature] =
+    if (isTesting) Set(TestUnsupportedReaderWriterFeature) else Set.empty
 
   private val allDependentFeaturesMap: Map[TableFeature, Set[TableFeature]] = {
     val dependentFeatureTuples =
@@ -641,6 +649,7 @@ object VariantTypeTableFeature extends ReaderWriterFeature(name = "variantType")
 
 object DeletionVectorsTableFeature
   extends ReaderWriterFeature(name = "deletionVectors")
+  with RemovableFeature
   with FeatureAutomaticallyEnabledByMetadata {
   override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
 
@@ -650,6 +659,27 @@ object DeletionVectorsTableFeature
       spark: SparkSession): Boolean = {
     DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.fromMetaData(metadata)
   }
+
+  override def validateRemoval(snapshot: Snapshot): Boolean = {
+    val dvsWritable = DeletionVectorUtils.deletionVectorsWritable(snapshot)
+    val dvsExist = snapshot.numDeletionVectorsOpt.getOrElse(0L) > 0
+
+    !(dvsWritable || dvsExist)
+  }
+
+  override def actionUsesFeature(action: Action): Boolean = {
+    action match {
+      case m: Metadata => DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.fromMetaData(m)
+      case a: AddFile => a.deletionVector != null
+      case r: RemoveFile => r.deletionVector != null
+      // In general, CDC actions do not contain DVs. We added this for safety.
+      case cdc: AddCDCFile => cdc.deletionVector != null
+      case _ => false
+    }
+  }
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    DeletionVectorsPreDowngradeCommand(table)
 }
 
 object RowTrackingFeature extends WriterFeature(name = "rowTracking")
@@ -1079,6 +1109,19 @@ object TestRemovableWriterFeature
 
   override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
     TestWriterFeaturePreDowngradeCommand(table)
+
+  override def actionUsesFeature(action: Action): Boolean = false
+}
+
+/** Test feature that appears unsupported and it is used for testing protocol checks. */
+object TestUnsupportedReaderWriterFeature
+    extends ReaderWriterFeature(name = "testUnsupportedReaderWriter")
+    with RemovableFeature {
+
+  override def validateRemoval(snapshot: Snapshot): Boolean = true
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    TestUnsupportedReaderWriterFeaturePreDowngradeCommand(table)
 
   override def actionUsesFeature(action: Action): Boolean = false
 }
