@@ -1435,6 +1435,19 @@ trait DeltaSQLConfBase {
       .intConf
       .createWithDefault(32)
 
+  val UNSAFE_ALLOW_REFERENCELESS_PARTITION_FILTERS =
+    buildConf("unsafe.skipping.allowReferencelessPartitionFilters")
+      .internal()
+      .doc(
+        """Filter expressions that didn't have any references, such as rand() were incorrectly
+          |treated as a partition filter. When this flag is disabled (false), these expressions
+          |will NOT be treated as partition filters, therefore results will be correct.
+          |However, since this is a behavior change, providing a flag to return to the old behavior
+          |even though the filters will be double evaluated.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   val MDC_NUM_RANGE_IDS =
     SQLConf.buildConf("spark.databricks.io.skipping.mdc.rangeId.max")
       .internal()
