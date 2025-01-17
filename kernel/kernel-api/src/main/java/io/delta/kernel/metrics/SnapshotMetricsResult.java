@@ -15,9 +15,11 @@
  */
 package io.delta.kernel.metrics;
 
+import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 import java.util.Optional;
 
 /** Stores the metrics results for a {@link SnapshotReport} */
+@JsonPropertyOrder({"timestampToVersionResolutionDurationNs", "loadInitialDeltaActionsDurationNs"})
 public interface SnapshotMetricsResult {
 
   /**

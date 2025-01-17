@@ -1,5 +1,5 @@
 /*
- * Copyright (2024) The Delta Lake Project Authors.
+ * Copyright (2025) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,34 +13,21 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.defaults
+package io.delta.kernel.defaults.metrics
 
 import java.io.File
-import java.util
 import java.util.{Objects, Optional}
 
-import scala.collection.mutable.ArrayBuffer
-
 import io.delta.golden.GoldenTableUtils.goldenTablePath
-import io.delta.kernel.defaults.utils.TestUtils
-import io.delta.kernel.engine.{Engine, ExpressionHandler, FileSystemClient, JsonHandler, MetricsReporter, ParquetHandler}
-import io.delta.kernel.metrics.{MetricsReport, SnapshotReport}
-import io.delta.kernel.{Snapshot, Table}
+import io.delta.kernel._
+import io.delta.kernel.engine._
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.metrics.Timer
 import io.delta.kernel.internal.util.FileNames
+import io.delta.kernel.metrics.SnapshotReport
 import org.scalatest.funsuite.AnyFunSuite
 
-/**
- * Test suite to test the Kernel-API created [[MetricsReport]]s. This suite is in the defaults
- * package to be able to use real tables and avoid having to mock both file listings AND file
- * contents.
- */
-class MetricsReportSuite extends AnyFunSuite with TestUtils {
-
-  ///////////////////////////
-  // SnapshotReport tests //
-  //////////////////////////
+class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
 
   /**
    * Given a function [[f]] that generates a snapshot from a [[Table]], runs [[f]] and looks for
@@ -60,17 +47,13 @@ class MetricsReportSuite extends AnyFunSuite with TestUtils {
   ): (SnapshotReport, Long, Option[Exception]) = {
     val timer = new Timer()
 
-    val (metricsReports: Seq[MetricsReport], exception: Option[Exception]) = if (expectException) {
-      collectMetricsReportsAndException { engine =>
+    val (metricsReports, exception) = collectMetricsReports(
+      engine => {
         val table = Table.forPath(engine, path)
         timer.time(() => f(table, engine)) // Time the actual operation
-      }
-    } else {
-      (collectMetricsReports { engine =>
-        val table = Table.forPath(engine, path)
-        timer.time(() => f(table, engine)) // Time the actual operation
-      }, Option.empty)
-    }
+      },
+      expectException
+    )
 
     val snapshotReports = metricsReports.filter(_.isInstanceOf[SnapshotReport])
     assert(snapshotReports.length == 1, "Expected exactly 1 SnapshotReport")
@@ -110,7 +93,7 @@ class MetricsReportSuite extends AnyFunSuite with TestUtils {
     val (snapshotReport, duration, exception) = getSnapshotReport(f, path, expectException)
 
     // Verify contents
-    assert(snapshotReport.getTablePath == resolvePath(path))
+    assert(snapshotReport.getTablePath == defaultEngine.getFileSystemClient.resolvePath(path))
     assert(snapshotReport.getOperationType == "Snapshot")
     exception match {
       case Some(e) =>
@@ -360,67 +343,5 @@ class MetricsReportSuite extends AnyFunSuite with TestUtils {
       expectNonEmptyTimestampToVersionResolutionDuration = true,
       expectNonZeroLoadProtocolAndMetadataDuration = true
     )
-  }
-
-  /////////////////////////
-  // Test Helper Methods //
-  /////////////////////////
-
-  // For now this just uses the default engine since we have no need to override it, if we would
-  // like to use a specific engine in the future for other tests we can simply add another arg here
-  /** Executes [[f]] using a special engine implementation to collect and return metrics reports */
-  def collectMetricsReports(f: Engine => Unit): Seq[MetricsReport] = {
-    // Initialize a buffer for any metric reports and wrap the engine so that they are recorded
-    val reports = ArrayBuffer.empty[MetricsReport]
-    f(new EngineWithInMemoryMetricsReporter(reports, defaultEngine))
-    reports
-  }
-
-  /**
-   * Executes [[f]] using a special engine implementation to collect and return metrics reports when
-   * it is expected [[f]] will throw an exception. Collects said exception and returns with
-   * the reports.
-   */
-  def collectMetricsReportsAndException(
-      f: Engine => Unit): (Seq[MetricsReport], Option[Exception]) = {
-    // Initialize a buffer for any metric reports and wrap the engine so that they are recorded
-    val reports = ArrayBuffer.empty[MetricsReport]
-    val e = intercept[Exception](
-      f(new EngineWithInMemoryMetricsReporter(reports, defaultEngine))
-    )
-    (reports, Some(e))
-  }
-
-  def resolvePath(path: String): String = {
-    defaultEngine.getFileSystemClient.resolvePath(path)
-  }
-
-  /**
-   * Wraps an {@link Engine} to implement the metrics reporter such that it appends any reports
-   * to the provided in memory buffer.
-   */
-  class EngineWithInMemoryMetricsReporter(buf: ArrayBuffer[MetricsReport], baseEngine: Engine)
-    extends Engine {
-
-    private val metricsReporter = new MetricsReporter {
-      override def report(report: MetricsReport): Unit = buf.append(report)
-    }
-
-    private val metricsReporters = new util.ArrayList[MetricsReporter]() {{
-      addAll(baseEngine.getMetricsReporters)
-      add(metricsReporter)
-    }}
-
-    override def getExpressionHandler: ExpressionHandler = baseEngine.getExpressionHandler
-
-    override def getJsonHandler: JsonHandler = baseEngine.getJsonHandler
-
-    override def getFileSystemClient: FileSystemClient = baseEngine.getFileSystemClient
-
-    override def getParquetHandler: ParquetHandler = baseEngine.getParquetHandler
-
-    override def getMetricsReporters(): java.util.List[MetricsReporter] = {
-      metricsReporters
-    }
   }
 }

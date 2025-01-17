@@ -30,10 +30,13 @@ import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.metrics.TransactionMetrics;
+import io.delta.kernel.internal.metrics.TransactionReportImpl;
 import io.delta.kernel.internal.replay.ConflictChecker;
 import io.delta.kernel.internal.replay.ConflictChecker.TransactionRebaseState;
 import io.delta.kernel.internal.rowtracking.RowTracking;
 import io.delta.kernel.internal.util.*;
+import io.delta.kernel.metrics.TransactionReport;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.kernel.utils.CloseableIterator;
@@ -51,13 +54,6 @@ public class TransactionImpl implements Transaction {
   public static final int DEFAULT_READ_VERSION = 1;
   public static final int DEFAULT_WRITE_VERSION = 2;
 
-  /**
-   * Number of retries for concurrent write exceptions to resolve conflicts and retry commit. In
-   * Delta-Spark, for historical reasons the number of retries is really high (10m). We are starting
-   * with a lower number for now. If this is not sufficient we can update it.
-   */
-  private static final int NUM_TXN_RETRIES = 200;
-
   private final UUID txnId = UUID.randomUUID();
 
   private final boolean isNewTable; // the transaction is creating a new table
@@ -73,6 +69,7 @@ public class TransactionImpl implements Transaction {
   private final List<DomainMetadata> domainMetadatas = new ArrayList<>();
   private Metadata metadata;
   private boolean shouldUpdateMetadata;
+  private int maxRetries;
 
   private boolean closed; // To avoid trying to commit the same transaction again.
 
@@ -88,6 +85,7 @@ public class TransactionImpl implements Transaction {
       Optional<SetTransaction> setTxnOpt,
       boolean shouldUpdateMetadata,
       boolean shouldUpdateProtocol,
+      int maxRetries,
       Clock clock) {
     this.isNewTable = isNewTable;
     this.dataPath = dataPath;
@@ -100,6 +98,7 @@ public class TransactionImpl implements Transaction {
     this.setTxnOpt = setTxnOpt;
     this.shouldUpdateMetadata = shouldUpdateMetadata;
     this.shouldUpdateProtocol = shouldUpdateProtocol;
+    this.maxRetries = maxRetries;
     this.clock = clock;
   }
 
@@ -138,9 +137,31 @@ public class TransactionImpl implements Transaction {
   @Override
   public TransactionCommitResult commit(Engine engine, CloseableIterable<Row> dataActions)
       throws ConcurrentWriteException {
+    checkState(!closed, "Transaction is already attempted to commit. Create a new transaction.");
+    TransactionMetrics transactionMetrics = new TransactionMetrics();
     try {
-      checkState(!closed, "Transaction is already attempted to commit. Create a new transaction.");
+      TransactionCommitResult result =
+          transactionMetrics.totalCommitTimer.time(
+              () -> commitWithRetry(engine, dataActions, transactionMetrics));
+      recordTransactionReport(
+          engine,
+          Optional.of(result.getVersion()) /* committedVersion */,
+          transactionMetrics,
+          Optional.empty() /* exception */);
+      return result;
+    } catch (Exception e) {
+      recordTransactionReport(
+          engine,
+          Optional.empty() /* committedVersion */,
+          transactionMetrics,
+          Optional.of(e) /* exception */);
+      throw e;
+    }
+  }
 
+  private TransactionCommitResult commitWithRetry(
+      Engine engine, CloseableIterable<Row> dataActions, TransactionMetrics transactionMetrics) {
+    try {
       long commitAsVersion = readSnapshot.getVersion(engine) + 1;
       // Generate the commit action with the inCommitTimestamp if ICT is enabled.
       CommitInfo attemptCommitInfo = generateCommitAction(engine);
@@ -158,42 +179,55 @@ public class TransactionImpl implements Transaction {
                 readSnapshot, commitAsVersion, dataActions);
       }
 
-      int numRetries = 0;
-      do {
+      int numTries = 0;
+      while (numTries <= maxRetries) { // leq because the first is a try, not a retry
         logger.info("Committing transaction as version = {}.", commitAsVersion);
         try {
-          return doCommit(engine, commitAsVersion, attemptCommitInfo, dataActions);
+          transactionMetrics.commitAttemptsCounter.increment();
+          return doCommit(
+              engine, commitAsVersion, attemptCommitInfo, dataActions, transactionMetrics);
         } catch (FileAlreadyExistsException fnfe) {
           logger.info(
-              "Concurrent write detected when committing as version = {}. "
-                  + "Trying to resolve conflicts and retry commit.",
-              commitAsVersion);
-          TransactionRebaseState rebaseState =
-              ConflictChecker.resolveConflicts(engine, readSnapshot, commitAsVersion, this);
-          long newCommitAsVersion = rebaseState.getLatestVersion() + 1;
-          checkArgument(
-              commitAsVersion < newCommitAsVersion,
-              "New commit version %d should be greater than the previous commit "
-                  + "attempt version %d.",
-              newCommitAsVersion,
-              commitAsVersion);
-          commitAsVersion = newCommitAsVersion;
-          Optional<Long> updatedInCommitTimestamp =
-              getUpdatedInCommitTimestampAfterConflict(
-                  rebaseState.getLatestCommitTimestamp(), attemptCommitInfo.getInCommitTimestamp());
-          updateMetadataWithICTIfRequired(
-              engine, updatedInCommitTimestamp, rebaseState.getLatestVersion());
-          attemptCommitInfo.setInCommitTimestamp(updatedInCommitTimestamp);
+              "Concurrent write detected when committing as version = {}.", commitAsVersion);
+          if (numTries < maxRetries) {
+            // only try and resolve conflicts if we're going to retry
+            commitAsVersion =
+                resolveConflicts(engine, commitAsVersion, attemptCommitInfo, numTries);
+          }
         }
-        numRetries++;
-      } while (numRetries < NUM_TXN_RETRIES);
+        numTries++;
+      }
     } finally {
       closed = true;
     }
 
     // we have exhausted the number of retries, give up.
-    logger.info("Exhausted maximum retries ({}) for committing transaction.", NUM_TXN_RETRIES);
+    logger.info("Exhausted maximum retries ({}) for committing transaction.", maxRetries);
     throw new ConcurrentWriteException();
+  }
+
+  private long resolveConflicts(
+      Engine engine, long commitAsVersion, CommitInfo attemptCommitInfo, int numTries) {
+    logger.info(
+        "Table {}, trying to resolve conflicts and retry commit. (tries/maxRetries: {}/{})",
+        dataPath,
+        numTries,
+        maxRetries);
+    TransactionRebaseState rebaseState =
+        ConflictChecker.resolveConflicts(engine, readSnapshot, commitAsVersion, this);
+    long newCommitAsVersion = rebaseState.getLatestVersion() + 1;
+    checkArgument(
+        commitAsVersion < newCommitAsVersion,
+        "New commit version %d should be greater than the previous commit attempt version %d.",
+        newCommitAsVersion,
+        commitAsVersion);
+    Optional<Long> updatedInCommitTimestamp =
+        getUpdatedInCommitTimestampAfterConflict(
+            rebaseState.getLatestCommitTimestamp(), attemptCommitInfo.getInCommitTimestamp());
+    updateMetadataWithICTIfRequired(
+        engine, updatedInCommitTimestamp, rebaseState.getLatestVersion());
+    attemptCommitInfo.setInCommitTimestamp(updatedInCommitTimestamp);
+    return newCommitAsVersion;
   }
 
   private void updateMetadata(Metadata metadata) {
@@ -230,7 +264,8 @@ public class TransactionImpl implements Transaction {
       Engine engine,
       long commitAsVersion,
       CommitInfo attemptCommitInfo,
-      CloseableIterable<Row> dataActions)
+      CloseableIterable<Row> dataActions,
+      TransactionMetrics transactionMetrics)
       throws FileAlreadyExistsException {
     List<Row> metadataActions = new ArrayList<>();
     metadataActions.add(createCommitInfoSingleAction(attemptCommitInfo.toRow()));
@@ -270,6 +305,9 @@ public class TransactionImpl implements Transaction {
         }
       }
 
+      // Action counters may be partially incremented from previous tries, reset the counters to 0
+      transactionMetrics.resetActionCounters();
+
       // Write the staged data to a delta file
       wrapEngineExceptionThrowsIO(
           () -> {
@@ -277,7 +315,16 @@ public class TransactionImpl implements Transaction {
                 .getJsonHandler()
                 .writeJsonFileAtomically(
                     FileNames.deltaFile(logPath, commitAsVersion),
-                    dataAndMetadataActions,
+                    dataAndMetadataActions.map(
+                        action -> {
+                          transactionMetrics.totalActionsCounter.increment();
+                          if (!action.isNullAt(ADD_FILE_ORDINAL)) {
+                            transactionMetrics.addFilesCounter.increment();
+                          } else if (!action.isNullAt(REMOVE_FILE_ORDINAL)) {
+                            transactionMetrics.removeFilesCounter.increment();
+                          }
+                          return action;
+                        }),
                     false /* overwrite */);
             return null;
           },
@@ -340,6 +387,23 @@ public class TransactionImpl implements Transaction {
       return Collections.singletonMap("partitionBy", partitionBy);
     }
     return Collections.emptyMap();
+  }
+
+  private void recordTransactionReport(
+      Engine engine,
+      Optional<Long> committedVersion,
+      TransactionMetrics transactionMetrics,
+      Optional<Exception> exception) {
+    TransactionReport transactionReport =
+        new TransactionReportImpl(
+            dataPath.toString() /* tablePath */,
+            operation.toString(),
+            engineInfo,
+            committedVersion,
+            transactionMetrics,
+            readSnapshot.getSnapshotReport(),
+            exception);
+    engine.getMetricsReporters().forEach(reporter -> reporter.report(transactionReport));
   }
 
   /**
