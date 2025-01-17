@@ -44,7 +44,7 @@ import org.apache.hadoop.fs.Path
 import org.json4s.JString
 import org.scalatest.GivenWhenThen
 
-import org.apache.spark.SparkThrowable
+import org.apache.spark.{SparkContext, SparkThrowable}
 import org.apache.spark.sql.{AnalysisException, QueryTest, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
@@ -3241,6 +3241,38 @@ trait DeltaErrorsSuiteBase
           "the commit coordinator test"),
         startWith = true
       )
+    }
+    {
+      val exceptionWithContext =
+        DeltaErrors.multipleSourceRowMatchingTargetRowInMergeException(spark)
+      assert(exceptionWithContext.getMessage.contains("https") === true)
+
+      withCustomContext(spark, null) {
+        val exceptionWithoutContext =
+          DeltaErrors.multipleSourceRowMatchingTargetRowInMergeException(spark)
+        assert(exceptionWithoutContext.getMessage.contains("https") === false)
+      }
+    }
+  }
+
+  private def setCustomContext(session: SparkSession, context: SparkContext): Unit = {
+    val scField = classOf[SparkSession].getDeclaredField("sparkContext")
+    scField.setAccessible(true)
+    try {
+      scField.set(session, context)
+    } finally {
+      scField.setAccessible(false)
+    }
+  }
+
+  /** Runs `f` with custom context used in spark session. */
+  private def withCustomContext(session: SparkSession, context: SparkContext)(f: => Unit): Unit = {
+    val originalContext = session.sparkContext
+    try {
+      setCustomContext(session, context)
+      f
+    } finally {
+      setCustomContext(session, originalContext)
     }
   }
 }
