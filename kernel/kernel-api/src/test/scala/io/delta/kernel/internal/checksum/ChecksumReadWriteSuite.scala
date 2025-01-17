@@ -21,6 +21,7 @@ import io.delta.kernel.internal.data.GenericRow
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.snapshot.SnapshotHint
 import io.delta.kernel.internal.util.InternalUtils.singletonStringColumnVector
+import io.delta.kernel.internal.util.VectorUtils
 import io.delta.kernel.test.{BaseMockJsonHandler, MockEngineUtils}
 import io.delta.kernel.types.{StringType, StructType}
 import io.delta.kernel.utils.CloseableIterator
@@ -38,16 +39,30 @@ class ChecksumReadWriteSuite extends AnyFunSuite with MockEngineUtils {
     val jsonHandler = new MockCheckSumFileJsonWriter()
     val checksumWriter =
       new ChecksumWriter(mockEngine(jsonHandler = jsonHandler), FAKE_DELTA_LOG_PATH)
+    val protocol = createTestProtocol()
+    val metadata = createTestMetadata()
     val snapshotHint = new SnapshotHint(
       1,
-      createTestProtocol(),
-      createTestMetadata(),
-      OptionalLong.of(1),
-      OptionalLong.of(100))
+      protocol,
+      metadata,
+      OptionalLong.of(100),
+      OptionalLong.of(1))
     checksumWriter.maybeWriteCheckSum(snapshotHint, "tnx")
 
-    assert(jsonHandler.capturedCrcRow.getLong(1) == 100L)
-
+    assert(jsonHandler.capturedCrcRow.getLong(
+      ChecksumWriter.CRC_FILE_SCHEMA.indexOf("tableSizeBytes")) == 100L)
+    assert(jsonHandler.capturedCrcRow.getLong(
+      ChecksumWriter.CRC_FILE_SCHEMA.indexOf("numFiles")) == 1L)
+    assert(jsonHandler.capturedCrcRow.getLong(
+      ChecksumWriter.CRC_FILE_SCHEMA.indexOf("numMetadata")) == 1L)
+    assert(jsonHandler.capturedCrcRow.getLong(
+      ChecksumWriter.CRC_FILE_SCHEMA.indexOf("numProtocol")) == 1L)
+    assert(jsonHandler.capturedCrcRow.getString(
+      ChecksumWriter.CRC_FILE_SCHEMA.indexOf("txnId")) == "tnx")
+    checkMetadata(metadata,
+      jsonHandler.capturedCrcRow.getStruct(ChecksumWriter.CRC_FILE_SCHEMA.indexOf("metadata")))
+    checkProtocol(protocol,
+      jsonHandler.capturedCrcRow.getStruct(ChecksumWriter.CRC_FILE_SCHEMA.indexOf("protocol")))
   }
 
   def createTestMetadata(): Metadata = {
@@ -63,7 +78,7 @@ class ChecksumReadWriteSuite extends AnyFunSuite with MockEngineUtils {
 
         override def getElements: ColumnVector = singletonStringColumnVector("c3")
       },
-      Optional.empty(),
+      Optional.of(123),
       new MapValue() { // conf
         override def getSize = 1
 
@@ -82,6 +97,38 @@ class ChecksumReadWriteSuite extends AnyFunSuite with MockEngineUtils {
       Collections.emptyList(),
       Collections.emptyList()
     )
+  }
+
+  def checkMetadata(metadata: Metadata, metadataRow: Row): Unit = {
+    assert(metadataRow.getSchema == Metadata.FULL_SCHEMA)
+    assert(metadataRow.getString(Metadata.FULL_SCHEMA.indexOf("id")) == metadata.getId)
+    assert(Optional.ofNullable(
+      metadataRow.getString(Metadata.FULL_SCHEMA.indexOf("name"))) == metadata.getName)
+    assert(Optional.ofNullable(
+      metadataRow.getString(Metadata.FULL_SCHEMA.indexOf("description"))
+    ) == metadata.getDescription)
+    assert(
+      metadataRow.getStruct(
+        Metadata.FULL_SCHEMA.indexOf("format")
+      ).getString(Format.FULL_SCHEMA.indexOf("provider")) == metadata.getFormat.getProvider)
+    assert(
+      metadataRow.getString(
+        Metadata.FULL_SCHEMA.indexOf("schemaString")) == metadata.getSchemaString
+    )
+    assert(metadataRow.getArray(
+      Metadata.FULL_SCHEMA.indexOf("partitionColumns")) == metadata.getPartitionColumns)
+    assert(Optional.ofNullable(metadataRow.getLong(
+      Metadata.FULL_SCHEMA.indexOf("createdTime"))) == metadata.getCreatedTime)
+    assert(VectorUtils.toJavaMap(metadataRow.getMap(
+      Metadata.FULL_SCHEMA.indexOf("configuration"))) == metadata.getConfiguration)
+  }
+
+  def checkProtocol(protocol: Protocol, protocolRow: Row): Unit = {
+    assert(protocolRow.getSchema == Protocol.FULL_SCHEMA)
+    assert(protocol.getMinReaderVersion ==
+      protocolRow.getInt(Protocol.FULL_SCHEMA.indexOf("minReaderVersion")))
+    assert(protocol.getMinWriterVersion ==
+      protocolRow.getInt(Protocol.FULL_SCHEMA.indexOf("minWriterVersion")))
   }
 
 
