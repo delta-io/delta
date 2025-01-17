@@ -1744,6 +1744,7 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
       val dataFilter = expr("is_even = 1")
       val randWithPartitionFilter = expr("rand() <= 0.5 and is_odd = 1")
       val randWithDataFilter = expr("rand() <= 0.5 and is_even = 1")
+      val randOrPartitionFilter = expr("rand() <= 0.5 or is_odd = 1")
 
       def getDeltaScan(filters: Seq[Column]): DeltaScan = {
         var df = spark.read.format("delta").load(path)
@@ -1791,6 +1792,14 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
             s"Unused filter should not contain rand")
         }
       }
+
+      // When an or is used, the filter does get pushed down, because we need to pull in other
+      // partitions as well
+      val scan4 = getDeltaScan(Seq(randOrPartitionFilter))
+      assert(scan4.partitionFilters.exists(_.exists { _.isInstanceOf[Rand] }),
+        "rand should be part of the partition filter in this case")
+      assert(!scan4.unusedFilters.exists(_.exists { _.isInstanceOf[Rand] }),
+        s"Unused filter should not contain rand: ${scan4.unusedFilters}")
     }
   }
 
