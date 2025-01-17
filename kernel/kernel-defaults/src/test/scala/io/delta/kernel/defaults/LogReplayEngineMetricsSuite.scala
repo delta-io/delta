@@ -579,10 +579,10 @@ class MetricsParquetHandler(config: Configuration)
   extends DefaultParquetHandler(config)
     with FileReadMetrics {
 
-  override def readParquetFiles(
-                                 fileIter: CloseableIterator[FileStatus],
-                                 physicalSchema: StructType,
-                                 predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] = {
+  override def readParquetFiles(fileIter: CloseableIterator[FileStatus],
+                                physicalSchema: StructType,
+                                predicate: Optional[Predicate]
+                               ): CloseableIterator[ColumnarBatch] = {
     val fileReadSet = fileIter.toSeq
     checkpointReadRequestSizes += fileReadSet.size
     super.readParquetFiles(
