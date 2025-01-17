@@ -26,14 +26,18 @@ import static java.lang.String.format;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.ConcurrentWriteException;
 import io.delta.kernel.internal.*;
 import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.actions.SetTransaction;
+import io.delta.kernel.internal.rowtracking.RowTracking;
+import io.delta.kernel.internal.rowtracking.RowTrackingMetadataDomain;
 import io.delta.kernel.internal.util.DomainMetadataUtils;
 import io.delta.kernel.internal.util.FileNames;
+import io.delta.kernel.utils.CloseableIterable;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import java.io.*;
@@ -61,11 +65,20 @@ public class ConflictChecker {
   // Losing transaction
   private final TransactionImpl transaction;
   private final long attemptVersion;
+  private final CloseableIterable<Row> attemptDataActions;
 
-  private ConflictChecker(SnapshotImpl snapshot, TransactionImpl transaction, long attemptVersion) {
+  // Helper states during conflict resolution
+  private Optional<Long> lastWinningRowIdHighWatermark = Optional.empty();
+
+  private ConflictChecker(
+      SnapshotImpl snapshot,
+      TransactionImpl transaction,
+      long attemptVersion,
+      CloseableIterable<Row> dataActions) {
     this.snapshot = snapshot;
     this.transaction = transaction;
     this.attemptVersion = attemptVersion;
+    this.attemptDataActions = dataActions;
   }
 
   /**
@@ -76,15 +89,22 @@ public class ConflictChecker {
    * @param snapshot {@link SnapshotImpl} of the table when the losing transaction has started
    * @param transaction {@link TransactionImpl} that encountered the conflict (a.k.a the losing
    *     transaction)
+   * @param dataActions {@link CloseableIterable} of data actions that the losing transaction is
+   *     trying to commit
    * @return {@link TransactionRebaseState} that the losing transaction needs to rebase against
    * @throws ConcurrentWriteException if there are logical conflicts between the losing transaction
    *     and the winning transactions that cannot be resolved.
    */
   public static TransactionRebaseState resolveConflicts(
-      Engine engine, SnapshotImpl snapshot, long attemptVersion, TransactionImpl transaction)
+      Engine engine,
+      SnapshotImpl snapshot,
+      long attemptVersion,
+      TransactionImpl transaction,
+      CloseableIterable<Row> dataActions)
       throws ConcurrentWriteException {
     checkArgument(transaction.isBlindAppend(), "Current support is for blind appends only.");
-    return new ConflictChecker(snapshot, transaction, attemptVersion).resolveConflicts(engine);
+    return new ConflictChecker(snapshot, transaction, attemptVersion, dataActions)
+        .resolveConflicts(engine);
   }
 
   public TransactionRebaseState resolveConflicts(Engine engine) throws ConcurrentWriteException {
@@ -120,30 +140,61 @@ public class ConflictChecker {
       throw new UncheckedIOException("Error reading actions from winning commits.", ioe);
     }
 
+    // Initialize updated actions for the next commit attempt with the current attempt's actions
+    CloseableIterable<Row> updatedDataActions = attemptDataActions;
+    List<DomainMetadata> updatedDomainMetadatas = transaction.getDomainMetadatas();
+
+    if (TableFeatures.isRowTrackingSupported(transaction.getProtocol())) {
+      updatedDomainMetadatas =
+          RowTracking.updateRowIdHighWatermarkIfNeeded(
+              snapshot,
+              lastWinningRowIdHighWatermark,
+              attemptDataActions,
+              transaction.getDomainMetadatas());
+      updatedDataActions =
+          RowTracking.assignBaseRowIdAndDefaultRowCommitVersion(
+              snapshot,
+              lastWinningRowIdHighWatermark,
+              Optional.of(attemptVersion),
+              lastWinningVersion + 1,
+              attemptDataActions);
+    }
+
     // if we get here, we have successfully rebased (i.e no logical conflicts)
     // against the winning transactions
     return new TransactionRebaseState(
         lastWinningVersion,
         getLastCommitTimestamp(
-            engine, lastWinningVersion, lastWinningTxn, winningCommitInfoOpt.get()));
+            engine, lastWinningVersion, lastWinningTxn, winningCommitInfoOpt.get()),
+        updatedDataActions,
+        updatedDomainMetadatas);
   }
 
   /**
    * Class containing the rebase state from winning transactions that the current transaction needs
    * to rebase against before attempting the commit.
    *
-   * <p>Currently, the rebase state is just the latest winning version of the table. In future once
-   * we start supporting read-after-write, domain metadata, row tracking, etc., we will have more
-   * state to add. For example read-after-write will need to know the files deleted in the winning
-   * transactions to make sure the same files are not deleted by the current (losing) transaction.
+   * <p>Currently, the rebase state is just the latest winning version of the table plus the updated
+   * data actions and domainMetadata actions to commit. In future once we start supporting
+   * read-after-write, row tracking, etc., we will have more state to add. For example
+   * read-after-write will need to know the files deleted in the winning transactions to make sure
+   * the same files are not deleted by the current (losing) transaction.
    */
   public static class TransactionRebaseState {
     private final long latestVersion;
     private final long latestCommitTimestamp;
+    private final CloseableIterable<Row> updatedDataActions;
+    private final List<DomainMetadata> updatedDomainMetadatas;
 
-    public TransactionRebaseState(long latestVersion, long latestCommitTimestamp) {
+    public TransactionRebaseState(
+        long latestVersion,
+        long latestCommitTimestamp,
+        CloseableIterable<Row> updatedDataActions,
+        List<DomainMetadata> updatedDomainMetadatas) {
       this.latestVersion = latestVersion;
       this.latestCommitTimestamp = latestCommitTimestamp;
+      this.updatedDataActions = updatedDataActions;
+      this.updatedDomainMetadatas = updatedDomainMetadatas;
     }
 
     /**
@@ -164,6 +215,14 @@ public class ConflictChecker {
      */
     public long getLatestCommitTimestamp() {
       return latestCommitTimestamp;
+    }
+
+    public CloseableIterable<Row> getUpdatedDataActions() {
+      return updatedDataActions;
+    }
+
+    public List<DomainMetadata> getUpdatedDomainMetadatas() {
+      return updatedDomainMetadatas;
     }
   }
 
@@ -209,8 +268,9 @@ public class ConflictChecker {
    * </ol>
    *
    * @param domainMetadataVector domainMetadata rows from the winning transactions
+   * @return a map of domain name to {@link DomainMetadata} from the winning transaction
    */
-  private void handleDomainMetadata(ColumnVector domainMetadataVector) {
+  private Map<String, DomainMetadata> handleDomainMetadata(ColumnVector domainMetadataVector) {
     // Build a domain metadata map from the winning transaction.
     Map<String, DomainMetadata> winningTxnDomainMetadataMap = new HashMap<>();
     DomainMetadataUtils.populateDomainMetadataMap(
@@ -223,11 +283,27 @@ public class ConflictChecker {
       DomainMetadata winningTxnDM = winningTxnDomainMetadataMap.get(domainName);
       if (winningTxnDM != null) {
         // Conflict - check if the conflict can be resolved.
-        // Currently, we don't have any domain-specific way of resolving the conflict.
-        // Domain-specific ways of resolving the conflict can be added here (e.g. for Row Tracking).
-        throw concurrentDomainMetadataAction(currentTxnDM, winningTxnDM);
+        // Domain-specific ways of resolving the conflict can be added here.
+        switch (domainName) {
+          case RowTrackingMetadataDomain.DOMAIN_NAME:
+            // We keep updating the new row ID high watermark we have seen from all winning txns.
+            // The latest one will be used to reassign row IDs later
+            final long winningRowIdHighWatermark =
+                RowTrackingMetadataDomain.fromJsonConfiguration(winningTxnDM.getConfiguration())
+                    .getRowIdHighWaterMark();
+            checkState(
+                !lastWinningRowIdHighWatermark.isPresent()
+                    || lastWinningRowIdHighWatermark.get() <= winningRowIdHighWatermark,
+                "row ID high watermark should be monotonically increasing");
+            this.lastWinningRowIdHighWatermark = Optional.of(winningRowIdHighWatermark);
+            break;
+          default:
+            throw concurrentDomainMetadataAction(currentTxnDM, winningTxnDM);
+        }
       }
     }
+
+    return winningTxnDomainMetadataMap;
   }
 
   /**
