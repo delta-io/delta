@@ -28,6 +28,7 @@ import scala.util.Try
 import scala.util.control.NonFatal
 
 import com.databricks.spark.util.TagDefinitions._
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsUtils
@@ -371,7 +372,15 @@ class DeltaLog private(
    * `read` and `write`.
    */
   private def protocolCheck(tableProtocol: Protocol, readOrWrite: String): Unit = {
-    val clientSupportedProtocol = Action.supportedProtocolVersion()
+    val unsupportedTestFeatures =
+      if (spark.conf.get(DeltaSQLConf.UNSUPPORTED_TESTING_FEATURES_ENABLED)) {
+        TableFeature.testUnsupportedFeatures.toSeq
+      } else {
+        Seq.empty
+      }
+
+    val clientSupportedProtocol =
+      Action.supportedProtocolVersion(featuresToExclude = unsupportedTestFeatures)
     // Depending on the operation, pull related protocol versions out of Protocol objects.
     // `getEnabledFeatures` is a pointer to pull reader/writer features out of a Protocol.
     val (clientSupportedVersions, tableRequiredVersion, getEnabledFeatures) = readOrWrite match {

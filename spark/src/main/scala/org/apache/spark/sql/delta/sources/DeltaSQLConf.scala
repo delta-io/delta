@@ -431,6 +431,15 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val UNSUPPORTED_TESTING_FEATURES_ENABLED =
+    buildConf("tableFeatures.dev.unsupportedTableFeatures.enabled")
+      .internal()
+      .doc(
+        """When turned on, it emulates the existence of unsupported features by the client.
+          |This config is only used for testing purposes.""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   val FAST_DROP_FEATURE_ENABLED =
     buildConf("tableFeatures.dev.fastDropFeature.enabled")
       .internal()
@@ -440,6 +449,36 @@ trait DeltaSQLConfBase {
           |for testing purposes.""".stripMargin)
       .booleanConf
       .createWithDefault(false)
+
+  val FAST_DROP_FEATURE_DV_DISCOVERY_IN_VACUUM_DISABLED =
+    buildConf("tableFeatures.dev.fastDropFeature.DVDiscoveryInVacuum.disabled")
+      .internal()
+      .doc(
+        """Whether to allow DV discovery in Vacuum.
+          |This is config is only intended for testing purposes.""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
+  val FAST_DROP_FEATURE_GENERATE_DV_TOMBSTONES =
+    buildConf("tableFeatures.dev.fastDropFeature.generateDVTombstones.enabled")
+      .internal()
+      .doc(
+        """Whether to generate DV tombstones when dropping deletion vectors.
+          |These make sure deletion vector files won't accidentally be vacuumed by clients
+          |that do not support DVs.""".stripMargin)
+      .booleanConf
+      .createWithDefaultFunction(() => SQLConf.get.getConf(DeltaSQLConf.FAST_DROP_FEATURE_ENABLED))
+
+  val FAST_DROP_FEATURE_DV_TOMBSTONE_COUNT_THRESHOLD =
+    buildConf("tableFeatures.dev.fastDropFeature.dvTombstoneCountThreshold")
+      .doc(
+        """The maximum number of DV tombstones we are allowed store to memory when dropping
+          |deletion vectors. When the resulting number of DV tombstones is higher, we use
+          |a special commit for large outputs. This does not materialize results to memory
+          |but does not retry in case of a conflict.""".stripMargin)
+      .intConf
+      .checkValue(_ >= 0, "DVTombstoneCountThreshold must not be negative.")
+      .createWithDefault(10000)
 
   val DELTA_MAX_SNAPSHOT_LINEAGE_LENGTH =
     buildConf("maxSnapshotLineageLength")
@@ -1341,6 +1380,16 @@ trait DeltaSQLConfBase {
         """
           |When enabled, replaceWhere on arbitrary expression and arbitrary columns will produce
           |results for CDF. If disabled, it will fall back to the old behavior.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val OVERWRITE_REMOVE_METRICS_ENABLED =
+    buildConf("insertOverwrite.removeMetrics.enabled")
+      .internal()
+      .doc(
+        """
+          |When enabled, insert operations in overwrite mode will add metrics describing
+          |removed data to table's history""".stripMargin)
       .booleanConf
       .createWithDefault(true)
 

@@ -24,6 +24,7 @@ import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.metrics.MetricsReport;
 import io.delta.kernel.metrics.ScanReport;
 import io.delta.kernel.metrics.SnapshotReport;
+import io.delta.kernel.metrics.TransactionReport;
 import io.delta.kernel.types.StructType;
 
 /** Defines JSON serializers for {@link MetricsReport} types */
@@ -50,6 +51,16 @@ public final class MetricsReportSerializers {
    */
   public static String serializeScanReport(ScanReport scanReport) throws JsonProcessingException {
     return OBJECT_MAPPER.writeValueAsString(scanReport);
+  }
+
+  /**
+   * Serializes a {@link TransactionReport} to a JSON string
+   *
+   * @throws JsonProcessingException
+   */
+  public static String serializeTransactionReport(TransactionReport transactionReport)
+      throws JsonProcessingException {
+    return OBJECT_MAPPER.writeValueAsString(transactionReport);
   }
 
   /////////////////////////////////

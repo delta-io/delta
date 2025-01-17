@@ -83,6 +83,15 @@ public interface TransactionBuilder {
   TransactionBuilder withTableProperties(Engine engine, Map<String, String> properties);
 
   /**
+   * Set the maximum number of times to retry a transaction if a concurrent write is detected. This
+   * defaults to 200
+   *
+   * @param maxRetries The number of times to retry
+   * @return updated {@link TransactionBuilder} instance
+   */
+  TransactionBuilder withMaxRetries(int maxRetries);
+
+  /**
    * Build the transaction. Also validates the given info to ensure that a valid transaction can be
    * created.
    *

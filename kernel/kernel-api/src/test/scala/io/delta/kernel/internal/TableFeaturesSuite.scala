@@ -80,13 +80,28 @@ class TableFeaturesSuite extends AnyFunSuite {
     }
   }
 
-  Seq("invariants", "checkConstraints", "generatedColumns", "allowColumnDefaults", "changeDataFeed",
+  Seq("checkConstraints", "generatedColumns", "allowColumnDefaults", "changeDataFeed",
     "identityColumns", "deletionVectors", "timestampNtz", "v2Checkpoint", "icebergCompatV1",
-    "icebergCompatV2", "clustering",
-      "vacuumProtocolCheck").foreach { unsupportedWriterFeature =>
+    "icebergCompatV2", "clustering", "vacuumProtocolCheck").foreach { unsupportedWriterFeature =>
     test(s"validateWriteSupported: protocol 7 with $unsupportedWriterFeature") {
       checkUnsupported(createTestProtocol(minWriterVersion = 7, unsupportedWriterFeature))
     }
+  }
+
+  test("validateWriteSupported: protocol 7 with invariants, schema doesn't contain invariants") {
+    checkSupported(
+      createTestProtocol(minWriterVersion = 7, "invariants"),
+      metadata = createTestMetadata(),
+      schema = createTestSchema(includeInvariant = false)
+    )
+  }
+
+  test("validateWriteSupported: protocol 7 with invariants, schema contains invariants") {
+    checkUnsupported(
+      createTestProtocol(minWriterVersion = 7, "invariants"),
+      metadata = createTestMetadata(),
+      schema = createTestSchema(includeInvariant = true)
+    )
   }
 
   def checkSupported(

@@ -20,6 +20,7 @@ import scala.collection.mutable
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.DMLUtils.TaggedCommitData
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -346,6 +347,9 @@ case class WriteIntoDelta(
     if (replaceWhere.nonEmpty && replaceOnDataColsEnabled &&
         sparkSession.conf.get(DeltaSQLConf.REPLACEWHERE_METRICS_ENABLED)) {
       registerReplaceWhereMetrics(sparkSession, txn, newFiles, deletedFiles)
+    } else if (mode == SaveMode.Overwrite &&
+        sparkSession.conf.get(DeltaSQLConf.OVERWRITE_REMOVE_METRICS_ENABLED)) {
+      registerOverwriteRemoveMetrics(sparkSession, txn, deletedFiles)
     }
 
     val fileActions = if (rearrangeOnly) {

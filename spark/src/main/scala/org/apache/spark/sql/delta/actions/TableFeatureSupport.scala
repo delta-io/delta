@@ -555,7 +555,7 @@ object DropTableFeatureUtils extends DeltaLogging {
       retryOnFailure: Boolean = false): Boolean = {
     val log = table.deltaLog
     val snapshot = log.update(checkIfUpdatedSinceTs = Some(snapshotRefreshStartTs))
-    val emptyCommitTS = System.nanoTime()
+    val emptyCommitTS = table.deltaLog.clock.nanoTime()
     log.startTransaction(table.catalogTable, Some(snapshot))
       .commit(Nil, DeltaOperations.EmptyCommit)
 

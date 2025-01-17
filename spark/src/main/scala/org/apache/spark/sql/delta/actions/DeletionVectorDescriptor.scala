@@ -21,6 +21,7 @@ import java.net.URI
 import java.util.{Base64, UUID}
 
 import org.apache.spark.sql.delta.DeltaErrors
+import org.apache.spark.sql.delta.DeltaUDF
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{Codec, DeltaEncoder, JsonUtils}
 import com.fasterxml.jackson.annotation.JsonIgnore
@@ -32,7 +33,6 @@ import org.apache.spark.sql.{Column, Encoder}
 import org.apache.spark.sql.functions.{concat, lit, when}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
-import org.apache.spark.util.Utils
 
 /** Information about a deletion vector attached to a file action. */
 case class DeletionVectorDescriptor(
@@ -128,6 +128,10 @@ case class DeletionVectorDescriptor(
     }
   }
 
+  /** Returns the url encoded absolute path of the deletion vector. */
+  def urlEncodedPath(tablePath: Path): String =
+    SparkPath.fromPath(absolutePath(tablePath)).urlEncoded
+
   /**
    * Produce a copy of this DV, but using an absolute path.
    *
@@ -136,10 +140,9 @@ case class DeletionVectorDescriptor(
   def copyWithAbsolutePath(tableLocation: Path): DeletionVectorDescriptor = {
     storageType match {
       case UUID_DV_MARKER =>
-        val absolutePath = this.absolutePath(tableLocation)
         this.copy(
           storageType = PATH_DV_MARKER,
-          pathOrInlineDv = SparkPath.fromPath(absolutePath).urlEncoded)
+          pathOrInlineDv = urlEncodedPath(tableLocation))
       case PATH_DV_MARKER | INLINE_DV_MARKER => this.copy()
     }
   }
@@ -215,6 +218,10 @@ object DeletionVectorDescriptor {
   final val INLINE_DV_MARKER: String = "i"
   final val UUID_DV_MARKER: String = "u"
 
+  private final val deletionVectorFileNameRegex =
+    raw"${new Path(DELETION_VECTOR_FILE_NAME_CORE).toUri}_([^.]+)\.bin".r
+  private final val deletionVectorFileNamePattern = deletionVectorFileNameRegex.pattern
+
   final lazy val STRUCT_TYPE: StructType =
     Action.addFileSchema("deletionVector").dataType.asInstanceOf[StructType]
 
@@ -261,6 +268,33 @@ object DeletionVectorDescriptor {
       pathOrInlineDv = encodeData(data),
       sizeInBytes = data.length,
       cardinality = cardinality)
+
+  /**
+   * Returns whether the path points to a deletion vector file.
+   * Note, external writers are no enforced to create DV files with the same naming convertions.
+   * This function is intended for testing. */
+  private[delta] def isDeletionVectorPath(path: Path): Boolean =
+    deletionVectorFileNamePattern.matcher(path.getName).matches()
+
+  /** Only for testing. */
+  private[delta] def isDeletionVectorPath(path: String): Boolean =
+    isDeletionVectorPath(new Path(path))
+
+  /** Same as above but as a column expression. Only for testing. */
+  private[delta] def isDeletionVectorPath(pathCol: Column): Column =
+    DeltaUDF.booleanFromString(isDeletionVectorPath)(pathCol)
+
+  /** Returns a boolean column that corresponds to whether each deletion vector is inline. */
+  def isInline(dv: Column): Column =
+    DeltaUDF.booleanFromDeletionVectorDescriptor(_.isInline)(dv)
+
+  /**
+   * Returns a column with the url encoded deletion vector paths.
+   * WARNING: It throws an exception if it encounters any inline DVs. The caller is responsible
+   * for handling these separately.
+   */
+  def urlEncodedPath(deletionVectorCol: Column, tablePath: Path): Column =
+    DeltaUDF.stringFromDeletionVectorDescriptor(_.urlEncodedPath(tablePath))(deletionVectorCol)
 
   /**
    * This produces the same output as [[DeletionVectorDescriptor.uniqueId]] but as a column

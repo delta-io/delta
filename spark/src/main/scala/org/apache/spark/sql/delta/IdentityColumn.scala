@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import scala.collection.mutable
 
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -137,15 +138,21 @@ object IdentityColumn extends DeltaLogging {
         if (positiveStep) max(col) else min(col)
     }
     val unresolvedExpr = to_json(array(aggregates: _*))
+
     // Resolve the collection expression by constructing a query to select the expression from a
     // table with the statsSchema and get the analyzed expression.
-    val resolvedExpr = Dataset.ofRows(spark, LocalRelation(statsDataSchema))
-      .select(unresolvedExpr).queryExecution.analyzed.expressions.head
+    val resolvedPlan = Dataset.ofRows(spark, LocalRelation(statsDataSchema))
+      .select(unresolvedExpr).queryExecution.analyzed
+
+    // We have to use the new attributes with regenerated attribute IDs, because the Analyzer
+    // doesn't guarantee that attributes IDs will stay the same
+    val newStatsDataSchema = resolvedPlan.children.head.output
+
     Some(new DeltaIdentityColumnStatsTracker(
       hadoopConf,
       path,
-      statsDataSchema,
-      resolvedExpr,
+      newStatsDataSchema,
+      resolvedPlan.expressions.head,
       identityColumnInfo
     ))
   }

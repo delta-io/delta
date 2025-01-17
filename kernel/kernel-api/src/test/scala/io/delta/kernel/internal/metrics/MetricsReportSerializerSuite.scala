@@ -18,7 +18,7 @@ package io.delta.kernel.internal.metrics
 import java.util.{Optional, UUID}
 
 import io.delta.kernel.expressions.{Column, Literal, Predicate}
-import io.delta.kernel.metrics.{ScanReport, SnapshotReport}
+import io.delta.kernel.metrics.{ScanReport, SnapshotReport, TransactionReport}
 import io.delta.kernel.types.{IntegerType, StructType}
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -96,6 +96,99 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
     val snapshotReport2 = SnapshotReportImpl.forSuccess(snapshotContext2)
     testSnapshotReport(snapshotReport2)
   }
+
+  private def testTransactionReport(transactionReport: TransactionReport): Unit = {
+    val exception: Optional[String] = transactionReport.getException().map(_.toString)
+    val snapshotReportUUID: Optional[String] =
+      transactionReport.getSnapshotReportUUID().map(_.toString)
+    val transactionMetrics = transactionReport.getTransactionMetrics
+
+    val expectedJson =
+      s"""
+         |{"tablePath":"${transactionReport.getTablePath()}",
+         |"operationType":"Transaction",
+         |"reportUUID":"${transactionReport.getReportUUID()}",
+         |"exception":${optionToString(exception)},
+         |"operation":"${transactionReport.getOperation()}",
+         |"engineInfo":"${transactionReport.getEngineInfo()}",
+         |"baseSnapshotVersion":${transactionReport.getBaseSnapshotVersion()},
+         |"snapshotReportUUID":${optionToString(snapshotReportUUID)},
+         |"committedVersion":${optionToString(transactionReport.getCommittedVersion())},
+         |"transactionMetrics":{
+         |"totalCommitDurationNs":${transactionMetrics.getTotalCommitDurationNs},
+         |"numCommitAttempts":${transactionMetrics.getNumCommitAttempts},
+         |"numAddFiles":${transactionMetrics.getNumAddFiles},
+         |"numRemoveFiles":${transactionMetrics.getNumRemoveFiles},
+         |"numTotalActions":${transactionMetrics.getNumTotalActions}
+         |}
+         |}
+         |""".stripMargin.replaceAll("\n", "")
+    assert(expectedJson == MetricsReportSerializers.serializeTransactionReport(transactionReport))
+  }
+
+  test("TransactionReport serializer") {
+    val snapshotReport1 = SnapshotReportImpl.forSuccess(
+      SnapshotQueryContext.forVersionSnapshot("/table/path", 1))
+    val exception = new RuntimeException("something something failed")
+
+    // Initialize transaction metrics and record some values
+    val transactionMetrics1 = new TransactionMetrics()
+    transactionMetrics1.totalCommitTimer.record(200)
+    transactionMetrics1.commitAttemptsCounter.increment(2)
+    transactionMetrics1.addFilesCounter.increment(82)
+    transactionMetrics1.totalActionsCounter.increment(90)
+
+    val transactionReport1 = new TransactionReportImpl(
+      "/table/path",
+      "test-operation",
+      "test-engine",
+      Optional.of(2), /* committedVersion */
+      transactionMetrics1,
+      snapshotReport1,
+      Optional.of(exception)
+    )
+
+    // Manually check expected JSON
+    val expectedJson =
+      s"""
+         |{"tablePath":"/table/path",
+         |"operationType":"Transaction",
+         |"reportUUID":"${transactionReport1.getReportUUID()}",
+         |"exception":"$exception",
+         |"operation":"test-operation",
+         |"engineInfo":"test-engine",
+         |"baseSnapshotVersion":1,
+         |"snapshotReportUUID":"${snapshotReport1.getReportUUID}",
+         |"committedVersion":2,
+         |"transactionMetrics":{
+         |"totalCommitDurationNs":200,
+         |"numCommitAttempts":2,
+         |"numAddFiles":82,
+         |"numRemoveFiles":0,
+         |"numTotalActions":90
+         |}
+         |}
+         |""".stripMargin.replaceAll("\n", "")
+    assert(expectedJson == MetricsReportSerializers.serializeTransactionReport(transactionReport1))
+    // Check with test function
+    testTransactionReport(transactionReport1)
+
+    // Initialize snapshot report for the empty table case
+    val snapshotReport2 = SnapshotReportImpl.forSuccess(
+      SnapshotQueryContext.forVersionSnapshot("/table/path", -1))
+    // Empty option for alll possible fields (committedVersion, exception)
+    val transactionReport2 = new TransactionReportImpl(
+      "/table/path",
+      "test-operation-2",
+      "test-engine-2",
+      Optional.empty(), /* committedVersion */
+      new TransactionMetrics(), // empty/un-incremented transaction metrics
+      snapshotReport2,
+      Optional.empty() /* exception */
+    )
+    testTransactionReport(transactionReport2)
+  }
+
 
   private def testScanReport(scanReport: ScanReport): Unit = {
     val exception: Optional[String] = scanReport.getException().map(_.toString)

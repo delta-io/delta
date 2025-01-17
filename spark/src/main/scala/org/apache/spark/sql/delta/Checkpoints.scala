@@ -25,6 +25,7 @@ import scala.util.Try
 import scala.util.control.NonFatal
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.{Action, CheckpointMetadata, Metadata, SidecarFile, SingleAction}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
