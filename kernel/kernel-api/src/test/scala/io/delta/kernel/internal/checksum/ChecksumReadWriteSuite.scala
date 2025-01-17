@@ -130,9 +130,6 @@ class ChecksumReadWriteSuite extends AnyFunSuite with MockEngineUtils {
     assert(protocol.getMinWriterVersion ==
       protocolRow.getInt(Protocol.FULL_SCHEMA.indexOf("minWriterVersion")))
   }
-
-
-
 }
 
 class MockCheckSumFileJsonWriter extends BaseMockJsonHandler {
