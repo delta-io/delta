@@ -660,6 +660,14 @@ object DeletionVectorsTableFeature
     DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.fromMetaData(metadata)
   }
 
+  /**
+   * Validate whether all deletion vector traces are removed from the snapshot.
+   *
+   * Note, we do not need to validate whether DV tombstones exist. These are added in the
+   * pre-downgrade stage and always cover all DVs within the retention period. This invariant can
+   * never change unless we enable again DVs. If DVs are enabled before the protocol downgrade
+   * we will abort the operation.
+   */
   override def validateRemoval(snapshot: Snapshot): Boolean = {
     val dvsWritable = DeletionVectorUtils.deletionVectorsWritable(snapshot)
     val dvsExist = snapshot.numDeletionVectorsOpt.getOrElse(0L) > 0

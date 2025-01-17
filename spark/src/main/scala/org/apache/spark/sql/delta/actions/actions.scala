@@ -959,6 +959,10 @@ case class RemoveFile(
   @JsonIgnore
   override def getFileSize: Long = size.getOrElse(0L)
 
+  /** Only for testing. */
+  @JsonIgnore
+  private [delta] def isDVTombstone: Boolean = DeletionVectorDescriptor.isDeletionVectorPath(new Path(path))
+
 }
 // scalastyle:on
 

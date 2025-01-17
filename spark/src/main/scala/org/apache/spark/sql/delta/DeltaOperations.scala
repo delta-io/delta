@@ -487,6 +487,21 @@ object DeltaOperations {
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
   }
+
+  /**
+   * Recorded when dropping deletion vectors. Deletion Vector tombstones directly reference
+   * deletion vector files within the retention period. This is to protect them from deletion
+   * against oblivious writers when vacuuming.
+   */
+  object AddDeletionVectorsTombstones extends Operation("Deletion Vector Tombstones") {
+    override val parameters: Map[String, Any] = Map.empty
+
+    // This operation should only introduce RemoveFile actions.
+    override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
+
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
+  }
+
   /** Recorded when columns are added. */
   case class AddColumns(
       colsToAdd: Seq[QualifiedColTypeWithPositionForLog]) extends Operation("ADD COLUMNS") {
