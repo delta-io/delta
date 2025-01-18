@@ -80,7 +80,7 @@ trait SpaceFillingCurveClustering extends MultiDimClustering {
     val mdcCol = getClusteringExpression(cols, numRanges)
     val repartitionKeyColName = s"${UUID.randomUUID().toString}-rpKey1"
 
-    val repartitionedDf = if (addNoise) {
+    var repartitionedDf = if (addNoise) {
       val randByteColName = s"${UUID.randomUUID().toString}-rpKey2"
       val randByteCol = randomizationExpressionOpt.getOrElse((rand() * 255 - 128).cast(ByteType))
       df.withColumn(repartitionKeyColName, mdcCol).withColumn(randByteColName, randByteCol)
@@ -92,10 +92,10 @@ trait SpaceFillingCurveClustering extends MultiDimClustering {
     }
 
     if (sortWithinFiles) {
-      repartitionDf = repartitionedDf.sortWithinPartitions(repartitionKeyColName)
+      repartitionedDf = repartitionedDf.sortWithinPartitions(repartitionKeyColName)
     }
 
-    repartitionDf.drop(repartitionKeyColName)
+    repartitionedDf.drop(repartitionKeyColName)
 
   }
 }

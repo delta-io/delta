@@ -1434,7 +1434,7 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
-  val MDC_SORT_WITHIN_PARTITIONS =
+  val MDC_SORT_WITHIN_FILES =
     SQLConf.buildConf("spark.databricks.io.skipping.mdc.sortWithinFiles")
       .internal()
       .doc("If enabled, sort within files by the specified MDC curve. " +

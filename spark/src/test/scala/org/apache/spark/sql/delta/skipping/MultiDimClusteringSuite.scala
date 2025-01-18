@@ -150,7 +150,7 @@ class MultiDimClusteringSuite extends QueryTest
 
   test("ensure records in each partition are sorted according to Z-order values") {
     withSQLConf(
-      MDC_SORT_WITHIN_PARTITIONS.key -> "true",
+      MDC_SORT_WITHIN_FILES.key -> "true",
       MDC_ADD_NOISE.key -> "false") {
       val data = Seq(
         // "c1" -> "c2", // (rangeId_c1, rangeId_c2) -> ZOrder (decimal Z-Order)
@@ -192,7 +192,7 @@ class MultiDimClusteringSuite extends QueryTest
 
   test("ensure records in each partition are sorted according to Hilbert curve values") {
     withSQLConf(
-      MDC_SORT_WITHIN_PARTITIONS.key -> "true",
+      MDC_SORT_WITHIN_FILES.key -> "true",
       MDC_ADD_NOISE.key -> "false") {
       val data = Seq(
         // "c1" -> "c2", // (rangeId_c1, rangeId_c2) -> Decimal Hilbert index
