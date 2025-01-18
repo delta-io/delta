@@ -39,6 +39,7 @@ import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSourceUtils, De
 import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.spark.sql.delta.tablefeatures.DropFeature
 import org.apache.spark.sql.delta.util.PartitionUtils
+import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.fs.Path
 
@@ -155,7 +156,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
     // Note: Spark generates the table location for managed tables in
     // `DeltaCatalog#delegate#createTable`, so `isManagedLocation` should never be true if
     // Unity Catalog is not involved. For safety we also check `isUnityCatalog` here.
-    val respectManagedLoc = isUnityCatalog || org.apache.spark.util.Utils.isTesting
+    val respectManagedLoc = isUnityCatalog || DeltaUtils.isTesting
     val tableType = if (location.isEmpty || (isManagedLocation && respectManagedLoc)) {
       CatalogTableType.MANAGED
     } else {
