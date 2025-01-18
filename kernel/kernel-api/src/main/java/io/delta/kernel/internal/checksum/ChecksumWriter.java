@@ -37,6 +37,7 @@ import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+/** Writers for writing checksum files from a snapshot */
 public class ChecksumWriter {
 
   private static final Logger log = LoggerFactory.getLogger(ChecksumWriter.class);
@@ -59,6 +60,12 @@ public class ChecksumWriter {
     this.logPath = logPath;
   }
 
+  /**
+   * Writes a checksum file in a best-effort manner from a post commit snapshot, write will only
+   * process if all required fields, including NumFiles and TableSizeBytes, are collected.
+   *
+   * @return true if checksum file is successfully written, false otherwise.
+   */
   public boolean maybeWriteCheckSum(SnapshotHint postCommitSnapshot, String tnxId) {
     // No sufficient information to write checksum file.
     if (!postCommitSnapshot.getNumFiles().isPresent()
