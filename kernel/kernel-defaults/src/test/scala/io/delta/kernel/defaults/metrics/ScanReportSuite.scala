@@ -316,7 +316,7 @@ class ScanReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         expectException = true,
         expectedNumAddFiles = 0,
         expectedNumAddFilesFromDeltaFiles = 0,
-        expectedNumActiveAddFiles = 0,
+        expectedNumActiveAddFiles = 0
       )
     }
   }
