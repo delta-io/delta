@@ -1435,11 +1435,11 @@ trait DeltaSQLConfBase {
       .createWithDefault(true)
 
   val MDC_SORT_WITHIN_PARTITIONS =
-    SQLConf.buildConf("spark.databricks.io.skipping.mdc.sortWithinPartitions")
+    SQLConf.buildConf("spark.databricks.io.skipping.mdc.sortWithinFiles")
       .internal()
-      .doc("If enabled, partitions are sorted on Z-order values for MDC. " +
-         "This co-locates records with the same Z-order values in row groups, " +
-         "which enables data skipping on the Parquet level.")
+      .doc("If enabled, sort within files by the specified MDC curve. " +
+         "This might improve row-group skipping and data compression, at " +
+         "the cost of additional overhead for sorting.")
       .booleanConf
       .createWithDefault(false)
 
