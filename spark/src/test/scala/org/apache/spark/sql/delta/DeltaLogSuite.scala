@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta
 
 import java.io.{BufferedReader, File, InputStreamReader, IOException}
 import java.nio.charset.StandardCharsets
-import java.util.Locale
+import java.util.{Locale, Optional}
 
 import scala.collection.JavaConverters._
 import scala.language.postfixOps
@@ -34,6 +34,7 @@ import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.scala.DefaultScalaModule
+import io.delta.storage.commit.TableDescriptor
 import org.apache.hadoop.fs.Path
 import org.apache.hadoop.fs.permission.FsPermission
 
@@ -410,6 +411,9 @@ class DeltaLogSuite extends QueryTest
           }
         }
 
+        val checksumFilePath = FileNames.checksumFile(log.logPath, log.snapshot.version)
+        removeProtocolAndMetadataFromChecksumFile(checksumFilePath)
+
         {
           // Create an incomplete checkpoint without the action and overwrite the
           // original checkpoint
@@ -506,8 +510,9 @@ class DeltaLogSuite extends QueryTest
         // file.
         val oc = CommitCoordinatorProvider.getCommitCoordinatorClient(
           "tracking-in-memory", Map.empty[String, String], spark)
-        val commitResponse = oc.getCommits(
-          deltaLog.logPath, Map.empty[String, String].asJava, 2, null)
+        val tableDesc =
+          new TableDescriptor(deltaLog.logPath, Optional.empty(), Map.empty[String, String].asJava)
+        val commitResponse = oc.getCommits(tableDesc, 2, null)
         if (!commitResponse.getCommits.isEmpty) {
           val path = commitResponse.getCommits.asScala.last.getFileStatus.getPath
           fs.delete(path, true)
@@ -592,7 +597,7 @@ class DeltaLogSuite extends QueryTest
           Iterator(JsonUtils.toJson(add.wrap)),
           overwrite = false,
           deltaLog.newDeltaHadoopConf())
-        deltaLog
+        (deltaLog, None)
       }
       assert(snapshot.version === 0)
 
@@ -619,8 +624,9 @@ class DeltaLogSuite extends QueryTest
         // file.
         val oc = CommitCoordinatorProvider.getCommitCoordinatorClient(
           "tracking-in-memory", Map.empty[String, String], spark)
-        val commitResponse = oc.getCommits(
-          log.logPath, Map.empty[String, String].asJava, 1, null)
+        val tableDesc =
+          new TableDescriptor(log.logPath, Optional.empty(), Map.empty[String, String].asJava)
+        val commitResponse = oc.getCommits(tableDesc, 1, null)
         if (!commitResponse.getCommits.isEmpty) {
           commitFilePath = commitResponse.getCommits.asScala.head.getFileStatus.getPath
         }
@@ -788,6 +794,62 @@ class DeltaLogSuite extends QueryTest
     }
   }
 
+  test("checksum file should contain protocol and metadata") {
+    withSQLConf(
+      DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true",
+      DeltaSQLConf.USE_PROTOCOL_AND_METADATA_FROM_CHECKSUM_ENABLED.key -> "true"
+    ) {
+      withTempDir { dir =>
+        val path = new Path("file://" + dir.getAbsolutePath)
+        val log = DeltaLog.forTable(spark, path)
+
+        val txn = log.startTransaction()
+        val files = (1 to 10).map(f => createTestAddFile(encodedPath = f.toString))
+        txn.commitManually(files: _*)
+        val metadata = log.snapshot.metadata
+        val protocol = log.snapshot.protocol
+        DeltaLog.clearCache()
+
+        val readLog = DeltaLog.forTable(spark, path)
+        val checksum = readLog.snapshot.checksumOpt.get
+        assert(checksum.metadata != null)
+        assert(checksum.protocol != null)
+        assert(checksum.metadata.equals(metadata))
+        assert(checksum.protocol.equals(protocol))
+      }
+    }
+  }
+
+  test("checksum reader should be able to read incomplete checksum file without " +
+    "protocol and metadata") {
+    withSQLConf(
+      DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true",
+      DeltaSQLConf.USE_PROTOCOL_AND_METADATA_FROM_CHECKSUM_ENABLED.key -> "true"
+    ) {
+      withTempDir { dir =>
+        val path = new Path("file://" + dir.getAbsolutePath)
+        val log = DeltaLog.forTable(spark, path)
+
+        val txn = log.startTransaction()
+        val files = (1 to 10).map(f => createTestAddFile(encodedPath = f.toString))
+        txn.commitManually(files: _*)
+        val metadata = log.snapshot.metadata
+        val protocol = log.snapshot.protocol
+        DeltaLog.clearCache()
+        val checksumFilePath = FileNames.checksumFile(log.logPath, 0L)
+        removeProtocolAndMetadataFromChecksumFile(checksumFilePath)
+
+        val readLog = DeltaLog.forTable(spark, path)
+        val checksum = readLog.snapshot.checksumOpt.get
+        assert(checksum.metadata == null)
+        assert(checksum.protocol == null)
+
+        // check we are still able to read protocol and metadata from checkpoint
+        assert(readLog.snapshot.metadata.equals(metadata))
+        assert(readLog.snapshot.protocol.equals(protocol))
+      }
+    }
+  }
 }
 
 class CoordinatedCommitsBatchBackfill1DeltaLogSuite extends DeltaLogSuite {

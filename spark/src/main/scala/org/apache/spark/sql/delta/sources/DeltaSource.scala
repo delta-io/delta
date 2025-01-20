@@ -33,6 +33,7 @@ import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.storage.{ClosableIterator, SupportsRewinding}
 import org.apache.spark.sql.delta.storage.ClosableIterator._
 import org.apache.spark.sql.delta.util.{DateTimeUtils, TimestampFormatter}
+import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.fs.FileStatus
 
 import org.apache.spark.internal.MDC
@@ -215,7 +216,7 @@ trait DeltaSourceBase extends Source
   @volatile protected var hasCheckedReadIncompatibleSchemaChangesOnStreamStart: Boolean = false
 
   override val schema: StructType = {
-    val readSchema = DeltaTableUtils.removeInternalMetadata(spark, readSchemaAtSourceInit)
+    val readSchema = DeltaTableUtils.removeInternalWriterMetadata(spark, readSchemaAtSourceInit)
     val readSchemaWithCdc = if (options.readChangeFeed) {
       CDCReader.cdcReadSchema(readSchema)
     } else {
@@ -240,7 +241,7 @@ trait DeltaSourceBase extends Source
   private var isTriggerAvailableNow = false
 
   override def prepareForTriggerAvailableNow(): Unit = {
-    logInfo("The streaming query reports to use Trigger.AvailableNow.")
+    logInfo(log"The streaming query reports to use Trigger.AvailableNow.")
     isTriggerAvailableNow = true
   }
 
@@ -792,7 +793,7 @@ case class DeltaSource(
     val (result, duration) = Utils.timeTakenMs {
       var iter = if (isInitialSnapshot) {
         Iterator(1, 2).flatMapWithClose { // so that the filterAndIndexDeltaLogs call is lazy
-          case 1 => getSnapshotAt(fromVersion).toClosable
+          case 1 => getSnapshotAt(fromVersion)._1.toClosable
           case 2 => filterAndIndexDeltaLogs(fromVersion + 1)
         }
       } else {
@@ -845,8 +846,10 @@ case class DeltaSource(
   /**
    * This method computes the initial snapshot to read when Delta Source was initialized on a fresh
    * stream.
+   * @return A tuple where the first element is an iterator of IndexedFiles and the second element
+   *         is the in-commit timestamp of the initial snapshot if available.
    */
-  protected def getSnapshotAt(version: Long): Iterator[IndexedFile] = {
+  protected def getSnapshotAt(version: Long): (Iterator[IndexedFile], Option[Long]) = {
     if (initialState == null || version != initialStateVersion) {
       super[DeltaSourceBase].cleanUpSnapshotResources()
       val snapshot = getSnapshotFromDeltaLog(version)
@@ -879,7 +882,12 @@ case class DeltaSource(
         )
       }
     }
-    addBeginAndEndIndexOffsetsForVersion(version, initialState.iterator())
+    val inCommitTimestampOpt =
+      Option.when(
+          DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(initialState.snapshot.metadata)) {
+        initialState.snapshot.timestamp
+      }
+    (addBeginAndEndIndexOffsetsForVersion(version, initialState.iterator()), inCommitTimestampOpt)
   }
 
   /**

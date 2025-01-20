@@ -16,15 +16,16 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.hadoop.fs.Path
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.Column
 import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.execution.streaming.MemoryStream
+import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.Trigger
 import org.apache.spark.sql.types.StringType
@@ -46,8 +47,8 @@ class EvolvabilitySuite extends EvolvabilitySuiteBase with DeltaSQLCommandTest {
 
   test("serialized partition values must contain null values") {
     val tempDir = Utils.createTempDir().toString
-    val df1 = spark.range(5).withColumn("part", Column(Literal(null, StringType)))
-    val df2 = spark.range(5).withColumn("part", Column(Literal("1")))
+    val df1 = spark.range(5).withColumn("part", lit(null).cast(StringType))
+    val df2 = spark.range(5).withColumn("part", lit("1"))
     df1.union(df2).coalesce(1).write.partitionBy("part").format("delta").save(tempDir)
 
     // Clear the cache
@@ -89,7 +90,14 @@ class EvolvabilitySuite extends EvolvabilitySuiteBase with DeltaSQLCommandTest {
 
   test("transaction log schema evolvability - batch change data read") {
     withTempDir { dir =>
-      withSQLConf(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "true") {
+      withSQLConf(
+        DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "true",
+        // All files verification will always fail in this test since we the extra column
+        // will not be present in the `allFiles` of the CRC.
+        DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_VERIFICATION_MODE_ENABLED.key -> "false",
+        DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_FORCE_VERIFICATION_MODE_FOR_NON_UTC_ENABLED.key ->
+          "false"
+      ) {
         EvolvabilitySuiteBase.generateTransactionLogWithExtraColumn(spark, dir.getAbsolutePath)
         spark.sql(s"UPDATE delta.`${dir.getAbsolutePath}` SET value = 10")
         spark.read.format("delta").option("readChangeFeed", "true")
@@ -104,7 +112,14 @@ class EvolvabilitySuite extends EvolvabilitySuiteBase with DeltaSQLCommandTest {
 
   test("transaction log schema evolvability - streaming change data read") {
     withTempDir { dir =>
-      withSQLConf(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "true") {
+      withSQLConf(
+        DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "true",
+        // All files verification will always fail in this test since we the extra column
+        // will not be present in the `allFiles` of the CRC.
+        DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_VERIFICATION_MODE_ENABLED.key -> "false",
+        DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_FORCE_VERIFICATION_MODE_FOR_NON_UTC_ENABLED.key ->
+          "false"
+      ) {
         EvolvabilitySuiteBase.generateTransactionLogWithExtraColumn(spark, dir.getAbsolutePath)
         spark.sql(s"UPDATE delta.`${dir.getAbsolutePath}` SET value = 10")
         val query = spark.readStream.format("delta")

@@ -40,7 +40,7 @@ import org.apache.spark.sql.catalyst.expressions.InSet
 import org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral
 import org.apache.spark.sql.catalyst.plans.logical.Filter
 import org.apache.spark.sql.execution.FileSourceScanExec
-import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
+import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelationWithTable}
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.functions.{asc, col, expr, lit, map_values, struct}
 import org.apache.spark.sql.internal.SQLConf
@@ -215,9 +215,7 @@ class DeltaSuite extends QueryTest
 
     // Verify the correct partitioning schema is picked up
     val hadoopFsRelations = df.queryExecution.analyzed.collect {
-      case LogicalRelation(baseRelation, _, _, _) if
-      baseRelation.isInstanceOf[HadoopFsRelation] =>
-        baseRelation.asInstanceOf[HadoopFsRelation]
+      case LogicalRelationWithTable(h: HadoopFsRelation, _) => h
     }
     assert(hadoopFsRelations.size === 1)
     assert(hadoopFsRelations.head.partitionSchema.exists(_.name == "is_odd"))
@@ -1305,8 +1303,8 @@ class DeltaSuite extends QueryTest
           .save(tempDir.toString)
       }
       checkError(
-        exception = e,
-        errorClass = "DELTA_FAILED_TO_MERGE_FIELDS",
+        e,
+        "DELTA_FAILED_TO_MERGE_FIELDS",
         parameters = Map("currentField" -> "value", "updateField" -> "value"))
     }
   }

@@ -317,12 +317,22 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
     (outputStatsCollectionSchema, tableStatsCollectionSchema)
   }
 
+  /**
+   * Returns a resolved `statsCollection.statsCollector` expression with `statsDataSchema`
+   * attributes re-resolved to be used for writing Delta file stats.
+   */
   protected def getStatsColExpr(
       statsDataSchema: Seq[Attribute],
-      statsCollection: StatisticsCollection): Expression = {
-    Dataset.ofRows(spark, LocalRelation(statsDataSchema))
+      statsCollection: StatisticsCollection): (Expression, Seq[Attribute]) = {
+    val resolvedPlan = Dataset.ofRows(spark, LocalRelation(statsDataSchema))
       .select(to_json(statsCollection.statsCollector))
-      .queryExecution.analyzed.expressions.head
+      .queryExecution.analyzed
+
+    // We have to use the new attributes with regenerated attribute IDs, because the Analyzer
+    // doesn't guarantee that attributes IDs will stay the same
+    val newStatsDataSchema = resolvedPlan.children.head.output
+
+    resolvedPlan.expressions.head -> newStatsDataSchema
   }
 
 
@@ -360,11 +370,12 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
         override val statsColumnSpec = StatisticsCollection.configuredDeltaStatsColumnSpec(metadata)
         override val protocol: Protocol = newProtocol.getOrElse(snapshot.protocol)
       }
-      val statsColExpr = getStatsColExpr(outputStatsCollectionSchema, statsCollection)
+      val (statsColExpr, newOutputStatsCollectionSchema) =
+        getStatsColExpr(outputStatsCollectionSchema, statsCollection)
 
       (Some(new DeltaJobStatisticsTracker(deltaLog.newDeltaHadoopConf(),
                                           outputPath,
-                                          outputStatsCollectionSchema,
+                                          newOutputStatsCollectionSchema,
                                           statsColExpr
         )),
        Some(statsCollection))

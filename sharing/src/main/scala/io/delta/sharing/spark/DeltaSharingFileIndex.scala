@@ -212,12 +212,7 @@ case class DeltaSharingFileIndex(
       partitionFilters: Seq[Expression],
       dataFilters: Seq[Expression]): TahoeLogFileIndex = {
     val deltaLog = fetchFilesAndConstructDeltaLog(partitionFilters, dataFilters, None)
-    new TahoeLogFileIndex(
-      params.spark,
-      deltaLog,
-      deltaLog.dataPath,
-      deltaLog.unsafeVolatileSnapshot
-    )
+    TahoeLogFileIndex(params.spark, deltaLog)
   }
 
   override def listFiles(

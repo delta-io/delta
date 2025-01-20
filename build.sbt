@@ -52,7 +52,7 @@ val all_scala_versions = Seq(scala212, scala213)
 val default_scala_version = settingKey[String]("Default Scala version")
 Global / default_scala_version := scala212
 
-val LATEST_RELEASED_SPARK_VERSION = "3.5.2"
+val LATEST_RELEASED_SPARK_VERSION = "3.5.3"
 val SPARK_MASTER_VERSION = "4.0.0-SNAPSHOT"
 val sparkVersion = settingKey[String]("Spark version")
 spark / sparkVersion := getSparkVersion()
@@ -176,6 +176,7 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
     Compile / unmanagedSourceDirectories += (Compile / baseDirectory).value / "src" / "main" / "scala-spark-3.5",
     Test / unmanagedSourceDirectories += (Test / baseDirectory).value / "src" / "test" / "scala-spark-3.5",
     Antlr4 / antlr4Version := "4.9.3",
+    Test / javaOptions ++= Seq("-Dlog4j.configurationFile=log4j2.properties"),
 
     // Java-/Scala-/Uni-Doc Settings
     scalacOptions ++= Seq(
@@ -204,8 +205,9 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
       "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
       "--add-opens=java.base/sun.nio.cs=ALL-UNNAMED",
       "--add-opens=java.base/sun.security.action=ALL-UNNAMED",
-      "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED"
-    )
+      "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED",
+      "-Dlog4j.configurationFile=log4j2_spark_master.properties"
+    ),
 
     // Java-/Scala-/Uni-Doc Settings
     // This isn't working yet against Spark Master.
@@ -545,7 +547,7 @@ lazy val sharing = (project in file("sharing"))
     libraryDependencies ++= Seq(
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
 
-      "io.delta" %% "delta-sharing-client" % "1.2.0",
+      "io.delta" %% "delta-sharing-client" % "1.2.2",
 
       // Test deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
@@ -574,6 +576,7 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
       "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5",
       "com.fasterxml.jackson.core" % "jackson-core" % "2.13.5",
       "com.fasterxml.jackson.core" % "jackson-annotations" % "2.13.5",
+      "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % "2.13.5",
 
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "junit" % "junit" % "4.13.2" % "test",
@@ -655,6 +658,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
     libraryDependencies ++= Seq(
       "org.apache.hadoop" % "hadoop-client-runtime" % hadoopVersion,
       "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5",
+      "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % "2.13.5",
       "org.apache.parquet" % "parquet-hadoop" % "1.12.3",
 
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",

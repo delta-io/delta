@@ -192,10 +192,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       nullSafeEquals(ofInt(1), col("a")), // 1 <=> a
       not(nullSafeEquals(col("a"), ofInt(2))), // NOT a <=> 2
       // MOVE BELOW EXPRESSIONS TO MISSES ONCE SUPPORTED BY DATA SKIPPING
-      not(nullSafeEquals(col("a"), ofInt(1))), // NOT a <=> 1
-      nullSafeEquals(col("a"), ofInt(2)), // a <=> 2
       notEquals(col("a"), ofInt(1)), // a != 1
-      nullSafeEquals(col("a"), ofInt(2)), // a <=> 2
       notEquals(ofInt(1), col("a")) // 1 != a
     ),
     misses = Seq(
@@ -210,7 +207,11 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       lessThanOrEqual(ofInt(2), col("a")), // 2 <= a
       greaterThanOrEqual(ofInt(0), col("a")), // 0 >= a
       not(equals(col("a"), ofInt(1))), // NOT a = 1
-      not(equals(ofInt(1), col("a"))) // NOT 1 = a
+      not(equals(ofInt(1), col("a"))), // NOT 1 = a
+      not(nullSafeEquals(col("a"), ofInt(1))), // NOT a <=> 1
+      not(nullSafeEquals(ofInt(1), col("a"))), // NOT 1 <=> a
+      nullSafeEquals(ofInt(2), col("a")), // 2 <=> a
+      nullSafeEquals(col("a"), ofInt(2)) // a <=> 2
     )
   )
 
@@ -762,15 +763,12 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       lessThan(col("a"), ofInt(1)),
       greaterThan(col("a"), ofInt(1)),
       not(equals(col("a"), ofInt(1))),
-      notEquals(col("a"), ofInt(1)),
-      nullSafeEquals(col("a"), ofInt(1)),
-
-      // MOVE BELOW EXPRESSIONS TO MISSES ONCE SUPPORTED BY DATA SKIPPING
-      // This can be optimized to `IsNotNull(a)` (done by NullPropagation in Spark)
-      not(nullSafeEquals(col("a"), ofNull(INTEGER)))
+      notEquals(col("a"), ofInt(1))
     ),
     misses = Seq(
       AlwaysFalse.ALWAYS_FALSE,
+      nullSafeEquals(col("a"), ofInt(1)),
+      not(nullSafeEquals(col("a"), ofNull(INTEGER))),
       isNotNull(col("a"))
     )
   )
@@ -1054,10 +1052,9 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
         expNumPartitions = 1,
         expNumFiles = 3) // 3 files with key = null
 
-      /*
-      NOT YET SUPPORTED EXPRESSIONS
+
       checkResults(
-        predicate = nullSafeEquals(col("key"), ofNull(string)),
+        predicate = nullSafeEquals(col("key"), ofNull(STRING)),
         expNumPartitions = 1,
         expNumFiles = 3) // 3 files with key = null
 
@@ -1070,7 +1067,6 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
         predicate = nullSafeEquals(col("key"), ofString("b")),
         expNumPartitions = 1,
         expNumFiles = 1) // 1 files with key <=> 'b'
-      */
 
       // Conditions on partitions keys and values
       checkResults(
@@ -1086,7 +1082,12 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       checkResults(
         predicate = nullSafeEquals(col("value"), ofNull(STRING)),
         expNumPartitions = 3,
-        expNumFiles = 5) // should be 3 once <=> is supported
+        expNumFiles = 3)
+
+      checkResults(
+        predicate = nullSafeEquals(ofNull(STRING), col("value")),
+        expNumPartitions = 3,
+        expNumFiles = 3)
 
       checkResults(
         predicate = equals(col("value"), ofString("a")),
@@ -1095,8 +1096,13 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
 
       checkResults(
         predicate = nullSafeEquals(col("value"), ofString("a")),
-        expNumPartitions = 3, // should be 2 once <=> is supported
-        expNumFiles = 5) // should be 2 once <=> is supported
+        expNumPartitions = 2,
+        expNumFiles = 2)
+
+      checkResults(
+        predicate = nullSafeEquals(ofString("a"), col("value")),
+        expNumPartitions = 2,
+        expNumFiles = 2)
 
       checkResults(
         predicate = notEquals(col("value"), ofString("a")),
@@ -1110,8 +1116,8 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
 
       checkResults(
         predicate = nullSafeEquals(col("value"), ofString("b")),
-        expNumPartitions = 3, // should be 1 once <=> is supported
-        expNumFiles = 5) // should be 1 once <=> is supported
+        expNumPartitions = 1,
+        expNumFiles = 1)
 
       // Conditions on both, partition keys and values
       /*
@@ -1596,47 +1602,54 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
   }
 
   Seq(
-    ("version 0 no predicate", None, Some(0), 2),
-    ("latest version (has checkpoint) no predicate", None, None, 4),
-    ("version 0 with predicate", Some(equals(col("id"), ofLong(10))), Some(0), 1)
-  ).foreach { case (nameSuffix, predicate, snapshotVersion, expectedNumFiles) =>
-    test(s"read scan files with variant - $nameSuffix") {
-      val path = getTestResourceFilePath("spark-variant-checkpoint")
-      val table = Table.forPath(defaultEngine, path)
-      val snapshot = snapshotVersion match {
-        case Some(version) => table.getSnapshotAsOfVersion(defaultEngine, version)
-        case None => table.getLatestSnapshot(defaultEngine)
+    "spark-variant-checkpoint",
+    "spark-variant-stable-feature-checkpoint"
+  ).foreach { tableName =>
+    Seq(
+      ("version 0 no predicate", None, Some(0), 2),
+      ("latest version (has checkpoint) no predicate", None, None, 4),
+      ("version 0 with predicate", Some(equals(col("id"), ofLong(10))), Some(0), 1)
+    ).foreach { case (nameSuffix, predicate, snapshotVersion, expectedNumFiles) =>
+      test(s"read scan files with variant - $nameSuffix - $tableName") {
+        val path = getTestResourceFilePath(tableName)
+        val table = Table.forPath(defaultEngine, path)
+        val snapshot = snapshotVersion match {
+          case Some(version) => table.getSnapshotAsOfVersion(defaultEngine, version)
+          case None => table.getLatestSnapshot(defaultEngine)
+        }
+        val snapshotSchema = snapshot.getSchema(defaultEngine)
+
+        val expectedSchema = new StructType()
+          .add("id", LongType.LONG, true)
+          .add("v", VariantType.VARIANT, true)
+          .add("array_of_variants", new ArrayType(VariantType.VARIANT, true), true)
+          .add("struct_of_variants", new StructType().add("v", VariantType.VARIANT, true))
+          .add("map_of_variants", new MapType(StringType.STRING, VariantType.VARIANT, true), true)
+          .add(
+            "array_of_struct_of_variants",
+            new ArrayType(new StructType().add("v", VariantType.VARIANT, true), true),
+            true
+          )
+          .add(
+            "struct_of_array_of_variants",
+            new StructType().add("v", new ArrayType(VariantType.VARIANT, true), true),
+            true
+          )
+
+        assert(snapshotSchema == expectedSchema)
+
+        val scanBuilder = snapshot.getScanBuilder(defaultEngine)
+        val scan = predicate match {
+          case Some(pred) => scanBuilder.withFilter(defaultEngine, pred).build()
+          case None => scanBuilder.build()
+        }
+        val scanFiles = scan.asInstanceOf[ScanImpl].getScanFiles(defaultEngine, true)
+        var numFiles: Int = 0
+        scanFiles.forEach { s =>
+          numFiles += s.getRows().toSeq.length
+        }
+        assert(numFiles == expectedNumFiles)
       }
-      val snapshotSchema = snapshot.getSchema(defaultEngine)
-
-      val expectedSchema = new StructType()
-        .add("id", LongType.LONG, true)
-        .add("v", VariantType.VARIANT, true)
-        .add("array_of_variants", new ArrayType(VariantType.VARIANT, true), true)
-        .add("struct_of_variants", new StructType().add("v", VariantType.VARIANT, true))
-        .add("map_of_variants", new MapType(StringType.STRING, VariantType.VARIANT, true), true)
-        .add(
-          "array_of_struct_of_variants",
-          new ArrayType(new StructType().add("v", VariantType.VARIANT, true), true),
-          true
-        )
-        .add(
-          "struct_of_array_of_variants",
-          new StructType().add("v", new ArrayType(VariantType.VARIANT, true), true),
-          true
-        )
-
-      assert(snapshotSchema == expectedSchema)
-
-      val scanBuilder = snapshot.getScanBuilder(defaultEngine)
-      val scan = predicate match {
-        case Some(pred) => scanBuilder.withFilter(defaultEngine, pred).build()
-        case None => scanBuilder.build()
-      }
-
-      val scanFiles = scan.asInstanceOf[ScanImpl].getScanFiles(defaultEngine, true)
-
-      assert(scanFiles.next().getRows().toSeq.length == expectedNumFiles)
     }
   }
 }

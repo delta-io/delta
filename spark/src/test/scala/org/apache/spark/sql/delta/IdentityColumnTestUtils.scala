@@ -99,12 +99,26 @@ trait IdentityColumnTestUtils
     checkAnswer(sql(s"SELECT * FROM $tableName ORDER BY value ASC"), expectedAnswer)
   }
 
+
+  /**
+   * Retrieves the high watermark information for the given `colName` in the metadata of
+   * given `snapshot`, if it's present. Returns None if the high watermark has not been set yet.
+   */
+  protected def getHighWaterMark(snapshot: Snapshot, colName: String): Option[Long] = {
+    val metadata = snapshot.schema(colName).metadata
+    if (metadata.contains(DeltaSourceUtils.IDENTITY_INFO_HIGHWATERMARK)) {
+      Some(metadata.getLong(DeltaSourceUtils.IDENTITY_INFO_HIGHWATERMARK))
+    } else {
+      None
+    }
+  }
+
   /**
    * Retrieves the high watermark information for the given `colName` in the metadata of
    * given `snapshot`
    */
   protected def highWaterMark(snapshot: Snapshot, colName: String): Long = {
-    snapshot.schema(colName).metadata.getLong(DeltaSourceUtils.IDENTITY_INFO_HIGHWATERMARK)
+    getHighWaterMark(snapshot, colName).get
   }
 
   /**
@@ -173,6 +187,29 @@ trait IdentityColumnTestUtils
     }
     assert(sortedRows.last.id <= expectedUpperBound)
     assert(sortedRows.map(_.id).distinct.size === expectedDistinctCount)
+  }
+
+  /** Force a bad high water mark on all identity columns in the table with a manual commit. */
+  def forceBadWaterMark(deltaLog: DeltaLog): Unit = {
+    deltaLog.withNewTransaction { txn =>
+      // Manually corrupt the high water mark.
+      val tblSchema = txn.snapshot.schema
+      val badTblSchema = StructType(tblSchema.map {
+        case tblIdCol if ColumnWithDefaultExprUtils.isIdentityColumn(tblIdCol) =>
+          val identityInfo = IdentityColumn.getIdentityInfo(tblIdCol)
+          // This bad water mark needs to follow the step and start,
+          // otherwise we fail the requirement in GenerateIdentityValues
+          val badWaterMark = identityInfo.start - identityInfo.step * 1000
+          val tblColMetadata = tblIdCol.metadata
+          val badMetadata = new MetadataBuilder().withMetadata(tblColMetadata)
+            .putLong(DeltaSourceUtils.IDENTITY_INFO_HIGHWATERMARK, badWaterMark).build()
+          tblIdCol.copy(metadata = badMetadata)
+        case f => f
+      })
+      val updatedMetadata = txn.snapshot.metadata.copy(schemaString = badTblSchema.json)
+      txn.updateMetadata(updatedMetadata, ignoreDefaultProperties = false)
+      txn.commit(Nil, DeltaOperations.ManualUpdate)
+    }
   }
 }
 

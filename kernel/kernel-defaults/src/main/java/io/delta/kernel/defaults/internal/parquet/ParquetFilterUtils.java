@@ -384,7 +384,7 @@ public class ParquetFilterUtils {
   }
 
   private static boolean getBoolean(Literal literal) {
-    checkArgument(isBoolean(literal), "Literal is not a boolean: " + literal);
+    checkArgument(isBoolean(literal), "Literal is not a boolean: %s", literal);
     return (boolean) literal.getValue();
   }
 
@@ -402,7 +402,7 @@ public class ParquetFilterUtils {
   }
 
   private static int getInt(Literal literal) {
-    checkArgument(isInteger(literal), "Literal is not an integer: " + literal);
+    checkArgument(isInteger(literal), "Literal is not an integer: %s", literal);
     DataType dataType = literal.getDataType();
     if (dataType instanceof LongType) {
       return ((Long) literal.getValue()).intValue();
@@ -421,7 +421,7 @@ public class ParquetFilterUtils {
   }
 
   private static long getLong(Literal literal) {
-    checkArgument(isLong(literal), "Literal is not a long: " + literal);
+    checkArgument(isLong(literal), "Literal is not a long: %s", literal);
     DataType dataType = literal.getDataType();
     if (dataType instanceof LongType) {
       return (long) literal.getValue();
@@ -435,7 +435,7 @@ public class ParquetFilterUtils {
   }
 
   private static float getFloat(Literal literal) {
-    checkArgument(isFloat(literal), "Literal is not a float: " + literal);
+    checkArgument(isFloat(literal), "Literal is not a float: %s", literal);
     return ((Number) literal.getValue()).floatValue();
   }
 
@@ -444,7 +444,7 @@ public class ParquetFilterUtils {
   }
 
   private static double getDouble(Literal literal) {
-    checkArgument(isDouble(literal), "Literal is not a double: " + literal);
+    checkArgument(isDouble(literal), "Literal is not a double: %s", literal);
     return ((Number) literal.getValue()).doubleValue();
   }
 
@@ -454,7 +454,7 @@ public class ParquetFilterUtils {
   }
 
   private static Binary getBinary(Literal literal) {
-    checkArgument(isBinary(literal), "Literal is not a binary: " + literal);
+    checkArgument(isBinary(literal), "Literal is not a binary: %s", literal);
     DataType type = literal.getDataType();
     if (type instanceof BinaryType) {
       return Binary.fromConstantByteArray((byte[]) literal.getValue());

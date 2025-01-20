@@ -17,17 +17,14 @@
 package io.delta.kernel.internal;
 
 import static io.delta.kernel.internal.DeltaErrors.*;
+import static io.delta.kernel.internal.TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED;
 
-import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.StructType;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 import java.util.stream.Collectors;
 
 /** Contains utility methods related to the Delta table feature support in protocol. */
@@ -40,37 +37,59 @@ public class TableFeatures {
               add("appendOnly");
               add("inCommitTimestamp");
               add("columnMapping");
+              add("typeWidening-preview");
+              add("typeWidening");
+              add(DOMAIN_METADATA_FEATURE_NAME);
+              add(ROW_TRACKING_FEATURE_NAME);
             }
           });
+
+  private static final Set<String> SUPPORTED_READER_FEATURES =
+      Collections.unmodifiableSet(
+          new HashSet<String>() {
+            {
+              add("columnMapping");
+              add("deletionVectors");
+              add("timestampNtz");
+              add("typeWidening-preview");
+              add("typeWidening");
+              add("vacuumProtocolCheck");
+              add("variantType");
+              add("variantType-preview");
+              add("v2Checkpoint");
+            }
+          });
+
+  public static final String DOMAIN_METADATA_FEATURE_NAME = "domainMetadata";
+
+  public static final String ROW_TRACKING_FEATURE_NAME = "rowTracking";
+
+  public static final String INVARIANTS_FEATURE_NAME = "invariants";
+
+  /** The minimum writer version required to support table features. */
+  public static final int TABLE_FEATURES_MIN_WRITER_VERSION = 7;
 
   ////////////////////
   // Helper Methods //
   ////////////////////
 
   public static void validateReadSupportedTable(
-      Protocol protocol, Metadata metadata, String tablePath) {
+      Protocol protocol, String tablePath, Optional<Metadata> metadata) {
     switch (protocol.getMinReaderVersion()) {
       case 1:
         break;
       case 2:
-        ColumnMapping.throwOnUnsupportedColumnMappingMode(metadata);
+        metadata.ifPresent(ColumnMapping::throwOnUnsupportedColumnMappingMode);
         break;
       case 3:
         List<String> readerFeatures = protocol.getReaderFeatures();
-        for (String readerFeature : readerFeatures) {
-          switch (readerFeature) {
-            case "columnMapping":
-              ColumnMapping.throwOnUnsupportedColumnMappingMode(metadata);
-              break;
-            case "deletionVectors": // fall through
-            case "timestampNtz": // fall through
-            case "vacuumProtocolCheck": // fall through
-            case "variantType-preview": // fall through
-            case "v2Checkpoint":
-              break;
-            default:
-              throw DeltaErrors.unsupportedReaderFeature(tablePath, readerFeature);
-          }
+        if (!SUPPORTED_READER_FEATURES.containsAll(readerFeatures)) {
+          Set<String> unsupportedFeatures = new HashSet<>(readerFeatures);
+          unsupportedFeatures.removeAll(SUPPORTED_READER_FEATURES);
+          throw DeltaErrors.unsupportedReaderFeature(tablePath, unsupportedFeatures);
+        }
+        if (readerFeatures.contains("columnMapping")) {
+          metadata.ifPresent(ColumnMapping::throwOnUnsupportedColumnMappingMode);
         }
         break;
       default:
@@ -86,7 +105,8 @@ public class TableFeatures {
    *   <li>protocol writer version 1.
    *   <li>protocol writer version 2 only with appendOnly feature enabled.
    *   <li>protocol writer version 7 with {@code appendOnly}, {@code inCommitTimestamp}, {@code
-   *       columnMapping} feature enabled.
+   *       columnMapping}, {@code typeWidening}, {@code domainMetadata}, {@code rowTracking} feature
+   *       enabled.
    * </ul>
    *
    * @param protocol Table protocol
@@ -118,17 +138,20 @@ public class TableFeatures {
         throw unsupportedWriterProtocol(tablePath, minWriterVersion);
       case 7:
         for (String writerFeature : protocol.getWriterFeatures()) {
-          switch (writerFeature) {
-              // Only supported writer features as of today in Kernel
-            case "appendOnly":
-              break;
-            case "inCommitTimestamp":
-              break;
-            case "columnMapping":
-              break;
-            default:
-              throw unsupportedWriterFeature(tablePath, writerFeature);
+          if (writerFeature.equals(INVARIANTS_FEATURE_NAME)) {
+            // For version 7, we allow 'invariants' to be present in the protocol's writerFeatures
+            // to unblock certain use cases, provided that no invariants are defined in the schema.
+            validateNoInvariants(tableSchema);
+          } else if (!SUPPORTED_WRITER_FEATURES.contains(writerFeature)) {
+            throw unsupportedWriterFeature(tablePath, writerFeature);
           }
+        }
+
+        // Eventually we may have a way to declare and enforce dependencies between features.
+        // By putting this check for row tracking here, it makes it easier to spot that row
+        // tracking defines such a dependency that can be implicitly checked.
+        if (isRowTrackingSupported(protocol) && !isDomainMetadataSupported(protocol)) {
+          throw DeltaErrors.rowTrackingSupportedWithDomainMetadataUnsupported();
         }
         break;
       default:
@@ -163,18 +186,37 @@ public class TableFeatures {
    * when the delta property name (delta.enableInCommitTimestamps) is set to true in the metadata if
    * it is not already enabled.
    *
-   * @param engine the engine to use for IO operations
    * @param metadata the metadata of the table
    * @param protocol the protocol of the table
    * @return the writer features that should be enabled automatically
    */
   public static Set<String> extractAutomaticallyEnabledWriterFeatures(
-      Engine engine, Metadata metadata, Protocol protocol) {
+      Metadata metadata, Protocol protocol) {
     return TableFeatures.SUPPORTED_WRITER_FEATURES.stream()
-        .filter(f -> metadataRequiresWriterFeatureToBeEnabled(engine, metadata, f))
+        .filter(f -> metadataRequiresWriterFeatureToBeEnabled(metadata, f))
         .filter(
             f -> protocol.getWriterFeatures() == null || !protocol.getWriterFeatures().contains(f))
         .collect(Collectors.toSet());
+  }
+
+  /**
+   * Checks if the table protocol supports the "domainMetadata" writer feature.
+   *
+   * @param protocol the protocol to check
+   * @return true if the "domainMetadata" feature is supported, false otherwise
+   */
+  public static boolean isDomainMetadataSupported(Protocol protocol) {
+    return isWriterFeatureSupported(protocol, DOMAIN_METADATA_FEATURE_NAME);
+  }
+
+  /**
+   * Check if the table protocol supports the "rowTracking" writer feature.
+   *
+   * @param protocol the protocol to check
+   * @return true if the protocol supports row tracking, false otherwise
+   */
+  public static boolean isRowTrackingSupported(Protocol protocol) {
+    return isWriterFeatureSupported(protocol, ROW_TRACKING_FEATURE_NAME);
   }
 
   /**
@@ -211,16 +253,15 @@ public class TableFeatures {
    * Determine whether a writer feature must be supported and enabled to satisfy the metadata
    * requirements.
    *
-   * @param engine the engine to use for IO operations
    * @param metadata the table metadata
    * @param feature the writer feature to check
    * @return whether the writer feature must be enabled
    */
   private static boolean metadataRequiresWriterFeatureToBeEnabled(
-      Engine engine, Metadata metadata, String feature) {
+      Metadata metadata, String feature) {
     switch (feature) {
       case "inCommitTimestamp":
-        return TableConfig.isICTEnabled(engine, metadata);
+        return IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata);
       default:
         return false;
     }
@@ -233,5 +274,14 @@ public class TableFeatures {
     if (hasInvariants) {
       throw columnInvariantsNotSupported();
     }
+  }
+
+  private static boolean isWriterFeatureSupported(Protocol protocol, String featureName) {
+    List<String> writerFeatures = protocol.getWriterFeatures();
+    if (writerFeatures == null) {
+      return false;
+    }
+    return writerFeatures.contains(featureName)
+        && protocol.getMinWriterVersion() >= TABLE_FEATURES_MIN_WRITER_VERSION;
   }
 }

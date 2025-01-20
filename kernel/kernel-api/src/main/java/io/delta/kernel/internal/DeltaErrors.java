@@ -18,12 +18,15 @@ package io.delta.kernel.internal;
 import static java.lang.String.format;
 
 import io.delta.kernel.exceptions.*;
+import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.DataFileStatus;
 import java.io.IOException;
 import java.sql.Timestamp;
 import java.util.List;
+import java.util.Optional;
+import java.util.Set;
 import java.util.function.Supplier;
 
 /** Contains methods to create user-facing Delta exceptions. */
@@ -87,6 +90,50 @@ public final class DeltaErrors {
     return new KernelException(message);
   }
 
+  public static KernelException noCommitFilesFoundForVersionRange(
+      String tablePath, long startVersion, long endVersion) {
+    String message =
+        String.format(
+            "%s: Requested table changes between [%s, %s] but no log files found in the requested"
+                + " version range.",
+            tablePath, startVersion, endVersion);
+    return new KernelException(message);
+  }
+
+  public static KernelException startVersionNotFound(
+      String tablePath, long startVersionRequested, Optional<Long> earliestAvailableVersion) {
+    String message =
+        String.format(
+            "%s: Requested table changes beginning with startVersion=%s but no log file found for "
+                + "version %s.",
+            tablePath, startVersionRequested, startVersionRequested);
+    if (earliestAvailableVersion.isPresent()) {
+      message =
+          message
+              + String.format(" Earliest available version is %s", earliestAvailableVersion.get());
+    }
+    return new KernelException(message);
+  }
+
+  public static KernelException endVersionNotFound(
+      String tablePath, long endVersionRequested, long latestAvailableVersion) {
+    String message =
+        String.format(
+            "%s: Requested table changes ending with endVersion=%d but no log file found for "
+                + "version %d. Latest available version is %d",
+            tablePath, endVersionRequested, endVersionRequested, latestAvailableVersion);
+    return new KernelException(message);
+  }
+
+  public static KernelException invalidVersionRange(long startVersion, long endVersion) {
+    String message =
+        String.format(
+            "Invalid version range: requested table changes for version range [%s, %s]. "
+                + "Requires startVersion >= 0 and endVersion >= startVersion.",
+            startVersion, endVersion);
+    return new KernelException(message);
+  }
+
   /* ------------------------ PROTOCOL EXCEPTIONS ----------------------------- */
 
   public static KernelException unsupportedReaderProtocol(
@@ -99,12 +146,13 @@ public final class DeltaErrors {
     return new KernelException(message);
   }
 
-  public static KernelException unsupportedReaderFeature(String tablePath, String readerFeature) {
+  public static KernelException unsupportedReaderFeature(
+      String tablePath, Set<String> unsupportedFeatures) {
     String message =
         String.format(
-            "Unsupported Delta reader feature: table `%s` requires reader table feature \"%s\" "
+            "Unsupported Delta reader features: table `%s` requires reader table features [%s] "
                 + "which is unsupported by this version of Delta Kernel.",
-            tablePath, readerFeature);
+            tablePath, String.join(", ", unsupportedFeatures));
     return new KernelException(message);
   }
 
@@ -220,6 +268,37 @@ public final class DeltaErrors {
   public static KernelException invalidConfigurationValueException(
       String key, String value, String helpMessage) {
     return new InvalidConfigurationValueException(key, value, helpMessage);
+  }
+
+  public static KernelException domainMetadataUnsupported() {
+    String message =
+        "Cannot commit DomainMetadata action(s) because the feature 'domainMetadata' "
+            + "is not supported on this table.";
+    return new KernelException(message);
+  }
+
+  public static ConcurrentWriteException concurrentDomainMetadataAction(
+      DomainMetadata domainMetadataAttempt, DomainMetadata winningDomainMetadata) {
+    String message =
+        String.format(
+            "A concurrent writer added a domainMetadata action for the same domain: %s. "
+                + "No domain-specific conflict resolution is available for this domain. "
+                + "Attempted domainMetadata: %s. Winning domainMetadata: %s",
+            domainMetadataAttempt.getDomain(), domainMetadataAttempt, winningDomainMetadata);
+    return new ConcurrentWriteException(message);
+  }
+
+  public static KernelException missingNumRecordsStatsForRowTracking() {
+    return new KernelException(
+        "Cannot write to a rowTracking-supported table without 'numRecords' statistics. "
+            + "Connectors are expected to populate the number of records statistics when "
+            + "writing to a Delta table with 'rowTracking' table feature supported.");
+  }
+
+  public static KernelException rowTrackingSupportedWithDomainMetadataUnsupported() {
+    return new KernelException(
+        "Feature 'rowTracking' is supported and depends on feature 'domainMetadata',"
+            + " but 'domainMetadata' is unsupported");
   }
 
   /* ------------------------ HELPER METHODS ----------------------------- */

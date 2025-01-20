@@ -140,7 +140,6 @@ public class DefaultViewVector implements ColumnVector {
   }
 
   private void checkValidRowId(int rowId) {
-    checkArgument(
-        rowId >= 0 && rowId < size, String.format("Invalid rowId=%s for size=%s", rowId, size));
+    checkArgument(rowId >= 0 && rowId < size, "Invalid rowId=%s for size=%s", rowId, size);
   }
 }

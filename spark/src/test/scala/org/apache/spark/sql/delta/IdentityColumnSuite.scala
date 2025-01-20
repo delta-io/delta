@@ -333,7 +333,7 @@ trait IdentityColumnSuiteBase extends IdentityColumnTestUtils {
             TestColumnSpec(colName = "id", dataType = LongType),
             TestColumnSpec(colName = "value", dataType = IntegerType))
         )
-        assert(getProtocolVersions == (1, 2) || getProtocolVersions == (2, 5))
+        assert(getProtocolVersions == (1, 2) || getProtocolVersions == (2, 7))
         assert(DeltaLog.forTable(spark, TableIdentifier(tblName)).snapshot.version == 0)
 
         replaceTable(
@@ -347,8 +347,105 @@ trait IdentityColumnSuiteBase extends IdentityColumnTestUtils {
             TestColumnSpec(colName = "value", dataType = IntegerType)
           )
         )
-        assert(getProtocolVersions == (1, 6) || getProtocolVersions == (2, 6))
-        assert(DeltaLog.forTable(spark, TableIdentifier(tblName)).snapshot.version == 1)
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tblName))
+        val snapshot = deltaLog.update()
+        val protocol = snapshot.protocol
+        assert(getProtocolVersions == (1, 7) ||
+          protocol.readerAndWriterFeatures.contains(IdentityColumnsTableFeature))
+        assert(snapshot.version == 1)
+        assert(getHighWaterMark(snapshot, "id").isEmpty)
+      }
+    }
+  }
+
+  test("ctas/rtas does not produce an identity column") {
+    def assertIdentityColumn(tblName: String, idColExpected: Boolean): Unit = {
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tblName))
+      val snapshot = deltaLog.update()
+      assert(ColumnWithDefaultExprUtils.hasIdentityColumn(snapshot.tableSchema) === idColExpected)
+      assert(getHighWaterMark(snapshot, colName = "id").isDefined === idColExpected)
+    }
+    val tblName = getRandomTableName
+    val ctasTblName = s"ctas_$tblName"
+    withTable(tblName) {
+      generateTableWithIdentityColumn(tblName)
+      assertIdentityColumn(tblName, idColExpected = true)
+
+      withTable(ctasTblName) {
+        sql(
+          s"""
+             |CREATE TABLE $ctasTblName
+             |USING DELTA
+             |AS SELECT * FROM $tblName
+             |""".stripMargin)
+        assertIdentityColumn(ctasTblName, idColExpected = false)
+        sql(
+          s"""
+             |CREATE OR REPLACE TABLE $ctasTblName
+             |USING DELTA
+             |AS SELECT * FROM $tblName
+             |""".stripMargin)
+        assertIdentityColumn(ctasTblName, idColExpected = false)
+      }
+    }
+  }
+
+  test("create or replace on a table resets high watermark") {
+    val tblName = getRandomTableName
+    val initialStartsWith = 100L
+    val increment = 1L
+    for {
+      generatedAsIdentityType <- GeneratedAsIdentityType.values
+      isPartitioned <- DeltaTestUtils.BOOLEAN_DOMAIN
+    } {
+      val partitionedBy = if (isPartitioned) Seq("value") else Nil
+      withTable(tblName) {
+        createTable(
+          tblName,
+          Seq(
+            IdentityColumnSpec(
+              generatedAsIdentityType,
+              Some(initialStartsWith),
+              Some(increment)
+            ),
+            TestColumnSpec(colName = "value", dataType = IntegerType)
+          ),
+          partitionedBy = partitionedBy
+        )
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tblName))
+
+        // A column that has not yet generated values does not have a high watermark.
+        assert(getHighWaterMark(deltaLog.update(), colName = "id").isEmpty)
+
+        // The system generates one row for the identity column .
+        // The high watermark should now be set to the start value.
+        sql(s"INSERT INTO $tblName (value) VALUES (1)")
+        assert(highWaterMark(deltaLog.update(), colName = "id") === initialStartsWith)
+
+        for {
+          replaceType <- Seq(DDLType.REPLACE, DDLType.CREATE_OR_REPLACE)
+        } {
+          // After a REPLACE or CREATE OR REPLACE TABLE, there should be no high watermark.
+          val newStartsWith = 50000L
+          runDDL(
+            replaceType,
+            tblName,
+            Seq(
+              IdentityColumnSpec(
+                generatedAsIdentityType,
+                startsWith = Some(newStartsWith),
+                incrementBy = Some(increment)),
+              TestColumnSpec(colName = "value", dataType = StringType)
+            ),
+            partitionedBy = partitionedBy,
+            tblProperties = Map.empty
+          )
+          assert(getHighWaterMark(deltaLog.update(), colName = "id").isEmpty)
+
+          // Sanity check that the new table is using the new start for the next high watermark.
+          sql(s"INSERT INTO $tblName (value) VALUES (-1)")
+          assert(highWaterMark(deltaLog.update(), colName = "id") === newStartsWith)
+        }
       }
     }
   }

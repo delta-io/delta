@@ -16,14 +16,18 @@
 
 package org.apache.spark.sql.delta.coordinatedcommits
 
+import java.util.Optional
 import java.util.concurrent.atomic.AtomicInteger
+
+import scala.collection.mutable
+import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaTestUtilsBase}
 import org.apache.spark.sql.delta.DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo, Metadata, Protocol}
 import org.apache.spark.sql.delta.util.JsonUtils
 import io.delta.storage.LogStore
-import io.delta.storage.commit.{CommitCoordinatorClient, CommitResponse, GetCommitsResponse => JGetCommitsResponse, UpdatedActions}
+import io.delta.storage.commit.{CommitCoordinatorClient, CommitResponse, GetCommitsResponse => JGetCommitsResponse, TableDescriptor, TableIdentifier, UpdatedActions}
 import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
@@ -69,7 +73,7 @@ trait CoordinatedCommitsTestUtils
    */
   def withoutCoordinatedCommitsDefaultTableProperties[T](f: => T): T = {
     val defaultCoordinatedCommitsConfs = CoordinatedCommitsUtils
-      .fetchDefaultCoordinatedCommitsConfigurations(spark, withDefaultKey = true)
+      .getDefaultCCConfigurations(spark, withDefaultKey = true)
     defaultCoordinatedCommitsConfs.foreach { case (defaultKey, _) =>
       spark.conf.unset(defaultKey)
     }
@@ -247,42 +251,36 @@ class TrackingCommitCoordinatorClient(
   override def commit(
       logStore: LogStore,
       hadoopConf: Configuration,
-      logPath: Path,
-      coordinatedCommitsTableConf: java.util.Map[String, String],
+      tableDesc: TableDescriptor,
       commitVersion: Long,
       actions: java.util.Iterator[String],
       updatedActions: UpdatedActions): CommitResponse = recordOperation("commit") {
     delegatingCommitCoordinatorClient.commit(
       logStore,
       hadoopConf,
-      logPath,
-      coordinatedCommitsTableConf,
+      tableDesc,
       commitVersion,
       actions,
       updatedActions)
   }
 
   override def getCommits(
-      logPath: Path,
-      coordinatedCommitsTableConf: java.util.Map[String, String],
+      tableDesc: TableDescriptor,
       startVersion: java.lang.Long,
       endVersion: java.lang.Long): JGetCommitsResponse = recordOperation("getCommits") {
-    delegatingCommitCoordinatorClient.getCommits(
-      logPath, coordinatedCommitsTableConf, startVersion, endVersion)
+    delegatingCommitCoordinatorClient.getCommits(tableDesc, startVersion, endVersion)
   }
 
   override def backfillToVersion(
       logStore: LogStore,
       hadoopConf: Configuration,
-      logPath: Path,
-      coordinatedCommitsTableConf: java.util.Map[String, String],
+      tableDesc: TableDescriptor,
       version: Long,
       lastKnownBackfilledVersion: java.lang.Long): Unit = recordOperation("backfillToVersion") {
     delegatingCommitCoordinatorClient.backfillToVersion(
       logStore,
       hadoopConf,
-      logPath,
-      coordinatedCommitsTableConf,
+      tableDesc,
       version,
       lastKnownBackfilledVersion)
   }
@@ -305,12 +303,13 @@ class TrackingCommitCoordinatorClient(
 
   override def registerTable(
       logPath: Path,
+      tableIdentifier: Optional[TableIdentifier],
       currentVersion: Long,
       currentMetadata: AbstractMetadata,
       currentProtocol: AbstractProtocol): java.util.Map[String, String] =
     recordOperation("registerTable") {
       delegatingCommitCoordinatorClient.registerTable(
-        logPath, currentVersion, currentMetadata, currentProtocol)
+        logPath, tableIdentifier, currentVersion, currentMetadata, currentProtocol)
     }
 }
 
@@ -327,6 +326,45 @@ trait CoordinatedCommitsBaseSuite
   def coordinatedCommitsBackfillBatchSize: Option[Int] = None
 
   final def coordinatedCommitsEnabledInTests: Boolean = coordinatedCommitsBackfillBatchSize.nonEmpty
+
+  // Keeps track of the number of table names pointing to the location.
+  protected val locRefCount: mutable.Map[String, Int] = mutable.Map.empty
+
+  // In case some tests reuse the table path/name with DROP table, this method can be used to
+  // clean the table data in the commit coordinator. Note that we should call this before
+  // the table actually gets DROP.
+  def deleteTableFromCommitCoordinator(tableName: String): Unit = {
+    val cc = CommitCoordinatorProvider.getCommitCoordinatorClient(
+      defaultCommitsCoordinatorName, defaultCommitsCoordinatorConf, spark)
+    assert(
+      cc.isInstanceOf[TrackingCommitCoordinatorClient],
+      s"Please implement delete/drop method for coordinator: ${cc.getClass.getName}")
+    val location = try {
+      spark.sql(s"describe detail $tableName")
+        .select("location")
+        .first()
+        .getAs[String](0)
+    } catch {
+      case NonFatal(_) =>
+        // Ignore if the table does not exist/broken.
+        return
+    }
+    val locKey = location.stripPrefix("file:")
+    if (locRefCount.contains(locKey)) {
+      locRefCount(locKey) -= 1
+    }
+    // When we create an external table in a location where some table already existed, two table
+    // names could be pointing to the same location. We should only clean up the table data in the
+    // commit coordinator when the last table name pointing to the location is dropped.
+    if (locRefCount.getOrElse(locKey, 0) == 0) {
+      val logPath = location + "/_delta_log"
+      cc.asInstanceOf[TrackingCommitCoordinatorClient]
+        .delegatingCommitCoordinatorClient
+        .asInstanceOf[InMemoryCommitCoordinator]
+        .dropTable(new Path(logPath))
+    }
+    DeltaLog.clearCache()
+  }
 
   override protected def sparkConf: SparkConf = {
     if (coordinatedCommitsBackfillBatchSize.nonEmpty) {

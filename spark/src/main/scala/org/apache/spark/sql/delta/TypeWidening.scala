@@ -17,8 +17,10 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.functions.{col, lit}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 
 object TypeWidening {
@@ -66,22 +68,50 @@ object TypeWidening {
    * It is the responsibility of the caller to recurse into structs, maps and arrays.
    */
   def isTypeChangeSupported(fromType: AtomicType, toType: AtomicType): Boolean =
-    TypeWideningShims.isTypeChangeSupported(fromType, toType)
+    TypeWideningShims.isTypeChangeSupported(fromType = fromType, toType = toType)
 
   /**
    * Returns whether the given type change can be applied during schema evolution. Only a
    * subset of supported type changes are considered for schema evolution.
    */
-  def isTypeChangeSupportedForSchemaEvolution(fromType: AtomicType, toType: AtomicType): Boolean =
-    TypeWideningShims.isTypeChangeSupportedForSchemaEvolution(fromType, toType)
+  def isTypeChangeSupportedForSchemaEvolution(
+      fromType: AtomicType,
+      toType: AtomicType,
+      uniformIcebergCompatibleOnly: Boolean): Boolean =
+    TypeWideningShims.isTypeChangeSupportedForSchemaEvolution(
+      fromType = fromType,
+      toType = toType
+    ) && (
+      !uniformIcebergCompatibleOnly ||
+        isTypeChangeSupportedByIceberg(fromType = fromType, toType = toType)
+    )
+
+  /**
+   * Returns whether the given type change is supported by Iceberg, and by extension can be read
+   * using Uniform. See https://iceberg.apache.org/spec/#schema-evolution.
+   * Note that these are type promotions supported by Iceberg V1 & V2 (both support the same type
+   * promotions). Iceberg V3 will add support for date -> timestamp_ntz and void -> any but Uniform
+   * doesn't currently support Iceberg V3.
+   */
+  def isTypeChangeSupportedByIceberg(fromType: AtomicType, toType: AtomicType): Boolean =
+    (fromType, toType) match {
+      case (from, to) if from == to => true
+      case (from, to) if !isTypeChangeSupported(from, to) => false
+      case (from: IntegralType, to: IntegralType) => from.defaultSize <= to.defaultSize
+      case (FloatType, DoubleType) => true
+      case (from: DecimalType, to: DecimalType)
+        if from.scale == to.scale && from.precision <= to.precision => true
+      case _ => false
+    }
 
   /**
    * Asserts that the given table doesn't contain any unsupported type changes. This should never
    * happen unless a non-compliant writer applied a type change that is not part of the feature
    * specification.
    */
-  def assertTableReadable(protocol: Protocol, metadata: Metadata): Unit = {
-    if (!isSupported(protocol) ||
+  def assertTableReadable(conf: SQLConf, protocol: Protocol, metadata: Metadata): Unit = {
+    if (conf.getConf(DeltaSQLConf.DELTA_TYPE_WIDENING_BYPASS_UNSUPPORTED_TYPE_CHANGE_CHECK) ||
+      !isSupported(protocol) ||
       !TypeWideningMetadata.containsTypeWideningMetadata(metadata.schema)) {
       return
     }
@@ -89,6 +119,20 @@ object TypeWidening {
     TypeWideningMetadata.getAllTypeChanges(metadata.schema).foreach {
       case (_, TypeChange(_, from: AtomicType, to: AtomicType, _))
         if isTypeChangeSupported(from, to) =>
+      // Char/Varchar/String type changes are allowed and independent from type widening.
+      // Implementations shouldn't record these type changes in the table metadata per the Delta
+      // spec, but in case that happen we really shouldn't block reading the table.
+      case (_, TypeChange(_,
+        _: StringType | CharType(_) | VarcharType(_),
+        _: StringType | CharType(_) | VarcharType(_), _)) =>
+      case (fieldPath, TypeChange(_, from: AtomicType, to: AtomicType, _))
+        if stableFeatureCanReadTypeChange(from, to) =>
+        val featureName = if (protocol.isFeatureSupported(TypeWideningPreviewTableFeature)) {
+          TypeWideningPreviewTableFeature
+        } else {
+          TypeWideningTableFeature
+        }
+        throw DeltaErrors.unsupportedTypeChangeInPreview(fieldPath, from, to, featureName)
       case (fieldPath, invalidChange) =>
         throw DeltaErrors.unsupportedTypeChangeInSchema(
           fieldPath ++ invalidChange.fieldPath,
@@ -97,4 +141,25 @@ object TypeWidening {
         )
     }
   }
+
+  /**
+   * Whether the given type change is supported in the stable version of the feature. Used to
+   * provide a helpful error message during the preview phase if upgrading to Delta 4.0 would allow
+   * reading the table.
+   */
+  private def stableFeatureCanReadTypeChange(fromType: AtomicType, toType: AtomicType): Boolean =
+    (fromType, toType) match {
+      case (from, to) if from == to => true
+      case (from: IntegralType, to: IntegralType) => from.defaultSize <= to.defaultSize
+      case (FloatType, DoubleType) => true
+      case (DateType, TimestampNTZType) => true
+      case (ByteType | ShortType | IntegerType, DoubleType) => true
+      case (from: DecimalType, to: DecimalType) => to.isWiderThan(from)
+      // Byte, Short, Integer are all stored as INT32 in parquet. The parquet readers support
+      // converting INT32 to Decimal(10, 0) and wider.
+      case (ByteType | ShortType | IntegerType, d: DecimalType) => d.isWiderThan(IntegerType)
+      // The parquet readers support converting INT64 to Decimal(20, 0) and wider.
+      case (LongType, d: DecimalType) => d.isWiderThan(LongType)
+      case _ => false
+    }
 }

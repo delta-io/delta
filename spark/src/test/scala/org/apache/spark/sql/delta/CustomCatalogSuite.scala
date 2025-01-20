@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta
 import scala.collection.JavaConverters._
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.catalog.{DeltaCatalog, DeltaTableV2}
 import org.apache.spark.sql.delta.commands._
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.hadoop.fs.{FileSystem, Path}
@@ -34,7 +34,6 @@ import org.apache.spark.sql.catalyst.plans.logical.{AppendData, LogicalPlan, Set
 import org.apache.spark.sql.catalyst.trees.UnaryLike
 import org.apache.spark.sql.connector.catalog.{DelegatingCatalogExtension, Identifier, InMemoryTable, InMemoryTableCatalog, Table, TableCatalog, TableChange, V1Table}
 import org.apache.spark.sql.connector.expressions.Transform
-import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.datasources.v2.{DataSourceV2Relation, V2SessionCatalog}
 import org.apache.spark.sql.test.SharedSparkSession
@@ -297,6 +296,22 @@ class CustomCatalogSuite extends QueryTest with SharedSparkSession
       }
     }
   }
+
+  test("custom catalog that generates location for managed tables") {
+    // Reset catalog manager so that the new `spark_catalog` implementation can apply.
+    spark.sessionState.catalogManager.reset()
+    withSQLConf("spark.sql.catalog.spark_catalog" -> classOf[DummySessionCatalog].getName) {
+      withTable("t") {
+        withTempPath { path =>
+          sql(s"CREATE TABLE t (id LONG) USING delta TBLPROPERTIES (fakeLoc='$path')")
+          val t = spark.sessionState.catalogManager.v2SessionCatalog.asInstanceOf[TableCatalog]
+            .loadTable(Identifier.of(Array("default"), "t"))
+          // It should be a managed table.
+          assert(!t.properties().containsKey(TableCatalog.PROP_EXTERNAL))
+        }
+      }
+    }
+  }
 }
 
 class DummyCatalog extends TableCatalog {
@@ -397,9 +412,10 @@ class DummySessionCatalogInner extends DelegatingCatalogExtension {
 }
 
 // A dummy catalog that adds a layer between DeltaCatalog and the Spark SessionCatalog,
-// to attach additional table storage properties after the table is loaded.
+// to attach additional table storage properties after the table is loaded, and generates location
+// for managed tables.
 class DummySessionCatalog extends TableCatalog {
-  private var deltaCatalog: DelegatingCatalogExtension = null
+  private var deltaCatalog: DeltaCatalog = null
 
   override def initialize(name: String, options: CaseInsensitiveStringMap): Unit = {
     val inner = new DummySessionCatalogInner()
@@ -422,7 +438,16 @@ class DummySessionCatalog extends TableCatalog {
       schema: StructType,
       partitions: Array[Transform],
       properties: java.util.Map[String, String]): Table = {
-    deltaCatalog.createTable(ident, schema, partitions, properties)
+    if (!properties.containsKey(TableCatalog.PROP_EXTERNAL) &&
+      !properties.containsKey(TableCatalog.PROP_LOCATION)) {
+      val newProps = new java.util.HashMap[String, String]
+      newProps.putAll(properties)
+      newProps.put(TableCatalog.PROP_LOCATION, properties.get("fakeLoc"))
+      newProps.put(TableCatalog.PROP_IS_MANAGED_LOCATION, "true")
+      deltaCatalog.createTable(ident, schema, partitions, newProps)
+    } else {
+      deltaCatalog.createTable(ident, schema, partitions, properties)
+    }
   }
 
   override def alterTable(ident: Identifier, changes: TableChange*): Table = {

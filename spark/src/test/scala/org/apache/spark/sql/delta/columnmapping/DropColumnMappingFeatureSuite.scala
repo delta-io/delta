@@ -20,6 +20,7 @@ import java.util.concurrent.TimeUnit
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaConfigs._
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.sources.DeltaSQLConf._
 
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -58,8 +59,7 @@ class DropColumnMappingFeatureSuite extends RemoveColumnMappingSuiteUtils {
       dropColumnMappingTableFeature()
     }
     checkError(e,
-      errorClass = DeltaErrors.dropTableFeatureFeatureNotSupportedByProtocol(".")
-      .getErrorClass,
+      DeltaErrors.dropTableFeatureFeatureNotSupportedByProtocol(".").getErrorClass,
       parameters = Map("feature" -> "columnMapping"))
   }
 
@@ -76,7 +76,7 @@ class DropColumnMappingFeatureSuite extends RemoveColumnMappingSuiteUtils {
       dropColumnMappingTableFeature()
     }
     checkError(e,
-      errorClass = "DELTA_INVALID_COLUMN_NAMES_WHEN_REMOVING_COLUMN_MAPPING",
+      "DELTA_INVALID_COLUMN_NAMES_WHEN_REMOVING_COLUMN_MAPPING",
       parameters = Map("invalidColumnNames" -> "col1 with special chars ,;{}()\n\t="))
   }
 
@@ -125,7 +125,7 @@ class DropColumnMappingFeatureSuite extends RemoveColumnMappingSuiteUtils {
     }
     checkError(
       e,
-      errorClass = "DELTA_FEATURE_DROP_HISTORICAL_VERSIONS_EXIST",
+      "DELTA_FEATURE_DROP_HISTORICAL_VERSIONS_EXIST",
       parameters = Map(
         "feature" -> "columnMapping",
         "logRetentionPeriodKey" -> "delta.logRetentionDuration",
@@ -155,20 +155,20 @@ class DropColumnMappingFeatureSuite extends RemoveColumnMappingSuiteUtils {
     val comment = "test comment"
     sql(s"ALTER TABLE $testTableName ALTER COLUMN $logicalColumnName COMMENT '$comment'")
 
-    val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName = testTableName))
-    val originalSnapshot = deltaLog.update()
+    val table = DeltaTableV2(spark, TableIdentifier(tableName = testTableName), "")
+    val originalSnapshot = table.initialSnapshot
 
     assert(originalSnapshot.schema.head.getComment().get == comment,
       "Renamed column should preserve comment.")
     val originalFiles = getFiles(originalSnapshot)
-    val startingVersion = deltaLog.update().version
+    val startingVersion = originalSnapshot.version
 
     val e = intercept[DeltaTableFeatureException] {
       dropColumnMappingTableFeature()
     }
     checkError(
       e,
-      errorClass = "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
+      "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
       parameters = Map(
         "feature" -> "columnMapping",
         "logRetentionPeriodKey" -> "delta.logRetentionDuration",
@@ -178,7 +178,7 @@ class DropColumnMappingFeatureSuite extends RemoveColumnMappingSuiteUtils {
 
     verifyRewrite(
       unsetTableProperty = true,
-      deltaLog,
+      table,
       originalFiles,
       startingVersion,
       originalData = originalData,

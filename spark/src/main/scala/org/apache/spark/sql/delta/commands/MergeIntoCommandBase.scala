@@ -119,7 +119,7 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
             castIfNeeded(
               attr.withNullability(attr.nullable || makeNullable),
               col.dataType,
-              allowStructEvolution = canMergeSchema,
+              castingBehavior = MergeOrUpdateCastingBehavior(canMergeSchema),
               col.name),
             col.name
           )()

@@ -256,16 +256,16 @@ abstract class CloneTableBase(
         }
       }
 
-        recordDeltaOperation(
-          destinationTable, s"delta.${deltaOperation.name.toLowerCase()}.commit") {
-          txn.commitLarge(
-            spark,
-            actions,
-            Some(newProtocol),
-            deltaOperation,
-            context,
-            commitOpMetrics.mapValues(_.toString()).toMap)
-        }
+      recordDeltaOperation(
+        destinationTable, s"delta.${deltaOperation.name.toLowerCase()}.commit") {
+        txn.commitLarge(
+          spark,
+          actions,
+          Some(newProtocol),
+          deltaOperation,
+          context,
+          commitOpMetrics.mapValues(_.toString()).toMap)
+      }
 
       val cloneLogData = getOperationMetricsForEventRecord(opMetrics) ++ Map(
         SOURCE -> sourceName,
@@ -308,8 +308,10 @@ abstract class CloneTableBase(
       .toMap
     val clonedSchema =
       IdentityColumn.copySchemaWithMergedHighWaterMarks(
+        deltaLog = targetSnapshot.deltaLog,
         schemaToCopy = clonedMetadata.schema,
-        schemaWithHighWaterMarksToMerge = targetSnapshot.metadata.schema)
+        schemaWithHighWaterMarksToMerge = targetSnapshot.metadata.schema
+      )
     clonedMetadata.copy(configuration = filteredConfiguration, schemaString = clonedSchema.json)
   }
 
@@ -346,13 +348,12 @@ abstract class CloneTableBase(
       assert(validatedOverrides.isEmpty,
         "Explicit overrides on Coordinated Commits configurations for existing tables" +
           " are not supported, and should have been caught earlier.")
-      CoordinatedCommitsUtils.extractCoordinatedCommitsConfigurations(
-        targetSnapshot.metadata.configuration)
+      CoordinatedCommitsUtils.getExplicitCCConfigurations(targetSnapshot.metadata.configuration)
     } else {
       if (validatedOverrides.nonEmpty) {
         validatedOverrides
       } else {
-        CoordinatedCommitsUtils.fetchDefaultCoordinatedCommitsConfigurations(spark)
+        CoordinatedCommitsUtils.getDefaultCCConfigurations(spark)
       }
     }
   }
@@ -369,7 +370,7 @@ abstract class CloneTableBase(
 
     // Finalize Coordinated Commits configurations for the target
     val coordinatedCommitsConfigurationOverrides =
-      CoordinatedCommitsUtils.extractCoordinatedCommitsConfigurations(validatedConfigurations)
+      CoordinatedCommitsUtils.getExplicitCCConfigurations(validatedConfigurations)
     val validatedConfigurationsWithoutCoordinatedCommits =
       validatedConfigurations -- coordinatedCommitsConfigurationOverrides.keys
     val finalCoordinatedCommitsConfigurations = determineCoordinatedCommitsConfigurations(

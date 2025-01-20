@@ -22,7 +22,7 @@ import java.util.regex.Pattern
 
 import scala.annotation.tailrec
 
-import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaLog, DeltaTestUtils}
+import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaLog, DeltaTestUtils, TypeWideningMode}
 import org.apache.spark.sql.delta.RowCommitVersion
 import org.apache.spark.sql.delta.RowId
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -36,7 +36,7 @@ import org.scalatest.GivenWhenThen
 
 import org.apache.spark.sql.{AnalysisException, Column, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.{InternalRow, TableIdentifier}
-import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.catalyst.analysis.{caseInsensitiveResolution, caseSensitiveResolution, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.expressions.{Alias, Cast, Expression}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Project}
 import org.apache.spark.sql.functions._
@@ -87,8 +87,8 @@ class SchemaUtilsSuite extends QueryTest
     val err = getError(e)
     assert(err.isDefined, "exception with the error class not found")
     checkError(
-      exception = err.get,
-      errorClass = errorClass,
+      err.get,
+      errorClass,
       parameters = params,
       matchPVals = true)
   }
@@ -1258,6 +1258,35 @@ class SchemaUtilsSuite extends QueryTest
     }
   }
 
+  test("addColumn - top level array") {
+    val a = StructField("a", IntegerType)
+    val b = StructField("b", StringType)
+    val schema = ArrayType(new StructType().add(a).add(b))
+
+    val x = StructField("x", LongType)
+    assert(SchemaUtils.addColumn(schema, x, Seq(0, 1)) ===
+      ArrayType(new StructType().add(a).add(x).add(b)))
+  }
+
+  test("addColumn - top level map") {
+    val k = StructField("k", IntegerType)
+    val v = StructField("v", StringType)
+    val schema = MapType(
+      keyType = new StructType().add(k),
+      valueType = new StructType().add(v))
+
+    val x = StructField("x", LongType)
+    assert(SchemaUtils.addColumn(schema, x, Seq(0, 1)) ===
+      MapType(
+        keyType = new StructType().add(k).add(x),
+        valueType = new StructType().add(v)))
+
+    assert(SchemaUtils.addColumn(schema, x, Seq(1, 1)) ===
+      MapType(
+        keyType = new StructType().add(k),
+        valueType = new StructType().add(v).add(x)))
+  }
+
   ////////////////////////////
   // dropColumn
   ////////////////////////////
@@ -1511,6 +1540,29 @@ class SchemaUtilsSuite extends QueryTest
     }
   }
 
+  test("dropColumn - top level array") {
+    val schema = ArrayType(new StructType().add("a", IntegerType).add("b", StringType))
+
+    assert(SchemaUtils.dropColumn(schema, Seq(0, 0))._1 ===
+      ArrayType(new StructType().add("b", StringType)))
+  }
+
+  test("dropColumn - top level map") {
+    val schema = MapType(
+      keyType = new StructType().add("k", IntegerType).add("k2", StringType),
+      valueType = new StructType().add("v", StringType).add("v2", StringType))
+
+    assert(SchemaUtils.dropColumn(schema, Seq(0, 0))._1 ===
+      MapType(
+        keyType = new StructType().add("k2", StringType),
+        valueType = new StructType().add("v", StringType).add("v2", StringType)))
+
+    assert(SchemaUtils.dropColumn(schema, Seq(1, 0))._1 ===
+      MapType(
+        keyType = new StructType().add("k", IntegerType).add("k2", StringType),
+        valueType = new StructType().add("v2", StringType)))
+  }
+
   /////////////////////////////////
   // normalizeColumnNamesInDataType
   /////////////////////////////////
@@ -1680,8 +1732,8 @@ class SchemaUtilsSuite extends QueryTest
         Seq("x", "Y"), new StructType())
     }
     checkError(
-      exception = exception,
-      errorClass = "DELTA_CANNOT_RESOLVE_COLUMN",
+      exception,
+      "DELTA_CANNOT_RESOLVE_COLUMN",
       sqlState = "42703",
       parameters = Map("columnName" -> "x.Y.bb", "schema" -> "root\n")
     )
@@ -1948,8 +2000,8 @@ class SchemaUtilsSuite extends QueryTest
       )
     }
     checkError(
-      exception = exception,
-      errorClass = "DELTA_CANNOT_RESOLVE_COLUMN",
+      exception,
+      "DELTA_CANNOT_RESOLVE_COLUMN",
       sqlState = "42703",
       parameters = Map("columnName" -> "two", "schema" -> tableSchema.treeString)
     )
@@ -1974,8 +2026,8 @@ class SchemaUtilsSuite extends QueryTest
       )
     }
     checkError(
-      exception = exception,
-      errorClass = "DELTA_CANNOT_RESOLVE_COLUMN",
+      exception,
+      "DELTA_CANNOT_RESOLVE_COLUMN",
       sqlState = "42703",
       parameters = Map("columnName" -> "s.two", "schema" -> tableSchema.treeString)
     )
@@ -2348,8 +2400,8 @@ class SchemaUtilsSuite extends QueryTest
           mergeSchemas(longType, sourceType)
         }
       checkError(
-        exception = e.getCause.asInstanceOf[AnalysisException],
-        errorClass = "DELTA_MERGE_INCOMPATIBLE_DATATYPE",
+        e.getCause.asInstanceOf[AnalysisException],
+        "DELTA_MERGE_INCOMPATIBLE_DATATYPE",
         parameters = Map("currentDataType" -> "LongType",
           "updateDataType" -> sourceType.head.dataType.toString))
     }
@@ -2376,6 +2428,117 @@ class SchemaUtilsSuite extends QueryTest
     testParquetUpcast()
 
   }
+
+  test("schema merging non struct root type") {
+    // Array root type
+    val base1 = ArrayType(new StructType().add("a", IntegerType))
+    val update1 = ArrayType(new StructType().add("b", IntegerType))
+    val mergedType1 =
+      mergeDataTypes(
+        current = base1,
+        update = update1,
+        allowImplicitConversions = false,
+        keepExistingType = false,
+        typeWideningMode = TypeWideningMode.NoTypeWidening,
+        caseSensitive = false,
+        allowOverride = false)
+    assert(mergedType1 === ArrayType(new StructType().add("a", IntegerType).add("b", IntegerType)))
+
+    // Map root type
+    val base2 = MapType(
+      new StructType().add("a", IntegerType),
+      new StructType().add("b", IntegerType)
+    )
+    val update2 = MapType(
+      new StructType().add("b", IntegerType),
+      new StructType().add("c", IntegerType)
+    )
+    val mergedType2 =
+      mergeDataTypes(
+        current = base2,
+        update = update2,
+        allowImplicitConversions = false,
+        keepExistingType = false,
+        typeWideningMode = TypeWideningMode.NoTypeWidening,
+        caseSensitive = false,
+        allowOverride = false)
+    assert(mergedType2 ===
+      MapType(
+        new StructType().add("a", IntegerType).add("b", IntegerType),
+        new StructType().add("b", IntegerType).add("c", IntegerType)
+      ))
+  }
+
+  test("schema merging allow override") {
+    // override root type
+    val base1 = new StructType().add("a", IntegerType)
+    val update1 = ArrayType(LongType)
+    val mergedSchema1 =
+      mergeDataTypes(
+        current = base1,
+        update = update1,
+        allowImplicitConversions = false,
+        keepExistingType = false,
+        typeWideningMode = TypeWideningMode.NoTypeWidening,
+        caseSensitive = false,
+        allowOverride = true)
+    assert(mergedSchema1 === ArrayType(LongType))
+
+    // override nested type
+    val base2 = ArrayType(new StructType().add("a", IntegerType).add("b", StringType))
+    val update2 = ArrayType(new StructType().add("a", MapType(StringType, StringType)))
+    val mergedSchema2 =
+      mergeDataTypes(
+        current = base2,
+        update = update2,
+        allowImplicitConversions = false,
+        keepExistingType = false,
+        typeWideningMode = TypeWideningMode.NoTypeWidening,
+        caseSensitive = false,
+        allowOverride = true)
+    assert(mergedSchema2 ===
+      ArrayType(new StructType().add("a", MapType(StringType, StringType)).add("b", StringType)))
+  }
+
+  test("keepExistingType and typeWideningMode both set allows both widening and " +
+    "preserving non-widenable existing types") {
+    val base = new StructType()
+      .add("widened", ShortType)
+      .add("struct", new StructType()
+        .add("b", ByteType)
+        .add("a", StringType))
+      .add("map", MapType(ShortType, IntegerType))
+      .add("array", ArrayType(StringType))
+      .add("nonwidened", IntegerType)
+
+    val update = new StructType()
+      .add("widened", IntegerType)
+      .add("struct", new StructType()
+        .add("b", IntegerType)
+        .add("a", IntegerType))
+      .add("map", MapType(IntegerType, StringType))
+      .add("array", ArrayType(ByteType))
+      .add("nonwidened", StringType)
+
+    val expected = new StructType()
+      .add("widened", IntegerType)
+      .add("struct", new StructType()
+        .add("b", IntegerType)
+        .add("a", StringType))
+      .add("map", MapType(IntegerType, IntegerType))
+      .add("array", ArrayType(StringType))
+      .add("nonwidened", IntegerType)
+
+    val mergedSchema =
+      mergeSchemas(
+        base,
+        update,
+        typeWideningMode = TypeWideningMode.TypeEvolution(uniformIcebergCompatibleOnly = false),
+        keepExistingType = true
+      )
+    assert(mergedSchema === expected)
+  }
+
   ////////////////////////////
   // transformColumns
   ////////////////////////////
@@ -2584,6 +2747,45 @@ class SchemaUtilsSuite extends QueryTest
     assert(update === res3)
   }
 
+  test("transform top level array type") {
+    val at = ArrayType(
+      new StructType()
+        .add("s1", IntegerType)
+    )
+
+    var visitedFields = 0
+    val updated = SchemaMergingUtils.transformColumns(at) {
+      case (_, field, _) =>
+        visitedFields += 1
+        field.copy(name = "s1_1", dataType = StringType)
+    }
+
+    assert(visitedFields === 1)
+    assert(updated === ArrayType(new StructType().add("s1_1", StringType)))
+  }
+
+  test("transform top level map type") {
+    val mt = MapType(
+      new StructType()
+        .add("k1", IntegerType),
+      new StructType()
+        .add("v1", IntegerType)
+    )
+
+    var visitedFields = 0
+    val updated = SchemaMergingUtils.transformColumns(mt) {
+      case (_, field, _) =>
+        visitedFields += 1
+        field.copy(name = field.name + "_1", dataType = StringType)
+    }
+
+    assert(visitedFields === 2)
+    assert(updated === MapType(
+      new StructType().add("k1_1", StringType),
+      new StructType().add("v1_1", StringType)
+    ))
+  }
+
   ////////////////////////////
   // pruneEmptyStructs
   ////////////////////////////
@@ -2637,10 +2839,10 @@ class SchemaUtilsSuite extends QueryTest
     badCharacters.foreach { char =>
       Seq(s"a${char}b", s"${char}ab", s"ab${char}", char.toString).foreach { name =>
         checkError(
-          exception = intercept[AnalysisException] {
+          intercept[AnalysisException] {
             SchemaUtils.checkFieldNames(Seq(name))
           },
-          errorClass = "DELTA_INVALID_CHARACTERS_IN_COLUMN_NAME",
+          "DELTA_INVALID_CHARACTERS_IN_COLUMN_NAME",
           parameters = Map("columnName" -> s"$name")
         )
       }
@@ -2879,6 +3081,100 @@ class SchemaUtilsSuite extends QueryTest
     assert(udts.map(_.getClass.getName).toSet == Set(classOf[PointUDT].getName))
   }
 
+
+  test("check if column affects given dependent expressions") {
+    val schema = StructType(Seq(
+      StructField("cArray", ArrayType(StringType)),
+      StructField("cStruct", StructType(Seq(
+        StructField("cMap", MapType(IntegerType, ArrayType(BooleanType))),
+        StructField("cMapWithComplexKey", MapType(StructType(Seq(
+          StructField("a", ArrayType(StringType)),
+          StructField("b", BooleanType)
+        )), IntegerType))
+      )))
+    ))
+    assert(
+      SchemaUtils.containsDependentExpression(
+        spark,
+        columnToChange = Seq("cArray"),
+        exprString = "cast(cStruct.cMap as string) == '{}'",
+        schema,
+        caseInsensitiveResolution) === false
+    )
+    // Extracting value from map uses key type as well.
+    assert(
+      SchemaUtils.containsDependentExpression(
+        spark,
+        columnToChange = Seq("cStruct", "cMap", "key"),
+        exprString = "cStruct.cMap['random_key'] == 'string'",
+        schema,
+        caseInsensitiveResolution) === true
+    )
+    assert(
+      SchemaUtils.containsDependentExpression(
+        spark,
+        columnToChange = Seq("cstruct"),
+        exprString = "size(cStruct.cMap) == 0",
+        schema,
+        caseSensitiveResolution) === false
+    )
+    assert(
+      SchemaUtils.containsDependentExpression(
+        spark,
+        columnToChange = Seq("cStruct", "cMap", "key"),
+        exprString = "size(cArray) == 1",
+        schema,
+        caseInsensitiveResolution) === false
+    )
+    assert(
+      SchemaUtils.containsDependentExpression(
+        spark,
+        columnToChange = Seq("cStruct", "cMap", "key"),
+        exprString = "cStruct.cMapWithComplexKey[struct(cArray, false)] == 0",
+        schema,
+        caseInsensitiveResolution) === false
+    )
+    assert(
+      SchemaUtils.containsDependentExpression(
+        spark,
+        columnToChange = Seq("cArray", "element"),
+        exprString = "cStruct.cMapWithComplexKey[struct(cArray, false)] == 0",
+        schema,
+        caseInsensitiveResolution) === true
+    )
+    assert(
+      SchemaUtils.containsDependentExpression(
+        spark,
+        columnToChange = Seq("cStruct", "cMapWithComplexKey", "key", "b"),
+        exprString = "cStruct.cMapWithComplexKey[struct(cArray, false)] == 0",
+        schema,
+        caseInsensitiveResolution) === true
+    )
+    assert(
+      SchemaUtils.containsDependentExpression(
+        spark,
+        columnToChange = Seq("cArray", "element"),
+        exprString = "concat_ws('', cArray) == 'string'",
+        schema,
+        caseInsensitiveResolution) === true
+    )
+    assert(
+      SchemaUtils.containsDependentExpression(
+        spark,
+        columnToChange = Seq("CARRAY"),
+        exprString = "cArray[0] > 'a'",
+        schema,
+        caseInsensitiveResolution) === true
+    )
+    assert(
+      SchemaUtils.containsDependentExpression(
+        spark,
+        columnToChange = Seq("CARRAY", "element"),
+        exprString = "cArray[0] > 'a'",
+        schema,
+        caseSensitiveResolution) === false
+    )
+  }
 }
 
 object UnsupportedDataType extends DataType {

@@ -22,6 +22,7 @@ import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
 import org.apache.spark.sql.delta.skipping.ClusteredTableTestUtils
 import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingEnableIdMode, DeltaColumnMappingEnableNameMode, DeltaConfigs, DeltaExcludedBySparkVersionTestMixinShims, DeltaLog, DeltaUnsupportedOperationException, NoMapping}
 import org.apache.spark.sql.delta.clustering.ClusteringMetadataDomain
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
 import org.apache.spark.sql.delta.hooks.UpdateCatalog
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.SkippingEligibleDataType
@@ -250,10 +251,11 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
                   if (clause == "CREATE") {
                     // Drop the table and delete the _delta_log directory to allow
                     // external delta table creation.
+                    deleteTableFromCommitCoordinatorIfNeeded("dstTbl")
                     sql("DROP TABLE IF EXISTS dstTbl")
                     Utils.deleteRecursively(new File(tmpDir, "_delta_log"))
                   }
-                  // Qualified data types and no exception is epxected.
+                  // Qualified data types and no exception is expected.
                   f()
                 } else {
                   val e = intercept[DeltaAnalysisException] {
@@ -267,8 +269,8 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
                   assert(dataTypeOpt.nonEmpty, s"Can't find column $colName " +
                     s"in schema ${tableSchema.treeString}")
                   checkError(
-                    exception = e,
-                    errorClass = "DELTA_CLUSTERING_COLUMNS_DATATYPE_NOT_SUPPORTED",
+                    e,
+                    "DELTA_CLUSTERING_COLUMNS_DATATYPE_NOT_SUPPORTED",
                     parameters = Map("columnsWithDataTypes" -> s"$colName : ${dataTypeOpt.get.sql}")
                   )
                 }
@@ -287,8 +289,8 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
           "CREATE", testTable, "a INT, b INT, c INT, d INT, e INT", "a, b, c, d, e")
       }
       checkError(
-        exception = e,
-        errorClass = "DELTA_CLUSTER_BY_INVALID_NUM_COLUMNS",
+        e,
+        "DELTA_CLUSTER_BY_INVALID_NUM_COLUMNS",
         parameters = Map("numColumnsLimit" -> "4", "actualNumColumns" -> "5")
       )
     }
@@ -305,8 +307,8 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
             "CREATE", testTable, sourceTable, "a, b, c, d, e", location = location)
         }
         checkError(
-          exception = e,
-          errorClass = "DELTA_CLUSTER_BY_INVALID_NUM_COLUMNS",
+          e,
+          "DELTA_CLUSTER_BY_INVALID_NUM_COLUMNS",
           parameters = Map("numColumnsLimit" -> "4", "actualNumColumns" -> "5")
         )
       }
@@ -354,8 +356,8 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
                 indexedColumns,
                 Some(tableSchema)))
             checkError(
-              exception = e,
-              errorClass = "DELTA_CLUSTERING_COLUMN_MISSING_STATS",
+              e,
+              "DELTA_CLUSTERING_COLUMN_MISSING_STATS",
               parameters = Map(
                 "columns" -> "col1.col12, col2",
                 "schema" -> """root
@@ -411,8 +413,8 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
                   None,
                   location = Some(dir.getPath)))
               checkError(
-                exception = e,
-                errorClass = "DELTA_CLUSTERING_COLUMN_MISSING_STATS",
+                e,
+                "DELTA_CLUSTERING_COLUMN_MISSING_STATS",
                 parameters = Map(
                   "columns" -> "col1.col12, col2",
                   "schema" -> """root
@@ -456,8 +458,8 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
             indexedColumns,
             Some(nonEligibleTableSchema)))
         checkError(
-          exception = e,
-          errorClass = "DELTA_CLUSTERING_COLUMNS_DATATYPE_NOT_SUPPORTED",
+          e,
+          "DELTA_CLUSTERING_COLUMNS_DATATYPE_NOT_SUPPORTED",
           parameters = Map("columnsWithDataTypes" -> "col1.col11 : ARRAY<INT>")
         )
       }
@@ -553,8 +555,8 @@ trait ClusteredTableDDLWithColumnMapping
         sql(s"ALTER TABLE $testTable DROP COLUMNS (col1)")
       }
       checkError(
-        exception = e,
-        errorClass = "DELTA_UNSUPPORTED_DROP_CLUSTERING_COLUMN",
+        e,
+        "DELTA_UNSUPPORTED_DROP_CLUSTERING_COLUMN",
         parameters = Map("columnList" -> "col1")
       )
       // Drop non-clustering columns are allowed.
@@ -568,8 +570,8 @@ trait ClusteredTableDDLWithColumnMapping
         sql(s"ALTER TABLE $testTable DROP COLUMNS (col1, col2)")
       }
       checkError(
-        exception = e,
-        errorClass = "DELTA_UNSUPPORTED_DROP_CLUSTERING_COLUMN",
+        e,
+        "DELTA_UNSUPPORTED_DROP_CLUSTERING_COLUMN",
         parameters = Map("columnList" -> "col1,col2")
       )
     }
@@ -582,8 +584,8 @@ trait ClusteredTableDDLWithColumnMapping
         sql(s"ALTER TABLE $testTable DROP COLUMNS (col1, col3)")
       }
       checkError(
-        exception = e,
-        errorClass = "DELTA_UNSUPPORTED_DROP_CLUSTERING_COLUMN",
+        e,
+        "DELTA_UNSUPPORTED_DROP_CLUSTERING_COLUMN",
         parameters = Map("columnList" -> "col1")
       )
     }
@@ -659,7 +661,7 @@ trait ClusteredTableDDLSuiteBase
       }
       checkError(
         e,
-        errorClass = "DELTA_CLUSTER_BY_INVALID_NUM_COLUMNS",
+        "DELTA_CLUSTER_BY_INVALID_NUM_COLUMNS",
         parameters = Map(
           "numColumnsLimit" -> "4",
           "actualNumColumns" -> "5")
@@ -782,8 +784,8 @@ trait ClusteredTableDDLSuiteBase
         sql(s"OPTIMIZE $testTable ZORDER BY (a)")
       }
       checkError(
-        exception = e2,
-        errorClass = "DELTA_CLUSTERING_WITH_ZORDER_BY",
+        e2,
+        "DELTA_CLUSTERING_WITH_ZORDER_BY",
         parameters = Map("zOrderBy" -> "a")
       )
     }
@@ -911,7 +913,7 @@ trait ClusteredTableDDLSuiteBase
       }
       checkError(
         e,
-        errorClass = "DELTA_CANNOT_MODIFY_TABLE_PROPERTY",
+        "DELTA_CANNOT_MODIFY_TABLE_PROPERTY",
         parameters = Map("prop" -> "clusteringColumns"))
     }
   }
@@ -994,7 +996,9 @@ trait ClusteredTableDDLSuiteBase
   }
 }
 
-trait ClusteredTableDDLSuite extends ClusteredTableDDLSuiteBase
+trait ClusteredTableDDLSuite
+  extends ClusteredTableDDLSuiteBase
+    with CoordinatedCommitsBaseSuite
 
 trait ClusteredTableDDLWithNameColumnMapping
   extends ClusteredTableCreateOrReplaceDDLSuite with DeltaColumnMappingEnableNameMode
@@ -1169,7 +1173,7 @@ trait ClusteredTableDDLDataSourceV2SuiteBase
         }
         checkError(
           e,
-          errorClass = "DELTA_CREATE_TABLE_WITH_DIFFERENT_CLUSTERING",
+          "DELTA_CREATE_TABLE_WITH_DIFFERENT_CLUSTERING",
           parameters = Map(
             "path" -> dir.toURI.toString.stripSuffix("/"),
             "specifiedColumns" -> "",
@@ -1194,7 +1198,7 @@ trait ClusteredTableDDLDataSourceV2SuiteBase
         }
         checkError(
           e,
-          errorClass = "DELTA_CREATE_TABLE_WITH_DIFFERENT_CLUSTERING",
+          "DELTA_CREATE_TABLE_WITH_DIFFERENT_CLUSTERING",
           parameters = Map(
             "path" -> dir.toURI.toString.stripSuffix("/"),
             "specifiedColumns" -> "col2",
@@ -1235,7 +1239,7 @@ trait ClusteredTableDDLDataSourceV2SuiteBase
         }
         checkError(
           e,
-          errorClass = "DELTA_CREATE_TABLE_WITH_DIFFERENT_CLUSTERING",
+          "DELTA_CREATE_TABLE_WITH_DIFFERENT_CLUSTERING",
           parameters = Map(
             "path" -> dir.toURI.toString.stripSuffix("/"),
             "specifiedColumns" -> "col1",
@@ -1259,3 +1263,8 @@ class ClusteredTableDDLDataSourceV2NameColumnMappingSuite
     with ClusteredTableDDLWithV2
     with ClusteredTableDDLWithColumnMappingV2
     with ClusteredTableDDLSuite
+
+class ClusteredTableDDLDataSourceV2WithCoordinatedCommitsBatch100Suite
+    extends ClusteredTableDDLDataSourceV2Suite {
+  override val coordinatedCommitsBackfillBatchSize: Option[Int] = Some(100)
+}

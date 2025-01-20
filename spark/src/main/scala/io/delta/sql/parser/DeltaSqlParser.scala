@@ -319,17 +319,42 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
   /**
    * Create a [[VacuumTableCommand]] logical plan. Example SQL:
    * {{{
-   *   VACUUM ('/path/to/dir' | delta.`/path/to/dir`) [RETAIN number HOURS] [DRY RUN];
+   *   VACUUM ('/path/to/dir' | delta.`/path/to/dir`)
+   *   LITE|FULL
+   *   [RETAIN number HOURS] [DRY RUN];
    * }}}
    */
   override def visitVacuumTable(ctx: VacuumTableContext): AnyRef = withOrigin(ctx) {
+    val vacuumModifiersCtx = ctx.vacuumModifiers()
+    withOrigin(vacuumModifiersCtx) {
+      checkDuplicateClauses(vacuumModifiersCtx.vacuumType(), "LITE/FULL", vacuumModifiersCtx)
+      checkDuplicateClauses(vacuumModifiersCtx.inventory(), "INVENTORY", vacuumModifiersCtx)
+      checkDuplicateClauses(vacuumModifiersCtx.retain(), "RETAIN", vacuumModifiersCtx)
+      checkDuplicateClauses(vacuumModifiersCtx.dryRun(), "DRY RUN", vacuumModifiersCtx)
+      if (!vacuumModifiersCtx.inventory().isEmpty &&
+        !vacuumModifiersCtx.vacuumType().isEmpty &&
+        vacuumModifiersCtx.vacuumType().asScala.head.LITE != null) {
+        operationNotAllowed("Inventory option is not compatible with LITE", vacuumModifiersCtx)
+      }
+    }
     VacuumTableCommand(
       path = Option(ctx.path).map(string),
       table = Option(ctx.table).map(visitTableIdentifier),
-      inventoryTable = Option(ctx.inventoryTable).map(visitTableIdentifier),
-      inventoryQuery = Option(ctx.inventoryQuery).map(extractRawText),
-      horizonHours = Option(ctx.number).map(_.getText.toDouble),
-      dryRun = ctx.RUN != null)
+      inventoryTable = ctx.vacuumModifiers().inventory().asScala.headOption.collect {
+        case i if i.inventoryTable != null => visitTableIdentifier(i.inventoryTable)
+      },
+      inventoryQuery = ctx.vacuumModifiers().inventory().asScala.headOption.collect {
+        case i if i.inventoryQuery != null => extractRawText(i.inventoryQuery)
+      },
+      horizonHours =
+        ctx.vacuumModifiers().retain().asScala.headOption.map(_.number.getText.toDouble),
+      dryRun =
+        ctx.vacuumModifiers().dryRun().asScala.headOption.exists(_.RUN != null),
+      vacuumType = ctx.vacuumModifiers().vacuumType().asScala.headOption.map {
+        t => if (t.LITE != null) "LITE" else "FULL"
+      },
+      options = Map.empty
+    )
   }
 
   /** Provides a list of unresolved attributes for multi dimensional clustering. */
@@ -368,7 +393,8 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
     OptimizeTableCommand(
       Option(ctx.path).map(string),
       Option(ctx.table).map(visitTableIdentifier),
-      Option(ctx.partitionPredicate).map(extractRawText(_)).toSeq)(interleaveBy)
+      Option(ctx.partitionPredicate).map(extractRawText(_)).toSeq,
+      DeltaOptimizeContext(isFull = ctx.FULL != null))(interleaveBy)
   }
 
   /**
@@ -428,9 +454,8 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
 
   override def visitGenerate(ctx: GenerateContext): LogicalPlan = withOrigin(ctx) {
     DeltaGenerateCommand(
-      modeName = ctx.modeName.getText,
-      tableId = visitTableIdentifier(ctx.table),
-      Map.empty)
+      UnresolvedTable(visitTableIdentifier(ctx.table).nameParts, DeltaGenerateCommand.COMMAND_NAME),
+      modeName = ctx.modeName.getText)
   }
 
   override def visitConvert(ctx: ConvertContext): LogicalPlan = withOrigin(ctx) {

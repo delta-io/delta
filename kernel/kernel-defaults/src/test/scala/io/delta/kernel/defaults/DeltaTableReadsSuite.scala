@@ -18,18 +18,22 @@ package io.delta.kernel.defaults
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.exceptions.{InvalidTableException, KernelException, TableNotFoundException}
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
+import io.delta.kernel.internal.TableImpl
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.InternalUtils.daysSinceEpoch
 import io.delta.kernel.internal.util.{DateTimeConstants, FileNames}
 import io.delta.kernel.types.{LongType, StructType}
 import io.delta.kernel.Table
 import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
+import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations}
+import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
 import org.apache.spark.sql.functions.col
 import org.scalatest.funsuite.AnyFunSuite
 
 import java.io.File
 import java.math.BigDecimal
 import java.sql.Date
+import java.time.Instant
 import scala.collection.JavaConverters._
 
 class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
@@ -435,6 +439,86 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
     }
   }
 
+  test("table with type widening on basic types") {
+    val path = goldenTablePath("type-widening")
+
+    def timestampToMicros(timestamp: String): Long = {
+      val instant = Instant.parse(timestamp)
+      instant.getEpochSecond() * DateTimeConstants.MICROS_PER_SECOND + instant.getNano() / 1000
+    }
+
+    val expectedAnswer = Seq(
+      TestRow(
+        1L, 2L, 3.4.toFloat.toDouble, 5.0, 6.0, 7.0, timestampToMicros("2024-09-09T00:00:00Z")
+      ),
+      TestRow(
+        Long.MaxValue, Long.MaxValue, 1.234567890123, 1.234567890123, 1.234567890123,
+        1.234567890123, timestampToMicros("2024-09-09T12:34:56.123456Z")
+      )
+    )
+    checkTable(
+      path = path,
+      expectedAnswer = expectedAnswer,
+      readCols = Seq(
+        "byte_long",
+        "int_long",
+        "float_double",
+        "byte_double",
+        "short_double",
+        "int_double",
+        "date_timestamp_ntz")
+    )
+  }
+
+  test("table with type widening to decimal types") {
+    val path = goldenTablePath("type-widening")
+    val expectedAnswer = Seq(
+      TestRow(
+        BigDecimal.valueOf(12345L, 2),
+        BigDecimal.valueOf(6789000L, 5),
+        BigDecimal.valueOf(10L, 1),
+        BigDecimal.valueOf(20L, 1),
+        BigDecimal.valueOf(30L, 1),
+        BigDecimal.valueOf(40L, 1)
+      ),
+      TestRow(
+        BigDecimal.valueOf(1234567890123456L, 2),
+        BigDecimal.valueOf(1234567890123456L, 5),
+        BigDecimal.valueOf(1234L, 1),
+        BigDecimal.valueOf(123456L, 1),
+        BigDecimal.valueOf(12345678901L, 1),
+        BigDecimal.valueOf(1234567890123456789L, 1)
+      )
+    )
+    checkTable(
+      path = path,
+      expectedAnswer = expectedAnswer,
+      readCols = Seq(
+        "decimal_decimal_same_scale",
+        "decimal_decimal_greater_scale",
+        "byte_decimal",
+        "short_decimal",
+        "int_decimal",
+        "long_decimal"
+      )
+    )
+  }
+
+  test("table with type widening to nested types") {
+    val path = goldenTablePath("type-widening-nested")
+    val expectedAnswer = Seq(
+      TestRow(TestRow(1L), Map(2L -> 3L), Seq(4L, 5L)),
+      TestRow(
+        TestRow(Long.MaxValue), Map(Long.MaxValue -> Long.MaxValue),
+        Seq(Long.MaxValue, Long.MinValue))
+    )
+    checkTable(
+      path = path,
+      expectedAnswer = expectedAnswer,
+      readCols = Seq("struct", "map", "array")
+    )
+  }
+
   test("table with complex map types") {
     val path = "file:" + goldenTablePath("data-reader-map")
 
@@ -590,7 +674,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
     val e = intercept[InvalidTableException] {
       latestSnapshot(goldenTablePath("versions-not-contiguous"))
     }
-    assert(e.getMessage.contains("versions are not continuous: ([0, 2])"))
+    assert(e.getMessage.contains("versions are not contiguous: ([0, 2])"))
   }
 
   test("table protocol version greater than reader protocol version") {
@@ -856,6 +940,143 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       intercept[TableNotFoundException] {
         Table.forPath(defaultEngine, dir.getCanonicalPath)
           .getSnapshotAsOfTimestamp(defaultEngine, 0L)
+      }
+    }
+  }
+
+  ///////////////////////////////////////////////////////////////////////////////////////////////
+  // getVersionBeforeOrAtTimestamp + getVersionAtOrAfterTimestamp tests
+  // (more in TableImplSuite and DeltaHistoryManagerSuite)
+  //////////////////////////////////////////////////////////////////////////////////////////////
+
+  // Copied from Standalone DeltaLogSuite
+  test("getVersionBeforeOrAtTimestamp and getVersionAtOrAfterTimestamp") {
+    // Note:
+    // - all Xa test cases will test getVersionBeforeOrAtTimestamp
+    // - all Xb test cases will test getVersionAtOrAfterTimestamp
+    withTempDir { dir =>
+      val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
+      val tableImpl = Table.forPath(defaultEngine, dir.getCanonicalPath).asInstanceOf[TableImpl]
+
+      // ========== case 0: delta table does not exist ==========
+      intercept[TableNotFoundException] {
+        tableImpl.getVersionBeforeOrAtTimestamp(defaultEngine, System.currentTimeMillis())
+      }
+      intercept[TableNotFoundException] {
+        tableImpl.getVersionAtOrAfterTimestamp(defaultEngine, System.currentTimeMillis())
+      }
+
+      // Setup part 1 of 2: create log files
+      (0 to 2).foreach { i =>
+        val files = AddFile(i.toString, Map.empty, 1, 1, true) :: Nil
+        val metadata = if (i == 0) Metadata() :: Nil else Nil
+        log.startTransaction().commit( metadata ++ files, DeltaOperations.ManualUpdate)
+      }
+
+      // Setup part 2 of 2: edit lastModified times
+      val logPath = new Path(dir.getCanonicalPath, "_delta_log")
+
+      val delta0 = new File(FileNames.deltaFile(logPath, 0))
+      val delta1 = new File(FileNames.deltaFile(logPath, 1))
+      val delta2 = new File(FileNames.deltaFile(logPath, 2))
+      delta0.setLastModified(1000)
+      delta1.setLastModified(2000)
+      delta2.setLastModified(3000)
+
+      // ========== case 1: before first commit ==========
+      // case 1a
+      val e1 = intercept[KernelException] {
+        tableImpl.getVersionBeforeOrAtTimestamp(defaultEngine, 500)
+      }.getMessage
+      assert(e1.contains("is before the earliest available version 0"))
+      // case 1b
+      assert(tableImpl.getVersionAtOrAfterTimestamp(defaultEngine, 500) == 0)
+
+      // ========== case 2: at first commit ==========
+      // case 2a
+      assert(tableImpl.getVersionBeforeOrAtTimestamp(defaultEngine, 1000) == 0)
+      // case 2b
+      assert(tableImpl.getVersionAtOrAfterTimestamp(defaultEngine, 1000) == 0)
+
+      // ========== case 3: between two normal commits ==========
+      // case 3a
+      assert(tableImpl.getVersionBeforeOrAtTimestamp(defaultEngine, 1500) == 0) // round down to v0
+      // case 3b
+      assert(tableImpl.getVersionAtOrAfterTimestamp(defaultEngine, 1500) == 1) // round up to v1
+
+      // ========== case 4: at last commit ==========
+      // case 4a
+      assert(tableImpl.getVersionBeforeOrAtTimestamp(defaultEngine, 3000) == 2)
+      // case 4b
+      assert(tableImpl.getVersionAtOrAfterTimestamp(defaultEngine, 3000) == 2)
+
+      // ========== case 5: after last commit ==========
+      // case 5a
+      assert(tableImpl.getVersionBeforeOrAtTimestamp(defaultEngine, 4000) == 2)
+      // case 5b
+      val e2 = intercept[KernelException] {
+        tableImpl.getVersionAtOrAfterTimestamp(defaultEngine, 4000)
+      }.getMessage
+      assert(e2.contains("is after the latest available version 2"))
+    }
+  }
+
+  // Copied from Standalone DeltaLogSuite
+  test("getVersionBeforeOrAtTimestamp and getVersionAtOrAfterTimestamp - recoverability") {
+    withTempDir { dir =>
+      // local file system truncates to seconds
+      val nowEpochMs = System.currentTimeMillis() / 1000 * 1000
+
+      val logPath = new Path(dir.getCanonicalPath, "_delta_log")
+
+      val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
+      val tableImpl = Table.forPath(defaultEngine, dir.getCanonicalPath).asInstanceOf[TableImpl]
+
+      (0 to 35).foreach { i =>
+        val files = AddFile(i.toString, Map.empty, 1, 1, true) :: Nil
+        val metadata = if (i == 0) Metadata() :: Nil else Nil
+        log.startTransaction().commit(metadata ++ files, DeltaOperations.ManualUpdate)
+      }
+
+      (0 to 35).foreach { i =>
+        val delta = new File(FileNames.deltaFile(logPath, i))
+        if (i >= 25) {
+          delta.setLastModified(nowEpochMs + i * 1000)
+        } else {
+          assert(delta.delete())
+        }
+      }
+
+      // A checkpoint exists at version 30, so all versions [30, 35] are recoverable.
+      // Nonetheless, getVersionBeforeOrAtTimestamp and getVersionAtOrAfterTimestamp do not
+      // require that the version is recoverable, so we should still be able to get back versions
+      // [25-29]
+
+      (25 to 34).foreach { i =>
+        if (i == 25) {
+          assertThrows[KernelException] {
+            tableImpl.getVersionBeforeOrAtTimestamp(defaultEngine, nowEpochMs + i * 1000 - 1)
+          }
+        } else {
+          assert(tableImpl.getVersionBeforeOrAtTimestamp(defaultEngine, nowEpochMs + i * 1000 - 1)
+            == i - 1)
+        }
+
+        assert(
+          tableImpl.getVersionAtOrAfterTimestamp(defaultEngine, nowEpochMs + i * 1000 - 1) == i)
+
+        assert(tableImpl.getVersionBeforeOrAtTimestamp(defaultEngine, nowEpochMs + i * 1000) == i)
+        assert(tableImpl.getVersionAtOrAfterTimestamp(defaultEngine, nowEpochMs + i * 1000) == i)
+
+        assert(
+          tableImpl.getVersionBeforeOrAtTimestamp(defaultEngine, nowEpochMs + i * 1000 + 1)== i)
+
+        if (i == 35) {
+          tableImpl.getVersionAtOrAfterTimestamp(defaultEngine, nowEpochMs + i * 1000 + 1)
+        } else {
+          assert(tableImpl.getVersionAtOrAfterTimestamp(defaultEngine, nowEpochMs + i * 1000 + 1)
+            == i + 1)
+        }
       }
     }
   }

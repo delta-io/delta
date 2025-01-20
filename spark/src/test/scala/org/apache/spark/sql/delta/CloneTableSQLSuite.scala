@@ -18,26 +18,30 @@ package org.apache.spark.sql.delta
 
 import scala.collection.immutable.NumericRange
 
-import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.actions.{AddFile, FileAction, RemoveFile}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaExcludedTestMixin, DeltaSQLCommandTest}
-import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{AnalysisException, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.catalog.CatalogTableType
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.util.Utils
 
 class CloneTableSQLSuite extends CloneTableSuiteBase
   with DeltaColumnMappingTestUtils
 {
+
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    disableDeletionVectors(spark.conf)
+  }
+
   // scalastyle:off argcount
   override protected def cloneTable(
       source: String,
       target: String,
+      isShallow: Boolean,
       sourceIsTable: Boolean = false,
       targetIsTable: Boolean = false,
       targetLocation: Option[String] = None,
@@ -66,7 +70,8 @@ class CloneTableSQLSuite extends CloneTableSuiteBase
     testSyntax(
       tbl,
       target,
-      s"CREATE TABLE delta.`$target` ${cloneTypeStr(isShallow)} CLONE $tbl VERSION AS OF 0"
+      s"CREATE TABLE delta.`$target` ${cloneTypeStr(isShallow)} CLONE $tbl VERSION AS OF 0",
+      isShallow
     )
   }
 
@@ -76,7 +81,8 @@ class CloneTableSQLSuite extends CloneTableSuiteBase
       testSyntax(
         tbl,
         clone,
-        s"CREATE OR REPLACE TABLE delta.`$clone` ${cloneTypeStr(isShallow)} CLONE $tbl"
+        s"CREATE OR REPLACE TABLE delta.`$clone` ${cloneTypeStr(isShallow)} CLONE $tbl",
+        isShallow
       )
   }
 
@@ -248,6 +254,7 @@ class CloneTableSQLSuite extends CloneTableSuiteBase
         runAndValidateClone(
           sourceTable,
           deep,
+          isShallow = true,
           sourceIsTable = true,
           targetLocation = Some(ext))()
       }
@@ -345,7 +352,7 @@ object CloneTableSQLTestUtils {
 }
 
 class CloneTableScalaDeletionVectorSuite
-    extends CloneTableSQLSuite
+    extends CloneTableScalaSuite
     with DeltaSQLCommandTest
     with DeltaExcludedTestMixin
     with DeletionVectorsTestUtils {
@@ -386,6 +393,7 @@ class CloneTableScalaDeletionVectorSuite
     runAndValidateCloneWithDVs(
       source,
       target,
+      isShallow,
       expectedNumFilesWithDVs = 2)
   }
 
@@ -404,6 +412,7 @@ class CloneTableScalaDeletionVectorSuite
       runAndValidateCloneWithDVs(
         source,
         target,
+        isShallow,
         expectedNumFilesWithDVs = 2)
     }
   }
@@ -426,6 +435,7 @@ class CloneTableScalaDeletionVectorSuite
       runAndValidateCloneWithDVs(
         source,
         target,
+        isShallow,
         expectedNumFilesWithDVs = 2)
     }
   }
@@ -444,6 +454,7 @@ class CloneTableScalaDeletionVectorSuite
     runAndValidateCloneWithDVs(
       source = source,
       target = target,
+      isShallow = true,
       expectedNumFilesWithDVs = 2)
 
     // Add a new DV to file 3 and update the DV file 2,
@@ -453,6 +464,7 @@ class CloneTableScalaDeletionVectorSuite
     runAndValidateCloneWithDVs(
       source = target,
       target = source,
+      isShallow = true,
       expectedNumFilesWithDVs = 3,
       isReplaceOperation = true)
   }
@@ -485,6 +497,7 @@ class CloneTableScalaDeletionVectorSuite
   private def runAndValidateCloneWithDVs(
     source: String,
     target: String,
+    isShallow: Boolean,
     expectedNumFilesWithDVs: Int,
     isReplaceOperation: Boolean = false): Unit = {
     val sourceDeltaLog = DeltaLog.forTable(spark, source)
@@ -504,6 +517,7 @@ class CloneTableScalaDeletionVectorSuite
     runAndValidateClone(
       source,
       target,
+      isShallow,
       isReplaceOperation = isReplaceOperation)()
     val filesWithDVsInTarget = getFilesWithDeletionVectors(targetDeltaLog)
     val numberOfUniqueDVFilesInTarget = filesWithDVsInTarget

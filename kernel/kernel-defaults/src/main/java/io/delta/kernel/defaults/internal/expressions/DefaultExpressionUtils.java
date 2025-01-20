@@ -15,12 +15,14 @@
  */
 package io.delta.kernel.defaults.internal.expressions;
 
+import static io.delta.kernel.defaults.internal.DefaultEngineErrors.unsupportedExpressionException;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.expressions.Expression;
+import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.types.*;
 import java.math.BigDecimal;
@@ -35,19 +37,6 @@ import java.util.stream.Collectors;
 class DefaultExpressionUtils {
 
   static final Comparator<BigDecimal> BIGDECIMAL_COMPARATOR = Comparator.naturalOrder();
-  static final Comparator<String> STRING_COMPARATOR =
-      (leftOp, rightOp) -> {
-        byte[] leftBytes = leftOp.getBytes(StandardCharsets.UTF_8);
-        byte[] rightBytes = rightOp.getBytes(StandardCharsets.UTF_8);
-        int i = 0;
-        while (i < leftBytes.length && i < rightBytes.length) {
-          if (leftBytes[i] != rightBytes[i]) {
-            return Byte.toUnsignedInt(leftBytes[i]) - Byte.toUnsignedInt(rightBytes[i]);
-          }
-          i++;
-        }
-        return Integer.compare(leftBytes.length, rightBytes.length);
-      };
   static final Comparator<byte[]> BINARY_COMPARTOR =
       (leftOp, rightOp) -> {
         int i = 0;
@@ -58,6 +47,12 @@ class DefaultExpressionUtils {
           i++;
         }
         return Integer.compare(leftOp.length, rightOp.length);
+      };
+  static final Comparator<String> STRING_COMPARATOR =
+      (leftOp, rightOp) -> {
+        byte[] leftBytes = leftOp.getBytes(StandardCharsets.UTF_8);
+        byte[] rightBytes = rightOp.getBytes(StandardCharsets.UTF_8);
+        return BINARY_COMPARTOR.compare(leftBytes, rightBytes);
       };
 
   private DefaultExpressionUtils() {}
@@ -389,5 +384,45 @@ class DefaultExpressionUtils {
         return lastLookupVector;
       }
     };
+  }
+
+  /**
+   * Checks if the specific expression is an integer literal, throws {@link
+   * UnsupportedOperationException} if not.
+   *
+   * @param expr, expression to be checked.
+   * @param context string describing the context, used for constructing error message.
+   * @param baseExpression expression whose evaluation triggers this check. Used for constructing
+   *     error message.
+   */
+  static void checkIntegerLiteral(Expression expr, String context, Expression baseExpression) {
+    if (!(expr instanceof Literal) || !IntegerType.INTEGER.equals(((Literal) expr).getDataType())) {
+      throw unsupportedExpressionException(
+          baseExpression, String.format("%s, expects an integral numeric", context));
+    }
+  }
+
+  /**
+   * Checks the argument count of an expression. throws {@code unsupportedExpressionException} if
+   * argument count mismatched.
+   */
+  static void checkArgsCount(Expression expr, int expectedCount, String exprName, String context) {
+    if (expr.getChildren().size() != expectedCount) {
+      throw unsupportedExpressionException(
+          expr, String.format("Invalid number of inputs of %s expression, %s", exprName, context));
+    }
+  }
+
+  static void checkIsStringType(DataType dataType, Expression parentExpr, String errorMessage) {
+    if (StringType.STRING.equals(dataType)) {
+      return;
+    }
+    throw unsupportedExpressionException(parentExpr, errorMessage);
+  }
+
+  static void checkIsLiteral(Expression expr, Expression parentExpr, String errorMessage) {
+    if (!(expr instanceof Literal)) {
+      throw unsupportedExpressionException(parentExpr, errorMessage);
+    }
   }
 }

@@ -207,6 +207,12 @@
     ],
     "sqlState" : "42809"
   },
+  "DELTA_CANNOT_MODIFY_COORDINATED_COMMITS_DEPENDENCIES" : {
+    "message" : [
+      "<Command> cannot override or unset in-commit timestamp table properties because coordinated commits is enabled in this table and depends on them. Please remove them (\"delta.enableInCommitTimestamps\", \"delta.inCommitTimestampEnablementVersion\", \"delta.inCommitTimestampEnablementTimestamp\") from the TBLPROPERTIES clause and then retry the command again."
+    ],
+    "sqlState" : "42616"
+  },
   "DELTA_CANNOT_MODIFY_TABLE_PROPERTY" : {
     "message" : [
       "The Delta table configuration <prop> cannot be specified by the user"
@@ -267,6 +273,12 @@
     ],
     "sqlState" : "22003"
   },
+  "DELTA_CANNOT_SET_COORDINATED_COMMITS_DEPENDENCIES" : {
+    "message" : [
+      "<Command> cannot set in-commit timestamp table properties together with coordinated commits, because the latter depends on the former and sets the former internally. Please remove them (\"delta.enableInCommitTimestamps\", \"delta.inCommitTimestampEnablementVersion\", \"delta.inCommitTimestampEnablementTimestamp\") from the TBLPROPERTIES clause and then retry the command again."
+    ],
+    "sqlState" : "42616"
+  },
   "DELTA_CANNOT_SET_LOCATION_MULTIPLE_TIMES" : {
     "message" : [
       "Can't set location multiple times. Found <location>"
@@ -278,6 +290,12 @@
       "Cannot change the location of a path based table."
     ],
     "sqlState" : "42613"
+  },
+  "DELTA_CANNOT_UNSET_COORDINATED_COMMITS_CONFS" : {
+    "message" : [
+      "ALTER cannot unset coordinated commits configurations. To downgrade a table from coordinated commits, please try again using `ALTER TABLE [table-name] DROP FEATURE 'coordinatedCommits-preview'`."
+    ],
+    "sqlState" : "42616"
   },
   "DELTA_CANNOT_UPDATE_ARRAY_FIELD" : {
     "message" : [
@@ -308,6 +326,12 @@
       "Cannot use all columns for partition columns"
     ],
     "sqlState" : "428FT"
+  },
+  "DELTA_CANNOT_VACUUM_LITE" : {
+    "message" : [
+      "VACUUM LITE cannot delete all eligible files as some files are not referenced by the Delta log. Please run VACUUM FULL."
+    ],
+    "sqlState" : "55000"
   },
   "DELTA_CANNOT_WRITE_INTO_VIEW" : {
     "message" : [
@@ -381,9 +405,9 @@
   },
   "DELTA_CLUSTERING_COLUMNS_DATATYPE_NOT_SUPPORTED" : {
     "message" : [
-      "Clustering requires the data types of clustering columns to support data skipping. However the following column(s) '<columnsWithDataTypes>' have unsupported data types for data skipping in Delta."
+      "CLUSTER BY is not supported because the following column(s): <columnsWithDataTypes> don't support data skipping."
     ],
-    "sqlState" : "22000"
+    "sqlState" : "0A000"
   },
   "DELTA_CLUSTERING_COLUMNS_MISMATCH" : {
     "message" : [
@@ -491,6 +515,12 @@
       "Struct column <source> cannot be inserted into a <targetType> field <targetField> in <targetTable>."
     ],
     "sqlState" : "2200G"
+  },
+  "DELTA_COMMIT_INTERMEDIATE_REDIRECT_STATE" : {
+    "message" : [
+      "Cannot handle commit of table within redirect table state '<state>'."
+    ],
+    "sqlState" : "42P01"
   },
   "DELTA_COMPLEX_TYPE_COLUMN_CONTAINS_NULL_TYPE" : {
     "message" : [
@@ -815,6 +845,12 @@
     ],
     "sqlState" : "42601"
   },
+  "DELTA_DV_HISTOGRAM_DESERIALIZATON" : {
+    "message" : [
+      "Could not deserialize the deleted record counts histogram during table integrity verification."
+    ],
+    "sqlState" : "22000"
+  },
   "DELTA_DYNAMIC_PARTITION_OVERWRITE_DISABLED" : {
     "message" : [
       "Dynamic partition overwrite mode is specified by session config or write options, but it is disabled by `delta.dynamicPartitionOverwrite.enabled=false`."
@@ -936,6 +972,35 @@
       "Current supported feature(s): <supportedFeatures>."
     ],
     "sqlState" : "0AKDE"
+  },
+  "DELTA_FEATURE_CAN_ONLY_DROP_CHECKPOINT_PROTECTION_WITH_HISTORY_TRUNCATION" : {
+    "message" : [
+      "Could not drop the Checkpoint Protection feature.",
+      "This feature can only be dropped by truncating history.",
+      "Please try again with the TRUNCATE HISTORY option:",
+      "",
+      "    ALTER TABLE table_name DROP FEATURE checkpointProtection TRUNCATE HISTORY"
+    ],
+    "sqlState" : "55000"
+  },
+  "DELTA_FEATURE_DROP_CHECKPOINT_FAILED" : {
+    "message" : [
+      "Dropping <featureName> failed due to a failure in checkpoint creation.",
+      "Please try again later. It the issue persists, contact support."
+    ],
+    "sqlState" : "22KD0"
+  },
+  "DELTA_FEATURE_DROP_CHECKPOINT_PROTECTION_WAIT_FOR_RETENTION_PERIOD" : {
+    "message" : [
+      "The operation did not succeed because there are still traces of dropped features ",
+      "in the table history. CheckpointProtection cannot be dropped until these historical",
+      "versions have expired.",
+      "",
+      "To drop CheckpointProtection, please wait for the historical versions to",
+      "expire, and then repeat this command. The retention period for historical versions is",
+      "currently configured to <truncateHistoryLogRetentionPeriod>."
+    ],
+    "sqlState" : "22KD0"
   },
   "DELTA_FEATURE_DROP_CONFLICT_REVALIDATION_FAIL" : {
     "message" : [
@@ -1154,6 +1219,18 @@
         "message" : [
           "IcebergCompatV<version> does not support the data type <dataType> in your schema. Your schema:",
           "<schema>"
+        ]
+      },
+      "UNSUPPORTED_PARTITION_DATA_TYPE" : {
+        "message" : [
+          "IcebergCompatV<version> does not support the data type <dataType> for partition columns in your schema. Your partition schema:",
+          "<schema>"
+        ]
+      },
+      "UNSUPPORTED_TYPE_WIDENING" : {
+        "message" : [
+          "IcebergCompatV<version> is incompatible with a type change applied to this table:",
+          "Field <fieldPath> was changed from <prevType> to <newType>."
         ]
       },
       "VERSION_MUTUAL_EXCLUSIVE" : {
@@ -1860,6 +1937,13 @@
     ],
     "sqlState" : "KD006"
   },
+  "DELTA_NO_REDIRECT_RULES_VIOLATED" : {
+    "message" : [
+      "Operation not allowed: <operation> cannot be performed on a table with redirect feature.",
+      "The no redirect rules are not satisfied <noRedirectRules>."
+    ],
+    "sqlState" : "42P01"
+  },
   "DELTA_NO_RELATION_TABLE" : {
     "message" : [
       "Table <tableIdent> not found"
@@ -1919,6 +2003,12 @@
       "Operation not allowed: <operation> cannot be performed on a view."
     ],
     "sqlState" : "0AKDC"
+  },
+  "DELTA_OPTIMIZE_FULL_NOT_SUPPORTED" : {
+    "message" : [
+      "OPTIMIZE FULL is only supported for clustered tables with non-empty clustering columns."
+    ],
+    "sqlState" : "42601"
   },
   "DELTA_OVERWRITE_SCHEMA_WITH_DYNAMIC_PARTITION_OVERWRITE" : {
     "message" : [
@@ -2341,6 +2431,19 @@
     ],
     "sqlState" : "XXKDS"
   },
+  "DELTA_TABLE_INVALID_REDIRECT_STATE_TRANSITION" : {
+    "message" : [
+      "Unable to update table redirection state: Invalid state transition attempted.",
+      "The Delta table '<table>' cannot change from '<oldState>' to '<newState>'."
+    ],
+    "sqlState" : "KD007"
+  },
+  "DELTA_TABLE_INVALID_REMOVE_TABLE_REDIRECT" : {
+    "message" : [
+      "Unable to remove table redirection for <table> due to its invalid state: <currentState>."
+    ],
+    "sqlState" : "KD007"
+  },
   "DELTA_TABLE_LOCATION_MISMATCH" : {
     "message" : [
       "The location of the existing table <tableName> is <existingTableLocation>. It doesn't match the specified location <tableLocation>."
@@ -2621,6 +2724,12 @@
     ],
     "sqlState" : "42621"
   },
+  "DELTA_UNSUPPORTED_DEEP_CLONE" : {
+    "message" : [
+      "Deep clone is not supported by this Delta version."
+    ],
+    "sqlState" : "0A000"
+  },
   "DELTA_UNSUPPORTED_DESCRIBE_DETAIL_VIEW" : {
     "message" : [
       "<view> is a view. DESCRIBE DETAIL is only supported for tables."
@@ -2805,6 +2914,14 @@
   "DELTA_UNSUPPORTED_TIME_TRAVEL_VIEWS" : {
     "message" : [
       "Cannot time travel views, subqueries, streams or change data feed queries."
+    ],
+    "sqlState" : "0AKDC"
+  },
+  "DELTA_UNSUPPORTED_TYPE_CHANGE_IN_PREVIEW" : {
+    "message" : [
+      "This table can't be read by this version of Delta because an unsupported type change was applied. Field <fieldPath> was changed from <fromType> to <toType>.",
+      "Please upgrade to Delta 4.0 or higher to read this table, or drop the Type Widening table feature using a client that supports reading this table:",
+      "  ALTER TABLE tableName DROP FEATURE <typeWideningFeatureName>"
     ],
     "sqlState" : "0AKDC"
   },

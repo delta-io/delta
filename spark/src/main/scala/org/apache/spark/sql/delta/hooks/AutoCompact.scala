@@ -203,8 +203,16 @@ trait AutoCompactBase extends PostCommitHook with DeltaLogging {
         maxFileSizeOpt,
         maxDeletedRowsRatio = maxDeletedRowsRatio
       )
-      val rows = new OptimizeExecutor(spark, deltaLog.update(), catalogTable, partitionPredicates,
-        zOrderByColumns = Seq(), isAutoCompact = true, optimizeContext).optimize()
+      val rows = new OptimizeExecutor(
+        spark,
+        deltaLog.update(catalogTableOpt = catalogTable),
+        catalogTable,
+        partitionPredicates,
+        zOrderByColumns = Seq(),
+        isAutoCompact = true,
+        optimizeContext
+      )
+      .optimize()
       val metrics = rows.map(_.getAs[OptimizeMetrics](1))
       recordDeltaEvent(deltaLog, s"$opType.execute.metrics", data = metrics.head)
       metrics

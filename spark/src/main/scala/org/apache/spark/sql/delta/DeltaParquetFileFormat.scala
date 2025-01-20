@@ -27,6 +27,7 @@ import org.apache.spark.sql.delta.deletionvectors.{DropMarkedRowsFilter, KeepAll
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.apache.hadoop.mapreduce.Job
@@ -73,7 +74,10 @@ case class DeltaParquetFileFormat(
     }
   }
 
-  TypeWidening.assertTableReadable(protocol, metadata)
+  SparkSession.getActiveSession.ifDefined { session =>
+    TypeWidening.assertTableReadable(session.sessionState.conf, protocol, metadata)
+  }
+
 
   val columnMappingMode: DeltaColumnMappingMode = metadata.columnMappingMode
   val referenceSchema: StructType = metadata.schema
@@ -265,8 +269,11 @@ case class DeltaParquetFileFormat(
        dataSchema: StructType): OutputWriterFactory = {
     val factory = super.prepareWrite(sparkSession, job, options, dataSchema)
     val conf = ContextUtil.getConfiguration(job)
-    conf.set(SQLConf.PARQUET_OUTPUT_TIMESTAMP_TYPE.key,
-      sparkSession.conf.get(DeltaSQLConf.PARQUET_OUTPUT_TIMESTAMP_TYPE))
+    // Always write timestamp as TIMESTAMP_MICROS for Iceberg compat based on Iceberg spec
+    if (IcebergCompatV1.isEnabled(metadata) || IcebergCompatV2.isEnabled(metadata)) {
+      conf.set(SQLConf.PARQUET_OUTPUT_TIMESTAMP_TYPE.key,
+        SQLConf.ParquetOutputTimestampType.TIMESTAMP_MICROS.toString)
+    }
     if (IcebergCompatV2.isEnabled(metadata)) {
       // For Uniform with IcebergCompatV2, we need to write nested field IDs for list and map
       // types to the parquet schema. Spark currently does not support it so we hook in our

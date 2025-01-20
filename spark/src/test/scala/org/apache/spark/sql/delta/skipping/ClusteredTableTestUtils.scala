@@ -19,8 +19,10 @@ package org.apache.spark.sql.delta.skipping
 import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumn, ClusteringColumnInfo}
 import org.apache.spark.sql.delta.skipping.clustering.temp.ClusterBySpec
 import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
+import org.apache.spark.sql.delta.DeltaOperations
 import org.apache.spark.sql.delta.DeltaOperations.{CLUSTERING_PARAMETER_KEY, ZORDER_PARAMETER_KEY}
 import org.apache.spark.sql.delta.commands.optimize.OptimizeMetrics
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
 import org.apache.spark.sql.delta.hooks.UpdateCatalog
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
@@ -32,7 +34,10 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
 
-trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession {
+trait ClusteredTableTestUtilsBase
+    extends SparkFunSuite
+    with SharedSparkSession
+    with CoordinatedCommitsBaseSuite {
   import testImplicits._
 
   /**
@@ -49,10 +54,55 @@ trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession 
    * @param postHook callback triggered with OptimizeMetrics returned by the OPTIMIZE command
    */
   def runOptimize(table: String)(postHook: OptimizeMetrics => Unit): Unit = {
+    // Verify Delta history operation parameters' clusterBy
+    val isPathBasedTable = table.startsWith("tahoe.") || table.startsWith("delta.")
+    var (deltaLog, snapshot) = if (isPathBasedTable) {
+      // Path based table e.g. delta.`path-to-directory` or tahoe.`path-to-directory`. Strip
+      // 6 characters to extract table path.
+      DeltaLog.forTableWithSnapshot(spark, table.drop(6).replace("`", ""))
+    } else {
+      DeltaLog.forTableWithSnapshot(spark, TableIdentifier(table))
+    }
+    val beforeVersion = snapshot.version
+
     postHook(optimizeTable(table).select($"metrics.*").as[OptimizeMetrics].head())
+    snapshot = deltaLog.update()
+    val afterVersion = snapshot.version
+
+    val shouldCheckFullStatus = deltaLog.history.getHistory(Some(1)).headOption.exists { h =>
+      Seq(DeltaOperations.OPTIMIZE_OPERATION_NAME
+      ).contains(h.operation)
+    }
+
+    // Note: Only expect isFull status when the table has non-empty clustering columns and
+    // clustering table feature, otherwise the OPTIMIZE will fall back to compaction and
+    // isFull status will not be relevant anymore.
+    val expectedOperationParameters = ClusteredTableUtils
+      .getClusteringColumnsOptional(snapshot)
+      .filter { cols =>
+        cols.nonEmpty &&
+          shouldCheckFullStatus &&
+          ClusteredTableUtils.isSupported(snapshot.protocol) &&
+          afterVersion > beforeVersion
+      }
+      .map(_ => Map(DeltaOperations.CLUSTERING_IS_FULL_KEY -> false))
+      .getOrElse(Map.empty)
+    verifyDescribeHistoryOperationParameters(
+      table, expectedOperationParameters = expectedOperationParameters)
+  }
+
+  /**
+   * Runs optimize full on the table and calls postHook on the metrics.
+   *
+   * @param table    the name of table
+   * @param postHook callback triggered with OptimizeMetrics returned by the OPTIMIZE command
+   */
+  def runOptimizeFull(table: String)(postHook: OptimizeMetrics => Unit): Unit = {
+    postHook(sql(s"OPTIMIZE $table FULL").select($"metrics.*").as[OptimizeMetrics].head())
 
     // Verify Delta history operation parameters' clusterBy
-    verifyDescribeHistoryOperationParameters(table)
+    verifyDescribeHistoryOperationParameters(table, expectedOperationParameters = Map(
+      DeltaOperations.CLUSTERING_IS_FULL_KEY -> true))
   }
 
   def verifyClusteringColumnsInDomainMetadata(
@@ -66,8 +116,8 @@ trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession 
 
   // Verify the operation parameters of the last history event contains `clusterBy`.
   protected def verifyDescribeHistoryOperationParameters(
-      table: String
-  ): Unit = {
+      table: String,
+      expectedOperationParameters: Map[String, Any] = Map.empty): Unit = {
     val clusterBySupportedOperations = Set(
       "CREATE TABLE",
       "REPLACE TABLE",
@@ -98,7 +148,8 @@ trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession 
         "add the operation to the appropriate case in " +
         "verifyDescribeHistoryOperationParameters. " +
         s"table: $table, lastOperation: ${lastEvent.operation} " +
-        s"lastOperationParameters: $lastOperationParameters"
+        s"lastOperationParameters: $lastOperationParameters " +
+        s"expectedOperationParameters: $expectedOperationParameters"
       try {
         assert(assertion, debugMsg)
       } catch {
@@ -121,6 +172,12 @@ trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession 
     // Check clusterBy does not exist.
     def assertClusterByNotExist(): Unit = {
       doAssert(!lastOperationParameters.contains(CLUSTERING_PARAMETER_KEY))
+    }
+
+    // Validate caller provided operator parameters from the last commit.
+    for ((operationParameterKey, value) <- expectedOperationParameters) {
+      // Convert value to string since value is stored as toString in operationParameters.
+      doAssert(lastOperationParameters(operationParameterKey) === value.toString)
     }
 
     // Check clusterBy
@@ -161,6 +218,23 @@ trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession 
     }
   }
 
+  protected def deleteTableFromCommitCoordinatorIfNeeded(table: String): Unit = {
+    if (coordinatedCommitsEnabledInTests) {
+      // Clean up the table data in commit coordinator because DROP/REPLACE TABLE does not bother
+      // commit coordinator.
+      deleteTableFromCommitCoordinator(table)
+    }
+  }
+
+  override def withTable(tableNames: String*)(f: => Unit): Unit = {
+    Utils.tryWithSafeFinally(f) {
+      tableNames.foreach { name =>
+        deleteTableFromCommitCoordinatorIfNeeded(name)
+        spark.sql(s"DROP TABLE IF EXISTS $name")
+      }
+    }
+  }
+
   def withClusteredTable[T](
       table: String,
       schema: String,
@@ -170,6 +244,7 @@ trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession 
     createOrReplaceClusteredTable("CREATE", table, schema, clusterBy, tableProperties, location)
 
     Utils.tryWithSafeFinally(f) {
+      deleteTableFromCommitCoordinatorIfNeeded(table)
       spark.sql(s"DROP TABLE IF EXISTS $table")
     }
   }
@@ -199,6 +274,7 @@ trait ClusteredTableTestUtilsBase extends SparkFunSuite with SharedSparkSession 
     }
     spark.sql(s"$clause TABLE $table ($schema) USING delta CLUSTER BY ($clusterBy) " +
       s"$tablePropertiesClause $locationClause")
+    location.foreach { loc => locRefCount(loc) = locRefCount.getOrElse(loc, 0) + 1 }
   }
 
   protected def createOrReplaceAsSelectClusteredTable(

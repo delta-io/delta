@@ -16,7 +16,6 @@
 package io.delta.kernel.internal.util;
 
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
-import static java.lang.String.format;
 
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.Predicate;
@@ -25,9 +24,7 @@ import java.util.List;
 public class ExpressionUtils {
   /** Return an expression cast as a predicate, throw an error if it is not a predicate */
   public static Predicate asPredicate(Expression expression) {
-    checkArgument(
-        expression instanceof Predicate,
-        String.format("Expected predicate but got %s", expression));
+    checkArgument(expression instanceof Predicate, "Expected predicate but got %s", expression);
     return (Predicate) expression;
   }
 
@@ -35,8 +32,7 @@ public class ExpressionUtils {
   public static Expression getLeft(Expression expression) {
     List<Expression> children = expression.getChildren();
     checkArgument(
-        children.size() == 2,
-        format("%s: expected two inputs, but got %s", expression, children.size()));
+        children.size() == 2, "%s: expected two inputs, but got %s", expression, children.size());
     return children.get(0);
   }
 
@@ -44,8 +40,7 @@ public class ExpressionUtils {
   public static Expression getRight(Expression expression) {
     List<Expression> children = expression.getChildren();
     checkArgument(
-        children.size() == 2,
-        format("%s: expected two inputs, but got %s", expression, children.size()));
+        children.size() == 2, "%s: expected two inputs, but got %s", expression, children.size());
     return children.get(1);
   }
 
@@ -53,8 +48,7 @@ public class ExpressionUtils {
   public static Expression getUnaryChild(Expression expression) {
     List<Expression> children = expression.getChildren();
     checkArgument(
-        children.size() == 1,
-        format("%s: expected one inputs, but got %s", expression, children.size()));
+        children.size() == 1, "%s: expected one inputs, but got %s", expression, children.size());
     return children.get(0);
   }
 }

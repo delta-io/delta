@@ -92,7 +92,8 @@ class CoordinatedCommitsEnablementSuite
       val log = DeltaLog.forTable(spark, tablePath)
       validateCoordinatedCommitsCompleteEnablement(log.snapshot, expectEnabled = false)
       sql(s"ALTER TABLE delta.`$tablePath` SET TBLPROPERTIES " + // Enable CC
-        s"('${DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'tracking-in-memory')")
+        s"('${DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'tracking-in-memory', " +
+        s"'${DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '{}')")
       Seq(1).toDF().write.format("delta").mode("overwrite").save(tablePath) // commit 3
       validateCoordinatedCommitsCompleteEnablement(log.update(), expectEnabled = true)
     }

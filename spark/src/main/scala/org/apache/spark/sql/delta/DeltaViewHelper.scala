@@ -16,8 +16,10 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.catalyst.analysis.EliminateSubqueryAliases
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{Alias, Attribute, Cast, NamedExpression}
+import org.apache.spark.sql.catalyst.optimizer.CollapseProject
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Project, SubqueryAlias, View}
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.internal.SQLConf
@@ -31,7 +33,7 @@ object DeltaViewHelper {
 
       val allowedExprs = (left ++ right).forall {
         case _: Attribute => true
-        case Alias(Cast(_: Attribute, dataType, timeZone, _), name) => true
+        case Alias(Cast(attr: Attribute, _, _, _), name) => conf.resolver(attr.name, name)
         case _ => false
       }
 
@@ -58,24 +60,14 @@ object DeltaViewHelper {
         // * An outer Project explicitly casting the scanned types to the types defined in the
         //   metastore for the view. We don't need this cast for Delta DML commands and it will
         //   end up being eliminated.
-        // * An inner no-op project.
-        // * A SubqueryAlias explicitly aliasing the scan to its own name (plus another if there's
-        //   a user specified alias.
+        // * An arbitrary number of inner no-op project and subquery aliases.
         // * The actual scan of the Delta table.
-        // We check for these Projects by ensuring that the name lists are an exact match, and
-        // produce a scan with the outer list's attribute IDs aliased to the view's name.
-        plan match {
+        // We check for this by removing all subquery aliases and collapsing all Projects into one
+        // and ensuring that the project list exactly match the output of the scan.
+        CollapseProject(EliminateSubqueryAliases(plan)) match {
           case View(desc, true, // isTempView
-          Project(outerList,
-          Project(innerList,
-          SubqueryAlias(innerAlias, scan: LogicalRelation))))
-            if attributesMatch(outerList, innerList) && attributesMatch(outerList, scan.output) =>
-            Some(desc, outerList, scan)
-          case View(desc, true, // isTempView
-          Project(outerList,
-          Project(innerList,
-          SubqueryAlias(innerAlias, SubqueryAlias(subalias, scan: LogicalRelation)))))
-            if attributesMatch(outerList, innerList) && attributesMatch(outerList, scan.output) =>
+              Project(outerList, scan: LogicalRelation))
+            if attributesMatch(outerList, scan.output) =>
             Some(desc, outerList, scan)
           case _ => None
         }
@@ -84,9 +76,10 @@ object DeltaViewHelper {
 
     plan.transformUp {
       case ViewPlan(desc, outerList, scan) =>
+       // Produce a scan with the outer list's attribute IDs aliased to the view's name.
         val newOutput = scan.output.map { oldAttr =>
           val newId = outerList.collectFirst {
-            case newAttr if conf.resolver(oldAttr.qualifiedName, newAttr.qualifiedName) =>
+            case newAttr if conf.resolver(oldAttr.name, newAttr.name) =>
               newAttr.exprId
           }.getOrElse {
             throw DeltaErrors.noNewAttributeId(oldAttr)

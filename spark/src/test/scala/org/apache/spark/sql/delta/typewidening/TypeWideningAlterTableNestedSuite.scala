@@ -57,8 +57,8 @@ trait TypeWideningAlterTableNestedTests {
     // Running ALTER TABLE CHANGE COLUMN on non-leaf fields is invalid.
     var alterTableSql = s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN s TYPE struct<a: short>"
     checkError(
-      exception = intercept[AnalysisException] { sql(alterTableSql) },
-      errorClass = "CANNOT_UPDATE_FIELD.STRUCT_TYPE",
+      intercept[AnalysisException] { sql(alterTableSql) },
+      "CANNOT_UPDATE_FIELD.STRUCT_TYPE",
       parameters = Map(
         "table" -> s"`spark_catalog`.`delta`.`$tempPath`",
         "fieldName" -> "`s`"
@@ -71,8 +71,8 @@ trait TypeWideningAlterTableNestedTests {
 
     alterTableSql = s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN m TYPE map<int, int>"
     checkError(
-      exception = intercept[AnalysisException] { sql(alterTableSql) },
-      errorClass = "CANNOT_UPDATE_FIELD.MAP_TYPE",
+      intercept[AnalysisException] { sql(alterTableSql) },
+      "CANNOT_UPDATE_FIELD.MAP_TYPE",
       parameters = Map(
         "table" -> s"`spark_catalog`.`delta`.`$tempPath`",
         "fieldName" -> "`m`"
@@ -85,8 +85,8 @@ trait TypeWideningAlterTableNestedTests {
 
     alterTableSql = s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE array<int>"
     checkError(
-      exception = intercept[AnalysisException] { sql(alterTableSql) },
-      errorClass = "CANNOT_UPDATE_FIELD.ARRAY_TYPE",
+      intercept[AnalysisException] { sql(alterTableSql) },
+      "CANNOT_UPDATE_FIELD.ARRAY_TYPE",
       parameters = Map(
         "table" -> s"`spark_catalog`.`delta`.`$tempPath`",
         "fieldName" -> "`a`"

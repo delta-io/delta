@@ -24,16 +24,17 @@ import java.util.zip.CRC32
 
 import org.apache.spark.sql.delta.DeltaErrors
 import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor
+import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, StoredBitmap}
+import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.PathWithFileSystem
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, FSDataOutputStream, Path}
 
-import org.apache.spark.internal.Logging
 import org.apache.spark.paths.SparkPath
 import org.apache.spark.util.Utils
 
-trait DeletionVectorStore extends Logging {
+trait DeletionVectorStore extends DeltaLogging {
   /**
    * Read a Deletion Vector and parse it as [[RoaringBitmapArray]].
    */
@@ -197,7 +198,9 @@ class HadoopFileSystemDVStore(hadoopConf: Configuration)
       reader.seek(offset)
       DeletionVectorStore.readRangeFromStream(reader, size)
     }
-    RoaringBitmapArray.readFrom(buffer)
+    DeletionVectorUtils.deserialize(
+      buffer,
+      debugInfo = Map("path" -> path, "offset" -> offset, "size" -> size))
   }
 
   override def createWriter(path: PathWithFileSystem): DeletionVectorStore.Writer = {
@@ -205,22 +208,36 @@ class HadoopFileSystemDVStore(hadoopConf: Configuration)
       // Lazily create the writer for the deletion vectors, so that we don't write an empty file
       // in case all deletion vectors are empty.
       private var outputStream: FSDataOutputStream = _
+      private var writtenBytes = 0L
 
       override def write(data: Array[Byte]): DeletionVectorStore.DVRangeDescriptor = {
         if (outputStream == null) {
           val overwrite = false // `create` Java API does not support named parameters
           outputStream = path.fs.create(path.path, overwrite)
           outputStream.writeByte(DeletionVectorStore.DV_FILE_FORMAT_VERSION_ID_V1)
+          writtenBytes += 1
         }
         val dvRange = DeletionVectorStore.DVRangeDescriptor(
           offset = outputStream.size(),
           length = data.length,
-          checksum = DeletionVectorStore.calculateChecksum(data)
-          )
+          checksum = DeletionVectorStore.calculateChecksum(data))
+
+        if (writtenBytes != dvRange.offset) {
+          recordDeltaEvent(
+            deltaLog = null,
+            opType = "delta.deletionVector.write.offsetMismatch",
+            data = Map(
+              "path" -> path.path.toString,
+              "reportedOffset" -> dvRange.offset,
+              "calculatedOffset" -> writtenBytes))
+        }
+
         log.debug(s"Writing DV range to file: Path=${path.path}, Range=${dvRange}")
         outputStream.writeInt(data.length)
         outputStream.write(data)
         outputStream.writeInt(dvRange.checksum)
+        writtenBytes += DeletionVectorStore.getTotalSizeOfDVFieldsInFile(data.length)
+
         dvRange
       }
 

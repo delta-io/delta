@@ -45,7 +45,10 @@ class TypeWideningTableFeatureSuite
     with TypeWideningDropFeatureTestMixin
     with TypeWideningTableFeatureTests
 
-trait TypeWideningTableFeatureTests extends RowTrackingTestUtils with TypeWideningTestCases {
+trait TypeWideningTableFeatureTests
+  extends RowTrackingTestUtils
+    with DeltaExcludedBySparkVersionTestMixinShims
+    with TypeWideningTestCases {
   self: QueryTest
     with TypeWideningTestMixin
     with TypeWideningDropFeatureTestMixin =>
@@ -70,7 +73,7 @@ trait TypeWideningTableFeatureTests extends RowTrackingTestUtils with TypeWideni
     assert(clock != null, "Must call setupManualClock in tests that are using this method.")
     clock.advance(
       deltaLog.deltaRetentionMillis(deltaLog.update().metadata) +
-        TimeUnit.MINUTES.toMillis(5))
+        TimeUnit.DAYS.toMillis(3))
   }
 
   test("enable type widening at table creation then disable it") {
@@ -110,11 +113,11 @@ trait TypeWideningTableFeatureTests extends RowTrackingTestUtils with TypeWideni
     sql(s"CREATE TABLE delta.`$tempPath` (a int) USING DELTA " +
        s"TBLPROPERTIES ('${DeltaConfigs.ENABLE_TYPE_WIDENING.key}' = 'false')")
     checkError(
-      exception = intercept[SparkException] {
+      intercept[SparkException] {
         sql(s"ALTER TABLE delta.`$tempPath` " +
           s"SET TBLPROPERTIES ('${DeltaConfigs.ENABLE_TYPE_WIDENING.key}' = 'bla')")
       },
-      errorClass = "_LEGACY_ERROR_TEMP_2045",
+      "_LEGACY_ERROR_TEMP_2045",
       parameters = Map(
         "message" -> "For input string: \"bla\""
       )
@@ -128,10 +131,10 @@ trait TypeWideningTableFeatureTests extends RowTrackingTestUtils with TypeWideni
       s"TBLPROPERTIES ('${DeltaConfigs.ENABLE_TYPE_WIDENING.key}' = 'false')")
 
     checkError(
-      exception = intercept[AnalysisException] {
+      intercept[AnalysisException] {
         sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE SMALLINT")
       },
-      errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
+      "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
       parameters = Map(
         "fieldPath" -> "a",
         "oldField" -> "TINYINT",
@@ -147,10 +150,10 @@ trait TypeWideningTableFeatureTests extends RowTrackingTestUtils with TypeWideni
       s"SET TBLPROPERTIES ('${DeltaConfigs.ENABLE_TYPE_WIDENING.key}' = 'false')")
 
     checkError(
-      exception = intercept[AnalysisException] {
+      intercept[AnalysisException] {
         sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE INT")
       },
-      errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
+      "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
       parameters = Map(
         "fieldPath" -> "a",
         "oldField" -> "SMALLINT",
@@ -192,12 +195,12 @@ trait TypeWideningTableFeatureTests extends RowTrackingTestUtils with TypeWideni
         val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName, Some(databaseName)))
 
         checkError(
-          exception = intercept[DeltaTableFeatureException] {
+          intercept[DeltaTableFeatureException] {
             sql(s"ALTER TABLE $databaseName.$tableName " +
               s"DROP FEATURE '${TypeWideningPreviewTableFeature.name}'"
             ).collect()
           },
-          errorClass = "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
+          "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
           parameters = Map(
             "feature" -> TypeWideningPreviewTableFeature.name,
             "logRetentionPeriodKey" -> DeltaConfigs.LOG_RETENTION.key,
@@ -442,14 +445,124 @@ trait TypeWideningTableFeatureTests extends RowTrackingTestUtils with TypeWideni
     }
 
     checkError(
-      exception = intercept[DeltaIllegalStateException] {
+      intercept[DeltaIllegalStateException] {
         readDeltaTable(tempPath).collect()
       },
-      errorClass = "DELTA_UNSUPPORTED_TYPE_CHANGE_IN_SCHEMA",
+      "DELTA_UNSUPPORTED_TYPE_CHANGE_IN_SCHEMA",
       parameters = Map(
         "fieldName" -> "a.element",
         "fromType" -> "INT",
         "toType" -> "STRING"
+      )
+    )
+
+    // Validate that the internal table property can be used to bypass the check if needed.
+    withSQLConf(
+      DeltaSQLConf.DELTA_TYPE_WIDENING_BYPASS_UNSUPPORTED_TYPE_CHANGE_CHECK.key -> "true") {
+      readDeltaTable(tempPath).collect()
+    }
+  }
+
+  test("unsupported type changes in nested structs") {
+    sql(s"CREATE TABLE delta.`$tempDir` (s struct<a: int>) USING DELTA")
+    deltaLog.withNewTransaction { txn =>
+      txn.commit(
+        Seq(txn.snapshot.metadata.copy(
+          schemaString = new StructType()
+            .add("s", new StructType()
+              .add("a", BooleanType, nullable = true,
+                metadata = typeWideningMetadata(version = 1, IntegerType, BooleanType)))
+          .json
+        )),
+        ManualUpdate)
+    }
+
+    checkError(
+      intercept[DeltaIllegalStateException] {
+        readDeltaTable(tempPath).collect()
+      },
+      "DELTA_UNSUPPORTED_TYPE_CHANGE_IN_SCHEMA",
+      parameters = Map(
+        "fieldName" -> "s.a",
+        "fromType" -> "INT",
+        "toType" -> "BOOLEAN"
+      )
+    )
+  }
+
+  test("char/varchar/string type changes don't trigger the unsupported type change check") {
+    sql(
+      s"""
+        |CREATE TABLE delta.`$tempDir` (
+        |  a string, b string, c char(4), d char(4), e varchar(4), f varchar(4), s struct<x: string>
+        |) USING DELTA
+        |""".stripMargin)
+
+    // Add type change metadata for all string<->char<->varchar type changes and ensure the table
+    // can still be read.
+    // Note: compliant delta implementations shouldn't actually record these type changes in the
+    // table schema metadata. This test ensures that if a non-compliant implementation still does,
+    // we don't unnecessarily block reads.
+    deltaLog.withNewTransaction { txn =>
+      txn.commit(
+        Seq(txn.snapshot.metadata.copy(
+          schemaString = new StructType()
+            .add("a", StringType, nullable = true,
+              metadata = typeWideningMetadata(version = 1, StringType, CharType(4)))
+            .add("b", StringType, nullable = true,
+              metadata = typeWideningMetadata(version = 1, StringType, VarcharType(4)))
+            .add("c", StringType, nullable = true,
+              metadata = typeWideningMetadata(version = 1, CharType(4), StringType))
+            .add("d", StringType, nullable = true,
+              metadata = typeWideningMetadata(version = 1, CharType(4), VarcharType(4)))
+            .add("e", StringType, nullable = true,
+              metadata = typeWideningMetadata(version = 1, VarcharType(4), StringType))
+            .add("f", StringType, nullable = true,
+              metadata = typeWideningMetadata(version = 1, VarcharType(4), CharType(4)))
+            .add("s", new StructType()
+              .add("x", StringType, nullable = true,
+                metadata = typeWideningMetadata(version = 1, StringType, CharType(4)))
+            )
+            .json
+        )),
+        ManualUpdate)
+    }
+    readDeltaTable(tempPath).collect()
+  }
+
+  testSparkLatestOnly(
+    "helpful error when reading type changes not supported yet during preview") {
+    sql(s"CREATE TABLE delta.`$tempDir` (a int) USING DELTA")
+    val metadata = new MetadataBuilder()
+      .putMetadataArray("delta.typeChanges", Array(
+        new MetadataBuilder()
+          .putString("toType", "long")
+          .putString("fromType", "int")
+          .putLong("tableVersion", 1)
+          .build()
+      )).build()
+
+    // Delta 3.2/3.3 doesn't support changing type from int->long, we manually commit that type
+    // change to simulate what Delta 4.0 could do.
+    deltaLog.withNewTransaction { txn =>
+      txn.commit(
+        Seq(txn.snapshot.metadata.copy(
+          schemaString = new StructType()
+            .add("a", LongType, nullable = true, metadata).json
+        )),
+        ManualUpdate)
+    }
+
+    checkError(
+      exception = intercept[DeltaUnsupportedOperationException] {
+        readDeltaTable(tempPath).collect()
+      },
+      "DELTA_UNSUPPORTED_TYPE_CHANGE_IN_PREVIEW",
+      parameters = Map(
+        "fieldPath" -> "a",
+        "fromType" -> "INT",
+        "toType" -> "BIGINT",
+        "typeWideningFeatureName" -> "typeWidening-preview"
       )
     )
   }

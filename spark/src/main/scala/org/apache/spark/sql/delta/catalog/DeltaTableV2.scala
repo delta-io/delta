@@ -46,10 +46,11 @@ import org.apache.spark.sql.connector.catalog.V1Table
 import org.apache.spark.sql.connector.expressions._
 import org.apache.spark.sql.connector.write.{LogicalWriteInfo, SupportsDynamicOverwrite, SupportsOverwrite, SupportsTruncate, V1Write, WriteBuilder}
 import org.apache.spark.sql.errors.QueryCompilationErrors
-import org.apache.spark.sql.execution.datasources.LogicalRelation
+import org.apache.spark.sql.execution.datasources.{LogicalRelation, LogicalRelationShims}
 import org.apache.spark.sql.sources.{BaseRelation, Filter, InsertableRelation}
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
+import org.apache.spark.util.{Clock, SystemClock}
 
 /**
  * The data source V2 representation of a Delta table that exists.
@@ -96,7 +97,7 @@ case class DeltaTableV2(
       // as Unity Catalog may add more table storage properties on the fly. We should respect it
       // and merge the table storage properties and Delta options.
       val dataSourceOptions = if (catalogTable.isDefined) {
-        // To be safe, here we only extra file system options from table storage properties and
+        // To be safe, here we only extract file system options from table storage properties and
         // the original `options` has higher priority than the table storage properties.
         val fileSystemOptions = catalogTable.get.storage.properties.filter { case (k, _) =>
           DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
@@ -108,6 +109,11 @@ case class DeltaTableV2(
       DeltaLog.forTable(spark, rootPath, dataSourceOptions)
     }
   }
+
+  /**
+   * Updates the delta log for this table and returns a new snapshot
+   */
+  def update(): Snapshot = deltaLog.update(catalogTableOpt = catalogTable)
 
   def getTableIdentifierIfExists: Option[TableIdentifier] = tableIdentifier.map { tableName =>
     spark.sessionState.sqlParser.parseMultipartIdentifier(tableName).asTableIdentifier
@@ -156,11 +162,12 @@ case class DeltaTableV2(
         "queriedVersion" -> version,
         "accessType" -> accessType
       ))
-      deltaLog.getSnapshotAt(version)
+      deltaLog.getSnapshotAt(version, catalogTableOpt = catalogTable)
     }.getOrElse(
       deltaLog.update(
         stalenessAcceptable = true,
-        checkIfUpdatedSinceTs = Some(creationTimeMs)
+        checkIfUpdatedSinceTs = Some(creationTimeMs),
+        catalogTableOpt = catalogTable
       )
     )
   }
@@ -181,7 +188,7 @@ case class DeltaTableV2(
 
   private lazy val tableSchema: StructType = {
     val baseSchema = cdcRelation.map(_.schema).getOrElse {
-      DeltaTableUtils.removeInternalMetadata(spark, initialSnapshot.schema)
+      DeltaTableUtils.removeInternalWriterMetadata(spark, initialSnapshot.schema)
     }
     DeltaColumnMapping.dropColumnMappingMetadata(baseSchema)
   }
@@ -280,7 +287,7 @@ case class DeltaTableV2(
   /** Creates a [[LogicalRelation]] that represents this table */
   lazy val toLogicalRelation: LogicalRelation = {
     val relation = this.toBaseRelation
-    LogicalRelation(
+    LogicalRelationShims.newInstance(
       relation, toAttributes(relation.schema), ttSafeCatalogTable, isStreaming = false)
   }
 
@@ -361,27 +368,33 @@ case class DeltaTableV2(
 object DeltaTableV2 {
   /** Resolves a path into a DeltaTableV2, leveraging standard v2 table resolution. */
   def apply(spark: SparkSession, tablePath: Path, options: Map[String, String], cmd: String)
-      : DeltaTableV2 =
-    resolve(spark, UnresolvedPathBasedDeltaTable(tablePath.toString, options, cmd), cmd)
+      : DeltaTableV2 = {
+    val unresolved = UnresolvedPathBasedDeltaTable(tablePath.toString, options, cmd)
+    extractFrom((new DeltaAnalysis(spark))(unresolved), cmd)
+  }
 
   /** Resolves a table identifier into a DeltaTableV2, leveraging standard v2 table resolution. */
   def apply(spark: SparkSession, tableId: TableIdentifier, cmd: String): DeltaTableV2 = {
-    resolve(spark, UnresolvedTable(tableId.nameParts, cmd), cmd)
-  }
-
-  /** Applies standard v2 table resolution to an unresolved Delta table plan node */
-  def resolve(spark: SparkSession, unresolved: LogicalPlan, cmd: String): DeltaTableV2 =
+    val unresolved = UnresolvedTable(tableId.nameParts, cmd)
     extractFrom(spark.sessionState.analyzer.ResolveRelations(unresolved), cmd)
+  }
 
   /**
    * Extracts the DeltaTableV2 from a resolved Delta table plan node, throwing "table not found" if
    * the node does not actually represent a resolved Delta table.
    */
-  def extractFrom(plan: LogicalPlan, cmd: String): DeltaTableV2 = plan match {
-    case ResolvedTable(_, _, d: DeltaTableV2, _) => d
+  def extractFrom(plan: LogicalPlan, cmd: String): DeltaTableV2 =
+    maybeExtractFrom(plan).getOrElse(throw DeltaErrors.notADeltaTableException(cmd))
+
+  /**
+   * Extracts the DeltaTableV2 from a resolved Delta table plan node, returning None if the node
+   * does not actually represent a resolved Delta table.
+   */
+  def maybeExtractFrom(plan: LogicalPlan): Option[DeltaTableV2] = plan match {
+    case ResolvedTable(_, _, d: DeltaTableV2, _) => Some(d)
     case ResolvedTable(_, _, t: V1Table, _) if DeltaTableUtils.isDeltaTable(t.catalogTable) =>
-      DeltaTableV2(SparkSession.active, new Path(t.v1Table.location), Some(t.v1Table))
-    case _ => throw DeltaErrors.notADeltaTableException(cmd)
+      Some(DeltaTableV2(SparkSession.active, new Path(t.v1Table.location), Some(t.v1Table)))
+    case _ => None
   }
 
   /**

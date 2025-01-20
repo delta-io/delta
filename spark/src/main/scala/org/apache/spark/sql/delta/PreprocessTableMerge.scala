@@ -185,7 +185,7 @@ case class PreprocessTableMerge(override val conf: SQLConf)
             castIfNeeded(
               a.expr,
               targetAttrib.dataType,
-              allowStructEvolution = withSchemaEvolution,
+              castingBehavior = MergeOrUpdateCastingBehavior(withSchemaEvolution),
               targetAttrib.name),
             targetColNameResolved = true)
         }.getOrElse {

@@ -151,7 +151,7 @@ private[sharing] class DeltaSharingDataSource
           .getOrElse(snapshotDescriptor.schema)
       }
 
-      val schemaToUse = TahoeDeltaTableUtils.removeInternalMetadata(
+      val schemaToUse = TahoeDeltaTableUtils.removeInternalWriterMetadata(
         sqlContext.sparkSession,
         readSchema
       )
@@ -416,7 +416,7 @@ private[sharing] class DeltaSharingDataSource
       // column locations. Otherwise, for any partition columns not in `dataSchema`, Spark would
       // just append them to the end of `dataSchema`.
       dataSchema = DeltaColumnMapping.dropColumnMappingMetadata(
-        TahoeDeltaTableUtils.removeInternalMetadata(
+        TahoeDeltaTableUtils.removeInternalWriterMetadata(
           spark,
           SchemaUtils.dropNullTypeColumns(deltaSharingTableMetadata.metadata.schema)
         )

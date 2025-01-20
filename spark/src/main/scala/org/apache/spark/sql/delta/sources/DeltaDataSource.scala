@@ -109,7 +109,7 @@ class DeltaDataSource
     }
 
     val schemaToUse = DeltaColumnMapping.dropColumnMappingMetadata(
-      DeltaTableUtils.removeInternalMetadata(sqlContext.sparkSession, readSchema)
+      DeltaTableUtils.removeInternalWriterMetadata(sqlContext.sparkSession, readSchema)
     )
     if (schemaToUse.isEmpty) {
       throw DeltaErrors.schemaNotSetException
@@ -304,32 +304,6 @@ object DeltaDataSource extends DatabricksLogging {
 
   def decodePartitioningColumns(str: String): Seq[String] = {
     Serialization.read[Seq[String]](str)
-  }
-
-  /**
-   * Extract the Delta path if `dataset` is created to load a Delta table. Otherwise returns `None`.
-   * Table UI in universe will call this.
-   */
-  def extractDeltaPath(dataset: Dataset[_]): Option[String] = {
-    if (dataset.isStreaming) {
-      dataset.queryExecution.logical match {
-        case logical: org.apache.spark.sql.execution.streaming.StreamingRelation =>
-          if (logical.dataSource.providingClass == classOf[DeltaDataSource]) {
-            CaseInsensitiveMap(logical.dataSource.options).get("path")
-          } else {
-            None
-          }
-        case _ => None
-      }
-    } else {
-      dataset.queryExecution.analyzed match {
-        case DeltaTable(tahoeFileIndex) =>
-          Some(tahoeFileIndex.path.toString)
-        case SubqueryAlias(_, DeltaTable(tahoeFileIndex)) =>
-          Some(tahoeFileIndex.path.toString)
-        case _ => None
-      }
-    }
   }
 
   /**

@@ -28,7 +28,7 @@ import org.apache.spark.sql.catalyst.analysis._
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.types.{StructField, StructType}
+import org.apache.spark.sql.types.{AtomicType, StructField, StructType}
 
 /**
  * Implements logic to resolve conditions and actions in MERGE clauses and handles schema evolution.
@@ -292,11 +292,13 @@ object ResolveDeltaMergeInto {
         })
 
       val migrationSchema = filterSchema(source.schema, Seq.empty)
-      val allowTypeWidening = target.exists {
-        case DeltaTable(fileIndex) =>
-          TypeWidening.isEnabled(fileIndex.protocol, fileIndex.metadata)
-        case _ => false
-      }
+
+      val typeWideningMode =
+        target.collectFirst {
+          case DeltaTable(index) if TypeWidening.isEnabled(index.protocol, index.metadata) =>
+            TypeWideningMode.TypeEvolution(
+              uniformIcebergCompatibleOnly = UniversalFormat.icebergEnabled(index.metadata))
+        }.getOrElse(TypeWideningMode.NoTypeWidening)
 
       // The implicit conversions flag allows any type to be merged from source to target if Spark
       // SQL considers the source type implicitly castable to the target. Normally, mergeSchemas
@@ -306,7 +308,7 @@ object ResolveDeltaMergeInto {
         target.schema,
         migrationSchema,
         allowImplicitConversions = true,
-        allowTypeWidening = allowTypeWidening
+        typeWideningMode = typeWideningMode
       )
     } else {
       target.schema

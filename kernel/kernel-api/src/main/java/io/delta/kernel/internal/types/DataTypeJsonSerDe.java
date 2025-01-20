@@ -25,7 +25,6 @@ import com.fasterxml.jackson.databind.module.SimpleModule;
 import com.fasterxml.jackson.databind.ser.std.StdSerializer;
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.internal.DeltaErrors;
-import io.delta.kernel.internal.util.Preconditions;
 import io.delta.kernel.types.*;
 import java.io.IOException;
 import java.io.StringWriter;
@@ -89,7 +88,11 @@ public class DataTypeJsonSerDe {
    */
   public static StructType deserializeStructType(String structTypeJson) {
     try {
-      DataType parsedType = parseDataType(OBJECT_MAPPER.reader().readTree(structTypeJson));
+      DataType parsedType =
+          parseDataType(
+              OBJECT_MAPPER.reader().readTree(structTypeJson),
+              "" /* fieldPath */,
+              new FieldMetadata.Builder().build() /* collationsMetadata */);
       if (parsedType instanceof StructType) {
         return (StructType) parsedType;
       } else {
@@ -130,23 +133,61 @@ public class DataTypeJsonSerDe {
    *   "nullable" : false,
    *   "metadata" : { }
    * }
+   *
+   * // Collated string type field serialized as:
+   * {
+   *   "name" : "s",
+   *   "type" : "string",
+   *   "nullable", false,
+   *   "metadata" : {
+   *     "__COLLATIONS": { "s": "ICU.de_DE" }
+   *   }
+   * }
+   *
+   * // Array with collated strings field serialized as:
+   * {
+   *   "name" : "arr",
+   *   "type" : {
+   *     "type" : "array",
+   *     "elementType" : "string",
+   *     "containsNull" : false
+   *   }
+   *   "nullable" : false,
+   *   "metadata" : {
+   *     "__COLLATIONS": { "arr.element": "ICU.de_DE" }
+   *   }
+   * }
    * </pre>
+   *
+   * @param fieldPath Path from the nearest ancestor that is of the {@link StructField} type. For
+   *     example, "c1.key.element" represents a path starting from the {@link StructField} named
+   *     "c1." The next element, "key," indicates that "c1" stores a {@link MapType} type. The final
+   *     element, "element", shows that the key of the map is an {@link ArrayType} type.
+   * @param collationsMetadata Metadata that maps the path of a {@link StringType} to its collation.
+   *     Only maps non-UTF8_BINARY collated {@link StringType}. Collation metadata is stored in the
+   *     nearest ancestor, which is the StructField. This is because StructField includes a metadata
+   *     field, whereas Map and Array do not, making them unable to store this information. Paths
+   *     are in same form as `fieldPath`. <a
+   *     href="https://github.com/delta-io/delta/blob/master/protocol_rfcs/collated-string-type.md#collation-identifiers">Docs</a>
    */
-  static DataType parseDataType(JsonNode json) {
+  static DataType parseDataType(JsonNode json, String fieldPath, FieldMetadata collationsMetadata) {
     switch (json.getNodeType()) {
       case STRING:
         // simple types are stored as just a string
-        return nameToType(json.textValue());
+        return nameToType(json.textValue(), fieldPath, collationsMetadata);
       case OBJECT:
         // complex types (array, map, or struct are stored as JSON objects)
         String type = getStringField(json, "type");
         switch (type) {
           case "struct":
+            assertValidTypeForCollations(fieldPath, "struct", collationsMetadata);
             return parseStructType(json);
           case "array":
-            return parseArrayType(json);
+            assertValidTypeForCollations(fieldPath, "array", collationsMetadata);
+            return parseArrayType(json, fieldPath, collationsMetadata);
           case "map":
-            return parseMapType(json);
+            assertValidTypeForCollations(fieldPath, "map", collationsMetadata);
+            return parseMapType(json, fieldPath, collationsMetadata);
             // No default case here; fall through to the following error when no match
         }
       default:
@@ -160,12 +201,16 @@ public class DataTypeJsonSerDe {
    * Parses an <a href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#array-type">array
    * type </a>
    */
-  private static ArrayType parseArrayType(JsonNode json) {
+  private static ArrayType parseArrayType(
+      JsonNode json, String fieldPath, FieldMetadata collationsMetadata) {
     checkArgument(
         json.isObject() && json.size() == 3,
-        String.format("Expected JSON object with 3 fields for array data type but got:\n%s", json));
+        "Expected JSON object with 3 fields for array data type but got:\n%s",
+        json);
     boolean containsNull = getBooleanField(json, "containsNull");
-    DataType dataType = parseDataType(getNonNullField(json, "elementType"));
+    DataType dataType =
+        parseDataType(
+            getNonNullField(json, "elementType"), fieldPath + ".element", collationsMetadata);
     return new ArrayType(dataType, containsNull);
   }
 
@@ -173,13 +218,17 @@ public class DataTypeJsonSerDe {
    * Parses an <a href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#map-type">map type
    * </a>
    */
-  private static MapType parseMapType(JsonNode json) {
+  private static MapType parseMapType(
+      JsonNode json, String fieldPath, FieldMetadata collationsMetadata) {
     checkArgument(
         json.isObject() && json.size() == 4,
-        String.format("Expected JSON object with 4 fields for map data type but got:\n%s", json));
+        "Expected JSON object with 4 fields for map data type but got:\n%s",
+        json);
     boolean valueContainsNull = getBooleanField(json, "valueContainsNull");
-    DataType keyType = parseDataType(getNonNullField(json, "keyType"));
-    DataType valueType = parseDataType(getNonNullField(json, "valueType"));
+    DataType keyType =
+        parseDataType(getNonNullField(json, "keyType"), fieldPath + ".key", collationsMetadata);
+    DataType valueType =
+        parseDataType(getNonNullField(json, "valueType"), fieldPath + ".value", collationsMetadata);
     return new MapType(keyType, valueType, valueContainsNull);
   }
 
@@ -190,12 +239,10 @@ public class DataTypeJsonSerDe {
   private static StructType parseStructType(JsonNode json) {
     checkArgument(
         json.isObject() && json.size() == 2,
-        String.format(
-            "Expected JSON object with 2 fields for struct data type but got:\n%s", json));
+        "Expected JSON object with 2 fields for struct data type but got:\n%s",
+        json);
     JsonNode fieldsNode = getNonNullField(json, "fields");
-    Preconditions.checkArgument(
-        fieldsNode.isArray(),
-        String.format("Expected array for fieldName=%s in:\n%s", "fields", json));
+    checkArgument(fieldsNode.isArray(), "Expected array for fieldName=%s in:\n%s", "fields", json);
     Iterator<JsonNode> fields = fieldsNode.elements();
     List<StructField> parsedFields = new ArrayList<>();
     while (fields.hasNext()) {
@@ -209,27 +256,42 @@ public class DataTypeJsonSerDe {
    * struct field </a>
    */
   private static StructField parseStructField(JsonNode json) {
-    Preconditions.checkArgument(json.isObject(), "Expected JSON object for struct field");
+    checkArgument(json.isObject(), "Expected JSON object for struct field");
     String name = getStringField(json, "name");
-    DataType type = parseDataType(getNonNullField(json, "type"));
+    FieldMetadata metadata = parseFieldMetadata(json.get("metadata"), false);
+    DataType type =
+        parseDataType(
+            getNonNullField(json, "type"), name, getCollationsMetadata(json.get("metadata")));
     boolean nullable = getBooleanField(json, "nullable");
-    FieldMetadata metadata = parseFieldMetadata(json.get("metadata"));
     return new StructField(name, type, nullable, metadata);
   }
 
   /** Parses an {@link FieldMetadata}. */
   private static FieldMetadata parseFieldMetadata(JsonNode json) {
+    return parseFieldMetadata(json, true);
+  }
+
+  /**
+   * Parses a {@link FieldMetadata}, optionally including collation metadata, depending on
+   * `includecollationsMetadata`.
+   */
+  private static FieldMetadata parseFieldMetadata(
+      JsonNode json, boolean includecollationsMetadata) {
     if (json == null || json.isNull()) {
       return FieldMetadata.empty();
     }
 
-    Preconditions.checkArgument(json.isObject(), "Expected JSON object for struct field metadata");
+    checkArgument(json.isObject(), "Expected JSON object for struct field metadata");
     final Iterator<Map.Entry<String, JsonNode>> iterator = json.fields();
     final FieldMetadata.Builder builder = FieldMetadata.builder();
     while (iterator.hasNext()) {
       Map.Entry<String, JsonNode> entry = iterator.next();
       JsonNode value = entry.getValue();
       String key = entry.getKey();
+
+      if (!includecollationsMetadata && key.equals(StructField.COLLATIONS_METADATA_KEY)) {
+        continue;
+      }
 
       if (value.isNull()) {
         builder.putNull(key);
@@ -298,8 +360,13 @@ public class DataTypeJsonSerDe {
   private static Pattern FIXED_DECIMAL_PATTERN = Pattern.compile(FIXED_DECIMAL_REGEX);
 
   /** Parses primitive string type names to a {@link DataType} */
-  private static DataType nameToType(String name) {
+  private static DataType nameToType(
+      String name, String fieldPath, FieldMetadata collationsMetadata) {
     if (BasePrimitiveType.isPrimitiveType(name)) {
+      if (collationsMetadata.contains(fieldPath)) {
+        assertValidTypeForCollations(fieldPath, name, collationsMetadata);
+        return new StringType(collationsMetadata.getString(fieldPath));
+      }
       return BasePrimitiveType.createPrimitive(name);
     } else if (name.equals("decimal")) {
       return DecimalType.USER_DEFAULT;
@@ -335,17 +402,31 @@ public class DataTypeJsonSerDe {
 
   private static String getStringField(JsonNode rootNode, String fieldName) {
     JsonNode node = getNonNullField(rootNode, fieldName);
-    Preconditions.checkArgument(
-        node.isTextual(),
-        String.format("Expected string for fieldName=%s in:\n%s", fieldName, rootNode));
+    checkArgument(
+        node.isTextual(), "Expected string for fieldName=%s in:\n%s", fieldName, rootNode);
     return node.textValue(); // double check this only works for string values! and isTextual()!
+  }
+
+  private static void assertValidTypeForCollations(
+      String fieldPath, String fieldType, FieldMetadata collationsMetadata) {
+    if (collationsMetadata.contains(fieldPath) && !fieldType.equals("string")) {
+      throw new IllegalArgumentException(
+          String.format("Invalid data type for collations: \"%s\"", fieldType));
+    }
+  }
+
+  /** Returns a metadata with a map of field path to collation name. */
+  private static FieldMetadata getCollationsMetadata(JsonNode fieldMetadata) {
+    if (fieldMetadata == null || !fieldMetadata.has(StructField.COLLATIONS_METADATA_KEY)) {
+      return new FieldMetadata.Builder().build();
+    }
+    return parseFieldMetadata(fieldMetadata.get(StructField.COLLATIONS_METADATA_KEY));
   }
 
   private static boolean getBooleanField(JsonNode rootNode, String fieldName) {
     JsonNode node = getNonNullField(rootNode, fieldName);
-    Preconditions.checkArgument(
-        node.isBoolean(),
-        String.format("Expected boolean for fieldName=%s in:\n%s", fieldName, rootNode));
+    checkArgument(
+        node.isBoolean(), "Expected boolean for fieldName=%s in:\n%s", fieldName, rootNode);
     return node.booleanValue();
   }
 

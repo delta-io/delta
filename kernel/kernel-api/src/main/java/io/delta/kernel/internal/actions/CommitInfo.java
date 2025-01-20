@@ -65,8 +65,8 @@ public class CommitInfo {
       return null;
     }
 
-    ColumnVector[] children = new ColumnVector[7];
-    for (int i = 0; i < 7; i++) {
+    ColumnVector[] children = new ColumnVector[8];
+    for (int i = 0; i < children.length; i++) {
       children[i] = vector.getChild(i);
     }
 
@@ -79,7 +79,10 @@ public class CommitInfo {
             ? Collections.emptyMap()
             : VectorUtils.toJavaMap(children[4].getMap(rowId)),
         children[5].isNullAt(rowId) ? null : children[5].getBoolean(rowId),
-        children[6].isNullAt(rowId) ? null : children[6].getString(rowId));
+        children[6].isNullAt(rowId) ? null : children[6].getString(rowId),
+        children[7].isNullAt(rowId)
+            ? Collections.emptyMap()
+            : VectorUtils.toJavaMap(children[7].getMap(rowId)));
   }
 
   public static StructType FULL_SCHEMA =
@@ -92,7 +95,10 @@ public class CommitInfo {
               "operationParameters",
               new MapType(StringType.STRING, StringType.STRING, true /* nullable */))
           .add("isBlindAppend", BooleanType.BOOLEAN, true /* nullable */)
-          .add("txnId", StringType.STRING);
+          .add("txnId", StringType.STRING)
+          .add(
+              "operationMetrics",
+              new MapType(StringType.STRING, StringType.STRING, true /* nullable */));
 
   private static final Map<String, Integer> COL_NAME_TO_ORDINAL =
       IntStream.range(0, FULL_SCHEMA.length())
@@ -108,6 +114,7 @@ public class CommitInfo {
   private final boolean isBlindAppend;
   private final String txnId;
   private Optional<Long> inCommitTimestamp;
+  private final Map<String, String> operationMetrics;
 
   public CommitInfo(
       Optional<Long> inCommitTimestamp,
@@ -116,7 +123,8 @@ public class CommitInfo {
       String operation,
       Map<String, String> operationParameters,
       boolean isBlindAppend,
-      String txnId) {
+      String txnId,
+      Map<String, String> operationMetrics) {
     this.inCommitTimestamp = inCommitTimestamp;
     this.timestamp = timestamp;
     this.engineInfo = engineInfo;
@@ -124,6 +132,7 @@ public class CommitInfo {
     this.operationParameters = Collections.unmodifiableMap(operationParameters);
     this.isBlindAppend = isBlindAppend;
     this.txnId = txnId;
+    this.operationMetrics = operationMetrics;
   }
 
   public Optional<Long> getInCommitTimestamp() {
@@ -161,6 +170,8 @@ public class CommitInfo {
         COL_NAME_TO_ORDINAL.get("operationParameters"), stringStringMapValue(operationParameters));
     commitInfo.put(COL_NAME_TO_ORDINAL.get("isBlindAppend"), isBlindAppend);
     commitInfo.put(COL_NAME_TO_ORDINAL.get("txnId"), txnId);
+    commitInfo.put(
+        COL_NAME_TO_ORDINAL.get("operationMetrics"), stringStringMapValue(operationMetrics));
 
     return new GenericRow(CommitInfo.FULL_SCHEMA, commitInfo);
   }

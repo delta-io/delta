@@ -23,6 +23,7 @@ import java.util.TimeZone
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.DeltaInsertIntoTableSuiteShims._
+import org.apache.spark.sql.delta.DeltaTestUtils.withTimeZone
 import org.apache.spark.sql.delta.schema.InvariantViolationException
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -213,10 +214,10 @@ class DeltaInsertIntoSQLSuite
     withTable("t") {
       sql(s"CREATE TABLE t(i STRING, c string) USING $v2Format PARTITIONED BY (c)")
       checkError(
-        exception = intercept[AnalysisException] {
+        intercept[AnalysisException] {
           sql("INSERT OVERWRITE t PARTITION (c='1') (c) VALUES ('2')")
         },
-        errorClass = "STATIC_PARTITION_COLUMN_IN_INSERT_COLUMN_LIST",
+        "STATIC_PARTITION_COLUMN_IN_INSERT_COLUMN_LIST",
         parameters = Map("staticName" -> "c"))
     }
   }
@@ -280,6 +281,246 @@ class DeltaInsertIntoSQLSuite
       }
     }
   }
+
+  // Schema evolution for complex map type
+  test("insertInto schema evolution with map type - append mode: field renaming + new field") {
+    withTable("map_schema_evolution") {
+      val tableName = "map_schema_evolution"
+      val initialSchema = StructType(Seq(
+        StructField("key", IntegerType, nullable = false),
+        StructField("metrics", MapType(StringType, StructType(Seq(
+          StructField("id", IntegerType, nullable = false),
+          StructField("value", IntegerType, nullable = false)
+        ))))
+      ))
+
+      val initialData = Seq(
+        Row(1, Map("event" -> Row(1, 1)))
+      )
+
+      val initialRdd = spark.sparkContext.parallelize(initialData)
+      val initialDf = spark.createDataFrame(initialRdd, initialSchema)
+
+      // Write initial data
+      initialDf.write
+        .option("overwriteSchema", "true")
+        .mode("overwrite")
+        .format("delta")
+        .saveAsTable(tableName)
+
+      // Evolved schema with field renamed and additional field in map struct
+      val evolvedSchema = StructType(Seq(
+        StructField("renamed_key", IntegerType, nullable = false),
+        StructField("metrics", MapType(StringType, StructType(Seq(
+          StructField("id", IntegerType, nullable = false),
+          StructField("value", IntegerType, nullable = false),
+          StructField("comment", StringType, nullable = true)
+        ))))
+      ))
+
+      val evolvedData = Seq(
+        Row(1, Map("event" -> Row(1, 1, "deprecated")))
+      )
+
+      val evolvedRdd = spark.sparkContext.parallelize(evolvedData)
+      val evolvedDf = spark.createDataFrame(evolvedRdd, evolvedSchema)
+
+      // insert data without schema evolution
+      val err = intercept[AnalysisException] {
+        evolvedDf.write
+          .mode("append")
+          .format("delta")
+          .insertInto(tableName)
+      }
+      checkErrorMatchPVals(
+        exception = err,
+        "_LEGACY_ERROR_TEMP_DELTA_0007",
+        parameters = Map(
+          "message" -> "A schema mismatch detected when writing to the Delta table(.|\\n)*"
+        )
+      )
+
+      // insert data with schema evolution
+      withSQLConf("spark.databricks.delta.schema.autoMerge.enabled" -> "true") {
+        evolvedDf.write
+          .mode("append")
+          .format("delta")
+          .insertInto(tableName)
+
+        checkAnswer(
+          spark.sql(s"SELECT * FROM $tableName"),
+          Seq(
+            Row(1, Map("event" -> Row(1, 1, null))),
+            Row(1, Map("event" -> Row(1, 1, "deprecated")))
+        ))
+      }
+    }
+  }
+
+  test("not enough column in source to insert in nested map types") {
+    withTable("source", "target") {
+      sql(
+        """CREATE TABLE source (
+          |  id INT,
+          |  metrics MAP<STRING, STRUCT<id: INT, value: INT>>
+          |) USING delta""".stripMargin)
+
+      sql(
+        """CREATE TABLE target (
+          |  id INT,
+          |  metrics MAP<STRING, STRUCT<id: INT, value: INT, comment: STRING>>
+          |) USING delta""".stripMargin)
+
+      sql("INSERT INTO source VALUES (1, map('event', struct(1, 1)))")
+
+      val e = intercept[AnalysisException] {
+        sql("INSERT INTO target SELECT * FROM source")
+      }
+      checkError(
+        exception = e,
+        "DELTA_INSERT_COLUMN_ARITY_MISMATCH",
+        parameters = Map(
+          "tableName" -> "spark_catalog.default.target",
+          "columnName" -> "not enough nested fields in value",
+          "numColumns" -> "3",
+          "insertColumns" -> "2"
+        )
+      )
+    }
+  }
+
+  // not enough nested fields in value
+  test("more columns in source to insert in nested map types") {
+    withTable("source", "target") {
+      sql(
+        """CREATE TABLE source (
+          |  id INT,
+          |  metrics MAP<STRING, STRUCT<id: INT, value: INT, comment: STRING>>
+          |) USING delta""".stripMargin)
+
+      sql(
+        """CREATE TABLE target (
+          |  id INT,
+          |  metrics MAP<STRING, STRUCT<id: INT, value: INT>>
+          |) USING delta""".stripMargin)
+
+      sql("INSERT INTO source VALUES (1, map('event', struct(1, 1, 'deprecated')))")
+
+      val e = intercept[AnalysisException] {
+        sql("INSERT INTO target SELECT * FROM source")
+      }
+      checkErrorMatchPVals(
+        exception = e,
+        "_LEGACY_ERROR_TEMP_DELTA_0007",
+        parameters = Map(
+          "message" -> "A schema mismatch detected when writing to the Delta table(.|\\n)*"
+        )
+      )
+
+      withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
+        sql("INSERT INTO target SELECT * FROM source")
+        checkAnswer(
+          spark.sql(s"SELECT * FROM source"),
+          Seq(
+            Row(1, Map("event" -> Row(1, 1, "deprecated")))
+        ))
+      }
+    }
+  }
+
+  test("more columns in source to insert in nested 2-level deep map types") {
+    withTable("source", "target") {
+      sql(
+        """CREATE TABLE source (
+          |  id INT,
+          |  metrics MAP<STRING, MAP<STRING, STRUCT<id: INT, value: INT, comment: STRING>>>
+          |) USING delta""".stripMargin)
+
+      sql(
+        """CREATE TABLE target (
+          |  id INT,
+          |  metrics MAP<STRING, MAP<STRING, STRUCT<id: INT, value: INT>>>
+          |) USING delta""".stripMargin)
+
+      sql(
+        """INSERT INTO source VALUES
+         | (1, map('event', map('subEvent', struct(1, 1, 'deprecated'))))
+         """.stripMargin)
+
+      val e = intercept[AnalysisException] {
+        sql("INSERT INTO target SELECT * FROM source")
+      }
+      checkErrorMatchPVals(
+        exception = e,
+        "_LEGACY_ERROR_TEMP_DELTA_0007",
+        parameters = Map(
+          "message" -> "A schema mismatch detected when writing to the Delta table(.|\\n)*"
+        )
+      )
+
+      withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
+        sql("INSERT INTO target SELECT * FROM source")
+        checkAnswer(
+          spark.sql(s"SELECT * FROM source"),
+          Seq(
+            Row(1, Map("event" -> Map("subEvent" -> Row(1, 1, "deprecated"))))
+        ))
+      }
+    }
+  }
+
+  test("insert map type with different data type in key") {
+    withTable("source", "target") {
+      sql(
+        """CREATE TABLE source (
+          |  id INT,
+          |  metrics MAP<STRING, STRUCT<id: INT, value: INT>>
+          |) USING delta""".stripMargin)
+
+      sql(
+        """CREATE TABLE target (
+          |  id INT,
+          |  metrics MAP<INT, STRUCT<id: INT, value: INT>>
+          |) USING delta""".stripMargin)
+
+      sql("INSERT INTO source VALUES (1, map('1', struct(2, 3)))")
+
+      sql("INSERT INTO target SELECT * FROM source")
+
+      checkAnswer(
+        spark.sql("SELECT * FROM target"),
+        Seq(
+          Row(1, Map(1 -> Row(2, 3)))
+      ))
+    }
+  }
+
+  test("insert map type with different data type in value") {
+    withTable("source", "target") {
+      sql(
+        """CREATE TABLE source (
+          |  id INT,
+          |  metrics MAP<STRING, STRUCT<id: INT, value: LONG>>
+          |) USING delta""".stripMargin)
+
+      sql(
+        """CREATE TABLE target (
+          |  id INT,
+          |  metrics MAP<STRING, STRUCT<id: INT, value: INT>>
+          |) USING delta""".stripMargin)
+
+      sql("INSERT INTO source VALUES (1, map('m1', struct(2, 3L)))")
+
+      sql("INSERT INTO target SELECT * FROM source")
+
+      checkAnswer(
+        spark.sql("SELECT * FROM target"),
+        Seq(
+          Row(1, Map("m1" -> Row(2, 3)))
+      ))
+    }
+  }
+
 
   def runInsertOverwrite(
       sourceSchema: String,
@@ -596,22 +837,22 @@ class DeltaColumnDefaultsInsertSuite extends InsertIntoSQLOnlyTests with DeltaSQ
       // The table feature is not enabled via TBLPROPERTIES.
       withTable("createTableWithDefaultFeatureNotEnabled") {
         checkError(
-          exception = intercept[DeltaAnalysisException] {
+          intercept[DeltaAnalysisException] {
             sql(s"create table createTableWithDefaultFeatureNotEnabled(" +
               s"i boolean, s bigint, q int default 42) using $v2Format " +
               "partitioned by (i)")
           },
-          errorClass = "WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
+          "WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
           parameters = Map("commandType" -> "CREATE TABLE")
         )
       }
       withTable("alterTableSetDefaultFeatureNotEnabled") {
         sql(s"create table alterTableSetDefaultFeatureNotEnabled(a int) using $v2Format")
         checkError(
-          exception = intercept[DeltaAnalysisException] {
+          intercept[DeltaAnalysisException] {
             sql("alter table alterTableSetDefaultFeatureNotEnabled alter column a set default 42")
           },
-          errorClass = "WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
+          "WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
           parameters = Map("commandType" -> "ALTER TABLE")
         )
       }
@@ -620,19 +861,19 @@ class DeltaColumnDefaultsInsertSuite extends InsertIntoSQLOnlyTests with DeltaSQ
         sql(s"create table alterTableTest(i boolean, s bigint, q int default 42) using $v2Format " +
           s"partitioned by (i) $tblPropertiesAllowDefaults")
         checkError(
-          exception = intercept[DeltaAnalysisException] {
+          intercept[DeltaAnalysisException] {
             sql("alter table alterTableTest add column z int default 42")
           },
-          errorClass = "WRONG_COLUMN_DEFAULTS_FOR_DELTA_ALTER_TABLE_ADD_COLUMN_NOT_SUPPORTED"
+          "WRONG_COLUMN_DEFAULTS_FOR_DELTA_ALTER_TABLE_ADD_COLUMN_NOT_SUPPORTED"
         )
       }
       // The default value fails to analyze.
       checkError(
-        exception = intercept[AnalysisException] {
+        intercept[AnalysisException] {
           sql(s"create table t4 (s int default badvalue) using $v2Format " +
             s"$tblPropertiesAllowDefaults")
         },
-        errorClass = INVALID_COLUMN_DEFAULT_VALUE_ERROR_MSG,
+        INVALID_COLUMN_DEFAULT_VALUE_ERROR_MSG,
         parameters = Map(
           "statement" -> "CREATE TABLE",
           "colName" -> "`s`",
@@ -642,11 +883,11 @@ class DeltaColumnDefaultsInsertSuite extends InsertIntoSQLOnlyTests with DeltaSQ
       // The error message reports that we failed to execute the command because subquery
       // expressions are not allowed in DEFAULT values.
       checkError(
-        exception = intercept[AnalysisException] {
+        intercept[AnalysisException] {
           sql(s"create table t4 (s int default (select min(x) from badtable)) using $v2Format " +
             tblPropertiesAllowDefaults)
         },
-        errorClass = "INVALID_DEFAULT_VALUE.SUBQUERY_EXPRESSION",
+        "INVALID_DEFAULT_VALUE.SUBQUERY_EXPRESSION",
         parameters = Map(
           "statement" -> "CREATE TABLE",
           "colName" -> "`s`",
@@ -656,22 +897,22 @@ class DeltaColumnDefaultsInsertSuite extends InsertIntoSQLOnlyTests with DeltaSQ
       // The error message reports that we failed to execute the command because subquery
       // expressions are not allowed in DEFAULT values.
       checkError(
-        exception = intercept[AnalysisException] {
+        intercept[AnalysisException] {
           sql(s"create table t4 (s int default (select 42 as alias)) using $v2Format " +
             tblPropertiesAllowDefaults)
         },
-        errorClass = "INVALID_DEFAULT_VALUE.SUBQUERY_EXPRESSION",
+        "INVALID_DEFAULT_VALUE.SUBQUERY_EXPRESSION",
         parameters = Map(
           "statement" -> "CREATE TABLE",
           "colName" -> "`s`",
           "defaultValue" -> "(select 42 as alias)"))
       // The default value parses but the type is not coercible.
       checkError(
-        exception = intercept[AnalysisException] {
+        intercept[AnalysisException] {
           sql(s"create table t4 (s bigint default false) " +
             s"using $v2Format $tblPropertiesAllowDefaults")
         },
-        errorClass = "INVALID_DEFAULT_VALUE.DATA_TYPE",
+        "INVALID_DEFAULT_VALUE.DATA_TYPE",
         parameters = Map(
           "statement" -> "CREATE TABLE",
           "colName" -> "`s`",
@@ -702,11 +943,11 @@ class DeltaColumnDefaultsInsertSuite extends InsertIntoSQLOnlyTests with DeltaSQ
     // Column default values are disabled per configuration in general.
     withSQLConf(SQLConf.ENABLE_DEFAULT_COLUMNS.key -> "false") {
       checkError(
-        exception = intercept[ParseException] {
+        intercept[ParseException] {
           sql(s"create table t4 (s int default 41 + 1) using $v2Format " +
             tblPropertiesAllowDefaults)
         },
-        errorClass = "UNSUPPORTED_DEFAULT_VALUE.WITH_SUGGESTION",
+        "UNSUPPORTED_DEFAULT_VALUE.WITH_SUGGESTION",
         parameters = Map.empty,
         context = ExpectedContext(fragment = "s int default 41 + 1", start = 17, stop = 36))
     }
@@ -1224,16 +1465,6 @@ abstract class DeltaInsertIntoTests(
 
         checkAnswer(sql(s"SELECT count(distinct(ts)) from $t1"), Seq(Row(2)))
       }
-    }
-  }
-
-  private def withTimeZone(zone: String)(f: => Unit): Unit = {
-    val currentDefault = TimeZone.getDefault
-    try {
-      TimeZone.setDefault(TimeZone.getTimeZone(zone))
-      f
-    } finally {
-      TimeZone.setDefault(currentDefault)
     }
   }
 

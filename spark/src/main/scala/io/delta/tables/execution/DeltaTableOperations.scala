@@ -19,16 +19,19 @@ package io.delta.tables.execution
 import scala.collection.Map
 
 import org.apache.spark.sql.catalyst.TimeTravel
-import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog}
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.DeltaTableUtils.withActiveSession
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.{DeltaGenerateCommand, DescribeDeltaDetailCommand, VacuumCommand}
 import org.apache.spark.sql.delta.util.AnalysisHelper
+import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{functions, Column, DataFrame}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{UnresolvedAttribute, UnresolvedRelation}
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.connector.catalog.Identifier
@@ -51,9 +54,9 @@ trait DeltaTableOperations extends AnalysisHelper { self: io.delta.tables.DeltaT
   protected def executeHistory(
       deltaLog: DeltaLog,
       limit: Option[Int] = None,
-      tableId: Option[TableIdentifier] = None): DataFrame = withActiveSession(sparkSession) {
+      catalogTable: Option[CatalogTable] = None): DataFrame = withActiveSession(sparkSession) {
     val history = deltaLog.history
-    sparkSession.createDataFrame(history.getHistory(limit))
+    sparkSession.createDataFrame(history.getHistory(limit, catalogTable))
   }
 
   protected def executeDetails(
@@ -63,15 +66,13 @@ trait DeltaTableOperations extends AnalysisHelper { self: io.delta.tables.DeltaT
     toDataset(sparkSession, details)
   }
 
-  protected def executeGenerate(tblIdentifier: String, mode: String): Unit =
-    withActiveSession(sparkSession) {
-      val tableId: TableIdentifier = sparkSession
-        .sessionState
-        .sqlParser
-        .parseTableIdentifier(tblIdentifier)
-      val generate = DeltaGenerateCommand(mode, tableId, self.deltaLog.options)
-      toDataset(sparkSession, generate)
-    }
+  protected def executeGenerate(
+      path: String,
+      tableIdentifier: Option[TableIdentifier],
+      mode: String): Unit = withActiveSession(sparkSession) {
+    val generate = DeltaGenerateCommand(Option(path), tableIdentifier, mode, self.deltaLog.options)
+    toDataset(sparkSession, generate)
+  }
 
   protected def executeUpdate(
       set: Map[String, Column],
@@ -87,10 +88,20 @@ trait DeltaTableOperations extends AnalysisHelper { self: io.delta.tables.DeltaT
   }
 
   protected def executeVacuum(
-      deltaLog: DeltaLog,
-      retentionHours: Option[Double],
-      tableId: Option[TableIdentifier] = None): DataFrame = withActiveSession(sparkSession) {
-    VacuumCommand.gc(sparkSession, deltaLog, false, retentionHours)
+      table: DeltaTableV2,
+      retentionHours: Option[Double]): DataFrame = withActiveSession(sparkSession) {
+    val tableId = table.getTableIdentifierIfExists
+    val path = Option.when(tableId.isEmpty)(deltaLog.dataPath.toString)
+    val vacuum = VacuumTableCommand(
+      path,
+      tableId,
+      inventoryTable = None,
+      inventoryQuery = None,
+      retentionHours,
+      dryRun = false,
+      vacuumType = None,
+      deltaLog.options)
+    toDataset(sparkSession, vacuum)
     sparkSession.emptyDataFrame
   }
 
@@ -115,11 +126,16 @@ trait DeltaTableOperations extends AnalysisHelper { self: io.delta.tables.DeltaT
   protected def executeClone(
       table: DeltaTableV2,
       target: String,
+      isShallow: Boolean,
       replace: Boolean,
       properties: Map[String, String],
       versionAsOf: Option[Long] = None,
       timestampAsOf: Option[String] = None
   ): io.delta.tables.DeltaTable = withActiveSession(sparkSession) {
+    if (!isShallow) {
+      throw DeltaErrors.unsupportedDeepCloneException()
+    }
+
     val sourceIdentifier = table.getTableIdentifierIfExists.map(id =>
       Identifier.of(id.database.toArray, id.table))
     val sourceRelation = DataSourceV2Relation.create(table, None, sourceIdentifier)
