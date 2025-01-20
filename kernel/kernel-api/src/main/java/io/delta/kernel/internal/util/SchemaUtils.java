@@ -23,6 +23,8 @@ import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.types.*;
 import java.util.*;
 import java.util.stream.Collectors;
+import org.apache.iceberg.Schema;
+import org.apache.iceberg.types.TypeUtil;
 
 /**
  * Utility methods for schema related operations such as validating the schema has no duplicate
@@ -75,6 +77,10 @@ public class SchemaUtils {
     }
 
     validateSupportedType(schema);
+  }
+
+  public static StructType icebergToDeltaSchema(Schema icebergSchema) {
+    return (StructType) TypeUtil.visit(icebergSchema, new IcebergTypeToStructType());
   }
 
   /**
