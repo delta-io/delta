@@ -97,10 +97,10 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
       deltaLog: DeltaLog,
       options: Option[DeltaOptions],
       data: DataFrame): (QueryExecution, Seq[Attribute], Seq[Constraint], Set[String]) = {
-    val (normalizedData, output, constraints, trackHighWaterMarks) = normalizeSchema(
+    val (normalizedSchema, output, constraints, trackHighWaterMarks) = normalizeSchema(
       deltaLog, options, data)
 
-    (normalizedData.queryExecution, output, constraints, trackHighWaterMarks)
+    (normalizedSchema.queryExecution, output, constraints, trackHighWaterMarks)
   }
 
   /**
