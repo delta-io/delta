@@ -57,10 +57,10 @@ public interface ScanReport extends DeltaOperationReport {
   /** @return the read schema provided when building the scan */
   StructType getReadSchema();
 
-  /** @returns the part of {@link ScanReport#getFilter()} that was used for partition pruning */
+  /** @return the part of {@link ScanReport#getFilter()} that was used for partition pruning */
   Optional<Predicate> getPartitionPredicate();
 
-  /** @returns the filter used for data skipping using the file statistics */
+  /** @return the filter used for data skipping using the file statistics */
   Optional<Predicate> getDataSkippingFilter();
 
   /** @return the metrics for this scan */
