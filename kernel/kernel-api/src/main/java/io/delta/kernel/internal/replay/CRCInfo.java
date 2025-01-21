@@ -21,14 +21,14 @@ import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.types.StructType;
 
-public class VersionStats {
+public class CRCInfo {
 
-  public static VersionStats fromColumnarBatch(
+  public static CRCInfo fromColumnarBatch(
       Engine engine, long version, ColumnarBatch batch, int rowId) {
     // fromColumnVector already takes care of nulls
     Protocol protocol = Protocol.fromColumnVector(batch.getColumnVector(PROTOCOL_ORDINAL), rowId);
     Metadata metadata = Metadata.fromColumnVector(batch.getColumnVector(METADATA_ORDINAL), rowId);
-    return new VersionStats(version, metadata, protocol);
+    return new CRCInfo(version, metadata, protocol);
   }
 
   // We can add additional fields later
@@ -42,7 +42,7 @@ public class VersionStats {
   private final Metadata metadata;
   private final Protocol protocol;
 
-  protected VersionStats(long version, Metadata metadata, Protocol protocol) {
+  protected CRCInfo(long version, Metadata metadata, Protocol protocol) {
     this.version = version;
     this.metadata = metadata;
     this.protocol = protocol;

@@ -212,14 +212,13 @@ public class LogReplay {
     // If the snapshot hint is present, we can use it as the lower bound for the CRC search.
     // TODO: this can be further improved to make the lower bound until the checkpoint version
     Optional<Long> crcSearchLowerBound = snapshotHint.map(SnapshotHint::getVersion);
-    Optional<VersionStats> versionStatsOpt =
-        ChecksumReader.getVersionStats(
-            engine, logSegment.logPath, snapshotVersion, crcSearchLowerBound);
-    if (versionStatsOpt.isPresent()) {
-      // We found the protocol and metadata for the version we are looking for
-      VersionStats versionStats = versionStatsOpt.get();
-      if (versionStats.getVersion() == snapshotVersion) {
-        return new Tuple2<>(versionStats.getProtocol(), versionStats.getMetadata());
+    Optional<CRCInfo> crcInfoOpt =
+        ChecksumReader.getCRCInfo(engine, logSegment.logPath, snapshotVersion, crcSearchLowerBound);
+    if (crcInfoOpt.isPresent()) {
+      // CRC is related to the desired snapshot version. Load protocol and metadata from CRC.
+      CRCInfo crcInfo = crcInfoOpt.get();
+      if (crcInfo.getVersion() == snapshotVersion) {
+        return new Tuple2<>(crcInfo.getProtocol(), crcInfo.getMetadata());
       }
       // We found the protocol and metadata in a version older than the one we are looking
       // for. We need to replay the actions to get the latest protocol and metadata, but
@@ -227,10 +226,7 @@ public class LogReplay {
       // protocol and metadata are updated in the versions after the one we found.
       snapshotHint =
           Optional.of(
-              new SnapshotHint(
-                  versionStats.getVersion(),
-                  versionStats.getProtocol(),
-                  versionStats.getMetadata()));
+              new SnapshotHint(crcInfo.getVersion(), crcInfo.getProtocol(), crcInfo.getMetadata()));
     }
 
     Protocol protocol = null;

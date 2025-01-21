@@ -387,7 +387,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
   /////////////////////////////////////////////////////////////////////////////////////////////////
 
   Seq(-1L, 3L, 4L).foreach { version => // -1 means latest version
-    test(s"checksum found at the read version: ${if (version == 1) "latest" else version}") {
+    test(s"checksum found at the read version: ${if (version == -1) "latest" else version}") {
       withTempDirAndMetricsEngine { (_, engine) =>
         val goldenTable = getTestResourceFilePath("stream_table_optimize")
         val table = Table.forPath(engine, goldenTable)

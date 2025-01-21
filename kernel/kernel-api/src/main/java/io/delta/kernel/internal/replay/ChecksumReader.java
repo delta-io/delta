@@ -15,7 +15,7 @@
  */
 package io.delta.kernel.internal.replay;
 
-import static io.delta.kernel.internal.replay.VersionStats.fromColumnarBatch;
+import static io.delta.kernel.internal.replay.CRCInfo.fromColumnarBatch;
 import static io.delta.kernel.internal.util.FileNames.checksumFile;
 import static io.delta.kernel.internal.util.FileNames.isChecksumFile;
 import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
@@ -43,31 +43,30 @@ public class ChecksumReader {
    * @param logPath the path to the Delta log
    * @param readVersion the version to read the checksum file from
    * @param lowerBoundOpt the lower bound version to search for the checksum file
-   * @return Optional {@link VersionStats} containing the protocol and metadata, and the version of
-   *     the checksum file. If the checksum file is not found, it will return an empty
+   * @return Optional {@link CRCInfo} containing the protocol and metadata, and the version of the
+   *     checksum file. If the checksum file is not found, it will return an empty
    */
-  public static Optional<VersionStats> getVersionStats(
+  public static Optional<CRCInfo> getCRCInfo(
       Engine engine, Path logPath, long readVersion, Optional<Long> lowerBoundOpt) {
 
     // First try to load the CRC at given version. If not found or failed to read then try to
-    // find the latest CRC file that is created after the lower bound version or within the
-    // last 100 versions.
+    // find the latest CRC file that is created after the lower bound version or within the last 100
+    // versions if no lower bound is provided.
     Path crcFilePath = checksumFile(logPath, readVersion);
-    Optional<VersionStats> versionStatsOpt = readChecksumFile(engine, crcFilePath);
-    if (versionStatsOpt.isPresent()
+    Optional<CRCInfo> crcInfoOpt = readChecksumFile(engine, crcFilePath);
+    if (crcInfoOpt.isPresent()
         ||
         // we don't expect any more checksum files as it is the first version
         readVersion == 0) {
-      return versionStatsOpt;
+      return crcInfoOpt;
     }
 
     // Try to list the last 100 CRC files and see if we can find a CRC that we can use
-    long lowerBound = Math.max(lowerBoundOpt.orElse(0L) + 1, Math.max(0, readVersion - 100));
+    long lowerBound = Math.max(lowerBoundOpt.orElse(0L), Math.max(0, readVersion - 100));
 
-    Path listFrom = checksumFile(logPath, lowerBound);
+    Path lowerBoundFilePath = checksumFile(logPath, lowerBound);
     try (CloseableIterator<FileStatus> crcFiles =
-        engine.getFileSystemClient().listFrom(listFrom.toString())) {
-
+        engine.getFileSystemClient().listFrom(lowerBoundFilePath.toString())) {
       List<FileStatus> crcFilesList = new ArrayList<>();
       crcFiles
           .filter(file -> isChecksumFile(new Path(file.getPath())))
@@ -82,18 +81,18 @@ public class ChecksumReader {
       FileStatus latestCRCFile = crcFilesList.get(crcFilesList.size() - 1);
       return readChecksumFile(engine, new Path(latestCRCFile.getPath()));
     } catch (Exception e) {
-      logger.warn("Failed to list checksum files from {}", listFrom, e);
+      logger.warn("Failed to list checksum files from {}", lowerBoundFilePath, e);
       return Optional.empty();
     }
   }
 
-  private static Optional<VersionStats> readChecksumFile(Engine engine, Path filePath) {
+  private static Optional<CRCInfo> readChecksumFile(Engine engine, Path filePath) {
     try (CloseableIterator<ColumnarBatch> iter =
         engine
             .getJsonHandler()
             .readJsonFiles(
                 singletonCloseableIterator(FileStatus.of(filePath.toString())),
-                VersionStats.FULL_SCHEMA,
+                CRCInfo.FULL_SCHEMA,
                 Optional.empty())) {
       // We do this instead of iterating through the rows or using `getSingularRow` so we
       // can use the existing fromColumnVector methods in Protocol, Metadata, Format etc
@@ -111,7 +110,7 @@ public class ChecksumReader {
 
       long crcVersion = FileNames.checksumVersion(filePath);
 
-      VersionStats versionStats = fromColumnarBatch(engine, crcVersion, batch, 0 /* rowId */);
+      CRCInfo versionStats = fromColumnarBatch(engine, crcVersion, batch, 0 /* rowId */);
       if (versionStats.getMetadata() == null || versionStats.getProtocol() == null) {
         logger.warn("Invalid checksum file missing protocol and/or metadata: {}", filePath);
         return Optional.empty();
