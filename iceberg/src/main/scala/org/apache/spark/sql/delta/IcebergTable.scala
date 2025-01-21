@@ -37,15 +37,26 @@ import org.apache.spark.sql.types.StructType
  *
  * @param icebergTable the Iceberg table underneath.
  * @param existingSchema schema used for incremental update, none for initial conversion.
+ * @param convertStats flag for disabling convert iceberg stats directly into Delta stats.
+ *                     If you wonder why we need this flag, you are not alone.
+ *                     This flag is only used by the old, obsolete, legacy command
+ *                     `CONVERT TO DELTA NO STATISTICS`.
+ *                     We believe that back then the CONVERT command suffered performance
+ *                     problem due to stats collection and design `NO STATISTICS` as a workaround.
+ *                     Now we are able to generate stats much faster, but when this flag is true,
+ *                     we still have to honor it and give up generating stats. What a pity!
  */
 class IcebergTable(
     spark: SparkSession,
     icebergTable: Table,
-    existingSchema: Option[StructType]) extends ConvertTargetTable {
+    existingSchema: Option[StructType],
+    convertStats: Boolean) extends ConvertTargetTable {
 
-  def this(spark: SparkSession, basePath: String, existingSchema: Option[StructType]) =
+  def this(spark: SparkSession, basePath: String, existingSchema: Option[StructType],
+           convertStats: Boolean = true) =
     // scalastyle:off deltahadoopconfiguration
-    this(spark, new HadoopTables(spark.sessionState.newHadoopConf).load(basePath), existingSchema)
+    this(spark, new HadoopTables(spark.sessionState.newHadoopConf).load(basePath),
+      existingSchema, convertStats)
     // scalastyle:on deltahadoopconfiguration
 
   private val partitionEvolutionEnabled =
@@ -96,7 +107,7 @@ class IcebergTable(
 
   checkConvertible()
 
-  val fileManifest = new IcebergFileManifest(spark, icebergTable, partitionSchema)
+  val fileManifest = new IcebergFileManifest(spark, icebergTable, partitionSchema, convertStats)
 
   lazy val numFiles: Long =
     Option(icebergTable.currentSnapshot())
