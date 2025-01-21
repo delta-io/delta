@@ -2337,6 +2337,20 @@ trait DeltaSQLConfBase {
       .createWithDefault(false)
 
   ///////////
+  // VARIANT
+  ///////////////////
+  val FORCE_USE_PREVIEW_VARIANT_FEATURE = buildConf("variant.forceUsePreviewTableFeature")
+    .internal()
+    .doc(
+      """
+        | If true, creating new tables with variant columns only attaches the 'variantType-preview'
+        | table feature. Attempting to operate on existing tables created with the stable feature
+        | does not require that the preview table feature be present.
+        |""".stripMargin)
+    .booleanConf
+    .createWithDefault(false)
+
+  ///////////
   // TESTING
   ///////////
   val DELTA_POST_COMMIT_HOOK_THROW_ON_ERROR =
