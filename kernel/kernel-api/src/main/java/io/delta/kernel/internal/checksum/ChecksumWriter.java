@@ -41,7 +41,6 @@ import org.slf4j.LoggerFactory;
 public class ChecksumWriter {
 
   private static final Logger log = LoggerFactory.getLogger(ChecksumWriter.class);
-  // TODO: Collects "tableSizeBytes", "numFiles" and other optional fields
   public static StructType CRC_FILE_SCHEMA =
       new StructType()
           .add("tableSizeBytes", LongType.LONG)
