@@ -73,7 +73,7 @@ public class SingleAction {
 
   private static final int TXN_ORDINAL = FULL_SCHEMA.indexOf("txn");
   public static final int ADD_FILE_ORDINAL = FULL_SCHEMA.indexOf("add");
-  private static final int REMOVE_FILE_ORDINAL = FULL_SCHEMA.indexOf("remove");
+  public static final int REMOVE_FILE_ORDINAL = FULL_SCHEMA.indexOf("remove");
   private static final int METADATA_ORDINAL = FULL_SCHEMA.indexOf("metaData");
   private static final int PROTOCOL_ORDINAL = FULL_SCHEMA.indexOf("protocol");
   private static final int COMMIT_INFO_ORDINAL = FULL_SCHEMA.indexOf("commitInfo");

@@ -31,6 +31,12 @@ import org.apache.spark.util.Utils
 class CloneTableSQLSuite extends CloneTableSuiteBase
   with DeltaColumnMappingTestUtils
 {
+
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    disableDeletionVectors(spark.conf)
+  }
+
   // scalastyle:off argcount
   override protected def cloneTable(
       source: String,
@@ -346,7 +352,7 @@ object CloneTableSQLTestUtils {
 }
 
 class CloneTableScalaDeletionVectorSuite
-    extends CloneTableSQLSuite
+    extends CloneTableScalaSuite
     with DeltaSQLCommandTest
     with DeltaExcludedTestMixin
     with DeletionVectorsTestUtils {
