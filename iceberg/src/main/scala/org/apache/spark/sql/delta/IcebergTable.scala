@@ -25,7 +25,7 @@ import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.iceberg.{Table, TableProperties}
 import org.apache.iceberg.hadoop.HadoopTables
-import org.apache.iceberg.transforms.{Bucket, IcebergPartitionUtil}
+import org.apache.iceberg.transforms.IcebergPartitionUtil
 import org.apache.iceberg.util.PropertyUtil
 
 import org.apache.spark.sql.{AnalysisException, SparkSession}
@@ -50,9 +50,6 @@ class IcebergTable(
 
   private val partitionEvolutionEnabled =
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_PARTITION_EVOLUTION_ENABLED)
-
-  private val bucketPartitionEnabled =
-    spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_BUCKET_PARTITION_ENABLED)
 
   private val fieldPathToPhysicalName =
     existingSchema.map {
@@ -129,15 +126,6 @@ class IcebergTable(
     }
 
     /**
-     * If the sql conf bucketPartitionEnabled is true, then convert iceberg table with
-     * bucket partition to unpartitioned delta table; if bucketPartitionEnabled is false,
-     * block convertion.
-     */
-    if (!bucketPartitionEnabled && IcebergPartitionUtil.hasBucketPartition(icebergTable.spec())) {
-      throw new UnsupportedOperationException(IcebergTable.ERR_BUCKET_PARTITION)
-    }
-
-    /**
      * Existing Iceberg Table that has data imported from table without field ids will need
      * to add a custom property to enable the mapping for Iceberg.
      * Therefore, we can simply check for the existence of this property to see if there was
@@ -173,8 +161,6 @@ object IcebergTable {
       | had data columns converted to partition columns will not be able to read the pre-partition
       | column values.""".stripMargin
   val ERR_CUSTOM_NAME_MAPPING = "Cannot convert Iceberg tables with column name mapping"
-
-  val ERR_BUCKET_PARTITION = "Cannot convert Iceberg tables with bucket partition"
 
   def caseSensitiveConversionExceptionMsg(conflictingColumns: String): String =
     s"""Cannot convert table to Delta as the table contains column names that only differ by case.
