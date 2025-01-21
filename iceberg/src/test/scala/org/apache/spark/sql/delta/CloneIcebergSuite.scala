@@ -395,6 +395,8 @@ trait CloneIcebergSuiteBase extends QueryTest
     }
   }
 
+
+
   testClone("bucket partition") { mode =>
     withTable(table, cloneTable) {
       spark.sql(
