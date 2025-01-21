@@ -66,7 +66,7 @@ public class TransactionImpl implements Transaction {
   private final Optional<SetTransaction> setTxnOpt;
   private final boolean shouldUpdateProtocol;
   private final Clock clock;
-  private final List<DomainMetadata> domainMetadatas = new ArrayList<>();
+  private List<DomainMetadata> domainMetadatas = new ArrayList<>();
   private Metadata metadata;
   private boolean shouldUpdateMetadata;
   private int maxRetries;
@@ -134,6 +134,10 @@ public class TransactionImpl implements Transaction {
     return domainMetadatas;
   }
 
+  public Protocol getProtocol() {
+    return protocol;
+  }
+
   @Override
   public TransactionCommitResult commit(Engine engine, CloseableIterable<Row> dataActions)
       throws ConcurrentWriteException {
@@ -172,11 +176,21 @@ public class TransactionImpl implements Transaction {
       // AddFile actions that do not yet have them. If the row ID high watermark changes, emit a
       // DomainMetadata action to update it.
       if (TableFeatures.isRowTrackingSupported(protocol)) {
-        RowTracking.createNewHighWaterMarkIfNeeded(readSnapshot, dataActions)
-            .ifPresent(domainMetadatas::add);
+        domainMetadatas =
+            RowTracking.updateRowIdHighWatermarkIfNeeded(
+                readSnapshot,
+                protocol,
+                Optional.empty() /* winningTxnRowIdHighWatermark */,
+                dataActions,
+                domainMetadatas);
         dataActions =
             RowTracking.assignBaseRowIdAndDefaultRowCommitVersion(
-                readSnapshot, commitAsVersion, dataActions);
+                readSnapshot,
+                protocol,
+                Optional.empty() /* winningTxnRowIdHighWatermark */,
+                Optional.empty() /* prevCommitVersion */,
+                commitAsVersion,
+                dataActions);
       }
 
       int numTries = 0;
@@ -191,8 +205,11 @@ public class TransactionImpl implements Transaction {
               "Concurrent write detected when committing as version = {}.", commitAsVersion);
           if (numTries < maxRetries) {
             // only try and resolve conflicts if we're going to retry
-            commitAsVersion =
-                resolveConflicts(engine, commitAsVersion, attemptCommitInfo, numTries);
+            TransactionRebaseState rebaseState =
+                resolveConflicts(engine, commitAsVersion, attemptCommitInfo, numTries, dataActions);
+            commitAsVersion = rebaseState.getLatestVersion() + 1;
+            dataActions = rebaseState.getUpdatedDataActions();
+            domainMetadatas = rebaseState.getUpdatedDomainMetadatas();
           }
         }
         numTries++;
@@ -206,15 +223,19 @@ public class TransactionImpl implements Transaction {
     throw new ConcurrentWriteException();
   }
 
-  private long resolveConflicts(
-      Engine engine, long commitAsVersion, CommitInfo attemptCommitInfo, int numTries) {
+  private TransactionRebaseState resolveConflicts(
+      Engine engine,
+      long commitAsVersion,
+      CommitInfo attemptCommitInfo,
+      int numTries,
+      CloseableIterable<Row> dataActions) {
     logger.info(
         "Table {}, trying to resolve conflicts and retry commit. (tries/maxRetries: {}/{})",
         dataPath,
         numTries,
         maxRetries);
     TransactionRebaseState rebaseState =
-        ConflictChecker.resolveConflicts(engine, readSnapshot, commitAsVersion, this);
+        ConflictChecker.resolveConflicts(engine, readSnapshot, commitAsVersion, this, dataActions);
     long newCommitAsVersion = rebaseState.getLatestVersion() + 1;
     checkArgument(
         commitAsVersion < newCommitAsVersion,
@@ -227,7 +248,7 @@ public class TransactionImpl implements Transaction {
     updateMetadataWithICTIfRequired(
         engine, updatedInCommitTimestamp, rebaseState.getLatestVersion());
     attemptCommitInfo.setInCommitTimestamp(updatedInCommitTimestamp);
-    return newCommitAsVersion;
+    return rebaseState;
   }
 
   private void updateMetadata(Metadata metadata) {
