@@ -18,10 +18,11 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.managedcommit.ManagedCommitBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames}
 import org.apache.hadoop.fs.Path
 
@@ -34,7 +35,7 @@ class DeltaLogMinorCompactionSuite extends QueryTest
   with SharedSparkSession
   with DeltaSQLCommandTest
   with DeltaSQLTestUtils
-  with ManagedCommitBaseSuite {
+  with CoordinatedCommitsBaseSuite {
 
   /** Helper method to do minor compaction of [[DeltaLog]] from [startVersion, endVersion] */
   private def minorCompactDeltaLog(
@@ -42,8 +43,8 @@ class DeltaLogMinorCompactionSuite extends QueryTest
       startVersion: Long,
       endVersion: Long): Unit = {
     val deltaLog = DeltaLog.forTable(spark, tablePath)
-    deltaLog.update().tableCommitOwnerClientOpt.foreach { tableCommitOwnerClient =>
-      tableCommitOwnerClient.backfillToVersion(startVersion = 0, Some(endVersion))
+    deltaLog.update().tableCommitCoordinatorClientOpt.foreach { tableCommitCoordinatorClient =>
+      tableCommitCoordinatorClient.backfillToVersion(endVersion)
     }
     val logReplay = new InMemoryLogReplay(
       minFileRetentionTimestamp = 0,
@@ -440,15 +441,17 @@ class DeltaLogMinorCompactionSuite extends QueryTest
   }
 }
 
-class ManagedCommitBatchBackfill1DeltaLogMinorCompactionSuite extends DeltaLogMinorCompactionSuite {
-  override val managedCommitBackfillBatchSize: Option[Int] = Some(1)
+class DeltaLogMinorCompactionWithCoordinatedCommitsBatch1Suite
+  extends DeltaLogMinorCompactionSuite {
+  override val coordinatedCommitsBackfillBatchSize: Option[Int] = Some(1)
 }
 
-class ManagedCommitBatchBackFill2DeltaLogMinorCompactionSuite extends DeltaLogMinorCompactionSuite {
-  override val managedCommitBackfillBatchSize: Option[Int] = Some(2)
+class DeltaLogMinorCompactionWithCoordinatedCommitsBatch2Suite
+  extends DeltaLogMinorCompactionSuite {
+  override val coordinatedCommitsBackfillBatchSize: Option[Int] = Some(2)
 }
 
-class ManagedCommitBatchBackFill20DeltaLogMinorCompactionSuite
+class DeltaLogMinorCompactionWithCoordinatedCommitsBatch100Suite
     extends DeltaLogMinorCompactionSuite {
-  override val managedCommitBackfillBatchSize: Option[Int] = Some(20)
+  override val coordinatedCommitsBackfillBatchSize: Option[Int] = Some(100)
 }

@@ -381,10 +381,10 @@ class DeltaTableBuilderSuite
   }
 
   test("delta table property case") {
-    val preservedCaseConfig = Map("delta.appendOnly" -> "true", "Foo" -> "Bar", "foo" -> "Bar")
-    val lowerCaseEnforcedConfig = Map("delta.appendOnly" -> "true", "foo" -> "Bar")
-
     sealed trait DeltaTablePropertySetOperation {
+      val preservedCaseConfig = Map("delta.appendOnly" -> "true", "Foo" -> "Bar", "foo" -> "Bar")
+      val lowerCaseEnforcedConfig = Map("delta.appendOnly" -> "true", "foo" -> "Bar")
+
       def setTableProperty(tablePath: String): Unit
 
       def expectedConfig: Map[String, String]
@@ -466,15 +466,19 @@ class DeltaTableBuilderSuite
   }
 
   test("create table with clustering") {
-    withTable("test") {
-      io.delta.tables.DeltaTable.create().tableName("test")
-        .addColumn("c1", "int")
-        .clusterBy("c1")
-        .execute()
+    withSQLConf(
+      // Enable update catalog for verifyClusteringColumns.
+      DeltaSQLConf.DELTA_UPDATE_CATALOG_ENABLED.key -> "true") {
+      withTable("test") {
+        io.delta.tables.DeltaTable.create().tableName("test")
+          .addColumn("c1", "int")
+          .clusterBy("c1")
+          .execute()
 
-      val deltaLog = DeltaLog.forTable(spark, TableIdentifier("test"))
-      val metadata = deltaLog.snapshot.metadata
-      verifyClusteringColumns(TableIdentifier("test"), "c1")
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier("test"))
+        val metadata = deltaLog.snapshot.metadata
+        verifyClusteringColumns(TableIdentifier("test"), Seq("c1"))
+      }
     }
   }
 
@@ -488,10 +492,7 @@ class DeltaTableBuilderSuite
           .execute()
       }
 
-      checkError(
-        exception = e,
-        errorClass = "DELTA_CLUSTER_BY_WITH_PARTITIONED_BY"
-      )
+      checkError(e, "DELTA_CLUSTER_BY_WITH_PARTITIONED_BY")
     }
   }
 }

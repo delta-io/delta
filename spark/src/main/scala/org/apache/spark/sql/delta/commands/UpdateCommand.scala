@@ -21,10 +21,12 @@ import java.util.concurrent.TimeUnit
 
 import org.apache.spark.sql.delta.metric.IncrementMetric
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, FileAction}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader.{CDC_TYPE_COLUMN_NAME, CDC_TYPE_NOT_CDC, CDC_TYPE_UPDATE_POSTIMAGE, CDC_TYPE_UPDATE_PREIMAGE}
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkContext
@@ -182,9 +184,9 @@ case class UpdateCommand(
         val incrUpdatedCountExpr = IncrementMetric(TrueLiteral, metrics("numUpdatedRows"))
         val pathsToRewrite =
           withStatusCode("DELTA", UpdateCommand.FINDING_TOUCHED_FILES_MSG) {
-            data.filter(new Column(updateCondition))
+            data.filter(Column(updateCondition))
               .select(input_file_name())
-              .filter(new Column(incrUpdatedCountExpr))
+              .filter(Column(incrUpdatedCountExpr))
               .distinct()
               .as[String]
               .collect()
@@ -295,7 +297,8 @@ case class UpdateCommand(
     txn.registerSQLMetrics(sparkSession, metrics)
 
     val finalActions = createSetTransaction(sparkSession, deltaLog).toSeq ++ totalActions
-    txn.commitIfNeeded(
+    val numRecordsStats = NumRecordsStats.fromActions(finalActions)
+    val commitVersion = txn.commitIfNeeded(
       actions = finalActions,
       op = DeltaOperations.Update(condition),
       tags = RowTracking.addPreservedRowTrackingTagIfNotSet(txn.snapshot))
@@ -315,7 +318,10 @@ case class UpdateCommand(
         rewriteTimeMs,
         numDeletionVectorsAdded,
         numDeletionVectorsRemoved,
-        numDeletionVectorsUpdated)
+        numDeletionVectorsUpdated,
+        commitVersion = commitVersion,
+        numLogicalRecordsAdded = numRecordsStats.numLogicalRecordsAdded,
+        numLogicalRecordsRemoved = numRecordsStats.numLogicalRecordsRemoved)
     )
   }
 
@@ -352,13 +358,13 @@ case class UpdateCommand(
       updateExpressions)
 
     val targetDfWithEvaluatedCondition = {
-      val evalDf = targetDf.withColumn(UpdateCommand.CONDITION_COLUMN_NAME, new Column(condition))
+      val evalDf = targetDf.withColumn(UpdateCommand.CONDITION_COLUMN_NAME, Column(condition))
       val copyAndUpdateRowsDf = if (copyUnmodifiedRows) {
         evalDf
       } else {
-        evalDf.filter(new Column(UpdateCommand.CONDITION_COLUMN_NAME))
+        evalDf.filter(Column(UpdateCommand.CONDITION_COLUMN_NAME))
       }
-      copyAndUpdateRowsDf.filter(new Column(incrTouchedCountExpr))
+      copyAndUpdateRowsDf.filter(Column(incrTouchedCountExpr))
     }
 
     val updatedDataFrame = UpdateCommand.withUpdatedColumns(
@@ -427,19 +433,19 @@ object UpdateCommand {
       shouldOutputCdc: Boolean): DataFrame = {
     val resultDf = if (shouldOutputCdc) {
       val namedUpdateCols = updateExpressions.zip(originalExpressions).map {
-        case (expr, targetCol) => new Column(expr).as(targetCol.name, targetCol.metadata)
+        case (expr, targetCol) => Column(expr).as(targetCol.name, targetCol.metadata)
       }
 
       // Build an array of output rows to be unpacked later. If the condition is matched, we
       // generate CDC pre and postimages in addition to the final output row; if the condition
       // isn't matched, we just generate a rewritten no-op row without any CDC events.
-      val preimageCols = originalExpressions.map(new Column(_)) :+
+      val preimageCols = originalExpressions.map(Column(_)) :+
         lit(CDC_TYPE_UPDATE_PREIMAGE).as(CDC_TYPE_COLUMN_NAME)
       val postimageCols = namedUpdateCols :+
         lit(CDC_TYPE_UPDATE_POSTIMAGE).as(CDC_TYPE_COLUMN_NAME)
-      val notCdcCol = new Column(CDC_TYPE_NOT_CDC).as(CDC_TYPE_COLUMN_NAME)
+      val notCdcCol = Column(CDC_TYPE_NOT_CDC).as(CDC_TYPE_COLUMN_NAME)
       val updatedDataCols = namedUpdateCols :+ notCdcCol
-      val noopRewriteCols = originalExpressions.map(new Column(_)) :+ notCdcCol
+      val noopRewriteCols = originalExpressions.map(Column(_)) :+ notCdcCol
       val packedUpdates = array(
         struct(preimageCols: _*),
         struct(postimageCols: _*),
@@ -460,7 +466,7 @@ object UpdateCommand {
         a => col(s"packedData.`${a.name}`").as(a.name, a.metadata)
       }
       dfWithEvaluatedCondition
-        .select(explode(new Column(packedData)).as("packedData"))
+        .select(explode(Column(packedData)).as("packedData"))
         .select(finalColumns: _*)
     } else {
       val finalCols = updateExpressions.zip(originalExpressions).map { case (update, original) =>
@@ -469,7 +475,7 @@ object UpdateCommand {
         } else {
           If(UnresolvedAttribute(CONDITION_COLUMN_NAME), update, original)
         }
-        new Column(updated).as(original.name, original.metadata)
+        Column(updated).as(original.name, original.metadata)
       }
 
       dfWithEvaluatedCondition.select(finalCols: _*)
@@ -540,5 +546,11 @@ case class UpdateMetric(
     rewriteTimeMs: Long,
     numDeletionVectorsAdded: Long,
     numDeletionVectorsRemoved: Long,
-    numDeletionVectorsUpdated: Long
+    numDeletionVectorsUpdated: Long,
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    commitVersion: Option[Long] = None,
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    numLogicalRecordsAdded: Option[Long] = None,
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    numLogicalRecordsRemoved: Option[Long] = None
 )

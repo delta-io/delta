@@ -26,21 +26,15 @@ import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.test.SharedSparkSession
 
-trait SchemaValidationSuiteBase extends QueryTest with SharedSparkSession with DeltaSQLCommandTest {
-
-  def checkMergeException(e: Exception, col: String): Unit = {
-    assert(e.isInstanceOf[MetadataChangedException])
-    assert(e.getMessage.contains(
-      "The metadata of the Delta table has been changed by a concurrent update"))
-  }
-}
-
 /**
  * This Suite tests the behavior of Delta commands when a schema altering commit is run after the
  * command completes analysis but before the command starts the transaction. We want to make sure
  * That we do not corrupt tables.
  */
-class SchemaValidationSuite extends SchemaValidationSuiteBase {
+class SchemaValidationSuite
+  extends QueryTest
+  with SharedSparkSession
+  with DeltaSQLCommandTest {
 
   class BlockingRule(
       blockActionLatch: CountDownLatch,
@@ -331,7 +325,7 @@ class SchemaValidationSuite extends SchemaValidationSuiteBase {
 
   /**
    * Concurrently drop column in merge condition. Merge command detects the schema change while
-   * resolving the target and throws an AnalysisException
+   * resolving the target and throws a DeltaAnalysisException
    */
   testConcurrentChange("merge - remove a column in merge condition concurrently")(
     createTable = (spark: SparkSession, tblPath: String) => {
@@ -343,7 +337,7 @@ class SchemaValidationSuite extends SchemaValidationSuiteBase {
     actionToTest = (spark: SparkSession, tblPath: String) => {
       val deltaTable = io.delta.tables.DeltaTable.forPath(spark, tblPath)
       val sourceDf = spark.range(10).withColumn("col2", lit(2))
-      val e = intercept[Exception] {
+      val e = intercept[DeltaAnalysisException] {
         deltaTable.as("t1")
           .merge(sourceDf.as("t2"), "t1.id == t2.id")
           .whenNotMatched()
@@ -352,14 +346,22 @@ class SchemaValidationSuite extends SchemaValidationSuiteBase {
           .updateAll()
           .execute()
       }
-      checkMergeException(e, "id")
+
+      checkErrorMatchPVals(
+        e,
+        "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS",
+        parameters = Map(
+          "schemaDiff" -> ".*id.*",
+          "legacyFlagMessage" -> ""
+        )
+      )
     },
     concurrentChange = dropColFromSampleTable("id")
   )
 
   /**
    * Concurrently drop column not in merge condition but in target. Merge command detects the schema
-   * change while resolving the target and throws an AnalysisException
+   * change while resolving the target and throws a DeltaAnalysisException
    */
   testConcurrentChange("merge - remove a column not in merge condition concurrently")(
     createTable = (spark: SparkSession, tblPath: String) => {
@@ -371,7 +373,7 @@ class SchemaValidationSuite extends SchemaValidationSuiteBase {
     actionToTest = (spark: SparkSession, tblPath: String) => {
       val deltaTable = io.delta.tables.DeltaTable.forPath(spark, tblPath)
       val sourceDf = spark.range(10).withColumn("col2", lit(2))
-      val e = intercept[Exception] {
+      val e = intercept[DeltaAnalysisException] {
         deltaTable.as("t1")
           .merge(sourceDf.as("t2"), "t1.id == t2.id")
           .whenNotMatched()
@@ -380,7 +382,14 @@ class SchemaValidationSuite extends SchemaValidationSuiteBase {
           .updateAll()
           .execute()
       }
-      checkMergeException(e, "col2")
+      checkErrorMatchPVals(
+        e,
+        "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS",
+        parameters = Map(
+          "schemaDiff" -> ".*col2.*",
+          "legacyFlagMessage" -> ""
+        )
+      )
     },
     concurrentChange = dropColFromSampleTable("col2")
   )

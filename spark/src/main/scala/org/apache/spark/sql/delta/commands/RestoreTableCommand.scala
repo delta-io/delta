@@ -21,7 +21,7 @@ import java.sql.Timestamp
 import scala.collection.JavaConverters._
 import scala.util.{Success, Try}
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOperations, Snapshot}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOperations, DomainMetadataUtils, IdentityColumn, Snapshot}
 import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, RemoveFile}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -92,6 +92,7 @@ case class RestoreTableCommand(sourceTable: DeltaTableV2)
 
   override def run(spark: SparkSession): Seq[Row] = {
     val deltaLog = sourceTable.deltaLog
+    val catalogTableOpt = sourceTable.catalogTable
     val version = sourceTable.timeTravelOpt.get.version
     val timestamp = getTimestamp()
     recordDeltaOperation(deltaLog, "delta.restore") {
@@ -105,14 +106,18 @@ case class RestoreTableCommand(sourceTable: DeltaTableV2)
           .version
       }
 
-      val latestVersion = deltaLog.update().version
+      val latestVersion = deltaLog
+        .update(catalogTableOpt = catalogTableOpt)
+        .version
 
       require(versionToRestore < latestVersion, s"Version to restore ($versionToRestore)" +
         s"should be less then last available version ($latestVersion)")
 
-      deltaLog.withNewTransaction(sourceTable.catalogTable) { txn =>
+      deltaLog.withNewTransaction(catalogTableOpt) { txn =>
         val latestSnapshot = txn.snapshot
-        val snapshotToRestore = deltaLog.getSnapshotAt(versionToRestore)
+        val snapshotToRestore = deltaLog.getSnapshotAt(
+          versionToRestore,
+          catalogTableOpt = txn.catalogTable)
         val latestSnapshotFiles = latestSnapshot.allFiles
         val snapshotToRestoreFiles = snapshotToRestore.allFiles
 
@@ -191,7 +196,15 @@ case class RestoreTableCommand(sourceTable: DeltaTableV2)
           filesToRemove.toLocalIterator().asScala
         }
 
-        txn.updateMetadata(snapshotToRestore.metadata)
+        // We need to merge the schema of the latest snapshot with the schema of the snapshot
+        // we're restoring to ensure that the high water mark is correct.
+        val mergedSchema = IdentityColumn.copySchemaWithMergedHighWaterMarks(
+          deltaLog = deltaLog,
+          schemaToCopy = snapshotToRestore.metadata.schema,
+          schemaWithHighWaterMarksToMerge = latestSnapshot.metadata.schema
+        )
+
+        txn.updateMetadata(snapshotToRestore.metadata.copy(schemaString = mergedSchema.json))
 
         val sourceProtocol = snapshotToRestore.protocol
         val targetProtocol = latestSnapshot.protocol
@@ -205,9 +218,12 @@ case class RestoreTableCommand(sourceTable: DeltaTableV2)
           sourceProtocol.merge(targetProtocol)
         }
 
+        val actions = addActions ++ removeActions ++
+          DomainMetadataUtils.handleDomainMetadataForRestoreTable(snapshotToRestore, latestSnapshot)
+
         txn.commitLarge(
           spark,
-          addActions ++ removeActions,
+          actions,
           Some(newProtocol),
           DeltaOperations.Restore(version, timestamp),
           Map.empty,

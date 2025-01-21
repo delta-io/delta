@@ -18,6 +18,8 @@
 
 package io.delta.standalone.internal
 
+import io.delta.kernel.defaults.engine.DefaultEngine
+import io.delta.kernel.engine.Engine
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
@@ -51,6 +53,7 @@ import io.delta.standalone.internal.util.ConversionUtils
  *  - allFilesScala (only used in verifySchemaCompatibility)
  */
 class KernelSnapshotDelegator(
+    engine: Engine,
     kernelSnapshot: SnapshotImplKernel,
     // This needs to be an argument to the constructor since the constructor of SnapshotImpl might call back
     // into things like `metadataScala`, and this needs to be already initalized for that
@@ -79,7 +82,7 @@ class KernelSnapshotDelegator(
 
   // provide a path to use the faster txn lookup in kernel
   def getLatestTransactionVersion(id: String): Option[Long] = {
-    val versionJOpt = kernelSnapshot.getLatestTransactionVersion(id)
+    val versionJOpt = kernelSnapshot.getLatestTransactionVersion(engine, id)
     if (versionJOpt.isPresent) {
       Some(versionJOpt.get)
     } else {

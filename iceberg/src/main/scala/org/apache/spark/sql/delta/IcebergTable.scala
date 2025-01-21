@@ -26,6 +26,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.iceberg.{Table, TableProperties}
 import org.apache.iceberg.hadoop.HadoopTables
 import org.apache.iceberg.transforms.IcebergPartitionUtil
+import org.apache.iceberg.util.PropertyUtil
 
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.execution.datasources.PartitioningUtils
@@ -65,13 +66,16 @@ class IcebergTable(
       fieldPathToPhysicalName)
 
     // Assign physical names to new columns.
-    DeltaColumnMapping.assignPhysicalNames(mergedSchema)
+    DeltaColumnMapping.assignPhysicalNames(mergedSchema, reuseLogicalName = true)
   }
 
   override val requiredColumnMappingMode: DeltaColumnMappingMode = IdMapping
 
   override val properties: Map[String, String] = {
-    icebergTable.properties().asScala.toMap + (DeltaConfigs.COLUMN_MAPPING_MODE.key -> "id")
+    val maxSnapshotAgeMs = PropertyUtil.propertyAsLong(icebergTable.properties,
+      TableProperties.MAX_SNAPSHOT_AGE_MS, TableProperties.MAX_SNAPSHOT_AGE_MS_DEFAULT)
+    icebergTable.properties().asScala.toMap + (DeltaConfigs.COLUMN_MAPPING_MODE.key -> "id") +
+    (DeltaConfigs.LOG_RETENTION.key -> s"$maxSnapshotAgeMs millisecond")
   }
 
   override val partitionSchema: StructType = {
@@ -82,7 +86,7 @@ class IcebergTable(
       fieldPathToPhysicalName)
 
     // Assign physical names to new partition columns.
-    DeltaColumnMapping.assignPhysicalNames(mergedPartitionSchema)
+    DeltaColumnMapping.assignPhysicalNames(mergedPartitionSchema, reuseLogicalName = true)
   }
 
   val tableSchema: StructType = PartitioningUtils.mergeDataAndPartitionSchema(
@@ -94,7 +98,15 @@ class IcebergTable(
 
   val fileManifest = new IcebergFileManifest(spark, icebergTable, partitionSchema)
 
-  lazy val numFiles: Long = fileManifest.numFiles
+  lazy val numFiles: Long =
+    Option(icebergTable.currentSnapshot())
+      .flatMap(_.summary().asScala.get("total-data-files").map(_.toLong))
+      .getOrElse(fileManifest.numFiles)
+
+  lazy val sizeInBytes: Long =
+    Option(icebergTable.currentSnapshot())
+      .flatMap(_.summary().asScala.get("total-files-size").map(_.toLong))
+      .getOrElse(fileManifest.sizeInBytes)
 
   override val format: String = "iceberg"
 

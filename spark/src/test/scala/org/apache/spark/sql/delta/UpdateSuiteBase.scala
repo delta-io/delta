@@ -27,7 +27,7 @@ import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.execution.datasources.FileFormat
-import org.apache.spark.sql.functions.struct
+import org.apache.spark.sql.functions.{lit, struct}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.internal.SQLConf.StoreAssignmentPolicy
 import org.apache.spark.sql.test.SharedSparkSession
@@ -38,7 +38,8 @@ abstract class UpdateSuiteBase
   with SharedSparkSession
   with DeltaDMLTestUtils
   with DeltaSQLTestUtils
-  with DeltaTestUtilsForTempViews {
+  with DeltaTestUtilsForTempViews
+  with DeltaExcludedBySparkVersionTestMixinShims {
   import testImplicits._
 
   protected def executeUpdate(target: String, set: Seq[String], where: String): Unit = {
@@ -957,4 +958,36 @@ abstract class UpdateSuiteBase
     expectedResult = Seq(Row(0, 3), Row(2, 3))
   )
 
+  testSparkMasterOnly("Variant type") {
+    val df = sql(
+      """SELECT parse_json(cast(id as string)) v, id i
+        FROM range(2)""")
+    append(df)
+    executeUpdate(target = s"delta.`$tempPath`",
+        where = "to_json(v) = '1'", set = "i = 10, v = parse_json('123')")
+    checkAnswer(readDeltaTable(tempPath).selectExpr("i", "to_json(v)"),
+        Seq(Row(0, "0"), Row(10, "123")))
+  }
+
+  test("update on partitioned table with special chars") {
+    val partA = "part%one"
+    val partB = "part%two"
+    spark.range(0, 3, 1, 1).toDF("key").withColumn("value", lit(partA))
+      .write.format("delta").partitionBy("value").save(tempPath)
+    checkUpdate(
+      condition = Some(s"value = '$partA' AND key = 1"),
+      setClauses = s"value = '$partB'",
+      expectedResults = Row(0, partA) :: Row(1, partB) :: Row(2, partA) :: Nil
+    )
+    checkUpdate(
+      condition = Some(s"value = '$partA' AND key = 2"),
+      setClauses = s"value = '$partB'",
+      expectedResults = Row(0, partA) :: Row(1, partB) :: Row(2, partB) :: Nil
+    )
+    checkUpdate(
+      condition = Some(s"value = '$partA'"),
+      setClauses = s"value = '$partB'",
+      expectedResults = Row(0, partB) :: Row(1, partB) :: Row(2, partB) :: Nil
+    )
+  }
 }

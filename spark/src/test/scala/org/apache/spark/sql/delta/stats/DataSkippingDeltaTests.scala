@@ -42,7 +42,7 @@ import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
 
-trait DataSkippingDeltaTestsBase extends QueryTest
+trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShims
     with SharedSparkSession
     with DeltaSQLCommandTest
     with PredicateHelper
@@ -597,6 +597,33 @@ trait DataSkippingDeltaTestsBase extends QueryTest
     ),
     indexedCols = 3,
     deltaStatsColNamesOpt = Some("b.c")
+  )
+
+  testSkipping(
+    "indexed column names - naming a nested column allows nested complex types",
+    """{
+      "a": {
+        "b": [1, 2, 3],
+        "c": [4, 5, 6],
+        "d": 7,
+        "e": 8,
+        "f": {
+          "g": 9
+        }
+      },
+      "i": 10
+    }""".replace("\n", ""),
+    hits = Seq(
+      "i < 0",
+      "a.d > 6",
+      "a.f.g < 10"
+    ),
+    misses = Seq(
+      "a.d < 0",
+      "a.e < 0",
+      "a.f.g < 0"
+    ),
+    deltaStatsColNamesOpt = Some("a")
   )
 
   testSkipping(
@@ -1668,6 +1695,37 @@ trait DataSkippingDeltaTestsBase extends QueryTest
         val r = DeltaLog.forTable(spark, new TableIdentifier("table"))
         checkSkipping(r, hits, misses, dataSeq.toString(), false)
       }
+    }
+  }
+
+  testSparkMasterOnly("data skipping by stats - variant type") {
+    withTable("tbl") {
+      sql("""CREATE TABLE tbl(v VARIANT,
+              v_struct STRUCT<v: VARIANT>,
+              null_v VARIANT,
+              null_v_struct STRUCT<v: VARIANT>) USING DELTA""")
+      sql("""INSERT INTO tbl (SELECT
+          parse_json(cast(id as string)),
+          named_struct('v', parse_json(cast(id as string))),
+          cast(null as variant),
+          named_struct('v', cast(null as variant))
+          FROM range(100))""")
+
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier("tbl", None, None))
+      val hits = Seq(
+        "v IS NOT NULL",
+        "v_struct.v IS NOT NULL",
+        "null_v IS NULL",
+        "null_v_struct.v IS NULL"
+      )
+      val misses = Seq(
+        "v IS NULL",
+        "v_struct.v IS NULL",
+        "null_v IS NOT NULL",
+        "null_v_struct.v IS NOT NULL"
+      )
+      val data = spark.sql("select * from tbl").collect().toSeq.toString
+      checkSkipping(deltaLog, hits, misses, data, false)
     }
   }
 

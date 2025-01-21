@@ -16,9 +16,12 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.DeletedRecordCountsHistogram
 
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.encoders.encoderFor
 import org.apache.spark.sql.expressions.{SparkUserDefinedFunction, UserDefinedFunction}
 import org.apache.spark.sql.functions.udf
 
@@ -44,6 +47,21 @@ object DeltaUDF {
   def stringFromMap(f: Map[String, String] => String): UserDefinedFunction =
     createUdfFromTemplateUnsafe(stringFromMapTemplate, f, udf(f))
 
+  def deletedRecordCountsHistogramFromArrayLong(
+      f: Array[Long] => DeletedRecordCountsHistogram): UserDefinedFunction =
+    createUdfFromTemplateUnsafe(deletedRecordCountsHistogramFromArrayLongTemplate, f, udf(f))
+
+  def stringFromDeletionVectorDescriptor(
+      f: DeletionVectorDescriptor => String): UserDefinedFunction =
+    createUdfFromTemplateUnsafe(stringFromDeletionVectorDescriptorTemplate, f, udf(f))
+
+  def booleanFromDeletionVectorDescriptor(
+      f: DeletionVectorDescriptor => Boolean): UserDefinedFunction =
+    createUdfFromTemplateUnsafe(booleanFromDeletionVectorDescriptorTemplate, f, udf(f))
+
+  def booleanFromString(s: String => Boolean): UserDefinedFunction =
+    createUdfFromTemplateUnsafe(booleanFromStringTemplate, s, udf(s))
+
   def booleanFromMap(f: Map[String, String] => Boolean): UserDefinedFunction =
     createUdfFromTemplateUnsafe(booleanFromMapTemplate, f, udf(f))
 
@@ -64,6 +82,19 @@ object DeltaUDF {
   private lazy val stringFromMapTemplate =
     udf((_: Map[String, String]) => "").asInstanceOf[SparkUserDefinedFunction]
 
+  private lazy val deletedRecordCountsHistogramFromArrayLongTemplate =
+    udf((_: Array[Long]) => DeletedRecordCountsHistogram(Array.empty))
+      .asInstanceOf[SparkUserDefinedFunction]
+
+  private lazy val stringFromDeletionVectorDescriptorTemplate =
+    udf((_: DeletionVectorDescriptor) => "").asInstanceOf[SparkUserDefinedFunction]
+
+  private lazy val booleanFromDeletionVectorDescriptorTemplate =
+    udf((_: DeletionVectorDescriptor) => false).asInstanceOf[SparkUserDefinedFunction]
+
+  private lazy val booleanFromStringTemplate =
+    udf((_: String) => false).asInstanceOf[SparkUserDefinedFunction]
+
   private lazy val booleanFromMapTemplate =
     udf((_: Map[String, String]) => true).asInstanceOf[SparkUserDefinedFunction]
 
@@ -81,8 +112,8 @@ object DeltaUDF {
       orElse: => UserDefinedFunction): UserDefinedFunction = {
     if (SparkSession.active.sessionState.conf
       .getConf(DeltaSQLConf.INTERNAL_UDF_OPTIMIZATION_ENABLED)) {
-      val inputEncoders = template.inputEncoders.map(_.map(_.copy()))
-      val outputEncoder = template.outputEncoder.map(_.copy())
+      val inputEncoders = template.inputEncoders.map(_.map(e => encoderFor(e)))
+      val outputEncoder = template.outputEncoder.map(e => encoderFor(e))
       template.copy(f = f, inputEncoders = inputEncoders, outputEncoder = outputEncoder)
     } else {
       orElse

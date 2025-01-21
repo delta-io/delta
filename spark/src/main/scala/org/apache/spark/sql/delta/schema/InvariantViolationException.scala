@@ -17,6 +17,8 @@
 package org.apache.spark.sql.delta.schema
 
 // scalastyle:off import.ordering.noEmptyLine
+import java.util
+
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.{DeltaThrowable, DeltaThrowableHelper}
@@ -57,11 +59,12 @@ object DeltaInvariantViolationException {
   }
 
   def getCharVarcharLengthInvariantViolationException(
-      exprStr: String
+      exprStr: String,
+      valueStr: String
   ): DeltaInvariantViolationException = {
     new DeltaInvariantViolationException(
       errorClass = "DELTA_EXCEED_CHAR_VARCHAR_LIMIT",
-      messageParameters = Array(exprStr)
+      messageParameters = Array(valueStr, exprStr)
     )
   }
 
@@ -86,7 +89,9 @@ object DeltaInvariantViolationException {
       constraint: Constraints.Check,
       values: Map[String, Any]): DeltaInvariantViolationException = {
     if (constraint.name == CharVarcharConstraint.INVARIANT_NAME) {
-      return getCharVarcharLengthInvariantViolationException(constraint.expression.toString)
+      return getCharVarcharLengthInvariantViolationException(
+        exprStr = constraint.expression.sql,
+        valueStr = values.head._2.toString)
     }
 
     // Sort by the column name to generate consistent error messages in Scala 2.12 and 2.13.
@@ -119,4 +124,9 @@ class DeltaInvariantViolationException(
   extends InvariantViolationException(
     DeltaThrowableHelper.getMessage(errorClass, messageParameters)) with DeltaThrowable {
   override def getErrorClass: String = errorClass
+
+  override def getMessageParameters: util.Map[String, String] = {
+    DeltaThrowableHelper.getParameterNames(errorClass, errorSubClass = null)
+      .zip(messageParameters).toMap.asJava
+  }
 }

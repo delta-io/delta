@@ -15,62 +15,83 @@
  */
 package io.delta.kernel.expressions;
 
+import static java.util.Objects.requireNonNull;
+
+import io.delta.kernel.annotation.Evolving;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.stream.Collectors;
-import static java.util.Objects.requireNonNull;
-
-import io.delta.kernel.annotation.Evolving;
 
 /**
- * Scalar SQL expressions which take zero or more inputs and for each input row generate one
- * output value. A subclass of these expressions are of type {@link Predicate} whose result type is
- * `boolean`. See {@link Predicate} for predicate type scalar expressions. Supported
- * non-predicate type scalar expressions are listed below.
+ * Scalar SQL expressions which take zero or more inputs and for each input row generate one output
+ * value. A subclass of these expressions are of type {@link Predicate} whose result type is
+ * `boolean`. See {@link Predicate} for predicate type scalar expressions. Supported non-predicate
+ * type scalar expressions are listed below.
+ *
  * <ol>
  *   <li>Name: <code>element_at</code>
- *     <ul>
- *       <li>Semantic: <code>element_at(map, key)</code>. Return the value of given <i>key</i>
- *       from the <i>map</i> type input. Returns <i>null</i> if the given <i>key</i> is not in
- *       the <i>map</i> Ex: `element_at(map(1, 'a', 2, 'b'), 2)` returns 'b'</li>
- *       <li>Since version: 3.0.0</li>
- *     </ul>
- *   </li>
- *  <li>Name: <code>COALESCE</code>
- *   <ul>
- *    <li>Semantic: <code>COALESCE(expr1, ..., exprN)</code> Return the first non-null argument.
- *    If all arguments are null returns null</li>
- *    <li>Since version: 3.1.0</li>
- *   </ul>
- *  </li>
+ *       <ul>
+ *         <li>Semantic: <code>element_at(map, key)</code>. Return the value of given <i>key</i>
+ *             from the <i>map</i> type input. Returns <i>null</i> if the given <i>key</i> is not in
+ *             the <i>map</i> Ex: `element_at(map(1, 'a', 2, 'b'), 2)` returns 'b'
+ *         <li>Since version: 3.0.0
+ *       </ul>
+ *   <li>Name: <code>COALESCE</code>
+ *       <ul>
+ *         <li>Semantic: <code>COALESCE(expr1, ..., exprN)</code> Return the first non-null
+ *             argument. If all arguments are null returns null
+ *         <li>Since version: 3.1.0
+ *       </ul>
+ *   <li>Name: <code>TIMEADD</code>
+ *       <ul>
+ *         <li>Semantic: <code>TIMEADD(colExpr, milliseconds)</code>. Add the specified number of
+ *             milliseconds to the timestamp represented by <i>colExpr</i>. The adjustment does not
+ *             alter the original value but returns a new timestamp increased by the given
+ *             milliseconds. Ex: `TIMEADD(timestampColumn, 1000)` returns a timestamp 1 second
+ *             later.
+ *         <li>Since version: 3.3.0
+ *       </ul>
+ *   <li>Name: <code>SUBSTRING</code>
+ *       <ul>
+ *         <li>Semantic: <code>SUBSTRING(colExpr, pos, len)</code>. Returns the slice of byte array
+ *             or string, that starts at pos and has the length len.
+ *             <ul>
+ *               <li>pos is 1 based. If pos is negative the start is determined by counting
+ *                   characters (or bytes for BINARY) from the end.
+ *               <li>If len is less than 1 the result is empty.
+ *               <li>If len is omitted the function returns on characters or bytes starting with
+ *                   pos.
+ *             </ul>
+ *         <li>Since version: 3.4.0
+ *       </ul>
  * </ol>
  *
  * @since 3.0.0
  */
 @Evolving
 public class ScalarExpression implements Expression {
-    protected final String name;
-    protected final List<Expression> children;
+  protected final String name;
+  protected final List<Expression> children;
 
-    public ScalarExpression(String name, List<Expression> children) {
-        this.name = requireNonNull(name, "name is null").toUpperCase(Locale.ENGLISH);
-        this.children = Collections.unmodifiableList(new ArrayList<>(children));
-    }
+  public ScalarExpression(String name, List<Expression> children) {
+    this.name = requireNonNull(name, "name is null").toUpperCase(Locale.ENGLISH);
+    this.children = Collections.unmodifiableList(new ArrayList<>(children));
+  }
 
-    @Override
-    public String toString() {
-        return String.format("%s(%s)", name,
-            children.stream().map(Object::toString).collect(Collectors.joining(", ")));
-    }
+  @Override
+  public String toString() {
+    return String.format(
+        "%s(%s)", name, children.stream().map(Object::toString).collect(Collectors.joining(", ")));
+  }
 
-    public String getName() {
-        return name;
-    }
+  public String getName() {
+    return name;
+  }
 
-    @Override
-    public List<Expression> getChildren() {
-        return children;
-    }
+  @Override
+  public List<Expression> getChildren() {
+    return children;
+  }
 }

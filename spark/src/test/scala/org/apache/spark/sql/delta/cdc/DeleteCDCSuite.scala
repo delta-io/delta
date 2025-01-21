@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.cdc
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.commands.cdc.CDCReader._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf._

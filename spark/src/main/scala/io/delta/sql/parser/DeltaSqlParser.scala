@@ -59,9 +59,9 @@ import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
 import org.apache.spark.sql.catalyst.{FunctionIdentifier, TableIdentifier}
 import org.apache.spark.sql.catalyst.analysis._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedTableImplicits._
-import org.apache.spark.sql.catalyst.parser.{ParseErrorListener, ParseException, ParserInterface}
+import org.apache.spark.sql.catalyst.parser.{CompoundBody, ParseErrorListener, ParseException, ParserInterface, ParserInterfaceShims}
 import org.apache.spark.sql.catalyst.parser.ParserUtils.{checkDuplicateClauses, string, withOrigin}
-import org.apache.spark.sql.catalyst.plans.logical.{AlterTableAddConstraint, AlterTableDropConstraint, AlterTableDropFeature, CloneTableStatement, LogicalPlan, RestoreTableStatement}
+import org.apache.spark.sql.catalyst.plans.logical.{AlterColumnSyncIdentity, AlterTableAddConstraint, AlterTableDropConstraint, AlterTableDropFeature, CloneTableStatement, LogicalPlan, RestoreTableStatement}
 import org.apache.spark.sql.catalyst.trees.Origin
 import org.apache.spark.sql.connector.catalog.{CatalogV2Util, TableCatalog}
 import org.apache.spark.sql.errors.QueryParsingErrors
@@ -72,7 +72,8 @@ import org.apache.spark.sql.types._
  * A SQL parser that tries to parse Delta commands. If failing to parse the SQL text, it will
  * forward the call to `delegate`.
  */
-class DeltaSqlParser(val delegate: ParserInterface) extends ParserInterface {
+class DeltaSqlParser(val delegateSpark: ParserInterface) extends ParserInterfaceShims {
+  private val delegate = ParserInterfaceShims(delegateSpark)
   private val builder = new DeltaSqlAstBuilder
   private val substitution = new VariableSubstitution
 
@@ -155,6 +156,9 @@ class DeltaSqlParser(val delegate: ParserInterface) extends ParserInterface {
   override def parseTableSchema(sqlText: String): StructType = delegate.parseTableSchema(sqlText)
 
   override def parseDataType(sqlText: String): DataType = delegate.parseDataType(sqlText)
+
+  override def parseScript(sqlScriptText: String): CompoundBody =
+    delegate.parseScript(sqlScriptText)
 }
 
 /**
@@ -315,17 +319,42 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
   /**
    * Create a [[VacuumTableCommand]] logical plan. Example SQL:
    * {{{
-   *   VACUUM ('/path/to/dir' | delta.`/path/to/dir`) [RETAIN number HOURS] [DRY RUN];
+   *   VACUUM ('/path/to/dir' | delta.`/path/to/dir`)
+   *   LITE|FULL
+   *   [RETAIN number HOURS] [DRY RUN];
    * }}}
    */
   override def visitVacuumTable(ctx: VacuumTableContext): AnyRef = withOrigin(ctx) {
+    val vacuumModifiersCtx = ctx.vacuumModifiers()
+    withOrigin(vacuumModifiersCtx) {
+      checkDuplicateClauses(vacuumModifiersCtx.vacuumType(), "LITE/FULL", vacuumModifiersCtx)
+      checkDuplicateClauses(vacuumModifiersCtx.inventory(), "INVENTORY", vacuumModifiersCtx)
+      checkDuplicateClauses(vacuumModifiersCtx.retain(), "RETAIN", vacuumModifiersCtx)
+      checkDuplicateClauses(vacuumModifiersCtx.dryRun(), "DRY RUN", vacuumModifiersCtx)
+      if (!vacuumModifiersCtx.inventory().isEmpty &&
+        !vacuumModifiersCtx.vacuumType().isEmpty &&
+        vacuumModifiersCtx.vacuumType().asScala.head.LITE != null) {
+        operationNotAllowed("Inventory option is not compatible with LITE", vacuumModifiersCtx)
+      }
+    }
     VacuumTableCommand(
       path = Option(ctx.path).map(string),
       table = Option(ctx.table).map(visitTableIdentifier),
-      inventoryTable = Option(ctx.inventoryTable).map(visitTableIdentifier),
-      inventoryQuery = Option(ctx.inventoryQuery).map(extractRawText),
-      horizonHours = Option(ctx.number).map(_.getText.toDouble),
-      dryRun = ctx.RUN != null)
+      inventoryTable = ctx.vacuumModifiers().inventory().asScala.headOption.collect {
+        case i if i.inventoryTable != null => visitTableIdentifier(i.inventoryTable)
+      },
+      inventoryQuery = ctx.vacuumModifiers().inventory().asScala.headOption.collect {
+        case i if i.inventoryQuery != null => extractRawText(i.inventoryQuery)
+      },
+      horizonHours =
+        ctx.vacuumModifiers().retain().asScala.headOption.map(_.number.getText.toDouble),
+      dryRun =
+        ctx.vacuumModifiers().dryRun().asScala.headOption.exists(_.RUN != null),
+      vacuumType = ctx.vacuumModifiers().vacuumType().asScala.headOption.map {
+        t => if (t.LITE != null) "LITE" else "FULL"
+      },
+      options = Map.empty
+    )
   }
 
   /** Provides a list of unresolved attributes for multi dimensional clustering. */
@@ -364,7 +393,8 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
     OptimizeTableCommand(
       Option(ctx.path).map(string),
       Option(ctx.table).map(visitTableIdentifier),
-      Option(ctx.partitionPredicate).map(extractRawText(_)).toSeq)(interleaveBy)
+      Option(ctx.partitionPredicate).map(extractRawText(_)).toSeq,
+      DeltaOptimizeContext(isFull = ctx.FULL != null))(interleaveBy)
   }
 
   /**
@@ -424,9 +454,8 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
 
   override def visitGenerate(ctx: GenerateContext): LogicalPlan = withOrigin(ctx) {
     DeltaGenerateCommand(
-      modeName = ctx.modeName.getText,
-      tableId = visitTableIdentifier(ctx.table),
-      Map.empty)
+      UnresolvedTable(visitTableIdentifier(ctx.table).nameParts, DeltaGenerateCommand.COMMAND_NAME),
+      modeName = ctx.modeName.getText)
   }
 
   override def visitConvert(ctx: ConvertContext): LogicalPlan = withOrigin(ctx) {
@@ -554,6 +583,19 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
         "ALTER TABLE ... DROP CONSTRAINT"),
       ctx.name.getText,
       ifExists = ctx.EXISTS != null)
+  }
+
+  /**
+   * `ALTER TABLE ... ALTER (CHANGE) COLUMN ... SYNC IDENTITY` command.
+   */
+  override def visitAlterTableSyncIdentity(
+      ctx: AlterTableSyncIdentityContext): LogicalPlan = withOrigin(ctx) {
+    val verb = if (ctx.CHANGE != null) "CHANGE" else "ALTER"
+    AlterColumnSyncIdentity(
+      UnresolvedTable(ctx.table.identifier.asScala.map(_.getText).toSeq,
+        s"ALTER TABLE ... $verb COLUMN"),
+      UnresolvedFieldName(visitMultipartIdentifier(ctx.column))
+    )
   }
 
   /**

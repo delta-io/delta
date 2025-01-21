@@ -17,8 +17,9 @@
 package io.delta.kernel;
 
 import io.delta.kernel.annotation.Evolving;
-import io.delta.kernel.client.TableClient;
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.types.StructType;
+import java.util.List;
 
 /**
  * Represents the snapshot of a Delta table.
@@ -28,27 +29,46 @@ import io.delta.kernel.types.StructType;
 @Evolving
 public interface Snapshot {
 
-    /**
-     * Get the version of this snapshot in the table.
-     *
-     * @param tableClient {@link TableClient} instance to use in Delta Kernel.
-     * @return version of this snapshot in the Delta table
-     */
-    long getVersion(TableClient tableClient);
+  /**
+   * Get the version of this snapshot in the table.
+   *
+   * @param engine {@link Engine} instance to use in Delta Kernel.
+   * @return version of this snapshot in the Delta table
+   */
+  long getVersion(Engine engine);
 
-    /**
-     * Get the schema of the table at this snapshot.
-     *
-     * @param tableClient {@link TableClient} instance to use in Delta Kernel.
-     * @return Schema of the Delta table at this snapshot.
-     */
-    StructType getSchema(TableClient tableClient);
+  /**
+   * Get the names of the partition columns in the Delta table at this snapshot.
+   *
+   * <p>The partition column names are returned in the order they are defined in the Delta table
+   * schema. If the table does not define any partition columns, this method returns an empty list.
+   *
+   * @param engine {@link Engine} instance to use in Delta Kernel.
+   * @return a list of partition column names, or an empty list if the table is not partitioned.
+   */
+  List<String> getPartitionColumnNames(Engine engine);
 
-    /**
-     * Create a scan builder to construct a {@link Scan} to read data from this snapshot.
-     *
-     * @param tableClient {@link TableClient} instance to use in Delta Kernel.
-     * @return an instance of {@link ScanBuilder}
-     */
-    ScanBuilder getScanBuilder(TableClient tableClient);
+  /**
+   * Get the timestamp (in milliseconds since the Unix epoch) of the latest commit in this snapshot.
+   *
+   * @param engine the engine to use for IO operations
+   * @return the timestamp of the latest commit
+   */
+  long getTimestamp(Engine engine);
+
+  /**
+   * Get the schema of the table at this snapshot.
+   *
+   * @param engine {@link Engine} instance to use in Delta Kernel.
+   * @return Schema of the Delta table at this snapshot.
+   */
+  StructType getSchema(Engine engine);
+
+  /**
+   * Create a scan builder to construct a {@link Scan} to read data from this snapshot.
+   *
+   * @param engine {@link Engine} instance to use in Delta Kernel.
+   * @return an instance of {@link ScanBuilder}
+   */
+  ScanBuilder getScanBuilder(Engine engine);
 }

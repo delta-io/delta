@@ -21,6 +21,8 @@ import java.util.UUID
 
 import org.apache.spark.sql.delta.DeltaOperations.Truncate
 import org.apache.spark.sql.delta.actions.{Action, AddFile, DeletionVectorDescriptor, RemoveFile}
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.commands.AlterTableDropFeatureDeltaCommand
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
@@ -49,6 +51,13 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession with De
     spark.conf.set(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS.key, merge.toString)
   }
 
+  /** Disable persistent deletion vectors in new tables and all supported DML commands. */
+  def disableDeletionVectors(conf: RuntimeConfig): Unit = {
+    conf.set(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey, false.toString)
+    conf.set(DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS.key, false.toString)
+    conf.set(DeltaSQLConf.UPDATE_USE_PERSISTENT_DELETION_VECTORS.key, false.toString)
+  }
+
   def enableDeletionVectorsForAllSupportedOperations(spark: SparkSession): Unit =
     enableDeletionVectors(spark, delete = true, update = true)
 
@@ -71,6 +80,15 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession with De
       thunk
     }
   }
+
+  def dropDVTableFeature(
+      spark: SparkSession,
+      log: DeltaLog,
+      truncateHistory: Boolean): Unit =
+    AlterTableDropFeatureDeltaCommand(
+      DeltaTableV2(spark, log.dataPath),
+      DeletionVectorsTableFeature.name,
+      truncateHistory = truncateHistory).run(spark)
 
   /** Helper to run 'fn' with a temporary Delta table. */
   def withTempDeltaTable(

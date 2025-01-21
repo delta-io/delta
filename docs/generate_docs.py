@@ -26,6 +26,12 @@ def main():
         help="Generate the API docs")
 
     args = parser.parse_args()
+    
+    # Assert that env var _DELTA_LAKE_RELEASE_VERSION_ (used by conf.py) is set
+    try:
+        os.environ["_DELTA_LAKE_RELEASE_VERSION_"]
+    except KeyError:
+        raise KeyError(f"Environment variable _DELTA_LAKE_RELEASE_VERSION_ not set.")
 
     docs_root_dir = os.path.dirname(os.path.realpath(__file__))
     api_docs_root_dir = os.path.join(docs_root_dir, "apis")

@@ -16,24 +16,32 @@
 
 package org.apache.spark.sql.delta.hudi
 
+import java.io.{IOException, UncheckedIOException}
+import java.util.concurrent.atomic.AtomicReference
+import javax.annotation.concurrent.GuardedBy
+
+import scala.collection.JavaConverters._
+import scala.util.control.NonFatal
+
+import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.OptimisticTransactionImpl
+import org.apache.spark.sql.delta.Snapshot
+import org.apache.spark.sql.delta.UniversalFormatConverter
+import org.apache.spark.sql.delta.actions.Action
+import org.apache.spark.sql.delta.hooks.HudiConverterHook
+import org.apache.spark.sql.delta.hudi.HudiTransactionUtils._
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
+import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hudi.common.model.{HoodieCommitMetadata, HoodieReplaceCommitMetadata}
 import org.apache.hudi.common.table.HoodieTableMetaClient
 import org.apache.hudi.common.table.timeline.{HoodieInstant, HoodieTimeline}
+import org.apache.hudi.storage.hadoop.HadoopStorageConfiguration
+
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.spark.sql.delta.actions.Action
-import org.apache.spark.sql.delta.hooks.HudiConverterHook
-import org.apache.spark.sql.delta.hudi.HudiTransactionUtils._
-import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta._
-
-import java.io.{IOException, UncheckedIOException}
-import java.util.concurrent.atomic.AtomicReference
-import javax.annotation.concurrent.GuardedBy
-import scala.collection.JavaConverters._
-import scala.util.control.NonFatal
 
 object HudiConverter {
   /**
@@ -101,12 +109,14 @@ class HudiConverter(spark: SparkSession)
                     val snapshotVal = snapshotAndTxn._1
                     val prevTxn = snapshotAndTxn._2
                     try {
-                      logInfo(s"Converting Delta table [path=${log.logPath}, " +
-                        s"tableId=${log.tableId}, version=${snapshotVal.version}] into Hudi")
+                      logInfo(log"Converting Delta table [path=" +
+                        log"${MDC(DeltaLogKeys.PATH, log.logPath)}, " +
+                        log"tableId=${MDC(DeltaLogKeys.TABLE_ID, log.tableId)}, " +
+                        log"version=${MDC(DeltaLogKeys.VERSION, snapshotVal.version)}] into Hudi")
                       convertSnapshot(snapshotVal, prevTxn)
                     } catch {
                       case NonFatal(e) =>
-                        logWarning(s"Error when writing Hudi metadata asynchronously", e)
+                        logWarning(log"Error when writing Hudi metadata asynchronously", e)
                         recordDeltaEvent(
                           log,
                           "delta.hudi.conversion.async.error",
@@ -167,7 +177,7 @@ class HudiConverter(spark: SparkSession)
     if (!UniversalFormat.hudiEnabled(snapshotToConvert.metadata)) {
       return None
     }
-    convertSnapshot(snapshotToConvert, None, Option.apply(catalogTable.identifier.table))
+    convertSnapshot(snapshotToConvert, None, Some(catalogTable))
   }
 
   /**
@@ -183,7 +193,7 @@ class HudiConverter(spark: SparkSession)
     if (!UniversalFormat.hudiEnabled(snapshotToConvert.metadata)) {
       return None
     }
-    convertSnapshot(snapshotToConvert, Some(txn), txn.catalogTable.map(_.identifier.table))
+    convertSnapshot(snapshotToConvert, Some(txn), txn.catalogTable)
   }
 
   /**
@@ -198,12 +208,14 @@ class HudiConverter(spark: SparkSession)
   private def convertSnapshot(
       snapshotToConvert: Snapshot,
       txnOpt: Option[OptimisticTransactionImpl],
-      tableName: Option[String]): Option[(Long, Long)] =
+      catalogTable: Option[CatalogTable]): Option[(Long, Long)] =
       recordFrameProfile("Delta", "HudiConverter.convertSnapshot") {
     val log = snapshotToConvert.deltaLog
-    val metaClient = loadTableMetaClient(snapshotToConvert.deltaLog.dataPath.toString,
-      tableName, snapshotToConvert.metadata.partitionColumns,
-      log.newDeltaHadoopConf())
+    val metaClient = loadTableMetaClient(
+      snapshotToConvert.deltaLog.dataPath.toString,
+      catalogTable.flatMap(ct => Option(ct.identifier.table)),
+      snapshotToConvert.metadata.partitionColumns,
+      new HadoopStorageConfiguration(log.newDeltaHadoopConf()))
     val lastDeltaVersionConverted: Option[Long] = loadLastDeltaVersionConverted(metaClient)
     val maxCommitsToConvert =
       spark.sessionState.conf.getConf(DeltaSQLConf.HUDI_MAX_COMMITS_TO_CONVERT)
@@ -223,7 +235,7 @@ class HudiConverter(spark: SparkSession)
         try {
           // TODO: We can optimize this by providing a checkpointHint to getSnapshotAt. Check if
           //  txn.snapshot.version < version. If true, use txn.snapshot's checkpoint as a hint.
-          Some(log.getSnapshotAt(version))
+          Some(log.getSnapshotAt(version, catalogTableOpt = catalogTable))
         } catch {
           // If we can't load the file since the last time Hudi was converted, it's likely that
           // the commit file expired. Treat this like a new Hudi table conversion.
@@ -297,7 +309,7 @@ class HudiConverter(spark: SparkSession)
   def loadLastDeltaVersionConverted(snapshot: Snapshot, table: CatalogTable): Option[Long] = {
     val metaClient = loadTableMetaClient(snapshot.deltaLog.dataPath.toString,
       Option.apply(table.identifier.table), snapshot.metadata.partitionColumns,
-      snapshot.deltaLog.newDeltaHadoopConf())
+      new HadoopStorageConfiguration(snapshot.deltaLog.newDeltaHadoopConf()))
     loadLastDeltaVersionConverted(metaClient)
   }
 

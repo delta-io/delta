@@ -75,13 +75,12 @@ trait TransactionExecutionTestMixin {
 
   /**
    * Run `functions` with the ordering defined by `observerOrdering` function.
-   * This function returns the usage records generated during the run of these queries and also
-   * futures for each of the query results.
+   * This function returns futures for each of the query results.
    */
-  private[delta] def runFunctionsWithOrderingFromObserver(functions: Seq[() => Array[Row]])
+  private[delta] def runFunctionsWithOrderingFromObserver
+      (functions: Seq[() => Array[Row]])
       (observerOrdering: (Seq[TransactionObserver]) => Unit)
-      : (Seq[UsageRecord], Seq[Future[Array[Row]]]) = {
-
+      : Seq[Future[Array[Row]]] = {
     val executors = functions.zipWithIndex.map { case (_, index) =>
       ThreadUtils.newDaemonSingleThreadExecutor(threadName = s"executor-txn-$index")
     }
@@ -89,22 +88,22 @@ trait TransactionExecutionTestMixin {
       val (observers, futures) = functions.zipWithIndex.map { case (fn, index) =>
         runFunctionWithObserver(name = s"query-$index", executors(index), fn)
       }.unzip
-      val usageRecords = Log4jUsageLogger.track {
-        // Run the observer ordering function.
-        observerOrdering(observers)
 
-        // wait for futures to succeed or fail
-        for (future <- futures) {
-          try {
-            ThreadUtils.awaitResult(future, timeout)
-          } catch {
-            case _: SparkException =>
-              // pass
-              true
-          }
+      // Run the observer ordering function.
+      observerOrdering(observers)
+
+      // wait for futures to succeed or fail
+      for (future <- futures) {
+        try {
+          ThreadUtils.awaitResult(future, timeout)
+        } catch {
+          case _: SparkException =>
+            // pass
+            true
         }
       }
-      (usageRecords, futures)
+
+      futures
     } finally {
       for (executor <- executors) {
         executor.shutdownNow()
@@ -119,11 +118,90 @@ trait TransactionExecutionTestMixin {
     observer.phases.preparePhase.entryBarrier.unblock()
   }
 
+  /**
+   * Unblocks the `commitPhase` and `backfillPhase` for [[TransactionObserver]].
+   */
+  def unblockCommit(observer: TransactionObserver): Unit = {
+    observer.phases.commitPhase.entryBarrier.unblock()
+    observer.phases.backfillPhase.entryBarrier.unblock()
+    observer.phases.postCommitPhase.entryBarrier.unblock()
+  }
+
   /** Unblocks all phases for [[TransactionObserver]] so that corresponding query can finish. */
   def unblockAllPhases(observer: TransactionObserver): Unit = {
     observer.phases.initialPhase.entryBarrier.unblock()
     observer.phases.preparePhase.entryBarrier.unblock()
     observer.phases.commitPhase.entryBarrier.unblock()
+    observer.phases.backfillPhase.entryBarrier.unblock()
+    observer.phases.postCommitPhase.entryBarrier.unblock()
+  }
+
+  def waitForPrecommit(observer: TransactionObserver): Unit =
+    busyWaitFor(observer.phases.preparePhase.hasEntered, timeout)
+
+  def waitForCommit(observer: TransactionObserver): Unit = {
+    busyWaitFor(observer.phases.commitPhase.hasLeft, timeout)
+    busyWaitFor(observer.phases.backfillPhase.hasLeft, timeout)
+    busyWaitFor(observer.phases.postCommitPhase.hasLeft, timeout)
+  }
+
+  /**
+   * Prepare and commit the transaction managed by the given observer.
+   * If nextObserver is set, we need to manually call backfillPhase.leave() to advance to the
+   * nextObserver. Details in [[TransactionObserver.waitForCommitPhaseAndAdvanceToNextObserver]].
+   */
+  private def prepareAndCommitBase(
+      observer: TransactionObserver, hasNextObserver: Boolean): Unit = {
+    unblockUntilPreCommit(observer)
+    waitForPrecommit(observer)
+    unblockCommit(observer)
+    if (hasNextObserver) {
+      observer.phases.postCommitPhase.leave()
+    }
+    waitForCommit(observer)
+  }
+
+  /**
+   * Prepare and commit the transaction managed by the given observer.
+   */
+  def prepareAndCommit(observer: TransactionObserver): Unit = {
+    prepareAndCommitBase(observer, hasNextObserver = false)
+  }
+
+  /**
+   * Prepare and commit the transaction managed by the given observer which has nextObserver set.
+   */
+  def prepareAndCommitWithNextObserverSet(observer: TransactionObserver): Unit = {
+    prepareAndCommitBase(observer, hasNextObserver = true)
+  }
+
+  /**
+   * Run 2 transactions A, B with following order:
+   *
+   * t1 -------------------------------------- TxnA starts
+   * t2 --------- TxnB starts and commits (no transaction observer)
+   * t6 -------------------------------------- TxnA commits
+   *
+   * This function returns futures for each of the query runs.
+   */
+  def runTxnsWithOrder__A_Start__B__A_end_without_observer_on_B(
+      txnA: () => Array[Row],
+      txnB: () => Array[Row]): Future[Array[Row]] = {
+    val Seq(futureA) =
+      runFunctionsWithOrderingFromObserver(Seq(txnA)) {
+        case (observerA :: Nil) =>
+          // A starts
+          unblockUntilPreCommit(observerA)
+          busyWaitFor(observerA.phases.preparePhase.hasEntered, timeout)
+
+          // B starts and finishes
+          txnB()
+
+          // A commits
+          unblockCommit(observerA)
+          waitForCommit(observerA)
+      }
+    futureA
   }
 
   /**
@@ -133,10 +211,12 @@ trait TransactionExecutionTestMixin {
    * t2 --------- TxnB starts
    * t3 --------- TxnB commits
    * t6 -------------------------------------- TxnA commits
+   *
+   * This function returns futures for each of the query runs.
    */
   def runTxnsWithOrder__A_Start__B__A_End(txnA: () => Array[Row], txnB: () => Array[Row])
-      : (Seq[UsageRecord], Future[Array[Row]], Future[Array[Row]]) = {
-    val (usageRecords, Seq(futureA, futureB)) =
+      : (Future[Array[Row]], Future[Array[Row]]) = {
+    val Seq(futureA, futureB) =
       runFunctionsWithOrderingFromObserver(Seq(txnA, txnB)) {
         case (observerA :: observerB :: Nil) =>
           // A starts
@@ -145,13 +225,17 @@ trait TransactionExecutionTestMixin {
 
           // B starts and commits
           unblockAllPhases(observerB)
-          busyWaitFor(observerB.phases.commitPhase.hasLeft, timeout)
+          busyWaitFor(observerB.phases.postCommitPhase.hasLeft, timeout)
 
           // A commits
           observerA.phases.commitPhase.entryBarrier.unblock()
           busyWaitFor(observerA.phases.commitPhase.hasLeft, timeout)
+          observerA.phases.backfillPhase.entryBarrier.unblock()
+          busyWaitFor(observerA.phases.backfillPhase.hasLeft, timeout)
+          observerA.phases.postCommitPhase.entryBarrier.unblock()
+          busyWaitFor(observerA.phases.postCommitPhase.hasLeft, timeout)
       }
-    (usageRecords, futureA, futureB)
+    (futureA, futureB)
   }
 
   /**
@@ -163,14 +247,16 @@ trait TransactionExecutionTestMixin {
    * t4 ----------------- TxnC starts
    * t5 ----------------- TxnC commits
    * t6 -------------------------------------- TxnA commits
+   *
+   * This function returns futures for each of the query runs.
    */
   def runTxnsWithOrder__A_Start__B__C__A_End(
       txnA: () => Array[Row],
       txnB: () => Array[Row],
       txnC: () => Array[Row])
-      : (Seq[UsageRecord], Future[Array[Row]], Future[Array[Row]], Future[Array[Row]]) = {
+      : (Future[Array[Row]], Future[Array[Row]], Future[Array[Row]]) = {
 
-    val (usageRecords, Seq(futureA, futureB, futureC)) =
+    val Seq(futureA, futureB, futureC) =
       runFunctionsWithOrderingFromObserver(Seq(txnA, txnB, txnC)) {
         case (observerA :: observerB :: observerC :: Nil) =>
           // A starts
@@ -179,16 +265,20 @@ trait TransactionExecutionTestMixin {
 
           // B starts and commits
           unblockAllPhases(observerB)
-          busyWaitFor(observerB.phases.commitPhase.hasLeft, timeout)
+          busyWaitFor(observerB.phases.postCommitPhase.hasLeft, timeout)
 
           // C starts and commits
           unblockAllPhases(observerC)
-          busyWaitFor(observerC.phases.commitPhase.hasLeft, timeout)
+          busyWaitFor(observerC.phases.postCommitPhase.hasLeft, timeout)
 
           // A commits
           observerA.phases.commitPhase.entryBarrier.unblock()
           busyWaitFor(observerA.phases.commitPhase.hasLeft, timeout)
+          observerA.phases.backfillPhase.entryBarrier.unblock()
+          busyWaitFor(observerA.phases.backfillPhase.hasLeft, timeout)
+          observerA.phases.postCommitPhase.entryBarrier.unblock()
+          busyWaitFor(observerA.phases.postCommitPhase.hasLeft, timeout)
       }
-    (usageRecords, futureA, futureB, futureC)
+    (futureA, futureB, futureC)
   }
 }

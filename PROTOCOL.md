@@ -13,6 +13,8 @@
       - [Sidecar Files](#sidecar-files)
     - [Log Compaction Files](#log-compaction-files)
     - [Last Checkpoint File](#last-checkpoint-file)
+    - [Version Checksum File](#version-checksum-file)
+      - [File Size Histogram Schema](#file-size-histogram-schema)
   - [Actions](#actions)
     - [Change Metadata](#change-metadata)
       - [Format Specification](#format-specification)
@@ -162,7 +164,7 @@ This directory format is only used to follow existing conventions and is not req
 Actual partition values for a file must be read from the transaction log.
 
 ### Deletion Vector Files
-Deletion Vector (DV) files are stored root directory of the table alongside the data files. A DV file contains one or more serialised DV, each describing the set of *invalidated* (or "soft deleted") rows for a particular data file it is associated with.
+Deletion Vector (DV) files are stored in the root directory of the table alongside the data files. A DV file contains one or more serialised DV, each describing the set of *invalidated* (or "soft deleted") rows for a particular data file it is associated with.
 For data with partition values, DV files are *not* kept in the same directory hierarchy as data files, as each one can contain DVs for files from multiple partitions.
 DV files store DVs in a [binary format](#deletion-vector-format).
 
@@ -321,6 +323,98 @@ The last checkpoint file can help reduce the cost of constructing the latest sna
 Rather than list the entire directory, readers can locate a recent checkpoint by looking at the `_delta_log/_last_checkpoint` file.
 Due to the zero-padded encoding of the files in the log, the version id of this recent checkpoint can be used on storage systems that support lexicographically-sorted, paginated directory listing to enumerate any delta files or newer checkpoints that comprise more recent versions of the table.
 
+### Version Checksum File
+
+The Delta transaction log must remain an append-only log. To enable the detection of non-compliant modifications to Delta files, writers can optionally emit an auxiliary file with every commit, which contains important information about the state of the table as of that version. This file is referred to as the **Version Checksum** and can be used to validate the integrity of the table.
+
+### Version Checksum File Schema
+
+A Version Checksum file must have the following properties:
+- Be named `{version}.crc` where `version` is zero-padded to 20 digits (e.g., `00000000000000000001.crc`)
+- Be stored directly in the `_delta_log` directory alongside Delta log files
+- Contain exactly one JSON object with the following schema:
+
+Field Name | Data Type | Description | optional/required
+-|-|-|-
+txnId | String | A unique identifier for the transaction that produced this commit. | optional
+tableSizeBytes | Long | Total size of the table in bytes, calculated as the sum of the `size` field of all live `add` actions. | required
+numFiles | Long | Number of live `add` actions in this table version after Action Reconciliation. | required
+numMetadata | Long | Number of `metaData` actions. Must be 1. | required
+numProtocol | Long | Number of `protocol` actions. Must be 1. | required
+inCommitTimestampOpt | Long | The in-commit timestamp of this version. Present if and only if [In-Commit Timestamps](#in-commit-timestamps) are enabled. | optional
+setTransactions | Array[`txn`] | Live [Transaction Identifier](#transaction-identifiers) actions at this version. | optional
+domainMetadata | Array[`domainMetadata`] | Live [Domain Metadata](#domain-metadata) actions at this version, excluding tombstones. | optional
+metadata | Metadata | The table [metadata](#change-metadata) at this version. | required
+protocol | Protocol | The table [protocol](#protocol-evolution) at this version. | required
+fileSizeHistogram | FileSizeHistogram | Size distribution information of files remaining after [Action Reconciliation](#action-reconciliation). See [FileSizeHistogram](#file-size-histogram-schema) for more details. | optional
+allFiles | Array[`add`] | All live [Add File](#add-file-and-remove-file) actions at this version. | optional
+numDeletedRecordsOpt | Long | Number of records deleted through Deletion Vectors in this table version. | optional
+numDeletionVectorsOpt | Long | Number of Deletion Vectors active in this table version. | optional
+deletedRecordCountsHistogramOpt | DeletedRecordCountsHistogram | Distribution of deleted record counts across files. See [this](#deleted-record-counts-histogram-schema) section for more details. | optional
+
+##### File Size Histogram Schema
+
+The `FileSizeHistogram` object represents a histogram tracking file counts and total bytes across different size ranges. It has the following schema:
+
+Field Name | Data Type | Description | optional/required
+-|-|-|-
+sortedBinBoundaries | Array[Long] | A sorted array of bin boundaries where each element represents the start of a bin (inclusive) and the next element represents the end of the bin (exclusive). The first element must be 0. | required
+fileCounts | Array[Long] | Count of files in each bin. Length must match `sortedBinBoundaries`. | required
+totalBytes | Array[Long] | Total bytes of files in each bin. Length must match `sortedBinBoundaries`. | required
+
+Each index `i` in these arrays corresponds to a size range from `sortedBinBoundaries[i]` (inclusive) up to but not including `sortedBinBoundaries[i+1]`. The last bin ends at positive infinity. For example, given boundaries `[0, 1024, 4096]`:
+- Bin 0 contains files of size [0, 1024) bytes
+- Bin 1 contains files of size [1024, 4096) bytes
+- Bin 2 contains files of size [4096, ∞) bytes
+
+The arrays `fileCounts` and `totalBytes` store the number of files and their total size respectively that fall into each bin. This data structure enables efficient analysis of file size distributions in Delta tables.
+
+### Deleted Record Counts Histogram Schema
+
+The `DeletedRecordCountsHistogram` object represents a histogram tracking the distribution of deleted record counts across files in the table. Each bin in the histogram represents a range of deletion counts and stores the number of files having that many deleted records.
+
+Field Name | Data Type | Description | optional/required
+-|-|-|-
+deletedRecordCounts | Array[Long] | Array of size 10 where each element represents the count of files falling into a specific deletion count range. | required
+
+The histogram bins correspond to the following ranges:
+- Bin 0: [0, 0] (files with no deletions)
+- Bin 1: [1, 9] (files with 1-9 deleted records)
+- Bin 2: [10, 99] (files with 10-99 deleted records)
+- Bin 3: [100, 999] (files with 100-999 deleted records) 
+- Bin 4: [1000, 9999] (files with 1,000-9,999 deleted records)
+- Bin 5: [10000, 99999] (files with 10,000-99,999 deleted records)
+- Bin 6: [100000, 999999] (files with 100,000-999,999 deleted records)
+- Bin 7: [1000000, 9999999] (files with 1,000,000-9,999,999 deleted records)
+- Bin 8: [10000000, 2147483646] (files with 10,000,000 to 2147483646 (i.e. Int.MaxValue-1 in Java) deleted records)
+- Bin 9: [2147483647, ∞) (files with 2147483647 or more deleted records)
+
+This histogram allows analyzing the distribution of deleted records across files in a Delta table, which can be useful for monitoring and optimizing deletion patterns.
+
+#### State Validation
+
+Readers can validate table state integrity at a particular version by:
+1. Reading the Version Checksum file for that version
+2. Independently computing the same metrics by performing [Action Reconciliation](#action-reconciliation) on the table state
+3. Comparing the computed values against those recorded in the Version Checksum
+
+If any discrepancy is found between computed and recorded values, the table state at that version should be considered potentially corrupted.
+
+### Writer Requirements
+
+- Writers SHOULD produce a Version Checksum file for each commit
+- Writers MUST ensure all metrics in the Version Checksum accurately reflect table state after Action Reconciliation
+- Writers MUST write the Version Checksum file only after successfully writing the corresponding Delta log entry
+- Writers MUST NOT overwrite existing Version Checksum files
+
+### Reader Requirements
+
+- Readers MAY use Version Checksums to validate table state integrity
+- If performing validation, readers SHOULD verify all required fields match computed values
+- If validation fails, readers SHOULD surface the discrepancy to users via error messaging
+- Readers MUST continue functioning if Version Checksum files are missing
+
+
 ## Actions
 Actions modify the state of the table and they are stored both in delta files and in checkpoints.
 This section lists the space of available actions as well as their schema.
@@ -394,6 +488,8 @@ That means specifically that for any commit…
  - it is **legal** for the same `path` to occur in an `add` action and a `remove` action, but with two different `dvId`s.
  - it is **legal** for the same `path` to be added and/or removed and also occur in a `cdc` action.
  - it is **illegal** for the same `path` to be occur twice with different `dvId`s within each set of `add` or `remove` actions.
+ - it is **illegal** for a `path` to occur in an `add` action that already occurs with a different `dvId` in the list of `add` actions from the snapshot of the version immediately preceeding the commit, unless the commit also contains a remove for the later combination.
+ - it is **legal** to commit an existing `path` and `dvId` combination again (this allows metadata updates).
 
 The `dataChange` flag on either an `add` or a `remove` can be set to `false` to indicate that an action when combined with other actions in the same atomic version only rearranges existing data or adds new statistics.
 For example, streaming queries that are tailing the transaction log can use this flag to skip actions that would not affect the final results.
@@ -477,7 +573,9 @@ The following is an example `remove` action.
 ```
 
 ### Add CDC File
-The `cdc` action is used to add a [file](#change-data-files) containing only the data that was changed as part of the transaction. When change data readers encounter a `cdc` action in a particular Delta table version, they must read the changes made in that version exclusively using the `cdc` files. If a version has no `cdc` action, then the data in `add` and `remove` actions are read as inserted and deleted rows, respectively.
+The `cdc` action is used to add a [file](#change-data-files) containing only the data that was changed as part of the transaction. The `cdc` action is allowed to add a [Data File](#data-files) that is also added by an `add` action, when it does not contain any copied rows and the `_change_type` column is filled for all rows.
+
+When change data readers encounter a `cdc` action in a particular Delta table version, they must read the changes made in that version exclusively using the `cdc` files. If a version has no `cdc` action, then the data in `add` and `remove` actions are read as inserted and deleted rows, respectively.
 
 The schema of the `cdc` action is as follows:
 
@@ -519,11 +617,11 @@ Specifically, to read the row-level changes made in a version, the following str
     Field Name | Data Type | Description
     -|-|-
     _commit_version|`Long`| The table version containing the change. This can be derived from the name of the Delta log file that contains actions.
-    _commit_timestamp|`Timestamp`| The timestamp associated when the commit was created. This can be derived from the file modification time of the Delta log file that contains actions.
+    _commit_timestamp|`Timestamp`| The timestamp associated when the commit was created. Depending on whether [In-Commit Timestamps](#in-commit-timestamps) are enabled, this is derived from either the `inCommitTimestamp` field of the `commitInfo` action of the version's Delta log file, or from the Delta log file's modification time.
 
 ##### Note for non-change data readers
 
-In a table with Change Data Feed enabled, the data Parquet files referenced by `add` and `remove` actions are allowed to contain an extra column `_change_type`. This column is not present in the table's schema and will consistently have a `null` value. When accessing these files, readers should disregard this column and only process columns defined within the table's schema.
+In a table with Change Data Feed enabled, the data Parquet files referenced by `add` and `remove` actions are allowed to contain an extra column `_change_type`. This column is not present in the table's schema. When accessing these files, readers should disregard this column and only process columns defined within the table's schema.
 
 ### Transaction Identifiers
 Incremental processing systems (e.g., streaming systems) that track progress using their own application-specific versions need to record what progress has been made, in order to avoid duplicating data in the face of failures and retries during a write.
@@ -617,6 +715,8 @@ A table that is using table features for both readers and writers:
 A delta file can optionally contain additional provenance information about what higher-level operation was being performed as well as who executed it.
 
 Implementations are free to store any valid JSON-formatted data via the `commitInfo` action.
+
+When [In-Commit Timestamps](#in-commit-timestamps) are enabled, writers are required to include a `commitInfo` action with every commit, which must include the `inCommitTimestamp` field. Also, the `commitInfo` action must be first action in the commit.
 
 An example of storing provenance information related to an `INSERT` operation:
 ```json
@@ -727,7 +827,7 @@ A given snapshot of the table can be computed by replaying the events committed 
  - A single `metaData` action
  - A collection of `txn` actions with unique `appId`s
  - A collection of `domainMetadata` actions with unique `domain`s.
- - A collection of `add` actions with unique `(path, deletionVector.uniqueId)` keys.
+ - A collection of `add` actions with unique path keys, corresponding to the newest (path, deletionVector.uniqueId) pair encountered for each path.
  - A collection of `remove` actions with unique `(path, deletionVector.uniqueId)` keys. The intersection of the primary keys in the `add` collection and `remove` collection must be empty. That means a logical file cannot exist in both the `remove` and `add` collections at the same time; however, the same *data file* can exist with *different* DVs in the `remove` collection, as logically they represent different content. The `remove` actions act as _tombstones_, and only exist for the benefit of the VACUUM command. Snapshot reads only return `add` actions on the read path.
  
 To achieve the requirements above, related actions from different delta files need to be reconciled with each other:
@@ -1059,7 +1159,7 @@ Row Tracking is defined to be **supported** or **enabled** on a table as follows
 
 Enablement:
 - The table must be on Writer Version 7.
-- The feature `rowTracking` must exist in the table `protocol`'s `writerFeatures`.
+- The feature `rowTracking` must exist in the table `protocol`'s `writerFeatures`. The feature `domainMetadata` is required in the table `protocol`'s `writerFeatures`.
 - The table property `delta.enableRowTracking` must be set to `true`.
 
 ## Row IDs
@@ -1252,6 +1352,41 @@ The example above converts `configuration` field into JSON format, including esc
   ]
 }
 ```
+
+# In-Commit Timestamps
+
+The In-Commit Timestamps writer feature strongly associates a monotonically increasing timestamp with each commit by storing it in the commit's metadata.
+
+Enablement:
+- The table must be on Writer Version 7.
+- The feature `inCommitTimestamps` must exist in the table `protocol`'s `writerFeatures`.
+- The table property `delta.enableInCommitTimestamps` must be set to `true`.
+
+## Writer Requirements for In-Commit Timestamps
+
+When In-Commit Timestamps is enabled, then:
+1. Writers must write the `commitInfo` (see [Commit Provenance Information](#commit-provenance-information)) action in the commit.
+2. The `commitInfo` action must be the first action in the commit.
+3. The `commitInfo` action must include a field named `inCommitTimestamp`, of type `long` (see [Primitive Types](#primitive-types)), which represents the time (in milliseconds since the Unix epoch) when the commit is considered to have succeeded. It is the larger of two values:
+   - The time, in milliseconds since the Unix epoch, at which the writer attempted the commit
+   - One millisecond later than the previous commit's `inCommitTimestamp`
+4. If the table has commits from a period when this feature was not enabled, provenance information around when this feature was enabled must be tracked in table properties:
+   - The property `delta.inCommitTimestampEnablementVersion` must be used to track the version of the table when this feature was enabled.
+   - The property `delta.inCommitTimestampEnablementTimestamp` must be the same as the `inCommitTimestamp` of the commit when this feature was enabled.
+5. The `inCommitTimestamp` of the commit that enables this feature must be greater than the file modification time of the immediately preceding commit.
+
+## Recommendations for Readers of Tables with In-Commit Timestamps
+
+For tables with In-Commit timestamps enabled, readers should use the `inCommitTimestamp` as the commit timestamp for operations like time travel and [`DESCRIBE HISTORY`](https://docs.delta.io/latest/delta-utility.html#retrieve-delta-table-history).
+If a table has commits from a period before In-Commit timestamps were enabled, the table properties `delta.inCommitTimestampEnablementVersion` and `delta.inCommitTimestampEnablementTimestamp` would be set and can be used to identify commits that don't have `inCommitTimestamp`.
+To correctly determine the commit timestamp for these tables, readers can use the following rules:
+1. For commits with version >= `delta.inCommitTimestampEnablementVersion`, readers should use the `inCommitTimestamp` field of the `commitInfo` action.
+2. For commits with version < `delta.inCommitTimestampEnablementVersion`, readers should use the file modification timestamp.
+
+Furthermore, when attempting timestamp-based time travel where table state must be fetched as of `timestamp X`, readers should use the following rules:
+1. If `timestamp X` >= `delta.inCommitTimestampEnablementTimestamp`, only table versions >= `delta.inCommitTimestampEnablementVersion` should be considered for the query.
+2. Otherwise, only table versions less than `delta.inCommitTimestampEnablementVersion` should be considered for the query.
+
 
 # Requirements for Writers
 This section documents additional requirements that writers must follow in order to preserve some of the higher level guarantees that Delta provides.
@@ -1469,7 +1604,7 @@ the `cutoffCommit`, because a commit exactly at midnight is an acceptable cutoff
 2. Identify the newest checkpoint that is not newer than the `cutOffCommit`. A checkpoint at the `cutOffCommit` is ideal, but an older one will do. Lets call it `cutOffCheckpoint`.
 We need to preserve the `cutOffCheckpoint` and all commits after it, because we need them to enable
 time travel for commits between `cutOffCheckpoint` and the next available checkpoint.
-3. Delete all [delta log entries](#delta-log-entries and [checkpoint files](#checkpoints) before the
+3. Delete all [delta log entries](#delta-log-entries) and [checkpoint files](#checkpoints) before the
 `cutOffCheckpoint` checkpoint. Also delete all the [log compaction files](#log-compaction-files) having
 startVersion <= `cutOffCheckpoint`'s version.
 4. Now read all the available [checkpoints](#checkpoints-1) in the _delta_log directory and identify
@@ -1708,7 +1843,7 @@ numRecords | The number of records in this data file.
 tightBounds | Whether per-column statistics are currently **tight** or **wide** (see below).
 
 For any logical file where `deletionVector` is not `null`, the `numRecords` statistic *must* be present and accurate. That is, it must equal the number of records in the data file, not the valid records in the logical file.
-In the presence of [Deletion Vectors](#Deletion-Vectors) the statistics may be somewhat outdated, i.e. not reflecting deleted rows yet. The flag `stats.tightBounds` indicates whether we have **tight bounds** (i.e. the min/maxValue exists[^1] in the valid state of the file) or **wide bounds** (i.e. the minValue is <= all valid values in the file, and the maxValue >= all valid values in the file). These upper/lower bounds are sufficient information for data skipping.
+In the presence of [Deletion Vectors](#Deletion-Vectors) the statistics may be somewhat outdated, i.e. not reflecting deleted rows yet. The flag `stats.tightBounds` indicates whether we have **tight bounds** (i.e. the min/maxValue exists[^1] in the valid state of the file) or **wide bounds** (i.e. the minValue is <= all valid values in the file, and the maxValue >= all valid values in the file). These upper/lower bounds are sufficient information for data skipping. Note, `stats.tightBounds` should be treated as `true` when it is not explicitly present in the statistics.
 
 Per-column statistics record information for each column in the file and they are encoded, mirroring the schema of the actual data.
 For example, given the following data schema:
@@ -1752,13 +1887,16 @@ Type | Serialization Format
 string | No translation required
 numeric types | The string representation of the number
 date | Encoded as `{year}-{month}-{day}`. For example, `1970-01-01`
-timestamp | Encoded as `{year}-{month}-{day} {hour}:{minute}:{second}` or `{year}-{month}-{day} {hour}:{minute}:{second}.{microsecond}` For example: `1970-01-01 00:00:00`, or `1970-01-01 00:00:00.123456`
+timestamp | Encoded as `{year}-{month}-{day} {hour}:{minute}:{second}` or `{year}-{month}-{day} {hour}:{minute}:{second}.{microsecond}`. For example: `1970-01-01 00:00:00`, or `1970-01-01 00:00:00.123456`. Timestamps may also be encoded as an ISO8601 formatted timestamp adjusted to UTC timestamp such as `1970-01-01T00:00:00.123456Z`
 timestamp without timezone | Encoded as `{year}-{month}-{day} {hour}:{minute}:{second}` or `{year}-{month}-{day} {hour}:{minute}:{second}.{microsecond}` For example: `1970-01-01 00:00:00`, or `1970-01-01 00:00:00.123456` To use this type, a table must support a feature `timestampNtz`. See section [Timestamp without timezone (TimestampNtz)](#timestamp-without-timezone-timestampNtz) for more information.
 boolean | Encoded as the string "true" or "false"
 binary | Encoded as a string of escaped binary values. For example, `"\u0001\u0002\u0003"`
 
-Note: A `timestamp` value in a partition value doesn't store the time zone due to historical reasons.
-It means its behavior looks similar to `timestamp without time zone` when it is used in a partition column.
+Note: A timestamp value in a partition value may be stored in one of the following ways:
+1. Without a timezone, where the timestamp should be interpreted using the time zone of the system which wrote to the table.
+2. Adjusted to UTC and stored in ISO8601 format.
+
+It is highly recommended that modern writers adjust the timestamp to UTC and store the timestamp in ISO8601 format as outlined in 2.
 
 ## Schema Serialization Format
 

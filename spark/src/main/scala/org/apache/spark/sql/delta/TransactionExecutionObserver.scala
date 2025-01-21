@@ -16,6 +16,23 @@
 
 package org.apache.spark.sql.delta
 
+trait ChainableExecutionObserver[O] {
+  /**
+   * The next txn observer for this thread.
+   * The next observer is used to test threads that perform multiple transactions, i.e.
+   * commands that perform multiple commits.
+   */
+  @volatile protected var nextObserver: Option[O] = None
+
+  /** Set the next observer for this thread. */
+  def setNextObserver(nextTxnObserver: O): Unit = {
+    nextObserver = Some(nextTxnObserver)
+  }
+
+  /** Update the observer of this thread with the next observer. */
+  def advanceToNextThreadObserver(): Unit
+}
+
 /**
  * Track different stages of the execution of a transaction.
  *
@@ -23,7 +40,16 @@ package org.apache.spark.sql.delta
  *
  * The default is a no-op implementation.
  */
-trait TransactionExecutionObserver {
+trait TransactionExecutionObserver
+  extends ChainableExecutionObserver[TransactionExecutionObserver] {
+
+  /**
+   * Create a child instance of this observer for use in [[OptimisticTransactionImpl.split()]].
+   *
+   * It's up to each observer type what state new child needs to hold.
+   */
+  def createChild(): TransactionExecutionObserver
+
   /*
    * This is called outside the transaction object,
    * since it wraps its creation.
@@ -48,6 +74,12 @@ trait TransactionExecutionObserver {
   /** Called before the first `doCommit` attempt. */
   def beginDoCommit(): Unit
 
+  /** Called after publishing the commit file but before the `backfill` attempt. */
+  def beginBackfill(): Unit
+
+  /** Called after backfill but before the `postCommit` attempt. */
+  def beginPostCommit(): Unit
+
   /** Called once a commit succeeded. */
   def transactionCommitted(): Unit
 
@@ -59,34 +91,17 @@ trait TransactionExecutionObserver {
    *         This occurs when there is an Exception thrown during the transaction's body.
    */
   def transactionAborted(): Unit
+
+  override def advanceToNextThreadObserver(): Unit = {
+    TransactionExecutionObserver.setObserver(
+      nextObserver.getOrElse(NoOpTransactionExecutionObserver))
+  }
 }
 
-object TransactionExecutionObserver {
-  /** Thread-local observer instance loaded by [[DeltaLog]] and [[OptimisticTransaction]]. */
-  val threadObserver: ThreadLocal[TransactionExecutionObserver] =
-    ThreadLocal.withInitial(() => NoOpTransactionExecutionObserver)
-
-  /**
-   * Instrument all transactions created and completed within `thunk` with `observer`.
-   *
-   * *Note 1:* Closing over existing transactions with `thunk` will have no effect.
-   * *Note 2:* Do not leak transactions created within `thunk` via the return value.
-   * *Note 3:* Do not create threads with new transactions within `thunk`.
-   *           The observer information is not copied to children threads automatically.
-   *
-   * If you need more flexible usage of [[TransactionExecutionObserver]] use
-   * `TransactionExecutionObserver.threadObserver.set()` instead.
-   */
-  def withObserver[T](observer: TransactionExecutionObserver)(thunk: => T): T = {
-    val oldObserver = threadObserver.get()
-    threadObserver.set(observer)
-    try {
-      thunk
-    } finally {
-      // reset
-      threadObserver.set(oldObserver)
-    }
-  }
+object TransactionExecutionObserver
+  extends ThreadStorageExecutionObserver[TransactionExecutionObserver] {
+  override protected val initialValue: TransactionExecutionObserver =
+    NoOpTransactionExecutionObserver
 }
 
 /** Default observer does nothing. */
@@ -97,7 +112,16 @@ object NoOpTransactionExecutionObserver extends TransactionExecutionObserver {
 
   override def beginDoCommit(): Unit = ()
 
+  override def beginBackfill(): Unit = ()
+
+  override def beginPostCommit(): Unit = ()
+
   override def transactionCommitted(): Unit = ()
 
   override def transactionAborted(): Unit = ()
+
+  override def createChild(): TransactionExecutionObserver = {
+    // This mimics the original behaviour of this code.
+    TransactionExecutionObserver.getObserver
+  }
 }

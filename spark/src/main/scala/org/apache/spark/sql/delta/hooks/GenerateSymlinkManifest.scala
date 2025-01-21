@@ -20,17 +20,20 @@ package org.apache.spark.sql.delta.hooks
 import java.net.URI
 
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils.isTableDVFree
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkEnv
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
-import org.apache.spark.sql.catalyst.catalog.ExternalCatalogUtils
+import org.apache.spark.sql.catalyst.catalog.{CatalogTable, ExternalCatalogUtils}
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Cast, Concat, Expression, Literal, ScalaUDF}
 import org.apache.spark.sql.execution.datasources.InMemoryFileIndex
@@ -72,8 +75,7 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
       committedVersion: Long,
       postCommitSnapshot: Snapshot,
       committedActions: Seq[Action]): Unit = {
-    generateIncrementalManifest(
-      spark, txn.deltaLog, txn.snapshot, postCommitSnapshot, committedActions)
+    generateIncrementalManifest(spark, txn, postCommitSnapshot, committedActions)
   }
 
   override def handleError(spark: SparkSession, error: Throwable, version: Long): Unit = {
@@ -91,21 +93,21 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
    */
   protected def generateIncrementalManifest(
       spark: SparkSession,
-      deltaLog: DeltaLog,
-      txnReadSnapshot: Snapshot,
+      txn: OptimisticTransactionImpl,
       currentSnapshot: Snapshot,
-      actions: Seq[Action]): Unit = recordManifestGeneration(deltaLog, full = false) {
+      actions: Seq[Action]): Unit = recordManifestGeneration(txn.deltaLog, full = false) {
 
     import org.apache.spark.sql.delta.implicits._
 
     checkColumnMappingMode(currentSnapshot.metadata)
 
+    val deltaLog = txn.deltaLog
     val partitionCols = currentSnapshot.metadata.partitionColumns
     val manifestRootDirPath = new Path(deltaLog.dataPath, MANIFEST_LOCATION)
     val hadoopConf = new SerializableConfiguration(deltaLog.newDeltaHadoopConf())
     val fs = deltaLog.dataPath.getFileSystem(hadoopConf.value)
     if (!fs.exists(manifestRootDirPath)) {
-      generateFullManifest(spark, deltaLog)
+      generateFullManifest(spark, deltaLog, txn.catalogTable)
       return
     }
 
@@ -118,7 +120,7 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
       val removedFileNames =
         spark.createDataset(actions.collect { case r: RemoveFile => r.path }).toDF("path")
       val partitionValuesOfRemovedFiles =
-        txnReadSnapshot.allFiles.join(removedFileNames, "path").select("partitionValues").persist()
+        txn.snapshot.allFiles.join(removedFileNames, "path").select("partitionValues").persist()
       try {
         val partitionsOfRemovedFiles = partitionValuesOfRemovedFiles
           .as[Map[String, String]](GenerateSymlinkManifestUtils.mapEncoder).collect().toSet
@@ -178,8 +180,9 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
    */
   def generateFullManifest(
       spark: SparkSession,
-      deltaLog: DeltaLog): Unit = {
-    val snapshot = deltaLog.update(stalenessAcceptable = false)
+      deltaLog: DeltaLog,
+      catalogTableOpt: Option[CatalogTable]): Unit = {
+    val snapshot = deltaLog.update(catalogTableOpt = catalogTableOpt)
     assertTableIsDVFree(spark, snapshot)
     generateFullManifestWithSnapshot(spark, deltaLog, snapshot)
   }
@@ -308,9 +311,9 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
         }.collect().toSet
       }
 
-    logInfo(s"Generated manifest partitions for $deltaLogDataPath " +
-      s"[${newManifestPartitionRelativePaths.size}]:\n\t" +
-      newManifestPartitionRelativePaths.mkString("\n\t"))
+    logInfo(log"Generated manifest partitions for ${MDC(DeltaLogKeys.PATH, deltaLogDataPath)} " +
+      log"[${MDC(DeltaLogKeys.NUM_PARTITIONS, newManifestPartitionRelativePaths.size)}]:\n\t" +
+      log"${MDC(DeltaLogKeys.PATHS, newManifestPartitionRelativePaths.mkString("\n\t"))}")
 
     newManifestPartitionRelativePaths
   }
@@ -334,8 +337,9 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
       fs.delete(absPathToDelete, true)
     }
 
-    logInfo(s"Deleted manifest partitions [${partitionRelativePathsToDelete.size}]:\n\t" +
-      partitionRelativePathsToDelete.mkString("\n\t"))
+    logInfo(log"Deleted manifest partitions [" +
+      log"${MDC(DeltaLogKeys.NUM_FILES, partitionRelativePathsToDelete.size.toLong)}]:\n\t" +
+      log"${MDC(DeltaLogKeys.PATHS, partitionRelativePathsToDelete.mkString("\n\t"))}")
   }
 
   /**
@@ -373,7 +377,7 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
       colNameToAttribs,
       spark.sessionState.conf.sessionLocalTimeZone)
 
-    df.withColumn("relativePartitionDir", new Column(relativePartitionDirExpression))
+    df.withColumn("relativePartitionDir", Column(relativePartitionDirExpression))
       .drop(colToRenamedCols.map(_._2): _*)
   }
 

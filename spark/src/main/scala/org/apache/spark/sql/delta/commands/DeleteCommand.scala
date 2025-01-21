@@ -20,6 +20,7 @@ import java.util.concurrent.TimeUnit
 
 import org.apache.spark.sql.delta.metric.IncrementMetric
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, FileAction}
 import org.apache.spark.sql.delta.commands.DeleteCommand.{rewritingFilesMsg, FINDING_TOUCHED_FILES_MSG}
 import org.apache.spark.sql.delta.commands.MergeIntoCommandBase.totalBytesAndDistinctPartitionValues
@@ -125,10 +126,15 @@ case class DeleteCommand(
           return Seq.empty
         }
 
-        val deleteActions = performDelete(sparkSession, deltaLog, txn)
-        txn.commitIfNeeded(actions = deleteActions,
+        val (deleteActions, deleteMetrics) = performDelete(sparkSession, deltaLog, txn)
+        val commitVersion = txn.commitIfNeeded(
+          actions = deleteActions,
           op = DeltaOperations.Delete(condition.toSeq),
           tags = RowTracking.addPreservedRowTrackingTagIfNotSet(txn.snapshot))
+        recordDeltaEvent(
+          deltaLog,
+          "delta.dml.delete.stats",
+          data = deleteMetrics.copy(commitVersion = commitVersion))
       }
       // Re-cache all cached plans(including this relation itself, if it's cached) that refer to
       // this data source relation.
@@ -149,7 +155,7 @@ case class DeleteCommand(
   def performDelete(
       sparkSession: SparkSession,
       deltaLog: DeltaLog,
-      txn: OptimisticTransaction): Seq[Action] = {
+      txn: OptimisticTransaction): (Seq[Action], DeleteMetric) = {
     import org.apache.spark.sql.delta.implicits._
 
     var numRemovedFiles: Long = 0
@@ -301,9 +307,9 @@ case class DeleteCommand(
                 if (candidateFiles.isEmpty) {
                   Array.empty[String]
                 } else {
-                  data.filter(new Column(cond))
+                  data.filter(Column(cond))
                     .select(input_file_name())
-                    .filter(new Column(incrDeletedCountExpr))
+                    .filter(Column(incrDeletedCountExpr))
                     .distinct()
                     .as[String]
                     .collect()
@@ -386,10 +392,8 @@ case class DeleteCommand(
     txn.registerSQLMetrics(sparkSession, metrics)
     sendDriverMetrics(sparkSession, metrics)
 
-    recordDeltaEvent(
-      deltaLog,
-      "delta.dml.delete.stats",
-      data = DeleteMetric(
+    val numRecordsStats = NumRecordsStats.fromActions(deleteActions)
+    val deleteMetric = DeleteMetric(
         condition = condition.map(_.sql).getOrElse("true"),
         numFilesTotal,
         numFilesAfterSkipping,
@@ -413,14 +417,16 @@ case class DeleteCommand(
         rewriteTimeMs,
         numDeletionVectorsAdded,
         numDeletionVectorsRemoved,
-        numDeletionVectorsUpdated)
-    )
+        numDeletionVectorsUpdated,
+        numLogicalRecordsAdded = numRecordsStats.numLogicalRecordsAdded,
+        numLogicalRecordsRemoved = numRecordsStats.numLogicalRecordsRemoved)
 
-    if (deleteActions.nonEmpty) {
+    val actionsToCommit = if (deleteActions.nonEmpty) {
       createSetTransaction(sparkSession, deltaLog).toSeq ++ deleteActions
     } else {
       Seq.empty
     }
+    (actionsToCommit, deleteMetric)
   }
 
   /**
@@ -446,15 +452,15 @@ case class DeleteCommand(
         // as table data, while all rows which don't match are removed from the rewritten table data
         // but do get included in the output as CDC events.
         baseData
-          .filter(new Column(incrTouchedCountExpr))
+          .filter(Column(incrTouchedCountExpr))
           .withColumn(
             CDC_TYPE_COLUMN_NAME,
-            new Column(If(filterCondition, CDC_TYPE_NOT_CDC, CDC_TYPE_DELETE))
+            Column(If(filterCondition, CDC_TYPE_NOT_CDC, CDC_TYPE_DELETE))
           )
       } else {
         baseData
-          .filter(new Column(incrTouchedCountExpr))
-          .filter(new Column(filterCondition))
+          .filter(Column(incrTouchedCountExpr))
+          .filter(Column(filterCondition))
       }
 
       txn.writeFiles(dfToWrite)
@@ -541,5 +547,12 @@ case class DeleteMetric(
     rewriteTimeMs: Long,
     numDeletionVectorsAdded: Long,
     numDeletionVectorsRemoved: Long,
-    numDeletionVectorsUpdated: Long
+    numDeletionVectorsUpdated: Long,
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    commitVersion: Option[Long] = None,
+    isWriteCommand: Boolean = false,
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    numLogicalRecordsAdded: Option[Long] = None,
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    numLogicalRecordsRemoved: Option[Long] = None
 )

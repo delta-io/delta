@@ -17,9 +17,10 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
-import org.apache.spark.sql.catalyst.expressions.Cast
 import org.apache.spark.sql.functions.{col, lit}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 
 object TypeWidening {
@@ -28,7 +29,8 @@ object TypeWidening {
    * Returns whether the protocol version supports the Type Widening table feature.
    */
   def isSupported(protocol: Protocol): Boolean =
-    protocol.isFeatureSupported(TypeWideningTableFeature)
+    Seq(TypeWideningPreviewTableFeature, TypeWideningTableFeature)
+      .exists(protocol.isFeatureSupported)
 
   /**
    * Returns whether Type Widening is enabled on this table version. Checks that Type Widening is
@@ -66,26 +68,39 @@ object TypeWidening {
    * It is the responsibility of the caller to recurse into structs, maps and arrays.
    */
   def isTypeChangeSupported(fromType: AtomicType, toType: AtomicType): Boolean =
-    (fromType, toType) match {
-      case (from, to) if from == to => true
-      // All supported type changes below are supposed to be widening, but to be safe, reject any
-      // non-widening change upfront.
-      case (from, to) if !Cast.canUpCast(from, to) => false
-      case (ByteType, ShortType) => true
-      case (ByteType | ShortType, IntegerType) => true
-      case _ => false
-    }
+    TypeWideningShims.isTypeChangeSupported(fromType = fromType, toType = toType)
 
   /**
    * Returns whether the given type change can be applied during schema evolution. Only a
    * subset of supported type changes are considered for schema evolution.
    */
-  def isTypeChangeSupportedForSchemaEvolution(fromType: AtomicType, toType: AtomicType): Boolean =
+  def isTypeChangeSupportedForSchemaEvolution(
+      fromType: AtomicType,
+      toType: AtomicType,
+      uniformIcebergCompatibleOnly: Boolean): Boolean =
+    TypeWideningShims.isTypeChangeSupportedForSchemaEvolution(
+      fromType = fromType,
+      toType = toType
+    ) && (
+      !uniformIcebergCompatibleOnly ||
+        isTypeChangeSupportedByIceberg(fromType = fromType, toType = toType)
+    )
+
+  /**
+   * Returns whether the given type change is supported by Iceberg, and by extension can be read
+   * using Uniform. See https://iceberg.apache.org/spec/#schema-evolution.
+   * Note that these are type promotions supported by Iceberg V1 & V2 (both support the same type
+   * promotions). Iceberg V3 will add support for date -> timestamp_ntz and void -> any but Uniform
+   * doesn't currently support Iceberg V3.
+   */
+  def isTypeChangeSupportedByIceberg(fromType: AtomicType, toType: AtomicType): Boolean =
     (fromType, toType) match {
       case (from, to) if from == to => true
       case (from, to) if !isTypeChangeSupported(from, to) => false
-      case (ByteType, ShortType) => true
-      case (ByteType | ShortType, IntegerType) => true
+      case (from: IntegralType, to: IntegralType) => from.defaultSize <= to.defaultSize
+      case (FloatType, DoubleType) => true
+      case (from: DecimalType, to: DecimalType)
+        if from.scale == to.scale && from.precision <= to.precision => true
       case _ => false
     }
 
@@ -94,8 +109,9 @@ object TypeWidening {
    * happen unless a non-compliant writer applied a type change that is not part of the feature
    * specification.
    */
-  def assertTableReadable(protocol: Protocol, metadata: Metadata): Unit = {
-    if (!isSupported(protocol) ||
+  def assertTableReadable(conf: SQLConf, protocol: Protocol, metadata: Metadata): Unit = {
+    if (conf.getConf(DeltaSQLConf.DELTA_TYPE_WIDENING_BYPASS_UNSUPPORTED_TYPE_CHANGE_CHECK) ||
+      !isSupported(protocol) ||
       !TypeWideningMetadata.containsTypeWideningMetadata(metadata.schema)) {
       return
     }
@@ -103,6 +119,20 @@ object TypeWidening {
     TypeWideningMetadata.getAllTypeChanges(metadata.schema).foreach {
       case (_, TypeChange(_, from: AtomicType, to: AtomicType, _))
         if isTypeChangeSupported(from, to) =>
+      // Char/Varchar/String type changes are allowed and independent from type widening.
+      // Implementations shouldn't record these type changes in the table metadata per the Delta
+      // spec, but in case that happen we really shouldn't block reading the table.
+      case (_, TypeChange(_,
+        _: StringType | CharType(_) | VarcharType(_),
+        _: StringType | CharType(_) | VarcharType(_), _)) =>
+      case (fieldPath, TypeChange(_, from: AtomicType, to: AtomicType, _))
+        if stableFeatureCanReadTypeChange(from, to) =>
+        val featureName = if (protocol.isFeatureSupported(TypeWideningPreviewTableFeature)) {
+          TypeWideningPreviewTableFeature
+        } else {
+          TypeWideningTableFeature
+        }
+        throw DeltaErrors.unsupportedTypeChangeInPreview(fieldPath, from, to, featureName)
       case (fieldPath, invalidChange) =>
         throw DeltaErrors.unsupportedTypeChangeInSchema(
           fieldPath ++ invalidChange.fieldPath,
@@ -113,31 +143,23 @@ object TypeWidening {
   }
 
   /**
-   * Filter the given list of files to only keep files that were written before the latest type
-   * change, if any. These older files contain a column or field with a type that is different than
-   * in the current table schema and must be rewritten when dropping the type widening table feature
-   * to make the table readable by readers that don't support the feature.
+   * Whether the given type change is supported in the stable version of the feature. Used to
+   * provide a helpful error message during the preview phase if upgrading to Delta 4.0 would allow
+   * reading the table.
    */
-  def filterFilesRequiringRewrite(snapshot: Snapshot, files: Seq[AddFile]): Seq[AddFile] =
-     TypeWideningMetadata.getLatestTypeChangeVersion(snapshot.metadata.schema) match {
-      case Some(latestVersion) =>
-        files.filter(_.defaultRowCommitVersion match {
-            case Some(version) => version < latestVersion
-            // Files written before the type widening table feature was added to the table don't
-            // have a defaultRowCommitVersion. That does mean they were written before the latest
-            // type change.
-            case None => true
-        })
-      case None =>
-        Seq.empty
+  private def stableFeatureCanReadTypeChange(fromType: AtomicType, toType: AtomicType): Boolean =
+    (fromType, toType) match {
+      case (from, to) if from == to => true
+      case (from: IntegralType, to: IntegralType) => from.defaultSize <= to.defaultSize
+      case (FloatType, DoubleType) => true
+      case (DateType, TimestampNTZType) => true
+      case (ByteType | ShortType | IntegerType, DoubleType) => true
+      case (from: DecimalType, to: DecimalType) => to.isWiderThan(from)
+      // Byte, Short, Integer are all stored as INT32 in parquet. The parquet readers support
+      // converting INT32 to Decimal(10, 0) and wider.
+      case (ByteType | ShortType | IntegerType, d: DecimalType) => d.isWiderThan(IntegerType)
+      // The parquet readers support converting INT64 to Decimal(20, 0) and wider.
+      case (LongType, d: DecimalType) => d.isWiderThan(LongType)
+      case _ => false
     }
-
-
-  /**
-   * Return the number of files that were written before the latest type change and that then
-   * contain a column or field with a type that is different from the current able schema.
-   */
-  def numFilesRequiringRewrite(snapshot: Snapshot): Long = {
-    filterFilesRequiringRewrite(snapshot, snapshot.allFiles.collect()).size
-  }
 }

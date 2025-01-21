@@ -17,7 +17,7 @@ package io.delta.kernel.test
 
 import java.util.UUID
 
-import io.delta.kernel.client._
+import io.delta.kernel.engine._
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
@@ -31,7 +31,7 @@ import scala.collection.JavaConverters._
  *
  * [[MockListFromFileSystemClient]] - mocks the `listFrom` API within [[FileSystemClient]].
  */
-trait MockFileSystemClientUtils extends MockTableClientUtils {
+trait MockFileSystemClientUtils extends MockEngineUtils {
 
   val dataPath = new Path("/fake/path/to/table/")
   val logPath = new Path(dataPath, "_delta_log")
@@ -86,7 +86,7 @@ trait MockFileSystemClientUtils extends MockTableClientUtils {
     }
   }
 
-  /* Create input function for createMockTableClient to implement listFrom from a list of
+  /* Create input function for createMockEngine to implement listFrom from a list of
    * file statuses.
    */
   def listFromProvider(files: Seq[FileStatus])(filePath: String): Seq[FileStatus] = {
@@ -94,34 +94,34 @@ trait MockFileSystemClientUtils extends MockTableClientUtils {
   }
 
   /**
-   * Create a mock [[TableClient]] to mock the [[FileSystemClient.listFrom]] calls using
+   * Create a mock [[Engine]] to mock the [[FileSystemClient.listFrom]] calls using
    * the given contents. The contents are filtered depending upon the list from path prefix.
    */
-  def createMockFSListFromTableClient(
+  def createMockFSListFromEngine(
       contents: Seq[FileStatus],
       parquetHandler: ParquetHandler,
-      jsonHandler: JsonHandler): TableClient = {
-    mockTableClient(fileSystemClient =
+      jsonHandler: JsonHandler): Engine = {
+    mockEngine(fileSystemClient =
       new MockListFromFileSystemClient(listFromProvider(contents)),
       parquetHandler = parquetHandler,
       jsonHandler = jsonHandler)
   }
 
   /**
-   * Create a mock [[TableClient]] to mock the [[FileSystemClient.listFrom]] calls using
+   * Create a mock [[Engine]] to mock the [[FileSystemClient.listFrom]] calls using
    * the given contents. The contents are filtered depending upon the list from path prefix.
    */
-  def createMockFSListFromTableClient(contents: Seq[FileStatus]): TableClient = {
-    mockTableClient(fileSystemClient =
+  def createMockFSListFromEngine(contents: Seq[FileStatus]): Engine = {
+    mockEngine(fileSystemClient =
       new MockListFromFileSystemClient(listFromProvider(contents)))
   }
 
   /**
-   * Create a mock [[TableClient]] to mock the [[FileSystemClient.listFrom]] calls using
+   * Create a mock [[Engine]] to mock the [[FileSystemClient.listFrom]] calls using
    * [[MockListFromFileSystemClient]].
    */
-  def createMockFSListFromTableClient(listFromProvider: String => Seq[FileStatus]): TableClient = {
-    mockTableClient(fileSystemClient = new MockListFromFileSystemClient(listFromProvider))
+  def createMockFSListFromEngine(listFromProvider: String => Seq[FileStatus]): Engine = {
+    mockEngine(fileSystemClient = new MockListFromFileSystemClient(listFromProvider))
   }
 }
 
@@ -140,4 +140,49 @@ class MockListFromFileSystemClient(listFromProvider: String => Seq[FileStatus])
   }
 
   def getListFromCalls: Seq[String] = listFromCalls
+}
+
+/**
+ * A mock [[FileSystemClient]] that answers `listFrom` calls from a given content provider and
+ * implements the identity function for `resolvePath` calls.
+ *
+ * It also maintains metrics on number of times `listFrom` is called and arguments for each call.
+ */
+class MockListFromResolvePathFileSystemClient(listFromProvider: String => Seq[FileStatus])
+  extends BaseMockFileSystemClient {
+  private var listFromCalls: Seq[String] = Seq.empty
+
+  override def listFrom(filePath: String): CloseableIterator[FileStatus] = {
+    listFromCalls = listFromCalls :+ filePath
+    toCloseableIterator(listFromProvider(filePath).iterator.asJava)
+  }
+
+  override def resolvePath(path: String): String = path
+
+  def getListFromCalls: Seq[String] = listFromCalls
+}
+
+/**
+ * A mock [[FileSystemClient]] that answers `listFrom` call from the given list of file statuses
+ * and tracks the delete calls.
+ * @param listContents List of file statuses to be returned by `listFrom` call.
+ */
+class MockListFromDeleteFileSystemClient(listContents: Seq[FileStatus])
+    extends BaseMockFileSystemClient {
+  private val listOfFiles: Seq[String] = listContents.map(_.getPath).toSeq
+  private var isListFromAlreadyCalled = false
+  private var deleteCalls: Seq[String] = Seq.empty
+
+  override def listFrom(filePath: String): CloseableIterator[FileStatus] = {
+    assert(!isListFromAlreadyCalled, "listFrom should be called only once")
+    isListFromAlreadyCalled = true
+    toCloseableIterator(listContents.sortBy(_.getPath).asJava.iterator())
+  }
+
+  override def delete(path: String): Boolean = {
+    deleteCalls = deleteCalls :+ path
+    listOfFiles.contains(path)
+  }
+
+  def getDeleteCalls: Seq[String] = deleteCalls
 }

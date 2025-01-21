@@ -16,112 +16,272 @@
 
 package io.delta.kernel.internal;
 
-import java.util.List;
-
-import io.delta.kernel.types.StructType;
+import static io.delta.kernel.internal.DeltaErrors.*;
+import static io.delta.kernel.internal.TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED;
 
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.util.ColumnMapping;
-import static io.delta.kernel.internal.DeltaErrors.*;
+import io.delta.kernel.internal.util.Tuple2;
+import io.delta.kernel.types.StructType;
+import java.util.*;
+import java.util.stream.Collectors;
 
-/**
- * Contains utility methods related to the Delta table feature support in protocol.
- */
+/** Contains utility methods related to the Delta table feature support in protocol. */
 public class TableFeatures {
 
-    ////////////////////
-    // Helper Methods //
-    ////////////////////
+  private static final Set<String> SUPPORTED_WRITER_FEATURES =
+      Collections.unmodifiableSet(
+          new HashSet<String>() {
+            {
+              add("appendOnly");
+              add("inCommitTimestamp");
+              add("columnMapping");
+              add("typeWidening-preview");
+              add("typeWidening");
+              add(DOMAIN_METADATA_FEATURE_NAME);
+              add(ROW_TRACKING_FEATURE_NAME);
+            }
+          });
 
-    public static void validateReadSupportedTable(Protocol protocol, Metadata metadata) {
-        switch (protocol.getMinReaderVersion()) {
-            case 1:
-                break;
-            case 2:
-                ColumnMapping.throwOnUnsupportedColumnMappingMode(metadata);
-                break;
-            case 3:
-                List<String> readerFeatures = protocol.getReaderFeatures();
-                for (String readerFeature : readerFeatures) {
-                    switch (readerFeature) {
-                        case "columnMapping":
-                            ColumnMapping.throwOnUnsupportedColumnMappingMode(metadata);
-                            break;
-                        case "deletionVectors": // fall through
-                        case "timestampNtz": // fall through
-                        case "vacuumProtocolCheck": // fall through
-                        case "v2Checkpoint":
-                            break;
-                        default:
-                            throw DeltaErrors.unsupportedReadFeature(3, readerFeature);
-                    }
-                }
-                break;
-            default:
-                throw unsupportedReaderProtocol(protocol.getMinReaderVersion());
+  private static final Set<String> SUPPORTED_READER_FEATURES =
+      Collections.unmodifiableSet(
+          new HashSet<String>() {
+            {
+              add("columnMapping");
+              add("deletionVectors");
+              add("timestampNtz");
+              add("typeWidening-preview");
+              add("typeWidening");
+              add("vacuumProtocolCheck");
+              add("variantType");
+              add("variantType-preview");
+              add("v2Checkpoint");
+            }
+          });
+
+  public static final String DOMAIN_METADATA_FEATURE_NAME = "domainMetadata";
+
+  public static final String ROW_TRACKING_FEATURE_NAME = "rowTracking";
+
+  public static final String INVARIANTS_FEATURE_NAME = "invariants";
+
+  /** The minimum writer version required to support table features. */
+  public static final int TABLE_FEATURES_MIN_WRITER_VERSION = 7;
+
+  ////////////////////
+  // Helper Methods //
+  ////////////////////
+
+  public static void validateReadSupportedTable(
+      Protocol protocol, String tablePath, Optional<Metadata> metadata) {
+    switch (protocol.getMinReaderVersion()) {
+      case 1:
+        break;
+      case 2:
+        metadata.ifPresent(ColumnMapping::throwOnUnsupportedColumnMappingMode);
+        break;
+      case 3:
+        List<String> readerFeatures = protocol.getReaderFeatures();
+        if (!SUPPORTED_READER_FEATURES.containsAll(readerFeatures)) {
+          Set<String> unsupportedFeatures = new HashSet<>(readerFeatures);
+          unsupportedFeatures.removeAll(SUPPORTED_READER_FEATURES);
+          throw DeltaErrors.unsupportedReaderFeature(tablePath, unsupportedFeatures);
         }
+        if (readerFeatures.contains("columnMapping")) {
+          metadata.ifPresent(ColumnMapping::throwOnUnsupportedColumnMappingMode);
+        }
+        break;
+      default:
+        throw DeltaErrors.unsupportedReaderProtocol(tablePath, protocol.getMinReaderVersion());
+    }
+  }
+
+  /**
+   * Utility method to validate whether the given table is supported for writing from Kernel.
+   * Currently, the support is as follows:
+   *
+   * <ul>
+   *   <li>protocol writer version 1.
+   *   <li>protocol writer version 2 only with appendOnly feature enabled.
+   *   <li>protocol writer version 7 with {@code appendOnly}, {@code inCommitTimestamp}, {@code
+   *       columnMapping}, {@code typeWidening}, {@code domainMetadata}, {@code rowTracking} feature
+   *       enabled.
+   * </ul>
+   *
+   * @param protocol Table protocol
+   * @param metadata Table metadata
+   * @param tableSchema Table schema
+   */
+  public static void validateWriteSupportedTable(
+      Protocol protocol, Metadata metadata, StructType tableSchema, String tablePath) {
+    int minWriterVersion = protocol.getMinWriterVersion();
+    switch (minWriterVersion) {
+      case 1:
+        break;
+      case 2:
+        // Append-only and column invariants are the writer features added in version 2
+        // Append-only is supported, but not the invariants
+        validateNoInvariants(tableSchema);
+        break;
+      case 3:
+        // Check constraints are added in version 3
+        throw unsupportedWriterProtocol(tablePath, minWriterVersion);
+      case 4:
+        // CDF and generated columns are writer features added in version 4
+        throw unsupportedWriterProtocol(tablePath, minWriterVersion);
+      case 5:
+        // Column mapping is the only one writer feature added in version 5
+        throw unsupportedWriterProtocol(tablePath, minWriterVersion);
+      case 6:
+        // Identity is the only one writer feature added in version 6
+        throw unsupportedWriterProtocol(tablePath, minWriterVersion);
+      case 7:
+        for (String writerFeature : protocol.getWriterFeatures()) {
+          if (writerFeature.equals(INVARIANTS_FEATURE_NAME)) {
+            // For version 7, we allow 'invariants' to be present in the protocol's writerFeatures
+            // to unblock certain use cases, provided that no invariants are defined in the schema.
+            validateNoInvariants(tableSchema);
+          } else if (!SUPPORTED_WRITER_FEATURES.contains(writerFeature)) {
+            throw unsupportedWriterFeature(tablePath, writerFeature);
+          }
+        }
+
+        // Eventually we may have a way to declare and enforce dependencies between features.
+        // By putting this check for row tracking here, it makes it easier to spot that row
+        // tracking defines such a dependency that can be implicitly checked.
+        if (isRowTrackingSupported(protocol) && !isDomainMetadataSupported(protocol)) {
+          throw DeltaErrors.rowTrackingSupportedWithDomainMetadataUnsupported();
+        }
+        break;
+      default:
+        throw unsupportedWriterProtocol(tablePath, minWriterVersion);
+    }
+  }
+
+  /**
+   * Given the automatically enabled features from Delta table metadata, returns the minimum
+   * required reader and writer version that satisfies all enabled table features in the metadata.
+   *
+   * @param enabledFeatures the automatically enabled features from the Delta table metadata
+   * @return the minimum required reader and writer version that satisfies all enabled table
+   */
+  public static Tuple2<Integer, Integer> minProtocolVersionFromAutomaticallyEnabledFeatures(
+      Set<String> enabledFeatures) {
+
+    int readerVersion = 0;
+    int writerVersion = 0;
+
+    for (String feature : enabledFeatures) {
+      readerVersion = Math.max(readerVersion, getMinReaderVersion(feature));
+      writerVersion = Math.max(writerVersion, getMinWriterVersion(feature));
     }
 
-    /**
-     * Utility method to validate whether the given table is supported for writing from Kernel.
-     * Currently, the support is as follows:
-     * <ul>
-     *     <li>protocol writer version 1.</li>
-     *     <li>protocol writer version 2 only with appendOnly feature enabled.</li>
-     *     <li>protocol writer version 7 with "appendOnly" feature enabled.</li>
-     * </ul>
-     *
-     * @param protocol    Table protocol
-     * @param metadata    Table metadata
-     * @param tableSchema Table schema
-     */
-    public static void validateWriteSupportedTable(
-            Protocol protocol,
-            Metadata metadata,
-            StructType tableSchema) {
-        int minWriterVersion = protocol.getMinWriterVersion();
-        switch (minWriterVersion) {
-            case 1:
-                break;
-            case 2:
-                // Append-only and column invariants are the writer features added in version 2
-                // Append-only is supported, but not the invariants
-                validateNoInvariants(minWriterVersion, tableSchema);
-                break;
-            case 3:
-                // Check constraints are added in version 3
-                throw unsupportedWriterProtocol(minWriterVersion);
-            case 4:
-                // CDF and generated columns are writer features added in version 4
-                throw unsupportedWriterProtocol(minWriterVersion);
-            case 5:
-                // Column mapping is the only one writer feature added in version 5
-                throw unsupportedWriterProtocol(minWriterVersion);
-            case 6:
-                // Identity is the only one writer feature added in version 6
-                throw unsupportedWriterProtocol(minWriterVersion);
-            case 7:
-                for (String writerFeature : protocol.getWriterFeatures()) {
-                    switch (writerFeature) {
-                        // Only supported writer features as of today in Kernel
-                        case "appendOnly":
-                            break;
-                        default:
-                            throw unsupportedWriteFeature(7, writerFeature);
-                    }
-                }
-                break;
-            default:
-                throw unsupportedWriterProtocol(minWriterVersion);
-        }
-    }
+    return new Tuple2<>(readerVersion, writerVersion);
+  }
 
-    private static void validateNoInvariants(int minWriterVersion, StructType tableSchema) {
-        boolean hasInvariants = tableSchema.fields().stream().anyMatch(
-                field -> field.getMetadata().contains("delta.invariants"));
-        if (hasInvariants) {
-            throw unsupportedWriteFeature(minWriterVersion, "invariants");
-        }
+  /**
+   * Extract the writer features that should be enabled automatically based on the metadata which
+   * are not already enabled. For example, the {@code inCommitTimestamp} feature should be enabled
+   * when the delta property name (delta.enableInCommitTimestamps) is set to true in the metadata if
+   * it is not already enabled.
+   *
+   * @param metadata the metadata of the table
+   * @param protocol the protocol of the table
+   * @return the writer features that should be enabled automatically
+   */
+  public static Set<String> extractAutomaticallyEnabledWriterFeatures(
+      Metadata metadata, Protocol protocol) {
+    return TableFeatures.SUPPORTED_WRITER_FEATURES.stream()
+        .filter(f -> metadataRequiresWriterFeatureToBeEnabled(metadata, f))
+        .filter(
+            f -> protocol.getWriterFeatures() == null || !protocol.getWriterFeatures().contains(f))
+        .collect(Collectors.toSet());
+  }
+
+  /**
+   * Checks if the table protocol supports the "domainMetadata" writer feature.
+   *
+   * @param protocol the protocol to check
+   * @return true if the "domainMetadata" feature is supported, false otherwise
+   */
+  public static boolean isDomainMetadataSupported(Protocol protocol) {
+    return isWriterFeatureSupported(protocol, DOMAIN_METADATA_FEATURE_NAME);
+  }
+
+  /**
+   * Check if the table protocol supports the "rowTracking" writer feature.
+   *
+   * @param protocol the protocol to check
+   * @return true if the protocol supports row tracking, false otherwise
+   */
+  public static boolean isRowTrackingSupported(Protocol protocol) {
+    return isWriterFeatureSupported(protocol, ROW_TRACKING_FEATURE_NAME);
+  }
+
+  /**
+   * Get the minimum reader version required for a feature.
+   *
+   * @param feature the feature
+   * @return the minimum reader version required for the feature
+   */
+  private static int getMinReaderVersion(String feature) {
+    switch (feature) {
+      case "inCommitTimestamp":
+        return 3;
+      default:
+        return 1;
     }
+  }
+
+  /**
+   * Get the minimum writer version required for a feature.
+   *
+   * @param feature the feature
+   * @return the minimum writer version required for the feature
+   */
+  private static int getMinWriterVersion(String feature) {
+    switch (feature) {
+      case "inCommitTimestamp":
+        return 7;
+      default:
+        return 2;
+    }
+  }
+
+  /**
+   * Determine whether a writer feature must be supported and enabled to satisfy the metadata
+   * requirements.
+   *
+   * @param metadata the table metadata
+   * @param feature the writer feature to check
+   * @return whether the writer feature must be enabled
+   */
+  private static boolean metadataRequiresWriterFeatureToBeEnabled(
+      Metadata metadata, String feature) {
+    switch (feature) {
+      case "inCommitTimestamp":
+        return IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata);
+      default:
+        return false;
+    }
+  }
+
+  private static void validateNoInvariants(StructType tableSchema) {
+    boolean hasInvariants =
+        tableSchema.fields().stream()
+            .anyMatch(field -> field.getMetadata().contains("delta.invariants"));
+    if (hasInvariants) {
+      throw columnInvariantsNotSupported();
+    }
+  }
+
+  private static boolean isWriterFeatureSupported(Protocol protocol, String featureName) {
+    List<String> writerFeatures = protocol.getWriterFeatures();
+    if (writerFeatures == null) {
+      return false;
+    }
+    return writerFeatures.contains(featureName)
+        && protocol.getMinWriterVersion() >= TABLE_FEATURES_MIN_WRITER_VERSION;
+  }
 }

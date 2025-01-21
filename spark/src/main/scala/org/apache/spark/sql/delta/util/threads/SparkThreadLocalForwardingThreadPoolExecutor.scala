@@ -21,8 +21,10 @@ import java.util.concurrent._
 
 import scala.collection.JavaConverters._
 
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
+
 import org.apache.spark.{SparkContext, TaskContext}
-import org.apache.spark.internal.Logging
+import org.apache.spark.internal.{LoggingShims, MDC}
 import org.apache.spark.util.{Utils => SparkUtils}
 
 /**
@@ -46,7 +48,7 @@ class SparkThreadLocalForwardingThreadPoolExecutor(
 }
 
 
-trait SparkThreadLocalCapturingHelper extends Logging {
+trait SparkThreadLocalCapturingHelper extends LoggingShims {
   // At the time of creating this instance we capture the task context and command context.
   val capturedTaskContext = TaskContext.get()
   val sparkContext = SparkContext.getActive
@@ -75,7 +77,8 @@ trait SparkThreadLocalCapturingHelper extends Logging {
       body
     } catch {
       case t: Throwable =>
-        logError(s"Exception in thread ${Thread.currentThread().getName}", t)
+        logError(log"Exception in thread " +
+          log"${MDC(DeltaLogKeys.THREAD_NAME, Thread.currentThread().getName)}", t)
         throw t
     } finally {
       TaskContext.setTaskContext(previousTaskContext)

@@ -25,14 +25,17 @@ import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol}
 import org.apache.spark.sql.delta.actions.Protocol.extractAutomaticallyEnabledFeatures
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.convert.{ConvertTargetTable, ConvertUtils}
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.{Column, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference}
 import org.apache.spark.sql.connector.catalog.Table
+import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{LongType, StructType}
@@ -82,13 +85,15 @@ case class CloneTableCommand(
   def handleClone(
       sparkSession: SparkSession,
       txn: OptimisticTransaction,
-      targetDeltaLog: DeltaLog): Seq[Row] = {
+      targetDeltaLog: DeltaLog,
+      commandMetrics: Option[Map[String, SQLMetric]] = None): Seq[Row] = {
     if (!targetPath.isAbsolute) {
       throw DeltaErrors.cloneOnRelativePath(targetIdent.toString)
     }
 
     /** Log clone command information */
-    logInfo("Cloning " + sourceTable.description + s" to $targetPath")
+    logInfo(log"Cloning ${MDC(DeltaLogKeys.CLONE_SOURCE_DESC, sourceTable.description)} to " +
+      log"${MDC(DeltaLogKeys.PATH, targetPath)}")
 
     // scalastyle:off deltahadoopconfiguration
     val hdpConf = sparkSession.sessionState.newHadoopConf()
@@ -113,7 +118,8 @@ case class CloneTableCommand(
       hdpConf = hdpConf,
       deltaOperation = Clone(
         sourceTable.name, sourceTable.snapshot.map(_.version).getOrElse(-1)
-      ))
+      ),
+      commandMetrics = commandMetrics)
   }
 }
 
@@ -194,7 +200,7 @@ abstract class CloneConvertedSource(spark: SparkSession) extends CloneSource {
   def protocol: Protocol = {
     // This is quirky but necessary to add table features such as column mapping if the default
     // protocol version supports table features.
-    Protocol().withFeatures(extractAutomaticallyEnabledFeatures(spark, metadata))
+    Protocol().withFeatures(extractAutomaticallyEnabledFeatures(spark, metadata, Protocol()))
   }
 
   override val clock: Clock = new SystemClock()
@@ -242,12 +248,9 @@ abstract class CloneConvertedSource(spark: SparkSession) extends CloneSource {
     }
   }
 
-  private lazy val fileStats = allFiles.select(
-      coalesce(sum("size"), lit(0L)), count(new Column("*"))).first()
+  def sizeInBytes: Long = convertTargetTable.sizeInBytes
 
-  def sizeInBytes: Long = fileStats.getLong(0)
-
-  def numOfFiles: Long = fileStats.getLong(1)
+  def numOfFiles: Long = convertTargetTable.numFiles
 
   def description: String = s"${format} table ${name}"
 

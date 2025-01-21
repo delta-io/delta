@@ -23,11 +23,13 @@ import scala.collection.mutable
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{AddFile, Protocol}
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeFileIndexWithSnapshotDescriptor, TahoeLogFileIndex}
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.perf.OptimizeMetadataOnlyDeltaQuery
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.planning.PhysicalOperation
@@ -52,7 +54,7 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
   with PredicateHelper
   with DeltaLogging
   with OptimizeMetadataOnlyDeltaQuery
-  with PreprocessTableWithDVs { self: PrepareDeltaScan =>
+  with SubqueryTransformerHelper { self: PrepareDeltaScan =>
 
   /**
    * Tracks the first-access snapshots of other logs planned by this rule. The snapshots are
@@ -204,7 +206,7 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
     } else {
       prepareDeltaScanWithoutFileSkipping(plan)
     }
-    preprocessTablesWithDVs(updatedPlan)
+    updatedPlan
   }
 
   protected def prepareDeltaScanWithoutFileSkipping(plan: LogicalPlan): LogicalPlan = {
@@ -370,10 +372,10 @@ case class PreparedDeltaFileIndex(
       (preparedScan.files.distinct, eventData)
     } else {
       logInfo(
-        s"""
+        log"""
            |Prepared scan does not match actual filters. Reselecting files to query.
-           |Prepared: ${preparedScan.allFilters}
-           |Actual: ${currentFilters}
+           |Prepared: ${MDC(DeltaLogKeys.FILTER, preparedScan.allFilters)}
+           |Actual: ${MDC(DeltaLogKeys.FILTER2, currentFilters)}
          """.stripMargin)
       val eventData = Map(
         "reused" -> false,

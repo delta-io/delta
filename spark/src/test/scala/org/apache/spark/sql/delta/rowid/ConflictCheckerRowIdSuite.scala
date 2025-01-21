@@ -68,7 +68,7 @@ class ConflictCheckerRowIdSuite extends QueryTest
         Array.empty
       }
 
-      val (_, futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(txnA, txnB)
+      val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(txnA, txnB)
       ThreadUtils.awaitResult(futureA, Duration.Inf)
       ThreadUtils.awaitResult(futureB, Duration.Inf)
 
@@ -97,7 +97,7 @@ class ConflictCheckerRowIdSuite extends QueryTest
         Array.empty
       }
 
-      val (_, futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(txnA, txnB)
+      val (futureA, futureB) = runTxnsWithOrder__A_Start__B__A_End(txnA, txnB)
       ThreadUtils.awaitResult(futureA, Duration.Inf)
       ThreadUtils.awaitResult(futureB, Duration.Inf)
 
@@ -143,7 +143,7 @@ class ConflictCheckerRowIdSuite extends QueryTest
         Array.empty
       }
 
-      val (_, futureA, futureB, futureC) = runTxnsWithOrder__A_Start__B__C__A_End(txnA, txnB, txnC)
+      val (futureA, futureB, futureC) = runTxnsWithOrder__A_Start__B__C__A_End(txnA, txnB, txnC)
       ThreadUtils.awaitResult(futureA, Duration.Inf)
       ThreadUtils.awaitResult(futureB, Duration.Inf)
       ThreadUtils.awaitResult(futureC, Duration.Inf)

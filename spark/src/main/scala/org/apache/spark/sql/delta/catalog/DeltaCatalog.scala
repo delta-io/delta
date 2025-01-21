@@ -27,26 +27,28 @@ import scala.collection.mutable
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterBy, ClusterBySpec}
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterByTransform => TempClusterByTransform}
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaErrors, DeltaTableUtils}
-import org.apache.spark.sql.delta.{DeltaLog, DeltaOptions}
+import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaConfigs, DeltaErrors, DeltaTableUtils}
+import org.apache.spark.sql.delta.{DeltaLog, DeltaOptions, IdentityColumn}
 import org.apache.spark.sql.delta.DeltaTableIdentifier.gluePermissionError
 import org.apache.spark.sql.delta.commands._
 import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.spark.sql.delta.tablefeatures.DropFeature
 import org.apache.spark.sql.delta.util.PartitionUtils
+import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkException
-import org.apache.spark.internal.Logging
+import org.apache.spark.internal.{Logging, MDC}
 import org.apache.spark.sql.{AnalysisException, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{NoSuchDatabaseException, NoSuchNamespaceException, NoSuchTableException, UnresolvedAttribute, UnresolvedFieldName, UnresolvedFieldPosition}
 import org.apache.spark.sql.catalyst.catalog.{BucketSpec, CatalogTable, CatalogTableType, CatalogUtils, SessionCatalog}
-import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, QualifiedColType}
+import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, QualifiedColType, SyncIdentity}
 import org.apache.spark.sql.connector.catalog.{DelegatingCatalogExtension, Identifier, StagedTable, StagingTableCatalog, SupportsWrite, Table, TableCapability, TableCatalog, TableChange, V1Table}
 import org.apache.spark.sql.connector.catalog.TableCapability._
 import org.apache.spark.sql.connector.catalog.TableChange._
@@ -69,6 +71,12 @@ class DeltaCatalog extends DelegatingCatalogExtension
 
 
   val spark = SparkSession.active
+
+  private lazy val isUnityCatalog: Boolean = {
+    val delegateField = classOf[DelegatingCatalogExtension].getDeclaredField("delegate")
+    delegateField.setAccessible(true)
+    delegateField.get(this).getClass.getCanonicalName.startsWith("io.unitycatalog.")
+  }
 
   /**
    * Creates a Delta table
@@ -107,6 +115,12 @@ class DeltaCatalog extends DelegatingCatalogExtension
     }.toMap
     val (partitionColumns, maybeBucketSpec, maybeClusterBySpec) = convertTransforms(partitions)
     validateClusterBySpec(maybeClusterBySpec, schema)
+    // Check partition columns are not IDENTITY columns.
+    partitionColumns.foreach { colName =>
+      if (ColumnWithDefaultExprUtils.isIdentityColumn(schema(colName))) {
+        throw DeltaErrors.identityColumnPartitionNotSupported(colName)
+      }
+    }
     var newSchema = schema
     var newPartitionColumns = partitionColumns
     var newBucketSpec = maybeBucketSpec
@@ -134,13 +148,24 @@ class DeltaCatalog extends DelegatingCatalogExtension
     }
     var locUriOpt = location.map(CatalogUtils.stringToURI)
     val existingTableOpt = getExistingTableIfExists(id)
+    // PROP_IS_MANAGED_LOCATION indicates that the table location is not user-specified but
+    // system-generated. The table should be created as managed table in this case.
+    val isManagedLocation = Option(allTableProperties.get(TableCatalog.PROP_IS_MANAGED_LOCATION))
+      .exists(_.equalsIgnoreCase("true"))
+    // Note: Spark generates the table location for managed tables in
+    // `DeltaCatalog#delegate#createTable`, so `isManagedLocation` should never be true if
+    // Unity Catalog is not involved. For safety we also check `isUnityCatalog` here.
+    val respectManagedLoc = isUnityCatalog || org.apache.spark.util.Utils.isTesting
+    val tableType = if (location.isEmpty || (isManagedLocation && respectManagedLoc)) {
+      CatalogTableType.MANAGED
+    } else {
+      CatalogTableType.EXTERNAL
+    }
     val loc = locUriOpt
       .orElse(existingTableOpt.flatMap(_.storage.locationUri))
       .getOrElse(spark.sessionState.catalog.defaultTablePath(id))
     val storage = DataSource.buildStorageFormatFromOptions(writeOptions)
       .copy(locationUri = Option(loc))
-    val tableType =
-      if (location.isDefined) CatalogTableType.EXTERNAL else CatalogTableType.MANAGED
     val commentOpt = Option(allTableProperties.get("comment"))
 
 
@@ -181,7 +206,19 @@ class DeltaCatalog extends DelegatingCatalogExtension
       operation.mode,
       writer,
       operation,
-      tableByPath = isByPath).run(spark)
+      tableByPath = isByPath,
+      // We should invoke the Spark catalog plugin API to create the table, to
+      // respect third party catalogs. Note: only handle CREATE TABLE for now, we
+      // should support CTAS later.
+      // TODO: Spark `V2SessionCatalog` mistakenly treat tables with location as EXTERNAL table.
+      //       Before this bug is fixed, we should only call the catalog plugin API to create tables
+      //       if UC is enabled to replace `V2SessionCatalog`.
+      createTableFunc = Option.when(isUnityCatalog && sourceQuery.isEmpty) {
+        v1Table => {
+          val t = V1Table(v1Table)
+          super.createTable(ident, t.columns(), t.partitioning, t.properties)
+        }
+      }).run(spark)
 
     loadTable(ident)
   }
@@ -209,8 +246,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
             throw e
           }
       case e: AnalysisException if gluePermissionError(e) && isPathIdentifier(ident) =>
-        logWarning("Received an access denied error from Glue. Assuming this " +
-          s"identifier ($ident) is path based.", e)
+        logWarning(log"Received an access denied error from Glue. Assuming this " +
+          log"identifier (${MDC(DeltaLogKeys.TABLE_NAME, ident)}) is path based.", e)
         newDeltaPathTable(ident)
     }
   }
@@ -311,12 +348,24 @@ class DeltaCatalog extends DelegatingCatalogExtension
       properties: util.Map[String, String]) : Table =
     recordFrameProfile("DeltaCatalog", "createTable") {
       if (DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties))) {
+        // TODO: we should extract write options from table properties for all the cases. We
+        //       can remove the UC check when we have confidence.
+        val respectOptions = isUnityCatalog || properties.containsKey("test.simulateUC")
+        val (props, writeOptions) = if (respectOptions) {
+          val (props, writeOptions) = getTablePropsAndWriteOptions(properties)
+          expandTableProps(props, writeOptions, spark.sessionState.conf)
+          props.remove("test.simulateUC")
+          (props, writeOptions)
+        } else {
+          (properties, Map.empty[String, String])
+        }
+
         createDeltaTable(
           ident,
           schema,
           partitions,
-          properties,
-          Map.empty,
+          props,
+          writeOptions,
           sourceQuery = None,
           TableCreationModes.Create
         )
@@ -449,7 +498,9 @@ class DeltaCatalog extends DelegatingCatalogExtension
     var validatedConfigurations =
       DeltaConfigs.validateConfigurations(tableDesc.properties)
     ClusteredTableUtils.validateExistingTableFeatureProperties(validatedConfigurations)
-    // Add needed configs for Clustered table.
+    // Add needed configs for Clustered table. Note that [[PROP_CLUSTERING_COLUMNS]] can only
+    // be added after [[DeltaConfigs.validateConfigurations]] to avoid non-user configurable check
+    // failure.
     if (maybeClusterBySpec.nonEmpty) {
       validatedConfigurations =
         validatedConfigurations ++
@@ -485,6 +536,44 @@ class DeltaCatalog extends DelegatingCatalogExtension
     }
   }
 
+  private def getTablePropsAndWriteOptions(properties: util.Map[String, String])
+  : (util.Map[String, String], Map[String, String]) = {
+    val props = new util.HashMap[String, String]()
+    // Options passed in through the SQL API will show up both with an "option." prefix and
+    // without in Spark 3.1, so we need to remove those from the properties
+    val optionsThroughProperties = properties.asScala.collect {
+      case (k, _) if k.startsWith(TableCatalog.OPTION_PREFIX) =>
+        k.stripPrefix(TableCatalog.OPTION_PREFIX)
+    }.toSet
+    val writeOptions = new util.HashMap[String, String]()
+    properties.asScala.foreach { case (k, v) =>
+      if (!k.startsWith(TableCatalog.OPTION_PREFIX) && !optionsThroughProperties.contains(k)) {
+        // Add to properties
+        props.put(k, v)
+      } else if (optionsThroughProperties.contains(k)) {
+        writeOptions.put(k, v)
+      }
+    }
+    (props, writeOptions.asScala.toMap)
+  }
+
+  private def expandTableProps(
+      props: util.Map[String, String],
+      options: Map[String, String],
+      conf: SQLConf): Unit = {
+    if (conf.getConf(DeltaSQLConf.DELTA_LEGACY_STORE_WRITER_OPTIONS_AS_PROPS)) {
+      // Legacy behavior
+      options.foreach { case (k, v) => props.put(k, v) }
+    } else {
+      options.foreach { case (k, v) =>
+        // Continue putting in Delta prefixed options to avoid breaking workloads
+        if (k.toLowerCase(Locale.ROOT).startsWith("delta.")) {
+          props.put(k, v)
+        }
+      }
+    }
+  }
+
   /**
    * A staged delta table, which creates a HiveMetaStore entry and appends data if this was a
    * CTAS/RTAS command. We have a ugly way of using this API right now, but it's the best way to
@@ -506,35 +595,11 @@ class DeltaCatalog extends DelegatingCatalogExtension
     override def commitStagedChanges(): Unit = recordFrameProfile(
         "DeltaCatalog", "commitStagedChanges") {
       val conf = spark.sessionState.conf
-      val props = new util.HashMap[String, String]()
-      // Options passed in through the SQL API will show up both with an "option." prefix and
-      // without in Spark 3.1, so we need to remove those from the properties
-      val optionsThroughProperties = properties.asScala.collect {
-        case (k, _) if k.startsWith("option.") => k.stripPrefix("option.")
-      }.toSet
-      val sqlWriteOptions = new util.HashMap[String, String]()
-      properties.asScala.foreach { case (k, v) =>
-        if (!k.startsWith("option.") && !optionsThroughProperties.contains(k)) {
-          // Do not add to properties
-          props.put(k, v)
-        } else if (optionsThroughProperties.contains(k)) {
-          sqlWriteOptions.put(k, v)
-        }
+      val (props, sqlWriteOptions) = getTablePropsAndWriteOptions(properties)
+      if (writeOptions.isEmpty && sqlWriteOptions.nonEmpty) {
+        writeOptions = sqlWriteOptions
       }
-      if (writeOptions.isEmpty && !sqlWriteOptions.isEmpty) {
-        writeOptions = sqlWriteOptions.asScala.toMap
-      }
-      if (conf.getConf(DeltaSQLConf.DELTA_LEGACY_STORE_WRITER_OPTIONS_AS_PROPS)) {
-        // Legacy behavior
-        writeOptions.foreach { case (k, v) => props.put(k, v) }
-      } else {
-        writeOptions.foreach { case (k, v) =>
-          // Continue putting in Delta prefixed options to avoid breaking workloads
-          if (k.toLowerCase(Locale.ROOT).startsWith("delta.")) {
-            props.put(k, v)
-          }
-        }
-      }
+      expandTableProps(props, writeOptions, conf)
       createDeltaTable(
         ident,
         schema,
@@ -589,6 +654,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
       case deltaTable: DeltaTableV2 => deltaTable
       case _ if changes.exists(_.isInstanceOf[ClusterBy]) =>
         throw DeltaErrors.alterClusterByNotOnDeltaTableException()
+      case _ if changes.exists(_.isInstanceOf[SyncIdentity]) =>
+        throw DeltaErrors.identityColumnAlterNonDeltaFormatError()
       case _ => return super.alterTable(ident, changes: _*)
     }
 
@@ -668,10 +735,17 @@ class DeltaCatalog extends DelegatingCatalogExtension
           ifExists = true).run(spark)
 
       case (t, columnChanges) if classOf[ColumnChange].isAssignableFrom(t) =>
+        // TODO: Theoretically we should be able to fetch the snapshot from a txn.
+        val snapshotSchema = table.initialSnapshot.schema
+        val schema = if (!spark.conf.get(DeltaSQLConf.DELTA_BYPASS_CHARVARCHAR_TO_STRING_FIX)) {
+          // Convert (StringType, metadata = 'VARCHAR(n)') into (VARCHAR(n), metadata = '')
+          // so that CHAR/VARCHAR to String conversion can be handled correctly.
+          SchemaUtils.getRawSchemaWithoutCharVarcharMetadata(snapshotSchema)
+        } else {
+          snapshotSchema
+        }
         def getColumn(fieldNames: Seq[String]): (StructField, Option[ColumnPosition]) = {
           columnUpdates.getOrElseUpdate(fieldNames, {
-            // TODO: Theoretically we should be able to fetch the snapshot from a txn.
-            val schema = table.initialSnapshot.schema
             val colName = UnresolvedAttribute(fieldNames).name
             val fieldOpt = schema.findNestedField(fieldNames, includeCollections = true,
               spark.sessionState.conf.resolver)
@@ -681,6 +755,22 @@ class DeltaCatalog extends DelegatingCatalogExtension
             }
             field -> None
           })
+        }
+
+        // Any ColumnChange not explicitly on the allowlist is blocked from making changes on
+        // Identity Columns
+        val disallowedColumnChangesOnIdentityColumns = columnChanges.filterNot {
+            case _: UpdateColumnComment | _: UpdateColumnPosition | _: RenameColumn
+                 | _: SyncIdentity => true
+            case _ => false
+        }
+        disallowedColumnChangesOnIdentityColumns.foreach {
+          case change: ColumnChange =>
+            val field = change.fieldNames()
+            val (existingField, _) = getColumn(field)
+            if (ColumnWithDefaultExprUtils.isIdentityColumn(existingField)) {
+              throw DeltaErrors.identityColumnAlterColumnNotSupported()
+            }
         }
 
         columnChanges.foreach {
@@ -709,6 +799,18 @@ class DeltaCatalog extends DelegatingCatalogExtension
             val (oldField, pos) = getColumn(field)
             columnUpdates(field) = oldField.copy(name = rename.newName()) -> pos
 
+          case sync: SyncIdentity =>
+            syncIdentity = true
+            val field = sync.fieldNames
+            val (oldField, pos) = getColumn(field)
+            if (!ColumnWithDefaultExprUtils.isIdentityColumn(oldField)) {
+              throw DeltaErrors.identityColumnAlterNonIdentityColumnError()
+            }
+            // If the IDENTITY column does not allow explicit insert, high water mark should
+            // always be sync'ed and this is an no-op.
+            if (IdentityColumn.allowExplicitInsert(oldField)) {
+              columnUpdates(field) = oldField.copy() -> pos
+            }
 
           case updateDefault: UpdateColumnDefaultValue =>
             val field = updateDefault.fieldNames()
@@ -761,8 +863,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
             val clusterBySpec = ClusterBySpec(c.clusteringColumns.toSeq)
             validateClusterBySpec(Some(clusterBySpec), table.schema())
           }
-          if (!ClusteredTableUtils.isSupported(table.initialSnapshot.protocol)) {
-            throw DeltaErrors.alterClusterByNotAllowedException()
+          if (table.initialSnapshot.metadata.partitionColumns.nonEmpty) {
+            throw DeltaErrors.alterTableClusterByOnPartitionedTableException()
           }
           AlterTableClusterByDeltaCommand(
             table, c.clusteringColumns.map(_.fieldNames().toSeq).toSeq).run(spark)

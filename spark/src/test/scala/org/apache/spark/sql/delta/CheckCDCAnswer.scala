@@ -47,16 +47,10 @@ trait CheckCDCAnswer extends QueryTest {
       // Results should match the fully monotonized commits. Note that this map will include
       // all versions of the table but only the ones in timestampsByVersion are checked for
       // correctness.
-      val commits = DeltaHistoryManager.getCommits(
-        log.store,
-        log.logPath,
-        start = 0,
-        end = None,
-        log.newDeltaHadoopConf())
-
-      // Note that the timestamps come from filesystem modification timestamps, so they're
-      // milliseconds since epoch and we don't need to deal with timezones.
-      commits.map(f => (f.version -> new Timestamp(f.timestamp))).toMap
+      val commits = log.history.getHistory(start = 0, end = None)
+      // Note that the timestamps are in milliseconds since epoch and we don't need to deal
+      // with timezones.
+      commits.map(f => (f.getVersion -> f.timestamp)).toMap
     }
 
     timestampsByVersion.keySet.foreach { version =>

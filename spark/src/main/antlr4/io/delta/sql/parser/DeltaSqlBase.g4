@@ -73,8 +73,7 @@ singleStatement
 // If you add keywords here that should not be reserved, add them to 'nonReserved' list.
 statement
     : VACUUM (path=STRING | table=qualifiedName)
-        (USING INVENTORY (inventoryTable=qualifiedName | LEFT_PAREN inventoryQuery=subQuery RIGHT_PAREN))?
-        (RETAIN number HOURS)? (DRY RUN)?                               #vacuumTable
+        vacuumModifiers                                                 #vacuumTable
     | (DESC | DESCRIBE) DETAIL (path=STRING | table=qualifiedName)      #describeDeltaDetail
     | GENERATE modeName=identifier FOR TABLE table=qualifiedName        #generate
     | (DESC | DESCRIBE) HISTORY (path=STRING | table=qualifiedName)
@@ -91,7 +90,9 @@ statement
         DROP FEATURE featureName=featureNameValue (TRUNCATE HISTORY)?   #alterTableDropFeature
     | ALTER TABLE table=qualifiedName
         (clusterBySpec | CLUSTER BY NONE)                               #alterTableClusterBy
-    | OPTIMIZE (path=STRING | table=qualifiedName)
+    | ALTER TABLE table=qualifiedName
+        (ALTER | CHANGE) COLUMN? column=qualifiedName SYNC IDENTITY     #alterTableSyncIdentity
+    | OPTIMIZE (path=STRING | table=qualifiedName) FULL?
         (WHERE partitionPredicate=predicateToken)?
         (zorderSpec)?                                                   #optimizeTable
     | REORG TABLE table=qualifiedName
@@ -194,6 +195,29 @@ dataType
     : identifier ('(' INTEGER_VALUE (',' INTEGER_VALUE)* ')')?         #primitiveDataType
     ;
 
+vacuumModifiers
+    : (vacuumType
+    | inventory
+    | retain
+    | dryRun)*
+    ;
+
+vacuumType
+    : LITE|FULL
+    ;
+
+inventory
+    : USING INVENTORY (inventoryTable=qualifiedName | LEFT_PAREN inventoryQuery=subQuery RIGHT_PAREN)
+    ;
+
+retain
+    : RETAIN number HOURS
+    ;
+
+dryRun
+    : DRY RUN
+    ;
+
 number
     : MINUS? DECIMAL_VALUE            #decimalLiteral
     | MINUS? INTEGER_VALUE            #integerLiteral
@@ -232,10 +256,11 @@ exprToken
 // Add keywords here so that people's queries don't break if they have a column name as one of
 // these tokens
 nonReserved
-    : VACUUM | USING | INVENTORY | RETAIN | HOURS | DRY | RUN
+    : VACUUM | FULL | LITE | USING | INVENTORY | RETAIN | HOURS | DRY | RUN
     | CONVERT | TO | DELTA | PARTITIONED | BY
     | DESC | DESCRIBE | LIMIT | DETAIL
-    | GENERATE | FOR | TABLE | CHECK | EXISTS | OPTIMIZE
+    | GENERATE | FOR | TABLE | CHECK | EXISTS | OPTIMIZE | FULL
+    | IDENTITY | SYNC | COLUMN | CHANGE
     | REORG | APPLY | PURGE | UPGRADE | UNIFORM | ICEBERG_COMPAT_VERSION
     | RESTORE | AS | OF
     | ZORDER | LEFT_PAREN | RIGHT_PAREN
@@ -251,9 +276,11 @@ ALTER: 'ALTER';
 APPLY: 'APPLY';
 AS: 'AS';
 BY: 'BY';
+CHANGE: 'CHANGE';
 CHECK: 'CHECK';
 CLONE: 'CLONE';
 CLUSTER: 'CLUSTER';
+COLUMN: 'COLUMN';
 COMMA: ',';
 COMMENT: 'COMMENT';
 CONSTRAINT: 'CONSTRAINT';
@@ -270,14 +297,17 @@ EXISTS: 'EXISTS';
 FALSE: 'FALSE';
 FEATURE: 'FEATURE';
 FOR: 'FOR';
+FULL: 'FULL';
 GENERATE: 'GENERATE';
 HISTORY: 'HISTORY';
 HOURS: 'HOURS';
 ICEBERG_COMPAT_VERSION: 'ICEBERG_COMPAT_VERSION';
+IDENTITY: 'IDENTITY';
 IF: 'IF';
 INVENTORY: 'INVENTORY';
 LEFT_PAREN: '(';
 LIMIT: 'LIMIT';
+LITE: 'LITE';
 LOCATION: 'LOCATION';
 MINUS: '-';
 NO: 'NO';
@@ -296,6 +326,7 @@ RETAIN: 'RETAIN';
 RIGHT_PAREN: ')';
 RUN: 'RUN';
 SHALLOW: 'SHALLOW';
+SYNC: 'SYNC';
 SYSTEM_TIME: 'SYSTEM_TIME';
 SYSTEM_VERSION: 'SYSTEM_VERSION';
 TABLE: 'TABLE';

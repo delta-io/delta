@@ -15,20 +15,19 @@
  */
 package io.delta.kernel.defaults
 
-import java.math.{BigDecimal => BigDecimalJ}
-import scala.collection.JavaConverters._
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestRow, TestUtils}
-import io.delta.kernel.expressions.{Column, Expression, Literal, Predicate}
 import io.delta.kernel.expressions.Literal._
+import io.delta.kernel.expressions.{Column, Literal, Predicate}
 import io.delta.kernel.types.TimestampNTZType.TIMESTAMP_NTZ
 import io.delta.kernel.types._
 import org.scalatest.funsuite.AnyFunSuite
 
+import java.math.{BigDecimal => BigDecimalJ}
+
 class PartitionPruningSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils {
 
   // scalastyle:off sparkimplicits
-  import spark.implicits._
   // scalastyle:on sparkimplicits
 
   // Test golden table containing partition columns of all simple types
@@ -242,11 +241,15 @@ class PartitionPruningSuite extends AnyFunSuite with TestUtils with ExpressionTe
       (
         // Filter on just the data column
         // 1637202600123456L in epoch micros for '2021-11-18 02:30:00.123456'
-        predicate("=", col("tsNtz"), ofTimestampNtz(1637202600123456L)),
+        predicate("OR",
+          predicate("=", col("tsNtz"), ofTimestampNtz(1637202600123456L)),
+          predicate("=", col("tsNtz"), ofTimestampNtz(1373043660123456L))),
         "",
         9, // expected row count
         // expected remaining filter
-        predicate("=", col("tsNtz"), ofTimestampNtz(1637202600123456L))
+        predicate("OR",
+          predicate("=", col("tsNtz"), ofTimestampNtz(1637202600123456L)),
+          predicate("=", col("tsNtz"), ofTimestampNtz(1373043660123456L)))
       )
     ).foreach {
       case (kernelPredicate, sparkPredicate, expectedRowCount, expRemainingFilter) =>
@@ -260,6 +263,28 @@ class PartitionPruningSuite extends AnyFunSuite with TestUtils with ExpressionTe
             expectedRemainingFilter = expRemainingFilter,
             filter = kernelPredicate)
         }
+    }
+  }
+
+  test("partition pruning from checkpoint") {
+    withTempDir { path =>
+      val tbl = "tbl"
+      withTable(tbl) {
+        // Create partitioned table and insert some data, ensuring that a checkpoint is created
+        // after the last insertion.
+        spark.sql(s"CREATE TABLE $tbl (a INT, b STRING) USING delta " +
+          s"PARTITIONED BY (a) LOCATION '$path' " +
+          s"TBLPROPERTIES ('delta.checkpointInterval' = '2')")
+        spark.sql(s"INSERT INTO $tbl VALUES (1, 'a'), (2, 'b')")
+        spark.sql(s"INSERT INTO $tbl VALUES (3, 'c'), (4, 'd')")
+        spark.sql(s"INSERT INTO $tbl VALUES (5, 'e'), (6, 'f')")
+
+        // Read from the source table with a partition predicate and validate the results.
+        val result = readSnapshot(
+          latestSnapshot(path.toString),
+          filter = greaterThan(col("a"), Literal.ofInt(3)))
+        checkAnswer(result, Seq(TestRow(4, "d"), TestRow(5, "e"), TestRow(6, "f")))
+      }
     }
   }
 

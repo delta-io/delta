@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.cdc.MergeCDCTests
 import org.apache.spark.sql.delta.commands.{DeletionVectorBitmapGenerator, DMLWithDeletionVectorsHelper}
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
@@ -57,6 +58,7 @@ trait MergeIntoDVsTests extends MergeIntoSQLSuite with DeletionVectorsTestUtils 
   }
 
   protected override lazy val expectedOpTypes: Set[String] = Set(
+    "delta.dml.merge.materializeSource",
     "delta.dml.merge.findTouchedFiles",
     "delta.dml.merge.writeModifiedRowsOnly",
     "delta.dml.merge.writeDeletionVectors",
@@ -65,6 +67,11 @@ trait MergeIntoDVsTests extends MergeIntoSQLSuite with DeletionVectorsTestUtils 
 
 class MergeIntoDVsSuite extends MergeIntoDVsTests {
   import testImplicits._
+
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    spark.conf.set(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key, "false")
+  }
 
   def assertOperationalDVMetrics(
       tablePath: String,
@@ -248,3 +255,19 @@ trait MergeCDCWithDVsTests extends MergeCDCTests with DeletionVectorsTestUtils {
  * Includes the entire MergeIntoSQLSuite with CDC enabled.
  */
 class MergeIntoDVsCDCSuite extends MergeIntoDVsTests with MergeCDCWithDVsTests
+
+class MergeIntoDVsWithPredicatePushdownSuite extends MergeIntoDVsTests {
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    spark.conf.set(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key, "true")
+  }
+}
+
+class MergeIntoDVsWithPredicatePushdownCDCSuite
+    extends MergeIntoDVsTests
+    with MergeCDCWithDVsTests {
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    spark.conf.set(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key, "true")
+  }
+}

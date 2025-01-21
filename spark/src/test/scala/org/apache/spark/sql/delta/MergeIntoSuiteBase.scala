@@ -23,6 +23,7 @@ import java.util.Locale
 import scala.language.implicitConversions
 
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions, UsageRecord}
+import org.apache.spark.sql.delta.commands.MergeIntoCommand
 import org.apache.spark.sql.delta.commands.merge.MergeStats
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
@@ -33,7 +34,9 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.{functions, AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{GenericInternalRow, UnsafeArrayData}
+import org.apache.spark.sql.catalyst.plans.logical.{SubqueryAlias, View}
 import org.apache.spark.sql.execution.adaptive.DisableAdaptiveExecution
+import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
@@ -46,7 +49,8 @@ abstract class MergeIntoSuiteBase
     with DeltaTestUtilsForTempViews
     with MergeIntoTestUtils
     with MergeIntoSchemaEvolutionMixin
-    with MergeIntoSchemaEvolutionAllTests {
+    with MergeIntoSchemaEvolutionAllTests
+    with DeltaExcludedBySparkVersionTestMixinShims {
   import testImplicits._
 
   Seq(true, false).foreach { isPartitioned =>
@@ -699,6 +703,34 @@ abstract class MergeIntoSuiteBase
         // The target table should have the same number of rows as the source after the merge
         assert(spark.read.format("delta").load(targetPath).count() == numSourceRecords)
       }
+    }
+  }
+
+  testSparkMasterOnly("Variant type") {
+    withTable("source") {
+      // Insert ("0", 0), ("1", 1)
+      val dstDf = sql(
+        """SELECT parse_json(cast(id as string)) v, id i
+        FROM range(2)""")
+      append(dstDf)
+      // Insert ("1", 2), ("2", 3)
+      // The first row will update, the second will insert.
+      sql(
+        s"""SELECT parse_json(cast(id as string)) v, id + 1 i
+              FROM range(1, 3)""").createOrReplaceTempView("source")
+
+      executeMerge(
+        target = s"delta.`$tempPath` as trgNew",
+        source = "source src",
+        condition = "to_json(src.v) = to_json(trgNew.v)",
+        update = "i = 10 + src.i + trgNew.i, v = trgNew.v",
+        insert = """(i, v) VALUES (i + 100, parse_json('"inserted"'))""")
+
+      checkAnswer(readDeltaTable(tempPath).selectExpr("i", "to_json(v)"),
+        Row(0, "0") :: // No change
+          Row(13, "1") :: // Update
+          Row(103, "\"inserted\"") :: // Insert
+          Nil)
     }
   }
 
@@ -3063,50 +3095,57 @@ abstract class MergeIntoSuiteBase
       Option("Aggregate functions are not supported in the .* condition of MERGE operation.*")
   )
 
+  /**
+   * Ensure we can successfully remove the temp view from the target plan during MERGE analysis.
+   * Failing to do so can cause MERGE execution to fail later on as it is assumed the target plan is
+   * a simple logical relation by then without projections.
+   */
+  protected def checkStripViewFromTarget(target: String): Unit = {
+    val targetViewPlan = sql(s"SELECT * FROM $target").queryExecution.analyzed.collect {
+      case v: View => v
+    }
+    assert(targetViewPlan.size === 1,
+      s"Expected 1 view in target plan, got ${targetViewPlan.size}")
+    DeltaViewHelper.stripTempViewForMerge(targetViewPlan.head, conf) match {
+      case SubqueryAlias(_, _: LogicalRelation) =>
+      case _ =>
+        fail(s"DeltaViewHelper.stripTempViewForMerge doesn't correctly handle" +
+          s"removing the view from plan:\n${targetViewPlan.head}")
+    }
+  }
+
   protected def testTempViews(name: String)(
       text: String,
-      expectedResult: Seq[Row] = null,
-      expectedErrorMsgForSQLTempView: String = null,
-      expectedErrorMsgForDataSetTempView: String = null,
-      expectedErrorClassForSQLTempView: String = null,
-      expectedErrorClassForDataSetTempView: String = null): Unit = {
+      mergeCondition: String,
+      expectedResult: ExpectedResult[Seq[Row]],
+      checkViewStripped: Boolean = true): Unit = {
     testWithTempView(s"test merge on temp view - $name") { isSQLTempView =>
       withTable("tab") {
         withTempView("src") {
           Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
           createTempViewFromSelect(text, isSQLTempView)
           sql("CREATE TEMP VIEW src AS SELECT * FROM VALUES (1, 2), (3, 4) AS t(a, b)")
-          val doesExpectError = if (isSQLTempView) {
-            expectedErrorMsgForSQLTempView != null || expectedErrorClassForSQLTempView != null
-          } else {
-            expectedErrorMsgForDataSetTempView != null ||
-              expectedErrorClassForDataSetTempView != null
-          }
-          if (doesExpectError) {
-            val ex = intercept[AnalysisException] {
-              executeMerge(
-                target = "v",
-                source = "src",
-                condition = "src.a = v.key AND src.b = v.value",
-                update = "v.value = src.b + 1",
-                insert = "(v.key, v.value) VALUES (src.a, src.b)")
-            }
-            testErrorMessageAndClass(
-              isSQLTempView,
-              ex,
-              expectedErrorMsgForSQLTempView,
-              expectedErrorMsgForDataSetTempView,
-              expectedErrorClassForSQLTempView,
-              expectedErrorClassForDataSetTempView)
-          } else {
-            require(expectedResult != null)
+
+          def runMerge(): Unit =
             executeMerge(
               target = "v",
               source = "src",
-              condition = "src.a = v.key AND src.b = v.value",
+              condition = mergeCondition,
               update = "v.value = src.b + 1",
               insert = "(v.key, v.value) VALUES (src.a, src.b)")
-            checkAnswer(spark.table("v"), expectedResult)
+
+          expectedResult match {
+            case ExpectedResult.Failure(checkError) =>
+              val ex = intercept[AnalysisException] {
+                runMerge()
+              }
+              checkError(ex)
+            case ExpectedResult.Success(expectedRows: Seq[Row]) =>
+              if (checkViewStripped) {
+                checkStripViewFromTarget(target = "v")
+              }
+              runMerge()
+              checkAnswer(spark.table("v"), expectedRows)
           }
         }
       }
@@ -3115,32 +3154,62 @@ abstract class MergeIntoSuiteBase
 
   testTempViews("basic")(
     text = "SELECT * FROM tab",
-    expectedResult = Seq(Row(0, 3), Row(1, 3), Row(3, 4))
+    mergeCondition = "src.a = v.key AND src.b = v.value",
+    expectedResult = ExpectedResult.Success(Seq(Row(0, 3), Row(1, 3), Row(3, 4)))
+  )
+
+  testTempViews("basic - merge condition references subset of target cols")(
+    text = "SELECT * FROM tab",
+    mergeCondition = "src.a = v.key",
+    expectedResult = ExpectedResult.Success(Seq(Row(0, 3), Row(1, 3), Row(3, 4)))
   )
 
   testTempViews("subset cols")(
     text = "SELECT key FROM tab",
-    expectedErrorMsgForSQLTempView = "cannot",
-    expectedErrorMsgForDataSetTempView = "cannot"
+    mergeCondition = "src.a = v.key AND src.b = v.value",
+    expectedResult = ExpectedResult.Failure { ex =>
+      assert(ex.getErrorClass === "UNRESOLVED_COLUMN.WITH_SUGGESTION")
+    }
   )
 
   testTempViews("superset cols")(
     text = "SELECT key, value, 1 FROM tab",
+    mergeCondition = "src.a = v.key AND src.b = v.value",
     // The analyzer can't tell whether the table originally had the extra column or not.
-    expectedErrorMsgForSQLTempView =
-      "The schema of your Delta table has changed in an incompatible way",
-    expectedErrorMsgForDataSetTempView =
-      "The schema of your Delta table has changed in an incompatible way"
+    expectedResult = ExpectedResult.Failure { ex =>
+      checkErrorMatchPVals(
+        ex,
+        "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS",
+        parameters = Map(
+          "schemaDiff" -> "(?s)Latest schema is missing field.*",
+          "legacyFlagMessage" -> ""
+      ))
+    }
   )
 
   testTempViews("nontrivial projection")(
     text = "SELECT value as key, key as value FROM tab",
-    expectedResult = Seq(Row(2, 1), Row(2, 1), Row(3, 0), Row(4, 3))
+    mergeCondition = "src.a = v.key AND src.b = v.value",
+    expectedResult = ExpectedResult.Success(Seq(Row(2, 1), Row(2, 1), Row(3, 0), Row(4, 3))),
+    // The view doesn't get stripped by DeltaViewHelper.stripTempViewForMerge during analysis in
+    // this case, doing it would be incorrect since the view is not a simple projection.
+    // We really shouldn't support this use case altogether but due to historical reasons we have to
+    // keep supporting it.
+    checkViewStripped = false
   )
+
 
   testTempViews("view with too many internal aliases")(
     text = "SELECT * FROM (SELECT * FROM tab AS t1) AS t2",
-    expectedResult = Seq(Row(0, 3), Row(1, 3), Row(3, 4))
+    mergeCondition = "src.a = v.key AND src.b = v.value",
+    expectedResult = ExpectedResult.Success(Seq(Row(0, 3), Row(1, 3), Row(3, 4)))
+  )
+
+  testTempViews("view with too many internal aliases - merge condition references subset of " +
+      s"target cols")(
+    text = "SELECT * FROM (SELECT * FROM tab AS t1) AS t2",
+    mergeCondition = "src.a = v.key",
+    expectedResult = ExpectedResult.Success(Seq(Row(0, 3), Row(1, 3), Row(3, 4)))
   )
 
   test("merge correctly handle field metadata") {
@@ -3255,7 +3324,10 @@ abstract class MergeIntoSuiteBase
   }
 
   protected lazy val expectedOpTypes: Set[String] = Set(
-    "delta.dml.merge.findTouchedFiles", "delta.dml.merge.writeAllChanges", "delta.dml.merge")
+    "delta.dml.merge.materializeSource",
+    "delta.dml.merge.findTouchedFiles",
+    "delta.dml.merge.writeAllChanges",
+    "delta.dml.merge")
 
   test("insert only merge - recorded operation") {
     var events: Seq[UsageRecord] = Seq.empty
@@ -3288,7 +3360,9 @@ abstract class MergeIntoSuiteBase
     }.map(_.opType.get.typeName).toSet
 
     assert(opTypes == Set(
-      "delta.dml.merge", "delta.dml.merge.writeInsertsOnlyWhenNoMatchedClauses"))
+      "delta.dml.merge",
+      "delta.dml.merge.materializeSource",
+      "delta.dml.merge.writeInsertsOnlyWhenNoMatchedClauses"))
   }
 
   test("recorded operations - write inserts only") {
@@ -3324,9 +3398,71 @@ abstract class MergeIntoSuiteBase
   }
 
   protected lazy val expectedOpTypesInsertOnly: Set[String] = Set(
+    "delta.dml.merge.materializeSource",
     "delta.dml.merge.findTouchedFiles",
     "delta.dml.merge.writeInsertsOnlyWhenNoMatches",
     "delta.dml.merge")
+
+  test("merge execution is recorded with QueryExecutionListener") {
+    withKeyValueData(
+      source = (0, 0) :: (1, 10) :: Nil,
+      target = (1, 1) :: (2, 2) :: Nil) { case (sourceName, targetName) =>
+      val plans = withLogicalPlansCaptured(spark, optimizedPlan = false) {
+        executeMerge(
+          tgt = s"$targetName t",
+          src = s"$sourceName s",
+          cond = "s.key = t.key",
+          update(set = "*"))
+      }
+      val mergeCommands = plans.collect {
+        case m: MergeIntoCommand => m
+      }
+      assert(mergeCommands.size === 1,
+        "Merge command wasn't properly recorded by QueryExecutionListener")
+    }
+  }
+
+  test("merge on partitioned table with special chars") {
+    withTable("source") {
+      val part1 = "part%1"
+      val part2 = "part%2"
+      val part3 = "part%3"
+      val part4 = "part%4"
+
+      for (part <- Seq(part1, part2, part3)) {
+        spark.range(0, 3, 1, 1)
+          .toDF("key")
+          .withColumn("value", functions.lit(part))
+          .write.format("delta")
+          .partitionBy("value")
+          .mode("append")
+          .save(tempPath)
+      }
+
+      Seq(
+        (0, part1),
+        (0, part2), (1, part2),
+        (0, part3), (1, part3), (2, part3),
+        (0, part4)
+      ).toDF("key", "value").createOrReplaceTempView("source")
+
+      executeMerge(
+        tgt = s"delta.`$tempPath` t",
+        src = "source s",
+        cond = "t.key = s.key AND t.value = s.value",
+        delete(condition = s"s.value = '$part2'"),
+        update(set = s"t.key = -1"),
+        insert("*")
+      )
+      checkAnswer(
+        readDeltaTable(tempPath),
+        Row(-1, part1) :: Row(1, part1) :: Row(2, part1) ::
+          Row(2, part2) ::
+          Row(-1, part3) :: Row(-1, part3) :: Row(-1, part3) ::
+          Row(0, part4) ::
+          Nil)
+    }
+  }
 }
 
 

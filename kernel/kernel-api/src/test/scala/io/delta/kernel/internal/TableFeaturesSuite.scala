@@ -16,6 +16,7 @@
 package io.delta.kernel.internal
 
 import io.delta.kernel.data.{ArrayValue, ColumnVector, MapValue}
+import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.TableFeatures.validateWriteSupportedTable
 import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
 import io.delta.kernel.internal.util.InternalUtils.singletonStringColumnVector
@@ -67,32 +68,55 @@ class TableFeaturesSuite extends AnyFunSuite {
     checkSupported(createTestProtocol(minWriterVersion = 7))
   }
 
-  test("validateWriteSupported: protocol 7 with appendOnly") {
-    checkSupported(createTestProtocol(minWriterVersion = 7, writerFeatures = "appendOnly"))
+  Seq("appendOnly", "inCommitTimestamp", "columnMapping", "typeWidening-preview", "typeWidening",
+    "domainMetadata", "rowTracking").foreach { supportedWriterFeature =>
+    test(s"validateWriteSupported: protocol 7 with $supportedWriterFeature") {
+      val protocol = if (supportedWriterFeature == "rowTracking") {
+        createTestProtocol(minWriterVersion = 7, supportedWriterFeature, "domainMetadata")
+      } else {
+        createTestProtocol(minWriterVersion = 7, supportedWriterFeature)
+      }
+      checkSupported(protocol)
+    }
   }
 
-  Seq("invariants", "checkConstraints", "generatedColumns", "allowColumnDefaults", "changeDataFeed",
-      "columnMapping", "identityColumns", "deletionVectors", "rowTracking", "timestampNtz",
-      "domainMetadata", "v2Checkpoint", "icebergCompatV1", "icebergCompatV2", "clustering",
-      "vacuumProtocolCheck").foreach { unsupportedWriterFeature =>
+  Seq("checkConstraints", "generatedColumns", "allowColumnDefaults", "changeDataFeed",
+    "identityColumns", "deletionVectors", "timestampNtz", "v2Checkpoint", "icebergCompatV1",
+    "icebergCompatV2", "clustering", "vacuumProtocolCheck").foreach { unsupportedWriterFeature =>
     test(s"validateWriteSupported: protocol 7 with $unsupportedWriterFeature") {
       checkUnsupported(createTestProtocol(minWriterVersion = 7, unsupportedWriterFeature))
     }
+  }
+
+  test("validateWriteSupported: protocol 7 with invariants, schema doesn't contain invariants") {
+    checkSupported(
+      createTestProtocol(minWriterVersion = 7, "invariants"),
+      metadata = createTestMetadata(),
+      schema = createTestSchema(includeInvariant = false)
+    )
+  }
+
+  test("validateWriteSupported: protocol 7 with invariants, schema contains invariants") {
+    checkUnsupported(
+      createTestProtocol(minWriterVersion = 7, "invariants"),
+      metadata = createTestMetadata(),
+      schema = createTestSchema(includeInvariant = true)
+    )
   }
 
   def checkSupported(
     protocol: Protocol,
     metadata: Metadata = null,
     schema: StructType = createTestSchema()): Unit = {
-    validateWriteSupportedTable(protocol, metadata, schema)
+    validateWriteSupportedTable(protocol, metadata, schema, "/test/table")
   }
 
   def checkUnsupported(
     protocol: Protocol,
     metadata: Metadata = null,
     schema: StructType = createTestSchema()): Unit = {
-    intercept[UnsupportedOperationException] {
-      validateWriteSupportedTable(protocol, metadata, schema)
+    intercept[KernelException] {
+      validateWriteSupportedTable(protocol, metadata, schema, "/test/table")
     }
   }
 

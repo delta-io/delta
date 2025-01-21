@@ -45,7 +45,8 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
   with PredicateHelper
   with ImplicitMetadataOperation
   with MergeIntoMaterializeSource
-  with UpdateExpressionsSupport {
+  with UpdateExpressionsSupport
+  with SupportsNonDeterministicExpression {
 
   @transient val source: LogicalPlan
   @transient val target: LogicalPlan
@@ -118,7 +119,7 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
             castIfNeeded(
               attr.withNullability(attr.nullable || makeNullable),
               col.dataType,
-              allowStructEvolution = canMergeSchema,
+              castingBehavior = MergeOrUpdateCastingBehavior(canMergeSchema),
               col.name),
             col.name
           )()
@@ -213,6 +214,8 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
       createMetric(sc, "number of target partitions to which files were added"),
     "executionTimeMs" ->
       createTimingMetric(sc, "time taken to execute the entire operation"),
+    "materializeSourceTimeMs" ->
+      createTimingMetric(sc, "time taken to materialize source (or determine it's not needed)"),
     "scanTimeMs" ->
       createTimingMetric(sc, "time taken to scan the files for matches"),
     "rewriteTimeMs" ->
@@ -229,8 +232,9 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
    */
   protected def collectMergeStats(
       deltaTxn: OptimisticTransaction,
-      materializeSourceReason: MergeIntoMaterializeSourceReason.MergeIntoMaterializeSourceReason)
-    : MergeStats = {
+      materializeSourceReason: MergeIntoMaterializeSourceReason.MergeIntoMaterializeSourceReason,
+      commitVersion: Option[Long],
+      numRecordsStats: NumRecordsStats): MergeStats = {
     val stats = MergeStats.fromMergeSQLMetrics(
       metrics,
       condition,
@@ -238,7 +242,10 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
       notMatchedClauses,
       notMatchedBySourceClauses,
       isPartitioned = deltaTxn.metadata.partitionColumns.nonEmpty,
-      performedSecondSourceScan = performedSecondSourceScan)
+      performedSecondSourceScan = performedSecondSourceScan,
+      commitVersion = commitVersion,
+      numRecordsStats = numRecordsStats
+    )
     stats.copy(
       materializeSourceReason = Some(materializeSourceReason.toString),
       materializeSourceAttempts = Some(attempt))
@@ -401,8 +408,13 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
         newDesc.foreach { d => sc.setJobDescription(d) }
         val r = thunk
         val timeTakenMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTimeNs)
-        if (sqlMetricName != null && timeTakenMs > 0) {
-          metrics(sqlMetricName) += timeTakenMs
+        if (sqlMetricName != null) {
+          if (timeTakenMs > 0) {
+            metrics(sqlMetricName) += timeTakenMs
+          } else if (metrics(sqlMetricName).isZero) {
+            // Make it always at least 1ms if it ran, to distinguish whether it ran or not.
+            metrics(sqlMetricName) += 1
+          }
         }
         r
       } finally {
@@ -443,6 +455,65 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
         throw DeltaErrors.sourceNotDeterministicInMergeException(spark)
       }
     }
+  }
+
+  override protected def prepareMergeSource(
+      spark: SparkSession,
+      source: LogicalPlan,
+      condition: Expression,
+      matchedClauses: Seq[DeltaMergeIntoMatchedClause],
+      notMatchedClauses: Seq[DeltaMergeIntoNotMatchedClause],
+      isInsertOnly: Boolean
+    ): Unit = recordMergeOperation(
+      extraOpType = "materializeSource",
+      status = "MERGE operation - materialize source",
+      sqlMetricName = "materializeSourceTimeMs") {
+    super.prepareMergeSource(
+      spark, source, condition, matchedClauses, notMatchedClauses, isInsertOnly)
+  }
+
+  /**
+   * Verify that the high water marks used by the identity column generators still match the
+   * the high water marks in the version of the table read by the current transaction.
+   * These high water marks were determined during analysis in [[PreprocessTableMerge]],
+   * which runs outside of the current transaction, so they may no longer be valid.
+   */
+  protected def checkIdentityColumnHighWaterMarks(deltaTxn: OptimisticTransaction): Unit = {
+    notMatchedClauses.foreach { clause =>
+      if (deltaTxn.metadata.schema.length != clause.resolvedActions.length) {
+        throw new IllegalStateException
+      }
+      deltaTxn.metadata.schema.zip(clause.resolvedActions.map(_.expr)).foreach {
+        case (f, GenerateIdentityValues(gen)) =>
+          val info = IdentityColumn.getIdentityInfo(f)
+          if (info.highWaterMark != gen.highWaterMarkOpt) {
+            IdentityColumn.logTransactionAbort(deltaTxn.deltaLog)
+            throw DeltaErrors.metadataChangedException(conflictingCommit = None)
+          }
+
+        case (f, _) if ColumnWithDefaultExprUtils.isIdentityColumn(f) &&
+          !IdentityColumn.allowExplicitInsert(f) =>
+          throw new IllegalStateException
+
+        case _ => ()
+      }
+    }
+  }
+
+  /** Returns whether it allows non-deterministic expressions. */
+  override def allowNonDeterministicExpression: Boolean = {
+    def isConditionDeterministic(mergeClause: DeltaMergeIntoClause): Boolean = {
+      mergeClause.condition match {
+        case Some(c) => c.deterministic
+        case None => true
+      }
+    }
+    // Allow actions to be non-deterministic while all the conditions
+    // must be deterministic.
+    condition.deterministic &&
+      matchedClauses.forall(isConditionDeterministic) &&
+      notMatchedClauses.forall(isConditionDeterministic) &&
+      notMatchedBySourceClauses.forall(isConditionDeterministic)
   }
 }
 

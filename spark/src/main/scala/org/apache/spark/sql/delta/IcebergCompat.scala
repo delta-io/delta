@@ -18,9 +18,13 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.{Action, AddFile, Metadata, Protocol}
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
+import org.apache.spark.internal.MDC
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.types._
 
 /**
@@ -45,8 +49,9 @@ object IcebergCompatV1 extends IcebergCompat(
     CheckAddFileHasStats,
     CheckNoPartitionEvolution,
     CheckNoListMapNullType,
-    CheckNoDeletionVector,
-    CheckVersionChangeNeedsRewrite)
+    CheckDeletionVectorDisabled,
+    CheckTypeWideningSupported
+  )
 )
 
 object IcebergCompatV2 extends IcebergCompat(
@@ -58,9 +63,11 @@ object IcebergCompatV2 extends IcebergCompat(
     CheckOnlySingleVersionEnabled,
     CheckAddFileHasStats,
     CheckTypeInV2AllowList,
+    CheckPartitionDataTypeInV2AllowList,
     CheckNoPartitionEvolution,
-    CheckNoDeletionVector,
-    CheckVersionChangeNeedsRewrite)
+    CheckDeletionVectorDisabled,
+    CheckTypeWideningSupported
+  )
 )
 
 /**
@@ -101,16 +108,19 @@ case class IcebergCompat(
    *         updates need to be applied, will return None.
    */
   def enforceInvariantsAndDependencies(
+      spark: SparkSession,
       prevSnapshot: Snapshot,
       newestProtocol: Protocol,
       newestMetadata: Metadata,
-      isCreatingOrReorgTable: Boolean,
+      operation: Option[DeltaOperations.Operation],
       actions: Seq[Action]): (Option[Protocol], Option[Metadata]) = {
     val prevProtocol = prevSnapshot.protocol
     val prevMetadata = prevSnapshot.metadata
     val wasEnabled = this.isEnabled(prevMetadata)
     val isEnabled = this.isEnabled(newestMetadata)
     val tableId = newestMetadata.id
+
+    val isCreatingOrReorgTable = UniversalFormat.isCreatingOrReorgTable(operation)
 
     (wasEnabled, isEnabled) match {
       case (_, false) => (None, None) // not enable or disabling, Ignore
@@ -163,14 +173,16 @@ case class IcebergCompat(
 
         // Update Protocol and Metadata if necessary
         val protocolResult = if (tblFeatureUpdates.nonEmpty) {
-          logInfo(s"[tableId=$tableId] IcebergCompatV1 auto-supporting table features: " +
-            s"${tblFeatureUpdates.map(_.name)}")
+          logInfo(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, tableId)}] " +
+            log"IcebergCompatV1 auto-supporting table features: " +
+            log"${MDC(DeltaLogKeys.TABLE_FEATURES, tblFeatureUpdates.map(_.name))}")
           Some(newestProtocol.merge(tblFeatureUpdates.map(Protocol.forTableFeature).toSeq: _*))
         } else None
 
         val metadataResult = if (tblPropertyUpdates.nonEmpty) {
-          logInfo(s"[tableId=$tableId] IcebergCompatV1 auto-setting table properties: " +
-            s"$tblPropertyUpdates")
+          logInfo(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, tableId)}] " +
+            log"IcebergCompatV1 auto-setting table properties: " +
+            log"${MDC(DeltaLogKeys.TBL_PROPERTIES, tblPropertyUpdates)}")
           val newConfiguration = newestMetadata.configuration ++ tblPropertyUpdates.toMap
           var tmpNewMetadata = newestMetadata.copy(configuration = newConfiguration)
 
@@ -182,10 +194,16 @@ case class IcebergCompat(
         } else None
 
         // Apply additional checks
-        val context = IcebergCompatContext(prevSnapshot,
+        val context = IcebergCompatContext(
+          spark,
+          prevSnapshot,
           protocolResult.getOrElse(newestProtocol),
           metadataResult.getOrElse(newestMetadata),
-          isCreatingOrReorgTable, actions, tableId, version)
+          operation,
+          actions,
+          tableId,
+          version
+        )
         checks.foreach(_.apply(context))
 
         (protocolResult, metadataResult)
@@ -237,7 +255,10 @@ object IcebergCompat extends DeltaLogging {
    * @return true if the target version is enabled on the table.
    */
   def isVersionEnabled(metadata: Metadata, version: Integer): Boolean =
-    knownVersions.exists{ case (_, v) => v == version }
+    knownVersions.exists {
+      case (config, v) =>
+        (v == version) && (config.fromMetaData(metadata).getOrElse(false))
+    }
 }
 
 /**
@@ -286,10 +307,11 @@ object RequireColumnMapping extends RequiredDeltaTableProperty(
 }
 
 case class IcebergCompatContext(
+    spark: SparkSession,
     prevSnapshot: Snapshot,
     newestProtocol: Protocol,
     newestMetadata: Metadata,
-    isCreatingOrReorgTable: Boolean,
+    operation: Option[DeltaOperations.Operation],
     actions: Seq[Action],
     tableId: String,
     version: Integer) {
@@ -306,9 +328,9 @@ trait IcebergCompatCheck extends (IcebergCompatContext => Unit)
 object CheckOnlySingleVersionEnabled extends IcebergCompatCheck {
   override def apply(context: IcebergCompatContext): Unit = {
     val numEnabled = IcebergCompat.knownVersions
-      .map{ case (config, _) =>
-        if (config.fromMetaData(context.newestMetadata).getOrElse(false)) 1 else 0 }
-      .sum
+      .map { case (config, _) =>
+        if (config.fromMetaData(context.newestMetadata).getOrElse(false)) 1 else 0
+      }.sum
     if (numEnabled > 1) {
       throw DeltaErrors.icebergCompatVersionMutualExclusive(context.version)
     }
@@ -384,35 +406,89 @@ object CheckTypeInV2AllowList extends IcebergCompatCheck {
   }
 }
 
-object CheckNoDeletionVector extends IcebergCompatCheck {
-
+object CheckPartitionDataTypeInV2AllowList extends IcebergCompatCheck {
+  private val allowedTypes = Set[Class[_]] (
+    ByteType.getClass, ShortType.getClass, IntegerType.getClass, LongType.getClass,
+    FloatType.getClass, DoubleType.getClass, DecimalType.getClass,
+    StringType.getClass, BinaryType.getClass,
+    BooleanType.getClass,
+    TimestampType.getClass, TimestampNTZType.getClass, DateType.getClass
+  )
   override def apply(context: IcebergCompatContext): Unit = {
-    // Check for incompatible table features;
-    // Deletion Vectors cannot be writeable; Note that concurrent txns are also covered
-    // to NOT write deletion vectors as that txn would need to make DVs writable, which
-    // would conflict with current txn because of metadata change.
-    if (DeletionVectorUtils.deletionVectorsWritable(
-      context.newestProtocol, context.newestMetadata)) {
-      throw DeltaErrors.icebergCompatDeletionVectorsShouldBeDisabledException(context.version)
+    val partitionSchema = context.newestMetadata.partitionSchema
+    partitionSchema.fields.find(field => !allowedTypes.contains(field.dataType.getClass))
+    match {
+      case Some(field) =>
+        throw DeltaErrors.icebergCompatUnsupportedPartitionDataTypeException(
+            context.version, field.dataType, partitionSchema)
+       case _ =>
     }
   }
 }
 
+/**
+ * Check if the deletion vector has been disabled by previous snapshot
+ * or newest metadata and protocol depending on whether the operation
+ * is REORG UPGRADE UNIFORM or not.
+ */
+object CheckDeletionVectorDisabled extends IcebergCompatCheck {
+  override def apply(context: IcebergCompatContext): Unit = {
+    if (context.newestProtocol.isFeatureSupported(DeletionVectorsTableFeature)) {
+      // note: user will need to *separately* disable deletion vectors if this check fails,
+      //       i.e., ALTER TABLE SET TBLPROPERTIES ('delta.enableDeletionVectors' = 'false');
+      val isReorgUpgradeUniform = UniversalFormat.isReorgUpgradeUniform(context.operation)
+      // for REORG UPGRADE UNIFORM, we only need to check whether DV
+      // is enabled in the newest metadata and protocol, this conforms with
+      // the semantics of REORG UPGRADE UNIFORM, which will automatically disable
+      // DV and rewrite all the parquet files with DV removed as for now.
+      if (isReorgUpgradeUniform) {
+        if (DeletionVectorUtils.deletionVectorsWritable(
+              protocol = context.newestProtocol,
+              metadata = context.newestMetadata
+        )) {
+          throw DeltaErrors.icebergCompatDeletionVectorsShouldBeDisabledException(context.version)
+        }
+      } else {
+        // for other commands, we need to check whether DV is disabled from the
+        // previous snapshot, in case there are concurrent writers.
+        // plus, we also need to check from the newest metadata and protocol,
+        // in case we are creating a new uniform table with DV enabled.
+        if (DeletionVectorUtils.deletionVectorsWritable(context.prevSnapshot) ||
+          DeletionVectorUtils.deletionVectorsWritable(
+            protocol = context.newestProtocol,
+            metadata = context.newestMetadata
+          )) {
+          throw DeltaErrors.icebergCompatDeletionVectorsShouldBeDisabledException(context.version)
+        }
+      }
+    }
+  }
+}
 
 /**
- * Check if change IcebergCompat version needs a REORG operation
+ * Checks that the table didn't go through any type changes that Iceberg doesn't support. See
+ * `TypeWidening.isTypeChangeSupportedByIceberg()` for supported type changes.
+ * Note that this check covers both:
+ * - When the table had an unsupported type change applied in the past and Uniform is being enabled.
+ * - When Uniform is enabled and a new, unsupported type change is being applied.
  */
-object CheckVersionChangeNeedsRewrite extends IcebergCompatCheck {
-
-  private val versionChangesWithoutRewrite: Map[Int, Set[Int]] =
-    Map(0 -> Set(0, 1), 1 -> Set(0, 1), 2 -> Set(0, 1, 2))
+object CheckTypeWideningSupported extends IcebergCompatCheck {
   override def apply(context: IcebergCompatContext): Unit = {
-    if (!context.isCreatingOrReorgTable) {
-      val oldVersion = IcebergCompat.getEnabledVersion(context.prevMetadata).getOrElse(0)
-      val allowedChanges = versionChangesWithoutRewrite.getOrElse(oldVersion, Set.empty[Int])
-      if (!allowedChanges.contains(context.version)) {
-          throw DeltaErrors.icebergCompatChangeVersionNeedRewrite(oldVersion, context.version)
-      }
+    val skipCheck = context.spark.sessionState.conf
+      .getConf(DeltaSQLConf.DELTA_TYPE_WIDENING_ALLOW_UNSUPPORTED_ICEBERG_TYPE_CHANGES)
+
+    if (skipCheck || !TypeWidening.isSupported(context.newestProtocol)) return
+
+    TypeWideningMetadata.getAllTypeChanges(context.newestMetadata.schema).foreach {
+      case (fieldPath, TypeChange(_, fromType: AtomicType, toType: AtomicType, _))
+        // We ignore type changes that are not generally supported with type widening to reduce the
+        // risk of this check misfiring. These are handled by `TypeWidening.assertTableReadable()`.
+        // The error here only captures type changes that are supported in Delta but not Iceberg.
+        if TypeWidening.isTypeChangeSupported(fromType, toType) &&
+          !TypeWidening.isTypeChangeSupportedByIceberg(fromType, toType) =>
+        throw DeltaErrors.icebergCompatUnsupportedTypeWideningException(
+          context.version, fieldPath, fromType, toType)
+      case _ => () // ignore
     }
   }
 }

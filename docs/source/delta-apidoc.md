@@ -8,23 +8,13 @@ description: Learn about the APIs provided by <Delta>.
 
 ## Delta Spark
 
-Delta Spark is library for reading or write Delta tables using the Apache Spark™. For most read and write operations on Delta tables, you can use <AS> [reader and writer](/spark/latest/dataframes-datasets/index.md) APIs. For examples,  see [_](delta-batch.md) and [_](delta-streaming.md).
+Delta Spark is a library for reading and writing Delta tables using Apache Spark™. For most read and write operations on Delta tables, you can use <AS> [reader and writer](/spark/latest/dataframes-datasets/index.md) APIs. For examples,  see [_](delta-batch.md) and [_](delta-streaming.md).
 
 However, there are some operations that are specific to <Delta> and you must use <Delta> APIs. For examples, see [_](delta-utility.md).
 
 - [Scala API docs](api/scala/spark/io/delta/tables/index.html)
 - [Java API docs](api/java/spark/index.html)
 - [Python API docs](api/python/spark/index.html)
-
-## Delta Standalone
-Delta Standalone, formerly known as the Delta Standalone Reader (DSR), is a JVM library to read and write Delta tables. Unlike Delta-Spark, this library doesn't use Spark to read or write tables and it has only a few transitive dependencies. It can be used by any application that cannot use a Spark cluster. More details refer [here](https://github.com/delta-io/delta/blob/master/connectors/README.md).
-
-- [Java API docs](api/java/standalone/index.html)
-
-## Delta Flink
-Flink/Delta Connector is a JVM library to read and write data from Apache Flink applications to Delta tables utilizing the Delta Standalone JVM library. More details refer [here](https://github.com/delta-io/delta/blob/master/connectors/flink/README.md).
-
-- [Java API docs](api/java/flink/index.html)
 
 ## Delta Kernel
 
@@ -36,4 +26,21 @@ More details refer [here](https://github.com/delta-io/delta/blob/branch-3.0/kern
 
 - [Java API docs](api/java/kernel/index.html)
 
-.. include:: /shared/replacements.md
+## Delta Rust
+This [library](https://docs.rs/deltalake/latest/deltalake/) allows Rust (with Python bindings) low level access to Delta tables and is intended to be used with data processing frameworks like `datafusion`, `ballista`, `rust-dataframe`, `vega`, etc.
+
+## Delta Standalone
+
+.. warning:: The Delta Standalone is deprecated in favor of [Delta Kernel](delta-kernel.md) which has support for reading from or writing into Delta tables with advanced features.
+
+Delta Standalone, formerly known as the Delta Standalone Reader (DSR), is a JVM library to read and write Delta tables. Unlike Delta-Spark, this library doesn't use Spark to read or write tables and it has only a few transitive dependencies. It can be used by any application that cannot use a Spark cluster. More details refer [here](https://github.com/delta-io/delta/blob/master/connectors/README.md).
+
+- [Java API docs](api/java/standalone/index.html)
+
+## Delta Flink
+Flink/Delta Connector is a JVM library to read and write data from Apache Flink applications to Delta tables utilizing the Delta Standalone JVM library. More details refer [here](https://github.com/delta-io/delta/blob/master/connectors/flink/README.md).
+
+- [Java API docs](api/java/flink/index.html)
+
+.. <Delta> replace:: Delta Lake
+.. <AS> replace:: Apache Spark

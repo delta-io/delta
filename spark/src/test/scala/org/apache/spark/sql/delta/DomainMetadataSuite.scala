@@ -89,6 +89,16 @@ class DomainMetadataSuite
             sortByDomain(deltaTable.snapshot.domainMetadata))
         }
 
+        DeltaLog.clearCache()
+        deltaTable = DeltaTableV2(spark, TableIdentifier(table))
+        val checksumOpt = deltaTable.snapshot.checksumOpt
+        if (doChecksum) {
+          assertEquals(
+            sortByDomain(checksumOpt.get.domainMetadata.get), sortByDomain(domainMetadata))
+        } else {
+          assert(checksumOpt.isEmpty)
+        }
+        assert(deltaLog.update().validateChecksum())
       }
     }
   }
@@ -147,6 +157,108 @@ class DomainMetadataSuite
         snapshot = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(table))._2
         assertEquals(sortByDomain(domainMetadatasAfterDeletion), snapshot.domainMetadata)
       }
+    }
+  }
+
+  test("DomainMetadata actions tracking in CRC should stop once threshold is crossed") {
+    def assertDomainMetadatas(
+        deltaLog: DeltaLog,
+        expectedDomainMetadatas: Seq[DomainMetadata],
+        expectedInCrc: Boolean): Unit = {
+      val snapshot = deltaLog.update()
+      assert(snapshot.validateChecksum())
+      assertEquals(sortByDomain(expectedDomainMetadatas), sortByDomain(snapshot.domainMetadata))
+      assert(snapshot.checksumOpt.nonEmpty)
+      if (expectedInCrc) {
+        assert(snapshot.checksumOpt.get.domainMetadata.nonEmpty)
+        assertEquals(
+          sortByDomain(expectedDomainMetadatas),
+          sortByDomain(snapshot.checksumOpt.get.domainMetadata.get))
+      } else {
+        assert(snapshot.checksumOpt.get.domainMetadata.isEmpty)
+      }
+    }
+
+    val table = "testTable"
+    withSQLConf(
+      DeltaSQLConf.DELTA_MAX_DOMAIN_METADATAS_IN_CRC.key -> "2") {
+      withTable(table) {
+        sql(
+          s"""
+             | CREATE TABLE $table(id int) USING delta
+             | tblproperties
+             | ('${TableFeatureProtocolUtils.propertyKey(DomainMetadataTableFeature)}' = 'enabled')
+             |""".stripMargin)
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(table))
+        assertDomainMetadatas(deltaLog, Seq.empty, true)
+
+        deltaLog
+          .startTransaction()
+          .commit(DomainMetadata("testDomain1", "", false) :: Nil, Truncate())
+        assertDomainMetadatas(
+          deltaLog, DomainMetadata("testDomain1", "", false) :: Nil, true)
+
+        deltaLog
+          .startTransaction()
+          .commit(DomainMetadata("testDomain2", "", false) :: Nil, Truncate())
+        assertDomainMetadatas(
+          deltaLog,
+          DomainMetadata("testDomain1", "", false) ::
+            DomainMetadata("testDomain2", "", false) :: Nil,
+          true)
+
+        deltaLog
+          .startTransaction()
+          .commit(DomainMetadata("testDomain3", "", false) :: Nil, Truncate())
+        assertDomainMetadatas(
+          deltaLog,
+          DomainMetadata("testDomain1", "", false) ::
+            DomainMetadata("testDomain2", "", false) ::
+            DomainMetadata("testDomain3", "", false) :: Nil,
+          false)
+      }
+    }
+  }
+
+  test("Validate crc can be read when domainMetadata is missing") {
+    val table = "testTable"
+    withTable(table) {
+      sql(
+        s"""
+           | CREATE TABLE $table(id int) USING delta
+           | tblproperties
+           | ('${TableFeatureProtocolUtils.propertyKey(DomainMetadataTableFeature)}' = 'enabled')
+           |""".stripMargin)
+      val deltaTable = DeltaTableV2(spark, TableIdentifier(table))
+      val deltaLog = deltaTable.deltaLog
+      val version =
+        deltaTable
+          .startTransactionWithInitialSnapshot()
+          .commit(DomainMetadata("testDomain1", "", false) :: Nil, Truncate())
+      val snapshot = deltaLog.update()
+      assert(snapshot.checksumOpt.nonEmpty)
+      assert(snapshot.checksumOpt.get.domainMetadata.nonEmpty)
+      val originalChecksum = snapshot.checksumOpt.get
+
+      // Write out a checksum without domainMetadata.
+      val checksumWithoutDomainMetadata = originalChecksum.copy(domainMetadata = None)
+      val writer = CheckpointFileManager.create(deltaLog.logPath, deltaLog.newDeltaHadoopConf())
+      val toWrite = JsonUtils.toJson(checksumWithoutDomainMetadata) + "\n"
+      val stream = writer.createAtomic(
+        FileNames.checksumFile(deltaLog.logPath, version + 1),
+        overwriteIfPossible = false)
+      stream.write(toWrite.getBytes(UTF_8))
+      stream.close()
+
+      // Make sure the read is not broken.
+      val content =
+        deltaLog
+          .store
+          .read(
+            FileNames.checksumFile(deltaLog.logPath, version + 1),
+            deltaLog.newDeltaHadoopConf())
+      val checksumFromFile = JsonUtils.mapper.readValue[VersionChecksum](content.head)
+      assert(checksumWithoutDomainMetadata == checksumFromFile)
     }
   }
 

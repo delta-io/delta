@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.files
 
+import java.text.SimpleDateFormat
+
 import org.apache.spark.sql.delta.{DeltaLog, Snapshot, SnapshotDescriptor}
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader.{CDC_COMMIT_TIMESTAMP, CDC_COMMIT_VERSION, CDCDataSpec}
@@ -29,6 +31,9 @@ import org.apache.spark.sql.types.{LongType, StructType, TimestampType}
 /**
  * A [[TahoeFileIndex]] for scanning a sequence of CDC files. Similar to [[TahoeBatchFileIndex]],
  * the equivalent for reading [[AddFile]] actions.
+ *
+ * Note: Please also consider other CDC-related file indexes like [[CdcAddFileIndex]]
+ * and [[TahoeRemoveFileIndex]] when modifying this file index.
  */
 class TahoeChangeFileIndex(
     spark: SparkSession,
@@ -47,9 +52,11 @@ class TahoeChangeFileIndex(
         files.map { f =>
           // We add the metadata as faked partition columns in order to attach it on a per-file
           // basis.
+          val tsOpt = Option(ts)
+            .map(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS Z").format(_)).orNull
           val newPartitionVals = f.partitionValues +
             (CDC_COMMIT_VERSION -> version.toString) +
-            (CDC_COMMIT_TIMESTAMP -> Option(ts).map(_.toString).orNull)
+            (CDC_COMMIT_TIMESTAMP -> tsOpt)
           AddFile(f.path, newPartitionVals, f.size, 0, dataChange = false, tags = f.tags)
         }
     }

@@ -31,7 +31,13 @@ default retention threshold for the files is 7 days. To change this behavior, se
   .. lang:: sql
 
     ```sql
-    VACUUM eventsTable   -- vacuum files not required by versions older than the default retention period
+  
+    VACUUM eventsTable   -- This runs VACUUM in ‘FULL’ mode and deletes data files outside of the retention duration and all files in the table directory not referenced by the table.
+
+    VACUUM eventsTable LITE   -- This VACUUM in ‘LITE’ mode runs faster.  
+                              -- Instead of finding all files in the table directory, `VACUUM LITE` uses the Delta transaction log to identify and remove files no longer referenced by any table versions within the retention duration.  
+                              -- If `VACUUM LITE` cannot be completed because the Delta log has been pruned a `DELTA_CANNOT_VACUUM_LITE` exception is raised.  
+                              -- This mode is available only in Delta 3.3 and above.
 
     VACUUM '/data/events' -- vacuum files in path-based table
 
@@ -718,4 +724,5 @@ CREATE OR REPLACE TABLE <target_table_name> SHALLOW CLONE iceberg.`/path/to/data
 
 .. <PrestoAnd> replace:: Presto and Athena
 
-.. include:: /shared/replacements.md
+.. <Delta> replace:: Delta Lake
+.. <AS> replace:: Apache Spark

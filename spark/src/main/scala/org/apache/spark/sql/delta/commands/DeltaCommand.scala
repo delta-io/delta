@@ -25,11 +25,13 @@ import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaErrors, DeltaLog
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.catalog.{DeltaTableV2, IcebergTablePlaceHolder}
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{Analyzer, EliminateSubqueryAliases, NoSuchTableException, ResolvedTable, UnresolvedAttribute, UnresolvedRelation}
@@ -39,7 +41,7 @@ import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.connector.catalog.V1Table
 import org.apache.spark.sql.execution.SQLExecution
-import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
+import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelationWithTable}
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 
@@ -192,9 +194,9 @@ trait DeltaCommand extends DeltaLogging {
     try {
       resolveIdentifier(analyzer, tableIdent) match {
         // is path
-        case LogicalRelation(HadoopFsRelation(_, _, _, _, _, _), _, None, _) => false
+        case LogicalRelationWithTable(HadoopFsRelation(_, _, _, _, _, _), None) => false
         // is table
-        case LogicalRelation(HadoopFsRelation(_, _, _, _, _, _), _, Some(_), _) => true
+        case LogicalRelationWithTable(HadoopFsRelation(_, _, _, _, _, _), Some(_)) => true
         // is iceberg table
         case DataSourceV2Relation(_: IcebergTablePlaceHolder, _, _, _, _) => false
         // could not resolve table/db
@@ -222,7 +224,7 @@ trait DeltaCommand extends DeltaLogging {
 
   /**
    * Utility method to return the [[DeltaLog]] of an existing Delta table referred
-   * by either the given [[path]] or [[tableIdentifier].
+   * by either the given [[path]] or [[tableIdentifier]].
    *
    * @param spark [[SparkSession]] reference to use.
    * @param path Table location. Expects a non-empty [[tableIdentifier]] or [[path]].
@@ -239,18 +241,18 @@ trait DeltaCommand extends DeltaLogging {
       tableIdentifier: Option[TableIdentifier],
       operationName: String,
       hadoopConf: Map[String, String] = Map.empty): DeltaLog = {
-    val tablePath =
+    val (deltaLog, catalogTable) =
       if (path.nonEmpty) {
-        new Path(path.get)
+        (DeltaLog.forTable(spark, new Path(path.get), hadoopConf), None)
       } else if (tableIdentifier.nonEmpty) {
         val sessionCatalog = spark.sessionState.catalog
         lazy val metadata = sessionCatalog.getTableMetadata(tableIdentifier.get)
 
         DeltaTableIdentifier(spark, tableIdentifier.get) match {
           case Some(id) if id.path.nonEmpty =>
-            new Path(id.path.get)
+            (DeltaLog.forTable(spark, new Path(id.path.get), hadoopConf), None)
           case Some(id) if id.table.nonEmpty =>
-            new Path(metadata.location)
+            (DeltaLog.forTable(spark, metadata, hadoopConf), Some(metadata))
           case _ =>
             if (metadata.tableType == CatalogTableType.VIEW) {
               throw DeltaErrors.viewNotSupported(operationName)
@@ -262,8 +264,9 @@ trait DeltaCommand extends DeltaLogging {
       }
 
     val startTime = Some(System.currentTimeMillis)
-    val deltaLog = DeltaLog.forTable(spark, tablePath, hadoopConf)
-    if (deltaLog.update(checkIfUpdatedSinceTs = startTime).version < 0) {
+    if (deltaLog
+        .update(checkIfUpdatedSinceTs = startTime, catalogTableOpt = catalogTable)
+        .version < 0) {
       throw DeltaErrors.notADeltaTableException(
         operationName,
         DeltaTableIdentifier(path, tableIdentifier))
@@ -355,7 +358,8 @@ trait DeltaCommand extends DeltaLogging {
     for (version <- txnVersionOpt; appId <- txnAppIdOpt) {
       val currentVersion = txn.txnVersion(appId)
       if (currentVersion >= version) {
-        logInfo(s"Already completed batch $version in application $appId. This will be skipped.")
+        logInfo(log"Already completed batch ${MDC(DeltaLogKeys.VERSION, version)} in application " +
+          log"${MDC(DeltaLogKeys.APP_ID, appId)}. This will be skipped.")
         if (isFromSessionConf && sparkSession.sessionState.conf.getConf(
           DeltaSQLConf.DELTA_IDEMPOTENT_DML_AUTO_RESET_ENABLED)) {
           // if we got txnAppId and txnVersion from the session config, we reset the

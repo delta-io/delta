@@ -72,6 +72,40 @@ object DeltaOperations {
         transformer.transformToString(metric, allMetrics)
       }
     }
+
+    /**
+     * A transaction that commits AddFile actions with deletionVector should have column stats that
+     * are not tight bounds. An exception to this is ComputeStats operation, which recomputes stats
+     * on these files, and the new stats are tight bounds. Some other operations that merely take an
+     * existing AddFile action and commit a copy of it, not changing the deletionVector or stats,
+     * can then also recommit AddFile with deletionVector and tight bound stats that were recomputed
+     * before.
+     *
+     * An operation for which this can happen, and there is no way that it could be committing
+     * new deletion vectors, should set this to false to bypass this check.
+     * All other operations should set this to true, so that this is validated during commit.
+     *
+     * This is abstract to force the implementers of all operations to think about this setting.
+     * All operations should add a comment justifying this setting.
+     * Any operation that sets this to false should add a test in TightBoundsSuite.
+     */
+    def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean
+
+    /**
+     * Whether the transaction is updating metadata of existing files.
+     *
+     * The Delta protocol allows committing AddFile actions for files that already exist on the
+     * latest version of the table, without committing corresponding RemoveFile actions. This is
+     * used to update the metadata of existing files, e.g. to recompute statistics or add tags.
+     *
+     * Such operations need special handling during conflict checking, especially against
+     * no-data-change transactions, because the read/delete conflict can be resolved with
+     * read-file-remapping and because there is no RemoveFile action to trigger a delete/delete
+     * conflict. In case you are adding such operation, make sure to include a test for conflicts
+     * with business *and* no-data-change transactions, e.g. optimize.
+     */
+    def isInPlaceFileMetadataUpdate: Option[Boolean]
+
   }
 
   abstract class OperationWithPredicates(name: String, val predicates: Seq[Expression])
@@ -94,6 +128,9 @@ object DeltaOperations {
 
     val replaceWhereMetricsEnabled = SparkSession.active.conf.get(
       DeltaSQLConf.REPLACEWHERE_METRICS_ENABLED)
+
+    val insertOverwriteRemoveMetricsEnabled = SparkSession.active.conf.get(
+      DeltaSQLConf.OVERWRITE_REMOVE_METRICS_ENABLED)
 
     override def transformMetrics(metrics: Map[String, SQLMetric]): Map[String, String] = {
       // Need special handling for replaceWhere as it is implemented as a Write + Delete.
@@ -125,14 +162,29 @@ object DeltaOperations {
       }
     }
 
-    override val operationMetrics: Set[String] = if (predicate.isEmpty ||
-        !replaceWhereMetricsEnabled) {
-      DeltaOperationMetrics.WRITE
-    } else {
-      // Need special handling for replaceWhere as rows/files are deleted as well.
-      DeltaOperationMetrics.WRITE_REPLACE_WHERE
-    }
+    override val operationMetrics: Set[String] =
+      if (predicate.isEmpty || !replaceWhereMetricsEnabled) {
+        // Remove metrics are included to replaceWhere metrics
+        // so they need to be added only when replaceWhere metrics are not presented
+        val overwriteMetrics =
+          if (mode == SaveMode.Overwrite && insertOverwriteRemoveMetricsEnabled) {
+            DeltaOperationMetrics.OVERWRITE_REMOVES
+          } else {
+            Set.empty
+          }
+        DeltaOperationMetrics.WRITE ++ overwriteMetrics
+      } else {
+        // Need special handling for replaceWhere as rows/files are deleted as well.
+        DeltaOperationMetrics.WRITE_REPLACE_WHERE
+      }
+
     override def changesData: Boolean = true
+
+    // This operation shouldn't be introducing AddFile actions with DVs and tight bounds stats.
+    // DVs can be introduced by the replaceWhere operation.
+    override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
+
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
   }
 
   case class RemoveColumnMapping(
@@ -140,6 +192,11 @@ object DeltaOperations {
     override def parameters: Map[String, Any] = Map()
 
     override val operationMetrics: Set[String] = DeltaOperationMetrics.REMOVE_COLUMN_MAPPING
+
+    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial.
+    override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
+
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
   }
 
   /** Recorded during streaming inserts. */
@@ -154,6 +211,11 @@ object DeltaOperations {
       )
     override val operationMetrics: Set[String] = DeltaOperationMetrics.STREAMING_UPDATE
     override def changesData: Boolean = true
+
+    // This operation shouldn't be introducing AddFile actions with DVs and tight bounds stats.
+    override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
+
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
   }
   /** Recorded while deleting certain partitions. */
   case class Delete(predicate: Seq[Expression])
@@ -175,12 +237,22 @@ object DeltaOperations {
       strMetrics ++ dvMetrics
     }
     override def changesData: Boolean = true
+
+    // This operation shouldn't be introducing AddFile actions with DVs and tight bounds stats.
+    override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
+
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
   }
   /** Recorded when truncating the table. */
   case class Truncate() extends Operation("TRUNCATE") {
     override val parameters: Map[String, Any] = Map.empty
     override val operationMetrics: Set[String] = DeltaOperationMetrics.TRUNCATE
     override def changesData: Boolean = true
+
+    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial.
+    override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
+
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
   }
 
   /** Recorded when converting a table into a Delta table. */
@@ -198,6 +270,11 @@ object DeltaOperations {
         sourceFormat.map("sourceFormat" -> _)
     override val operationMetrics: Set[String] = DeltaOperationMetrics.CONVERT
     override def changesData: Boolean = true
+
+    // This operation shouldn't be introducing AddFile actions with DVs and non-tight bounds stats.
+    override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
+
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
   }
 
   /** Represents the predicates and action type (insert, update, delete) for a Merge clause */
@@ -265,6 +342,11 @@ object DeltaOperations {
     }
 
     override def changesData: Boolean = true
+
+    // This operation shouldn't be introducing AddFile actions with DVs and non-tight bounds stats.
+    override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
+
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
   }
 
   object Merge {
@@ -296,6 +378,11 @@ object DeltaOperations {
       val dvMetrics = transformDeletionVectorMetrics(metrics)
       super.transformMetrics(metrics) ++ dvMetrics
     }
+
+    // This operation shouldn't be introducing AddFile actions with DVs and non-tight bounds stats.
+    override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
+
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
   }
   /** Recorded when the table is created. */
   case class CreateTable(
@@ -317,6 +404,11 @@ object DeltaOperations {
       DeltaOperationMetrics.WRITE
     }
     override def changesData: Boolean = asSelect
+
+    // This operation shouldn't be introducing AddFile actions with DVs and non-tight bounds stats.
+    override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
+
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
   }
   /** Recorded when the table is replaced. */
   case class ReplaceTable(
@@ -335,18 +427,37 @@ object DeltaOperations {
       CLUSTERING_PARAMETER_KEY -> JsonUtils.toJson(clusterBy.getOrElse(Seq.empty)),
       "properties" -> JsonUtils.toJson(metadata.configuration)
   )
+
+    private val insertOverwriteRemoveMetricsEnabled = SparkSession.active.conf.get(
+      DeltaSQLConf.OVERWRITE_REMOVE_METRICS_ENABLED)
+
     override val operationMetrics: Set[String] = if (!asSelect) {
       Set()
     } else {
-      DeltaOperationMetrics.WRITE
+      val overwriteMetrics =
+        if (insertOverwriteRemoveMetricsEnabled) DeltaOperationMetrics.OVERWRITE_REMOVES
+        else Set.empty
+      DeltaOperationMetrics.WRITE ++ overwriteMetrics
     }
     override def changesData: Boolean = true
+
+    // This operation shouldn't be introducing AddFile actions with DVs and non-tight bounds stats.
+    override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
+
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
   }
   /** Recorded when the table properties are set. */
   val OP_SET_TBLPROPERTIES = "SET TBLPROPERTIES"
   case class SetTableProperties(
       properties: Map[String, String]) extends Operation(OP_SET_TBLPROPERTIES) {
     override val parameters: Map[String, Any] = Map("properties" -> JsonUtils.toJson(properties))
+
+    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial.
+    // Note: This operation may trigger additional actions and additional commits. For example
+    // RowTrackingBackfill. These are separate transactions, and this check is performed separately.
+    override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
+
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
   }
   /** Recorded when the table properties are unset. */
   case class UnsetTableProperties(
@@ -355,6 +466,11 @@ object DeltaOperations {
     override val parameters: Map[String, Any] = Map(
       "properties" -> JsonUtils.toJson(propKeys),
       "ifExists" -> ifExists)
+
+    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial.
+    override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
+
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
   }
   /** Recorded when dropping a table feature. */
   case class DropTableFeature(
@@ -363,7 +479,29 @@ object DeltaOperations {
     override val parameters: Map[String, Any] = Map(
       "featureName" -> featureName,
       "truncateHistory" -> truncateHistory)
+
+    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial.
+    // Note: this operation may trigger additional actions and additional commits. These would be
+    // separate transactions, and this check is performed separately.
+    override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
+
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
   }
+
+  /**
+   * Recorded when dropping deletion vectors. Deletion Vector tombstones directly reference
+   * deletion vector files within the retention period. This is to protect them from deletion
+   * against oblivious writers when vacuuming.
+   */
+  object AddDeletionVectorsTombstones extends Operation("Deletion Vector Tombstones") {
+    override val parameters: Map[String, Any] = Map.empty
+
+    // This operation should only introduce RemoveFile actions.
+    override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
+
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
+  }
+
   /** Recorded when columns are added. */
   case class AddColumns(
       colsToAdd: Seq[QualifiedColTypeWithPositionForLog]) extends Operation("ADD COLUMNS") {
@@ -375,6 +513,11 @@ object DeltaOperations {
             "column" -> structFieldToMap(columnPath, column)
           ) ++ colPosition.map("position" -> _.toString)
       }))
+
+    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial.
+    override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
+
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
   }
 
   /** Recorded when columns are dropped. */
@@ -384,6 +527,11 @@ object DeltaOperations {
 
     override val parameters: Map[String, Any] = Map(
       "columns" -> JsonUtils.toJson(colsToDrop.map(UnresolvedAttribute(_).name)))
+
+    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial.
+    override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
+
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
   }
 
   /** Recorded when column is renamed */
@@ -394,6 +542,11 @@ object DeltaOperations {
       "oldColumnPath" -> UnresolvedAttribute(oldColumnPath).name,
       "newColumnPath" -> UnresolvedAttribute(newColumnPath).name
     )
+
+    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial.
+    override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
+
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
   }
 
   /** Recorded when columns are changed. */
@@ -406,6 +559,11 @@ object DeltaOperations {
     override val parameters: Map[String, Any] = Map(
       "column" -> JsonUtils.toJson(structFieldToMap(columnPath, newColumn))
     ) ++ colPosition.map("position" -> _)
+
+    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial.
+    override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
+
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
   }
   /** Recorded when columns are replaced. */
   case class ReplaceColumns(
@@ -413,6 +571,11 @@ object DeltaOperations {
 
     override val parameters: Map[String, Any] = Map(
       "columns" -> JsonUtils.toJson(columns.map(structFieldToMap(Seq.empty, _))))
+
+    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial.
+    override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
+
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
   }
 
   case class UpgradeProtocol(newProtocol: Protocol) extends Operation("UPGRADE PROTOCOL") {
@@ -422,15 +585,32 @@ object DeltaOperations {
       "readerFeatures" -> newProtocol.readerFeatures,
       "writerFeatures" -> newProtocol.writerFeatures
     )))
+
+    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial.
+    override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
+
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
   }
 
   object ManualUpdate extends Operation("Manual Update") {
     override val parameters: Map[String, Any] = Map.empty
+
+    // Unsafe manual update disables checks.
+    override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = false
+
+    // Manual update operations can commit arbitrary actions. In case this field is needed consider
+    // adding a new Delta operation. For test-only code use TestOperation.
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = None
   }
 
   /** A commit without any actions. Could be used to force creation of new checkpoints. */
   object EmptyCommit extends Operation("Empty Commit") {
     override val parameters: Map[String, Any] = Map.empty
+
+    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial.
+    override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
+
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
   }
 
   case class UpdateColumnMetadata(
@@ -442,6 +622,11 @@ object DeltaOperations {
         case (path, field) => structFieldToMap(path, field)
       }))
     }
+
+    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial.
+    override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
+
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
   }
 
   case class UpdateSchema(oldSchema: StructType, newSchema: StructType)
@@ -449,11 +634,21 @@ object DeltaOperations {
     override val parameters: Map[String, Any] = Map(
       "oldSchema" -> JsonUtils.toJson(oldSchema),
       "newSchema" -> JsonUtils.toJson(newSchema))
+
+    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial.
+    override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
+
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
   }
 
   case class AddConstraint(
       constraintName: String, expr: String) extends Operation("ADD CONSTRAINT") {
     override val parameters: Map[String, Any] = Map("name" -> constraintName, "expr" -> expr)
+
+    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial.
+    override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
+
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
   }
 
   case class DropConstraint(
@@ -465,11 +660,24 @@ object DeltaOperations {
         Map("name" -> constraintName, "existed" -> "false")
       }
     }
+
+    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial.
+    override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
+
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
   }
 
   /** Recorded when recomputing stats on the table. */
   case class ComputeStats(predicate: Seq[Expression])
-      extends OperationWithPredicates("COMPUTE STATS", predicate)
+      extends OperationWithPredicates("COMPUTE STATS", predicate) {
+
+    // ComputeStats operation commits AddFiles with recomputed stats which are always tight bounds,
+    // even when DVs are present. This check should be disabled.
+    override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = false
+
+    // ComputeStats operation only updates statistics of existing files.
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(true)
+  }
 
   /** Recorded when restoring a Delta table to an older version. */
   val OP_RESTORE = "RESTORE"
@@ -482,10 +690,23 @@ object DeltaOperations {
     override def changesData: Boolean = true
 
     override val operationMetrics: Set[String] = DeltaOperationMetrics.RESTORE
+
+    // Restore operation commits AddFiles with files, DVs and stats from the version it restores to.
+    // It can happen that tight bound stats were recomputed before by ComputeStats.
+    override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = false
+
+    // The restore operation could perform in-place file metadata updates. However, the difference
+    // between the current and the restored state is computed using only the (path, DV) pairs as
+    // identifiers, meaning that metadata differences are ignored.
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
   }
 
   sealed abstract class OptimizeOrReorg(override val name: String, predicates: Seq[Expression])
     extends OperationWithPredicates(name, predicates)
+
+  /** operation name for ROW TRACKING BACKFILL command */
+  val ROW_TRACKING_BACKFILL_OPERATION_NAME = "ROW TRACKING BACKFILL"
+
   /** parameter key to indicate whether it's an Auto Compaction */
   val AUTO_COMPACTION_PARAMETER_KEY = "auto"
 
@@ -497,13 +718,16 @@ object DeltaOperations {
   val ZORDER_PARAMETER_KEY = "zOrderBy"
   /** parameter key to indicate clustering columns */
   val CLUSTERING_PARAMETER_KEY = "clusterBy"
+  /** parameter key to indicate the operation for `OPTIMIZE tbl FULL` */
+  val CLUSTERING_IS_FULL_KEY = "isFull"
 
   /** Recorded when optimizing the table. */
   case class Optimize(
       predicate: Seq[Expression],
       zOrderBy: Seq[String] = Seq.empty,
       auto: Boolean = false,
-      clusterBy: Option[Seq[String]] = None
+      clusterBy: Option[Seq[String]] = None,
+      isFull: Boolean = false
   ) extends OptimizeOrReorg(OPTIMIZE_OPERATION_NAME, predicate) {
     override val parameters: Map[String, Any] = super.parameters ++ Map(
       // When clustering columns are specified, set the zOrderBy key to empty.
@@ -511,8 +735,15 @@ object DeltaOperations {
       CLUSTERING_PARAMETER_KEY -> JsonUtils.toJson(clusterBy.getOrElse(Seq.empty)),
       AUTO_COMPACTION_PARAMETER_KEY -> auto
     )
+    // `isFull` is not relevant for non-clustering tables, so skip it.
+    .++(clusterBy.filter(_.nonEmpty).map(_ => CLUSTERING_IS_FULL_KEY -> isFull))
 
     override val operationMetrics: Set[String] = DeltaOperationMetrics.OPTIMIZE
+
+    // This operation shouldn't be introducing AddFile actions with DVs and tight bounds stats.
+    override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
+
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
   }
 
   /** Recorded when cloning a Delta table into a new location. */
@@ -527,6 +758,12 @@ object DeltaOperations {
     )
     override def changesData: Boolean = true
     override val operationMetrics: Set[String] = DeltaOperationMetrics.CLONE
+
+    // Clone operation commits AddFiles with files, DVs and stats copied over from the source table.
+    // It can happen that tight bound stats were recomputed before by ComputeStats.
+    override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = false
+
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
   }
 
   /**
@@ -537,24 +774,42 @@ object DeltaOperations {
   case class VacuumStart(
       retentionCheckEnabled: Boolean,
       specifiedRetentionMillis: Option[Long],
-      defaultRetentionMillis: Long) extends Operation("VACUUM START") {
+      defaultRetentionMillis: Long) extends Operation(VacuumStart.OPERATION_NAME) {
     override val parameters: Map[String, Any] = Map(
       "retentionCheckEnabled" -> retentionCheckEnabled,
       "defaultRetentionMillis" -> defaultRetentionMillis
     ) ++ specifiedRetentionMillis.map("specifiedRetentionMillis" -> _)
 
     override val operationMetrics: Set[String] = DeltaOperationMetrics.VACUUM_START
+
+    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial.
+    override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
+
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
+  }
+
+  object VacuumStart {
+    val OPERATION_NAME = "VACUUM START"
   }
 
   /**
    * @param status - whether the vacuum operation was successful; either "COMPLETED" or "FAILED"
    */
-  case class VacuumEnd(status: String) extends Operation(s"VACUUM END") {
+  case class VacuumEnd(status: String) extends Operation(VacuumEnd.OPERATION_NAME) {
     override val parameters: Map[String, Any] = Map(
       "status" -> status
     )
 
     override val operationMetrics: Set[String] = DeltaOperationMetrics.VACUUM_END
+
+    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial.
+    override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
+
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
+  }
+
+  object VacuumEnd {
+    val OPERATION_NAME = "VACUUM END"
   }
 
   /** Recorded when running REORG on the table. */
@@ -566,6 +821,11 @@ object DeltaOperations {
     )
 
     override val operationMetrics: Set[String] = DeltaOperationMetrics.OPTIMIZE
+
+    // This operation shouldn't be introducing AddFile actions with DVs and tight bounds stats.
+    override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
+
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
   }
 
   /** Recorded when clustering columns are changed on clustered tables. */
@@ -575,6 +835,26 @@ object DeltaOperations {
     override val parameters: Map[String, Any] = Map(
       "oldClusteringColumns" -> oldClusteringColumns,
       "newClusteringColumns" -> newClusteringColumns)
+
+    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial.
+    override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
+
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
+  }
+
+  /** Recorded when we backfill a Delta table's existing AddFiles with row tracking data. */
+  case class RowTrackingBackfill(
+      batchId: Int = 0) extends Operation(ROW_TRACKING_BACKFILL_OPERATION_NAME) {
+    override val parameters: Map[String, Any] = Map(
+      "batchId" -> JsonUtils.toJson(batchId)
+    )
+
+    // RowTrackingBackfill operation commits AddFiles with files, DVs and stats copied over.
+    // It can happen that tight bound stats were recomputed before by ComputeStats.
+    override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = false
+
+    // RowTrackingBackfill only updates tags of existing files.
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(true)
   }
 
   private def structFieldToMap(colPath: Seq[String], field: StructField): Map[String, Any] = {
@@ -596,8 +876,14 @@ object DeltaOperations {
      colPosition: Option[String])
 
   /** Dummy operation only for testing with arbitrary operation names */
-  case class TestOperation(operationName: String = "TEST") extends Operation(operationName) {
+  case class TestOperation(
+    operationName: String = "TEST",
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = None
+  ) extends Operation(operationName) {
     override val parameters: Map[String, Any] = Map.empty
+
+    // Perform the check for testing.
+    override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
   }
 
   /**
@@ -618,6 +904,11 @@ object DeltaOperations {
   case class UpgradeUniformProperties(properties: Map[String, String]) extends Operation(
       OP_UPGRADE_UNIFORM_BY_REORG) {
     override val parameters: Map[String, Any] = Map("properties" -> JsonUtils.toJson(properties))
+
+    // This operation shouldn't be introducing AddFile actions with DVs and tight bounds stats.
+    override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
+
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
   }
 }
 
@@ -626,6 +917,11 @@ private[delta] object DeltaOperationMetrics {
     "numFiles", // number of files written
     "numOutputBytes", // size in bytes of the written contents
     "numOutputRows" // number of rows written
+  )
+
+  val OVERWRITE_REMOVES = Set(
+    "numRemovedFiles",
+    "numRemovedBytes"
   )
 
   val REMOVE_COLUMN_MAPPING: Set[String] = Set(
@@ -804,6 +1100,7 @@ private[delta] object DeltaOperationMetrics {
     "numTargetFilesRemoved", // number of files removed from the sink(target)
     "numTargetChangeFilesAdded", // number of CDC files
     "executionTimeMs",  // time taken to execute the entire operation
+    "materializeSourceTimeMs", // time taken to materialize source (or determine it's not needed)
     "scanTimeMs", // time taken to scan the files for matches
     "rewriteTimeMs", // time taken to rewrite the matched files
     "numTargetDeletionVectorsAdded", // number of deletion vectors added

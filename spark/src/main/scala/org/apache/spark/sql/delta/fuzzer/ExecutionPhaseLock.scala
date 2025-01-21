@@ -65,4 +65,7 @@ case class ExecutionPhaseLock(
     waitToEnter()
     leave()
   }
+
+  /** Blocks at this point until the phase has been left. */
+  def waitToLeave(): Unit = exitBarrier.waitToPass()
 }

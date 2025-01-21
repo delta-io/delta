@@ -25,6 +25,7 @@ import java.util.Locale
 import scala.sys.process.Process
 
 // scalastyle:off import.ordering.noEmptyLine
+// scalastyle:off line.size.limit
 import org.apache.spark.sql.delta.DeltaErrors.generateDocsLink
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.{TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
@@ -43,7 +44,7 @@ import org.apache.hadoop.fs.Path
 import org.json4s.JString
 import org.scalatest.GivenWhenThen
 
-import org.apache.spark.SparkThrowable
+import org.apache.spark.{SparkContext, SparkThrowable}
 import org.apache.spark.sql.{AnalysisException, QueryTest, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
@@ -278,16 +279,16 @@ trait DeltaErrorsSuiteBase
         Some("NOT NULL constraint violated for column: col1.\n"))
     }
     {
-      val expr = CatalystSqlParser.parseExpression("concat(\"hello \", \"world\")")
+      val expr = UnresolvedAttribute("col")
       val e = intercept[DeltaInvariantViolationException] {
         throw DeltaInvariantViolationException(
           Constraints.Check(CharVarcharConstraint.INVARIANT_NAME,
             LessThanOrEqual(Length(expr), Literal(5))),
-          Map.empty[String, Any])
+          Map("col" -> "Hello World"))
       }
       checkErrorMessage(e, Some("DELTA_EXCEED_CHAR_VARCHAR_LIMIT"), Some("22001"),
-        Some("Exceeds char/varchar type length limitation. " +
-        "Failed check: (length('concat(hello , world)) <= 5)."))
+        Some("Value \"Hello World\" exceeds char/varchar type length limitation. " +
+          "Failed check: (length(col) <= 5)."))
     }
     {
       val e = intercept[DeltaInvariantViolationException] {
@@ -476,12 +477,12 @@ trait DeltaErrorsSuiteBase
         Some(s"Delta table $table doesn't exist."))
     }
     checkError(
-      exception = intercept[DeltaIllegalStateException] {
+      intercept[DeltaIllegalStateException] {
         throw DeltaErrors.differentDeltaTableReadByStreamingSource(
           newTableId = "027fb01c-94aa-4cab-87cb-5aab6aec6d17",
           oldTableId = "2edf2c02-bb63-44e9-a84c-517fad0db296")
       },
-      errorClass = "DIFFERENT_DELTA_TABLE_READ_BY_STREAMING_SOURCE",
+      "DIFFERENT_DELTA_TABLE_READ_BY_STREAMING_SOURCE",
       parameters = Map(
         "oldTableId" -> "2edf2c02-bb63-44e9-a84c-517fad0db296",
         "newTableId" -> "027fb01c-94aa-4cab-87cb-5aab6aec6d17")
@@ -583,45 +584,6 @@ trait DeltaErrorsSuiteBase
         Some("The configuration " +
         "'spark.databricks.delta.properties.defaults.columnMapping.mode' cannot be set to `id` " +
         "when using CONVERT TO DELTA."))
-    }
-    {
-      val oldAndNew = Seq(
-        (Protocol(2, 4), ColumnMappingTableFeature.minProtocolVersion),
-        (
-          Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION),
-          Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
-            .withFeature(ColumnMappingTableFeature)))
-      for ((oldProtocol, newProtocol) <- oldAndNew) {
-        val e = intercept[DeltaColumnMappingUnsupportedException] {
-          throw DeltaErrors.changeColumnMappingModeOnOldProtocol(oldProtocol)
-        }
-        // scalastyle:off line.size.limit
-        checkErrorMessage(e, None, None,
-          Some(
-          s"""
-             |Your current table protocol version does not support changing column mapping modes
-             |using delta.columnMapping.mode.
-             |
-             |Required Delta protocol version for column mapping:
-             |${newProtocol.toString}
-             |Your table's current Delta protocol version:
-             |${oldProtocol.toString}
-             |
-             |Please enable Column Mapping on your Delta table with mapping mode 'name'.
-             |You can use one of the following commands.
-             |
-             |If your table is already on the required protocol version:
-             |ALTER TABLE table_name SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name')
-             |
-             |If your table is not on the required protocol version and requires a protocol upgrade:
-             |ALTER TABLE table_name SET TBLPROPERTIES (
-             |   'delta.columnMapping.mode' = 'name',
-             |   'delta.minReaderVersion' = '${newProtocol.minReaderVersion}',
-             |   'delta.minWriterVersion' = '${newProtocol.minWriterVersion}')
-             |""".stripMargin)
-          )
-          // scalastyle:off line.size.limit
-      }
     }
     {
       val e = intercept[DeltaColumnMappingUnsupportedException] {
@@ -999,12 +961,12 @@ trait DeltaErrorsSuiteBase
         SchemaMergingUtils.mergeSchemas(s1, s2)
       }
       checkError(
-        exception = e,
-        errorClass = "DELTA_FAILED_TO_MERGE_FIELDS",
+        e,
+        "DELTA_FAILED_TO_MERGE_FIELDS",
         parameters = Map("currentField" -> "c0", "updateField" -> "c0"))
       checkError(
-        exception = e.getCause.asInstanceOf[DeltaAnalysisException],
-        errorClass = "DELTA_MERGE_INCOMPATIBLE_DATATYPE",
+        e.getCause.asInstanceOf[DeltaAnalysisException],
+        "DELTA_MERGE_INCOMPATIBLE_DATATYPE",
         parameters = Map("currentDataType" -> "IntegerType", "updateDataType" -> "StringType"))
     }
     {
@@ -1035,13 +997,13 @@ trait DeltaErrorsSuiteBase
     }
     {
       checkError(
-        exception = intercept[DeltaAnalysisException] {
+        intercept[DeltaAnalysisException] {
           throw DeltaErrors.alterTableChangeColumnException(
             fieldPath = "a.b.c",
             oldField = StructField("c", IntegerType),
             newField = StructField("c", LongType))
         },
-        errorClass = "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
+        "DELTA_UNSUPPORTED_ALTER_TABLE_CHANGE_COL_OP",
         parameters = Map(
           "fieldPath" -> "a.b.c",
           "oldField" -> "INT",
@@ -1067,6 +1029,24 @@ trait DeltaErrorsSuiteBase
           | |-- c0: string (nullable = true)
           |""".stripMargin
       ))
+    }
+    {
+      checkError(
+        exception = intercept[DeltaUnsupportedOperationException] {
+          throw DeltaErrors.unsupportedTypeChangeInPreview(
+            fieldPath = Seq("origin", "country"),
+            fromType = IntegerType,
+            toType = LongType,
+            feature = TypeWideningPreviewTableFeature
+          )
+        },
+        "DELTA_UNSUPPORTED_TYPE_CHANGE_IN_PREVIEW",
+        parameters = Map(
+          "fieldPath" -> "origin.country",
+          "fromType" -> "INT",
+          "toType" -> "BIGINT",
+          "typeWideningFeatureName" -> "typeWidening-preview"
+        ))
     }
     {
       val e = intercept[DeltaIllegalStateException] {
@@ -1459,14 +1439,14 @@ trait DeltaErrorsSuiteBase
     }
     {
       checkError(
-        exception = intercept[DeltaAnalysisException] {
+        intercept[DeltaAnalysisException] {
           throw DeltaErrors.constraintDataTypeMismatch(
             columnPath = Seq("a", "x"),
             columnType = ByteType,
             dataType = IntegerType,
             constraints = Map("ck1" -> "a > 0", "ck2" -> "hash(b) > 0"))
         },
-        errorClass = "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH",
+        "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH",
         parameters = Map(
           "columnName" -> "a.x",
           "columnType" -> "TINYINT",
@@ -1476,7 +1456,7 @@ trait DeltaErrorsSuiteBase
     }
     {
       checkError(
-        exception = intercept[DeltaAnalysisException] {
+        intercept[DeltaAnalysisException] {
           throw DeltaErrors.generatedColumnsDataTypeMismatch(
             columnPath = Seq("a", "x"),
             columnType = ByteType,
@@ -1486,7 +1466,7 @@ trait DeltaErrorsSuiteBase
               "gen2" -> "3 + a . x"
             ))
         },
-        errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
+        "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
         parameters = Map(
           "columnName" -> "a.x",
           "columnType" -> "TINYINT",
@@ -1600,7 +1580,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.tableFeatureDropHistoryTruncationNotAllowed()
       }
       checkErrorMessage(e, Some("DELTA_FEATURE_DROP_HISTORY_TRUNCATION_NOT_ALLOWED"),
-        Some("0AKDE"), Some("History truncation is only relevant for reader features."))
+        Some("0AKDE"), Some("The particular feature does not require history truncation."))
     }
     {
       val logRetention = DeltaConfigs.LOG_RETENTION
@@ -1954,10 +1934,10 @@ trait DeltaErrorsSuiteBase
     }
     {
       checkError(
-        exception = intercept[DeltaIllegalStateException] {
+        intercept[DeltaIllegalStateException] {
           throw MaterializedRowId.missingMetadataException("table_name")
         },
-        errorClass = "DELTA_MATERIALIZED_ROW_TRACKING_COLUMN_NAME_MISSING",
+        "DELTA_MATERIALIZED_ROW_TRACKING_COLUMN_NAME_MISSING",
         parameters = Map(
           "rowTrackingColumn" -> "Row ID",
           "tableName" -> "table_name"
@@ -1966,10 +1946,10 @@ trait DeltaErrorsSuiteBase
     }
     {
       checkError(
-        exception = intercept[DeltaIllegalStateException] {
+        intercept[DeltaIllegalStateException] {
           throw MaterializedRowCommitVersion.missingMetadataException("table_name")
         },
-        errorClass = "DELTA_MATERIALIZED_ROW_TRACKING_COLUMN_NAME_MISSING",
+        "DELTA_MATERIALIZED_ROW_TRACKING_COLUMN_NAME_MISSING",
         parameters = Map(
           "rowTrackingColumn" -> "Row Commit Version",
           "tableName" -> "table_name"
@@ -2529,6 +2509,13 @@ trait DeltaErrorsSuiteBase
       checkErrorMessage(e, Some("DELTA_CHECKPOINT_NON_EXIST_TABLE"), Some("42K03"),
         Some(s"Cannot checkpoint a non-existing table $path. " +
           "Did you manually delete files in the _delta_log directory?"))
+    }
+    {
+      val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.unsupportedDeepCloneException()
+      }
+      checkErrorMessage(e, Some("DELTA_UNSUPPORTED_DEEP_CLONE"), Some("0A000"),
+        Some("Deep clone is not supported by this Delta version."))
     }
     {
       val e = intercept[DeltaAnalysisException] {
@@ -3204,6 +3191,88 @@ trait DeltaErrorsSuiteBase
         None,
         Some(s"Could not resolve expression: ${exprs.mkString(",")}")
       )
+    }
+    {
+      val unsupportedDataType = IntegerType
+      val e = intercept[DeltaUnsupportedOperationException] {
+        throw DeltaErrors.identityColumnDataTypeNotSupported(unsupportedDataType)
+      }
+      checkErrorMessage(
+        e,
+        Some("DELTA_IDENTITY_COLUMNS_UNSUPPORTED_DATA_TYPE"),
+        Some("428H2"),
+        Some(s"DataType ${unsupportedDataType.typeName} is not supported for IDENTITY columns."),
+        startWith = true
+      )
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.identityColumnIllegalStep()
+      }
+      checkErrorMessage(
+        e,
+        Some("DELTA_IDENTITY_COLUMNS_ILLEGAL_STEP"),
+        Some("42611"),
+        Some("IDENTITY column step cannot be 0."),
+        startWith = true
+      )
+    }
+    {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.identityColumnWithGenerationExpression()
+      }
+      checkErrorMessage(
+        e,
+        Some("DELTA_IDENTITY_COLUMNS_WITH_GENERATED_EXPRESSION"),
+        Some("42613"),
+        Some("IDENTITY column cannot be specified with a generated column expression."),
+        startWith = true
+      )
+    }
+    {
+      val e = intercept[DeltaUnsupportedOperationException] {
+        throw DeltaErrors.unsupportedWritesWithMissingCoordinators("test")
+      }
+      checkErrorMessage(
+        e,
+        Some("DELTA_UNSUPPORTED_WRITES_WITHOUT_COORDINATOR"),
+        Some("0AKDC"),
+        Some("You are trying to perform writes on a table which has been registered with " +
+          "the commit coordinator test"),
+        startWith = true
+      )
+    }
+    {
+      val exceptionWithContext =
+        DeltaErrors.multipleSourceRowMatchingTargetRowInMergeException(spark)
+      assert(exceptionWithContext.getMessage.contains("https") === true)
+
+      withCustomContext(spark, null) {
+        val exceptionWithoutContext =
+          DeltaErrors.multipleSourceRowMatchingTargetRowInMergeException(spark)
+        assert(exceptionWithoutContext.getMessage.contains("https") === false)
+      }
+    }
+  }
+
+  private def setCustomContext(session: SparkSession, context: SparkContext): Unit = {
+    val scField = classOf[SparkSession].getDeclaredField("sparkContext")
+    scField.setAccessible(true)
+    try {
+      scField.set(session, context)
+    } finally {
+      scField.setAccessible(false)
+    }
+  }
+
+  /** Runs `f` with custom context used in spark session. */
+  private def withCustomContext(session: SparkSession, context: SparkContext)(f: => Unit): Unit = {
+    val originalContext = session.sparkContext
+    try {
+      setCustomContext(session, context)
+      f
+    } finally {
+      setCustomContext(session, originalContext)
     }
   }
 }

@@ -20,7 +20,11 @@ import java.util.Locale
 
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsUtils
+import org.apache.spark.sql.delta.redirect.{RedirectReaderWriter, RedirectWriterOnly}
+import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
@@ -145,7 +149,8 @@ sealed trait FeatureAutomaticallyEnabledByMetadata { this: TableFeature =>
    * Determine whether the feature must be supported and enabled because its metadata requirements
    * are satisfied.
    */
-  def metadataRequiresFeatureToBeEnabled(metadata: Metadata, spark: SparkSession): Boolean
+  def metadataRequiresFeatureToBeEnabled(
+      protocol: Protocol, metadata: Metadata, spark: SparkSession): Boolean
 
   require(
     !this.isLegacyFeature || automaticallyUpdateProtocolOfExistingTables,
@@ -154,7 +159,7 @@ sealed trait FeatureAutomaticallyEnabledByMetadata { this: TableFeature =>
 
 /**
  * A trait indicating a feature can be removed. Classes that extend the trait need to
- * implement the following three functions:
+ * implement the following four functions:
  *
  * a) preDowngradeCommand. This is where all required actions for removing the feature are
  *    implemented. For example, to remove the DVs feature we need to remove metadata config
@@ -169,13 +174,21 @@ sealed trait FeatureAutomaticallyEnabledByMetadata { this: TableFeature =>
  *    protocol downgrade is committed to the table. When the protocol downgrade txn conflicts,
  *    the validation is repeated against the winning txn snapshot. As soon as the protocol
  *    downgrade succeeds, all subsequent interleaved txns are aborted.
+ *    The implementation should return true if there are no feature traces in the latest
+ *    version. False otherwise.
  *
- * c) actionUsesFeature. For reader+writer features we check whether past versions contain any
- *    traces of the removed feature. This is achieved by calling [[actionUsesFeature]] for
- *    every action of every reachable commit version in the log. Note, a feature may leave traces
- *    in both data and metadata. Depending on the feature, we need to check several types of
- *    actions such as Metadata, AddFile, RemoveFile etc.
- *    Writer features should directly return false.
+ * c) requiresHistoryProtection. It indicates whether the feature leaves traces in the table
+ *    history that may result in incorrect behaviour if the table is read/written by a client
+ *    that does not support the feature. This is by default true for all reader+writer features
+ *    and false for writer features.
+ *    WARNING: Disabling [[requiresHistoryProtection]] for relevant features could result in
+ *    incorrect snapshot reconstruction.
+ *
+ * d) actionUsesFeature. For features that require history truncation we verify whether past
+ *    versions contain any traces of the removed feature. This is achieved by calling
+ *    [[actionUsesFeature]] for every action of every reachable commit version in the log.
+ *    Note, a feature may leave traces in both data and metadata. Depending on the feature, we
+ *    need to check several types of actions such as Metadata, AddFile, RemoveFile etc.
  *
  *    WARNING: actionUsesFeature should not check Protocol actions for the feature being removed,
  *    because at the time actionUsesFeature is invoked the protocol downgrade did not happen yet.
@@ -189,6 +202,7 @@ sealed trait FeatureAutomaticallyEnabledByMetadata { this: TableFeature =>
 sealed trait RemovableFeature { self: TableFeature =>
   def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand
   def validateRemoval(snapshot: Snapshot): Boolean
+  def requiresHistoryProtection: Boolean = isReaderWriterFeature
   def actionUsesFeature(action: Action): Boolean
 
   /**
@@ -214,7 +228,7 @@ sealed trait RemovableFeature { self: TableFeature =>
   def historyContainsFeature(
       spark: SparkSession,
       downgradeTxnReadSnapshot: Snapshot): Boolean = {
-    require(isReaderWriterFeature)
+    require(requiresHistoryProtection)
     val deltaLog = downgradeTxnReadSnapshot.deltaLog
     val earliestCheckpointVersion = deltaLog.findEarliestReliableCheckpoint.getOrElse(0L)
     val toVersion = downgradeTxnReadSnapshot.version
@@ -235,8 +249,9 @@ sealed trait RemovableFeature { self: TableFeature =>
 
     // Check if commits between 0 version and toVersion contain any traces of the feature.
     val allHistoricalDeltaFiles = deltaLog
-      .listFrom(0L)
-      .takeWhile(file => FileNames.getFileVersionOpt(file.getPath).forall(_ <= toVersion))
+      .getChangeLogFiles(0)
+      .takeWhile { case (version, _) => version <= toVersion }
+      .map { case (_, file) => file }
       .filter(FileNames.isDeltaFile)
       .toSeq
     DeltaLogFileIndex(DeltaLogFileIndex.COMMIT_FILE_FORMAT, allHistoricalDeltaFiles)
@@ -313,6 +328,8 @@ sealed abstract class LegacyReaderWriterFeature(
   with ReaderWriterFeatureType
 
 object TableFeature {
+  val isTesting = DeltaUtils.isTesting
+
   /**
    * All table features recognized by this client. Update this set when you added a new Table
    * Feature.
@@ -320,8 +337,17 @@ object TableFeature {
    * Warning: Do not call `get` on this Map to get a specific feature because keys in this map are
    * in lower cases. Use [[featureNameToFeature]] instead.
    */
-  private[delta] val allSupportedFeaturesMap: Map[String, TableFeature] = {
-    var features: Set[TableFeature] = Set(
+  def allSupportedFeaturesMap: Map[String, TableFeature] = {
+    val testingFeaturesEnabled =
+      try {
+        SparkSession
+        .getActiveSession
+        .map(_.conf.get(DeltaSQLConf.TABLE_FEATURES_TEST_FEATURES_ENABLED))
+        .getOrElse(true)
+      } catch {
+          case _ => true
+      }
+   var features: Set[TableFeature] = Set(
       AllowColumnDefaultsTableFeature,
       AppendOnlyTableFeature,
       ChangeDataFeedTableFeature,
@@ -329,9 +355,11 @@ object TableFeature {
       ClusteringTableFeature,
       DomainMetadataTableFeature,
       GeneratedColumnsTableFeature,
+      IdentityColumnsTableFeature,
       InvariantsTableFeature,
       ColumnMappingTableFeature,
       TimestampNTZTableFeature,
+      TypeWideningPreviewTableFeature,
       TypeWideningTableFeature,
       IcebergCompatV1TableFeature,
       IcebergCompatV2TableFeature,
@@ -339,54 +367,87 @@ object TableFeature {
       VacuumProtocolCheckTableFeature,
       V2CheckpointTableFeature,
       RowTrackingFeature,
-      InCommitTimestampTableFeature)
-    if (DeltaUtils.isTesting) {
+      InCommitTimestampTableFeature,
+      VariantTypePreviewTableFeature,
+      VariantTypeTableFeature,
+      CoordinatedCommitsTableFeature,
+      CheckpointProtectionTableFeature)
+    if (isTesting && testingFeaturesEnabled) {
       features ++= Set(
+        RedirectReaderWriterFeature,
+        RedirectWriterOnlyFeature,
         TestLegacyWriterFeature,
         TestLegacyReaderWriterFeature,
         TestWriterFeature,
         TestWriterMetadataNoAutoUpdateFeature,
         TestReaderWriterFeature,
+        TestUnsupportedReaderWriterFeature,
         TestReaderWriterMetadataAutoUpdateFeature,
         TestReaderWriterMetadataNoAutoUpdateFeature,
         TestRemovableWriterFeature,
+        TestRemovableWriterFeatureWithDependency,
+        TestRemovableWriterWithHistoryTruncationFeature,
         TestRemovableLegacyWriterFeature,
         TestRemovableReaderWriterFeature,
         TestRemovableLegacyReaderWriterFeature,
         TestFeatureWithDependency,
         TestFeatureWithTransitiveDependency,
-        TestWriterFeatureWithTransitiveDependency,
-        // Identity columns are under development and only available in testing.
-        IdentityColumnsTableFeature,
-        // managed-commits are under development and only available in testing.
-        ManagedCommitTableFeature)
+        TestWriterFeatureWithTransitiveDependency)
     }
     val featureMap = features.map(f => f.name.toLowerCase(Locale.ROOT) -> f).toMap
     require(features.size == featureMap.size, "Lowercase feature names must not duplicate.")
     featureMap
   }
 
+  /** Test only features that appear unsupported in order to test protocol validations. */
+  def testUnsupportedFeatures: Set[TableFeature] =
+    if (isTesting) Set(TestUnsupportedReaderWriterFeature) else Set.empty
+
+  private val allDependentFeaturesMap: Map[TableFeature, Set[TableFeature]] = {
+    val dependentFeatureTuples =
+      allSupportedFeaturesMap.values.toSeq.flatMap(f => f.requiredFeatures.map(_ -> f))
+    dependentFeatureTuples
+      .groupBy(_._1)
+      .mapValues(_.map(_._2).toSet)
+      .toMap
+  }
+
   /** Get a [[TableFeature]] object by its name. */
   def featureNameToFeature(featureName: String): Option[TableFeature] =
     allSupportedFeaturesMap.get(featureName.toLowerCase(Locale.ROOT))
 
+  /** Returns a set of [[TableFeature]]s that require the given feature to be enabled. */
+  def getDependentFeatures(feature: TableFeature): Set[TableFeature] =
+    allDependentFeaturesMap.getOrElse(feature, Set.empty)
+
   /**
-   * Extracts the removed (explicit) feature names by comparing new and old protocols.
-   * Returns None if there are no removed (explicit) features.
+   * Extracts the removed features by comparing new and old protocols.
+   * Returns None if there are no removed features.
    */
-  protected def getDroppedExplicitFeatureNames(
+  protected def getDroppedFeatures(
       newProtocol: Protocol,
-      oldProtocol: Protocol): Option[Set[String]] = {
-    val newFeatureNames = newProtocol.readerAndWriterFeatureNames
-    val oldFeatureNames = oldProtocol.readerAndWriterFeatureNames
-    Option(oldFeatureNames -- newFeatureNames).filter(_.nonEmpty)
+      oldProtocol: Protocol): Set[TableFeature] = {
+    val newFeatureNames = newProtocol.implicitlyAndExplicitlySupportedFeatures
+    val oldFeatureNames = oldProtocol.implicitlyAndExplicitlySupportedFeatures
+    oldFeatureNames -- newFeatureNames
+  }
+
+  /** Identifies whether there was any feature removal between two protocols. */
+  def isProtocolRemovingFeatures(newProtocol: Protocol, oldProtocol: Protocol): Boolean = {
+    getDroppedFeatures(newProtocol = newProtocol, oldProtocol = oldProtocol).nonEmpty
   }
 
   /**
-   * Identifies whether there was any feature removal between two protocols.
+   * Identifies whether there were any features with requiresHistoryProtection removed
+   * between the two protocols.
    */
-  def isProtocolRemovingExplicitFeatures(newProtocol: Protocol, oldProtocol: Protocol): Boolean = {
-    getDroppedExplicitFeatureNames(newProtocol = newProtocol, oldProtocol = oldProtocol).isDefined
+  def isProtocolRemovingFeatureWithHistoryProtection(
+      newProtocol: Protocol,
+      oldProtocol: Protocol): Boolean = {
+    getDroppedFeatures(newProtocol = newProtocol, oldProtocol = oldProtocol).exists {
+        case r: RemovableFeature if r.requiresHistoryProtection => true
+        case _ => false
+      }
   }
 
   /**
@@ -396,20 +457,20 @@ object TableFeature {
       newProtocol: Protocol,
       oldProtocol: Protocol,
       snapshot: Snapshot): Boolean = {
-    val droppedFeatureNamesOpt = TableFeature.getDroppedExplicitFeatureNames(
+    val droppedFeatures = TableFeature.getDroppedFeatures(
       newProtocol = newProtocol,
       oldProtocol = oldProtocol)
-    val droppedFeatureName = droppedFeatureNamesOpt match {
-      case Some(f) if f.size == 1 => f.head
-      // We do not support dropping more than one features at a time so we have to reject
+    val droppedFeature = droppedFeatures match {
+      case f if f.size == 1 => f.head
+      // We do not support dropping more than one feature at a time so we have to reject
       // the validation.
-      case Some(_) => return false
-      case None => return true
+      case f if f.size > 1 => return false
+      case _ => return true
     }
 
-    TableFeature.featureNameToFeature(droppedFeatureName) match {
-      case Some(feature: RemovableFeature) => feature.validateRemoval(snapshot)
-      case _ => throw DeltaErrors.dropTableFeatureFeatureNotSupportedByClient(droppedFeatureName)
+    droppedFeature match {
+      case feature: RemovableFeature => feature.validateRemoval(snapshot)
+      case _ => throw DeltaErrors.dropTableFeatureFeatureNotSupportedByClient(droppedFeature.name)
     }
   }
 }
@@ -422,6 +483,7 @@ object AppendOnlyTableFeature
   extends LegacyWriterFeature(name = "appendOnly", minWriterVersion = 2)
   with FeatureAutomaticallyEnabledByMetadata {
   override def metadataRequiresFeatureToBeEnabled(
+      protocol: Protocol,
       metadata: Metadata,
       spark: SparkSession): Boolean = {
     DeltaConfigs.IS_APPEND_ONLY.fromMetaData(metadata)
@@ -432,6 +494,7 @@ object InvariantsTableFeature
   extends LegacyWriterFeature(name = "invariants", minWriterVersion = 2)
   with FeatureAutomaticallyEnabledByMetadata {
   override def metadataRequiresFeatureToBeEnabled(
+      protocol: Protocol,
       metadata: Metadata,
       spark: SparkSession): Boolean = {
     Invariants.getFromSchema(metadata.schema, spark).nonEmpty
@@ -440,11 +503,24 @@ object InvariantsTableFeature
 
 object CheckConstraintsTableFeature
   extends LegacyWriterFeature(name = "checkConstraints", minWriterVersion = 3)
-  with FeatureAutomaticallyEnabledByMetadata {
+  with FeatureAutomaticallyEnabledByMetadata
+  with RemovableFeature {
   override def metadataRequiresFeatureToBeEnabled(
+      protocol: Protocol,
       metadata: Metadata,
       spark: SparkSession): Boolean = {
     Constraints.getCheckConstraints(metadata, spark).nonEmpty
+  }
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    CheckConstraintsPreDowngradeTableFeatureCommand(table)
+
+  override def validateRemoval(snapshot: Snapshot): Boolean =
+    Constraints.getCheckConstraintNames(snapshot.metadata).isEmpty
+
+  override def actionUsesFeature(action: Action): Boolean = {
+    // This method is never called, as it is only used for ReaderWriterFeatures.
+    throw new UnsupportedOperationException()
   }
 }
 
@@ -452,6 +528,7 @@ object ChangeDataFeedTableFeature
   extends LegacyWriterFeature(name = "changeDataFeed", minWriterVersion = 4)
   with FeatureAutomaticallyEnabledByMetadata {
   override def metadataRequiresFeatureToBeEnabled(
+      protocol: Protocol,
       metadata: Metadata,
       spark: SparkSession): Boolean = {
     DeltaConfigs.CHANGE_DATA_FEED.fromMetaData(metadata)
@@ -462,6 +539,7 @@ object GeneratedColumnsTableFeature
   extends LegacyWriterFeature(name = "generatedColumns", minWriterVersion = 4)
   with FeatureAutomaticallyEnabledByMetadata {
   override def metadataRequiresFeatureToBeEnabled(
+      protocol: Protocol,
       metadata: Metadata,
       spark: SparkSession): Boolean = {
     GeneratedColumn.hasGeneratedColumns(metadata.schema)
@@ -473,8 +551,10 @@ object ColumnMappingTableFeature
     name = "columnMapping",
     minReaderVersion = 2,
     minWriterVersion = 5)
+  with RemovableFeature
   with FeatureAutomaticallyEnabledByMetadata {
   override def metadataRequiresFeatureToBeEnabled(
+      protocol: Protocol,
       metadata: Metadata,
       spark: SparkSession): Boolean = {
     metadata.columnMappingMode match {
@@ -482,12 +562,31 @@ object ColumnMappingTableFeature
       case _ => true
     }
   }
+
+  override def validateRemoval(snapshot: Snapshot): Boolean = {
+    val schemaHasNoColumnMappingMetadata =
+      !DeltaColumnMapping.schemaHasColumnMappingMetadata(snapshot.schema)
+    val metadataHasNoMappingMode = snapshot.metadata.columnMappingMode match {
+      case NoMapping => true
+      case _ => false
+    }
+    schemaHasNoColumnMappingMetadata && metadataHasNoMappingMode
+  }
+
+  override def actionUsesFeature(action: Action): Boolean = action match {
+      case m: Metadata => DeltaConfigs.COLUMN_MAPPING_MODE.fromMetaData(m) != NoMapping
+      case _ => false
+    }
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    ColumnMappingPreDowngradeCommand(table)
 }
 
 object IdentityColumnsTableFeature
   extends LegacyWriterFeature(name = "identityColumns", minWriterVersion = 6)
   with FeatureAutomaticallyEnabledByMetadata {
   override def metadataRequiresFeatureToBeEnabled(
+      protocol: Protocol,
       metadata: Metadata,
       spark: SparkSession): Boolean = {
     ColumnWithDefaultExprUtils.hasIdentityColumn(metadata.schema)
@@ -497,21 +596,98 @@ object IdentityColumnsTableFeature
 object TimestampNTZTableFeature extends ReaderWriterFeature(name = "timestampNtz")
     with FeatureAutomaticallyEnabledByMetadata {
   override def metadataRequiresFeatureToBeEnabled(
-      metadata: Metadata, spark: SparkSession): Boolean = {
+      protocol: Protocol, metadata: Metadata, spark: SparkSession): Boolean = {
     SchemaUtils.checkForTimestampNTZColumnsRecursively(metadata.schema)
   }
 }
 
+object RedirectReaderWriterFeature
+  extends ReaderWriterFeature(name = "redirectReaderWriter-preview")
+  with FeatureAutomaticallyEnabledByMetadata {
+  override def metadataRequiresFeatureToBeEnabled(
+    protocol: Protocol,
+    metadata: Metadata,
+    spark: SparkSession
+  ): Boolean = RedirectReaderWriter.isFeatureSet(metadata)
+
+  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+}
+
+object RedirectWriterOnlyFeature extends WriterFeature(name = "redirectWriterOnly-preview")
+  with FeatureAutomaticallyEnabledByMetadata {
+  override def metadataRequiresFeatureToBeEnabled(
+    protocol: Protocol,
+    metadata: Metadata,
+    spark: SparkSession
+  ): Boolean = RedirectWriterOnly.isFeatureSet(metadata)
+
+  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+}
+
+object VariantTypePreviewTableFeature extends ReaderWriterFeature(name = "variantType-preview")
+    with FeatureAutomaticallyEnabledByMetadata {
+  override def metadataRequiresFeatureToBeEnabled(
+      protocol: Protocol, metadata: Metadata, spark: SparkSession): Boolean = {
+    SchemaUtils.checkForVariantTypeColumnsRecursively(metadata.schema) &&
+      // Do not require the 'variantType-preview' table feature to be enabled if the 'variantType'
+      // table feature is enabled so tables with 'variantType' can be read.
+      !protocol.isFeatureSupported(VariantTypeTableFeature)
+  }
+}
+
+/**
+ * Stable feature for variant. The stable feature isn't enabled automatically yet when variants
+ * are present in the table schema. The feature spec is finalized though and by supporting the
+ * stable feature here we guarantee that this version can already read any table created in the
+ * future.
+ *
+ * Note: Users can manually add both the preview and stable features to a table using ADD FEATURE,
+ * although that's undocumented. This is allowed: the two feature specifications are compatible and
+ * supported.
+ */
+object VariantTypeTableFeature extends ReaderWriterFeature(name = "variantType")
+
 object DeletionVectorsTableFeature
   extends ReaderWriterFeature(name = "deletionVectors")
+  with RemovableFeature
   with FeatureAutomaticallyEnabledByMetadata {
   override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
 
   override def metadataRequiresFeatureToBeEnabled(
+      protocol: Protocol,
       metadata: Metadata,
       spark: SparkSession): Boolean = {
     DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.fromMetaData(metadata)
   }
+
+  /**
+   * Validate whether all deletion vector traces are removed from the snapshot.
+   *
+   * Note, we do not need to validate whether DV tombstones exist. These are added in the
+   * pre-downgrade stage and always cover all DVs within the retention period. This invariant can
+   * never change unless we enable again DVs. If DVs are enabled before the protocol downgrade
+   * we will abort the operation.
+   */
+  override def validateRemoval(snapshot: Snapshot): Boolean = {
+    val dvsWritable = DeletionVectorUtils.deletionVectorsWritable(snapshot)
+    val dvsExist = snapshot.numDeletionVectorsOpt.getOrElse(0L) > 0
+
+    !(dvsWritable || dvsExist)
+  }
+
+  override def actionUsesFeature(action: Action): Boolean = {
+    action match {
+      case m: Metadata => DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.fromMetaData(m)
+      case a: AddFile => a.deletionVector != null
+      case r: RemoveFile => r.deletionVector != null
+      // In general, CDC actions do not contain DVs. We added this for safety.
+      case cdc: AddCDCFile => cdc.deletionVector != null
+      case _ => false
+    }
+  }
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    DeletionVectorsPreDowngradeCommand(table)
 }
 
 object RowTrackingFeature extends WriterFeature(name = "rowTracking")
@@ -519,8 +695,10 @@ object RowTrackingFeature extends WriterFeature(name = "rowTracking")
   override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
 
   override def metadataRequiresFeatureToBeEnabled(
+      protocol: Protocol,
       metadata: Metadata,
-      spark: SparkSession): Boolean = DeltaConfigs.ROW_TRACKING_ENABLED.fromMetaData(metadata)
+      spark: SparkSession): Boolean =
+    DeltaConfigs.ROW_TRACKING_ENABLED.fromMetaData(metadata)
 
   override def requiredFeatures: Set[TableFeature] = Set(DomainMetadataTableFeature)
 }
@@ -533,6 +711,7 @@ object IcebergCompatV1TableFeature extends WriterFeature(name = "icebergCompatV1
   override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
 
   override def metadataRequiresFeatureToBeEnabled(
+      protocol: Protocol,
       metadata: Metadata,
       spark: SparkSession): Boolean = IcebergCompatV1.isEnabled(metadata)
 
@@ -545,6 +724,7 @@ object IcebergCompatV2TableFeature extends WriterFeature(name = "icebergCompatV2
   override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
 
   override def metadataRequiresFeatureToBeEnabled(
+      protocol: Protocol,
       metadata: Metadata,
       spark: SparkSession): Boolean = IcebergCompatV2.isEnabled(metadata)
 
@@ -596,6 +776,7 @@ object V2CheckpointTableFeature
     DeltaConfigs.CHECKPOINT_POLICY.fromMetaData(metadata).needsV2CheckpointSupport
 
   override def metadataRequiresFeatureToBeEnabled(
+      protocol: Protocol,
       metadata: Metadata,
       spark: SparkSession): Boolean = isV2CheckpointSupportNeededByMetadata(metadata)
 
@@ -625,31 +806,42 @@ object V2CheckpointTableFeature
     V2CheckpointPreDowngradeCommand(table)
 }
 
-/** Table feature to represent tables whose commits are managed by separate commit-owner */
-object ManagedCommitTableFeature
-  extends ReaderWriterFeature(name = "managed-commit-dev")
-    with FeatureAutomaticallyEnabledByMetadata {
-
-  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
-
-  override def metadataRequiresFeatureToBeEnabled(
-      metadata: Metadata,
-      spark: SparkSession): Boolean = {
-    DeltaConfigs.MANAGED_COMMIT_OWNER_NAME.fromMetaData(metadata).nonEmpty
-  }
-}
-
-object TypeWideningTableFeature extends ReaderWriterFeature(name = "typeWidening-preview")
+/** Table feature to represent tables whose commits are managed by separate commit-coordinator */
+object CoordinatedCommitsTableFeature
+  extends WriterFeature(name = "coordinatedCommits-preview")
     with FeatureAutomaticallyEnabledByMetadata
     with RemovableFeature {
+
   override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
 
-  private def isTypeWideningSupportNeededByMetadata(metadata: Metadata): Boolean =
-    DeltaConfigs.ENABLE_TYPE_WIDENING.fromMetaData(metadata)
-
   override def metadataRequiresFeatureToBeEnabled(
+      protocol: Protocol,
       metadata: Metadata,
-      spark: SparkSession): Boolean = isTypeWideningSupportNeededByMetadata(metadata)
+      spark: SparkSession): Boolean = {
+    DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.fromMetaData(metadata).nonEmpty
+  }
+
+  override def requiredFeatures: Set[TableFeature] =
+    Set(InCommitTimestampTableFeature, VacuumProtocolCheckTableFeature)
+
+  override def preDowngradeCommand(table: DeltaTableV2)
+      : PreDowngradeTableFeatureCommand = CoordinatedCommitsPreDowngradeCommand(table)
+
+  override def validateRemoval(snapshot: Snapshot): Boolean = {
+    !CoordinatedCommitsUtils.tablePropertiesPresent(snapshot.metadata) &&
+      !CoordinatedCommitsUtils.unbackfilledCommitsPresent(snapshot)
+  }
+
+  // This is a writer feature, so it should directly return false.
+  override def actionUsesFeature(action: Action): Boolean = false
+}
+
+/** Common base shared by the preview and stable type widening table features. */
+abstract class TypeWideningTableFeatureBase(name: String) extends ReaderWriterFeature(name)
+    with RemovableFeature {
+
+  protected def isTypeWideningSupportNeededByMetadata(metadata: Metadata): Boolean =
+    DeltaConfigs.ENABLE_TYPE_WIDENING.fromMetaData(metadata)
 
   override def validateRemoval(snapshot: Snapshot): Boolean =
     !isTypeWideningSupportNeededByMetadata(snapshot.metadata) &&
@@ -666,17 +858,48 @@ object TypeWideningTableFeature extends ReaderWriterFeature(name = "typeWidening
 }
 
 /**
+ * Feature used for the preview phase of type widening. Tables that enabled this feature during the
+ * preview will keep being supported after the preview.
+ */
+object TypeWideningPreviewTableFeature
+  extends TypeWideningTableFeatureBase(name = "typeWidening-preview")
+  with FeatureAutomaticallyEnabledByMetadata {
+  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+
+  override def metadataRequiresFeatureToBeEnabled(
+      protocol: Protocol,
+      metadata: Metadata,
+      spark: SparkSession): Boolean = isTypeWideningSupportNeededByMetadata(metadata) &&
+    // Don't automatically enable the preview feature if the stable feature is already supported.
+    !protocol.isFeatureSupported(TypeWideningTableFeature)
+}
+
+/**
+ * Stable feature for type widening. The stable feature isn't enabled automatically yet
+ * when setting the type widening table property as the feature is still in preview in this version.
+ * The feature spec is finalized though and by supporting the stable feature here we guarantee that
+ * this version can already read any table created in the future.
+ *
+ * Note: Users can manually add both the preview and stable features to a table using ADD FEATURE,
+ * although that's undocumented for type widening. This is allowed: the two feature specifications
+ * are compatible and supported.
+ */
+object TypeWideningTableFeature
+  extends TypeWideningTableFeatureBase(name = "typeWidening")
+
+/**
  * inCommitTimestamp table feature is a writer feature that makes
  * every writer write a monotonically increasing timestamp inside the commit file.
  */
 object InCommitTimestampTableFeature
-  extends WriterFeature(name = "inCommitTimestamp-preview")
+  extends WriterFeature(name = "inCommitTimestamp")
   with FeatureAutomaticallyEnabledByMetadata
   with RemovableFeature {
 
   override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
 
   override def metadataRequiresFeatureToBeEnabled(
+      protocol: Protocol,
       metadata: Metadata,
       spark: SparkSession): Boolean = {
     DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(metadata)
@@ -720,6 +943,103 @@ object InCommitTimestampTableFeature
  */
 object VacuumProtocolCheckTableFeature
   extends ReaderWriterFeature(name = "vacuumProtocolCheck")
+  with RemovableFeature {
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand = {
+    VacuumProtocolCheckPreDowngradeCommand(table)
+  }
+
+  // The delta snapshot doesn't have any trace of the [[VacuumProtocolCheckTableFeature]] feature.
+  // Other than it being present in PROTOCOL, which will be handled by the table feature downgrade
+  // command once this method returns true.
+  override def validateRemoval(snapshot: Snapshot): Boolean = true
+
+  // None of the actions uses [[VacuumProtocolCheckTableFeature]]
+  override def actionUsesFeature(action: Action): Boolean = false
+}
+
+/**
+ * Writer feature that enforces writers to cleanup metadata iff metadata can be cleaned up to
+ * requireCheckpointProtectionBeforeVersion in one go. This means that a single cleanup
+ * operation should truncate up to requireCheckpointProtectionBeforeVersion as opposed to
+ * several cleanup operations truncating in chunks.
+ *
+ * The are two exceptions to this rule. If any of the two holds, the rule
+ * above can be ignored:
+ *
+ *   a) The writer verifies it supports all protocols between
+ *      [start, min(requireCheckpointProtectionBeforeVersion, targetCleanupVersion)] versions
+ *      it intends to truncate.
+ *   b) The writer does not create any checkpoints during history cleanup and does not erase any
+ *      checkpoints after the truncation version.
+ *
+ * The CheckpointProtectionTableFeature can only be removed if history is truncated up to
+ * at least requireCheckpointProtectionBeforeVersion.
+ */
+object CheckpointProtectionTableFeature
+    extends WriterFeature(name = "checkpointProtection")
+    with RemovableFeature {
+  def getCheckpointProtectionVersion(snapshot: Snapshot): Long = {
+    if (!snapshot.protocol.isFeatureSupported(CheckpointProtectionTableFeature)) return 0
+    DeltaConfigs.REQUIRE_CHECKPOINT_PROTECTION_BEFORE_VERSION.fromMetaData(snapshot.metadata)
+  }
+
+  def metadataWithCheckpointProtection(metadata: Metadata, version: Long): Metadata = {
+    val versionPropKey = DeltaConfigs.REQUIRE_CHECKPOINT_PROTECTION_BEFORE_VERSION.key
+    val versionConf = versionPropKey -> version.toString
+    metadata.copy(configuration = metadata.configuration + versionConf)
+  }
+
+  /** Verify whether any deltas exist between version 0 to toVersion (inclusive). */
+  private def deltasUpToVersionAreTruncated(deltaLog: DeltaLog, toVersion: Long): Boolean = {
+    deltaLog
+      .getChangeLogFiles(startVersion = 0, endVersion = toVersion, failOnDataLoss = false)
+      .map { case (_, file) => file }
+      .filter(FileNames.isDeltaFile)
+      .take(1).isEmpty
+  }
+
+  def historyPriorToCheckpointProtectionVersionIsTruncated(snapshot: Snapshot): Boolean = {
+    val checkpointProtectionVersion = getCheckpointProtectionVersion(snapshot)
+    if (checkpointProtectionVersion <= 0) return true
+
+    val deltaLog = snapshot.deltaLog
+    // In most cases, the earliest checkpoint matches the version of the earliest commit. This is
+    // not true for new tables that were never cleaned up. Furthermore, if there is no checkpoint it
+    // means history is not truncated.
+    deltaLog.findEarliestReliableCheckpoint.exists(_ >= checkpointProtectionVersion) &&
+      deltasUpToVersionAreTruncated(deltaLog, checkpointProtectionVersion - 1)
+  }
+
+  /**
+   * This is a special feature in the sense that it requires history truncation but implements it
+   * as part of its downgrade process. This is implemented like this for 2 reasons:
+   *
+   *  1. It allows us to remove the feature table property after the clean up in the preDowngrade
+   *     command is successful.
+   *  2. It does not require to scan the history for features traces as long as all history
+   *     before requireCheckpointProtectionBeforeVersion is truncated.
+   */
+  override def requiresHistoryProtection: Boolean = false
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand = {
+    CheckpointProtectionPreDowngradeCommand(table)
+  }
+
+  /** Returns true if table property is absent. */
+  override def validateRemoval(snapshot: Snapshot): Boolean = {
+    val property = DeltaConfigs.REQUIRE_CHECKPOINT_PROTECTION_BEFORE_VERSION.key
+    !snapshot.metadata.configuration.contains(property)
+  }
+
+  /**
+   * The feature uses the `requireCheckpointProtectionBeforeVersion` property. This is removed when
+   * dropping the feature but we allow it to exist in the history. This is to allow history
+   * truncation at the boundary of requireCheckpointProtectionBeforeVersion rather than the last
+   * 24 hours. Otherwise, dropping the feature would always require 24 hour waiting time.
+   */
+  override def actionUsesFeature(action: Action): Boolean = false
+}
 
 /**
  * Features below are for testing only, and are being registered to the system only in the testing
@@ -736,6 +1056,7 @@ object TestWriterMetadataNoAutoUpdateFeature
   with FeatureAutomaticallyEnabledByMetadata {
   val TABLE_PROP_KEY = "_123testWriterMetadataNoAutoUpdate321_"
   override def metadataRequiresFeatureToBeEnabled(
+      protocol: Protocol,
       metadata: Metadata,
       spark: SparkSession): Boolean = {
     metadata.configuration.get(TABLE_PROP_KEY).exists(_.toBoolean)
@@ -755,6 +1076,7 @@ object TestReaderWriterMetadataNoAutoUpdateFeature
   with FeatureAutomaticallyEnabledByMetadata {
   val TABLE_PROP_KEY = "_123testReaderWriterMetadataNoAutoUpdate321_"
   override def metadataRequiresFeatureToBeEnabled(
+      protocol: Protocol,
       metadata: Metadata,
       spark: SparkSession): Boolean = {
     metadata.configuration.get(TABLE_PROP_KEY).exists(_.toBoolean)
@@ -769,19 +1091,21 @@ object TestReaderWriterMetadataAutoUpdateFeature
   override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
 
   override def metadataRequiresFeatureToBeEnabled(
+      protocol: Protocol,
       metadata: Metadata,
       spark: SparkSession): Boolean = {
     metadata.configuration.get(TABLE_PROP_KEY).exists(_.toBoolean)
   }
 }
 
-private[sql] object TestRemovableWriterFeature
+object TestRemovableWriterFeature
   extends WriterFeature(name = "testRemovableWriter")
   with FeatureAutomaticallyEnabledByMetadata
   with RemovableFeature {
 
   val TABLE_PROP_KEY = "_123TestRemovableWriter321_"
   override def metadataRequiresFeatureToBeEnabled(
+      protocol: Protocol,
       metadata: Metadata,
       spark: SparkSession): Boolean = {
     metadata.configuration.get(TABLE_PROP_KEY).exists(_.toBoolean)
@@ -797,13 +1121,53 @@ private[sql] object TestRemovableWriterFeature
   override def actionUsesFeature(action: Action): Boolean = false
 }
 
-private[sql] object TestRemovableReaderWriterFeature
+/** Test feature that appears unsupported and it is used for testing protocol checks. */
+object TestUnsupportedReaderWriterFeature
+    extends ReaderWriterFeature(name = "testUnsupportedReaderWriter")
+    with RemovableFeature {
+
+  override def validateRemoval(snapshot: Snapshot): Boolean = true
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    TestUnsupportedReaderWriterFeaturePreDowngradeCommand(table)
+
+  override def actionUsesFeature(action: Action): Boolean = false
+}
+
+private[sql] object TestRemovableWriterFeatureWithDependency
+  extends WriterFeature(name = "testRemovableWriterFeatureWithDependency")
+  with FeatureAutomaticallyEnabledByMetadata
+  with RemovableFeature {
+
+  val TABLE_PROP_KEY = "_123TestRemovableWriterFeatureWithDependency321_"
+  override def metadataRequiresFeatureToBeEnabled(
+      protocol: Protocol,
+      metadata: Metadata,
+      spark: SparkSession): Boolean = {
+    metadata.configuration.get(TABLE_PROP_KEY).exists(_.toBoolean)
+  }
+
+  /** Make sure the property is not enabled on the table. */
+  override def validateRemoval(snapshot: Snapshot): Boolean =
+    !snapshot.metadata.configuration.get(TABLE_PROP_KEY).exists(_.toBoolean)
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    TestWriterFeaturePreDowngradeCommand(table)
+
+  override def actionUsesFeature(action: Action): Boolean = false
+
+  override def requiredFeatures: Set[TableFeature] =
+    Set(TestRemovableReaderWriterFeature, TestRemovableWriterFeature)
+}
+
+object TestRemovableReaderWriterFeature
   extends ReaderWriterFeature(name = "testRemovableReaderWriter")
     with FeatureAutomaticallyEnabledByMetadata
     with RemovableFeature {
 
   val TABLE_PROP_KEY = "_123TestRemovableReaderWriter321_"
   override def metadataRequiresFeatureToBeEnabled(
+      protocol: Protocol,
       metadata: Metadata,
       spark: SparkSession): Boolean = {
     metadata.configuration.get(TABLE_PROP_KEY).exists(_.toBoolean)
@@ -829,6 +1193,7 @@ object TestRemovableLegacyWriterFeature
 
   val TABLE_PROP_KEY = "_123TestRemovableLegacyWriter321_"
   override def metadataRequiresFeatureToBeEnabled(
+      protocol: Protocol,
       metadata: Metadata,
       spark: SparkSession): Boolean = {
     metadata.configuration.get(TABLE_PROP_KEY).exists(_.toBoolean)
@@ -852,6 +1217,7 @@ object TestRemovableLegacyReaderWriterFeature
 
   val TABLE_PROP_KEY = "_123TestRemovableLegacyReaderWriter321_"
   override def metadataRequiresFeatureToBeEnabled(
+      protocol: Protocol,
       metadata: Metadata,
       spark: SparkSession): Boolean = {
     metadata.configuration.get(TABLE_PROP_KEY).exists(_.toBoolean)
@@ -881,7 +1247,7 @@ object TestFeatureWithDependency
   override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
 
   override def metadataRequiresFeatureToBeEnabled(
-      metadata: Metadata, spark: SparkSession): Boolean = {
+      protocol: Protocol, metadata: Metadata, spark: SparkSession): Boolean = {
     metadata.configuration.get(TABLE_PROP_KEY).exists(_.toBoolean)
   }
 
@@ -898,4 +1264,33 @@ object TestWriterFeatureWithTransitiveDependency
   extends WriterFeature(name = "testWriterFeatureWithTransitiveDependency") {
 
   override def requiredFeatures: Set[TableFeature] = Set(TestFeatureWithDependency)
+}
+
+object TestRemovableWriterWithHistoryTruncationFeature
+  extends WriterFeature(name = "TestRemovableWriterWithHistoryTruncationFeature")
+  with FeatureAutomaticallyEnabledByMetadata
+  with RemovableFeature {
+
+  val TABLE_PROP_KEY = "_123TestRemovableWriterWithHistoryTruncationFeature321_"
+
+  override def metadataRequiresFeatureToBeEnabled(
+      protocol: Protocol,
+      metadata: Metadata,
+      spark: SparkSession): Boolean = {
+    metadata.configuration.get(TABLE_PROP_KEY).exists(_.toBoolean)
+  }
+
+  /** Make sure the property is not enabled on the table. */
+  override def validateRemoval(snapshot: Snapshot): Boolean =
+    !snapshot.metadata.configuration.get(TABLE_PROP_KEY).exists(_.toBoolean)
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    TestWriterWithHistoryValidationFeaturePreDowngradeCommand(table)
+
+  override def actionUsesFeature(action: Action): Boolean = action match {
+    case m: Metadata => m.configuration.get(TABLE_PROP_KEY).exists(_.toBoolean)
+    case _ => false
+  }
+
+  override def requiresHistoryProtection: Boolean = true
 }

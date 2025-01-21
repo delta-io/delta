@@ -24,6 +24,7 @@ import java.time.LocalDateTime
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.StatisticsCollection.{ASCII_MAX_CHARACTER, UTF8_MAX_CHARACTER}
 import org.apache.spark.sql.delta.test.{DeltaExceptionTestUtils, DeltaSQLCommandTest, DeltaSQLTestUtils, TestsStatistics}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.JsonUtils
@@ -145,6 +146,35 @@ class StatsCollectionSuite
         assert(statsDf.where('numRecords.isNotNull).count() > 0)
         // Make sure stats indicate 2 rows, min [0], max [1]
         checkAnswer(statsDf, Row(2, Row(0), Row(1)))
+      }
+    }
+  }
+
+  statsTestSparkMasterOnly("recompute variant stats") {
+    withTempDir { tempDir =>
+      withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS.key -> "false") {
+        val df = spark.range(2)
+          .selectExpr(
+            "case when id % 2 = 0 then parse_json(cast(id as string)) else null end as v"
+          )
+          .coalesce(1)
+          .toDF()
+        df.write.format("delta").save(tempDir.toString())
+        val deltaLog = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+
+        assert(getStatsDf(deltaLog, Seq($"numRecords")).where('numRecords.isNotNull).count() == 0)
+
+        {
+          StatisticsCollection.recompute(spark, deltaLog)
+        }
+        checkAnswer(
+          spark.read.format("delta").load(tempDir.getCanonicalPath),
+          df
+        )
+        val statsDf = getStatsDf(deltaLog, Seq($"numRecords", $"nullCount"))
+        assert(statsDf.where('numRecords.isNotNull).count() > 0)
+        // Make sure stats indicate 2 rows, nullCount [1]
+        checkAnswer(statsDf, Row(2, Row(1)))
       }
     }
   }
@@ -330,26 +360,67 @@ class StatsCollectionSuite
     }
   }
 
+  test("Truncate min string") {
+    // scalastyle:off nonascii
+    val inputToExpected = Seq(
+      (s"abcd", s"abc", 3),
+      (s"abcdef", s"abcdef", 6),
+      (s"abcde�", s"abcde�", 6),
+      (s"$UTF8_MAX_CHARACTER$UTF8_MAX_CHARACTER$UTF8_MAX_CHARACTER$UTF8_MAX_CHARACTER",
+        s"$UTF8_MAX_CHARACTER",
+        1),
+      (s"$UTF8_MAX_CHARACTER$UTF8_MAX_CHARACTER", s"$UTF8_MAX_CHARACTER", 1),
+      (s"abcd", null, 0)
+    )
+
+    inputToExpected.foreach {
+      case (input, expected, prefixLen) =>
+        val actual = StatisticsCollection.truncateMinStringAgg(prefixLen)(input)
+        val debugMsg = s"input:$input, actual:$actual, expected:$expected"
+        assert(actual == expected, debugMsg)
+        if (actual != null) {
+          assert(input.startsWith(actual), debugMsg)
+        }
+    }
+    // scalastyle:on nonascii
+  }
+
   test("Truncate max string") {
     // scalastyle:off nonascii
-    val prefixLen = 6
-    // � is the max unicode character with value \ufffd
     val inputToExpected = Seq(
-      (s"abcd", s"abcd"),
-      (s"abcdef", s"abcdef"),
-      (s"abcde�", s"abcde�"),
-      (s"abcd�abcd", s"abcd�a�"),
-      (s"�abcd", s"�abcd"),
-      (s"abcdef�", s"abcdef��"),
-      (s"abcdef-abcdef�", s"abcdef�"),
-      (s"abcdef�abcdef", s"abcdef��"),
-      (s"abcdef��abcdef", s"abcdef���"),
-      (s"abcdef�abcdef�abcdef�abcdef", s"abcdef��")
+      (s"abcd", null, 0),
+      (s"a${UTF8_MAX_CHARACTER}d", s"a$UTF8_MAX_CHARACTER$ASCII_MAX_CHARACTER", 2),
+      (s"abcd", s"abcd", 6),
+      (s"abcdef", s"abcdef", 6),
+      (s"abcde�", s"abcde�", 6),
+      (s"abcd�abcd", s"abcd�a$ASCII_MAX_CHARACTER", 6),
+      (s"�abcd", s"�abcd", 6),
+      (s"abcdef�", s"abcdef$UTF8_MAX_CHARACTER", 6),
+      (s"abcdef��", s"abcdef$UTF8_MAX_CHARACTER", 6),
+      (s"abcdef-abcdef�", s"abcdef$ASCII_MAX_CHARACTER", 6),
+      (s"abcdef�abcdef", s"abcdef$UTF8_MAX_CHARACTER", 6),
+      (s"abcde�abcdef�abcdef�abcdef", s"abcde�$ASCII_MAX_CHARACTER", 6),
+      (s"漢字仮名한글தமி", s"漢字仮名한글$UTF8_MAX_CHARACTER", 6),
+      (s"漢字仮名한글��", s"漢字仮名한글$UTF8_MAX_CHARACTER", 6),
+      (s"漢字仮名한글", s"漢字仮名한글", 6),
+      (s"abcdef🚀", s"abcdef$UTF8_MAX_CHARACTER", 6),
+      (s"$UTF8_MAX_CHARACTER$UTF8_MAX_CHARACTER$UTF8_MAX_CHARACTER$UTF8_MAX_CHARACTER", null, 1),
+      (s"$UTF8_MAX_CHARACTER$UTF8_MAX_CHARACTER$UTF8_MAX_CHARACTER$UTF8_MAX_CHARACTER",
+        s"$UTF8_MAX_CHARACTER$UTF8_MAX_CHARACTER$UTF8_MAX_CHARACTER$UTF8_MAX_CHARACTER",
+        4),
+      (s"����", s"��$UTF8_MAX_CHARACTER", 2),
+      (s"���", s"�$UTF8_MAX_CHARACTER", 1),
+      ("abcdefghijklm💞😉💕\n🥀🌹💐🌺🌷🌼🌻🌷🥀",
+        s"abcdefghijklm💞😉💕\n🥀🌹💐🌺🌷🌼$UTF8_MAX_CHARACTER",
+        32)
     )
+
     inputToExpected.foreach {
-      case (input, expected) =>
+      case (input, expected, prefixLen) =>
         val actual = StatisticsCollection.truncateMaxStringAgg(prefixLen)(input)
-        assert(actual == expected, s"input:$input, actual:$actual, expected:$expected")
+        // `Actual` should be higher or equal than `input` in UTF-8 encoded binary order.
+        val debugMsg = s"input:$input, actual:$actual, expected:$expected"
+        assert(actual == expected, debugMsg)
     }
     // scalastyle:off nonascii
   }
@@ -428,14 +499,13 @@ class StatsCollectionSuite
     ("BINARY", "BinaryType"),
     ("BOOLEAN", "BooleanType"),
     ("ARRAY<TINYINT>", "ArrayType(ByteType,true)"),
-    ("MAP<DATE, INT>", "MapType(DateType,IntegerType,true)"),
-    ("STRUCT<c60:INT, c61:ARRAY<INT>>", "ArrayType(IntegerType,true)")
+    ("MAP<DATE, INT>", "MapType(DateType,IntegerType,true)")
   ).foreach { case (invalidType, typename) =>
     val tableName1 = "delta_table_1"
     val tableName2 = "delta_table_2"
     test(s"Delta statistic column: invalid data type $invalidType") {
       withTable(tableName1, tableName2) {
-        val columnName = if (typename.equals("ArrayType(IntegerType,true)")) "c2.c61" else "c2"
+        val columnName = "c2"
         val exceptOne = intercept[DeltaIllegalArgumentException] {
           sql(
             s"create table $tableName1 (c1 long, c2 $invalidType) using delta " +
@@ -459,7 +529,7 @@ class StatsCollectionSuite
 
     test(s"Delta statistic column: invalid data type $invalidType in nested column") {
       withTable(tableName1, tableName2) {
-        val columnName = if (typename == "ArrayType(IntegerType,true)") "c2.c21.c61" else "c2.c21"
+        val columnName = "c2.c21"
         val exceptOne = intercept[DeltaIllegalArgumentException] {
           sql(
             s"create table $tableName1 (c1 long, c2 STRUCT<c20:INT, c21:$invalidType>) " +
@@ -470,16 +540,6 @@ class StatsCollectionSuite
           exceptOne.getErrorClass == "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_TYPE" &&
             exceptOne.getMessageParametersArray.toSeq == Seq(columnName, typename)
         )
-        val exceptTwo = intercept[DeltaIllegalArgumentException] {
-          sql(
-            s"create table $tableName1 (c1 long, c2 STRUCT<c20:INT, c21:$invalidType>) " +
-              s"using delta TBLPROPERTIES('delta.dataSkippingStatsColumns' = 'c2')"
-          )
-        }
-        assert(
-          exceptTwo.getErrorClass == "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_TYPE" &&
-          exceptTwo.getMessageParametersArray.toSeq == Seq(columnName, typename)
-        )
         sql(s"create table $tableName2 (c1 long, c2 STRUCT<c20:INT, c21:$invalidType>) using delta")
         val exceptThree = interceptWithUnwrapping[DeltaIllegalArgumentException] {
           sql(
@@ -489,13 +549,6 @@ class StatsCollectionSuite
         assert(
           exceptThree.getErrorClass == "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_TYPE" &&
           exceptThree.getMessageParametersArray.toSeq == Seq(columnName, typename)
-        )
-        val exceptFour = interceptWithUnwrapping[DeltaIllegalArgumentException] {
-          sql(s"ALTER TABLE $tableName2 SET TBLPROPERTIES('delta.dataSkippingStatsColumns'='c2')")
-        }
-        assert(
-          exceptFour.getErrorClass == "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_TYPE" &&
-          exceptFour.getMessageParametersArray.toSeq == Seq(columnName, typename)
         )
       }
     }
@@ -537,7 +590,8 @@ class StatsCollectionSuite
 
   Seq(
     "BIGINT", "DATE", "DECIMAL(3, 2)", "DOUBLE", "FLOAT", "INT", "SMALLINT", "STRING",
-    "TIMESTAMP", "TIMESTAMP_NTZ", "TINYINT"
+    "TIMESTAMP", "TIMESTAMP_NTZ", "TINYINT", "STRUCT<c3: BIGINT>",
+    "STRUCT<c3: BIGINT, c4: ARRAY<BIGINT>>"
   ).foreach { validType =>
     val tableName1 = "delta_table_1"
     val tableName2 = "delta_table_2"

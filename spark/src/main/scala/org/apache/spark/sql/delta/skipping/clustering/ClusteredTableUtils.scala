@@ -23,13 +23,17 @@ import org.apache.spark.sql.delta.clustering.ClusteringMetadataDomain
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.stats.{DeltaStatistics, StatisticsCollection}
+import org.apache.spark.sql.delta.stats.{DeltaStatistics, SkippingEligibleDataType, StatisticsCollection}
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{StructField, StructType}
+
+case class MatchingMetadataDomain(
+    clusteringDomainOpt: Option[DomainMetadata]
+)
 
 /**
  * Clustered table utility functions.
@@ -56,6 +60,18 @@ trait ClusteredTableUtilsBase extends DeltaLogging {
   }
 
   /**
+   * Returns an optional [[ClusterBySpec]] from the given Snapshot.
+   */
+  def getClusterBySpecOptional(snapshot: Snapshot): Option[ClusterBySpec] = {
+    if (isSupported(snapshot.protocol)) {
+      val clusteringColumns = ClusteringColumnInfo.extractLogicalNames(snapshot)
+      Some(ClusterBySpec.fromColumnNames(clusteringColumns))
+    } else {
+      None
+    }
+  }
+
+  /**
    * Extract clustering columns from ClusterBySpec.
    *
    * @param maybeClusterBySpec optional ClusterBySpec. If it's empty, will return the
@@ -65,6 +81,14 @@ trait ClusteredTableUtilsBase extends DeltaLogging {
   def getClusteringColumnsAsProperty(
       maybeClusterBySpec: Option[ClusterBySpec]): Option[(String, String)] = {
     maybeClusterBySpec.map(ClusterBySpec.toProperty)
+  }
+
+  /**
+   * Extract clustering columns from a given snapshot.
+   */
+  def getClusteringColumnsAsProperty(snapshot: Snapshot): Option[(String, String)] = {
+    val clusterBySpec = getClusterBySpecOptional(snapshot)
+    getClusteringColumnsAsProperty(clusterBySpec)
   }
 
   /**
@@ -118,6 +142,19 @@ trait ClusteredTableUtilsBase extends DeltaLogging {
   }
 
   /**
+   * Remove clustered table internal table properties. These properties are never stored into
+   * [[Metadata.configuration]] such as table features.
+   */
+  def removeInternalTableProperties(
+      props: scala.collection.Map[String, String]): Map[String, String] = {
+    props.toMap --
+      // Clustering table feature and dependent table features
+      Seq(ClusteringTableFeature).flatMap { feature =>
+        (feature +: feature.requiredFeatures.toSeq).map(TableFeatureProtocolUtils.propertyKey)
+      }
+  }
+
+  /**
    * Remove PROP_CLUSTERING_COLUMNS from metadata action.
    * Clustering columns should only exist in:
    * 1. CatalogTable.properties(PROP_CLUSTERING_COLUMNS)
@@ -130,18 +167,49 @@ trait ClusteredTableUtilsBase extends DeltaLogging {
   }
 
   /**
-   * Create an optional [[DomainMetadata]] action to store clustering columns.
+   * Returns [[DomainMetadata]] action to store clustering columns.
+   * If clusterBySpecOpt is not empty (clustering columns are specified by CLUSTER BY), it creates
+   * the domain metadata based on the clustering columns.
+   * Otherwise (CLUSTER BY is not specified for REPLACE TABLE), it creates the domain metadata
+   * with empty clustering columns if a clustering domain exists.
+   *
+   * This is used for CREATE TABLE and REPLACE TABLE.
    */
-  def getDomainMetadataOptional(
+  def getDomainMetadataFromTransaction(
       clusterBySpecOpt: Option[ClusterBySpec],
-      txn: OptimisticTransaction): Option[DomainMetadata] = {
+      txn: OptimisticTransaction): Seq[DomainMetadata] = {
     clusterBySpecOpt.map { clusterBy =>
       ClusteredTableUtils.validateClusteringColumnsInStatsSchema(
         txn.protocol, txn.metadata, clusterBy)
       val clusteringColumns =
         clusterBy.columnNames.map(_.toString).map(ClusteringColumn(txn.metadata.schema, _))
-      createDomainMetadata(clusteringColumns)
+      Seq(createDomainMetadata(clusteringColumns))
+    }.getOrElse {
+      getMatchingMetadataDomain(
+        clusteringColumns = Seq.empty,
+        txn.snapshot.domainMetadata).clusteringDomainOpt.toSeq
     }
+  }
+
+  /**
+   * Returns a sequence of [[DomainMetadata]] actions to update the existing domain metadata with
+   * the given clustering columns.
+   *
+   * This is mainly used for REPLACE TABLE and RESTORE TABLE.
+   */
+  def getMatchingMetadataDomain(
+      clusteringColumns: Seq[ClusteringColumn],
+      existingDomainMetadata: Seq[DomainMetadata]): MatchingMetadataDomain = {
+    val clusteringMetadataDomainOpt =
+      if (existingDomainMetadata.exists(_.domain == ClusteringMetadataDomain.domainName)) {
+        Some(ClusteringMetadataDomain.fromClusteringColumns(clusteringColumns).toDomainMetadata)
+      } else {
+        None
+      }
+
+    MatchingMetadataDomain(
+      clusteringMetadataDomainOpt
+    )
   }
 
   /**
@@ -149,15 +217,6 @@ trait ClusteredTableUtilsBase extends DeltaLogging {
    */
   def createDomainMetadata(clusteringColumns: Seq[ClusteringColumn]): DomainMetadata = {
     ClusteringMetadataDomain.fromClusteringColumns(clusteringColumns).toDomainMetadata
-  }
-
-  /**
-   * Create a [[ClusteringMetadataDomain]] with the given CatalogTable's clustering column property.
-   */
-  def getDomainMetadataOptional(
-      table: CatalogTable,
-      txn: OptimisticTransaction): Option[DomainMetadata] = {
-    getDomainMetadataOptional(getClusterBySpecOptional(table), txn)
   }
 
   /**
@@ -296,11 +355,25 @@ trait ClusteredTableUtilsBase extends DeltaLogging {
   private def validateClusteringColumnsInStatsSchema(
       statsCollection: StatisticsCollection,
       clusteringColumnInfos: Seq[ClusteringColumnInfo]): Unit = {
-    val missingColumn = getClusteringColumnsNotInStatsSchema(statsCollection, clusteringColumnInfos)
-    if (missingColumn.nonEmpty) {
-      // Convert back to logical names.
+    val missingColumns =
+      getClusteringColumnsNotInStatsSchema(statsCollection, clusteringColumnInfos)
+    if (missingColumns.nonEmpty) {
+      // Check DataType eligibility.
+      val missingColumnInfos = clusteringColumnInfos.filter(
+        info => missingColumns.contains(info.logicalName))
+      // This assertion must hold since missingColumns are subset of clusteringColumnInfos.
+      assert(missingColumnInfos.length == missingColumns.length)
+      val nonSkippingEligibleMissingColumnInfos =
+        missingColumnInfos.filter(info => !SkippingEligibleDataType(info.dataType))
+      if (nonSkippingEligibleMissingColumnInfos.nonEmpty) {
+        val columnNameWithDataTypes = nonSkippingEligibleMissingColumnInfos
+          .map(info => s"${info.logicalName} : ${info.dataType.sql}")
+          .mkString(", ")
+        throw DeltaErrors.clusteringColumnUnsupportedDataTypes(columnNameWithDataTypes)
+      }
+
       throw DeltaErrors.clusteringColumnMissingStats(
-        missingColumn.mkString(", "),
+        missingColumns.mkString(", "),
         statsCollection.statCollectionLogicalSchema.treeString)
     }
   }
