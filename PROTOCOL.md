@@ -488,6 +488,8 @@ That means specifically that for any commit…
  - it is **legal** for the same `path` to occur in an `add` action and a `remove` action, but with two different `dvId`s.
  - it is **legal** for the same `path` to be added and/or removed and also occur in a `cdc` action.
  - it is **illegal** for the same `path` to be occur twice with different `dvId`s within each set of `add` or `remove` actions.
+ - it is **illegal** for a `path` to occur in an `add` action that already occurs with a different `dvId` in the list of `add` actions from the snapshot of the version immediately preceeding the commit, unless the commit also contains a remove for the later combination.
+ - it is **legal** to commit an existing `path` and `dvId` combination again (this allows metadata updates).
 
 The `dataChange` flag on either an `add` or a `remove` can be set to `false` to indicate that an action when combined with other actions in the same atomic version only rearranges existing data or adds new statistics.
 For example, streaming queries that are tailing the transaction log can use this flag to skip actions that would not affect the final results.
@@ -825,7 +827,7 @@ A given snapshot of the table can be computed by replaying the events committed 
  - A single `metaData` action
  - A collection of `txn` actions with unique `appId`s
  - A collection of `domainMetadata` actions with unique `domain`s.
- - A collection of `add` actions with unique `(path, deletionVector.uniqueId)` keys.
+ - A collection of `add` actions with unique path keys, corresponding to the newest (path, deletionVector.uniqueId) pair encountered for each path.
  - A collection of `remove` actions with unique `(path, deletionVector.uniqueId)` keys. The intersection of the primary keys in the `add` collection and `remove` collection must be empty. That means a logical file cannot exist in both the `remove` and `add` collections at the same time; however, the same *data file* can exist with *different* DVs in the `remove` collection, as logically they represent different content. The `remove` actions act as _tombstones_, and only exist for the benefit of the VACUUM command. Snapshot reads only return `add` actions on the read path.
  
 To achieve the requirements above, related actions from different delta files need to be reconciled with each other:
