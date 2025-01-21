@@ -394,39 +394,6 @@ trait CloneIcebergSuiteBase extends QueryTest
       assert(protocol.isFeatureSupported(ColumnMappingTableFeature))
     }
   }
-
-
-
-  testClone("bucket partition") { mode =>
-    withTable(table, cloneTable) {
-      spark.sql(
-        s"""CREATE TABLE $table (date date, id bigint, category string, price double)
-           | USING iceberg PARTITIONED BY (bucket(2, id))""".stripMargin)
-
-      // scalastyle:off deltahadoopconfiguration
-      val hadoopTables = new HadoopTables(spark.sessionState.newHadoopConf())
-      // scalastyle:on deltahadoopconfiguration
-      val icebergTable = hadoopTables.load(tablePath)
-      val icebergTableSchema =
-        org.apache.iceberg.spark.SparkSchemaUtil.convert(icebergTable.schema())
-
-      val df1 = spark.createDataFrame(
-        Seq(
-          Row(toDate("2022-01-01"), 1L, "toy", 2.5D),
-          Row(toDate("2022-01-01"), 2L, "food", 0.6D),
-          Row(toDate("2022-02-05"), 3L, "food", 1.4D),
-          Row(toDate("2022-02-05"), 4L, "toy", 10.2D)).asJava,
-        icebergTableSchema)
-
-      df1.writeTo(table).append()
-
-      runCreateOrReplace(mode, sourceIdentifier)
-      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(cloneTable))
-      assert(deltaLog.snapshot.metadata.partitionColumns.isEmpty)
-      checkAnswer(spark.table(cloneTable), df1)
-      checkAnswer(spark.sql(s"select * from $cloneTable where id = 1"), df1.where("id = 1"))
-    }
-  }
 }
 
 class CloneIcebergByPathSuite extends CloneIcebergSuiteBase

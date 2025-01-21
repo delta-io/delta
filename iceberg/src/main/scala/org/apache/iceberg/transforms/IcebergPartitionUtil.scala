@@ -119,8 +119,7 @@ object IcebergPartitionUtil {
   def getPartitionFields(partSpec: PartitionSpec, schema: Schema): Seq[StructField] = {
     // Skip removed partition fields due to partition evolution.
     partSpec.fields.asScala.toSeq.collect {
-      case partField if !partField.transform().isInstanceOf[VoidTransform[_]] &&
-          !partField.transform().isInstanceOf[Bucket[_]] =>
+      case partField if !partField.transform().isInstanceOf[VoidTransform[_]] =>
         val sourceColumnName = schema.findColumnName(partField.sourceId())
         val sourceField = schema.findField(partField.sourceId())
         val sourceType = sourceField.`type`()
