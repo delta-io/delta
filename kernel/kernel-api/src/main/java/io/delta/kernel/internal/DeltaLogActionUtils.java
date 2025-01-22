@@ -222,22 +222,18 @@ public class DeltaLogActionUtils {
       while (fsIter.hasNext()) {
         final FileStatus fs = fsIter.next();
 
-        boolean isDesiredFileType = false;
         if (fileTypes.contains(DeltaLogFileType.COMMIT)
             && FileNames.isCommitFile(getName(fs.getPath()))) {
-          isDesiredFileType = true;
+          // Here, we do nothing (we will consume this file).
         } else if (fileTypes.contains(DeltaLogFileType.CHECKPOINT)
             && FileNames.isCheckpointFile(getName(fs.getPath()))
             && fs.getSize() > 0) {
-          // Checkpoint files of 0 size are invalid but may be ignored silently when read,
-          // hence we ignore them so that we never pick up such checkpoints.
-          isDesiredFileType = true;
+          // Checkpoint files of 0 size are invalid but may be ignored silently when read, hence we
+          // ignore them so that we never pick up such checkpoints.
+          // Here, we do nothing (we will consume this file).
         } else {
           logger.debug("Ignoring file {} as it is not of the desired type", fs.getPath());
-        }
-
-        if (!isDesiredFileType) {
-          continue;
+          continue; // Here, we continue and skip this file.
         }
 
         final long fileVersion = FileNames.getFileVersion(new Path(fs.getPath()));

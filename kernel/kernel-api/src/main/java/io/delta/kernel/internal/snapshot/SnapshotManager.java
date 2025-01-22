@@ -438,7 +438,8 @@ public class SnapshotManager {
         // TODO: for case (a), re-load the delta log but ignore the _LAST_CHECKPOINT file.
         throw DeltaErrors.missingCheckpoint(tablePath.toString(), startCheckpointOpt.get());
       } else {
-        // No files found even when listing from 0 => empty directory => table does not exist yet.
+        // Either no files found OR no *delta* files found even when listing from 0. This means that
+        // the delta table does not exist yet.
         throw new TableNotFoundException(
             tablePath.toString(), format("No delta files found in the directory: %s", logPath));
       }
