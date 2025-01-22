@@ -242,7 +242,9 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
                 resolvedPath.getName(),
                 tempPath,
                 false, // not complete
-                null // no expireTime
+                null, // no expireTime
+                fs.getDefaultBlockSize(),
+                System.currentTimeMillis()
             );
 
             // Step 2.1: Create temp file T(N)
@@ -455,7 +457,7 @@ public abstract class BaseExternalLogStore extends HadoopFileSystemLogStore {
     /**
      * Returns path stripped user info.
      */
-    private Path stripUserInfo(Path path) {
+    protected Path stripUserInfo(Path path) {
         final URI uri = path.toUri();
 
         try {
