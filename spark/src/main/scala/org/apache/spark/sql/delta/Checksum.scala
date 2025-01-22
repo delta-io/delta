@@ -139,8 +139,8 @@ trait RecordChecksum extends DeltaLogging {
    * @param deltaLog The DeltaLog
    * @param versionToCompute The version for which we want to compute the checksum
    * @param actions The actions corresponding to the version `versionToCompute`
-   * @param metadata The metadata corresponding to the version `versionToCompute`
-   * @param protocol The protocol corresponding to the version `versionToCompute`
+   * @param metadataOpt The metadata corresponding to the version `versionToCompute` (if known)
+   * @param protocolOpt The protocol corresponding to the version `versionToCompute` (if known)
    * @param operationName The operation name corresponding to the version `versionToCompute`
    * @param txnIdOpt The transaction identifier for the version `versionToCompute`
    * @param previousVersionState Contains either the versionChecksum corresponding to
@@ -156,8 +156,8 @@ trait RecordChecksum extends DeltaLogging {
       deltaLog: DeltaLog,
       versionToCompute: Long,
       actions: Seq[Action],
-      metadata: Metadata,
-      protocol: Protocol,
+      metadataOpt: Option[Metadata],
+      protocolOpt: Option[Protocol],
       operationName: String,
       txnIdOpt: Option[String],
       previousVersionState: Either[Snapshot, VersionChecksum],
@@ -215,6 +215,23 @@ trait RecordChecksum extends DeltaLogging {
       RecordChecksum.operationNamesWhereAddFilesIgnoredForIncrementalCrc.contains(operationName)
     val ignoreRemoveFilesInOperation =
       RecordChecksum.operationNamesWhereRemoveFilesIgnoredForIncrementalCrc.contains(operationName)
+    // Retrieve protocol/metadata in order of precedence:
+    // 1. Use provided protocol/metadata if available
+    // 2. Look for a protocol/metadata action in the incremental set of actions to be applied
+    // 3. Use protocol/metadata from previous version's checksum
+    // 4. Return PROTOCOL_MISSING/METADATA_MISSING error if all attempts fail
+    val protocol = protocolOpt
+      .orElse(actions.collectFirst { case p: Protocol => p })
+      .orElse(Option(oldVersionChecksum.protocol))
+      .getOrElse {
+        return Left("PROTOCOL_MISSING")
+      }
+    val metadata = metadataOpt
+      .orElse(actions.collectFirst { case m: Metadata => m })
+      .orElse(Option(oldVersionChecksum.metadata))
+      .getOrElse {
+        return Left("METADATA_MISSING")
+      }
     val persistentDVsOnTableReadable =
       DeletionVectorUtils.deletionVectorsReadable(protocol, metadata)
     val persistentDVsOnTableWritable =
