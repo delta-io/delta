@@ -546,7 +546,7 @@ trait FileReadMetrics { self: Object =>
       }
     } else if (Checkpointer.LAST_CHECKPOINT_FILE_NAME.equals(path.getName)) {
       lastCheckpointMetadataReadCalls += 1
-    } else if (FileNames.isChecksumFile(path)) {
+    } else if (FileNames.isChecksumFile(path.getName)) {
       checksumsRead += FileNames.getFileVersion(path)
     }
   }
