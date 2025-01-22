@@ -42,7 +42,7 @@ public class ChecksumReader {
    * @param engine the engine to use for reading the checksum file
    * @param logPath the path to the Delta log
    * @param readVersion the version to read the checksum file from
-   * @param lowerBoundOpt the inclusive lower bound version to search for the checksum file
+   * @param lowerBoundOpt the exclusive lower bound version to search for the checksum file
    * @return Optional {@link CRCInfo} containing the protocol and metadata, and the version of the
    *     checksum file. If the checksum file is not found, it will return an empty
    */
@@ -62,7 +62,7 @@ public class ChecksumReader {
     }
 
     // Try to list the last 100 CRC files and see if we can find a CRC that we can use
-    long lowerBound = Math.max(lowerBoundOpt.orElse(0L), Math.max(0, readVersion - 100));
+    long lowerBound = Math.max(lowerBoundOpt.orElse(0L) + 1, Math.max(0, readVersion - 100));
     logger.info(
         "CRC file for version {} not found, attempt to loading version up to {}",
         readVersion,
@@ -72,9 +72,7 @@ public class ChecksumReader {
     try (CloseableIterator<FileStatus> crcFiles =
         engine.getFileSystemClient().listFrom(lowerBoundFilePath.toString())) {
       List<FileStatus> crcFilesList = new ArrayList<>();
-      crcFiles
-          .filter(file -> isChecksumFile(new Path(file.getPath())))
-          .forEachRemaining(crcFilesList::add);
+      crcFiles.filter(file -> isChecksumFile(file.getPath())).forEachRemaining(crcFilesList::add);
 
       // pick the last file which is the latest version that has the CRC file
       if (crcFilesList.isEmpty()) {
@@ -114,12 +112,7 @@ public class ChecksumReader {
 
       long crcVersion = FileNames.checksumVersion(filePath);
 
-      Optional<CRCInfo> crcInfo = fromColumnarBatch(engine, crcVersion, batch, 0 /* rowId */);
-      if (!crcInfo.isPresent()) {
-        logger.warn("Invalid checksum file missing protocol and/or metadata: {}", filePath);
-        return Optional.empty();
-      }
-      return crcInfo;
+      return fromColumnarBatch(engine, crcVersion, batch, 0 /* rowId */, filePath.toString());
     } catch (Exception e) {
       // This can happen when the version does not have a checksum file
       logger.warn("Failed to read checksum file {}", filePath, e);

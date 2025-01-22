@@ -203,12 +203,14 @@ public class LogReplay {
   protected Tuple2<Protocol, Metadata> loadTableProtocolAndMetadata(
       Engine engine, Optional<SnapshotHint> snapshotHint, long snapshotVersion) {
 
-    // If the snapshot hint is provided and matches the expected version, load the P&M from version
-    // hint.
-    // If not, e.g. for the case of time travel, skip use version hint and fallback to CRC file or
-    // log replay.
+    // Exit early if the hint already has the info we need.
     if (snapshotHint.isPresent() && snapshotHint.get().getVersion() == snapshotVersion) {
       return new Tuple2<>(snapshotHint.get().getProtocol(), snapshotHint.get().getMetadata());
+    }
+
+    // Snapshot hit is not use-able in this case for determine the lower bound.
+    if (snapshotHint.isPresent() && snapshotHint.get().getVersion() > snapshotVersion) {
+      snapshotHint = Optional.empty();
     }
 
     // Compute the lower bound for the CRC search

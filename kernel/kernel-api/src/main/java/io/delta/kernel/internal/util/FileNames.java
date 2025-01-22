@@ -161,8 +161,8 @@ public final class FileNames {
         || UUID_DELTA_FILE_REGEX.matcher(filename).matches();
   }
 
-  public static boolean isChecksumFile(Path checksumFilePath) {
-    return checksumFileRegex.matcher(checksumFilePath.getName()).matches();
+  public static boolean isChecksumFile(String checksumFilePath) {
+    return checksumFileRegex.matcher(new Path(checksumFilePath).getName()).matches();
   }
 
   /**
@@ -176,7 +176,7 @@ public final class FileNames {
       return checkpointVersion(path);
     } else if (isCommitFile(path.getName())) {
       return deltaVersion(path);
-    } else if (isChecksumFile(path)) {
+    } else if (isChecksumFile(path.getName())) {
       return checksumVersion(path);
     } else {
       throw new IllegalArgumentException(

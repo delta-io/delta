@@ -23,15 +23,19 @@ import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.types.StructType;
 import java.util.Optional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class CRCInfo {
+  private static final Logger logger = LoggerFactory.getLogger(CRCInfo.class);
 
   public static Optional<CRCInfo> fromColumnarBatch(
-      Engine engine, long version, ColumnarBatch batch, int rowId) {
+      Engine engine, long version, ColumnarBatch batch, int rowId, String crcFilePath) {
     // fromColumnVector already takes care of nulls
     Protocol protocol = Protocol.fromColumnVector(batch.getColumnVector(PROTOCOL_ORDINAL), rowId);
     Metadata metadata = Metadata.fromColumnVector(batch.getColumnVector(METADATA_ORDINAL), rowId);
     if (protocol == null || metadata == null) {
+      logger.warn("Invalid checksum file missing protocol and/or metadata: {}", crcFilePath);
       return Optional.empty();
     }
     return Optional.of(new CRCInfo(version, metadata, protocol));
