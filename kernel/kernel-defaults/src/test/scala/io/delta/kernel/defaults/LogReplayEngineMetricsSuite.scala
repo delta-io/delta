@@ -388,9 +388,9 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
 
   Seq(-1L, 3L, 4L).foreach { version => // -1 means latest version
     test(s"checksum found at the read version: ${if (version == -1) "latest" else version}") {
-      withTempDirAndMetricsEngine { (_, engine) =>
-        val goldenTable = getTestResourceFilePath("stream_table_optimize")
-        val table = Table.forPath(engine, goldenTable)
+      withTempDirAndMetricsEngine { (path, engine) =>
+        buildTableWithCrc(path)
+        val table = Table.forPath(engine, path)
 
         loadPandMCheckMetrics(
           version match {
@@ -409,9 +409,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
 
   test("checksum not found at the read version, but found at a previous version") {
     withTempDirAndMetricsEngine { (path, engine) =>
-      // copy the golden table with crc files to the temp dir delete the checksum files
-      // for version 5 and 6
-      copyTable(getTestResourceFilePath("stream_table_optimize"), path)
+      buildTableWithCrc(path)
       Seq(5L, 6L).foreach { version =>
         val crcFile = new File(path, f"_delta_log/$version%020d.crc")
         assert(Files.deleteIfExists(crcFile.toPath))
@@ -446,9 +444,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
 
   test("checksum not found at the read version, but uses snapshot hint lower bound") {
     withTempDirAndMetricsEngine { (path, engine) =>
-      // copy the golden table with crc files to the temp dir delete the checksum files
-      // for version 3 to 6
-      copyTable(getTestResourceFilePath("stream_table_optimize"), path)
+      buildTableWithCrc(path)
       (3 to 6).foreach { version =>
         val crcFile = new File(path, f"_delta_log/$version%020d.crc")
         assert(Files.deleteIfExists(crcFile.toPath))
@@ -484,6 +480,18 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
         // beyond version 4
         expChecksumReadSet = Seq(6))
     }
+  }
+
+  def buildTableWithCrc(path: String): Unit = {
+    spark.conf.set(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key, true)
+    spark.sql(s"CREATE TABLE delta.`$path` USING DELTA AS " +
+      s"SELECT 0 as value")
+    spark.sql(s"INSERT INTO delta.`$path` values(1)")
+    spark.sql(s"INSERT INTO delta.`$path` values(2)")
+    spark.sql(s"INSERT INTO delta.`$path` values(3)")
+    spark.sql(s"INSERT INTO delta.`$path` values(4)")
+    spark.sql(s"INSERT INTO delta.`$path` values(5)")
+    spark.sql(s"INSERT INTO delta.`$path` values(6)")
   }
 }
 

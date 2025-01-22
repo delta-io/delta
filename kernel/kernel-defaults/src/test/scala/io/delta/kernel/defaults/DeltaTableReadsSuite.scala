@@ -27,6 +27,7 @@ import io.delta.kernel.Table
 import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
 import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations}
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.functions.col
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -39,12 +40,17 @@ import scala.collection.JavaConverters._
 class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
 
   test("CRC metadata & protocol fetching") {
-    val path = getTestResourceFilePath("stream_table_optimize")
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath + "/table"
+      spark.conf.set(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key, true)
+      spark.sql(s"CREATE TABLE delta.`$path` USING DELTA AS " +
+      s"SELECT 0 as value")
 
-    val snapshot = Table.forPath(defaultEngine, path)
+      val snapshot = Table.forPath(defaultEngine, path)
       .getSnapshotAsOfVersion(defaultEngine, 0)
 
-    readSnapshot(snapshot)
+      readSnapshot(snapshot)
+    }
   }
 
   //////////////////////////////////////////////////////////////////////////////////
