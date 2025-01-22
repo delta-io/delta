@@ -47,7 +47,7 @@ public class ChecksumReader {
    *     checksum file. If the checksum file is not found, it will return an empty
    */
   public static Optional<CRCInfo> getCRCInfo(
-          Engine engine, Path logPath, long targetedVersion, Optional<Long> lowerBoundOpt) {
+      Engine engine, Path logPath, long targetedVersion, Optional<Long> lowerBoundOpt) {
     logger.info("Loading CRC file for version {}", targetedVersion);
     // First try to load the CRC at given version. If not found or failed to read then try to
     // find the latest CRC file that is created after the lower bound version or within the last 100
@@ -65,7 +65,7 @@ public class ChecksumReader {
     long lowerBound = Math.max(lowerBoundOpt.orElse(0L) + 1, Math.max(0, targetedVersion - 100));
     logger.info(
         "CRC file for version {} not found, attempt to loading version up to {}",
-            targetedVersion,
+        targetedVersion,
         lowerBound);
 
     Path lowerBoundFilePath = checksumFile(logPath, lowerBound);
