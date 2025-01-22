@@ -2203,6 +2203,13 @@ trait DeltaSQLConfBase {
       .checkValue(v => v >= 1, "Must be at least 1.")
       .createWithDefault(100)
 
+  val DELTA_CONVERT_ICEBERG_STATS = buildConf("collectStats.convertIceberg")
+    .internal()
+    .doc("When enabled, attempts to convert Iceberg stats to Delta stats when cloning from " +
+      "an Iceberg source.")
+    .booleanConf
+    .createWithDefault(true)
+
   /////////////////////
   // Optimized Write
   /////////////////////

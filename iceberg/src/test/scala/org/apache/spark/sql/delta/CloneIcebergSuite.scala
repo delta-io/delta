@@ -28,6 +28,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.iceberg.hadoop.HadoopTables
 
+import org.apache.spark.SparkConf
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.util.DateTimeUtils.{stringToDate, toJavaDate}
@@ -445,4 +446,17 @@ class CloneIcebergByNameSuite extends CloneIcebergSuiteBase
     }
   }
 }
+
+trait DisablingConvertIcebergStats extends CloneIcebergSuiteBase {
+  override def sparkConf: SparkConf =
+    super.sparkConf.set(DeltaSQLConf.DELTA_CONVERT_ICEBERG_STATS.key, "false")
+}
+
+class CloneIcebergByPathNoConvertStatsSuite
+  extends CloneIcebergByPathSuite
+    with DisablingConvertIcebergStats
+
+class CloneIcebergByNameNoConvertStatsSuite
+  extends CloneIcebergByNameSuite
+    with DisablingConvertIcebergStats
 
