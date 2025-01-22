@@ -106,6 +106,7 @@ spark-warehouse/
 
 # For SBT
 .jvmopts
+sbt-launch-*.jar
 
 # For Python linting
 pep8*.py
