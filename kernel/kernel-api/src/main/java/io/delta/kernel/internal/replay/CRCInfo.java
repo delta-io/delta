@@ -31,9 +31,9 @@ public class CRCInfo {
 
   public static Optional<CRCInfo> fromColumnarBatch(
       Engine engine, long version, ColumnarBatch batch, int rowId, String crcFilePath) {
-    // fromColumnVector already takes care of nulls
     Protocol protocol = Protocol.fromColumnVector(batch.getColumnVector(PROTOCOL_ORDINAL), rowId);
     Metadata metadata = Metadata.fromColumnVector(batch.getColumnVector(METADATA_ORDINAL), rowId);
+    //  protocol and metadata are nullable per fromColumnVector's implementation.
     if (protocol == null || metadata == null) {
       logger.warn("Invalid checksum file missing protocol and/or metadata: {}", crcFilePath);
       return Optional.empty();
