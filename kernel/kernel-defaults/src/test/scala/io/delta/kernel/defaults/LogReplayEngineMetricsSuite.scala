@@ -383,7 +383,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
   }
 
   /////////////////////////////////////////////////////////////////////////////////////////////////
-  // Tests for loading P & M  through checksums files                                            //
+  // Tests for loading P & M through checksums files                                            //
   /////////////////////////////////////////////////////////////////////////////////////////////////
 
   Seq(-1L, 3L, 4L).foreach { version => // -1 means latest version
