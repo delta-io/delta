@@ -203,7 +203,8 @@ public class LogReplay {
   protected Tuple2<Protocol, Metadata> loadTableProtocolAndMetadata(
       Engine engine, Optional<SnapshotHint> snapshotHint, long snapshotVersion) {
 
-    // Exit early if the hint already has the info we need
+    // If the snapshot hint is provided and matches the expected version, load the P&M from version hint.
+    // If not, e.g. for the case of time travel, skip use version hint and fallback to CRC file or log replay.
     if (snapshotHint.isPresent() && snapshotHint.get().getVersion() == snapshotVersion) {
       return new Tuple2<>(snapshotHint.get().getProtocol(), snapshotHint.get().getMetadata());
     }
@@ -224,6 +225,7 @@ public class LogReplay {
       // for. We need to replay the actions to get the latest protocol and metadata, but
       // update the hint to read the actions from the version we found to check if the
       // protocol and metadata are updated in the versions after the one we found.
+      // Building a new snapshotHit for determining the time to end the log replay loop.
       snapshotHint =
           Optional.of(
               new SnapshotHint(crcInfo.getVersion(), crcInfo.getProtocol(), crcInfo.getMetadata()));
