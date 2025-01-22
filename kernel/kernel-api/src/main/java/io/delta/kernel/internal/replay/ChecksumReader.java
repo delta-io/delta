@@ -41,7 +41,7 @@ public class ChecksumReader {
    *
    * @param engine the engine to use for reading the checksum file
    * @param logPath the path to the Delta log
-   * @param targetedVersion the version to read the checksum file from
+   * @param targetedVersion the target version to read the checksum file from
    * @param lowerBoundOpt the exclusive lower bound version to search for the checksum file
    * @return Optional {@link CRCInfo} containing the protocol and metadata, and the version of the
    *     checksum file. If the checksum file is not found, it will return an empty
