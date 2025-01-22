@@ -215,9 +215,9 @@ public class LogReplay {
     Optional<CRCInfo> crcInfoOpt =
         ChecksumReader.getCRCInfo(engine, logSegment.logPath, snapshotVersion, crcSearchLowerBound);
     if (crcInfoOpt.isPresent()) {
-      // CRC is related to the desired snapshot version. Load protocol and metadata from CRC.
       CRCInfo crcInfo = crcInfoOpt.get();
       if (crcInfo.getVersion() == snapshotVersion) {
+        // CRC is related to the desired snapshot version. Load protocol and metadata from CRC.
         return new Tuple2<>(crcInfo.getProtocol(), crcInfo.getMetadata());
       }
       // We found the protocol and metadata in a version older than the one we are looking
