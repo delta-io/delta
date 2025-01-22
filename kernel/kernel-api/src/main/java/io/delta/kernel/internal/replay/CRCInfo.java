@@ -58,7 +58,7 @@ public class CRCInfo {
     this.protocol = requireNonNull(protocol);
   }
 
-  /** The version of the Delta table that this VersionStats represents. */
+  /** The version of the Delta table that this CRCInfo represents. */
   public long getVersion() {
     return version;
   }

@@ -17,6 +17,7 @@
 package io.delta.kernel.internal.replay;
 
 import static io.delta.kernel.internal.replay.LogReplayUtils.assertLogFilesBelongToTable;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
@@ -135,7 +136,7 @@ public class LogReplay {
     this.logSegment = logSegment;
     this.protocolAndMetadata =
         snapshotMetrics.loadInitialDeltaActionsTimer.time(
-            () -> loadTableProtocolAndMetadata(engine, snapshotHint, snapshotVersion));
+            () -> loadTableProtocolAndMetadata(engine, logSegment, snapshotHint, snapshotVersion));
     // Lazy loading of domain metadata only when needed
     this.domainMetadataMap = new Lazy<>(() -> loadDomainMetadataMap(engine));
   }
@@ -201,7 +202,10 @@ public class LogReplay {
    * use the P and/or M from the hint.
    */
   protected Tuple2<Protocol, Metadata> loadTableProtocolAndMetadata(
-      Engine engine, Optional<SnapshotHint> snapshotHint, long snapshotVersion) {
+      Engine engine,
+      LogSegment logSegment,
+      Optional<SnapshotHint> snapshotHint,
+      long snapshotVersion) {
 
     // Exit early if the hint already has the info we need.
     if (snapshotHint.isPresent() && snapshotHint.get().getVersion() == snapshotVersion) {
@@ -213,10 +217,12 @@ public class LogReplay {
       snapshotHint = Optional.empty();
     }
 
-    // Compute the lower bound for the CRC search
-    // If the snapshot hint is present, we can use it as the lower bound for the CRC search.
-    // TODO: this can be further improved to make the lower bound until the checkpoint version
-    Optional<Long> crcSearchLowerBound = snapshotHint.map(SnapshotHint::getVersion);
+    // Finds the exclusive lower bound for CRC search.
+    long crcSearchLowerBound =
+        Math.max(
+            snapshotHint.map(SnapshotHint::getVersion).orElse(0L),
+            logSegment.checkpointVersionOpt.orElse(0),
+            Math.max(0, snapshotVersion - 101));
     Optional<CRCInfo> crcInfoOpt =
         ChecksumReader.getCRCInfo(engine, logSegment.logPath, snapshotVersion, crcSearchLowerBound);
     if (crcInfoOpt.isPresent()) {
@@ -225,11 +231,10 @@ public class LogReplay {
         // CRC is related to the desired snapshot version. Load protocol and metadata from CRC.
         return new Tuple2<>(crcInfo.getProtocol(), crcInfo.getMetadata());
       }
-      // We found the protocol and metadata in a version older than the one we are looking
-      // for. We need to replay the actions to get the latest protocol and metadata, but
-      // update the hint to read the actions from the version we found to check if the
-      // protocol and metadata are updated in the versions after the one we found.
-      // Building a new snapshotHit for determining the time to end the log replay loop.
+      checkArgument(
+          crcInfo.getVersion() >= crcSearchLowerBound && crcInfo.getVersion() <= snapshotVersion);
+      // We found a CRCInfo of a version (a) older than the one we are looking for (snapshotVersion)
+      // but (b) newer than the current hint. Use this CRCInfo to create a new hint
       snapshotHint =
           Optional.of(
               new SnapshotHint(crcInfo.getVersion(), crcInfo.getProtocol(), crcInfo.getMetadata()));

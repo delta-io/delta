@@ -35,19 +35,19 @@ public class ChecksumReader {
   private static final Logger logger = LoggerFactory.getLogger(ChecksumReader.class);
 
   /**
-   * Load the protocol and metadata from the checksum file at the given version. If the checksum
-   * file is not found at the given version, it will try to find the latest checksum file that is
-   * created after the lower bound version or within the last 100 versions.
+   * Load the CRCInfo from the from the checksum file at the given version. If the checksum file is
+   * not found at the given version, it will try to find the latest checksum file that is created
+   * after the lower bound version or within the last 100 versions.
    *
    * @param engine the engine to use for reading the checksum file
    * @param logPath the path to the Delta log
    * @param targetedVersion the target version to read the checksum file from
-   * @param lowerBoundOpt the exclusive lower bound version to search for the checksum file
+   * @param lowerBound the exclusive lower bound version to search for the checksum file
    * @return Optional {@link CRCInfo} containing the protocol and metadata, and the version of the
    *     checksum file. If the checksum file is not found, it will return an empty
    */
   public static Optional<CRCInfo> getCRCInfo(
-      Engine engine, Path logPath, long targetedVersion, Optional<Long> lowerBoundOpt) {
+      Engine engine, Path logPath, long targetedVersion, long lowerBound) {
     logger.info("Loading CRC file for version {}", targetedVersion);
     // First try to load the CRC at given version. If not found or failed to read then try to
     // find the latest CRC file that is created after the lower bound version or within the last 100
@@ -60,15 +60,12 @@ public class ChecksumReader {
         targetedVersion == 0) {
       return crcInfoOpt;
     }
-
-    // Try to list the last 100 CRC files and see if we can find a CRC that we can use
-    long lowerBound = Math.max(lowerBoundOpt.orElse(0L) + 1, Math.max(0, targetedVersion - 100));
     logger.info(
         "CRC file for version {} not found, attempt to loading version up to {}",
         targetedVersion,
         lowerBound);
 
-    Path lowerBoundFilePath = checksumFile(logPath, lowerBound);
+    Path lowerBoundFilePath = checksumFile(logPath, lowerBound + 1);
     try (CloseableIterator<FileStatus> crcFiles =
         engine.getFileSystemClient().listFrom(lowerBoundFilePath.toString())) {
       List<FileStatus> crcFilesList = new ArrayList<>();
