@@ -63,12 +63,12 @@ public class CRCInfo {
     return version;
   }
 
-  /** The {@link Metadata} stored in this VersionStats. May be null. */
+  /** The {@link Metadata} stored in this CRCInfo. */
   public Metadata getMetadata() {
     return metadata;
   }
 
-  /** The {@link Protocol} stored in this VersionStats. May be null. */
+  /** The {@link Protocol} stored in this CRCInfo. */
   public Protocol getProtocol() {
     return protocol;
   }
