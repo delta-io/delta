@@ -39,9 +39,7 @@ import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
 import java.io.UncheckedIOException;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 
 /**
  * Replays a history of actions, resolving them to produce the current state of the table. The
@@ -218,11 +216,15 @@ public class LogReplay {
     }
 
     // Finds the exclusive lower bound for CRC search.
+    // If the snapshot hint or checkpoint older than required version is present, we can use them as
+    // the lower bound for the CRC search.
     long crcSearchLowerBound =
-        Math.max(
-            snapshotHint.map(SnapshotHint::getVersion).orElse(0L),
-            logSegment.checkpointVersionOpt.orElse(0),
-            Math.max(0, snapshotVersion - 101));
+        Collections.max(
+            Arrays.asList(
+                snapshotHint.map(SnapshotHint::getVersion).orElse(0L),
+                logSegment.checkpointVersionOpt.orElse(0L),
+                // Only find the CRC within 100 versions. 101 is for implementing exclusive bound.
+                Math.max(0, snapshotVersion - 101)));
     Optional<CRCInfo> crcInfoOpt =
         ChecksumReader.getCRCInfo(engine, logSegment.logPath, snapshotVersion, crcSearchLowerBound);
     if (crcInfoOpt.isPresent()) {
