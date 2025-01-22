@@ -42,13 +42,13 @@ public class ChecksumReader {
    * @param engine the engine to use for reading the checksum file
    * @param logPath the path to the Delta log
    * @param readVersion the version to read the checksum file from
-   * @param lowerBoundOpt the lower bound version to search for the checksum file
+   * @param lowerBoundOpt the inclusive lower bound version to search for the checksum file
    * @return Optional {@link CRCInfo} containing the protocol and metadata, and the version of the
    *     checksum file. If the checksum file is not found, it will return an empty
    */
   public static Optional<CRCInfo> getCRCInfo(
       Engine engine, Path logPath, long readVersion, Optional<Long> lowerBoundOpt) {
-
+    logger.info("Loading CRC file for version {}", readVersion);
     // First try to load the CRC at given version. If not found or failed to read then try to
     // find the latest CRC file that is created after the lower bound version or within the last 100
     // versions if no lower bound is provided.
@@ -63,6 +63,10 @@ public class ChecksumReader {
 
     // Try to list the last 100 CRC files and see if we can find a CRC that we can use
     long lowerBound = Math.max(lowerBoundOpt.orElse(0L), Math.max(0, readVersion - 100));
+    logger.info(
+        "CRC file for version {} not found, attempt to loading version up to {}",
+        readVersion,
+        lowerBound);
 
     Path lowerBoundFilePath = checksumFile(logPath, lowerBound);
     try (CloseableIterator<FileStatus> crcFiles =
