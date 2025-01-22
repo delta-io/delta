@@ -29,7 +29,7 @@ import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils._
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.sources.{DeltaSQLConf, DeltaStreamUtils}
 import org.apache.spark.sql.util.ScalaExtensions._
 
 import org.apache.spark.internal.MDC
@@ -39,6 +39,7 @@ import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.expressions.{Alias, AttributeReference, Expression, GetArrayItem, GetArrayStructFields, GetMapValue, GetStructField}
 import org.apache.spark.sql.catalyst.plans.logical.{LocalRelation, Project}
 import org.apache.spark.sql.catalyst.util.CharVarcharUtils
+import org.apache.spark.sql.execution.streaming.IncrementalExecution
 import org.apache.spark.sql.functions.{col, struct}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
@@ -362,7 +363,12 @@ def normalizeColumnNamesInDataType(
         }
         expression
       }
-      data.select(aliasExpressions: _*)
+      data.queryExecution match {
+        case incrementalExecution: IncrementalExecution =>
+          DeltaStreamUtils.selectFromStreamingDataFrame(
+            incrementalExecution, data.toDF(), aliasExpressions: _*)
+        case _ => data.select(aliasExpressions: _*)
+      }
     }
   }
 

@@ -1538,6 +1538,13 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_CONVERT_ICEBERG_BUCKET_PARTITION_ENABLED =
+    buildConf("convert.iceberg.bucketPartition.enabled")
+      .doc("If enabled, convert iceberg table with bucket partition to unpartitioned delta table.")
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_CONVERT_ICEBERG_UNSAFE_MOR_TABLE_ENABLE =
     buildConf("convert.iceberg.unsafeConvertMorTable.enabled")
       .doc("If enabled, iceberg merge-on-read tables can be unsafely converted by ignoring " +
@@ -2202,6 +2209,13 @@ trait DeltaSQLConfBase {
       .intConf
       .checkValue(v => v >= 1, "Must be at least 1.")
       .createWithDefault(100)
+
+  val DELTA_CONVERT_ICEBERG_STATS = buildConf("collectStats.convertIceberg")
+    .internal()
+    .doc("When enabled, attempts to convert Iceberg stats to Delta stats when cloning from " +
+      "an Iceberg source.")
+    .booleanConf
+    .createWithDefault(true)
 
   /////////////////////
   // Optimized Write

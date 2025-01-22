@@ -31,7 +31,8 @@ import org.apache.spark.sql.types.StructType
 class IcebergFileManifest(
     spark: SparkSession,
     table: Table,
-    partitionSchema: StructType) extends ConvertTargetFileManifest with LoggingShims {
+    partitionSchema: StructType,
+    convertStats: Boolean = true) extends ConvertTargetFileManifest with LoggingShims {
 
   // scalastyle:off sparkimplicits
   import spark.implicits._
@@ -106,6 +107,8 @@ class IcebergFileManifest(
       null
     }
 
+    val shouldConvertStats = convertStats
+
     val manifestFiles = localTable
       .currentSnapshot()
       .dataManifests(localTable.io())
@@ -125,11 +128,15 @@ class IcebergFileManifest(
           ),
           partitionValues = if (shouldConvertPartition) {
             Some(convertPartition.toDelta(dataFile.partition()))
+          } else None,
+          stats = if (shouldConvertStats) {
+            IcebergStatsUtils.icebergStatsToDelta(localTable.schema, dataFile)
           } else None
         )
       }
       .cache()
   }
+
 
   override def close(): Unit = {
     fileSparkResults.map(_.unpersist())
