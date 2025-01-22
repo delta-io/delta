@@ -48,7 +48,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       }
 
       val snapshot = Table.forPath(defaultEngine, path)
-      .getSnapshotAsOfVersion(defaultEngine, 0)
+        .getSnapshotAsOfVersion(defaultEngine, 0)
 
       readSnapshot(snapshot)
     }
