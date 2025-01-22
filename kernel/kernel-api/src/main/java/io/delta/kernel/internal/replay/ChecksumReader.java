@@ -114,12 +114,12 @@ public class ChecksumReader {
 
       long crcVersion = FileNames.checksumVersion(filePath);
 
-      CRCInfo versionStats = fromColumnarBatch(engine, crcVersion, batch, 0 /* rowId */);
-      if (versionStats.getMetadata() == null || versionStats.getProtocol() == null) {
+      Optional<CRCInfo> crcInfo = fromColumnarBatch(engine, crcVersion, batch, 0 /* rowId */);
+      if (!crcInfo.isPresent()) {
         logger.warn("Invalid checksum file missing protocol and/or metadata: {}", filePath);
         return Optional.empty();
       }
-      return Optional.of(versionStats);
+      return crcInfo;
     } catch (Exception e) {
       // This can happen when the version does not have a checksum file
       logger.warn("Failed to read checksum file {}", filePath, e);

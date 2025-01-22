@@ -483,15 +483,16 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
   }
 
   def buildTableWithCrc(path: String): Unit = {
-    spark.conf.set(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key, true)
-    spark.sql(s"CREATE TABLE delta.`$path` USING DELTA AS " +
+    withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true") {
+      spark.sql(s"CREATE TABLE delta.`$path` USING DELTA AS " +
       s"SELECT 0 as value")
-    spark.sql(s"INSERT INTO delta.`$path` values(1)")
-    spark.sql(s"INSERT INTO delta.`$path` values(2)")
-    spark.sql(s"INSERT INTO delta.`$path` values(3)")
-    spark.sql(s"INSERT INTO delta.`$path` values(4)")
-    spark.sql(s"INSERT INTO delta.`$path` values(5)")
-    spark.sql(s"INSERT INTO delta.`$path` values(6)")
+      spark.sql(s"INSERT INTO delta.`$path` values(1)")
+      spark.sql(s"INSERT INTO delta.`$path` values(2)")
+      spark.sql(s"INSERT INTO delta.`$path` values(3)")
+      spark.sql(s"INSERT INTO delta.`$path` values(4)")
+      spark.sql(s"INSERT INTO delta.`$path` values(5)")
+      spark.sql(s"INSERT INTO delta.`$path` values(6)")
+    }
   }
 }
 

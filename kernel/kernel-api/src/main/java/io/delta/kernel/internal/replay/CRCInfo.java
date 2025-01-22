@@ -15,20 +15,26 @@
  */
 package io.delta.kernel.internal.replay;
 
+import static java.util.Objects.requireNonNull;
+
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.types.StructType;
+import java.util.Optional;
 
 public class CRCInfo {
 
-  public static CRCInfo fromColumnarBatch(
+  public static Optional<CRCInfo> fromColumnarBatch(
       Engine engine, long version, ColumnarBatch batch, int rowId) {
     // fromColumnVector already takes care of nulls
     Protocol protocol = Protocol.fromColumnVector(batch.getColumnVector(PROTOCOL_ORDINAL), rowId);
     Metadata metadata = Metadata.fromColumnVector(batch.getColumnVector(METADATA_ORDINAL), rowId);
-    return new CRCInfo(version, metadata, protocol);
+    if (protocol == null || metadata == null) {
+      return Optional.empty();
+    }
+    return Optional.of(new CRCInfo(version, metadata, protocol));
   }
 
   // We can add additional fields later
@@ -44,8 +50,8 @@ public class CRCInfo {
 
   protected CRCInfo(long version, Metadata metadata, Protocol protocol) {
     this.version = version;
-    this.metadata = metadata;
-    this.protocol = protocol;
+    this.metadata = requireNonNull(metadata);
+    this.protocol = requireNonNull(protocol);
   }
 
   /** The version of the Delta table that this VersionStats represents. */
