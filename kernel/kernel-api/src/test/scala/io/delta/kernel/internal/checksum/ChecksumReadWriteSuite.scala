@@ -23,7 +23,7 @@ import io.delta.kernel.internal.snapshot.SnapshotHint
 import io.delta.kernel.internal.util.InternalUtils.singletonStringColumnVector
 import io.delta.kernel.internal.util.VectorUtils
 import io.delta.kernel.test.{BaseMockJsonHandler, MockEngineUtils}
-import io.delta.kernel.types.{StringType, StructType}
+import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.CloseableIterator
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -34,35 +34,41 @@ class ChecksumReadWriteSuite extends AnyFunSuite with MockEngineUtils {
 
   private val FAKE_DELTA_LOG_PATH = new Path("/path/to/delta/log")
 
-
   test("basic checksum write") {
     val jsonHandler = new MockCheckSumFileJsonWriter()
-    val checksumWriter =
-      new ChecksumWriter(mockEngine(jsonHandler = jsonHandler), FAKE_DELTA_LOG_PATH)
+    val checksumWriter = new ChecksumWriter(FAKE_DELTA_LOG_PATH)
     val protocol = createTestProtocol()
     val metadata = createTestMetadata()
-    val snapshotHint = new SnapshotHint(
-      1,
-      protocol,
-      metadata,
-      OptionalLong.of(100),
-      OptionalLong.of(1))
-    checksumWriter.maybeWriteCheckSum(snapshotHint, "tnx")
+    val snapshotHint =
+      new SnapshotHint(1, protocol, metadata, OptionalLong.of(100), OptionalLong.of(1))
+    checksumWriter.maybeWriteCheckSum(mockEngine(jsonHandler = jsonHandler), snapshotHint, "tnx")
 
-    assert(jsonHandler.capturedCrcRow.getLong(
-      ChecksumWriter.CRC_FILE_SCHEMA.indexOf("tableSizeBytes")) == 100L)
-    assert(jsonHandler.capturedCrcRow.getLong(
-      ChecksumWriter.CRC_FILE_SCHEMA.indexOf("numFiles")) == 1L)
-    assert(jsonHandler.capturedCrcRow.getLong(
-      ChecksumWriter.CRC_FILE_SCHEMA.indexOf("numMetadata")) == 1L)
-    assert(jsonHandler.capturedCrcRow.getLong(
-      ChecksumWriter.CRC_FILE_SCHEMA.indexOf("numProtocol")) == 1L)
-    assert(jsonHandler.capturedCrcRow.getString(
-      ChecksumWriter.CRC_FILE_SCHEMA.indexOf("txnId")) == "tnx")
-    checkMetadata(metadata,
-      jsonHandler.capturedCrcRow.getStruct(ChecksumWriter.CRC_FILE_SCHEMA.indexOf("metadata")))
-    checkProtocol(protocol,
-      jsonHandler.capturedCrcRow.getStruct(ChecksumWriter.CRC_FILE_SCHEMA.indexOf("protocol")))
+    assert(
+      jsonHandler.capturedCrcRow
+        .getLong(ChecksumWriter.CRC_FILE_SCHEMA.indexOf("tableSizeBytes")) == 100L
+    )
+    assert(
+      jsonHandler.capturedCrcRow.getLong(ChecksumWriter.CRC_FILE_SCHEMA.indexOf("numFiles")) == 1L
+    )
+    assert(
+      jsonHandler.capturedCrcRow
+        .getLong(ChecksumWriter.CRC_FILE_SCHEMA.indexOf("numMetadata")) == 1L
+    )
+    assert(
+      jsonHandler.capturedCrcRow
+        .getLong(ChecksumWriter.CRC_FILE_SCHEMA.indexOf("numProtocol")) == 1L
+    )
+    assert(
+      jsonHandler.capturedCrcRow.getString(ChecksumWriter.CRC_FILE_SCHEMA.indexOf("txnId")) == "tnx"
+    )
+    checkMetadata(
+      metadata,
+      jsonHandler.capturedCrcRow.getStruct(ChecksumWriter.CRC_FILE_SCHEMA.indexOf("metadata"))
+    )
+    checkProtocol(
+      protocol,
+      jsonHandler.capturedCrcRow.getStruct(ChecksumWriter.CRC_FILE_SCHEMA.indexOf("protocol"))
+    )
   }
 
   def createTestMetadata(): Metadata = {
@@ -92,8 +98,8 @@ class ChecksumReadWriteSuite extends AnyFunSuite with MockEngineUtils {
 
   def createTestProtocol(): Protocol = {
     new Protocol(
-      /* minReaderVersion= */ 0,
-      /* minWriterVersion= */ 1,
+      /* minReaderVersion= */ 1,
+      /* minWriterVersion= */ 2,
       Collections.emptyList(),
       Collections.emptyList()
     )
@@ -102,41 +108,59 @@ class ChecksumReadWriteSuite extends AnyFunSuite with MockEngineUtils {
   def checkMetadata(metadata: Metadata, metadataRow: Row): Unit = {
     assert(metadataRow.getSchema == Metadata.FULL_SCHEMA)
     assert(metadataRow.getString(Metadata.FULL_SCHEMA.indexOf("id")) == metadata.getId)
-    assert(Optional.ofNullable(
-      metadataRow.getString(Metadata.FULL_SCHEMA.indexOf("name"))) == metadata.getName)
-    assert(Optional.ofNullable(metadataRow.getString(Metadata.FULL_SCHEMA.indexOf("description")))
-      == metadata.getDescription)
     assert(
-      metadataRow.getStruct(
-        Metadata.FULL_SCHEMA.indexOf("format")
-      ).getString(Format.FULL_SCHEMA.indexOf("provider")) == metadata.getFormat.getProvider)
-    assert(
-      metadataRow.getString(
-        Metadata.FULL_SCHEMA.indexOf("schemaString")) == metadata.getSchemaString
+      Optional
+        .ofNullable(metadataRow.getString(Metadata.FULL_SCHEMA.indexOf("name"))) == metadata.getName
     )
-    assert(metadataRow.getArray(
-      Metadata.FULL_SCHEMA.indexOf("partitionColumns")) == metadata.getPartitionColumns)
-    assert(Optional.ofNullable(metadataRow.getLong(
-      Metadata.FULL_SCHEMA.indexOf("createdTime"))) == metadata.getCreatedTime)
-    assert(VectorUtils.toJavaMap(metadataRow.getMap(
-      Metadata.FULL_SCHEMA.indexOf("configuration"))) == metadata.getConfiguration)
+    assert(
+      Optional.ofNullable(metadataRow.getString(Metadata.FULL_SCHEMA.indexOf("description")))
+      == metadata.getDescription
+    )
+    assert(
+      metadataRow
+        .getStruct(
+          Metadata.FULL_SCHEMA.indexOf("format")
+        )
+        .getString(Format.FULL_SCHEMA.indexOf("provider")) == metadata.getFormat.getProvider
+    )
+    assert(
+      metadataRow
+        .getString(Metadata.FULL_SCHEMA.indexOf("schemaString")) == metadata.getSchemaString
+    )
+    assert(
+      metadataRow
+        .getArray(Metadata.FULL_SCHEMA.indexOf("partitionColumns")) == metadata.getPartitionColumns
+    )
+    assert(
+      Optional
+        .ofNullable(metadataRow.getLong(Metadata.FULL_SCHEMA.indexOf("createdTime"))) == metadata.getCreatedTime
+    )
+    assert(
+      VectorUtils
+        .toJavaMap(metadataRow.getMap(Metadata.FULL_SCHEMA.indexOf("configuration"))) == metadata.getConfiguration
+    )
   }
 
   def checkProtocol(protocol: Protocol, protocolRow: Row): Unit = {
     assert(protocolRow.getSchema == Protocol.FULL_SCHEMA)
-    assert(protocol.getMinReaderVersion ==
-      protocolRow.getInt(Protocol.FULL_SCHEMA.indexOf("minReaderVersion")))
-    assert(protocol.getMinWriterVersion ==
-      protocolRow.getInt(Protocol.FULL_SCHEMA.indexOf("minWriterVersion")))
+    assert(
+      protocol.getMinReaderVersion ==
+      protocolRow.getInt(Protocol.FULL_SCHEMA.indexOf("minReaderVersion"))
+    )
+    assert(
+      protocol.getMinWriterVersion ==
+      protocolRow.getInt(Protocol.FULL_SCHEMA.indexOf("minWriterVersion"))
+    )
   }
 }
 
 class MockCheckSumFileJsonWriter extends BaseMockJsonHandler {
   var capturedCrcRow: Row = new GenericRow(new StructType(), new util.HashMap[Integer, AnyRef]);
 
-  override def writeJsonFileAtomically(filePath: String,
-                                       data: CloseableIterator[Row],
-                                       overwrite: Boolean): Unit = {
+  override def writeJsonFileAtomically(
+      filePath: String,
+      data: CloseableIterator[Row],
+      overwrite: Boolean): Unit = {
     if (data.hasNext) capturedCrcRow = data.next()
   }
 

@@ -445,7 +445,11 @@ public class SnapshotManager {
 
     final SnapshotHint hint =
         new SnapshotHint(
-            snapshot.getVersion(engine), snapshot.getProtocol(), snapshot.getMetadata());
+            snapshot.getVersion(engine),
+            snapshot.getProtocol(),
+            snapshot.getMetadata(),
+            /* tableSizeBytes= */ OptionalLong.empty(),
+            /* numFiles= */ OptionalLong.empty());
 
     registerHint(hint);
 

@@ -34,13 +34,15 @@ import java.io.IOException;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /** Writers for writing checksum files from a snapshot */
 public class ChecksumWriter {
 
-  private static final Logger log = LoggerFactory.getLogger(ChecksumWriter.class);
+  private static final Logger logger = LoggerFactory.getLogger(ChecksumWriter.class);
   public static StructType CRC_FILE_SCHEMA =
       new StructType()
           .add("tableSizeBytes", LongType.LONG)
@@ -51,11 +53,9 @@ public class ChecksumWriter {
           .add("protocol", Protocol.FULL_SCHEMA)
           .add("txnId", StringType.STRING, /*nullable*/ true);
 
-  private final Engine engine;
   private final Path logPath;
 
-  public ChecksumWriter(Engine engine, Path logPath) {
-    this.engine = engine;
+  public ChecksumWriter(Path logPath) {
     this.logPath = logPath;
   }
 
@@ -65,10 +65,11 @@ public class ChecksumWriter {
    *
    * @return true if checksum file is successfully written, false otherwise.
    */
-  public boolean maybeWriteCheckSum(SnapshotHint postCommitSnapshot, String tnxId) {
+  public boolean maybeWriteCheckSum(Engine engine, SnapshotHint postCommitSnapshot, Optional<String> txnId) {
     // No sufficient information to write checksum file.
     if (!postCommitSnapshot.getNumFiles().isPresent()
         || !postCommitSnapshot.getTableSizeBytes().isPresent()) {
+      logger.warn("Skipping writing");
       return false;
     }
     Path newChecksumPath = FileNames.checksumFile(logPath, postCommitSnapshot.getVersion());
@@ -80,20 +81,19 @@ public class ChecksumWriter {
                 .writeJsonFileAtomically(
                     newChecksumPath.toString(),
                     toCloseableIterator(
-                        Arrays.asList(buildCheckSumRow(postCommitSnapshot, tnxId)).iterator()),
+                        Arrays.asList(buildCheckSumRow(postCommitSnapshot, txnId)).iterator()),
                     false /* overwrite */);
             return true;
           },
           "Write checksum file `%s`",
           newChecksumPath);
     } catch (IOException io) {
-      //
-      log.error(String.format("Write checksum fails with error %s", io.getMessage()));
+      logger.warn("Write checksum fails with error {}", io.getMessage());
     }
     return false;
   }
 
-  private Row buildCheckSumRow(SnapshotHint snapshot, String tnxId) {
+  private Row buildCheckSumRow(SnapshotHint snapshot, Optional<String> txnId) {
     checkArgument(snapshot.getTableSizeBytes().isPresent() && snapshot.getNumFiles().isPresent());
     Map<Integer, Object> value = new HashMap<>();
     value.put(CRC_FILE_SCHEMA.indexOf("tableSizeBytes"), snapshot.getTableSizeBytes().getAsLong());
@@ -102,7 +102,7 @@ public class ChecksumWriter {
     value.put(CRC_FILE_SCHEMA.indexOf("numProtocol"), 1L);
     value.put(CRC_FILE_SCHEMA.indexOf("metadata"), snapshot.getMetadata().toRow());
     value.put(CRC_FILE_SCHEMA.indexOf("protocol"), snapshot.getProtocol().toRow());
-    value.put(CRC_FILE_SCHEMA.indexOf("txnId"), tnxId);
+    txnId.ifPresent(txn -> value.put(CRC_FILE_SCHEMA.indexOf("txnId"), txn));
     return new GenericRow(CRC_FILE_SCHEMA, value);
   }
 }

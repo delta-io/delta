@@ -28,14 +28,6 @@ public class SnapshotHint {
   private final OptionalLong tableSizeBytes;
   private final OptionalLong numFiles;
 
-  public SnapshotHint(long version, Protocol protocol, Metadata metadata) {
-    this.version = version;
-    this.protocol = protocol;
-    this.metadata = metadata;
-    this.tableSizeBytes = OptionalLong.empty();
-    this.numFiles = OptionalLong.empty();
-  }
-
   public SnapshotHint(
       long version,
       Protocol protocol,
