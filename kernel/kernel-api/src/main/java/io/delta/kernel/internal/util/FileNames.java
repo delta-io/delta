@@ -52,8 +52,8 @@ public final class FileNames {
   private static final Pattern CLASSIC_CHECKPOINT_FILE_PATTERN =
       Pattern.compile("\\d+\\.checkpoint\\.parquet");
 
-    /** Example: 00000000000000000001.crc */
-    private static final Pattern CHECK_SUM_FILE_PATTERN = Pattern.compile("(\\d+)\\.crc")
+  /** Example: 00000000000000000001.crc */
+  private static final Pattern CHECK_SUM_FILE_PATTERN = Pattern.compile("(\\d+)\\.crc");
 
   /**
    * Examples:
@@ -87,8 +87,8 @@ public final class FileNames {
       return checkpointVersion(path);
     } else if (isCommitFile(path.getName())) {
       return deltaVersion(path);
-       } else if (isChecksumFile(path.getName())) {
-       return   checksumVersion(path);
+    } else if (isChecksumFile(path.getName())) {
+      return checksumVersion(path);
     } else {
       throw new IllegalArgumentException(
           String.format("Unexpected file type found in transaction log: %s", path));
@@ -219,7 +219,7 @@ public final class FileNames {
         || UUID_DELTA_FILE_REGEX.matcher(fileName).matches();
   }
 
-    public static boolean isChecksumFile(String checksumFilePath) {
-        return CHECK_SUM_FILE_PATTERN.matcher(new Path(checksumFilePath).getName()).matches();
-    }
+  public static boolean isChecksumFile(String checksumFilePath) {
+    return CHECK_SUM_FILE_PATTERN.matcher(new Path(checksumFilePath).getName()).matches();
+  }
 }
