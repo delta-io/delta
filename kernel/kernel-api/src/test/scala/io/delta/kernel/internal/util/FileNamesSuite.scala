@@ -111,21 +111,47 @@ class FileNamesSuite extends AnyFunSuite {
   ///////////////////////////////////
 
   test("is checkpoint file") {
-    // Case: V1 checkpoint
+    // ===== V1 checkpoint =====
+    // Positive cases
     assert(isCheckpointFile(checkpointV1))
+    assert(isCheckpointFile(new Path(checkpointV1).getName))
     assert(isClassicCheckpointFile(checkpointV1))
+    assert(isClassicCheckpointFile(new Path(checkpointV1).getName))
+    // Negative cases
+    assert(!isMultiPartCheckpointFile(checkpointV1))
+    assert(!isV2CheckpointFile(checkpointV1))
+    assert(!isCommitFile(checkpointV1))
 
-    // Case: multipart checkpoint
+    // ===== Multipart checkpoint =====
+    // Positive cases
     assert(isCheckpointFile(checkpointMultiPart))
+    assert(isCheckpointFile(new Path(checkpointMultiPart).getName))
     assert(isMultiPartCheckpointFile(checkpointMultiPart))
+    assert(isMultiPartCheckpointFile(new Path(checkpointMultiPart).getName))
+    // Negative cases
+    assert(!isClassicCheckpointFile(checkpointMultiPart))
+    assert(!isV2CheckpointFile(checkpointMultiPart))
+    assert(!isCommitFile(checkpointMultiPart))
 
-    // Case: V2 checkpoint
+    // ===== V2 checkpoint =====
+    // Positive cases
     assert(isCheckpointFile(checkpointV2Json))
+    assert(isCheckpointFile(new Path(checkpointV2Json).getName))
     assert(isV2CheckpointFile(checkpointV2Json))
+    assert(isV2CheckpointFile(new Path(checkpointV2Json).getName))
     assert(isCheckpointFile(checkpointV2Parquet))
+    assert(isCheckpointFile(new Path(checkpointV2Parquet).getName))
     assert(isV2CheckpointFile(checkpointV2Parquet))
+    assert(isV2CheckpointFile(new Path(checkpointV2Parquet).getName))
+    // Negative cases
+    assert(!isClassicCheckpointFile(checkpointV2Json))
+    assert(!isClassicCheckpointFile(checkpointV2Parquet))
+    assert(!isMultiPartCheckpointFile(checkpointV2Json))
+    assert(!isMultiPartCheckpointFile(checkpointV2Parquet))
+    assert(!isCommitFile(checkpointV2Json))
+    assert(!isCommitFile(checkpointV2Parquet))
 
-    // Case: others
+    // ===== Others =====
     assert(!isCheckpointFile("/a/123.json"))
     assert(!isCommitFile("/a/123.checkpoint.3.json"))
   }
