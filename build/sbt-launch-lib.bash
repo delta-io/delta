@@ -36,52 +36,42 @@ dlog () {
   [[ $debug ]] && echoerr "$@"
 }
 
-download_sbt () {
-  local url=$1
-  local output=$2
-  local temp_file="${output}.part"
-
-  if [ $(command -v curl) ]; then
-    curl --fail --location --silent ${url} > "${temp_file}" &&\
-      mv "${temp_file}" "${output}"
-  elif [ $(command -v wget) ]; then
-    wget --quiet ${url} -O "${temp_file}" &&\
-      mv "${temp_file}" "${output}"
-  else
-    printf "You do not have curl or wget installed, unable to downlaod ${url}\n"
-    exit -1
-  fi
-}
-
-
 acquire_sbt_jar () {
   SBT_VERSION=`awk -F "=" '/sbt\.version/ {print $2}' ./project/build.properties`
 
-  # Set primary and fallback URLs
+  # Download sbt from mirror URL if the environment variable is provided
   if [[ "${SBT_VERSION}" == "0.13.18" ]] && [[ -n "${SBT_MIRROR_JAR_URL}" ]]; then
     URL1="${SBT_MIRROR_JAR_URL}"
   elif [[ "${SBT_VERSION}" == "1.5.5" ]] && [[ -n "${SBT_1_5_5_MIRROR_JAR_URL}" ]]; then
     URL1="${SBT_1_5_5_MIRROR_JAR_URL}"
   else
-    URL1=${DEFAULT_ARTIFACT_REPOSITORY:-https://maven-central.storage-download.googleapis.com/maven2/}org/scala-sbt/sbt-launch/${SBT_VERSION}/sbt-launch-${SBT_VERSION}.jar
+    URL1=${DEFAULT_ARTIFACT_REPOSITORY:-https://repo1.maven.org/maven2/}org/scala-sbt/sbt-launch/${SBT_VERSION}/sbt-launch-${SBT_VERSION}.jar
   fi
-  BACKUP_URL="https://repo1.maven.org/maven2/org/scala-sbt/sbt-launch/${SBT_VERSION}/sbt-launch-${SBT_VERSION}.jar"
 
   JAR=build/sbt-launch-${SBT_VERSION}.jar
   sbt_jar=$JAR
 
   if [[ ! -f "$sbt_jar" ]]; then
+    # Download sbt launch jar if it hasn't been downloaded yet
+    if [ ! -f "${JAR}" ]; then
+    # Download
     printf 'Attempting to fetch sbt from %s\n' "${URL1}"
-    download_sbt "${URL1}" "${JAR}"
-
-    if [[ ! -f "${JAR}" ]]; then
-      printf 'Download from %s failed. Retrying from %s\n' "${URL1}" "${BACKUP_URL}"
-      download_sbt "${BACKUP_URL}" "${JAR}"
+    JAR_DL="${JAR}.part"
+    if [ $(command -v curl) ]; then
+      curl --fail --location --silent ${URL1} > "${JAR_DL}" &&\
+        mv "${JAR_DL}" "${JAR}"
+    elif [ $(command -v wget) ]; then
+      wget --quiet ${URL1} -O "${JAR_DL}" &&\
+        mv "${JAR_DL}" "${JAR}"
+    else
+      printf "You do not have curl or wget installed, please install sbt manually from https://www.scala-sbt.org/\n"
+      exit -1
     fi
-
-    if [[ ! -f "${JAR}" ]]; then
-      printf "Failed to download sbt. Please install sbt manually from https://www.scala-sbt.org/\n"
-      exit 1
+    fi
+    if [ ! -f "${JAR}" ]; then
+    # We failed to download
+    printf "Our attempt to download sbt locally to ${JAR} failed. Please install sbt manually from https://www.scala-sbt.org/\n"
+    exit -1
     fi
     printf "Launching sbt from ${JAR}\n"
   fi
