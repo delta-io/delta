@@ -509,18 +509,19 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
     withTempDirAndMetricsEngine { (path, engine) =>
       buildTableWithCrc(path)
       val checkpointVersion = 10;
+      val logPath = f"$path/_delta_log"
       assert(
           Files.exists(
             new File(
               FileNames
-                .checkpointFileSingular(new Path(f"$path/_delta_log"), checkpointVersion)
+                .checkpointFileSingular(new Path(logPath), checkpointVersion)
                 .toString
             ).toPath
           )
         )
         assert(
           Files.deleteIfExists(
-            new File(FileNames.checksumFile(new Path(path), checkpointVersion).getName).toPath))
+            new File(FileNames.checksumFile(new Path(logPath), checkpointVersion).toString).toPath))
 
       val table = Table.forPath(engine, path)
 
@@ -555,19 +556,19 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
           Files
             .exists(
               new File(
-                FileNames.checkpointFileSingular(new Path(logPath), checkpointVersion).getName
+                FileNames.checkpointFileSingular(new Path(logPath), checkpointVersion).toString
               ).toPath
             )
         )
         assert(
           Files.deleteIfExists(
-            new File(FileNames.checksumFile(new Path(logPath), checkpointVersion).getName).toPath
+            new File(FileNames.checksumFile(new Path(logPath), checkpointVersion).toString).toPath
           )
         )
         assert(
           Files.deleteIfExists(
             new File(
-              FileNames.checksumFile(new Path(logPath), checkpointVersion + 1).getName
+              FileNames.checksumFile(new Path(logPath), checkpointVersion + 1).toString
             ).toPath
           )
         )
@@ -600,7 +601,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
           for (_ <- 0 to 10) { appendCommit(path) }
         }
         val checkpointVersion = 10;
-        val logPath = new Path(s"$path/delta_log")
+        val logPath = new Path(s"$path/_delta_log")
         assert(
           Files.exists(
             new File(
