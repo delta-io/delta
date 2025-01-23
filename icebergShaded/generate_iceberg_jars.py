@@ -19,7 +19,6 @@
 import argparse
 import os
 import glob
-import re
 import subprocess
 import shlex
 import shutil
@@ -66,28 +65,6 @@ def iceberg_jars_exists():
     return True
 
 
-def add_google_maven_repo_to_gradle_config():
-  with WorkingDirectory(iceberg_src_dir):
-    file_path = 'build.gradle'
-
-    with open(file_path, 'r') as file:
-      content = file.read()
-
-    # Define the old and new configurations
-    old_config = r'repositories {\n    mavenCentral\(\)'
-
-    new_config = 'repositories {\n    maven {\n      ' + \
-      'url "https://maven-central.storage-download.googleapis.com/maven2"\n    }\n    ' + \
-      'mavenCentral()'
-
-    # Replace the old configuration with the new one
-    updated_content = re.sub(old_config, new_config, content, flags=re.DOTALL)
-
-    # Write the updated content back to the file
-    with open(file_path, 'w') as file:
-      file.write(updated_content)
-
-
 def prepare_iceberg_source():
     with WorkingDirectory(iceberg_root_dir):
         print(">>> Cloning Iceberg repo")
@@ -114,8 +91,6 @@ def prepare_iceberg_source():
             run_cmd("git apply %s" % patch_file)
             run_cmd("git add .")
             run_cmd("git commit -a -m 'applied %s'" % path.basename(patch_file))
-
-        add_google_maven_repo_to_gradle_config()
 
 
 def generate_iceberg_jars():
