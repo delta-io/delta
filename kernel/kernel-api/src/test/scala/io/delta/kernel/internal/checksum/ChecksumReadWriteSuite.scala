@@ -41,34 +41,47 @@ class ChecksumReadWriteSuite extends AnyFunSuite with MockEngineUtils {
     val metadata = createTestMetadata()
     val snapshotHint =
       new SnapshotHint(1, protocol, metadata, OptionalLong.of(100), OptionalLong.of(1))
-    checksumWriter.maybeWriteCheckSum( mockEngine(jsonHandler = jsonHandler), snapshotHint, Optional.of("tnx"))
 
-    assert(
-      jsonHandler.capturedCrcRow
-        .getLong(ChecksumWriter.CRC_FILE_SCHEMA.indexOf("tableSizeBytes")) == 100L
-    )
-    assert(
-      jsonHandler.capturedCrcRow.getLong(ChecksumWriter.CRC_FILE_SCHEMA.indexOf("numFiles")) == 1L
-    )
-    assert(
-      jsonHandler.capturedCrcRow
-        .getLong(ChecksumWriter.CRC_FILE_SCHEMA.indexOf("numMetadata")) == 1L
-    )
-    assert(
-      jsonHandler.capturedCrcRow
-        .getLong(ChecksumWriter.CRC_FILE_SCHEMA.indexOf("numProtocol")) == 1L
-    )
-    assert(
-      jsonHandler.capturedCrcRow.getString(ChecksumWriter.CRC_FILE_SCHEMA.indexOf("txnId")) == "tnx"
-    )
-    checkMetadata(
-      metadata,
-      jsonHandler.capturedCrcRow.getStruct(ChecksumWriter.CRC_FILE_SCHEMA.indexOf("metadata"))
-    )
-    checkProtocol(
-      protocol,
-      jsonHandler.capturedCrcRow.getStruct(ChecksumWriter.CRC_FILE_SCHEMA.indexOf("protocol"))
-    )
+    def testChecksumWrite(txn: Optional[String]): Unit = {
+      checksumWriter.maybeWriteCheckSum(mockEngine(jsonHandler = jsonHandler), snapshotHint, txn)
+      assert(
+        jsonHandler.capturedCrcRow
+          .getLong(ChecksumWriter.CRC_FILE_SCHEMA.indexOf("tableSizeBytes")) == 100L
+      )
+      assert(
+        jsonHandler.capturedCrcRow.getLong(ChecksumWriter.CRC_FILE_SCHEMA.indexOf("numFiles")) == 1L
+      )
+      assert(
+        jsonHandler.capturedCrcRow
+          .getLong(ChecksumWriter.CRC_FILE_SCHEMA.indexOf("numMetadata")) == 1L
+      )
+      assert(
+        jsonHandler.capturedCrcRow
+          .getLong(ChecksumWriter.CRC_FILE_SCHEMA.indexOf("numProtocol")) == 1L
+      )
+
+      if (txn.isPresent) {
+        assert(
+          jsonHandler.capturedCrcRow.getString(
+            ChecksumWriter.CRC_FILE_SCHEMA.indexOf("txnId")
+          ) == txn.get()
+        )
+      } else {
+        assert(jsonHandler.capturedCrcRow.isNullAt(ChecksumWriter.CRC_FILE_SCHEMA.indexOf("txnId")))
+      }
+
+      checkMetadata(
+        metadata,
+        jsonHandler.capturedCrcRow.getStruct(ChecksumWriter.CRC_FILE_SCHEMA.indexOf("metadata"))
+      )
+      checkProtocol(
+        protocol,
+        jsonHandler.capturedCrcRow.getStruct(ChecksumWriter.CRC_FILE_SCHEMA.indexOf("protocol"))
+      )
+
+    }
+    testChecksumWrite(Optional.of("txn"));
+    testChecksumWrite(Optional.empty());
   }
 
   test("skip checksum write on required fields missing") {
@@ -78,7 +91,8 @@ class ChecksumReadWriteSuite extends AnyFunSuite with MockEngineUtils {
     val metadata = createTestMetadata()
     Seq(
       (OptionalLong.of(100), OptionalLong.empty()),
-      (OptionalLong.empty(), OptionalLong.of(10), (OptionalLong.empty(), OptionalLong.empty()))
+      (OptionalLong.empty(), OptionalLong.of(10)),
+      (OptionalLong.empty(), OptionalLong.empty())
     ).foreach { tableSizeAndNumFiles =>
       {
         val snapshotHint =
@@ -96,6 +110,8 @@ class ChecksumReadWriteSuite extends AnyFunSuite with MockEngineUtils {
             Optional.of("tnx")
           )
         )
+        // Nothing is exported.
+        assert(jsonHandler.capturedCrcRow.getSchema == new StructType())
       }
     }
 
