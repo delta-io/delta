@@ -224,7 +224,7 @@ public class LogReplay {
             Collections.max(
                 Arrays.asList(
                     snapshotHint.map(SnapshotHint::getVersion).orElse(0L) + 1,
-                    logSegment.checkpointVersionOpt.orElse(0L) + 1,
+                    logSegment.checkpointVersionOpt.orElse(0L),
                     // Only find the CRC within 100 versions.
                     Math.max(0, snapshotVersion - 100))));
     Optional<CRCInfo> crcInfoOpt =
