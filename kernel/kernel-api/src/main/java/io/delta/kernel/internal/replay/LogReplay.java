@@ -18,6 +18,8 @@ package io.delta.kernel.internal.replay;
 
 import static io.delta.kernel.internal.replay.LogReplayUtils.assertLogFilesBelongToTable;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import static java.util.Arrays.asList;
+import static java.util.Collections.max;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
@@ -219,14 +221,13 @@ public class LogReplay {
     // If the snapshot hint or checkpoint older than required version is present, we can use them as
     // the lower bound for the CRC search.
     long crcSearchLowerBound =
-        Math.min(
-            snapshotVersion,
-            Collections.max(
-                Arrays.asList(
-                    snapshotHint.map(SnapshotHint::getVersion).orElse(0L) + 1,
-                    logSegment.checkpointVersionOpt.orElse(0L),
-                    // Only find the CRC within 100 versions.
-                    Math.max(0, snapshotVersion - 100))));
+        max(
+            asList(
+                snapshotHint.map(SnapshotHint::getVersion).orElse(0L) + 1,
+                logSegment.checkpointVersionOpt.orElse(0L),
+                // Only find the CRC within 100 versions.
+                snapshotVersion - 100,
+                0L));
     Optional<CRCInfo> crcInfoOpt =
         ChecksumReader.getCRCInfo(engine, logSegment.logPath, snapshotVersion, crcSearchLowerBound);
     if (crcInfoOpt.isPresent()) {

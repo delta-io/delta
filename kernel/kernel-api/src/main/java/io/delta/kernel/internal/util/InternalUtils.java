@@ -30,9 +30,8 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
-import java.util.Collection;
-import java.util.Optional;
-import java.util.Set;
+import java.util.*;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 public class InternalUtils {
@@ -168,5 +167,12 @@ public class InternalUtils {
 
   public static Set<String> toLowerCaseSet(Collection<String> set) {
     return set.stream().map(String::toLowerCase).collect(Collectors.toSet());
+  }
+
+  public static <T> List<T> toFilteredList(
+      CloseableIterator<T> iterator, Function<T, Boolean> filter) {
+    List<T> result = new ArrayList<>();
+    iterator.filter(filter).forEachRemaining(result::add);
+    return result;
   }
 }

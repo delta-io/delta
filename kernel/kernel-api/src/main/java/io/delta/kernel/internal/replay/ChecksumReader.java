@@ -17,6 +17,7 @@ package io.delta.kernel.internal.replay;
 
 import static io.delta.kernel.internal.replay.CRCInfo.fromColumnarBatch;
 import static io.delta.kernel.internal.util.FileNames.*;
+import static io.delta.kernel.internal.util.InternalUtils.toFilteredList;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 
@@ -26,6 +27,7 @@ import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
+import java.io.IOException;
 import java.util.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -36,8 +38,8 @@ public class ChecksumReader {
 
   /**
    * Load the CRCInfo from the checksum file at the given version. If the checksum file is not found
-   * at the given version, it will try to find the latest checksum file that is created after the
-   * lower bound version or within the last 100 versions.
+   * at the given version, it will try to find the latest checksum file that is created at or after
+   * the lower bound version.
    *
    * @param engine the engine to use for reading the checksum file
    * @param logPath the path to the Delta log
@@ -70,13 +72,12 @@ public class ChecksumReader {
     Path lowerBoundFilePath = checksumFile(logPath, lowerBound);
     try (CloseableIterator<FileStatus> crcFiles =
         engine.getFileSystemClient().listFrom(lowerBoundFilePath.toString())) {
-      List<FileStatus> crcFilesList = new ArrayList<>();
-      crcFiles
-          .filter(
+      List<FileStatus> crcFilesList =
+          toFilteredList(
+              crcFiles,
               file ->
                   isChecksumFile(file.getPath())
-                      && checksumVersion(new Path(file.getPath())) <= targetedVersion)
-          .forEachRemaining(crcFilesList::add);
+                      && checksumVersion(new Path(file.getPath())) <= targetedVersion);
 
       // pick the last file which is the latest version that has the CRC file
       if (crcFilesList.isEmpty()) {
@@ -86,7 +87,7 @@ public class ChecksumReader {
 
       FileStatus latestCRCFile = crcFilesList.get(crcFilesList.size() - 1);
       return readChecksumFile(engine, new Path(latestCRCFile.getPath()));
-    } catch (Exception e) {
+    } catch (IOException e) {
       logger.warn("Failed to list checksum files from {}", lowerBoundFilePath, e);
       return Optional.empty();
     }
