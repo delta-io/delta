@@ -22,15 +22,10 @@ import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.internal.actions.Metadata;
-import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.snapshot.SnapshotHint;
 import io.delta.kernel.internal.util.FileNames;
-import io.delta.kernel.types.LongType;
-import io.delta.kernel.types.StringType;
-import io.delta.kernel.types.StructType;
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;

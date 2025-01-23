@@ -23,15 +23,15 @@ import io.delta.kernel.types.StructType;
 
 public final class ChecksumUtils {
 
-    public static StructType CRC_FILE_SCHEMA =
-            new StructType()
-                    .add("tableSizeBytes", LongType.LONG)
-                    .add("numFiles", LongType.LONG)
-                    .add("numMetadata", LongType.LONG)
-                    .add("numProtocol", LongType.LONG)
-                    .add("metadata", Metadata.FULL_SCHEMA)
-                    .add("protocol", Protocol.FULL_SCHEMA)
-                    .add("txnId", StringType.STRING, /*nullable*/ true);
+  public static StructType CRC_FILE_SCHEMA =
+      new StructType()
+          .add("tableSizeBytes", LongType.LONG)
+          .add("numFiles", LongType.LONG)
+          .add("numMetadata", LongType.LONG)
+          .add("numProtocol", LongType.LONG)
+          .add("metadata", Metadata.FULL_SCHEMA)
+          .add("protocol", Protocol.FULL_SCHEMA)
+          .add("txnId", StringType.STRING, /*nullable*/ true);
 
-    private ChecksumUtils() {}
+  private ChecksumUtils() {}
 }

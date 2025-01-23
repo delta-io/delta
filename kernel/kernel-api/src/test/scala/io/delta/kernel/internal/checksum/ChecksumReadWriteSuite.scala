@@ -180,11 +180,15 @@ class ChecksumReadWriteSuite extends AnyFunSuite with MockEngineUtils {
     )
     assert(
       Optional
-        .ofNullable(metadataRow.getLong(Metadata.FULL_SCHEMA.indexOf("createdTime"))) == metadata.getCreatedTime
+        .ofNullable(
+          metadataRow.getLong(
+            Metadata.FULL_SCHEMA.indexOf("createdTime"))) == metadata.getCreatedTime
     )
     assert(
       VectorUtils
-        .toJavaMap(metadataRow.getMap(Metadata.FULL_SCHEMA.indexOf("configuration"))) == metadata.getConfiguration
+        .toJavaMap(
+          metadataRow.getMap(
+            Metadata.FULL_SCHEMA.indexOf("configuration"))) == metadata.getConfiguration
     )
   }
 
