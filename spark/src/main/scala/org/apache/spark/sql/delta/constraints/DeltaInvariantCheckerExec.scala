@@ -20,6 +20,7 @@ import scala.collection.mutable
 
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaIllegalStateException}
 import org.apache.spark.sql.delta.constraints.Constraints.{Check, NotNull}
+import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.util.AnalysisHelper
 
@@ -100,7 +101,7 @@ case class DeltaInvariantCheckerExec(
     copy(child = newChild)
 }
 
-object DeltaInvariantCheckerExec {
+object DeltaInvariantCheckerExec extends DeltaLogging {
 
   // Specialized optimizer to run necessary rules so that the check expressions can be evaluated.
   object DeltaInvariantCheckerOptimizer
@@ -172,7 +173,7 @@ object DeltaInvariantCheckerExec {
           val wrappedPlan: LogicalPlan = ExpressionLogicalPlanWrapper(attributesExtracted)
           val analyzedLogicalPlan = spark.sessionState.analyzer.execute(wrappedPlan)
           val optimizedLogicalPlan = DeltaInvariantCheckerOptimizer.execute(analyzedLogicalPlan)
-          optimizedLogicalPlan match {
+          val resolvedExpr = optimizedLogicalPlan match {
             case ExpressionLogicalPlanWrapper(e) => e
             // This should never happen.
             case plan => throw new DeltaIllegalStateException(
@@ -181,6 +182,20 @@ object DeltaInvariantCheckerExec {
                 "Applying type casting resulted in a bad plan rather than a simple expression.\n" +
                s"Plan:${plan.prettyJson}\n"))
           }
+          deltaAssert(
+            resolvedExpr.resolved,
+            name = "invariant.unresolvedExpression",
+            msg = s"CHECK constraint child expression was not properly resolved",
+            data = Map(
+              "name" -> name,
+              "checkExpr" -> expr.toString,
+              "attributesExtracted" -> attributesExtracted.toString,
+              "analyzedLogicalPlan" -> analyzedLogicalPlan.toString,
+              "optimizedLogicalPlan" -> optimizedLogicalPlan.toString,
+              "resolvedExpr" -> resolvedExpr.toString
+            )
+          )
+          resolvedExpr
       }
 
       CheckDeltaInvariant(executableExpr, columnExtractors.toMap, constraint)
