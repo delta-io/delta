@@ -27,7 +27,6 @@ import io.delta.kernel.Table
 import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
 import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations}
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.functions.col
 import org.scalatest.funsuite.AnyFunSuite
 
