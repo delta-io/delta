@@ -29,19 +29,17 @@ import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 import org.apache.hadoop.conf.Configuration
-
-import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.{DeltaConfig, DeltaLog}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.functions.col
+import org.apache.spark.sql.functions.{col, log}
 import org.scalatest.funsuite.AnyFunSuite
+
 import java.io.File
 import java.nio.file.Files
 import java.util
 import java.util.Optional
-
 import scala.collection.convert.ImplicitConversions._
 import scala.collection.mutable.ArrayBuffer
-
 import org.apache.spark.sql.SparkSession
 
 /**
@@ -402,7 +400,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
           expJsonVersionsRead = Nil,
           expParquetVersionsRead = Nil,
           expParquetReadSetSizes = Nil,
-          expChecksumReadSet = Seq(if (version == -1) 6 else version))
+          expChecksumReadSet = Seq(if (version == -1) 11 else version))
       }
     }
   }
@@ -410,7 +408,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
   test("checksum not found at the read version, but found at a previous version") {
     withTempDirAndMetricsEngine { (path, engine) =>
       buildTableWithCrc(path)
-      Seq(5L, 6L).foreach { version =>
+        Seq(10L, 11L, 5L, 6L).foreach { version =>
         val crcFile = new File(path, f"_delta_log/$version%020d.crc")
         assert(Files.deleteIfExists(crcFile.toPath))
       }
@@ -419,6 +417,19 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
         Table.forPath(engine, path)
           .getLatestSnapshot(engine).getSchema(engine),
         engine,
+          // 10.checkpoint found, so use it and combined with 10.crc
+          expJsonVersionsRead = Seq(11),
+          expParquetVersionsRead = Seq(10),
+          expParquetReadSetSizes = Seq(1),
+          expChecksumReadSet = Seq(11)
+        )
+
+        loadPandMCheckMetrics(
+          Table
+            .forPath(engine, path)
+            .getSnapshotAsOfVersion(engine, 6 /* versionId */ )
+            .getSchema(engine),
+          engine,
         // We find the checksum from crc at version 4, but still read commit files 5 and 6
         // to find the P&M which could have been updated in version 5 and 6.
         expJsonVersionsRead = Seq(6, 5),
@@ -478,20 +489,118 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
         // First we attempt to read at version 6, then we do a listing of last 100 crc files
         // bound by the snapshot hint which is at version 4 and we don't try to read checksums
         // beyond version 4
-        expChecksumReadSet = Seq(6))
+        expChecksumReadSet = Seq(6)
+      )
+    }
+  }
+
+  test(
+    "checksum missing read version, checkpoint exists the read version, use checkpoint"
+  ) {
+    withTempDirAndMetricsEngine { (path, engine) =>
+      buildTableWithCrc(path)
+      val checkpointVersion = 10;
+      assert(
+        Files
+          .exists(new File(path, f"_delta_log/$checkpointVersion%020d.checkpoint.parquet").toPath)
+      )
+      assert(Files.deleteIfExists(new File(path, f"_delta_log/$checkpointVersion%020d.crc").toPath))
+
+      val table = Table.forPath(engine, path)
+
+      loadPandMCheckMetrics(
+        table.getSnapshotAsOfVersion(engine, 10).getSchema(engine),
+        engine,
+        // 10.crc missing, 10.checkpoint.parquet exists.
+        // Attempt to read 10.crc fails and read 10.checkpoint.parquet succeeds.
+        expJsonVersionsRead = Nil,
+        expParquetVersionsRead = Seq(10),
+        expParquetReadSetSizes = Seq(1),
+        expChecksumReadSet = Seq(10)
+      )
+    }
+  }
+
+  test(
+    "checksum missing read version and the previous version, " +
+    "checkpoint exists the read version the previous version, use checkpoint"
+  ) {
+    withTempDirAndMetricsEngine { (path, engine) =>
+      withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true") {
+        spark.sql(
+          s"CREATE TABLE delta.`$path` USING DELTA AS " +
+          s"SELECT 0L as id"
+        )
+        for (_ <- 0 to 10) { appendCommit(path) }
+      }
+      val checkpointVersion = 10;
+      assert(
+        Files
+          .exists(new File(path, f"_delta_log/$checkpointVersion%020d.checkpoint.parquet").toPath)
+      )
+      assert(Files.deleteIfExists(new File(path, f"_delta_log/$checkpointVersion%020d.crc").toPath))
+      assert(
+        Files.deleteIfExists(new File(path, f"_delta_log/${checkpointVersion + 1}%020d.crc").toPath)
+      )
+
+      val table = Table.forPath(engine, path)
+
+      // 11.crc, 10.crc missing, 10.checkpoint.parquet exists.
+      // Attempt to read 11.crc fails and read 10.checkpoint.parquet and 11.json succeeds.
+      loadPandMCheckMetrics(
+        table.getSnapshotAsOfVersion(engine, 11).getSchema(engine),
+        engine,
+        expJsonVersionsRead = Seq(11),
+        expParquetVersionsRead = Seq(10),
+        expParquetReadSetSizes = Seq(1),
+        expChecksumReadSet = Seq(11)
+      )
+    }
+  }
+
+  test(
+    "checksum missing read version, " +
+    "both checksum and checkpoint exist the read version the previous version, use checksum"
+  ) {
+    withTempDirAndMetricsEngine { (path, engine) =>
+      withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true") {
+        spark.sql(
+          s"CREATE TABLE delta.`$path` USING DELTA AS " +
+          s"SELECT 0L as id"
+        )
+        for (_ <- 0 to 10) { appendCommit(path) }
+      }
+      val checkpointVersion = 10;
+      assert(
+        Files
+          .exists(new File(path, f"_delta_log/$checkpointVersion%020d.checkpoint.parquet").toPath)
+      )
+      assert(
+        Files.deleteIfExists(new File(path, f"_delta_log/${checkpointVersion + 1}%020d.crc").toPath)
+      )
+
+      val table = Table.forPath(engine, path)
+
+      // 11.crc, missing, 10.crc and 10.checkpoint.parquet exist.
+      // Attempt to read 11.crc fails and read 10.checkpoint.parquet and 11.json succeeds.
+      loadPandMCheckMetrics(
+        table.getSnapshotAsOfVersion(engine, 11).getSchema(engine),
+        engine,
+        expJsonVersionsRead = Seq(11),
+        expParquetVersionsRead = Nil,
+        expParquetReadSetSizes = Nil,
+        expChecksumReadSet = Seq(11, 10)
+      )
     }
   }
 
   def buildTableWithCrc(path: String): Unit = {
     withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true") {
-      spark.sql(s"CREATE TABLE delta.`$path` USING DELTA AS " +
-      s"SELECT 0 as value")
-      spark.sql(s"INSERT INTO delta.`$path` values(1)")
-      spark.sql(s"INSERT INTO delta.`$path` values(2)")
-      spark.sql(s"INSERT INTO delta.`$path` values(3)")
-      spark.sql(s"INSERT INTO delta.`$path` values(4)")
-      spark.sql(s"INSERT INTO delta.`$path` values(5)")
-      spark.sql(s"INSERT INTO delta.`$path` values(6)")
+      spark.sql(
+        s"CREATE TABLE delta.`$path` USING DELTA AS " +
+        s"SELECT 0L as id"
+      )
+      for (_ <- 0 to 10) { appendCommit(path) }
     }
   }
 }

@@ -16,8 +16,7 @@
 package io.delta.kernel.internal.replay;
 
 import static io.delta.kernel.internal.replay.CRCInfo.fromColumnarBatch;
-import static io.delta.kernel.internal.util.FileNames.checksumFile;
-import static io.delta.kernel.internal.util.FileNames.isChecksumFile;
+import static io.delta.kernel.internal.util.FileNames.*;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 
@@ -72,7 +71,12 @@ public class ChecksumReader {
     try (CloseableIterator<FileStatus> crcFiles =
         engine.getFileSystemClient().listFrom(lowerBoundFilePath.toString())) {
       List<FileStatus> crcFilesList = new ArrayList<>();
-      crcFiles.filter(file -> isChecksumFile(file.getPath())).forEachRemaining(crcFilesList::add);
+      crcFiles
+          .filter(
+              file ->
+                  isChecksumFile(file.getPath())
+                      && checksumVersion(new Path(file.getPath())) <= targetedVersion)
+          .forEachRemaining(crcFilesList::add);
 
       // pick the last file which is the latest version that has the CRC file
       if (crcFilesList.isEmpty()) {
