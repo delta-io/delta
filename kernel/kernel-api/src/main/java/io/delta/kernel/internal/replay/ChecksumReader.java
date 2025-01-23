@@ -59,7 +59,8 @@ public class ChecksumReader {
     if (crcInfoOpt.isPresent()
         ||
         // we don't expect any more checksum files as it is the first version
-        targetedVersion == 0 || targetedVersion == lowerBound) {
+        targetedVersion == 0
+        || targetedVersion == lowerBound) {
       return crcInfoOpt;
     }
     logger.info(
