@@ -221,13 +221,15 @@ public class LogReplay {
     // If the snapshot hint or checkpoint older than required version is present, we can use them as
     // the lower bound for the CRC search.
     long crcSearchLowerBound =
-        max(
-            asList(
-                snapshotHint.map(SnapshotHint::getVersion).orElse(0L) + 1,
-                logSegment.checkpointVersionOpt.orElse(0L),
-                // Only find the CRC within 100 versions.
-                snapshotVersion - 100,
-                0L));
+        Math.min(
+            snapshotVersion,
+            max(
+                asList(
+                    snapshotHint.map(SnapshotHint::getVersion).orElse(0L) + 1,
+                    logSegment.checkpointVersionOpt.orElse(0L),
+                    // Only find the CRC within 100 versions.
+                    snapshotVersion - 100,
+                    0L)));
     Optional<CRCInfo> crcInfoOpt =
         ChecksumReader.getCRCInfo(engine, logSegment.logPath, snapshotVersion, crcSearchLowerBound);
     if (crcInfoOpt.isPresent()) {
