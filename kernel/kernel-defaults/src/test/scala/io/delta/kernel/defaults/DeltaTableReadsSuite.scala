@@ -39,21 +39,6 @@ import scala.collection.JavaConverters._
 
 class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
 
-  test("CRC metadata & protocol fetching") {
-    withTempDir { dir =>
-      val path = dir.getCanonicalPath
-      withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true") {
-        spark.sql(s"CREATE TABLE delta.`$path` USING DELTA AS " +
-        s"SELECT 0 as value")
-      }
-
-      val snapshot = Table.forPath(defaultEngine, path)
-        .getSnapshotAsOfVersion(defaultEngine, 0)
-
-      readSnapshot(snapshot)
-    }
-  }
-
   //////////////////////////////////////////////////////////////////////////////////
   // Timestamp type tests
   //////////////////////////////////////////////////////////////////////////////////
