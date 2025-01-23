@@ -25,28 +25,71 @@ public final class FileNames {
 
   private FileNames() {}
 
+  ////////////////////////////////////////////////
+  // File name patterns and other static values //
+  ////////////////////////////////////////////////
+
+  /** Example: 00000000000000000001.json */
   private static final Pattern DELTA_FILE_PATTERN = Pattern.compile("\\d+\\.json");
 
-  // Example: 00000000000000000001.dc0f9f58-a1a0-46fd-971a-bd8b2e9dbb81.json
+  /** Example: 00000000000000000001.dc0f9f58-a1a0-46fd-971a-bd8b2e9dbb81.json */
   private static final Pattern UUID_DELTA_FILE_REGEX = Pattern.compile("(\\d+)\\.([^\\.]+)\\.json");
 
+  /**
+   * Examples:
+   *
+   * <ul>
+   *   <li>Classic V1 - 00000000000000000001.checkpoint.parquet
+   *   <li>Multi-part V1 - 00000000000000000001.checkpoint.0000000001.0000000010.parquet
+   *   <li>V2 JSON - 00000000000000000001.checkpoint.uuid-1234abcd.json
+   *   <li>V2 Parquet - 00000000000000000001.checkpoint.uuid-1234abcd.parquet
+   * </ul>
+   */
   private static final Pattern CHECKPOINT_FILE_PATTERN =
       Pattern.compile("(\\d+)\\.checkpoint((\\.\\d+\\.\\d+)?\\.parquet|\\.[^.]+\\.(json|parquet))");
 
+  /** Example: 00000000000000000001.checkpoint.parquet */
   private static final Pattern CLASSIC_CHECKPOINT_FILE_PATTERN =
       Pattern.compile("\\d+\\.checkpoint\\.parquet");
 
+  /**
+   * Examples:
+   *
+   * <ul>
+   *   <li>00000000000000000001.checkpoint.dc0f9f58-a1a0-46fd-971a-bd8b2e9dbb81.json
+   *   <li>00000000000000000001.checkpoint.dc0f9f58-a1a0-46fd-971a-bd8b2e9dbb81.parquet
+   * </ul>
+   */
   private static final Pattern V2_CHECKPOINT_FILE_PATTERN =
       Pattern.compile("(\\d+)\\.checkpoint\\.[^.]+\\.(json|parquet)");
 
+  /** Example: 00000000000000000001.checkpoint.0000000020.0000000060.parquet */
   private static final Pattern MULTI_PART_CHECKPOINT_FILE_PATTERN =
       Pattern.compile("(\\d+)\\.checkpoint\\.\\d+\\.\\d+\\.parquet");
 
   public static final String SIDECAR_DIRECTORY = "_sidecars";
 
-  /** Returns the delta (json format) path for a given delta file. */
-  public static String deltaFile(Path path, long version) {
-    return String.format("%s/%020d.json", path, version);
+  ////////////////////////
+  // Version extractors //
+  ////////////////////////
+
+  /**
+   * Get the version of the checkpoint, checksum or delta file. Throws an error if an unexpected
+   * file type is seen. These unexpected files should be filtered out to ensure forward
+   * compatibility in cases where new file types are added, but without an explicit protocol
+   * upgrade.
+   */
+  public static long getFileVersion(Path path) {
+    if (isCheckpointFile(path.getName())) {
+      return checkpointVersion(path);
+    } else if (isCommitFile(path.getName())) {
+      return deltaVersion(path);
+      // } else if (isChecksumFile(path)) {
+      //    checksumVersion(path);
+    } else {
+      throw new IllegalArgumentException(
+          String.format("Unexpected file type found in transaction log: %s", path));
+    }
   }
 
   /** Returns the version for the given delta path. */
@@ -71,6 +114,16 @@ public final class FileNames {
     return Long.parseLong(name.split("\\.")[0]);
   }
 
+  ///////////////////////////////////
+  // File path and prefix builders //
+  ///////////////////////////////////
+
+  /** Returns the delta (json format) path for a given delta file. */
+  public static String deltaFile(Path path, long version) {
+    return String.format("%s/%020d.json", path, version);
+  }
+
+  /** Example: /a/_sidecars/3a0d65cd-4056-49b8-937b-95f9e3ee90e5.parquet */
   public static String sidecarFile(Path path, String sidecar) {
     return String.format("%s/%s/%s", path.toString(), SIDECAR_DIRECTORY, sidecar);
   }
@@ -106,7 +159,7 @@ public final class FileNames {
 
   /** Returns the path for a V2 sidecar file with a given UUID. */
   public static Path v2CheckpointSidecarFile(Path path, String uuid) {
-    return new Path(String.format("%s/_sidecars/%s.parquet", path.toString(), uuid));
+    return new Path(String.format("%s/%s/%s.parquet", path.toString(), SIDECAR_DIRECTORY, uuid));
   }
 
   /**
@@ -128,44 +181,29 @@ public final class FileNames {
     return output;
   }
 
-  public static boolean isCheckpointFile(String fileName) {
-    return CHECKPOINT_FILE_PATTERN.matcher(new Path(fileName).getName()).matches();
+  /////////////////////////////
+  // Is <type> file checkers //
+  /////////////////////////////
+
+  public static boolean isCheckpointFile(String path) {
+    return CHECKPOINT_FILE_PATTERN.matcher(new Path(path).getName()).matches();
   }
 
-  public static boolean isClassicCheckpointFile(String fileName) {
-    return CLASSIC_CHECKPOINT_FILE_PATTERN.matcher(fileName).matches();
+  public static boolean isClassicCheckpointFile(String path) {
+    return CLASSIC_CHECKPOINT_FILE_PATTERN.matcher(new Path(path).getName()).matches();
   }
 
-  public static boolean isMultiPartCheckpointFile(String fileName) {
-    return MULTI_PART_CHECKPOINT_FILE_PATTERN.matcher(fileName).matches();
+  public static boolean isMultiPartCheckpointFile(String path) {
+    return MULTI_PART_CHECKPOINT_FILE_PATTERN.matcher(new Path(path).getName()).matches();
   }
 
-  public static boolean isV2CheckpointFile(String fileName) {
-    return V2_CHECKPOINT_FILE_PATTERN.matcher(fileName).matches();
+  public static boolean isV2CheckpointFile(String path) {
+    return V2_CHECKPOINT_FILE_PATTERN.matcher(new Path(path).getName()).matches();
   }
 
-  public static boolean isCommitFile(String fileName) {
-    String filename = new Path(fileName).getName();
-    return DELTA_FILE_PATTERN.matcher(filename).matches()
-        || UUID_DELTA_FILE_REGEX.matcher(filename).matches();
-  }
-
-  /**
-   * Get the version of the checkpoint, checksum or delta file. Throws an error if an unexpected
-   * file type is seen. These unexpected files should be filtered out to ensure forward
-   * compatibility in cases where new file types are added, but without an explicit protocol
-   * upgrade.
-   */
-  public static long getFileVersion(Path path) {
-    if (isCheckpointFile(path.getName())) {
-      return checkpointVersion(path);
-    } else if (isCommitFile(path.getName())) {
-      return deltaVersion(path);
-      // } else if (isChecksumFile(path)) {
-      //    checksumVersion(path);
-    } else {
-      throw new IllegalArgumentException(
-          String.format("Unexpected file type found in transaction log: %s", path));
-    }
+  public static boolean isCommitFile(String path) {
+    final String fileName = new Path(path).getName();
+    return DELTA_FILE_PATTERN.matcher(fileName).matches()
+        || UUID_DELTA_FILE_REGEX.matcher(fileName).matches();
   }
 }
