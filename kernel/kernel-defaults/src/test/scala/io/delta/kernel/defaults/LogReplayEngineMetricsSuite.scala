@@ -412,7 +412,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
         assert(
             Files.deleteIfExists(
               new File(
-                FileNames.checksumFile(new Path(f"$path/_delta_log"), version).getName
+                FileNames.checksumFile(new Path(f"$path/_delta_log"), version).toString
               ).toPath
             )
           )
@@ -464,7 +464,8 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
       (3 to 6).foreach { version =>
           assert(
             Files.deleteIfExists(
-              new File(FileNames.checksumFile(new Path(path), version).getName).toPath
+              new File(FileNames.checksumFile(
+                new Path(f"$path/_delta_log"), version).toString).toPath
             )
           )
         }
@@ -513,7 +514,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
             new File(
               FileNames
                 .checkpointFileSingular(new Path(f"$path/_delta_log"), checkpointVersion)
-                .getName
+                .toString
             ).toPath
           )
         )
@@ -599,20 +600,20 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
           for (_ <- 0 to 10) { appendCommit(path) }
         }
         val checkpointVersion = 10;
-        val logPath = f"$path/_delta_log"
+        val logPath = new Path(s"$path/delta_log")
         assert(
           Files.exists(
             new File(
               FileNames
-                .checkpointFileSingular(new Path(logPath), checkpointVersion)
-                .getName
+                .checkpointFileSingular(logPath, checkpointVersion)
+                .toString
             ).toPath
           )
         )
         assert(
           Files.deleteIfExists(
             new File(
-              FileNames.checksumFile(new Path(logPath), checkpointVersion + 1).getName
+              FileNames.checksumFile(logPath, checkpointVersion + 1).toString
             ).toPath
           )
         )
