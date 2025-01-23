@@ -171,7 +171,7 @@ public final class FileNames {
 
   /** Returns the path for a V2 sidecar file with a given UUID. */
   public static Path v2CheckpointSidecarFile(Path path, String uuid) {
-    return new Path(String.format("%s/_sidecars/%s.parquet", path.toString(), uuid));
+    return new Path(String.format("%s/%s/%s.parquet", path.toString(), SIDECAR_DIRECTORY, uuid));
   }
 
   /**
