@@ -18,6 +18,7 @@ package io.delta.kernel.types;
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.types.DataTypeJsonSerDe;
+import io.delta.kernel.internal.util.SchemaUtils;
 import io.delta.kernel.internal.util.Tuple2;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -93,8 +94,10 @@ public final class StructType extends DataType {
     return fieldAndOrdinal != null ? fieldAndOrdinal._2 : -1;
   }
 
+  /** @return the field with the given name, or null if not found */
   public StructField get(String fieldName) {
-    return nameToFieldAndOrdinal.get(fieldName)._1;
+    final Tuple2<StructField, Integer> fieldAndOrdinal = nameToFieldAndOrdinal.get(fieldName);
+    return fieldAndOrdinal != null ? fieldAndOrdinal._1 : null;
   }
 
   public StructField at(int index) {
@@ -119,6 +122,16 @@ public final class StructType extends DataType {
    */
   public String toJson() {
     return DataTypeJsonSerDe.serializeStructType(this);
+  }
+
+  /** Checks if this schema is a superset of the given schema. */
+  public boolean isSupersetOf(StructType other) {
+    return SchemaUtils.isSuperset(this, other);
+  }
+
+  /** Checks if this schema is a subset of the given schema. */
+  public boolean isSubsetOf(StructType other) {
+    return SchemaUtils.isSuperset(other, this);
   }
 
   @Override

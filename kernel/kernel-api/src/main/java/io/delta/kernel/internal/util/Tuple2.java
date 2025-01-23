@@ -38,6 +38,11 @@ public class Tuple2<K, V> {
   }
 
   @Override
+  public String toString() {
+    return String.format("Tuple2{%s, %s}", _1, _2);
+  }
+
+  @Override
   public boolean equals(Object o) {
     if (this == o) {
       return true;

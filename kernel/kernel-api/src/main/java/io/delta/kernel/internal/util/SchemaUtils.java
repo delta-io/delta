@@ -32,6 +32,24 @@ public class SchemaUtils {
 
   private SchemaUtils() {}
 
+  /////////////////
+  // Public APIs //
+  /////////////////
+
+  /** Checks if the {@code supersetSchema} is a superset of the {@code subsetSchema}. */
+  public static boolean isSuperset(StructType supersetSchema, StructType subsetSchema) {
+    for (StructField subsetField : subsetSchema.fields()) {
+      final StructField supersetField = supersetSchema.get(subsetField.getName());
+      if (supersetField == null) {
+        return false;
+      }
+      if (!isSupersetOrEquivalent(supersetField.getDataType(), subsetField.getDataType())) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   /**
    * Validate the schema. This method checks if the schema has no duplicate columns, the names
    * contain only valid characters and the data types are supported.
@@ -177,6 +195,50 @@ public class SchemaUtils {
     return -1;
   }
 
+  ////////////////////
+  // Helper methods //
+  ////////////////////
+
+  /**
+   * Recursively checks if {@code supersetType} is equivalent to {@code subsetType} (if applicable)
+   * or if {@code supersetType} is a superset of {@code subsetType}.
+   *
+   * <ul>
+   *   <li>If both are {@code StructType}, compare fields recursively.
+   *   <li>If both are {@code ArrayType}, compare element types.
+   *   <li>If both are {@code MapType}, compare key & value types.
+   *   <li>Otherwise, use the standard {@link StructType#equivalent} check.
+   * </ul>
+   */
+  private static boolean isSupersetOrEquivalent(DataType supersetType, DataType subsetType) {
+    if (subsetType instanceof StructType) {
+      if (!(supersetType instanceof StructType)) {
+        return false;
+      }
+      StructType supersetStruct = (StructType) supersetType;
+      StructType subsetStruct = (StructType) subsetType;
+      return isSuperset(supersetStruct, subsetStruct);
+    } else if (subsetType instanceof ArrayType) {
+      if (!(supersetType instanceof ArrayType)) {
+        return false;
+      }
+      final ArrayType supersetArray = (ArrayType) supersetType;
+      final ArrayType subsetArray = (ArrayType) subsetType;
+      return isSupersetOrEquivalent(supersetArray.getElementType(), subsetArray.getElementType());
+    } else if (subsetType instanceof MapType) {
+      if (!(supersetType instanceof MapType)) {
+        return false;
+      }
+      final MapType supersetMap = (MapType) supersetType;
+      final MapType subsetMap = (MapType) subsetType;
+      if (!isSupersetOrEquivalent(supersetMap.getKeyType(), subsetMap.getKeyType())) {
+        return false;
+      }
+      return isSupersetOrEquivalent(supersetMap.getValueType(), subsetMap.getValueType());
+    }
+    return supersetType.equivalent(subsetType);
+  }
+
   /**
    * Returns all column names in this schema as a flat list. For example, a schema like:
    *
@@ -227,7 +289,7 @@ public class SchemaUtils {
     return name.contains(".") ? "`" + name + "`" : name;
   }
 
-  protected static void validParquetColumnNames(List<String> columnNames) {
+  private static void validParquetColumnNames(List<String> columnNames) {
     for (String name : columnNames) {
       // ,;{}()\n\t= and space are special characters in Parquet schema
       if (name.matches(".*[ ,;{}()\n\t=].*")) {
@@ -242,7 +304,7 @@ public class SchemaUtils {
    *
    * @param dataType the data type to validate
    */
-  protected static void validateSupportedType(DataType dataType) {
+  private static void validateSupportedType(DataType dataType) {
     if (dataType instanceof BooleanType
         || dataType instanceof ByteType
         || dataType instanceof ShortType

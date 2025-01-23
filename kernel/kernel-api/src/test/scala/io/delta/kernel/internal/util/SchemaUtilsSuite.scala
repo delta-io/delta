@@ -18,9 +18,12 @@ package io.delta.kernel.internal.util
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.util.SchemaUtils.validateSchema
 import io.delta.kernel.types.IntegerType.INTEGER
-import io.delta.kernel.types.{ArrayType, MapType, StringType, StructType}
+import io.delta.kernel.types.StringType.STRING
+import io.delta.kernel.types.DoubleType.DOUBLE
+import io.delta.kernel.types.{ArrayType, MapType, StringType, StructField, StructType}
 import org.scalatest.funsuite.AnyFunSuite
 
+import java.util.Arrays
 import java.util.Locale
 
 class SchemaUtilsSuite extends AnyFunSuite {
@@ -31,6 +34,187 @@ class SchemaUtilsSuite extends AnyFunSuite {
     val msg = e.getMessage.toLowerCase(Locale.ROOT)
     assert(shouldContain.map(_.toLowerCase(Locale.ROOT)).forall(msg.contains),
       s"Error message '$msg' didn't contain: $shouldContain")
+  }
+
+  //////////////////////
+  // isSuperset tests //
+  //////////////////////
+
+  private val field_a = new StructField("a", INTEGER, true)
+  private val field_b_1 = new StructField("1", INTEGER, true)
+  private val field_b_2 = new StructField("2", STRING, true)
+  private val field_b =
+    new StructField("b", new StructType(Arrays.asList(field_b_1, field_b_2)), true)
+  private val field_c_foobar_3 = new StructField("3", INTEGER, true)
+  private val field_c_foobar =
+    new StructField("foo.bar", new StructType(Arrays.asList(field_c_foobar_3)), true)
+  private val field_c = new StructField("c", new StructType(Arrays.asList(field_c_foobar)), true)
+  private val field_d = new StructField("d", new ArrayType(STRING, true), true)
+  private val field_e = new StructField("e", new MapType(INTEGER, STRING, true), true)
+  private val field_f_element_4 = new StructField("4", INTEGER, true)
+  private val field_f =
+    new StructField("f",
+      new ArrayType(new StructType(Arrays.asList(field_f_element_4)), true), true)
+  private val field_g_key_5 = new StructField("5", INTEGER, true)
+  private val field_g_value_zipzap_6 = new StructField("6", INTEGER, true)
+  private val field_g_value_zipzap_7 = new StructField("7", INTEGER, true)
+  private val field_g_value_zipzap =
+    new StructField("zip.zap",
+      new StructType(Arrays.asList(field_g_value_zipzap_6, field_g_value_zipzap_7)), true)
+  private val field_g = new StructField("g", new MapType(
+    new StructType(Arrays.asList(field_g_key_5)),
+    new StructType(Arrays.asList(field_g_value_zipzap)), true), true)
+  private val complexSchema =
+    new StructType(Arrays.asList(field_a, field_b, field_c, field_d, field_e, field_f, field_g))
+
+  test("isSuperset -- simple cases") {
+    {
+      // is subset, empty
+      assert(SchemaUtils.isSuperset(complexSchema, new StructType()))
+    }
+    {
+      // is subset, simple
+      val schema = new StructType(Arrays.asList(field_a))
+      assert(SchemaUtils.isSuperset(complexSchema, schema))
+    }
+    {
+      // is subset, itself
+      assert(SchemaUtils.isSuperset(complexSchema, complexSchema))
+    }
+    {
+      // is subset, different order
+      val schema = new StructType(Arrays.asList(field_e, field_d, field_c, field_b, field_a))
+      assert(SchemaUtils.isSuperset(complexSchema, schema))
+    }
+    {
+      // is NOT subset, field doesn't exist
+      val schema = new StructType().add("new_field", INTEGER)
+      assert(!SchemaUtils.isSuperset(complexSchema, schema))
+    }
+    {
+      // is NOT subset, field has different type
+      val schema = new StructType().add("a", STRING)
+      assert(!SchemaUtils.isSuperset(complexSchema, schema))
+    }
+  }
+
+  test("isSuperset -- struct cases") {
+    {
+      // is subset, an entire nested struct
+      val schema = new StructType(Arrays.asList(field_b))
+      assert(SchemaUtils.isSuperset(complexSchema, schema))
+    }
+    {
+      // is subset, several entire nested structs
+      val schema = new StructType(Arrays.asList(field_b, field_c))
+      assert(SchemaUtils.isSuperset(complexSchema, schema))
+    }
+    {
+      // is subset, only some nested fields of a struct. here we select b.1 but not b.2.
+      val b_1_nested = new StructField("b", new StructType(Arrays.asList(field_b_1)), true)
+      val schema = new StructType(Arrays.asList(b_1_nested))
+      assert(SchemaUtils.isSuperset(complexSchema, schema))
+    }
+    {
+      // is NOT a subset, nested field doesn't exist
+      val field_b_99 = new StructField("99", STRING, true)
+      val b_99_nested = new StructField("b", new StructType(Arrays.asList(field_b_99)), true)
+      val schema = new StructType(Arrays.asList(b_99_nested))
+      assert(!SchemaUtils.isSuperset(complexSchema, schema))
+    }
+  }
+
+  test("isSuperset -- simple array cases") {
+    {
+      // is subset, array
+      val schema = new StructType(Arrays.asList(field_d))
+      assert(SchemaUtils.isSuperset(complexSchema, schema))
+    }
+    {
+      // is NOT subset, array has wrong element type (DOUBLE instead of STRING)
+      val field_d_bad_type = new StructField("d", new ArrayType(DOUBLE, true), true)
+      val schema = new StructType(Arrays.asList(field_d_bad_type))
+      assert(!SchemaUtils.isSuperset(complexSchema, schema))
+    }
+  }
+
+  test("isSuperset -- simple map cases") {
+    {
+      // is subset, an entire map
+      val schema = new StructType(Arrays.asList(field_e))
+      assert(SchemaUtils.isSuperset(complexSchema, schema))
+    }
+    {
+      // is NOT subset, map has wrong key type (DOUBLE instead of INTEGER)
+      val field_e_bad_type = new StructField("e", new MapType(DOUBLE, STRING, true), true)
+      val schema = new StructType(Arrays.asList(field_e_bad_type))
+      assert(!SchemaUtils.isSuperset(complexSchema, schema))
+    }
+    {
+      // is NOT subset, map has wrong value type (DOUBLE instead of STRING)
+      val field_e_bad_type = new StructField("e", new MapType(INTEGER, DOUBLE, true), true)
+      val schema = new StructType(Arrays.asList(field_e_bad_type))
+      assert(!SchemaUtils.isSuperset(complexSchema, schema))
+    }
+  }
+
+  test("isSuperset -- array of complex type cases") {
+    {
+      // is subset, an entire array whose element is a struct
+      val schema = new StructType(Arrays.asList(field_f))
+      assert(SchemaUtils.isSuperset(complexSchema, schema))
+    }
+    {
+      // is NOT subset, array of struct has wrong element type (DOUBLE instead of INTEGER)
+      val field_f_element_4_bad_type = new StructField("4", DOUBLE, true)
+      val field_f_bad_type = new StructField("f",
+        new ArrayType(new StructType(Arrays.asList(field_f_element_4_bad_type)), true), true)
+      val schema = new StructType(Arrays.asList(field_f_bad_type))
+      assert(!SchemaUtils.isSuperset(complexSchema, schema))
+    }
+  }
+
+  test("isSuperset -- map of complex type cases") {
+    {
+      // is subset, an entire map whose keys and values are structs
+      val schema = new StructType(Arrays.asList(field_g))
+      assert(SchemaUtils.isSuperset(complexSchema, schema))
+    }
+    {
+      // is subset, only some of the nested fields of the struct which is the map's value type
+      val field_g_value_zipzap_excluding_7 =
+        new StructField("zip.zap", new StructType(Arrays.asList(field_g_value_zipzap_6)), true)
+      val field_g_with_subset_value = new StructField("g", new MapType(
+        new StructType(Arrays.asList(field_g_key_5)),
+        new StructType(Arrays.asList(field_g_value_zipzap_excluding_7)), // <-- selecting subset
+        true), true)
+      val schema = new StructType(Arrays.asList(field_g_with_subset_value))
+      assert(SchemaUtils.isSuperset(complexSchema, schema))
+    }
+    {
+      // is NOT subset, non-existent nested field in the struct which is the maps's value type
+      val field_g_value_zipzap_8 = new StructField("8", INTEGER, true)
+      val field_g_value_zipzap_with_extra =
+        new StructField("zip.zap",
+          new StructType(
+            Arrays.asList(field_g_value_zipzap_6, field_g_value_zipzap_7, field_g_value_zipzap_8)
+          ), true)
+      val field_g_with_bad_value = new StructField("g", new MapType(
+        new StructType(Arrays.asList(field_g_key_5)),
+        new StructType(Arrays.asList(field_g_value_zipzap_with_extra)), // <-- value has bad field
+        true), true)
+      val schema = new StructType(Arrays.asList(field_g_with_bad_value))
+      assert(!SchemaUtils.isSuperset(complexSchema, schema))
+    }
+    {
+      // is NOT subset, nested field with wrong type in the struct which is the maps's key type
+      val field_g_key_5_bad_type = new StructField("5", DOUBLE, true)
+      val field_g_with_bad_value = new StructField("g", new MapType(
+        new StructType(Arrays.asList(field_g_key_5_bad_type)), // <-- bad key type
+        new StructType(Arrays.asList(field_g_value_zipzap)), true), true)
+      val schema = new StructType(Arrays.asList(field_g_with_bad_value))
+      assert(!SchemaUtils.isSuperset(complexSchema, schema))
+    }
   }
 
   ///////////////////////////////////////////////////////////////////////////
