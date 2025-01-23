@@ -50,7 +50,8 @@ public class ChecksumReader {
    */
   public static Optional<CRCInfo> getCRCInfo(
       Engine engine, Path logPath, long targetedVersion, long lowerBound) {
-    checkArgument(targetedVersion >= lowerBound);
+    // If targetedVersion is 0, lower bound will be ignored as snapshot 0 is the first snapshot.
+    checkArgument(targetedVersion == 0 || targetedVersion >= lowerBound);
     logger.info("Loading CRC file for version {} with lower bound {}", targetedVersion, lowerBound);
     // First try to load the CRC at given version. If not found or failed to read then try to
     // find the latest CRC file that is created after the lower bound version or within the last 100

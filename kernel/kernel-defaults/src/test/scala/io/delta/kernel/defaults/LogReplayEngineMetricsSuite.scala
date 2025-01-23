@@ -409,8 +409,13 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
     withTempDirAndMetricsEngine { (path, engine) =>
       buildTableWithCrc(path)
         Seq(10L, 11L, 5L, 6L).foreach { version =>
-        val crcFile = new File(path, f"_delta_log/$version%020d.crc")
-        assert(Files.deleteIfExists(crcFile.toPath))
+        assert(
+            Files.deleteIfExists(
+              new File(
+                FileNames.checksumFile(new Path(f"$path/_delta_log"), version).getName
+              ).toPath
+            )
+          )
       }
 
       loadPandMCheckMetrics(
@@ -457,11 +462,14 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
     withTempDirAndMetricsEngine { (path, engine) =>
       buildTableWithCrc(path)
       (3 to 6).foreach { version =>
-        val crcFile = new File(path, f"_delta_log/$version%020d.crc")
-        assert(Files.deleteIfExists(crcFile.toPath))
-      }
+          assert(
+            Files.deleteIfExists(
+              new File(FileNames.checksumFile(new Path(path), version).getName).toPath
+            )
+          )
+        }
 
-      val table = Table.forPath(engine, path)
+        val table = Table.forPath(engine, path)
 
       loadPandMCheckMetrics(
         table.getSnapshotAsOfVersion(engine, 4 /* versionId */).getSchema(engine),
@@ -501,10 +509,17 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
       buildTableWithCrc(path)
       val checkpointVersion = 10;
       assert(
-        Files
-          .exists(new File(path, f"_delta_log/$checkpointVersion%020d.checkpoint.parquet").toPath)
-      )
-      assert(Files.deleteIfExists(new File(path, f"_delta_log/$checkpointVersion%020d.crc").toPath))
+          Files.exists(
+            new File(
+              FileNames
+                .checkpointFileSingular(new Path(f"$path/_delta_log"), checkpointVersion)
+                .getName
+            ).toPath
+          )
+        )
+        assert(
+          Files.deleteIfExists(
+            new File(FileNames.checksumFile(new Path(path), checkpointVersion).getName).toPath))
 
       val table = Table.forPath(engine, path)
 
@@ -531,22 +546,35 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
           s"CREATE TABLE delta.`$path` USING DELTA AS " +
           s"SELECT 0L as id"
         )
-        for (_ <- 0 to 10) { appendCommit(path) }
-      }
-      val checkpointVersion = 10;
-      assert(
-        Files
-          .exists(new File(path, f"_delta_log/$checkpointVersion%020d.checkpoint.parquet").toPath)
-      )
-      assert(Files.deleteIfExists(new File(path, f"_delta_log/$checkpointVersion%020d.crc").toPath))
-      assert(
-        Files.deleteIfExists(new File(path, f"_delta_log/${checkpointVersion + 1}%020d.crc").toPath)
-      )
+          for (_ <- 0 to 10) { appendCommit(path) }
+        }
+        val checkpointVersion = 10;
+        val logPath = f"$path/_delta_log"
+        assert(
+          Files
+            .exists(
+              new File(
+                FileNames.checkpointFileSingular(new Path(logPath), checkpointVersion).getName
+              ).toPath
+            )
+        )
+        assert(
+          Files.deleteIfExists(
+            new File(FileNames.checksumFile(new Path(logPath), checkpointVersion).getName).toPath
+          )
+        )
+        assert(
+          Files.deleteIfExists(
+            new File(
+              FileNames.checksumFile(new Path(logPath), checkpointVersion + 1).getName
+            ).toPath
+          )
+        )
 
-      val table = Table.forPath(engine, path)
+        val table = Table.forPath(engine, path)
 
-      // 11.crc, 10.crc missing, 10.checkpoint.parquet exists.
-      // Attempt to read 11.crc fails and read 10.checkpoint.parquet and 11.json succeeds.
+        // 11.crc, 10.crc missing, 10.checkpoint.parquet exists.
+        // Attempt to read 11.crc fails and read 10.checkpoint.parquet and 11.json succeeds.
       loadPandMCheckMetrics(
         table.getSnapshotAsOfVersion(engine, 11).getSchema(engine),
         engine,
@@ -566,20 +594,30 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
       withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true") {
         spark.sql(
           s"CREATE TABLE delta.`$path` USING DELTA AS " +
-          s"SELECT 0L as id"
+            s"SELECT 0L as id"
         )
-        for (_ <- 0 to 10) { appendCommit(path) }
-      }
-      val checkpointVersion = 10;
-      assert(
-        Files
-          .exists(new File(path, f"_delta_log/$checkpointVersion%020d.checkpoint.parquet").toPath)
-      )
-      assert(
-        Files.deleteIfExists(new File(path, f"_delta_log/${checkpointVersion + 1}%020d.crc").toPath)
-      )
+          for (_ <- 0 to 10) { appendCommit(path) }
+        }
+        val checkpointVersion = 10;
+        val logPath = f"$path/_delta_log"
+        assert(
+          Files.exists(
+            new File(
+              FileNames
+                .checkpointFileSingular(new Path(logPath), checkpointVersion)
+                .getName
+            ).toPath
+          )
+        )
+        assert(
+          Files.deleteIfExists(
+            new File(
+              FileNames.checksumFile(new Path(logPath), checkpointVersion + 1).getName
+            ).toPath
+          )
+        )
 
-      val table = Table.forPath(engine, path)
+        val table = Table.forPath(engine, path)
 
       // 11.crc, missing, 10.crc and 10.checkpoint.parquet exist.
       // Attempt to read 11.crc fails and read 10.checkpoint.parquet and 11.json succeeds.
@@ -594,6 +632,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
     }
   }
 
+  // Produce a test table with 0 to 11 .json, 0 to 11.crc, 10.checkpoint.parquet
   def buildTableWithCrc(path: String): Unit = {
     withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true") {
       spark.sql(

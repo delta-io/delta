@@ -17,6 +17,7 @@
 package io.delta.kernel.internal.replay;
 
 import static io.delta.kernel.internal.replay.LogReplayUtils.assertLogFilesBelongToTable;
+import static io.delta.kernel.internal.util.FileNames.checkpointVersion;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Arrays.asList;
 import static java.util.Collections.max;
@@ -42,6 +43,7 @@ import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * Replays a history of actions, resolving them to produce the current state of the table. The
@@ -220,16 +222,19 @@ public class LogReplay {
     // Finds the exclusive lower bound for CRC search.
     // If the snapshot hint or checkpoint older than required version is present, we can use them as
     // the lower bound for the CRC search.
+    List<Long> eligibleCheckpointVersions =
+        logSegment.checkpoints.stream()
+            .map(cp -> checkpointVersion(cp.getPath()))
+            .filter(v -> v <= snapshotVersion)
+            .collect(Collectors.toList());
     long crcSearchLowerBound =
-        Math.min(
-            snapshotVersion,
-            max(
-                asList(
-                    snapshotHint.map(SnapshotHint::getVersion).orElse(0L) + 1,
-                    logSegment.checkpointVersionOpt.orElse(0L),
-                    // Only find the CRC within 100 versions.
-                    snapshotVersion - 100,
-                    0L)));
+        max(
+            asList(
+                snapshotHint.map(SnapshotHint::getVersion).orElse(0L) + 1,
+                eligibleCheckpointVersions.isEmpty() ? 0L : max(eligibleCheckpointVersions),
+                // Only find the CRC within 100 versions.
+                snapshotVersion - 100,
+                0L));
     Optional<CRCInfo> crcInfoOpt =
         ChecksumReader.getCRCInfo(engine, logSegment.logPath, snapshotVersion, crcSearchLowerBound);
     if (crcInfoOpt.isPresent()) {
