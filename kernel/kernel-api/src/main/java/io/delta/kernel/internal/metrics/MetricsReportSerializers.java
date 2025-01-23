@@ -73,9 +73,6 @@ public final class MetricsReportSerializers {
           .registerModule( // Serialize Exception using toString()
               new SimpleModule().addSerializer(Exception.class, new ToStringSerializer()))
           .registerModule( // Serialize StructType using toString
-              // TODO Decide how we want to serialize StructType
-              // We can serialize as a JSON string (more verbose) or using toString (less verbose)
-              // Note - JSON string isn't much more parsable? no fixed schema
               new SimpleModule().addSerializer(StructType.class, new ToStringSerializer()))
           .registerModule( // Serialize Predicate using toString
               new SimpleModule().addSerializer(Predicate.class, new ToStringSerializer()));
