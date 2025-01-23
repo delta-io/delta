@@ -18,6 +18,7 @@ package io.delta.kernel.internal.replay;
 import static io.delta.kernel.internal.replay.CRCInfo.fromColumnarBatch;
 import static io.delta.kernel.internal.util.FileNames.checksumFile;
 import static io.delta.kernel.internal.util.FileNames.isChecksumFile;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 
 import io.delta.kernel.data.ColumnarBatch;
@@ -42,12 +43,13 @@ public class ChecksumReader {
    * @param engine the engine to use for reading the checksum file
    * @param logPath the path to the Delta log
    * @param targetedVersion the target version to read the checksum file from
-   * @param lowerBound the exclusive lower bound version to search for the checksum file
+   * @param lowerBound the inclusive lower bound version to search for the checksum file
    * @return Optional {@link CRCInfo} containing the protocol and metadata, and the version of the
    *     checksum file. If the checksum file is not found, it will return an empty
    */
   public static Optional<CRCInfo> getCRCInfo(
       Engine engine, Path logPath, long targetedVersion, long lowerBound) {
+    checkArgument(targetedVersion >= lowerBound);
     logger.info("Loading CRC file for version {} with lower bound {}", targetedVersion, lowerBound);
     // First try to load the CRC at given version. If not found or failed to read then try to
     // find the latest CRC file that is created after the lower bound version or within the last 100
@@ -57,7 +59,7 @@ public class ChecksumReader {
     if (crcInfoOpt.isPresent()
         ||
         // we don't expect any more checksum files as it is the first version
-        targetedVersion == 0) {
+        targetedVersion == 0 || targetedVersion == lowerBound) {
       return crcInfoOpt;
     }
     logger.info(
@@ -65,7 +67,7 @@ public class ChecksumReader {
         targetedVersion,
         lowerBound);
 
-    Path lowerBoundFilePath = checksumFile(logPath, lowerBound + 1);
+    Path lowerBoundFilePath = checksumFile(logPath, lowerBound);
     try (CloseableIterator<FileStatus> crcFiles =
         engine.getFileSystemClient().listFrom(lowerBoundFilePath.toString())) {
       List<FileStatus> crcFilesList = new ArrayList<>();
