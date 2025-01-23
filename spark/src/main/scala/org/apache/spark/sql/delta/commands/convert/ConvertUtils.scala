@@ -71,27 +71,36 @@ trait ConvertUtilsBase extends DeltaLogging {
    * @param targetDir: the target directory of the Iceberg table.
    * @param sparkTable: the optional V2 table interface of the Iceberg table.
    * @param tableSchema: the existing converted Delta table schema (if exists) of the Iceberg table.
+   * @param collectStats: collect column stats on convert
    * @return a target Iceberg table.
    */
   def getIcebergTable(
       spark: SparkSession,
       targetDir: String,
       sparkTable: Option[Table],
-      tableSchema: Option[StructType]): ConvertTargetTable = {
+      tableSchema: Option[StructType],
+      collectStats: Boolean = true): ConvertTargetTable = {
     try {
+      val convertIcebergStats = collectStats &&
+        spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_STATS)
       val clazz = Utils.classForName(icebergSparkTableClassPath)
       if (sparkTable.isDefined) {
         val constFromTable = clazz.getConstructor(
           classOf[SparkSession],
           Utils.classForName(icebergLibTableClassPath),
-          classOf[Option[StructType]])
+          classOf[Option[StructType]],
+          java.lang.Boolean.TYPE
+        )
         val method = sparkTable.get.getClass.getMethod("table")
-        constFromTable.newInstance(spark, method.invoke(sparkTable.get), tableSchema)
+        constFromTable.newInstance(spark, method.invoke(sparkTable.get), tableSchema,
+          java.lang.Boolean.valueOf(convertIcebergStats))
       } else {
         val baseDir = getQualifiedPath(spark, new Path(targetDir)).toString
         val constFromPath = clazz.getConstructor(
-          classOf[SparkSession], classOf[String], classOf[Option[StructType]])
-        constFromPath.newInstance(spark, baseDir, tableSchema)
+          classOf[SparkSession], classOf[String], classOf[Option[StructType]],
+          java.lang.Boolean.TYPE)
+        constFromPath.newInstance(spark, baseDir, tableSchema,
+          java.lang.Boolean.valueOf(convertIcebergStats))
       }
     } catch {
       case e: ClassNotFoundException =>
@@ -215,7 +224,8 @@ trait ConvertUtilsBase extends DeltaLogging {
       path.toUri.toString
     }
 
-    AddFile(pathStrForAddFile, partition, file.length, file.modificationTime, dataChange = true)
+    AddFile(pathStrForAddFile, partition, file.length, file.modificationTime, dataChange = true,
+      stats = targetFile.stats.orNull)
   }
 
   /**

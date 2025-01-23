@@ -25,7 +25,7 @@ import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.iceberg.{Table, TableProperties}
 import org.apache.iceberg.hadoop.HadoopTables
-import org.apache.iceberg.transforms.IcebergPartitionUtil
+import org.apache.iceberg.transforms.{Bucket, IcebergPartitionUtil}
 import org.apache.iceberg.util.PropertyUtil
 
 import org.apache.spark.sql.{AnalysisException, SparkSession}
@@ -37,19 +37,33 @@ import org.apache.spark.sql.types.StructType
  *
  * @param icebergTable the Iceberg table underneath.
  * @param existingSchema schema used for incremental update, none for initial conversion.
+ * @param convertStats flag for disabling convert iceberg stats directly into Delta stats.
+ *                     If you wonder why we need this flag, you are not alone.
+ *                     This flag is only used by the old, obsolete, legacy command
+ *                     `CONVERT TO DELTA NO STATISTICS`.
+ *                     We believe that back then the CONVERT command suffered performance
+ *                     problem due to stats collection and design `NO STATISTICS` as a workaround.
+ *                     Now we are able to generate stats much faster, but when this flag is true,
+ *                     we still have to honor it and give up generating stats. What a pity!
  */
 class IcebergTable(
     spark: SparkSession,
     icebergTable: Table,
-    existingSchema: Option[StructType]) extends ConvertTargetTable {
+    existingSchema: Option[StructType],
+    convertStats: Boolean) extends ConvertTargetTable {
 
-  def this(spark: SparkSession, basePath: String, existingSchema: Option[StructType]) =
+  def this(spark: SparkSession, basePath: String, existingSchema: Option[StructType],
+           convertStats: Boolean = true) =
     // scalastyle:off deltahadoopconfiguration
-    this(spark, new HadoopTables(spark.sessionState.newHadoopConf).load(basePath), existingSchema)
+    this(spark, new HadoopTables(spark.sessionState.newHadoopConf).load(basePath),
+      existingSchema, convertStats)
     // scalastyle:on deltahadoopconfiguration
 
   private val partitionEvolutionEnabled =
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_PARTITION_EVOLUTION_ENABLED)
+
+  private val bucketPartitionEnabled =
+    spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_BUCKET_PARTITION_ENABLED)
 
   private val fieldPathToPhysicalName =
     existingSchema.map {
@@ -96,7 +110,7 @@ class IcebergTable(
 
   checkConvertible()
 
-  val fileManifest = new IcebergFileManifest(spark, icebergTable, partitionSchema)
+  val fileManifest = new IcebergFileManifest(spark, icebergTable, partitionSchema, convertStats)
 
   lazy val numFiles: Long =
     Option(icebergTable.currentSnapshot())
@@ -123,6 +137,15 @@ class IcebergTable(
 
     if (!partitionEvolutionEnabled && icebergTable.specs().size() > 1) {
       throw new UnsupportedOperationException(IcebergTable.ERR_MULTIPLE_PARTITION_SPECS)
+    }
+
+    /**
+     * If the sql conf bucketPartitionEnabled is true, then convert iceberg table with
+     * bucket partition to unpartitioned delta table; if bucketPartitionEnabled is false,
+     * block conversion.
+     */
+    if (!bucketPartitionEnabled && IcebergPartitionUtil.hasBucketPartition(icebergTable.spec())) {
+      throw new UnsupportedOperationException(IcebergTable.ERR_BUCKET_PARTITION)
     }
 
     /**
@@ -161,6 +184,8 @@ object IcebergTable {
       | had data columns converted to partition columns will not be able to read the pre-partition
       | column values.""".stripMargin
   val ERR_CUSTOM_NAME_MAPPING = "Cannot convert Iceberg tables with column name mapping"
+
+  val ERR_BUCKET_PARTITION = "Cannot convert Iceberg tables with bucket partition"
 
   def caseSensitiveConversionExceptionMsg(conflictingColumns: String): String =
     s"""Cannot convert table to Delta as the table contains column names that only differ by case.

@@ -624,28 +624,54 @@ object RedirectWriterOnlyFeature extends WriterFeature(name = "redirectWriterOnl
   override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
 }
 
-object VariantTypePreviewTableFeature extends ReaderWriterFeature(name = "variantType-preview")
-    with FeatureAutomaticallyEnabledByMetadata {
-  override def metadataRequiresFeatureToBeEnabled(
-      protocol: Protocol, metadata: Metadata, spark: SparkSession): Boolean = {
-    SchemaUtils.checkForVariantTypeColumnsRecursively(metadata.schema) &&
-      // Do not require the 'variantType-preview' table feature to be enabled if the 'variantType'
-      // table feature is enabled so tables with 'variantType' can be read.
-      !protocol.isFeatureSupported(VariantTypeTableFeature)
-  }
+trait BinaryVariantTableFeature {
+  def forcePreviewTableFeature: Boolean = SparkSession
+    .getActiveSession
+    .map(_.conf.get(DeltaSQLConf.FORCE_USE_PREVIEW_VARIANT_FEATURE))
+    .getOrElse(false)
 }
 
 /**
- * Stable feature for variant. The stable feature isn't enabled automatically yet when variants
- * are present in the table schema. The feature spec is finalized though and by supporting the
- * stable feature here we guarantee that this version can already read any table created in the
- * future.
+ * Preview feature for variant. The preview feature isn't enabled automatically anymore when
+ * variants are present in the table schema and the GA feature is used instead.
  *
  * Note: Users can manually add both the preview and stable features to a table using ADD FEATURE,
- * although that's undocumented. This is allowed: the two feature specifications are compatible and
- * supported.
+ * although that's undocumented. The feature spec did not change between preview and GA so the two
+ * feature specifications are compatible and supported.
  */
+object VariantTypePreviewTableFeature extends ReaderWriterFeature(name = "variantType-preview")
+  with FeatureAutomaticallyEnabledByMetadata
+    with BinaryVariantTableFeature {
+  override def metadataRequiresFeatureToBeEnabled(
+      protocol: Protocol, metadata: Metadata, spark: SparkSession): Boolean = {
+    if (forcePreviewTableFeature) {
+      SchemaUtils.checkForVariantTypeColumnsRecursively(metadata.schema) &&
+      // Do not require this table feature to be enabled when the 'variantType' table feature is
+      // enabled so existing tables with variant columns with only 'variantType' and not
+      // 'variantType-preview' can be operated on when the 'FORCE_USE_PREVIEW_VARIANT_FEATURE'
+      // config is enabled.
+      !protocol.isFeatureSupported(VariantTypeTableFeature)
+    } else {
+      false
+    }
+  }
+}
+
 object VariantTypeTableFeature extends ReaderWriterFeature(name = "variantType")
+    with FeatureAutomaticallyEnabledByMetadata
+    with BinaryVariantTableFeature {
+  override def metadataRequiresFeatureToBeEnabled(
+      protocol: Protocol, metadata: Metadata, spark: SparkSession): Boolean = {
+    if (forcePreviewTableFeature) {
+      false
+    } else {
+      SchemaUtils.checkForVariantTypeColumnsRecursively(metadata.schema) &&
+      // Do not require this table feature to be enabled when the 'variantType-preview' table
+      // feature is enabled so old tables with only the preview table feature can be read.
+      !protocol.isFeatureSupported(VariantTypePreviewTableFeature)
+    }
+  }
+}
 
 object DeletionVectorsTableFeature
   extends ReaderWriterFeature(name = "deletionVectors")

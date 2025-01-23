@@ -133,6 +133,17 @@ This mode supports concurrent writes to S3 from multiple clusters and has to be 
 #### Requirements (S3 multi-cluster)
 - All of the requirements listed in [_](#requirements-s3-single-cluster) section
 - In additon to S3 credentials, you also need DynamoDB operating permissions
+- To ensure proper coordination across clusters, it's crucial to maintain consistency in how tables are referenced. Always use the same scheme (e.g., all cluster refer the table path with either s3a:// or s3:// but not a combination of the two) and maintain case sensitivity when referring to a table from different clusters. For example, use s3a://mybucket/mytable consistently across all clusters. This consistency is vital because DynamoDB relies on the table path as a key to achieve put-if-absent semantics, and inconsistent references can lead to coordination issues. If the table is registered in a catalog, verify (use `DESCRIBE FORMATTED` or other equivalent commands) that the registered path matches the path used for writes from other clusters. By adhering to these guidelines, you can minimize the risk of coordination problems and ensure smooth operation across multiple clusters.
+  - In case the table should be referred using `s3` scheme Delta-Spark connector, following configs are needed:
+
+
+    ```
+    "spark.delta.logStore.s3.impl" = "io.delta.storage.S3DynamoDBLogStore"
+    "spark.io.delta.storage.S3DynamoDBLogStore.ddb.region" = "<region>"
+    "spark.io.delta.storage.S3DynamoDBLogStore.ddb.tableName" = "<dynamodb_table_name>"
+    "spark.hadoop.fs.s3.impl"="org.apache.hadoop.fs.s3a.S3AFileSystem"
+    # and any other config  key name that has `s3a` in it should be changed to `s3`
+    ```
 
 #### Quickstart (S3 multi-cluster)
 
