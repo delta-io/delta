@@ -718,5 +718,4 @@ trait TestUtils extends Assertions with SQLHelper {
     }
     resource.getFile
   }
-  
 }
