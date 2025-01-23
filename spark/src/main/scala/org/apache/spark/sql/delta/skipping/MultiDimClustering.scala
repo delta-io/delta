@@ -96,7 +96,6 @@ trait SpaceFillingCurveClustering extends MultiDimClustering {
     }
 
     repartitionedDf.drop(repartitionKeyColName)
-
   }
 }
 
