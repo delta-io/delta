@@ -43,7 +43,7 @@ class ScanReportSuite extends AnyFunSuite with MetricsReportTestUtils {
    *
    * @param getScan function to generate a [[Scan]] given an engine
    * @param expectException whether we expect consuming the scan files to throw an exception, which
-   *                        if so, is caught and returend with the other results
+   *                        if so, is caught and returned with the other results
    * @return (ScanReport, durationToConsumeScanFiles, SnapshotReport, ExceptionIfThrown)
    */
   def getScanAndSnapshotReport(
