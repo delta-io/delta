@@ -17,7 +17,7 @@ package io.delta.kernel.internal.checksum;
 
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
-import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
+import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
@@ -31,11 +31,9 @@ import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import java.io.IOException;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -65,7 +63,8 @@ public class ChecksumWriter {
    *
    * @return true if checksum file is successfully written, false otherwise.
    */
-  public boolean maybeWriteCheckSum(Engine engine, SnapshotHint postCommitSnapshot, Optional<String> txnId) {
+  public boolean maybeWriteCheckSum(
+      Engine engine, SnapshotHint postCommitSnapshot, Optional<String> txnId) {
     // No sufficient information to write checksum file.
     if (!postCommitSnapshot.getNumFiles().isPresent()
         || !postCommitSnapshot.getTableSizeBytes().isPresent()) {
@@ -80,8 +79,7 @@ public class ChecksumWriter {
                 .getJsonHandler()
                 .writeJsonFileAtomically(
                     newChecksumPath.toString(),
-                    toCloseableIterator(
-                        Arrays.asList(buildCheckSumRow(postCommitSnapshot, txnId)).iterator()),
+                    singletonCloseableIterator(buildCheckSumRow(postCommitSnapshot, txnId)),
                     false /* overwrite */);
             return true;
           },
