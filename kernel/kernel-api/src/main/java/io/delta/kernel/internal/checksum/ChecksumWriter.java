@@ -16,6 +16,7 @@
 package io.delta.kernel.internal.checksum;
 
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
+import static io.delta.kernel.internal.checksum.ChecksumUtils.CRC_FILE_SCHEMA;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 
@@ -41,15 +42,6 @@ import org.slf4j.LoggerFactory;
 public class ChecksumWriter {
 
   private static final Logger logger = LoggerFactory.getLogger(ChecksumWriter.class);
-  public static StructType CRC_FILE_SCHEMA =
-      new StructType()
-          .add("tableSizeBytes", LongType.LONG)
-          .add("numFiles", LongType.LONG)
-          .add("numMetadata", LongType.LONG)
-          .add("numProtocol", LongType.LONG)
-          .add("metadata", Metadata.FULL_SCHEMA)
-          .add("protocol", Protocol.FULL_SCHEMA)
-          .add("txnId", StringType.STRING, /*nullable*/ true);
 
   private final Path logPath;
 

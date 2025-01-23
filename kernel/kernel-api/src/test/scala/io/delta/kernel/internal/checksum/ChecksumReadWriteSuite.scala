@@ -17,6 +17,7 @@ package io.delta.kernel.internal.checksum
 
 import io.delta.kernel.data.{ArrayValue, ColumnVector, MapValue, Row}
 import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
+import io.delta.kernel.internal.checksum.ChecksumUtils.CRC_FILE_SCHEMA
 import io.delta.kernel.internal.data.GenericRow
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.snapshot.SnapshotHint
@@ -46,37 +47,37 @@ class ChecksumReadWriteSuite extends AnyFunSuite with MockEngineUtils {
       checksumWriter.maybeWriteCheckSum(mockEngine(jsonHandler = jsonHandler), snapshotHint, txn)
       assert(
         jsonHandler.capturedCrcRow
-          .getLong(ChecksumWriter.CRC_FILE_SCHEMA.indexOf("tableSizeBytes")) == 100L
+          .getLong(CRC_FILE_SCHEMA.indexOf("tableSizeBytes")) == 100L
       )
       assert(
-        jsonHandler.capturedCrcRow.getLong(ChecksumWriter.CRC_FILE_SCHEMA.indexOf("numFiles")) == 1L
-      )
-      assert(
-        jsonHandler.capturedCrcRow
-          .getLong(ChecksumWriter.CRC_FILE_SCHEMA.indexOf("numMetadata")) == 1L
+        jsonHandler.capturedCrcRow.getLong(CRC_FILE_SCHEMA.indexOf("numFiles")) == 1L
       )
       assert(
         jsonHandler.capturedCrcRow
-          .getLong(ChecksumWriter.CRC_FILE_SCHEMA.indexOf("numProtocol")) == 1L
+          .getLong(CRC_FILE_SCHEMA.indexOf("numMetadata")) == 1L
+      )
+      assert(
+        jsonHandler.capturedCrcRow
+          .getLong(CRC_FILE_SCHEMA.indexOf("numProtocol")) == 1L
       )
 
       if (txn.isPresent) {
         assert(
           jsonHandler.capturedCrcRow.getString(
-            ChecksumWriter.CRC_FILE_SCHEMA.indexOf("txnId")
+            CRC_FILE_SCHEMA.indexOf("txnId")
           ) == txn.get()
         )
       } else {
-        assert(jsonHandler.capturedCrcRow.isNullAt(ChecksumWriter.CRC_FILE_SCHEMA.indexOf("txnId")))
+        assert(jsonHandler.capturedCrcRow.isNullAt(CRC_FILE_SCHEMA.indexOf("txnId")))
       }
 
       checkMetadata(
         metadata,
-        jsonHandler.capturedCrcRow.getStruct(ChecksumWriter.CRC_FILE_SCHEMA.indexOf("metadata"))
+        jsonHandler.capturedCrcRow.getStruct(CRC_FILE_SCHEMA.indexOf("metadata"))
       )
       checkProtocol(
         protocol,
-        jsonHandler.capturedCrcRow.getStruct(ChecksumWriter.CRC_FILE_SCHEMA.indexOf("protocol"))
+        jsonHandler.capturedCrcRow.getStruct(CRC_FILE_SCHEMA.indexOf("protocol"))
       )
 
     }
