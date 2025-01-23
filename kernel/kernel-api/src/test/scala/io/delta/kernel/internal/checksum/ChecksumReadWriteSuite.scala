@@ -107,7 +107,7 @@ class ChecksumReadWriteSuite extends AnyFunSuite with MockEngineUtils {
           !checksumWriter.maybeWriteCheckSum(
             mockEngine(jsonHandler = jsonHandler),
             snapshotHint,
-            Optional.of("tnx")
+            Optional.of("txn")
           )
         )
         // Nothing is exported.
