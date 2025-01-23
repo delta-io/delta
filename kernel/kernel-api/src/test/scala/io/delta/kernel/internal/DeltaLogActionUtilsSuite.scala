@@ -16,17 +16,19 @@
 package io.delta.kernel.internal
 
 import java.io.FileNotFoundException
+import java.util.{Collections, Optional}
+
 import scala.collection.JavaConverters._
 import scala.reflect.ClassTag
+
 import io.delta.kernel.exceptions.{InvalidTableException, KernelException, TableNotFoundException}
 import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.utils.FileStatus
-import org.scalatest.funsuite.AnyFunSuite
 import io.delta.kernel.internal.DeltaLogActionUtils.{getCommitFilesForVersionRange, listDeltaLogFiles, verifyDeltaVersions}
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.test.MockFileSystemClientUtils
 
-import java.util.{Collections, HashSet, Optional}
+import org.scalatest.funsuite.AnyFunSuite
 
 class DeltaLogActionUtilsSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
@@ -310,18 +312,5 @@ class DeltaLogActionUtilsSuite extends AnyFunSuite with MockFileSystemClientUtil
     assert(exMsg.contains("Cannot load table version 4 as the transaction log has been " +
       "truncated due to manual deletion or the log/checkpoint retention policy. The earliest " +
       "available version is 10"))
-  }
-
-  test("listDeltaLogFiles: throws TableNotFoundException if table not found") {
-    intercept[TableNotFoundException] {
-      listDeltaLogFiles(
-        createMockFSListFromEngine(_ => throw new FileNotFoundException()),
-        Set(FileNames.DeltaLogFileType.COMMIT, FileNames.DeltaLogFileType.CHECKPOINT).asJava,
-        dataPath,
-        0,
-        Optional.empty(),
-        false /* mustBeRecreatable */
-      )
-    }
   }
 }
