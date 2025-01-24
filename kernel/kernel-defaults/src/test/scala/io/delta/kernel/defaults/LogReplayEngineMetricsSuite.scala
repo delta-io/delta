@@ -651,7 +651,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
   }
 
 
-  test("crc found at read version and checkpoint at read version => use crc") {
+  test("crc found at read version and checkpoint at read version => use checksum") {
     withTempDirAndMetricsEngine { (path, engine) =>
       // Produce a test table with 0 to 11 .json, 0 to 11.crc, 10.checkpoint.parquet
       buildTableWithCrc(path)
