@@ -20,6 +20,8 @@ import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import java.util.OptionalLong;
 
+import static java.util.Objects.requireNonNull;
+
 /** Contains summary information of a {@link io.delta.kernel.Snapshot}. */
 public class SnapshotHint {
   private final long version;
@@ -28,6 +30,10 @@ public class SnapshotHint {
   private final OptionalLong tableSizeBytes;
   private final OptionalLong numFiles;
 
+  public SnapshotHint(long version, Protocol protocol, Metadata metadata) {
+    this(version, protocol, metadata, OptionalLong.empty(), OptionalLong.empty());
+  }
+
   public SnapshotHint(
       long version,
       Protocol protocol,
@@ -35,8 +41,8 @@ public class SnapshotHint {
       OptionalLong tableSizeBytes,
       OptionalLong numFiles) {
     this.version = version;
-    this.protocol = protocol;
-    this.metadata = metadata;
+    this.protocol = requireNonNull(protocol);
+    this.metadata = requireNonNull(metadata);
     this.tableSizeBytes = tableSizeBytes;
     this.numFiles = numFiles;
   }
