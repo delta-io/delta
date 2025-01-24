@@ -15,7 +15,6 @@
  */
 package io.delta.kernel.internal.replay;
 
-import static io.delta.kernel.internal.replay.CRCInfo.fromColumnarBatch;
 import static io.delta.kernel.internal.util.FileNames.*;
 import static io.delta.kernel.internal.util.InternalUtils.toFilteredList;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
@@ -50,12 +49,9 @@ public class ChecksumReader {
    */
   public static Optional<CRCInfo> getCRCInfo(
       Engine engine, Path logPath, long targetedVersion, long lowerBound) {
-    // If targetedVersion is 0, lower bound will be ignored as snapshot 0 is the first snapshot.
-    checkArgument(targetedVersion == 0 || targetedVersion >= lowerBound);
     logger.info("Loading CRC file for version {} with lower bound {}", targetedVersion, lowerBound);
     // First try to load the CRC at given version. If not found or failed to read then try to
-    // find the latest CRC file that is created after the lower bound version or within the last 100
-    // versions if no lower bound is provided.
+    // find the latest CRC file that is created at or after the lower bound version.
     Path crcFilePath = checksumFile(logPath, targetedVersion);
     Optional<CRCInfo> crcInfoOpt = readChecksumFile(engine, crcFilePath);
     if (crcInfoOpt.isPresent()
@@ -65,8 +61,9 @@ public class ChecksumReader {
         || targetedVersion == lowerBound) {
       return crcInfoOpt;
     }
+    checkArgument(targetedVersion >= lowerBound);
     logger.info(
-        "CRC file for version {} not found, attempt to loading version up to {}",
+        "CRC file for version {} not found, listing CRC files from version {}",
         targetedVersion,
         lowerBound);
 
@@ -118,7 +115,7 @@ public class ChecksumReader {
 
       long crcVersion = FileNames.checksumVersion(filePath);
 
-      return fromColumnarBatch(engine, crcVersion, batch, 0 /* rowId */, filePath.toString());
+      return CRCInfo.fromColumnarBatch(engine, crcVersion, batch, 0 /* rowId */, filePath.toString());
     } catch (Exception e) {
       // This can happen when the version does not have a checksum file
       logger.warn("Failed to read checksum file {}", filePath, e);

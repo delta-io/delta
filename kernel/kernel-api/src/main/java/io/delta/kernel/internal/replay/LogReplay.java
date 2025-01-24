@@ -219,7 +219,7 @@ public class LogReplay {
       snapshotHint = Optional.empty();
     }
 
-    // Finds the exclusive lower bound for CRC search.
+    // Finds the inclusive lower bound for CRC search.
     // If the snapshot hint or checkpoint older than required version is present, we can use them as
     // the lower bound for the CRC search.
     List<Long> eligibleCheckpointVersions =
