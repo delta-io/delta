@@ -23,6 +23,7 @@ import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.snapshot.SnapshotHint
 import io.delta.kernel.internal.util.InternalUtils.singletonStringColumnVector
 import io.delta.kernel.internal.util.VectorUtils
+import io.delta.kernel.internal.util.VectorUtils.{stringArrayValue, stringStringMapValue}
 import io.delta.kernel.test.{BaseMockJsonHandler, MockEngineUtils}
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.CloseableIterator
@@ -124,22 +125,13 @@ class ChecksumReadWriteSuite extends AnyFunSuite with MockEngineUtils {
       Optional.of("name"),
       Optional.of("description"),
       new Format("parquet", Collections.emptyMap()),
-      "sss",
+      "schemaString",
       new StructType(),
-      new ArrayValue() { // partitionColumns
-        override def getSize = 1
-
-        override def getElements: ColumnVector = singletonStringColumnVector("c3")
-      },
+      stringArrayValue(util.Arrays.asList("c3")),
       Optional.of(123),
-      new MapValue() { // conf
-        override def getSize = 1
-
-        override def getKeys: ColumnVector = singletonStringColumnVector("delta.appendOnly")
-
-        override def getValues: ColumnVector =
-          singletonStringColumnVector("true")
-      }
+      stringStringMapValue(new util.HashMap[String, String]() {
+        put("delta.appendOnly", "true")
+      })
     )
   }
 
