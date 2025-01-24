@@ -17,7 +17,6 @@ package io.delta.kernel.internal.replay;
 
 import static io.delta.kernel.internal.util.FileNames.*;
 import static io.delta.kernel.internal.util.InternalUtils.toFilteredList;
-import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 import static java.lang.Math.min;
 
