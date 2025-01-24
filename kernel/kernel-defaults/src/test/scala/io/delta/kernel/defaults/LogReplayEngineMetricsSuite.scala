@@ -387,7 +387,8 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
   Seq(-1L, 3L, 4L).foreach { version => // -1 means latest version
     test(s"checksum found at the read version: ${if (version == -1) "latest" else version}") {
       withTempDirAndMetricsEngine { (path, engine) =>
-        buildTableWithCrc(path)
+        // Produce a test table with 0 to 11 .json, 0 to 11.crc, 10.checkpoint.parquet
+      buildTableWithCrc(path)
         val table = Table.forPath(engine, path)
 
         loadPandMCheckMetrics(
@@ -407,6 +408,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
 
   test("checksum not found at the read version, but found at a previous version") {
     withTempDirAndMetricsEngine { (path, engine) =>
+      // Produce a test table with 0 to 11 .json, 0 to 11.crc, 10.checkpoint.parquet
       buildTableWithCrc(path)
         Seq(10L, 11L, 5L, 6L).foreach { version =>
         assert(
@@ -460,6 +462,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
 
   test("checksum not found at the read version, but uses snapshot hint lower bound") {
     withTempDirAndMetricsEngine { (path, engine) =>
+      // Produce a test table with 0 to 11 .json, 0 to 11.crc, 10.checkpoint.parquet
       buildTableWithCrc(path)
       (3 to 6).foreach { version =>
           assert(
@@ -505,6 +508,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
 
   test("snapshot hint found for read version and crc found at read version => use hint") {
     withTempDirAndMetricsEngine { (path, engine) =>
+      // Produce a test table with 0 to 11 .json, 0 to 11.crc, 10.checkpoint.parquet
       buildTableWithCrc(path)
 
       val table = Table.forPath(engine, path)
@@ -526,6 +530,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
     "checksum not found at read version and checkpoint exists at read version => use checkpoint"
   ) {
     withTempDirAndMetricsEngine { (path, engine) =>
+      // Produce a test table with 0 to 11 .json, 0 to 11.crc, 10.checkpoint.parquet
       buildTableWithCrc(path)
       val checkpointVersion = 10;
       val logPath = f"$path/_delta_log"
@@ -564,6 +569,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
     "checkpoint exists the read version the previous version => use checkpoint"
   ) {
     withTempDirAndMetricsEngine { (path, engine) =>
+      // Produce a test table with 0 to 11 .json, 0 to 11.crc, 10.checkpoint.parquet
       buildTableWithCrc(path)
       val checkpointVersion = 10;
       val logPath = f"$path/_delta_log"
@@ -608,6 +614,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
     "both checksum and checkpoint exist the read version the previous version => use checksum"
   ) {
     withTempDirAndMetricsEngine { (path, engine) =>
+      // Produce a test table with 0 to 11 .json, 0 to 11.crc, 10.checkpoint.parquet
       buildTableWithCrc(path)
       val checkpointVersion = 10;
       val logPath = new Path(s"$path/_delta_log")
@@ -646,6 +653,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
 
   test("crc found at read version and checkpoint at read version => use crc") {
     withTempDirAndMetricsEngine { (path, engine) =>
+      // Produce a test table with 0 to 11 .json, 0 to 11.crc, 10.checkpoint.parquet
       buildTableWithCrc(path)
       val checkpointVersion = 10;
       val logPath = new Path(s"$path/_delta_log")
