@@ -31,7 +31,6 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 
 public class InternalUtils {
@@ -169,10 +168,9 @@ public class InternalUtils {
     return set.stream().map(String::toLowerCase).collect(Collectors.toSet());
   }
 
-  public static <T> List<T> toFilteredList(
-      CloseableIterator<T> iterator, Function<T, Boolean> filter) {
+  public static <T> List<T> toList(CloseableIterator<T> iterator) {
     List<T> result = new ArrayList<>();
-    iterator.filter(filter).forEachRemaining(result::add);
+    iterator.forEachRemaining(result::add);
     return result;
   }
 }
