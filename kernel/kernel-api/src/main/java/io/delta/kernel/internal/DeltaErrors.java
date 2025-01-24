@@ -33,6 +33,11 @@ import java.util.function.Supplier;
 public final class DeltaErrors {
   private DeltaErrors() {}
 
+  public static KernelException missingCheckpoint(String tablePath, long checkpointVersion) {
+    return new InvalidTableException(
+        tablePath, String.format("Missing checkpoint at version %s", checkpointVersion));
+  }
+
   public static KernelException versionBeforeFirstAvailableCommit(
       String tablePath, long versionToLoad, long earliestVersion) {
     String message =

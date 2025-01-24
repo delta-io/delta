@@ -20,8 +20,8 @@ import java.util.{Arrays, Collections, Optional}
 import scala.collection.JavaConverters._
 import scala.reflect.ClassTag
 
-import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
-import io.delta.kernel.exceptions.InvalidTableException
+import io.delta.kernel.data.{ColumnVector, ColumnarBatch}
+import io.delta.kernel.exceptions.{InvalidTableException, TableNotFoundException}
 import io.delta.kernel.expressions.Predicate
 import io.delta.kernel.internal.checkpoints.{CheckpointInstance, SidecarFile}
 import io.delta.kernel.internal.fs.Path
@@ -436,25 +436,27 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
   }
 
   test("getLogSegmentForVersion: empty delta log") {
-    // listDeltaAndCheckpointFiles = Optional.empty()
-    val logSegmentOpt = snapshotManager.getLogSegmentForVersion(
-      createMockFSListFromEngine(Seq.empty),
-      Optional.empty(),
-      Optional.empty()
-    )
-    assert(!logSegmentOpt.isPresent())
+    val exMsg = intercept[TableNotFoundException] {
+      snapshotManager.getLogSegmentForVersion(
+        createMockFSListFromEngine(Seq.empty),
+        Optional.empty(),
+        Optional.empty()
+      )
+    }.getMessage
+
+    assert(exMsg.contains("No delta files found in the directory"))
   }
 
   test("getLogSegmentForVersion: no delta files in the delta log") {
     // listDeltaAndCheckpointFiles = Optional.of(EmptyList)
     val files = Seq("foo", "notdelta.parquet", "foo.json", "001.checkpoint.00f.oo0.parquet")
       .map(FileStatus.of(_, 10, 10))
-    testExpectedError[RuntimeException](
+    testExpectedError[TableNotFoundException](
       files,
       expectedErrorMessageContains =
         "No delta files found in the directory: /fake/path/to/table/_delta_log"
     )
-    testExpectedError[RuntimeException](
+    testExpectedError[TableNotFoundException](
       files,
       versionToLoad = Optional.of(5),
       expectedErrorMessageContains =
@@ -848,13 +850,15 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
   }
 
   test("getLogSegmentForVersion: corrupt _last_checkpoint with empty delta log") {
-    // listDeltaAndCheckpointFiles = Optional.empty()
-    val logSegmentOpt = snapshotManager.getLogSegmentForVersion(
-      createMockFSListFromEngine(Seq.empty),
-      Optional.of(1),
-      Optional.empty()
-    )
-    assert(!logSegmentOpt.isPresent())
+    val exMsg = intercept[InvalidTableException] {
+      snapshotManager.getLogSegmentForVersion(
+        createMockFSListFromEngine(Seq.empty),
+        Optional.of(1),
+        Optional.empty()
+      )
+    }.getMessage
+
+    assert(exMsg.contains("Missing checkpoint at version 1"))
   }
 }
 
