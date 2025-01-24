@@ -21,7 +21,6 @@ import io.delta.kernel.internal.checksum.ChecksumUtils.CRC_FILE_SCHEMA
 import io.delta.kernel.internal.data.GenericRow
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.snapshot.SnapshotHint
-import io.delta.kernel.internal.util.InternalUtils.singletonStringColumnVector
 import io.delta.kernel.internal.util.VectorUtils
 import io.delta.kernel.internal.util.VectorUtils.{stringArrayValue, stringStringMapValue}
 import io.delta.kernel.test.{BaseMockJsonHandler, MockEngineUtils}
@@ -47,6 +46,8 @@ class ChecksumReadWriteSuite extends AnyFunSuite with MockEngineUtils {
     def testChecksumWrite(txn: Optional[String]): Unit = {
       assert(
         checksumWriter.maybeWriteCheckSum(mockEngine(jsonHandler = jsonHandler), snapshotHint, txn))
+      assert(jsonHandler.checksumFilePath == "/path/to/delta/log/00000000000000000001.crc")
+      assert(jsonHandler.capturedCrcRow.getSchema == CRC_FILE_SCHEMA)
       assert(
         jsonHandler.capturedCrcRow
           .getLong(CRC_FILE_SCHEMA.indexOf("tableSizeBytes")) == 100L
@@ -198,11 +199,13 @@ class ChecksumReadWriteSuite extends AnyFunSuite with MockEngineUtils {
 
 class MockCheckSumFileJsonWriter extends BaseMockJsonHandler {
   var capturedCrcRow: Row = new GenericRow(new StructType(), new util.HashMap[Integer, AnyRef]);
+  var checksumFilePath = ""
 
   override def writeJsonFileAtomically(
       filePath: String,
       data: CloseableIterator[Row],
       overwrite: Boolean): Unit = {
+    checksumFilePath = filePath
     if (data.hasNext) capturedCrcRow = data.next()
     assert(!data.hasNext)
   }
