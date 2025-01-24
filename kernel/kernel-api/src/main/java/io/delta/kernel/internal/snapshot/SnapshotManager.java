@@ -387,7 +387,7 @@ public class SnapshotManager {
         System.currentTimeMillis() - startTimeMillis);
 
     try {
-      return getLogSegmentForVersionHelper(startCheckpointVersionOpt, versionToLoadOpt, newFiles);
+      return constructLogSegmentFromFileList(startCheckpointVersionOpt, versionToLoadOpt, newFiles);
     } finally {
       logger.info(
           "{}: Took {}ms to construct a log segment",
@@ -400,7 +400,7 @@ public class SnapshotManager {
    * Helper function for the getLogSegmentForVersion above. Called with a provided files list, and
    * will then try to construct a new LogSegment using that.
    */
-  private LogSegment getLogSegmentForVersionHelper(
+  private LogSegment constructLogSegmentFromFileList(
       Optional<Long> startCheckpointOpt,
       Optional<Long> versionToLoadOpt,
       List<FileStatus> newFiles) {
