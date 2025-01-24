@@ -206,7 +206,8 @@ class MockCheckSumFileJsonWriter extends BaseMockJsonHandler {
       data: CloseableIterator[Row],
       overwrite: Boolean): Unit = {
     checksumFilePath = filePath
-    if (data.hasNext) capturedCrcRow = data.next()
+    assert(data.hasNext)
+    capturedCrcRow = data.next()
     assert(!data.hasNext)
   }
 
