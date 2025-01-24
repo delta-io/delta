@@ -27,6 +27,7 @@ import org.scalatest.BeforeAndAfter
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.plans.logical.Filter
 import org.apache.spark.sql.functions.{array, col, concat, lit, struct}
 import org.apache.spark.sql.test.SharedSparkSession
 
@@ -72,8 +73,9 @@ trait PartitionLikeDataSkippingSuiteBase
       val res = sql(query).collect()
       assert(res.sameElements(baseResult))
 
-      val predicates =
-        sql(query).queryExecution.optimizedPlan.expressions.flatMap(splitConjunctivePredicates)
+      val predicates = sql(query).queryExecution.optimizedPlan.collect {
+        case Filter(condition, _) => condition
+      }.flatMap(splitConjunctivePredicates)
       val scanResult = DeltaLog.forTable(spark, TableIdentifier(tableName))
         .update().filesForScan(predicates)
       assert(scanResult.files.length == expectedNumFiles)
