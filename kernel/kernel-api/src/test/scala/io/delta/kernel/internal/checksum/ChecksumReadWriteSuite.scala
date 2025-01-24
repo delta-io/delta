@@ -204,6 +204,7 @@ class MockCheckSumFileJsonWriter extends BaseMockJsonHandler {
       data: CloseableIterator[Row],
       overwrite: Boolean): Unit = {
     if (data.hasNext) capturedCrcRow = data.next()
+    assert(!data.hasNext)
   }
 
 }
