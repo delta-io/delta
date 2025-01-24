@@ -97,18 +97,16 @@ class ChecksumReadWriteSuite extends AnyFunSuite with MockEngineUtils {
       (OptionalLong.empty(), OptionalLong.empty())
     ).foreach { tableSizeAndNumFiles =>
       {
-        val snapshotHint =
-          new SnapshotHint(
-            1,
-            protocol,
-            metadata,
-            tableSizeAndNumFiles._1,
-            tableSizeAndNumFiles._2
-          )
         assert(
           !checksumWriter.maybeWriteCheckSum(
             mockEngine(jsonHandler = jsonHandler),
-            snapshotHint,
+            new SnapshotHint(
+              /* version= */1,
+              protocol,
+              metadata,
+              tableSizeAndNumFiles._1,
+              tableSizeAndNumFiles._2
+            ),
             Optional.of("txn")
           )
         )
