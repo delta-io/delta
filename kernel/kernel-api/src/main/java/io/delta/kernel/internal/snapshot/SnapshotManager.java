@@ -341,43 +341,12 @@ public class SnapshotManager {
     //         the previous latest complete checkpoint at or before $versionToLoad.               //
     ////////////////////////////////////////////////////////////////////////////////////////////////
 
-    final Optional<Long> startCheckpointVersionOpt =
-        versionToLoadOpt
-            .map(
-                versionToLoad -> {
-                  logger.info(
-                      "Finding last complete checkpoint at or before version {}", versionToLoad);
-                  final long startTimeMillis = System.currentTimeMillis();
-                  return Checkpointer.findLastCompleteCheckpointBefore(
-                          engine, logPath, versionToLoad + 1)
-                      .map(checkpointInstance -> checkpointInstance.version)
-                      .map(
-                          checkpointVersion -> {
-                            checkArgument(
-                                checkpointVersion <= versionToLoad,
-                                "Last complete checkpoint version %s was not <= targetVersion %s",
-                                checkpointVersion,
-                                versionToLoad);
+    final Optional<Long> getStartCheckpointVersionOpt =
+        getStartCheckpointVersion(engine, versionToLoadOpt);
 
-                            logger.info(
-                                "{}: Took {}ms to find last complete checkpoint at or before "
-                                    + "targetVersion {}",
-                                tablePath,
-                                System.currentTimeMillis() - startTimeMillis,
-                                versionToLoad);
+    // TODO: make this method *deep*. Conslidate all of the getLogSegment methods to one.
 
-                            return checkpointVersion;
-                          });
-                })
-            .orElseGet(
-                () -> {
-                  logger.info("Loading last checkpoint from the _last_checkpoint file");
-                  return new Checkpointer(logPath)
-                      .readLastCheckpointFile(engine)
-                      .map(x -> x.version);
-                });
-
-    return getLogSegmentForVersion(engine, startCheckpointVersionOpt, versionToLoadOpt);
+    return getLogSegmentForVersion(engine, getStartCheckpointVersionOpt, versionToLoadOpt);
   }
 
   /**
@@ -637,6 +606,49 @@ public class SnapshotManager {
         newCheckpointFiles,
         newCheckpointOpt.map(x -> x.version),
         lastCommitTimestamp);
+  }
+
+  /////////////////////////
+  // getLogSegment utils //
+  /////////////////////////
+
+  /**
+   * Determine the starting checkpoint version that is at or before `versionToLoadOpt`. If no
+   * `versionToLoadOpt` is provided, will use the checkpoint pointed to by the _last_checkpoint
+   * file.
+   */
+  private Optional<Long> getStartCheckpointVersion(Engine engine, Optional<Long> versionToLoadOpt) {
+    return versionToLoadOpt
+        .map(
+            versionToLoad -> {
+              logger.info(
+                  "Finding last complete checkpoint at or before version {}", versionToLoad);
+              final long startTimeMillis = System.currentTimeMillis();
+              return Checkpointer.findLastCompleteCheckpointBefore(
+                      engine, logPath, versionToLoad + 1)
+                  .map(checkpointInstance -> checkpointInstance.version)
+                  .map(
+                      checkpointVersion -> {
+                        checkArgument(
+                            checkpointVersion <= versionToLoad,
+                            "Last complete checkpoint version %s was not <= targetVersion %s",
+                            checkpointVersion,
+                            versionToLoad);
+
+                        logger.info(
+                            "{}: Took {}ms to find last complete checkpoint <= targetVersion {}",
+                            tablePath,
+                            System.currentTimeMillis() - startTimeMillis,
+                            versionToLoad);
+
+                        return checkpointVersion;
+                      });
+            })
+        .orElseGet(
+            () -> {
+              logger.info("Loading last checkpoint from the _last_checkpoint file");
+              return new Checkpointer(logPath).readLastCheckpointFile(engine).map(x -> x.version);
+            });
   }
 
   /**
