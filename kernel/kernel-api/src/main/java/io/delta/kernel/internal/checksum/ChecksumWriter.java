@@ -55,7 +55,8 @@ public class ChecksumWriter {
     // No sufficient information to write checksum file.
     if (!postCommitSnapshot.getNumFiles().isPresent()
         || !postCommitSnapshot.getTableSizeBytes().isPresent()) {
-      logger.warn("Skipping writing");
+      logger.warn(
+          "Skipping writing checksum due to num_files or total_table_size missing in the snapshot");
       return false;
     }
     Path newChecksumPath = FileNames.checksumFile(logPath, postCommitSnapshot.getVersion());

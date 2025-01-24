@@ -16,11 +16,11 @@
 
 package io.delta.kernel.internal.snapshot;
 
+import static java.util.Objects.requireNonNull;
+
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import java.util.OptionalLong;
-
-import static java.util.Objects.requireNonNull;
 
 /** Contains summary information of a {@link io.delta.kernel.Snapshot}. */
 public class SnapshotHint {
