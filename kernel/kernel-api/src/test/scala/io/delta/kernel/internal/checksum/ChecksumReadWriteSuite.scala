@@ -45,7 +45,8 @@ class ChecksumReadWriteSuite extends AnyFunSuite with MockEngineUtils {
       new SnapshotHint(1, protocol, metadata, OptionalLong.of(100), OptionalLong.of(1))
 
     def testChecksumWrite(txn: Optional[String]): Unit = {
-      checksumWriter.maybeWriteCheckSum(mockEngine(jsonHandler = jsonHandler), snapshotHint, txn)
+      assert(
+        checksumWriter.maybeWriteCheckSum(mockEngine(jsonHandler = jsonHandler), snapshotHint, txn))
       assert(
         jsonHandler.capturedCrcRow
           .getLong(CRC_FILE_SCHEMA.indexOf("tableSizeBytes")) == 100L
