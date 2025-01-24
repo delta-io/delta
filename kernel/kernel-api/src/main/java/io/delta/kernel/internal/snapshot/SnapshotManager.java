@@ -39,11 +39,11 @@ import io.delta.kernel.internal.*;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.checkpoints.*;
+import io.delta.kernel.internal.checksum.CRCInfo;
+import io.delta.kernel.internal.checksum.ChecksumReader;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.ListUtils;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
-import io.delta.kernel.internal.replay.CRCInfo;
-import io.delta.kernel.internal.replay.ChecksumReader;
 import io.delta.kernel.internal.replay.CreateCheckpointIterator;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.util.Clock;
@@ -809,7 +809,12 @@ public class SnapshotManager {
       // We found a CRCInfo of a version (a) older than the one we are looking for (snapshotVersion)
       // but (b) newer than the current hint. Use this CRCInfo to create a new hint
       return Optional.of(
-          new SnapshotHint(crcInfo.getVersion(), crcInfo.getProtocol(), crcInfo.getMetadata()));
+          new SnapshotHint(
+              crcInfo.getVersion(),
+              crcInfo.getProtocol(),
+              crcInfo.getMetadata(),
+              OptionalLong.of(crcInfo.getTableSizeBytes()),
+              OptionalLong.of(crcInfo.getNumFiles())));
     }
     return snapshotHint;
   }

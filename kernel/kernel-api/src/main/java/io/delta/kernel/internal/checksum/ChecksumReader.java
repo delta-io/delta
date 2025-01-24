@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.internal.replay;
+package io.delta.kernel.internal.checksum;
 
 import static io.delta.kernel.internal.util.FileNames.*;
 import static io.delta.kernel.internal.util.InternalUtils.toFilteredList;
@@ -98,7 +98,7 @@ public class ChecksumReader {
             .getJsonHandler()
             .readJsonFiles(
                 singletonCloseableIterator(FileStatus.of(filePath.toString())),
-                CRCInfo.FULL_SCHEMA,
+                ChecksumUtils.CRC_FILE_SCHEMA,
                 Optional.empty())) {
       // We do this instead of iterating through the rows or using `getSingularRow` so we
       // can use the existing fromColumnVector methods in Protocol, Metadata, Format etc
@@ -116,8 +116,7 @@ public class ChecksumReader {
 
       long crcVersion = FileNames.checksumVersion(filePath);
 
-      return CRCInfo.fromColumnarBatch(
-          engine, crcVersion, batch, 0 /* rowId */, filePath.toString());
+      return CRCInfo.fromColumnarBatch(crcVersion, batch, 0 /* rowId */, filePath.toString());
     } catch (Exception e) {
       // This can happen when the version does not have a checksum file
       logger.warn("Failed to read checksum file {}", filePath, e);
