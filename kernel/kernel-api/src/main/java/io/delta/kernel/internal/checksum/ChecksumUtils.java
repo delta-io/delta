@@ -21,6 +21,7 @@ import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 
+/** Helper class for shared components in checksum file read and write */
 public final class ChecksumUtils {
 
   public static StructType CRC_FILE_SCHEMA =
