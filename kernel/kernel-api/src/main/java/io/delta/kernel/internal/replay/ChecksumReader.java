@@ -19,6 +19,7 @@ import static io.delta.kernel.internal.util.FileNames.*;
 import static io.delta.kernel.internal.util.InternalUtils.toFilteredList;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
+import static java.lang.Math.min;
 
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
@@ -49,6 +50,8 @@ public class ChecksumReader {
    */
   public static Optional<CRCInfo> getCRCInfo(
       Engine engine, Path logPath, long targetedVersion, long lowerBound) {
+    // lower bound should always smaller than the targetedVersion.
+    lowerBound = min(lowerBound, targetedVersion);
     logger.info("Loading CRC file for version {} with lower bound {}", targetedVersion, lowerBound);
     // First try to load the CRC at given version. If not found or failed to read then try to
     // find the latest CRC file that is created at or after the lower bound version.
@@ -61,7 +64,6 @@ public class ChecksumReader {
         || targetedVersion == lowerBound) {
       return crcInfoOpt;
     }
-    checkArgument(targetedVersion >= lowerBound);
     logger.info(
         "CRC file for version {} not found, listing CRC files from version {}",
         targetedVersion,
