@@ -647,7 +647,6 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
   test("crc found at read version and checkpoint at read version => use crc") {
     withTempDirAndMetricsEngine { (path, engine) =>
       buildTableWithCrc(path)
-
       val checkpointVersion = 10;
       val logPath = new Path(s"$path/_delta_log")
       assert(
@@ -659,9 +658,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
           ).toPath
         )
       )
-
       val table = Table.forPath(engine, path)
-      table.getLatestSnapshot(engine)
 
       loadPandMCheckMetrics(
         table.getSnapshotAsOfVersion(engine, checkpointVersion).getSchema(engine),
