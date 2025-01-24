@@ -15,7 +15,7 @@
  */
 package io.delta.kernel.internal.checksum
 
-import io.delta.kernel.data.{ArrayValue, ColumnVector, MapValue, Row}
+import io.delta.kernel.data.Row
 import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
 import io.delta.kernel.internal.checksum.ChecksumUtils.CRC_FILE_SCHEMA
 import io.delta.kernel.internal.data.GenericRow
@@ -29,7 +29,7 @@ import io.delta.kernel.utils.CloseableIterator
 import org.scalatest.funsuite.AnyFunSuite
 
 import java.util
-import java.util.{Collections, HashMap, Optional, OptionalLong}
+import java.util.{Collections, Optional, OptionalLong}
 
 class ChecksumReadWriteSuite extends AnyFunSuite with MockEngineUtils {
 
