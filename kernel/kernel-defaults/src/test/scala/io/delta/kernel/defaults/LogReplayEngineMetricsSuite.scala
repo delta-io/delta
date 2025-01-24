@@ -424,7 +424,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
         Table.forPath(engine, path)
           .getLatestSnapshot(engine).getSchema(engine),
         engine,
-          // 10.checkpoint found, so use it and combined with 10.crc
+          // 10.checkpoint found, so use it and combined with 11.crc
           expJsonVersionsRead = Seq(11),
           expParquetVersionsRead = Seq(10),
           expParquetReadSetSizes = Seq(1),
