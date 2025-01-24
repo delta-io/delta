@@ -561,37 +561,37 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
 
   test(
     "checksum missing read version and the previous version, " +
-      "checkpoint exists the read version the previous version => use checkpoint"
+    "checkpoint exists the read version the previous version => use checkpoint"
   ) {
     withTempDirAndMetricsEngine { (path, engine) =>
-    buildTableWithCrc(path)
-        val checkpointVersion = 10;
-        val logPath = f"$path/_delta_log"
-        assert(
-          Files
-            .exists(
-              new File(
-                FileNames.checkpointFileSingular(new Path(logPath), checkpointVersion).toString
-              ).toPath
-            )
-        )
-        assert(
-          Files.deleteIfExists(
-            new File(FileNames.checksumFile(new Path(logPath), checkpointVersion).toString).toPath
-          )
-        )
-        assert(
-          Files.deleteIfExists(
+      buildTableWithCrc(path)
+      val checkpointVersion = 10;
+      val logPath = f"$path/_delta_log"
+      assert(
+        Files
+          .exists(
             new File(
-              FileNames.checksumFile(new Path(logPath), checkpointVersion + 1).toString
+              FileNames.checkpointFileSingular(new Path(logPath), checkpointVersion).toString
             ).toPath
           )
+      )
+      assert(
+        Files.deleteIfExists(
+          new File(FileNames.checksumFile(new Path(logPath), checkpointVersion).toString).toPath
         )
+      )
+      assert(
+        Files.deleteIfExists(
+          new File(
+            FileNames.checksumFile(new Path(logPath), checkpointVersion + 1).toString
+          ).toPath
+        )
+      )
 
-        val table = Table.forPath(engine, path)
+      val table = Table.forPath(engine, path)
 
-        // 11.crc, 10.crc missing, 10.checkpoint.parquet exists.
-        // Attempt to read 11.crc fails and read 10.checkpoint.parquet and 11.json succeeds.
+      // 11.crc, 10.crc missing, 10.checkpoint.parquet exists.
+      // Attempt to read 11.crc fails and read 10.checkpoint.parquet and 11.json succeeds.
       loadPandMCheckMetrics(
         table.getSnapshotAsOfVersion(engine, 11).getSchema(engine),
         engine,
@@ -642,7 +642,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
       )
     }
   }
-  
+
 
   test("crc found at read version and checkpoint at read version => use crc") {
     withTempDirAndMetricsEngine { (path, engine) =>
