@@ -37,6 +37,9 @@ public class TransactionMetrics {
 
   public final Counter totalActionsCounter = new Counter();
 
+  // TODO: collect removed file's total size.
+  public final Counter addFilesSizeInBytesCounter = new Counter();
+
   /**
    * Resets the action counters (addFilesCounter, removeFilesCounter and totalActionsCounter) to 0.
    * Action counters may be partially incremented if an action iterator is not read to completion
@@ -45,6 +48,7 @@ public class TransactionMetrics {
    */
   public void resetActionCounters() {
     addFilesCounter.reset();
+    addFilesSizeInBytesCounter.reset();
     removeFilesCounter.reset();
     totalActionsCounter.reset();
   }
@@ -57,6 +61,7 @@ public class TransactionMetrics {
       final long numAddFiles = addFilesCounter.value();
       final long numRemoveFiles = removeFilesCounter.value();
       final long numTotalActions = totalActionsCounter.value();
+      final long totalAddFilesSizeInBytes = addFilesSizeInBytesCounter.value();
 
       @Override
       public long getTotalCommitDurationNs() {
@@ -81,6 +86,11 @@ public class TransactionMetrics {
       @Override
       public long getNumTotalActions() {
         return numTotalActions;
+      }
+
+      @Override
+      public long getTotalAddFilesSizeInBytes() {
+        return totalAddFilesSizeInBytes;
       }
     };
   }

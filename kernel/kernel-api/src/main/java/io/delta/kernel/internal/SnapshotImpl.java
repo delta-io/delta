@@ -183,4 +183,8 @@ public class SnapshotImpl implements Snapshot {
   public Optional<Long> getLatestTransactionVersion(Engine engine, String applicationId) {
     return logReplay.getLatestTransactionIdentifier(engine, applicationId);
   }
+
+    public Optional<SnapshotHint> getCachedSnapshotHint() {
+        return cachedSnapshotHint;
+    }
 }

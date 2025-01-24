@@ -23,7 +23,8 @@ import com.fasterxml.jackson.annotation.JsonPropertyOrder;
   "numCommitAttempts",
   "numAddFiles",
   "numRemoveFiles",
-  "numTotalActions"
+  "numTotalActions",
+  "totalAddFilesSizeInBytes"
 })
 public interface TransactionMetricsResult {
 
@@ -50,4 +51,10 @@ public interface TransactionMetricsResult {
    *     transaction this metric may be incomplete.
    */
   long getNumTotalActions();
+
+  /**
+   * @return the sum of size of added files committed in this transaction. For a failed transaction
+   *     this metric may be incomplete.
+   */
+  long getTotalAddFilesSizeInBytes();
 }

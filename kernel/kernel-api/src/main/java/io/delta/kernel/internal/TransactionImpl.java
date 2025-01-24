@@ -28,6 +28,7 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.ConcurrentWriteException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.*;
+import io.delta.kernel.internal.checksum.ChecksumWriter;
 import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.metrics.TransactionMetrics;
@@ -35,7 +36,9 @@ import io.delta.kernel.internal.metrics.TransactionReportImpl;
 import io.delta.kernel.internal.replay.ConflictChecker;
 import io.delta.kernel.internal.replay.ConflictChecker.TransactionRebaseState;
 import io.delta.kernel.internal.rowtracking.RowTracking;
+import io.delta.kernel.internal.snapshot.SnapshotHint;
 import io.delta.kernel.internal.util.*;
+import io.delta.kernel.metrics.TransactionMetricsResult;
 import io.delta.kernel.metrics.TransactionReport;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterable;
@@ -70,6 +73,7 @@ public class TransactionImpl implements Transaction {
   private Metadata metadata;
   private boolean shouldUpdateMetadata;
   private int maxRetries;
+  private final ChecksumWriter checksumWriter;
 
   private boolean closed; // To avoid trying to commit the same transaction again.
 
@@ -100,6 +104,7 @@ public class TransactionImpl implements Transaction {
     this.shouldUpdateProtocol = shouldUpdateProtocol;
     this.maxRetries = maxRetries;
     this.clock = clock;
+    this.checksumWriter = new ChecksumWriter(logPath);
   }
 
   @Override
@@ -341,6 +346,9 @@ public class TransactionImpl implements Transaction {
                           transactionMetrics.totalActionsCounter.increment();
                           if (!action.isNullAt(ADD_FILE_ORDINAL)) {
                             transactionMetrics.addFilesCounter.increment();
+                            AddFile addFile = new AddFile(action.getStruct(ADD_FILE_ORDINAL));
+                            transactionMetrics.addFilesSizeInBytesCounter.increment(
+                                    addFile.getSize());
                           } else if (!action.isNullAt(REMOVE_FILE_ORDINAL)) {
                             transactionMetrics.removeFilesCounter.increment();
                           }
@@ -351,6 +359,8 @@ public class TransactionImpl implements Transaction {
           },
           "Write file actions to JSON log file `%s`",
           FileNames.deltaFile(logPath, commitAsVersion));
+
+      checksumWriter.maybeWriteCheckSum()
 
       return new TransactionCommitResult(commitAsVersion, isReadyForCheckpoint(commitAsVersion));
     } catch (FileAlreadyExistsException e) {
