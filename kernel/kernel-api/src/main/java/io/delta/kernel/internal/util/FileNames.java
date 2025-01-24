@@ -92,11 +92,6 @@ public final class FileNames {
     }
   }
 
-  /** Returns the path to the checksum file for the given version. */
-  public static Path checksumFile(Path path, long version) {
-    return new Path(path, String.format("%020d.crc", version));
-  }
-
   /** Returns the version for the given delta path. */
   public static long deltaVersion(Path path) {
     return Long.parseLong(path.getName().split("\\.")[0]);
@@ -184,6 +179,11 @@ public final class FileNames {
               path, String.format("%020d.checkpoint.%010d.%010d.parquet", version, i, numParts)));
     }
     return output;
+  }
+
+  /** Returns the path to the checksum file for the given version. */
+  public static Path checksumFile(Path path, long version) {
+    return new Path(path, String.format("%020d.crc", version));
   }
 
   /////////////////////////////
