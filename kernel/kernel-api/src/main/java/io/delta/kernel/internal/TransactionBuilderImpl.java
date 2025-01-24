@@ -236,7 +236,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
           logReplay,
           protocol,
           metadata,
-          snapshotContext);
+          snapshotContext,
+          Optional.empty());
     }
 
     @Override

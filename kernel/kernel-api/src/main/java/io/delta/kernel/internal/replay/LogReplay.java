@@ -17,10 +17,6 @@
 package io.delta.kernel.internal.replay;
 
 import static io.delta.kernel.internal.replay.LogReplayUtils.assertLogFilesBelongToTable;
-import static io.delta.kernel.internal.util.FileNames.checkpointVersion;
-import static io.delta.kernel.internal.util.Preconditions.checkArgument;
-import static java.util.Arrays.asList;
-import static java.util.Collections.max;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
@@ -43,7 +39,6 @@ import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.*;
-import java.util.stream.Collectors;
 
 /**
  * Replays a history of actions, resolving them to produce the current state of the table. The
@@ -212,44 +207,6 @@ public class LogReplay {
     // Exit early if the hint already has the info we need.
     if (snapshotHint.isPresent() && snapshotHint.get().getVersion() == snapshotVersion) {
       return new Tuple2<>(snapshotHint.get().getProtocol(), snapshotHint.get().getMetadata());
-    }
-
-    // Snapshot hit is not use-able in this case for determine the lower bound.
-    if (snapshotHint.isPresent() && snapshotHint.get().getVersion() > snapshotVersion) {
-      snapshotHint = Optional.empty();
-    }
-
-    // Finds the inclusive lower bound for CRC search.
-    // If the snapshot hint or checkpoint older than required version is present, we can use them as
-    // the lower bound for the CRC search.
-    List<Long> eligibleCheckpointVersions =
-        logSegment.checkpoints.stream()
-            .map(cp -> checkpointVersion(cp.getPath()))
-            .filter(v -> v <= snapshotVersion)
-            .collect(Collectors.toList());
-    long crcSearchLowerBound =
-        max(
-            asList(
-                snapshotHint.map(SnapshotHint::getVersion).orElse(0L) + 1,
-                eligibleCheckpointVersions.isEmpty() ? 0L : max(eligibleCheckpointVersions),
-                // Only find the CRC within 100 versions.
-                snapshotVersion - 100,
-                0L));
-    Optional<CRCInfo> crcInfoOpt =
-        ChecksumReader.getCRCInfo(engine, logSegment.logPath, snapshotVersion, crcSearchLowerBound);
-    if (crcInfoOpt.isPresent()) {
-      CRCInfo crcInfo = crcInfoOpt.get();
-      if (crcInfo.getVersion() == snapshotVersion) {
-        // CRC is related to the desired snapshot version. Load protocol and metadata from CRC.
-        return new Tuple2<>(crcInfo.getProtocol(), crcInfo.getMetadata());
-      }
-      checkArgument(
-          crcInfo.getVersion() >= crcSearchLowerBound && crcInfo.getVersion() <= snapshotVersion);
-      // We found a CRCInfo of a version (a) older than the one we are looking for (snapshotVersion)
-      // but (b) newer than the current hint. Use this CRCInfo to create a new hint
-      snapshotHint =
-          Optional.of(
-              new SnapshotHint(crcInfo.getVersion(), crcInfo.getProtocol(), crcInfo.getMetadata()));
     }
 
     Protocol protocol = null;

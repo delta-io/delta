@@ -31,6 +31,7 @@ import io.delta.kernel.internal.metrics.SnapshotReportImpl;
 import io.delta.kernel.internal.replay.CreateCheckpointIterator;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
+import io.delta.kernel.internal.snapshot.SnapshotHint;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.metrics.SnapshotReport;
 import io.delta.kernel.types.StructType;
@@ -49,6 +50,7 @@ public class SnapshotImpl implements Snapshot {
   private final LogSegment logSegment;
   private Optional<Long> inCommitTimestampOpt;
   private final SnapshotReport snapshotReport;
+  private final Optional<SnapshotHint> cachedSnapshotHint;
 
   public SnapshotImpl(
       Path dataPath,
@@ -56,7 +58,8 @@ public class SnapshotImpl implements Snapshot {
       LogReplay logReplay,
       Protocol protocol,
       Metadata metadata,
-      SnapshotQueryContext snapshotContext) {
+      SnapshotQueryContext snapshotContext,
+      Optional<SnapshotHint> cachedSnapshotHint) {
     this.logPath = new Path(dataPath, "_delta_log");
     this.dataPath = dataPath;
     this.version = logSegment.version;
@@ -66,6 +69,7 @@ public class SnapshotImpl implements Snapshot {
     this.metadata = metadata;
     this.inCommitTimestampOpt = Optional.empty();
     this.snapshotReport = SnapshotReportImpl.forSuccess(snapshotContext);
+    this.cachedSnapshotHint = cachedSnapshotHint;
   }
 
   /////////////////
