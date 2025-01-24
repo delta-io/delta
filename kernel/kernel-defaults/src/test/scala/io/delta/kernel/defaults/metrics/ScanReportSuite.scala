@@ -18,6 +18,7 @@ package io.delta.kernel.defaults.metrics
 import java.util.Collections
 
 import io.delta.kernel._
+import io.delta.kernel.data.FilteredColumnarBatch
 import io.delta.kernel.engine._
 import io.delta.kernel.expressions.{Column, Literal, Predicate}
 import io.delta.kernel.internal.data.GenericRow
@@ -26,6 +27,7 @@ import io.delta.kernel.internal.metrics.Timer
 import io.delta.kernel.internal.util.{FileNames, Utils}
 import io.delta.kernel.metrics.{ScanReport, SnapshotReport}
 import io.delta.kernel.types.{IntegerType, LongType, StructType}
+import io.delta.kernel.utils.CloseableIterator
 
 import org.apache.spark.sql.functions.col
 import org.scalatest.funsuite.AnyFunSuite
@@ -48,15 +50,16 @@ class ScanReportSuite extends AnyFunSuite with MetricsReportTestUtils {
    */
   def getScanAndSnapshotReport(
     getScan: Engine => Scan,
-    expectException: Boolean
+    expectException: Boolean,
+    consumeScanFiles: CloseableIterator[FilteredColumnarBatch] => Unit
   ): (ScanReport, Long, SnapshotReport, Option[Exception]) = {
     val timer = new Timer()
 
     val (metricsReports, exception) = collectMetricsReports(
       engine => {
         val scan = getScan(engine)
-        // toSeq triggers log replay, consumes the actions and closes the iterator
-        timer.time(() => scan.getScanFiles(engine).toSeq) // Time the actual operation
+        // Time the actual operation
+        timer.timeCallable(() => consumeScanFiles(scan.getScanFiles(engine)))
       },
       expectException
     )
@@ -85,6 +88,7 @@ class ScanReportSuite extends AnyFunSuite with MetricsReportTestUtils {
    * @param expectedDataSkippingFilter expected data skipping filter
    * @param filter filter to build the scan with
    * @param readSchema read schema to build the scan with
+   * @param consumeScanFiles function to consume scan file iterator
    */
   // scalastyle:off
   def checkScanReport(
@@ -97,8 +101,11 @@ class ScanReportSuite extends AnyFunSuite with MetricsReportTestUtils {
     expectedNumRemoveFilesSeenFromDeltaFiles: Long = 0,
     expectedPartitionPredicate: Option[Predicate] = None,
     expectedDataSkippingFilter: Option[Predicate] = None,
+    expectedIsFullyConsumed: Boolean = true,
     filter: Option[Predicate] = None,
-    readSchema: Option[StructType] = None
+    readSchema: Option[StructType] = None,
+    // toSeq triggers log replay, consumes the actions and closes the iterator
+    consumeScanFiles: CloseableIterator[FilteredColumnarBatch] => Unit = iter => iter.toSeq
   ): Unit = {
     // scalastyle:on
     // We need to save the snapshotSchema to check against the generated scan report
@@ -119,7 +126,8 @@ class ScanReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         }
         scanBuilder.build()
       },
-      expectException
+      expectException,
+      consumeScanFiles
     )
 
     // Verify contents
@@ -142,6 +150,7 @@ class ScanReportSuite extends AnyFunSuite with MetricsReportTestUtils {
     assert(scanReport.getFilter.toScala == filter)
     assert(scanReport.getReadSchema == readSchema.getOrElse(snapshotSchema))
     assert(scanReport.getPartitionPredicate.toScala == expectedPartitionPredicate)
+    assert(scanReport.getIsFullyConsumed == expectedIsFullyConsumed)
 
     (scanReport.getDataSkippingFilter.toScala, expectedDataSkippingFilter) match {
       case (Some(found), Some(expected)) =>
@@ -257,6 +266,26 @@ class ScanReportSuite extends AnyFunSuite with MetricsReportTestUtils {
     }
   }
 
+  test("ScanReport: close scan file iterator early") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+
+      // Set up delta table with 2 add files
+      spark.range(10).write.format("delta").mode("append").save(path)
+      spark.range(10).write.format("delta").mode("append").save(path)
+
+      checkScanReport(
+        path,
+        expectException = false,
+        expectedNumAddFiles = 1,
+        expectedNumAddFilesFromDeltaFiles = 1,
+        expectedNumActiveAddFiles = 1,
+        expectedIsFullyConsumed = false,
+        consumeScanFiles = iter => iter.close() // Close iterator before consuming any scan files
+      )
+    }
+  }
+
   //////////////////
   // Error cases ///
   //////////////////
@@ -280,6 +309,7 @@ class ScanReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         expectedNumAddFiles = 0,
         expectedNumAddFilesFromDeltaFiles = 0,
         expectedNumActiveAddFiles = 0,
+        expectedIsFullyConsumed = false,
         filter = Some(partFilter),
         expectedPartitionPredicate = Some(partFilter)
       )
@@ -316,7 +346,8 @@ class ScanReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         expectException = true,
         expectedNumAddFiles = 0,
         expectedNumAddFilesFromDeltaFiles = 0,
-        expectedNumActiveAddFiles = 0
+        expectedNumActiveAddFiles = 0,
+        expectedIsFullyConsumed = false
       )
     }
   }

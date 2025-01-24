@@ -210,6 +210,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |"readSchema":"${scanReport.getReadSchema}",
          |"partitionPredicate":${optionToString(partitionPredicate)},
          |"dataSkippingFilter":${optionToString(dataSkippingFilter)},
+         |"isFullyConsumed":${scanReport.getIsFullyConsumed},
          |"scanMetrics":{
          |"totalPlanningDurationNs":${scanMetrics.getTotalPlanningDurationNs},
          |"numAddFilesSeen":${scanMetrics.getNumAddFilesSeen},
@@ -248,6 +249,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
       new StructType().add("id", IntegerType.INTEGER),
       Optional.of(partitionPredicate),
       Optional.empty(),
+      true,
       scanMetrics,
       Optional.of(exception)
     )
@@ -267,6 +269,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |"readSchema":"struct(StructField(name=id,type=integer,nullable=true,metadata={}))",
          |"partitionPredicate":"(column(`part`) > 1)",
          |"dataSkippingFilter":null,
+         |"isFullyConsumed":true,
          |"scanMetrics":{
          |"totalPlanningDurationNs":200,
          |"numAddFilesSeen":100,
@@ -292,6 +295,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
       tableSchema,
       Optional.empty(),
       Optional.empty(),
+      false, // isFullyConsumed
       new ScanMetrics(),
       Optional.empty()
     )

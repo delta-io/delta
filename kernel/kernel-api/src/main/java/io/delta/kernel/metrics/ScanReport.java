@@ -36,6 +36,7 @@ import java.util.UUID;
   "readSchema",
   "partitionPredicate",
   "dataSkippingFilter",
+  "isFullyConsumed",
   "scanMetrics"
 })
 public interface ScanReport extends DeltaOperationReport {
@@ -62,6 +63,15 @@ public interface ScanReport extends DeltaOperationReport {
 
   /** @return the filter used for data skipping using the file statistics */
   Optional<Predicate> getDataSkippingFilter();
+
+  /**
+   * Whether the scan file iterator had been fully consumed when it was closed. The iterator may be
+   * closed early (before being fully consumed) either due to an exception originating within
+   * connector code or intentionally (such as for a LIMIT query).
+   *
+   * @return whether the scan file iterator had been fully consumed when it was closed
+   */
+  boolean getIsFullyConsumed();
 
   /** @return the metrics for this scan */
   ScanMetricsResult getScanMetrics();

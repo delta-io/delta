@@ -40,19 +40,19 @@ public interface ScanMetricsResult {
 
   /**
    * @return the number of AddFile actions seen during log replay (from both checkpoint and delta
-   *     files). For a failed scan this metric may be incomplete.
+   *     files). For a failed or incomplete scan this metric may be incomplete.
    */
   long getNumAddFilesSeen();
 
   /**
    * @return the number of AddFile actions seen during log replay from delta files only. For a
-   *     failed scan this metric may be incomplete.
+   *     failed or incomplete scan this metric may be incomplete.
    */
   long getNumAddFilesSeenFromDeltaFiles();
 
   /**
    * @return the number of active AddFile actions that survived log replay (i.e. belong to the table
-   *     state). For a failed scan this metric may be incomplete.
+   *     state). For a failed or incomplete scan this metric may be incomplete.
    */
   long getNumActiveAddFiles();
 
@@ -62,13 +62,13 @@ public interface ScanMetricsResult {
    * In this case, the same AddFile will be added with stats without removing the original.
    *
    * @return the number of AddFile actions seen during log replay that are duplicates. For a failed
-   *     scan this metric may be incomplete.
+   *     or incomplete scan this metric may be incomplete.
    */
   long getNumDuplicateAddFiles();
 
   /**
-   * @return the number of RemoveFiles seen in log replay (only from delta files). For a failed scan
-   *     this metric may be incomplete.
+   * @return the number of RemoveFiles seen in log replay (only from delta files). For a failed or
+   *     incomplete scan this metric may be incomplete.
    */
   long getNumRemoveFilesSeenFromDeltaFiles();
 }

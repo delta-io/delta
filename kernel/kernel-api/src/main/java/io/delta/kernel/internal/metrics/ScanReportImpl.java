@@ -34,6 +34,7 @@ public class ScanReportImpl extends DeltaOperationReportImpl implements ScanRepo
   private final StructType readSchema;
   private final Optional<Predicate> partitionPredicate;
   private final Optional<Predicate> dataSkippingFilter;
+  private final boolean isFullyConsumed;
   private final ScanMetricsResult scanMetricsResult;
 
   public ScanReportImpl(
@@ -45,6 +46,7 @@ public class ScanReportImpl extends DeltaOperationReportImpl implements ScanRepo
       StructType readSchema,
       Optional<Predicate> partitionPredicate,
       Optional<Predicate> dataSkippingFilter,
+      boolean isFullyConsumed,
       ScanMetrics scanMetrics,
       Optional<Exception> exception) {
     super(tablePath, exception);
@@ -55,6 +57,7 @@ public class ScanReportImpl extends DeltaOperationReportImpl implements ScanRepo
     this.readSchema = requireNonNull(readSchema);
     this.partitionPredicate = requireNonNull(partitionPredicate);
     this.dataSkippingFilter = requireNonNull(dataSkippingFilter);
+    this.isFullyConsumed = isFullyConsumed;
     this.scanMetricsResult = requireNonNull(scanMetrics).captureScanMetricsResult();
   }
 
@@ -91,6 +94,11 @@ public class ScanReportImpl extends DeltaOperationReportImpl implements ScanRepo
   @Override
   public Optional<Predicate> getDataSkippingFilter() {
     return dataSkippingFilter;
+  }
+
+  @Override
+  public boolean getIsFullyConsumed() {
+    return isFullyConsumed;
   }
 
   @Override

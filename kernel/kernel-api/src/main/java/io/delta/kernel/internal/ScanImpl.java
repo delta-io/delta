@@ -134,7 +134,7 @@ public class ScanImpl implements Scan {
     // `reportError` or `reportSuccess` to stop the planning duration timer and push a report to
     // the engine
     ScanReportReporter reportReporter =
-        exceptionOpt -> {
+        (exceptionOpt, isFullyConsumed) -> {
           planningDuration.stop();
           ScanReport scanReport =
               new ScanReportImpl(
@@ -146,6 +146,7 @@ public class ScanImpl implements Scan {
                   readSchema,
                   getPartitionsFilters() /* partitionPredicate */,
                   dataSkippingFilter.map(p -> p),
+                  isFullyConsumed,
                   scanMetrics,
                   exceptionOpt);
           engine.getMetricsReporters().forEach(reporter -> reporter.report(scanReport));
@@ -359,27 +360,32 @@ public class ScanImpl implements Scan {
    * etc. This means we cannot report the successful scan within `getScanFiles` but rather must
    * report after the iterator has been consumed.
    *
-   * <p>This method takes a scan file iterator. It wraps the methods `next` and `hasNext` such that
-   * in the case of an exception originating from there, we will first report a failed ScanReport
-   * before propagating the exception. It also reports a success ScanReport when the iterator is
-   * closed, if and only if, all the elements have been consumed.
+   * <p>This method wraps an inner scan file iterator with an outer iterator wrapper that reports
+   * {@link ScanReport}s as needed. It reports a failed {@link ScanReport} in the case of any
+   * exceptions originating from the inner iterator `next` and `hasNext` impl. It reports a complete
+   * or incomplete {@link ScanReport} when the iterator is closed.
    */
   private CloseableIterator<FilteredColumnarBatch> wrapWithMetricsReporting(
       CloseableIterator<FilteredColumnarBatch> scanIter, ScanReportReporter reporter) {
     return new CloseableIterator<FilteredColumnarBatch>() {
 
+      /* Whether this iterator has reported an error report */
+      private boolean errorReported = false;
+
       @Override
       public void close() throws IOException {
         try {
-          if (!scanIter.hasNext()) {
-            // The entire scan file iterator has been successfully consumed, report successful Scan
-            reporter.reportSuccess();
-          } else {
-            // TODO what should we do if the iterator is not fully consumed?
-            //  - Do nothing (we don't know why the iterator is being closed early or what is going
-            //    on in the connector)
-            //  - Report a failure report with some sort of placeholder exception
-            //  - Something else?
+          // If a ScanReport has already been pushed in the case of an exception don't double report
+          if (!errorReported) {
+            if (!scanIter.hasNext()) {
+              // The entire scan file iterator has been successfully consumed report a complete Scan
+              reporter.reportCompleteScan();
+            } else {
+              // The scan file iterator has NOT been fully consumed before being closed
+              // We have no way of knowing the reason why, this could be due to an exception in the
+              // connector code, or intentional early termination such as for a LIMIT query
+              reporter.reportIncompleteScan();
+            }
           }
         } finally {
           scanIter.close();
@@ -401,6 +407,7 @@ public class ScanImpl implements Scan {
           return s.get();
         } catch (Exception e) {
           reporter.reportError(e);
+          errorReported = true;
           throw e;
         }
       }
@@ -414,14 +421,18 @@ public class ScanImpl implements Scan {
   private interface ScanReportReporter {
 
     default void reportError(Exception e) {
-      report(Optional.of(e));
+      report(Optional.of(e), false /* isFullyConsumed */);
     }
 
-    default void reportSuccess() {
-      report(Optional.empty());
+    default void reportCompleteScan() {
+      report(Optional.empty(), true /* isFullyConsumed */);
+    }
+
+    default void reportIncompleteScan() {
+      report(Optional.empty(), false /* isFullyConsumed */);
     }
 
     /** Given an optional exception, reports a {@link ScanReport} to the engine */
-    void report(Optional<Exception> exceptionOpt);
+    void report(Optional<Exception> exceptionOpt, boolean isFullyConsumed);
   }
 }
