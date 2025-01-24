@@ -207,6 +207,42 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
+  test("Setting retries to 0 disables retries") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // Create table
+      val table = Table.forPath(engine, tablePath)
+      createTxn(engine, tablePath, isNewTable = true, testSchema, Seq.empty)
+        .commit(engine, emptyIterable())
+
+      // Create txn1 with config changes
+      val txn1 = createWriteTxnBuilder(table)
+        .withTableProperties(engine, Map(TableConfig.CHECKPOINT_INTERVAL.getKey -> "2").asJava)
+        .withMaxRetries(0)
+        .build(engine)
+
+      // Create and commit txn2
+      appendData(
+        engine,
+        tablePath,
+        data = Seq(Map.empty[String, Literal] -> dataBatches1)
+      )
+
+      val ver1Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      assertMetadataProp(ver1Snapshot, TableConfig.CHECKPOINT_INTERVAL, 10)
+
+      // Try to commit txn1 but expect failure
+      val ex1 = intercept[ConcurrentWriteException] {
+        txn1.commit(engine, emptyIterable())
+      }
+      assert(
+        ex1.getMessage.contains("Transaction has encountered a conflict and can not be committed"))
+
+      // check that we're still set to 10
+      val ver2Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      assertMetadataProp(ver2Snapshot, TableConfig.CHECKPOINT_INTERVAL, 10)
+    }
+  }
+
   test("create table and configure the same properties") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)

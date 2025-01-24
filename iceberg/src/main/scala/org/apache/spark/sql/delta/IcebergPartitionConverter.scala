@@ -55,7 +55,8 @@ object IcebergPartitionConverter {
   def physicalNameToPartitionField(
       table: Table, partitionSchema: StructType): Map[String, PartitionField] =
     table.spec().fields().asScala.collect {
-      case field if field.transform().toString != "void" =>
+      case field if field.transform().toString != "void" &&
+          !field.transform().toString.contains("bucket") =>
         DeltaColumnMapping.getPhysicalName(partitionSchema(field.name)) -> field
     }.toMap
 }

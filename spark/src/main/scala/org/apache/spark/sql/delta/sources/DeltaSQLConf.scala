@@ -450,6 +450,36 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val FAST_DROP_FEATURE_DV_DISCOVERY_IN_VACUUM_DISABLED =
+    buildConf("tableFeatures.dev.fastDropFeature.DVDiscoveryInVacuum.disabled")
+      .internal()
+      .doc(
+        """Whether to allow DV discovery in Vacuum.
+          |This is config is only intended for testing purposes.""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
+  val FAST_DROP_FEATURE_GENERATE_DV_TOMBSTONES =
+    buildConf("tableFeatures.dev.fastDropFeature.generateDVTombstones.enabled")
+      .internal()
+      .doc(
+        """Whether to generate DV tombstones when dropping deletion vectors.
+          |These make sure deletion vector files won't accidentally be vacuumed by clients
+          |that do not support DVs.""".stripMargin)
+      .booleanConf
+      .createWithDefaultFunction(() => SQLConf.get.getConf(DeltaSQLConf.FAST_DROP_FEATURE_ENABLED))
+
+  val FAST_DROP_FEATURE_DV_TOMBSTONE_COUNT_THRESHOLD =
+    buildConf("tableFeatures.dev.fastDropFeature.dvTombstoneCountThreshold")
+      .doc(
+        """The maximum number of DV tombstones we are allowed store to memory when dropping
+          |deletion vectors. When the resulting number of DV tombstones is higher, we use
+          |a special commit for large outputs. This does not materialize results to memory
+          |but does not retry in case of a conflict.""".stripMargin)
+      .intConf
+      .checkValue(_ >= 0, "DVTombstoneCountThreshold must not be negative.")
+      .createWithDefault(10000)
+
   val DELTA_MAX_SNAPSHOT_LINEAGE_LENGTH =
     buildConf("maxSnapshotLineageLength")
       .internal()
@@ -1508,6 +1538,13 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_CONVERT_ICEBERG_BUCKET_PARTITION_ENABLED =
+    buildConf("convert.iceberg.bucketPartition.enabled")
+      .doc("If enabled, convert iceberg table with bucket partition to unpartitioned delta table.")
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_CONVERT_ICEBERG_UNSAFE_MOR_TABLE_ENABLE =
     buildConf("convert.iceberg.unsafeConvertMorTable.enabled")
       .doc("If enabled, iceberg merge-on-read tables can be unsafely converted by ignoring " +
@@ -2173,6 +2210,13 @@ trait DeltaSQLConfBase {
       .checkValue(v => v >= 1, "Must be at least 1.")
       .createWithDefault(100)
 
+  val DELTA_CONVERT_ICEBERG_STATS = buildConf("collectStats.convertIceberg")
+    .internal()
+    .doc("When enabled, attempts to convert Iceberg stats to Delta stats when cloning from " +
+      "an Iceberg source.")
+    .booleanConf
+    .createWithDefault(true)
+
   /////////////////////
   // Optimized Write
   /////////////////////
@@ -2305,6 +2349,20 @@ trait DeltaSQLConfBase {
           |""".stripMargin)
       .booleanConf
       .createWithDefault(false)
+
+  ///////////
+  // VARIANT
+  ///////////////////
+  val FORCE_USE_PREVIEW_VARIANT_FEATURE = buildConf("variant.forceUsePreviewTableFeature")
+    .internal()
+    .doc(
+      """
+        | If true, creating new tables with variant columns only attaches the 'variantType-preview'
+        | table feature. Attempting to operate on existing tables created with the stable feature
+        | does not require that the preview table feature be present.
+        |""".stripMargin)
+    .booleanConf
+    .createWithDefault(false)
 
   ///////////
   // TESTING

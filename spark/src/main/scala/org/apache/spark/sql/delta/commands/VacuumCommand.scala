@@ -31,7 +31,7 @@ import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, FileAction, Remo
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, DeltaFileOperations, FileNames, JsonUtils}
+import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, DeltaFileOperations, FileNames, JsonUtils, Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.DeltaFileOperations.tryDeleteNonRecursive
 import org.apache.spark.sql.delta.util.FileNames._
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
@@ -131,6 +131,8 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
     }
     val relativizeIgnoreError =
       spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_RELATIVIZE_IGNORE_ERROR)
+    val dvDiscoveryDisabled = DeltaUtils.isTesting && spark.sessionState.conf.getConf(
+      DeltaSQLConf.FAST_DROP_FEATURE_DV_DISCOVERY_IN_VACUUM_DISABLED)
 
     val canonicalizedBasePath = SparkPath.fromPathString(basePath).urlEncoded
     snapshot.stateDS.mapPartitions { actions =>
@@ -148,7 +150,8 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
               fa,
               fs,
               reservoirBase,
-              relativizeIgnoreError
+              relativizeIgnoreError,
+              dvDiscoveryDisabled
             )
           case _ => Nil
         }
@@ -864,7 +867,8 @@ trait VacuumCommandImpl extends DeltaCommand {
       action: FileAction,
       fs: FileSystem,
       basePath: Path,
-      relativizeIgnoreError: Boolean
+      relativizeIgnoreError: Boolean,
+      dvDiscoveryDisabled: Boolean
   ): Seq[String] = {
     val paths = getActionRelativePath(action, fs, basePath, relativizeIgnoreError)
       .map {
@@ -873,7 +877,7 @@ trait VacuumCommandImpl extends DeltaCommand {
       }.getOrElse(Seq.empty)
 
     val deletionVectorPath =
-      getDeletionVectorRelativePathAndSize(action).map(_._1)
+      if (dvDiscoveryDisabled) None else getDeletionVectorRelativePathAndSize(action).map(_._1)
 
     paths ++ deletionVectorPath.toSeq
   }
