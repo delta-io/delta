@@ -236,8 +236,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
           logReplay,
           protocol,
           metadata,
-          snapshotContext,
-          Optional.empty());
+          snapshotContext);
     }
 
     @Override
@@ -264,6 +263,11 @@ public class TransactionBuilderImpl implements TransactionBuilder {
           Optional<SnapshotHint> snapshotHint,
           long snapshotVersion) {
         return new Tuple2<>(protocol, metadata);
+      }
+
+      @Override
+      public Tuple2<OptionalLong, OptionalLong> getFileSizeAndTableSizeInBytes() {
+        return new Tuple2<>(OptionalLong.of(0), OptionalLong.of(0));
       }
 
       @Override

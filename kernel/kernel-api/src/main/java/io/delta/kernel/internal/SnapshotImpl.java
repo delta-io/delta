@@ -31,13 +31,13 @@ import io.delta.kernel.internal.metrics.SnapshotReportImpl;
 import io.delta.kernel.internal.replay.CreateCheckpointIterator;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
-import io.delta.kernel.internal.snapshot.SnapshotHint;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.metrics.SnapshotReport;
 import io.delta.kernel.types.StructType;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalLong;
 
 /** Implementation of {@link Snapshot}. */
 public class SnapshotImpl implements Snapshot {
@@ -50,7 +50,6 @@ public class SnapshotImpl implements Snapshot {
   private final LogSegment logSegment;
   private Optional<Long> inCommitTimestampOpt;
   private final SnapshotReport snapshotReport;
-  private final Optional<SnapshotHint> cachedSnapshotHint;
 
   public SnapshotImpl(
       Path dataPath,
@@ -58,8 +57,7 @@ public class SnapshotImpl implements Snapshot {
       LogReplay logReplay,
       Protocol protocol,
       Metadata metadata,
-      SnapshotQueryContext snapshotContext,
-      Optional<SnapshotHint> cachedSnapshotHint) {
+      SnapshotQueryContext snapshotContext) {
     this.logPath = new Path(dataPath, "_delta_log");
     this.dataPath = dataPath;
     this.version = logSegment.version;
@@ -69,7 +67,6 @@ public class SnapshotImpl implements Snapshot {
     this.metadata = metadata;
     this.inCommitTimestampOpt = Optional.empty();
     this.snapshotReport = SnapshotReportImpl.forSuccess(snapshotContext);
-    this.cachedSnapshotHint = cachedSnapshotHint;
   }
 
   /////////////////
@@ -156,6 +153,14 @@ public class SnapshotImpl implements Snapshot {
     return logReplay.getDomainMetadataMap();
   }
 
+  public OptionalLong getTotalSizeInByte() {
+    return logReplay.getFileSizeAndTableSizeInBytes()._2;
+  }
+
+  public OptionalLong getFileCount() {
+    return logReplay.getFileSizeAndTableSizeInBytes()._1;
+  }
+
   public Metadata getMetadata() {
     return metadata;
   }
@@ -183,8 +188,4 @@ public class SnapshotImpl implements Snapshot {
   public Optional<Long> getLatestTransactionVersion(Engine engine, String applicationId) {
     return logReplay.getLatestTransactionIdentifier(engine, applicationId);
   }
-
-    public Optional<SnapshotHint> getCachedSnapshotHint() {
-        return cachedSnapshotHint;
-    }
 }

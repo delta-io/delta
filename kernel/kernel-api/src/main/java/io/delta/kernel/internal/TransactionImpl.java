@@ -348,7 +348,7 @@ public class TransactionImpl implements Transaction {
                             transactionMetrics.addFilesCounter.increment();
                             AddFile addFile = new AddFile(action.getStruct(ADD_FILE_ORDINAL));
                             transactionMetrics.addFilesSizeInBytesCounter.increment(
-                                    addFile.getSize());
+                                addFile.getSize());
                           } else if (!action.isNullAt(REMOVE_FILE_ORDINAL)) {
                             transactionMetrics.removeFilesCounter.increment();
                           }
@@ -360,7 +360,14 @@ public class TransactionImpl implements Transaction {
           "Write file actions to JSON log file `%s`",
           FileNames.deltaFile(logPath, commitAsVersion));
 
-      checksumWriter.maybeWriteCheckSum()
+      boolean crcWritten =
+          checksumWriter.maybeWriteCheckSum(
+              engine,
+              buildPostCommitSnapshotHint(
+                  commitAsVersion, transactionMetrics.captureTransactionMetricsResult()),
+              Optional.of(txnId.toString()));
+
+      System.out.println(crcWritten);
 
       return new TransactionCommitResult(commitAsVersion, isReadyForCheckpoint(commitAsVersion));
     } catch (FileAlreadyExistsException e) {
@@ -374,6 +381,23 @@ public class TransactionImpl implements Transaction {
     // For now, Kernel just supports blind append.
     // Change this when read-after-write is supported.
     return true;
+  }
+
+  private SnapshotHint buildPostCommitSnapshotHint(
+      long commitAtVersion, TransactionMetricsResult metricsResult) {
+    return new SnapshotHint(
+        commitAtVersion,
+        protocol,
+        metadata,
+        readSnapshot.getTotalSizeInByte().isPresent()
+            ? OptionalLong.of(
+                readSnapshot.getTotalSizeInByte().getAsLong()
+                    + metricsResult.getTotalAddFilesSizeInBytes())
+            : OptionalLong.empty(),
+        readSnapshot.getFileCount().isPresent()
+            ? OptionalLong.of(
+                readSnapshot.getFileCount().getAsLong() + metricsResult.getNumAddFiles())
+            : OptionalLong.empty());
   }
 
   /**
