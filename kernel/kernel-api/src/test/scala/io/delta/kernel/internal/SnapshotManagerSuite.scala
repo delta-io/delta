@@ -21,7 +21,6 @@ import scala.collection.JavaConverters._
 import scala.reflect.ClassTag
 
 import io.delta.kernel.data.{ColumnVector, ColumnarBatch}
-import io.delta.kernel.engine.JsonHandler
 import io.delta.kernel.exceptions.{InvalidTableException, TableNotFoundException}
 import io.delta.kernel.expressions.Predicate
 import io.delta.kernel.internal.checkpoints.{CheckpointInstance, CheckpointMetaData, SidecarFile}
@@ -311,21 +310,9 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       lastCheckpointVersion: Optional[java.lang.Long] = Optional.empty(),
       versionToLoad: Optional[java.lang.Long] = Optional.empty(),
       expectedErrorMessageContains: String = "")(implicit classTag: ClassTag[T]): Unit = {
-    val jsonHandler = if (lastCheckpointVersion.isPresent) {
-      new MockReadLastCheckpointFileJsonHandler(
-        s"$logPath/_last_checkpoint",
-        lastCheckpointVersion.get()
-      )
-    } else {
-      null
-    }
-
     val e = intercept[T] {
       snapshotManager.getLogSegmentForVersion(
-        mockEngine(
-          jsonHandler = jsonHandler,
-          fileSystemClient = new MockListFromFileSystemClient(listFromProvider(files))
-        ),
+        createMockFSAndJsonEngineForLastCheckpoint(files, lastCheckpointVersion),
         versionToLoad
       )
     }
@@ -791,14 +778,6 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       (10, Seq.empty, (0L to 10L), Optional.empty())
     )
     cases.foreach { case (corruptedVersion, validVersions, deltaVersions, lastCheckpointVersion) =>
-      val jsonHandler = if (lastCheckpointVersion.isPresent) {
-        new MockReadLastCheckpointFileJsonHandler(
-          s"$logPath/_last_checkpoint",
-          lastCheckpointVersion.get()
-        )
-      } else {
-        null
-      }
       val corruptedCheckpoint = FileNames.checkpointFileWithParts(logPath, corruptedVersion, 5)
         .asScala
         .map(p => FileStatus.of(p.toString, 10, 10))
@@ -807,10 +786,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       val deltas = deltaFileStatuses(deltaVersions)
       val allFiles = deltas ++ corruptedCheckpoint ++ checkpoints
       val logSegment = snapshotManager.getLogSegmentForVersion(
-        mockEngine(
-          jsonHandler = jsonHandler,
-          fileSystemClient = new MockListFromFileSystemClient(listFromProvider(allFiles))
-        ),
+        createMockFSAndJsonEngineForLastCheckpoint(allFiles, lastCheckpointVersion),
         Optional.empty()
       )
       val checkpointVersion = validVersions.sorted.lastOption
