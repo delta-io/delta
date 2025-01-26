@@ -48,7 +48,6 @@ import java.io.*;
 import java.nio.file.FileAlreadyExistsException;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -118,7 +117,8 @@ public class SnapshotManager {
    * @param millisSinceEpochUTC timestamp to fetch the snapshot for in milliseconds since the unix
    *     epoch
    * @return a {@link Snapshot} of the table at the provided timestamp
-   * @throws TableNotFoundException
+   * @throws TableNotFoundException if the table does not exist
+   * @throws InvalidTableException if the table is in an invalid state
    */
   public Snapshot getSnapshotForTimestamp(
       Engine engine, long millisSinceEpochUTC, SnapshotQueryContext snapshotContext)
@@ -236,17 +236,19 @@ public class SnapshotManager {
     }
     expectedStartVersion.ifPresent(
         v -> {
-          checkArgument(
-              !versions.isEmpty() && Objects.equals(versions.get(0), v),
-              "Did not get the first delta file version %s to compute Snapshot",
-              v);
+          if (versions.isEmpty() || !Objects.equals(versions.get(0), v)) {
+            throw new InvalidTableException(
+                tablePath.toString(),
+                String.format("Cannot compute snapshot. Missing delta file version %d.", v));
+          }
         });
     expectedEndVersion.ifPresent(
         v -> {
-          checkArgument(
-              !versions.isEmpty() && Objects.equals(ListUtils.getLast(versions), v),
-              "Did not get the last delta file version %s to compute Snapshot",
-              v);
+          if (versions.isEmpty() || !Objects.equals(ListUtils.getLast(versions), v)) {
+            throw new InvalidTableException(
+                tablePath.toString(),
+                String.format("Cannot compute snapshot. Missing delta file version %d.", v));
+          }
         });
   }
 
@@ -331,7 +333,8 @@ public class SnapshotManager {
    *   <li>Third, process and validate this list of _delta_log files to yield a {@code LogSegment}.
    * </ol>
    */
-  private LogSegment getLogSegmentForVersion(Engine engine, Optional<Long> versionToLoadOpt) {
+  @VisibleForTesting
+  public LogSegment getLogSegmentForVersion(Engine engine, Optional<Long> versionToLoadOpt) {
     final String versionToLoadStr = versionToLoadOpt.map(String::valueOf).orElse("latest");
     logger.info("Loading log segment for version {}", versionToLoadStr);
 
@@ -341,39 +344,32 @@ public class SnapshotManager {
     //         the previous latest complete checkpoint at or before $versionToLoad.               //
     ////////////////////////////////////////////////////////////////////////////////////////////////
 
-    final Optional<Long> getStartCheckpointVersionOpt =
+    final Optional<Long> startCheckpointVersionOpt =
         getStartCheckpointVersion(engine, versionToLoadOpt);
 
-    // TODO: make this method *deep*. Conslidate all of the getLogSegment methods to one.
-
-    return getLogSegmentForVersion(engine, getStartCheckpointVersionOpt, versionToLoadOpt);
-  }
-
-  /**
-   * Helper function for the {@link #getLogSegmentForVersion(Engine, Optional)} above. Exposes the
-   * startCheckpoint param for testing.
-   */
-  @VisibleForTesting
-  public LogSegment getLogSegmentForVersion(
-      Engine engine, Optional<Long> startCheckpointVersionOpt, Optional<Long> versionToLoadOpt) {
     /////////////////////////////////////////////////////////////////
     // Step 2: Determine the actual version to start listing from. //
     /////////////////////////////////////////////////////////////////
 
     final long listFromStartVersion =
-        startCheckpointVersionOpt.orElseGet(
-            () -> {
-              logger.warn(
-                  "{}: Starting checkpoint is missing. Listing from version as 0", tablePath);
-              return 0L;
-            });
+        startCheckpointVersionOpt
+            .map(
+                version -> {
+                  logger.info("Found a complete checkpoint at version {}.", version);
+                  return version;
+                })
+            .orElseGet(
+                () -> {
+                  logger.warn("Cannot find a complete checkpoint. Listing from version 0.");
+                  return 0L;
+                });
 
     /////////////////////////////////////////////////////////////////
     // Step 3: List the files from $startVersion to $versionToLoad //
     /////////////////////////////////////////////////////////////////
 
     final long startTimeMillis = System.currentTimeMillis();
-    final List<FileStatus> newFiles =
+    final List<FileStatus> listedFileStatuses =
         DeltaLogActionUtils.listDeltaLogFiles(
             engine,
             new HashSet<>(Arrays.asList(DeltaLogFileType.COMMIT, DeltaLogFileType.CHECKPOINT)),
@@ -386,31 +382,17 @@ public class SnapshotManager {
         tablePath,
         System.currentTimeMillis() - startTimeMillis);
 
-    try {
-      return constructLogSegmentFromFileList(startCheckpointVersionOpt, versionToLoadOpt, newFiles);
-    } finally {
-      logger.info(
-          "{}: Took {}ms to construct a log segment",
-          tablePath,
-          System.currentTimeMillis() - startTimeMillis);
-    }
-  }
+    ////////////////////////////////////////////////////////////////////////
+    // Step 4: Perform some basic validations on the listed file statuses //
+    ////////////////////////////////////////////////////////////////////////
 
-  /**
-   * Helper function for the getLogSegmentForVersion above. Called with a provided files list, and
-   * will then try to construct a new LogSegment using that.
-   */
-  private LogSegment constructLogSegmentFromFileList(
-      Optional<Long> startCheckpointOpt,
-      Optional<Long> versionToLoadOpt,
-      List<FileStatus> newFiles) {
-    if (newFiles.isEmpty()) {
-      if (startCheckpointOpt.isPresent()) {
+    if (listedFileStatuses.isEmpty()) {
+      if (startCheckpointVersionOpt.isPresent()) {
         // We either (a) determined this checkpoint version from the _LAST_CHECKPOINT file, or (b)
         // found the last complete checkpoint before our versionToLoad. In either case, we didn't
         // see the checkpoint file in the listing.
-        // TODO: for case (a), re-load the delta log but ignore the _LAST_CHECKPOINT file.
-        throw DeltaErrors.missingCheckpoint(tablePath.toString(), startCheckpointOpt.get());
+        // TODO: throw a more specific error based on case (a) or (b)
+        throw DeltaErrors.missingCheckpoint(tablePath.toString(), startCheckpointVersionOpt.get());
       } else {
         // Either no files found OR no *delta* files found even when listing from 0. This means that
         // the delta table does not exist yet.
@@ -419,192 +401,180 @@ public class SnapshotManager {
       }
     }
 
-    logDebug(
-        () ->
-            format(
-                "newFiles: %s",
-                Arrays.toString(
-                    newFiles.stream().map(x -> new Path(x.getPath()).getName()).toArray())));
+    logDebugFileStatuses("listedFileStatuses", listedFileStatuses);
 
-    Tuple2<List<FileStatus>, List<FileStatus>> checkpointsAndDeltas =
+    ////////////////////////////////////////////////////////////////////////////
+    // Step 5: Partition $listedFileStatuses into the checkpoints and deltas. //
+    ////////////////////////////////////////////////////////////////////////////
+
+    final Tuple2<List<FileStatus>, List<FileStatus>> listedCheckpointAndDeltaFileStatuses =
         ListUtils.partition(
-            newFiles,
+            listedFileStatuses,
             fileStatus -> FileNames.isCheckpointFile(new Path(fileStatus.getPath()).getName()));
-    final List<FileStatus> checkpoints = checkpointsAndDeltas._1;
-    final List<FileStatus> deltas = checkpointsAndDeltas._2;
+    final List<FileStatus> listedCheckpointFileStatuses = listedCheckpointAndDeltaFileStatuses._1;
+    final List<FileStatus> listedDeltaFileStatuses = listedCheckpointAndDeltaFileStatuses._2;
 
-    logDebug(
-        () ->
-            format(
-                "\ncheckpoints: %s\ndeltas: %s",
-                Arrays.toString(
-                    checkpoints.stream().map(x -> new Path(x.getPath()).getName()).toArray()),
-                Arrays.toString(
-                    deltas.stream().map(x -> new Path(x.getPath()).getName()).toArray())));
+    logDebugFileStatuses("listedCheckpointFileStatuses", listedCheckpointFileStatuses);
+    logDebugFileStatuses("listedDeltaFileStatuses", listedDeltaFileStatuses);
 
-    // Find the latest checkpoint in the listing that is not older than the versionToLoad
-    final CheckpointInstance maxCheckpoint =
-        versionToLoadOpt.map(CheckpointInstance::new).orElse(CheckpointInstance.MAX_VALUE);
-    logger.debug("lastCheckpoint: {}", maxCheckpoint);
+    /////////////////////////////////////////////////////////////////////////////////////////////
+    // Step 6: Determine the latest complete checkpoint version. The intuition here is that we //
+    //         LISTed from the startingCheckpoint but may have found a newer complete          //
+    //         checkpoint.                                                                     //
+    /////////////////////////////////////////////////////////////////////////////////////////////
 
-    final List<CheckpointInstance> checkpointFiles =
-        checkpoints.stream()
+    final List<CheckpointInstance> listedCheckpointInstances =
+        listedCheckpointFileStatuses.stream()
             .map(f -> new CheckpointInstance(f.getPath()))
             .collect(Collectors.toList());
-    logDebug(() -> format("checkpointFiles: %s", Arrays.toString(checkpointFiles.toArray())));
 
-    final Optional<CheckpointInstance> newCheckpointOpt =
-        Checkpointer.getLatestCompleteCheckpointFromList(checkpointFiles, maxCheckpoint);
-    logger.debug("newCheckpointOpt: {}", newCheckpointOpt);
+    final CheckpointInstance notLaterThanCheckpoint =
+        versionToLoadOpt.map(CheckpointInstance::new).orElse(CheckpointInstance.MAX_VALUE);
 
-    final long newCheckpointVersion =
-        newCheckpointOpt
-            .map(c -> c.version)
-            .orElseGet(
-                () -> {
-                  // If we do not have any checkpoint, pass new checkpoint version as -1 so that
-                  // first delta version can be 0.
-                  startCheckpointOpt.map(
-                      startCheckpoint -> {
-                        // `startCheckpointOpt` was given but no checkpoint found on delta log.
-                        // This means that the last checkpoint we thought should exist (the
-                        // `_last_checkpoint` file) no longer exists.
-                        // Try to look up another valid checkpoint and create `LogSegment` from it.
-                        //
-                        // FIXME: Something has gone very wrong if the checkpoint doesn't
-                        // exist at all. This code should only handle rejected incomplete
-                        // checkpoints.
-                        final long snapshotVersion =
-                            versionToLoadOpt.orElseGet(
-                                () -> {
-                                  final FileStatus lastDelta = deltas.get(deltas.size() - 1);
-                                  return FileNames.deltaVersion(new Path(lastDelta.getPath()));
-                                });
+    final Optional<CheckpointInstance> latestCompleteCheckpointOpt =
+        Checkpointer.getLatestCompleteCheckpointFromList(
+            listedCheckpointInstances, notLaterThanCheckpoint);
 
-                        return getLogSegmentWithMaxExclusiveCheckpointVersion(
-                                snapshotVersion, startCheckpoint)
-                            .orElseThrow(
-                                () ->
-                                    // No alternative found, but the directory contains files
-                                    // so we cannot return None.
-                                    new RuntimeException(
-                                        format(
-                                            "Checkpoint file to load version: %s is missing.",
-                                            startCheckpoint)));
-                      });
+    if (!latestCompleteCheckpointOpt.isPresent() && startCheckpointVersionOpt.isPresent()) {
+      // In Step 1 we found a $startCheckpointVersion but now our LIST of the file system doesn't
+      // see it. This means that the checkpoint we thought should exist no longer does.
+      throw DeltaErrors.missingCheckpoint(tablePath.toString(), startCheckpointVersionOpt.get());
+    }
 
-                  return -1L;
-                });
-    logger.debug("newCheckpointVersion: {}", newCheckpointVersion);
+    final long latestCompleteCheckpointVersion =
+        latestCompleteCheckpointOpt.map(x -> x.version).orElse(-1L);
 
-    // TODO: we can calculate deltasAfterCheckpoint and deltaVersions more efficiently
-    // If there is a new checkpoint, start new lineage there. If `newCheckpointVersion` is -1,
-    // it will list all existing delta files.
+    logger.info("Latest complete checkpoint version: {}", latestCompleteCheckpointVersion);
+
+    /////////////////////////////////////////////////////////////////////////////////////////////
+    // Step 7: Grab all deltas in range [$latestCompleteCheckpointVersion + 1, $versionToLoad] //
+    /////////////////////////////////////////////////////////////////////////////////////////////
+
     final List<FileStatus> deltasAfterCheckpoint =
-        deltas.stream()
+        listedDeltaFileStatuses.stream()
             .filter(
-                fileStatus ->
-                    FileNames.deltaVersion(new Path(fileStatus.getPath())) > newCheckpointVersion)
+                fs -> {
+                  final long deltaVersion = FileNames.deltaVersion(new Path(fs.getPath()));
+                  return latestCompleteCheckpointVersion + 1 <= deltaVersion
+                      && deltaVersion <= versionToLoadOpt.orElse(Long.MAX_VALUE);
+                })
             .collect(Collectors.toList());
 
-    logDebug(
-        () ->
-            format(
-                "deltasAfterCheckpoint: %s",
-                Arrays.toString(
-                    deltasAfterCheckpoint.stream()
-                        .map(x -> new Path(x.getPath()).getName())
-                        .toArray())));
+    logDebugFileStatuses("deltasAfterCheckpoint", deltasAfterCheckpoint);
+
+    ////////////////////////////////////////////////////////////////////
+    // Step 8: Determine the version of the snapshot we can now load. //
+    ////////////////////////////////////////////////////////////////////
 
     final List<Long> deltaVersionsAfterCheckpoint =
         deltasAfterCheckpoint.stream()
             .map(fileStatus -> FileNames.deltaVersion(new Path(fileStatus.getPath())))
             .collect(Collectors.toList());
 
-    logDebug(
-        () -> format("deltaVersions: %s", Arrays.toString(deltaVersionsAfterCheckpoint.toArray())));
-
     final long newVersion =
         deltaVersionsAfterCheckpoint.isEmpty()
-            ? newCheckpointOpt.get().version
+            ? latestCompleteCheckpointVersion
             : ListUtils.getLast(deltaVersionsAfterCheckpoint);
 
-    // There should be a delta file present for the newVersion that we are loading
-    // (Even if `deltasAfterCheckpoint` is empty, `deltas` should not be)
-    if (deltas.isEmpty()
-        || FileNames.deltaVersion(deltas.get(deltas.size() - 1).getPath()) < newVersion) {
+    logger.info("New version to load: {}", newVersion);
+
+    /////////////////////////////////////////////
+    // Step 9: Perform some basic validations. //
+    /////////////////////////////////////////////
+
+    if (!latestCompleteCheckpointOpt.isPresent() && deltasAfterCheckpoint.isEmpty()) {
       throw new InvalidTableException(
-          tablePath.toString(), String.format("Missing delta file for version %s", newVersion));
+          tablePath.toString(), "No complete checkpoint found and no delta files found");
     }
 
-    versionToLoadOpt
-        .filter(v -> v != newVersion)
-        .ifPresent(
-            v -> {
-              throw DeltaErrors.versionAfterLatestCommit(tablePath.toString(), v, newVersion);
-            });
+    // If there's a checkpoint at version N then we also require that there's a delta file at that
+    // version.
+    if (latestCompleteCheckpointOpt.isPresent()
+        && listedDeltaFileStatuses.stream()
+            .map(x -> FileNames.deltaVersion(new Path(x.getPath())))
+            .noneMatch(v -> v == latestCompleteCheckpointVersion)) {
+      throw new InvalidTableException(
+          tablePath.toString(),
+          String.format("Missing delta file for version %s", latestCompleteCheckpointVersion));
+    }
 
-    // We may just be getting a checkpoint file after the filtering
-    if (!deltaVersionsAfterCheckpoint.isEmpty()) {
-      // If we have deltas after the checkpoint, the first file should be 1 greater than our
-      // last checkpoint version. If no checkpoint is present, this means the first delta file
-      // should be version 0.
-      if (deltaVersionsAfterCheckpoint.get(0) != newCheckpointVersion + 1) {
-        throw new InvalidTableException(
-            tablePath.toString(),
-            String.format(
-                "Unable to reconstruct table state: missing log file for version %s",
-                newCheckpointVersion + 1));
-      }
+    versionToLoadOpt.ifPresent(
+        versionToLoad -> {
+          if (newVersion < versionToLoad) {
+            throw DeltaErrors.versionToLoadAfterLatestCommit(
+                tablePath.toString(), versionToLoad, newVersion);
+          } else if (newVersion > versionToLoad) {
+            throw new IllegalStateException(
+                String.format(
+                    "%s: Expected to load version %s but actually loaded version %s",
+                    tablePath, versionToLoad, newVersion));
+          }
+        });
 
+    if (!deltasAfterCheckpoint.isEmpty()) {
       verifyDeltaVersions(
           deltaVersionsAfterCheckpoint,
-          Optional.of(newCheckpointVersion + 1),
-          versionToLoadOpt,
+          Optional.of(latestCompleteCheckpointVersion + 1) /* expected first version */,
+          versionToLoadOpt /* expected end version */,
           tablePath);
 
       logger.info(
           "Verified delta files are contiguous from version {} to {}",
-          newCheckpointVersion + 1,
+          latestCompleteCheckpointVersion + 1,
           newVersion);
     }
 
-    final long lastCommitTimestamp = deltas.get(deltas.size() - 1).getModificationTime();
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // Step 10: Grab the actual checkpoint file statuses for latestCompleteCheckpointVersion. //
+    ////////////////////////////////////////////////////////////////////////////////////////////
 
-    final List<FileStatus> newCheckpointFiles =
-        newCheckpointOpt
+    final List<FileStatus> latestCompleteCheckpointFileStatuses =
+        latestCompleteCheckpointOpt
             .map(
-                newCheckpoint -> {
+                latestCompleteCheckpoint -> {
                   final Set<Path> newCheckpointPaths =
-                      new HashSet<>(newCheckpoint.getCorrespondingFiles(logPath));
-                  final List<FileStatus> newCheckpointFileList =
-                      checkpoints.stream()
+                      new HashSet<>(latestCompleteCheckpoint.getCorrespondingFiles(logPath));
+
+                  final List<FileStatus> newCheckpointFileStatuses =
+                      listedCheckpointFileStatuses.stream()
                           .filter(f -> newCheckpointPaths.contains(new Path(f.getPath())))
                           .collect(Collectors.toList());
 
-                  if (newCheckpointFileList.size() != newCheckpointPaths.size()) {
-                    String msg =
+                  logDebugFileStatuses("newCheckpointFileStatuses", newCheckpointFileStatuses);
+
+                  if (newCheckpointFileStatuses.size() != newCheckpointPaths.size()) {
+                    final String msg =
                         format(
                             "Seems like the checkpoint is corrupted. Failed in getting the file "
                                 + "information for:\n%s\namong\n%s",
                             newCheckpointPaths.stream()
                                 .map(Path::toString)
-                                .collect(Collectors.toList()),
-                            checkpoints.stream()
+                                .collect(Collectors.joining("\n - ")),
+                            listedCheckpointFileStatuses.stream()
                                 .map(FileStatus::getPath)
                                 .collect(Collectors.joining("\n - ")));
                     throw new IllegalStateException(msg);
                   }
-                  return newCheckpointFileList;
+
+                  return newCheckpointFileStatuses;
                 })
             .orElse(Collections.emptyList());
+
+    ///////////////////////////////////////////////////
+    // Step 11: Construct the LogSegment and return. //
+    ///////////////////////////////////////////////////
+
+    logger.info("Successfully constructed LogSegment at version {}", newVersion);
+
+    final long lastCommitTimestamp =
+        ListUtils.getLast(listedDeltaFileStatuses).getModificationTime();
 
     return new LogSegment(
         logPath,
         newVersion,
         deltasAfterCheckpoint,
-        newCheckpointFiles,
-        newCheckpointOpt.map(x -> x.version),
+        latestCompleteCheckpointFileStatuses,
+        latestCompleteCheckpointOpt.map(x -> x.version),
         lastCommitTimestamp);
   }
 
@@ -651,23 +621,14 @@ public class SnapshotManager {
             });
   }
 
-  /**
-   * Returns a [[LogSegment]] for reading `snapshotVersion` such that the segment's checkpoint
-   * version (if checkpoint present) is LESS THAN `maxExclusiveCheckpointVersion`. This is useful
-   * when trying to skip a bad checkpoint. Returns `None` when we are not able to construct such
-   * [[LogSegment]], for example, no checkpoint can be used but we don't have the entire history
-   * from version 0 to version `snapshotVersion`.
-   */
-  private Optional<LogSegment> getLogSegmentWithMaxExclusiveCheckpointVersion(
-      long snapshotVersion, long maxExclusiveCheckpointVersion) {
-    // TODO
-    return Optional.empty();
-  }
-
-  // TODO logger interface to support this across kernel-api module
-  private void logDebug(Supplier<String> message) {
+  private void logDebugFileStatuses(String varName, List<FileStatus> fileStatuses) {
     if (logger.isDebugEnabled()) {
-      logger.debug(message.get());
+      logger.debug(
+          String.format(
+              "%s: %s",
+              varName,
+              Arrays.toString(
+                  fileStatuses.stream().map(x -> new Path(x.getPath()).getName()).toArray())));
     }
   }
 }

@@ -49,7 +49,7 @@ public final class DeltaErrors {
     return new KernelException(message);
   }
 
-  public static KernelException versionAfterLatestCommit(
+  public static KernelException versionToLoadAfterLatestCommit(
       String tablePath, long versionToLoad, long latestVersion) {
     String message =
         String.format(
