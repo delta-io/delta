@@ -272,16 +272,16 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
       // Set up delta table with version 0
       spark.range(10).write.format("delta").mode("append").save(path)
 
-        val removeFileRow: Row = {
-          val fieldMap: Map[Integer, AnyRef] = Map(
+      val removeFileRow: Row = {
+        val fieldMap: Map[Integer, AnyRef] = Map(
           Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("path")) -> "/path/for/remove/file",
           Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("dataChange")) -> java.lang.Boolean.TRUE
         )
         new GenericRow(RemoveFile.FULL_SCHEMA, fieldMap.asJava)
-        }
+      }
 
-        checkTransactionReport(
-          generateCommitActions = (_, _) => CloseableIterable.inMemoryIterable(
+      checkTransactionReport(
+        generateCommitActions = (_, _) => CloseableIterable.inMemoryIterable(
           Utils.toCloseableIterator(
             Seq(SingleAction.createRemoveFileSingleAction(removeFileRow)).iterator.asJava
           )),
