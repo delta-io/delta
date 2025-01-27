@@ -154,7 +154,7 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
   }
 
   def generateAppendActions(fileStatusIter: CloseableIterator[DataFileStatus])
-   (trans: Transaction, engine: Engine): CloseableIterable[Row] = {
+    (trans: Transaction, engine: Engine): CloseableIterable[Row] = {
     val transState = trans.getTransactionState(engine)
     CloseableIterable.inMemoryIterable(
       Transaction.generateAppendActions(engine, transState, fileStatusIter,
