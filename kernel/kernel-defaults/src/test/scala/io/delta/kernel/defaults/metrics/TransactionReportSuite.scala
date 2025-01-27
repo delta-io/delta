@@ -158,8 +158,7 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
     val transState = trans.getTransactionState(engine)
     CloseableIterable.inMemoryIterable(
       Transaction.generateAppendActions(engine, transState, fileStatusIter,
-        Transaction.getWriteContext(engine, transState, Collections.emptyMap())
-      )
+        Transaction.getWriteContext(engine, transState, Collections.emptyMap()))
     )
   }
 
