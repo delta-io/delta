@@ -36,6 +36,8 @@ public class TransactionMetrics {
   public final Counter removeFilesCounter = new Counter();
 
   public final Counter totalActionsCounter = new Counter();
+  // TODO: collect removed file's total size.
+  public final Counter addFilesSizeInBytesCounter = new Counter();
 
   /**
    * Resets the action counters (addFilesCounter, removeFilesCounter and totalActionsCounter) to 0.
@@ -45,6 +47,7 @@ public class TransactionMetrics {
    */
   public void resetActionCounters() {
     addFilesCounter.reset();
+    addFilesSizeInBytesCounter.reset();
     removeFilesCounter.reset();
     totalActionsCounter.reset();
   }
@@ -55,6 +58,7 @@ public class TransactionMetrics {
       final long totalCommitDurationNs = totalCommitTimer.totalDurationNs();
       final long numCommitAttempts = commitAttemptsCounter.value();
       final long numAddFiles = addFilesCounter.value();
+      final long totalAddFilesSizeInBytes = addFilesSizeInBytesCounter.value();
       final long numRemoveFiles = removeFilesCounter.value();
       final long numTotalActions = totalActionsCounter.value();
 
@@ -82,6 +86,11 @@ public class TransactionMetrics {
       public long getNumTotalActions() {
         return numTotalActions;
       }
+
+      @Override
+      public long getTotalAddFilesSizeInBytes() {
+        return totalAddFilesSizeInBytes;
+      }
     };
   }
 
@@ -89,11 +98,12 @@ public class TransactionMetrics {
   public String toString() {
     return String.format(
         "TransactionMetrics(totalCommitTimer=%s, commitAttemptsCounter=%s, addFilesCounter=%s, "
-            + "removeFilesCounter=%s, totalActionsCounter=%s)",
+            + "removeFilesCounter=%s, totalActionsCounter=%s, totalAddFilesSizeInBytes=%s)",
         totalCommitTimer,
         commitAttemptsCounter,
         addFilesCounter,
         removeFilesCounter,
-        totalActionsCounter);
+        totalActionsCounter,
+        addFilesSizeInBytesCounter);
   }
 }

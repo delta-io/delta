@@ -117,7 +117,8 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |"numCommitAttempts":${transactionMetrics.getNumCommitAttempts},
          |"numAddFiles":${transactionMetrics.getNumAddFiles},
          |"numRemoveFiles":${transactionMetrics.getNumRemoveFiles},
-         |"numTotalActions":${transactionMetrics.getNumTotalActions}
+         |"numTotalActions":${transactionMetrics.getNumTotalActions},
+         |"totalAddFilesSizeInBytes":${transactionMetrics.getTotalAddFilesSizeInBytes}
          |}
          |}
          |""".stripMargin.replaceAll("\n", "")
@@ -135,6 +136,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
     transactionMetrics1.commitAttemptsCounter.increment(2)
     transactionMetrics1.addFilesCounter.increment(82)
     transactionMetrics1.totalActionsCounter.increment(90)
+    transactionMetrics1.addFilesSizeInBytesCounter.increment(100)
 
     val transactionReport1 = new TransactionReportImpl(
       "/table/path",
@@ -163,7 +165,8 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |"numCommitAttempts":2,
          |"numAddFiles":82,
          |"numRemoveFiles":0,
-         |"numTotalActions":90
+         |"numTotalActions":90,
+         |"totalAddFilesSizeInBytes":100
          |}
          |}
          |""".stripMargin.replaceAll("\n", "")

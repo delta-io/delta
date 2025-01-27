@@ -341,6 +341,8 @@ public class TransactionImpl implements Transaction {
                           transactionMetrics.totalActionsCounter.increment();
                           if (!action.isNullAt(ADD_FILE_ORDINAL)) {
                             transactionMetrics.addFilesCounter.increment();
+                            transactionMetrics.addFilesSizeInBytesCounter.increment(
+                                new AddFile(action.getStruct(ADD_FILE_ORDINAL)).getSize());
                           } else if (!action.isNullAt(REMOVE_FILE_ORDINAL)) {
                             transactionMetrics.removeFilesCounter.increment();
                           }
