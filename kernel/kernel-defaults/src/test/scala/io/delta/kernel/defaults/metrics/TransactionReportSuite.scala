@@ -91,19 +91,19 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
    */
   // scalastyle:off
   def checkTransactionReport(
-                              generateCommitActions: (Transaction, Engine) => CloseableIterable[Row],
-                              path: String,
-                              expectException: Boolean,
-                              expectedBaseSnapshotVersion: Long,
-                              expectedNumAddFiles: Long = 0,
-                              expectedNumRemoveFiles: Long = 0,
-                              expectedNumTotalActions: Long = 0,
-                              expectedCommitVersion: Option[Long] = None,
-                              expectedNumAttempts: Long = 1,
-                              buildTransaction: (TransactionBuilder, Engine) => Transaction = (tb, e) => tb.build(e),
-                              engineInfo: String = "test-engine-info",
-                              operation: Operation = Operation.MANUAL_UPDATE,
-                              expectedTotalAddFilesSizeInBytes: Long = 0
+    generateCommitActions: (Transaction, Engine) => CloseableIterable[Row],
+    path: String,
+    expectException: Boolean,
+    expectedBaseSnapshotVersion: Long,
+    expectedNumAddFiles: Long = 0,
+    expectedNumRemoveFiles: Long = 0,
+    expectedNumTotalActions: Long = 0,
+    expectedCommitVersion: Option[Long] = None,
+    expectedNumAttempts: Long = 1,
+    buildTransaction: (TransactionBuilder, Engine) => Transaction = (tb, e) => tb.build(e),
+    engineInfo: String = "test-engine-info",
+    operation: Operation = Operation.MANUAL_UPDATE,
+    expectedTotalAddFilesSizeInBytes: Long = 0
   ): Unit = {
     // scalastyle:on
     assert(expectException == expectedCommitVersion.isEmpty)
@@ -153,9 +153,8 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
     assert(transactionReport.getTransactionMetrics.getNumTotalActions == expectedNumTotalActions)
   }
 
-  def generateAppendActions(fileStatusIter: CloseableIterator[DataFileStatus])(
-    trans: Transaction,
-    engine: Engine): CloseableIterable[Row] = {
+  def generateAppendActions(fileStatusIter: CloseableIterator[DataFileStatus])
+   (trans: Transaction, engine: Engine): CloseableIterable[Row] = {
     val transState = trans.getTransactionState(engine)
     CloseableIterable.inMemoryIterable(
       Transaction.generateAppendActions(engine, transState, fileStatusIter,
@@ -170,8 +169,8 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
       // Set up delta table with version 0
       spark.range(10).write.format("delta").mode("append").save(path)
 
-        // Commit 1 AddFiles
-        checkTransactionReport(
+      // Commit 1 AddFiles
+      checkTransactionReport(
         generateCommitActions = generateAppendActions(fileStatusIter1),
         path,
         expectException = false,
@@ -180,7 +179,7 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         expectedNumTotalActions = 2, // commitInfo + addFile
           expectedCommitVersion = Some(1),
         expectedTotalAddFilesSizeInBytes = 100
-        )
+      )
 
       // Commit 2 AddFiles
       checkTransactionReport(
@@ -325,8 +324,8 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
       // Set up delta table with version 0
       spark.range(10).write.format("delta").mode("append").save(path)
 
-        checkTransactionReport(
-          generateCommitActions = (trans, engine) => {
+      checkTransactionReport(
+        generateCommitActions = (trans, engine) => {
           spark.sql("ALTER TABLE delta.`" + path + "` ADD COLUMN newCol INT")
           generateAppendActions(fileStatusIter1)(trans, engine)
         },
