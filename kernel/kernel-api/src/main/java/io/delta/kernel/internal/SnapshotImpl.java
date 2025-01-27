@@ -154,11 +154,11 @@ public class SnapshotImpl implements Snapshot {
   }
 
   public OptionalLong getTotalSizeInByte() {
-    return logReplay.getFileSizeAndTableSizeInBytes()._2;
+    return logReplay.getFileCountAndTableSizeInBytes()._2;
   }
 
   public OptionalLong getFileCount() {
-    return logReplay.getFileSizeAndTableSizeInBytes()._1;
+    return logReplay.getFileCountAndTableSizeInBytes()._1;
   }
 
   public Metadata getMetadata() {

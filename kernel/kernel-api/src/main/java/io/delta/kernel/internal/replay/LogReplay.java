@@ -127,7 +127,7 @@ public class LogReplay {
   private final LogSegment logSegment;
   private final Tuple2<Protocol, Metadata> protocolAndMetadata;
   private final Lazy<Map<String, DomainMetadata>> domainMetadataMap;
-  private final Lazy<Tuple2<OptionalLong, OptionalLong>> fileSizeAndTableSizeInBytes;
+  private final Lazy<Tuple2<OptionalLong, OptionalLong>> fileCountAndTableSizeInBytes;
 
   public LogReplay(
       Path logPath,
@@ -149,7 +149,7 @@ public class LogReplay {
                     engine, logSegment, updatedSnapshotHint, snapshotVersion));
     // Lazy loading of domain metadata only when needed
     this.domainMetadataMap = new Lazy<>(() -> loadDomainMetadataMap(engine));
-    this.fileSizeAndTableSizeInBytes =
+    this.fileCountAndTableSizeInBytes =
         new Lazy<>(() -> loadFileSizeAndTableSize(engine, updatedSnapshotHint));
   }
 
@@ -173,8 +173,8 @@ public class LogReplay {
     return domainMetadataMap.get();
   }
 
-  public Tuple2<OptionalLong, OptionalLong> getFileSizeAndTableSizeInBytes() {
-    return fileSizeAndTableSizeInBytes.get();
+  public Tuple2<OptionalLong, OptionalLong> getFileCountAndTableSizeInBytes() {
+    return fileCountAndTableSizeInBytes.get();
   }
 
   public long getVersion() {
@@ -381,7 +381,7 @@ public class LogReplay {
       Engine engine, Optional<SnapshotHint> hint) {
     if (!hint.isPresent()
         || !hint.get().getTableSizeBytes().isPresent()
-        || hint.get().getTableSizeBytes().isPresent()) {
+        || !hint.get().getNumFiles().isPresent()) {
       return new Tuple2<>(OptionalLong.empty(), OptionalLong.empty());
     }
     StructType schema = getAddRemoveReadSchema(false);
@@ -412,7 +412,7 @@ public class LogReplay {
                   });
         });
     return new Tuple2<>(
-        OptionalLong.of(fileSize.longValue()), OptionalLong.of(fileCount.longValue()));
+        OptionalLong.of(fileCount.longValue()), OptionalLong.of(fileSize.longValue()));
   }
 
   private Optional<SnapshotHint> maybeBuildNewerHintFromChecksum(
@@ -452,10 +452,18 @@ public class LogReplay {
         ChecksumReader.getCRCInfo(engine, logSegment.logPath, snapshotVersion, crcSearchLowerBound);
     if (crcInfoOpt.isPresent()) {
       CRCInfo crcInfo = crcInfoOpt.get();
-      System.out.println(crcInfo.getVersion());
-      System.out.println(crcSearchLowerBound);
-      System.out.println(snapshotVersion);
-      checkArgument(crcInfo.getVersion() <= snapshotVersion);
+      if (crcInfo.getVersion() == snapshotVersion) {
+        // CRC is related to the desired snapshot version. Load protocol and metadata from CRC.
+        return Optional.of(
+            new SnapshotHint(
+                crcInfo.getVersion(),
+                crcInfo.getProtocol(),
+                crcInfo.getMetadata(),
+                OptionalLong.of(crcInfo.getTableSizeBytes()),
+                OptionalLong.of(crcInfo.getNumFiles())));
+      }
+      checkArgument(
+          crcSearchLowerBound <= crcInfo.getVersion() && crcInfo.getVersion() <= snapshotVersion);
       // We found a CRCInfo of a version (a) older than the one we are looking for (snapshotVersion)
       // but (b) newer than the current hint. Use this CRCInfo to create a new hint
       return Optional.of(

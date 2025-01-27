@@ -443,9 +443,14 @@ public class SnapshotManager {
         initSegment.version,
         startingFromStr);
 
+    // TODO: optimize before merging code
     final SnapshotHint hint =
         new SnapshotHint(
-            snapshot.getVersion(engine), snapshot.getProtocol(), snapshot.getMetadata());
+            snapshot.getVersion(engine),
+            snapshot.getProtocol(),
+            snapshot.getMetadata(),
+            snapshot.getTotalSizeInByte(),
+            snapshot.getFileCount());
 
     registerHint(hint);
 
