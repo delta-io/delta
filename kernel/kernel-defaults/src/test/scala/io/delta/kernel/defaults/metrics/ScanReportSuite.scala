@@ -320,7 +320,8 @@ class ScanReportSuite extends AnyFunSuite with MetricsReportTestUtils {
     withTempDir { tempDir =>
       val path = tempDir.getCanonicalPath
 
-      // We set up table with a giberish json file that falls before a file containing the P&M
+      // We set up a table with a giberish json file at version 0 and a valid json file at version 1
+      // that contains the P&M
       // This is so the snapshot loading will happen successful, and we will only fail when trying
       // to load up the scan files
       // This exception is thrown from within the `hasNext` method on the iterator since that is
