@@ -182,17 +182,20 @@ object DeltaInvariantCheckerExec extends DeltaLogging {
                 "Applying type casting resulted in a bad plan rather than a simple expression.\n" +
                s"Plan:${plan.prettyJson}\n"))
           }
+          // Cap the maximum length when logging an unresolved expression to avoid issues. This is a
+          // CHECK constraint expression and should be relatively simple.
+          val MAX_OUTPUT_LENGTH = 10 * 1024
           deltaAssert(
             resolvedExpr.resolved,
             name = "invariant.unresolvedExpression",
             msg = s"CHECK constraint child expression was not properly resolved",
             data = Map(
               "name" -> name,
-              "checkExpr" -> expr.toString,
-              "attributesExtracted" -> attributesExtracted.treeString,
-              "analyzedLogicalPlan" -> analyzedLogicalPlan.treeString,
-              "optimizedLogicalPlan" -> optimizedLogicalPlan.treeString,
-              "resolvedExpr" -> resolvedExpr.toString
+              "checkExpr" -> expr.treeString.take(MAX_OUTPUT_LENGTH),
+              "attributesExtracted" -> attributesExtracted.treeString.take(MAX_OUTPUT_LENGTH),
+              "analyzedLogicalPlan" -> analyzedLogicalPlan.treeString.take(MAX_OUTPUT_LENGTH),
+              "optimizedLogicalPlan" -> optimizedLogicalPlan.treeString.take(MAX_OUTPUT_LENGTH),
+              "resolvedExpr" -> resolvedExpr.treeString.take(MAX_OUTPUT_LENGTH)
             )
           )
           resolvedExpr
