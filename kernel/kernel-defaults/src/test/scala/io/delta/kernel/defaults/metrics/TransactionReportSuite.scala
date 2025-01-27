@@ -177,7 +177,7 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         expectedBaseSnapshotVersion = 0,
         expectedNumAddFiles = 1,
         expectedNumTotalActions = 2, // commitInfo + addFile
-          expectedCommitVersion = Some(1),
+        expectedCommitVersion = Some(1),
         expectedTotalAddFilesSizeInBytes = 100
       )
 
