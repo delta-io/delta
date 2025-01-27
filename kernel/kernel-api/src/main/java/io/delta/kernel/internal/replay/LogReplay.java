@@ -150,18 +150,21 @@ public class LogReplay {
     // Lazy loading of domain metadata only when needed
     this.domainMetadataMap = new Lazy<>(() -> loadDomainMetadataMap(engine));
     this.fileCountAndTableSizeInBytes =
-        new Lazy<>(() ->{
-          // No hit or no crc found ever
-          if (!updatedSnapshotHint.isPresent()) {
-            return new Tuple2<>(OptionalLong.empty(), OptionalLong.empty());
-          }
-          Optional<SnapshotHint> hintFromCrc = updatedSnapshotHint;
-          if (!updatedSnapshotHint.get().getNumFiles().isPresent() || !updatedSnapshotHint.get().getTableSizeBytes().isPresent()) {
-           hintFromCrc = maybeBuildNewerHintFromChecksum(snapshotVersion,logSegment,Optional.empty(), engine);
-          }
-          return loadFileSizeAndTableSize(engine, hintFromCrc);
-        }
-        );
+        new Lazy<>(
+            () -> {
+              // No hit or no crc found ever
+              if (!updatedSnapshotHint.isPresent()) {
+                return new Tuple2<>(OptionalLong.empty(), OptionalLong.empty());
+              }
+              Optional<SnapshotHint> hintFromCrc = updatedSnapshotHint;
+              if (!updatedSnapshotHint.get().getNumFiles().isPresent()
+                  || !updatedSnapshotHint.get().getTableSizeBytes().isPresent()) {
+                hintFromCrc =
+                    maybeBuildNewerHintFromChecksum(
+                        snapshotVersion, logSegment, Optional.empty(), engine);
+              }
+              return loadFileSizeAndTableSize(engine, hintFromCrc);
+            });
   }
 
   /////////////////
@@ -390,7 +393,11 @@ public class LogReplay {
 
   private Tuple2<OptionalLong, OptionalLong> loadFileSizeAndTableSize(
       Engine engine, Optional<SnapshotHint> hint) {
-
+    if (!hint.isPresent()) {
+      return new Tuple2<>(OptionalLong.empty(), OptionalLong.empty());
+    }
+    checkArgument(
+        hint.get().getTableSizeBytes().isPresent() && hint.get().getNumFiles().isPresent());
 
     StructType schema = getAddRemoveReadSchema(false);
     final CloseableIterator<ActionWrapper> addRemoveIter =

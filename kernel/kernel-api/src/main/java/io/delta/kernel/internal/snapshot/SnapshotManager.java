@@ -446,9 +446,7 @@ public class SnapshotManager {
     // TODO: optimize before merging code
     final SnapshotHint hint =
         new SnapshotHint(
-            snapshot.getVersion(engine),
-            snapshot.getProtocol(),
-            snapshot.getMetadata());
+            snapshot.getVersion(engine), snapshot.getProtocol(), snapshot.getMetadata());
 
     registerHint(hint);
 
