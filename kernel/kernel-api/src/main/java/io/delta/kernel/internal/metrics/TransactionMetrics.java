@@ -54,6 +54,7 @@ public class TransactionMetrics {
 
   public TransactionMetricsResult captureTransactionMetricsResult() {
     return new TransactionMetricsResult() {
+
       final long totalCommitDurationNs = totalCommitTimer.totalDurationNs();
       final long numCommitAttempts = commitAttemptsCounter.value();
       final long numAddFiles = addFilesCounter.value();
