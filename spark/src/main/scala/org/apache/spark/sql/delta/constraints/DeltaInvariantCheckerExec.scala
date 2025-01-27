@@ -189,9 +189,9 @@ object DeltaInvariantCheckerExec extends DeltaLogging {
             data = Map(
               "name" -> name,
               "checkExpr" -> expr.toString,
-              "attributesExtracted" -> attributesExtracted.toString,
-              "analyzedLogicalPlan" -> analyzedLogicalPlan.toString,
-              "optimizedLogicalPlan" -> optimizedLogicalPlan.toString,
+              "attributesExtracted" -> attributesExtracted.treeString,
+              "analyzedLogicalPlan" -> analyzedLogicalPlan.treeString,
+              "optimizedLogicalPlan" -> optimizedLogicalPlan.treeString,
               "resolvedExpr" -> resolvedExpr.toString
             )
           )
