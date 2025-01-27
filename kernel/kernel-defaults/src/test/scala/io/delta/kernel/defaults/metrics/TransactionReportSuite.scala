@@ -100,10 +100,10 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
     expectedNumTotalActions: Long = 0,
     expectedCommitVersion: Option[Long] = None,
     expectedNumAttempts: Long = 1,
+    expectedTotalAddFilesSizeInBytes: Long = 0,
     buildTransaction: (TransactionBuilder, Engine) => Transaction = (tb, e) => tb.build(e),
     engineInfo: String = "test-engine-info",
-    operation: Operation = Operation.MANUAL_UPDATE,
-    expectedTotalAddFilesSizeInBytes: Long = 0
+    operation: Operation = Operation.MANUAL_UPDATE
   ): Unit = {
     // scalastyle:on
     assert(expectException == expectedCommitVersion.isEmpty)
@@ -190,8 +190,8 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         expectedNumTotalActions = 3, // commitInfo + addFile
         expectedCommitVersion = Some(2),
         engineInfo = "foo",
-        operation = Operation.WRITE,
-        expectedTotalAddFilesSizeInBytes = 200
+        expectedTotalAddFilesSizeInBytes = 200,
+        operation = Operation.WRITE
       )
 
       // Update metadata only
@@ -255,12 +255,12 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         expectedNumAddFiles = 1,
         expectedNumTotalActions = 4, // protocol, metadata, commitInfo
         expectedCommitVersion = Some(0),
+        expectedTotalAddFilesSizeInBytes = 100,
         buildTransaction = (transBuilder, engine) => {
           transBuilder
             .withSchema(engine, new StructType().add("id", IntegerType.INTEGER))
             .build(engine)
-        },
-        expectedTotalAddFilesSizeInBytes = 100
+        }
       )
     }
   }
