@@ -150,7 +150,18 @@ public class LogReplay {
     // Lazy loading of domain metadata only when needed
     this.domainMetadataMap = new Lazy<>(() -> loadDomainMetadataMap(engine));
     this.fileCountAndTableSizeInBytes =
-        new Lazy<>(() -> loadFileSizeAndTableSize(engine, updatedSnapshotHint));
+        new Lazy<>(() ->{
+          // No hit or no crc found ever
+          if (!updatedSnapshotHint.isPresent()) {
+            return new Tuple2<>(OptionalLong.empty(), OptionalLong.empty());
+          }
+          Optional<SnapshotHint> hintFromCrc = updatedSnapshotHint;
+          if (!updatedSnapshotHint.get().getNumFiles().isPresent() || !updatedSnapshotHint.get().getTableSizeBytes().isPresent()) {
+           hintFromCrc = maybeBuildNewerHintFromChecksum(snapshotVersion,logSegment,Optional.empty(), engine);
+          }
+          return loadFileSizeAndTableSize(engine, hintFromCrc);
+        }
+        );
   }
 
   /////////////////
@@ -379,11 +390,8 @@ public class LogReplay {
 
   private Tuple2<OptionalLong, OptionalLong> loadFileSizeAndTableSize(
       Engine engine, Optional<SnapshotHint> hint) {
-    if (!hint.isPresent()
-        || !hint.get().getTableSizeBytes().isPresent()
-        || !hint.get().getNumFiles().isPresent()) {
-      return new Tuple2<>(OptionalLong.empty(), OptionalLong.empty());
-    }
+
+
     StructType schema = getAddRemoveReadSchema(false);
     final CloseableIterator<ActionWrapper> addRemoveIter =
         new ActionsIterator(

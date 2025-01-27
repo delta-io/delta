@@ -448,9 +448,7 @@ public class SnapshotManager {
         new SnapshotHint(
             snapshot.getVersion(engine),
             snapshot.getProtocol(),
-            snapshot.getMetadata(),
-            snapshot.getTotalSizeInByte(),
-            snapshot.getFileCount());
+            snapshot.getMetadata());
 
     registerHint(hint);
 
