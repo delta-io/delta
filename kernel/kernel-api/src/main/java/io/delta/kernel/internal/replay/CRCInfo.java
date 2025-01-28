@@ -18,7 +18,6 @@ package io.delta.kernel.internal.replay;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.types.StructType;
@@ -30,7 +29,7 @@ public class CRCInfo {
   private static final Logger logger = LoggerFactory.getLogger(CRCInfo.class);
 
   public static Optional<CRCInfo> fromColumnarBatch(
-      Engine engine, long version, ColumnarBatch batch, int rowId, String crcFilePath) {
+      long version, ColumnarBatch batch, int rowId, String crcFilePath) {
     Protocol protocol = Protocol.fromColumnVector(batch.getColumnVector(PROTOCOL_ORDINAL), rowId);
     Metadata metadata = Metadata.fromColumnVector(batch.getColumnVector(METADATA_ORDINAL), rowId);
     //  protocol and metadata are nullable per fromColumnVector's implementation.

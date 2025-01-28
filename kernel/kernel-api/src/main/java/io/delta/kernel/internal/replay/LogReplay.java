@@ -230,6 +230,7 @@ public class LogReplay {
     long crcSearchLowerBound =
         max(
             asList(
+                // Prefer reading hint over CRC, so start listing from hint's version + 1.
                 snapshotHint.map(SnapshotHint::getVersion).orElse(0L) + 1,
                 eligibleCheckpointVersions.isEmpty() ? 0L : max(eligibleCheckpointVersions),
                 // Only find the CRC within 100 versions.
