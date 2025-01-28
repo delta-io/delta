@@ -1,4 +1,6 @@
 # Variant Data Type
+**Folded into [PROTOCOL.md](../../protocol.md#variant-data-type)**
+
 **Associated Github issue for discussions: https://github.com/delta-io/delta/issues/2864**
 
 This protocol change adds support for the Variant data type.
