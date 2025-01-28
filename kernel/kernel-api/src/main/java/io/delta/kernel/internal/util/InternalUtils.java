@@ -170,11 +170,7 @@ public class InternalUtils {
 
   public static <T> List<T> toList(CloseableIterator<T> iterator) {
     List<T> result = new ArrayList<>();
-    iterator.forEachRemaining(
-        t -> {
-          System.out.println(t.toString());
-          result.add(t);
-        });
+    iterator.forEachRemaining(result::add);
     return result;
   }
 }
