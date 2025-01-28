@@ -38,7 +38,7 @@ class CloseableIteratorSuite extends AnyFunSuite {
     assert(res.isEmpty)
   }
 
-  test("test take while with some element matching filter") {
+  test("test take while with some elements matching filter") {
     val res = new util.ArrayList[Int]();
     new IntArrayIterator(List(1, 2, 3, 2, 2))
       .takeWhile((input: Int) => input < 3)
