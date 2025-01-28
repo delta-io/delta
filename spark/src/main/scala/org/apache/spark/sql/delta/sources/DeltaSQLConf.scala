@@ -1553,6 +1553,14 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_CONVERT_ICEBERG_CAST_TIME_TYPE = {
+    buildConf("convert.iceberg.castTimeType")
+      .internal()
+      .doc("Cast Iceberg TIME type to Spark Long when converting to Delta")
+      .booleanConf
+      .createWithDefault(false)
+  }
+
   final object NonDeterministicPredicateWidening {
     final val OFF = "off"
     final val LOGGING = "logging"

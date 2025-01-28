@@ -20,7 +20,7 @@ import java.util.Locale
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaColumnMappingMode, DeltaConfigs, IdMapping, SerializableFileStatus}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaColumnMappingMode, DeltaConfigs, IdMapping, SerializableFileStatus, Snapshot}
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.iceberg.{Table, TableProperties}
@@ -36,7 +36,7 @@ import org.apache.spark.sql.types.StructType
  * A target Iceberg table for conversion to a Delta table.
  *
  * @param icebergTable the Iceberg table underneath.
- * @param existingSchema schema used for incremental update, none for initial conversion.
+ * @param deltaSnapshot the delta snapshot used for incremental update, none for initial conversion.
  * @param convertStats flag for disabling convert iceberg stats directly into Delta stats.
  *                     If you wonder why we need this flag, you are not alone.
  *                     This flag is only used by the old, obsolete, legacy command
@@ -49,15 +49,17 @@ import org.apache.spark.sql.types.StructType
 class IcebergTable(
     spark: SparkSession,
     icebergTable: Table,
-    existingSchema: Option[StructType],
+    deltaSnapshot: Option[Snapshot],
     convertStats: Boolean) extends ConvertTargetTable {
 
-  def this(spark: SparkSession, basePath: String, existingSchema: Option[StructType],
+  def this(spark: SparkSession, basePath: String, deltaTable: Option[Snapshot],
            convertStats: Boolean = true) =
     // scalastyle:off deltahadoopconfiguration
     this(spark, new HadoopTables(spark.sessionState.newHadoopConf).load(basePath),
-      existingSchema, convertStats)
+      deltaTable, convertStats)
     // scalastyle:on deltahadoopconfiguration
+
+  protected val existingSchema: Option[StructType] = deltaSnapshot.map(_.schema)
 
   private val partitionEvolutionEnabled =
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_PARTITION_EVOLUTION_ENABLED)
@@ -65,7 +67,13 @@ class IcebergTable(
   private val bucketPartitionEnabled =
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_BUCKET_PARTITION_ENABLED)
 
-  private val fieldPathToPhysicalName =
+  // When a table is CLONED/federated with the session conf ON, it will have the table property
+  // set and will continue to support CAST TIME TYPE even when later the session conf is OFF.
+  private val castTimeType =
+    spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_CAST_TIME_TYPE) ||
+      deltaSnapshot.exists(s => DeltaConfigs.CAST_ICEBERG_TIME_TYPE.fromMetaData(s.metadata))
+
+  protected val fieldPathToPhysicalName =
     existingSchema.map {
       SchemaMergingUtils.explode(_).collect {
         case (path, field) if DeltaColumnMapping.hasPhysicalName(field) =>
@@ -76,7 +84,7 @@ class IcebergTable(
   private val convertedSchema = {
     // Reuse physical names of existing columns.
     val mergedSchema = DeltaColumnMapping.setPhysicalNames(
-      IcebergSchemaUtils.convertIcebergSchemaToSpark(icebergTable.schema()),
+      IcebergSchemaUtils.convertIcebergSchemaToSpark(icebergTable.schema(), castTimeType),
       fieldPathToPhysicalName)
 
     // Assign physical names to new columns.
@@ -88,8 +96,13 @@ class IcebergTable(
   override val properties: Map[String, String] = {
     val maxSnapshotAgeMs = PropertyUtil.propertyAsLong(icebergTable.properties,
       TableProperties.MAX_SNAPSHOT_AGE_MS, TableProperties.MAX_SNAPSHOT_AGE_MS_DEFAULT)
+    val castTimeTypeConf = if (castTimeType) {
+      Some((DeltaConfigs.CAST_ICEBERG_TIME_TYPE.key -> "true"))
+    } else {
+      None
+    }
     icebergTable.properties().asScala.toMap + (DeltaConfigs.COLUMN_MAPPING_MODE.key -> "id") +
-    (DeltaConfigs.LOG_RETENTION.key -> s"$maxSnapshotAgeMs millisecond")
+    (DeltaConfigs.LOG_RETENTION.key -> s"$maxSnapshotAgeMs millisecond") ++ castTimeTypeConf
   }
 
   override val partitionSchema: StructType = {
