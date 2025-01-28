@@ -296,7 +296,7 @@ class DeltaAnalysis(session: SparkSession)
           resolveCloneCommand(
             cloneStatement.target,
             CloneIcebergSource(
-              table.tableIdentifier, sparkTable = None, tableSchema = None, session),
+              table.tableIdentifier, sparkTable = None, deltaSnapshot = None, session),
             cloneStatement)
 
         case DataSourceV2Relation(table, _, _, _, _)
@@ -313,7 +313,7 @@ class DeltaAnalysis(session: SparkSession)
           }
           resolveCloneCommand(
             cloneStatement.target,
-            CloneIcebergSource(tableIdent, Some(table), tableSchema = None, session),
+            CloneIcebergSource(tableIdent, Some(table), deltaSnapshot = None, session),
             cloneStatement)
 
         case u: UnresolvedRelation =>
