@@ -34,87 +34,25 @@ import org.scalatest.funsuite.AnyFunSuite
 
 class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
-  test("verifyDeltaVersions") {
+  test("verifyDeltaVersionsContiguous") {
+    val path = new Path("/path/to/table")
     // empty array
-    SnapshotManager.verifyDeltaVersions(
-      Collections.emptyList(),
-      Optional.empty(),
-      Optional.empty(),
-      new Path("/path/to/table"))
+    SnapshotManager.verifyDeltaVersionsContiguous(Collections.emptyList(), path)
+    // array of size 1
+    SnapshotManager.verifyDeltaVersionsContiguous(Collections.singletonList(1), path)
     // contiguous versions
-    SnapshotManager.verifyDeltaVersions(
-      Arrays.asList(1, 2, 3),
-      Optional.empty(),
-      Optional.empty(),
-      new Path("/path/to/table"))
-    // contiguous versions with correct `expectedStartVersion` and `expectedStartVersion`
-    SnapshotManager.verifyDeltaVersions(
-      Arrays.asList(1, 2, 3),
-      Optional.empty(),
-      Optional.of(3),
-      new Path("/path/to/table"))
-    SnapshotManager.verifyDeltaVersions(
-      Arrays.asList(1, 2, 3),
-      Optional.of(1),
-      Optional.empty(),
-      new Path("/path/to/table"))
-    SnapshotManager.verifyDeltaVersions(
-      Arrays.asList(1, 2, 3),
-      Optional.of(1),
-      Optional.of(3),
-      new Path("/path/to/table"))
-    // `expectedStartVersion` or `expectedEndVersion` doesn't match
+    SnapshotManager.verifyDeltaVersionsContiguous(Arrays.asList(1, 2, 3), path)
+    // non-contiguous versions
     intercept[InvalidTableException] {
-      SnapshotManager.verifyDeltaVersions(
-        Arrays.asList(1, 2),
-        Optional.of(0),
-        Optional.empty(),
-        new Path("/path/to/table"))
-    }
-    intercept[InvalidTableException] {
-      SnapshotManager.verifyDeltaVersions(
-        Arrays.asList(1, 2),
-        Optional.empty(),
-        Optional.of(3),
-        new Path("/path/to/table"))
-    }
-    intercept[InvalidTableException] {
-      SnapshotManager.verifyDeltaVersions(
-        Collections.emptyList(),
-        Optional.of(0),
-        Optional.empty(),
-        new Path("/path/to/table"))
-    }
-    intercept[InvalidTableException] {
-      SnapshotManager.verifyDeltaVersions(
-        Collections.emptyList(),
-        Optional.empty(),
-        Optional.of(3),
-        new Path("/path/to/table"))
-    }
-    // non contiguous versions
-    intercept[InvalidTableException] {
-      SnapshotManager.verifyDeltaVersions(
-        Arrays.asList(1, 3),
-        Optional.empty(),
-        Optional.empty(),
-        new Path("/path/to/table"))
+      SnapshotManager.verifyDeltaVersionsContiguous(Arrays.asList(1, 3), path)
     }
     // duplicates in versions
     intercept[InvalidTableException] {
-      SnapshotManager.verifyDeltaVersions(
-        Arrays.asList(1, 2, 2, 3),
-        Optional.empty(),
-        Optional.empty(),
-        new Path("/path/to/table"))
+      SnapshotManager.verifyDeltaVersionsContiguous(Arrays.asList(1, 2, 2, 3), path)
     }
     // unsorted versions
     intercept[InvalidTableException] {
-      SnapshotManager.verifyDeltaVersions(
-        Arrays.asList(3, 2, 1),
-        Optional.empty(),
-        Optional.empty(),
-        new Path("/path/to/table"))
+      SnapshotManager.verifyDeltaVersionsContiguous(Arrays.asList(3, 2, 1), path)
     }
   }
 
@@ -805,11 +743,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
   test("getLogSegmentForVersion: corrupt _last_checkpoint with empty delta log") {
     val exMsg = intercept[InvalidTableException] {
       snapshotManager.getLogSegmentForVersion(
-        mockEngine(
-          jsonHandler = new MockReadLastCheckpointFileJsonHandler(
-            s"$logPath/_last_checkpoint", 1),
-          fileSystemClient = new MockListFromFileSystemClient(_ => Seq.empty)
-        ),
+        createMockFSAndJsonEngineForLastCheckpoint(Seq.empty, Optional.of(1)),
         Optional.empty()
       )
     }.getMessage

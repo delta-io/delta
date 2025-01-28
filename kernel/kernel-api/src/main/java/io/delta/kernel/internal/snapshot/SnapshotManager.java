@@ -215,18 +215,12 @@ public class SnapshotManager {
   ////////////////////
 
   /**
-   * Given a list of delta versions, verifies that they are (1) contiguous, (2) start with
-   * expectedStartVersion (if provided), and (3) end with expectedEndVersionOpt (if provided).
-   * Throws an exception if any of these are not true.
+   * Verify that a list of delta versions is contiguous.
    *
-   * @param versions List of versions in sorted increasing order according
+   * @throws InvalidTableException if the versions are not contiguous
    */
   @VisibleForTesting
-  public static void verifyDeltaVersions(
-      List<Long> versions,
-      Optional<Long> expectedStartVersion,
-      Optional<Long> expectedEndVersion,
-      Path tablePath) {
+  public static void verifyDeltaVersionsContiguous(List<Long> versions, Path tablePath) {
     for (int i = 1; i < versions.size(); i++) {
       if (versions.get(i) != versions.get(i - 1) + 1) {
         throw new InvalidTableException(
@@ -234,22 +228,6 @@ public class SnapshotManager {
             String.format("Missing delta files: versions are not contiguous: (%s)", versions));
       }
     }
-    expectedStartVersion.ifPresent(
-        v -> {
-          if (versions.isEmpty() || !Objects.equals(versions.get(0), v)) {
-            throw new InvalidTableException(
-                tablePath.toString(),
-                String.format("Cannot compute snapshot. Missing delta file version %d.", v));
-          }
-        });
-    expectedEndVersion.ifPresent(
-        v -> {
-          if (versions.isEmpty() || !Objects.equals(ListUtils.getLast(versions), v)) {
-            throw new InvalidTableException(
-                tablePath.toString(),
-                String.format("Cannot compute snapshot. Missing delta file version %d.", v));
-          }
-        });
   }
 
   /**
@@ -482,13 +460,13 @@ public class SnapshotManager {
     // Step 9: Perform some basic validations. //
     /////////////////////////////////////////////
 
+    // Check that we have found at least one checkpoint or delta file
     if (!latestCompleteCheckpointOpt.isPresent() && deltasAfterCheckpoint.isEmpty()) {
       throw new InvalidTableException(
           tablePath.toString(), "No complete checkpoint found and no delta files found");
     }
 
-    // If there's a checkpoint at version N then we also require that there's a delta file at that
-    // version.
+    // Check that, for a checkpoint at version N, there's a delta file at N, too.
     if (latestCompleteCheckpointOpt.isPresent()
         && listedDeltaFileStatuses.stream()
             .map(x -> FileNames.deltaVersion(new Path(x.getPath())))
@@ -498,6 +476,7 @@ public class SnapshotManager {
           String.format("Missing delta file for version %s", latestCompleteCheckpointVersion));
     }
 
+    // Check that the $newVersion we actually loaded is the desired $versionToLoad
     versionToLoadOpt.ifPresent(
         versionToLoad -> {
           if (newVersion < versionToLoad) {
@@ -512,11 +491,22 @@ public class SnapshotManager {
         });
 
     if (!deltasAfterCheckpoint.isEmpty()) {
-      verifyDeltaVersions(
-          deltaVersionsAfterCheckpoint,
-          Optional.of(latestCompleteCheckpointVersion + 1) /* expected first version */,
-          versionToLoadOpt /* expected end version */,
-          tablePath);
+      // Check that the delta versions are contiguous
+      verifyDeltaVersionsContiguous(deltaVersionsAfterCheckpoint, tablePath);
+
+      // Check that the delta versions start with $latestCompleteCheckpointVersion + 1. If they
+      // don't, then we have a gap in between the checkpoint and the first delta file.
+      if (!deltaVersionsAfterCheckpoint.get(0).equals(latestCompleteCheckpointVersion + 1)) {
+        throw new InvalidTableException(
+            tablePath.toString(),
+            String.format(
+                "Cannot compute snapshot. Missing delta file version %d.",
+                latestCompleteCheckpointVersion + 1));
+      }
+
+      // Note: We have already asserted above that $versionToLoad equals $newVersion.
+      // Note: We already know that the last element of deltasAfterCheckpoint is $newVersion IF
+      //       $deltasAfterCheckpoint is not empty.
 
       logger.info(
           "Verified delta files are contiguous from version {} to {}",
