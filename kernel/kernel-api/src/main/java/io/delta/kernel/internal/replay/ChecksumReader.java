@@ -73,10 +73,9 @@ public class ChecksumReader {
         engine.getFileSystemClient().listFrom(lowerBoundFilePath.toString())) {
       List<FileStatus> crcFilesList =
           InternalUtils.toList(
-              crcFiles.filter(
-                  file ->
-                      isChecksumFile(file.getPath())
-                          && checksumVersion(new Path(file.getPath())) <= targetedVersion));
+              crcFiles
+                  .filter(file -> isChecksumFile(file.getPath()))
+                  .takeWhile(file -> checksumVersion(new Path(file.getPath())) <= targetedVersion));
 
       // pick the last file which is the latest version that has the CRC file
       if (crcFilesList.isEmpty()) {

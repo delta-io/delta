@@ -129,6 +129,49 @@ public interface CloseableIterator<T> extends Iterator<T>, Closeable {
     };
   }
 
+  default CloseableIterator<T> takeWhile(Function<T, Boolean> mapper) {
+    CloseableIterator<T> delegate = this;
+    return new CloseableIterator<T>() {
+      T next;
+      boolean hasLoadedNext;
+      boolean end;
+
+      @Override
+      public boolean hasNext() {
+        if (end) {
+          return false;
+        }
+        if (hasLoadedNext) {
+          return true;
+        }
+        if (delegate.hasNext()) {
+          T potentialNext = delegate.next();
+          if (mapper.apply(potentialNext)) {
+            next = potentialNext;
+            hasLoadedNext = true;
+            return true;
+          }
+        }
+        end = true;
+        return false;
+      }
+
+      @Override
+      public T next() {
+        if (!hasNext()) {
+          throw new NoSuchElementException();
+        }
+        hasLoadedNext = false;
+        return next;
+      }
+
+      @Override
+      public void close() throws IOException {
+        delegate.close();
+      }
+    };
+  }
+
   /**
    * Combine the current iterator with another iterator. The resulting iterator will return all
    * elements from the current iterator followed by all elements from the other iterator.
