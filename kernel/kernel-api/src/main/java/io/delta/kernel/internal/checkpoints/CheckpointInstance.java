@@ -81,10 +81,6 @@ public class CheckpointInstance implements Comparable<CheckpointInstance> {
     }
   }
 
-  public CheckpointInstance(Path path) {
-    this(path.getName());
-  }
-
   public CheckpointInstance(long version) {
     this(version, Optional.empty());
   }

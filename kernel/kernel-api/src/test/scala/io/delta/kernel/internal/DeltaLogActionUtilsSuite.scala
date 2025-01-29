@@ -282,7 +282,7 @@ class DeltaLogActionUtilsSuite extends AnyFunSuite with MockFileSystemClientUtil
       false /* mustBeRecreatable */
     ).asScala
 
-    assert(commitFiles.forall(fs => FileNames.isCommitFile(fs.getPath)))
+    assert(commitFiles.forall(fs => FileNames.isCommitFile(new Path(fs.getPath))))
     assert(extractVersions(commitFiles) == Seq(10, 11, 12, 13, 14, 15, 16, 17))
 
     val checkpointFiles = listDeltaLogFiles(
@@ -294,7 +294,7 @@ class DeltaLogActionUtilsSuite extends AnyFunSuite with MockFileSystemClientUtil
       false /* mustBeRecreatable */
     ).asScala
 
-    assert(checkpointFiles.forall(fs => FileNames.isCheckpointFile(fs.getPath)))
+    assert(checkpointFiles.forall(fs => FileNames.isCheckpointFile(new Path(fs.getPath))))
     assert(extractVersions(checkpointFiles) == Seq(10, 14, 14, 17))
   }
 

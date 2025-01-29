@@ -403,7 +403,7 @@ public class SnapshotManager {
 
     final List<CheckpointInstance> listedCheckpointInstances =
         listedCheckpointFileStatuses.stream()
-            .map(f -> new CheckpointInstance(new Path(f.getPath())))
+            .map(f -> new CheckpointInstance(f.getPath()))
             .collect(Collectors.toList());
 
     final CheckpointInstance notLaterThanCheckpoint =

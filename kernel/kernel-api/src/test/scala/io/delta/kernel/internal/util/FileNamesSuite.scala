@@ -113,51 +113,43 @@ class FileNamesSuite extends AnyFunSuite {
   test("is checkpoint file") {
     // ===== V1 checkpoint =====
     // Positive cases
-    assert(isCheckpointFile(checkpointV1))
-    assert(isCheckpointFile(new Path(checkpointV1).getName))
-    assert(isClassicCheckpointFile(checkpointV1))
-    assert(isClassicCheckpointFile(new Path(checkpointV1).getName))
+    assert(isCheckpointFile(new Path(checkpointV1)))
+    assert(isClassicCheckpointFile(new Path(checkpointV1)))
     // Negative cases
-    assert(!isMultiPartCheckpointFile(checkpointV1))
-    assert(!isV2CheckpointFile(checkpointV1))
-    assert(!isCommitFile(checkpointV1))
+    assert(!isMultiPartCheckpointFile(new Path(checkpointV1)))
+    assert(!isV2CheckpointFile(new Path(checkpointV1)))
+    assert(!isCommitFile(new Path(checkpointV1)))
 
     // ===== Multipart checkpoint =====
     // Positive cases
-    assert(isCheckpointFile(checkpointMultiPart))
-    assert(isCheckpointFile(new Path(checkpointMultiPart).getName))
-    assert(isMultiPartCheckpointFile(checkpointMultiPart))
-    assert(isMultiPartCheckpointFile(new Path(checkpointMultiPart).getName))
+    assert(isCheckpointFile(new Path(checkpointMultiPart)))
+    assert(isMultiPartCheckpointFile(new Path(checkpointMultiPart)))
     // Negative cases
-    assert(!isClassicCheckpointFile(checkpointMultiPart))
-    assert(!isV2CheckpointFile(checkpointMultiPart))
-    assert(!isCommitFile(checkpointMultiPart))
+    assert(!isClassicCheckpointFile(new Path(checkpointMultiPart)))
+    assert(!isV2CheckpointFile(new Path(checkpointMultiPart)))
+    assert(!isCommitFile(new Path(checkpointMultiPart)))
 
     // ===== V2 checkpoint =====
     // Positive cases
-    assert(isCheckpointFile(checkpointV2Json))
-    assert(isCheckpointFile(new Path(checkpointV2Json).getName))
-    assert(isV2CheckpointFile(checkpointV2Json))
-    assert(isV2CheckpointFile(new Path(checkpointV2Json).getName))
-    assert(isCheckpointFile(checkpointV2Parquet))
-    assert(isCheckpointFile(new Path(checkpointV2Parquet).getName))
-    assert(isV2CheckpointFile(checkpointV2Parquet))
-    assert(isV2CheckpointFile(new Path(checkpointV2Parquet).getName))
+    assert(isCheckpointFile(new Path(checkpointV2Json)))
+    assert(isV2CheckpointFile(new Path(checkpointV2Json)))
+    assert(isCheckpointFile(new Path(checkpointV2Parquet)))
+    assert(isV2CheckpointFile(new Path(checkpointV2Parquet)))
     // Negative cases
-    assert(!isClassicCheckpointFile(checkpointV2Json))
-    assert(!isClassicCheckpointFile(checkpointV2Parquet))
-    assert(!isMultiPartCheckpointFile(checkpointV2Json))
-    assert(!isMultiPartCheckpointFile(checkpointV2Parquet))
-    assert(!isCommitFile(checkpointV2Json))
-    assert(!isCommitFile(checkpointV2Parquet))
+    assert(!isClassicCheckpointFile(new Path(checkpointV2Json)))
+    assert(!isClassicCheckpointFile(new Path(checkpointV2Parquet)))
+    assert(!isMultiPartCheckpointFile(new Path(checkpointV2Json)))
+    assert(!isMultiPartCheckpointFile(new Path(checkpointV2Parquet)))
+    assert(!isCommitFile(new Path(checkpointV2Json)))
+    assert(!isCommitFile(new Path(checkpointV2Parquet)))
 
     // ===== Others =====
-    assert(!isCheckpointFile("/a/123.json"))
-    assert(!isCommitFile("/a/123.checkpoint.3.json"))
+    assert(!isCheckpointFile(new Path("/a/123.json")))
+    assert(!isCommitFile(new Path("/a/123.checkpoint.3.json")))
   }
 
   test("is commit file") {
-    assert(isCommitFile(commitNormal))
-    assert(isCommitFile(commitUUID))
+    assert(isCommitFile(new Path(commitNormal)))
+    assert(isCommitFile(new Path(commitUUID)))
   }
 }
