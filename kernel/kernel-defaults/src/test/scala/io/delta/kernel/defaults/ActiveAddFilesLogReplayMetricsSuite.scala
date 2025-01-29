@@ -142,7 +142,7 @@ class ActiveAddFilesLogReplayMetricsSuite extends AnyFunSuite with TestUtils {
 
     val scanFileIter = Table.forPath(engine, tablePath)
       .getLatestSnapshot(engine)
-      .getScanBuilder(engine)
+      .getScanBuilder()
       .build()
       .getScanFiles(engine)
 

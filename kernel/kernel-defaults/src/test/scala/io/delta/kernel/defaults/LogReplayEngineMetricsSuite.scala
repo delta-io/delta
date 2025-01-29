@@ -76,7 +76,7 @@ class LogReplayEngineMetricsSuite extends QueryTest
       expParquetVersionsRead: Seq[Long],
       expParquetReadSetSizes: Seq[Long] = Nil): Unit = {
     engine.resetMetrics()
-    table.getLatestSnapshot(engine).getSchema(engine)
+    table.getLatestSnapshot(engine).getSchema()
 
     assertMetrics(
       engine,
@@ -93,7 +93,7 @@ class LogReplayEngineMetricsSuite extends QueryTest
       expParquetReadSetSizes: Seq[Long],
       expLastCheckpointReadCalls: Option[Int] = None): Unit = {
     engine.resetMetrics()
-    val scan = table.getLatestSnapshot(engine).getScanBuilder(engine).build()
+    val scan = table.getLatestSnapshot(engine).getScanBuilder().build()
     // get all scan files and iterate through them to trigger the metrics collection
     val scanFiles = scan.getScanFiles(engine)
     while (scanFiles.hasNext) scanFiles.next()
@@ -206,7 +206,7 @@ class LogReplayEngineMetricsSuite extends QueryTest
 
       val table = Table.forPath(tc, path)
 
-      table.getLatestSnapshot(tc).getSchema(tc)
+      table.getLatestSnapshot(tc).getSchema()
 
       // A hint is now saved at v14
 
@@ -222,7 +222,7 @@ class LogReplayEngineMetricsSuite extends QueryTest
 
       val table = Table.forPath(tc, path)
 
-      table.getLatestSnapshot(tc).getSchema(tc)
+      table.getLatestSnapshot(tc).getSchema()
 
       // A hint is now saved at v14
 
@@ -253,7 +253,7 @@ class LogReplayEngineMetricsSuite extends QueryTest
 
       val table = Table.forPath(tc, path)
 
-      table.getLatestSnapshot(tc).getSchema(tc)
+      table.getLatestSnapshot(tc).getSchema()
 
       // A hint is now saved at v3
 

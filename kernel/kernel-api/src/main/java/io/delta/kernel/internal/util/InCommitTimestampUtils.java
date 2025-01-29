@@ -71,7 +71,7 @@ public class InCommitTimestampUtils {
     boolean isICTCurrentlyEnabled =
         IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(currentTransactionMetadata);
     boolean wasICTEnabledInReadSnapshot =
-        readSnapshot.getVersion(engine) != -1
+        readSnapshot.getVersion() != -1
             && IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(readSnapshot.getMetadata());
     return isICTCurrentlyEnabled && !wasICTEnabledInReadSnapshot;
   }

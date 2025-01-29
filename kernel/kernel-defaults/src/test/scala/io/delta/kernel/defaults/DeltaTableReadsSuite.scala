@@ -282,7 +282,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
 
     // for now we don't support timestamp type partition columns so remove from read columns
     val readCols = Table.forPath(defaultEngine, path).getLatestSnapshot(defaultEngine)
-      .getSchema(defaultEngine)
+      .getSchema()
       .withoutField("as_timestamp")
       .fields()
       .asScala
@@ -680,7 +680,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
   test("table protocol version greater than reader protocol version") {
     val e = intercept[Exception] {
       latestSnapshot(goldenTablePath("deltalog-invalid-protocol-version"))
-        .getScanBuilder(defaultEngine)
+        .getScanBuilder()
         .build()
     }
     assert(e.getMessage.contains("Unsupported Delta protocol reader version"))
