@@ -35,7 +35,6 @@ public class ScanBuilderImpl implements ScanBuilder {
   private final Metadata metadata;
   private final StructType snapshotSchema;
   private final LogReplay logReplay;
-  private final Engine engine;
 
   private StructType readSchema;
   private Optional<Predicate> predicate;
@@ -45,14 +44,12 @@ public class ScanBuilderImpl implements ScanBuilder {
       Protocol protocol,
       Metadata metadata,
       StructType snapshotSchema,
-      LogReplay logReplay,
-      Engine engine) {
+      LogReplay logReplay) {
     this.dataPath = dataPath;
     this.protocol = protocol;
     this.metadata = metadata;
     this.snapshotSchema = snapshotSchema;
     this.logReplay = logReplay;
-    this.engine = engine;
     this.readSchema = snapshotSchema;
     this.predicate = Optional.empty();
   }

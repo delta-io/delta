@@ -291,7 +291,7 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
       }
 
       // Checkpoint the table
-      val latestVersion = table.getLatestSnapshot(engine).getVersion(engine)
+      val latestVersion = table.getLatestSnapshot(engine).getVersion()
       table.checkpoint(engine, latestVersion)
 
       // Verify that only the latest domain metadata is persisted in the checkpoint
@@ -508,7 +508,7 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
 
         // Checkpoint the table so domain metadata is distributed to both checkpoint and log files
         val table = Table.forPath(engine, tablePath)
-        val latestVersion = table.getLatestSnapshot(engine).getVersion(engine)
+        val latestVersion = table.getLatestSnapshot(engine).getVersion()
         table.checkpoint(engine, latestVersion)
 
         // Manually commit two domain metadata actions

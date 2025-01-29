@@ -73,8 +73,13 @@ public class SnapshotImpl implements Snapshot {
   /////////////////
 
   @Override
-  public long getVersion(Engine engine) {
+  public long getVersion() {
     return version;
+  }
+
+  @Override
+  public List<String> getPartitionColumnNames() {
+    return VectorUtils.toJavaList(getMetadata().getPartitionColumns());
   }
 
   /**
@@ -107,14 +112,14 @@ public class SnapshotImpl implements Snapshot {
   }
 
   @Override
-  public StructType getSchema(Engine engine) {
+  public StructType getSchema() {
     return getMetadata().getSchema();
   }
 
   @Override
-  public ScanBuilder getScanBuilder(Engine engine) {
+  public ScanBuilder getScanBuilder() {
     // TODO when we add ScanReport we will pass the SnapshotReport downstream here
-    return new ScanBuilderImpl(dataPath, protocol, metadata, getSchema(engine), logReplay, engine);
+    return new ScanBuilderImpl(dataPath, protocol, metadata, getSchema(), logReplay);
   }
 
   ///////////////////
@@ -131,10 +136,6 @@ public class SnapshotImpl implements Snapshot {
 
   public Protocol getProtocol() {
     return protocol;
-  }
-
-  public List<String> getPartitionColumnNames(Engine engine) {
-    return VectorUtils.toJavaList(getMetadata().getPartitionColumns());
   }
 
   public SnapshotReport getSnapshotReport() {

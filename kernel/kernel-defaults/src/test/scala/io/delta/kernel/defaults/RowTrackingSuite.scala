@@ -75,9 +75,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
     val table = TableImpl.forPath(engine, tablePath)
     val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
 
-    val scanFileRows = collectScanFileRows(
-      snapshot.getScanBuilder(engine).build()
-    )
+    val scanFileRows = collectScanFileRows(snapshot.getScanBuilder().build())
     val sortedBaseRowIds = scanFileRows
       .map(InternalScanFileUtils.getBaseRowId)
       .map(_.orElse(-1))
@@ -93,9 +91,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
     val table = TableImpl.forPath(engine, tablePath)
     val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
 
-    val scanFileRows = collectScanFileRows(
-      snapshot.getScanBuilder(engine).build()
-    )
+    val scanFileRows = collectScanFileRows(snapshot.getScanBuilder().build())
     val sortedAddFileDefaultRowCommitVersions = scanFileRows
       .map(InternalScanFileUtils.getDefaultRowCommitVersion)
       .map(_.orElse(-1))
@@ -189,7 +185,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
 
       // Checkpoint the table
       val table = TableImpl.forPath(engine, tablePath)
-      val latestVersion = table.getLatestSnapshot(engine).getVersion(engine)
+      val latestVersion = table.getLatestSnapshot(engine).getVersion()
       table.checkpoint(engine, latestVersion)
 
       val commitVersion3 = appendData(
