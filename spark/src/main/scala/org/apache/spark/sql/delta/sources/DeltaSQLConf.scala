@@ -1452,6 +1452,24 @@ trait DeltaSQLConfBase {
       .intConf
       .createWithDefault(100)
 
+  val DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_CLUSTERING_COLUMNS_ONLY =
+    buildConf("skipping.partitionLikeDataSkipping.limitToClusteringColumns")
+      .internal()
+      .doc("Limits partition-like data skipping to filters referencing only clustering columns" +
+        "In general, clustering columns will be most likely to produce files with the same" +
+        "min-max values, though this restriction might exclude filters on columns highly " +
+        "correlated with the clustering columns.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_ADDITIONAL_SUPPORTED_EXPRESSIONS =
+    buildConf("skipping.partitionLikeDataSkipping.additionalSupportedExpressions")
+      .internal()
+      .doc("Comma-separated list of the canonical class names of additional expressions for which" +
+        "partition-like data skipping can be safely applied.")
+      .stringConf
+      .createOptional
+
   /**
    * The below confs have a special prefix `spark.databricks.io` because this is the conf value
    * already used by Databricks' data skipping implementation. There's no benefit to making OSS
