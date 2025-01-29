@@ -31,7 +31,6 @@ import io.delta.kernel.internal.metrics.SnapshotReportImpl;
 import io.delta.kernel.internal.replay.CreateCheckpointIterator;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
-import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.metrics.SnapshotReport;
 import io.delta.kernel.types.StructType;
 import java.util.List;
@@ -134,7 +133,7 @@ public class SnapshotImpl implements Snapshot {
   }
 
   public List<String> getPartitionColumnNames(Engine engine) {
-    return VectorUtils.toJavaList(getMetadata().getPartitionColumns());
+    return getMetadata().getPartitionColumns();
   }
 
   public SnapshotReport getSnapshotReport() {

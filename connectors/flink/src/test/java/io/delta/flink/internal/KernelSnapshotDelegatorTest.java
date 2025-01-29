@@ -59,7 +59,7 @@ class KernelSnapshotDelegatorTest {
         SnapshotImpl snapshot = kernelDeltaLog.snapshot();
         Metadata metadata = snapshot.getMetadata();
         assertEquals(metadata.getId(), "eaf79abd-f74f-4618-a013-afd3a69c7ad2");
-        assertEquals(metadata.getName(), null);
+        assertEquals(metadata.getName(), "");
         Optional<Long> created = metadata.getCreatedTime();
         assertThat(created.isPresent());
         assertEquals(created.get(), 1641940596848L);
