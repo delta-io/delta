@@ -17,7 +17,6 @@
 package io.delta.kernel.internal.replay;
 
 import static io.delta.kernel.internal.replay.LogReplayUtils.assertLogFilesBelongToTable;
-import static io.delta.kernel.internal.util.FileNames.checkpointVersion;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Arrays.asList;
 import static java.util.Collections.max;
@@ -43,7 +42,6 @@ import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.*;
-import java.util.stream.Collectors;
 
 /**
  * Replays a history of actions, resolving them to produce the current state of the table. The
