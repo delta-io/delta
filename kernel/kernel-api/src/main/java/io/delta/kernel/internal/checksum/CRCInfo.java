@@ -53,7 +53,7 @@ public class CRCInfo {
   private final long tableSizeBytes;
   private final long numFiles;
 
-  protected CRCInfo(
+  public CRCInfo(
       long version, Metadata metadata, Protocol protocol, long tableSizeBytes, long numFiles) {
     this.version = version;
     this.metadata = requireNonNull(metadata);

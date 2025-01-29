@@ -28,7 +28,7 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.ConcurrentWriteException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.*;
-import io.delta.kernel.internal.checksum.ChecksumWriter;
+import io.delta.kernel.internal.checksum.CRCInfo;
 import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.metrics.TransactionMetrics;
@@ -36,7 +36,6 @@ import io.delta.kernel.internal.metrics.TransactionReportImpl;
 import io.delta.kernel.internal.replay.ConflictChecker;
 import io.delta.kernel.internal.replay.ConflictChecker.TransactionRebaseState;
 import io.delta.kernel.internal.rowtracking.RowTracking;
-import io.delta.kernel.internal.snapshot.SnapshotHint;
 import io.delta.kernel.internal.util.*;
 import io.delta.kernel.metrics.TransactionMetricsResult;
 import io.delta.kernel.metrics.TransactionReport;
@@ -73,7 +72,6 @@ public class TransactionImpl implements Transaction {
   private Metadata metadata;
   private boolean shouldUpdateMetadata;
   private int maxRetries;
-  private final ChecksumWriter checksumWriter;
 
   private boolean closed; // To avoid trying to commit the same transaction again.
 
@@ -104,7 +102,6 @@ public class TransactionImpl implements Transaction {
     this.shouldUpdateProtocol = shouldUpdateProtocol;
     this.maxRetries = maxRetries;
     this.clock = clock;
-    this.checksumWriter = new ChecksumWriter(logPath);
   }
 
   @Override
@@ -359,17 +356,11 @@ public class TransactionImpl implements Transaction {
           },
           "Write file actions to JSON log file `%s`",
           FileNames.deltaFile(logPath, commitAsVersion));
-
-      boolean crcWritten =
-          checksumWriter.maybeWriteCheckSum(
-              engine,
-              buildPostCommitSnapshotHint(
-                  commitAsVersion, transactionMetrics.captureTransactionMetricsResult()),
-              Optional.of(txnId.toString()));
-
-      System.out.println(crcWritten);
-
-      return new TransactionCommitResult(commitAsVersion, isReadyForCheckpoint(commitAsVersion));
+      return new TransactionCommitResult(
+          commitAsVersion,
+          isReadyForCheckpoint(commitAsVersion),
+          buildPostCommitCrcInfo(
+              commitAsVersion, transactionMetrics.captureTransactionMetricsResult(), engine));
     } catch (FileAlreadyExistsException e) {
       throw e;
     } catch (IOException ioe) {
@@ -383,21 +374,20 @@ public class TransactionImpl implements Transaction {
     return true;
   }
 
-  private SnapshotHint buildPostCommitSnapshotHint(
-      long commitAtVersion, TransactionMetricsResult metricsResult) {
-    return new SnapshotHint(
-        commitAtVersion,
-        protocol,
-        metadata,
-        readSnapshot.getTotalSizeInByte().isPresent()
-            ? OptionalLong.of(
-                readSnapshot.getTotalSizeInByte().getAsLong()
-                    + metricsResult.getTotalAddFilesSizeInBytes())
-            : OptionalLong.empty(),
-        readSnapshot.getFileCount().isPresent()
-            ? OptionalLong.of(
-                readSnapshot.getFileCount().getAsLong() + metricsResult.getNumAddFiles())
-            : OptionalLong.empty());
+  private Optional<CRCInfo> buildPostCommitCrcInfo(
+      long commitAtVersion, TransactionMetricsResult metricsResult, Engine engine) {
+    if (!readSnapshot.crcInfo().isPresent()
+        || commitAtVersion != readSnapshot.crcInfo().get().getVersion() + 1) {
+      return Optional.empty();
+    }
+    CRCInfo lastCrcInfo = readSnapshot.crcInfo().get();
+    return Optional.of(
+        new CRCInfo(
+            commitAtVersion,
+            metadata,
+            protocol,
+            lastCrcInfo.getTableSizeBytes() + metricsResult.getTotalAddFilesSizeInBytes(),
+            lastCrcInfo.getNumFiles() + metricsResult.getNumAddFiles()));
   }
 
   /**

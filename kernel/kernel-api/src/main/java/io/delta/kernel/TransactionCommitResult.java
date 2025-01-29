@@ -17,7 +17,9 @@ package io.delta.kernel;
 
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.checksum.CRCInfo;
 import io.delta.kernel.utils.CloseableIterable;
+import java.util.Optional;
 
 /**
  * Contains the result of a successful transaction commit. Returned by {@link
@@ -29,10 +31,13 @@ import io.delta.kernel.utils.CloseableIterable;
 public class TransactionCommitResult {
   private final long version;
   private final boolean isReadyForCheckpoint;
+  private final Optional<CRCInfo> crcInfo;
 
-  public TransactionCommitResult(long version, boolean isReadyForCheckpoint) {
+  public TransactionCommitResult(
+      long version, boolean isReadyForCheckpoint, Optional<CRCInfo> crcInfo) {
     this.version = version;
     this.isReadyForCheckpoint = isReadyForCheckpoint;
+    this.crcInfo = crcInfo;
   }
 
   /**
@@ -53,5 +58,9 @@ public class TransactionCommitResult {
    */
   public boolean isReadyForCheckpoint() {
     return isReadyForCheckpoint;
+  }
+
+  public Optional<CRCInfo> getCrcInfo() {
+    return crcInfo;
   }
 }

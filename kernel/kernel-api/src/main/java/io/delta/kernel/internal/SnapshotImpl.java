@@ -25,6 +25,7 @@ import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.checksum.CRCInfo;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.metrics.SnapshotReportImpl;
@@ -37,7 +38,6 @@ import io.delta.kernel.types.StructType;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.OptionalLong;
 
 /** Implementation of {@link Snapshot}. */
 public class SnapshotImpl implements Snapshot {
@@ -153,12 +153,8 @@ public class SnapshotImpl implements Snapshot {
     return logReplay.getDomainMetadataMap();
   }
 
-  public OptionalLong getTotalSizeInByte() {
-    return logReplay.getFileCountAndTableSizeInBytes()._2;
-  }
-
-  public OptionalLong getFileCount() {
-    return logReplay.getFileCountAndTableSizeInBytes()._1;
+  public Optional<CRCInfo> crcInfo() {
+    return logReplay.getCrcInfo();
   }
 
   public Metadata getMetadata() {
