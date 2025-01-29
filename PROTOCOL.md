@@ -1408,13 +1408,14 @@ metadata | binary | The binary-encoded Variant metadata, as described in [Varian
 
 The parquet struct must include the two struct fields `value` and `metadata`.
 Supported writers must write the two binary fields, and supported readers must read the two binary fields.
-Struct fields which start with `_` (underscore) can be safely ignored.
+
+Variant shredding will be introduced in a separate `variantShredding` table feature.
 
 ## Writer Requirements for Variant Data Type
 
 When Variant type is supported (`writerFeatures` field of a table's `protocol` action contains `variantType`), writers:
 - must write a column of type `variant` to parquet as a struct containing the fields `value` and `metadata` and storing values that conform to the [Variant binary encoding specification](https://github.com/apache/spark/blob/master/common/variant/README.md)
-- must not write additional, non-ignorable parquet struct fields. Writing additional struct fields with names starting with `_` (underscore) is allowed.
+- must not write additional parquet struct fields.
 
 ## Reader Requirements for Variant Data Type
 
