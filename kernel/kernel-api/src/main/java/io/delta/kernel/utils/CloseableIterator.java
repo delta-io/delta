@@ -185,9 +185,8 @@ public interface CloseableIterator<T> extends Iterator<T>, Closeable {
           return true;
         }
         while (delegate.hasNext()) {
-          T potentialNext = delegate.next();
-
-          BreakableFilterResult result = mapper.apply(potentialNext);
+          final T potentialNext = delegate.next();
+          final BreakableFilterResult result = mapper.apply(potentialNext);
           if (result == BreakableFilterResult.INCLUDE) {
             next = potentialNext;
             hasLoadedNext = true;
