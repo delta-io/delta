@@ -23,98 +23,36 @@ import scala.reflect.ClassTag
 import io.delta.kernel.data.{ColumnVector, ColumnarBatch}
 import io.delta.kernel.exceptions.{InvalidTableException, TableNotFoundException}
 import io.delta.kernel.expressions.Predicate
-import io.delta.kernel.internal.checkpoints.{CheckpointInstance, SidecarFile}
+import io.delta.kernel.internal.checkpoints.{CheckpointInstance, CheckpointMetaData, SidecarFile}
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.snapshot.{LogSegment, SnapshotManager}
 import io.delta.kernel.internal.util.{FileNames, Utils}
-import io.delta.kernel.test.{BaseMockJsonHandler, BaseMockParquetHandler, MockFileSystemClientUtils, VectorTestUtils}
+import io.delta.kernel.test.{BaseMockJsonHandler, BaseMockParquetHandler, MockFileSystemClientUtils, MockListFromFileSystemClient, VectorTestUtils}
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 import org.scalatest.funsuite.AnyFunSuite
 
 class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
-  test("verifyDeltaVersions") {
+  test("verifyDeltaVersionsContiguous") {
+    val path = new Path("/path/to/table")
     // empty array
-    SnapshotManager.verifyDeltaVersions(
-      Collections.emptyList(),
-      Optional.empty(),
-      Optional.empty(),
-      new Path("/path/to/table"))
+    SnapshotManager.verifyDeltaVersionsContiguous(Collections.emptyList(), path)
+    // array of size 1
+    SnapshotManager.verifyDeltaVersionsContiguous(Collections.singletonList(1), path)
     // contiguous versions
-    SnapshotManager.verifyDeltaVersions(
-      Arrays.asList(1, 2, 3),
-      Optional.empty(),
-      Optional.empty(),
-      new Path("/path/to/table"))
-    // contiguous versions with correct `expectedStartVersion` and `expectedStartVersion`
-    SnapshotManager.verifyDeltaVersions(
-      Arrays.asList(1, 2, 3),
-      Optional.empty(),
-      Optional.of(3),
-      new Path("/path/to/table"))
-    SnapshotManager.verifyDeltaVersions(
-      Arrays.asList(1, 2, 3),
-      Optional.of(1),
-      Optional.empty(),
-      new Path("/path/to/table"))
-    SnapshotManager.verifyDeltaVersions(
-      Arrays.asList(1, 2, 3),
-      Optional.of(1),
-      Optional.of(3),
-      new Path("/path/to/table"))
-    // `expectedStartVersion` or `expectedEndVersion` doesn't match
-    intercept[IllegalArgumentException] {
-      SnapshotManager.verifyDeltaVersions(
-        Arrays.asList(1, 2),
-        Optional.of(0),
-        Optional.empty(),
-        new Path("/path/to/table"))
-    }
-    intercept[IllegalArgumentException] {
-      SnapshotManager.verifyDeltaVersions(
-        Arrays.asList(1, 2),
-        Optional.empty(),
-        Optional.of(3),
-        new Path("/path/to/table"))
-    }
-    intercept[IllegalArgumentException] {
-      SnapshotManager.verifyDeltaVersions(
-        Collections.emptyList(),
-        Optional.of(0),
-        Optional.empty(),
-        new Path("/path/to/table"))
-    }
-    intercept[IllegalArgumentException] {
-      SnapshotManager.verifyDeltaVersions(
-        Collections.emptyList(),
-        Optional.empty(),
-        Optional.of(3),
-        new Path("/path/to/table"))
-    }
-    // non contiguous versions
+    SnapshotManager.verifyDeltaVersionsContiguous(Arrays.asList(1, 2, 3), path)
+    // non-contiguous versions
     intercept[InvalidTableException] {
-      SnapshotManager.verifyDeltaVersions(
-        Arrays.asList(1, 3),
-        Optional.empty(),
-        Optional.empty(),
-        new Path("/path/to/table"))
+      SnapshotManager.verifyDeltaVersionsContiguous(Arrays.asList(1, 3), path)
     }
     // duplicates in versions
     intercept[InvalidTableException] {
-      SnapshotManager.verifyDeltaVersions(
-        Arrays.asList(1, 2, 2, 3),
-        Optional.empty(),
-        Optional.empty(),
-        new Path("/path/to/table"))
+      SnapshotManager.verifyDeltaVersionsContiguous(Arrays.asList(1, 2, 2, 3), path)
     }
     // unsorted versions
     intercept[InvalidTableException] {
-      SnapshotManager.verifyDeltaVersions(
-        Arrays.asList(3, 2, 1),
-        Optional.empty(),
-        Optional.empty(),
-        new Path("/path/to/table"))
+      SnapshotManager.verifyDeltaVersionsContiguous(Arrays.asList(3, 2, 1), path)
     }
   }
 
@@ -219,7 +157,6 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
         createMockFSListFromEngine(listFromProvider(deltas ++ checkpointFiles)("/"),
           new MockSidecarParquetHandler(expectedSidecars),
           new MockSidecarJsonHandler(expectedSidecars)),
-        Optional.empty(),
         versionToLoad
       )
 
@@ -308,13 +245,12 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
    */
   def testExpectedError[T <: Throwable](
       files: Seq[FileStatus],
-      startCheckpoint: Optional[java.lang.Long] = Optional.empty(),
+      lastCheckpointVersion: Optional[java.lang.Long] = Optional.empty(),
       versionToLoad: Optional[java.lang.Long] = Optional.empty(),
       expectedErrorMessageContains: String = "")(implicit classTag: ClassTag[T]): Unit = {
     val e = intercept[T] {
       snapshotManager.getLogSegmentForVersion(
-        createMockFSListFromEngine(files),
-        startCheckpoint,
+        createMockFSAndJsonEngineForLastCheckpoint(files, lastCheckpointVersion),
         versionToLoad
       )
     }
@@ -438,8 +374,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
     val exMsg = intercept[TableNotFoundException] {
       snapshotManager.getLogSegmentForVersion(
         createMockFSListFromEngine(Seq.empty),
-        Optional.empty(),
-        Optional.empty()
+        Optional.empty() /* versionToLoad */
       )
     }.getMessage
 
@@ -479,21 +414,31 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
   }
 
   test("getLogSegmentForVersion: start listing from _last_checkpoint when it is provided") {
-    val deltas = deltaFileStatuses(0L until 25)
-    val checkpoints = singularCheckpointFileStatuses(Seq(10L, 20L))
-    val files = deltas ++ checkpoints
-    def listFrom(minVersion: Long)(filePath: String): Seq[FileStatus] = {
-      if (filePath < FileNames.listingPrefix(logPath, minVersion)) {
-        throw new RuntimeException("Listing from before provided _last_checkpoint")
+    val deltas = deltaFileStatuses(0L to 24)
+    val checkpoints = singularCheckpointFileStatuses(Seq(10, 20))
+
+    for (lastCheckpointVersion <- Seq(10, 20)) {
+      val lastCheckpointFileStatus = FileStatus.of(s"$logPath/_last_checkpoint", 2, 2)
+      val files = deltas ++ checkpoints ++ Seq(lastCheckpointFileStatus)
+
+      def listFrom(filePath: String): Seq[FileStatus] = {
+        if (filePath < FileNames.listingPrefix(logPath, lastCheckpointVersion)) {
+          throw new RuntimeException(
+            s"Listing from before the checkpoint version referenced by _last_checkpoint. " +
+            s"Last checkpoint version: $lastCheckpointVersion. Listing from: $filePath")
+        }
+        listFromProvider(files)(filePath)
       }
-      listFromProvider(files)(filePath)
-    }
-    for (checkpointV <- Seq(10, 20)) {
+
       val logSegment = snapshotManager.getLogSegmentForVersion(
-        createMockFSListFromEngine(listFrom(checkpointV)(_)),
-        Optional.of(checkpointV),
-        Optional.empty()
+        mockEngine(
+          jsonHandler = new MockReadLastCheckpointFileJsonHandler(
+            lastCheckpointFileStatus.getPath, lastCheckpointVersion),
+          fileSystemClient = new MockListFromFileSystemClient(listFrom)
+        ),
+        Optional.empty() /* versionToLoad */
       )
+
       checkLogSegment(
         logSegment,
         expectedVersion = 24,
@@ -634,14 +579,12 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
   /* ------------------- CORRUPT DELTA LOG FILE LISTINGS ------------------ */
 
   test("getLogSegmentForVersion: corrupt listing with only checkpoint file") {
-    for (versionToLoad <-
-           Seq(Optional.empty(), Optional.of(10L)): Seq[Optional[java.lang.Long]]) {
-      for (startCheckpoint <-
-             Seq(Optional.empty(), Optional.of(10L)): Seq[Optional[java.lang.Long]]) {
+    Seq(Optional.empty(), Optional.of(10L)).foreach { lastCheckpointVersion =>
+      Seq(Optional.empty(), Optional.of(10L)).foreach { versionToLoad =>
         testExpectedError[InvalidTableException](
           files = singularCheckpointFileStatuses(Seq(10L)),
-          startCheckpoint = startCheckpoint,
-          versionToLoad = versionToLoad,
+          lastCheckpointVersion.map(Long.box),
+          versionToLoad.map(Long.box),
           expectedErrorMessageContains = "Missing delta file for version 10"
         )
       }
@@ -652,88 +595,54 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
     // checkpoint(10), 010.json, 011.json, 013.json
     val fileList = deltaFileStatuses(Seq(10L, 11L)) ++ deltaFileStatuses(Seq(13L)) ++
       singularCheckpointFileStatuses(Seq(10L))
-    testExpectedError[InvalidTableException](
-      fileList,
-      expectedErrorMessageContains = "versions are not contiguous: ([11, 13])"
-    )
-    testExpectedError[InvalidTableException](
-      fileList,
-      startCheckpoint = Optional.of(10),
-      expectedErrorMessageContains = "versions are not contiguous: ([11, 13])"
-    )
-    testExpectedError[InvalidTableException](
-      fileList,
-      versionToLoad = Optional.of(13),
-      expectedErrorMessageContains = "versions are not contiguous: ([11, 13])"
-    )
+    Seq(Optional.empty(), Optional.of(10L)).foreach { lastCheckpointVersion =>
+      Seq(Optional.empty(), Optional.of(13L)).foreach { versionToLoad =>
+        testExpectedError[InvalidTableException](
+          fileList,
+          lastCheckpointVersion.map(Long.box),
+          versionToLoad.map(Long.box),
+          expectedErrorMessageContains = "versions are not contiguous: ([11, 13])"
+        )
+      }
+    }
   }
 
   test("getLogSegmentForVersion: corrupt listing 000.json...009.json + checkpoint(10)") {
     val fileList = deltaFileStatuses((0L until 10L)) ++ singularCheckpointFileStatuses(Seq(10L))
-
-    /* ----------  version to load is 15 (greater than latest checkpoint/delta file) ---------- */
-    testExpectedError[InvalidTableException](
-      fileList,
-      versionToLoad = Optional.of(15),
-      expectedErrorMessageContains = "Missing delta file for version 10"
-    )
-    testExpectedError[InvalidTableException](
-      fileList,
-      startCheckpoint = Optional.of(10),
-      versionToLoad = Optional.of(15),
-      expectedErrorMessageContains = "Missing delta file for version 10"
-    )
-
-    /* ---------- versionToLoad is latest (10) ---------- */
-    testExpectedError[InvalidTableException](
-      fileList,
-      startCheckpoint = Optional.of(10),
-      expectedErrorMessageContains = "Missing delta file for version 10"
-    )
-    testExpectedError[InvalidTableException](
-      fileList,
-      expectedErrorMessageContains = "Missing delta file for version 10"
-    )
+    Seq(Optional.empty(), Optional.of(10L)).foreach { lastCheckpointVersion =>
+      Seq(Optional.empty(), Optional.of(15L)).foreach { versionToLoad =>
+        testExpectedError[InvalidTableException](
+          fileList,
+          lastCheckpointVersion.map(Long.box),
+          versionToLoad.map(Long.box),
+          expectedErrorMessageContains = "Missing delta file for version 10"
+        )
+      }
+    }
   }
 
-  // it's weird that checkpoint(10) fails but 011.json...014.json + checkpoint(10) does not
-  test("getLogSegmentForVersion: corrupt listing 011.json...014.json + checkpoint(10)") {
+  test("getLogSegmentForVersion: corrupt listing: checkpoint(10); 11 to 14.json; no 10.json") {
     val fileList = singularCheckpointFileStatuses(Seq(10L)) ++ deltaFileStatuses((11L until 15L))
-    /* ---------- versionToLoad is latest (14) ---------- */
-    // no error
-    testWithSingularAndMultipartCheckpoint(
-      deltaVersions = (11L until 15L),
-      checkpointVersions = Seq(10)
-    )
-    testWithSingularAndMultipartCheckpoint(
-      deltaVersions = (11L until 15L),
-      checkpointVersions = Seq(10),
-      startCheckpoint = Optional.of(10)
-    )
-    /* ---------- versionToLoad is 10 ---------- */
-    // (?) throws an error
-    testExpectedError[InvalidTableException](
-      fileList,
-      versionToLoad = Optional.of(10),
-      expectedErrorMessageContains = "Missing delta file for version 10"
-    )
-    testExpectedError[InvalidTableException](
-      fileList,
-      startCheckpoint = Optional.of(10),
-      versionToLoad = Optional.of(10),
-      expectedErrorMessageContains = "Missing delta file for version 10"
-    )
+    Seq(Optional.empty(), Optional.of(10L)).foreach { lastCheckpointVersion =>
+      Seq(Optional.empty(), Optional.of(10L)).foreach { versionToLoad =>
+        testExpectedError[InvalidTableException](
+          fileList,
+          lastCheckpointVersion.map(Long.box),
+          versionToLoad.map(Long.box),
+          expectedErrorMessageContains = "Missing delta file for version 10")
+      }
+    }
   }
 
   test("getLogSegmentForVersion: corrupted log missing json files / no way to construct history") {
     testExpectedError[InvalidTableException](
       deltaFileStatuses(1L until 10L),
-      expectedErrorMessageContains = "missing log file for version 0"
+      expectedErrorMessageContains = "Cannot compute snapshot. Missing delta file version 0."
     )
     testExpectedError[InvalidTableException](
       deltaFileStatuses(15L until 25L) ++ singularCheckpointFileStatuses(Seq(20L)),
       versionToLoad = Optional.of(17),
-      expectedErrorMessageContains = "missing log file for version 0"
+      expectedErrorMessageContains = "Cannot compute snapshot. Missing delta file version 0."
     )
     testExpectedError[InvalidTableException](
       deltaFileStatuses((0L until 5L) ++ (6L until 9L)),
@@ -746,9 +655,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
     val deltas = deltaFileStatuses(10L to 13L)
     testExpectedError[InvalidTableException](
       corruptedCheckpointStatuses ++ deltas,
-      Optional.empty(),
-      Optional.empty(),
-      expectedErrorMessageContains = "missing log file for version 0"
+      expectedErrorMessageContains = "Cannot compute snapshot. Missing delta file version 0."
     )
   }
 
@@ -780,44 +687,44 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
     )
   }
 
-  // TODO recover from missing checkpoint (getLogSegmentWithMaxExclusiveCheckpointVersion)
   test("getLogSegmentForVersion: corrupt _last_checkpoint refers to in range version " +
     "but no valid checkpoint") {
+    // _last_checkpoint refers to a v1 checkpoint at version 20 that is missing
     testExpectedError[RuntimeException](
       deltaFileStatuses(0L until 25L) ++ singularCheckpointFileStatuses(Seq(10L)),
-      startCheckpoint = Optional.of(20),
-      expectedErrorMessageContains = "Checkpoint file to load version: 20 is missing."
+      lastCheckpointVersion = Optional.of(20),
+      expectedErrorMessageContains = "Missing checkpoint at version 20"
     )
-    // _last_checkpoint refers to incomplete multi-part checkpoint
+    // _last_checkpoint refers to incomplete multi-part checkpoint at version 20 that is missing
     val corruptedCheckpointStatuses = FileNames.checkpointFileWithParts(logPath, 20, 5).asScala
       .map(p => FileStatus.of(p.toString, 10, 10))
       .take(4)
     testExpectedError[RuntimeException](
       files = corruptedCheckpointStatuses ++ deltaFileStatuses(10L to 20L) ++
         singularCheckpointFileStatuses(Seq(10L)),
-      startCheckpoint = Optional.of(20),
-      expectedErrorMessageContains = "Checkpoint file to load version: 20 is missing."
+      lastCheckpointVersion = Optional.of(20),
+      expectedErrorMessageContains = "Missing checkpoint at version 20"
     )
   }
 
   test("getLogSegmentForVersion: corrupted incomplete multi-part checkpoint with no" +
     "_last_checkpoint or a valid _last_checkpoint provided") {
     val cases: Seq[(Long, Seq[Long], Seq[Long], Optional[java.lang.Long])] = Seq(
-      /* (corruptedCheckpointVersion, validCheckpointVersions, deltaVersions, startCheckpoint) */
+      /* (corruptedCheckpointVersion, validCheckpointVersions, deltaVersions, lastCheckpointV) */
       (20, Seq(10), (10L to 20L), Optional.empty()),
       (20, Seq(10), (10L to 20L), Optional.of(10)),
       (10, Seq.empty, (0L to 10L), Optional.empty())
     )
-    cases.foreach { case (corruptedVersion, validVersions, deltaVersions, startCheckpoint) =>
+    cases.foreach { case (corruptedVersion, validVersions, deltaVersions, lastCheckpointVersion) =>
       val corruptedCheckpoint = FileNames.checkpointFileWithParts(logPath, corruptedVersion, 5)
         .asScala
         .map(p => FileStatus.of(p.toString, 10, 10))
         .take(4)
       val checkpoints = singularCheckpointFileStatuses(validVersions)
       val deltas = deltaFileStatuses(deltaVersions)
+      val allFiles = deltas ++ corruptedCheckpoint ++ checkpoints
       val logSegment = snapshotManager.getLogSegmentForVersion(
-        createMockFSListFromEngine(deltas ++ corruptedCheckpoint ++ checkpoints),
-        Optional.empty(),
+        createMockFSAndJsonEngineForLastCheckpoint(allFiles, lastCheckpointVersion),
         Optional.empty()
       )
       val checkpointVersion = validVersions.sorted.lastOption
@@ -836,27 +743,12 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
   test("getLogSegmentForVersion: corrupt _last_checkpoint with empty delta log") {
     val exMsg = intercept[InvalidTableException] {
       snapshotManager.getLogSegmentForVersion(
-        createMockFSListFromEngine(Seq.empty),
-        Optional.of(1),
+        createMockFSAndJsonEngineForLastCheckpoint(Seq.empty, Optional.of(1)),
         Optional.empty()
       )
     }.getMessage
 
     assert(exMsg.contains("Missing checkpoint at version 1"))
-  }
-
-  test("getLogSegmentForVersion: startCheckpoint is greater than versionToLoad") {
-    val exMsg = intercept[IllegalArgumentException] {
-      snapshotManager.getLogSegmentForVersion(
-        createMockFSListFromEngine(
-          singularCheckpointFileStatuses(Seq(10)) ++ deltaFileStatuses(10L until 15L)
-        ),
-        Optional.of(10), // startCheckpoint
-        Optional.of(7) // versionToLoad
-      )
-    }.getMessage
-
-    assert(exMsg.contains("endVersion=7 provided is less than startVersion=10"))
   }
 }
 
@@ -896,4 +788,33 @@ class MockSidecarJsonHandler(sidecars: Seq[FileStatus])
       physicalSchema: StructType,
       predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] =
     singletonSidecarIterator(sidecars)
+}
+
+class MockReadLastCheckpointFileJsonHandler(
+    lastCheckpointPath: String,
+    lastCheckpointVersion: Long)
+  extends BaseMockJsonHandler with VectorTestUtils {
+  override def readJsonFiles(
+      fileIter: CloseableIterator[FileStatus],
+      physicalSchema: StructType,
+      predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] = {
+    assert(fileIter.hasNext)
+    assert(fileIter.next.getPath == lastCheckpointPath)
+
+    Utils.singletonCloseableIterator(
+      new ColumnarBatch {
+        override def getSchema: StructType = CheckpointMetaData.READ_SCHEMA
+
+        override def getColumnVector(ordinal: Int): ColumnVector = {
+          ordinal match {
+            case 0 => longVector(lastCheckpointVersion) /* version */
+            case 1 => longVector(100) /* size */
+            case 2 => longVector(1) /* parts */
+          }
+        }
+
+        override def getSize: Int = 1
+      }
+    )
+  }
 }

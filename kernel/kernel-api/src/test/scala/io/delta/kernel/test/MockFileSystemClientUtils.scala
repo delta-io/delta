@@ -15,7 +15,7 @@
  */
 package io.delta.kernel.test
 
-import java.util.UUID
+import java.util.{Optional, UUID}
 
 import io.delta.kernel.engine._
 import io.delta.kernel.internal.fs.Path
@@ -24,6 +24,8 @@ import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 
 import scala.collection.JavaConverters._
+
+import io.delta.kernel.internal.MockReadLastCheckpointFileJsonHandler
 
 /**
  * This is an extension to [[BaseMockFileSystemClient]] containing specific mock implementations
@@ -105,6 +107,21 @@ trait MockFileSystemClientUtils extends MockEngineUtils {
       new MockListFromFileSystemClient(listFromProvider(contents)),
       parquetHandler = parquetHandler,
       jsonHandler = jsonHandler)
+  }
+
+  def createMockFSAndJsonEngineForLastCheckpoint(
+      contents: Seq[FileStatus], lastCheckpointVersion: Optional[java.lang.Long]): Engine = {
+    mockEngine(
+      fileSystemClient = new MockListFromFileSystemClient(listFromProvider(contents)),
+      jsonHandler = if (lastCheckpointVersion.isPresent) {
+        new MockReadLastCheckpointFileJsonHandler(
+          s"$logPath/_last_checkpoint",
+          lastCheckpointVersion.get()
+        )
+      } else {
+        null
+      }
+    )
   }
 
   /**
