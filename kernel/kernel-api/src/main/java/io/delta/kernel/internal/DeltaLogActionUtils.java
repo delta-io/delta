@@ -231,8 +231,7 @@ public class DeltaLogActionUtils {
                   && FileNames.isCheckpointFile(getName(fs.getPath()))
                   && fs.getSize() > 0) {
                 // Checkpoint files of 0 size are invalid but may be ignored silently when read,
-                // hence we
-                // ignore them so that we never pick up such checkpoints.
+                // hence we ignore them so that we never pick up such checkpoints.
                 // Here, we do nothing (we will consume this file).
               } else {
                 logger.debug("Ignoring file {} as it is not of the desired type", fs.getPath());
