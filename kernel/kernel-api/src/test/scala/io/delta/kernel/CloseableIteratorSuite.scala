@@ -43,8 +43,8 @@ class CloseableIteratorSuite extends AnyFunSuite {
   }
 
   test("CloseableIterator::filter -- returns filtered result") {
-    val result = normalDataIter.filter(x => x <= 3)
-    assert(toList(result) === List(1, 2, 3))
+    val result = normalDataIter.filter(x => x <= 3 || x == 5)
+    assert(toList(result) === List(1, 2, 3, 5))
   }
 
   test("CloseableIterator::filter -- iterates over all elements") {
