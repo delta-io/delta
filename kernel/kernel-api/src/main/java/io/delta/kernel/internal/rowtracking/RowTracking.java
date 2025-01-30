@@ -25,8 +25,10 @@ import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Collectors;
 
 /** A collection of helper methods for working with row tracking. */
 public class RowTracking {
@@ -35,43 +37,68 @@ public class RowTracking {
   }
 
   /**
-   * Assigns base row IDs and default row commit versions to {@link AddFile} actions in the provided
-   * {@code dataActions}. This method should be called when processing data actions during commit
-   * preparation and before the actual commit.
+   * Assigns or reassigns baseRowIds and defaultRowCommitVersions to {@link AddFile} actions in the
+   * provided {@code dataActions}. This method should be invoked only when the 'rowTracking' feature
+   * is supported and is used in two scenarios:
    *
-   * <p>This method should be called exactly once per transaction during commit preparation, i.e.,
-   * not for each commit attempt. And it should only be called when the 'rowTracking' feature is
-   * supported.
+   * <ol>
+   *   <li>Initial Assignment: Assigns row tracking fields to AddFile actions during commit
+   *       preparation before they are committed.
+   *   <li>Conflict Resolution: Updates row tracking fields when a transaction conflict occurs.
+   *       Since the losing transaction gets a new commit version and winning transactions may have
+   *       increased the row ID high watermark, this method reassigns the fields for the losing
+   *       transaction using the latest state from winning transactions before retrying the commit.
+   * </ol>
    *
-   * <p>For {@link AddFile} actions missing a base row ID, assigns the current row ID high watermark
-   * plus 1. The high watermark is then incremented by the number of records in the file. For
-   * actions missing a default row commit version, assigns the specified commit version.
-   *
-   * @param snapshot the snapshot of the table that this transaction is reading at
-   * @param commitVersion the version of the commit for default row commit version assignment
-   * @param dataActions the {@link CloseableIterable} of data actions to process
-   * @return an {@link CloseableIterable} of data actions with base row IDs and default row commit
-   *     versions assigned
+   * @param txnReadSnapshot the snapshot of the table that this transaction is reading from
+   * @param txnProtocol the (updated, if any) protocol that will result from this txn
+   * @param winningTxnRowIdHighWatermark the latest row ID high watermark from the winning
+   *     transactions. Should be empty for initial assignment and present for conflict resolution.
+   * @param prevCommitVersion the commit version used by this transaction in the previous commit
+   *     attempt. Should be empty for initial assignment and present for conflict resolution.
+   * @param currCommitVersion the transaction's (latest) commit version
+   * @param txnDataActions a {@link CloseableIterable} of data actions this txn is trying to commit
+   * @return a {@link CloseableIterable} of data actions with baseRowIds and
+   *     defaultRowCommitVersions assigned or reassigned
    */
   public static CloseableIterable<Row> assignBaseRowIdAndDefaultRowCommitVersion(
-      SnapshotImpl snapshot, long commitVersion, CloseableIterable<Row> dataActions) {
+      SnapshotImpl txnReadSnapshot,
+      Protocol txnProtocol,
+      Optional<Long> winningTxnRowIdHighWatermark,
+      Optional<Long> prevCommitVersion,
+      long currCommitVersion,
+      CloseableIterable<Row> txnDataActions) {
     checkArgument(
-        TableFeatures.isRowTrackingSupported(snapshot.getProtocol()),
+        TableFeatures.isRowTrackingSupported(txnProtocol),
         "Base row ID and default row commit version are assigned "
             + "only when feature 'rowTracking' is supported.");
 
     return new CloseableIterable<Row>() {
       @Override
       public void close() throws IOException {
-        dataActions.close();
+        txnDataActions.close();
       }
 
       @Override
       public CloseableIterator<Row> iterator() {
-        // Used to keep track of the current high watermark as we iterate through the data actions.
-        // Use an AtomicLong to allow for updating the high watermark in the lambda.
-        final AtomicLong currRowIdHighWatermark = new AtomicLong(readRowIdHighWaterMark(snapshot));
-        return dataActions
+        // The row ID high watermark from the snapshot of the table that this transaction is reading
+        // at. Any baseRowIds higher than this watermark are assigned by this transaction.
+        final long prevRowIdHighWatermark = readRowIdHighWaterMark(txnReadSnapshot);
+
+        // Used to track the current high watermark as we iterate through the data actions and
+        // assign baseRowIds. Use an AtomicLong to allow for updating in the lambda.
+        final AtomicLong currRowIdHighWatermark =
+            new AtomicLong(winningTxnRowIdHighWatermark.orElse(prevRowIdHighWatermark));
+
+        // The row ID high watermark must increase monotonically, so the winning transaction's high
+        // watermark must be greater than or equal to the high watermark from the current
+        // transaction's read snapshot.
+        checkArgument(
+            currRowIdHighWatermark.get() >= prevRowIdHighWatermark,
+            "The current row ID high watermark must be greater than or equal to "
+                + "the high watermark from the transaction's read snapshot");
+
+        return txnDataActions
             .iterator()
             .map(
                 row -> {
@@ -82,16 +109,20 @@ public class RowTracking {
 
                   AddFile addFile = new AddFile(row.getStruct(SingleAction.ADD_FILE_ORDINAL));
 
-                  // Assign base row ID if missing
-                  if (!addFile.getBaseRowId().isPresent()) {
-                    final long numRecords = getNumRecordsOrThrow(addFile);
+                  // Assign a baseRowId if not present, or update it if previously assigned
+                  // by this transaction
+                  if (!addFile.getBaseRowId().isPresent()
+                      || addFile.getBaseRowId().get() > prevRowIdHighWatermark) {
                     addFile = addFile.withNewBaseRowId(currRowIdHighWatermark.get() + 1L);
-                    currRowIdHighWatermark.addAndGet(numRecords);
+                    currRowIdHighWatermark.addAndGet(getNumRecordsOrThrow(addFile));
                   }
 
-                  // Assign default row commit version if missing
-                  if (!addFile.getDefaultRowCommitVersion().isPresent()) {
-                    addFile = addFile.withNewDefaultRowCommitVersion(commitVersion);
+                  // Assign a defaultRowCommitVersion if not present, or update it if previously
+                  // assigned by this transaction
+                  if (!addFile.getDefaultRowCommitVersion().isPresent()
+                      || addFile.getDefaultRowCommitVersion().get()
+                          == prevCommitVersion.orElse(-1L)) {
+                    addFile = addFile.withNewDefaultRowCommitVersion(currCommitVersion);
                   }
 
                   return SingleAction.createAddFileSingleAction(addFile.toRow());
@@ -101,38 +132,71 @@ public class RowTracking {
   }
 
   /**
-   * Returns a {@link DomainMetadata} action if the row ID high watermark has changed due to newly
-   * processed {@link AddFile} actions.
+   * Inserts or updates the {@link DomainMetadata} action reflecting the new row ID high watermark
+   * when this transaction adds rows and pushed it higher.
    *
-   * <p>This method should be called during commit preparation to prepare the domain metadata
-   * actions for commit. It should be called only when the 'rowTracking' feature is supported.
+   * <p>This method should only be called when the 'rowTracking' feature is supported. Similar to
+   * {@link #assignBaseRowIdAndDefaultRowCommitVersion}, it should be called during the initial row
+   * ID assignment or conflict resolution to reflect the change to the row ID high watermark.
    *
-   * @param snapshot the snapshot of the table that this transaction is reading at
-   * @param dataActions the iterable of data actions that may update the high watermark
+   * @param txnReadSnapshot the snapshot of the table that this transaction is reading at
+   * @param txnProtocol the (updated, if any) protocol that will result from this txn
+   * @param winningTxnRowIdHighWatermark the latest row ID high watermark from the winning
+   *     transaction. Should be empty for initial assignment and present for conflict resolution.
+   * @param txnDataActions a {@link CloseableIterable} of data actions this txn is trying to commit
+   * @param txnDomainMetadatas a list of domain metadata actions this txn is trying to commit
+   * @return Updated list of domain metadata actions for commit
    */
-  public static Optional<DomainMetadata> createNewHighWaterMarkIfNeeded(
-      SnapshotImpl snapshot, CloseableIterable<Row> dataActions) {
+  public static List<DomainMetadata> updateRowIdHighWatermarkIfNeeded(
+      SnapshotImpl txnReadSnapshot,
+      Protocol txnProtocol,
+      Optional<Long> winningTxnRowIdHighWatermark,
+      CloseableIterable<Row> txnDataActions,
+      List<DomainMetadata> txnDomainMetadatas) {
     checkArgument(
-        TableFeatures.isRowTrackingSupported(snapshot.getProtocol()),
+        TableFeatures.isRowTrackingSupported(txnProtocol),
         "Row ID high watermark is updated only when feature 'rowTracking' is supported.");
 
-    final long prevRowIdHighWatermark = readRowIdHighWaterMark(snapshot);
-    // Use an AtomicLong to allow for updating the high watermark in the lambda
-    final AtomicLong newRowIdHighWatermark = new AtomicLong(prevRowIdHighWatermark);
+    // Filter out existing row tracking domainMetadata action, if any
+    List<DomainMetadata> nonRowTrackingDomainMetadatas =
+        txnDomainMetadatas.stream()
+            .filter(dm -> !dm.getDomain().equals(RowTrackingMetadataDomain.DOMAIN_NAME))
+            .collect(Collectors.toList());
 
-    dataActions.forEach(
+    // The row ID high watermark from the snapshot of the table that this transaction is reading at.
+    // Any baseRowIds higher than this watermark are assigned by this transaction.
+    final long prevRowIdHighWatermark = readRowIdHighWaterMark(txnReadSnapshot);
+
+    // Tracks the new row ID high watermark as we iterate through data actions and counting new rows
+    // added in this transaction.
+    final AtomicLong currRowIdHighWatermark =
+        new AtomicLong(winningTxnRowIdHighWatermark.orElse(prevRowIdHighWatermark));
+
+    // The row ID high watermark must increase monotonically, so the winning transaction's high
+    // watermark (if present) must be greater than or equal to the high watermark from the
+    // current transaction's read snapshot.
+    checkArgument(
+        currRowIdHighWatermark.get() >= prevRowIdHighWatermark,
+        "The current row ID high watermark must be greater than or equal to "
+            + "the high watermark from the transaction's read snapshot");
+
+    txnDataActions.forEach(
         row -> {
           if (!row.isNullAt(SingleAction.ADD_FILE_ORDINAL)) {
             AddFile addFile = new AddFile(row.getStruct(SingleAction.ADD_FILE_ORDINAL));
-            if (!addFile.getBaseRowId().isPresent()) {
-              newRowIdHighWatermark.addAndGet(getNumRecordsOrThrow(addFile));
+            if (!addFile.getBaseRowId().isPresent()
+                || addFile.getBaseRowId().get() > prevRowIdHighWatermark) {
+              currRowIdHighWatermark.addAndGet(getNumRecordsOrThrow(addFile));
             }
           }
         });
 
-    return (newRowIdHighWatermark.get() != prevRowIdHighWatermark)
-        ? Optional.of(new RowTrackingMetadataDomain(newRowIdHighWatermark.get()).toDomainMetadata())
-        : Optional.empty();
+    if (currRowIdHighWatermark.get() != prevRowIdHighWatermark) {
+      nonRowTrackingDomainMetadatas.add(
+          new RowTrackingMetadataDomain(currRowIdHighWatermark.get()).toDomainMetadata());
+    }
+
+    return nonRowTrackingDomainMetadatas;
   }
 
   /**

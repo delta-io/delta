@@ -154,12 +154,12 @@ trait TestUtils extends Assertions with SQLHelper {
   def tableSchema(path: String): StructType = {
     Table.forPath(defaultEngine, path)
       .getLatestSnapshot(defaultEngine)
-      .getSchema(defaultEngine)
+      .getSchema()
   }
 
   def hasTableProperty(tablePath: String, propertyKey: String, expValue: String): Boolean = {
     val table = Table.forPath(defaultEngine, tablePath)
-    val schema = table.getLatestSnapshot(defaultEngine).getSchema(defaultEngine)
+    val schema = table.getLatestSnapshot(defaultEngine).getSchema()
     schema.fields().asScala.exists { field =>
       field.getMetadata.getString(propertyKey) == expValue
     }
@@ -194,14 +194,14 @@ trait TestUtils extends Assertions with SQLHelper {
 
     val result = ArrayBuffer[Row]()
 
-    var scanBuilder = snapshot.getScanBuilder(engine)
+    var scanBuilder = snapshot.getScanBuilder()
 
     if (readSchema != null) {
-      scanBuilder = scanBuilder.withReadSchema(engine, readSchema)
+      scanBuilder = scanBuilder.withReadSchema(readSchema)
     }
 
     if (filter != null) {
-      scanBuilder = scanBuilder.withFilter(engine, filter)
+      scanBuilder = scanBuilder.withFilter(filter)
     }
 
     val scan = scanBuilder.build()
@@ -264,8 +264,8 @@ trait TestUtils extends Assertions with SQLHelper {
     readSchema: StructType): Seq[FilteredColumnarBatch] = {
     val scan = Table.forPath(engine, tablePath)
       .getLatestSnapshot(engine)
-      .getScanBuilder(engine)
-      .withReadSchema(engine, readSchema)
+      .getScanBuilder()
+      .withReadSchema(readSchema)
       .build()
     val scanState = scan.getScanState(engine)
 
@@ -372,25 +372,24 @@ trait TestUtils extends Assertions with SQLHelper {
     val readSchema = if (readCols == null) {
       null
     } else {
-      val schema = snapshot.getSchema(engine)
+      val schema = snapshot.getSchema()
       new StructType(readCols.map(schema.get(_)).asJava)
     }
 
     if (expectedSchema != null) {
       assert(
-        expectedSchema == snapshot.getSchema(engine),
+        expectedSchema == snapshot.getSchema(),
         s"""
            |Expected schema does not match actual schema:
            |Expected schema: $expectedSchema
-           |Actual schema: ${snapshot.getSchema(engine)}
+           |Actual schema: ${snapshot.getSchema()}
            |""".stripMargin
       )
     }
 
     expectedVersion.foreach { version =>
-      assert(version == snapshot.getVersion(defaultEngine),
-        s"Expected version $version does not match actual version" +
-          s" ${snapshot.getVersion(defaultEngine)}")
+      assert(version == snapshot.getVersion(),
+        s"Expected version $version does not match actual version ${snapshot.getVersion()}")
     }
 
     val result = readSnapshot(snapshot, readSchema, filter, expectedRemainingFilter, engine)

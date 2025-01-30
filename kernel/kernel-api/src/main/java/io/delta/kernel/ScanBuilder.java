@@ -49,21 +49,19 @@ public interface ScanBuilder {
    * read from the scan files (returned by {@link Scan#getScanFiles(Engine)}) to completely filter
    * out the data that doesn't satisfy the filter.```
    *
-   * @param engine {@link Engine} instance to use in Delta Kernel.
    * @param predicate a {@link Predicate} to prune the metadata or data.
    * @return A {@link ScanBuilder} with filter applied.
    */
-  ScanBuilder withFilter(Engine engine, Predicate predicate);
+  ScanBuilder withFilter(Predicate predicate);
 
   /**
    * Apply the given <i>readSchema</i>. If the builder already has a projection applied, calling
    * this again replaces the existing projection.
    *
-   * @param engine {@link Engine} instance to use in Delta Kernel.
    * @param readSchema Subset of columns to read from the Delta table.
    * @return A {@link ScanBuilder} with projection pruning.
    */
-  ScanBuilder withReadSchema(Engine engine, StructType readSchema);
+  ScanBuilder withReadSchema(StructType readSchema);
 
   /** @return Build the {@link Scan instance} */
   Scan build();

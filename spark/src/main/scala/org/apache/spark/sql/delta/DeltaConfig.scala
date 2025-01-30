@@ -755,6 +755,13 @@ trait DeltaConfigsBase extends DeltaLogging {
     helpMessage = "needs to be a boolean."
   )
 
+  val CAST_ICEBERG_TIME_TYPE = buildConfig[Boolean](
+    key = "castIcebergTimeType",
+    defaultValue = "false",
+    fromString = _.toBoolean,
+    validationFunction = _ => true,
+    helpMessage = "Casting Iceberg TIME type to Spark Long type enabled"
+  )
   /**
    * Enable optimized writes into a Delta table. Optimized writes adds an adaptive shuffle before
    * the write to write compacted files into a Delta table during a write.

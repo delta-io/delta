@@ -116,13 +116,13 @@ class ScanReportSuite extends AnyFunSuite with MetricsReportTestUtils {
     val (scanReport, durationNs, snapshotReport, exceptionOpt) = getScanAndSnapshotReport(
       engine => {
         val snapshot = Table.forPath(engine, path).getLatestSnapshot(engine)
-        snapshotSchema = snapshot.getSchema(engine)
-        var scanBuilder = snapshot.getScanBuilder(engine)
+        snapshotSchema = snapshot.getSchema()
+        var scanBuilder = snapshot.getScanBuilder()
         if (filter.nonEmpty) {
-          scanBuilder = scanBuilder.withFilter(engine, filter.get)
+          scanBuilder = scanBuilder.withFilter(filter.get)
         }
         if (readSchema.nonEmpty) {
-          scanBuilder = scanBuilder.withReadSchema(engine, readSchema.get)
+          scanBuilder = scanBuilder.withReadSchema(readSchema.get)
         }
         scanBuilder.build()
       },

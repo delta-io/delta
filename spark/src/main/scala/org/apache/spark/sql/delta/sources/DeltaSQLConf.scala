@@ -1452,6 +1452,24 @@ trait DeltaSQLConfBase {
       .intConf
       .createWithDefault(100)
 
+  val DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_CLUSTERING_COLUMNS_ONLY =
+    buildConf("skipping.partitionLikeDataSkipping.limitToClusteringColumns")
+      .internal()
+      .doc("Limits partition-like data skipping to filters referencing only clustering columns" +
+        "In general, clustering columns will be most likely to produce files with the same" +
+        "min-max values, though this restriction might exclude filters on columns highly " +
+        "correlated with the clustering columns.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_ADDITIONAL_SUPPORTED_EXPRESSIONS =
+    buildConf("skipping.partitionLikeDataSkipping.additionalSupportedExpressions")
+      .internal()
+      .doc("Comma-separated list of the canonical class names of additional expressions for which" +
+        "partition-like data skipping can be safely applied.")
+      .stringConf
+      .createOptional
+
   /**
    * The below confs have a special prefix `spark.databricks.io` because this is the conf value
    * already used by Databricks' data skipping implementation. There's no benefit to making OSS
@@ -1538,6 +1556,13 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_CONVERT_ICEBERG_BUCKET_PARTITION_ENABLED =
+    buildConf("convert.iceberg.bucketPartition.enabled")
+      .doc("If enabled, convert iceberg table with bucket partition to unpartitioned delta table.")
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_CONVERT_ICEBERG_UNSAFE_MOR_TABLE_ENABLE =
     buildConf("convert.iceberg.unsafeConvertMorTable.enabled")
       .doc("If enabled, iceberg merge-on-read tables can be unsafely converted by ignoring " +
@@ -1545,6 +1570,14 @@ trait DeltaSQLConfBase {
       .internal()
       .booleanConf
       .createWithDefault(false)
+
+  val DELTA_CONVERT_ICEBERG_CAST_TIME_TYPE = {
+    buildConf("convert.iceberg.castTimeType")
+      .internal()
+      .doc("Cast Iceberg TIME type to Spark Long when converting to Delta")
+      .booleanConf
+      .createWithDefault(false)
+  }
 
   final object NonDeterministicPredicateWidening {
     final val OFF = "off"
@@ -2203,6 +2236,13 @@ trait DeltaSQLConfBase {
       .checkValue(v => v >= 1, "Must be at least 1.")
       .createWithDefault(100)
 
+  val DELTA_CONVERT_ICEBERG_STATS = buildConf("collectStats.convertIceberg")
+    .internal()
+    .doc("When enabled, attempts to convert Iceberg stats to Delta stats when cloning from " +
+      "an Iceberg source.")
+    .booleanConf
+    .createWithDefault(true)
+
   /////////////////////
   // Optimized Write
   /////////////////////
@@ -2335,6 +2375,20 @@ trait DeltaSQLConfBase {
           |""".stripMargin)
       .booleanConf
       .createWithDefault(false)
+
+  ///////////
+  // VARIANT
+  ///////////////////
+  val FORCE_USE_PREVIEW_VARIANT_FEATURE = buildConf("variant.forceUsePreviewTableFeature")
+    .internal()
+    .doc(
+      """
+        | If true, creating new tables with variant columns only attaches the 'variantType-preview'
+        | table feature. Attempting to operate on existing tables created with the stable feature
+        | does not require that the preview table feature be present.
+        |""".stripMargin)
+    .booleanConf
+    .createWithDefault(false)
 
   ///////////
   // TESTING

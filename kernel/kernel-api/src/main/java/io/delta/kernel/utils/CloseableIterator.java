@@ -23,7 +23,10 @@ import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.internal.util.Utils;
 import java.io.Closeable;
 import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.util.ArrayList;
 import java.util.Iterator;
+import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.function.Function;
 
@@ -35,6 +38,31 @@ import java.util.function.Function;
  */
 @Evolving
 public interface CloseableIterator<T> extends Iterator<T>, Closeable {
+
+  /**
+   * Represents the result of applying the filter condition in the {@link
+   * #breakableFilter(Function)} method of a {@link CloseableIterator}. This enum determines how
+   * each element in the iterator should be handled.
+   */
+  enum BreakableFilterResult {
+    /**
+     * Indicates that the current element should be included in the resulting iterator produced by
+     * {@link #breakableFilter(Function)}.
+     */
+    INCLUDE,
+
+    /**
+     * Indicates that the current element should be excluded from the resulting iterator produced by
+     * {@link #breakableFilter(Function)}.
+     */
+    EXCLUDE,
+
+    /**
+     * Indicates that the iteration should stop immediately and that no further elements should be
+     * processed by {@link #breakableFilter(Function)}.
+     */
+    BREAK
+  }
 
   /**
    * Returns true if the iteration has more elements. (In other words, returns true if next would
@@ -91,23 +119,81 @@ public interface CloseableIterator<T> extends Iterator<T>, Closeable {
     };
   }
 
+  /**
+   * Returns a new {@link CloseableIterator} that includes only the elements of this iterator for
+   * which the given {@code mapper} function returns {@code true}.
+   *
+   * @param mapper A function that determines whether an element should be included in the resulting
+   *     iterator.
+   * @return A {@link CloseableIterator} that includes only the filtered the elements of this
+   *     iterator.
+   */
   default CloseableIterator<T> filter(Function<T, Boolean> mapper) {
+    return breakableFilter(
+        t -> {
+          if (mapper.apply(t)) {
+            return BreakableFilterResult.INCLUDE;
+          } else {
+            return BreakableFilterResult.EXCLUDE;
+          }
+        });
+  }
+
+  /**
+   * Returns a new {@link CloseableIterator} that includes elements from this iterator as long as
+   * the given {@code mapper} function returns {@code true}. Once the mapper function returns {@code
+   * false}, the iteration is terminated.
+   *
+   * @param mapper A function that determines whether to include an element in the resulting
+   *     iterator.
+   * @return A {@link CloseableIterator} that stops iteration when the condition is not met.
+   */
+  default CloseableIterator<T> takeWhile(Function<T, Boolean> mapper) {
+    return breakableFilter(
+        t -> {
+          if (mapper.apply(t)) {
+            return BreakableFilterResult.INCLUDE;
+          } else {
+            return BreakableFilterResult.BREAK;
+          }
+        });
+  }
+
+  /**
+   * Returns a new {@link CloseableIterator} that applies a {@link BreakableFilterResult}-based
+   * filtering function to determine whether elements of this iterator should be included or
+   * excluded, or whether the iteration should terminate.
+   *
+   * @param mapper A function that determines the filtering action for each element: include,
+   *     exclude, or break.
+   * @return A {@link CloseableIterator} that applies the specified {@link
+   *     BreakableFilterResult}-based logic.
+   */
+  default CloseableIterator<T> breakableFilter(Function<T, BreakableFilterResult> mapper) {
     CloseableIterator<T> delegate = this;
     return new CloseableIterator<T>() {
       T next;
       boolean hasLoadedNext;
+      boolean shouldBreak = false;
 
       @Override
       public boolean hasNext() {
+        if (shouldBreak) {
+          return false;
+        }
         if (hasLoadedNext) {
           return true;
         }
         while (delegate.hasNext()) {
-          T potentialNext = delegate.next();
-          if (mapper.apply(potentialNext)) {
+          final T potentialNext = delegate.next();
+          final BreakableFilterResult result = mapper.apply(potentialNext);
+          if (result == BreakableFilterResult.INCLUDE) {
             next = potentialNext;
             hasLoadedNext = true;
             return true;
+          } else if (result == BreakableFilterResult.BREAK) {
+            shouldBreak = true;
+            return false;
           }
         }
         return false;
@@ -159,5 +245,27 @@ public interface CloseableIterator<T> extends Iterator<T>, Closeable {
         Utils.closeCloseables(delegate, other);
       }
     };
+  }
+
+  /**
+   * Collects all elements from this {@link CloseableIterator} into a {@link List}.
+   *
+   * <p>This method iterates through all elements of the iterator, storing them in an in-memory
+   * list. Once iteration is complete, the iterator is automatically closed to release any
+   * underlying resources.
+   *
+   * @return A {@link List} containing all elements from this iterator.
+   * @throws UncheckedIOException If an {@link IOException} occurs while closing the iterator.
+   */
+  default List<T> toInMemoryList() {
+    final List<T> result = new ArrayList<>();
+    try (CloseableIterator<T> iterator = this) {
+      while (iterator.hasNext()) {
+        result.add(iterator.next());
+      }
+    } catch (IOException e) {
+      throw new UncheckedIOException("Failed to close the CloseableIterator", e);
+    }
+    return result;
   }
 }

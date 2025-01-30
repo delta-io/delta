@@ -304,7 +304,7 @@ abstract class UniversalFormatConverter(spark: SparkSession) {
    */
   def enqueueSnapshotForConversion(
     snapshotToConvert: Snapshot,
-    txn: OptimisticTransactionImpl): Unit
+    txn: DeltaTransaction): Unit
 
   /**
    * Perform a blocking conversion when performing an OptimisticTransaction
@@ -317,7 +317,7 @@ abstract class UniversalFormatConverter(spark: SparkSession) {
    * @return Converted Delta version and commit timestamp
    */
   def convertSnapshot(
-    snapshotToConvert: Snapshot, txn: OptimisticTransactionImpl): Option[(Long, Long)]
+    snapshotToConvert: Snapshot, txn: DeltaTransaction): Option[(Long, Long)]
 
   /**
    * Perform a blocking conversion for the given catalogTable
