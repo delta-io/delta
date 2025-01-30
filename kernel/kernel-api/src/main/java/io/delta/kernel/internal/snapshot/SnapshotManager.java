@@ -153,11 +153,11 @@ public class SnapshotManager {
 
   public void writeCheckSum(Engine engine, long version) {
     SnapshotImpl snapshot =
-            (SnapshotImpl)
-                    getSnapshotAt(
-                            engine,
-                            version,
-                            SnapshotQueryContext.forVersionSnapshot(tablePath.toString(), version));
+        (SnapshotImpl)
+            getSnapshotAt(
+                engine,
+                version,
+                SnapshotQueryContext.forVersionSnapshot(tablePath.toString(), version));
     Optional<CRCInfo> crcInfo = snapshot.getCurrentCrcInfo();
     checkArgument(crcInfo.isPresent());
     new ChecksumWriter(logPath).writeCheckSum(engine, crcInfo.get());

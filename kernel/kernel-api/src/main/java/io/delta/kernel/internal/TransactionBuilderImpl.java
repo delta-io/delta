@@ -266,11 +266,6 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       }
 
       @Override
-      public Tuple2<OptionalLong, OptionalLong> getFileCountAndTableSizeInBytes() {
-        return new Tuple2<>(OptionalLong.of(0), OptionalLong.of(0));
-      }
-
-      @Override
       public Optional<Long> getLatestTransactionIdentifier(Engine engine, String applicationId) {
         return Optional.empty();
       }

@@ -382,11 +382,22 @@ public class TransactionImpl implements Transaction {
 
   private Optional<CRCInfo> buildPostCommitCrcInfo(
       long commitAtVersion, TransactionMetricsResult metricsResult) {
+    if (commitAtVersion == 0) {
+      return Optional.of(
+          new CRCInfo(
+              commitAtVersion,
+              metadata,
+              protocol,
+              metricsResult.getTotalAddFilesSizeInBytes(),
+              metricsResult.getNumAddFiles(),
+              Optional.of(txnId.toString())));
+    }
     // Retry or CRC is read for old version
     if (!readSnapshot.getCachedCrcInfo().isPresent()
         || commitAtVersion != readSnapshot.getCachedCrcInfo().get().getVersion() + 1) {
       return Optional.empty();
     }
+
     CRCInfo lastCrcInfo = readSnapshot.getCachedCrcInfo().get();
     return Optional.of(
         new CRCInfo(
