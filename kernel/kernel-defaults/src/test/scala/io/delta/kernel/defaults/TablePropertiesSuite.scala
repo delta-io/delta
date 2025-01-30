@@ -26,7 +26,7 @@ import scala.collection.immutable.Seq
  * Suite to set or get table properties.
  * TODO: for now we just have the support for `set`. API `get` will be added in the next PRs.
  */
-class TablePropertiesSutie extends DeltaTableWriteSuiteBase {
+class TablePropertiesSuite extends DeltaTableWriteSuiteBase {
   test("create/update table - allow arbitrary properties") {
     withTempDir { tempFile =>
       val tablePath = tempFile.getAbsolutePath
@@ -69,6 +69,22 @@ class TablePropertiesSutie extends DeltaTableWriteSuiteBase {
         createUpdateTableWithProps(tablePath, props = Map("Delta.unknown" -> "str"))
       }
       assert(ex2.getMessage.contains("Unknown configuration was specified: Delta.unknown"))
+    }
+  }
+
+  test("create/update table - delta configs are stored with same case as defined in TableConfig") {
+    withTempDir { tempFile =>
+      val tablePath = tempFile.getAbsolutePath
+      createUpdateTableWithProps(tablePath,
+        createTable = true,
+        Map("delta.CHECKPOINTINTERVAL" -> "20"))
+      assertHasProp(tablePath, expProps = Map("delta.checkpointInterval" -> "20"))
+
+      // Try updating in an existing table
+      createUpdateTableWithProps(
+        tablePath,
+        props = Map("DELTA.CHECKPOINTINTERVAL" -> "30"))
+      assertHasProp(tablePath, expProps = Map("delta.checkpointInterval" -> "30"))
     }
   }
 
