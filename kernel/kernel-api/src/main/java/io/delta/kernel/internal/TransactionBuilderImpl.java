@@ -137,7 +137,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     Protocol protocol = snapshot.getProtocol();
     if (tableProperties.isPresent()) {
       Map<String, String> validatedProperties =
-          TableConfig.validateProperties(tableProperties.get());
+          TableConfig.validateDeltaProperties(tableProperties.get());
       Map<String, String> newProperties =
           metadata.filterOutUnchangedProperties(validatedProperties);
 
