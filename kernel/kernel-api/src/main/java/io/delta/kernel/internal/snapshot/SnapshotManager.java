@@ -292,6 +292,11 @@ public class SnapshotManager {
     return snapshot;
   }
 
+  @VisibleForTesting
+  public LogSegment getLogSegmentForVersion(Engine engine, Optional<Long> versionToLoadOpt) {
+    return getLogSegmentForVersion(engine, versionToLoadOpt, Collections.emptyList());
+  }
+
   /**
    * Generates a {@link LogSegment} for the given `versionToLoadOpt`. If no `versionToLoadOpt` is
    * provided, generates a {@code LogSegment} for the latest version of the table.
@@ -308,7 +313,25 @@ public class SnapshotManager {
    * </ol>
    */
   @VisibleForTesting
-  public LogSegment getLogSegmentForVersion(Engine engine, Optional<Long> versionToLoadOpt) {
+  public LogSegment getLogSegmentForVersion(
+      Engine engine, Optional<Long> versionToLoadOpt, Optional<LogSegment> logSegmentHintOpt) {
+
+    ///////////////////////////////
+    // Step 0: Input validations //
+    ///////////////////////////////
+
+    checkArgument(
+        versionToLoadOpt.isPresent() == logSegmentHintOpt.isPresent(),
+        "versionToLoadOpt and logSegmentHintOpt must be present or absent together");
+
+    versionToLoadOpt.ifPresent(versionToLoad -> {
+      final LogSegment logSegment = logSegmentHintOpt.get();
+      checkArgument(versionToLoad >= 0, "versionToLoadOpt must be non-negative");
+      checkArgument(
+          versionToLoad == logSegment.version,
+          "versionToLoadOpt must match the version in logSegmentHintOpt");
+    });
+
     final String versionToLoadStr = versionToLoadOpt.map(String::valueOf).orElse("latest");
     logger.info("Loading log segment for version {}", versionToLoadStr);
 
@@ -426,7 +449,7 @@ public class SnapshotManager {
     // Step 7: Grab all deltas in range [$latestCompleteCheckpointVersion + 1, $versionToLoad] //
     /////////////////////////////////////////////////////////////////////////////////////////////
 
-    final List<FileStatus> deltasAfterCheckpoint =
+    final List<FileStatus> listedDeltasAfterCheckpoint =
         listedDeltaFileStatuses.stream()
             .filter(
                 fs -> {
@@ -436,10 +459,17 @@ public class SnapshotManager {
                 })
             .collect(Collectors.toList());
 
-    logDebugFileStatuses("deltasAfterCheckpoint", deltasAfterCheckpoint);
+    logDebugFileStatuses("listedDeltasAfterCheckpoint", listedDeltasAfterCheckpoint);
+
+    //////////////////////////////////////////////////////////////////////////////////////
+    // Step 8: As needed, merge the $listedDeltasAfterCheckpoint with the $suffixDeltas //
+    //////////////////////////////////////////////////////////////////////////////////////
+
+    final List<FileStatus> allDeltasAfterCheckpoint =
+        mergeListedDeltasAndSuffixDeltas(listedDeltasAfterCheckpoint, suffixDeltas);
 
     ////////////////////////////////////////////////////////////////////
-    // Step 8: Determine the version of the snapshot we can now load. //
+    // Step 9: Determine the version of the snapshot we can now load. //
     ////////////////////////////////////////////////////////////////////
 
     final List<Long> deltaVersionsAfterCheckpoint =
@@ -454,9 +484,9 @@ public class SnapshotManager {
 
     logger.info("New version to load: {}", newVersion);
 
-    /////////////////////////////////////////////
-    // Step 9: Perform some basic validations. //
-    /////////////////////////////////////////////
+    //////////////////////////////////////////////
+    // Step 10: Perform some basic validations. //
+    //////////////////////////////////////////////
 
     // Check that we have found at least one checkpoint or delta file
     if (!latestCompleteCheckpointOpt.isPresent() && deltasAfterCheckpoint.isEmpty()) {
@@ -513,7 +543,7 @@ public class SnapshotManager {
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
-    // Step 10: Grab the actual checkpoint file statuses for latestCompleteCheckpointVersion. //
+    // Step 11: Grab the actual checkpoint file statuses for latestCompleteCheckpointVersion. //
     ////////////////////////////////////////////////////////////////////////////////////////////
 
     final List<FileStatus> latestCompleteCheckpointFileStatuses =
@@ -606,6 +636,12 @@ public class SnapshotManager {
               logger.info("Loading last checkpoint from the _last_checkpoint file");
               return new Checkpointer(logPath).readLastCheckpointFile(engine).map(x -> x.version);
             });
+  }
+
+  @VisibleForTesting
+  public static List<FileStatus> mergeListedDeltasAndSuffixDeltas(
+      List<FileStatus> listedDeltas, List<FileStatus> suffixDeltas) {
+    // using long FileNames.deltaVersion(new Path(fs.getPath()));
   }
 
   private void logDebugFileStatuses(String varName, List<FileStatus> fileStatuses) {
