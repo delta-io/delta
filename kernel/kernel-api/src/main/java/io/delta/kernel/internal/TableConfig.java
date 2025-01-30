@@ -204,16 +204,23 @@ public class TableConfig<T> {
     for (Map.Entry<String, String> kv : configurations.entrySet()) {
       String key = kv.getKey().toLowerCase(Locale.ROOT);
       String value = kv.getValue();
-      if (key.startsWith("delta.") && VALID_PROPERTIES.containsKey(key)) {
+
+      if (key.startsWith("delta.")) {
+        // If it is a delta table property, make sure it is a supported property and editable
+        if (!VALID_PROPERTIES.containsKey(key)) {
+          throw DeltaErrors.unknownConfigurationException(kv.getKey());
+        }
+
         TableConfig<?> tableConfig = VALID_PROPERTIES.get(key);
-        if (tableConfig.editable) {
-          tableConfig.validate(value);
-          validatedConfigurations.put(tableConfig.getKey(), value);
-        } else {
+        if (!tableConfig.editable) {
           throw DeltaErrors.cannotModifyTableProperty(kv.getKey());
         }
+
+        tableConfig.validate(value);
+        validatedConfigurations.put(tableConfig.getKey(), value);
       } else {
-        throw DeltaErrors.unknownConfigurationException(kv.getKey());
+        // allow unknown properties to be set
+        validatedConfigurations.put(key, value);
       }
     }
     return validatedConfigurations;
