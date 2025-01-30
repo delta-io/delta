@@ -63,10 +63,10 @@ public class SingleThreadedTableReader
         Snapshot snapshot = table.getLatestSnapshot(engine);
         StructType readSchema = pruneSchema(snapshot.getSchema(), columnsOpt);
 
-        ScanBuilder scanBuilder = snapshot.getScanBuilder().withReadSchema(engine, readSchema);
+        ScanBuilder scanBuilder = snapshot.getScanBuilder().withReadSchema(readSchema);
 
         if (predicate.isPresent()) {
-            scanBuilder = scanBuilder.withFilter(engine, predicate.get());
+            scanBuilder = scanBuilder.withFilter(predicate.get());
         }
 
         return readData(readSchema, scanBuilder.build(), limit);

@@ -55,7 +55,7 @@ public class PartitionUtils {
     io.delta.kernel.internal.util.PartitionUtils.validatePredicateOnlyOnPartitionColumns(
         partitionPredicate, snapshotPartColNames);
 
-    final Scan scan = snapshot.getScanBuilder().withFilter(engine, partitionPredicate).build();
+    final Scan scan = snapshot.getScanBuilder().withFilter(partitionPredicate).build();
 
     try (CloseableIterator<FilteredColumnarBatch> columnarBatchIter = scan.getScanFiles(engine)) {
       while (columnarBatchIter.hasNext()) {

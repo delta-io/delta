@@ -197,11 +197,11 @@ trait TestUtils extends Assertions with SQLHelper {
     var scanBuilder = snapshot.getScanBuilder()
 
     if (readSchema != null) {
-      scanBuilder = scanBuilder.withReadSchema(engine, readSchema)
+      scanBuilder = scanBuilder.withReadSchema(readSchema)
     }
 
     if (filter != null) {
-      scanBuilder = scanBuilder.withFilter(engine, filter)
+      scanBuilder = scanBuilder.withFilter(filter)
     }
 
     val scan = scanBuilder.build()
@@ -265,7 +265,7 @@ trait TestUtils extends Assertions with SQLHelper {
     val scan = Table.forPath(engine, tablePath)
       .getLatestSnapshot(engine)
       .getScanBuilder()
-      .withReadSchema(engine, readSchema)
+      .withReadSchema(readSchema)
       .build()
     val scanState = scan.getScanState(engine)
 

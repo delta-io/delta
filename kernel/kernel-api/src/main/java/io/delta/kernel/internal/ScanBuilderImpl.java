@@ -18,7 +18,6 @@ package io.delta.kernel.internal;
 
 import io.delta.kernel.Scan;
 import io.delta.kernel.ScanBuilder;
-import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
@@ -55,7 +54,7 @@ public class ScanBuilderImpl implements ScanBuilder {
   }
 
   @Override
-  public ScanBuilder withFilter(Engine engine, Predicate predicate) {
+  public ScanBuilder withFilter(Predicate predicate) {
     if (this.predicate.isPresent()) {
       throw new IllegalArgumentException("There already exists a filter in current builder");
     }
@@ -64,7 +63,7 @@ public class ScanBuilderImpl implements ScanBuilder {
   }
 
   @Override
-  public ScanBuilder withReadSchema(Engine engine, StructType readSchema) {
+  public ScanBuilder withReadSchema(StructType readSchema) {
     // TODO: validate the readSchema is a subset of the table schema
     this.readSchema = readSchema;
     return this;
