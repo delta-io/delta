@@ -153,8 +153,12 @@ public class SnapshotImpl implements Snapshot {
     return logReplay.getDomainMetadataMap();
   }
 
-  public Optional<CRCInfo> crcInfo() {
-    return logReplay.getCrcInfo();
+  public Optional<CRCInfo> getCachedCrcInfo() {
+    return logReplay.getCachedCrcInfo(false);
+  }
+
+  public Optional<CRCInfo> getCurrentCrcInfo() {
+    return logReplay.getCachedCrcInfo(true);
   }
 
   public Metadata getMetadata() {

@@ -18,6 +18,7 @@ package io.delta.kernel;
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.checksum.CRCInfo;
+import io.delta.kernel.internal.checksum.ChecksumWriter;
 import io.delta.kernel.utils.CloseableIterable;
 import java.util.Optional;
 
@@ -32,12 +33,17 @@ public class TransactionCommitResult {
   private final long version;
   private final boolean isReadyForCheckpoint;
   private final Optional<CRCInfo> crcInfo;
+  private final boolean checkSumWritten;
 
   public TransactionCommitResult(
-      long version, boolean isReadyForCheckpoint, Optional<CRCInfo> crcInfo) {
+      long version,
+      boolean isReadyForCheckpoint,
+      Optional<CRCInfo> crcInfo,
+      boolean checkSumWritten) {
     this.version = version;
     this.isReadyForCheckpoint = isReadyForCheckpoint;
     this.crcInfo = crcInfo;
+    this.checkSumWritten = checkSumWritten;
   }
 
   /**
@@ -60,7 +66,10 @@ public class TransactionCommitResult {
     return isReadyForCheckpoint;
   }
 
-  public Optional<CRCInfo> getCrcInfo() {
-    return crcInfo;
+  public TransactionCommitResult withCheckSum(Engine engine, ChecksumWriter checksumWriter) {
+    boolean checksumWritten =
+        this.checkSumWritten
+            || crcInfo.map(crc -> checksumWriter.writeCheckSum(engine, crc)).orElse(false);
+    return new TransactionCommitResult(version, isReadyForCheckpoint, crcInfo, checksumWritten);
   }
 }

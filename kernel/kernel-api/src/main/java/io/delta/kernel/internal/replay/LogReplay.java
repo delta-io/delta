@@ -37,6 +37,7 @@ import io.delta.kernel.internal.metrics.SnapshotMetrics;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.SnapshotHint;
 import io.delta.kernel.internal.util.DomainMetadataUtils;
+import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
@@ -44,6 +45,7 @@ import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.*;
+import java.util.concurrent.atomic.LongAdder;
 import java.util.stream.Collectors;
 
 /**
@@ -124,7 +126,8 @@ public class LogReplay {
   private final LogSegment logSegment;
   private final Tuple2<Protocol, Metadata> protocolAndMetadata;
   private final Lazy<Map<String, DomainMetadata>> domainMetadataMap;
-  private Optional<CRCInfo> crcInfo;
+  private Optional<CRCInfo> cachedCrcInfo;
+  private Lazy<CRCInfo> crcAtCurrentVersion;
 
   public LogReplay(
       Path logPath,
@@ -135,20 +138,16 @@ public class LogReplay {
       Optional<SnapshotHint> snapshotHint,
       SnapshotMetrics snapshotMetrics) {
     assertLogFilesBelongToTable(logPath, logSegment.allLogFilesUnsorted());
-    Optional<CRCInfo> readCrcInfo =
+    this.cachedCrcInfo =
         maybeReadChecksumLaterThanHint(snapshotVersion, logSegment, snapshotHint, engine);
     Optional<SnapshotHint> updatedSnapshotHint;
-    this.crcInfo = Optional.empty();
-    if (readCrcInfo.isPresent()) {
+    if (this.cachedCrcInfo.isPresent()) {
       updatedSnapshotHint =
           Optional.of(
               new SnapshotHint(
-                  readCrcInfo.get().getVersion(),
-                  readCrcInfo.get().getProtocol(),
-                  readCrcInfo.get().getMetadata()));
-      if (readCrcInfo.get().getVersion() == snapshotVersion) {
-        this.crcInfo = readCrcInfo;
-      }
+                  cachedCrcInfo.get().getVersion(),
+                  cachedCrcInfo.get().getProtocol(),
+                  cachedCrcInfo.get().getMetadata()));
     } else {
       updatedSnapshotHint = snapshotHint;
     }
@@ -161,6 +160,7 @@ public class LogReplay {
                     engine, logSegment, updatedSnapshotHint, snapshotVersion));
     // Lazy loading of domain metadata only when needed
     this.domainMetadataMap = new Lazy<>(() -> loadDomainMetadataMap(engine));
+    this.crcAtCurrentVersion = new Lazy<>(() -> buildFullCrc(engine, cachedCrcInfo));
   }
 
   /////////////////
@@ -171,8 +171,69 @@ public class LogReplay {
     return this.protocolAndMetadata._1;
   }
 
-  public Optional<CRCInfo> getCrcInfo() {
-    return this.crcInfo;
+  public Optional<CRCInfo> getCachedCrcInfo(boolean refresh) {
+    if (!refresh) {
+      return this.cachedCrcInfo;
+    }
+    if (cachedCrcInfo.isPresent() && cachedCrcInfo.get().getVersion() == logSegment.version) {
+      return cachedCrcInfo;
+    }
+    return Optional.of(crcAtCurrentVersion.get());
+  }
+
+  private CRCInfo buildFullCrc(Engine engine, Optional<CRCInfo> cachedCrcInfo) {
+    if (cachedCrcInfo.isPresent() && cachedCrcInfo.get().getVersion() == logSegment.version) {
+      return cachedCrcInfo.get();
+    }
+    Optional<CRCInfo> crcInfoAfterCheckPoint;
+    if (cachedCrcInfo.isPresent()
+        && cachedCrcInfo.get().getVersion() < logSegment.checkpointVersionOpt.orElse(-1L)) {
+      crcInfoAfterCheckPoint = Optional.empty();
+    } else {
+      crcInfoAfterCheckPoint = cachedCrcInfo;
+    }
+
+    StructType schema = getAddRemoveReadSchema(false);
+    final CloseableIterator<ActionWrapper> addRemoveIter =
+        new ActionsIterator(
+            engine,
+            logSegment.allLogFilesReversed().stream()
+                .filter(
+                    log ->
+                        FileNames.getFileVersion(new Path(log.getPath()))
+                            > crcInfoAfterCheckPoint.map(CRCInfo::getVersion).orElse(-1L))
+                .collect(Collectors.toList()),
+            schema,
+            Optional.empty());
+    LongAdder fileSize = new LongAdder();
+    LongAdder fileCount = new LongAdder();
+    Optional<DomainMetadata> domainMetadata;
+
+    CloseableIterator<FilteredColumnarBatch> deltaIter =
+        new ActiveAddFilesIterator(engine, addRemoveIter, dataPath);
+    deltaIter.forEachRemaining(
+        batch -> {
+          batch
+              .getRows()
+              .forEachRemaining(
+                  row -> {
+                    fileSize.add(new AddFile(row.getStruct(schema.indexOf("add"))).getSize());
+                    fileCount.add(1);
+                  });
+        });
+
+    if (cachedCrcInfo.isPresent()) {
+      fileSize.add(cachedCrcInfo.get().getTableSizeBytes());
+      fileCount.add(cachedCrcInfo.get().getNumFiles());
+    }
+
+    return new CRCInfo(
+        logSegment.version,
+        protocolAndMetadata._2,
+        protocolAndMetadata._1,
+        fileSize.longValue(),
+        fileCount.longValue(),
+        Optional.empty());
   }
 
   public Metadata getMetadata() {

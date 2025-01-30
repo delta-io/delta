@@ -36,6 +36,8 @@ import io.delta.kernel.internal.*;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.checkpoints.*;
+import io.delta.kernel.internal.checksum.CRCInfo;
+import io.delta.kernel.internal.checksum.ChecksumWriter;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.ListUtils;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
@@ -147,6 +149,18 @@ public class SnapshotManager {
     snapshotContext.setVersion(versionToRead);
 
     return getSnapshotAt(engine, versionToRead, snapshotContext);
+  }
+
+  public void writeCheckSum(Engine engine, long version) {
+    SnapshotImpl snapshot =
+            (SnapshotImpl)
+                    getSnapshotAt(
+                            engine,
+                            version,
+                            SnapshotQueryContext.forVersionSnapshot(tablePath.toString(), version));
+    Optional<CRCInfo> crcInfo = snapshot.getCurrentCrcInfo();
+    checkArgument(crcInfo.isPresent());
+    new ChecksumWriter(logPath).writeCheckSum(engine, crcInfo.get());
   }
 
   public void checkpoint(Engine engine, Clock clock, long version)

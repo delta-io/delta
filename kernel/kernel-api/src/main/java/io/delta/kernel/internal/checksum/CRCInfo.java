@@ -39,12 +39,15 @@ public class CRCInfo {
     long tableSizeBytes =
         batch.getColumnVector(CRC_FILE_SCHEMA.indexOf("tableSizeBytes")).getLong(rowId);
     long numFiles = batch.getColumnVector(CRC_FILE_SCHEMA.indexOf("numFiles")).getLong(rowId);
+    Optional<String> txnId =
+        Optional.ofNullable(
+            batch.getColumnVector(CRC_FILE_SCHEMA.indexOf("txnId")).getString(rowId));
     //  protocol and metadata are nullable per fromColumnVector's implementation.
     if (protocol == null || metadata == null) {
       logger.warn("Invalid checksum file missing protocol and/or metadata: {}", crcFilePath);
       return Optional.empty();
     }
-    return Optional.of(new CRCInfo(version, metadata, protocol, tableSizeBytes, numFiles));
+    return Optional.of(new CRCInfo(version, metadata, protocol, tableSizeBytes, numFiles, txnId));
   }
 
   private final long version;
@@ -52,14 +55,21 @@ public class CRCInfo {
   private final Protocol protocol;
   private final long tableSizeBytes;
   private final long numFiles;
+  private final Optional<String> txnId;
 
   public CRCInfo(
-      long version, Metadata metadata, Protocol protocol, long tableSizeBytes, long numFiles) {
+      long version,
+      Metadata metadata,
+      Protocol protocol,
+      long tableSizeBytes,
+      long numFiles,
+      Optional<String> txnId) {
     this.version = version;
     this.metadata = requireNonNull(metadata);
     this.protocol = requireNonNull(protocol);
     this.tableSizeBytes = tableSizeBytes;
     this.numFiles = numFiles;
+    this.txnId = txnId;
   }
 
   /** The version of the Delta table that this CRCInfo represents. */
@@ -83,5 +93,9 @@ public class CRCInfo {
 
   public long getTableSizeBytes() {
     return tableSizeBytes;
+  }
+
+  public Optional<String> getTxnId() {
+    return txnId;
   }
 }
