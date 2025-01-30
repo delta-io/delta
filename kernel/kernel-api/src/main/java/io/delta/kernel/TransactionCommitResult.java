@@ -66,6 +66,10 @@ public class TransactionCommitResult {
     return isReadyForCheckpoint;
   }
 
+  public boolean isCheckSumWritten() {
+    return checkSumWritten;
+  }
+
   public TransactionCommitResult withCheckSum(Engine engine, ChecksumWriter checksumWriter) {
     boolean checksumWritten =
         this.checkSumWritten

@@ -143,4 +143,7 @@ public interface Table {
    */
   void checkpoint(Engine engine, long version)
       throws TableNotFoundException, CheckpointAlreadyExistsException, IOException;
+
+  void checksum(Engine engine, long version)
+          throws TableNotFoundException, CheckpointAlreadyExistsException, IOException;
 }
