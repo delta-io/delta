@@ -97,15 +97,13 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
     val snapshot = latestSnapshot(tablePath)
     hits.foreach { predicate =>
       val scanFiles = collectScanFileRows(
-        snapshot.getScanBuilder()
-          .withFilter(defaultEngine, predicate)
-          .build())
+        snapshot.getScanBuilder().withFilter(predicate).build())
       assert(scanFiles.nonEmpty, s"Expected hit but got miss for $predicate")
     }
     misses.foreach { predicate =>
       val scanFiles = collectScanFileRows(
         snapshot.getScanBuilder()
-          .withFilter(defaultEngine, predicate)
+          .withFilter(predicate)
           .build())
       assert(scanFiles.isEmpty, s"Expected miss but got hit for $predicate\n" +
         s"Returned scan files have stats: ${getScanFileStats(scanFiles)}"
@@ -121,9 +119,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
     val snapshot = latestSnapshot(tablePath)
     filterToNumExpFiles.foreach { case (filter, numExpFiles) =>
       val scanFiles = collectScanFileRows(
-        snapshot.getScanBuilder()
-          .withFilter(defaultEngine, filter)
-          .build())
+        snapshot.getScanBuilder().withFilter(filter).build())
       assert(scanFiles.length == numExpFiles,
         s"Expected $numExpFiles but found ${scanFiles.length} for $filter")
     }
@@ -1010,7 +1006,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
           predicate: Predicate, expNumPartitions: Int, expNumFiles: Long): Unit = {
         val snapshot = latestSnapshot(tableDir.getCanonicalPath)
         val scanFiles = collectScanFileRows(
-          snapshot.getScanBuilder().withFilter(defaultEngine, predicate).build())
+          snapshot.getScanBuilder().withFilter(predicate).build())
         assert(scanFiles.length == expNumFiles,
           s"Expected $expNumFiles but found ${scanFiles.length} for $predicate")
 
@@ -1496,7 +1492,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
     val partFilter = equals(new Column("part"), ofInt(1))
     verifyNoStatsColumn(
       snapshot(engineDisallowedStatsReads)
-        .getScanBuilder().withFilter(engine, partFilter).build()
+        .getScanBuilder().withFilter(partFilter).build()
         .getScanFiles(engine))
 
     // no eligible data skipping filter --> don't read stats
@@ -1505,7 +1501,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       ofInt(1))
     verifyNoStatsColumn(
       snapshot(engineDisallowedStatsReads)
-        .getScanBuilder().withFilter(engine, nonEligibleFilter).build()
+        .getScanBuilder().withFilter(nonEligibleFilter).build()
         .getScanFiles(engine))
   }
 
@@ -1543,9 +1539,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       val engine = engineVerifyJsonParseSchema(verifySchema(expectedCols))
       collectScanFileRows(
         Table.forPath(engine, path).getLatestSnapshot(engine)
-          .getScanBuilder()
-          .withFilter(engine, predicate)
-          .build(),
+          .getScanBuilder().withFilter(predicate).build(),
         engine = engine)
     }
   }
@@ -1573,7 +1567,6 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
         latestSnapshot(tempDir.getCanonicalPath)
           .getScanBuilder()
           .withFilter(
-            defaultEngine,
             greaterThan(
               new ScalarExpression("+", Seq(col("id"), ofInt(10)).asJava),
               ofInt(100)
@@ -1584,13 +1577,8 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       checkStatsPresent(
         latestSnapshot(tempDir.getCanonicalPath)
           .getScanBuilder()
-          .withFilter(
-            defaultEngine,
-            greaterThan(
-              col("id"),
-              ofInt(0)
-            )
-          ).build()
+          .withFilter(greaterThan(col("id"), ofInt(0)))
+          .build()
       )
     }
   }
@@ -1634,7 +1622,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
 
         val scanBuilder = snapshot.getScanBuilder()
         val scan = predicate match {
-          case Some(pred) => scanBuilder.withFilter(defaultEngine, pred).build()
+          case Some(pred) => scanBuilder.withFilter(pred).build()
           case None => scanBuilder.build()
         }
         val scanFiles = scan.asInstanceOf[ScanImpl].getScanFiles(defaultEngine, true)
