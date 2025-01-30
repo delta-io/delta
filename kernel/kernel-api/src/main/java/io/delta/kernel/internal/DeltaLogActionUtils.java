@@ -35,11 +35,13 @@ import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.FileNames.DeltaLogFileType;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
+import io.delta.kernel.utils.CloseableIterator.BreakableFilterResult;
 import io.delta.kernel.utils.FileStatus;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -103,13 +105,14 @@ public class DeltaLogActionUtils {
 
     // Get any available commit files within the version range
     final List<FileStatus> commitFiles =
-        listDeltaLogFiles(
-            engine,
-            Collections.singleton(DeltaLogFileType.COMMIT),
-            tablePath,
-            startVersion,
-            Optional.of(endVersion),
-            false /* mustBeRecreatable */);
+        listDeltaLogFilesAsIter(
+                engine,
+                Collections.singleton(DeltaLogFileType.COMMIT),
+                tablePath,
+                startVersion,
+                Optional.of(endVersion),
+                false /* mustBeRecreatable */)
+            .toInMemoryList();
 
     // There are no available commit files within the version range.
     // This can be due to (1) an empty directory, (2) no valid delta files in the directory,
@@ -181,14 +184,14 @@ public class DeltaLogActionUtils {
   }
 
   /**
-   * Returns the list of files of type $fileTypes in the _delta_log directory of the given
-   * $tablePath, in increasing order from $startVersion to the optional $endVersion.
+   * Returns a {@link CloseableIterator} of files of type $fileTypes in the _delta_log directory of
+   * the given $tablePath, in increasing order from $startVersion to the optional $endVersion.
    *
    * @throws TableNotFoundException if the table or its _delta_log does not exist
    * @throws KernelException if mustBeRecreatable is true, endVersionOpt is present, and the
    *     _delta_log history has been truncated so that we cannot load the desired end version
    */
-  public static List<FileStatus> listDeltaLogFiles(
+  public static CloseableIterator<FileStatus> listDeltaLogFilesAsIter(
       Engine engine,
       Set<DeltaLogFileType> fileTypes,
       Path tablePath,
@@ -215,69 +218,58 @@ public class DeltaLogActionUtils {
         startVersion,
         endVersionOpt);
 
-    final List<FileStatus> output = new ArrayList<>();
-    final long startTimeMillis = System.currentTimeMillis();
+    // Must be final to be used in lambda
+    final AtomicBoolean hasReturnedAnElement = new AtomicBoolean(false);
 
-    try (CloseableIterator<FileStatus> fsIter = listLogDir(engine, tablePath, startVersion)) {
-      while (fsIter.hasNext()) {
-        final FileStatus fs = fsIter.next();
+    return listLogDir(engine, tablePath, startVersion)
+        .breakableFilter(
+            fs -> {
+              if (fileTypes.contains(DeltaLogFileType.COMMIT)
+                  && FileNames.isCommitFile(getName(fs.getPath()))) {
+                // Here, we do nothing (we will consume this file).
+              } else if (fileTypes.contains(DeltaLogFileType.CHECKPOINT)
+                  && FileNames.isCheckpointFile(getName(fs.getPath()))
+                  && fs.getSize() > 0) {
+                // Checkpoint files of 0 size are invalid but may be ignored silently when read,
+                // hence we ignore them so that we never pick up such checkpoints.
+                // Here, we do nothing (we will consume this file).
+              } else {
+                logger.debug("Ignoring file {} as it is not of the desired type", fs.getPath());
+                return BreakableFilterResult.EXCLUDE; // Here, we exclude and filter out this file.
+              }
 
-        if (fileTypes.contains(DeltaLogFileType.COMMIT)
-            && FileNames.isCommitFile(getName(fs.getPath()))) {
-          // Here, we do nothing (we will consume this file).
-        } else if (fileTypes.contains(DeltaLogFileType.CHECKPOINT)
-            && FileNames.isCheckpointFile(getName(fs.getPath()))
-            && fs.getSize() > 0) {
-          // Checkpoint files of 0 size are invalid but may be ignored silently when read, hence we
-          // ignore them so that we never pick up such checkpoints.
-          // Here, we do nothing (we will consume this file).
-        } else {
-          logger.debug("Ignoring file {} as it is not of the desired type", fs.getPath());
-          continue; // Here, we continue and skip this file.
-        }
+              final long fileVersion = FileNames.getFileVersion(new Path(fs.getPath()));
 
-        final long fileVersion = FileNames.getFileVersion(new Path(fs.getPath()));
+              if (fileVersion < startVersion) {
+                throw new RuntimeException(
+                    String.format(
+                        "Listing files in %s with startVersion %s yet found file %s.",
+                        logPath, startVersion, fs.getPath()));
+              }
 
-        if (fileVersion < startVersion) {
-          throw new RuntimeException(
-              String.format(
-                  "Listing files in %s with startVersion %s yet found file %s with version %s",
-                  logPath, startVersion, fs.getPath(), fileVersion));
-        }
+              if (endVersionOpt.isPresent()) {
+                final long endVersion = endVersionOpt.get();
 
-        if (endVersionOpt.isPresent()) {
-          final long endVersion = endVersionOpt.get();
+                if (fileVersion > endVersion) {
+                  if (mustBeRecreatable && !hasReturnedAnElement.get()) {
+                    final long earliestVersion =
+                        DeltaHistoryManager.getEarliestRecreatableCommit(engine, logPath);
+                    throw DeltaErrors.versionBeforeFirstAvailableCommit(
+                        tablePath.toString(), endVersion, earliestVersion);
+                  } else {
+                    logger.debug(
+                        "Stopping listing; found file {} with version greater than endVersion {}",
+                        fs.getPath(),
+                        endVersion);
+                    return BreakableFilterResult.BREAK;
+                  }
+                }
+              }
 
-          if (fileVersion > endVersion) {
-            if (mustBeRecreatable && output.isEmpty()) {
-              final long earliestVersion =
-                  DeltaHistoryManager.getEarliestRecreatableCommit(engine, logPath);
-              throw DeltaErrors.versionBeforeFirstAvailableCommit(
-                  tablePath.toString(), endVersion, earliestVersion);
-            } else {
-              logger.debug(
-                  "Stopping listing; found file {} with version > {}=endVersion",
-                  fs.getPath(),
-                  endVersion);
-              break;
-            }
-          }
-        }
+              hasReturnedAnElement.set(true);
 
-        output.add(fs);
-      }
-    } catch (IOException e) {
-      throw new UncheckedIOException("Unable to close resource", e);
-    }
-
-    logger.info(
-        "{}: Took {} ms to list the commit files for versions [{}, {}]",
-        tablePath,
-        System.currentTimeMillis() - startTimeMillis,
-        startVersion,
-        endVersionOpt);
-
-    return output;
+              return BreakableFilterResult.INCLUDE;
+            });
   }
 
   //////////////////////

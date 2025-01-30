@@ -344,13 +344,15 @@ public class SnapshotManager {
 
     final long startTimeMillis = System.currentTimeMillis();
     final List<FileStatus> listedFileStatuses =
-        DeltaLogActionUtils.listDeltaLogFiles(
-            engine,
-            new HashSet<>(Arrays.asList(DeltaLogFileType.COMMIT, DeltaLogFileType.CHECKPOINT)),
-            tablePath,
-            listFromStartVersion,
-            versionToLoadOpt,
-            true /* mustBeRecreatable */);
+        DeltaLogActionUtils.listDeltaLogFilesAsIter(
+                engine,
+                new HashSet<>(Arrays.asList(DeltaLogFileType.COMMIT, DeltaLogFileType.CHECKPOINT)),
+                tablePath,
+                listFromStartVersion,
+                versionToLoadOpt,
+                true /* mustBeRecreatable */)
+            .toInMemoryList();
+
     logger.info(
         "{}: Took {}ms to list the files after starting checkpoint",
         tablePath,
