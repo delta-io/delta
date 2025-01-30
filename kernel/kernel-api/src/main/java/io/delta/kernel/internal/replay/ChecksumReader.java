@@ -23,7 +23,6 @@ import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.FileNames;
-import io.delta.kernel.internal.util.InternalUtils;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import java.io.IOException;
@@ -72,10 +71,10 @@ public class ChecksumReader {
     try (CloseableIterator<FileStatus> crcFiles =
         engine.getFileSystemClient().listFrom(lowerBoundFilePath.toString())) {
       List<FileStatus> crcFilesList =
-          InternalUtils.toList(
-              crcFiles
-                  .filter(file -> isChecksumFile(file.getPath()))
-                  .takeWhile(file -> checksumVersion(new Path(file.getPath())) <= targetedVersion));
+          crcFiles
+              .filter(file -> isChecksumFile(file.getPath()))
+              .takeWhile(file -> checksumVersion(new Path(file.getPath())) <= targetedVersion)
+              .toInMemoryList();
 
       // pick the last file which is the latest version that has the CRC file
       if (crcFilesList.isEmpty()) {

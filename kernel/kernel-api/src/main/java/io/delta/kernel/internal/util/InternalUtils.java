@@ -167,10 +167,4 @@ public class InternalUtils {
   public static Set<String> toLowerCaseSet(Collection<String> set) {
     return set.stream().map(String::toLowerCase).collect(Collectors.toSet());
   }
-
-  public static <T> List<T> toList(CloseableIterator<T> iterator) {
-    List<T> result = new ArrayList<>();
-    iterator.forEachRemaining(result::add);
-    return result;
-  }
 }
