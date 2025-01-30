@@ -221,22 +221,28 @@ class ScanReportSuite extends AnyFunSuite with MetricsReportTestUtils {
       val expectedSkippingFilter = new Predicate(
         "<=", new Column(Array("minValues", "id")), Literal.ofLong(0))
 
+      // The below metrics are incremented during log replay before any filtering happens and thus
+      // should be the same for all of the following test cases
+      val expectedNumAddFiles = 2
+      val expectedNumAddFilesFromDeltaFiles = 2
+      val expectedNumActiveAddFiles = 2
+
       // No filter - 2 add files one for each partition
       checkScanReport(
         path,
         expectException = false,
-        expectedNumAddFiles = 2,
-        expectedNumAddFilesFromDeltaFiles = 2,
-        expectedNumActiveAddFiles = 2
+        expectedNumAddFiles = expectedNumAddFiles,
+        expectedNumAddFilesFromDeltaFiles = expectedNumAddFilesFromDeltaFiles,
+        expectedNumActiveAddFiles = expectedNumActiveAddFiles
       )
 
       // With partition filter
       checkScanReport(
         path,
         expectException = false,
-        expectedNumAddFiles = 2,
-        expectedNumAddFilesFromDeltaFiles = 2,
-        expectedNumActiveAddFiles = 2,
+        expectedNumAddFiles = expectedNumAddFiles,
+        expectedNumAddFilesFromDeltaFiles = expectedNumAddFilesFromDeltaFiles,
+        expectedNumActiveAddFiles = expectedNumActiveAddFiles,
         filter = Some(partFilter),
         expectedPartitionPredicate = Some(partFilter)
       )
@@ -245,9 +251,9 @@ class ScanReportSuite extends AnyFunSuite with MetricsReportTestUtils {
       checkScanReport(
         path,
         expectException = false,
-        expectedNumAddFiles = 2,
-        expectedNumAddFilesFromDeltaFiles = 2,
-        expectedNumActiveAddFiles = 2,
+        expectedNumAddFiles = expectedNumAddFiles,
+        expectedNumAddFilesFromDeltaFiles = expectedNumAddFilesFromDeltaFiles,
+        expectedNumActiveAddFiles = expectedNumActiveAddFiles,
         filter = Some(dataFilter),
         expectedDataSkippingFilter = Some(expectedSkippingFilter)
       )
@@ -256,9 +262,9 @@ class ScanReportSuite extends AnyFunSuite with MetricsReportTestUtils {
       checkScanReport(
         path,
         expectException = false,
-        expectedNumAddFiles = 2,
-        expectedNumAddFilesFromDeltaFiles = 2,
-        expectedNumActiveAddFiles = 2,
+        expectedNumAddFiles = expectedNumAddFiles,
+        expectedNumAddFilesFromDeltaFiles = expectedNumAddFilesFromDeltaFiles,
+        expectedNumActiveAddFiles = expectedNumActiveAddFiles,
         filter = Some(new Predicate("AND", partFilter, dataFilter)),
         expectedDataSkippingFilter = Some(expectedSkippingFilter),
         expectedPartitionPredicate = Some(partFilter)
