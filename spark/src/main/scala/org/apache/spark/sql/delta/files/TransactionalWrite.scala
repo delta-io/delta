@@ -54,14 +54,6 @@ import org.apache.spark.util.SerializableConfiguration
  */
 trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl =>
 
-  def deltaLog: DeltaLog
-
-  def protocol: Protocol
-
-  protected def snapshot: Snapshot
-
-  protected def metadata: Metadata
-
   protected var hasWritten = false
 
   private[delta] val deltaDataSubdir =

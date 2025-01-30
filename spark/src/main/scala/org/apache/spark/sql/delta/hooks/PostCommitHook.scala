@@ -43,7 +43,7 @@ trait PostCommitHook {
    */
   def run(
     spark: SparkSession,
-    txn: OptimisticTransactionImpl,
+    txn: DeltaTransaction,
     committedVersion: Long,
     postCommitSnapshot: Snapshot,
     committedActions: Seq[Action]): Unit

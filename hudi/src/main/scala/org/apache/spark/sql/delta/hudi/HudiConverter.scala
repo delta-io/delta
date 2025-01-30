@@ -67,9 +67,9 @@ class HudiConverter(spark: SparkSession)
   // Save an atomic reference of the snapshot being converted, and the txn that triggered
   // resulted in the specified snapshot
   protected val currentConversion =
-    new AtomicReference[(Snapshot, OptimisticTransactionImpl)]()
+    new AtomicReference[(Snapshot, DeltaTransaction)]()
   protected val standbyConversion =
-    new AtomicReference[(Snapshot, OptimisticTransactionImpl)]()
+    new AtomicReference[(Snapshot, DeltaTransaction)]()
 
   // Whether our async converter thread is active. We may already have an alive thread that is
   // about to shutdown, but in such cases this value should return false.
@@ -88,7 +88,7 @@ class HudiConverter(spark: SparkSession)
    */
   override def enqueueSnapshotForConversion(
       snapshotToConvert: Snapshot,
-      txn: OptimisticTransactionImpl): Unit = {
+      txn: DeltaTransaction): Unit = {
     if (!UniversalFormat.hudiEnabled(snapshotToConvert.metadata)) {
       return
     }
@@ -138,7 +138,7 @@ class HudiConverter(spark: SparkSession)
               }
 
           // Get a snapshot to convert from the hudiQueue. Sets the queue to null after.
-          private def getNextSnapshot: (Snapshot, OptimisticTransactionImpl) =
+          private def getNextSnapshot: (Snapshot, DeltaTransaction) =
             asyncThreadLock.synchronized {
               val potentialSnapshotAndTxn = standbyConversion.get()
               currentConversion.set(potentialSnapshotAndTxn)
@@ -189,7 +189,7 @@ class HudiConverter(spark: SparkSession)
    * @return Converted Delta version and commit timestamp
    */
   override def convertSnapshot(
-      snapshotToConvert: Snapshot, txn: OptimisticTransactionImpl): Option[(Long, Long)] = {
+      snapshotToConvert: Snapshot, txn: DeltaTransaction): Option[(Long, Long)] = {
     if (!UniversalFormat.hudiEnabled(snapshotToConvert.metadata)) {
       return None
     }
@@ -207,7 +207,7 @@ class HudiConverter(spark: SparkSession)
    */
   private def convertSnapshot(
       snapshotToConvert: Snapshot,
-      txnOpt: Option[OptimisticTransactionImpl],
+      txnOpt: Option[DeltaTransaction],
       catalogTable: Option[CatalogTable]): Option[(Long, Long)] =
       recordFrameProfile("Delta", "HudiConverter.convertSnapshot") {
     val log = snapshotToConvert.deltaLog
