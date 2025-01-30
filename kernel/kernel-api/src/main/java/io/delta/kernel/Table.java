@@ -145,5 +145,5 @@ public interface Table {
       throws TableNotFoundException, CheckpointAlreadyExistsException, IOException;
 
   void checksum(Engine engine, long version)
-          throws TableNotFoundException, CheckpointAlreadyExistsException, IOException;
+      throws TableNotFoundException, CheckpointAlreadyExistsException, IOException;
 }

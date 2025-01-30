@@ -118,6 +118,12 @@ public class LogReplay {
   public static int REMOVE_FILE_PATH_ORDINAL = REMOVE_FILE_SCHEMA.indexOf("path");
   public static int REMOVE_FILE_DV_ORDINAL = REMOVE_FILE_SCHEMA.indexOf("deletionVector");
 
+  private enum CrcUnusedReason {
+    USE_HINT,
+    NOT_FOUND,
+    READ_ERROR
+  }
+
   ///////////////////////////////////
   // Member fields and constructor //
   ///////////////////////////////////
@@ -138,8 +144,10 @@ public class LogReplay {
       Optional<SnapshotHint> snapshotHint,
       SnapshotMetrics snapshotMetrics) {
     assertLogFilesBelongToTable(logPath, logSegment.allLogFilesUnsorted());
-    this.cachedCrcInfo =
-        maybeReadChecksumLaterThanHint(snapshotVersion, logSegment, snapshotHint, engine);
+    Tuple2<Optional<CRCInfo>, Optional<CrcUnusedReason>> crcReadResult =
+        maybeReadChecksumBetweenCheckpointAndHint(
+            snapshotVersion, logSegment, snapshotHint, engine);
+    this.cachedCrcInfo = crcReadResult._1;
     Optional<SnapshotHint> updatedSnapshotHint;
     if (this.cachedCrcInfo.isPresent()) {
       updatedSnapshotHint =
@@ -160,7 +168,7 @@ public class LogReplay {
                     engine, logSegment, updatedSnapshotHint, snapshotVersion));
     // Lazy loading of domain metadata only when needed
     this.domainMetadataMap = new Lazy<>(() -> loadDomainMetadataMap(engine));
-    this.crcAtCurrentVersion = new Lazy<>(() -> buildFullCrc(engine, cachedCrcInfo));
+    this.crcAtCurrentVersion = new Lazy<>(() -> buildFullCrc(engine, crcReadResult));
   }
 
   /////////////////
@@ -181,18 +189,17 @@ public class LogReplay {
     return Optional.of(crcAtCurrentVersion.get());
   }
 
-  private CRCInfo buildFullCrc(Engine engine, Optional<CRCInfo> cachedCrcInfo) {
-    if (cachedCrcInfo.isPresent() && cachedCrcInfo.get().getVersion() == logSegment.version) {
-      return cachedCrcInfo.get();
-    }
+  private CRCInfo buildFullCrc(
+      Engine engine, Tuple2<Optional<CRCInfo>, Optional<CrcUnusedReason>> crcReadResult) {
     Optional<CRCInfo> crcInfoAfterCheckPoint;
-    if (cachedCrcInfo.isPresent()
-        && cachedCrcInfo.get().getVersion() < logSegment.checkpointVersionOpt.orElse(-1L)) {
-      crcInfoAfterCheckPoint = Optional.empty();
+    if (crcReadResult._2.equals(Optional.of(CrcUnusedReason.USE_HINT))) {
+      crcInfoAfterCheckPoint =
+          maybeReadChecksumBetweenCheckpointAndHint(
+                  logSegment.version, logSegment, Optional.empty(), engine)
+              ._1;
     } else {
-      crcInfoAfterCheckPoint = cachedCrcInfo;
+      crcInfoAfterCheckPoint = crcReadResult._1;
     }
-
     StructType schema = getAddRemoveReadSchema(false);
     final CloseableIterator<ActionWrapper> addRemoveIter =
         new ActionsIterator(
@@ -452,16 +459,17 @@ public class LogReplay {
     }
   }
 
-  private Optional<CRCInfo> maybeReadChecksumLaterThanHint(
-      long snapshotVersion,
-      LogSegment logSegment,
-      Optional<SnapshotHint> snapshotHint,
-      Engine engine) {
+  private Tuple2<Optional<CRCInfo>, Optional<CrcUnusedReason>>
+      maybeReadChecksumBetweenCheckpointAndHint(
+          long snapshotVersion,
+          LogSegment logSegment,
+          Optional<SnapshotHint> snapshotHint,
+          Engine engine) {
     if (snapshotHint.isPresent() && snapshotHint.get().getVersion() == snapshotVersion) {
-      return Optional.empty();
+      return new Tuple2<>(Optional.empty(), Optional.of(CrcUnusedReason.USE_HINT));
     }
     if (snapshotHint.isPresent() && snapshotHint.get().getVersion() == snapshotVersion - 1) {
-      return Optional.empty();
+      return new Tuple2<>(Optional.empty(), Optional.of(CrcUnusedReason.USE_HINT));
     }
 
     // Snapshot hit is not use-able in this case for determine the lower bound.
@@ -485,7 +493,9 @@ public class LogReplay {
                 // Only find the CRC within 100 versions.
                 snapshotVersion - 100,
                 0L));
-    return ChecksumReader.getCRCInfo(
-        engine, logSegment.logPath, snapshotVersion, crcSearchLowerBound);
+    // TODO: populate the failure reason
+    return new Tuple2<>(
+        ChecksumReader.getCRCInfo(engine, logSegment.logPath, snapshotVersion, crcSearchLowerBound),
+        Optional.empty());
   }
 }
