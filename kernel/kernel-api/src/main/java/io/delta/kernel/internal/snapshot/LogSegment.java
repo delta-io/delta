@@ -21,6 +21,7 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
+import io.delta.kernel.internal.lang.ListUtils;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.utils.FileStatus;
 import java.util.Collections;
@@ -42,8 +43,7 @@ public class LogSegment {
   private final Lazy<List<FileStatus>> allFilesReversed;
 
   public static LogSegment empty(Path logPath) {
-    return new LogSegment(
-        logPath, -1, Collections.emptyList(), Collections.emptyList(), Optional.empty(), -1);
+    return new LogSegment(logPath, -1, Collections.emptyList(), Collections.emptyList(), -1);
   }
 
   /**
@@ -54,7 +54,6 @@ public class LogSegment {
    * @param version The Snapshot version to generate
    * @param deltas The delta commit files (.json) to read
    * @param checkpoints The checkpoint file(s) to read
-   * @param checkpointVersionOpt The version of the checkpoint file(s)
    * @param lastCommitTimestamp The "unadjusted" timestamp of the last commit within this segment.
    *     By unadjusted, we mean that the commit timestamps may not necessarily be monotonically
    *     increasing for the commits within this segment.
@@ -64,36 +63,66 @@ public class LogSegment {
       long version,
       List<FileStatus> deltas,
       List<FileStatus> checkpoints,
-      Optional<Long> checkpointVersionOpt,
       long lastCommitTimestamp) {
+
+    ///////////////////////
+    // Input validations //
+    ///////////////////////
+
     requireNonNull(logPath, "logPath is null");
     requireNonNull(deltas, "deltas is null");
     requireNonNull(checkpoints, "checkpoints is null");
-    requireNonNull(checkpointVersionOpt, "checkpointVersionOpt is null");
-    checkArgument(
-        checkpoints.isEmpty() == !checkpointVersionOpt.isPresent(),
-        "checkpoints and checkpointVersionOpt must either be both empty or both non-empty");
     checkArgument(
         deltas.stream().allMatch(fs -> FileNames.isCommitFile(fs.getPath())),
         "deltas must all be actual delta (commit) files");
     checkArgument(
         checkpoints.stream().allMatch(fs -> FileNames.isCheckpointFile(fs.getPath())),
         "checkpoints must all be actual checkpoint files");
-    checkpointVersionOpt.ifPresent(
-        checkpointVersion -> {
-          checkArgument(
-              checkpoints.stream()
-                  .allMatch(
-                      fs ->
-                          FileNames.checkpointVersion(new Path(fs.getPath())) == checkpointVersion),
-              "All checkpoint files must have the same version as the checkpointVersionOpt");
-        });
+
+    this.checkpointVersionOpt =
+        checkpoints.isEmpty()
+            ? Optional.empty()
+            : Optional.of(FileNames.checkpointVersion(new Path(checkpoints.get(0).getPath())));
+
+    checkArgument(
+        checkpoints.stream()
+            .map(fs -> FileNames.checkpointVersion(new Path(fs.getPath())))
+            .allMatch(v -> checkpointVersionOpt.get().equals(v)),
+        "All checkpoint files must have the same version");
+
+    if (version != -1) {
+      checkArgument(!deltas.isEmpty() || !checkpoints.isEmpty(), "No files to read");
+
+      if (!deltas.isEmpty()) {
+        this.checkpointVersionOpt.ifPresent(
+            checkpointVersion -> {
+              checkArgument(
+                  FileNames.deltaVersion(deltas.get(0).getPath()) == checkpointVersion + 1,
+                  "First delta file version must equal checkpointVersion + 1");
+            });
+
+        checkArgument(
+            FileNames.deltaVersion(ListUtils.getLast(deltas).getPath()) == version,
+            "Last delta file version must equal the version of this LogSegment");
+      } else {
+        this.checkpointVersionOpt.ifPresent(
+            checkpointVersion -> {
+              checkArgument(
+                  checkpointVersion == version,
+                  "If there are no deltas, then checkpointVersion must equal the version "
+                      + "of this LogSegment");
+            });
+      }
+    }
+
+    ////////////////////////////////
+    // Member variable assignment //
+    ////////////////////////////////
 
     this.logPath = logPath;
     this.version = version;
     this.deltas = deltas;
     this.checkpoints = checkpoints;
-    this.checkpointVersionOpt = checkpointVersionOpt;
     this.lastCommitTimestamp = lastCommitTimestamp;
 
     this.allFiles =

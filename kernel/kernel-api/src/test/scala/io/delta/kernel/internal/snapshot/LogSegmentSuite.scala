@@ -34,78 +34,81 @@ class LogSegmentSuite extends AnyFunSuite {
   private val badCheckpoint = Collections.singletonList(
     FileStatus.of(s"${logPath.toString}/gibberish.checkpoint.parquet", 0, 0))
 
-  test("LogSegment::constructor -- valid case (empty)") {
+  test("constructor -- valid case (empty)") {
     LogSegment.empty(new Path("/a/_delta_log"))
   }
 
-  test("LogSegment::constructor -- valid case (non-empty)") {
+  test("constructor -- valid case (non-empty)") {
     val logPath = new Path("/a/_delta_log")
-    new LogSegment(logPath, 11, deltaFs11, checkpointFs10, Optional.of(10), 1)
+    new LogSegment(logPath, 11, deltaFs11, checkpointFs10, 1)
   }
 
-  test("LogSegment::constructor -- null arguments") {
-    // case: logPath is null
+  test("constructor -- null arguments => throw") {
+    // logPath is null
     intercept[NullPointerException] {
       new LogSegment(
-        null, 1, Collections.emptyList(), Collections.emptyList(), Optional.empty(), -1)
+        null, 1, Collections.emptyList(), Collections.emptyList(), -1)
     }
-    // case: deltas is null
+    // deltas is null
     intercept[NullPointerException] {
       new LogSegment(
-        new Path("/a/_delta_log"), 1, null, Collections.emptyList(), Optional.empty(), -1)
+        new Path("/a/_delta_log"), 1, null, Collections.emptyList(), -1)
     }
-    // case: checkpoints is null
+    // checkpoints is null
     intercept[NullPointerException] {
       new LogSegment(
-        new Path("/a/_delta_log"), 1, Collections.emptyList(), null, Optional.empty(), -1)
-    }
-    // case: checkpointVersionOpt is null
-    intercept[NullPointerException] {
-      new LogSegment(
-        new Path("/a/_delta_log"), 1, Collections.emptyList(), Collections.emptyList(), null, -1)
+        new Path("/a/_delta_log"), 1, Collections.emptyList(), null, -1)
     }
   }
 
-  test("LogSegment::constructor -- only one of checkpoints and checkpointVersionOpt is empty") {
-    // case: checkpoints is empty but checkpointVersionOpt is not
-    val exMsg1 = intercept[IllegalArgumentException] {
-      new LogSegment(
-        logPath, 11, Collections.emptyList(), Collections.emptyList(), Optional.of(10), 1)
-    }.getMessage
-    assert(
-      exMsg1 === "checkpoints and checkpointVersionOpt must either be both empty or both non-empty")
-
-    // case: checkpoints is not empty but checkpointVersionOpt is
-    val exMsg2 = intercept[IllegalArgumentException] {
-      new LogSegment(
-        logPath, 11, Collections.emptyList(), checkpointFs10, Optional.empty(), 1)
-    }.getMessage
-    assert(
-      exMsg2 === "checkpoints and checkpointVersionOpt must either be both empty or both non-empty")
-  }
-
-  test("LogSegment::constructor -- pass in non-delta file") {
+  test("constructor -- all deltas must be actual delta files") {
     val exMsg = intercept[IllegalArgumentException] {
       new LogSegment(
-        logPath, 11, badJson, checkpointFs10, Optional.of(10), 1)
+        logPath, 11, badJson, checkpointFs10, 1)
     }.getMessage
     assert(exMsg === "deltas must all be actual delta (commit) files")
   }
 
-  test("LogSegment::constructor -- pass in non-checkpoint file") {
+  test("constructor -- all checkpoints must be actual checkpoint files") {
     val exMsg = intercept[IllegalArgumentException] {
       new LogSegment(
-        logPath, 11, deltaFs11, badCheckpoint, Optional.of(10), 1)
+        logPath, 11, deltaFs11, badCheckpoint, 1)
     }.getMessage
     assert(exMsg === "checkpoints must all be actual checkpoint files")
   }
 
-  test("LogSegment::constructor -- checkpoint file version != checkpointVersionOpt") {
-    // checkpointFs10 has version 10 but checkpointVersionOpt is 5
+  test("constructor -- if version >= 0 then both deltas and checkpoints cannot be empty") {
     val exMsg = intercept[IllegalArgumentException] {
       new LogSegment(
-        logPath, 11, deltaFs11, checkpointFs10, Optional.of(5), 1)
+        logPath, 11, Collections.emptyList(), Collections.emptyList(), 1)
     }.getMessage
-    assert(exMsg === "All checkpoint files must have the same version as the checkpointVersionOpt")
+    assert(exMsg === "No files to read")
+  }
+
+  test("constructor -- if deltas non-empty then first delta must equal checkpointVersion + 1") {
+    val deltaFs12 = Collections.singletonList(
+      FileStatus.of(FileNames.deltaFile(logPath, 12), 0, 0))
+    val exMsg = intercept[IllegalArgumentException] {
+      new LogSegment(
+        logPath, 12, deltaFs12, checkpointFs10, 1)
+    }.getMessage
+    assert(exMsg === "First delta file version must equal checkpointVersion + 1")
+  }
+
+  test("constructor -- if deltas non-empty then last delta must equal version") {
+    val exMsg = intercept[IllegalArgumentException] {
+      new LogSegment(
+        logPath, 12, deltaFs11, checkpointFs10, 1)
+    }.getMessage
+    assert(exMsg === "Last delta file version must equal the version of this LogSegment")
+  }
+
+  test("constructor -- if no deltas then checkpointVersion must equal version") {
+    val exMsg = intercept[IllegalArgumentException] {
+      new LogSegment(
+        logPath, 11, Collections.emptyList(), checkpointFs10, 1)
+    }.getMessage
+    assert(exMsg ===
+      "If there are no deltas, then checkpointVersion must equal the version of this LogSegment")
   }
 }
