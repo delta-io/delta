@@ -49,6 +49,11 @@ public class DefaultEngine implements Engine {
   }
 
   @Override
+  public PostCommitHandler getPostCommitHandler() {
+    return new DefaultPostCommitHandler();
+  }
+
+  @Override
   public List<MetricsReporter> getMetricsReporters() {
     return Collections.singletonList(new LoggingMetricsReporter());
   };

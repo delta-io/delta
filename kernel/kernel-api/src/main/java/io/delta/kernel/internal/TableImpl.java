@@ -25,6 +25,7 @@ import io.delta.kernel.exceptions.CheckpointAlreadyExistsException;
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.checksum.CRCInfo;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.metrics.SnapshotReportImpl;
@@ -132,6 +133,12 @@ public class TableImpl implements Table {
   public void checkpoint(Engine engine, long version)
       throws TableNotFoundException, CheckpointAlreadyExistsException, IOException {
     snapshotManager.checkpoint(engine, clock, version);
+  }
+
+  @Override
+  public void checksumSimple(Engine engine, CRCInfo crcInfo)
+      throws TableNotFoundException, CheckpointAlreadyExistsException {
+    snapshotManager.writeCheckSumSimple(engine, crcInfo);
   }
 
   @Override

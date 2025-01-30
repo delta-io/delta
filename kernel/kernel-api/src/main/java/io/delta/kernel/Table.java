@@ -21,6 +21,7 @@ import io.delta.kernel.exceptions.CheckpointAlreadyExistsException;
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.TableImpl;
+import io.delta.kernel.internal.checksum.CRCInfo;
 import java.io.IOException;
 
 /**
@@ -146,4 +147,6 @@ public interface Table {
 
   void checksum(Engine engine, long version)
       throws TableNotFoundException, CheckpointAlreadyExistsException, IOException;
+
+  void checksumSimple(Engine engine, CRCInfo crcInfo);
 }

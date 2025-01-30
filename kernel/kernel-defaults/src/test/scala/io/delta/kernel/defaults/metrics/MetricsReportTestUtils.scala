@@ -76,6 +76,8 @@ trait MetricsReportTestUtils extends TestUtils {
 
     override def getParquetHandler: ParquetHandler = baseEngine.getParquetHandler
 
+    override def getPostCommitHandler: PostCommitHandler = baseEngine.getPostCommitHandler
+
     override def getMetricsReporters(): java.util.List[MetricsReporter] = {
       metricsReporters
     }

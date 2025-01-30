@@ -57,6 +57,8 @@ public interface Engine {
    */
   ParquetHandler getParquetHandler();
 
+  PostCommitHandler getPostCommitHandler();
+
   /** Get the engine's {@link MetricsReporter} instances to push reports to. */
   default List<MetricsReporter> getMetricsReporters() {
     return Collections.emptyList();

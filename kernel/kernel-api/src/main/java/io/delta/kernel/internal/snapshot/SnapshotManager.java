@@ -151,6 +151,10 @@ public class SnapshotManager {
     return getSnapshotAt(engine, versionToRead, snapshotContext);
   }
 
+  public void writeCheckSumSimple(Engine engine, CRCInfo crcInfo) {
+    new ChecksumWriter(logPath).writeCheckSum(engine, crcInfo);
+  }
+
   public void writeCheckSum(Engine engine, long version) {
     SnapshotImpl snapshot =
         (SnapshotImpl)

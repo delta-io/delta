@@ -17,10 +17,9 @@ package io.delta.kernel;
 
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.internal.checksum.CRCInfo;
-import io.delta.kernel.internal.checksum.ChecksumWriter;
+import io.delta.kernel.internal.actions.PostCommitAction;
 import io.delta.kernel.utils.CloseableIterable;
-import java.util.Optional;
+import java.util.List;
 
 /**
  * Contains the result of a successful transaction commit. Returned by {@link
@@ -31,19 +30,11 @@ import java.util.Optional;
 @Evolving
 public class TransactionCommitResult {
   private final long version;
-  private final boolean isReadyForCheckpoint;
-  private final Optional<CRCInfo> crcInfo;
-  private final boolean checkSumWritten;
+  private final List<PostCommitAction> postCommitActions;
 
-  public TransactionCommitResult(
-      long version,
-      boolean isReadyForCheckpoint,
-      Optional<CRCInfo> crcInfo,
-      boolean checkSumWritten) {
+  public TransactionCommitResult(long version, List<PostCommitAction> postCommitActions) {
     this.version = version;
-    this.isReadyForCheckpoint = isReadyForCheckpoint;
-    this.crcInfo = crcInfo;
-    this.checkSumWritten = checkSumWritten;
+    this.postCommitActions = postCommitActions;
   }
 
   /**
@@ -55,25 +46,7 @@ public class TransactionCommitResult {
     return version;
   }
 
-  /**
-   * Is the table ready for checkpoint (i.e. there are enough commits since the last checkpoint)? If
-   * yes the connector can choose to checkpoint as the version the transaction is committed as using
-   * {@link Table#checkpoint(Engine, long)}
-   *
-   * @return Is the table ready for checkpointing?
-   */
-  public boolean isReadyForCheckpoint() {
-    return isReadyForCheckpoint;
-  }
-
-  public boolean isCheckSumWritten() {
-    return checkSumWritten;
-  }
-
-  public TransactionCommitResult withCheckSum(Engine engine, ChecksumWriter checksumWriter) {
-    boolean checksumWritten =
-        this.checkSumWritten
-            || crcInfo.map(crc -> checksumWriter.writeCheckSum(engine, crc)).orElse(false);
-    return new TransactionCommitResult(version, isReadyForCheckpoint, crcInfo, checksumWritten);
+  public List<PostCommitAction> getPostCommitActions() {
+    return postCommitActions;
   }
 }

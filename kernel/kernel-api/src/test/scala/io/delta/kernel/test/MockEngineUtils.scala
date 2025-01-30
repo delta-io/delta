@@ -69,6 +69,10 @@ trait MockEngineUtils {
       override def getParquetHandler: ParquetHandler =
         Option(parquetHandler).getOrElse(
           throw new UnsupportedOperationException("not supported in this test suite"))
+
+      override def getPostCommitHandler: PostCommitHandler = {
+        throw new UnsupportedOperationException("not supported in this test suite")
+      }
     }
   }
 }

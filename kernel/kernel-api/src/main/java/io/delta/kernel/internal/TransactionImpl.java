@@ -150,10 +150,8 @@ public class TransactionImpl implements Transaction {
     TransactionMetrics transactionMetrics = new TransactionMetrics();
     try {
       TransactionCommitResult result =
-          transactionMetrics
-              .totalCommitTimer
-              .time(() -> commitWithRetry(engine, dataActions, transactionMetrics))
-              .withCheckSum(engine, checksumWriter);
+          transactionMetrics.totalCommitTimer.time(
+              () -> commitWithRetry(engine, dataActions, transactionMetrics));
       recordTransactionReport(
           engine,
           Optional.of(result.getVersion()) /* committedVersion */,
@@ -363,10 +361,13 @@ public class TransactionImpl implements Transaction {
           FileNames.deltaFile(logPath, commitAsVersion));
       return new TransactionCommitResult(
           commitAsVersion,
-          isReadyForCheckpoint(commitAsVersion),
-          buildPostCommitCrcInfo(
-              commitAsVersion, transactionMetrics.captureTransactionMetricsResult()),
-          false);
+          engine
+              .getPostCommitHandler()
+              .getPostCommitAction(
+                  commitAsVersion,
+                  isReadyForCheckpoint(commitAsVersion),
+                  buildPostCommitCrcInfo(
+                      commitAsVersion, transactionMetrics.captureTransactionMetricsResult())));
     } catch (FileAlreadyExistsException e) {
       throw e;
     } catch (IOException ioe) {
