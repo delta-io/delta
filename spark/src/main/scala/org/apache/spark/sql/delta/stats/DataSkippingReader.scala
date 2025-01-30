@@ -220,6 +220,13 @@ trait DataSkippingReaderBase
 
   private def useStats = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_STATS_SKIPPING)
 
+  private lazy val limitPartitionLikeFiltersToClusteringColumns = spark.sessionState.conf.getConf(
+    DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_CLUSTERING_COLUMNS_ONLY)
+  private lazy val additionalPartitionLikeFilterSupportedExpressions =
+    spark.sessionState.conf.getConf(
+        DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_ADDITIONAL_SUPPORTED_EXPRESSIONS)
+      .toSet.flatMap((exprs: String) => exprs.split(","))
+
   /** Returns a DataFrame expression to obtain a list of files with parsed statistics. */
   private def withStatsInternal0: DataFrame = {
     allFiles.withColumn("stats", from_json(col("stats"), statsSchema))
@@ -681,7 +688,8 @@ trait DataSkippingReaderBase
 
       // Don't attempt partition-like skipping on any unknown expressions: there's no way to
       // guarantee it's safe to do so.
-      case _ => false
+      case _ => additionalPartitionLikeFilterSupportedExpressions.contains(
+        expr.getClass.getCanonicalName)
     }
 
     /**
@@ -700,6 +708,7 @@ trait DataSkippingReaderBase
      *  CAST(a AS DATE) = '2024-09-11' -> CAST(parsed_stats[minValues][a] AS DATE) = '2024-09-11'
      *
      * @param expr    The expression to rewrite.
+     * @param clusteringColumnPaths The logical paths to the clustering columns in the table.
      * @return        If the expression is safe to rewrite, return the rewritten expression and a
      *                set of referenced attributes (with both the logical path to the column and the
      *                column type).
@@ -718,7 +727,8 @@ trait DataSkippingReaderBase
       // to have the same min-max values).
       case SkippingEligibleColumn(c, SkippingEligibleDataType(dt))
         if dt != TimestampType && dt != TimestampNTZType &&
-          clusteringColumnPaths.exists(SchemaUtils.areLogicalNamesEqual(_, c.reverse)) =>
+          (!limitPartitionLikeFiltersToClusteringColumns ||
+            clusteringColumnPaths.exists(SchemaUtils.areLogicalNamesEqual(_, c.reverse))) =>
         // Only rewrite the expression if all stats are collected for this column.
         val minStatsCol = StatsColumn(MIN, c, dt)
         val maxStatsCol = StatsColumn(MAX, c, dt)
