@@ -128,7 +128,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
           new InitialSnapshot(table.getDataPath(), logReplay, metadata, protocol, snapshotContext);
     }
 
-    boolean isNewTable = snapshot.getVersion(engine) < 0;
+    boolean isNewTable = snapshot.getVersion() < 0;
     validate(engine, snapshot, isNewTable);
 
     boolean shouldUpdateMetadata = false;

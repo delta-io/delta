@@ -100,6 +100,7 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
     expectedNumTotalActions: Long = 0,
     expectedCommitVersion: Option[Long] = None,
     expectedNumAttempts: Long = 1,
+    expectedTotalAddFilesSizeInBytes: Long = 0,
     buildTransaction: (TransactionBuilder, Engine) => Transaction = (tb, e) => tb.build(e),
     engineInfo: String = "test-engine-info",
     operation: Operation = Operation.MANUAL_UPDATE
@@ -146,6 +147,8 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
 
     assert(transactionReport.getTransactionMetrics.getNumCommitAttempts == expectedNumAttempts)
     assert(transactionReport.getTransactionMetrics.getNumAddFiles == expectedNumAddFiles)
+    assert(transactionReport.getTransactionMetrics.getTotalAddFilesSizeInBytes
+        == expectedTotalAddFilesSizeInBytes)
     assert(transactionReport.getTransactionMetrics.getNumRemoveFiles == expectedNumRemoveFiles)
     assert(transactionReport.getTransactionMetrics.getNumTotalActions == expectedNumTotalActions)
   }
@@ -173,7 +176,8 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         expectedBaseSnapshotVersion = 0,
         expectedNumAddFiles = 1,
         expectedNumTotalActions = 2, // commitInfo + addFile
-        expectedCommitVersion = Some(1)
+        expectedCommitVersion = Some(1),
+        expectedTotalAddFilesSizeInBytes = 100
       )
 
       // Commit 2 AddFiles
@@ -186,6 +190,7 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         expectedNumTotalActions = 3, // commitInfo + addFile
         expectedCommitVersion = Some(2),
         engineInfo = "foo",
+        expectedTotalAddFilesSizeInBytes = 200,
         operation = Operation.WRITE
       )
 
@@ -232,7 +237,8 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         expectedBaseSnapshotVersion = 0,
         expectedNumAddFiles = 2,
         expectedNumTotalActions = 3, // commitInfo + addFile
-        expectedCommitVersion = Some(1)
+        expectedCommitVersion = Some(1),
+        expectedTotalAddFilesSizeInBytes = 200
       )
     }
   }
@@ -249,6 +255,7 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         expectedNumAddFiles = 1,
         expectedNumTotalActions = 4, // protocol, metadata, commitInfo
         expectedCommitVersion = Some(0),
+        expectedTotalAddFilesSizeInBytes = 100,
         buildTransaction = (transBuilder, engine) => {
           transBuilder
             .withSchema(engine, new StructType().add("id", IntegerType.INTEGER))
@@ -304,7 +311,8 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         expectedNumAddFiles = 1,
         expectedNumTotalActions = 2, // commitInfo + removeFile
         expectedCommitVersion = Some(2),
-        expectedNumAttempts = 2
+        expectedNumAttempts = 2,
+        expectedTotalAddFilesSizeInBytes = 100
       )
     }
   }

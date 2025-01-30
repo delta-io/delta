@@ -74,11 +74,10 @@ def add_google_maven_repo_to_gradle_config():
       content = file.read()
 
     # Define the old and new configurations
-    old_config = r'repositories {\n    mavenCentral\(\)'
+    old_config = r'repositories {\n'
 
     new_config = 'repositories {\n    maven {\n      ' + \
-      'url "https://maven-central.storage-download.googleapis.com/maven2"\n    }\n    ' + \
-      'mavenCentral()'
+      'url "https://maven-central.storage-download.googleapis.com/maven2"\n    }\n'
 
     # Replace the old configuration with the new one
     updated_content = re.sub(old_config, new_config, content, flags=re.DOTALL)

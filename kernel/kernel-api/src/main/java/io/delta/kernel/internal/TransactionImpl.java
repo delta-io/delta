@@ -114,7 +114,7 @@ public class TransactionImpl implements Transaction {
 
   @Override
   public StructType getSchema(Engine engine) {
-    return readSnapshot.getSchema(engine);
+    return readSnapshot.getSchema();
   }
 
   public Optional<SetTransaction> getSetTxnOpt() {
@@ -166,11 +166,11 @@ public class TransactionImpl implements Transaction {
   private TransactionCommitResult commitWithRetry(
       Engine engine, CloseableIterable<Row> dataActions, TransactionMetrics transactionMetrics) {
     try {
-      long commitAsVersion = readSnapshot.getVersion(engine) + 1;
+      long commitAsVersion = readSnapshot.getVersion() + 1;
       // Generate the commit action with the inCommitTimestamp if ICT is enabled.
       CommitInfo attemptCommitInfo = generateCommitAction(engine);
       updateMetadataWithICTIfRequired(
-          engine, attemptCommitInfo.getInCommitTimestamp(), readSnapshot.getVersion(engine));
+          engine, attemptCommitInfo.getInCommitTimestamp(), readSnapshot.getVersion());
 
       // If row tracking is supported, assign base row IDs and default row commit versions to any
       // AddFile actions that do not yet have them. If the row ID high watermark changes, emit a
@@ -341,6 +341,8 @@ public class TransactionImpl implements Transaction {
                           transactionMetrics.totalActionsCounter.increment();
                           if (!action.isNullAt(ADD_FILE_ORDINAL)) {
                             transactionMetrics.addFilesCounter.increment();
+                            transactionMetrics.addFilesSizeInBytesCounter.increment(
+                                new AddFile(action.getStruct(ADD_FILE_ORDINAL)).getSize());
                           } else if (!action.isNullAt(REMOVE_FILE_ORDINAL)) {
                             transactionMetrics.removeFilesCounter.increment();
                           }

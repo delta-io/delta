@@ -166,8 +166,7 @@ public class ConflictChecker {
     // against the winning transactions
     return new TransactionRebaseState(
         lastWinningVersion,
-        getLastCommitTimestamp(
-            engine, lastWinningVersion, lastWinningTxn, winningCommitInfoOpt.get()),
+        getLastCommitTimestamp(lastWinningVersion, lastWinningTxn, winningCommitInfoOpt.get()),
         updatedDataActions,
         updatedDomainMetadatas);
   }
@@ -343,8 +342,7 @@ public class ConflictChecker {
   }
 
   private List<FileStatus> getWinningCommitFiles(Engine engine) {
-    String firstWinningCommitFile =
-        deltaFile(snapshot.getLogPath(), snapshot.getVersion(engine) + 1);
+    String firstWinningCommitFile = deltaFile(snapshot.getLogPath(), snapshot.getVersion() + 1);
 
     try (CloseableIterator<FileStatus> files =
         wrapEngineExceptionThrowsIO(
@@ -374,18 +372,16 @@ public class ConflictChecker {
    * latest winning transaction commit file. For non-ICT enabled tables, this is the modification
    * time of the latest winning transaction commit file.
    *
-   * @param engine {@link Engine} instance to use
    * @param lastWinningVersion last winning version of the table
    * @param lastWinningTxn the last winning transaction commit file
    * @param winningCommitInfoOpt winning commit info
    * @return last commit timestamp of the table
    */
   private long getLastCommitTimestamp(
-      Engine engine,
       long lastWinningVersion,
       FileStatus lastWinningTxn,
       Optional<CommitInfo> winningCommitInfoOpt) {
-    if (snapshot.getVersion(engine) == -1
+    if (snapshot.getVersion() == -1
         || !IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(snapshot.getMetadata())) {
       return lastWinningTxn.getModificationTime();
     } else {

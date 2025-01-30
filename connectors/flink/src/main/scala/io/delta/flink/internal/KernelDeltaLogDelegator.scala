@@ -83,7 +83,7 @@ class KernelDeltaLogDelegator(
       kernelSnapshotWrapper,
       hadoopConf,
       logPath,
-      kernelSnapshot.getVersion(engine), // note: engine isn't used
+      kernelSnapshot.getVersion(),
       this,
       standaloneDeltaLog
     ))

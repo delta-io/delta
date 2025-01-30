@@ -29,6 +29,11 @@ public final class FileNames {
   // File name patterns and other static values //
   ////////////////////////////////////////////////
 
+  public enum DeltaLogFileType {
+    COMMIT,
+    CHECKPOINT
+  }
+
   /** Example: 00000000000000000001.json */
   private static final Pattern DELTA_FILE_PATTERN = Pattern.compile("\\d+\\.json");
 

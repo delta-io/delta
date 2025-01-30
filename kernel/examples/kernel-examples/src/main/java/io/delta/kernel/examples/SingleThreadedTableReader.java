@@ -61,10 +61,9 @@ public class SingleThreadedTableReader
         throws TableNotFoundException, IOException {
         Table table = Table.forPath(engine, tablePath);
         Snapshot snapshot = table.getLatestSnapshot(engine);
-        StructType readSchema = pruneSchema(snapshot.getSchema(engine), columnsOpt);
+        StructType readSchema = pruneSchema(snapshot.getSchema(), columnsOpt);
 
-        ScanBuilder scanBuilder = snapshot.getScanBuilder(engine)
-            .withReadSchema(engine, readSchema);
+        ScanBuilder scanBuilder = snapshot.getScanBuilder().withReadSchema(engine, readSchema);
 
         if (predicate.isPresent()) {
             scanBuilder = scanBuilder.withFilter(engine, predicate.get());
