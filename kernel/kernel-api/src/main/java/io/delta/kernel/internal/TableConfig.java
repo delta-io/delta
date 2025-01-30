@@ -191,11 +191,11 @@ public class TableConfig<T> {
   ///////////////////////////
 
   /**
-   * Validates that the given new properties that the txn is trying to update in table.
-   * Properties that have `delta.` prefix in the key name should be in valid list and
-   * are editable. The caller is expected to store the returned properties in the table metadata
-   * after further validation from a protocol point of view. The returned properties will have
-   * the key's case normalized as defined in its {@link TableConfig}.
+   * Validates that the given new properties that the txn is trying to update in table. Properties
+   * that have `delta.` prefix in the key name should be in valid list and are editable. The caller
+   * is expected to store the returned properties in the table metadata after further validation
+   * from a protocol point of view. The returned properties will have the key's case normalized as
+   * defined in its {@link TableConfig}.
    *
    * @param newProperties the properties to validate
    * @throws InvalidConfigurationValueException if any of the properties are invalid
