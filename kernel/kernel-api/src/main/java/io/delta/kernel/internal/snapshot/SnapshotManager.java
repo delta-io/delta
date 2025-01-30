@@ -562,7 +562,6 @@ public class SnapshotManager {
         newVersion,
         deltasAfterCheckpoint,
         latestCompleteCheckpointFileStatuses,
-        latestCompleteCheckpointOpt.map(x -> x.version),
         lastCommitTimestamp);
   }
 
