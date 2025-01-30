@@ -16,8 +16,12 @@
 
 package io.delta.kernel.internal.snapshot;
 
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import static java.util.Objects.requireNonNull;
+
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
+import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.utils.FileStatus;
 import java.util.Collections;
 import java.util.Comparator;
@@ -50,7 +54,7 @@ public class LogSegment {
    * @param version The Snapshot version to generate
    * @param deltas The delta commit files (.json) to read
    * @param checkpoints The checkpoint file(s) to read
-   * @param checkpointVersionOpt The checkpoint version used to start replay
+   * @param checkpointVersionOpt The version of the checkpoint file(s)
    * @param lastCommitTimestamp The "unadjusted" timestamp of the last commit within this segment.
    *     By unadjusted, we mean that the commit timestamps may not necessarily be monotonically
    *     increasing for the commits within this segment.
@@ -62,6 +66,29 @@ public class LogSegment {
       List<FileStatus> checkpoints,
       Optional<Long> checkpointVersionOpt,
       long lastCommitTimestamp) {
+    requireNonNull(logPath, "logPath is null");
+    requireNonNull(deltas, "deltas is null");
+    requireNonNull(checkpoints, "checkpoints is null");
+    requireNonNull(checkpointVersionOpt, "checkpointVersionOpt is null");
+    checkArgument(
+        checkpoints.isEmpty() == !checkpointVersionOpt.isPresent(),
+        "checkpoints and checkpointVersionOpt must either be both empty or both non-empty");
+    checkArgument(
+        deltas.stream().allMatch(fs -> FileNames.isCommitFile(fs.getPath())),
+        "deltas must all be actual delta (commit) files");
+    checkArgument(
+        checkpoints.stream().allMatch(fs -> FileNames.isCheckpointFile(fs.getPath())),
+        "checkpoints must all be actual checkpoint files");
+    checkpointVersionOpt.ifPresent(
+        checkpointVersion -> {
+          checkArgument(
+              checkpoints.stream()
+                  .allMatch(
+                      fs ->
+                          FileNames.checkpointVersion(new Path(fs.getPath())) == checkpointVersion),
+              "All checkpoint files must have the same version as the checkpointVersionOpt");
+        });
+
     this.logPath = logPath;
     this.version = version;
     this.deltas = deltas;
