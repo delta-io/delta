@@ -58,6 +58,19 @@ public class LogSegment {
    * Provides information around which files in the transaction log need to be read to create the
    * given version of the log.
    *
+   * <p>This constructor validates and guarantees that:
+   *
+   * <ul>
+   *   <li>All deltas are valid deltas files
+   *   <li>All checkpoints are valid checkpoint files
+   *   <li>All checkpoint files have the same version
+   *   <li>All deltas are contiguous and range from {@link #checkpointVersionOpt} to version
+   *   <li>If no deltas are present then {@link #checkpointVersionOpt} is equal to version
+   * </ul>
+   *
+   * <p>Notably, this constructor does not guarantee that this LogSegment is complete and fully
+   * describes a Snapshot version. You may use the {@link #isComplete()} method to check this.
+   *
    * @param logPath The path to the _delta_log directory
    * @param version The Snapshot version to generate
    * @param deltas The delta commit files (.json) to read
@@ -136,6 +149,8 @@ public class LogSegment {
                       + "of this LogSegment");
             });
       }
+    } else {
+      checkArgument(deltas.isEmpty() && checkpoints.isEmpty(), "Version -1 should have no files");
     }
 
     ////////////////////////////////

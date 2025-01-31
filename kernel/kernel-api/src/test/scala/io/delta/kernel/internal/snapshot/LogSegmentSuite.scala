@@ -20,7 +20,6 @@ import java.util.Collections
 
 import scala.collection.JavaConverters._
 
-import io.delta.kernel.exceptions.InvalidTableException
 import io.delta.kernel.test.MockFileSystemClientUtils
 import io.delta.kernel.utils.FileStatus
 import org.scalatest.funsuite.AnyFunSuite
@@ -56,6 +55,18 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils {
     intercept[NullPointerException] {
       new LogSegment(logPath, 1, Collections.emptyList(), null, -1)
     }
+  }
+
+  test("constructor -- non-empty deltas or checkpoints with version -1 => throw") {
+    val exMsg1 = intercept[IllegalArgumentException] {
+      new LogSegment(logPath, -1, deltasFs11To12List, Collections.emptyList(), 1)
+    }.getMessage
+    assert(exMsg1 === "Version -1 should have no files")
+
+    val exMsg2 = intercept[IllegalArgumentException] {
+      new LogSegment(logPath, -1, Collections.emptyList(), checkpointFs10List, 1)
+    }.getMessage
+    assert(exMsg2 === "Version -1 should have no files")
   }
 
   test("constructor -- all deltas must be actual delta files") {
