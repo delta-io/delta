@@ -26,6 +26,26 @@ import java.util.Objects;
  */
 @Evolving
 public class FileStatus {
+
+  //////////////////////////////////
+  // Static variables and methods //
+  //////////////////////////////////
+
+  /**
+   * Create a {@link FileStatus} with the given path, size and modification time.
+   *
+   * @param path Fully qualified file path.
+   * @param size File size in bytes
+   * @param modificationTime Modification time of the file in epoch millis
+   */
+  public static FileStatus of(String path, long size, long modificationTime) {
+    return new FileStatus(path, size, modificationTime);
+  }
+
+  //////////////////////////////////
+  // Member variables and methods //
+  //////////////////////////////////
+
   private final String path;
   private final long size;
   private final long modificationTime;
@@ -64,15 +84,10 @@ public class FileStatus {
     return modificationTime;
   }
 
-  /**
-   * Create a {@link FileStatus} with the given path, size and modification time.
-   *
-   * @param path Fully qualified file path.
-   * @param size File size in bytes
-   * @param modificationTime Modification time of the file in epoch millis
-   */
-  public static FileStatus of(String path, long size, long modificationTime) {
-    return new FileStatus(path, size, modificationTime);
+  @Override
+  public String toString() {
+    return String.format(
+        "FileStatus{path='%s', size=%d, modificationTime=%d}", path, size, modificationTime);
   }
 
   /**

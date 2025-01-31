@@ -59,7 +59,7 @@ public class SnapshotImpl implements Snapshot {
       SnapshotQueryContext snapshotContext) {
     this.logPath = new Path(dataPath, "_delta_log");
     this.dataPath = dataPath;
-    this.version = logSegment.version;
+    this.version = logSegment.getVersion();
     this.logSegment = logSegment;
     this.logReplay = logReplay;
     this.protocol = protocol;
@@ -99,15 +99,15 @@ public class SnapshotImpl implements Snapshot {
     if (IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata)) {
       if (!inCommitTimestampOpt.isPresent()) {
         Optional<CommitInfo> commitInfoOpt =
-            CommitInfo.getCommitInfoOpt(engine, logPath, logSegment.version);
+            CommitInfo.getCommitInfoOpt(engine, logPath, logSegment.getVersion());
         inCommitTimestampOpt =
             Optional.of(
                 CommitInfo.getRequiredInCommitTimestamp(
-                    commitInfoOpt, String.valueOf(logSegment.version), dataPath));
+                    commitInfoOpt, String.valueOf(logSegment.getVersion()), dataPath));
       }
       return inCommitTimestampOpt.get();
     } else {
-      return logSegment.lastCommitTimestamp;
+      return logSegment.getLastCommitTimestamp();
     }
   }
 
