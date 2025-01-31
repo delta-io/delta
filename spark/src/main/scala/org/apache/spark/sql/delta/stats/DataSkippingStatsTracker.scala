@@ -87,14 +87,11 @@ class DeltaTaskStatisticsTracker(
 
   // This projection combines the intermediate results stored by aggBuffer with the values of the
   // currently processed row and updates aggBuffer in place.
-  private val updateStats: MutableProjection = GenerateMutableProjection.generate(
-    expressions = JoinedProjection.bind(
-      aggBufferAttrs,
-      dataCols,
-      aggregates.flatMap(_.updateExpressions)),
-    inputSchema = Nil,
-    useSubexprElimination = true
-  )
+  private val updateStats: MutableProjection = {
+    val expressions = JoinedProjection.bind(
+      aggBufferAttrs, dataCols, aggregates.flatMap(_.updateExpressions))
+    MutableProjection.create(expressions, Nil)
+  }
 
   // This executes the whole statsColExpr in order to compute the final stats value for the file.
   // In order to evaluate it, we have to replace its aggregate functions with the corresponding
