@@ -162,7 +162,7 @@ public class LogReplay {
   }
 
   public long getVersion() {
-    return logSegment.version;
+    return logSegment.getVersion();
   }
 
   /**
@@ -222,12 +222,13 @@ public class LogReplay {
             asList(
                 // Prefer reading hint over CRC, so start listing from hint's version + 1.
                 snapshotHint.map(SnapshotHint::getVersion).orElse(0L) + 1,
-                logSegment.checkpointVersionOpt.orElse(0L),
+                logSegment.getCheckpointVersionOpt().orElse(0L),
                 // Only find the CRC within 100 versions.
                 snapshotVersion - 100,
                 0L));
     Optional<CRCInfo> crcInfoOpt =
-        ChecksumReader.getCRCInfo(engine, logSegment.logPath, snapshotVersion, crcSearchLowerBound);
+        ChecksumReader.getCRCInfo(
+            engine, logSegment.getLogPath(), snapshotVersion, crcSearchLowerBound);
     if (crcInfoOpt.isPresent()) {
       CRCInfo crcInfo = crcInfoOpt.get();
       if (crcInfo.getVersion() == snapshotVersion) {
@@ -321,11 +322,11 @@ public class LogReplay {
 
     if (protocol == null) {
       throw new IllegalStateException(
-          String.format("No protocol found at version %s", logSegment.version));
+          String.format("No protocol found at version %s", logSegment.getVersion()));
     }
 
     throw new IllegalStateException(
-        String.format("No metadata found at version %s", logSegment.version));
+        String.format("No metadata found at version %s", logSegment.getVersion()));
   }
 
   private Optional<Long> loadLatestTransactionVersion(Engine engine, String applicationId) {
