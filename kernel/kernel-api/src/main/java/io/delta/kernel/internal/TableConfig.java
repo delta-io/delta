@@ -191,32 +191,41 @@ public class TableConfig<T> {
   ///////////////////////////
 
   /**
-   * Validates that the given properties have the delta prefix in the key name, and they are in the
-   * set of valid properties. The caller should get the validated configurations and store the case
-   * of the property name defined in TableConfig.
+   * Validates that the given new properties that the txn is trying to update in table. Properties
+   * that have `delta.` prefix in the key name should be in valid list and are editable. The caller
+   * is expected to store the returned properties in the table metadata after further validation
+   * from a protocol point of view. The returned properties will have the key's case normalized as
+   * defined in its {@link TableConfig}.
    *
-   * @param configurations the properties to validate
+   * @param newProperties the properties to validate
    * @throws InvalidConfigurationValueException if any of the properties are invalid
    * @throws UnknownConfigurationException if any of the properties are unknown
    */
-  public static Map<String, String> validateProperties(Map<String, String> configurations) {
-    Map<String, String> validatedConfigurations = new HashMap<>();
-    for (Map.Entry<String, String> kv : configurations.entrySet()) {
+  public static Map<String, String> validateDeltaProperties(Map<String, String> newProperties) {
+    Map<String, String> validatedProperties = new HashMap<>();
+    for (Map.Entry<String, String> kv : newProperties.entrySet()) {
       String key = kv.getKey().toLowerCase(Locale.ROOT);
       String value = kv.getValue();
-      if (key.startsWith("delta.") && VALID_PROPERTIES.containsKey(key)) {
+
+      if (key.startsWith("delta.")) {
+        // If it is a delta table property, make sure it is a supported property and editable
+        if (!VALID_PROPERTIES.containsKey(key)) {
+          throw DeltaErrors.unknownConfigurationException(kv.getKey());
+        }
+
         TableConfig<?> tableConfig = VALID_PROPERTIES.get(key);
-        if (tableConfig.editable) {
-          tableConfig.validate(value);
-          validatedConfigurations.put(tableConfig.getKey(), value);
-        } else {
+        if (!tableConfig.editable) {
           throw DeltaErrors.cannotModifyTableProperty(kv.getKey());
         }
+
+        tableConfig.validate(value);
+        validatedProperties.put(tableConfig.getKey(), value);
       } else {
-        throw DeltaErrors.unknownConfigurationException(kv.getKey());
+        // allow unknown properties to be set
+        validatedProperties.put(key, value);
       }
     }
-    return validatedConfigurations;
+    return validatedProperties;
   }
 
   private static void addConfig(HashMap<String, TableConfig<?>> configs, TableConfig<?> config) {

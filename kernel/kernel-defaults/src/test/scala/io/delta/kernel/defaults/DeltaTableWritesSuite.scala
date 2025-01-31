@@ -292,29 +292,6 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
-  test("create table - invalid properties - expect failure") {
-    withTempDirAndEngine { (tablePath, engine) =>
-      val ex1 = intercept[UnknownConfigurationException] {
-        createTxn(
-          engine, tablePath, isNewTable = true, testSchema, Seq.empty, Map("invalid key" -> "10"))
-      }
-      assert(ex1.getMessage.contains("Unknown configuration was specified: invalid key"))
-
-      val ex2 = intercept[InvalidConfigurationValueException] {
-        createTxn(
-          engine,
-          tablePath,
-          isNewTable = true,
-          testSchema, Seq.empty, Map(TableConfig.CHECKPOINT_INTERVAL.getKey -> "-1"))
-      }
-      assert(
-        ex2.getMessage.contains(
-          String.format(
-            "Invalid value for table property '%s': '%s'. %s",
-            TableConfig.CHECKPOINT_INTERVAL.getKey, "-1", "needs to be a positive integer.")))
-    }
-  }
-
   test("create partitioned table - partition column is not part of the schema") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
