@@ -258,7 +258,10 @@ public class TransactionBuilderImpl implements TransactionBuilder {
 
       @Override
       protected Tuple2<Protocol, Metadata> loadTableProtocolAndMetadata(
-          Engine engine, Optional<SnapshotHint> snapshotHint, long snapshotVersion) {
+          Engine engine,
+          LogSegment logSegment,
+          Optional<SnapshotHint> snapshotHint,
+          long snapshotVersion) {
         return new Tuple2<>(protocol, metadata);
       }
 

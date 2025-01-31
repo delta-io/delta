@@ -17,6 +17,9 @@
 package io.delta.kernel.internal.replay;
 
 import static io.delta.kernel.internal.replay.LogReplayUtils.assertLogFilesBelongToTable;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import static java.util.Arrays.asList;
+import static java.util.Collections.max;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
@@ -38,9 +41,7 @@ import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
 import java.io.UncheckedIOException;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 
 /**
  * Replays a history of actions, resolving them to produce the current state of the table. The
@@ -135,7 +136,7 @@ public class LogReplay {
     this.logSegment = logSegment;
     this.protocolAndMetadata =
         snapshotMetrics.loadInitialDeltaActionsTimer.time(
-            () -> loadTableProtocolAndMetadata(engine, snapshotHint, snapshotVersion));
+            () -> loadTableProtocolAndMetadata(engine, logSegment, snapshotHint, snapshotVersion));
     // Lazy loading of domain metadata only when needed
     this.domainMetadataMap = new Lazy<>(() -> loadDomainMetadataMap(engine));
   }
@@ -201,11 +202,45 @@ public class LogReplay {
    * use the P and/or M from the hint.
    */
   protected Tuple2<Protocol, Metadata> loadTableProtocolAndMetadata(
-      Engine engine, Optional<SnapshotHint> snapshotHint, long snapshotVersion) {
+      Engine engine,
+      LogSegment logSegment,
+      Optional<SnapshotHint> snapshotHint,
+      long snapshotVersion) {
 
-    // Exit early if the hint already has the info we need
+    // Exit early if the hint already has the info we need.
     if (snapshotHint.isPresent() && snapshotHint.get().getVersion() == snapshotVersion) {
       return new Tuple2<>(snapshotHint.get().getProtocol(), snapshotHint.get().getMetadata());
+    }
+
+    // Snapshot hit is not use-able in this case for determine the lower bound.
+    if (snapshotHint.isPresent() && snapshotHint.get().getVersion() > snapshotVersion) {
+      snapshotHint = Optional.empty();
+    }
+
+    long crcSearchLowerBound =
+        max(
+            asList(
+                // Prefer reading hint over CRC, so start listing from hint's version + 1.
+                snapshotHint.map(SnapshotHint::getVersion).orElse(0L) + 1,
+                logSegment.checkpointVersionOpt.orElse(0L),
+                // Only find the CRC within 100 versions.
+                snapshotVersion - 100,
+                0L));
+    Optional<CRCInfo> crcInfoOpt =
+        ChecksumReader.getCRCInfo(engine, logSegment.logPath, snapshotVersion, crcSearchLowerBound);
+    if (crcInfoOpt.isPresent()) {
+      CRCInfo crcInfo = crcInfoOpt.get();
+      if (crcInfo.getVersion() == snapshotVersion) {
+        // CRC is related to the desired snapshot version. Load protocol and metadata from CRC.
+        return new Tuple2<>(crcInfo.getProtocol(), crcInfo.getMetadata());
+      }
+      checkArgument(
+          crcInfo.getVersion() >= crcSearchLowerBound && crcInfo.getVersion() <= snapshotVersion);
+      // We found a CRCInfo of a version (a) older than the one we are looking for (snapshotVersion)
+      // but (b) newer than the current hint. Use this CRCInfo to create a new hint
+      snapshotHint =
+          Optional.of(
+              new SnapshotHint(crcInfo.getVersion(), crcInfo.getProtocol(), crcInfo.getMetadata()));
     }
 
     Protocol protocol = null;

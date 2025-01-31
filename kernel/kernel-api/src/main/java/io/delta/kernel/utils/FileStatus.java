@@ -75,6 +75,16 @@ public class FileStatus {
     return new FileStatus(path, size, modificationTime);
   }
 
+  /**
+   * Create a {@link FileStatus} with the given path with size and modification time set to 0.
+   *
+   * @param path Fully qualified file path.
+   * @return {@link FileStatus} object
+   */
+  public static FileStatus of(String path) {
+    return new FileStatus(path, 0 /* size */, 0 /* modTime */);
+  }
+
   @Override
   public boolean equals(Object o) {
     if (this == o) {
