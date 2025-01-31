@@ -312,7 +312,7 @@ trait DeltaSQLConfBase {
         s"""When enabled, Auto Compaction only works on the modified partitions of the delta
            |transaction that triggers compaction.""".stripMargin)
       .booleanConf
-      .createWithDefault(true)
+      .createWithDefault(false)
 
   val DELTA_AUTO_COMPACT_NON_BLIND_APPEND_ENABLED =
     buildConf("autoCompact.nonBlindAppend.enabled")
