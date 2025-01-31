@@ -88,7 +88,7 @@ public class SnapshotManager {
     final LogSegment logSegment =
         getLogSegmentForVersion(engine, Optional.empty() /* versionToLoad */);
 
-    snapshotContext.setVersion(logSegment.version);
+    snapshotContext.setVersion(logSegment.getVersion());
 
     return createSnapshot(logSegment, engine, snapshotContext);
   }
@@ -246,10 +246,10 @@ public class SnapshotManager {
       LogSegment initSegment, Engine engine, SnapshotQueryContext snapshotContext) {
     final String startingFromStr =
         initSegment
-            .checkpointVersionOpt
+            .getCheckpointVersionOpt()
             .map(v -> format("starting from checkpoint version %s.", v))
             .orElse(".");
-    logger.info("{}: Loading version {} {}", tablePath, initSegment.version, startingFromStr);
+    logger.info("{}: Loading version {} {}", tablePath, initSegment.getVersion(), startingFromStr);
 
     long startTimeMillis = System.currentTimeMillis();
 
@@ -257,7 +257,7 @@ public class SnapshotManager {
         new LogReplay(
             logPath,
             tablePath,
-            initSegment.version,
+            initSegment.getVersion(),
             engine,
             initSegment,
             Optional.ofNullable(latestSnapshotHint.get()),
@@ -281,7 +281,7 @@ public class SnapshotManager {
         "{}: Took {}ms to construct the snapshot (loading protocol and metadata) for {} {}",
         tablePath,
         System.currentTimeMillis() - startTimeMillis,
-        initSegment.version,
+        initSegment.getVersion(),
         startingFromStr);
 
     final SnapshotHint hint =

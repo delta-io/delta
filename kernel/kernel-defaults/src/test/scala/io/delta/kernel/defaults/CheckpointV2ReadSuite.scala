@@ -88,10 +88,10 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils with ExpressionTe
     // interval of 2, this will be the most recent even version.
     val expectedV2CkptToRead =
       ckptVersionExpected.getOrElse(snapshotFromSpark.version - (snapshotFromSpark.version % 2))
-    assert(snapshotImpl.getLogSegment.checkpoints.asScala.map(
+    assert(snapshotImpl.getLogSegment.getCheckpoints.asScala.map(
       f => FileNames.checkpointVersion(new Path(f.getPath)))
       .contains(expectedV2CkptToRead))
-    assert(snapshotImpl.getLogSegment.checkpoints.asScala.map(
+    assert(snapshotImpl.getLogSegment.getCheckpoints.asScala.map(
       f => new CheckpointInstance(f.getPath).format == CheckpointInstance.CheckpointFormat.V2)
       .contains(expectV2CheckpointFormat))
 

@@ -72,25 +72,25 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       expectedCheckpointVersion: Option[Long],
       expectedLastCommitTimestamp: Long): Unit = {
 
-    assert(logSegment.logPath == logPath)
-    assert(logSegment.version == expectedVersion)
+    assert(logSegment.getLogPath == logPath)
+    assert(logSegment.getVersion == expectedVersion)
     assert(expectedDeltas.map(f => (f.getPath, f.getSize, f.getModificationTime)) sameElements
-      logSegment.deltas.asScala.map(f => (f.getPath, f.getSize, f.getModificationTime)))
+      logSegment.getDeltas.asScala.map(f => (f.getPath, f.getSize, f.getModificationTime)))
 
     val expectedCheckpointStatuses = expectedCheckpoints
       .map(f => (f.getPath, f.getSize, f.getModificationTime)).sortBy(_._1)
-    val actualCheckpointStatuses = logSegment.checkpoints.asScala
+    val actualCheckpointStatuses = logSegment.getCheckpoints.asScala
       .map(f => (f.getPath, f.getSize, f.getModificationTime)).sortBy(_._1)
     assert(expectedCheckpointStatuses sameElements actualCheckpointStatuses,
       s"expected:\n$expectedCheckpointStatuses\nactual:\n$actualCheckpointStatuses")
 
     expectedCheckpointVersion match {
       case Some(v) =>
-        assert(logSegment.checkpointVersionOpt.isPresent() &&
-          logSegment.checkpointVersionOpt.get == v)
-      case None => assert(!logSegment.checkpointVersionOpt.isPresent())
+        assert(logSegment.getCheckpointVersionOpt.isPresent() &&
+          logSegment.getCheckpointVersionOpt.get == v)
+      case None => assert(!logSegment.getCheckpointVersionOpt.isPresent())
     }
-    assert(expectedLastCommitTimestamp == logSegment.lastCommitTimestamp)
+    assert(expectedLastCommitTimestamp == logSegment.getLastCommitTimestamp)
   }
 
   /**
