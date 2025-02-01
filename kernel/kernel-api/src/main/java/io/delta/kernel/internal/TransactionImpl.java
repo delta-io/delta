@@ -354,7 +354,23 @@ public class TransactionImpl implements Transaction {
           "Write file actions to JSON log file `%s`",
           FileNames.deltaFile(logPath, commitAsVersion));
 
-      return new TransactionCommitResult(commitAsVersion, isReadyForCheckpoint(commitAsVersion));
+      List<PostCommitAction> postCommitActions = new ArrayList<>();
+      if (isReadyForCheckpoint(commitAsVersion)) {
+        postCommitActions.add(
+            new PostCommitAction() {
+              @Override
+              public void threadSafeInvoke() throws IOException {
+                Table.forPath(engine, dataPath.toString()).checkpoint(engine, commitAsVersion);
+              }
+
+              @Override
+              public String getType() {
+                return "checkpoint";
+              }
+            });
+      }
+
+      return new TransactionCommitResult(commitAsVersion, postCommitActions);
     } catch (FileAlreadyExistsException e) {
       throw e;
     } catch (IOException ioe) {
