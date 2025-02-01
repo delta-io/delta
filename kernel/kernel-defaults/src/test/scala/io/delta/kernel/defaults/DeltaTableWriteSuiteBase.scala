@@ -29,7 +29,6 @@ import io.delta.kernel.utils.FileStatus
 import io.delta.kernel.{
   Meta,
   Operation,
-  PostCommitAction,
   Table,
   Transaction,
   TransactionBuilder,
@@ -411,7 +410,12 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     expVersion: Long,
     expIsReadyForCheckpoint: Boolean): Unit = {
     assert(result.getVersion === expVersion)
-    assert(result.isReadyForCheckpoint === expIsReadyForCheckpoint)
+    assert(
+      result.getPostCommitActions
+        .stream()
+        .filter(action => action.getType == "checkpoint")
+        .count() == 1 === expIsReadyForCheckpoint
+    )
   }
 
   def verifyTableProperties(

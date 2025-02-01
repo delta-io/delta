@@ -16,9 +16,11 @@
 
 package io.delta.kernel;
 
+import java.io.IOException;
+
 public interface PostCommitAction {
 
-  void threadSafeInvoke() throws Exception;
+  void threadSafeInvoke() throws IOException;
 
   String getType();
 }

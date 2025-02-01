@@ -131,7 +131,12 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       val txnResult = txn.commit(engine, emptyIterable())
 
       assert(txnResult.getVersion === 0)
-      assert(!txnResult.isReadyForCheckpoint)
+      assert(
+          txnResult.getPostCommitActions
+            .stream()
+            .filter(action => action.getType == "checkpoint")
+            .count() == 0
+        )
 
       verifyCommitInfo(tablePath = tablePath, version = 0)
       verifyWrittenContent(tablePath, testSchema, Seq.empty)
@@ -350,7 +355,12 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       val txnResult = txn.commit(engine, emptyIterable())
 
       assert(txnResult.getVersion === 0)
-      assert(!txnResult.isReadyForCheckpoint)
+        assert(
+          txnResult.getPostCommitActions
+            .stream()
+            .filter(action => action.getType == "checkpoint")
+            .count() == 0
+        )
 
       verifyCommitInfo(tablePath, version = 0, Seq("Part1", "part2"))
       verifyWrittenContent(tablePath, schema, Seq.empty)
@@ -368,7 +378,12 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       val txnResult = txn.commit(engine, emptyIterable())
 
       assert(txnResult.getVersion === 0)
-      assert(!txnResult.isReadyForCheckpoint)
+        assert(
+          txnResult.getPostCommitActions
+            .stream()
+            .filter(action => action.getType == "checkpoint")
+            .count() == 0
+      )
 
       verifyCommitInfo(tablePath, version = 0)
       verifyWrittenContent(tablePath, schema, Seq.empty)
