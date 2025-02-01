@@ -17,18 +17,21 @@ package io.delta.kernel.defaults
 
 import java.io.File
 import java.util.Optional
-
 import scala.collection.JavaConverters._
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import org.scalatest.funsuite.AnyFunSuite
 import org.apache.hadoop.conf.Configuration
-
 import io.delta.kernel.types.{LongType, StructType}
 import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl}
 import io.delta.kernel.internal.data.ScanStateRow
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
 import io.delta.kernel.Table
+import io.delta.kernel.internal.fs.Path
+import io.delta.kernel.internal.util.FileNames
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+
+import java.nio.file.Files
 
 class LogReplaySuite extends AnyFunSuite with TestUtils {
 
@@ -297,5 +300,52 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
 
     assert(snapshotImpl.getLatestTransactionVersion(defaultEngine, "fakeAppId") === Optional.of(3L))
     assert(!snapshotImpl.getLatestTransactionVersion(defaultEngine, "nonExistentAppId").isPresent)
+  }
+
+  test("test snapshot provides crc info if checksum read") {
+    withTempDir { tempFile =>
+      val tablePath = tempFile.getAbsolutePath
+      withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true") {
+        spark.sql(
+          s"CREATE TABLE delta.`$tablePath` USING DELTA AS " +
+          s"SELECT 0L as id"
+        )
+        spark.sql(
+          s"INSERT INTO delta.`$tablePath` SELECT 1L as id"
+        )
+      }
+      val table = Table.forPath(defaultEngine, tablePath)
+      val snapshot = table.getLatestSnapshot(defaultEngine).asInstanceOf[SnapshotImpl]
+      assert(snapshot.getCurrentCrcInfo.isPresent)
+      val crcInfo = snapshot.getCurrentCrcInfo.get()
+      assert(crcInfo.getVersion == 1)
+      assert(crcInfo.getProtocol == snapshot.getProtocol)
+      assert(crcInfo.getMetadata == snapshot.getMetadata)
+    }
+  }
+
+  test("test snapshot provides crc info if checksum stale") {
+    withTempDir { tempFile =>
+      val tablePath = tempFile.getAbsolutePath
+      withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true") {
+        spark.sql(
+          s"CREATE TABLE delta.`$tablePath` USING DELTA AS " +
+          s"SELECT 0L as id"
+        )
+        spark.sql(
+          s"INSERT INTO delta.`$tablePath` SELECT 1L as id"
+        )
+      }
+      assert(
+        Files.deleteIfExists(
+          new File(
+            FileNames.checksumFile(new Path(s"$tablePath/_delta_log"), 1).toString
+          ).toPath
+        )
+      )
+      val table = Table.forPath(defaultEngine, tablePath)
+      val snapshot = table.getLatestSnapshot(defaultEngine).asInstanceOf[SnapshotImpl]
+      assert(!snapshot.getCurrentCrcInfo.isPresent)
+    }
   }
 }
