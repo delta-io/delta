@@ -270,7 +270,7 @@ public class LogSegment {
         + list.stream().map(FileStatus::toString).collect(Collectors.joining(",\n    "));
   }
 
-  public Optional<FileStatus> getlatestChecksum() {
+  public Optional<FileStatus> getLatestChecksum() {
     return latestChecksum;
   }
 }
