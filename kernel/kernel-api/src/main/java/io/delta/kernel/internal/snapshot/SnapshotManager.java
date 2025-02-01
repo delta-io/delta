@@ -346,7 +346,11 @@ public class SnapshotManager {
     final List<FileStatus> listedFileStatuses =
         DeltaLogActionUtils.listDeltaLogFilesAsIter(
                 engine,
-                new HashSet<>(Arrays.asList(DeltaLogFileType.COMMIT, DeltaLogFileType.CHECKPOINT)),
+                new HashSet<>(
+                    Arrays.asList(
+                        DeltaLogFileType.COMMIT,
+                        DeltaLogFileType.CHECKPOINT,
+                        DeltaLogFileType.CHECKSUM)),
                 tablePath,
                 listFromStartVersion,
                 versionToLoadOpt,
@@ -388,10 +392,16 @@ public class SnapshotManager {
             listedFileStatuses,
             fileStatus -> FileNames.isCheckpointFile(new Path(fileStatus.getPath()).getName()));
     final List<FileStatus> listedCheckpointFileStatuses = listedCheckpointAndDeltaFileStatuses._1;
-    final List<FileStatus> listedDeltaFileStatuses = listedCheckpointAndDeltaFileStatuses._2;
+    final Tuple2<List<FileStatus>, List<FileStatus>> listedDeltaFileCheckSumStatuses =
+        ListUtils.partition(
+            listedCheckpointAndDeltaFileStatuses._2,
+            fileStatus -> FileNames.isCommitFile(new Path(fileStatus.getPath()).getName()));
+    final List<FileStatus> listedDeltaFileStatuses = listedDeltaFileCheckSumStatuses._1;
+    final List<FileStatus> listedChecksumFileStatues = listedDeltaFileCheckSumStatuses._2;
 
     logDebugFileStatuses("listedCheckpointFileStatuses", listedCheckpointFileStatuses);
     logDebugFileStatuses("listedDeltaFileStatuses", listedDeltaFileStatuses);
+    logDebugFileStatuses("listedCheckSumFileStatuses", listedChecksumFileStatues);
 
     /////////////////////////////////////////////////////////////////////////////////////////////
     // Step 6: Determine the latest complete checkpoint version. The intuition here is that we //
@@ -562,6 +572,15 @@ public class SnapshotManager {
         newVersion,
         deltasAfterCheckpoint,
         latestCompleteCheckpointFileStatuses,
+        listedChecksumFileStatues.stream()
+            .max(
+                new Comparator<FileStatus>() {
+                  public int compare(FileStatus file1, FileStatus file2) {
+                    return Long.compare(
+                        FileNames.getFileVersion(new Path(file1.getPath())),
+                        FileNames.getFileVersion(new Path(file2.getPath())));
+                  }
+                }),
         lastCommitTimestamp);
   }
 

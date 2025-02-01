@@ -35,6 +35,7 @@ import io.delta.kernel.internal.metrics.SnapshotMetrics;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.SnapshotHint;
 import io.delta.kernel.internal.util.DomainMetadataUtils;
+import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
@@ -217,18 +218,25 @@ public class LogReplay {
       snapshotHint = Optional.empty();
     }
 
-    long crcSearchLowerBound =
+    long crcReadLowerBound =
         max(
             asList(
                 // Prefer reading hint over CRC, so start listing from hint's version + 1.
                 snapshotHint.map(SnapshotHint::getVersion).orElse(0L) + 1,
                 logSegment.getCheckpointVersionOpt().orElse(0L),
                 // Only find the CRC within 100 versions.
-                snapshotVersion - 100,
-                0L));
+                snapshotVersion - 100));
     Optional<CRCInfo> crcInfoOpt =
-        ChecksumReader.getCRCInfo(
-            engine, logSegment.getLogPath(), snapshotVersion, crcSearchLowerBound);
+        logSegment
+            .getLastSeenCheckSum()
+            .flatMap(
+                checksum -> {
+                  if (FileNames.getFileVersion(new Path(checksum.getPath())) < crcReadLowerBound) {
+                    return Optional.empty();
+                  }
+                  return ChecksumReader.getCRCInfo(engine, checksum);
+                });
+
     if (crcInfoOpt.isPresent()) {
       CRCInfo crcInfo = crcInfoOpt.get();
       if (crcInfo.getVersion() == snapshotVersion) {
@@ -236,7 +244,7 @@ public class LogReplay {
         return new Tuple2<>(crcInfo.getProtocol(), crcInfo.getMetadata());
       }
       checkArgument(
-          crcInfo.getVersion() >= crcSearchLowerBound && crcInfo.getVersion() <= snapshotVersion);
+          crcInfo.getVersion() >= crcReadLowerBound && crcInfo.getVersion() <= snapshotVersion);
       // We found a CRCInfo of a version (a) older than the one we are looking for (snapshotVersion)
       // but (b) newer than the current hint. Use this CRCInfo to create a new hint
       snapshotHint =

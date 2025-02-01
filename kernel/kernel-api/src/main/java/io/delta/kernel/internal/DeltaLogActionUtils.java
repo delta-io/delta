@@ -233,6 +233,9 @@ public class DeltaLogActionUtils {
                 // Checkpoint files of 0 size are invalid but may be ignored silently when read,
                 // hence we ignore them so that we never pick up such checkpoints.
                 // Here, we do nothing (we will consume this file).
+              } else if (fileTypes.contains(DeltaLogFileType.CHECKSUM)
+                  && FileNames.isChecksumFile(getName(fs.getPath()))) {
+                // Here, we do nothing (we will consume this file).
               } else {
                 logger.debug("Ignoring file {} as it is not of the desired type", fs.getPath());
                 return BreakableFilterResult.EXCLUDE; // Here, we exclude and filter out this file.
