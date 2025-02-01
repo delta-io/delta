@@ -26,8 +26,16 @@ import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.internal.{SnapshotImpl, TableConfig, TableImpl}
 import io.delta.kernel.utils.FileStatus
-import io.delta.kernel.{Meta, Operation, Table, Transaction, TransactionBuilder, TransactionCommitResult}
-import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch, Row}
+import io.delta.kernel.{
+  Meta,
+  Operation,
+  PostCommitAction,
+  Table,
+  Transaction,
+  TransactionBuilder,
+  TransactionCommitResult
+}
+import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch, Row}
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.expressions.Literal.ofInt
@@ -139,10 +147,14 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     tablePath: String,
     result: TransactionCommitResult,
     expSize: Long): Unit = {
-    if (result.isReadyForCheckpoint) {
-      Table.forPath(engine, tablePath).checkpoint(engine, result.getVersion)
-      verifyLastCheckpointMetadata(tablePath, checkpointAt = result.getVersion, expSize)
-    }
+    result.getPostCommitActions.forEach(
+      action => {
+        if (action.getType == "checkpoint") {
+          action.threadSafeInvoke()
+          verifyLastCheckpointMetadata(tablePath, checkpointAt = result.getVersion, expSize)
+        }
+      }
+    )
   }
 
   /**
