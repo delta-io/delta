@@ -50,6 +50,8 @@ public class ChecksumReader {
       Engine engine, Path logPath, long targetedVersion, long lowerBound) {
     // lower bound should always smaller than the targetedVersion.
     lowerBound = min(lowerBound, targetedVersion);
+    System.out.println(targetedVersion);
+    System.out.println(lowerBound);
     logger.info("Loading CRC file for version {} with lower bound {}", targetedVersion, lowerBound);
     // First try to load the CRC at given version. If not found or failed to read then try to
     // find the latest CRC file that is created at or after the lower bound version.

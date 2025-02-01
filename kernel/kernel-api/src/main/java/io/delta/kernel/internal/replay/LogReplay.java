@@ -222,38 +222,6 @@ public class LogReplay {
       return new Tuple2<>(snapshotHint.get().getProtocol(), snapshotHint.get().getMetadata());
     }
 
-    // Snapshot hit is not use-able in this case for determine the lower bound.
-    if (snapshotHint.isPresent() && snapshotHint.get().getVersion() > snapshotVersion) {
-      snapshotHint = Optional.empty();
-    }
-
-    long crcSearchLowerBound =
-        max(
-            asList(
-                // Prefer reading hint over CRC, so start listing from hint's version + 1.
-                snapshotHint.map(SnapshotHint::getVersion).orElse(0L) + 1,
-                logSegment.getCheckpointVersionOpt().orElse(0L),
-                // Only find the CRC within 100 versions.
-                snapshotVersion - 100,
-                0L));
-    Optional<CRCInfo> crcInfoOpt =
-        ChecksumReader.getCRCInfo(
-            engine, logSegment.getLogPath(), snapshotVersion, crcSearchLowerBound);
-    if (crcInfoOpt.isPresent()) {
-      CRCInfo crcInfo = crcInfoOpt.get();
-      if (crcInfo.getVersion() == snapshotVersion) {
-        // CRC is related to the desired snapshot version. Load protocol and metadata from CRC.
-        return new Tuple2<>(crcInfo.getProtocol(), crcInfo.getMetadata());
-      }
-      checkArgument(
-          crcInfo.getVersion() >= crcSearchLowerBound && crcInfo.getVersion() <= snapshotVersion);
-      // We found a CRCInfo of a version (a) older than the one we are looking for (snapshotVersion)
-      // but (b) newer than the current hint. Use this CRCInfo to create a new hint
-      snapshotHint =
-          Optional.of(
-              new SnapshotHint(crcInfo.getVersion(), crcInfo.getProtocol(), crcInfo.getMetadata()));
-    }
-
     Protocol protocol = null;
     Metadata metadata = null;
 
