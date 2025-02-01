@@ -219,7 +219,7 @@ public class DeltaLogActionUtils {
         endVersionOpt);
 
     // Must be final to be used in lambda
-    final AtomicBoolean hasReturnedAnElement = new AtomicBoolean(false);
+    final AtomicBoolean hasReturnedlogOrCheckPoint = new AtomicBoolean(false);
 
     return listLogDir(engine, tablePath, startVersion)
         .breakableFilter(
@@ -254,7 +254,7 @@ public class DeltaLogActionUtils {
                 final long endVersion = endVersionOpt.get();
 
                 if (fileVersion > endVersion) {
-                  if (mustBeRecreatable && !hasReturnedAnElement.get()) {
+                  if (mustBeRecreatable && !hasReturnedlogOrCheckPoint.get()) {
                     final long earliestVersion =
                         DeltaHistoryManager.getEarliestRecreatableCommit(engine, logPath);
                     throw DeltaErrors.versionBeforeFirstAvailableCommit(
@@ -269,7 +269,11 @@ public class DeltaLogActionUtils {
                 }
               }
 
-              hasReturnedAnElement.set(true);
+              // Only log and checkpoint could use to construct table state.
+              if (FileNames.isCommitFile(getName(fs.getPath()))
+                  || FileNames.isCheckpointFile(getName(fs.getPath()))) {
+                hasReturnedlogOrCheckPoint.set(true);
+              }
 
               return BreakableFilterResult.INCLUDE;
             });

@@ -51,7 +51,7 @@ public class LogSegment {
   private final List<FileStatus> deltas;
   private final List<FileStatus> checkpoints;
   private final Optional<Long> checkpointVersionOpt;
-  private final Optional<FileStatus> lastSeenCheckSum;
+  private final Optional<FileStatus> latestChecksum;
   private final long lastCommitTimestamp;
   private final Lazy<List<FileStatus>> allFiles;
   private final Lazy<List<FileStatus>> allFilesReversed;
@@ -86,7 +86,7 @@ public class LogSegment {
       long version,
       List<FileStatus> deltas,
       List<FileStatus> checkpoints,
-      Optional<FileStatus> lastSeenCheckSum,
+      Optional<FileStatus> latestChecksum,
       long lastCommitTimestamp) {
 
     ///////////////////////
@@ -164,7 +164,7 @@ public class LogSegment {
     this.version = version;
     this.deltas = deltas;
     this.checkpoints = checkpoints;
-    this.lastSeenCheckSum = lastSeenCheckSum;
+    this.latestChecksum = latestChecksum;
     this.lastCommitTimestamp = lastCommitTimestamp;
 
     this.allFiles =
@@ -249,7 +249,7 @@ public class LogSegment {
             + "  version=%d,\n"
             + "  deltas=[%s\n  ],\n"
             + "  checkpoints=[%s\n  ],\n"
-            + "  lastSeenCheckSum=%s,\n"
+            + "  latestChecksum=%s,\n"
             + "  checkpointVersion=%s,\n"
             + "  lastCommitTimestamp=%d\n"
             + "}",
@@ -257,7 +257,7 @@ public class LogSegment {
         version,
         formatList(deltas),
         formatList(checkpoints),
-        lastSeenCheckSum.map(FileStatus::toString).orElse("None"),
+        latestChecksum.map(FileStatus::toString).orElse("None"),
         checkpointVersionOpt.map(String::valueOf).orElse("None"),
         lastCommitTimestamp);
   }
@@ -270,7 +270,7 @@ public class LogSegment {
         + list.stream().map(FileStatus::toString).collect(Collectors.joining(",\n    "));
   }
 
-  public Optional<FileStatus> getLastSeenCheckSum() {
-    return lastSeenCheckSum;
+  public Optional<FileStatus> getlatestChecksum() {
+    return latestChecksum;
   }
 }

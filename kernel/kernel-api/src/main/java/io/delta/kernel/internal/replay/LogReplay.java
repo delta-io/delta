@@ -228,7 +228,7 @@ public class LogReplay {
                 snapshotVersion - 100));
     Optional<CRCInfo> crcInfoOpt =
         logSegment
-            .getLastSeenCheckSum()
+            .getLastestCheckSum()
             .flatMap(
                 checksum -> {
                   if (FileNames.getFileVersion(new Path(checksum.getPath())) < crcReadLowerBound) {
