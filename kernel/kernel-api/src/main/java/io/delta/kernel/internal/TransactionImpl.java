@@ -28,6 +28,8 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.ConcurrentWriteException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.*;
+import io.delta.kernel.internal.checksum.CRCInfo;
+import io.delta.kernel.internal.checksum.ChecksumWriter;
 import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.metrics.TransactionMetrics;
@@ -36,6 +38,7 @@ import io.delta.kernel.internal.replay.ConflictChecker;
 import io.delta.kernel.internal.replay.ConflictChecker.TransactionRebaseState;
 import io.delta.kernel.internal.rowtracking.RowTracking;
 import io.delta.kernel.internal.util.*;
+import io.delta.kernel.metrics.TransactionMetricsResult;
 import io.delta.kernel.metrics.TransactionReport;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterable;
@@ -356,19 +359,10 @@ public class TransactionImpl implements Transaction {
 
       List<PostCommitAction> postCommitActions = new ArrayList<>();
       if (isReadyForCheckpoint(commitAsVersion)) {
-        postCommitActions.add(
-            new PostCommitAction() {
-              @Override
-              public void threadSafeInvoke() throws IOException {
-                Table.forPath(engine, dataPath.toString()).checkpoint(engine, commitAsVersion);
-              }
-
-              @Override
-              public String getType() {
-                return "checkpoint";
-              }
-            });
+        postCommitActions.add(checkpoint(engine, dataPath.toString(), commitAsVersion));
       }
+      buildPostCommitCrcInfo(commitAsVersion, transactionMetrics.captureTransactionMetricsResult())
+          .ifPresent(crcInfo -> postCommitActions.add(checksumSimple(engine, crcInfo, logPath)));
 
       return new TransactionCommitResult(commitAsVersion, postCommitActions);
     } catch (FileAlreadyExistsException e) {
@@ -382,6 +376,63 @@ public class TransactionImpl implements Transaction {
     // For now, Kernel just supports blind append.
     // Change this when read-after-write is supported.
     return true;
+  }
+
+  private static PostCommitAction checkpoint(Engine engine, String tablePath, long version) {
+    return new PostCommitAction() {
+      @Override
+      public void threadSafeInvoke() throws IOException {
+        Table.forPath(engine, tablePath).checkpoint(engine, version);
+      }
+
+      @Override
+      public String getType() {
+        return "checkpoint";
+      }
+    };
+  }
+
+  private static PostCommitAction checksumSimple(Engine engine, CRCInfo crcInfo, Path logPath) {
+    return new PostCommitAction() {
+      @Override
+      public void threadSafeInvoke() throws IOException {
+        new ChecksumWriter(logPath).writeCheckSum(engine, crcInfo);
+      }
+
+      @Override
+      public String getType() {
+        return "checksum_simple";
+      }
+    };
+  }
+
+  private Optional<CRCInfo> buildPostCommitCrcInfo(
+      long commitAtVersion, TransactionMetricsResult metricsResult) {
+    if (commitAtVersion == 0) {
+      return Optional.of(
+          new CRCInfo(
+              commitAtVersion,
+              metadata,
+              protocol,
+              metricsResult.getTotalAddFilesSizeInBytes(),
+              metricsResult.getNumAddFiles(),
+              Optional.of(txnId.toString())));
+    }
+    // Retry or CRC is read for old version
+    if (!readSnapshot.getCurrentCrcInfo().isPresent()
+        || commitAtVersion != readSnapshot.getCurrentCrcInfo().get().getVersion() + 1) {
+      return Optional.empty();
+    }
+
+    CRCInfo lastCrcInfo = readSnapshot.getCurrentCrcInfo().get();
+    return Optional.of(
+        new CRCInfo(
+            commitAtVersion,
+            metadata,
+            protocol,
+            lastCrcInfo.getTableSizeBytes() + metricsResult.getTotalAddFilesSizeInBytes(),
+            lastCrcInfo.getNumFiles() + metricsResult.getNumAddFiles(),
+            Optional.of(txnId.toString())));
   }
 
   /**
