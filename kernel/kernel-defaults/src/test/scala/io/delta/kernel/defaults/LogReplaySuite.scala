@@ -302,18 +302,16 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
     assert(!snapshotImpl.getLatestTransactionVersion(defaultEngine, "nonExistentAppId").isPresent)
   }
 
-  test("test snapshot provides crc info if checksum read") {
+  test("current checksum read => snapshot provides crc info") {
     withTempDir { tempFile =>
       val tablePath = tempFile.getAbsolutePath
-      withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true") {
-        spark.sql(
-          s"CREATE TABLE delta.`$tablePath` USING DELTA AS " +
+      spark.sql(
+        s"CREATE TABLE delta.`$tablePath` USING DELTA AS " +
           s"SELECT 0L as id"
-        )
-        spark.sql(
-          s"INSERT INTO delta.`$tablePath` SELECT 1L as id"
-        )
-      }
+      )
+      spark.sql(
+        s"INSERT INTO delta.`$tablePath` SELECT 1L as id"
+      )
       val table = Table.forPath(defaultEngine, tablePath)
       val snapshot = table.getLatestSnapshot(defaultEngine).asInstanceOf[SnapshotImpl]
       assert(snapshot.getCurrentCrcInfo.isPresent)
@@ -324,24 +322,48 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
     }
   }
 
-  test("test snapshot provides crc info if checksum stale") {
+  test("stale checksum read => snapshot doesn't provides crc info") {
     withTempDir { tempFile =>
       val tablePath = tempFile.getAbsolutePath
-      withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true") {
-        spark.sql(
-          s"CREATE TABLE delta.`$tablePath` USING DELTA AS " +
+      spark.sql(
+        s"CREATE TABLE delta.`$tablePath` USING DELTA AS " +
           s"SELECT 0L as id"
-        )
-        spark.sql(
-          s"INSERT INTO delta.`$tablePath` SELECT 1L as id"
-        )
-      }
+      )
+      spark.sql(
+        s"INSERT INTO delta.`$tablePath` SELECT 1L as id"
+      )
       assert(
         Files.deleteIfExists(
           new File(
             FileNames.checksumFile(new Path(s"$tablePath/_delta_log"), 1).toString
           ).toPath
         )
+      )
+      val table = Table.forPath(defaultEngine, tablePath)
+      val snapshot = table.getLatestSnapshot(defaultEngine).asInstanceOf[SnapshotImpl]
+      assert(!snapshot.getCurrentCrcInfo.isPresent)
+    }
+  }
+
+  test("no checksum read => snapshot doesn't provides crc info") {
+    withTempDir { tempFile =>
+      val tablePath = tempFile.getAbsolutePath
+      spark.sql(
+        s"CREATE TABLE delta.`$tablePath` USING DELTA AS " +
+        s"SELECT 0L as id"
+      )
+      spark.sql(
+        s"INSERT INTO delta.`$tablePath` SELECT 1L as id"
+      )
+      Seq(0, 1).foreach(
+        version =>
+          assert(
+            Files.deleteIfExists(
+              new File(
+                FileNames.checksumFile(new Path(s"$tablePath/_delta_log"), version).toString
+              ).toPath
+            )
+          )
       )
       val table = Table.forPath(defaultEngine, tablePath)
       val snapshot = table.getLatestSnapshot(defaultEngine).asInstanceOf[SnapshotImpl]
