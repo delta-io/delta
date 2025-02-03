@@ -410,11 +410,17 @@ public class CreateTableAndInsertData extends BaseTableWriter {
         for (int i = 0; i < 12; i++) {
             TransactionCommitResult commitResult = insertDataIntoUnpartitionedTable(tablePath);
             for(PostCommitAction action: commitResult.getPostCommitActions())
-            if (action.getType().equals("checkpoint")) {
                 // Checkpoint the table
-               action.threadSafeInvoke();
-               didCheckpoint = true;
-            }
+                didCheckpoint = didCheckpoint || CompletableFuture.supplyAsync(() -> {
+                            // run the code async
+                            try{
+                                action.threadSafeInvoke();
+                            } catch (IOException e) {
+                                return false;
+                            }
+                            return action.getType().equals("checkpoint");
+                        }
+                ).join(); // wait async finish.
         }
 
         if (!didCheckpoint) {
