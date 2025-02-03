@@ -356,7 +356,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
       assert(txnResult.getVersion === 0)
         assert(
-          txnResult.getPostCommitActions
+          !txnResult.getPostCommitActions
             .stream()
             .anyMatch(action => action.getType == PostCommitActionType.CHECKPOINT)
         )
@@ -377,11 +377,10 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       val txnResult = txn.commit(engine, emptyIterable())
 
       assert(txnResult.getVersion === 0)
-        assert(
-          txnResult.getPostCommitActions.stream()
-          .anyMatch(
-            action => action.getType == PostCommitActionType.CHECKPOINT
-          )
+      assert(
+          !txnResult.getPostCommitActions
+            .stream()
+            .anyMatch(action => action.getType == PostCommitActionType.CHECKPOINT)
       )
 
       verifyCommitInfo(tablePath, version = 0)
