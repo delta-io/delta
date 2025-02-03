@@ -148,6 +148,7 @@ lazy val commonSettings = Seq(
     "-Ddelta.log.cacheSize=3",
     "-Dspark.databricks.delta.delta.log.cacheSize=3",
     "-Dspark.sql.sources.parallelPartitionDiscovery.parallelism=5",
+    "-Dspark.testing=1",
     "-Xmx1024m"
   ),
 
