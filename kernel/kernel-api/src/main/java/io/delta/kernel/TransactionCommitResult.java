@@ -45,9 +45,7 @@ public class TransactionCommitResult {
     return version;
   }
 
-  /**
-   * @return list of actions to trigger after commit.
-   */
+  /** @return list of actions to trigger after commit. */
   public List<PostCommitAction> getPostCommitActions() {
     return postCommitActions;
   }
