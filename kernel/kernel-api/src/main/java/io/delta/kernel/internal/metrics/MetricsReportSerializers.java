@@ -20,9 +20,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.module.SimpleModule;
 import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
 import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
+import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.metrics.MetricsReport;
+import io.delta.kernel.metrics.ScanReport;
 import io.delta.kernel.metrics.SnapshotReport;
 import io.delta.kernel.metrics.TransactionReport;
+import io.delta.kernel.types.StructType;
 
 /** Defines JSON serializers for {@link MetricsReport} types */
 public final class MetricsReportSerializers {
@@ -39,6 +42,15 @@ public final class MetricsReportSerializers {
   public static String serializeSnapshotReport(SnapshotReport snapshotReport)
       throws JsonProcessingException {
     return OBJECT_MAPPER.writeValueAsString(snapshotReport);
+  }
+
+  /**
+   * Serializes a {@link ScanReport} to a JSON string
+   *
+   * @throws JsonProcessingException
+   */
+  public static String serializeScanReport(ScanReport scanReport) throws JsonProcessingException {
+    return OBJECT_MAPPER.writeValueAsString(scanReport);
   }
 
   /**
@@ -59,7 +71,11 @@ public final class MetricsReportSerializers {
       new ObjectMapper()
           .registerModule(new Jdk8Module()) // To support Optional
           .registerModule( // Serialize Exception using toString()
-              new SimpleModule().addSerializer(Exception.class, new ToStringSerializer()));
+              new SimpleModule().addSerializer(Exception.class, new ToStringSerializer()))
+          .registerModule( // Serialize StructType using toString
+              new SimpleModule().addSerializer(StructType.class, new ToStringSerializer()))
+          .registerModule( // Serialize Predicate using toString
+              new SimpleModule().addSerializer(Predicate.class, new ToStringSerializer()));
 
   private MetricsReportSerializers() {}
 }

@@ -23,6 +23,7 @@ import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.replay.LogReplay;
+import io.delta.kernel.metrics.SnapshotReport;
 import io.delta.kernel.types.StructType;
 import java.util.Optional;
 
@@ -34,6 +35,7 @@ public class ScanBuilderImpl implements ScanBuilder {
   private final Metadata metadata;
   private final StructType snapshotSchema;
   private final LogReplay logReplay;
+  private final SnapshotReport snapshotReport;
 
   private StructType readSchema;
   private Optional<Predicate> predicate;
@@ -43,7 +45,8 @@ public class ScanBuilderImpl implements ScanBuilder {
       Protocol protocol,
       Metadata metadata,
       StructType snapshotSchema,
-      LogReplay logReplay) {
+      LogReplay logReplay,
+      SnapshotReport snapshotReport) {
     this.dataPath = dataPath;
     this.protocol = protocol;
     this.metadata = metadata;
@@ -51,6 +54,7 @@ public class ScanBuilderImpl implements ScanBuilder {
     this.logReplay = logReplay;
     this.readSchema = snapshotSchema;
     this.predicate = Optional.empty();
+    this.snapshotReport = snapshotReport;
   }
 
   @Override
@@ -72,6 +76,13 @@ public class ScanBuilderImpl implements ScanBuilder {
   @Override
   public Scan build() {
     return new ScanImpl(
-        snapshotSchema, readSchema, protocol, metadata, logReplay, predicate, dataPath);
+        snapshotSchema,
+        readSchema,
+        protocol,
+        metadata,
+        logReplay,
+        predicate,
+        dataPath,
+        snapshotReport);
   }
 }
