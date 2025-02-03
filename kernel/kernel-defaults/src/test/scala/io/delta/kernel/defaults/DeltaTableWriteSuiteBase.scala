@@ -29,6 +29,7 @@ import io.delta.kernel.utils.FileStatus
 import io.delta.kernel.{
   Meta,
   Operation,
+  PostCommitActionType,
   Table,
   Transaction,
   TransactionBuilder,
@@ -148,7 +149,7 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     expSize: Long): Unit = {
     result.getPostCommitActions.forEach(
       action => {
-        if (action.getType == "checkpoint") {
+        if (action.getType == PostCommitActionType.CHECKPOINT) {
           action.threadSafeInvoke()
           verifyLastCheckpointMetadata(tablePath, checkpointAt = result.getVersion, expSize)
         }
@@ -413,8 +414,9 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     assert(
       result.getPostCommitActions
         .stream()
-        .filter(action => action.getType == "checkpoint")
-        .count() == 1 === expIsReadyForCheckpoint
+        .anyMatch(
+          action => action.getType == PostCommitActionType.CHECKPOINT
+        ) === expIsReadyForCheckpoint
     )
   }
 

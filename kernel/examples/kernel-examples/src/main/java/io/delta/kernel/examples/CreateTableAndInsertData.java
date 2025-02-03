@@ -17,6 +17,7 @@ package io.delta.kernel.examples;
 
 import java.io.IOException;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 
 import org.apache.commons.cli.Options;
 
@@ -418,7 +419,7 @@ public class CreateTableAndInsertData extends BaseTableWriter {
                     } catch (IOException e) {
                         return false;
                     }
-                    return action.getType().equals("checkpoint");
+                    return action.getType().equals(PostCommitActionType.CHECKPOINT);
                 }).join(); // wait async finish.
         }
 

@@ -13,15 +13,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package io.delta.kernel;
 
-import java.io.IOException;
-
-public interface PostCommitAction {
-
-  // Invokes the post commit action, implementation of action should be thread safe.
-  void threadSafeInvoke() throws IOException;
-
-  PostCommitActionType getType();
+public enum PostCommitActionType {
+  CHECKPOINT
 }

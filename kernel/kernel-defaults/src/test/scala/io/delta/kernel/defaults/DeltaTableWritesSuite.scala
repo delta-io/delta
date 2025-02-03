@@ -132,10 +132,10 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
       assert(txnResult.getVersion === 0)
       assert(
-          txnResult.getPostCommitActions
-            .stream()
-            .filter(action => action.getType == "checkpoint")
-            .count() == 0
+        !txnResult.getPostCommitActions.stream()
+          .anyMatch(
+            action => action.getType == PostCommitActionType.CHECKPOINT
+          )
         )
 
       verifyCommitInfo(tablePath = tablePath, version = 0)
@@ -358,8 +358,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         assert(
           txnResult.getPostCommitActions
             .stream()
-            .filter(action => action.getType == "checkpoint")
-            .count() == 0
+            .anyMatch(action => action.getType == PostCommitActionType.CHECKPOINT)
         )
 
       verifyCommitInfo(tablePath, version = 0, Seq("Part1", "part2"))
@@ -379,10 +378,10 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
       assert(txnResult.getVersion === 0)
         assert(
-          txnResult.getPostCommitActions
-            .stream()
-            .filter(action => action.getType == "checkpoint")
-            .count() == 0
+          txnResult.getPostCommitActions.stream()
+          .anyMatch(
+            action => action.getType == PostCommitActionType.CHECKPOINT
+          )
       )
 
       verifyCommitInfo(tablePath, version = 0)

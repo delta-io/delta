@@ -356,18 +356,7 @@ public class TransactionImpl implements Transaction {
 
       List<PostCommitAction> postCommitActions = new ArrayList<>();
       if (isReadyForCheckpoint(commitAsVersion)) {
-        postCommitActions.add(
-            new PostCommitAction() {
-              @Override
-              public void threadSafeInvoke() throws IOException {
-                Table.forPath(engine, dataPath.toString()).checkpoint(engine, commitAsVersion);
-              }
-
-              @Override
-              public String getType() {
-                return "checkpoint";
-              }
-            });
+        postCommitActions.add(checkpoint(engine, dataPath.toString(), commitAsVersion));
       }
 
       return new TransactionCommitResult(commitAsVersion, postCommitActions);
@@ -382,6 +371,20 @@ public class TransactionImpl implements Transaction {
     // For now, Kernel just supports blind append.
     // Change this when read-after-write is supported.
     return true;
+  }
+
+  private static PostCommitAction checkpoint(Engine engine, String tablePath, long version) {
+    return new PostCommitAction() {
+      @Override
+      public void threadSafeInvoke() throws IOException {
+        Table.forPath(engine, tablePath).checkpoint(engine, version);
+      }
+
+      @Override
+      public PostCommitActionType getType() {
+        return PostCommitActionType.CHECKPOINT;
+      }
+    };
   }
 
   /**
