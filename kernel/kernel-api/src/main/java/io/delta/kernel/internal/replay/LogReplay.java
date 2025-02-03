@@ -171,6 +171,7 @@ public class LogReplay {
     return logSegment.getVersion();
   }
 
+  /** Returns the crc info for the current snapshot if the checksum file is read */
   public Optional<CRCInfo> getCurrentCrcInfo() {
     return currentCrcInfo;
   }
@@ -371,6 +372,8 @@ public class LogReplay {
     }
   }
 
+  // Calculates the lastest snapshot hint before current snapshot version, returns the CRCInfo if
+  // checksum file at the current is read.
   private Tuple2<Optional<SnapshotHint>, Optional<CRCInfo>>
       maybeGetNewerSnapshotHintAndCurrentCrcInfo(
           Engine engine,
@@ -378,12 +381,12 @@ public class LogReplay {
           Optional<SnapshotHint> snapshotHint,
           long snapshotVersion) {
 
-    // Exit early if the hint already has the info we need.
+    // Snapshot hint's version is current.
     if (snapshotHint.isPresent() && snapshotHint.get().getVersion() == snapshotVersion) {
       return new Tuple2<>(snapshotHint, Optional.empty());
     }
 
-    // Snapshot hit is not use-able in this case for determine the lower bound.
+    // Ignore the snapshot hint whose version is larger.
     if (snapshotHint.isPresent() && snapshotHint.get().getVersion() > snapshotVersion) {
       snapshotHint = Optional.empty();
     }
@@ -403,7 +406,7 @@ public class LogReplay {
     if (crcInfoOpt.isPresent()) {
       CRCInfo crcInfo = crcInfoOpt.get();
       if (crcInfo.getVersion() == snapshotVersion) {
-        // CRC is related to the desired snapshot version. Load protocol and metadata from CRC.
+        // CRC is related to the desired snapshot version.
         return new Tuple2<>(
             Optional.of(
                 new SnapshotHint(
@@ -413,7 +416,7 @@ public class LogReplay {
       checkArgument(
           crcInfo.getVersion() >= crcSearchLowerBound && crcInfo.getVersion() <= snapshotVersion);
       // We found a CRCInfo of a version (a) older than the one we are looking for (snapshotVersion)
-      // but (b) newer than the current hint. Use this CRCInfo to create a new hint
+      // but (b) newer than the current hint. Use this CRCInfo to create a new hint.
       return new Tuple2<>(
           Optional.of(
               new SnapshotHint(crcInfo.getVersion(), crcInfo.getProtocol(), crcInfo.getMetadata())),

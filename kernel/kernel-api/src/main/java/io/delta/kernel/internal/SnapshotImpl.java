@@ -154,6 +154,7 @@ public class SnapshotImpl implements Snapshot {
     return logReplay.getDomainMetadataMap();
   }
 
+  /** Returns the crc info for the current snapshot if the checksum file is read */
   public Optional<CRCInfo> getCurrentCrcInfo() {
     return logReplay.getCurrentCrcInfo();
   }
