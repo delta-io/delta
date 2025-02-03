@@ -355,10 +355,10 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       val txnResult = txn.commit(engine, emptyIterable())
 
       assert(txnResult.getVersion === 0)
-        assert(
+      assert(
           !txnResult.getPostCommitActions
-            .stream()
-            .anyMatch(action => action.getType == PostCommitActionType.CHECKPOINT)
+          .stream()
+          .anyMatch(action => action.getType == PostCommitActionType.CHECKPOINT)
         )
 
       verifyCommitInfo(tablePath, version = 0, Seq("Part1", "part2"))
