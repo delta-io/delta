@@ -373,8 +373,10 @@ public class LogReplay {
     }
   }
 
-  // Calculates the latest snapshot hint before current snapshot version, returns the CRCInfo if
-  // checksum file at the current version is read.
+  /**
+   * Calculates the latest snapshot hint before or at the current snapshot version, returns the
+   * CRCInfo if checksum file at the current version is read
+   */
   private Tuple2<Optional<SnapshotHint>, Optional<CRCInfo>>
       maybeGetNewerSnapshotHintAndCurrentCrcInfo(
           Engine engine,
@@ -401,27 +403,21 @@ public class LogReplay {
                 // Only find the CRC within 100 versions.
                 snapshotVersion - 100,
                 0L));
+    // crcSearchLowerBound should be smaller or equals to snapshot version
+    crcSearchLowerBound = Math.min(crcSearchLowerBound, snapshotVersion);
     Optional<CRCInfo> crcInfoOpt =
         ChecksumReader.getCRCInfo(
             engine, logSegment.getLogPath(), snapshotVersion, crcSearchLowerBound);
     if (crcInfoOpt.isPresent()) {
       CRCInfo crcInfo = crcInfoOpt.get();
-      if (crcInfo.getVersion() == snapshotVersion) {
-        // CRC is related to the desired snapshot version.
-        return new Tuple2<>(
-            Optional.of(
-                new SnapshotHint(
-                    crcInfo.getVersion(), crcInfo.getProtocol(), crcInfo.getMetadata())),
-            crcInfoOpt);
-      }
       checkArgument(
           crcInfo.getVersion() >= crcSearchLowerBound && crcInfo.getVersion() <= snapshotVersion);
       // We found a CRCInfo of a version (a) older than the one we are looking for (snapshotVersion)
-      // but (b) newer than the current hint. Use this CRCInfo to create a new hint.
+      // but (b) newer than the current hint. Use this CRCInfo to create a new hint, and return this
+      // crc info if it matches the current version.
       return new Tuple2<>(
-          Optional.of(
-              new SnapshotHint(crcInfo.getVersion(), crcInfo.getProtocol(), crcInfo.getMetadata())),
-          Optional.empty());
+          Optional.of(SnapshotHint.fromCrcInfo(crcInfo)),
+          crcInfo.getVersion() == snapshotVersion ? crcInfoOpt : Optional.empty());
     }
     return new Tuple2<>(snapshotHint, Optional.empty());
   }

@@ -17,10 +17,12 @@ package io.delta.kernel.defaults
 
 import java.io.File
 import java.util.Optional
+
 import scala.collection.JavaConverters._
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import org.scalatest.funsuite.AnyFunSuite
 import org.apache.hadoop.conf.Configuration
+
 import io.delta.kernel.types.{LongType, StructType}
 import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl}
 import io.delta.kernel.internal.data.ScanStateRow
@@ -332,13 +334,8 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
       spark.sql(
         s"INSERT INTO delta.`$tablePath` SELECT 1L as id"
       )
-      assert(
-        Files.deleteIfExists(
-          new File(
-            FileNames.checksumFile(new Path(s"$tablePath/_delta_log"), 1).toString
-          ).toPath
-        )
-      )
+      deleteCrcForVersion(tablePath, versions = Seq(1))
+
       val table = Table.forPath(defaultEngine, tablePath)
       val snapshot = table.getLatestSnapshot(defaultEngine).asInstanceOf[SnapshotImpl]
       assert(!snapshot.getCurrentCrcInfo.isPresent)
@@ -355,16 +352,8 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
       spark.sql(
         s"INSERT INTO delta.`$tablePath` SELECT 1L as id"
       )
-      Seq(0, 1).foreach(
-        version =>
-          assert(
-            Files.deleteIfExists(
-              new File(
-                FileNames.checksumFile(new Path(s"$tablePath/_delta_log"), version).toString
-              ).toPath
-            )
-          )
-      )
+        deleteCrcForVersion(tablePath, versions = Seq(0, 1))
+
       val table = Table.forPath(defaultEngine, tablePath)
       val snapshot = table.getLatestSnapshot(defaultEngine).asInstanceOf[SnapshotImpl]
       assert(!snapshot.getCurrentCrcInfo.isPresent)

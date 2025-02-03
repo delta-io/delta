@@ -18,12 +18,17 @@ package io.delta.kernel.internal.snapshot;
 
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.replay.CRCInfo;
 
 /** Contains summary information of a {@link io.delta.kernel.Snapshot}. */
 public class SnapshotHint {
   private final long version;
   private final Protocol protocol;
   private final Metadata metadata;
+
+  public static SnapshotHint fromCrcInfo(CRCInfo crcInfo) {
+    return new SnapshotHint(crcInfo.getVersion(), crcInfo.getProtocol(), crcInfo.getMetadata());
+  }
 
   public SnapshotHint(long version, Protocol protocol, Metadata metadata) {
     this.version = version;

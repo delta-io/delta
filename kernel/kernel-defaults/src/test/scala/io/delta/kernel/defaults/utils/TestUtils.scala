@@ -35,10 +35,12 @@ import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.types._
 import io.delta.kernel.utils.CloseableIterator
 import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.Path
 import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.{types => sparktypes}
 import org.apache.spark.sql.catalyst.plans.SQLHelper
+import org.apache.spark.sql.delta.util.FileNames
 import org.scalatest.Assertions
 
 trait TestUtils extends Assertions with SQLHelper {
@@ -716,5 +718,18 @@ trait TestUtils extends Assertions with SQLHelper {
       throw new FileNotFoundException("resource not found")
     }
     resource.getFile
+  }
+
+  def deleteCrcForVersion(tablePath: String, versions: Seq[Int]): Unit = {
+    versions.foreach(
+      v => {
+        Files.deleteIfExists(
+          new File(
+            FileNames.checksumFile(new Path(s"$tablePath/_delta_log"), v).toString
+          ).toPath
+        )
+      }
+    )
+
   }
 }
