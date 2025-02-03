@@ -412,15 +412,14 @@ public class CreateTableAndInsertData extends BaseTableWriter {
             for(PostCommitAction action: commitResult.getPostCommitActions())
                 // Checkpoint the table
                 didCheckpoint = didCheckpoint || CompletableFuture.supplyAsync(() -> {
-                            // run the code async
-                            try{
-                                action.threadSafeInvoke();
-                            } catch (IOException e) {
-                                return false;
-                            }
-                            return action.getType().equals("checkpoint");
-                        }
-                ).join(); // wait async finish.
+                    // run the code async
+                    try{
+                        action.threadSafeInvoke();
+                    } catch (IOException e) {
+                        return false;
+                    }
+                    return action.getType().equals("checkpoint");
+                }).join(); // wait async finish.
         }
 
         if (!didCheckpoint) {
