@@ -131,6 +131,7 @@ public class LogReplay {
       LogSegment logSegment,
       Optional<SnapshotHint> snapshotHint,
       SnapshotMetrics snapshotMetrics) {
+
     assertLogFilesBelongToTable(logPath, logSegment.allLogFilesUnsorted());
     Tuple2<Optional<SnapshotHint>, Optional<CRCInfo>> newerSnapshotHintAndCurrentCrcInfo =
         maybeGetNewerSnapshotHintAndCurrentCrcInfo(
@@ -372,8 +373,8 @@ public class LogReplay {
     }
   }
 
-  // Calculates the lastest snapshot hint before current snapshot version, returns the CRCInfo if
-  // checksum file at the current is read.
+  // Calculates the latest snapshot hint before current snapshot version, returns the CRCInfo if
+  // checksum file at the current version is read.
   private Tuple2<Optional<SnapshotHint>, Optional<CRCInfo>>
       maybeGetNewerSnapshotHintAndCurrentCrcInfo(
           Engine engine,
