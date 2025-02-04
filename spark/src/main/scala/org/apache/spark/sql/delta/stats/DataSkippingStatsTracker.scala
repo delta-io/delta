@@ -88,8 +88,8 @@ class DeltaTaskStatisticsTracker(
   // This projection combines the intermediate results stored by aggBuffer with the values of the
   // currently processed row and updates aggBuffer in place.
   private val updateStats: MutableProjection = {
-    val expressions = JoinedProjection.bind(
-      aggBufferAttrs, dataCols, aggregates.flatMap(_.updateExpressions))
+    val aggs = aggregates.flatMap(_.updateExpressions)
+    val expressions = JoinedProjection.bind(aggBufferAttrs, dataCols, aggs)
     MutableProjection.create(expressions, Nil)
   }
 
