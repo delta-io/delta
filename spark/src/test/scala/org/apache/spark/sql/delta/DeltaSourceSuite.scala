@@ -144,7 +144,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
 
   test("disallow user specified schema") {
     withTempDir { inputDir =>
-      new File(inputDir, "_delta_log").mkdir()
+      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+      withMetadata(deltaLog, StructType.fromDDL("value STRING"))
+
       val e = intercept[AnalysisException] {
         spark.readStream
           .schema(StructType.fromDDL("a INT, b STRING"))
@@ -154,6 +156,14 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       for (msg <- Seq("Delta does not support specifying the schema at read time")) {
         assert(e.getMessage.contains(msg))
       }
+
+      val e = intercept[SparkThrowable] {
+        spark.readStream
+          .schema(StructType.fromDDL("value STRING"))
+          .format("delta")
+          .load(inputDir.getCanonicalPath)
+      }
+      assert(e.getMessage.contains("does not support user-specified schema"))
     }
   }
 
