@@ -384,7 +384,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
   // Tests for loading P & M through checksums files                                            //
   /////////////////////////////////////////////////////////////////////////////////////////////////
 
-  Seq(-1L, 3L, 4L).foreach { version => // -1 means latest version
+  Seq(-1L, 0L, 3L, 4L).foreach { version => // -1 means latest version
     test(s"checksum found at the read version: ${if (version == -1) "latest" else version}") {
       withTempDirAndMetricsEngine { (path, engine) =>
         // Produce a test table with 0 to 11 .json, 0 to 11.crc, 10.checkpoint.parquet
