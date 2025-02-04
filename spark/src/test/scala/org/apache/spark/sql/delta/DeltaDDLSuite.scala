@@ -572,7 +572,15 @@ abstract class DeltaDDLTestBase extends QueryTest with DeltaSQLTestUtils {
     if (e == null) {
       fail("Didn't receive a InvariantViolationException.")
     }
-    assert(e.getMessage.contains("NOT NULL constraint violated for column"))
+    val idPattern = "[A-Za-z_][A-Za-z0-9_]*"
+    val idsPattern = s"$idPattern(\\.$idPattern)*"
+    val checkPattern =
+      (s"CHECK constraint  \\(\\(${idsPattern} IS NULL\\) OR \\(${idsPattern} IS NOT NULL\\)\\)" +
+        " violated by row with values").r
+    assert(
+      e.getMessage.contains("NOT NULL constraint violated for column") ||
+        checkPattern.findFirstIn(e.getMessage).nonEmpty
+    )
   }
 
   test("ALTER TABLE RENAME TO") {
