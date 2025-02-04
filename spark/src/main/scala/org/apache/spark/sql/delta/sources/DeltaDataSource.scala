@@ -105,7 +105,8 @@ class DeltaDataSource
         .getOrElse(snapshot.schema)
     }
 
-    if (schema.nonEmpty && !DataType.equalsIgnoreCompatibleNullability(readSchema, schema.get)) {
+    if (schema.nonEmpty && schema.get.nonEmpty &&
+      !DataType.equalsIgnoreCompatibleNullability(readSchema, schema.get)) {
       throw DeltaErrors.specifySchemaAtReadTimeException
     }
 
