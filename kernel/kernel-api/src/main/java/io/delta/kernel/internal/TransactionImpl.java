@@ -27,6 +27,8 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.ConcurrentWriteException;
 import io.delta.kernel.expressions.Column;
+import io.delta.kernel.hook.CheckpointHook;
+import io.delta.kernel.hook.PostCommitHook;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.internal.fs.Path;
@@ -354,12 +356,12 @@ public class TransactionImpl implements Transaction {
           "Write file actions to JSON log file `%s`",
           FileNames.deltaFile(logPath, commitAsVersion));
 
-      List<PostCommitAction> postCommitActions = new ArrayList<>();
+      List<PostCommitHook> postCommitHooks = new ArrayList<>();
       if (isReadyForCheckpoint(commitAsVersion)) {
-        postCommitActions.add(checkpoint(engine, dataPath.toString(), commitAsVersion));
+        postCommitHooks.add(new CheckpointHook(dataPath, commitAsVersion));
       }
 
-      return new TransactionCommitResult(commitAsVersion, postCommitActions);
+      return new TransactionCommitResult(commitAsVersion, postCommitHooks);
     } catch (FileAlreadyExistsException e) {
       throw e;
     } catch (IOException ioe) {
@@ -371,20 +373,6 @@ public class TransactionImpl implements Transaction {
     // For now, Kernel just supports blind append.
     // Change this when read-after-write is supported.
     return true;
-  }
-
-  private static PostCommitAction checkpoint(Engine engine, String tablePath, long version) {
-    return new PostCommitAction() {
-      @Override
-      public void threadSafeInvoke() throws IOException {
-        Table.forPath(engine, tablePath).checkpoint(engine, version);
-      }
-
-      @Override
-      public PostCommitActionType getType() {
-        return PostCommitActionType.CHECKPOINT;
-      }
-    };
   }
 
   /**

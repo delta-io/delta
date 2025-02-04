@@ -25,6 +25,7 @@ import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions._
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.expressions.Literal._
+import io.delta.kernel.hook.PostCommitHookType
 import io.delta.kernel.internal.checkpoints.CheckpointerSuite.selectSingleElement
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
 import io.delta.kernel.internal.{SnapshotImpl, TableConfig}
@@ -132,9 +133,9 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
       assert(txnResult.getVersion === 0)
       assert(
-        !txnResult.getPostCommitActions.stream()
+        !txnResult.getPostCommitHooks.stream()
           .anyMatch(
-            action => action.getType == PostCommitActionType.CHECKPOINT
+            hook => hook.getType == PostCommitHookType.CHECKPOINT
           )
         )
 
@@ -356,9 +357,9 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
       assert(txnResult.getVersion === 0)
       assert(
-          !txnResult.getPostCommitActions
+        !txnResult.getPostCommitHooks
           .stream()
-          .anyMatch(action => action.getType == PostCommitActionType.CHECKPOINT)
+          .anyMatch(hook => hook.getType == PostCommitHookType.CHECKPOINT)
         )
 
       verifyCommitInfo(tablePath, version = 0, Seq("Part1", "part2"))
@@ -378,9 +379,9 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
       assert(txnResult.getVersion === 0)
       assert(
-          !txnResult.getPostCommitActions
+        !txnResult.getPostCommitHooks
             .stream()
-            .anyMatch(action => action.getType == PostCommitActionType.CHECKPOINT)
+          .anyMatch(hook => hook.getType == PostCommitHookType.CHECKPOINT)
       )
 
       verifyCommitInfo(tablePath, version = 0)

@@ -25,6 +25,7 @@ import io.delta.kernel.*;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.expressions.Literal;
+import io.delta.kernel.hook.*;
 import io.delta.kernel.utils.*;
 import static io.delta.kernel.examples.utils.Utils.parseArgs;
 
@@ -410,16 +411,16 @@ public class CreateTableAndInsertData extends BaseTableWriter {
         // for every 10 versions.
         for (int i = 0; i < 12; i++) {
             TransactionCommitResult commitResult = insertDataIntoUnpartitionedTable(tablePath);
-            for(PostCommitAction action: commitResult.getPostCommitActions())
+            for(PostCommitHook hook: commitResult.getPostCommitHooks())
                 // Checkpoint the table
                 didCheckpoint = didCheckpoint || CompletableFuture.supplyAsync(() -> {
                     // run the code async
                     try{
-                        action.threadSafeInvoke();
+                        hook.threadSafeInvoke(engine);
                     } catch (IOException e) {
                         return false;
                     }
-                    return action.getType().equals(PostCommitActionType.CHECKPOINT);
+                    return hook.getType().equals(PostCommitHookType.CHECKPOINT);
                 }).join(); // wait async finish.
         }
 

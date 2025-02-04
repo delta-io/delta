@@ -29,7 +29,6 @@ import io.delta.kernel.utils.FileStatus
 import io.delta.kernel.{
   Meta,
   Operation,
-  PostCommitActionType,
   Table,
   Transaction,
   TransactionBuilder,
@@ -47,6 +46,7 @@ import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 import io.delta.kernel.utils.CloseableIterator
 import io.delta.kernel.Operation.CREATE_TABLE
+import io.delta.kernel.hook.PostCommitHookType
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
@@ -147,10 +147,10 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     tablePath: String,
     result: TransactionCommitResult,
     expSize: Long): Unit = {
-    result.getPostCommitActions.forEach(
-      action => {
-        if (action.getType == PostCommitActionType.CHECKPOINT) {
-          action.threadSafeInvoke()
+    result.getPostCommitHooks.forEach(
+      hook => {
+        if (hook.getType == PostCommitHookType.CHECKPOINT) {
+          hook.threadSafeInvoke(engine)
           verifyLastCheckpointMetadata(tablePath, checkpointAt = result.getVersion, expSize)
         }
       }
@@ -412,10 +412,10 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     expIsReadyForCheckpoint: Boolean): Unit = {
     assert(result.getVersion === expVersion)
     assert(
-      result.getPostCommitActions
+      result.getPostCommitHooks
         .stream()
         .anyMatch(
-          action => action.getType == PostCommitActionType.CHECKPOINT
+          hook => hook.getType == PostCommitHookType.CHECKPOINT
         ) === expIsReadyForCheckpoint
     )
   }

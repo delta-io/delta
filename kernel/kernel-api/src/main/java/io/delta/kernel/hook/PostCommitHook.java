@@ -13,8 +13,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel;
 
-public enum PostCommitActionType {
-  CHECKPOINT
+package io.delta.kernel.hook;
+
+import io.delta.kernel.engine.Engine;
+import java.io.IOException;
+
+public interface PostCommitHook {
+
+  /** Invokes the post commit hook, implementation should be thread safe. */
+  void threadSafeInvoke(Engine engine) throws IOException;
+
+  PostCommitHookType getType();
 }

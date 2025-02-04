@@ -17,6 +17,7 @@ package io.delta.kernel;
 
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.hook.PostCommitHook;
 import io.delta.kernel.utils.CloseableIterable;
 import java.util.List;
 
@@ -29,11 +30,11 @@ import java.util.List;
 @Evolving
 public class TransactionCommitResult {
   private final long version;
-  private final List<PostCommitAction> postCommitActions;
+  private final List<PostCommitHook> postCommitHooks;
 
-  public TransactionCommitResult(long version, List<PostCommitAction> postCommitActions) {
+  public TransactionCommitResult(long version, List<PostCommitHook> postCommitHooks) {
     this.version = version;
-    this.postCommitActions = postCommitActions;
+    this.postCommitHooks = postCommitHooks;
   }
 
   /**
@@ -46,7 +47,7 @@ public class TransactionCommitResult {
   }
 
   /** @return list of actions to trigger after commit. */
-  public List<PostCommitAction> getPostCommitActions() {
-    return postCommitActions;
+  public List<PostCommitHook> getPostCommitHooks() {
+    return postCommitHooks;
   }
 }
