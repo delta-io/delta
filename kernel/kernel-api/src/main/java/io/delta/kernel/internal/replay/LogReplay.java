@@ -397,14 +397,13 @@ public class LogReplay {
     long crcSearchLowerBound =
         max(
             asList(
-                // Prefer reading hint over CRC, so start listing from hint's version + 1.
-                snapshotHint.map(SnapshotHint::getVersion).orElse(0L) + 1,
+                // Prefer reading hint over CRC, so start listing from hint's version + 1,
+                // if hint is not present, list from version 0.
+                snapshotHint.map(SnapshotHint::getVersion).orElse(-1L) + 1,
                 logSegment.getCheckpointVersionOpt().orElse(0L),
                 // Only find the CRC within 100 versions.
                 snapshotVersion - 100,
                 0L));
-    // crcSearchLowerBound should be smaller or equals to snapshot version
-    crcSearchLowerBound = Math.min(crcSearchLowerBound, snapshotVersion);
     Optional<CRCInfo> crcInfoOpt =
         ChecksumReader.getCRCInfo(
             engine, logSegment.getLogPath(), snapshotVersion, crcSearchLowerBound);
