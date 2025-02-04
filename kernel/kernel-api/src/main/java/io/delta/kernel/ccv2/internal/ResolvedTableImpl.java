@@ -8,7 +8,6 @@ import io.delta.kernel.Snapshot;
 import io.delta.kernel.TransactionBuilder;
 import io.delta.kernel.ccv2.ResolvedMetadata;
 import io.delta.kernel.ccv2.ResolvedTable;
-import io.delta.kernel.internal.lang.Lazy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -59,7 +58,7 @@ public class ResolvedTableImpl implements ResolvedTable {
 
     rm.getLogSegment().ifPresent(logSegment -> {
       checkArgument(
-          logSegment.version == rm.getVersion(),
+          logSegment.getVersion() == rm.getVersion(),
           "ResolvedMetadata.getVersion() does not match the version of the LogSegment");
     });
   }

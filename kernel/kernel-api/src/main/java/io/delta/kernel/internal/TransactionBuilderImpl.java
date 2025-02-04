@@ -33,13 +33,12 @@ import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.metrics.SnapshotMetrics;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
+import io.delta.kernel.internal.replay.ExistingPAndMReplay;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
-import io.delta.kernel.internal.snapshot.SnapshotHint;
 import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
 import io.delta.kernel.internal.util.SchemaUtils;
-import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.StructType;
 import java.util.*;
 import org.slf4j.Logger;
@@ -125,7 +124,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       LogReplay logReplay =
           getEmptyLogReplay(engine, metadata, protocol, snapshotContext.getSnapshotMetrics());
       snapshot =
-          new InitialSnapshot(table.getDataPath(), logReplay, metadata, protocol, snapshotContext);
+          new InitialSnapshot(table.getDataPath(), logReplay, snapshotContext);
     }
 
     boolean isNewTable = snapshot.getVersion() < 0;
@@ -227,15 +226,11 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     InitialSnapshot(
         Path dataPath,
         LogReplay logReplay,
-        Metadata metadata,
-        Protocol protocol,
         SnapshotQueryContext snapshotContext) {
       super(
           dataPath,
           LogSegment.empty(table.getLogPath()),
           logReplay,
-          protocol,
-          metadata,
           snapshotContext);
     }
 
@@ -247,23 +242,12 @@ public class TransactionBuilderImpl implements TransactionBuilder {
 
   private LogReplay getEmptyLogReplay(
       Engine engine, Metadata metadata, Protocol protocol, SnapshotMetrics snapshotMetrics) {
-    return new LogReplay(
-        table.getLogPath(),
-        table.getDataPath(),
-        -1,
+    return new ExistingPAndMReplay(
         engine,
+        table.getDataPath(),
         LogSegment.empty(table.getLogPath()),
-        Optional.empty(),
-        snapshotMetrics) {
-
-      @Override
-      protected Tuple2<Protocol, Metadata> loadTableProtocolAndMetadata(
-          Engine engine,
-          LogSegment logSegment,
-          Optional<SnapshotHint> snapshotHint,
-          long snapshotVersion) {
-        return new Tuple2<>(protocol, metadata);
-      }
+        protocol,
+        metadata) {
 
       @Override
       public Optional<Long> getLatestTransactionIdentifier(Engine engine, String applicationId) {

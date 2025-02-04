@@ -45,8 +45,6 @@ public class SnapshotImpl implements Snapshot {
   private final Path dataPath;
   private final long version;
   private final LogReplay logReplay;
-  private final Protocol protocol;
-  private final Metadata metadata;
   private final LogSegment logSegment;
   private Optional<Long> inCommitTimestampOpt;
   private final SnapshotReport snapshotReport;
@@ -55,16 +53,12 @@ public class SnapshotImpl implements Snapshot {
       Path dataPath,
       LogSegment logSegment,
       LogReplay logReplay,
-      Protocol protocol,
-      Metadata metadata,
       SnapshotQueryContext snapshotContext) {
     this.logPath = new Path(dataPath, "_delta_log");
     this.dataPath = dataPath;
     this.version = logSegment.getVersion();
     this.logSegment = logSegment;
     this.logReplay = logReplay;
-    this.protocol = protocol;
-    this.metadata = metadata;
     this.inCommitTimestampOpt = Optional.empty();
     this.snapshotReport = SnapshotReportImpl.forSuccess(snapshotContext);
   }
@@ -97,7 +91,7 @@ public class SnapshotImpl implements Snapshot {
    */
   @Override
   public long getTimestamp(Engine engine) {
-    if (IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata)) {
+    if (IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(getMetadata())) {
       if (!inCommitTimestampOpt.isPresent()) {
         Optional<CommitInfo> commitInfoOpt =
             CommitInfo.getCommitInfoOpt(engine, logPath, logSegment.getVersion());
@@ -120,7 +114,7 @@ public class SnapshotImpl implements Snapshot {
   @Override
   public ScanBuilder getScanBuilder() {
     return new ScanBuilderImpl(
-        dataPath, protocol, metadata, getSchema(), logReplay, snapshotReport);
+        dataPath, getProtocol(), getMetadata(), getSchema(), logReplay, snapshotReport);
   }
 
   ///////////////////
@@ -136,7 +130,7 @@ public class SnapshotImpl implements Snapshot {
   }
 
   public Protocol getProtocol() {
-    return protocol;
+    return logReplay.getProtocol();
   }
 
   public SnapshotReport getSnapshotReport() {
@@ -160,7 +154,7 @@ public class SnapshotImpl implements Snapshot {
   }
 
   public Metadata getMetadata() {
-    return metadata;
+    return logReplay.getMetadata();
   }
 
   public LogSegment getLogSegment() {
@@ -169,7 +163,7 @@ public class SnapshotImpl implements Snapshot {
 
   public CreateCheckpointIterator getCreateCheckpointIterator(Engine engine) {
     long minFileRetentionTimestampMillis =
-        System.currentTimeMillis() - TOMBSTONE_RETENTION.fromMetadata(metadata);
+        System.currentTimeMillis() - TOMBSTONE_RETENTION.fromMetadata(getMetadata());
     return new CreateCheckpointIterator(engine, logSegment, minFileRetentionTimestampMillis);
   }
 

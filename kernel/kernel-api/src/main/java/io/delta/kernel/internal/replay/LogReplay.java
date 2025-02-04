@@ -17,26 +17,19 @@
 package io.delta.kernel.internal.replay;
 
 import static io.delta.kernel.internal.replay.LogReplayUtils.assertLogFilesBelongToTable;
-import static io.delta.kernel.internal.util.Preconditions.checkArgument;
-import static java.util.Arrays.asList;
-import static java.util.Collections.max;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Predicate;
-import io.delta.kernel.internal.TableFeatures;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.checkpoints.SidecarFile;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.metrics.ScanMetrics;
-import io.delta.kernel.internal.metrics.SnapshotMetrics;
 import io.delta.kernel.internal.snapshot.LogSegment;
-import io.delta.kernel.internal.snapshot.SnapshotHint;
 import io.delta.kernel.internal.util.DomainMetadataUtils;
-import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
@@ -58,7 +51,7 @@ import java.util.*;
  * #getAddFilesAsColumnarBatches}: return all active (not tombstoned) AddFiles as {@link
  * ColumnarBatch}s
  */
-public class LogReplay {
+public abstract class LogReplay {
 
   //////////////////////////
   // Static Schema Fields //
@@ -118,34 +111,18 @@ public class LogReplay {
   // Member fields and constructor //
   ///////////////////////////////////
 
-  private final Path dataPath;
-  private final LogSegment logSegment;
-  private final Tuple2<Protocol, Metadata> protocolAndMetadata;
+  protected final Path dataPath;
+  protected final LogSegment logSegment;
   private final Lazy<Map<String, DomainMetadata>> domainMetadataMap;
-  private final Optional<CRCInfo> currentCrcInfo;
 
-  public LogReplay(
-      Path logPath,
-      Path dataPath,
-      long snapshotVersion,
-      Engine engine,
-      LogSegment logSegment,
-      Optional<SnapshotHint> snapshotHint,
-      SnapshotMetrics snapshotMetrics) {
-
-    assertLogFilesBelongToTable(logPath, logSegment.allLogFilesUnsorted());
+  public LogReplay(Engine engine, Path dataPath, LogSegment logSegment) {
+    assertLogFilesBelongToTable(new Path(dataPath, "_delta_log"), logSegment.allLogFilesUnsorted());
     Tuple2<Optional<SnapshotHint>, Optional<CRCInfo>> newerSnapshotHintAndCurrentCrcInfo =
         maybeGetNewerSnapshotHintAndCurrentCrcInfo(
             engine, logSegment, snapshotHint, snapshotVersion);
     this.currentCrcInfo = newerSnapshotHintAndCurrentCrcInfo._2;
     this.dataPath = dataPath;
     this.logSegment = logSegment;
-    this.protocolAndMetadata =
-        snapshotMetrics.loadInitialDeltaActionsTimer.time(
-            () ->
-                loadTableProtocolAndMetadata(
-                    engine, logSegment, newerSnapshotHintAndCurrentCrcInfo._1, snapshotVersion));
-    // Lazy loading of domain metadata only when needed
     this.domainMetadataMap = new Lazy<>(() -> loadDomainMetadataMap(engine));
   }
 
@@ -153,16 +130,38 @@ public class LogReplay {
   // Public APIs //
   /////////////////
 
-  public Protocol getProtocol() {
-    return this.protocolAndMetadata._1;
-  }
+  public abstract Protocol getProtocol();
 
-  public Metadata getMetadata() {
-    return this.protocolAndMetadata._2;
-  }
+  public abstract Metadata getMetadata();
+
+  public abstract Optional<CRCInfo> getCurrentCrcInfo();
 
   public Optional<Long> getLatestTransactionIdentifier(Engine engine, String applicationId) {
-    return loadLatestTransactionVersion(engine, applicationId);
+    try (CloseableIterator<ActionWrapper> reverseIter =
+        new ActionsIterator(
+            engine,
+            logSegment.allLogFilesReversed(),
+            SET_TRANSACTION_READ_SCHEMA,
+            Optional.empty())) {
+      while (reverseIter.hasNext()) {
+        final ColumnarBatch columnarBatch = reverseIter.next().getColumnarBatch();
+        assert (columnarBatch.getSchema().equals(SET_TRANSACTION_READ_SCHEMA));
+
+        final ColumnVector txnVector = columnarBatch.getColumnVector(0);
+        for (int rowId = 0; rowId < txnVector.getSize(); rowId++) {
+          if (!txnVector.isNullAt(rowId)) {
+            SetTransaction txn = SetTransaction.fromColumnVector(txnVector, rowId);
+            if (txn != null && applicationId.equals(txn.getAppId())) {
+              return Optional.of(txn.getVersion());
+            }
+          }
+        }
+      }
+    } catch (IOException ex) {
+      throw new RuntimeException("Failed to fetch the transaction identifier", ex);
+    }
+
+    return Optional.empty();
   }
 
   public Map<String, DomainMetadata> getDomainMetadataMap() {
@@ -171,11 +170,6 @@ public class LogReplay {
 
   public long getVersion() {
     return logSegment.getVersion();
-  }
-
-  /** Returns the crc info for the current snapshot if the checksum file is read */
-  public Optional<CRCInfo> getCurrentCrcInfo() {
-    return currentCrcInfo;
   }
 
   /**
@@ -210,143 +204,10 @@ public class LogReplay {
   ////////////////////
 
   /**
-   * Returns the latest Protocol and Metadata from the delta files in the `logSegment`. Does *not*
-   * validate that this delta-kernel connector understands the table at that protocol.
-   *
-   * <p>Uses the `snapshotHint` to bound how many delta files it reads. i.e. we only need to read
-   * delta files newer than the hint to search for any new P & M. If we don't find them, we can just
-   * use the P and/or M from the hint.
-   */
-  protected Tuple2<Protocol, Metadata> loadTableProtocolAndMetadata(
-      Engine engine,
-      LogSegment logSegment,
-      Optional<SnapshotHint> snapshotHint,
-      long snapshotVersion) {
-
-    // Exit early if the hint already has the info we need.
-    if (snapshotHint.isPresent() && snapshotHint.get().getVersion() == snapshotVersion) {
-      return new Tuple2<>(snapshotHint.get().getProtocol(), snapshotHint.get().getMetadata());
-    }
-
-    Protocol protocol = null;
-    Metadata metadata = null;
-
-    try (CloseableIterator<ActionWrapper> reverseIter =
-        new ActionsIterator(
-            engine,
-            logSegment.allLogFilesReversed(),
-            PROTOCOL_METADATA_READ_SCHEMA,
-            Optional.empty())) {
-      while (reverseIter.hasNext()) {
-        final ActionWrapper nextElem = reverseIter.next();
-        final long version = nextElem.getVersion();
-
-        // Load this lazily (as needed). We may be able to just use the hint.
-        ColumnarBatch columnarBatch = null;
-
-        if (protocol == null) {
-          columnarBatch = nextElem.getColumnarBatch();
-          assert (columnarBatch.getSchema().equals(PROTOCOL_METADATA_READ_SCHEMA));
-
-          final ColumnVector protocolVector = columnarBatch.getColumnVector(0);
-
-          for (int i = 0; i < protocolVector.getSize(); i++) {
-            if (!protocolVector.isNullAt(i)) {
-              protocol = Protocol.fromColumnVector(protocolVector, i);
-
-              if (metadata != null) {
-                // Stop since we have found the latest Protocol and Metadata.
-                return new Tuple2<>(protocol, metadata);
-              }
-
-              break; // We just found the protocol, exit this for-loop
-            }
-          }
-        }
-
-        if (metadata == null) {
-          if (columnarBatch == null) {
-            columnarBatch = nextElem.getColumnarBatch();
-            assert (columnarBatch.getSchema().equals(PROTOCOL_METADATA_READ_SCHEMA));
-          }
-          final ColumnVector metadataVector = columnarBatch.getColumnVector(1);
-
-          for (int i = 0; i < metadataVector.getSize(); i++) {
-            if (!metadataVector.isNullAt(i)) {
-              metadata = Metadata.fromColumnVector(metadataVector, i);
-
-              if (protocol != null) {
-                // Stop since we have found the latest Protocol and Metadata.
-                TableFeatures.validateReadSupportedTable(
-                    protocol, dataPath.toString(), Optional.of(metadata));
-                return new Tuple2<>(protocol, metadata);
-              }
-
-              break; // We just found the metadata, exit this for-loop
-            }
-          }
-        }
-
-        // Since we haven't returned, at least one of P or M is null.
-        // Note: Suppose the hint is at version N. We check the hint eagerly at N + 1 so
-        // that we don't read or open any files at version N.
-        if (snapshotHint.isPresent() && version == snapshotHint.get().getVersion() + 1) {
-          if (protocol == null) {
-            protocol = snapshotHint.get().getProtocol();
-          }
-          if (metadata == null) {
-            metadata = snapshotHint.get().getMetadata();
-          }
-          return new Tuple2<>(protocol, metadata);
-        }
-      }
-    } catch (IOException ex) {
-      throw new RuntimeException("Could not close iterator", ex);
-    }
-
-    if (protocol == null) {
-      throw new IllegalStateException(
-          String.format("No protocol found at version %s", logSegment.getVersion()));
-    }
-
-    throw new IllegalStateException(
-        String.format("No metadata found at version %s", logSegment.getVersion()));
-  }
-
-  private Optional<Long> loadLatestTransactionVersion(Engine engine, String applicationId) {
-    try (CloseableIterator<ActionWrapper> reverseIter =
-        new ActionsIterator(
-            engine,
-            logSegment.allLogFilesReversed(),
-            SET_TRANSACTION_READ_SCHEMA,
-            Optional.empty())) {
-      while (reverseIter.hasNext()) {
-        final ColumnarBatch columnarBatch = reverseIter.next().getColumnarBatch();
-        assert (columnarBatch.getSchema().equals(SET_TRANSACTION_READ_SCHEMA));
-
-        final ColumnVector txnVector = columnarBatch.getColumnVector(0);
-        for (int rowId = 0; rowId < txnVector.getSize(); rowId++) {
-          if (!txnVector.isNullAt(rowId)) {
-            SetTransaction txn = SetTransaction.fromColumnVector(txnVector, rowId);
-            if (txn != null && applicationId.equals(txn.getAppId())) {
-              return Optional.of(txn.getVersion());
-            }
-          }
-        }
-      }
-    } catch (IOException ex) {
-      throw new RuntimeException("Failed to fetch the transaction identifier", ex);
-    }
-
-    return Optional.empty();
-  }
-
-  /**
    * Retrieves a map of domainName to {@link DomainMetadata} from the log files.
    *
    * <p>Loading domain metadata requires an additional round of log replay so this is done lazily
-   * only when domain metadata is requested. We might want to merge this into {@link
-   * #loadTableProtocolAndMetadata}.
+   * only when domain metadata is requested.
    *
    * @param engine The engine used to process the log files.
    * @return A map where the keys are domain names and the values are the corresponding {@link
@@ -375,53 +236,5 @@ public class LogReplay {
     } catch (IOException ex) {
       throw new UncheckedIOException("Could not close iterator", ex);
     }
-  }
-
-  /**
-   * Calculates the latest snapshot hint before or at the current snapshot version, returns the
-   * CRCInfo if checksum file at the current version is read
-   */
-  private Tuple2<Optional<SnapshotHint>, Optional<CRCInfo>>
-      maybeGetNewerSnapshotHintAndCurrentCrcInfo(
-          Engine engine,
-          LogSegment logSegment,
-          Optional<SnapshotHint> snapshotHint,
-          long snapshotVersion) {
-
-    // Snapshot hint's version is current.
-    if (snapshotHint.isPresent() && snapshotHint.get().getVersion() == snapshotVersion) {
-      return new Tuple2<>(snapshotHint, Optional.empty());
-    }
-
-    // Ignore the snapshot hint whose version is larger.
-    if (snapshotHint.isPresent() && snapshotHint.get().getVersion() > snapshotVersion) {
-      snapshotHint = Optional.empty();
-    }
-
-    long crcSearchLowerBound =
-        max(
-            asList(
-                // Prefer reading hint over CRC, so start listing from hint's version + 1,
-                // if hint is not present, list from version 0.
-                snapshotHint.map(SnapshotHint::getVersion).orElse(-1L) + 1,
-                logSegment.getCheckpointVersionOpt().orElse(0L),
-                // Only find the CRC within 100 versions.
-                snapshotVersion - 100,
-                0L));
-    Optional<CRCInfo> crcInfoOpt =
-        ChecksumReader.getCRCInfo(
-            engine, logSegment.getLogPath(), snapshotVersion, crcSearchLowerBound);
-    if (!crcInfoOpt.isPresent()) {
-      return new Tuple2<>(snapshotHint, Optional.empty());
-    }
-    CRCInfo crcInfo = crcInfoOpt.get();
-    checkArgument(
-        crcInfo.getVersion() >= crcSearchLowerBound && crcInfo.getVersion() <= snapshotVersion);
-    // We found a CRCInfo of a version (a) older than the one we are looking for (snapshotVersion)
-    // but (b) newer than the current hint. Use this CRCInfo to create a new hint, and return this
-    // crc info if it matches the current version.
-    return new Tuple2<>(
-        Optional.of(SnapshotHint.fromCrcInfo(crcInfo)),
-        crcInfo.getVersion() == snapshotVersion ? crcInfoOpt : Optional.empty());
   }
 }

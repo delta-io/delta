@@ -26,6 +26,7 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.lang.String.format;
 
 import io.delta.kernel.*;
+import io.delta.kernel.ccv2.ResolvedMetadata;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.CheckpointAlreadyExistsException;
 import io.delta.kernel.exceptions.InvalidTableException;
@@ -91,6 +92,11 @@ public class SnapshotManager {
     snapshotContext.setVersion(logSegment.getVersion());
 
     return createSnapshot(logSegment, engine, snapshotContext);
+  }
+
+  public Snapshot getSnapshotUsingResolvedMetadata(Engine engine, ResolvedMetadata rm) {
+
+    return null;
   }
 
   /**
@@ -270,8 +276,6 @@ public class SnapshotManager {
             tablePath,
             initSegment,
             logReplay,
-            logReplay.getProtocol(),
-            logReplay.getMetadata(),
             snapshotContext);
 
     // Push snapshot report to engine
@@ -294,7 +298,7 @@ public class SnapshotManager {
 
   @VisibleForTesting
   public LogSegment getLogSegmentForVersion(Engine engine, Optional<Long> versionToLoadOpt) {
-    return getLogSegmentForVersion(engine, versionToLoadOpt, Collections.emptyList());
+    return getLogSegmentForVersion(engine, versionToLoadOpt, Optional.empty());
   }
 
   /**
@@ -328,7 +332,7 @@ public class SnapshotManager {
       final LogSegment logSegment = logSegmentHintOpt.get();
       checkArgument(versionToLoad >= 0, "versionToLoadOpt must be non-negative");
       checkArgument(
-          versionToLoad == logSegment.version,
+          versionToLoad == logSegment.getVersion(),
           "versionToLoadOpt must match the version in logSegmentHintOpt");
     });
 
