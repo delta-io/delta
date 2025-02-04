@@ -407,17 +407,17 @@ public class LogReplay {
     Optional<CRCInfo> crcInfoOpt =
         ChecksumReader.getCRCInfo(
             engine, logSegment.getLogPath(), snapshotVersion, crcSearchLowerBound);
-    if (crcInfoOpt.isPresent()) {
-      CRCInfo crcInfo = crcInfoOpt.get();
-      checkArgument(
-          crcInfo.getVersion() >= crcSearchLowerBound && crcInfo.getVersion() <= snapshotVersion);
-      // We found a CRCInfo of a version (a) older than the one we are looking for (snapshotVersion)
-      // but (b) newer than the current hint. Use this CRCInfo to create a new hint, and return this
-      // crc info if it matches the current version.
-      return new Tuple2<>(
-          Optional.of(SnapshotHint.fromCrcInfo(crcInfo)),
-          crcInfo.getVersion() == snapshotVersion ? crcInfoOpt : Optional.empty());
+    if (!crcInfoOpt.isPresent()) {
+      return new Tuple2<>(snapshotHint, Optional.empty());
     }
-    return new Tuple2<>(snapshotHint, Optional.empty());
+    CRCInfo crcInfo = crcInfoOpt.get();
+    checkArgument(
+        crcInfo.getVersion() >= crcSearchLowerBound && crcInfo.getVersion() <= snapshotVersion);
+    // We found a CRCInfo of a version (a) older than the one we are looking for (snapshotVersion)
+    // but (b) newer than the current hint. Use this CRCInfo to create a new hint, and return this
+    // crc info if it matches the current version.
+    return new Tuple2<>(
+        Optional.of(SnapshotHint.fromCrcInfo(crcInfo)),
+        crcInfo.getVersion() == snapshotVersion ? crcInfoOpt : Optional.empty());
   }
 }
