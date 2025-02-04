@@ -26,7 +26,7 @@ public class SnapshotHint {
   private final Protocol protocol;
   private final Metadata metadata;
 
-  /** Constructs a new SnapshotHint based on a CRCInfo*/
+  /** Constructs a new SnapshotHint based on a CRCInfo */
   public static SnapshotHint fromCrcInfo(CRCInfo crcInfo) {
     return new SnapshotHint(crcInfo.getVersion(), crcInfo.getProtocol(), crcInfo.getMetadata());
   }
