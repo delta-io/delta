@@ -21,7 +21,7 @@ import java.io.IOException;
 
 public interface PostCommitHook {
 
-  /** Invokes the post commit hook, implementation should be thread safe. */
+  /** Invokes the post commit operation whose implementation must be thread safe. */
   void threadSafeInvoke(Engine engine) throws IOException;
 
   PostCommitHookType getType();
