@@ -21,6 +21,7 @@ import io.delta.kernel.types._
 
 import java.lang.{Boolean => BooleanJ, Double => DoubleJ, Float => FloatJ}
 import scala.collection.JavaConverters._
+import org.scalatest.Assertions.convertToEqualizer
 
 trait VectorTestUtils {
 
@@ -132,5 +133,53 @@ trait VectorTestUtils {
     override def isNullAt(rowId: Int): Boolean = false
 
     override def getBoolean(rowId: Int): Boolean = rowId == selectRowId
+  }
+
+  protected def checkBooleanVectors(actual: ColumnVector, expected: ColumnVector): Unit = {
+    assert(actual.getDataType === expected.getDataType)
+    assert(actual.getSize === expected.getSize)
+    Seq.range(0, actual.getSize).foreach { rowId =>
+      assert(actual.isNullAt(rowId) === expected.isNullAt(rowId))
+      if (!actual.isNullAt(rowId)) {
+        assert(
+          actual.getBoolean(rowId) === expected.getBoolean(rowId),
+          s"unexpected value at $rowId"
+        )
+      }
+    }
+  }
+
+  protected def checkTimestampVectors(actual: ColumnVector, expected: ColumnVector): Unit = {
+    assert(actual.getDataType === TimestampType.TIMESTAMP)
+    assert(actual.getDataType === expected.getDataType)
+    assert(actual.getSize === expected.getSize)
+    Seq.range(0, actual.getSize).foreach { rowId =>
+      assert(actual.isNullAt(rowId) === expected.isNullAt(rowId))
+      if (!actual.isNullAt(rowId)) {
+        assert(
+          actual.getLong(rowId) === expected.getLong(rowId),
+          s"unexpected value at $rowId: " +
+            s"expected: ${expected.getLong(rowId)} " +
+            s"actual: ${actual.getLong(rowId)} "
+        )
+      }
+    }
+  }
+
+  protected def checkStringVectors(actual: ColumnVector, expected: ColumnVector): Unit = {
+    assert(actual.getDataType === StringType.STRING)
+    assert(actual.getDataType === expected.getDataType)
+    assert(actual.getSize === expected.getSize)
+    Seq.range(0, actual.getSize).foreach { rowId =>
+      assert(actual.isNullAt(rowId) === expected.isNullAt(rowId))
+      if (!actual.isNullAt(rowId)) {
+        assert(
+          actual.getString(rowId) === expected.getString(rowId),
+          s"unexpected value at $rowId: " +
+            s"expected: ${expected.getString(rowId)} " +
+            s"actual: ${actual.getString(rowId)} "
+        )
+      }
+    }
   }
 }

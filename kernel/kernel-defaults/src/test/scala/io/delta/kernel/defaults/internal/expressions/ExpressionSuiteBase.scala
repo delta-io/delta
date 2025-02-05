@@ -65,48 +65,4 @@ trait ExpressionSuiteBase extends TestUtils with DefaultVectorTestUtils {
     new Predicate(symbol, left, right)
   }
 
-  protected def checkBooleanVectors(actual: ColumnVector, expected: ColumnVector): Unit = {
-    assert(actual.getDataType === expected.getDataType)
-    assert(actual.getSize === expected.getSize)
-    Seq.range(0, actual.getSize).foreach { rowId =>
-      assert(actual.isNullAt(rowId) === expected.isNullAt(rowId))
-      if (!actual.isNullAt(rowId)) {
-        assert(
-          actual.getBoolean(rowId) === expected.getBoolean(rowId),
-          s"unexpected value at $rowId"
-        )
-      }
-    }
-  }
-
-  protected def checkTimestampVectors(actual: ColumnVector, expected: ColumnVector): Unit = {
-    assert(actual.getSize === expected.getSize)
-    for (rowId <- 0 until actual.getSize) {
-      if (expected.isNullAt(rowId)) {
-        assert(actual.isNullAt(rowId), s"Expected null at row $rowId")
-      } else {
-        val expectedValue = getValueAsObject(expected, rowId).asInstanceOf[Long]
-        val actualValue = getValueAsObject(actual, rowId).asInstanceOf[Long]
-        assert(actualValue === expectedValue, s"Unexpected value at row $rowId")
-      }
-    }
-  }
-
-  protected def checkStringVectors(actual: ColumnVector, expected: ColumnVector): Unit = {
-    assert(actual.getDataType === StringType.STRING)
-    assert(actual.getDataType === expected.getDataType)
-    assert(actual.getSize === expected.getSize)
-    Seq.range(0, actual.getSize).foreach { rowId =>
-      assert(actual.isNullAt(rowId) === expected.isNullAt(rowId))
-      if (!actual.isNullAt(rowId)) {
-        assert(
-          actual.getString(rowId) === expected.getString(rowId),
-          s"unexpected value at $rowId: " +
-            s"expected: ${expected.getString(rowId)} " +
-            s"actual: ${actual.getString(rowId)} "
-        )
-      }
-    }
-  }
-
 }

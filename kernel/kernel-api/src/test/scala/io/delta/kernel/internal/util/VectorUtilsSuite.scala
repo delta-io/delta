@@ -1,5 +1,5 @@
 /*
- * Copyright (2024) The Delta Lake Project Authors.
+ * Copyright (2025) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,11 +15,20 @@
  */
 
 package io.delta.kernel.internal.util
+
+import io.delta.kernel.test.VectorTestUtils
+import io.delta.kernel.types.BooleanType
 import org.scalatest.funsuite.AnyFunSuite
 
-class VectorUtilsSuite extends AnyFunSuite{
+import java.lang.{Boolean => BooleanJ}
+import java.util
+
+class VectorUtilsSuite extends AnyFunSuite with VectorTestUtils {
 
   test("test build column vector from list of primitives") {
+
+    val childColumn = booleanVector(Seq[BooleanJ](true, false, null))
+     VectorUtils.buildColumnVector(util.Arrays.asList(true, false, null), BooleanType.BOOLEAN)
 
   }
 
