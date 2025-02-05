@@ -48,7 +48,9 @@ public class TransactionCommitResult {
 
   /**
    * Operations for connector to trigger post-commit.
-   * Usage: Call {@link PostCommitHook#threadSafeInvoke(Engine)} either sync or async in a separate thread.
+   *
+   * <p>Usage: Call {@link PostCommitHook#threadSafeInvoke(Engine)} either sync or async in a
+   * separate thread.
    *
    * @return list of post-commit operations
    */
