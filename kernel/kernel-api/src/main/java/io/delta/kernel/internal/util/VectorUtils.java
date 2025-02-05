@@ -23,10 +23,13 @@ import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.internal.data.StructRow;
 import io.delta.kernel.types.*;
+
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 public final class VectorUtils {
 
@@ -71,14 +74,12 @@ public final class VectorUtils {
   }
 
   /**
-   * Creates an {@link ArrayValue} from list of strings. The type {@code array(string)} is a common
-   * occurrence in Delta Log schema. We don't have any non-string array type in Delta Log. If we end
-   * up needing to support other types, we can make this generic.
+   * Creates an {@link ArrayValue} from list of object.
    *
-   * @param values list of strings
+   * @param values list of object
    * @return an {@link ArrayValue} with the given values of type {@link StringType}
    */
-  public static ArrayValue stringArrayValue(List<String> values) {
+  public static ArrayValue buildArrayValue(List<?> values, DataType dataType) {
     if (values == null) {
       return null;
     }
@@ -90,7 +91,7 @@ public final class VectorUtils {
 
       @Override
       public ColumnVector getElements() {
-        return stringVector(values);
+        return buildColumnVector(values, dataType);
       }
     };
   }
@@ -117,27 +118,28 @@ public final class VectorUtils {
 
       @Override
       public ColumnVector getKeys() {
-        return stringVector(keys);
+        return buildColumnVector(keys, StringType.STRING);
       }
 
       @Override
       public ColumnVector getValues() {
-        return stringVector(values);
+        return buildColumnVector(values, StringType.STRING);
       }
     };
   }
 
   /**
-   * Utility method to create a {@link ColumnVector} for given list of strings.
+   * Utility method to create a {@link ColumnVector} for given list of object, the object should be
+   * primitive type or an Row instance.
    *
    * @param values list of strings
    * @return a {@link ColumnVector} with the given values of type {@link StringType}
    */
-  public static ColumnVector stringVector(List<String> values) {
+  public static ColumnVector buildColumnVector(List<?> values, DataType dataType) {
     return new ColumnVector() {
       @Override
       public DataType getDataType() {
-        return StringType.STRING;
+        return dataType;
       }
 
       @Override
@@ -157,9 +159,122 @@ public final class VectorUtils {
       }
 
       @Override
-      public String getString(int rowId) {
+      public int getInt(int rowId) {
+        checkArgument(IntegerType.INTEGER.equals(dataType));
         checkArgument(rowId >= 0 && rowId < values.size(), "Invalid rowId: %s", rowId);
-        return values.get(rowId);
+        Object value = values.get(rowId);
+        checkArgument(value instanceof Integer);
+        return (Integer) values.get(rowId);
+      }
+
+      @Override
+      public long getLong(int rowId) {
+        checkArgument(LongType.LONG.equals(dataType));
+        checkArgument(rowId >= 0 && rowId < values.size(), "Invalid rowId: %s", rowId);
+        Object value = values.get(rowId);
+        checkArgument(value instanceof Long);
+        return (Long) values.get(rowId);
+      }
+
+      @Override
+      public float getFloat(int rowId) {
+        checkArgument(FloatType.FLOAT.equals(dataType));
+        checkArgument(rowId >= 0 && rowId < values.size(), "Invalid rowId: %s", rowId);
+        Object value = values.get(rowId);
+        checkArgument(value instanceof Float);
+        return (Float) values.get(rowId);
+      }
+
+      @Override
+      public double getDouble(int rowId) {
+        checkArgument(DoubleType.DOUBLE.equals(dataType));
+        checkArgument(rowId >= 0 && rowId < values.size(), "Invalid rowId: %s", rowId);
+        Object value = values.get(rowId);
+        checkArgument(value instanceof Float);
+        return (Double) values.get(rowId);
+      }
+
+      @Override
+      public byte[] getBinary(int rowId) {
+        checkArgument(DoubleType.DOUBLE.equals(dataType));
+        checkArgument(rowId >= 0 && rowId < values.size(), "Invalid rowId: %s", rowId);
+        Object value = values.get(rowId);
+        checkArgument(value instanceof byte[]);
+        return (byte[]) values.get(rowId);
+      }
+
+      @Override
+      public BigDecimal getDecimal(int rowId) {
+        checkArgument(dataType instanceof DecimalType);
+        checkArgument(rowId >= 0 && rowId < values.size(), "Invalid rowId: %s", rowId);
+        Object value = values.get(rowId);
+        checkArgument(value instanceof BigDecimal);
+        return (BigDecimal) values.get(rowId);
+      }
+
+      @Override
+      public ArrayValue getArray(int rowId) {
+        checkArgument(dataType instanceof ArrayValue);
+        checkArgument(rowId >= 0 && rowId < values.size(), "Invalid rowId: %s", rowId);
+        Object value = values.get(rowId);
+        checkArgument(value instanceof ArrayValue);
+        return (ArrayValue) values.get(rowId);
+      }
+
+      @Override
+      public String getString(int rowId) {
+        checkArgument(StringType.STRING.equals(dataType));
+        checkArgument(rowId >= 0 && rowId < values.size(), "Invalid rowId: %s", rowId);
+        Object value = values.get(rowId);
+        checkArgument(value instanceof String);
+        return (String) values.get(rowId);
+      }
+
+      @Override
+      public boolean getBoolean(int rowId) {
+        checkArgument(BooleanType.BOOLEAN.equals(dataType));
+        checkArgument(rowId >= 0 && rowId < values.size(), "Invalid rowId: %s", rowId);
+        return (Boolean) values.get(rowId);
+      }
+
+      @Override
+      public MapValue getMap(int rowId) {
+        checkArgument(dataType instanceof MapType);
+        checkArgument(rowId >= 0 && rowId < values.size(), "Invalid rowId: %s", rowId);
+        Object value = values.get(rowId);
+        checkArgument(value instanceof MapType);
+        return (MapValue) values.get(rowId);
+      }
+
+      @Override
+      public ColumnVector getChild(int ordinal) {
+        checkArgument(dataType instanceof StructType);
+        checkArgument(ordinal < ((StructType) dataType).length());
+        DataType childDatatype = ((StructType) dataType).at(ordinal).getDataType();
+        return buildColumnVector(
+            values.stream()
+                .map(
+                    e -> {
+                      checkArgument(e instanceof Row);
+                      Row row = (Row) e;
+                      if (row.isNullAt(ordinal)) {
+                        return null;
+                      }
+                        if (childDatatype.equals(StringType.STRING)) {
+                            return row.getString(ordinal);
+                        } else if (childDatatype.equals(LongType.LONG)) {
+                            return row.getLong(ordinal);
+                        } else if (childDatatype.equals(IntegerType.INTEGER)) {
+                            return row.getInt(ordinal);
+                        } else if (childDatatype.equals(BooleanType.BOOLEAN)) {
+                            return row.getBoolean(ordinal);
+                        } else if (childDatatype instanceof MapType) {
+                        return row.getMap(ordinal);
+                      }
+                      return row.getStruct(ordinal);
+                    })
+                .collect(Collectors.toList()),
+            childDatatype);
       }
     };
   }
