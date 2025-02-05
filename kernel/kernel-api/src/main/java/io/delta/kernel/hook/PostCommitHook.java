@@ -26,7 +26,10 @@ import java.io.IOException;
 public interface PostCommitHook {
 
   enum PostCommitHookType {
-    // Write a new checkpoint at the version committed by the txn if required.
+    /**
+     * Write a new checkpoint at the version committed by the txn. This hook is present when the
+     * table is ready for checkpoint according to its configured checkpoint interval.
+     */
     CHECKPOINT,
   }
 
