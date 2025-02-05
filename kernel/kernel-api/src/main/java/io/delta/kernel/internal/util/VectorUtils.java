@@ -23,7 +23,6 @@ import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.internal.data.StructRow;
 import io.delta.kernel.types.*;
-
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -159,6 +158,27 @@ public final class VectorUtils {
       }
 
       @Override
+      public boolean getBoolean(int rowId) {
+        checkArgument(BooleanType.BOOLEAN.equals(dataType));
+        checkArgument(rowId >= 0 && rowId < values.size(), "Invalid rowId: %s", rowId);
+        return (Boolean) values.get(rowId);
+      }
+
+      @Override
+      public byte getByte(int rowId) {
+        checkArgument(ByteType.BYTE.equals(dataType));
+        checkArgument(rowId >= 0 && rowId < values.size(), "Invalid rowId: %s", rowId);
+        return (byte) values.get(rowId);
+      }
+
+      @Override
+      public short getShort(int rowId) {
+        checkArgument(ShortType.SHORT.equals(dataType));
+        checkArgument(rowId >= 0 && rowId < values.size(), "Invalid rowId: %s", rowId);
+        return (short) values.get(rowId);
+      }
+
+      @Override
       public int getInt(int rowId) {
         checkArgument(IntegerType.INTEGER.equals(dataType));
         checkArgument(rowId >= 0 && rowId < values.size(), "Invalid rowId: %s", rowId);
@@ -195,30 +215,12 @@ public final class VectorUtils {
       }
 
       @Override
-      public byte[] getBinary(int rowId) {
-        checkArgument(DoubleType.DOUBLE.equals(dataType));
-        checkArgument(rowId >= 0 && rowId < values.size(), "Invalid rowId: %s", rowId);
-        Object value = values.get(rowId);
-        checkArgument(value instanceof byte[]);
-        return (byte[]) values.get(rowId);
-      }
-
-      @Override
       public BigDecimal getDecimal(int rowId) {
         checkArgument(dataType instanceof DecimalType);
         checkArgument(rowId >= 0 && rowId < values.size(), "Invalid rowId: %s", rowId);
         Object value = values.get(rowId);
         checkArgument(value instanceof BigDecimal);
         return (BigDecimal) values.get(rowId);
-      }
-
-      @Override
-      public ArrayValue getArray(int rowId) {
-        checkArgument(dataType instanceof ArrayValue);
-        checkArgument(rowId >= 0 && rowId < values.size(), "Invalid rowId: %s", rowId);
-        Object value = values.get(rowId);
-        checkArgument(value instanceof ArrayValue);
-        return (ArrayValue) values.get(rowId);
       }
 
       @Override
@@ -231,10 +233,21 @@ public final class VectorUtils {
       }
 
       @Override
-      public boolean getBoolean(int rowId) {
-        checkArgument(BooleanType.BOOLEAN.equals(dataType));
+      public byte[] getBinary(int rowId) {
+        checkArgument(BinaryType.BINARY.equals(dataType));
         checkArgument(rowId >= 0 && rowId < values.size(), "Invalid rowId: %s", rowId);
-        return (Boolean) values.get(rowId);
+        Object value = values.get(rowId);
+        checkArgument(value instanceof byte[]);
+        return (byte[]) values.get(rowId);
+      }
+
+      @Override
+      public ArrayValue getArray(int rowId) {
+        checkArgument(dataType instanceof ArrayValue);
+        checkArgument(rowId >= 0 && rowId < values.size(), "Invalid rowId: %s", rowId);
+        Object value = values.get(rowId);
+        checkArgument(value instanceof ArrayValue);
+        return (ArrayValue) values.get(rowId);
       }
 
       @Override
@@ -260,18 +273,40 @@ public final class VectorUtils {
                       if (row.isNullAt(ordinal)) {
                         return null;
                       }
-                        if (childDatatype.equals(StringType.STRING)) {
-                            return row.getString(ordinal);
-                        } else if (childDatatype.equals(LongType.LONG)) {
-                            return row.getLong(ordinal);
-                        } else if (childDatatype.equals(IntegerType.INTEGER)) {
-                            return row.getInt(ordinal);
-                        } else if (childDatatype.equals(BooleanType.BOOLEAN)) {
-                            return row.getBoolean(ordinal);
-                        } else if (childDatatype instanceof MapType) {
+                      if (childDatatype instanceof BooleanType) {
+                        return row.getBoolean(ordinal);
+                      } else if (childDatatype instanceof ByteType) {
+                        return row.getByte(ordinal);
+                      } else if (childDatatype instanceof ShortType) {
+                        return row.getShort(ordinal);
+                      } else if (childDatatype instanceof IntegerType
+                          || childDatatype instanceof DateType) {
+                        // DateType data is stored internally as the number of days since 1970-01-01
+                        return row.getInt(ordinal);
+                      } else if (childDatatype instanceof LongType
+                          || childDatatype instanceof TimestampType) {
+                        // TimestampType data is stored internally as the number of microseconds
+                        // since the unix epoch
+                        return row.getLong(ordinal);
+                      } else if (childDatatype instanceof FloatType) {
+                        return row.getFloat(ordinal);
+                      } else if (childDatatype instanceof DoubleType) {
+                        return row.getDouble(ordinal);
+                      } else if (childDatatype instanceof StringType) {
+                        return row.getString(ordinal);
+                      } else if (childDatatype instanceof BinaryType) {
+                        return row.getBinary(ordinal);
+                      } else if (childDatatype instanceof StructType) {
+                        return row.getStruct(ordinal);
+                      } else if (childDatatype instanceof DecimalType) {
+                        return row.getDecimal(ordinal);
+                      } else if (childDatatype instanceof ArrayType) {
+                        return row.getArray(ordinal);
+                      } else if (dataType instanceof MapType) {
                         return row.getMap(ordinal);
+                      } else {
+                        throw new UnsupportedOperationException("unsupported data type");
                       }
-                      return row.getStruct(ordinal);
                     })
                 .collect(Collectors.toList()),
             childDatatype);
