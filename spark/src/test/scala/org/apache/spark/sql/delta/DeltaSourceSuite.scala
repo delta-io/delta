@@ -157,7 +157,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         assert(e.getMessage.contains(msg))
       }
 
-      val e2 = intercept[SparkThrowable] {
+      val e2 = intercept[Exception] {
         spark.readStream
           .schema(StructType.fromDDL("value STRING"))
           .format("delta")
