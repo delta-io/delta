@@ -156,6 +156,14 @@ trait DeltaSourceBase extends Source
     snapshotAtSourceInit.metadata.columnMappingMode != NoMapping
 
   /**
+   * Whether we should track widening type changes to allow users to accept them and resume
+   * stream processing.
+   */
+  protected lazy val shouldCheckTypeWideningChanges: Boolean =
+    spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_ALLOW_TYPE_WIDENING_STREAMING_SOURCE) &&
+     TypeWidening.isSupported(snapshotAtSourceInit.protocol)
+
+  /**
    * The persisted schema from the schema log that must be used to read data files in this Delta
    * streaming source.
    */
@@ -560,7 +568,7 @@ trait DeltaSourceBase extends Source
     }
 
     // Perform schema check if we need to, considering all escape flags.
-    if (!allowUnsafeStreamingReadOnColumnMappingSchemaChanges ||
+    if (!allowUnsafeStreamingReadOnColumnMappingSchemaChanges || (shouldCheckTypeWideningChanges) ||
         !forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart) {
       startVersionSnapshotOpt.foreach { snapshot =>
         checkReadIncompatibleSchemaChanges(
@@ -620,18 +628,25 @@ trait DeltaSourceBase extends Source
       (metadata, snapshotAtSourceInit.metadata)
     }
 
-    // Column mapping schema changes
-    if (!allowUnsafeStreamingReadOnColumnMappingSchemaChanges) {
-      assert(!trackingMetadataChange, "should not check schema change while tracking it")
-
-      if (!DeltaColumnMapping.hasNoColumnMappingSchemaChanges(newMetadata, oldMetadata,
-        allowUnsafeStreamingReadOnPartitionColumnChanges)) {
-        throw DeltaErrors.blockStreamingReadsWithIncompatibleColumnMappingSchemaChanges(
-          spark,
-          oldMetadata.schema,
-          newMetadata.schema,
-          detectedDuringStreaming = !validatedDuringStreamStart)
+    def shouldTrackSchema: Boolean =
+      if (shouldCheckTypeWideningChanges &&
+        TypeWidening.containsWideningTypeChanges(oldMetadata.schema, newMetadata.schema)) {
+        true
+      } else if (allowUnsafeStreamingReadOnColumnMappingSchemaChanges) {
+        false
+      } else {
+        // Column mapping schema changes
+        assert(!trackingMetadataChange, "should not check schema change while tracking it")
+        !DeltaColumnMapping.hasNoColumnMappingSchemaChanges(newMetadata, oldMetadata,
+          allowUnsafeStreamingReadOnPartitionColumnChanges)
       }
+
+    if (shouldTrackSchema) {
+      throw DeltaErrors.blockStreamingReadsWithIncompatibleNonAdditiveSchemaChanges(
+        spark,
+        oldMetadata.schema,
+        newMetadata.schema,
+        detectedDuringStreaming = !validatedDuringStreamStart)
     }
 
     // Other standard read compatibility changes
