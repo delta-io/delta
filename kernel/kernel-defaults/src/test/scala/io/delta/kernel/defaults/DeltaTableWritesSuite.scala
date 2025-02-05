@@ -351,7 +351,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       val txnResult = txn.commit(engine, emptyIterable())
 
       assert(txnResult.getVersion === 0)
-        assertCheckpointReadiness(txnResult, isReadyForCheckpoint = false)
+      assertCheckpointReadiness(txnResult, isReadyForCheckpoint = false)
 
       verifyCommitInfo(tablePath, version = 0, Seq("Part1", "part2"))
       verifyWrittenContent(tablePath, schema, Seq.empty)
@@ -369,7 +369,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       val txnResult = txn.commit(engine, emptyIterable())
 
       assert(txnResult.getVersion === 0)
-        assertCheckpointReadiness(txnResult, isReadyForCheckpoint = false)
+      assertCheckpointReadiness(txnResult, isReadyForCheckpoint = false)
 
       verifyCommitInfo(tablePath, version = 0)
       verifyWrittenContent(tablePath, schema, Seq.empty)
