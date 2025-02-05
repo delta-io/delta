@@ -47,10 +47,10 @@ public class TransactionCommitResult {
   }
 
   /**
-   * Contains list of operations for kernel based connector to trigger. Connector could trigger the
-   * operations by calling {@link PostCommitHook#threadSafeInvoke(Engine)} in a sync or async way.
+   * Operations for connector to trigger post-commit. Usage: Call
+   * PostCommitHook#threadSafeInvoke(Engine) either sync or async in a separate thread.
    *
-   * @return list of operations to trigger after commit.
+   * @return list of post-commit operations
    */
   public List<PostCommitHook> getPostCommitHooks() {
     return postCommitHooks;

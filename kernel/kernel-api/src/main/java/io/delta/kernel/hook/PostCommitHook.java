@@ -28,12 +28,12 @@ public interface PostCommitHook {
 
   enum PostCommitHookType {
     /**
-     * Write a new checkpoint at the version committed by the txn. This hook is present when the
-     * table is ready for checkpoint according to its configured checkpoint interval. To perform
-     * this operation, previous checkpoint (if present) and logs after checkpoint will be read to
-     * construct new checkpoint.
+     * Writes a new checkpoint at the version committed by the transaction. This hook is present
+     * when the table is ready for checkpoint according to its configured checkpoint interval. To
+     * perform this operation, reading previous checkpoint + logs is required to construct a new
+     * checkpoint, with latency scaling based on log size (typically seconds to minutes).
      */
-    CHECKPOINT,
+    CHECKPOINT
   }
 
   /** Invokes the post commit operation whose implementation must be thread safe. */
