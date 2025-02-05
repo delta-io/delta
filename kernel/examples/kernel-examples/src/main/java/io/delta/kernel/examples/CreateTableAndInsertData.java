@@ -25,7 +25,8 @@ import io.delta.kernel.*;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.expressions.Literal;
-import io.delta.kernel.hook.*;
+import io.delta.kernel.hook.PostCommitHook;
+import io.delta.kernel.hook.PostCommitHook.PostCommitHookType;
 import io.delta.kernel.utils.*;
 import static io.delta.kernel.examples.utils.Utils.parseArgs;
 
