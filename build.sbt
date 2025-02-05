@@ -575,7 +575,7 @@ lazy val sharing = (project in file("sharing"))
 lazy val kernelApi = (project in file("kernel/kernel-api"))
   .enablePlugins(ScalafmtPlugin)
   .settings(
-    name := "delta-kernel-api",
+    name := "delta-kernel-api-dbi",
     commonSettings,
     scalaStyleSettings,
     javaOnlyReleaseSettings,
@@ -663,7 +663,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
   .dependsOn(spark % "test->test")
   .dependsOn(goldenTables % "test")
   .settings(
-    name := "delta-kernel-defaults",
+    name := "delta-kernel-defaults-dbi",
     commonSettings,
     scalaStyleSettings,
     javaOnlyReleaseSettings,

@@ -41,13 +41,13 @@ limitations under the License.-->
     <dependencies>
         <dependency>
             <groupId>io.delta</groupId>
-            <artifactId>delta-kernel-api</artifactId>
+            <artifactId>delta-kernel-api-dbi</artifactId>
             <version>${delta-kernel.version}</version>
         </dependency>
 
         <dependency>
             <groupId>io.delta</groupId>
-            <artifactId>delta-kernel-defaults</artifactId>
+            <artifactId>delta-kernel-defaults-dbi</artifactId>
             <version>${delta-kernel.version}</version>
         </dependency>
 
