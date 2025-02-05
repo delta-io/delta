@@ -138,52 +138,6 @@ public class TableConfig<T> {
           "needs to be a long.",
           true);
 
-  /*
-   * This table property is used to track the commit-coordinator name for this table. If this
-   * property is not set, the table will be considered as file system table and commits will be
-   * done via atomically publishing the commit file.
-   */
-  public static final TableConfig<Optional<String>> COORDINATED_COMMITS_COORDINATOR_NAME =
-      new TableConfig<>(
-          "delta.coordinatedCommits.commitCoordinator-preview",
-          null, /* default values */
-          Optional::ofNullable,
-          value -> true,
-          "The commit-coordinator name for this table. This is used to determine "
-              + "which implementation of commit-coordinator to use when committing "
-              + "to this table. If this property is not set, the table will be "
-              + "considered as file system table and commits will be done via "
-              + "atomically publishing the commit file.",
-          true);
-
-  /*
-   * This table property is used to track the configuration properties for the commit coordinator
-   * which is needed to build the commit coordinator client.
-   */
-  public static final TableConfig<Map<String, String>> COORDINATED_COMMITS_COORDINATOR_CONF =
-      new TableConfig<>(
-          "delta.coordinatedCommits.commitCoordinatorConf-preview",
-          null, /* default values */
-          JsonUtils::parseJSONKeyValueMap,
-          value -> true,
-          "A string-to-string map of configuration properties for the"
-              + " coordinated commits-coordinator.",
-          true);
-
-  /*
-   * This property is used by the commit coordinator to uniquely identify and manage the table
-   * internally.
-   */
-  public static final TableConfig<Map<String, String>> COORDINATED_COMMITS_TABLE_CONF =
-      new TableConfig<>(
-          "delta.coordinatedCommits.tableConf-preview",
-          null, /* default values */
-          JsonUtils::parseJSONKeyValueMap,
-          value -> true,
-          "A string-to-string map of configuration properties for"
-              + "  describing the table to commit-coordinator.",
-          true);
-
   /** This table property is used to control the column mapping mode. */
   public static final TableConfig<ColumnMappingMode> COLUMN_MAPPING_MODE =
       new TableConfig<>(
@@ -226,9 +180,6 @@ public class TableConfig<T> {
               addConfig(this, IN_COMMIT_TIMESTAMPS_ENABLED);
               addConfig(this, IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION);
               addConfig(this, IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP);
-              addConfig(this, COORDINATED_COMMITS_COORDINATOR_NAME);
-              addConfig(this, COORDINATED_COMMITS_COORDINATOR_CONF);
-              addConfig(this, COORDINATED_COMMITS_TABLE_CONF);
               addConfig(this, COLUMN_MAPPING_MODE);
               addConfig(this, ICEBERG_COMPAT_V2_ENABLED);
               addConfig(this, COLUMN_MAPPING_MAX_COLUMN_ID);
@@ -240,32 +191,41 @@ public class TableConfig<T> {
   ///////////////////////////
 
   /**
-   * Validates that the given properties have the delta prefix in the key name, and they are in the
-   * set of valid properties. The caller should get the validated configurations and store the case
-   * of the property name defined in TableConfig.
+   * Validates that the given new properties that the txn is trying to update in table. Properties
+   * that have `delta.` prefix in the key name should be in valid list and are editable. The caller
+   * is expected to store the returned properties in the table metadata after further validation
+   * from a protocol point of view. The returned properties will have the key's case normalized as
+   * defined in its {@link TableConfig}.
    *
-   * @param configurations the properties to validate
+   * @param newProperties the properties to validate
    * @throws InvalidConfigurationValueException if any of the properties are invalid
    * @throws UnknownConfigurationException if any of the properties are unknown
    */
-  public static Map<String, String> validateProperties(Map<String, String> configurations) {
-    Map<String, String> validatedConfigurations = new HashMap<>();
-    for (Map.Entry<String, String> kv : configurations.entrySet()) {
+  public static Map<String, String> validateDeltaProperties(Map<String, String> newProperties) {
+    Map<String, String> validatedProperties = new HashMap<>();
+    for (Map.Entry<String, String> kv : newProperties.entrySet()) {
       String key = kv.getKey().toLowerCase(Locale.ROOT);
       String value = kv.getValue();
-      if (key.startsWith("delta.") && VALID_PROPERTIES.containsKey(key)) {
+
+      if (key.startsWith("delta.")) {
+        // If it is a delta table property, make sure it is a supported property and editable
+        if (!VALID_PROPERTIES.containsKey(key)) {
+          throw DeltaErrors.unknownConfigurationException(kv.getKey());
+        }
+
         TableConfig<?> tableConfig = VALID_PROPERTIES.get(key);
-        if (tableConfig.editable) {
-          tableConfig.validate(value);
-          validatedConfigurations.put(tableConfig.getKey(), value);
-        } else {
+        if (!tableConfig.editable) {
           throw DeltaErrors.cannotModifyTableProperty(kv.getKey());
         }
+
+        tableConfig.validate(value);
+        validatedProperties.put(tableConfig.getKey(), value);
       } else {
-        throw DeltaErrors.unknownConfigurationException(kv.getKey());
+        // allow unknown properties to be set
+        validatedProperties.put(key, value);
       }
     }
-    return validatedConfigurations;
+    return validatedProperties;
   }
 
   private static void addConfig(HashMap<String, TableConfig<?>> configs, TableConfig<?> config) {

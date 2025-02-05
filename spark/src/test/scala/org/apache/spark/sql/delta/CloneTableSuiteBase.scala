@@ -48,7 +48,8 @@ trait CloneTableSuiteBase extends QueryTest
   with DeltaColumnMappingTestUtils
   with DeltaSQLCommandTest
   with CoordinatedCommitsBaseSuite
-  with CoordinatedCommitsTestUtils {
+  with CoordinatedCommitsTestUtils
+  with DeletionVectorsTestUtils {
 
   protected val TAG_HAS_SHALLOW_CLONE = new Tag("SHALLOW CLONE")
   protected val TAG_MODIFY_PROTOCOL = new Tag("CHANGES PROTOCOL")
@@ -748,7 +749,9 @@ trait CloneTableSuiteBase extends QueryTest
   }
 
   testAllClones("CLONE with table properties to disable DV") { (source, target, isShallow) =>
-    withSQLConf(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey -> "true") {
+    withSQLConf(
+        DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey -> "true",
+        DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS.key -> "true") {
       spark.range(10).write.format("delta").save(source)
       spark.sql(s"DELETE FROM delta.`$source` WHERE id = 1")
     }
@@ -829,7 +832,7 @@ trait CloneTableSuiteBase extends QueryTest
       val targetDeltaLog = DeltaLog.forTable(spark, target)
       val targetSnapshot = targetDeltaLog.update()
       assert(targetSnapshot.metadata.configuration ===
-        tblProperties ++ sourceSnapshot.metadata.configuration)
+        sourceSnapshot.metadata.configuration ++ tblProperties)
       // Check that the protocol has been upgraded.
       assert(StrictProtocolOrdering.fulfillsVersionRequirements(
         actual = targetSnapshot.protocol,

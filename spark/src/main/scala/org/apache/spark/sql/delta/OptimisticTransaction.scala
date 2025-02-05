@@ -251,7 +251,8 @@ object OptimisticTransaction {
  *
  * This trait is not thread-safe.
  */
-trait OptimisticTransactionImpl extends TransactionalWrite
+trait OptimisticTransactionImpl extends DeltaTransaction
+  with TransactionalWrite
   with SQLMetricsReporting
   with DeltaScanGenerator
   with RecordChecksum
@@ -264,9 +265,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   protected val incrementalCommitEnabled = deltaLog.incrementalCommitEnabled
   protected val shouldVerifyIncrementalCommit = deltaLog.shouldVerifyIncrementalCommit
 
-  val deltaLog: DeltaLog
-  val catalogTable: Option[CatalogTable]
-  val snapshot: Snapshot
   def clock: Clock = deltaLog.clock
 
   // This would be a quick operation if we already validated the checksum
@@ -316,7 +314,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   protected var newProtocol: Option[Protocol] = None
 
   /** The transaction start time. */
-  protected val txnStartNano = System.nanoTime()
+  private val txnStartNano = System.nanoTime()
 
   override val snapshotToScan: Snapshot = snapshot
 
@@ -333,9 +331,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   protected var commitEndNano = -1L;
 
   protected var commitInfo: CommitInfo = _
-
-  /** Whether the txn should trigger a checkpoint after the commit */
-  private[delta] var needsCheckpoint = false
 
   // Whether this transaction is creating a new table.
   private var isCreatingNewTable: Boolean = false
@@ -396,7 +391,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   def txnStartTimeNs: Long = txnStartNano
 
   /** Unique identifier for the transaction */
-  val txnId = UUID.randomUUID().toString
+  val txnId: String = UUID.randomUUID().toString
 
   /** Whether to check unsupported data type when updating the table schema */
   protected var checkUnsupportedDataType: Boolean =
@@ -456,17 +451,14 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   def precommitUpdateSchemaWithIdentityHighWaterMarks(): Unit = {
     if (updatedIdentityHighWaterMarks.nonEmpty) {
       val newSchema = IdentityColumn.updateSchema(
-        metadata.schema, updatedIdentityHighWaterMarks.toSeq)
+        deltaLog,
+        metadata.schema,
+        updatedIdentityHighWaterMarks.toSeq
+      )
       val updatedMetadata = metadata.copy(schemaString = newSchema.json)
       updateMetadataAfterWrite(updatedMetadata)
     }
   }
-
-  /** The set of distinct partitions that contain added files by current transaction. */
-  protected[delta] var partitionsAddedToOpt: Option[mutable.HashSet[Map[String, String]]] = None
-
-  /** True if this transaction is a blind append. This is only valid after commit. */
-  protected[delta] var isBlindAppend: Boolean = false
 
   /**
    * The logSegment of the snapshot prior to the commit.
@@ -1971,6 +1963,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
     val (protocolUpdate1, metadataUpdate1) =
       UniversalFormat.enforceInvariantsAndDependencies(
+        spark,
         // Note: if this txn has no protocol or metadata updates, then `prev` will equal `newest`.
         snapshot,
         newestProtocol = protocol, // Note: this will try to use `newProtocol`
@@ -2550,8 +2543,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       deltaLog,
       attemptVersion,
       actions = currentTransactionInfo.finalActionsToCommit,
-      metadata = currentTransactionInfo.metadata,
-      protocol = currentTransactionInfo.protocol,
+      metadataOpt = Some(currentTransactionInfo.metadata),
+      protocolOpt = Some(currentTransactionInfo.protocol),
       operationName = currentTransactionInfo.op.name,
       txnIdOpt = Some(currentTransactionInfo.txnId),
       previousVersionState = scala.Left(snapshot),

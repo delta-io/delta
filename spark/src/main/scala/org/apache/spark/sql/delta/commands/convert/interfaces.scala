@@ -89,8 +89,10 @@ trait ConvertTargetFileManifest extends Closeable {
  *                        table format. If none, the converter will infer partition values from the
  *                        file path, assuming the Hive directory format.
  * @param parquetSchemaDDL the Parquet schema DDL associated with the file.
+ * @param stats           Stats information extracted from the source file.
  */
 case class ConvertTargetFile(
   fileStatus: SerializableFileStatus,
   partitionValues: Option[Map[String, String]] = None,
-  parquetSchemaDDL: Option[String] = None) extends Serializable
+  parquetSchemaDDL: Option[String] = None,
+  stats: Option[String] = None) extends Serializable

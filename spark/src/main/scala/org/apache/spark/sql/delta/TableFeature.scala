@@ -20,6 +20,7 @@ import java.util.Locale
 
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
 import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsUtils
 import org.apache.spark.sql.delta.redirect.{RedirectReaderWriter, RedirectWriterOnly}
@@ -327,6 +328,8 @@ sealed abstract class LegacyReaderWriterFeature(
   with ReaderWriterFeatureType
 
 object TableFeature {
+  val isTesting = DeltaUtils.isTesting
+
   /**
    * All table features recognized by this client. Update this set when you added a new Table
    * Feature.
@@ -365,10 +368,11 @@ object TableFeature {
       V2CheckpointTableFeature,
       RowTrackingFeature,
       InCommitTimestampTableFeature,
+      VariantTypePreviewTableFeature,
       VariantTypeTableFeature,
       CoordinatedCommitsTableFeature,
       CheckpointProtectionTableFeature)
-    if (DeltaUtils.isTesting && testingFeaturesEnabled) {
+    if (isTesting && testingFeaturesEnabled) {
       features ++= Set(
         RedirectReaderWriterFeature,
         RedirectWriterOnlyFeature,
@@ -377,6 +381,7 @@ object TableFeature {
         TestWriterFeature,
         TestWriterMetadataNoAutoUpdateFeature,
         TestReaderWriterFeature,
+        TestUnsupportedReaderWriterFeature,
         TestReaderWriterMetadataAutoUpdateFeature,
         TestReaderWriterMetadataNoAutoUpdateFeature,
         TestRemovableWriterFeature,
@@ -393,6 +398,10 @@ object TableFeature {
     require(features.size == featureMap.size, "Lowercase feature names must not duplicate.")
     featureMap
   }
+
+  /** Test only features that appear unsupported in order to test protocol validations. */
+  def testUnsupportedFeatures: Set[TableFeature] =
+    if (isTesting) Set(TestUnsupportedReaderWriterFeature) else Set.empty
 
   private val allDependentFeaturesMap: Map[TableFeature, Set[TableFeature]] = {
     val dependentFeatureTuples =
@@ -615,16 +624,58 @@ object RedirectWriterOnlyFeature extends WriterFeature(name = "redirectWriterOnl
   override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
 }
 
-object VariantTypeTableFeature extends ReaderWriterFeature(name = "variantType-preview")
-    with FeatureAutomaticallyEnabledByMetadata {
+trait BinaryVariantTableFeature {
+  def forcePreviewTableFeature: Boolean = SparkSession
+    .getActiveSession
+    .map(_.conf.get(DeltaSQLConf.FORCE_USE_PREVIEW_VARIANT_FEATURE))
+    .getOrElse(false)
+}
+
+/**
+ * Preview feature for variant. The preview feature isn't enabled automatically anymore when
+ * variants are present in the table schema and the GA feature is used instead.
+ *
+ * Note: Users can manually add both the preview and stable features to a table using ADD FEATURE,
+ * although that's undocumented. The feature spec did not change between preview and GA so the two
+ * feature specifications are compatible and supported.
+ */
+object VariantTypePreviewTableFeature extends ReaderWriterFeature(name = "variantType-preview")
+  with FeatureAutomaticallyEnabledByMetadata
+    with BinaryVariantTableFeature {
   override def metadataRequiresFeatureToBeEnabled(
       protocol: Protocol, metadata: Metadata, spark: SparkSession): Boolean = {
-    SchemaUtils.checkForVariantTypeColumnsRecursively(metadata.schema)
+    if (forcePreviewTableFeature) {
+      SchemaUtils.checkForVariantTypeColumnsRecursively(metadata.schema) &&
+      // Do not require this table feature to be enabled when the 'variantType' table feature is
+      // enabled so existing tables with variant columns with only 'variantType' and not
+      // 'variantType-preview' can be operated on when the 'FORCE_USE_PREVIEW_VARIANT_FEATURE'
+      // config is enabled.
+      !protocol.isFeatureSupported(VariantTypeTableFeature)
+    } else {
+      false
+    }
+  }
+}
+
+object VariantTypeTableFeature extends ReaderWriterFeature(name = "variantType")
+    with FeatureAutomaticallyEnabledByMetadata
+    with BinaryVariantTableFeature {
+  override def metadataRequiresFeatureToBeEnabled(
+      protocol: Protocol, metadata: Metadata, spark: SparkSession): Boolean = {
+    if (forcePreviewTableFeature) {
+      false
+    } else {
+      SchemaUtils.checkForVariantTypeColumnsRecursively(metadata.schema) &&
+      // Do not require this table feature to be enabled when the 'variantType-preview' table
+      // feature is enabled so old tables with only the preview table feature can be read.
+      !protocol.isFeatureSupported(VariantTypePreviewTableFeature)
+    }
   }
 }
 
 object DeletionVectorsTableFeature
   extends ReaderWriterFeature(name = "deletionVectors")
+  with RemovableFeature
   with FeatureAutomaticallyEnabledByMetadata {
   override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
 
@@ -634,6 +685,35 @@ object DeletionVectorsTableFeature
       spark: SparkSession): Boolean = {
     DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.fromMetaData(metadata)
   }
+
+  /**
+   * Validate whether all deletion vector traces are removed from the snapshot.
+   *
+   * Note, we do not need to validate whether DV tombstones exist. These are added in the
+   * pre-downgrade stage and always cover all DVs within the retention period. This invariant can
+   * never change unless we enable again DVs. If DVs are enabled before the protocol downgrade
+   * we will abort the operation.
+   */
+  override def validateRemoval(snapshot: Snapshot): Boolean = {
+    val dvsWritable = DeletionVectorUtils.deletionVectorsWritable(snapshot)
+    val dvsExist = snapshot.numDeletionVectorsOpt.getOrElse(0L) > 0
+
+    !(dvsWritable || dvsExist)
+  }
+
+  override def actionUsesFeature(action: Action): Boolean = {
+    action match {
+      case m: Metadata => DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.fromMetaData(m)
+      case a: AddFile => a.deletionVector != null
+      case r: RemoveFile => r.deletionVector != null
+      // In general, CDC actions do not contain DVs. We added this for safety.
+      case cdc: AddCDCFile => cdc.deletionVector != null
+      case _ => false
+    }
+  }
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    DeletionVectorsPreDowngradeCommand(table)
 }
 
 object RowTrackingFeature extends WriterFeature(name = "rowTracking")
@@ -1044,7 +1124,7 @@ object TestReaderWriterMetadataAutoUpdateFeature
   }
 }
 
-private[sql] object TestRemovableWriterFeature
+object TestRemovableWriterFeature
   extends WriterFeature(name = "testRemovableWriter")
   with FeatureAutomaticallyEnabledByMetadata
   with RemovableFeature {
@@ -1063,6 +1143,19 @@ private[sql] object TestRemovableWriterFeature
 
   override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
     TestWriterFeaturePreDowngradeCommand(table)
+
+  override def actionUsesFeature(action: Action): Boolean = false
+}
+
+/** Test feature that appears unsupported and it is used for testing protocol checks. */
+object TestUnsupportedReaderWriterFeature
+    extends ReaderWriterFeature(name = "testUnsupportedReaderWriter")
+    with RemovableFeature {
+
+  override def validateRemoval(snapshot: Snapshot): Boolean = true
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    TestUnsupportedReaderWriterFeaturePreDowngradeCommand(table)
 
   override def actionUsesFeature(action: Action): Boolean = false
 }
@@ -1093,7 +1186,7 @@ private[sql] object TestRemovableWriterFeatureWithDependency
     Set(TestRemovableReaderWriterFeature, TestRemovableWriterFeature)
 }
 
-private[sql] object TestRemovableReaderWriterFeature
+object TestRemovableReaderWriterFeature
   extends ReaderWriterFeature(name = "testRemovableReaderWriter")
     with FeatureAutomaticallyEnabledByMetadata
     with RemovableFeature {

@@ -31,6 +31,8 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.metrics.SnapshotMetrics;
+import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.SnapshotHint;
@@ -54,6 +56,13 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   private Optional<List<String>> partitionColumns = Optional.empty();
   private Optional<SetTransaction> setTxnOpt = Optional.empty();
   private Optional<Map<String, String>> tableProperties = Optional.empty();
+
+  /**
+   * Number of retries for concurrent write exceptions to resolve conflicts and retry commit. In
+   * Delta-Spark, for historical reasons the number of retries is really high (10m). We are starting
+   * with a lower number by default for now. If this is not sufficient we can update it.
+   */
+  private int maxRetries = 200;
 
   public TransactionBuilderImpl(TableImpl table, String engineInfo, Operation operation) {
     this.table = table;
@@ -94,6 +103,13 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   }
 
   @Override
+  public TransactionBuilder withMaxRetries(int maxRetries) {
+    checkArgument(maxRetries >= 0, "maxRetries must be >= 0");
+    this.maxRetries = maxRetries;
+    return this;
+  }
+
+  @Override
   public Transaction build(Engine engine) {
     SnapshotImpl snapshot;
     try {
@@ -105,11 +121,14 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       // Table doesn't exist yet. Create an initial snapshot with the new schema.
       Metadata metadata = getInitialMetadata();
       Protocol protocol = getInitialProtocol();
-      LogReplay logReplay = getEmptyLogReplay(engine, metadata, protocol);
-      snapshot = new InitialSnapshot(table.getDataPath(), logReplay, metadata, protocol);
+      SnapshotQueryContext snapshotContext = SnapshotQueryContext.forVersionSnapshot(tablePath, -1);
+      LogReplay logReplay =
+          getEmptyLogReplay(engine, metadata, protocol, snapshotContext.getSnapshotMetrics());
+      snapshot =
+          new InitialSnapshot(table.getDataPath(), logReplay, metadata, protocol, snapshotContext);
     }
 
-    boolean isNewTable = snapshot.getVersion(engine) < 0;
+    boolean isNewTable = snapshot.getVersion() < 0;
     validate(engine, snapshot, isNewTable);
 
     boolean shouldUpdateMetadata = false;
@@ -118,7 +137,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     Protocol protocol = snapshot.getProtocol();
     if (tableProperties.isPresent()) {
       Map<String, String> validatedProperties =
-          TableConfig.validateProperties(tableProperties.get());
+          TableConfig.validateDeltaProperties(tableProperties.get());
       Map<String, String> newProperties =
           metadata.filterOutUnchangedProperties(validatedProperties);
 
@@ -156,6 +175,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         setTxnOpt,
         shouldUpdateMetadata,
         shouldUpdateProtocol,
+        maxRetries,
         table.getClock());
   }
 
@@ -204,8 +224,19 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   }
 
   private class InitialSnapshot extends SnapshotImpl {
-    InitialSnapshot(Path dataPath, LogReplay logReplay, Metadata metadata, Protocol protocol) {
-      super(dataPath, LogSegment.empty(table.getLogPath()), logReplay, protocol, metadata);
+    InitialSnapshot(
+        Path dataPath,
+        LogReplay logReplay,
+        Metadata metadata,
+        Protocol protocol,
+        SnapshotQueryContext snapshotContext) {
+      super(
+          dataPath,
+          LogSegment.empty(table.getLogPath()),
+          logReplay,
+          protocol,
+          metadata,
+          snapshotContext);
     }
 
     @Override
@@ -214,18 +245,23 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     }
   }
 
-  private LogReplay getEmptyLogReplay(Engine engine, Metadata metadata, Protocol protocol) {
+  private LogReplay getEmptyLogReplay(
+      Engine engine, Metadata metadata, Protocol protocol, SnapshotMetrics snapshotMetrics) {
     return new LogReplay(
         table.getLogPath(),
         table.getDataPath(),
         -1,
         engine,
         LogSegment.empty(table.getLogPath()),
-        Optional.empty()) {
+        Optional.empty(),
+        snapshotMetrics) {
 
       @Override
       protected Tuple2<Protocol, Metadata> loadTableProtocolAndMetadata(
-          Engine engine, Optional<SnapshotHint> snapshotHint, long snapshotVersion) {
+          Engine engine,
+          LogSegment logSegment,
+          Optional<SnapshotHint> snapshotHint,
+          long snapshotVersion) {
         return new Tuple2<>(protocol, metadata);
       }
 

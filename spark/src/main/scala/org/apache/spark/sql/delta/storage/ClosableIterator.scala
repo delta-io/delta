@@ -63,12 +63,7 @@ object ClosableIterator {
   implicit class IteratorFlatMapCloseOp[A](val closableIter: Iterator[A]) extends AnyVal {
     def flatMapWithClose[B](f: A => ClosableIterator[B]): ClosableIterator[B] =
       new ClosableIterator[B] {
-        private var iter_curr =
-          if (closableIter.hasNext) {
-            f(closableIter.next())
-          } else {
-            null
-          }
+        private var iter_curr: ClosableIterator[B] = null
         override def next(): B = {
           if (!hasNext) {
             throw new NoSuchElementException
@@ -77,6 +72,9 @@ object ClosableIterator {
         }
         @scala.annotation.tailrec
         override def hasNext: Boolean = {
+          if (iter_curr == null && closableIter.hasNext) {
+            iter_curr = f(closableIter.next())
+          }
           if (iter_curr == null) {
             false
           }

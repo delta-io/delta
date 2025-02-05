@@ -323,7 +323,7 @@ case class AlterTableDropFeatureDeltaCommand(
     // Check whether the protocol contains the feature in either the writer features list or
     // the reader+writer features list. Note, protocol needs to denormalized to allow dropping
     // features from legacy protocols.
-    val protocol = table.initialSnapshot.protocol
+    val protocol = table.deltaLog.update().protocol
     val protocolContainsFeatureName =
       protocol.implicitlyAndExplicitlySupportedFeatures.map(_.name).contains(featureName)
     if (!protocolContainsFeatureName) {
@@ -385,9 +385,9 @@ case class AlterTableDropFeatureDeltaCommand(
       // Note, for features that cannot be disabled we solely rely for correctness on
       // validateRemoval.
       val requiresHistoryValidation = removableFeature.requiresHistoryProtection
-      val startTimeNs = System.nanoTime()
+      val startTimeNs = table.deltaLog.clock.nanoTime()
       val preDowngradeMadeChanges =
-        removableFeature.preDowngradeCommand(table).removeFeatureTracesIfNeeded()
+        removableFeature.preDowngradeCommand(table).removeFeatureTracesIfNeeded(sparkSession)
       if (requiresHistoryValidation) {
         // Generate a checkpoint after the cleanup that is based on commits that do not use
         // the feature. This intends to help slow-moving tables to qualify for history truncation
@@ -483,7 +483,7 @@ case class AlterTableDropFeatureDeltaCommand(
     val deltaLog = table.deltaLog
     recordDeltaOperation(deltaLog, "delta.ddl.alter.dropFeatureWithCheckpointProtection") {
       var startTimeNs = System.nanoTime()
-      removableFeature.preDowngradeCommand(table).removeFeatureTracesIfNeeded()
+      removableFeature.preDowngradeCommand(table).removeFeatureTracesIfNeeded(sparkSession)
 
       // Create and validate the barrier checkpoints. The checkpoint are created on top of
       // empty commits. However, this is not guaranteed. Other txns might interleave the empty
@@ -772,7 +772,14 @@ case class AlterTableChangeColumnDeltaCommand(
             if (syncIdentity) {
               assert(oldColumn == newColumn)
               val df = txn.snapshot.deltaLog.createDataFrame(txn.snapshot, txn.filterFiles())
-              val field = IdentityColumn.syncIdentity(newColumn, df)
+              val allowLoweringHighWaterMarkForSyncIdentity = sparkSession.conf
+                .get(DeltaSQLConf.DELTA_IDENTITY_ALLOW_SYNC_IDENTITY_TO_LOWER_HIGH_WATER_MARK)
+              val field = IdentityColumn.syncIdentity(
+                deltaLog,
+                newColumn,
+                df,
+                allowLoweringHighWaterMarkForSyncIdentity
+              )
               txn.setSyncIdentity()
               txn.readWholeTable()
               field

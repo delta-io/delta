@@ -2,7 +2,6 @@ package io.delta.flink.source.internal;
 
 import org.apache.flink.table.types.logical.ArrayType;
 import org.apache.flink.table.types.logical.BigIntType;
-import org.apache.flink.table.types.logical.BinaryType;
 import org.apache.flink.table.types.logical.BooleanType;
 import org.apache.flink.table.types.logical.DateType;
 import org.apache.flink.table.types.logical.DecimalType;
@@ -16,6 +15,7 @@ import org.apache.flink.table.types.logical.RowType;
 import org.apache.flink.table.types.logical.SmallIntType;
 import org.apache.flink.table.types.logical.TimestampType;
 import org.apache.flink.table.types.logical.TinyIntType;
+import org.apache.flink.table.types.logical.VarBinaryType;
 import org.apache.flink.table.types.logical.VarCharType;
 
 import io.delta.standalone.types.DataType;
@@ -64,7 +64,7 @@ public class SchemaConverter {
             case LONG:
                 return new BigIntType(nullable);
             case BINARY:
-                return new BinaryType(nullable, BinaryType.DEFAULT_LENGTH);
+                return new VarBinaryType(nullable, VarBinaryType.MAX_LENGTH);
             case BOOLEAN:
                 return new BooleanType(nullable);
             case BYTE:

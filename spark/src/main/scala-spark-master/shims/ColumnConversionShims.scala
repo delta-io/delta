@@ -18,14 +18,16 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.classic.ClassicConversions
 import org.apache.spark.sql.classic.ColumnConversions
-import org.apache.spark.sql.internal.ColumnNodeToExpressionConverter
 
 /**
  * Conversions from a [[org.apache.spark.sql.Column]] to an
  * [[org.apache.spark.sql.catalyst.expressions.Expression]], and vice versa.
+ *
+ * @note [[org.apache.spark.sql.internal.ExpressionUtils#expression]] is a cheap alternative for
+ *       [[org.apache.spark.sql.Column]] to [[org.apache.spark.sql.catalyst.expressions.Expression]]
+ *       conversions. However this can only be used when the produced expression is used in a Column
+ *       later on.
  */
 object ClassicColumnConversions
   extends ClassicConversions
-  with ColumnConversions {
-  override def converter: ColumnNodeToExpressionConverter = ColumnNodeToExpressionConverter
-}
+  with ColumnConversions

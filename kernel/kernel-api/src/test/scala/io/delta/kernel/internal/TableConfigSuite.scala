@@ -23,23 +23,20 @@ import scala.collection.JavaConverters._
 class TableConfigSuite extends AnyFunSuite {
 
   test("check TableConfig.editable is true") {
-    TableConfig.validateProperties(
+    TableConfig.validateDeltaProperties(
       Map(
         TableConfig.TOMBSTONE_RETENTION.getKey -> "interval 2 week",
         TableConfig.CHECKPOINT_INTERVAL.getKey -> "20",
         TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true",
         TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.getKey -> "1",
         TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.getKey -> "1",
-        TableConfig.COORDINATED_COMMITS_COORDINATOR_NAME.getKey -> "{in-memory}",
-        TableConfig.COORDINATED_COMMITS_COORDINATOR_CONF.getKey -> "{\"1\": \"1\"}",
-        TableConfig.COORDINATED_COMMITS_TABLE_CONF.getKey -> "{\"1\": \"1\"}",
         TableConfig.COLUMN_MAPPING_MODE.getKey -> "name",
         TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true").asJava)
   }
 
   test("check TableConfig.MAX_COLUMN_ID.editable is false") {
     val e = intercept[KernelException] {
-      TableConfig.validateProperties(
+      TableConfig.validateDeltaProperties(
         Map(
           TableConfig.TOMBSTONE_RETENTION.getKey -> "interval 2 week",
           TableConfig.CHECKPOINT_INTERVAL.getKey -> "20",

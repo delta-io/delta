@@ -129,6 +129,9 @@ object DeltaOperations {
     val replaceWhereMetricsEnabled = SparkSession.active.conf.get(
       DeltaSQLConf.REPLACEWHERE_METRICS_ENABLED)
 
+    val insertOverwriteRemoveMetricsEnabled = SparkSession.active.conf.get(
+      DeltaSQLConf.OVERWRITE_REMOVE_METRICS_ENABLED)
+
     override def transformMetrics(metrics: Map[String, SQLMetric]): Map[String, String] = {
       // Need special handling for replaceWhere as it is implemented as a Write + Delete.
       if (predicate.nonEmpty && replaceWhereMetricsEnabled) {
@@ -159,13 +162,22 @@ object DeltaOperations {
       }
     }
 
-    override val operationMetrics: Set[String] = if (predicate.isEmpty ||
-        !replaceWhereMetricsEnabled) {
-      DeltaOperationMetrics.WRITE
-    } else {
-      // Need special handling for replaceWhere as rows/files are deleted as well.
-      DeltaOperationMetrics.WRITE_REPLACE_WHERE
-    }
+    override val operationMetrics: Set[String] =
+      if (predicate.isEmpty || !replaceWhereMetricsEnabled) {
+        // Remove metrics are included to replaceWhere metrics
+        // so they need to be added only when replaceWhere metrics are not presented
+        val overwriteMetrics =
+          if (mode == SaveMode.Overwrite && insertOverwriteRemoveMetricsEnabled) {
+            DeltaOperationMetrics.OVERWRITE_REMOVES
+          } else {
+            Set.empty
+          }
+        DeltaOperationMetrics.WRITE ++ overwriteMetrics
+      } else {
+        // Need special handling for replaceWhere as rows/files are deleted as well.
+        DeltaOperationMetrics.WRITE_REPLACE_WHERE
+      }
+
     override def changesData: Boolean = true
 
     // This operation shouldn't be introducing AddFile actions with DVs and tight bounds stats.
@@ -415,10 +427,17 @@ object DeltaOperations {
       CLUSTERING_PARAMETER_KEY -> JsonUtils.toJson(clusterBy.getOrElse(Seq.empty)),
       "properties" -> JsonUtils.toJson(metadata.configuration)
   )
+
+    private val insertOverwriteRemoveMetricsEnabled = SparkSession.active.conf.get(
+      DeltaSQLConf.OVERWRITE_REMOVE_METRICS_ENABLED)
+
     override val operationMetrics: Set[String] = if (!asSelect) {
       Set()
     } else {
-      DeltaOperationMetrics.WRITE
+      val overwriteMetrics =
+        if (insertOverwriteRemoveMetricsEnabled) DeltaOperationMetrics.OVERWRITE_REMOVES
+        else Set.empty
+      DeltaOperationMetrics.WRITE ++ overwriteMetrics
     }
     override def changesData: Boolean = true
 
@@ -468,6 +487,21 @@ object DeltaOperations {
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
   }
+
+  /**
+   * Recorded when dropping deletion vectors. Deletion Vector tombstones directly reference
+   * deletion vector files within the retention period. This is to protect them from deletion
+   * against oblivious writers when vacuuming.
+   */
+  object AddDeletionVectorsTombstones extends Operation("Deletion Vector Tombstones") {
+    override val parameters: Map[String, Any] = Map.empty
+
+    // This operation should only introduce RemoveFile actions.
+    override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
+
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
+  }
+
   /** Recorded when columns are added. */
   case class AddColumns(
       colsToAdd: Seq[QualifiedColTypeWithPositionForLog]) extends Operation("ADD COLUMNS") {
@@ -883,6 +917,11 @@ private[delta] object DeltaOperationMetrics {
     "numFiles", // number of files written
     "numOutputBytes", // size in bytes of the written contents
     "numOutputRows" // number of rows written
+  )
+
+  val OVERWRITE_REMOVES = Set(
+    "numRemovedFiles",
+    "numRemovedBytes"
   )
 
   val REMOVE_COLUMN_MAPPING: Set[String] = Set(

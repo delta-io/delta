@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.skipping
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.expressions.{HilbertByteArrayIndex, HilbertLongIndex, InterleaveBits, RangePartitionId}
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 
 import org.apache.spark.SparkException
 import org.apache.spark.sql.Column

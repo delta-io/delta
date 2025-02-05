@@ -69,20 +69,39 @@ class TableFeaturesSuite extends AnyFunSuite {
   }
 
   Seq("appendOnly", "inCommitTimestamp", "columnMapping", "typeWidening-preview", "typeWidening",
-    "domainMetadata")
-    .foreach { supportedWriterFeature =>
+    "domainMetadata", "rowTracking").foreach { supportedWriterFeature =>
     test(s"validateWriteSupported: protocol 7 with $supportedWriterFeature") {
-      checkSupported(createTestProtocol(minWriterVersion = 7, supportedWriterFeature))
+      val protocol = if (supportedWriterFeature == "rowTracking") {
+        createTestProtocol(minWriterVersion = 7, supportedWriterFeature, "domainMetadata")
+      } else {
+        createTestProtocol(minWriterVersion = 7, supportedWriterFeature)
+      }
+      checkSupported(protocol)
     }
   }
 
-  Seq("invariants", "checkConstraints", "generatedColumns", "allowColumnDefaults", "changeDataFeed",
-      "identityColumns", "deletionVectors", "rowTracking", "timestampNtz",
-      "v2Checkpoint", "icebergCompatV1", "icebergCompatV2", "clustering",
-      "vacuumProtocolCheck").foreach { unsupportedWriterFeature =>
+  Seq("checkConstraints", "generatedColumns", "allowColumnDefaults", "changeDataFeed",
+    "identityColumns", "deletionVectors", "timestampNtz", "v2Checkpoint", "icebergCompatV1",
+    "icebergCompatV2", "clustering", "vacuumProtocolCheck").foreach { unsupportedWriterFeature =>
     test(s"validateWriteSupported: protocol 7 with $unsupportedWriterFeature") {
       checkUnsupported(createTestProtocol(minWriterVersion = 7, unsupportedWriterFeature))
     }
+  }
+
+  test("validateWriteSupported: protocol 7 with invariants, schema doesn't contain invariants") {
+    checkSupported(
+      createTestProtocol(minWriterVersion = 7, "invariants"),
+      metadata = createTestMetadata(),
+      schema = createTestSchema(includeInvariant = false)
+    )
+  }
+
+  test("validateWriteSupported: protocol 7 with invariants, schema contains invariants") {
+    checkUnsupported(
+      createTestProtocol(minWriterVersion = 7, "invariants"),
+      metadata = createTestMetadata(),
+      schema = createTestSchema(includeInvariant = true)
+    )
   }
 
   def checkSupported(

@@ -99,14 +99,14 @@ Snapshot mySnapshot = myTable.getLatestSnapshot(myEngine);
 Now that we have a consistent snapshot view of the table, we can query more details about the table. For example, you can get the version and schema of this snapshot.
 
 ```java
-long version = mySnapshot.getVersion(myEngine);
-StructType tableSchema = mySnapshot.getSchema(myEngine);
+long version = mySnapshot.getVersion();
+StructType tableSchema = mySnapshot.getSchema();
 ```
 
 Next, to read the table data, we have to *build* a [`Scan`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/Scan.html) object. In order to build a `Scan` object, create a [`ScanBuilder`](https://delta-io.github.io/delta/snapshot/kernel-api/java/io/delta/kernel/ScanBuilder.html) object which optionally allows selecting a subset of columns to read or setting a query filter. For now, ignore these optional settings.
 
 ```java
-Scan myScan = mySnapshot.getScanBuilder(myEngine).build()
+Scan myScan = mySnapshot.getScanBuilder().build()
 
 // Common information about scanning for all data files to read.
 Row scanState = myScan.getScanState(myEngine)
@@ -224,9 +224,7 @@ Predicate filter = new Predicate(
   "=",
   Arrays.asList(new Column("columnX"), Literal.ofInt(1)));
 
-Scan myFilteredScan = mySnapshot.buildScan(engine)
-  .withFilter(myEngine, filter)
-  .build()
+Scan myFilteredScan = mySnapshot.getScanBuilder().withFilter(filter).build()
 
 // Subset of the given filter that is not guaranteed to be satisfied by
 // Delta Kernel when it returns data. This filter is used by Delta Kernel
@@ -845,10 +843,7 @@ import io.delta.kernel.types.*;
 StructType readSchema = ... ;  // convert engine schema
 Predicate filterExpr = ... ;   // convert engine filter expression
 
-Scan myScan = mySnapshot.buildScan(engine)
-  .withFilter(myEngine, filterExpr)
-  .withReadSchema(myEngine, readSchema)
-  .build()
+Scan myScan = mySnapshot.getScanBuilder().withFilter(filterExpr).withReadSchema(readSchema).build();
 
 ```
 

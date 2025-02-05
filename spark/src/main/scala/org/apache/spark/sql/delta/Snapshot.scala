@@ -384,7 +384,7 @@ class Snapshot(
    * checksum file. If the checksum file is not present or if the protocol or metadata is missing
    * this will return None.
    */
-  protected def getProtocolMetadataAndIctFromCrc():
+  protected def getProtocolMetadataAndIctFromCrc(checksumOpt: Option[VersionChecksum]):
     Option[Array[ReconstructedProtocolMetadataAndICT]] = {
       if (!spark.sessionState.conf.getConf(
           DeltaSQLConf.USE_PROTOCOL_AND_METADATA_FROM_CHECKSUM_ENABLED)) {
@@ -431,7 +431,7 @@ class Snapshot(
       Array[ReconstructedProtocolMetadataAndICT] = {
     import implicits._
 
-    getProtocolMetadataAndIctFromCrc().foreach { protocolMetadataAndIctFromCrc =>
+    getProtocolMetadataAndIctFromCrc(checksumOpt).foreach { protocolMetadataAndIctFromCrc =>
       return protocolMetadataAndIctFromCrc
     }
 
@@ -577,6 +577,15 @@ class Snapshot(
       },
     domainMetadata = checksumOpt.flatMap(_.domainMetadata)
       .orElse(Option.when(_computedStateTriggered)(domainMetadata)),
+    numDeletedRecordsOpt = checksumOpt.flatMap(_.numDeletedRecordsOpt)
+      .orElse(Option.when(_computedStateTriggered)(numDeletedRecordsOpt).flatten)
+      .filter(_ => deletionVectorsReadableAndMetricsEnabled),
+    numDeletionVectorsOpt = checksumOpt.flatMap(_.numDeletionVectorsOpt)
+      .orElse(Option.when(_computedStateTriggered)(numDeletionVectorsOpt).flatten)
+      .filter(_ => deletionVectorsReadableAndMetricsEnabled),
+    deletedRecordCountsHistogramOpt = checksumOpt.flatMap(_.deletedRecordCountsHistogramOpt)
+      .orElse(Option.when(_computedStateTriggered)(deletedRecordCountsHistogramOpt).flatten)
+      .filter(_ => deletionVectorsReadableAndHistogramEnabled),
     histogramOpt = checksumOpt.flatMap(_.histogramOpt)
   )
 

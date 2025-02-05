@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.hooks
 
-import org.apache.spark.sql.delta.{OptimisticTransactionImpl, Snapshot, UniversalFormat}
+import org.apache.spark.sql.delta.{DeltaTransaction, Snapshot, UniversalFormat}
 import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf.DELTA_UNIFORM_HUDI_SYNC_CONVERT_ENABLED
@@ -31,7 +31,7 @@ object HudiConverterHook extends PostCommitHook with DeltaLogging {
 
   override def run(
       spark: SparkSession,
-      txn: OptimisticTransactionImpl,
+      txn: DeltaTransaction,
       committedVersion: Long,
       postCommitSnapshot: Snapshot,
       committedActions: Seq[Action]): Unit = {

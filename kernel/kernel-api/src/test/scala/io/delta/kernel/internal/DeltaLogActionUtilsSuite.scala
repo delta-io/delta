@@ -16,6 +16,7 @@
 package io.delta.kernel.internal
 
 import java.io.FileNotFoundException
+import java.util.{Collections, Optional}
 
 import scala.collection.JavaConverters._
 import scala.reflect.ClassTag
@@ -23,15 +24,17 @@ import scala.reflect.ClassTag
 import io.delta.kernel.exceptions.{InvalidTableException, KernelException, TableNotFoundException}
 import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.utils.FileStatus
-import org.scalatest.funsuite.AnyFunSuite
-import io.delta.kernel.internal.DeltaLogActionUtils.{getCommitFilesForVersionRange, verifyDeltaVersions}
+import io.delta.kernel.internal.DeltaLogActionUtils.{getCommitFilesForVersionRange, listDeltaLogFilesAsIter, verifyDeltaVersions}
+import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.test.MockFileSystemClientUtils
+
+import org.scalatest.funsuite.AnyFunSuite
 
 class DeltaLogActionUtilsSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
-  //////////////////////////////////////////////////////////////////////////////////
-  // verifyDeltaVersions tests
-  //////////////////////////////////////////////////////////////////////////////////
+  ///////////////////////////////
+  // verifyDeltaVersions tests //
+  ///////////////////////////////
 
   def getCommitFiles(versions: Seq[Long]): java.util.List[FileStatus] = {
     versions
@@ -108,9 +111,9 @@ class DeltaLogActionUtilsSuite extends AnyFunSuite with MockFileSystemClientUtil
     }
   }
 
-  //////////////////////////////////////////////////////////////////////////////////
-  // getCommitFilesForVersionRange tests
-  //////////////////////////////////////////////////////////////////////////////////
+  /////////////////////////////////////////
+  // getCommitFilesForVersionRange tests //
+  /////////////////////////////////////////
 
   test("getCommitFilesForVersionRange: directory does not exist") {
     intercept[TableNotFoundException] {
@@ -240,4 +243,74 @@ class DeltaLogActionUtilsSuite extends AnyFunSuite with MockFileSystemClientUtil
     endVersion = 0,
     expectedCommitFiles = deltaFileStatuses(Seq(0))
   )
+
+  /////////////////////////////
+  // listDeltaLogFiles tests //
+  /////////////////////////////
+
+  private val checkpointsAndDeltas = singularCheckpointFileStatuses(Seq(10)) ++
+    deltaFileStatuses(Seq(10, 11, 12, 13, 14)) ++
+    Seq(FileStatus.of(s"$logPath/00000000000000000014.crc", 0, 0)) ++
+    multiCheckpointFileStatuses(Seq(14), 2) ++
+    deltaFileStatuses(Seq(15, 16, 17)) ++
+    v2CheckpointFileStatuses(Seq((17, false, 2)), "json").map(_._1)
+
+  private def extractVersions(files: Seq[FileStatus]): Seq[Long] = {
+    files.map(fs => FileNames.getFileVersion(new Path(fs.getPath)))
+  }
+
+  test("listDeltaLogFiles: no fileTypes provided") {
+    intercept[IllegalArgumentException] {
+      listDeltaLogFilesAsIter(
+        createMockFSListFromEngine(deltaFileStatuses(Seq(1, 2, 3))),
+        Collections.emptySet(), // No fileTypes provided!
+        dataPath,
+        1,
+        Optional.empty(),
+        false /* mustBeRecreatable */
+      ).toInMemoryList
+    }
+  }
+
+  test("listDeltaLogFiles: returns requested file type only") {
+    val commitFiles = listDeltaLogFilesAsIter(
+      createMockFSListFromEngine(checkpointsAndDeltas),
+      Set(FileNames.DeltaLogFileType.COMMIT).asJava,
+      dataPath,
+      10,
+      Optional.empty(),
+      false /* mustBeRecreatable */
+    ).toInMemoryList.asScala
+
+    assert(commitFiles.forall(fs => FileNames.isCommitFile(fs.getPath)))
+    assert(extractVersions(commitFiles) == Seq(10, 11, 12, 13, 14, 15, 16, 17))
+
+    val checkpointFiles = listDeltaLogFilesAsIter(
+      createMockFSListFromEngine(checkpointsAndDeltas),
+      Set(FileNames.DeltaLogFileType.CHECKPOINT).asJava,
+      dataPath,
+      10,
+      Optional.empty(),
+      false /* mustBeRecreatable */
+    ).toInMemoryList.asScala
+
+    assert(checkpointFiles.forall(fs => FileNames.isCheckpointFile(fs.getPath)))
+    assert(extractVersions(checkpointFiles) == Seq(10, 14, 14, 17))
+  }
+
+  test("listDeltaLogFiles: mustBeRecreatable") {
+    val exMsg = intercept[KernelException] {
+      listDeltaLogFilesAsIter(
+        createMockFSListFromEngine(checkpointsAndDeltas),
+        Set(FileNames.DeltaLogFileType.COMMIT, FileNames.DeltaLogFileType.CHECKPOINT).asJava,
+        dataPath,
+        0,
+        Optional.of(4),
+        true /* mustBeRecreatable */
+      ).toInMemoryList
+    }.getMessage
+    assert(exMsg.contains("Cannot load table version 4 as the transaction log has been " +
+      "truncated due to manual deletion or the log/checkpoint retention policy. The earliest " +
+      "available version is 10"))
+  }
 }

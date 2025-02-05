@@ -23,6 +23,7 @@ import java.util.TimeZone
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.DeltaInsertIntoTableSuiteShims._
+import org.apache.spark.sql.delta.DeltaTestUtils.withTimeZone
 import org.apache.spark.sql.delta.schema.InvariantViolationException
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -1464,16 +1465,6 @@ abstract class DeltaInsertIntoTests(
 
         checkAnswer(sql(s"SELECT count(distinct(ts)) from $t1"), Seq(Row(2)))
       }
-    }
-  }
-
-  private def withTimeZone(zone: String)(f: => Unit): Unit = {
-    val currentDefault = TimeZone.getDefault
-    try {
-      TimeZone.setDefault(TimeZone.getTimeZone(zone))
-      f
-    } finally {
-      TimeZone.setDefault(currentDefault)
     }
   }
 

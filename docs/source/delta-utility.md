@@ -37,7 +37,7 @@ default retention threshold for the files is 7 days. To change this behavior, se
     VACUUM eventsTable LITE   -- This VACUUM in ‘LITE’ mode runs faster.  
                               -- Instead of finding all files in the table directory, `VACUUM LITE` uses the Delta transaction log to identify and remove files no longer referenced by any table versions within the retention duration.  
                               -- If `VACUUM LITE` cannot be completed because the Delta log has been pruned a `DELTA_CANNOT_VACUUM_LITE` exception is raised.  
-                              -- This mode is available only in <Delta> 3.3 and above.
+                              -- This mode is available only in Delta 3.3 and above.
 
     VACUUM '/data/events' -- vacuum files in path-based table
 
@@ -515,13 +515,6 @@ CONVERT TO DELTA iceberg.`<path-to-table>` NO STATISTICS
   - Converting Iceberg tables that have experienced [partition evolution](https://iceberg.apache.org/docs/latest/evolution/#partition-evolution) is not supported.
 
   - Converting Iceberg merge-on-read tables that have experienced updates, deletions, or merges is not supported.
-
-## Convert a Delta table to a Parquet table
-
-You can easily convert a Delta table back to a Parquet table using the following steps:
-
-1. If you have performed <Delta> operations that can change the data files (for example, `delete` or `merge`), run [vacuum](#delta-vacuum) with retention of 0 hours to delete all data files that do not belong to the latest version of the table.
-#. Delete the `_delta_log` directory in the table directory.
 
 <a id="restore-delta-table"></a>
 

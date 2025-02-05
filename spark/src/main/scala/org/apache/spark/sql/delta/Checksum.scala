@@ -27,9 +27,11 @@ import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.DeletedRecordCountsHistogram
 import org.apache.spark.sql.delta.stats.FileSizeHistogram
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
@@ -50,14 +52,22 @@ import org.apache.spark.util.{SerializableConfiguration, Utils}
  * @param txnId Optional transaction identifier
  * @param tableSizeBytes The size of the table in bytes
  * @param numFiles Number of `AddFile` actions in the snapshot
+ * @param numDeletedRecordsOpt  The number of deleted records with Deletion Vectors.
+ * @param numDeletionVectorsOpt The number of Deletion Vectors present in the snapshot.
  * @param numMetadata Number of `Metadata` actions in the snapshot
  * @param numProtocol Number of `Protocol` actions in the snapshot
  * @param histogramOpt Optional file size histogram
+ * @param deletedRecordCountsHistogramOpt A histogram of the deleted records count distribution
+ *                                        for all the files in the snapshot.
  */
 case class VersionChecksum(
     txnId: Option[String],
     tableSizeBytes: Long,
     numFiles: Long,
+    @JsonDeserialize(contentAs = classOf[Long])
+    numDeletedRecordsOpt: Option[Long],
+    @JsonDeserialize(contentAs = classOf[Long])
+    numDeletionVectorsOpt: Option[Long],
     numMetadata: Long,
     numProtocol: Long,
     @JsonDeserialize(contentAs = classOf[Long])
@@ -67,6 +77,7 @@ case class VersionChecksum(
     metadata: Metadata,
     protocol: Protocol,
     histogramOpt: Option[FileSizeHistogram],
+    deletedRecordCountsHistogramOpt: Option[DeletedRecordCountsHistogram],
     allFiles: Option[Seq[AddFile]])
 
 /**
@@ -128,8 +139,8 @@ trait RecordChecksum extends DeltaLogging {
    * @param deltaLog The DeltaLog
    * @param versionToCompute The version for which we want to compute the checksum
    * @param actions The actions corresponding to the version `versionToCompute`
-   * @param metadata The metadata corresponding to the version `versionToCompute`
-   * @param protocol The protocol corresponding to the version `versionToCompute`
+   * @param metadataOpt The metadata corresponding to the version `versionToCompute` (if known)
+   * @param protocolOpt The protocol corresponding to the version `versionToCompute` (if known)
    * @param operationName The operation name corresponding to the version `versionToCompute`
    * @param txnIdOpt The transaction identifier for the version `versionToCompute`
    * @param previousVersionState Contains either the versionChecksum corresponding to
@@ -145,8 +156,8 @@ trait RecordChecksum extends DeltaLogging {
       deltaLog: DeltaLog,
       versionToCompute: Long,
       actions: Seq[Action],
-      metadata: Metadata,
-      protocol: Protocol,
+      metadataOpt: Option[Metadata],
+      protocolOpt: Option[Protocol],
       operationName: String,
       txnIdOpt: Option[String],
       previousVersionState: Either[Snapshot, VersionChecksum],
@@ -202,6 +213,29 @@ trait RecordChecksum extends DeltaLogging {
     // Incrementally compute the new version checksum, if the old one is available.
     val ignoreAddFilesInOperation =
       RecordChecksum.operationNamesWhereAddFilesIgnoredForIncrementalCrc.contains(operationName)
+    val ignoreRemoveFilesInOperation =
+      RecordChecksum.operationNamesWhereRemoveFilesIgnoredForIncrementalCrc.contains(operationName)
+    // Retrieve protocol/metadata in order of precedence:
+    // 1. Use provided protocol/metadata if available
+    // 2. Look for a protocol/metadata action in the incremental set of actions to be applied
+    // 3. Use protocol/metadata from previous version's checksum
+    // 4. Return PROTOCOL_MISSING/METADATA_MISSING error if all attempts fail
+    val protocol = protocolOpt
+      .orElse(actions.collectFirst { case p: Protocol => p })
+      .orElse(Option(oldVersionChecksum.protocol))
+      .getOrElse {
+        return Left("PROTOCOL_MISSING")
+      }
+    val metadata = metadataOpt
+      .orElse(actions.collectFirst { case m: Metadata => m })
+      .orElse(Option(oldVersionChecksum.metadata))
+      .getOrElse {
+        return Left("METADATA_MISSING")
+      }
+    val persistentDVsOnTableReadable =
+      DeletionVectorUtils.deletionVectorsReadable(protocol, metadata)
+    val persistentDVsOnTableWritable =
+      DeletionVectorUtils.deletionVectorsWritable(protocol, metadata)
 
     computeNewChecksum(
       versionToCompute,
@@ -211,7 +245,10 @@ trait RecordChecksum extends DeltaLogging {
       oldSnapshot,
       actions,
       ignoreAddFilesInOperation,
-      includeAddFilesInCrc
+      ignoreRemoveFilesInOperation,
+      includeAddFilesInCrc,
+      persistentDVsOnTableReadable,
+      persistentDVsOnTableWritable
     )
   }
 
@@ -227,6 +264,12 @@ trait RecordChecksum extends DeltaLogging {
    * @param actions used to incrementally compute new checksum.
    * @param ignoreAddFiles for transactions whose add file actions refer to already-existing files
    *                       e.g., [[DeltaOperations.ComputeStats]] transactions.
+   * @param ignoreRemoveFiles for transactions that generate RemoveFiles for auxiliary files
+   *                          e.g., [[DeltaOperations.AddDeletionVectorsTombstones]].
+   * @param persistentDVsOnTableReadable Indicates whether commands modifying this table are allowed
+   *                                      to read deletion vectors.
+   * @param persistentDVsOnTableWritable Indicates whether commands modifying this table are allowed
+   *                                      to create new deletion vectors.
    * @return Either the new checksum or error code string if the checksum could not be computed
    *         incrementally due to some reason.
    */
@@ -239,7 +282,10 @@ trait RecordChecksum extends DeltaLogging {
       oldSnapshot: Option[Snapshot],
       actions: Seq[Action],
       ignoreAddFiles: Boolean,
-      includeAllFilesInCRC: Boolean
+      ignoreRemoveFiles: Boolean,
+      includeAllFilesInCRC: Boolean,
+      persistentDVsOnTableReadable: Boolean,
+      persistentDVsOnTableWritable: Boolean
   ) : Either[String, VersionChecksum] = {
     // scalastyle:on argcount
     oldSnapshot.foreach(s => require(s.version == (attemptVersion - 1)))
@@ -248,12 +294,55 @@ trait RecordChecksum extends DeltaLogging {
     var protocol = oldVersionChecksum.protocol
     var metadata = oldVersionChecksum.metadata
 
+    // In incremental computation, tables initialized with DVs disabled contain None DV
+    // statistics. DV statistics remain None even if DVs are enabled at a random point
+    // during the lifecycle of a table. That can only change if a full snapshot recomputation
+    // is invoked while DVs are enabled for the table.
+    val conf = spark.sessionState.conf
+    val isFirstVersion = oldSnapshot.forall(_.version == -1)
+    val checksumDVMetricsEnabled = conf.getConf(DeltaSQLConf.DELTA_CHECKSUM_DV_METRICS_ENABLED)
+    val deletedRecordCountsHistogramEnabled =
+      conf.getConf(DeltaSQLConf.DELTA_DELETED_RECORD_COUNTS_HISTOGRAM_ENABLED)
+
+    // For tables where DVs were disabled later on in the table lifecycle we want to maintain DV
+    // statistics.
+    val computeDVMetricsWhenDVsNotWritable = persistentDVsOnTableReadable &&
+      oldVersionChecksum.numDeletionVectorsOpt.isDefined && !isFirstVersion
+
+    val computeDVMetrics = checksumDVMetricsEnabled &&
+      (persistentDVsOnTableWritable || computeDVMetricsWhenDVsNotWritable)
+
+    // DV-related metrics. When the old checksum does not contain DV statistics, we attempt to
+    // pick them up from the old snapshot.
+    var numDeletedRecordsOpt = if (computeDVMetrics) {
+      oldVersionChecksum.numDeletedRecordsOpt
+        .orElse(oldSnapshot.flatMap(_.numDeletedRecordsOpt))
+    } else None
+    var numDeletionVectorsOpt = if (computeDVMetrics) {
+      oldVersionChecksum.numDeletionVectorsOpt
+        .orElse(oldSnapshot.flatMap(_.numDeletionVectorsOpt))
+    } else None
+    val deletedRecordCountsHistogramOpt =
+      if (computeDVMetrics && deletedRecordCountsHistogramEnabled) {
+        oldVersionChecksum.deletedRecordCountsHistogramOpt
+          .orElse(oldSnapshot.flatMap(_.deletedRecordCountsHistogramOpt))
+          .map(h => DeletedRecordCountsHistogram(h.deletedRecordCounts.clone()))
+      } else None
+
     var inCommitTimestamp : Option[Long] = None
     actions.foreach {
       case a: AddFile if !ignoreAddFiles =>
         tableSizeBytes += a.size
         numFiles += 1
 
+        // Only accumulate DV statistics when base stats are not None.
+        val (dvCount, dvCardinality) =
+          Option(a.deletionVector).map(1L -> _.cardinality).getOrElse(0L -> 0L)
+        numDeletedRecordsOpt = numDeletedRecordsOpt.map(_ + dvCardinality)
+        numDeletionVectorsOpt = numDeletionVectorsOpt.map(_ + dvCount)
+        deletedRecordCountsHistogramOpt.foreach(_.insert(dvCardinality))
+
+      case _: RemoveFile if ignoreRemoveFiles => ()
 
       // extendedFileMetadata == true implies fields partitionValues, size, and tags are present
       case r: RemoveFile if r.extendedFileMetadata == Some(true) =>
@@ -261,6 +350,12 @@ trait RecordChecksum extends DeltaLogging {
         tableSizeBytes -= size
         numFiles -= 1
 
+        // Only accumulate DV statistics when base stats are not None.
+        val (dvCount, dvCardinality) =
+          Option(r.deletionVector).map(1L -> _.cardinality).getOrElse(0L -> 0L)
+        numDeletedRecordsOpt = numDeletedRecordsOpt.map(_ - dvCardinality)
+        numDeletionVectorsOpt = numDeletionVectorsOpt.map(_ - dvCount)
+        deletedRecordCountsHistogramOpt.foreach(_.remove(dvCardinality))
 
       case r: RemoveFile =>
         // Report the failure to usage logs.
@@ -359,6 +454,8 @@ trait RecordChecksum extends DeltaLogging {
       txnId = txnIdOpt,
       tableSizeBytes = tableSizeBytes,
       numFiles = numFiles,
+      numDeletedRecordsOpt = numDeletedRecordsOpt,
+      numDeletionVectorsOpt = numDeletionVectorsOpt,
       numMetadata = 1,
       numProtocol = 1,
       inCommitTimestampOpt = inCommitTimestamp,
@@ -367,6 +464,7 @@ trait RecordChecksum extends DeltaLogging {
       setTransactions = setTransactions,
       domainMetadata = domainMetadata,
       allFiles = allFiles,
+      deletedRecordCountsHistogramOpt = deletedRecordCountsHistogramOpt,
       histogramOpt = None
     ))
   }
@@ -524,13 +622,20 @@ trait RecordChecksum extends DeltaLogging {
 
 object RecordChecksum {
   // Operations where we should ignore AddFiles in the incremental checksum computation.
-  val operationNamesWhereAddFilesIgnoredForIncrementalCrc = Set(
+  private[delta] val operationNamesWhereAddFilesIgnoredForIncrementalCrc = Set(
     // The transaction that computes stats is special -- it re-adds files that already exist, in
     // order to update their min/max stats. We should not count those against the totals.
     DeltaOperations.ComputeStats(Seq.empty).name,
     // Backfill/Tagging re-adds existing AddFiles without changing the underlying data files.
     // Incremental commits should ignore backfill commits.
     DeltaOperations.RowTrackingBackfill().name
+  )
+
+  // Operations where we should ignore RemoveFiles in the incremental checksum computation.
+  private[delta] val operationNamesWhereRemoveFilesIgnoredForIncrementalCrc = Set(
+    // Deletion vector tombstones are only required to protect DVs from vacuum. They should be
+    // ignored in checksum calculation.
+    DeltaOperations.AddDeletionVectorsTombstones.name
   )
 }
 
@@ -792,6 +897,15 @@ trait ValidateChecksum extends DeltaLogging { self: Snapshot =>
           "version" -> version)
         errorMap += ("domainMetadata" -> "domainMetadata mismatch")
         detailedErrorMapForUsageLogs += ("domainMetadata" -> JsonUtils.toJson(eventData))
+      }
+    }
+    // Deletion vectors metrics.
+    if (DeletionVectorUtils.deletionVectorsReadable(self)) {
+      (checksum.numDeletedRecordsOpt zip computedState.numDeletedRecordsOpt).foreach {
+        case (a, b) => compare(a, b, "Number of deleted records", "numDeletedRecordsOpt")
+      }
+      (checksum.numDeletionVectorsOpt zip computedState.numDeletionVectorsOpt).foreach {
+        case (a, b) => compare(a, b, "Number of deleted vectors", "numDeletionVectorsOpt")
       }
     }
 

@@ -21,15 +21,16 @@ import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.ClassicColumnConversions._
-import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingMode, DeltaErrors, DeltaLog, GeneratedColumn, NoMapping, TypeWidening}
+import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingMode, DeltaErrors, DeltaLog, GeneratedColumn, NoMapping, TypeWidening, TypeWideningMode}
 import org.apache.spark.sql.delta.{RowCommitVersion, RowId}
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils._
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.sources.{DeltaSQLConf, DeltaStreamUtils}
 import org.apache.spark.sql.util.ScalaExtensions._
 
 import org.apache.spark.internal.MDC
@@ -39,6 +40,7 @@ import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.expressions.{Alias, AttributeReference, Expression, GetArrayItem, GetArrayStructFields, GetMapValue, GetStructField}
 import org.apache.spark.sql.catalyst.plans.logical.{LocalRelation, Project}
 import org.apache.spark.sql.catalyst.util.CharVarcharUtils
+import org.apache.spark.sql.execution.streaming.IncrementalExecution
 import org.apache.spark.sql.functions.{col, struct}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
@@ -362,7 +364,12 @@ def normalizeColumnNamesInDataType(
         }
         expression
       }
-      data.select(aliasExpressions: _*)
+      data.queryExecution match {
+        case incrementalExecution: IncrementalExecution =>
+          DeltaStreamUtils.selectFromStreamingDataFrame(
+            incrementalExecution, data.toDF(), aliasExpressions: _*)
+        case _ => data.select(aliasExpressions: _*)
+      }
     }
   }
 
@@ -382,8 +389,8 @@ def normalizeColumnNamesInDataType(
    * new schema of a Delta table can be used with a previously analyzed LogicalPlan. Our
    * rules are to return false if:
    *   - Dropping any column that was present in the existing schema, if not allowMissingColumns
-   *   - Any change of datatype, if not allowTypeWidening. Any non-widening change of datatype
-   *     otherwise.
+   *   - Any change of datatype, unless eligible for widening. The caller specifies eligible type
+   *     changes via `typeWideningMode`.
    *   - Change of partition columns. Although analyzed LogicalPlan is not changed,
    *     physical structure of data is changed and thus is considered not read compatible.
    *   - If `forbidTightenNullability` = true:
@@ -404,7 +411,7 @@ def normalizeColumnNamesInDataType(
       readSchema: StructType,
       forbidTightenNullability: Boolean = false,
       allowMissingColumns: Boolean = false,
-      allowTypeWidening: Boolean = false,
+      typeWideningMode: TypeWideningMode = TypeWideningMode.NoTypeWidening,
       newPartitionColumns: Seq[String] = Seq.empty,
       oldPartitionColumns: Seq[String] = Seq.empty): Boolean = {
 
@@ -419,7 +426,7 @@ def normalizeColumnNamesInDataType(
     def isDatatypeReadCompatible(existing: DataType, newtype: DataType): Boolean = {
       (existing, newtype) match {
         case (e: StructType, n: StructType) =>
-          isReadCompatible(e, n, forbidTightenNullability, allowTypeWidening = allowTypeWidening)
+          isReadCompatible(e, n, forbidTightenNullability, typeWideningMode = typeWideningMode)
         case (e: ArrayType, n: ArrayType) =>
           // if existing elements are non-nullable, so should be the new element
           isNullabilityCompatible(e.containsNull, n.containsNull) &&
@@ -429,8 +436,8 @@ def normalizeColumnNamesInDataType(
           isNullabilityCompatible(e.valueContainsNull, n.valueContainsNull) &&
             isDatatypeReadCompatible(e.keyType, n.keyType) &&
             isDatatypeReadCompatible(e.valueType, n.valueType)
-        case (e: AtomicType, n: AtomicType) if allowTypeWidening =>
-          TypeWidening.isTypeChangeSupportedForSchemaEvolution(e, n)
+        case (e: AtomicType, n: AtomicType)
+          if typeWideningMode.shouldWidenType(fromType = e, toType = n) => true
         case (a, b) => a == b
       }
     }

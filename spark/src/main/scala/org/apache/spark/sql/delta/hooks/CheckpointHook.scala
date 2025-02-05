@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.hooks
 
-import org.apache.spark.sql.delta.{CheckpointInstance, OptimisticTransactionImpl, Snapshot}
+import org.apache.spark.sql.delta.{DeltaTransaction, Snapshot}
 import org.apache.spark.sql.delta.actions.Action
 
 import org.apache.spark.sql.SparkSession
@@ -27,7 +27,7 @@ object CheckpointHook extends PostCommitHook {
 
   override def run(
       spark: SparkSession,
-      txn: OptimisticTransactionImpl,
+      txn: DeltaTransaction,
       committedVersion: Long,
       postCommitSnapshot: Snapshot,
       committedActions: Seq[Action]): Unit = {

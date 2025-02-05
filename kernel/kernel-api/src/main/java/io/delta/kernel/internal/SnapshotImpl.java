@@ -26,11 +26,13 @@ import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.metrics.SnapshotQueryContext;
+import io.delta.kernel.internal.metrics.SnapshotReportImpl;
 import io.delta.kernel.internal.replay.CreateCheckpointIterator;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
-import io.delta.kernel.internal.snapshot.TableCommitCoordinatorClientHandler;
 import io.delta.kernel.internal.util.VectorUtils;
+import io.delta.kernel.metrics.SnapshotReport;
 import io.delta.kernel.types.StructType;
 import java.util.List;
 import java.util.Map;
@@ -46,21 +48,24 @@ public class SnapshotImpl implements Snapshot {
   private final Metadata metadata;
   private final LogSegment logSegment;
   private Optional<Long> inCommitTimestampOpt;
+  private final SnapshotReport snapshotReport;
 
   public SnapshotImpl(
       Path dataPath,
       LogSegment logSegment,
       LogReplay logReplay,
       Protocol protocol,
-      Metadata metadata) {
+      Metadata metadata,
+      SnapshotQueryContext snapshotContext) {
     this.logPath = new Path(dataPath, "_delta_log");
     this.dataPath = dataPath;
-    this.version = logSegment.version;
+    this.version = logSegment.getVersion();
     this.logSegment = logSegment;
     this.logReplay = logReplay;
     this.protocol = protocol;
     this.metadata = metadata;
     this.inCommitTimestampOpt = Optional.empty();
+    this.snapshotReport = SnapshotReportImpl.forSuccess(snapshotContext);
   }
 
   /////////////////
@@ -68,8 +73,13 @@ public class SnapshotImpl implements Snapshot {
   /////////////////
 
   @Override
-  public long getVersion(Engine engine) {
+  public long getVersion() {
     return version;
+  }
+
+  @Override
+  public List<String> getPartitionColumnNames() {
+    return VectorUtils.toJavaList(getMetadata().getPartitionColumns());
   }
 
   /**
@@ -89,26 +99,27 @@ public class SnapshotImpl implements Snapshot {
     if (IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata)) {
       if (!inCommitTimestampOpt.isPresent()) {
         Optional<CommitInfo> commitInfoOpt =
-            CommitInfo.getCommitInfoOpt(engine, logPath, logSegment.version);
+            CommitInfo.getCommitInfoOpt(engine, logPath, logSegment.getVersion());
         inCommitTimestampOpt =
             Optional.of(
                 CommitInfo.getRequiredInCommitTimestamp(
-                    commitInfoOpt, String.valueOf(logSegment.version), dataPath));
+                    commitInfoOpt, String.valueOf(logSegment.getVersion()), dataPath));
       }
       return inCommitTimestampOpt.get();
     } else {
-      return logSegment.lastCommitTimestamp;
+      return logSegment.getLastCommitTimestamp();
     }
   }
 
   @Override
-  public StructType getSchema(Engine engine) {
+  public StructType getSchema() {
     return getMetadata().getSchema();
   }
 
   @Override
-  public ScanBuilder getScanBuilder(Engine engine) {
-    return new ScanBuilderImpl(dataPath, protocol, metadata, getSchema(engine), logReplay, engine);
+  public ScanBuilder getScanBuilder() {
+    return new ScanBuilderImpl(
+        dataPath, protocol, metadata, getSchema(), logReplay, snapshotReport);
   }
 
   ///////////////////
@@ -127,8 +138,8 @@ public class SnapshotImpl implements Snapshot {
     return protocol;
   }
 
-  public List<String> getPartitionColumnNames(Engine engine) {
-    return VectorUtils.toJavaList(getMetadata().getPartitionColumns());
+  public SnapshotReport getSnapshotReport() {
+    return snapshotReport;
   }
 
   /**
@@ -168,17 +179,5 @@ public class SnapshotImpl implements Snapshot {
    */
   public Optional<Long> getLatestTransactionVersion(Engine engine, String applicationId) {
     return logReplay.getLatestTransactionIdentifier(engine, applicationId);
-  }
-
-  /**
-   * Returns the commit coordinator client handler based on the table metadata in this snapshot.
-   *
-   * @param engine the engine to use for IO operations
-   * @return the commit coordinator client handler for this snapshot or empty if the metadata is not
-   *     configured to use the commit coordinator.
-   */
-  public Optional<TableCommitCoordinatorClientHandler> getTableCommitCoordinatorClientHandlerOpt(
-      Engine engine) {
-    return Optional.empty();
   }
 }

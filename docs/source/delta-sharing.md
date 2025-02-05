@@ -182,6 +182,10 @@ Please remember to set the spark configurations mentioned in [_](delta-batch.md#
 | - | - |
 | [Deletion Vectors](delta-deletion-vectors.md) | 3.1.0 | 
 | [Column Mapping](delta-column-mapping.md) | 3.1.0 |
+| [Timestamp without Timezone](https://spark.apache.org/docs/latest/sql-ref-datatypes.html) | 3.3.0 |
+| [Type widening (Preview)](/delta-type-widening.md) | 3.3.0 |
+| [Variant Type (Preview)](https://github.com/delta-io/delta/blob/master/protocol_rfcs/variant-type.md) | 3.3.0 |
+
 
 Batch queries can be performed as is, because it can automatically resolve the `responseFormat` based on the table features of the shared table.
 An additional option `responseFormat=delta` needs to be set for cdf and streaming queries when reading shared tables with Deletion Vectors or Column Mapping enabled.

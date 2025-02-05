@@ -211,13 +211,13 @@ public interface Transaction {
           if (isIcebergCompatV2Enabled) {
             IcebergCompatV2Utils.validDataFileStatus(dataFileStatus);
           }
-          Row addFileRow =
+          AddFile addFileRow =
               AddFile.convertDataFileStatus(
                   tableRoot,
                   dataFileStatus,
                   ((DataWriteContextImpl) dataWriteContext).getPartitionValues(),
                   true /* dataChange */);
-          return SingleAction.createAddFileSingleAction(addFileRow);
+          return SingleAction.createAddFileSingleAction(addFileRow.toRow());
         });
   }
 }
