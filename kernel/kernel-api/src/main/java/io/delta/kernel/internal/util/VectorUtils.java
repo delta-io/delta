@@ -161,21 +161,27 @@ public final class VectorUtils {
       public boolean getBoolean(int rowId) {
         checkArgument(BooleanType.BOOLEAN.equals(dataType));
         checkArgument(rowId >= 0 && rowId < values.size(), "Invalid rowId: %s", rowId);
-        return (Boolean) values.get(rowId);
+        Object value = values.get(rowId);
+        checkArgument(value instanceof Boolean);
+        return (Boolean) value;
       }
 
       @Override
       public byte getByte(int rowId) {
         checkArgument(ByteType.BYTE.equals(dataType));
         checkArgument(rowId >= 0 && rowId < values.size(), "Invalid rowId: %s", rowId);
-        return (byte) values.get(rowId);
+        Object value = values.get(rowId);
+        checkArgument(value instanceof Byte);
+        return (Byte) value;
       }
 
       @Override
       public short getShort(int rowId) {
         checkArgument(ShortType.SHORT.equals(dataType));
         checkArgument(rowId >= 0 && rowId < values.size(), "Invalid rowId: %s", rowId);
-        return (short) values.get(rowId);
+        Object value = values.get(rowId);
+        checkArgument(value instanceof Short);
+        return (Short) value;
       }
 
       @Override
@@ -184,7 +190,7 @@ public final class VectorUtils {
         checkArgument(rowId >= 0 && rowId < values.size(), "Invalid rowId: %s", rowId);
         Object value = values.get(rowId);
         checkArgument(value instanceof Integer);
-        return (Integer) values.get(rowId);
+        return (Integer) value;
       }
 
       @Override
@@ -193,7 +199,7 @@ public final class VectorUtils {
         checkArgument(rowId >= 0 && rowId < values.size(), "Invalid rowId: %s", rowId);
         Object value = values.get(rowId);
         checkArgument(value instanceof Long);
-        return (Long) values.get(rowId);
+        return (Long) value;
       }
 
       @Override
@@ -202,7 +208,7 @@ public final class VectorUtils {
         checkArgument(rowId >= 0 && rowId < values.size(), "Invalid rowId: %s", rowId);
         Object value = values.get(rowId);
         checkArgument(value instanceof Float);
-        return (Float) values.get(rowId);
+        return (Float) value;
       }
 
       @Override
@@ -210,8 +216,8 @@ public final class VectorUtils {
         checkArgument(DoubleType.DOUBLE.equals(dataType));
         checkArgument(rowId >= 0 && rowId < values.size(), "Invalid rowId: %s", rowId);
         Object value = values.get(rowId);
-        checkArgument(value instanceof Float);
-        return (Double) values.get(rowId);
+        checkArgument(value instanceof Double);
+        return (Double) value;
       }
 
       @Override
@@ -220,7 +226,7 @@ public final class VectorUtils {
         checkArgument(rowId >= 0 && rowId < values.size(), "Invalid rowId: %s", rowId);
         Object value = values.get(rowId);
         checkArgument(value instanceof BigDecimal);
-        return (BigDecimal) values.get(rowId);
+        return (BigDecimal) value;
       }
 
       @Override
@@ -229,7 +235,7 @@ public final class VectorUtils {
         checkArgument(rowId >= 0 && rowId < values.size(), "Invalid rowId: %s", rowId);
         Object value = values.get(rowId);
         checkArgument(value instanceof String);
-        return (String) values.get(rowId);
+        return (String) value;
       }
 
       @Override
@@ -238,7 +244,7 @@ public final class VectorUtils {
         checkArgument(rowId >= 0 && rowId < values.size(), "Invalid rowId: %s", rowId);
         Object value = values.get(rowId);
         checkArgument(value instanceof byte[]);
-        return (byte[]) values.get(rowId);
+        return (byte[]) value;
       }
 
       @Override
@@ -247,7 +253,7 @@ public final class VectorUtils {
         checkArgument(rowId >= 0 && rowId < values.size(), "Invalid rowId: %s", rowId);
         Object value = values.get(rowId);
         checkArgument(value instanceof ArrayValue);
-        return (ArrayValue) values.get(rowId);
+        return (ArrayValue) value;
       }
 
       @Override
@@ -256,7 +262,7 @@ public final class VectorUtils {
         checkArgument(rowId >= 0 && rowId < values.size(), "Invalid rowId: %s", rowId);
         Object value = values.get(rowId);
         checkArgument(value instanceof MapType);
-        return (MapValue) values.get(rowId);
+        return (MapValue) value;
       }
 
       @Override

@@ -22,7 +22,7 @@ import static io.delta.kernel.internal.TransactionImpl.DEFAULT_WRITE_VERSION;
 import static io.delta.kernel.internal.util.ColumnMapping.isColumnMappingModeEnabled;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames;
-import static io.delta.kernel.internal.util.VectorUtils.stringArrayValue;
+import static io.delta.kernel.internal.util.VectorUtils.buildArrayValue;
 import static io.delta.kernel.internal.util.VectorUtils.stringStringMapValue;
 import static java.util.Objects.requireNonNull;
 
@@ -40,6 +40,7 @@ import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
 import io.delta.kernel.internal.util.SchemaUtils;
 import io.delta.kernel.internal.util.Tuple2;
+import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import java.util.*;
 import org.slf4j.Logger;
@@ -284,7 +285,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         new Format(), /* format */
         schema.get().toJson(), /* schemaString */
         schema.get(), /* schema */
-        stringArrayValue(partitionColumnsCasePreserving), /* partitionColumns */
+        buildArrayValue(partitionColumnsCasePreserving, StringType.STRING), /* partitionColumns */
         Optional.of(currentTimeMillis), /* createdTime */
         stringStringMapValue(Collections.emptyMap()) /* configuration */);
   }

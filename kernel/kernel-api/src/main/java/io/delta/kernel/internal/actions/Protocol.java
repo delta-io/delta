@@ -15,7 +15,7 @@
  */
 package io.delta.kernel.internal.actions;
 
-import static io.delta.kernel.internal.util.VectorUtils.stringArrayValue;
+import static io.delta.kernel.internal.util.VectorUtils.buildArrayValue;
 
 import io.delta.kernel.data.*;
 import io.delta.kernel.internal.TableFeatures;
@@ -105,8 +105,8 @@ public class Protocol {
     Map<Integer, Object> protocolMap = new HashMap<>();
     protocolMap.put(0, minReaderVersion);
     protocolMap.put(1, minWriterVersion);
-    protocolMap.put(2, stringArrayValue(readerFeatures));
-    protocolMap.put(3, stringArrayValue(writerFeatures));
+    protocolMap.put(2, buildArrayValue(readerFeatures, StringType.STRING));
+    protocolMap.put(3, buildArrayValue(writerFeatures, StringType.STRING));
 
     return new GenericRow(Protocol.FULL_SCHEMA, protocolMap);
   }
