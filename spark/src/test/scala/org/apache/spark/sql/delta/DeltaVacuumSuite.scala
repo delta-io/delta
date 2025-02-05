@@ -1486,6 +1486,53 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
       }
     }
   }
+
+  test(s"Ensure vacuum info is persisted even after full Vacuum") {
+    val tableName = "testTable"
+    withTable(tableName) {
+      withSQLConf(
+        DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false",
+        DeltaSQLConf.LITE_VACUUM_ENABLED.key -> "false"
+      ) {
+        spark.range(0, 50, step = 1, numPartitions = 5).write.format("delta")
+          .saveAsTable(tableName) // version 0
+        spark.sql(s"DELETE from $tableName") // version 1
+        spark.range(0, 50, step = 1, numPartitions = 5).write.format("delta").mode("append")
+          .saveAsTable(tableName) // version 2
+
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+        val basePath = deltaLog.dataPath.toString
+        val table = DeltaTableV2(spark, new Path(basePath))
+
+        assertNumFiles(deltaLog, addFiles = 5, addFilesWithDVs = 0, dvFiles = 0,
+          dataFiles = 10)
+
+        // Vacuums until version 2 and persists that info in last Vacuum info
+        spark.sql(s"Vacuum $tableName FULL RETAIN 0 HOURS")
+        assertNumFiles(deltaLog, addFiles = 5, addFilesWithDVs = 0, dvFiles = 0,
+          dataFiles = 5)
+
+        spark.sql(s"DELETE from $tableName") // version 3
+
+        spark.range(0, 50, step = 1, numPartitions = 5).write.format("delta").mode("append")
+          .saveAsTable(tableName) // version 4
+
+        assertNumFiles(deltaLog, addFiles = 5, addFilesWithDVs = 0, dvFiles = 0,
+          dataFiles = 10)
+
+        // Checkpoints will allow us to construct the table snapshot
+        deltaLog.createCheckpointAtVersion(2L)
+        deleteCommitFile(table, 0L) // delete version 0
+        deleteCommitFile(table, 1L) // delete version 1
+
+        // If vacuum info is not persisted after the full Vacuum, the following LITE vacuum
+        // would have failed.
+        spark.sql(s"Vacuum $tableName LITE RETAIN 0 HOURS")
+        assertNumFiles(deltaLog, addFiles = 5, addFilesWithDVs = 0, dvFiles = 0,
+          dataFiles = 5)
+      }
+    }
+  }
 }
 
 class DeltaVacuumWithCoordinatedCommitsBatch100Suite extends DeltaVacuumSuite {
@@ -1509,75 +1556,97 @@ class DeltaLiteVacuumSuite
     super.afterAll()
   }
 
-  test("lite vacuum not possible - commit 0 is missing") {
-    withSQLConf(
-      DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false"
-    ) {
-      withTempDir { dir =>
-        // create table versions 0 and 1
-        spark.range(10)
-          .write
-          .format("delta")
-          .save(dir.getAbsolutePath)
-        spark.range(10)
-          .write
-          .format("delta")
-          .mode("append")
-          .save(dir.getAbsolutePath)
-        val deltaTable = io.delta.tables.DeltaTable.forPath(dir.getAbsolutePath)
-        val table = DeltaTableV2(spark, new Path(dir.getAbsolutePath))
-        deltaTable.delete()
-        // Checkpoints will allow us to construct the table snapshot
-        table.deltaLog.createCheckpointAtVersion(2L)
-        deleteCommitFile(table, 0L) // delete version 0
+  Seq(true, false).foreach { errorEnabled =>
+      test(s"lite vacuum not possible - commit 0 is missing: errorEnabled: $errorEnabled ") {
+      withSQLConf(
+        DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false",
+        DatabricksSQLConf.LITE_VACUUM_ERROR_ENABLED.key -> errorEnabled.toString
+      ) {
+        withTempDir { dir =>
+          // create table versions 0 and 1
+          spark.range(10)
+            .write
+            .format("delta")
+            .save(dir.getAbsolutePath)
+          spark.range(10)
+            .write
+            .format("delta")
+            .mode("append")
+            .save(dir.getAbsolutePath)
+          val deltaTable = io.delta.tables.DeltaTable.forPath(dir.getAbsolutePath)
+          val table = DeltaTableV2(spark, new Path(dir.getAbsolutePath))
+          deltaTable.delete()
+          assertNumFiles(table.deltaLog, addFiles = 0, addFilesWithDVs = 0, dvFiles = 0,
+            dataFiles = 4)
+          // Checkpoints will allow us to construct the table snapshot
+          table.deltaLog.createCheckpointAtVersion(2L)
+          deleteCommitFile(table, 0L) // delete version 0
 
-        val e = intercept[DeltaIllegalStateException] {
-          VacuumCommand.gc(spark, table, dryRun = true, retentionHours = Some(0))
+          if (errorEnabled) {
+            val e = intercept[DeltaIllegalStateException] {
+              VacuumCommand.gc(spark, table, dryRun = false, retentionHours = Some(0))
+            }
+            assert(e.getMessage.contains("VACUUM LITE cannot delete all eligible files as some files" +
+              " are not referenced by the Delta log. Please run VACUUM FULL."))
+          } else {
+            VacuumCommand.gc(spark, table, dryRun = false, retentionHours = Some(0))
+            assertNumFiles(table.deltaLog, addFiles = 0, addFilesWithDVs = 0, dvFiles = 0,
+              dataFiles = 0)
+          }
         }
-        assert(e.getMessage.contains("VACUUM LITE cannot delete all eligible files as some files" +
-          " are not referenced by the Delta log. Please run VACUUM FULL."))
       }
     }
   }
 
-  test("lite vacuum not possible - commits since last vacuum is missing") {
-    withSQLConf(
-      DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false"
-    ) {
-      withTempDir { dir =>
-        // create table - version 0
-        spark.range(10)
-          .write
-          .format("delta")
-          .save(dir.getAbsolutePath)
-        val deltaTable = io.delta.tables.DeltaTable.forPath(dir.getAbsolutePath)
-        val table = DeltaTableV2(spark, new Path(dir.getAbsolutePath))
-        deltaTable.delete() // version 1
-        // The following Vacuum saves latestCommitVersionOutsideOfRetentionWindow as 1
-        VacuumCommand.gc(spark, table, dryRun = false, retentionHours = Some(0))
-        spark.range(10)
-          .write
-          .format("delta")
-          .mode("append")
-          .save(dir.getAbsolutePath) // version 2
-        deltaTable.delete() // version 3
-        // Checkpoint will allow us to construct the table snapshot
-        table.deltaLog.createCheckpointAtVersion(3L)
-        // Deleting version 0 shouldn't fail the vacuum since
-        // latestCommitVersionOutsideOfRetentionWindow is already at 1
-        deleteCommitFile(table, 0L)// delete version 0.
-        VacuumCommand.gc(spark, table, dryRun = true, retentionHours = Some(0))
-        // Since commit versions 1 and 2 are required for lite vacuum, deleting them will
-        // fail the command.
-        for (i <- 1 to 2) {
-          deleteCommitFile(table, i)
-        }
-
-        val e = intercept[DeltaIllegalStateException] {
+  Seq(true, false).foreach { errorEnabled =>
+    test(s"lite vacuum not possible - commits since last vacuum is missing:" +
+      s" errorEnabled: $errorEnabled") {
+      withSQLConf(
+        DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false",
+        DatabricksSQLConf.LITE_VACUUM_ERROR_ENABLED.key -> errorEnabled.toString
+      ) {
+        withTempDir { dir =>
+          // create table - version 0
+          spark.range(10)
+            .write
+            .format("delta")
+            .save(dir.getAbsolutePath)
+          val deltaTable = io.delta.tables.DeltaTable.forPath(dir.getAbsolutePath)
+          val table = DeltaTableV2(spark, new Path(dir.getAbsolutePath))
+          deltaTable.delete() // version 1
+          // The following Vacuum saves latestCommitVersionOutsideOfRetentionWindow as 1
+          VacuumCommand.gc(spark, table, dryRun = false, retentionHours = Some(0))
+          spark.range(10)
+            .write
+            .format("delta")
+            .mode("append")
+            .save(dir.getAbsolutePath) // version 2
+          deltaTable.delete() // version 3
+          // Checkpoint will allow us to construct the table snapshot
+          table.deltaLog.createCheckpointAtVersion(3L)
+          assertNumFiles(table.deltaLog, addFiles = 0, addFilesWithDVs = 0, dvFiles = 0,
+            dataFiles = 2)
+          // Deleting version 0 shouldn't fail the vacuum since
+          // latestCommitVersionOutsideOfRetentionWindow is already at 1
+          deleteCommitFile(table, 0L) // delete version 0.
           VacuumCommand.gc(spark, table, dryRun = true, retentionHours = Some(0))
+          // Since commit versions 1 and 2 are required for lite vacuum, deleting them will
+          // fail the command.
+          for (i <- 1 to 2) {
+            deleteCommitFile(table, i)
+          }
+          if (errorEnabled) {
+            val e = intercept[DeltaIllegalStateException] {
+              VacuumCommand.gc(spark, table, dryRun = false, retentionHours = Some(0))
+            }
+            assert(e.getMessage.contains("VACUUM LITE cannot delete all eligible files as some files" +
+              " are not referenced by the Delta log. Please run VACUUM FULL."))
+          } else {
+            VacuumCommand.gc(spark, table, dryRun = false, retentionHours = Some(0))
+            assertNumFiles(table.deltaLog, addFiles = 0, addFilesWithDVs = 0, dvFiles = 0,
+              dataFiles = 0)
+          }
         }
-        assert(e.getMessage.contains("VACUUM LITE cannot delete all eligible files as some files" +
-          " are not referenced by the Delta log. Please run VACUUM FULL."))
       }
     }
   }

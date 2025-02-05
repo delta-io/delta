@@ -283,7 +283,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       val defaultType = if (isLiteVacuumEnabled) VacuumType.LITE else VacuumType.FULL
       val vacuumType = vacuumTypeOpt.map(VacuumType.withName).getOrElse(defaultType)
       val latestCommitVersionOutsideOfRetentionWindowOpt: Option[Long] =
-        if (vacuumType == VacuumType.LITE) {
+        if (spark.sessionState.conf.getConf(DeltaSQLConf.PERSIST_VACUUM_INFO_ENABLED)) {
           try {
             val timestamp = new Timestamp(deleteBeforeTimestamp)
             val commit = new DeltaHistoryManager(deltaLog).getActiveCommitAtTime(
@@ -529,10 +529,12 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
     //    from 0
     // 2. Last vacuum info is there but metadata cleanup has cleaned up commit files since
     // the last Vacuum's latest commit version outside of the retention window.
-    if (earliestCommitVersion != 0 &&
-      latestCommitVersionOutsideOfRetentionWindowAsOfLastVacuumOpt
-        .forall(_ < earliestCommitVersion)) {
-      throw DeltaErrors.deltaCannotVacuumLite()
+    if (spark.conf.get(DatabricksSQLConf.LITE_VACUUM_ERROR_ENABLED)) {
+      if (earliestCommitVersion != 0 &&
+        latestCommitVersionOutsideOfRetentionWindowAsOfLastVacuumOpt
+          .forall(_ < earliestCommitVersion)) {
+        throw DeltaErrors.deltaCannotVacuumLite()
+      }
     }
 
     // The start and the end commit versions give the range of commit files we want to look into
