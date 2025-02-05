@@ -409,10 +409,11 @@ public class CreateTableAndInsertData extends BaseTableWriter {
         // for every 10 versions.
         for (int i = 0; i < 12; i++) {
             TransactionCommitResult commitResult = insertDataIntoUnpartitionedTable(tablePath);
-            if (commitResult.isReadyForCheckpoint()) {
+            for(PostCommitAction action: commitResult.getPostCommitActions())
+            if (action.getType().equals("checkpoint")) {
                 // Checkpoint the table
-                Table.forPath(engine, tablePath).checkpoint(engine, commitResult.getVersion());
-                didCheckpoint = true;
+               action.threadSafeInvoke();
+               didCheckpoint = true;
             }
         }
 

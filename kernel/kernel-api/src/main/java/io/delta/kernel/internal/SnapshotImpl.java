@@ -25,6 +25,7 @@ import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.checksum.CRCInfo;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.metrics.SnapshotReportImpl;
@@ -151,6 +152,10 @@ public class SnapshotImpl implements Snapshot {
    */
   public Map<String, DomainMetadata> getDomainMetadataMap() {
     return logReplay.getDomainMetadataMap();
+  }
+
+  public Optional<CRCInfo> getCurrentCrcInfo() {
+    return logReplay.getCurrentCrcInfo();
   }
 
   public Metadata getMetadata() {
