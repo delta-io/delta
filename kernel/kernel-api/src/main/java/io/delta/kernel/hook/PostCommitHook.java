@@ -21,14 +21,17 @@ import java.io.IOException;
 
 /**
  * A hook for executing operation after a transaction commit. Hooks are added in the Transaction and
- * engine need to invoke the hook explicitly for executing the operation.
+ * engine need to invoke the hook explicitly for executing the operation. Supported operations are
+ * listed in {@link PostCommitHookType}
  */
 public interface PostCommitHook {
 
   enum PostCommitHookType {
     /**
      * Write a new checkpoint at the version committed by the txn. This hook is present when the
-     * table is ready for checkpoint according to its configured checkpoint interval.
+     * table is ready for checkpoint according to its configured checkpoint interval. To perform
+     * this operation, previous checkpoint (if present) and logs after checkpoint will be read to
+     * construct new checkpoint.
      */
     CHECKPOINT,
   }
