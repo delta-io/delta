@@ -352,7 +352,7 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
       spark.sql(
         s"INSERT INTO delta.`$tablePath` SELECT 1L as id"
       )
-        deleteChecksumFileForTable(tablePath, versions = Seq(0, 1))
+      deleteChecksumFileForTable(tablePath, versions = Seq(0, 1))
 
       val table = Table.forPath(defaultEngine, tablePath)
       val snapshot = table.getLatestSnapshot(defaultEngine).asInstanceOf[SnapshotImpl]

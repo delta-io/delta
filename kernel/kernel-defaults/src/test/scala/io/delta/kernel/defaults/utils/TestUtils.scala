@@ -720,15 +720,9 @@ trait TestUtils extends Assertions with SQLHelper {
     resource.getFile
   }
 
-  def deleteChecksumFileForTable(tablePath: String, versions: Seq[Int]): Unit = {
+  def deleteChecksumFileForTable(tablePath: String, versions: Seq[Int]): Unit =
     versions.foreach(
-      v => {
-        Files.deleteIfExists(
-          new File(
-            FileNames.checksumFile(new Path(s"$tablePath/_delta_log"), v).toString
-          ).toPath
-        )
-      }
+      v => Files.deleteIfExists(
+        new File(FileNames.checksumFile(new Path(s"$tablePath/_delta_log"), v).toString).toPath)
     )
-  }
 }
