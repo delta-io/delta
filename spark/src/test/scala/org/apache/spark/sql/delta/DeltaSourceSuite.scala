@@ -144,7 +144,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
 
   test("disallow user specified schema") {
     withTempDir { inputDir =>
-      new File(inputDir, "_delta_log").mkdir()
+      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+      withMetadata(deltaLog, StructType.fromDDL("value STRING"))
+
       val e = intercept[AnalysisException] {
         spark.readStream
           .schema(StructType.fromDDL("a INT, b STRING"))
@@ -154,6 +156,32 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       for (msg <- Seq("Delta does not support specifying the schema at read time")) {
         assert(e.getMessage.contains(msg))
       }
+
+      val e2 = intercept[Exception] {
+        spark.readStream
+          .schema(StructType.fromDDL("value STRING"))
+          .format("delta")
+          .load(inputDir.getCanonicalPath)
+      }
+      assert(e2.getMessage.contains("does not support user-specified schema"))
+    }
+  }
+
+  test("allow user specified schema if consistent: v1 source") {
+    withTempDir { inputDir =>
+      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+      withMetadata(deltaLog, StructType.fromDDL("value STRING"))
+
+      import org.apache.spark.sql.execution.datasources.DataSource
+      // User-specified schema is allowed if it's consistent with the actual Delta table schema.
+      // Here we use Spark internal APIs to trigger v1 source code path. That being said, we
+      // are not fixing end-user behavior, but advanced Spark plugins.
+      val v1DataSource = DataSource(
+        spark,
+        userSpecifiedSchema = Some(StructType.fromDDL("value STRING")),
+        className = "delta",
+        options = Map("path" -> inputDir.getCanonicalPath))
+      Dataset.ofRows(spark, StreamingRelation(v1DataSource))
     }
   }
 
