@@ -198,6 +198,11 @@ public final class FileNames {
     return output;
   }
 
+  /** Returns the path to the checksum file for the given version. */
+  public static Path checksumFile(Path path, long version) {
+    return new Path(path, String.format("%020d.crc", version));
+  }
+
   /////////////////////////////
   // Is <type> file checkers //
   /////////////////////////////
