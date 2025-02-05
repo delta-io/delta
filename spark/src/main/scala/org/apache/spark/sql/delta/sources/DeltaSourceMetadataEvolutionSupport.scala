@@ -438,6 +438,15 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
 }
 
 object DeltaSourceMetadataEvolutionSupport {
+  /** SQL configs that allow unblocking each type of schema changes. */
+  private val SQL_CONF_PREFIX = s"${DeltaSQLConf.SQL_CONF_PREFIX}.streaming"
+
+  private final val SQL_CONF_UNBLOCK_RENAME_DROP =
+    SQL_CONF_PREFIX + ".allowSourceColumnRenameAndDrop"
+  private final val SQL_CONF_UNBLOCK_RENAME = SQL_CONF_PREFIX + ".allowSourceColumnRename"
+  private final val SQL_CONF_UNBLOCK_DROP = SQL_CONF_PREFIX + ".allowSourceColumnDrop"
+  private final val SQL_CONF_UNBLOCK_TYPE_CHANGE = SQL_CONF_PREFIX + ".allowSourceColumnTypeChange"
+
   /**
    * Defining the different combinations of non-additive schema changes to detect them and allow
    * users to vet and unblock them using a corresponding SQL conf:
@@ -447,52 +456,53 @@ object DeltaSourceMetadataEvolutionSupport {
    */
   private sealed trait SchemaChangeType {
     val name: String
-    val sqlConfUnblock: String
     val isRename: Boolean
     val isDrop: Boolean
     val isTypeWidening: Boolean
+    val sqlConfsUnblock: Seq[String]
   }
 
   // Single types of schema change, typically caused by a single ALTER TABLE operation.
   private case object SchemaChangeRename extends SchemaChangeType {
     override val name = "RENAME COLUMN"
-    override val sqlConfUnblock = "allowSourceColumnRename"
+    override val sqlConfsUnblock: Seq[String] = Seq(SQL_CONF_UNBLOCK_RENAME)
     override val (isRename, isDrop, isTypeWidening) = (true, false, false)
   }
   private case object SchemaChangeDrop extends SchemaChangeType {
     override val name = "DROP COLUMN"
-    override val sqlConfUnblock = "allowSourceColumnDrop"
     override val (isRename, isDrop, isTypeWidening) = (false, true, false)
+    override val sqlConfsUnblock: Seq[String] = Seq(SQL_CONF_UNBLOCK_DROP)
   }
   private case object SchemaChangeTypeWidening extends SchemaChangeType {
     override val name = "TYPE WIDENING"
-    override val sqlConfUnblock = "allowSourceTypeWidening"
     override val (isRename, isDrop, isTypeWidening) = (false, false, true)
+    override val sqlConfsUnblock: Seq[String] = Seq(SQL_CONF_UNBLOCK_TYPE_CHANGE)
   }
 
   // Combinations of rename, drop and type change -> can be caused by a complete overwrite.
   private case object SchemaChangeRenameAndDrop extends SchemaChangeType {
     override val name = "RENAME AND DROP COLUMN"
-    override val sqlConfUnblock = "allowSourceColumnRenameAndDrop"
     override val (isRename, isDrop, isTypeWidening) = (true, true, false)
+    override val sqlConfsUnblock: Seq[String] = Seq(SQL_CONF_UNBLOCK_RENAME_DROP)
   }
   private case object SchemaChangeRenameAndTypeWidening extends SchemaChangeType {
     override val name = "RENAME AND TYPE WIDENING"
-    override val sqlConfUnblock = "allowSourceColumnRenameAndTypeWidening"
     override val (isRename, isDrop, isTypeWidening) = (true, false, true)
+    override val sqlConfsUnblock: Seq[String] =
+      Seq(SQL_CONF_UNBLOCK_RENAME, SQL_CONF_UNBLOCK_TYPE_CHANGE)
   }
   private case object SchemaChangeDropAndTypeWidening extends SchemaChangeType {
     override val name = "DROP AND TYPE WIDENING"
-    override val sqlConfUnblock = "allowSourceColumnDropAndTypeWidening"
     override val (isRename, isDrop, isTypeWidening) = (false, true, true)
+    override val sqlConfsUnblock: Seq[String] =
+      Seq(SQL_CONF_UNBLOCK_DROP, SQL_CONF_UNBLOCK_TYPE_CHANGE)
   }
   private case object SchemaChangeRenameAndDropAndTypeWidening extends SchemaChangeType {
     override val name = "RENAME, DROP AND TYPE WIDENING"
-    override val sqlConfUnblock = "allowSourceColumnRenameAndDropAndTypeWidening"
     override val (isRename, isDrop, isTypeWidening) = (true, true, true)
+    override val sqlConfsUnblock: Seq[String] =
+      Seq(SQL_CONF_UNBLOCK_RENAME_DROP, SQL_CONF_UNBLOCK_TYPE_CHANGE)
   }
-
-  private val SQL_CONF_UNBLOCK_ALL: String = SchemaChangeRenameAndDropAndTypeWidening.sqlConfUnblock
 
   private final val allSchemaChangeTypes = Seq(
     SchemaChangeDrop,
@@ -513,23 +523,52 @@ object DeltaSourceMetadataEvolutionSupport {
       newSchema: StructType, oldSchema: StructType): Option[SchemaChangeType] = {
     val isRenameColumn = DeltaColumnMapping.isRenameColumnOperation(newSchema, oldSchema)
     val isDropColumn = DeltaColumnMapping.isDropColumnOperation(newSchema, oldSchema)
-    // If checking type changes is disabled - to revert to historical behavior - then type widening
-    // is not considered a non-additive schema change and are allowed to propagate without user
-    // action.
+    // Use physical column names to identify type changes. Dropping a column and adding a new column
+    // with a different type is historically allowed and is not considered a type change.
+    val oldPhysicalSchema = DeltaColumnMapping.renameColumns(oldSchema)
+    val newPhysicalSchema = DeltaColumnMapping.renameColumns(newSchema)
+    // Check if there are widening type changes. This assumes [[checkIncompatibleSchemaChange]] was
+    // already called before and failed if there were any non-widening type changes. The type change
+    // checks - both widening and non-widening - can be disabled by flag to revert to historical
+    // behavior where type changes are not considered a non-additive schema change and are allowed
+    // to propagate without user action.
     val isTypeWidening = allowTypeWidening(spark) && !bypassTypeChangeCheck(spark) &&
-      TypeWidening.containsWideningTypeChanges(from = oldSchema, to = newSchema)
+      TypeWidening.containsWideningTypeChanges(from = oldPhysicalSchema, to = newPhysicalSchema)
     allSchemaChangeTypes.find { c =>
       (c.isDrop, c.isRename, c.isTypeWidening) == (isDropColumn, isRenameColumn, isTypeWidening)
     }
   }
 
-  /** Retrieves the corresponding SQL confs that allow unblocking the given schema change. */
-  private def getUnblockingConfs(change: SchemaChangeType): Seq[String] = {
-    allSchemaChangeTypes.filter { c =>
-      (!change.isDrop || c.isDrop) &&
-      (!change.isRename || c.isRename) &&
-      (!change.isTypeWidening || c.isTypeWidening)
-    }.map(_.sqlConfUnblock)
+  /**
+   * Returns whether the given type of non-additive schema change was unblocked by setting one of
+   * the corresponding SQL confs.
+   */
+  private def isChangeUnblocked(
+      spark: SparkSession,
+      change: SchemaChangeType,
+      checkpointHash: Int,
+      schemaChangeVersion: Long): Boolean = {
+
+    def isUnblockedBySQLConf(sqlConf: String): Boolean = {
+      def getConf(key: String): Option[String] =
+        Option(spark.sessionState.conf.getConfString(key, null))
+          .map(_.toLowerCase(Locale.ROOT))
+      val validConfKeysValuePair = Seq(
+        (sqlConf, "always"),
+        (s"$sqlConf.ckpt_$checkpointHash", "always"),
+        (s"$sqlConf.ckpt_$checkpointHash", schemaChangeVersion.toString)
+      )
+      validConfKeysValuePair.exists(p => getConf(p._1).contains(p._2))
+    }
+
+    val isBlockedRename = change.isRename && !isUnblockedBySQLConf(SQL_CONF_UNBLOCK_RENAME) &&
+      !isUnblockedBySQLConf(SQL_CONF_UNBLOCK_RENAME_DROP)
+    val isBlockedDrop = change.isDrop && !isUnblockedBySQLConf(SQL_CONF_UNBLOCK_DROP) &&
+      !isUnblockedBySQLConf(SQL_CONF_UNBLOCK_RENAME_DROP)
+    val isBlockedTypeChange = change.isTypeWidening &&
+      !isUnblockedBySQLConf(SQL_CONF_UNBLOCK_TYPE_CHANGE)
+
+    !isBlockedRename && !isBlockedDrop && !isBlockedTypeChange
   }
 
   def getCheckpointHash(path: String): Int = path.hashCode
@@ -558,15 +597,18 @@ object DeltaSourceMetadataEvolutionSupport {
    * Given a non-additive operation type from a previous schema evolution, check we can process
    * using the new schema given any SQL conf users have explicitly set to unblock.
    * The SQL conf can take one of following formats:
-   * 1. spark.databricks.delta.streaming.allowSourceColumnRenameAndDrop = true
-   *    -> allows all non-additive schema changes to propagate.
-   * 2. spark.databricks.delta.streaming.allowSourceColumnRenameAndDrop.$checkpointHash = true
-   *    -> allows all non-additive schema changes to propagate for this particular stream
-   * 3. spark.databricks.delta.streaming.allowSourceColumnRenameAndDrop.$checkpointHash = $deltaVersion
-   *
-   * The `allowSourceColumnRenameAndDrop` can be replaced with:
-   * 1. `allowSourceColumnRename` to just allow column rename
-   * 2. `allowSourceColumnDrop` to just allow column drops
+   * 1. spark.databricks.delta.streaming.allowSourceColumn$action = "always"
+   *    -> allows non-additive schema change to propagate for all streams.
+   * 2. spark.databricks.delta.streaming.allowSourceColumn$action.$checkpointHash = "always"
+   *    -> allows non-additive schema change to propagate for this particular stream.
+   * 3. spark.databricks.delta.streaming.allowSourceColumn$action.$checkpointHash = $deltaVersion
+   *     -> allow non-additive schema change to propagate only for this particular stream source
+   *        table version.
+   * where `allowSourceColumn$action` is one of:
+   * 1. `allowSourceColumnRename` to allow column renames.
+   * 2. `allowSourceColumnDrop` to allow column drops.
+   * 3. `allowSourceColumnRenameAndDrop` to allow both column drops and renames.
+   * 4. `allowSourceColumnTypeChange` to allow widening type changes.
    *
    * We will check for any of these configs given the non-additive operation, and throw a proper
    * error message to instruct the user to set the SQL conf if they would like to unblock.
@@ -581,26 +623,17 @@ object DeltaSourceMetadataEvolutionSupport {
       metadataPath: String,
       currentSchema: PersistedMetadata,
       previousSchema: PersistedMetadata): Unit = {
-    val sqlConfPrefix = s"${DeltaSQLConf.SQL_CONF_PREFIX}.streaming"
     val checkpointHash = getCheckpointHash(metadataPath)
-
-    def getConf(key: String): Option[String] =
-      Option(spark.sessionState.conf.getConfString(key, null))
-        .map(_.toLowerCase(Locale.ROOT))
-
-    def getConfPairsToAllowSchemaChange(
-        allowSchemaChange: String, schemaChangeVersion: Long): Seq[(String, String)] =
-      Seq(
-        (s"$sqlConfPrefix.$allowSchemaChange", "always"),
-        (s"$sqlConfPrefix.$allowSchemaChange.ckpt_$checkpointHash", "always"),
-        (s"$sqlConfPrefix.$allowSchemaChange.ckpt_$checkpointHash", schemaChangeVersion.toString)
-      )
 
     // The start version of a possible series of consecutive schema changes.
     val previousSchemaChangeVersion = previousSchema.deltaCommitVersion
     // The end version of a possible series of consecutive schema changes.
     val currentSchemaChangeVersion = currentSchema.deltaCommitVersion
 
+    // Fail with a non-retryable exception if there are any type changes that we don't allow
+    // unblocking, i.e. non-widening type changes. We do allow changes caused by columns being
+    // dropped/renamed, e.g. dropping a column and adding it back with a different type. These were
+    // historically allowed and will be surfaced to the user as column drop/rename.
     checkIncompatibleSchemaChange(
       spark,
       previousSchema = previousSchema.dataSchema,
@@ -610,12 +643,8 @@ object DeltaSourceMetadataEvolutionSupport {
 
     determineNonAdditiveSchemaChangeType(
       spark, currentSchema.dataSchema, previousSchema.dataSchema).foreach { change =>
-      val confs = getUnblockingConfs(change)
-
-      val validConfKeysValuePair =
-        confs.flatMap(getConfPairsToAllowSchemaChange(_, currentSchemaChangeVersion))
-
-        if (!validConfKeysValuePair.exists(p => getConf(p._1).contains(p._2))) {
+        if (!isChangeUnblocked(
+            spark, change, checkpointHash, currentSchemaChangeVersion)) {
           // Throw error to prompt user to set the correct confs
           change match {
             case SchemaChangeTypeWidening =>
@@ -627,7 +656,7 @@ object DeltaSourceMetadataEvolutionSupport {
                 previousSchemaChangeVersion,
                 currentSchemaChangeVersion,
                 checkpointHash,
-                change.sqlConfUnblock,
+                change.sqlConfsUnblock,
                 wideningTypeChanges)
 
             case _ =>
@@ -636,8 +665,7 @@ object DeltaSourceMetadataEvolutionSupport {
                 previousSchemaChangeVersion,
                 currentSchemaChangeVersion,
                 checkpointHash,
-                SQL_CONF_UNBLOCK_ALL,
-                change.sqlConfUnblock)
+                change.sqlConfsUnblock)
           }
         }
     }
@@ -656,12 +684,13 @@ object DeltaSourceMetadataEvolutionSupport {
 
     val incompatibleSchema =
       !SchemaUtils.isReadCompatible(
-        previousSchema,
-        currentSchema,
+        // We want to ignore renamed/dropped columns here and let the check for non-additive
+        // schema changes handle them: we only check if an actual physical column had an
+        // incompatible type change.
+        existingSchema = DeltaColumnMapping.renameColumns(previousSchema),
+        readSchema = DeltaColumnMapping.renameColumns(currentSchema),
         forbidTightenNullability = true,
-        // We want to accept dropped/renamed columns that will manifest as missing columns.
         allowMissingColumns = true,
-        allowMissingStructFields = true,
         typeWideningMode =
           if (allowTypeWidening(spark)) TypeWideningMode.AllTypeWidening
           else TypeWideningMode.NoTypeWidening

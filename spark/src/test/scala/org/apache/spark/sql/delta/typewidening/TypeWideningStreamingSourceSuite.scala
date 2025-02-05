@@ -21,9 +21,10 @@ import java.io.File
 import org.apache.spark.sql.delta._
 
 import org.apache.spark.{SparkException, SparkThrowable}
+import org.apache.spark.SparkArithmeticException
 import org.apache.spark.sql.{DataFrame, Row, SaveMode}
 import org.apache.spark.sql.functions.{col, count, lit}
-import org.apache.spark.sql.streaming.{OutputMode, StreamingQueryException, StreamTest}
+import org.apache.spark.sql.streaming._
 import org.apache.spark.sql.test.SQLTestUtils
 import org.apache.spark.sql.types._
 
@@ -119,7 +120,7 @@ trait TypeWideningStreamingSourceTests
         )
 
         val streamActions = expectedResult match {
-          case ExpectedResult.Success(rows: Seq[Row]) =>
+          case ExpectedResult.Success(rows: Seq[Row @unchecked]) =>
             Seq(
               Execute { _ => sql(s"INSERT INTO delta.`$dir` VALUES (123456789, 2)") },
               ProcessAllAvailable(),
@@ -151,7 +152,7 @@ trait TypeWideningStreamingSourceTests
         }
 
         // We need to unblock the type change to let the stream make progress.
-        withSQLConf("spark.databricks.delta.streaming.allowSourceTypeWidening" -> "always") {
+        withSQLConf("spark.databricks.delta.streaming.allowSourceColumnTypeChange" -> "always") {
           testStream(query(readStream(dir, checkpointDir)), outputMode)(
             StartStream(checkpointLocation = checkpointDir.toString) +:
               streamActions: _*
@@ -192,13 +193,6 @@ trait TypeWideningStreamingSourceTests
     expectedResult = ExpectedResult.Failure { ex =>
       assert(ex.getErrorClass === "STATE_STORE_KEY_SCHEMA_NOT_COMPATIBLE")
     },
-    /*
-    expectedResult = ExpectedResult.Failure { ex =>
-      assert(
-        ex.asInstanceOf[Throwable].getMessage
-        .contains("Provided schema doesn't match to the schema for existing state"))
-    },
-     */
     outputMode = OutputMode.Complete()
   )
 
@@ -228,6 +222,46 @@ trait TypeWideningStreamingSourceTests
     expectedResult = ExpectedResult.Success(Seq.empty)
   )
 
+  testStreamTypeWidening("widen distinct",
+    query = _.select("widened").distinct(),
+    expectedResult = ExpectedResult.Failure { ex =>
+      assert(ex.getErrorClass === "STATE_STORE_KEY_SCHEMA_NOT_COMPATIBLE")
+    }
+  )
+
+  testStreamTypeWidening("widen drop duplicates",
+    query = _.select("widened").dropDuplicates(),
+    expectedResult = ExpectedResult.Failure { ex =>
+      assert(ex.getErrorClass === "STATE_STORE_KEY_SCHEMA_NOT_COMPATIBLE")
+    },
+    outputMode = OutputMode.Update()
+  )
+
+  testStreamTypeWidening("widen drop duplicates with watermark",
+    query = _.select("widened")
+      .withColumn("watermark", lit("2025-02-04").cast("timestamp"))
+      .withWatermark("watermark", "0 seconds")
+      .dropDuplicatesWithinWatermark(),
+    expectedResult = ExpectedResult.Failure { ex =>
+      assert(ex.getErrorClass === "STATE_STORE_KEY_SCHEMA_NOT_COMPATIBLE")
+    },
+    outputMode = OutputMode.Update()
+  )
+
+  testStreamTypeWidening("widen flatMap groups with state",
+    query = _.select("widened").as[Int]
+      .groupByKey(x => x)
+        .flatMapGroupsWithState(
+          outputMode = OutputMode.Update,
+          timeoutConf = GroupStateTimeout.NoTimeout
+        )((key: Int, values: Iterator[Int], state: GroupState[Int]) => {
+          Iterator(values.max)
+        })
+      .toDF(),
+    expectedResult = ExpectedResult.Success(Seq(Row(123456789))),
+    outputMode = OutputMode.Update()
+  )
+
   test("widening type change then restore back") {
     withTempDir { dir =>
       sql(s"CREATE TABLE delta.`$dir` (a byte) USING DELTA")
@@ -249,7 +283,7 @@ trait TypeWideningStreamingSourceTests
         ExpectTypeChangeBlockedException()
       )
 
-      withSQLConf("spark.databricks.delta.streaming.allowSourceTypeWidening" -> "always") {
+      withSQLConf("spark.databricks.delta.streaming.allowSourceColumnTypeChange" -> "always") {
         testStream(readStream(dir, checkpointDir, options = Map("ignoreDeletes" -> "true")))(
           StartStream(checkpointLocation = checkpointDir.toString),
           ProcessAllAvailable(),
@@ -261,7 +295,7 @@ trait TypeWideningStreamingSourceTests
       }
 
       // Retrying doesn't allow the narrowing type change to go through.
-      withSQLConf("spark.databricks.delta.streaming.allowSourceTypeWidening" -> "always") {
+      withSQLConf("spark.databricks.delta.streaming.allowSourceColumnTypeChange" -> "always") {
         testStream(readStream(dir, checkpointDir, options = Map("ignoreDeletes" -> "true")))(
           StartStream(checkpointLocation = checkpointDir.toString),
           ExpectIncompatibleSchemaChangeException()
@@ -308,7 +342,8 @@ trait TypeWideningStreamingSourceTests
     }
   }
 
-  test("type change without schemaTrackingLocation") {
+  test(
+    "type change first without schemaTrackingLocation and unblock using schemaTrackingLocation") {
     withTempDir { dir =>
       sql(s"CREATE TABLE delta.`$dir` (widened byte) USING DELTA")
       val checkpointDir = new File(dir, "sink_checkpoint")
@@ -327,7 +362,7 @@ trait TypeWideningStreamingSourceTests
         StartStream(checkpointLocation = checkpointDir.toString),
         Execute { _ => sql(s"ALTER TABLE delta.`$dir`ALTER COLUMN widened TYPE int") },
         Execute { _ => sql(s"INSERT INTO delta.`$dir` VALUES (123456789)") },
-        ExpectFailure[DeltaStreamingColumnMappingSchemaIncompatibleException]()
+        ExpectFailure[DeltaStreamingNonAdditiveSchemaIncompatibleException]()
       )
 
       // First retry with schema log initializes it.
@@ -346,7 +381,7 @@ trait TypeWideningStreamingSourceTests
         ExpectTypeChangeBlockedException()
       )
       // Unblocking the stream goes through.
-      withSQLConf("spark.databricks.delta.streaming.allowSourceTypeWidening" -> "always") {
+      withSQLConf("spark.databricks.delta.streaming.allowSourceColumnTypeChange" -> "always") {
         testStream(readStream(dir, checkpointDir))(
           StartStream(checkpointLocation = checkpointDir.toString),
           ProcessAllAvailable(),
@@ -357,9 +392,9 @@ trait TypeWideningStreamingSourceTests
   }
 
   for ((name, getSqlConf: (Int => String), value) <- Seq(
-    ("unblock all", (_: Int) => "allowSourceTypeWidening", "always"),
-    ("unblock stream", (hash: Int) => s"allowSourceTypeWidening.ckpt_$hash", "always"),
-    ("unblock version", (hash: Int) => s"allowSourceTypeWidening.ckpt_$hash", "2")
+    ("unblock all", (_: Int) => "allowSourceColumnTypeChange", "always"),
+    ("unblock stream", (hash: Int) => s"allowSourceColumnTypeChange.ckpt_$hash", "always"),
+    ("unblock version", (hash: Int) => s"allowSourceColumnTypeChange.ckpt_$hash", "2")
   )) {
     test(s"unblocking stream after type change - $name") {
       withTempDir { dir =>
@@ -428,8 +463,6 @@ trait TypeWideningStreamingSourceTests
       testStream(readStream(dir, checkpointDir, options = Map("ignoreDeletes" -> "true")))(
         StartStream(checkpointLocation = checkpointDir.toString),
         ExpectFailure[DeltaRuntimeException] { ex =>
-          val conf =
-            "spark\\.databricks\\.delta\\.streaming\\.allowSourceColumnRenameAndDropAndTypeWidening"
           checkErrorMatchPVals(
             exception = ex.asInstanceOf[DeltaRuntimeException],
             "DELTA_STREAMING_CANNOT_CONTINUE_PROCESSING_POST_SCHEMA_EVOLUTION",
@@ -437,38 +470,109 @@ trait TypeWideningStreamingSourceTests
               "opType" -> "DROP AND TYPE WIDENING",
               "previousSchemaChangeVersion" -> "0",
               "currentSchemaChangeVersion" -> "2",
-              "allowCkptVerKey" -> (conf + "\\.ckpt_.*"),
-              "allowCkptVerValue" -> "2",
-              "allowCkptKey" -> (conf + "\\.ckpt_.*"),
-              "allowCkptValue" -> "always",
-              "allowAllKey" -> conf,
-              "allowAllValue" -> "always",
-              "allowAllMode" -> "allowSourceColumnRenameAndDropAndTypeWidening",
-              "opSpecificMode" -> "allowSourceColumnDropAndTypeWidening"
+              "unblockChangeConfs" ->
+                ".*allowSourceColumnDrop(.|\\n)*allowSourceColumnTypeChange.*",
+              "unblockStreamConfs" ->
+                ".*allowSourceColumnDrop(.|\\n)*allowSourceColumnTypeChange.*",
+              "unblockAllConfs" ->
+                ".*allowSourceColumnDrop(.|\\n)*allowSourceColumnTypeChange.*"
             ))
         }
       )
-      // Allowing both source column drop and type widening separately is not enough to let the
-      // stream continue. Both must be unblocked using the combined config.
+      // Allowing both source column drop and type widening allows the stream to proceed
       withSQLConf(
           "spark.databricks.delta.streaming.allowSourceColumnDrop" -> "always",
-          "spark.databricks.delta.streaming.allowSourceColumnDrop" -> "always") {
-        testStream(readStream(dir, checkpointDir, options = Map("ignoreDeletes" -> "true")))(
-          StartStream(checkpointLocation = checkpointDir.toString),
-          Execute { _ => sql(s"INSERT INTO delta.`$dir` VALUES (2)") },
-          ExpectFailure[DeltaRuntimeException] { ex =>
-            assert(ex.asInstanceOf[DeltaRuntimeException].getErrorClass ===
-              "DELTA_STREAMING_CANNOT_CONTINUE_PROCESSING_POST_SCHEMA_EVOLUTION")
-          }
-        )
-      }
-
-      withSQLConf("spark.databricks.delta.streaming.allowSourceColumnDropAndTypeWidening"
-          -> "always") {
+          "spark.databricks.delta.streaming.allowSourceColumnTypeChange" -> "always") {
         testStream(readStream(dir, checkpointDir, options = Map("ignoreDeletes" -> "true")))(
           StartStream(checkpointLocation = checkpointDir.toString),
           Execute { _ => sql(s"INSERT INTO delta.`$dir` VALUES (2)") },
           ProcessAllAvailable()
+        )
+      }
+    }
+  }
+
+  test("type change in delta source writing to a delta sink") {
+    // End-to-end test with a delta source and a delta sink.
+    withTempDir { sourceDir =>
+      withTempDir { sinkDir =>
+        // The test mixin implicitly enables type widening on all tables, disable type widening on
+        // the sink initially for this test.
+        sql(s"CREATE TABLE delta.`$sourceDir` (a byte) USING DELTA")
+        sql(
+          s"""
+             |CREATE TABLE delta.`$sinkDir` (a byte) USING DELTA
+             |TBLPROPERTIES('delta.enableTypeWidening' = 'false')
+           """.stripMargin)
+        val checkpointDir = new File(sinkDir, "checkpoint_dir")
+
+        def runStream(mergeSchema: Boolean): Unit = try {
+          withSQLConf(
+            "spark.databricks.delta.streaming.allowSourceColumnTypeChange" -> "always") {
+            val q = spark
+              .readStream
+              .format("delta")
+              .option(DeltaOptions.SCHEMA_TRACKING_LOCATION, checkpointDir.toString)
+              .load(sourceDir.toString)
+              .writeStream
+              .format("delta")
+              .option("checkpointLocation", checkpointDir.toString)
+              .option("mergeSchema", mergeSchema.toString)
+              .start(sinkDir.getCanonicalPath)
+            q.processAllAvailable()
+            q.stop()
+          }
+        } catch {
+          case e: StreamingQueryException =>
+            // Unwrap the exception for convenience
+            throw e.getCause
+        }
+
+        // Start with no type change.
+        sql(s"INSERT INTO delta.`$sourceDir` VALUES (1)")
+        runStream(mergeSchema = false)
+        checkAnswer(readDeltaTable(sinkDir.toString), Seq(Row(1)))
+
+        // Change type of column 'a' and introduce a new column 'b'. Schema evolution is enabled
+        // so the new column 'b' is added to the sink, but type widening is disabled on the sink so
+        // the type of column 'a' remains INT: values are downcasted from INT to BYTE on write.
+        sql(s"ALTER TABLE delta.`$sourceDir`ALTER COLUMN a TYPE int")
+        sql(s"ALTER TABLE delta.`$sourceDir`ADD COLUMN b int")
+        sql(s"INSERT INTO delta.`$sourceDir` VALUES (2, 2)")
+        val evolutionException = intercept[DeltaRuntimeException] {
+          runStream(mergeSchema = true)
+        }
+        assert(evolutionException.getErrorClass === "DELTA_STREAMING_METADATA_EVOLUTION")
+        runStream(mergeSchema = true)
+        assert(readDeltaTable(sinkDir.toString).schema("a").dataType === ByteType)
+        assert(readDeltaTable(sinkDir.toString).schema("b").dataType === IntegerType)
+        checkAnswer(readDeltaTable(sinkDir.toString), Seq(Row(1, null), Row(2, 2)))
+
+        // Enable type widening on the sink and insert a value in 'a' that won't fit, first with
+        // schema evolution disabled: the type of column 'a' in the sink isn't automatically changed
+        // to INT and values are downcast: the value overflows and fails.
+        sql(s"ALTER TABLE delta.`$sinkDir` SET TBLPROPERTIES('delta.enableTypeWidening' = 'true')")
+        sql(s"INSERT INTO delta.`$sourceDir` VALUES (${Int.MaxValue}, ${Int.MaxValue})")
+
+        def getSparkArithmeticException(ex: Throwable): SparkArithmeticException = ex match {
+          case e: SparkArithmeticException => e
+          case e: Throwable if e.getCause != null => getSparkArithmeticException(e.getCause)
+          case e => fail(s"Unexpected exception: $e")
+        }
+
+        val ex = intercept[Throwable] {
+          runStream(mergeSchema = false)
+        }
+        assert(getSparkArithmeticException(ex).getErrorClass === "CAST_OVERFLOW_IN_TABLE_INSERT")
+
+        // Retry with schema evolution enabled. Type widening is also enabled on the sink, the type
+        // of column 'a' is widened to INT and the write succeeds.
+        runStream(mergeSchema = true)
+        assert(readDeltaTable(sinkDir.toString).schema("a").dataType === IntegerType)
+        assert(readDeltaTable(sinkDir.toString).schema("b").dataType === IntegerType)
+        checkAnswer(
+          readDeltaTable(sinkDir.toString),
+          Seq(Row(1, null), Row(2, 2), Row(Int.MaxValue, Int.MaxValue))
         )
       }
     }

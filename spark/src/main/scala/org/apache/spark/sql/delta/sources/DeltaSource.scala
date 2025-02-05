@@ -156,16 +156,12 @@ trait DeltaSourceBase extends Source
     snapshotAtSourceInit.metadata.columnMappingMode != NoMapping
 
   /**
-   * Internal flag to allow widening type changes to be propagated from Delta sources.
+   * Whether we should track widening type changes to allow users to accept them and resume
+   * stream processing.
    */
-  protected lazy val allowTypeWidening: Boolean =
-    spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_ALLOW_TYPE_WIDENING_STREAMING_SOURCE)
-
-  /**
-   * Whether we are streaming from a table that supports the type widening table feature.
-   */
-  protected val isStreamingFromTypeWideningTable: Boolean =
-    TypeWidening.isSupported(snapshotAtSourceInit.protocol)
+  protected lazy val shouldCheckTypeWideningChanges: Boolean =
+    spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_ALLOW_TYPE_WIDENING_STREAMING_SOURCE) &&
+     TypeWidening.isSupported(snapshotAtSourceInit.protocol)
 
   /**
    * The persisted schema from the schema log that must be used to read data files in this Delta
@@ -572,8 +568,7 @@ trait DeltaSourceBase extends Source
     }
 
     // Perform schema check if we need to, considering all escape flags.
-    if (!allowUnsafeStreamingReadOnColumnMappingSchemaChanges ||
-        (allowTypeWidening && isStreamingFromTypeWideningTable) ||
+    if (!allowUnsafeStreamingReadOnColumnMappingSchemaChanges || (shouldCheckTypeWideningChanges) ||
         !forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart) {
       startVersionSnapshotOpt.foreach { snapshot =>
         checkReadIncompatibleSchemaChanges(
@@ -634,7 +629,7 @@ trait DeltaSourceBase extends Source
     }
 
     def shouldTrackSchema: Boolean =
-      if (isStreamingFromTypeWideningTable && allowTypeWidening &&
+      if (shouldCheckTypeWideningChanges &&
         TypeWidening.containsWideningTypeChanges(oldMetadata.schema, newMetadata.schema)) {
         true
       } else if (allowUnsafeStreamingReadOnColumnMappingSchemaChanges) {
@@ -647,7 +642,7 @@ trait DeltaSourceBase extends Source
       }
 
     if (shouldTrackSchema) {
-      throw DeltaErrors.blockStreamingReadsWithIncompatibleColumnMappingSchemaChanges(
+      throw DeltaErrors.blockStreamingReadsWithIncompatibleNonAdditiveSchemaChanges(
         spark,
         oldMetadata.schema,
         newMetadata.schema,

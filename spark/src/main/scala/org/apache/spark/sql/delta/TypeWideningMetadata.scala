@@ -140,7 +140,7 @@ private[delta] object TypeWideningMetadata extends DeltaLogging {
     val changesToRecord = mutable.Buffer.empty[TypeChange]
     val schemaWithMetadata = SchemaMergingUtils.transformColumns(schema, oldSchema) {
       case (_, newField, Some(oldField), _) =>
-        var typeChanges = collectTypeChanges(
+        var typeChanges = collectTypeChangesInStructField(
           oldField.dataType,
           newField.dataType,
           logNonWideningChanges = true
@@ -176,7 +176,7 @@ private[delta] object TypeWideningMetadata extends DeltaLogging {
   }
 
   /**
-   * Recursively compare `from` and `to` to collect all primitive type widening changes, including
+   * Recursively compare `from` and `to` to collect all primitive widening type changes, including
    * in nested structs, maps and arrays.
    */
   def collectTypeChanges(from: StructType, to: StructType): Seq[TypeChange] = {
@@ -184,7 +184,7 @@ private[delta] object TypeWideningMetadata extends DeltaLogging {
 
     SchemaMergingUtils.transformColumns(schema = to, other = from) {
       case (path, newField, Some(oldField), _) =>
-        changes ++= collectTypeChanges(
+        changes ++= collectTypeChangesInStructField(
           oldField.dataType,
           newField.dataType,
           logNonWideningChanges = false
@@ -198,22 +198,27 @@ private[delta] object TypeWideningMetadata extends DeltaLogging {
   }
 
   /**
-   * Recursively collect primitive type changes inside nested maps and arrays between `fromType` and
-   * `toType`.
+   * Collects all primitive widening type changes inside a single struct field. This includes type
+   * changes inside nested maps and arrays but not inside other nested structs.
+   * @param fromType The previous type of the struct field.
+   * @param toType The new type of the struct field.
+   * @param logNonWideningChanges Whether to log / fail in tests if a non-widening change is found.
    */
-  private def collectTypeChanges(
+  private def collectTypeChangesInStructField(
       fromType: DataType,
       toType: DataType,
       logNonWideningChanges: Boolean): Seq[TypeChange] = (fromType, toType) match {
     case (from: MapType, to: MapType) =>
-      collectTypeChanges(from.keyType, to.keyType, logNonWideningChanges).map { typeChange =>
-        typeChange.copy(fieldPath = "key" +: typeChange.fieldPath)
-      } ++
-      collectTypeChanges(from.valueType, to.valueType, logNonWideningChanges).map { typeChange =>
-        typeChange.copy(fieldPath = "value" +: typeChange.fieldPath)
-      }
+      collectTypeChangesInStructField(from.keyType, to.keyType, logNonWideningChanges)
+        .map { typeChange =>
+          typeChange.copy(fieldPath = "key" +: typeChange.fieldPath)
+        } ++
+      collectTypeChangesInStructField(from.valueType, to.valueType, logNonWideningChanges)
+        .map { typeChange =>
+          typeChange.copy(fieldPath = "value" +: typeChange.fieldPath)
+        }
     case (from: ArrayType, to: ArrayType) =>
-      collectTypeChanges(from.elementType, to.elementType, logNonWideningChanges)
+      collectTypeChangesInStructField(from.elementType, to.elementType, logNonWideningChanges)
         .map { typeChange =>
           typeChange.copy(fieldPath = "element" +: typeChange.fieldPath)
         }

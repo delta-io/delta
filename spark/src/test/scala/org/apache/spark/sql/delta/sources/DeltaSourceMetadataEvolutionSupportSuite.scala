@@ -22,6 +22,11 @@ import org.apache.spark.{SparkConf, SparkFunSuite}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
 
+/**
+ * Unit tests covering `DeltaSourceMetadataEvolutionSupport`, which detects non-additive schema
+ * changes when reading from a Delta source and checks user provided confs to decide whether to
+ * allow resuming streaming processing.
+ */
 class DeltaSourceMetadataEvolutionSupportSuite
   extends SparkFunSuite
     with SharedSparkSession
@@ -53,16 +58,6 @@ class DeltaSourceMetadataEvolutionSupportSuite
     )
   }
 
-  private val allUnblockConfs: Seq[String] = Seq(
-    "allowSourceColumnRename",
-    "allowSourceColumnDrop",
-    "allowSourceTypeWidening",
-    "allowSourceColumnRenameAndDrop",
-    "allowSourceColumnRenameAndTypeWidening",
-    "allowSourceColumnDropAndTypeWidening",
-    "allowSourceColumnRenameAndDropAndTypeWidening"
-  )
-
   private def expectColumnMappingChangeBlocked(opType: String): ExpectedResult[Nothing] =
     ExpectedResult.Failure(ex => {
       assert(
@@ -78,21 +73,40 @@ class DeltaSourceMetadataEvolutionSupportSuite
         ex.getMessageParameters.get("wideningTypeChanges") === wideningTypeChanges.mkString("\n"))
     })
 
-
-
   private def expectNonWideningTypeChangeError: ExpectedResult[Nothing] =
     ExpectedResult.Failure(ex => {
       assert(
         ex.getErrorClass === "DELTA_SCHEMA_CHANGED_WITH_VERSION")
     })
 
-  private def withUnblockedChanges(unblock: Seq[String])(f: => Unit): Unit = {
+  private def withSQLConfUnblockedChanges(unblock: Seq[String])(f: => Unit): Unit = {
     val confs = unblock.map( conf => s"spark.databricks.delta.streaming.$conf" -> "always")
     withSQLConf(confs: _*) {
       f
     }
   }
 
+  /**
+   * Unit test runner covering `validateIfSchemaChangeCanBeUnblockedWithSQLConf()`. Takes as input
+   * an initial schema (from) and an updated schema (to) and checks that:
+   *   1. Non-additive schema changes are correctly detected: matches `expectedResult`
+   *   2. Setting SQL confs to unblock the changes allows the check to succeeds.
+   * @param name              Name of the test.
+   * @param fromDDL           Initial schema, as a DDL string: 'a INT'
+   * @param fromPhysicalNames Physical column/field names for the initial schema: assigning
+   *                          physical names that are different than the logical names in
+   *                          `fromDDL` allows simulating column mapping operations: DROP, RENAME.
+   * @param toDDL             Updated schema, as a DDL string.
+   * @param toPhysicalNames   Physical column/field names for the updated schema
+   * @param expectedResult    Expected result, either failure or success. In case of failure, a
+   *                          check to apply on the returned expression can be passed.
+   * @param unblock           SQL confs to unblock the schema change. Each entry is a set of SQL
+   *                          confs which together allow the schema change to be unblocked. There
+   *                          can be multiple such sets, e.g.
+   *                          [[allowSourceColumnDrop], [allowSourceColumnRenameAndDrop]] as both
+   *                          allow dropping columns independently.
+   * @param confs             Additional SQL confs to set when running the test.
+   */
   private def testSchemaChange(
       name: String,
       fromDDL: String,
@@ -100,36 +114,34 @@ class DeltaSourceMetadataEvolutionSupportSuite
       toDDL: String,
       toPhysicalNames: Map[Seq[String], String] = Map.empty,
       expectedResult: ExpectedResult[Nothing],
-      unblock: Seq[String] = Seq.empty,
+      unblock: Seq[Seq[String]] = Seq.empty,
       confs: Seq[(String, String)] = Seq.empty): Unit =
-  test(s"$name") {
-    def validate(): Unit =
-      DeltaSourceMetadataEvolutionSupport.validateIfSchemaChangeCanBeUnblockedWithSQLConf(
-        spark,
-        metadataPath = "sourceMetadataPath",
-        currentSchema = persistedMetadata(toDDL, toPhysicalNames),
-        previousSchema = persistedMetadata(fromDDL, fromPhysicalNames)
-      )
-    withSQLConf(confs: _*) {
-      expectedResult match {
-        case ExpectedResult.Success(_) => validate()
-        case ExpectedResult.Failure(checkError) =>
-          withUnblockedChanges(allUnblockConfs.filterNot(unblock.contains)) {
+    test(s"$name") {
+      def validate(): Unit =
+        DeltaSourceMetadataEvolutionSupport.validateIfSchemaChangeCanBeUnblockedWithSQLConf(
+          spark,
+           metadataPath = "sourceMetadataPath",
+          currentSchema = persistedMetadata(toDDL, toPhysicalNames),
+          previousSchema = persistedMetadata(fromDDL, fromPhysicalNames)
+        )
+      withSQLConf(confs: _*) {
+        expectedResult match {
+          case ExpectedResult.Success(_) => validate()
+          case ExpectedResult.Failure(checkError) =>
             val ex = intercept[DeltaThrowable] {
               validate()
             }
             checkError(ex)
-          }
 
-          // Verify that any of the unblock conf will allow the schema change to go through.
-          for (u <- unblock) {
-            withUnblockedChanges(Seq(u)) {
-              validate()
+            // Verify that we can unblock using SQL confs
+            for (u <- unblock) {
+              withSQLConfUnblockedChanges(u) {
+                validate()
+              }
             }
-          }
+        }
       }
     }
-  }
 
   testSchemaChange(
     name = "no schema change, use logical names",
@@ -147,10 +159,44 @@ class DeltaSourceMetadataEvolutionSupportSuite
     expectedResult = ExpectedResult.Success()
   )
 
+  testSchemaChange(
+    name = "schema overwrite, different column name",
+    fromDDL = "a int",
+    toDDL = "b string",
+    expectedResult = expectColumnMappingChangeBlocked("DROP COLUMN"),
+    unblock = Seq(
+      Seq("allowSourceColumnDrop"),
+      Seq("allowSourceColumnRenameAndDrop")
+    )
+  )
 
-  ///////////////
+  testSchemaChange(
+    name = "schema overwrite, same column name, non-widening type change",
+    fromDDL = "a int",
+    toDDL = "a string",
+    toPhysicalNames = Map(Seq("a") -> "b"),
+    expectedResult = expectColumnMappingChangeBlocked("DROP COLUMN"),
+    unblock = Seq(
+      Seq("allowSourceColumnDrop"),
+      Seq("allowSourceColumnRenameAndDrop")
+    )
+  )
+
+  testSchemaChange(
+    name = "schema overwrite, same column name, widening type change",
+    fromDDL = "a byte",
+    toDDL = "a int",
+    toPhysicalNames = Map(Seq("a") -> "b"),
+    expectedResult = expectColumnMappingChangeBlocked("DROP COLUMN"),
+    unblock = Seq(
+      Seq("allowSourceColumnDrop"),
+      Seq("allowSourceColumnRenameAndDrop")
+    )
+  )
+
+  /////////////////
   // Rename column
-  ///////////////
+  /////////////////
   testSchemaChange(
     name = "column rename, use logical names",
     fromDDL = "a int",
@@ -158,10 +204,9 @@ class DeltaSourceMetadataEvolutionSupportSuite
     toPhysicalNames = Map(Seq("b") -> "a"),
     expectedResult = expectColumnMappingChangeBlocked("RENAME COLUMN"),
     unblock = Seq(
-      "allowSourceColumnRename",
-      "allowSourceColumnRenameAndDrop",
-      "allowSourceColumnRenameAndTypeWidening",
-      "allowSourceColumnRenameAndDropAndTypeWidening")
+      Seq("allowSourceColumnRename"),
+      Seq("allowSourceColumnRenameAndDrop")
+    )
   )
 
   testSchemaChange(
@@ -172,10 +217,9 @@ class DeltaSourceMetadataEvolutionSupportSuite
     toPhysicalNames = Map(Seq("b") -> "x"),
     expectedResult = expectColumnMappingChangeBlocked("RENAME COLUMN"),
     unblock = Seq(
-      "allowSourceColumnRename",
-      "allowSourceColumnRenameAndDrop",
-      "allowSourceColumnRenameAndTypeWidening",
-      "allowSourceColumnRenameAndDropAndTypeWidening")
+      Seq("allowSourceColumnRename"),
+      Seq("allowSourceColumnRenameAndDrop")
+    )
   )
 
   testSchemaChange(
@@ -184,15 +228,11 @@ class DeltaSourceMetadataEvolutionSupportSuite
     fromPhysicalNames = Map(Seq("a") -> "x"),
     toDDL = "b int",
     toPhysicalNames = Map(Seq("b") -> "x"),
-    expectedResult = expectColumnMappingChangeBlocked("RENAME COLUMN"),
-    // We don't block the type change itself: either the user treats 'b' as a nwe column and the
-    // type change doesn't matter downstream, or 'b' is already in use in which case its type can
-    // already be arbitrary.
+    expectedResult = expectColumnMappingChangeBlocked("RENAME AND TYPE WIDENING"),
     unblock = Seq(
-      "allowSourceColumnRename",
-      "allowSourceColumnRenameAndDrop",
-      "allowSourceColumnRenameAndTypeWidening",
-      "allowSourceColumnRenameAndDropAndTypeWidening")
+      Seq("allowSourceColumnRename", "allowSourceColumnTypeChange"),
+      Seq("allowSourceColumnRenameAndDrop", "allowSourceColumnTypeChange")
+    )
   )
 
   testSchemaChange(
@@ -201,15 +241,7 @@ class DeltaSourceMetadataEvolutionSupportSuite
     fromPhysicalNames = Map(Seq("a") -> "x"),
     toDDL = "b string",
     toPhysicalNames = Map(Seq("b") -> "x"),
-    // We don't block the type change itself: either the user treats 'b' as a nwe column and the
-    // type change doesn't matter downstream, or 'b' is already in use in which case its type can
-    // already be arbitrary.
-    expectedResult = expectColumnMappingChangeBlocked("RENAME COLUMN"),
-    unblock = Seq(
-      "allowSourceColumnRename",
-      "allowSourceColumnRenameAndDrop",
-      "allowSourceColumnRenameAndTypeWidening",
-      "allowSourceColumnRenameAndDropAndTypeWidening")
+    expectedResult = expectNonWideningTypeChangeError
   )
 
   testSchemaChange(
@@ -219,10 +251,9 @@ class DeltaSourceMetadataEvolutionSupportSuite
     toPhysicalNames = Map(Seq("b") -> "a", Seq("a") -> "b"),
     expectedResult = expectColumnMappingChangeBlocked("RENAME COLUMN"),
     unblock = Seq(
-      "allowSourceColumnRename",
-      "allowSourceColumnRenameAndDrop",
-      "allowSourceColumnRenameAndTypeWidening",
-      "allowSourceColumnRenameAndDropAndTypeWidening")
+      Seq("allowSourceColumnRename"),
+      Seq("allowSourceColumnRenameAndDrop")
+    )
   )
 
   testSchemaChange(
@@ -232,8 +263,9 @@ class DeltaSourceMetadataEvolutionSupportSuite
     toPhysicalNames = Map(Seq("b") -> "a", Seq("a") -> "b"),
     expectedResult = expectColumnMappingChangeBlocked("RENAME AND TYPE WIDENING"),
     unblock = Seq(
-      "allowSourceColumnRenameAndTypeWidening",
-      "allowSourceColumnRenameAndDropAndTypeWidening")
+      Seq("allowSourceColumnRename", "allowSourceColumnTypeChange"),
+      Seq("allowSourceColumnRenameAndDrop", "allowSourceColumnTypeChange")
+    )
   )
 
   testSchemaChange(
@@ -244,19 +276,26 @@ class DeltaSourceMetadataEvolutionSupportSuite
     expectedResult = expectNonWideningTypeChangeError
   )
 
-  ///////////////
+  testSchemaChange(
+    name = "swap columns with widening and non-widening type change",
+    fromDDL = "a byte, b int",
+    toDDL = "b int, a string",
+    toPhysicalNames = Map(Seq("b") -> "a", Seq("a") -> "b"),
+    expectedResult = expectNonWideningTypeChangeError
+  )
+
+  /////////////////
   // Drop column
-  ///////////////
+  /////////////////
   testSchemaChange(
     name = "drop column, use logical names",
     fromDDL = "a int, b int",
     toDDL = "b int",
     expectedResult = expectColumnMappingChangeBlocked("DROP COLUMN"),
     unblock = Seq(
-      "allowSourceColumnDrop",
-      "allowSourceColumnRenameAndDrop",
-      "allowSourceColumnDropAndTypeWidening",
-      "allowSourceColumnRenameAndDropAndTypeWidening")
+      Seq("allowSourceColumnDrop", "allowSourceColumnTypeChange"),
+      Seq("allowSourceColumnRenameAndDrop", "allowSourceColumnTypeChange")
+    )
   )
 
   testSchemaChange(
@@ -267,10 +306,9 @@ class DeltaSourceMetadataEvolutionSupportSuite
     toPhysicalNames = Map(Seq("b") -> "y"),
     expectedResult = expectColumnMappingChangeBlocked("DROP COLUMN"),
     unblock = Seq(
-      "allowSourceColumnDrop",
-      "allowSourceColumnRenameAndDrop",
-      "allowSourceColumnDropAndTypeWidening",
-      "allowSourceColumnRenameAndDropAndTypeWidening")
+      Seq("allowSourceColumnDrop", "allowSourceColumnTypeChange"),
+      Seq("allowSourceColumnRenameAndDrop", "allowSourceColumnTypeChange")
+    )
   )
 
   testSchemaChange(
@@ -281,8 +319,9 @@ class DeltaSourceMetadataEvolutionSupportSuite
     toPhysicalNames = Map(Seq("b") -> "y"),
     expectedResult = expectColumnMappingChangeBlocked("DROP AND TYPE WIDENING"),
     unblock = Seq(
-      "allowSourceColumnDropAndTypeWidening",
-      "allowSourceColumnRenameAndDropAndTypeWidening")
+      Seq("allowSourceColumnDrop", "allowSourceColumnTypeChange"),
+      Seq("allowSourceColumnRenameAndDrop", "allowSourceColumnTypeChange")
+    )
   )
 
   testSchemaChange(
@@ -302,10 +341,9 @@ class DeltaSourceMetadataEvolutionSupportSuite
     toPhysicalNames = Map(Seq("b") -> "a"),
     expectedResult = expectColumnMappingChangeBlocked("DROP COLUMN"),
     unblock = Seq(
-      "allowSourceColumnDrop",
-      "allowSourceColumnRenameAndDrop",
-      "allowSourceColumnDropAndTypeWidening",
-      "allowSourceColumnRenameAndDropAndTypeWidening")
+      Seq("allowSourceColumnDrop", "allowSourceColumnTypeChange"),
+      Seq("allowSourceColumnRenameAndDrop", "allowSourceColumnTypeChange")
+    )
   )
 
   testSchemaChange(
@@ -316,8 +354,9 @@ class DeltaSourceMetadataEvolutionSupportSuite
     toPhysicalNames = Map(Seq("b") -> "a"),
     expectedResult = expectColumnMappingChangeBlocked("DROP AND TYPE WIDENING"),
     unblock = Seq(
-      "allowSourceColumnDropAndTypeWidening",
-      "allowSourceColumnRenameAndDropAndTypeWidening")
+      Seq("allowSourceColumnDrop", "allowSourceColumnTypeChange"),
+      Seq("allowSourceColumnRenameAndDrop", "allowSourceColumnTypeChange")
+    )
   )
 
   testSchemaChange(
@@ -329,9 +368,9 @@ class DeltaSourceMetadataEvolutionSupportSuite
     expectedResult = expectNonWideningTypeChangeError
   )
 
-  ///////////////
+  //////////////////////////
   // Drop and rename column
-  ///////////////
+  //////////////////////////
   testSchemaChange(
     name = "drop column, rename to other column name",
     fromDDL = "a int, b int",
@@ -339,8 +378,9 @@ class DeltaSourceMetadataEvolutionSupportSuite
     toPhysicalNames = Map(Seq("c") -> "b"),
     expectedResult = expectColumnMappingChangeBlocked("RENAME AND DROP COLUMN"),
     unblock = Seq(
-      "allowSourceColumnRenameAndDrop",
-      "allowSourceColumnRenameAndDropAndTypeWidening")
+      Seq("allowSourceColumnRename", "allowSourceColumnDrop"),
+      Seq("allowSourceColumnRenameAndDrop")
+    )
   )
 
   testSchemaChange(
@@ -349,10 +389,11 @@ class DeltaSourceMetadataEvolutionSupportSuite
     toDDL = "c int",
     toPhysicalNames = Map(Seq("c") -> "b"),
     // We don't block the type change itself here as the column is also renamed
-    expectedResult = expectColumnMappingChangeBlocked("RENAME AND DROP COLUMN"),
+    expectedResult = expectColumnMappingChangeBlocked("RENAME, DROP AND TYPE WIDENING"),
     unblock = Seq(
-      "allowSourceColumnRenameAndDrop",
-      "allowSourceColumnRenameAndDropAndTypeWidening")
+      Seq("allowSourceColumnRename", "allowSourceColumnDrop", "allowSourceColumnTypeChange"),
+      Seq("allowSourceColumnRenameAndDrop", "allowSourceColumnTypeChange")
+    )
   )
 
   testSchemaChange(
@@ -360,10 +401,7 @@ class DeltaSourceMetadataEvolutionSupportSuite
     fromDDL = "a int, b int",
     toDDL = "c string",
     toPhysicalNames = Map(Seq("c") -> "b"),
-    expectedResult = expectColumnMappingChangeBlocked("RENAME AND DROP COLUMN"),
-    unblock = Seq(
-      "allowSourceColumnRenameAndDrop",
-      "allowSourceColumnRenameAndDropAndTypeWidening")
+    expectedResult = expectNonWideningTypeChangeError
   )
 
   testSchemaChange(
@@ -373,8 +411,9 @@ class DeltaSourceMetadataEvolutionSupportSuite
     toPhysicalNames = Map(Seq("a") -> "b"),
     expectedResult = expectColumnMappingChangeBlocked("RENAME AND DROP COLUMN"),
     unblock = Seq(
-      "allowSourceColumnRenameAndDrop",
-      "allowSourceColumnRenameAndDropAndTypeWidening")
+      Seq("allowSourceColumnRename", "allowSourceColumnDrop"),
+      Seq("allowSourceColumnRenameAndDrop")
+    )
   )
 
   testSchemaChange(
@@ -383,7 +422,10 @@ class DeltaSourceMetadataEvolutionSupportSuite
     toDDL = "a int",
     toPhysicalNames = Map(Seq("a") -> "b"),
     expectedResult = expectColumnMappingChangeBlocked("RENAME, DROP AND TYPE WIDENING"),
-    unblock = Seq("allowSourceColumnRenameAndDropAndTypeWidening")
+    unblock = Seq(
+      Seq("allowSourceColumnRename", "allowSourceColumnDrop", "allowSourceColumnTypeChange"),
+      Seq("allowSourceColumnRenameAndDrop", "allowSourceColumnTypeChange")
+    )
   )
 
   testSchemaChange(
@@ -394,19 +436,24 @@ class DeltaSourceMetadataEvolutionSupportSuite
     expectedResult = expectNonWideningTypeChangeError
   )
 
-  ///////////////
+  ////////////////
   // Type changes
-  ///////////////
+  ////////////////
   testSchemaChange(
     name = "widen single column",
     fromDDL = "a byte",
     toDDL = "a int",
     expectedResult = expectTypeWideningBlocked(Seq("  a: TINYINT -> INT")),
     unblock = Seq(
-      "allowSourceTypeWidening",
-      "allowSourceColumnRenameAndTypeWidening",
-      "allowSourceColumnDropAndTypeWidening",
-      "allowSourceColumnRenameAndDropAndTypeWidening")
+      Seq("allowSourceColumnTypeChange")
+    )
+  )
+
+  testSchemaChange(
+    name = "widening and non-widening type changes",
+    fromDDL = "a byte, b int",
+    toDDL = "a int, b byte",
+    expectedResult = expectNonWideningTypeChangeError
   )
 
   testSchemaChange(
@@ -470,10 +517,8 @@ class DeltaSourceMetadataEvolutionSupportSuite
     toDDL = "a int",
     expectedResult = expectTypeWideningBlocked(Seq("  a: TINYINT -> INT")),
     unblock = Seq(
-      "allowSourceTypeWidening",
-      "allowSourceColumnRenameAndTypeWidening",
-      "allowSourceColumnDropAndTypeWidening",
-      "allowSourceColumnRenameAndDropAndTypeWidening")
+      Seq("allowSourceColumnTypeChange")
+    )
   )
 
   testSchemaChange(
@@ -492,10 +537,8 @@ class DeltaSourceMetadataEvolutionSupportSuite
       "  a.value: SMALLINT -> INT"
     )),
     unblock = Seq(
-      "allowSourceTypeWidening",
-      "allowSourceColumnRenameAndTypeWidening",
-      "allowSourceColumnDropAndTypeWidening",
-      "allowSourceColumnRenameAndDropAndTypeWidening")
+      Seq("allowSourceColumnTypeChange")
+    )
   )
 
   testSchemaChange(
@@ -504,10 +547,8 @@ class DeltaSourceMetadataEvolutionSupportSuite
     toDDL = "a array<short>",
     expectedResult = expectTypeWideningBlocked(Seq("  a.element: TINYINT -> SMALLINT")),
     unblock = Seq(
-      "allowSourceTypeWidening",
-      "allowSourceColumnRenameAndTypeWidening",
-      "allowSourceColumnDropAndTypeWidening",
-      "allowSourceColumnRenameAndDropAndTypeWidening")
+      Seq("allowSourceColumnTypeChange")
+    )
   )
 
   testSchemaChange(
@@ -516,10 +557,8 @@ class DeltaSourceMetadataEvolutionSupportSuite
     toDDL = "a struct<x: short>",
     expectedResult = expectTypeWideningBlocked(Seq("  a.x: TINYINT -> SMALLINT")),
     unblock = Seq(
-      "allowSourceTypeWidening",
-      "allowSourceColumnRenameAndTypeWidening",
-      "allowSourceColumnDropAndTypeWidening",
-      "allowSourceColumnRenameAndDropAndTypeWidening")
+      Seq("allowSourceColumnTypeChange")
+    )
   )
 
   testSchemaChange(
@@ -529,8 +568,9 @@ class DeltaSourceMetadataEvolutionSupportSuite
     toPhysicalNames = Map(Seq("a", "z") -> "y"),
     expectedResult = expectColumnMappingChangeBlocked("RENAME AND TYPE WIDENING"),
     unblock = Seq(
-      "allowSourceColumnRenameAndTypeWidening",
-      "allowSourceColumnRenameAndDropAndTypeWidening")
+      Seq("allowSourceColumnRename", "allowSourceColumnTypeChange"),
+      Seq("allowSourceColumnRenameAndDrop", "allowSourceColumnTypeChange")
+    )
   )
 
   testSchemaChange(
@@ -539,8 +579,9 @@ class DeltaSourceMetadataEvolutionSupportSuite
     toDDL = "a struct<x: short>",
     expectedResult = expectColumnMappingChangeBlocked("DROP AND TYPE WIDENING"),
     unblock = Seq(
-      "allowSourceColumnDropAndTypeWidening",
-      "allowSourceColumnRenameAndDropAndTypeWidening")
+      Seq("allowSourceColumnDrop", "allowSourceColumnTypeChange"),
+      Seq("allowSourceColumnRenameAndDrop", "allowSourceColumnTypeChange")
+    )
   )
 
   testSchemaChange(
@@ -549,22 +590,20 @@ class DeltaSourceMetadataEvolutionSupportSuite
     toDDL = "a struct<x: short, w: int>",
     toPhysicalNames = Map(Seq("a", "w") -> "y"),
     expectedResult = expectColumnMappingChangeBlocked("RENAME, DROP AND TYPE WIDENING"),
-    unblock = Seq("allowSourceColumnRenameAndDropAndTypeWidening")
+    unblock = Seq(
+      Seq("allowSourceColumnRename", "allowSourceColumnDrop", "allowSourceColumnTypeChange"),
+      Seq("allowSourceColumnRenameAndDrop", "allowSourceColumnTypeChange")
+    )
   )
 
-  test("combining individual SQL confs to unblock isn't supported") {
-    val ex = intercept[DeltaThrowable] {
-      // We're dropping a column and renaming another one. Unblocking the DROP and RENAME separately
-      // isn't supported, the user must use `allowSourceColumnRenameAndDrop` instead.
-      withUnblockedChanges(Seq("allowSourceColumnRename", "allowSourceColumnDrop")) {
-        DeltaSourceMetadataEvolutionSupport.validateIfSchemaChangeCanBeUnblockedWithSQLConf(
-          spark,
-          metadataPath = "sourceMetadataPath",
-          currentSchema = persistedMetadata("a int", Map(Seq("a") -> "b")),
-          previousSchema = persistedMetadata("a int, b int", Map.empty)
-        )
-      }
+  test("combining individual SQL confs to unblock is supported") {
+    withSQLConfUnblockedChanges(Seq("allowSourceColumnRename", "allowSourceColumnDrop")) {
+      DeltaSourceMetadataEvolutionSupport.validateIfSchemaChangeCanBeUnblockedWithSQLConf(
+        spark,
+        metadataPath = "sourceMetadataPath",
+        currentSchema = persistedMetadata("a int", Map(Seq("a") -> "b")),
+        previousSchema = persistedMetadata("a int, b int", Map.empty)
+      )
     }
-    assert(ex.getErrorClass === "DELTA_STREAMING_CANNOT_CONTINUE_PROCESSING_POST_SCHEMA_EVOLUTION")
   }
 }
