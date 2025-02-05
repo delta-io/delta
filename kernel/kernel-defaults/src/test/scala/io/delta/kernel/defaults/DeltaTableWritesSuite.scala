@@ -25,7 +25,7 @@ import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions._
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.expressions.Literal._
-import io.delta.kernel.hook.PostCommitHookType
+import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
 import io.delta.kernel.internal.checkpoints.CheckpointerSuite.selectSingleElement
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
 import io.delta.kernel.internal.{SnapshotImpl, TableConfig}
@@ -132,12 +132,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       val txnResult = txn.commit(engine, emptyIterable())
 
       assert(txnResult.getVersion === 0)
-      assert(
-        !txnResult.getPostCommitHooks.stream()
-          .anyMatch(
-            hook => hook.getType == PostCommitHookType.CHECKPOINT
-          )
-        )
+      assertCheckpointReadiness(txnResult, isReadyForCheckpoint = false)
 
       verifyCommitInfo(tablePath = tablePath, version = 0)
       verifyWrittenContent(tablePath, testSchema, Seq.empty)
@@ -356,11 +351,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       val txnResult = txn.commit(engine, emptyIterable())
 
       assert(txnResult.getVersion === 0)
-      assert(
-        !txnResult.getPostCommitHooks
-          .stream()
-          .anyMatch(hook => hook.getType == PostCommitHookType.CHECKPOINT)
-        )
+        assertCheckpointReadiness(txnResult, isReadyForCheckpoint = false)
 
       verifyCommitInfo(tablePath, version = 0, Seq("Part1", "part2"))
       verifyWrittenContent(tablePath, schema, Seq.empty)
@@ -378,11 +369,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       val txnResult = txn.commit(engine, emptyIterable())
 
       assert(txnResult.getVersion === 0)
-      assert(
-        !txnResult.getPostCommitHooks
-            .stream()
-          .anyMatch(hook => hook.getType == PostCommitHookType.CHECKPOINT)
-      )
+        assertCheckpointReadiness(txnResult, isReadyForCheckpoint = false)
 
       verifyCommitInfo(tablePath, version = 0)
       verifyWrittenContent(tablePath, schema, Seq.empty)

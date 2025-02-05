@@ -13,13 +13,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.hook;
+package io.delta.kernel.internal.hook;
 
 import io.delta.kernel.Table;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.hook.PostCommitHook;
 import io.delta.kernel.internal.fs.Path;
 import java.io.IOException;
 
+/** Write a new checkpoint at the version committed by the txn if required. */
 public class CheckpointHook implements PostCommitHook {
 
   private final Path tablePath;

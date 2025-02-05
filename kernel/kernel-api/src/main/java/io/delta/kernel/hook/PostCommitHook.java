@@ -19,7 +19,16 @@ package io.delta.kernel.hook;
 import io.delta.kernel.engine.Engine;
 import java.io.IOException;
 
+/**
+ * A hook for executing operation after a transaction commit. Hooks are added in the Transaction and
+ * engine need to invoke the hook explicitly for executing the operation.
+ */
 public interface PostCommitHook {
+
+  enum PostCommitHookType {
+    // Write a new checkpoint at the version committed by the txn if required.
+    CHECKPOINT,
+  }
 
   /** Invokes the post commit operation whose implementation must be thread safe. */
   void threadSafeInvoke(Engine engine) throws IOException;
