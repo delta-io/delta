@@ -1517,6 +1517,15 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val MDC_SORT_WITHIN_FILES =
+    SQLConf.buildConf("spark.databricks.io.skipping.mdc.sortWithinFiles")
+      .internal()
+      .doc("If enabled, sort within files by the specified MDC curve. " +
+         "This might improve row-group skipping and data compression, at " +
+         "the cost of additional overhead for sorting.")
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_OPTIMIZE_ZORDER_COL_STAT_CHECK =
     buildConf("optimize.zorder.checkStatsCollection.enabled")
       .internal()
