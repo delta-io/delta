@@ -123,8 +123,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       SnapshotQueryContext snapshotContext = SnapshotQueryContext.forVersionSnapshot(tablePath, -1);
       LogReplay logReplay =
           getEmptyLogReplay(engine, metadata, protocol, snapshotContext.getSnapshotMetrics());
-      snapshot =
-          new InitialSnapshot(table.getDataPath(), logReplay, snapshotContext);
+      snapshot = new InitialSnapshot(table.getDataPath(), logReplay, snapshotContext);
     }
 
     boolean isNewTable = snapshot.getVersion() < 0;
@@ -223,15 +222,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   }
 
   private class InitialSnapshot extends SnapshotImpl {
-    InitialSnapshot(
-        Path dataPath,
-        LogReplay logReplay,
-        SnapshotQueryContext snapshotContext) {
-      super(
-          dataPath,
-          LogSegment.empty(table.getLogPath()),
-          logReplay,
-          snapshotContext);
+    InitialSnapshot(Path dataPath, LogReplay logReplay, SnapshotQueryContext snapshotContext) {
+      super(dataPath, LogSegment.empty(table.getLogPath()), logReplay, snapshotContext);
     }
 
     @Override
@@ -243,11 +235,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   private LogReplay getEmptyLogReplay(
       Engine engine, Metadata metadata, Protocol protocol, SnapshotMetrics snapshotMetrics) {
     return new ExistingPAndMReplay(
-        engine,
-        table.getDataPath(),
-        LogSegment.empty(table.getLogPath()),
-        protocol,
-        metadata) {
+        engine, table.getDataPath(), LogSegment.empty(table.getLogPath()), protocol, metadata) {
 
       @Override
       public Optional<Long> getLatestTransactionIdentifier(Engine engine, String applicationId) {

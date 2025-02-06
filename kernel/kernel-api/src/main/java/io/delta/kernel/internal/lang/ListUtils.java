@@ -21,6 +21,7 @@ import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 public final class ListUtils {
   private ListUtils() {}
@@ -48,5 +49,12 @@ public final class ListUtils {
     } else {
       return list.get(list.size() - 1);
     }
+  }
+
+  public static <T> int firstIndexWhere(List<T> list, Predicate<? super T> predicate) {
+    return IntStream.range(0, list.size())
+        .filter(i -> predicate.test(list.get(i)))
+        .findFirst()
+        .orElse(-1);
   }
 }
