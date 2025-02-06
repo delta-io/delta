@@ -142,7 +142,6 @@ trait TypeWideningAlterTableTests
             new MetadataBuilder()
               .putString("toType", "integer")
               .putString("fromType", "short")
-              .putLong("tableVersion", 1)
               .build()
           )).build()))
     checkAnswer(readDeltaTable(tempPath), Seq(Row(1), Row(2)))

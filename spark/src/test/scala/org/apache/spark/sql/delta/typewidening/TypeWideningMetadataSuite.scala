@@ -629,8 +629,7 @@ trait TypeWideningMetadataEndToEndTests {
         "metadata": {
           "delta.typeChanges": [{
             "toType": "integer",
-            "fromType": "short",
-            "tableVersion": 1
+            "fromType": "short"
           }]
         }
       }]}""".stripMargin)
@@ -648,12 +647,10 @@ trait TypeWideningMetadataEndToEndTests {
         "metadata": {
           "delta.typeChanges": [{
             "toType": "short",
-            "fromType": "byte",
-            "tableVersion": 1
+            "fromType": "byte"
           },{
             "toType": "integer",
-            "fromType": "short",
-            "tableVersion": 2
+            "fromType": "short"
           }]
         }
       }]}""".stripMargin)
@@ -678,8 +675,7 @@ trait TypeWideningMetadataEndToEndTests {
               "metadata": {
                 "delta.typeChanges": [{
                   "toType": "short",
-                  "fromType": "byte",
-                  "tableVersion": 2
+                  "fromType": "byte"
                 }]
               }
             }]
@@ -691,7 +687,6 @@ trait TypeWideningMetadataEndToEndTests {
           "delta.typeChanges": [{
             "toType": "integer",
             "fromType": "byte",
-            "tableVersion": 1,
             "fieldPath": "key"
           }]
         }
@@ -717,7 +712,6 @@ trait TypeWideningMetadataEndToEndTests {
           "delta.typeChanges": [{
             "toType": "short",
             "fromType": "byte",
-            "tableVersion": 1,
             "fieldPath": "element"
           }]
         }
@@ -735,8 +729,7 @@ trait TypeWideningMetadataEndToEndTests {
               "metadata": {
                 "delta.typeChanges": [{
                   "toType": "integer",
-                  "fromType": "short",
-                  "tableVersion": 2
+                  "fromType": "short"
                 }]
               }
             }]
