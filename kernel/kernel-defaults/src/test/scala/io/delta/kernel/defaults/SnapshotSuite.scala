@@ -55,7 +55,7 @@ class SnapshotSuite extends AnyFunSuite with TestUtils {
 
         // Step 2: Check the partition columns
         val tablePartCols =
-          table.getLatestSnapshot(defaultEngine).getPartitionColumnNames(defaultEngine)
+          table.getLatestSnapshot(defaultEngine).getPartitionColumnNames()
 
         assert(partCols.asJava === tablePartCols)
       }

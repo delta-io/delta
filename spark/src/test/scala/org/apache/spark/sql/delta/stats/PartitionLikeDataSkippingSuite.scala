@@ -27,6 +27,7 @@ import org.scalatest.BeforeAndAfter
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.plans.logical.Filter
 import org.apache.spark.sql.functions.{array, col, concat, lit, struct}
 import org.apache.spark.sql.test.SharedSparkSession
 
@@ -72,8 +73,9 @@ trait PartitionLikeDataSkippingSuiteBase
       val res = sql(query).collect()
       assert(res.sameElements(baseResult))
 
-      val predicates =
-        sql(query).queryExecution.optimizedPlan.expressions.flatMap(splitConjunctivePredicates)
+      val predicates = sql(query).queryExecution.optimizedPlan.collect {
+        case Filter(condition, _) => condition
+      }.flatMap(splitConjunctivePredicates)
       val scanResult = DeltaLog.forTable(spark, TableIdentifier(tableName))
         .update().filesForScan(predicates)
       assert(scanResult.files.length == expectedNumFiles)
@@ -371,6 +373,57 @@ trait PartitionLikeDataSkippingSuiteBase
         expectedNumPartitionLikeDataFilters = 0,
         allPredicatesUsed = false,
         minNumFilesToApply = 1)
+    }
+  }
+
+  test("partition-like skipping can reference non-clustering columns via config") {
+    withSQLConf(
+        DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_CLUSTERING_COLUMNS_ONLY.key ->
+          "false") {
+      validateExpectedScanMetrics(
+        tableName = testTableName,
+        query = s"SELECT * FROM $testTableName WHERE CAST(e AS STRING) = '1'",
+        expectedNumFiles = 12,
+        expectedNumPartitionLikeDataFilters = 1,
+        allPredicatesUsed = true,
+        minNumFilesToApply = 1L)
+    }
+  }
+
+  test("partition-like skipping whitelist can be expanded via config") {
+    // Single additional supported expression.
+    withSQLConf(
+      DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_ADDITIONAL_SUPPORTED_EXPRESSIONS.key ->
+        "org.apache.spark.sql.catalyst.expressions.RegExpExtract") {
+      val query = s"SELECT * FROM $testTableName " +
+        "WHERE REGEXP_EXTRACT(s.b, '([0-9][0-9][0-9][0-9]).*') = '1971'"
+      validateExpectedScanMetrics(
+        tableName = testTableName,
+        query = query,
+        expectedNumFiles = 12,
+        expectedNumPartitionLikeDataFilters = 1,
+        allPredicatesUsed = true,
+        minNumFilesToApply = 1L)
+    }
+
+    // Multiple additional supported expressions.
+    DeltaLog.clearCache() // Clear cache to avoid stale config reads.
+    withSQLConf(
+      DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_ADDITIONAL_SUPPORTED_EXPRESSIONS.key ->
+        ("org.apache.spark.sql.catalyst.expressions.RegExpExtract," +
+        "org.apache.spark.sql.catalyst.expressions.JsonToStructs")) {
+      val query = s"""
+        |SELECT * FROM $testTableName
+        |WHERE (REGEXP_EXTRACT(s.b, '([0-9][0-9][0-9][0-9]).*') = '1971' OR
+        |FROM_JSON(CONCAT('{"date":"', STRING(c), '"}'), 'date STRING')['date'] = '1972-03-02')
+        |""".stripMargin
+      validateExpectedScanMetrics(
+        tableName = testTableName,
+        query = query,
+        expectedNumFiles = 13,
+        expectedNumPartitionLikeDataFilters = 1,
+        allPredicatesUsed = true,
+        minNumFilesToApply = 1L)
     }
   }
 }

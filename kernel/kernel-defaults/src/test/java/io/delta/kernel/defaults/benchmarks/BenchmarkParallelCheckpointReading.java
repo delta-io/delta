@@ -114,7 +114,7 @@ public class BenchmarkParallelCheckpointReading {
     Table table = Table.forPath(engine, testTablePath);
 
     Snapshot snapshot = table.getLatestSnapshot(engine);
-    ScanBuilder scanBuilder = snapshot.getScanBuilder(engine);
+    ScanBuilder scanBuilder = snapshot.getScanBuilder();
     Scan scan = scanBuilder.build();
 
     // Scan state is not used, but get it so that we simulate the real use case.

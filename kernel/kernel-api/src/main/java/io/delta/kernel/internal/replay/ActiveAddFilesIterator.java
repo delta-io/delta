@@ -34,6 +34,7 @@ import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.InternalScanFileUtils;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.metrics.ScanMetrics;
 import io.delta.kernel.internal.replay.LogReplayUtils.UniqueFileActionTuple;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.types.StringType;
@@ -72,18 +73,20 @@ public class ActiveAddFilesIterator implements CloseableIterator<FilteredColumna
   private boolean closed;
 
   /**
-   * Metrics capturing the state reconstruction log replay. These counters are updated as the
-   * iterator is consumed and printed when the iterator is closed.
+   * Metrics capturing log replay for scan building. These counters are updated as the iterator is
+   * consumed and reported to the {@link Engine#getMetricsReporters()} when the scan is complete.
    */
-  private LogReplayMetrics metrics = new LogReplayMetrics();
+  private ScanMetrics metrics;
 
-  ActiveAddFilesIterator(Engine engine, CloseableIterator<ActionWrapper> iter, Path tableRoot) {
+  ActiveAddFilesIterator(
+      Engine engine, CloseableIterator<ActionWrapper> iter, Path tableRoot, ScanMetrics metrics) {
     this.engine = engine;
     this.tableRoot = tableRoot;
     this.iter = iter;
     this.tombstonesFromJson = new HashSet<>();
     this.addFilesFromJson = new HashSet<>();
     this.next = Optional.empty();
+    this.metrics = metrics;
   }
 
   @Override
@@ -175,7 +178,7 @@ public class ActiveAddFilesIterator implements CloseableIterator<FilteredColumna
                 .map(DeletionVectorDescriptor::getUniqueId);
         final UniqueFileActionTuple key = new UniqueFileActionTuple(pathAsUri, dvId);
         tombstonesFromJson.add(key);
-        metrics.incNumTombstonesSeen();
+        metrics.removeFilesFromDeltaFilesCounter.increment();
       }
     }
 
@@ -192,9 +195,9 @@ public class ActiveAddFilesIterator implements CloseableIterator<FilteredColumna
         continue; // selectionVector will be `false` at rowId by default
       }
 
-      metrics.incNumAddFilesSeen();
+      metrics.addFilesCounter.increment();
       if (!isFromCheckpoint) {
-        metrics.incNumAddFilesSeenFromDeltaFiles();
+        metrics.addFilesFromDeltaFilesCounter.increment();
       }
 
       final String path = getAddFilePath(addsVector, rowId);
@@ -219,10 +222,10 @@ public class ActiveAddFilesIterator implements CloseableIterator<FilteredColumna
         if (!alreadyDeleted) {
           doSelect = true;
           selectionVectorBuffer[rowId] = true;
-          metrics.incNumActiveAddFiles();
+          metrics.activeAddFilesCounter.increment();
         }
       } else {
-        metrics.incNumDuplicateAddFiles();
+        metrics.duplicateAddFilesCounter.increment();
       }
 
       if (!doSelect) {
@@ -287,13 +290,5 @@ public class ActiveAddFilesIterator implements CloseableIterator<FilteredColumna
   public static DeletionVectorDescriptor getRemoveFileDV(ColumnVector removeFileVector, int rowId) {
     return DeletionVectorDescriptor.fromColumnVector(
         removeFileVector.getChild(REMOVE_FILE_DV_ORDINAL), rowId);
-  }
-
-  /**
-   * Returns the metrics for the log replay. Currently used in tests only. Caution: The metrics
-   * should be fetched only after the iterator is closed, to avoid reading incomplete metrics.
-   */
-  public LogReplayMetrics getMetrics() {
-    return metrics;
   }
 }

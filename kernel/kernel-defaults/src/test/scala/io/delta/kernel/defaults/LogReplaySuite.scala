@@ -29,6 +29,11 @@ import io.delta.kernel.internal.data.ScanStateRow
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
 import io.delta.kernel.Table
+import io.delta.kernel.internal.fs.Path
+import io.delta.kernel.internal.util.FileNames
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+
+import java.nio.file.Files
 
 class LogReplaySuite extends AnyFunSuite with TestUtils {
 
@@ -87,7 +92,7 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
     test(s"missing $action should fail") {
       val path = goldenTablePath(s"deltalog-state-reconstruction-without-$action")
       val e = intercept[IllegalStateException] {
-        latestSnapshot(path).getSchema(defaultEngine)
+        latestSnapshot(path).getSchema()
       }
       assert(e.getMessage.contains(s"No $action found"))
     }
@@ -100,7 +105,7 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
     test(s"missing $action should fail missing from checkpoint") {
       val path = goldenTablePath(s"deltalog-state-reconstruction-from-checkpoint-missing-$action")
       val e = intercept[IllegalStateException] {
-        latestSnapshot(path).getSchema(defaultEngine)
+        latestSnapshot(path).getSchema()
       }
       assert(e.getMessage.contains(s"No $action found"))
     }
@@ -109,7 +114,7 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
   test("fetches the latest protocol and metadata") {
     val path = goldenTablePath("log-replay-latest-metadata-protocol")
     val snapshot = latestSnapshot(path)
-    val scanStateRow = snapshot.getScanBuilder(defaultEngine).build()
+    val scanStateRow = snapshot.getScanBuilder().build()
       .getScanState(defaultEngine)
 
     // schema is updated
@@ -126,8 +131,8 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
   test("standalone DeltaLogSuite: 'checkpoint'") {
     val path = goldenTablePath("checkpoint")
     val snapshot = latestSnapshot(path)
-    assert(snapshot.getVersion(defaultEngine) == 14)
-    val scan = snapshot.getScanBuilder(defaultEngine).build()
+    assert(snapshot.getVersion() == 14)
+    val scan = snapshot.getScanBuilder().build()
     assert(collectScanFileRows(scan).length == 1)
   }
 
@@ -144,9 +149,9 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
       expectedFiles: Array[File],
       expectedVersion: Int): Unit = {
       val snapshot = latestSnapshot(tablePath)
-      assert(snapshot.getVersion(defaultEngine) == expectedVersion)
+      assert(snapshot.getVersion() == expectedVersion)
       val scanFileRows = collectScanFileRows(
-        snapshot.getScanBuilder(defaultEngine).build())
+        snapshot.getScanBuilder().build())
       assert(scanFileRows.length == expectedFiles.length)
       val scanFilePaths = scanFileRows
         .map(InternalScanFileUtils.getAddFileStatus)
@@ -199,9 +204,9 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
     // Repartition into 2 files
     withGoldenTable("snapshot-repartitioned") { tablePath =>
       val snapshot = latestSnapshot(tablePath)
-      assert(snapshot.getVersion(defaultEngine) == 5)
+      assert(snapshot.getVersion() == 5)
       val scanFileRows = collectScanFileRows(
-        snapshot.getScanBuilder(defaultEngine).build())
+        snapshot.getScanBuilder().build())
       assert(scanFileRows.length == 2)
     }
 
@@ -216,7 +221,7 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
   test("DV cases with same path different DV keys") {
     val snapshot = latestSnapshot(goldenTablePath("log-replay-dv-key-cases"))
     val scanFileRows = collectScanFileRows(
-      snapshot.getScanBuilder(defaultEngine).build()
+      snapshot.getScanBuilder().build()
     )
     assert(scanFileRows.length == 1) // there should only be 1 add file
     val dv = InternalScanFileUtils.getDeletionVectorDescriptorFromRow(scanFileRows.head)
@@ -227,14 +232,14 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
     withGoldenTable("log-replay-special-characters-a") { path =>
       val snapshot = latestSnapshot(path)
       val scanFileRows = collectScanFileRows(
-        snapshot.getScanBuilder(defaultEngine).build()
+        snapshot.getScanBuilder().build()
       )
       assert(scanFileRows.isEmpty)
     }
     withGoldenTable("log-replay-special-characters-b") { path =>
       val snapshot = latestSnapshot(path)
       val scanFileRows = collectScanFileRows(
-        snapshot.getScanBuilder(defaultEngine).build()
+        snapshot.getScanBuilder().build()
       )
       assert(scanFileRows.length == 1)
       val addFileStatus = InternalScanFileUtils.getAddFileStatus(scanFileRows.head)
@@ -247,8 +252,8 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
   ignore("path should be canonicalized - normal characters") {
     Seq("canonicalized-paths-normal-a", "canonicalized-paths-normal-b").foreach { path =>
       val snapshot = latestSnapshot(goldenTablePath(path))
-      assert(snapshot.getVersion(defaultEngine) == 1)
-      val scanFileRows = collectScanFileRows(snapshot.getScanBuilder(defaultEngine).build())
+      assert(snapshot.getVersion() == 1)
+      val scanFileRows = collectScanFileRows(snapshot.getScanBuilder().build())
       assert(scanFileRows.isEmpty)
     }
   }
@@ -256,8 +261,8 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
   ignore("path should be canonicalized - special characters") {
     Seq("canonicalized-paths-special-a", "canonicalized-paths-special-b").foreach { path =>
       val snapshot = latestSnapshot(goldenTablePath(path))
-      assert(snapshot.getVersion(defaultEngine) == 1)
-      val scanFileRows = collectScanFileRows(snapshot.getScanBuilder(defaultEngine).build())
+      assert(snapshot.getVersion() == 1)
+      val scanFileRows = collectScanFileRows(snapshot.getScanBuilder().build())
       assert(scanFileRows.isEmpty)
     }
   }
@@ -274,7 +279,7 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
   test("delete and re-add same file in different transactions") {
     val path = goldenTablePath("delete-re-add-same-file-different-transactions")
     val snapshot = latestSnapshot(path)
-    val scan = snapshot.getScanBuilder(defaultEngine).build()
+    val scan = snapshot.getScanBuilder().build()
 
     val foundFiles = collectScanFileRows(scan).map(InternalScanFileUtils.getAddFileStatus)
 
@@ -297,5 +302,61 @@ class LogReplaySuite extends AnyFunSuite with TestUtils {
 
     assert(snapshotImpl.getLatestTransactionVersion(defaultEngine, "fakeAppId") === Optional.of(3L))
     assert(!snapshotImpl.getLatestTransactionVersion(defaultEngine, "nonExistentAppId").isPresent)
+  }
+
+  test("current checksum read => snapshot provides crc info") {
+    withTempDir { tempFile =>
+      val tablePath = tempFile.getAbsolutePath
+      spark.sql(
+        s"CREATE TABLE delta.`$tablePath` USING DELTA AS " +
+          s"SELECT 0L as id"
+      )
+      spark.sql(
+        s"INSERT INTO delta.`$tablePath` SELECT 1L as id"
+      )
+      val table = Table.forPath(defaultEngine, tablePath)
+      val snapshot = table.getLatestSnapshot(defaultEngine).asInstanceOf[SnapshotImpl]
+      assert(snapshot.getCurrentCrcInfo.isPresent)
+      val crcInfo = snapshot.getCurrentCrcInfo.get()
+      assert(crcInfo.getVersion == 1)
+      assert(crcInfo.getProtocol == snapshot.getProtocol)
+      assert(crcInfo.getMetadata == snapshot.getMetadata)
+    }
+  }
+
+  test("stale checksum read => snapshot doesn't provides crc info") {
+    withTempDir { tempFile =>
+      val tablePath = tempFile.getAbsolutePath
+      spark.sql(
+        s"CREATE TABLE delta.`$tablePath` USING DELTA AS " +
+          s"SELECT 0L as id"
+      )
+      spark.sql(
+        s"INSERT INTO delta.`$tablePath` SELECT 1L as id"
+      )
+      deleteChecksumFileForTable(tablePath, versions = Seq(1))
+
+      val table = Table.forPath(defaultEngine, tablePath)
+      val snapshot = table.getLatestSnapshot(defaultEngine).asInstanceOf[SnapshotImpl]
+      assert(!snapshot.getCurrentCrcInfo.isPresent)
+    }
+  }
+
+  test("no checksum read => snapshot doesn't provides crc info") {
+    withTempDir { tempFile =>
+      val tablePath = tempFile.getAbsolutePath
+      spark.sql(
+        s"CREATE TABLE delta.`$tablePath` USING DELTA AS " +
+        s"SELECT 0L as id"
+      )
+      spark.sql(
+        s"INSERT INTO delta.`$tablePath` SELECT 1L as id"
+      )
+      deleteChecksumFileForTable(tablePath, versions = Seq(0, 1))
+
+      val table = Table.forPath(defaultEngine, tablePath)
+      val snapshot = table.getLatestSnapshot(defaultEngine).asInstanceOf[SnapshotImpl]
+      assert(!snapshot.getCurrentCrcInfo.isPresent)
+    }
   }
 }

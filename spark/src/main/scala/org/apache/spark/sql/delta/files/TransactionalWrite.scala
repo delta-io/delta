@@ -54,14 +54,6 @@ import org.apache.spark.util.SerializableConfiguration
  */
 trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl =>
 
-  def deltaLog: DeltaLog
-
-  def protocol: Protocol
-
-  protected def snapshot: Snapshot
-
-  protected def metadata: Metadata
-
   protected var hasWritten = false
 
   private[delta] val deltaDataSubdir =
@@ -90,20 +82,34 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
   }
 
   /**
-   * Normalize the schema of the query, and return the QueryExecution to execute. If the table has
-   * generated columns and users provide these columns in the output, we will also return
-   * constraints that should be respected. If any constraints are returned, the caller should apply
-   * these constraints when writing data.
-   *
-   * Note: The output attributes of the QueryExecution may not match the attributes we return as the
-   * output schema. This is because streaming queries create `IncrementalExecution`, which cannot be
-   * further modified. We can however have the Parquet writer use the physical plan from
-   * `IncrementalExecution` and the output schema provided through the attributes.
+   * Used to perform all required normalizations before writing out the data.
+   * Returns the QueryExecution to execute.
    */
   protected def normalizeData(
       deltaLog: DeltaLog,
       options: Option[DeltaOptions],
-      data: Dataset[_]): (QueryExecution, Seq[Attribute], Seq[Constraint], Set[String]) = {
+      data: DataFrame): (QueryExecution, Seq[Attribute], Seq[Constraint], Set[String]) = {
+    val (normalizedSchema, output, constraints, trackHighWaterMarks) = normalizeSchema(
+      deltaLog, options, data)
+
+    (normalizedSchema.queryExecution, output, constraints, trackHighWaterMarks)
+  }
+
+  /**
+   * Normalize the schema of the query, and returns the updated DataFrame. If the table has
+   * generated columns and users provide these columns in the output, we will also return
+   * constraints that should be respected. If any constraints are returned, the caller should apply
+   * these constraints when writing data.
+   *
+   * Note: The schema of the DataFrame may not match the attributes we return as the
+   * output schema. This is because streaming queries create `IncrementalExecution`, which cannot be
+   * further modified. We can however have the Parquet writer use the physical plan from
+   * `IncrementalExecution` and the output schema provided through the attributes.
+   */
+  protected def normalizeSchema(
+      deltaLog: DeltaLog,
+      options: Option[DeltaOptions],
+      data: DataFrame): (DataFrame, Seq[Attribute], Seq[Constraint], Set[String]) = {
     val normalizedData = SchemaUtils.normalizeColumnNames(
       deltaLog, metadata.schema, data
     )
@@ -131,20 +137,17 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
         (normalizedData, Nil, Set[String]())
       }
     val cleanedData = SchemaUtils.dropNullTypeColumns(dataWithDefaultExprs)
-    val queryExecution = if (cleanedData.schema != dataWithDefaultExprs.schema) {
+    val finalData = if (cleanedData.schema != dataWithDefaultExprs.schema) {
       // This must be batch execution as DeltaSink doesn't accept NullType in micro batch DataFrame.
       // For batch executions, we need to use the latest DataFrame query execution
-      cleanedData.queryExecution
+      cleanedData
     } else if (enforcesDefaultExprs) {
-      dataWithDefaultExprs.queryExecution
+      dataWithDefaultExprs
     } else {
       assert(
         normalizedData == dataWithDefaultExprs,
         "should not change data when there is no generate column")
-      // Ideally, we should use `normalizedData`. But it may use `QueryExecution` rather than
-      // `IncrementalExecution`. So we use the input `data` and leverage the `nullableOutput`
-      // below to fix the column names.
-      data.queryExecution
+      normalizedData
     }
     val nullableOutput = makeOutputNullable(cleanedData.queryExecution.analyzed.output)
     val columnMapping = metadata.columnMappingMode
@@ -156,7 +159,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
     val mappedOutput = if (columnMapping == NoMapping) nullableOutput else {
       mapColumnAttributes(nullableOutput, columnMapping)
     }
-    (queryExecution, mappedOutput, generatedColumnConstraints, trackHighWaterMarks)
+    (finalData, mappedOutput, generatedColumnConstraints, trackHighWaterMarks)
   }
 
   protected def checkPartitionColumns(

@@ -28,6 +28,7 @@ import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.metrics.SnapshotReportImpl;
+import io.delta.kernel.internal.replay.CRCInfo;
 import io.delta.kernel.internal.replay.CreateCheckpointIterator;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
@@ -59,7 +60,7 @@ public class SnapshotImpl implements Snapshot {
       SnapshotQueryContext snapshotContext) {
     this.logPath = new Path(dataPath, "_delta_log");
     this.dataPath = dataPath;
-    this.version = logSegment.version;
+    this.version = logSegment.getVersion();
     this.logSegment = logSegment;
     this.logReplay = logReplay;
     this.protocol = protocol;
@@ -73,8 +74,13 @@ public class SnapshotImpl implements Snapshot {
   /////////////////
 
   @Override
-  public long getVersion(Engine engine) {
+  public long getVersion() {
     return version;
+  }
+
+  @Override
+  public List<String> getPartitionColumnNames() {
+    return VectorUtils.toJavaList(getMetadata().getPartitionColumns());
   }
 
   /**
@@ -94,27 +100,27 @@ public class SnapshotImpl implements Snapshot {
     if (IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata)) {
       if (!inCommitTimestampOpt.isPresent()) {
         Optional<CommitInfo> commitInfoOpt =
-            CommitInfo.getCommitInfoOpt(engine, logPath, logSegment.version);
+            CommitInfo.getCommitInfoOpt(engine, logPath, logSegment.getVersion());
         inCommitTimestampOpt =
             Optional.of(
                 CommitInfo.getRequiredInCommitTimestamp(
-                    commitInfoOpt, String.valueOf(logSegment.version), dataPath));
+                    commitInfoOpt, String.valueOf(logSegment.getVersion()), dataPath));
       }
       return inCommitTimestampOpt.get();
     } else {
-      return logSegment.lastCommitTimestamp;
+      return logSegment.getLastCommitTimestamp();
     }
   }
 
   @Override
-  public StructType getSchema(Engine engine) {
+  public StructType getSchema() {
     return getMetadata().getSchema();
   }
 
   @Override
-  public ScanBuilder getScanBuilder(Engine engine) {
-    // TODO when we add ScanReport we will pass the SnapshotReport downstream here
-    return new ScanBuilderImpl(dataPath, protocol, metadata, getSchema(engine), logReplay, engine);
+  public ScanBuilder getScanBuilder() {
+    return new ScanBuilderImpl(
+        dataPath, protocol, metadata, getSchema(), logReplay, snapshotReport);
   }
 
   ///////////////////
@@ -133,10 +139,6 @@ public class SnapshotImpl implements Snapshot {
     return protocol;
   }
 
-  public List<String> getPartitionColumnNames(Engine engine) {
-    return VectorUtils.toJavaList(getMetadata().getPartitionColumns());
-  }
-
   public SnapshotReport getSnapshotReport() {
     return snapshotReport;
   }
@@ -150,6 +152,11 @@ public class SnapshotImpl implements Snapshot {
    */
   public Map<String, DomainMetadata> getDomainMetadataMap() {
     return logReplay.getDomainMetadataMap();
+  }
+
+  /** Returns the crc info for the current snapshot if the checksum file is read */
+  public Optional<CRCInfo> getCurrentCrcInfo() {
+    return logReplay.getCurrentCrcInfo();
   }
 
   public Metadata getMetadata() {

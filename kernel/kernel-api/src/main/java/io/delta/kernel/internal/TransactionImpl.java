@@ -27,9 +27,11 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.ConcurrentWriteException;
 import io.delta.kernel.expressions.Column;
+import io.delta.kernel.hook.PostCommitHook;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.hook.CheckpointHook;
 import io.delta.kernel.internal.metrics.TransactionMetrics;
 import io.delta.kernel.internal.metrics.TransactionReportImpl;
 import io.delta.kernel.internal.replay.ConflictChecker;
@@ -66,7 +68,7 @@ public class TransactionImpl implements Transaction {
   private final Optional<SetTransaction> setTxnOpt;
   private final boolean shouldUpdateProtocol;
   private final Clock clock;
-  private final List<DomainMetadata> domainMetadatas = new ArrayList<>();
+  private List<DomainMetadata> domainMetadatas = new ArrayList<>();
   private Metadata metadata;
   private boolean shouldUpdateMetadata;
   private int maxRetries;
@@ -114,7 +116,7 @@ public class TransactionImpl implements Transaction {
 
   @Override
   public StructType getSchema(Engine engine) {
-    return readSnapshot.getSchema(engine);
+    return readSnapshot.getSchema();
   }
 
   public Optional<SetTransaction> getSetTxnOpt() {
@@ -132,6 +134,10 @@ public class TransactionImpl implements Transaction {
 
   public List<DomainMetadata> getDomainMetadatas() {
     return domainMetadatas;
+  }
+
+  public Protocol getProtocol() {
+    return protocol;
   }
 
   @Override
@@ -162,21 +168,31 @@ public class TransactionImpl implements Transaction {
   private TransactionCommitResult commitWithRetry(
       Engine engine, CloseableIterable<Row> dataActions, TransactionMetrics transactionMetrics) {
     try {
-      long commitAsVersion = readSnapshot.getVersion(engine) + 1;
+      long commitAsVersion = readSnapshot.getVersion() + 1;
       // Generate the commit action with the inCommitTimestamp if ICT is enabled.
       CommitInfo attemptCommitInfo = generateCommitAction(engine);
       updateMetadataWithICTIfRequired(
-          engine, attemptCommitInfo.getInCommitTimestamp(), readSnapshot.getVersion(engine));
+          engine, attemptCommitInfo.getInCommitTimestamp(), readSnapshot.getVersion());
 
       // If row tracking is supported, assign base row IDs and default row commit versions to any
       // AddFile actions that do not yet have them. If the row ID high watermark changes, emit a
       // DomainMetadata action to update it.
       if (TableFeatures.isRowTrackingSupported(protocol)) {
-        RowTracking.createNewHighWaterMarkIfNeeded(readSnapshot, dataActions)
-            .ifPresent(domainMetadatas::add);
+        domainMetadatas =
+            RowTracking.updateRowIdHighWatermarkIfNeeded(
+                readSnapshot,
+                protocol,
+                Optional.empty() /* winningTxnRowIdHighWatermark */,
+                dataActions,
+                domainMetadatas);
         dataActions =
             RowTracking.assignBaseRowIdAndDefaultRowCommitVersion(
-                readSnapshot, commitAsVersion, dataActions);
+                readSnapshot,
+                protocol,
+                Optional.empty() /* winningTxnRowIdHighWatermark */,
+                Optional.empty() /* prevCommitVersion */,
+                commitAsVersion,
+                dataActions);
       }
 
       int numTries = 0;
@@ -191,8 +207,11 @@ public class TransactionImpl implements Transaction {
               "Concurrent write detected when committing as version = {}.", commitAsVersion);
           if (numTries < maxRetries) {
             // only try and resolve conflicts if we're going to retry
-            commitAsVersion =
-                resolveConflicts(engine, commitAsVersion, attemptCommitInfo, numTries);
+            TransactionRebaseState rebaseState =
+                resolveConflicts(engine, commitAsVersion, attemptCommitInfo, numTries, dataActions);
+            commitAsVersion = rebaseState.getLatestVersion() + 1;
+            dataActions = rebaseState.getUpdatedDataActions();
+            domainMetadatas = rebaseState.getUpdatedDomainMetadatas();
           }
         }
         numTries++;
@@ -206,15 +225,19 @@ public class TransactionImpl implements Transaction {
     throw new ConcurrentWriteException();
   }
 
-  private long resolveConflicts(
-      Engine engine, long commitAsVersion, CommitInfo attemptCommitInfo, int numTries) {
+  private TransactionRebaseState resolveConflicts(
+      Engine engine,
+      long commitAsVersion,
+      CommitInfo attemptCommitInfo,
+      int numTries,
+      CloseableIterable<Row> dataActions) {
     logger.info(
         "Table {}, trying to resolve conflicts and retry commit. (tries/maxRetries: {}/{})",
         dataPath,
         numTries,
         maxRetries);
     TransactionRebaseState rebaseState =
-        ConflictChecker.resolveConflicts(engine, readSnapshot, commitAsVersion, this);
+        ConflictChecker.resolveConflicts(engine, readSnapshot, commitAsVersion, this, dataActions);
     long newCommitAsVersion = rebaseState.getLatestVersion() + 1;
     checkArgument(
         commitAsVersion < newCommitAsVersion,
@@ -227,7 +250,7 @@ public class TransactionImpl implements Transaction {
     updateMetadataWithICTIfRequired(
         engine, updatedInCommitTimestamp, rebaseState.getLatestVersion());
     attemptCommitInfo.setInCommitTimestamp(updatedInCommitTimestamp);
-    return newCommitAsVersion;
+    return rebaseState;
   }
 
   private void updateMetadata(Metadata metadata) {
@@ -320,6 +343,8 @@ public class TransactionImpl implements Transaction {
                           transactionMetrics.totalActionsCounter.increment();
                           if (!action.isNullAt(ADD_FILE_ORDINAL)) {
                             transactionMetrics.addFilesCounter.increment();
+                            transactionMetrics.addFilesSizeInBytesCounter.increment(
+                                new AddFile(action.getStruct(ADD_FILE_ORDINAL)).getSize());
                           } else if (!action.isNullAt(REMOVE_FILE_ORDINAL)) {
                             transactionMetrics.removeFilesCounter.increment();
                           }
@@ -331,7 +356,12 @@ public class TransactionImpl implements Transaction {
           "Write file actions to JSON log file `%s`",
           FileNames.deltaFile(logPath, commitAsVersion));
 
-      return new TransactionCommitResult(commitAsVersion, isReadyForCheckpoint(commitAsVersion));
+      List<PostCommitHook> postCommitHooks = new ArrayList<>();
+      if (isReadyForCheckpoint(commitAsVersion)) {
+        postCommitHooks.add(new CheckpointHook(dataPath, commitAsVersion));
+      }
+
+      return new TransactionCommitResult(commitAsVersion, postCommitHooks);
     } catch (FileAlreadyExistsException e) {
       throw e;
     } catch (IOException ioe) {

@@ -30,7 +30,7 @@ import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils._
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.sources.{DeltaSQLConf, DeltaStreamUtils}
 import org.apache.spark.sql.util.ScalaExtensions._
 
 import org.apache.spark.internal.MDC
@@ -40,6 +40,7 @@ import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.expressions.{Alias, AttributeReference, Expression, GetArrayItem, GetArrayStructFields, GetMapValue, GetStructField}
 import org.apache.spark.sql.catalyst.plans.logical.{LocalRelation, Project}
 import org.apache.spark.sql.catalyst.util.CharVarcharUtils
+import org.apache.spark.sql.execution.streaming.IncrementalExecution
 import org.apache.spark.sql.functions.{col, struct}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
@@ -362,7 +363,12 @@ def normalizeColumnNamesInDataType(
         }
         expression
       }
-      data.select(aliasExpressions: _*)
+      data.queryExecution match {
+        case incrementalExecution: IncrementalExecution =>
+          DeltaStreamUtils.selectFromStreamingDataFrame(
+            incrementalExecution, data.toDF(), aliasExpressions: _*)
+        case _ => data.select(aliasExpressions: _*)
+      }
     }
   }
 
@@ -381,7 +387,8 @@ def normalizeColumnNamesInDataType(
    * As the Delta snapshots update, the schema may change as well. This method defines whether the
    * new schema of a Delta table can be used with a previously analyzed LogicalPlan. Our
    * rules are to return false if:
-   *   - Dropping any column that was present in the existing schema, if not allowMissingColumns
+   *   - Dropping any column or struct field that was present in the existing schema, if not
+   *     allowMissingColumns
    *   - Any change of datatype, unless eligible for widening. The caller specifies eligible type
    *     changes via `typeWideningMode`.
    *   - Change of partition columns. Although analyzed LogicalPlan is not changed,
@@ -419,7 +426,11 @@ def normalizeColumnNamesInDataType(
     def isDatatypeReadCompatible(existing: DataType, newtype: DataType): Boolean = {
       (existing, newtype) match {
         case (e: StructType, n: StructType) =>
-          isReadCompatible(e, n, forbidTightenNullability, typeWideningMode = typeWideningMode)
+          isReadCompatible(e, n,
+            forbidTightenNullability,
+            typeWideningMode = typeWideningMode,
+            allowMissingColumns = allowMissingColumns
+          )
         case (e: ArrayType, n: ArrayType) =>
           // if existing elements are non-nullable, so should be the new element
           isNullabilityCompatible(e.containsNull, n.containsNull) &&

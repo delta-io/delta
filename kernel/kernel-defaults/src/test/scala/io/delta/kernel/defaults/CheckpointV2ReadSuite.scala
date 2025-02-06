@@ -82,22 +82,22 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils with ExpressionTe
       snapshotFromSpark.protocol.readerFeatureNames)
     assert(snapshotImpl.getProtocol.getWriterFeatures.asScala.toSet ==
       snapshotFromSpark.protocol.writerFeatureNames)
-    assert(snapshot.getVersion(defaultEngine) == snapshotFromSpark.version)
+    assert(snapshot.getVersion() == snapshotFromSpark.version)
 
     // Validate that snapshot read from most recent checkpoint. For most cases, given a checkpoint
     // interval of 2, this will be the most recent even version.
     val expectedV2CkptToRead =
       ckptVersionExpected.getOrElse(snapshotFromSpark.version - (snapshotFromSpark.version % 2))
-    assert(snapshotImpl.getLogSegment.checkpoints.asScala.map(
+    assert(snapshotImpl.getLogSegment.getCheckpoints.asScala.map(
       f => FileNames.checkpointVersion(new Path(f.getPath)))
       .contains(expectedV2CkptToRead))
-    assert(snapshotImpl.getLogSegment.checkpoints.asScala.map(
+    assert(snapshotImpl.getLogSegment.getCheckpoints.asScala.map(
       f => new CheckpointInstance(f.getPath).format == CheckpointInstance.CheckpointFormat.V2)
       .contains(expectV2CheckpointFormat))
 
 
     // Validate AddFiles from sidecars found against Spark connector.
-    val scan = snapshot.getScanBuilder(defaultEngine).build()
+    val scan = snapshot.getScanBuilder().build()
     val foundFiles =
       collectScanFileRows(scan).map(InternalScanFileUtils.getAddFileStatus).map(
         _.getPath.split('/').last).toSet

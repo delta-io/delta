@@ -17,6 +17,7 @@ package io.delta.kernel.internal;
 
 import static io.delta.kernel.internal.DeltaErrors.*;
 import static io.delta.kernel.internal.fs.Path.getName;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
@@ -31,13 +32,16 @@ import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.ListUtils;
 import io.delta.kernel.internal.replay.ActionsIterator;
 import io.delta.kernel.internal.util.FileNames;
+import io.delta.kernel.internal.util.FileNames.DeltaLogFileType;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
+import io.delta.kernel.utils.CloseableIterator.BreakableFilterResult;
 import io.delta.kernel.utils.FileStatus;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -94,14 +98,21 @@ public class DeltaLogActionUtils {
    */
   public static List<FileStatus> getCommitFilesForVersionRange(
       Engine engine, Path tablePath, long startVersion, long endVersion) {
-
     // Validate arguments
     if (startVersion < 0 || endVersion < startVersion) {
       throw invalidVersionRange(startVersion, endVersion);
     }
 
     // Get any available commit files within the version range
-    List<FileStatus> commitFiles = listCommitFiles(engine, tablePath, startVersion, endVersion);
+    final List<FileStatus> commitFiles =
+        listDeltaLogFilesAsIter(
+                engine,
+                Collections.singleton(DeltaLogFileType.COMMIT),
+                tablePath,
+                startVersion,
+                Optional.of(endVersion),
+                false /* mustBeRecreatable */)
+            .toInMemoryList();
 
     // There are no available commit files within the version range.
     // This can be due to (1) an empty directory, (2) no valid delta files in the directory,
@@ -169,6 +180,95 @@ public class DeltaLogActionUtils {
                   .getColumnarBatch()
                   .withNewColumn(0, COMMIT_VERSION_STRUCT_FIELD, commitVersionVector)
                   .withNewColumn(1, COMMIT_TIMESTAMP_STRUCT_FIELD, commitTimestampVector);
+            });
+  }
+
+  /**
+   * Returns a {@link CloseableIterator} of files of type $fileTypes in the _delta_log directory of
+   * the given $tablePath, in increasing order from $startVersion to the optional $endVersion.
+   *
+   * @throws TableNotFoundException if the table or its _delta_log does not exist
+   * @throws KernelException if mustBeRecreatable is true, endVersionOpt is present, and the
+   *     _delta_log history has been truncated so that we cannot load the desired end version
+   */
+  public static CloseableIterator<FileStatus> listDeltaLogFilesAsIter(
+      Engine engine,
+      Set<DeltaLogFileType> fileTypes,
+      Path tablePath,
+      long startVersion,
+      Optional<Long> endVersionOpt,
+      boolean mustBeRecreatable) {
+    checkArgument(!fileTypes.isEmpty(), "At least one file type must be provided");
+
+    endVersionOpt.ifPresent(
+        endVersion -> {
+          checkArgument(
+              endVersion >= startVersion,
+              "endVersion=%s provided is less than startVersion=%s",
+              endVersion,
+              startVersion);
+        });
+
+    final Path logPath = new Path(tablePath, "_delta_log");
+
+    logger.info(
+        "Listing log files types={} in path={} starting from {} and ending with {}",
+        fileTypes,
+        logPath,
+        startVersion,
+        endVersionOpt);
+
+    // Must be final to be used in lambda
+    final AtomicBoolean hasReturnedAnElement = new AtomicBoolean(false);
+
+    return listLogDir(engine, tablePath, startVersion)
+        .breakableFilter(
+            fs -> {
+              if (fileTypes.contains(DeltaLogFileType.COMMIT)
+                  && FileNames.isCommitFile(getName(fs.getPath()))) {
+                // Here, we do nothing (we will consume this file).
+              } else if (fileTypes.contains(DeltaLogFileType.CHECKPOINT)
+                  && FileNames.isCheckpointFile(getName(fs.getPath()))
+                  && fs.getSize() > 0) {
+                // Checkpoint files of 0 size are invalid but may be ignored silently when read,
+                // hence we ignore them so that we never pick up such checkpoints.
+                // Here, we do nothing (we will consume this file).
+              } else {
+                logger.debug("Ignoring file {} as it is not of the desired type", fs.getPath());
+                return BreakableFilterResult.EXCLUDE; // Here, we exclude and filter out this file.
+              }
+
+              final long fileVersion = FileNames.getFileVersion(new Path(fs.getPath()));
+
+              if (fileVersion < startVersion) {
+                throw new RuntimeException(
+                    String.format(
+                        "Listing files in %s with startVersion %s yet found file %s.",
+                        logPath, startVersion, fs.getPath()));
+              }
+
+              if (endVersionOpt.isPresent()) {
+                final long endVersion = endVersionOpt.get();
+
+                if (fileVersion > endVersion) {
+                  if (mustBeRecreatable && !hasReturnedAnElement.get()) {
+                    final long earliestVersion =
+                        DeltaHistoryManager.getEarliestRecreatableCommit(engine, logPath);
+                    throw DeltaErrors.versionBeforeFirstAvailableCommit(
+                        tablePath.toString(), endVersion, earliestVersion);
+                  } else {
+                    logger.debug(
+                        "Stopping listing; found file {} with version greater than endVersion {}",
+                        fs.getPath(),
+                        endVersion);
+                    return BreakableFilterResult.BREAK;
+                  }
+                }
+              }
+
+              hasReturnedAnElement.set(true);
+
+              return BreakableFilterResult.INCLUDE;
             });
   }
 
@@ -247,53 +347,10 @@ public class DeltaLogActionUtils {
           "Listing from %s",
           FileNames.listingPrefix(logPath, startVersion));
     } catch (FileNotFoundException e) {
+      // Did not find the _delta_log directory.
       throw new TableNotFoundException(tablePath.toString());
     } catch (IOException io) {
       throw new UncheckedIOException("Failed to list the files in delta log", io);
     }
-  }
-
-  /**
-   * Returns a list of delta commit files found in the _delta_log directory between startVersion and
-   * endVersion (both inclusive).
-   *
-   * @throws TableNotFoundException if the _delta_log directory does not exist
-   */
-  private static List<FileStatus> listCommitFiles(
-      Engine engine, Path tablePath, long startVersion, long endVersion) {
-
-    // TODO update to support coordinated commits; suggested to load the Snapshot at endVersion
-    //  and get the backfilled/unbackfilled commits from the LogSegment to combine with commit files
-    //  listed from [startVersion, LogSegment.checkpointVersion]
-    logger.info(
-        "{}: Listing the commit files for versions [{}, {}]", tablePath, startVersion, endVersion);
-    long startTimeMillis = System.currentTimeMillis();
-    final List<FileStatus> output = new ArrayList<>();
-    try (CloseableIterator<FileStatus> fsIter = listLogDir(engine, tablePath, startVersion)) {
-      while (fsIter.hasNext()) {
-        FileStatus fs = fsIter.next();
-        if (!FileNames.isCommitFile(getName(fs.getPath()))) {
-          logger.debug("Ignoring non-commit file {}", fs.getPath());
-          continue;
-        }
-        if (FileNames.getFileVersion(new Path(fs.getPath())) > endVersion) {
-          logger.debug(
-              "Stopping listing found file {} with version > {}=endVersion",
-              fs.getPath(),
-              endVersion);
-          break;
-        }
-        output.add(fs);
-      }
-    } catch (IOException e) {
-      throw new UncheckedIOException("Unable to close resource", e);
-    }
-    logger.info(
-        "{}: Took {} ms to list the commit files for versions [{}, {}]",
-        tablePath,
-        System.currentTimeMillis() - startTimeMillis,
-        startVersion,
-        endVersion);
-    return output;
   }
 }

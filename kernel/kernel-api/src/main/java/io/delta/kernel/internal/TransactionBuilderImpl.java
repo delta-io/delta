@@ -128,7 +128,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
           new InitialSnapshot(table.getDataPath(), logReplay, metadata, protocol, snapshotContext);
     }
 
-    boolean isNewTable = snapshot.getVersion(engine) < 0;
+    boolean isNewTable = snapshot.getVersion() < 0;
     validate(engine, snapshot, isNewTable);
 
     boolean shouldUpdateMetadata = false;
@@ -137,7 +137,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     Protocol protocol = snapshot.getProtocol();
     if (tableProperties.isPresent()) {
       Map<String, String> validatedProperties =
-          TableConfig.validateProperties(tableProperties.get());
+          TableConfig.validateDeltaProperties(tableProperties.get());
       Map<String, String> newProperties =
           metadata.filterOutUnchangedProperties(validatedProperties);
 
@@ -258,7 +258,10 @@ public class TransactionBuilderImpl implements TransactionBuilder {
 
       @Override
       protected Tuple2<Protocol, Metadata> loadTableProtocolAndMetadata(
-          Engine engine, Optional<SnapshotHint> snapshotHint, long snapshotVersion) {
+          Engine engine,
+          LogSegment logSegment,
+          Optional<SnapshotHint> snapshotHint,
+          long snapshotVersion) {
         return new Tuple2<>(protocol, metadata);
       }
 

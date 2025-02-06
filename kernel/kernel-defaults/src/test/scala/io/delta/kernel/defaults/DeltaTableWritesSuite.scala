@@ -25,6 +25,7 @@ import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions._
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.expressions.Literal._
+import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
 import io.delta.kernel.internal.checkpoints.CheckpointerSuite.selectSingleElement
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
 import io.delta.kernel.internal.{SnapshotImpl, TableConfig}
@@ -131,7 +132,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       val txnResult = txn.commit(engine, emptyIterable())
 
       assert(txnResult.getVersion === 0)
-      assert(!txnResult.isReadyForCheckpoint)
+      assertCheckpointReadiness(txnResult, isReadyForCheckpoint = false)
 
       verifyCommitInfo(tablePath = tablePath, version = 0)
       verifyWrittenContent(tablePath, testSchema, Seq.empty)
@@ -292,29 +293,6 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
-  test("create table - invalid properties - expect failure") {
-    withTempDirAndEngine { (tablePath, engine) =>
-      val ex1 = intercept[UnknownConfigurationException] {
-        createTxn(
-          engine, tablePath, isNewTable = true, testSchema, Seq.empty, Map("invalid key" -> "10"))
-      }
-      assert(ex1.getMessage.contains("Unknown configuration was specified: invalid key"))
-
-      val ex2 = intercept[InvalidConfigurationValueException] {
-        createTxn(
-          engine,
-          tablePath,
-          isNewTable = true,
-          testSchema, Seq.empty, Map(TableConfig.CHECKPOINT_INTERVAL.getKey -> "-1"))
-      }
-      assert(
-        ex2.getMessage.contains(
-          String.format(
-            "Invalid value for table property '%s': '%s'. %s",
-            TableConfig.CHECKPOINT_INTERVAL.getKey, "-1", "needs to be a positive integer.")))
-    }
-  }
-
   test("create partitioned table - partition column is not part of the schema") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
@@ -373,7 +351,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       val txnResult = txn.commit(engine, emptyIterable())
 
       assert(txnResult.getVersion === 0)
-      assert(!txnResult.isReadyForCheckpoint)
+      assertCheckpointReadiness(txnResult, isReadyForCheckpoint = false)
 
       verifyCommitInfo(tablePath, version = 0, Seq("Part1", "part2"))
       verifyWrittenContent(tablePath, schema, Seq.empty)
@@ -391,7 +369,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       val txnResult = txn.commit(engine, emptyIterable())
 
       assert(txnResult.getVersion === 0)
-      assert(!txnResult.isReadyForCheckpoint)
+      assertCheckpointReadiness(txnResult, isReadyForCheckpoint = false)
 
       verifyCommitInfo(tablePath, version = 0)
       verifyWrittenContent(tablePath, schema, Seq.empty)
@@ -1060,7 +1038,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         .commit(engine, emptyIterable())
 
       val table = Table.forPath(engine, tablePath)
-      assert(table.getLatestSnapshot(engine).getSchema(engine).equals(testSchema))
+      assert(table.getLatestSnapshot(engine).getSchema().equals(testSchema))
     }
   }
 
@@ -1112,7 +1090,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         tableProperties = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "id"))
         .commit(engine, emptyIterable())
 
-      val structType = table.getLatestSnapshot(engine).getSchema(engine)
+      val structType = table.getLatestSnapshot(engine).getSchema()
       assertColumnMapping(structType.get("a"), 1)
       assertColumnMapping(structType.get("b"), 2)
 
@@ -1140,7 +1118,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         tableProperties = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "name"))
         .commit(engine, emptyIterable())
 
-      val structType = table.getLatestSnapshot(engine).getSchema(engine)
+      val structType = table.getLatestSnapshot(engine).getSchema()
       assertColumnMapping(structType.get("a"), 1)
       assertColumnMapping(structType.get("b"), 2)
 
@@ -1167,7 +1145,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       createTxn(engine, tablePath, isNewTable = true, schema, partCols = Seq.empty)
         .commit(engine, emptyIterable())
 
-      val structType = table.getLatestSnapshot(engine).getSchema(engine)
+      val structType = table.getLatestSnapshot(engine).getSchema()
       assert(structType.equals(schema))
 
       val ex = intercept[IllegalArgumentException] {
@@ -1203,7 +1181,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         tableProperties = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "name"))
         .commit(engine, emptyIterable())
 
-      val structType = table.getLatestSnapshot(engine).getSchema(engine)
+      val structType = table.getLatestSnapshot(engine).getSchema()
       assertColumnMapping(structType.get("a"), 1)
       assertColumnMapping(structType.get("b"), 2)
     }
@@ -1220,7 +1198,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         tableProperties = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "id"))
         .commit(engine, emptyIterable())
 
-      val structType = table.getLatestSnapshot(engine).getSchema(engine)
+      val structType = table.getLatestSnapshot(engine).getSchema()
       assertColumnMapping(structType.get("a"), 1)
       assertColumnMapping(structType.get("b"), 2)
     }
@@ -1236,7 +1214,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       createTxn(engine, tablePath, isNewTable = true, schema, partCols = Seq.empty)
         .commit(engine, emptyIterable())
 
-      val structType = table.getLatestSnapshot(engine).getSchema(engine)
+      val structType = table.getLatestSnapshot(engine).getSchema()
       assert(structType.equals(schema))
 
       table.createTransactionBuilder(engine, testEngineInfo, Operation.WRITE)
@@ -1246,7 +1224,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         .build(engine)
         .commit(engine, emptyIterable())
 
-      val updatedSchema = table.getLatestSnapshot(engine).getSchema(engine)
+      val updatedSchema = table.getLatestSnapshot(engine).getSchema()
       assertColumnMapping(updatedSchema.get("a"), 1, "a")
       assertColumnMapping(updatedSchema.get("b"), 2, "b")
     }
@@ -1268,7 +1246,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
           TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"))
         .commit(engine, emptyIterable())
 
-      val structType = table.getLatestSnapshot(engine).getSchema(engine)
+      val structType = table.getLatestSnapshot(engine).getSchema()
       assertColumnMapping(structType.get("a"), 1)
       assertColumnMapping(structType.get("b"), 2)
       val innerStruct = structType.get("b").getDataType.asInstanceOf[StructType]
