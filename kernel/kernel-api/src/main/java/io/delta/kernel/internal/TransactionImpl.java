@@ -27,9 +27,11 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.ConcurrentWriteException;
 import io.delta.kernel.expressions.Column;
+import io.delta.kernel.hook.PostCommitHook;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.hook.CheckpointHook;
 import io.delta.kernel.internal.metrics.TransactionMetrics;
 import io.delta.kernel.internal.metrics.TransactionReportImpl;
 import io.delta.kernel.internal.replay.ConflictChecker;
@@ -354,7 +356,12 @@ public class TransactionImpl implements Transaction {
           "Write file actions to JSON log file `%s`",
           FileNames.deltaFile(logPath, commitAsVersion));
 
-      return new TransactionCommitResult(commitAsVersion, isReadyForCheckpoint(commitAsVersion));
+      List<PostCommitHook> postCommitHooks = new ArrayList<>();
+      if (isReadyForCheckpoint(commitAsVersion)) {
+        postCommitHooks.add(new CheckpointHook(dataPath, commitAsVersion));
+      }
+
+      return new TransactionCommitResult(commitAsVersion, postCommitHooks);
     } catch (FileAlreadyExistsException e) {
       throw e;
     } catch (IOException ioe) {
