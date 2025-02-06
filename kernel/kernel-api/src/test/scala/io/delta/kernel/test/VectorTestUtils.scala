@@ -19,7 +19,7 @@ import io.delta.kernel.data.{ColumnVector, MapValue}
 import io.delta.kernel.internal.util.VectorUtils
 import io.delta.kernel.types._
 
-import java.lang.{Boolean => BooleanJ, Double => DoubleJ, Float => FloatJ}
+import java.lang.{Boolean => BooleanJ, Double => DoubleJ, Float => FloatJ, Byte => ByteJ}
 import scala.collection.JavaConverters._
 import org.scalatest.Assertions.convertToEqualizer
 
@@ -36,6 +36,20 @@ trait VectorTestUtils {
       override def isNullAt(rowId: Int): Boolean = values(rowId) == null
 
       override def getBoolean(rowId: Int): Boolean = values(rowId)
+    }
+  }
+
+  protected def byteVector(values: Seq[ByteJ]): ColumnVector = {
+    new ColumnVector {
+      override def getDataType: DataType = ByteType.BYTE
+
+      override def getSize: Int = values.length
+
+      override def close(): Unit = {}
+
+      override def isNullAt(rowId: Int): Boolean = values(rowId) == null
+
+      override def getByte(rowId: Int): Byte = values(rowId)
     }
   }
 
@@ -135,49 +149,27 @@ trait VectorTestUtils {
     override def getBoolean(rowId: Int): Boolean = rowId == selectRowId
   }
 
-  protected def checkBooleanVectors(actual: ColumnVector, expected: ColumnVector): Unit = {
-    assert(actual.getDataType === expected.getDataType)
-    assert(actual.getSize === expected.getSize)
-    Seq.range(0, actual.getSize).foreach { rowId =>
-      assert(actual.isNullAt(rowId) === expected.isNullAt(rowId))
-      if (!actual.isNullAt(rowId)) {
-        assert(
-          actual.getBoolean(rowId) === expected.getBoolean(rowId),
-          s"unexpected value at $rowId"
-        )
-      }
-    }
-  }
+  protected def checkVectors[T](
+      actual: ColumnVector,
+      expected: ColumnVector,
+      expectedType: DataType,
+      getValue: (ColumnVector, Int) => T,
+      errorMessageFn: (Int, T, T) => String = (rowId: Int, exp: T, act: T) =>
+        s"unexpected value at $rowId"
+  ): Unit = {
 
-  protected def checkTimestampVectors(actual: ColumnVector, expected: ColumnVector): Unit = {
-    assert(actual.getDataType === TimestampType.TIMESTAMP)
+    assert(actual.getDataType === expectedType)
     assert(actual.getDataType === expected.getDataType)
     assert(actual.getSize === expected.getSize)
-    Seq.range(0, actual.getSize).foreach { rowId =>
-      assert(actual.isNullAt(rowId) === expected.isNullAt(rowId))
-      if (!actual.isNullAt(rowId)) {
-        assert(
-          actual.getLong(rowId) === expected.getLong(rowId),
-          s"unexpected value at $rowId: " +
-            s"expected: ${expected.getLong(rowId)} " +
-            s"actual: ${actual.getLong(rowId)} "
-        )
-      }
-    }
-  }
 
-  protected def checkStringVectors(actual: ColumnVector, expected: ColumnVector): Unit = {
-    assert(actual.getDataType === StringType.STRING)
-    assert(actual.getDataType === expected.getDataType)
-    assert(actual.getSize === expected.getSize)
     Seq.range(0, actual.getSize).foreach { rowId =>
       assert(actual.isNullAt(rowId) === expected.isNullAt(rowId))
       if (!actual.isNullAt(rowId)) {
+        val actualValue = getValue(actual, rowId)
+        val expectedValue = getValue(expected, rowId)
         assert(
-          actual.getString(rowId) === expected.getString(rowId),
-          s"unexpected value at $rowId: " +
-            s"expected: ${expected.getString(rowId)} " +
-            s"actual: ${actual.getString(rowId)} "
+          actualValue === expectedValue,
+          errorMessageFn(rowId, expectedValue, actualValue)
         )
       }
     }

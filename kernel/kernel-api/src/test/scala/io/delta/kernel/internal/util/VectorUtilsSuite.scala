@@ -26,9 +26,12 @@ import java.util
 class VectorUtilsSuite extends AnyFunSuite with VectorTestUtils {
 
   test("test build column vector from list of primitives") {
+    checkVectors(booleanVector(Seq[BooleanJ](true, false, null)),
+      VectorUtils.buildColumnVector(util.Arrays.asList(true, false, null), BooleanType.BOOLEAN),
+      BooleanType.BOOLEAN,
+      (vec, id) => vec.getBoolean(id)
+    )
 
-    val childColumn = booleanVector(Seq[BooleanJ](true, false, null))
-     VectorUtils.buildColumnVector(util.Arrays.asList(true, false, null), BooleanType.BOOLEAN)
 
   }
 
