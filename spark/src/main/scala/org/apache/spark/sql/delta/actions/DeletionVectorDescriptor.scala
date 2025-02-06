@@ -112,11 +112,7 @@ case class DeletionVectorDescriptor(
     require(isOnDisk, "Can't get a path for an inline deletion vector")
     storageType match {
       case UUID_DV_MARKER =>
-        // If the file was written with a random prefix, we have to extract that,
-        // before decoding the UUID.
-        val randomPrefixLength = pathOrInlineDv.length - Codec.Base85Codec.ENCODED_UUID_LENGTH
-        val (randomPrefix, encodedUuid) = pathOrInlineDv.splitAt(randomPrefixLength)
-        val uuid = Codec.Base85Codec.decodeUUID(encodedUuid)
+        val (randomPrefix, uuid) = getRandomPrefixAndUuid.get
         assembleDeletionVectorPath(tableLocation, uuid, randomPrefix)
       case PATH_DV_MARKER =>
         // Since there is no need for legacy support for relative paths for DVs,
@@ -132,6 +128,20 @@ case class DeletionVectorDescriptor(
   def urlEncodedPath(tablePath: Path): String =
     SparkPath.fromPath(absolutePath(tablePath)).urlEncoded
 
+  /**
+   * Parse the prefix and UUID of a relative DV. Returns None if the DV is not relative.
+   */
+  @JsonIgnore
+  def getRandomPrefixAndUuid: Option[(String, UUID)] = storageType match {
+    case UUID_DV_MARKER =>
+      // If the file was written with a random prefix, we have to extract that,
+      // before decoding the UUID.
+      val randomPrefixLength = pathOrInlineDv.length - Codec.Base85Codec.ENCODED_UUID_LENGTH
+      val (randomPrefix, encodedUuid) = pathOrInlineDv.splitAt(randomPrefixLength)
+      Some((randomPrefix, Codec.Base85Codec.decodeUUID(encodedUuid)))
+    case _ =>
+      None
+  }
   /**
    * Produce a copy of this DV, but using an absolute path.
    *
@@ -318,13 +328,19 @@ object DeletionVectorDescriptor {
    * Optionally, prepend a `prefix` to the name.
    */
   def assembleDeletionVectorPath(targetParentPath: Path, id: UUID, prefix: String = ""): Path = {
-    val fileName = s"${DELETION_VECTOR_FILE_NAME_CORE}_${id}.bin"
+    val fileName = assembleDeletionVectorFileName(id)
     if (prefix.nonEmpty) {
       new Path(new Path(targetParentPath, prefix), fileName)
     } else {
       new Path(targetParentPath, fileName)
     }
   }
+
+  /**
+   * Return the unique file name for a deletion vector based on `id`.
+   */
+  def assembleDeletionVectorFileName(id: UUID): String =
+    s"${DELETION_VECTOR_FILE_NAME_CORE}_${id}.bin"
 
   /** Descriptor for an empty stored bitmap. */
   val EMPTY: DeletionVectorDescriptor = DeletionVectorDescriptor(
