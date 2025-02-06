@@ -470,6 +470,8 @@ trait TypeWideningStreamingSourceTests
               "opType" -> "DROP AND TYPE WIDENING",
               "previousSchemaChangeVersion" -> "0",
               "currentSchemaChangeVersion" -> "2",
+              "readerOptions" -> (
+                ".*allowSourceColumnDrop(.|\\n)*allowSourceColumnTypeChange.*"),
               "unblockChangeConfs" ->
                 ".*allowSourceColumnDrop(.|\\n)*allowSourceColumnTypeChange.*",
               "unblockStreamConfs" ->

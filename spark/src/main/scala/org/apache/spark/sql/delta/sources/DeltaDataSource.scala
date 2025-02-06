@@ -451,7 +451,7 @@ object DeltaDataSource extends DatabricksLogging {
 
         DeltaSourceMetadataTrackingLog.create(
           spark, schemaTrackingLocation, sourceSnapshot,
-          Option(options.get(DeltaOptions.STREAMING_SOURCE_TRACKING_ID)),
+          parameters,
           sourceMetadataPathOpt,
           mergeConsecutiveSchemaChanges
         )

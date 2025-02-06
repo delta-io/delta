@@ -3120,7 +3120,11 @@ trait DeltaErrorsBase
       previousSchemaChangeVersion: Long,
       currentSchemaChangeVersion: Long,
       checkpointHash: Int,
+      readerOptionsUnblock: Seq[String],
       sqlConfsUnblock: Seq[String]): Throwable = {
+    val readerOptions = readerOptionsUnblock.map { option =>
+        s"""  .option("$option", "true")"""
+      }.mkString("\n")
     val unblockChangeConfs = sqlConfsUnblock.map { conf =>
         s"""  SET $conf.ckpt_$checkpointHash = $currentSchemaChangeVersion;"""
       }.mkString("\n")
@@ -3138,6 +3142,7 @@ trait DeltaErrorsBase
         previousSchemaChangeVersion.toString,
         currentSchemaChangeVersion.toString,
         currentSchemaChangeVersion.toString,
+        readerOptions,
         unblockChangeConfs,
         unblockStreamConfs,
         unblockAllConfs
@@ -3149,6 +3154,7 @@ trait DeltaErrorsBase
       previousSchemaChangeVersion: Long,
       currentSchemaChangeVersion: Long,
       checkpointHash: Int,
+      readerOptionsUnblock: Seq[String],
       sqlConfsUnblock: Seq[String],
       wideningTypeChanges: Seq[TypeChange]): Throwable = {
 
@@ -3157,6 +3163,9 @@ trait DeltaErrorsBase
         s"${change.toType.sql}"
       }.mkString("\n")
 
+    val readerOptions = readerOptionsUnblock.map { option =>
+        s"""  .option("$option", "true")"""
+      }.mkString("\n")
     val unblockChangeConfs = sqlConfsUnblock.map { conf =>
         s"""  SET $conf.ckpt_$checkpointHash = $currentSchemaChangeVersion;"""
       }.mkString("\n")
@@ -3174,6 +3183,7 @@ trait DeltaErrorsBase
         currentSchemaChangeVersion.toString,
         wideningTypeChangesStr,
         currentSchemaChangeVersion.toString,
+        readerOptions,
         unblockChangeConfs,
         unblockStreamConfs,
         unblockAllConfs

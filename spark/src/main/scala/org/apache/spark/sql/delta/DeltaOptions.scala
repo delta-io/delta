@@ -212,6 +212,15 @@ trait DeltaReadOptions extends DeltaOptionParser {
   val schemaTrackingLocation = options.get(SCHEMA_TRACKING_LOCATION)
 
   val sourceTrackingId = options.get(STREAMING_SOURCE_TRACKING_ID)
+
+  val allowSourceColumnRename = options.get(ALLOW_SOURCE_COLUMN_RENAME)
+    .exists(toBoolean(_, ALLOW_SOURCE_COLUMN_RENAME))
+
+  val allowSourceColumnDrop = options.get(ALLOW_SOURCE_COLUMN_DROP)
+    .exists(toBoolean(_, ALLOW_SOURCE_COLUMN_DROP))
+
+  val allowSourceColumnTypeChange = options.get(ALLOW_SOURCE_COLUMN_TYPE_CHANGE)
+    .exists(toBoolean(_, ALLOW_SOURCE_COLUMN_TYPE_CHANGE))
 }
 
 
@@ -288,6 +297,10 @@ object DeltaOptions extends DeltaLogging {
    * The final schema log location will be $parent/_schema_log_${tahoeId}_${sourceTrackingId}.
    */
   val STREAMING_SOURCE_TRACKING_ID = "streamingSourceTrackingId"
+
+  val ALLOW_SOURCE_COLUMN_DROP = "allowSourceColumnDrop"
+  val ALLOW_SOURCE_COLUMN_RENAME = "allowSourceColumnRename"
+  val ALLOW_SOURCE_COLUMN_TYPE_CHANGE = "allowSourceColumnTypeChange"
 
   /**
    * An option to control if delta will write partition columns to data files

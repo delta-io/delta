@@ -460,23 +460,28 @@ object DeltaSourceMetadataEvolutionSupport {
     val isDrop: Boolean
     val isTypeWidening: Boolean
     val sqlConfsUnblock: Seq[String]
+    val readerOptionsUnblock: Seq[String]
   }
 
   // Single types of schema change, typically caused by a single ALTER TABLE operation.
   private case object SchemaChangeRename extends SchemaChangeType {
     override val name = "RENAME COLUMN"
-    override val sqlConfsUnblock: Seq[String] = Seq(SQL_CONF_UNBLOCK_RENAME)
     override val (isRename, isDrop, isTypeWidening) = (true, false, false)
+    override val sqlConfsUnblock: Seq[String] = Seq(SQL_CONF_UNBLOCK_RENAME)
+    override val readerOptionsUnblock: Seq[String] = Seq(DeltaOptions.ALLOW_SOURCE_COLUMN_RENAME)
   }
   private case object SchemaChangeDrop extends SchemaChangeType {
     override val name = "DROP COLUMN"
     override val (isRename, isDrop, isTypeWidening) = (false, true, false)
     override val sqlConfsUnblock: Seq[String] = Seq(SQL_CONF_UNBLOCK_DROP)
+    override val readerOptionsUnblock: Seq[String] = Seq(DeltaOptions.ALLOW_SOURCE_COLUMN_DROP)
   }
   private case object SchemaChangeTypeWidening extends SchemaChangeType {
     override val name = "TYPE WIDENING"
     override val (isRename, isDrop, isTypeWidening) = (false, false, true)
     override val sqlConfsUnblock: Seq[String] = Seq(SQL_CONF_UNBLOCK_TYPE_CHANGE)
+    override val readerOptionsUnblock: Seq[String] =
+      Seq(DeltaOptions.ALLOW_SOURCE_COLUMN_TYPE_CHANGE)
   }
 
   // Combinations of rename, drop and type change -> can be caused by a complete overwrite.
@@ -484,24 +489,32 @@ object DeltaSourceMetadataEvolutionSupport {
     override val name = "RENAME AND DROP COLUMN"
     override val (isRename, isDrop, isTypeWidening) = (true, true, false)
     override val sqlConfsUnblock: Seq[String] = Seq(SQL_CONF_UNBLOCK_RENAME_DROP)
+    override val readerOptionsUnblock: Seq[String] =
+      Seq(DeltaOptions.ALLOW_SOURCE_COLUMN_RENAME, DeltaOptions.ALLOW_SOURCE_COLUMN_DROP)
   }
   private case object SchemaChangeRenameAndTypeWidening extends SchemaChangeType {
     override val name = "RENAME AND TYPE WIDENING"
     override val (isRename, isDrop, isTypeWidening) = (true, false, true)
     override val sqlConfsUnblock: Seq[String] =
       Seq(SQL_CONF_UNBLOCK_RENAME, SQL_CONF_UNBLOCK_TYPE_CHANGE)
+    override val readerOptionsUnblock: Seq[String] =
+      Seq(DeltaOptions.ALLOW_SOURCE_COLUMN_RENAME, DeltaOptions.ALLOW_SOURCE_COLUMN_DROP)
   }
   private case object SchemaChangeDropAndTypeWidening extends SchemaChangeType {
     override val name = "DROP AND TYPE WIDENING"
     override val (isRename, isDrop, isTypeWidening) = (false, true, true)
     override val sqlConfsUnblock: Seq[String] =
       Seq(SQL_CONF_UNBLOCK_DROP, SQL_CONF_UNBLOCK_TYPE_CHANGE)
+    override val readerOptionsUnblock: Seq[String] =
+      Seq(DeltaOptions.ALLOW_SOURCE_COLUMN_DROP, DeltaOptions.ALLOW_SOURCE_COLUMN_TYPE_CHANGE)
   }
   private case object SchemaChangeRenameAndDropAndTypeWidening extends SchemaChangeType {
     override val name = "RENAME, DROP AND TYPE WIDENING"
     override val (isRename, isDrop, isTypeWidening) = (true, true, true)
     override val sqlConfsUnblock: Seq[String] =
       Seq(SQL_CONF_UNBLOCK_RENAME_DROP, SQL_CONF_UNBLOCK_TYPE_CHANGE)
+    override val readerOptionsUnblock: Seq[String] =
+      Seq(DeltaOptions.ALLOW_SOURCE_COLUMN_DROP, DeltaOptions.ALLOW_SOURCE_COLUMN_TYPE_CHANGE)
   }
 
   private final val allSchemaChangeTypes = Seq(
@@ -546,6 +559,7 @@ object DeltaSourceMetadataEvolutionSupport {
   private def isChangeUnblocked(
       spark: SparkSession,
       change: SchemaChangeType,
+      options: DeltaOptions,
       checkpointHash: Int,
       schemaChangeVersion: Long): Boolean = {
 
@@ -561,11 +575,13 @@ object DeltaSourceMetadataEvolutionSupport {
       validConfKeysValuePair.exists(p => getConf(p._1).contains(p._2))
     }
 
-    val isBlockedRename = change.isRename && !isUnblockedBySQLConf(SQL_CONF_UNBLOCK_RENAME) &&
+    val isBlockedRename = change.isRename && !options.allowSourceColumnRename &&
+      !isUnblockedBySQLConf(SQL_CONF_UNBLOCK_RENAME) &&
       !isUnblockedBySQLConf(SQL_CONF_UNBLOCK_RENAME_DROP)
-    val isBlockedDrop = change.isDrop && !isUnblockedBySQLConf(SQL_CONF_UNBLOCK_DROP) &&
+    val isBlockedDrop = change.isDrop && !options.allowSourceColumnDrop &&
+      !isUnblockedBySQLConf(SQL_CONF_UNBLOCK_DROP) &&
       !isUnblockedBySQLConf(SQL_CONF_UNBLOCK_RENAME_DROP)
-    val isBlockedTypeChange = change.isTypeWidening &&
+    val isBlockedTypeChange = change.isTypeWidening && !options.allowSourceColumnTypeChange &&
       !isUnblockedBySQLConf(SQL_CONF_UNBLOCK_TYPE_CHANGE)
 
     !isBlockedRename && !isBlockedDrop && !isBlockedTypeChange
@@ -620,9 +636,11 @@ object DeltaSourceMetadataEvolutionSupport {
   // scalastyle:on
   protected[sources] def validateIfSchemaChangeCanBeUnblockedWithSQLConf(
       spark: SparkSession,
+      parameters: Map[String, String],
       metadataPath: String,
       currentSchema: PersistedMetadata,
       previousSchema: PersistedMetadata): Unit = {
+    val options = new DeltaOptions(parameters, spark.sessionState.conf)
     val checkpointHash = getCheckpointHash(metadataPath)
 
     // The start version of a possible series of consecutive schema changes.
@@ -644,7 +662,7 @@ object DeltaSourceMetadataEvolutionSupport {
     determineNonAdditiveSchemaChangeType(
       spark, currentSchema.dataSchema, previousSchema.dataSchema).foreach { change =>
         if (!isChangeUnblocked(
-            spark, change, checkpointHash, currentSchemaChangeVersion)) {
+            spark, change, options, checkpointHash, currentSchemaChangeVersion)) {
           // Throw error to prompt user to set the correct confs
           change match {
             case SchemaChangeTypeWidening =>
@@ -656,6 +674,7 @@ object DeltaSourceMetadataEvolutionSupport {
                 previousSchemaChangeVersion,
                 currentSchemaChangeVersion,
                 checkpointHash,
+                change.readerOptionsUnblock,
                 change.sqlConfsUnblock,
                 wideningTypeChanges)
 
@@ -665,6 +684,7 @@ object DeltaSourceMetadataEvolutionSupport {
                 previousSchemaChangeVersion,
                 currentSchemaChangeVersion,
                 checkpointHash,
+                change.readerOptionsUnblock,
                 change.sqlConfsUnblock)
           }
         }

@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.sources
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.InputStream
 
+import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.streaming.{JsonSchemaSerializer, PartitionAndDataSchema, SchemaTrackingLog}
@@ -33,6 +34,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.types.{DataType, StructType}
+import org.apache.spark.sql.util.CaseInsensitiveStringMap
 // scalastyle:on import.ordering.noEmptyLine
 
 /**
@@ -240,10 +242,12 @@ object DeltaSourceMetadataTrackingLog extends Logging {
       sparkSession: SparkSession,
       rootMetadataLocation: String,
       sourceSnapshot: SnapshotDescriptor,
-      sourceTrackingId: Option[String] = None,
+      parameters: Map[String, String],
       sourceMetadataPathOpt: Option[String] = None,
       mergeConsecutiveSchemaChanges: Boolean = false,
       initMetadataLogEagerly: Boolean = true): DeltaSourceMetadataTrackingLog = {
+    val options = new CaseInsensitiveStringMap(parameters.asJava)
+    val sourceTrackingId = Option(options.get(DeltaOptions.STREAMING_SOURCE_TRACKING_ID))
     val metadataTrackingLocation = fullMetadataTrackingLocation(
       rootMetadataLocation, sourceSnapshot.deltaLog.tableId, sourceTrackingId)
     val log = new DeltaSourceMetadataTrackingLog(
@@ -296,7 +300,8 @@ object DeltaSourceMetadataTrackingLog extends Logging {
     (log.getPreviousTrackedMetadata, log.getCurrentTrackedMetadata, sourceMetadataPathOpt) match {
       case (Some(prev), Some(curr), Some(metadataPath)) =>
         DeltaSourceMetadataEvolutionSupport
-          .validateIfSchemaChangeCanBeUnblockedWithSQLConf(sparkSession, metadataPath, curr, prev)
+          .validateIfSchemaChangeCanBeUnblockedWithSQLConf(
+            sparkSession, parameters, metadataPath, curr, prev)
       case _ =>
     }
 
