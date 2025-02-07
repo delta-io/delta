@@ -25,6 +25,8 @@ import io.delta.kernel.TransactionBuilder;
 import io.delta.kernel.ccv2.ResolvedMetadata;
 import io.delta.kernel.ccv2.ResolvedTable;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.SnapshotImpl;
+import io.delta.kernel.internal.TransactionBuilderImpl;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.metrics.SnapshotReportImpl;
@@ -71,7 +73,13 @@ public class ResolvedTableImpl implements ResolvedTable {
 
   @Override
   public TransactionBuilder createTransactionBuilder(String engineInfo, Operation operation) {
-    return null;
+    // TODO: pass in the committer
+    return new TransactionBuilderImpl(
+        new Path(resolvedMetadata.getPath()) /* tablePath */,
+        engineInfo,
+        operation,
+        () -> (SnapshotImpl) snapshot /* snapshotSupplier */,
+        System::currentTimeMillis /* clock */);
   }
 
   ////////////////////

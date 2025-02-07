@@ -27,7 +27,7 @@ import io.delta.kernel.exceptions.TableNotFoundException;
 public interface ResolvedTable {
 
   /** Create a {@link ResolvedTable} object using the given {@link ResolvedMetadata}. */
-  static ResolvedTable forResolvedMetadata(Engine engine, ResolvedMetadata resolvedMetadata) {
+  static ResolvedTable fromResolvedMetadata(Engine engine, ResolvedMetadata resolvedMetadata) {
     return new ResolvedTableImpl(engine, resolvedMetadata);
   }
 

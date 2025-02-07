@@ -36,11 +36,13 @@ import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.replay.ExistingPAndMReplay;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
+import io.delta.kernel.internal.util.Clock;
 import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
 import io.delta.kernel.internal.util.SchemaUtils;
 import io.delta.kernel.types.StructType;
 import java.util.*;
+import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -48,9 +50,12 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   private static final Logger logger = LoggerFactory.getLogger(TransactionBuilderImpl.class);
 
   private final long currentTimeMillis = System.currentTimeMillis();
-  private final TableImpl table;
+  private final Path tablePath;
+  private final Path logPath;
+  private final Supplier<SnapshotImpl> readSnapshotSupplier;
   private final String engineInfo;
   private final Operation operation;
+  private final Clock clock;
   private Optional<StructType> schema = Optional.empty();
   private Optional<List<String>> partitionColumns = Optional.empty();
   private Optional<SetTransaction> setTxnOpt = Optional.empty();
@@ -63,10 +68,18 @@ public class TransactionBuilderImpl implements TransactionBuilder {
    */
   private int maxRetries = 200;
 
-  public TransactionBuilderImpl(TableImpl table, String engineInfo, Operation operation) {
-    this.table = table;
+  public TransactionBuilderImpl(
+      Path tablePath,
+      String engineInfo,
+      Operation operation,
+      Supplier<SnapshotImpl> readSnapshotSupplier,
+      Clock clock) {
+    this.tablePath = tablePath;
+    this.logPath = new Path(tablePath, "_delta_log");
     this.engineInfo = engineInfo;
     this.operation = operation;
+    this.readSnapshotSupplier = readSnapshotSupplier;
+    this.clock = clock;
   }
 
   @Override
@@ -112,18 +125,18 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   public Transaction build(Engine engine) {
     SnapshotImpl snapshot;
     try {
-      snapshot = (SnapshotImpl) table.getLatestSnapshot(engine);
+      snapshot = readSnapshotSupplier.get();
     } catch (TableNotFoundException tblf) {
-      String tablePath = table.getPath(engine);
       logger.info("Table {} doesn't exist yet. Trying to create a new table.", tablePath);
-      schema.orElseThrow(() -> requiresSchemaForNewTable(tablePath));
+      schema.orElseThrow(() -> requiresSchemaForNewTable(tablePath.toString()));
       // Table doesn't exist yet. Create an initial snapshot with the new schema.
       Metadata metadata = getInitialMetadata();
       Protocol protocol = getInitialProtocol();
-      SnapshotQueryContext snapshotContext = SnapshotQueryContext.forVersionSnapshot(tablePath, -1);
+      SnapshotQueryContext snapshotContext =
+          SnapshotQueryContext.forVersionSnapshot(tablePath.toString(), -1);
       LogReplay logReplay =
           getEmptyLogReplay(engine, metadata, protocol, snapshotContext.getSnapshotMetrics());
-      snapshot = new InitialSnapshot(table.getDataPath(), logReplay, snapshotContext);
+      snapshot = new InitialSnapshot(tablePath, logReplay, snapshotContext);
     }
 
     boolean isNewTable = snapshot.getVersion() < 0;
@@ -157,14 +170,14 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         List<String> curWriterFeatures = protocol.getWriterFeatures();
         checkArgument(!Objects.equals(oldWriterFeatures, curWriterFeatures));
         TableFeatures.validateWriteSupportedTable(
-            protocol, metadata, metadata.getSchema(), table.getPath(engine));
+            protocol, metadata, metadata.getSchema(), tablePath.toString());
       }
     }
 
     return new TransactionImpl(
         isNewTable,
-        table.getDataPath(),
-        table.getLogPath(),
+        tablePath,
+        logPath,
         snapshot,
         engineInfo,
         operation,
@@ -174,29 +187,28 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         shouldUpdateMetadata,
         shouldUpdateProtocol,
         maxRetries,
-        table.getClock());
+        clock);
   }
 
   /** Validate the given parameters for the transaction. */
   private void validate(Engine engine, SnapshotImpl snapshot, boolean isNewTable) {
-    String tablePath = table.getPath(engine);
     // Validate the table has no features that Kernel doesn't yet support writing into it.
     TableFeatures.validateWriteSupportedTable(
         snapshot.getProtocol(),
         snapshot.getMetadata(),
         snapshot.getMetadata().getSchema(),
-        tablePath);
+        tablePath.toString());
 
     if (!isNewTable) {
       if (schema.isPresent()) {
         throw tableAlreadyExists(
-            tablePath,
+            tablePath.toString(),
             "Table already exists, but provided a new schema. "
                 + "Schema can only be set on a new table.");
       }
       if (partitionColumns.isPresent()) {
         throw tableAlreadyExists(
-            tablePath,
+            tablePath.toString(),
             "Table already exists, but provided new partition columns. "
                 + "Partition columns can only be set on a new table.");
       }
@@ -223,7 +235,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
 
   private class InitialSnapshot extends SnapshotImpl {
     InitialSnapshot(Path dataPath, LogReplay logReplay, SnapshotQueryContext snapshotContext) {
-      super(dataPath, LogSegment.empty(table.getLogPath()), logReplay, snapshotContext);
+      super(dataPath, LogSegment.empty(logPath), logReplay, snapshotContext);
     }
 
     @Override
@@ -235,7 +247,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   private LogReplay getEmptyLogReplay(
       Engine engine, Metadata metadata, Protocol protocol, SnapshotMetrics snapshotMetrics) {
     return new ExistingPAndMReplay(
-        engine, table.getDataPath(), LogSegment.empty(table.getLogPath()), protocol, metadata) {
+        engine, tablePath, LogSegment.empty(logPath), protocol, metadata) {
 
       @Override
       public Optional<Long> getLatestTransactionIdentifier(Engine engine, String applicationId) {

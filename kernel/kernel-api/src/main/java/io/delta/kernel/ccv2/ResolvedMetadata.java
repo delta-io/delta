@@ -22,6 +22,7 @@ import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.utils.CloseableIterable;
+import io.delta.kernel.utils.CloseableIterator;
 import java.util.Optional;
 
 public interface ResolvedMetadata {
@@ -61,9 +62,9 @@ public interface ResolvedMetadata {
   // APIs for Kernel to interact with the invoking connector //
   /////////////////////////////////////////////////////////////
 
-  /** Commit the given data actions to the table. */
   TransactionCommitResult commit(
-      CloseableIterable<Row> dataActions,
+      long commitAsVersion,
+      CloseableIterator<Row> actions,
       Optional<Protocol> newProtocol,
       Optional<Metadata> newMetadata);
 }
