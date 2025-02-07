@@ -538,7 +538,6 @@ trait TypeWideningTableFeatureTests
         new MetadataBuilder()
           .putString("toType", "long")
           .putString("fromType", "int")
-          .putLong("tableVersion", 1)
           .build()
       )).build()
 
