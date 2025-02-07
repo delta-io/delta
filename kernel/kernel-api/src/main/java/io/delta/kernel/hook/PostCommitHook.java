@@ -33,7 +33,8 @@ public interface PostCommitHook {
      * perform this operation, reading previous checkpoint + logs is required to construct a new
      * checkpoint, with latency scaling based on log size (typically seconds to minutes).
      */
-    CHECKPOINT
+    CHECKPOINT,
+    CHECKSUM_SIMPLE
   }
 
   /** Invokes the post commit operation whose implementation must be thread safe. */

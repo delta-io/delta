@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.internal.replay;
+package io.delta.kernel.internal.checksum;
 
 import static io.delta.kernel.internal.util.FileNames.*;
 import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
@@ -96,7 +96,7 @@ public class ChecksumReader {
             .getJsonHandler()
             .readJsonFiles(
                 singletonCloseableIterator(FileStatus.of(filePath.toString())),
-                CRCInfo.FULL_SCHEMA,
+                ChecksumUtils.CRC_FILE_SCHEMA,
                 Optional.empty())) {
       // We do this instead of iterating through the rows or using `getSingularRow` so we
       // can use the existing fromColumnVector methods in Protocol, Metadata, Format etc
