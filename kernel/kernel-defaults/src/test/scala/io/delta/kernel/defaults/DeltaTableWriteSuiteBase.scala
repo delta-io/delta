@@ -22,7 +22,7 @@ import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.actions.{Metadata, Protocol, SingleAction}
 import io.delta.kernel.internal.fs.{Path => DeltaPath}
-import io.delta.kernel.internal.util.FileNames
+import io.delta.kernel.internal.util.{Clock, FileNames, VectorUtils}
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.internal.{SnapshotImpl, TableConfig, TableImpl}
 import io.delta.kernel.utils.FileStatus
@@ -38,7 +38,6 @@ import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch,
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.expressions.Literal.ofInt
-import io.delta.kernel.internal.util.Clock
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.types.IntegerType.INTEGER
@@ -47,15 +46,17 @@ import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 import io.delta.kernel.utils.CloseableIterator
 import io.delta.kernel.Operation.CREATE_TABLE
 import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
+import io.delta.kernel.internal.checksum.{CRCInfo, ChecksumUtils}
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.delta.VersionNotFoundException
 import org.scalatest.funsuite.AnyFunSuite
+import org.scalatest.matchers.should.Matchers.convertToAnyShouldWrapper
 
 import java.io.File
 import java.nio.file.{Files, Paths}
-import java.util.Optional
+import java.util.{Locale, Optional}
 import scala.collection.JavaConverters._
 import scala.collection.immutable.{ListMap, Seq}
 
@@ -314,23 +315,27 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
   }
 
   def appendData(
-    engine: Engine = defaultEngine,
-    tablePath: String,
-    isNewTable: Boolean = false,
-    schema: StructType = null,
-    partCols: Seq[String] = null,
-    data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])],
-    clock: Clock = () => System.currentTimeMillis,
-    tableProperties: Map[String, String] = null): TransactionCommitResult = {
-
+                  engine: Engine = defaultEngine,
+                  tablePath: String,
+                  isNewTable: Boolean = false,
+                  schema: StructType = null,
+                  partCols: Seq[String] = null,
+                  data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])],
+                  clock: Clock = () => System.currentTimeMillis,
+                  tableProperties: Map[String, String] = null,
+                  executePostCommitHook: Boolean = false): TransactionCommitResult = {
     val txn = createTxn(engine, tablePath, isNewTable, schema, partCols, tableProperties, clock)
-    commitAppendData(engine, txn, data)
+    val commitResult = commitAppendData(engine, txn, data)
+    if (executePostCommitHook) {
+      commitResult.getPostCommitHooks.forEach(hook => hook.threadSafeInvoke(engine))
+    }
+    commitResult
   }
 
   def assertMetadataProp(
-    snapshot: SnapshotImpl,
-    key: TableConfig[_ <: Any],
-    expectedValue: Any): Unit = {
+                          snapshot: SnapshotImpl,
+                          key: TableConfig[_ <: Any],
+                          expectedValue: Any): Unit = {
     assert(key.fromMetadata(snapshot.getMetadata) == expectedValue)
   }
 
@@ -365,7 +370,13 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     assertMetadataProp(snapshot, key, expectedValue)
   }
 
-  def verifyWrittenContent(path: String, expSchema: StructType, expData: Seq[TestRow]): Unit = {
+  def verifyWrittenContent(
+      path: String,
+      expSchema: StructType,
+      expData: Seq[TestRow],
+      expPartitionColumns: Seq[String] = Seq(),
+      version: Option[Long] = Option.empty,
+      checksumWritten: Boolean = false): Unit = {
     val actSchema = tableSchema(path)
     assert(actSchema === expSchema)
 
@@ -376,26 +387,38 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     // Spark reads the timestamp partition columns in local timezone vs. Kernel reads in UTC. We
     // need to set the timezone to UTC before reading the data using Spark to make the tests pass
     withSparkTimeZone("UTC") {
-      val resultSpark = spark.sql(s"SELECT * FROM delta.`$path`").collect().map(TestRow(_))
+      val resultSpark = spark
+        .sql(s"SELECT * FROM delta.`$path`" + {
+          if (version.isDefined) s" VERSION AS OF ${version.get}" else ""
+        })
+        .collect()
+        .map(TestRow(_))
       checkAnswer(resultSpark, expData)
+    }
+
+    if (checksumWritten) {
+      checkChecksumContent(path, version, expSchema, expPartitionColumns)
     }
   }
 
   def verifyCommitInfo(
-    tablePath: String,
-    version: Long,
-    partitionCols: Seq[String] = Seq.empty,
-    isBlindAppend: Boolean = true,
-    operation: Operation = CREATE_TABLE): Unit = {
-    val row = spark.sql(s"DESCRIBE HISTORY delta.`$tablePath`")
+                        tablePath: String,
+                        version: Long,
+                        partitionCols: Seq[String] = Seq.empty,
+                        isBlindAppend: Boolean = true,
+                        operation: Operation = CREATE_TABLE): Unit = {
+    val row = spark
+      .sql(s"DESCRIBE HISTORY delta.`$tablePath`")
       .filter(s"version = $version")
       .select(
         "version",
         "operationParameters.partitionBy",
         "isBlindAppend",
         "engineInfo",
-        "operation")
-      .collect().last
+        "operation"
+      )
+      .collect()
+      .last
 
     assert(row.getAs[Long]("version") === version)
     assert(row.getAs[Long]("partitionBy") ===
@@ -454,5 +477,42 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
           hook => hook.getType == PostCommitHookType.CHECKSUM_SIMPLE
         )
     )
+  }
+
+  def checkChecksumContent(
+      tablePath: String,
+      version: Option[Long],
+      expSchema: StructType,
+      expPartitionColumns: Seq[String]): Unit = {
+    val checksumVersion =
+      if (version.isDefined) version.get else latestSnapshot(tablePath, defaultEngine).getVersion
+    assert(
+      Files.exists(
+        new File(f"$tablePath/_delta_log/$checksumVersion%020d.crc").toPath
+      )
+    )
+    val columnarBatches = defaultEngine
+      .getJsonHandler()
+      .readJsonFiles(
+        singletonCloseableIterator(
+          FileStatus.of(f"$tablePath/_delta_log/$checksumVersion%020d.crc")
+        ),
+        ChecksumUtils.CRC_FILE_SCHEMA,
+        Optional.empty()
+      )
+    assert(columnarBatches.hasNext)
+    val crcRow = columnarBatches.next()
+    assert(crcRow.getSize === 1)
+    val metadataField = Metadata.fromColumnVector(
+      crcRow.getColumnVector(ChecksumUtils.CRC_FILE_SCHEMA.indexOf("metadata")),
+      0
+    )
+    assert(metadataField.getSchema === expSchema)
+    assert(
+      metadataField.getPartitionColNames.asScala === expPartitionColumns
+        .map(s => s.toLowerCase(Locale.ROOT))
+        .toSet
+    )
+    assert(!columnarBatches.hasNext)
   }
 }
