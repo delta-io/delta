@@ -230,11 +230,11 @@ abstract class DynamoDBCommitCoordinatorClientSuite(batchSize: Long)
       )
       if (skipPathCheck) {
         // This should succeed because we are skipping the path check.
-        val resp = commit(1L, 1L, wrongTablePathTableCommitCoordinator)
+        val resp = commit(wrongTablePathTableCommitCoordinator, 1L, 1L)
         assert(resp.getVersion == 1L)
       } else {
         val e = intercept[JCommitFailedException] {
-          commit(1L, 1L, wrongTablePathTableCommitCoordinator)
+          commit(wrongTablePathTableCommitCoordinator, 1L, 1L)
         }
         assert(e.getMessage.contains("while the table is registered at"))
       }

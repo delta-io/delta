@@ -36,6 +36,7 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.{ThreadUtils, Utils}
 
@@ -151,9 +152,10 @@ trait CommitCoordinatorClientImplSuiteBase extends QueryTest
   }
 
   protected def commit(
+      tableCommitCoordinatorClient: TableCommitCoordinatorClient,
       version: Long,
       timestamp: Long,
-      tableCommitCoordinatorClient: TableCommitCoordinatorClient): JCommit = {
+      tableIdentifier: Option[TableIdentifier] = None): JCommit = {
     val commitInfo = CommitInfo.empty(version = Some(version)).withTimestamp(timestamp)
       .copy(inCommitTimestamp = Some(timestamp))
     val updatedActions = if (version == 0) {
@@ -164,7 +166,8 @@ trait CommitCoordinatorClientImplSuiteBase extends QueryTest
     tableCommitCoordinatorClient.commit(
       version,
       Iterator(s"$version", s"$timestamp"),
-      updatedActions).getCommit
+      updatedActions,
+      tableIdentifier).getCommit
   }
 
   protected def assertBackfilled(
@@ -211,7 +214,7 @@ trait CommitCoordinatorClientImplSuiteBase extends QueryTest
       val tableCommitCoordinatorClient = createTableCommitCoordinatorClient(log)
 
       val e = intercept[JCommitFailedException] {
-        commit(version = 0, timestamp = 0, tableCommitCoordinatorClient)
+        commit(tableCommitCoordinatorClient, version = 0, timestamp = 0)
       }
       assert(e.getMessage === "Commit version 0 must go via filesystem.")
       writeCommitZero(logPath)
@@ -221,7 +224,7 @@ trait CommitCoordinatorClientImplSuiteBase extends QueryTest
 
       // Test backfilling functionality for commits 1 - 8
       (1 to 8).foreach { version =>
-        commit(version, version, tableCommitCoordinatorClient)
+        commit(tableCommitCoordinatorClient, version, version)
         validateBackfillStrategy(tableCommitCoordinatorClient, logPath, version)
         assert(tableCommitCoordinatorClient.getCommits().getLatestTableVersion == version)
       }
@@ -252,7 +255,7 @@ trait CommitCoordinatorClientImplSuiteBase extends QueryTest
       writeCommitZero(logPath)
       val maxVersion = 15
       (1 to maxVersion).foreach { version =>
-        commit(version, version, tableCommitCoordinatorClient)
+        commit(tableCommitCoordinatorClient, version, version)
       }
 
       runGetCommitsAndValidate(tableCommitCoordinatorClient, None, None, maxVersion)
@@ -270,7 +273,7 @@ trait CommitCoordinatorClientImplSuiteBase extends QueryTest
       val tableCommitCoordinatorClient = createTableCommitCoordinatorClient(log)
       // commit-0 must be file system based
       writeCommitZero(logPath)
-      (1 to 3).foreach(i => commit(i, i, tableCommitCoordinatorClient))
+      (1 to 3).foreach(i => commit(tableCommitCoordinatorClient, i, i))
 
       // Test that backfilling is idempotent for already-backfilled commits.
       registerBackfillOp(tableCommitCoordinatorClient, log, 2)
@@ -292,16 +295,16 @@ trait CommitCoordinatorClientImplSuiteBase extends QueryTest
       // commit-0 must be file system based
       writeCommitZero(logPath)
       // Verify that conflict-checker rejects out-of-order commits.
-      (1 to 4).foreach(i => commit(i, i, tableCommitCoordinatorClient))
+      (1 to 4).foreach(i => commit(tableCommitCoordinatorClient, i, i))
       // A retry of commit 0 fails from commit coordinator client with a conflict and it can't be
       // retried as commit 0 is upgrading the commit coordinator client.
-      assertCommitFail(0, 5, retryable = false, commit(0, 5, tableCommitCoordinatorClient))
-      assertCommitFail(4, 5, retryable = true, commit(4, 6, tableCommitCoordinatorClient))
+      assertCommitFail(0, 5, retryable = false, commit(tableCommitCoordinatorClient, 0, 5))
+      assertCommitFail(4, 5, retryable = true, commit(tableCommitCoordinatorClient, 4, 6))
 
-      commit(5, 5, tableCommitCoordinatorClient)
+      commit(tableCommitCoordinatorClient, 5, 5)
       validateGetCommitsResult(tableCommitCoordinatorClient.getCommits(), None, None, 5)
-      assertCommitFail(5, 6, retryable = true, commit(5, 5, tableCommitCoordinatorClient))
-      assertCommitFail(7, 6, retryable = false, commit(7, 7, tableCommitCoordinatorClient))
+      assertCommitFail(5, 6, retryable = true, commit(tableCommitCoordinatorClient, 5, 5))
+      assertCommitFail(7, 6, retryable = false, commit(tableCommitCoordinatorClient, 7, 7))
 
       assertInvariants(logPath, tableCommitCoordinatorClient)
     }
@@ -331,7 +334,7 @@ trait CommitCoordinatorClientImplSuiteBase extends QueryTest
                 val nextVersion = math.max(tcs.getCommits().getLatestTableVersion + 1, 1)
                 try {
                   val currentTimestamp = runningTimestamp.getAndIncrement()
-                  val commitResponse = commit(nextVersion, currentTimestamp, tcs)
+                  val commitResponse = commit(tcs, nextVersion, currentTimestamp)
                   currentWriterCommits += 1
                   assert(commitResponse.getCommitTimestamp == currentTimestamp)
                   assert(commitResponse.getVersion == nextVersion)

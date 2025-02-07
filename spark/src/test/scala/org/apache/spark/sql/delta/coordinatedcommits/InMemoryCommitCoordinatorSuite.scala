@@ -105,7 +105,7 @@ abstract class InMemoryCommitCoordinatorSuite(batchSize: Int)
       // Anything other than version-0 or version-1 should be rejected as the first commit
       // version-0 will be directly backfilled and won't be recorded in InMemoryCommitCoordinator.
       // version-1 is what commit-coordinator is accepting.
-      assertCommitFail(2, 1, retryable = false, commit(2, 0, tcs))
+      assertCommitFail(2, 1, retryable = false, commit(tcs, 2, 0))
     }
   }
 }
