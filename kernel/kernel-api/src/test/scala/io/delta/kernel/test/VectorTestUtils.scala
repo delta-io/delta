@@ -18,10 +18,10 @@ package io.delta.kernel.test
 import io.delta.kernel.data.{ColumnVector, MapValue}
 import io.delta.kernel.internal.util.VectorUtils
 import io.delta.kernel.types._
-
-import java.lang.{Boolean => BooleanJ, Double => DoubleJ, Float => FloatJ, Byte => ByteJ}
-import scala.collection.JavaConverters._
 import org.scalatest.Assertions.convertToEqualizer
+
+import java.lang.{Boolean => BooleanJ, Double => DoubleJ, Float => FloatJ}
+import scala.collection.JavaConverters._
 
 trait VectorTestUtils {
 
@@ -36,20 +36,6 @@ trait VectorTestUtils {
       override def isNullAt(rowId: Int): Boolean = values(rowId) == null
 
       override def getBoolean(rowId: Int): Boolean = values(rowId)
-    }
-  }
-
-  protected def byteVector(values: Seq[ByteJ]): ColumnVector = {
-    new ColumnVector {
-      override def getDataType: DataType = ByteType.BYTE
-
-      override def getSize: Int = values.length
-
-      override def close(): Unit = {}
-
-      override def isNullAt(rowId: Int): Boolean = values(rowId) == null
-
-      override def getByte(rowId: Int): Byte = values(rowId)
     }
   }
 
@@ -149,13 +135,38 @@ trait VectorTestUtils {
     override def getBoolean(rowId: Int): Boolean = rowId == selectRowId
   }
 
-  protected def checkVectors[T](
+  protected def checkBooleanVectors(actual: ColumnVector, expected: ColumnVector): Unit = {
+    checkVectors(
+      actual,
+      expected,
+      BooleanType.BOOLEAN,
+      (vec, id) => vec.getBoolean(id)
+    )
+  }
+
+  protected def checkTimestampVectors(actual: ColumnVector, expected: ColumnVector): Unit = {
+    checkVectors(
+      actual,
+      expected,
+      TimestampType.TIMESTAMP,
+      (vec, id) => vec.getLong(id)
+    )
+  }
+
+  protected def checkStringVectors(actual: ColumnVector, expected: ColumnVector): Unit = {
+    checkVectors(
+      actual,
+      expected,
+      StringType.STRING,
+      (vec, id) => vec.getString(id)
+    )
+  }
+
+  private def checkVectors[T](
       actual: ColumnVector,
       expected: ColumnVector,
       expectedType: DataType,
-      getValue: (ColumnVector, Int) => T,
-      errorMessageFn: (Int, T, T) => String = (rowId: Int, exp: T, act: T) =>
-        s"unexpected value at $rowId"
+      getValue: (ColumnVector, Int) => T
   ): Unit = {
 
     assert(actual.getDataType === expectedType)
@@ -169,7 +180,7 @@ trait VectorTestUtils {
         val expectedValue = getValue(expected, rowId)
         assert(
           actualValue === expectedValue,
-          errorMessageFn(rowId, expectedValue, actualValue)
+          s"unexpected value at $rowId: expected: $expected actual: $actual"
         )
       }
     }
