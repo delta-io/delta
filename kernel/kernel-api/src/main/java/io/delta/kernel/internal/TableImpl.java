@@ -141,6 +141,7 @@ public class TableImpl implements Table {
         engineInfo,
         operation,
         () -> (SnapshotImpl) getLatestSnapshot(engine),
+        Optional.empty() /* commitFunction */,
         getClock());
   }
 

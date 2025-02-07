@@ -19,6 +19,7 @@ package io.delta.kernel.internal.util;
 import io.delta.kernel.internal.fs.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public final class FileNames {
@@ -109,6 +110,16 @@ public final class FileNames {
     final int slashIdx = path.lastIndexOf(Path.SEPARATOR);
     final String name = path.substring(slashIdx + 1);
     return Long.parseLong(name.split("\\.")[0]);
+  }
+
+  public static long uuidCommitDeltaVersion(String path) {
+    final int slashIdx = path.lastIndexOf(Path.SEPARATOR);
+    final String name = path.substring(slashIdx + 1);
+    final Matcher matcher = UUID_DELTA_FILE_REGEX.matcher(name);
+    if (matcher.matches()) {
+      return Long.parseLong(matcher.group(1));
+    }
+    throw new IllegalArgumentException("Invalid UUID commit file name: " + path);
   }
 
   /** Returns the version for the given checkpoint path. */

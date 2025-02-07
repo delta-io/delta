@@ -21,6 +21,7 @@ import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.snapshot.LogSegment;
+import java.util.Optional;
 
 public class ExistingPAndMReplay extends LogReplay {
 

@@ -117,10 +117,6 @@ public abstract class LogReplay {
 
   public LogReplay(Engine engine, Path dataPath, LogSegment logSegment) {
     assertLogFilesBelongToTable(new Path(dataPath, "_delta_log"), logSegment.allLogFilesUnsorted());
-    Tuple2<Optional<SnapshotHint>, Optional<CRCInfo>> newerSnapshotHintAndCurrentCrcInfo =
-        maybeGetNewerSnapshotHintAndCurrentCrcInfo(
-            engine, logSegment, snapshotHint, snapshotVersion);
-    this.currentCrcInfo = newerSnapshotHintAndCurrentCrcInfo._2;
     this.dataPath = dataPath;
     this.logSegment = logSegment;
     this.domainMetadataMap = new Lazy<>(() -> loadDomainMetadataMap(engine));

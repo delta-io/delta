@@ -57,8 +57,9 @@ public class FullLogSegmentReplay extends LogReplay {
 
     this.protocolAndMetadata =
         snapshotMetrics.loadInitialDeltaActionsTimer.time(
-            () -> loadTableProtocolAndMetadata(
-              engine, logSegment, newerSnapshotHintAndCurrentCrcInfo._1, snapshotVersion));
+            () ->
+                loadTableProtocolAndMetadata(
+                    engine, logSegment, newerSnapshotHintAndCurrentCrcInfo._1, snapshotVersion));
   }
 
   @Override
@@ -80,7 +81,7 @@ public class FullLogSegmentReplay extends LogReplay {
   // Helper methods //
   ////////////////////
 
-    /**
+  /**
    * Calculates the latest snapshot hint before or at the current snapshot version, returns the
    * CRCInfo if checksum file at the current version is read
    */

@@ -25,6 +25,7 @@ import io.delta.kernel.TransactionBuilder;
 import io.delta.kernel.ccv2.ResolvedMetadata;
 import io.delta.kernel.ccv2.ResolvedTable;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.TransactionBuilderImpl;
 import io.delta.kernel.internal.fs.Path;
@@ -32,6 +33,7 @@ import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.metrics.SnapshotReportImpl;
 import io.delta.kernel.internal.snapshot.SnapshotManager;
 import io.delta.kernel.metrics.SnapshotReport;
+import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -40,7 +42,7 @@ public class ResolvedTableImpl implements ResolvedTable {
   private static final Logger logger = LoggerFactory.getLogger(ResolvedTableImpl.class);
 
   private final ResolvedMetadata resolvedMetadata;
-  private final Snapshot snapshot;
+  private final Optional<Snapshot> snapshot;
 
   public ResolvedTableImpl(Engine engine, ResolvedMetadata rm) {
     validateResolvedMetadata(rm);
@@ -49,16 +51,21 @@ public class ResolvedTableImpl implements ResolvedTable {
 
     final Path tablePath = new Path(resolvedMetadata.getPath());
 
-    final SnapshotQueryContext sqc =
-        SnapshotQueryContext.forVersionSnapshot(rm.getPath(), rm.getVersion());
+    if (resolvedMetadata.getVersion() == -1) {
+      this.snapshot = Optional.empty();
+    } else {
+      final SnapshotQueryContext sqc =
+          SnapshotQueryContext.forVersionSnapshot(rm.getPath(), rm.getVersion());
 
-    try {
-      this.snapshot =
-          new SnapshotManager(tablePath)
-              .getSnapshotUsingResolvedMetadata(engine, resolvedMetadata, sqc);
-    } catch (Exception e) {
-      recordSnapshotErrorReport(engine, sqc, e);
-      throw e;
+      try {
+        this.snapshot =
+            Optional.of(
+                new SnapshotManager(tablePath)
+                    .getSnapshotUsingResolvedMetadata(engine, resolvedMetadata, sqc));
+      } catch (Exception e) {
+        recordSnapshotErrorReport(engine, sqc, e);
+        throw e;
+      }
     }
   }
 
@@ -68,17 +75,17 @@ public class ResolvedTableImpl implements ResolvedTable {
 
   @Override
   public Snapshot getSnapshot() {
-    return snapshot;
+    return snapshot.orElseThrow(() -> new TableNotFoundException(resolvedMetadata.getPath()));
   }
 
   @Override
   public TransactionBuilder createTransactionBuilder(String engineInfo, Operation operation) {
-    // TODO: pass in the committer
     return new TransactionBuilderImpl(
         new Path(resolvedMetadata.getPath()) /* tablePath */,
         engineInfo,
         operation,
-        () -> (SnapshotImpl) snapshot /* snapshotSupplier */,
+        () -> (SnapshotImpl) getSnapshot() /* snapshotSupplier */,
+        Optional.of(resolvedMetadata.getCommitFunction()),
         System::currentTimeMillis /* clock */);
   }
 

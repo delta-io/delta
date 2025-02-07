@@ -23,6 +23,7 @@ import static io.delta.kernel.internal.util.Preconditions.checkState;
 import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
 
 import io.delta.kernel.*;
+import io.delta.kernel.ccv2.ResolvedMetadata.CommitFunction;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.ConcurrentWriteException;
@@ -67,6 +68,7 @@ public class TransactionImpl implements Transaction {
   private final SnapshotImpl readSnapshot;
   private final Optional<SetTransaction> setTxnOpt;
   private final boolean shouldUpdateProtocol;
+  private final Optional<CommitFunction> commitFunctionOpt;
   private final Clock clock;
   private List<DomainMetadata> domainMetadatas = new ArrayList<>();
   private Metadata metadata;
@@ -88,6 +90,7 @@ public class TransactionImpl implements Transaction {
       boolean shouldUpdateMetadata,
       boolean shouldUpdateProtocol,
       int maxRetries,
+      Optional<CommitFunction> commitFunctionOpt,
       Clock clock) {
     this.isNewTable = isNewTable;
     this.dataPath = dataPath;
@@ -101,6 +104,7 @@ public class TransactionImpl implements Transaction {
     this.shouldUpdateMetadata = shouldUpdateMetadata;
     this.shouldUpdateProtocol = shouldUpdateProtocol;
     this.maxRetries = maxRetries;
+    this.commitFunctionOpt = commitFunctionOpt;
     this.clock = clock;
   }
 
@@ -326,10 +330,43 @@ public class TransactionImpl implements Transaction {
             logPath)) {
           throw new RuntimeException("Failed to create delta log directory: " + logPath);
         }
+
+        final String uuidCommitsPath = new Path(logPath, "_commits").toString();
+        if (!wrapEngineExceptionThrowsIO(
+            () -> engine.getFileSystemClient().mkdirs(uuidCommitsPath),
+            "Creating directories for path %s",
+            uuidCommitsPath)) {
+          throw new RuntimeException("Failed to create delta log directory: " + uuidCommitsPath);
+        }
       }
 
       // Action counters may be partially incremented from previous tries, reset the counters to 0
       transactionMetrics.resetActionCounters();
+
+      final CloseableIterator<Row> finalActionsWithMetrics =
+          dataAndMetadataActions.map(
+              action -> {
+                transactionMetrics.totalActionsCounter.increment();
+                if (!action.isNullAt(ADD_FILE_ORDINAL)) {
+                  transactionMetrics.addFilesCounter.increment();
+                  transactionMetrics.addFilesSizeInBytesCounter.increment(
+                      new AddFile(action.getStruct(ADD_FILE_ORDINAL)).getSize());
+                } else if (!action.isNullAt(REMOVE_FILE_ORDINAL)) {
+                  transactionMetrics.removeFilesCounter.increment();
+                }
+                return action;
+              });
+
+      if (commitFunctionOpt.isPresent()) {
+        logger.info("Using custom commit function for commit as version = {}.", commitAsVersion);
+        return commitFunctionOpt
+            .get()
+            .commit(
+                commitAsVersion,
+                finalActionsWithMetrics,
+                Optional.of(protocol),
+                Optional.of(metadata));
+      }
 
       // Write the staged data to a delta file
       wrapEngineExceptionThrowsIO(
@@ -338,18 +375,7 @@ public class TransactionImpl implements Transaction {
                 .getJsonHandler()
                 .writeJsonFileAtomically(
                     FileNames.deltaFile(logPath, commitAsVersion),
-                    dataAndMetadataActions.map(
-                        action -> {
-                          transactionMetrics.totalActionsCounter.increment();
-                          if (!action.isNullAt(ADD_FILE_ORDINAL)) {
-                            transactionMetrics.addFilesCounter.increment();
-                            transactionMetrics.addFilesSizeInBytesCounter.increment(
-                                new AddFile(action.getStruct(ADD_FILE_ORDINAL)).getSize());
-                          } else if (!action.isNullAt(REMOVE_FILE_ORDINAL)) {
-                            transactionMetrics.removeFilesCounter.increment();
-                          }
-                          return action;
-                        }),
+                    finalActionsWithMetrics,
                     false /* overwrite */);
             return null;
           },
