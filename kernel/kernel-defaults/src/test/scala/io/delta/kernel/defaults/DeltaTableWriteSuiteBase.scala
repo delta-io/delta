@@ -445,4 +445,14 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
         ) === isReadyForCheckpoint
     )
   }
+
+  def assertChecksumSimpleReadiness(txnResult: TransactionCommitResult): Unit = {
+    assert(
+      txnResult.getPostCommitHooks
+        .stream()
+        .anyMatch(
+          hook => hook.getType == PostCommitHookType.CHECKSUM_SIMPLE
+        )
+    )
+  }
 }

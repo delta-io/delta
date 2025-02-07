@@ -329,34 +329,44 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
-  test("create a partitioned table") {
-    withTempDirAndEngine { (tablePath, engine) =>
-      val table = Table.forPath(engine, tablePath)
-      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+  Seq(true, false).foreach(
+    writeCheckSum =>
+      test("create a partitioned table" + {
+        if (writeCheckSum) "and execute post commit hook" else ""
+      }) {
+        withTempDirAndEngine {
+          (tablePath, engine) =>
+            val table = Table.forPath(engine, tablePath)
+            val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
 
-      val schema = new StructType()
-        .add("id", INTEGER)
-        .add("Part1", INTEGER) // partition column
-        .add("part2", INTEGER) // partition column
+            val schema = new StructType()
+              .add("id", INTEGER)
+              .add("Part1", INTEGER) // partition column
+              .add("part2", INTEGER) // partition column
 
-      val txn = txnBuilder
-        .withSchema(engine, schema)
-        // partition columns should preserve the same case the one in the schema
-        .withPartitionColumns(engine, Seq("part1", "PART2").asJava)
-        .build(engine)
+            val txn = txnBuilder
+              .withSchema(engine, schema)
+              // partition columns should preserve the same case the one in the schema
+              .withPartitionColumns(engine, Seq("part1", "PART2").asJava)
+              .build(engine)
 
-      assert(txn.getSchema(engine) === schema)
-      // Expect the partition column name is exactly same as the one in the schema
-      assert(txn.getPartitionColumns(engine) === Seq("Part1", "part2").asJava)
-      val txnResult = txn.commit(engine, emptyIterable())
+            assert(txn.getSchema(engine) === schema)
+            // Expect the partition column name is exactly same as the one in the schema
+            assert(txn.getPartitionColumns(engine) === Seq("Part1", "part2").asJava)
+            val txnResult = txn.commit(engine, emptyIterable())
 
-      assert(txnResult.getVersion === 0)
-      assertCheckpointReadiness(txnResult, isReadyForCheckpoint = false)
+            assert(txnResult.getVersion === 0)
+            assertCheckpointReadiness(txnResult, isReadyForCheckpoint = false)
+            assertChecksumSimpleReadiness(txnResult)
+            if (writeCheckSum) {
+              txnResult.getPostCommitHooks.forEach(hook => hook.threadSafeInvoke(engine))
+            }
 
-      verifyCommitInfo(tablePath, version = 0, Seq("Part1", "part2"))
-      verifyWrittenContent(tablePath, schema, Seq.empty)
-    }
-  }
+            verifyCommitInfo(tablePath, version = 0, Seq("Part1", "part2"))
+            verifyWrittenContent(tablePath, schema, Seq.empty)
+        }
+      }
+  )
 
   test("create table with all supported types") {
     withTempDirAndEngine { (tablePath, engine) =>
