@@ -8,20 +8,21 @@ import io.delta.kernel.TransactionCommitResult
 import io.delta.kernel.ccv2.ResolvedMetadata
 import io.delta.kernel.data.Row
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.exceptions.{ConcurrentWriteException, TableNotFoundException}
+import io.delta.kernel.exceptions.ConcurrentWriteException
 import io.delta.kernel.internal.actions.{Metadata, Protocol}
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.snapshot.LogSegment
+import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.FileSystem
+import org.apache.hadoop.fs.{FileSystem, FileUtil, Path => HadoopPath}
 import org.slf4j.Logger
 
 class CCv2Client(engine: Engine, catalogClient: CatalogClient) {
   import CCv2Client._
 
   def getResolvedMetadata(tableName: String): ResolvedMetadata = {
-    logger.info("tableName=$tableName")
+    logger.info(s"tableName=$tableName")
     new ResolvedCatalogMetadata(tableName, engine, catalogClient)
   }
 
@@ -53,7 +54,7 @@ class CCv2Client(engine: Engine, catalogClient: CatalogClient) {
       override def getSchemaString: Optional[String] = Optional.empty()
 
       override def getCommitFunction: ResolvedMetadata.CommitFunction =
-        commitFunctionImpl(logger, tableName, stagingTablePath, engine, catalogClient)
+        commitFunctionImpl(logger, engine, catalogClient, tableName, stagingTablePath, Seq.empty)
     }
   }
 
@@ -64,13 +65,20 @@ object CCv2Client {
 
   private val logger = org.slf4j.LoggerFactory.getLogger(classOf[CCv2Client])
 
+  /**
+   * @param unbackfilledCommits the *potentially* unbackfilled commits. They may be backfilled.
+   */
   def commitFunctionImpl(
       _logger: Logger,
+      engine: Engine,
+      catalogClient: CatalogClient,
       tableName: String,
       dataPath: String,
-      engine: Engine,
-      catalogClient: CatalogClient): ResolvedMetadata.CommitFunction = {
+      unbackfilledCommits: Seq[FileStatus]): ResolvedMetadata.CommitFunction = {
     new ResolvedMetadata.CommitFunction {
+      private val logPath = new Path(dataPath, "_delta_log")
+      private val hadoopFileSystem = FileSystem.getLocal(new Configuration())
+
       override def commit(
           commitAsVersion: Long,
           actions: CloseableIterator[Row],
@@ -94,18 +102,21 @@ object CCv2Client {
           .writeJsonFileAtomically(commitFilePath, actions, false /* overwrite */)
         _logger.info("Write UUID commit file: END")
 
-        val hadoopFs = FileSystem
-          .getLocal(new Configuration())
-          .getFileStatus(new org.apache.hadoop.fs.Path(commitFilePath))
+        val hadoopFs = hadoopFileSystem.getFileStatus(new HadoopPath(commitFilePath))
 
-        val kernelFileStatus =
-          FileStatus.of(commitFilePath, hadoopFs.getLen, hadoopFs.getModificationTime)
+        val kernelFs =
+          FileStatus.of(hadoopFs.getPath.toString, hadoopFs.getLen, hadoopFs.getModificationTime)
+
+        _logger.info(s"hadoopFS: $hadoopFs")
+        _logger.info(s"kernelFs: $kernelFs")
 
         _logger.info("Commit to catalog: START")
-        catalogClient
-          .commit(tableName, kernelFileStatus, newProtocol.asScala, newMetadata.asScala) match {
+
+        val result = catalogClient
+          .commit(tableName, kernelFs, newProtocol.asScala, newMetadata.asScala) match {
             case CommitResponse.Success =>
               _logger.info("Commit to catalog: SUCCESS")
+              // TODO: invoke backfill since this commit was successful
               new TransactionCommitResult(commitAsVersion, Seq.empty.asJava)
             case CommitResponse.TableDoesNotExist(tableName) =>
               _logger.info("Commit to catalog: TABLE DOES NOT EXIST")
@@ -114,6 +125,56 @@ object CCv2Client {
               _logger.info("Commit to catalog: COMMIT VERSION CONFLICT")
               throw new ConcurrentWriteException()
         }
+
+        try {
+          if (commitAsVersion % 5 == 0) {
+            backfill(commitAsVersion, kernelFs)
+          } else {
+            _logger.info("Skipping backfill")
+          }
+        } catch {
+          case e: Throwable => _logger.warn("Backfill failed, ignoring", e)
+        }
+
+        result
+      }
+
+      private def backfill(commitAsVersion: Long, committedFileStatus: FileStatus): Unit = {
+        _logger.info(s"Backfilling: START. commitAsVersion=$commitAsVersion")
+        val allCandidateUnbackfilledFiles = unbackfilledCommits ++ Seq(committedFileStatus)
+
+        allCandidateUnbackfilledFiles
+          // e.g. perhaps some of the deltas we got back from the catalog were in fact backfilled
+          .filter(fs => FileNames.isUnbackfilledDeltaFile(fs.getPath))
+          .foreach { fs =>
+            val fsVersion = FileNames.uuidCommitDeltaVersion(fs.getPath)
+            val backfilledFilePath = FileNames.deltaFile(logPath, fsVersion)
+            _logger.info(s"Unbackfilled fs: ${fs.getPath}")
+            _logger.info(s"Unbackfilled version: $fsVersion")
+            _logger.info(s"Backfilled file path: $backfilledFilePath")
+
+            if (hadoopFileSystem.exists(new HadoopPath(backfilledFilePath))) {
+              _logger.info(s"Backfilled file already exists: $backfilledFilePath")
+            } else {
+              _logger.info(s"Backfilling: $backfilledFilePath")
+              val sourceUnbackfilledPath = new HadoopPath(fs.getPath)
+              val targetBackfilledPath = new HadoopPath(backfilledFilePath)
+              _logger.info(s"Copying $sourceUnbackfilledPath to $targetBackfilledPath")
+
+              FileUtil.copy(
+                hadoopFileSystem, // sourceFileSystem
+                sourceUnbackfilledPath, // sourcePath
+                hadoopFileSystem, // targetFileSystem
+                targetBackfilledPath, // targetPath
+                false, // deleteSource
+                false, // overwrite
+                hadoopFileSystem.getConf)
+            }
+        }
+
+        _logger.info(s"Invoking catalog with latest backfilled version: $commitAsVersion")
+        catalogClient.setLatestBackfilledVersion(tableName, commitAsVersion)
+        _logger.info("Backfilling: END")
       }
     }
   }
@@ -163,7 +224,17 @@ class ResolvedCatalogMetadata(
   override def getSchemaString: Optional[String] = resolvedTableResponse.schemaString.asJava
 
   override def getCommitFunction: ResolvedMetadata.CommitFunction = {
-    CCv2Client.commitFunctionImpl(logger, tableName, dataPath, engine, catalogClient)
+    CCv2Client.commitFunctionImpl(
+      logger,
+      engine,
+      catalogClient,
+      tableName,
+      dataPath,
+      getLogSegment
+        .map[List[io.delta.kernel.utils.FileStatus]](
+          logSegment => logSegment.getDeltas.asScala.toList)
+        .asScala
+        .getOrElse(Seq.empty))
   }
 
 }

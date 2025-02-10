@@ -33,6 +33,8 @@ import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.metrics.SnapshotReportImpl;
 import io.delta.kernel.internal.snapshot.SnapshotManager;
 import io.delta.kernel.metrics.SnapshotReport;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -49,13 +51,28 @@ public class ResolvedTableImpl implements ResolvedTable {
 
     this.resolvedMetadata = rm;
 
-    final Path tablePath = new Path(resolvedMetadata.getPath());
+    logger.info("Creating ResolvedTableImpl");
+    logger.info("rm.version = {}", rm.getVersion());
+    logger.info("rm.path = {}", rm.getPath());
+    logger.info("rm.logSegment = {}", rm.getLogSegment());
+    logger.info("rm.protocol = {}", rm.getProtocol());
+    logger.info("rm.metadata = {}", rm.getMetadata());
+
+    final Path tablePath;
+
+    try {
+      tablePath = new Path(engine.getFileSystemClient().resolvePath(rm.getPath()));
+
+      logger.info("Resolved table path: {}", tablePath);
+    } catch (IOException io) {
+      throw new UncheckedIOException(io);
+    }
 
     if (resolvedMetadata.getVersion() == -1) {
       this.snapshot = Optional.empty();
     } else {
       final SnapshotQueryContext sqc =
-          SnapshotQueryContext.forVersionSnapshot(rm.getPath(), rm.getVersion());
+          SnapshotQueryContext.forVersionSnapshot(tablePath.toString(), rm.getVersion());
 
       try {
         this.snapshot =

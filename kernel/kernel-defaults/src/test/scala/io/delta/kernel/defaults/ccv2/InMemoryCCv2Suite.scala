@@ -21,86 +21,70 @@ class InMemoryCCv2Suite extends AnyFunSuite
   private val catalogClient = new InMemoryCatalogClient()
   private val ccv2Client = new CCv2Client(defaultEngine, catalogClient)
 
-  // DeltaTableWriteSuiteBase.testSchema is of INTEGER so that's what we produce here
-  val smallDataBatch1 = Seq(columnarBatch(intVector((1 to 10) : _*)))
-    .map(batch => new FilteredColumnarBatch(batch, Optional.empty()))
-    .toList // immutable
-  val smallDataBatch2 = Seq(columnarBatch(intVector((11 to 20) : _*)))
-    .map(batch => new FilteredColumnarBatch(batch, Optional.empty()))
-    .toList // immutable
-
   test("aaa") {
+    createTableHelper("table_001", createData(1 to 10))
 
-    {
-      // ===== Step 1: Create a staging table (v0) =====
-      val stagingTableMetadata = ccv2Client.getStagingTableResolvedMetadata(
-        "table_000", defaultEngine, catalogClient)
-      println(stagingTableMetadata.getPath)
-      println(stagingTableMetadata.getVersion)
-
-      val resolvedTable = ResolvedTable.fromResolvedMetadata(defaultEngine, stagingTableMetadata)
-
-      val txn = resolvedTable
-        .createTransactionBuilder(testEngineInfo, Operation.CREATE_TABLE)
-        .withSchema(defaultEngine, testSchema)
-        .build(defaultEngine)
-
-      val txnState = txn.getTransactionState(defaultEngine)
-      val stagedFiles = stageData(txnState, Map.empty, smallDataBatch1)
-      val stagedActionsIterable = CloseableIterable.inMemoryIterable(stagedFiles)
-      txn.commit(defaultEngine, stagedActionsIterable)
+    for (min <- 11 to 91 by 10) {
+      val max = min + 9
+      println("=" * 50)
+      appendDataHelper("table_001", createData(min to max))
     }
-
     println("=" * 50)
-
-    {
-      // ===== Step 2: Read that table (v0) =====
-      val resolvedMetadata = ccv2Client.getResolvedMetadata("table_000")
-      assert(resolvedMetadata.getVersion === 0)
-
-      println(resolvedMetadata.getPath)
-      println(resolvedMetadata.getVersion)
-      println(resolvedMetadata.getSchemaString)
-      println(resolvedMetadata.getProtocol)
-      println(resolvedMetadata.getMetadata)
-      println(resolvedMetadata.getLogSegment)
-
-      val resolvedTable = ResolvedTable.fromResolvedMetadata(defaultEngine, resolvedMetadata)
-      val snapshot = resolvedTable.getSnapshot
-      assert(snapshot.getVersion === 0)
-      println(snapshot.getVersion)
-      val readRows = readSnapshot(snapshot, engine = defaultEngine).map(TestRow(_))
-      readRows.foreach(row => println(row))
-
-      // ===== Step 3: Append to that resolved table (v1) =====
-      val txn = resolvedTable
-        .createTransactionBuilder(testEngineInfo, Operation.WRITE)
-        .build(defaultEngine)
-
-      val txnState = txn.getTransactionState(defaultEngine)
-      val stagedFiles = stageData(txnState, Map.empty, smallDataBatch2)
-      val stagedActionsIterable = CloseableIterable.inMemoryIterable(stagedFiles)
-      txn.commit(defaultEngine, stagedActionsIterable)
-    }
-
-    println("=" * 50)
-
-    {
-      // ===== Step 5: Read that table (v1) =====
-      val resolvedMetadata = ccv2Client.getResolvedMetadata("table_000")
-      assert(resolvedMetadata.getVersion === 1)
-
-      val resolvedTable = ResolvedTable.fromResolvedMetadata(defaultEngine, resolvedMetadata)
-      val snapshot = resolvedTable.getSnapshot
-      assert(snapshot.getVersion === 1)
-      println(snapshot.getVersion)
-      val readRows = readSnapshot(snapshot, engine = defaultEngine).map(TestRow(_))
-      readRows.foreach(row => println(row))
-    }
-
+    readTableHelper("table_001")
   }
 
-  protected def columnarBatch(vectors: ColumnVector*): ColumnarBatch = {
+  private def createTableHelper(
+      tableName: String,
+      data: Seq[FilteredColumnarBatch]): Unit = {
+    println(s"Creating staging table for $tableName")
+
+    val stagingTableMetadata = ccv2Client.getStagingTableResolvedMetadata(
+      tableName, defaultEngine, catalogClient)
+    println(stagingTableMetadata.getPath)
+    println(stagingTableMetadata.getVersion)
+
+    val resolvedTable = ResolvedTable.fromResolvedMetadata(defaultEngine, stagingTableMetadata)
+
+    val txn = resolvedTable
+      .createTransactionBuilder(testEngineInfo, Operation.CREATE_TABLE)
+      .withSchema(defaultEngine, testSchema)
+      .build(defaultEngine)
+
+    val txnState = txn.getTransactionState(defaultEngine)
+    val stagedFiles = stageData(txnState, Map.empty, data.toList)
+    val stagedActionsIterable = CloseableIterable.inMemoryIterable(stagedFiles)
+    txn.commit(defaultEngine, stagedActionsIterable)
+  }
+
+  private def appendDataHelper(tableName: String, data: Seq[FilteredColumnarBatch]): Unit = {
+    println(s"Appending data to $tableName")
+    val resolvedMetadata = ccv2Client.getResolvedMetadata(tableName)
+    val resolvedTable = ResolvedTable.fromResolvedMetadata(defaultEngine, resolvedMetadata)
+    val txn = resolvedTable
+      .createTransactionBuilder(testEngineInfo, Operation.WRITE)
+      .build(defaultEngine)
+
+    val txnState = txn.getTransactionState(defaultEngine)
+    val stagedFiles = stageData(txnState, Map.empty, data.toList)
+    val stagedActionsIterable = CloseableIterable.inMemoryIterable(stagedFiles)
+    txn.commit(defaultEngine, stagedActionsIterable)
+  }
+
+  private def readTableHelper(tableName: String): Unit = {
+    val resolvedMetadata = ccv2Client.getResolvedMetadata(tableName)
+    val resolvedTable = ResolvedTable.fromResolvedMetadata(defaultEngine, resolvedMetadata)
+    val snapshot = resolvedTable.getSnapshot
+    val readRows = readSnapshot(snapshot, engine = defaultEngine).map(TestRow(_))
+    readRows.map(_.get(0).asInstanceOf[Int]).sorted.foreach(row => println(row))
+  }
+
+  private def createData(vals: Seq[Int]): Seq[FilteredColumnarBatch] = {
+    Seq(columnarBatch(intVector(vals: _*)))
+      .map(_.toFiltered)
+      .toList // immutable
+  }
+
+  private def columnarBatch(vectors: ColumnVector*): ColumnarBatch = {
     val numRows = vectors.head.getSize
     vectors.tail.foreach(
       v => require(v.getSize == numRows, "All vectors should have the same size"))

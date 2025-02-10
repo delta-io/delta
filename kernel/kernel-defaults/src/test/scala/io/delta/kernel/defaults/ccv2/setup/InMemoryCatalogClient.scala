@@ -1,7 +1,7 @@
 package io.delta.kernel.defaults.ccv2.setup
 
 import java.util.UUID
-import java.util.concurrent.{ConcurrentHashMap, ConcurrentLinkedQueue}
+import java.util.concurrent.ConcurrentHashMap
 
 import io.delta.kernel.internal.actions.{Metadata, Protocol}
 import io.delta.kernel.internal.fs.Path
@@ -14,12 +14,11 @@ class InMemoryCatalogClient(workspace: Path = new Path("/tmp/in_memory_catalog/"
 
   case class CatalogTableData(
       path: String,
-      commits: scala.collection.mutable.ArrayBuffer[FileStatus],
+      var maxCommitVersion: Long = -1L,
+      var commits: scala.collection.mutable.ArrayBuffer[FileStatus],
+      var latestBackfilledVersion: Option[Long] = None,
       var latestProtocol: Option[Protocol],
       var latestMetadata: Option[Metadata]) {
-
-    def maxCommitVersion: Long =
-      commits.lastOption.map(_.getPath).map(FileNames.uuidCommitDeltaVersion).getOrElse(-1L)
 
     def latestSchemaString: Option[String] = latestMetadata.map(_.getSchemaString)
   }
@@ -70,7 +69,7 @@ class InMemoryCatalogClient(workspace: Path = new Path("/tmp/in_memory_catalog/"
       case tableData =>
         logger.info(s"table exists :: $tableName")
         val tableCommitsStr = tableData.commits.map(f => s"  - ${f.getPath}").mkString("\n")
-        logger.info(s"tableData.commits:\n$tableCommitsStr")
+        logger.info(s"tableData.commits (size=${tableData.commits.size}):\n$tableCommitsStr")
 
         GetCommitsResponse.Success(tableData.commits)
     }
@@ -88,9 +87,18 @@ class InMemoryCatalogClient(workspace: Path = new Path("/tmp/in_memory_catalog/"
             logger.info(s"table does not exist :: $tableName")
             CommitResponse.TableDoesNotExist(tableName)
           case stagingTablePath =>
-            logger.info(s"committing to an existing staging table :: $tableName")
+            logger.info(s"Committing to a staging table :: $tableName")
+            val commitVersion = FileNames.uuidCommitDeltaVersion(commitFile.getPath)
+            logger.info(s"[staging table] commitVersion: $commitVersion")
+
+            if (commitVersion != 0) {
+              // TODO: support converting a fs table to a ccv2 table ???
+              throw new RuntimeException(
+                s"[staging table] Expected first commit version 0 but got version $commitVersion")
+            }
             val tableData = CatalogTableData(
               path = stagingTablePath,
+              maxCommitVersion = commitVersion,
               commits = scala.collection.mutable.ArrayBuffer(commitFile),
               latestProtocol = updatedProtocol,
               latestMetadata = updatedMetadata
@@ -113,6 +121,7 @@ class InMemoryCatalogClient(workspace: Path = new Path("/tmp/in_memory_catalog/"
           return CommitResponse.CommitVersionConflict(commitVersion, expectedCommitVersion)
         }
 
+        tableData.maxCommitVersion = commitVersion
         tableData.commits += commitFile
         updatedProtocol.foreach(newP => tableData.latestProtocol = Some(newP))
         updatedMetadata.foreach(newM => tableData.latestMetadata = Some(newM))
@@ -123,8 +132,34 @@ class InMemoryCatalogClient(workspace: Path = new Path("/tmp/in_memory_catalog/"
         CommitResponse.Success
     }
   }
+
+  override def setLatestBackfilledVersion(
+      tableName: String,
+      latestBackfilledVersion: Long): SetLatestBackfilledVersionResponse = {
+    logger.info(s"tableName: $tableName, latestBackfilledVersion: $latestBackfilledVersion")
+
+    catalogTables.get(tableName) match {
+      case null => SetLatestBackfilledVersionResponse.TableDoesNotExist(tableName)
+      case tableData =>
+        if (latestBackfilledVersion > tableData.latestBackfilledVersion.getOrElse(-1L)) {
+          tableData.latestBackfilledVersion = Some(latestBackfilledVersion)
+          logger.info(s"Updated latestBackfilledVersion to $latestBackfilledVersion")
+
+          tableData.commits = tableData
+            .commits
+            .filter(f => FileNames.isUnbackfilledDeltaFile(f.getPath))
+            .dropWhile(f => {
+              val doDrop = FileNames.uuidCommitDeltaVersion(f.getPath) <= latestBackfilledVersion
+              logger.info(s"Checking if we should drop ${f.getPath}: $doDrop")
+              doDrop
+            })
+          logger.info(s"Removed commits older than or equal to $latestBackfilledVersion")
+        }
+        SetLatestBackfilledVersionResponse.Success
+    }
+  }
 }
 
 object InMemoryCatalogClient {
-  private val logger = org.slf4j.LoggerFactory.getLogger(classOf[InMemoryCatalogClient])
+  val logger = org.slf4j.LoggerFactory.getLogger(classOf[InMemoryCatalogClient])
 }

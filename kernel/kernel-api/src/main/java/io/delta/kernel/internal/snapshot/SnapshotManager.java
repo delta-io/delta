@@ -610,12 +610,17 @@ public class SnapshotManager {
     final long lastCommitTimestamp =
         ListUtils.getLast(listedDeltaFileStatuses).getModificationTime();
 
-    return new LogSegment(
-        logPath,
-        newVersion,
-        allDeltasAfterCheckpoint,
-        latestCompleteCheckpointFileStatuses,
-        lastCommitTimestamp);
+    final LogSegment result =
+        new LogSegment(
+            logPath,
+            newVersion,
+            allDeltasAfterCheckpoint,
+            latestCompleteCheckpointFileStatuses,
+            lastCommitTimestamp);
+
+    logger.info(result.toString());
+
+    return result;
   }
 
   /////////////////////////
@@ -696,17 +701,22 @@ public class SnapshotManager {
     final List<FileStatus> output = new ArrayList<>(listedDeltas);
     output.addAll(
         suffixDeltas.subList(firstSuffixIndexGreaterThanLastListedDelta, suffixDeltas.size()));
+
+    // TODO clean this up so only debug, but doing info for CCv2 hackathon
+    logger.info("Merging ...");
+    logDebugFileStatuses("listedDeltas", listedDeltas);
+    logDebugFileStatuses("suffixDeltas", suffixDeltas);
+    logDebugFileStatuses("output", output);
+
     return output;
   }
 
-  private void logDebugFileStatuses(String varName, List<FileStatus> fileStatuses) {
-    if (logger.isDebugEnabled()) {
-      logger.debug(
-          String.format(
-              "%s: %s",
-              varName,
-              Arrays.toString(
-                  fileStatuses.stream().map(x -> new Path(x.getPath()).getName()).toArray())));
-    }
+  private static void logDebugFileStatuses(String varName, List<FileStatus> fileStatuses) {
+    logger.info(
+        String.format(
+            "%s: %s",
+            varName,
+            Arrays.toString(
+                fileStatuses.stream().map(x -> new Path(x.getPath()).getName()).toArray())));
   }
 }

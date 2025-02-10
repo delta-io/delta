@@ -19,6 +19,10 @@ trait CatalogClient {
       commitFile: FileStatus,
       updatedProtocol: Option[Protocol] = None,
       updatedMetadata: Option[Metadata] = None): CommitResponse
+
+  def setLatestBackfilledVersion(
+      tableName: String,
+      latestBackfilledVersion: Long): SetLatestBackfilledVersionResponse
 }
 
 // ===== CreateStagingTableResponse =====
@@ -69,4 +73,14 @@ object CommitResponse {
   final case class CommitVersionConflict(
       attemptedCommitVersion: Long,
       expectedVersion: Long) extends CommitResponse
+}
+
+// ===== SetLatestBackfilledVersionResponse =====
+
+sealed trait SetLatestBackfilledVersionResponse
+
+object SetLatestBackfilledVersionResponse {
+  case object Success extends SetLatestBackfilledVersionResponse
+
+  final case class TableDoesNotExist(tableName: String) extends SetLatestBackfilledVersionResponse
 }

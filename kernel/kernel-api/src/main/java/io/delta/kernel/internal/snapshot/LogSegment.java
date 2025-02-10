@@ -112,7 +112,9 @@ public class LogSegment {
         "All checkpoint files must have the same version");
 
     if (version != -1) {
-      checkArgument(!deltas.isEmpty() || !checkpoints.isEmpty(), "No files to read");
+      // TODO: ugh, this is actually allowed, since in CCv2 version could be 14 and there could be
+      // no unbackfilled commits
+      // checkArgument(!deltas.isEmpty() || !checkpoints.isEmpty(), "No files to read");
 
       if (!deltas.isEmpty()) {
         final List<Long> deltaVersions =
@@ -145,8 +147,8 @@ public class LogSegment {
             checkpointVersion -> {
               checkArgument(
                   checkpointVersion == version,
-                  "If there are no deltas, then checkpointVersion must equal the version "
-                      + "of this LogSegment");
+                  "If there are no deltas and if there is a checkpoint, then"
+                      + "checkpointVersion must equal the version of this LogSegment");
             });
       }
     } else {

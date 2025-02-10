@@ -78,6 +78,8 @@ public final class FileNames {
 
   public static final String SIDECAR_DIRECTORY = "_sidecars";
 
+  public static final String COMMIT_SUBDIR = "_commits";
+
   ////////////////////////
   // Version extractors //
   ////////////////////////
@@ -237,5 +239,23 @@ public final class FileNames {
 
   public static boolean isChecksumFile(String checksumFilePath) {
     return CHECK_SUM_FILE_PATTERN.matcher(new Path(checksumFilePath).getName()).matches();
+  }
+
+  public static boolean isUnbackfilledDeltaFile(String path) {
+    final Path p = new Path(path);
+    final String parentDirName = p.getParent().getName();
+    if (!parentDirName.equals(COMMIT_SUBDIR)) {
+      return false;
+    }
+    return UUID_DELTA_FILE_REGEX.matcher(p.getName()).matches();
+  }
+
+  public static boolean isBackfilledDeltaFile(String path) {
+    final Path p = new Path(path);
+    final String parentDirName = p.getParent().getName();
+    if (parentDirName.equals(COMMIT_SUBDIR)) {
+      return false;
+    }
+    return DELTA_FILE_PATTERN.matcher(p.getName()).matches();
   }
 }
