@@ -39,9 +39,10 @@ import java.util.Collections.{emptyMap, singletonMap}
 import java.util.Optional
 import scala.collection.JavaConverters._
 
-/**
- * Test suites to copy delta-spark's log to delta kernel and verify correctness of written checksum file.
- */
+/* *
+ * Test suites to copy delta-spark's log to delta kernel and verify
+ * the correctness of written checksum file.
+ * */
 class ChecksumSimpleComparisonSuite extends AnyFunSuite with TestUtils {
 
   test("create table, insert data and verify checksum") {
