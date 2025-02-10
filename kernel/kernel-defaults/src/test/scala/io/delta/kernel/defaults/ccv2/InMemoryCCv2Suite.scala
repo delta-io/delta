@@ -24,7 +24,7 @@ class InMemoryCCv2Suite extends AnyFunSuite
   test("aaa") {
     createTableHelper("table_001", createData(1 to 10))
 
-    for (min <- 11 to 91 by 10) {
+    for (min <- 11 to 131 by 10) {
       val max = min + 9
       println("=" * 50)
       appendDataHelper("table_001", createData(min to max))
@@ -67,7 +67,16 @@ class InMemoryCCv2Suite extends AnyFunSuite
     val txnState = txn.getTransactionState(defaultEngine)
     val stagedFiles = stageData(txnState, Map.empty, data.toList)
     val stagedActionsIterable = CloseableIterable.inMemoryIterable(stagedFiles)
-    txn.commit(defaultEngine, stagedActionsIterable)
+    val txnCommitResult = txn.commit(defaultEngine, stagedActionsIterable)
+    println(s"Successfully committed transaction with version ${txnCommitResult.getVersion}")
+
+    // TODO: this is jenky -- the backfill might not yet be done
+    txnCommitResult.getPostCommitHooks.forEach(hook => {
+      println("=" * 25)
+      println("Invoking post commit hook ...")
+      hook.threadSafeInvoke(defaultEngine)
+      println("=" * 25)
+    })
   }
 
   private def readTableHelper(tableName: String): Unit = {

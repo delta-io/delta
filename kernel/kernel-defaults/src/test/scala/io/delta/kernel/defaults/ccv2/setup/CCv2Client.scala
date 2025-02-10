@@ -83,7 +83,7 @@ object CCv2Client {
           commitAsVersion: Long,
           actions: CloseableIterator[Row],
           newProtocol: Optional[Protocol],
-          newMetadata: Optional[Metadata]): TransactionCommitResult = {
+          newMetadata: Optional[Metadata]): Unit = {
         val logPath = s"$dataPath/_delta_log"
         val uuidCommitsPath = s"$logPath/_commits"
         val commitFilePath =
@@ -112,12 +112,10 @@ object CCv2Client {
 
         _logger.info("Commit to catalog: START")
 
-        val result = catalogClient
+        catalogClient
           .commit(tableName, kernelFs, newProtocol.asScala, newMetadata.asScala) match {
             case CommitResponse.Success =>
               _logger.info("Commit to catalog: SUCCESS")
-              // TODO: invoke backfill since this commit was successful
-              new TransactionCommitResult(commitAsVersion, Seq.empty.asJava)
             case CommitResponse.TableDoesNotExist(tableName) =>
               _logger.info("Commit to catalog: TABLE DOES NOT EXIST")
               throw new RuntimeException(s"Table $tableName does not exist in the catalog")
@@ -135,8 +133,6 @@ object CCv2Client {
         } catch {
           case e: Throwable => _logger.warn("Backfill failed, ignoring", e)
         }
-
-        result
       }
 
       private def backfill(commitAsVersion: Long, committedFileStatus: FileStatus): Unit = {

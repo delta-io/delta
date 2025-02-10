@@ -359,28 +359,28 @@ public class TransactionImpl implements Transaction {
 
       if (commitFunctionOpt.isPresent()) {
         logger.info("Using custom commit function for commit as version = {}.", commitAsVersion);
-        return commitFunctionOpt
+        commitFunctionOpt
             .get()
             .commit(
                 commitAsVersion,
                 finalActionsWithMetrics,
                 Optional.of(protocol),
                 Optional.of(metadata));
+      } else {
+        // Write the staged data to a delta file
+        wrapEngineExceptionThrowsIO(
+            () -> {
+              engine
+                  .getJsonHandler()
+                  .writeJsonFileAtomically(
+                      FileNames.deltaFile(logPath, commitAsVersion),
+                      finalActionsWithMetrics,
+                      false /* overwrite */);
+              return null;
+            },
+            "Write file actions to JSON log file `%s`",
+            FileNames.deltaFile(logPath, commitAsVersion));
       }
-
-      // Write the staged data to a delta file
-      wrapEngineExceptionThrowsIO(
-          () -> {
-            engine
-                .getJsonHandler()
-                .writeJsonFileAtomically(
-                    FileNames.deltaFile(logPath, commitAsVersion),
-                    finalActionsWithMetrics,
-                    false /* overwrite */);
-            return null;
-          },
-          "Write file actions to JSON log file `%s`",
-          FileNames.deltaFile(logPath, commitAsVersion));
 
       List<PostCommitHook> postCommitHooks = new ArrayList<>();
       if (isReadyForCheckpoint(commitAsVersion)) {

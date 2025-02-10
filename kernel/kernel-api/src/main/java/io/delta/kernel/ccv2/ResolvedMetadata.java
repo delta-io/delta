@@ -16,7 +16,6 @@
 
 package io.delta.kernel.ccv2;
 
-import io.delta.kernel.TransactionCommitResult;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
@@ -65,7 +64,7 @@ public interface ResolvedMetadata {
 
   @FunctionalInterface
   interface CommitFunction {
-    TransactionCommitResult commit(
+    void commit(
         long commitAsVersion,
         CloseableIterator<Row> dataActions,
         Optional<Protocol> newProtocol,

@@ -482,12 +482,24 @@ public class SnapshotManager {
 
     logDebugFileStatuses("listedDeltasAfterCheckpoint", listedDeltasAfterCheckpoint);
 
+    final List<FileStatus> suffixDeltasAfterCheckpoint =
+        suffixDeltas.stream()
+            .filter(
+                fs -> {
+                  final long deltaVersion = FileNames.deltaVersion(fs.getPath());
+                  return latestCompleteCheckpointVersion + 1 <= deltaVersion
+                      && deltaVersion <= versionToLoadOpt.orElse(Long.MAX_VALUE);
+                })
+            .collect(Collectors.toList());
+
+    logDebugFileStatuses("suffixDeltasAfterCheckpoint", suffixDeltasAfterCheckpoint);
+
     ///////////////////////////////////////////////////////////////////////////
     // Step 8: Merge the $listedDeltasAfterCheckpoint with the $suffixDeltas //
     ///////////////////////////////////////////////////////////////////////////
 
     final List<FileStatus> allDeltasAfterCheckpoint =
-        mergeListedDeltasAndSuffixDeltas(listedDeltasAfterCheckpoint, suffixDeltas);
+        mergeListedDeltasAndSuffixDeltas(listedDeltasAfterCheckpoint, suffixDeltasAfterCheckpoint);
 
     logDebugFileStatuses("allDeltasAfterCheckpoint", allDeltasAfterCheckpoint);
 
