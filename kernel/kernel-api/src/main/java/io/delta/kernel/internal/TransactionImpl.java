@@ -445,7 +445,7 @@ public class TransactionImpl implements Transaction {
   private Optional<CRCInfo> buildPostCommitCrcInfo(
       long commitAtVersion, TransactionMetricsResult metricsResult) {
     // Create table
-    if (commitAtVersion == 0) {
+    if (isNewTable) {
       return Optional.of(
           new CRCInfo(
               commitAtVersion,
@@ -455,21 +455,38 @@ public class TransactionImpl implements Transaction {
               metricsResult.getNumAddFiles(),
               Optional.of(txnId.toString())));
     }
-    // Retry or CRC is read for old version
+    // We cannot compute the table statistic if the crc info of commitAtVersion is missing
     if (!readSnapshot.getCurrentCrcInfo().isPresent()
         || commitAtVersion != readSnapshot.getCurrentCrcInfo().get().getVersion() + 1) {
       return Optional.empty();
     }
 
-    CRCInfo lastCrcInfo = readSnapshot.getCurrentCrcInfo().get();
+    return calculateNewCrcInfo(commitAtVersion, metricsResult);
+  }
+
+  private Optional<CRCInfo> calculateNewCrcInfo(
+      long commitAtVersion, TransactionMetricsResult metricsResult) {
+    CRCInfo lastCrcInfo =
+        readSnapshot
+            .getCurrentCrcInfo()
+            .orElseThrow(() -> new IllegalStateException("CRC info must be present at this point"));
+
     return Optional.of(
         new CRCInfo(
             commitAtVersion,
             metadata,
             protocol,
-            lastCrcInfo.getTableSizeBytes() + metricsResult.getTotalAddFilesSizeInBytes(),
-            lastCrcInfo.getNumFiles() + metricsResult.getNumAddFiles(),
+            calculateNewTableSize(lastCrcInfo, metricsResult),
+            calculateNewFileCount(lastCrcInfo, metricsResult),
             Optional.of(txnId.toString())));
+  }
+
+  private long calculateNewTableSize(CRCInfo lastCrcInfo, TransactionMetricsResult metricsResult) {
+    return lastCrcInfo.getTableSizeBytes() + metricsResult.getTotalAddFilesSizeInBytes();
+  }
+
+  private long calculateNewFileCount(CRCInfo lastCrcInfo, TransactionMetricsResult metricsResult) {
+    return lastCrcInfo.getNumFiles() + metricsResult.getNumAddFiles();
   }
 
   /**

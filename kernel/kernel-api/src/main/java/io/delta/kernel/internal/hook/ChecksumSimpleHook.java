@@ -15,6 +15,9 @@
  */
 package io.delta.kernel.internal.hook;
 
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import static java.util.Objects.requireNonNull;
+
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.hook.PostCommitHook;
 import io.delta.kernel.internal.checksum.CRCInfo;
@@ -22,19 +25,24 @@ import io.delta.kernel.internal.checksum.ChecksumWriter;
 import io.delta.kernel.internal.fs.Path;
 import java.io.IOException;
 
-/** Write a new checkpoint at the version committed by the txn. */
+/**
+ * A post-commit hook that writes a new checksum file at the version committed by the transaction.
+ * This hook performs a simple checksum operation without requiring previous checkpoint or log
+ * reading.
+ */
 public class ChecksumSimpleHook implements PostCommitHook {
 
   private final CRCInfo crcInfo;
   private final Path logPath;
 
   public ChecksumSimpleHook(CRCInfo crcInfo, Path logPath) {
-    this.crcInfo = crcInfo;
-    this.logPath = logPath;
+    this.crcInfo = requireNonNull(crcInfo);
+    this.logPath = requireNonNull(logPath);
   }
 
   @Override
   public void threadSafeInvoke(Engine engine) throws IOException {
+    checkArgument(engine != null);
     new ChecksumWriter(logPath).writeCheckSum(engine, crcInfo);
   }
 

@@ -18,6 +18,7 @@ package io.delta.kernel.internal.checksum;
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 import static io.delta.kernel.internal.checksum.ChecksumUtils.CRC_FILE_SCHEMA;
 import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
+import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
@@ -36,15 +37,24 @@ public class ChecksumWriter {
   private static final Logger logger = LoggerFactory.getLogger(ChecksumWriter.class);
 
   private final Path logPath;
+  // Constants for schema field names
+  private static final String TABLE_SIZE_BYTES = "tableSizeBytes";
+  private static final String NUM_FILES = "numFiles";
+  private static final String NUM_METADATA = "numMetadata";
+  private static final String NUM_PROTOCOL = "numProtocol";
+  private static final String METADATA = "metadata";
+  private static final String PROTOCOL = "protocol";
+  private static final String TXN_ID = "txnId";
 
   public ChecksumWriter(Path logPath) {
-    this.logPath = logPath;
+    this.logPath = requireNonNull(logPath);
   }
 
   /** Writes a checksum file */
   public void writeCheckSum(Engine engine, CRCInfo crcInfo) throws IOException {
     // No sufficient information to write checksum file.
     Path newChecksumPath = FileNames.checksumFile(logPath, crcInfo.getVersion());
+    logger.debug("Writing checksum file to path: {}", newChecksumPath);
     wrapEngineExceptionThrowsIO(
         () -> {
           engine
@@ -60,14 +70,21 @@ public class ChecksumWriter {
   }
 
   private Row buildCheckSumRow(CRCInfo crcInfo) {
-    Map<Integer, Object> value = new HashMap<>();
-    value.put(CRC_FILE_SCHEMA.indexOf("tableSizeBytes"), crcInfo.getTableSizeBytes());
-    value.put(CRC_FILE_SCHEMA.indexOf("numFiles"), crcInfo.getNumFiles());
-    value.put(CRC_FILE_SCHEMA.indexOf("numMetadata"), 1L);
-    value.put(CRC_FILE_SCHEMA.indexOf("numProtocol"), 1L);
-    value.put(CRC_FILE_SCHEMA.indexOf("metadata"), crcInfo.getMetadata().toRow());
-    value.put(CRC_FILE_SCHEMA.indexOf("protocol"), crcInfo.getProtocol().toRow());
-    crcInfo.getTxnId().ifPresent(txn -> value.put(CRC_FILE_SCHEMA.indexOf("txnId"), txn));
-    return new GenericRow(CRC_FILE_SCHEMA, value);
+    Map<Integer, Object> values = new HashMap<>();
+    // Add required fields
+    values.put(getSchemaIndex(TABLE_SIZE_BYTES), crcInfo.getTableSizeBytes());
+    values.put(getSchemaIndex(NUM_FILES), crcInfo.getNumFiles());
+    values.put(getSchemaIndex(NUM_METADATA), 1L);
+    values.put(getSchemaIndex(NUM_PROTOCOL), 1L);
+    values.put(getSchemaIndex(METADATA), crcInfo.getMetadata().toRow());
+    values.put(getSchemaIndex(PROTOCOL), crcInfo.getProtocol().toRow());
+
+    // Add optional fields
+    crcInfo.getTxnId().ifPresent(txn -> values.put(getSchemaIndex(TXN_ID), txn));
+    return new GenericRow(CRC_FILE_SCHEMA, values);
+  }
+
+  private int getSchemaIndex(String fieldName) {
+    return CRC_FILE_SCHEMA.indexOf(fieldName);
   }
 }

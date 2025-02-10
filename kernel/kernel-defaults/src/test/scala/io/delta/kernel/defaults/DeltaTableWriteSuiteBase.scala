@@ -315,15 +315,15 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
   }
 
   def appendData(
-                  engine: Engine = defaultEngine,
-                  tablePath: String,
-                  isNewTable: Boolean = false,
-                  schema: StructType = null,
-                  partCols: Seq[String] = null,
-                  data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])],
-                  clock: Clock = () => System.currentTimeMillis,
-                  tableProperties: Map[String, String] = null,
-                  executePostCommitHook: Boolean = false): TransactionCommitResult = {
+    engine: Engine = defaultEngine,
+    tablePath: String,
+    isNewTable: Boolean = false,
+    schema: StructType = null,
+    partCols: Seq[String] = null,
+    data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])],
+    clock: Clock = () => System.currentTimeMillis,
+    tableProperties: Map[String, String] = null,
+    executePostCommitHook: Boolean = false): TransactionCommitResult = {
     val txn = createTxn(engine, tablePath, isNewTable, schema, partCols, tableProperties, clock)
     val commitResult = commitAppendData(engine, txn, data)
     if (executePostCommitHook) {
@@ -333,9 +333,9 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
   }
 
   def assertMetadataProp(
-                          snapshot: SnapshotImpl,
-                          key: TableConfig[_ <: Any],
-                          expectedValue: Any): Unit = {
+    snapshot: SnapshotImpl,
+    key: TableConfig[_ <: Any],
+    expectedValue: Any): Unit = {
     assert(key.fromMetadata(snapshot.getMetadata) == expectedValue)
   }
 
@@ -402,11 +402,11 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
   }
 
   def verifyCommitInfo(
-                        tablePath: String,
-                        version: Long,
-                        partitionCols: Seq[String] = Seq.empty,
-                        isBlindAppend: Boolean = true,
-                        operation: Operation = CREATE_TABLE): Unit = {
+    tablePath: String,
+    version: Long,
+    partitionCols: Seq[String] = Seq.empty,
+    isBlindAppend: Boolean = true,
+    operation: Operation = CREATE_TABLE): Unit = {
     val row = spark
       .sql(s"DESCRIBE HISTORY delta.`$tablePath`")
       .filter(s"version = $version")
@@ -416,9 +416,7 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
         "isBlindAppend",
         "engineInfo",
         "operation"
-      )
-      .collect()
-      .last
+      ).collect().last
 
     assert(row.getAs[Long]("version") === version)
     assert(row.getAs[Long]("partitionBy") ===
