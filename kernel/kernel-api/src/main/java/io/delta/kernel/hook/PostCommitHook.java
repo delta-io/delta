@@ -35,9 +35,9 @@ public interface PostCommitHook {
      */
     CHECKPOINT,
     /**
-     * Writes a checksum file at the version committed by the transaction. This hook is present
-     * when the read snapshot is constructed based on previous checksum file.
-     * To perform this operation, no extra reading previous checkpoint or logs required.
+     * Writes a checksum file at the version committed by the transaction. This hook is present when
+     * the read snapshot is constructed based on previous checksum file. To perform this operation,
+     * no extra reading previous checkpoint or logs required.
      */
     CHECKSUM_SIMPLE
   }
