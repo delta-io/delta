@@ -455,7 +455,7 @@ public class TransactionImpl implements Transaction {
               metricsResult.getNumAddFiles(),
               Optional.of(txnId.toString())));
     }
-    // We cannot compute the table statistic if the crc info of commitAtVersion is missing
+    // We cannot compute the table statistic if the crc info of commitAtVersion - 1 is missing
     if (!readSnapshot.getCurrentCrcInfo().isPresent()
         || commitAtVersion != readSnapshot.getCurrentCrcInfo().get().getVersion() + 1) {
       return Optional.empty();
