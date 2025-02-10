@@ -140,12 +140,12 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
         .getArray(Metadata.FULL_SCHEMA.indexOf("partitionColumns")) == metadata.getPartitionColumns
     )
     assert(
-      Optional
-        .ofNullable(metadataRow.getLong(Metadata.FULL_SCHEMA.indexOf("createdTime"))) == metadata.getCreatedTime
+      Optional.ofNullable(metadataRow.getLong(
+          Metadata.FULL_SCHEMA.indexOf("createdTime"))) == metadata.getCreatedTime
     )
     assert(
-      VectorUtils
-        .toJavaMap(metadataRow.getMap(Metadata.FULL_SCHEMA.indexOf("configuration"))) == metadata.getConfiguration
+      VectorUtils.toJavaMap(metadataRow.getMap(
+          Metadata.FULL_SCHEMA.indexOf("configuration"))) == metadata.getConfiguration
     )
   }
 
