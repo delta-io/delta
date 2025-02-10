@@ -771,7 +771,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
             val checkpointInterval = 4
             setCheckpointInterval(tblPath, checkpointInterval)
 
-            for (i <- 2 until 5) {
+            for (i <- 1 until 5) {
               // insert until a checkpoint is required
               val commitResult = appendData(
                 engine,
@@ -902,7 +902,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
             val checkpointInterval = 2
             setCheckpointInterval(tblPath, checkpointInterval) // version 1
 
-            for (i <- 2 until 4) {
+            for (i <- 1 until 4) {
               // insert until a checkpoint is required
               val commitResult = appendData(
                 engine,
