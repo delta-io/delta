@@ -415,8 +415,8 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
         "operationParameters.partitionBy",
         "isBlindAppend",
         "engineInfo",
-        "operation"
-      ).collect().last
+        "operation")
+      .collect().last
 
     assert(row.getAs[Long]("version") === version)
     assert(row.getAs[Long]("partitionBy") ===
@@ -482,35 +482,41 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       version: Option[Long],
       expSchema: StructType,
       expPartitionColumns: Seq[String]): Unit = {
-    val checksumVersion =
-      if (version.isDefined) version.get else latestSnapshot(tablePath, defaultEngine).getVersion
-    assert(
-      Files.exists(
-        new File(f"$tablePath/_delta_log/$checksumVersion%020d.crc").toPath
-      )
-    )
+    val checksumVersion = version.getOrElse(latestSnapshot(tablePath, defaultEngine).getVersion)
+    val checksumFile = new File(f"$tablePath/_delta_log/$checksumVersion%020d.crc")
+
+    assert(Files.exists(checksumFile.toPath), s"Checksum file not found: ${checksumFile.getPath}")
+
     val columnarBatches = defaultEngine
       .getJsonHandler()
       .readJsonFiles(
-        singletonCloseableIterator(
-          FileStatus.of(f"$tablePath/_delta_log/$checksumVersion%020d.crc")
-        ),
+        singletonCloseableIterator(FileStatus.of(checksumFile.getPath)),
         ChecksumUtils.CRC_FILE_SCHEMA,
         Optional.empty()
       )
-    assert(columnarBatches.hasNext)
+
+    assert(columnarBatches.hasNext, "Empty checksum file")
     val crcRow = columnarBatches.next()
-    assert(crcRow.getSize === 1)
-    val metadataField = Metadata.fromColumnVector(
+    assert(crcRow.getSize === 1, s"Expected single row, found ${crcRow.getSize}")
+
+    val metadata = Metadata.fromColumnVector(
       crcRow.getColumnVector(ChecksumUtils.CRC_FILE_SCHEMA.indexOf("metadata")),
       0
     )
-    assert(metadataField.getSchema === expSchema)
+
     assert(
-      metadataField.getPartitionColNames.asScala === expPartitionColumns
-        .map(s => s.toLowerCase(Locale.ROOT))
-        .toSet
+      metadata.getSchema === expSchema,
+      s"Schema mismatch.\nExpected: $expSchema\nActual: ${metadata.getSchema}"
     )
-    assert(!columnarBatches.hasNext)
+
+    val normalizedPartitions = expPartitionColumns.map(_.toLowerCase(Locale.ROOT)).toSet
+    assert(
+      metadata.getPartitionColNames.asScala === normalizedPartitions,
+      s"Partition columns mismatch.\n" +
+      s"Expected: $normalizedPartitions\n" +
+      s"Actual: ${metadata.getPartitionColNames.asScala}"
+    )
+
+    assert(!columnarBatches.hasNext, "Unexpected additional data in checksum file")
   }
 }
