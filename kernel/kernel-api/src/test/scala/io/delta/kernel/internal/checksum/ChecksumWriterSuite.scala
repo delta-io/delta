@@ -53,18 +53,15 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
     val metadata = createTestMetadata()
 
     def testChecksumWrite(txn: Optional[String]): Unit = {
-      // Given
       val version = 1L
       val tableSizeBytes = 100L
       val numFiles = 1L
 
-      // When
       checksumWriter.writeCheckSum(
         mockEngine(jsonHandler = jsonHandler),
         new CRCInfo(version, metadata, protocol, tableSizeBytes, numFiles, txn)
       )
-
-      // Then
+      
       verifyChecksumFile(jsonHandler, version)
       verifyChecksumContent(jsonHandler.capturedCrcRow, tableSizeBytes, numFiles, txn)
       verifyMetadataAndProtocol(jsonHandler.capturedCrcRow, metadata, protocol)
