@@ -873,8 +873,9 @@ case object NameMapping extends DeltaColumnMappingMode {
 object DeltaColumnMappingMode {
   def apply(columnMappingModeString: String): DeltaColumnMappingMode = {
     val columnMappingModeLowerCaseString =
-      Option(columnMappingModeString).map(_.toLowerCase(Locale.ROOT)).
-        getOrElse(throw DeltaErrors.unsupportedColumnMappingModeException(columnMappingModeString))
+      Option(columnMappingModeString)
+        .map(_.toLowerCase(Locale.ROOT))
+        .getOrElse(throw DeltaErrors.unsupportedColumnMappingModeException(columnMappingModeString))
     columnMappingModeLowerCaseString match {
       case NoMapping.name => NoMapping
       case IdMapping.name => IdMapping
