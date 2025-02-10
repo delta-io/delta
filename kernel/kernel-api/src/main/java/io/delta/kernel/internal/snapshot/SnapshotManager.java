@@ -707,6 +707,9 @@ public class SnapshotManager {
     logDebugFileStatuses("listedDeltas", listedDeltas);
     logDebugFileStatuses("suffixDeltas", suffixDeltas);
     logDebugFileStatuses("output", output);
+    if (output.size() != listedDeltas.size() + suffixDeltas.size()) {
+      logger.info("Something interesting happened...");
+    }
 
     return output;
   }

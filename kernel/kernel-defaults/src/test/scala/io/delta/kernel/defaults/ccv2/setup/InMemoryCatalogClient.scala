@@ -149,7 +149,9 @@ class InMemoryCatalogClient(workspace: Path = new Path("/tmp/in_memory_catalog/"
             .commits
             .filter(f => FileNames.isUnbackfilledDeltaFile(f.getPath))
             .dropWhile(f => {
-              val doDrop = FileNames.uuidCommitDeltaVersion(f.getPath) <= latestBackfilledVersion
+              // TODO: THIS IS A TEST SETUP WHERE WE KEEP THE UNBACKFILLED FILE FOR THE LAST
+              //       BACKFILLED FILE. THIS SHOULD REALLY BE <= INSTEAD OF <
+              val doDrop = FileNames.uuidCommitDeltaVersion(f.getPath) < latestBackfilledVersion
               logger.info(s"Checking if we should drop ${f.getPath}: $doDrop")
               doDrop
             })
