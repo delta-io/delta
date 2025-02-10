@@ -768,7 +768,7 @@ trait VacuumCommandImpl extends DeltaCommand {
   protected def setCommitClock(deltaLog: DeltaLog, version: Long) = {
     // This is done to make sure that the commit timestamp reflects the one provided by the clock
     // object.
-    if (Utils.isTesting) {
+    if (DeltaUtils.isTesting) {
       val fs = deltaLog.logPath.getFileSystem(deltaLog.newDeltaHadoopConf())
       val filePath = DeltaCommitFileProvider(deltaLog.update()).deltaFile(version)
       if (fs.exists(filePath)) {

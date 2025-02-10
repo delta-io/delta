@@ -35,6 +35,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames._
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.spark.sql.delta.util.threads.DeltaThreadPool
+import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import com.fasterxml.jackson.annotation.JsonIgnore
 import io.delta.storage.commit.{Commit, GetCommitsResponse}
 import org.apache.hadoop.fs.{BlockLocation, FileStatus, LocatedFileStatus, Path}
@@ -44,7 +45,7 @@ import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.spark.util.{ThreadUtils, Utils}
+import org.apache.spark.util.ThreadUtils
 
 /**
  * Wraps the most recently updated snapshot along with the timestamp the update was started.
@@ -270,7 +271,7 @@ trait SnapshotManagement { self: DeltaLog =>
         deltaLog = this,
         opType = CoordinatedCommitsUsageLogs.FS_COMMIT_COORDINATOR_LISTING_UNEXPECTED_GAPS,
         data = eventData)
-      if (Utils.isTesting) {
+      if (DeltaUtils.isTesting) {
         throw new IllegalStateException(
           s"Delta table at $dataPath unexpectedly still requires additional file-system listing " +
             s"after an additional file-system listing was already performed to reconcile the gap " +
@@ -646,7 +647,7 @@ trait SnapshotManagement { self: DeltaLog =>
       deltaLog = this,
       opType = "delta.getLogSegmentForVersion.compactedDeltaValidationFailed",
       data = eventData)
-    if (Utils.isTesting) {
+    if (DeltaUtils.isTesting) {
       assert(false, s"Validation around Compacted deltas failed while creating Snapshot. " +
         s"[${JsonUtils.toJson(eventData)}]")
     }
@@ -1071,7 +1072,7 @@ trait SnapshotManagement { self: DeltaLog =>
               catalogTableOpt)
           }
         } catch {
-          case NonFatal(e) if !Utils.isTesting =>
+          case NonFatal(e) if !DeltaUtils.isTesting =>
             // Failed to schedule the future -- fail in testing, but just log it in prod.
             recordDeltaEvent(this, "delta.snapshot.asyncUpdateFailed", data = Map("exception" -> e))
         }
@@ -1200,7 +1201,7 @@ trait SnapshotManagement { self: DeltaLog =>
   /** Installs the given `newSnapshot` as the `currentSnapshot` */
   protected def installSnapshot(newSnapshot: Snapshot, updateTimestamp: Long): Snapshot = {
     if (!snapshotLock.isHeldByCurrentThread) {
-      if (Utils.isTesting) {
+      if (DeltaUtils.isTesting) {
         throw new RuntimeException("DeltaLog snapshot replaced without taking lock")
       }
       recordDeltaEvent(this, "delta.update.unsafeReplace")
@@ -1292,7 +1293,7 @@ trait SnapshotManagement { self: DeltaLog =>
         // NOTE: Validation is a no-op with incremental commit disabled.
         newSnapshot.validateChecksum(Map("context" -> checksumContext))
       } catch {
-        case _: IllegalStateException if !Utils.isTesting => false
+        case _: IllegalStateException if !DeltaUtils.isTesting => false
       }
 
       if (!crcIsValid) {
