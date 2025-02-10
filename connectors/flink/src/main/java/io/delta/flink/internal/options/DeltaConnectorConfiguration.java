@@ -66,7 +66,7 @@ public class DeltaConnectorConfiguration implements Serializable {
 
     /**
      * This method returns a value for used {@code DeltaSourceOption}. The type of returned value
-     * will be cast to the the same type that was used in {@link DeltaSourceOptions} definition.
+     * will be cast to the same type that was used in {@link DeltaSourceOptions} definition.
      * Using {@code DeltaSourceOption} object as an argument rather than option's string key
      * guaranties type safety.
      *

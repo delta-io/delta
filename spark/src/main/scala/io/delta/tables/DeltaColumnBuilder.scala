@@ -91,7 +91,7 @@ class DeltaColumnBuilder private[tables](
    *
    * Specify a expression if the column is always generated as a function of other columns.
    *
-   * @param expr string the the generation expression
+   * @param expr string the generation expression
    * @since 1.0.0
    */
   @Evolving

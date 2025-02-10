@@ -676,7 +676,7 @@ object DeltaHistoryManager extends DeltaLogging {
    * We will return the first available commit if the condition cannot be met. This method works
    * even for boundary commits, and can be best demonstrated through an example:
    * Imagine we have commits 999, 1000, 1001, 1002. t_999 < t_1000 but t_1000 > t_1001 and
-   * t_1001 < t_1002. So at the the boundary, we will need to eventually adjust t_1001. Assume the
+   * t_1001 < t_1002. So at the boundary, we will need to eventually adjust t_1001. Assume the
    * result needs to be t_1001 after the adjustment as t_search < t_1002 and t_search > t_1000.
    * What will happen is that the first fragment will return t_1000, and the second fragment will
    * return t_1001. On the Driver, we will adjust t_1001 = t_1000 + 1 milliseconds, and our linear

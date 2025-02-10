@@ -491,7 +491,7 @@ object TableFeatureProtocolUtils {
   }
 
   /**
-   * Checks if the the given table property key is a Table Protocol property, i.e.,
+   * Checks if the given table property key is a Table Protocol property, i.e.,
    * `delta.minReaderVersion`, `delta.minWriterVersion`, ``delta.ignoreProtocolDefaults``, or
    * anything that starts with `delta.feature.`
    */
