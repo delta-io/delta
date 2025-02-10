@@ -4,7 +4,6 @@ import java.util.{Collections, Optional, UUID}
 
 import scala.collection.JavaConverters._
 
-import io.delta.kernel.TransactionCommitResult
 import io.delta.kernel.ccv2.ResolvedMetadata
 import io.delta.kernel.data.Row
 import io.delta.kernel.engine.Engine
