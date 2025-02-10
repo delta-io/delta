@@ -39,6 +39,7 @@ import io.delta.kernel.types.TimestampType.TIMESTAMP
 import io.delta.kernel.types._
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 import io.delta.kernel.utils.CloseableIterable
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import java.util.{Locale, Optional}
 import scala.collection.JavaConverters._
@@ -769,9 +770,13 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
             var expData = dataWithPartInfo.flatMap(_._2).flatMap(_.toTestRows)
 
             val checkpointInterval = 4
-            setCheckpointInterval(tblPath, checkpointInterval)
+            withSQLConf(
+              DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> executePostCommitHook.toString
+            ) {
+              setCheckpointInterval(tblPath, checkpointInterval)
+            }
 
-            for (i <- 1 until 5) {
+            for (i <- 2 until 5) {
               // insert until a checkpoint is required
               val commitResult = appendData(
                 engine,
@@ -900,9 +905,13 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
             var expData = dataWithPartInfo.flatMap(_._2).flatMap(_.toTestRows)
 
             val checkpointInterval = 2
-            setCheckpointInterval(tblPath, checkpointInterval) // version 1
+            withSQLConf(
+              DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> executePostCommitHook.toString
+            ) {
+              setCheckpointInterval(tblPath, checkpointInterval) // version 1
+            }
 
-            for (i <- 1 until 4) {
+            for (i <- 2 until 4) {
               // insert until a checkpoint is required
               val commitResult = appendData(
                 engine,
