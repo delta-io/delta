@@ -180,9 +180,9 @@ class MockCheckSumFileJsonWriter extends BaseMockJsonHandler {
   var checksumFilePath: String = ""
 
   override def writeJsonFileAtomically(
-                                        filePath: String,
-                                        data: CloseableIterator[Row],
-                                        overwrite: Boolean): Unit = {
+    filePath: String,
+    data: CloseableIterator[Row],
+    overwrite: Boolean): Unit = {
     checksumFilePath = filePath
     assert(data.hasNext, "Expected data iterator to contain exactly one row")
     capturedCrcRow = data.next()
