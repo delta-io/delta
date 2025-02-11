@@ -65,7 +65,10 @@ class IcebergTable(
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_PARTITION_EVOLUTION_ENABLED)
 
   private val bucketPartitionEnabled =
-    spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_BUCKET_PARTITION_ENABLED)
+    spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_BUCKET_PARTITION_ENABLED) ||
+      deltaSnapshot.exists(s =>
+        DeltaConfigs.IGNORE_ICEBERG_BUCEKT_PARTITION.fromMetaData(s.metadata)
+      )
 
   // When a table is CLONED/federated with the session conf ON, it will have the table property
   // set and will continue to support CAST TIME TYPE even when later the session conf is OFF.
@@ -101,8 +104,15 @@ class IcebergTable(
     } else {
       None
     }
+    val bucketPartitionToNonPartition = if (bucketPartitionEnabled) {
+      Some((DeltaConfigs.IGNORE_ICEBERG_BUCEKT_PARTITION.key -> "true"))
+    } else {
+      None
+    }
     icebergTable.properties().asScala.toMap + (DeltaConfigs.COLUMN_MAPPING_MODE.key -> "id") +
-    (DeltaConfigs.LOG_RETENTION.key -> s"$maxSnapshotAgeMs millisecond") ++ castTimeTypeConf
+    (DeltaConfigs.LOG_RETENTION.key -> s"$maxSnapshotAgeMs millisecond") ++
+      castTimeTypeConf ++
+      bucketPartitionToNonPartition
   }
 
   override val partitionSchema: StructType = {
