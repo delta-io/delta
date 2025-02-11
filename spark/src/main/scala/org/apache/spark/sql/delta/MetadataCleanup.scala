@@ -163,12 +163,38 @@ trait MetadataCleanup extends DeltaLogging {
   private def listExpiredDeltaLogs(fileCutOffTime: Long): Iterator[FileStatus] = {
     val latestCheckpoint = readLastCheckpointFile()
     if (latestCheckpoint.isEmpty) return Iterator.empty
-    val threshold = latestCheckpoint.get.version - 1L
+
+    def listExpiredDeltaLogsInternal(threshold: Long): Iterator[FileStatus] = {
     val files = store.listFrom(listingPrefix(logPath, 0), newDeltaHadoopConf())
       .filter(f => isCheckpointFile(f) || isDeltaFile(f) || isChecksumFile(f))
 
     new BufferingLogDeletionIterator(
       files, fileCutOffTime, threshold, getDeltaFileChecksumOrCheckpointVersion)
+    }
+
+      // Get latest expired checkpoint version
+    val latestExpiredCheckpointVersion = {
+      val cutOffCheckpoint = listExpiredDeltaLogsInternal(latestCheckpoint.get.version - 1)
+        .filter(f => isCheckpointFile(f))
+        .map(FileNames.checkpointVersion)
+        .foldLeft(Option.empty[Long]) { (a, c) => if (a.getOrElse(-1L) < c) { Some(c) } else { a } }
+
+      logInfo("Cut off checkpoint version: " + cutOffCheckpoint)
+
+      recordDeltaEvent(this, "delta.log.cleanup.stats", data = Map(
+        "cutOffCheckpoint" -> cutOffCheckpoint.getOrElse(-1L),
+        "latestCheckpoint" -> latestCheckpoint.get.version))
+
+      if(cutOffCheckpoint.isEmpty) {
+        logInfo("No expired checkpoint file found. Returning empty iterator.")
+        return Iterator.empty
+      } else {
+        // Math.min for sanity check
+        Math.min(cutOffCheckpoint.get, latestCheckpoint.get.version) - 1L
+      }
+    }
+
+    listExpiredDeltaLogsInternal(latestExpiredCheckpointVersion)
   }
 
   protected def checkpointExistsAtCleanupBoundary(deltaLog: DeltaLog, version: Long): Boolean = {
