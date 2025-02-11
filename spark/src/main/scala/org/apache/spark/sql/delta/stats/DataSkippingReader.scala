@@ -23,7 +23,6 @@ import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumnInfo}
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaLog, DeltaTableUtils}
-import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
 import org.apache.spark.sql.delta.implicits._
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -1185,6 +1184,22 @@ trait DataSkippingReaderBase
     dataSkippingType
   }
 
+  /** Split filters with And conditions into separate filters */
+  private def splitConjunctivePredicates(expr: Expression): Seq[Expression] = {
+    val result = new scala.collection.mutable.ArrayBuffer[Expression]
+    val stack = new scala.collection.mutable.Stack[Expression]
+    stack.push(expr)
+    while (stack.nonEmpty) {
+      stack.pop() match {
+        case And(cond1, cond2) =>
+          stack.push(cond2)
+          stack.push(cond1)
+        case other => result += other
+      }
+    }
+    result.toSeq
+  }
+
   /**
    * Gathers files that should be included in a scan based on the given predicates.
    * Statistics about the amount of data that will be read are gathered and returned.
@@ -1221,10 +1236,12 @@ trait DataSkippingReaderBase
 
     import DeltaTableUtils._
     val partitionColumns = metadata.partitionColumns
+    // Be defensive, break apart filters further if possible
+    val allFilters = filters.flatMap(splitConjunctivePredicates)
 
     // For data skipping, avoid using the filters that involve subqueries.
 
-    val (subqueryFilters, flatFilters) = filters.partition {
+    val (subqueryFilters, flatFilters) = allFilters.partition {
       case f => containsSubquery(f)
     }
 

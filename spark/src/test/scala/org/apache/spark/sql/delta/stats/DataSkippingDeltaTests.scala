@@ -30,13 +30,14 @@ import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.Path
 import org.scalatest.GivenWhenThen
 
+import org.apache.spark.sql.catalyst.plans.logical.Filter
+
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.SparkConf
 import org.apache.spark.sql._
-import org.apache.spark.sql.catalyst.QueryPlanningTracker
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.expressions.{Expression, Literal, PredicateHelper}
-import org.apache.spark.sql.functions.{col, lit}
+import org.apache.spark.sql.catalyst.expressions.{Expression, Literal, PredicateHelper, Rand}
+import org.apache.spark.sql.functions.{col, expr, lit}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
@@ -1726,6 +1727,79 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
       )
       val data = spark.sql("select * from tbl").collect().toSeq.toString
       checkSkipping(deltaLog, hits, misses, data, false)
+    }
+  }
+
+  test("do not pushdown expressions without references as partition filters") {
+    import testImplicits._
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      spark.range(10000).withColumn("is_odd", 'id % 2).withColumn("is_even", ('id + 1) % 2)
+        .write.partitionBy("is_odd").format("delta").save(path)
+
+      val log = DeltaLog.forTable(spark, path)
+      val snapshot = log.update()
+      val randExpr = expr("rand() <= 0.5")
+      val partitionFilter = expr("is_odd = 1")
+      val dataFilter = expr("is_even = 1")
+      val randWithPartitionFilter = expr("rand() <= 0.5 and is_odd = 1")
+      val randWithDataFilter = expr("rand() <= 0.5 and is_even = 1")
+      val randOrPartitionFilter = expr("rand() <= 0.5 or is_odd = 1")
+
+      def getDeltaScan(filters: Seq[Column]): DeltaScan = {
+        var df = spark.read.format("delta").load(path)
+        filters.foreach { col =>
+          df = df.where(col)
+        }
+        val filterExprs = df.queryExecution.analyzed.collect {
+          case Filter(condition, _) => condition
+        }
+        snapshot.filesForScan(filterExprs)
+      }
+
+      val scan = getDeltaScan(Seq(randExpr))
+      assert(scan.partitionFilters.isEmpty, "partition filters were not empty")
+      assert(scan.partitionLikeDataFilters.isEmpty, "partition-like filters were not empty")
+      assert(scan.rewrittenPartitionLikeDataFilters.isEmpty,
+        "rewritten partition-like filters were not empty")
+
+      Seq(
+        Seq(randExpr),
+        Seq(randExpr, partitionFilter),
+        Seq(randExpr, dataFilter),
+        Seq(randExpr, partitionFilter, dataFilter),
+        Seq(randWithPartitionFilter),
+        Seq(randWithDataFilter)
+      ).foreach { exprs =>
+        val scan2 = getDeltaScan(exprs)
+        assert(scan2.unusedFilters.nonEmpty, "Unused filter should contain rand")
+        assert(scan2.unusedFilters.exists(_.exists { _.isInstanceOf[Rand] }),
+          s"Unused filter should contain rand: ${scan2.unusedFilters}")
+      }
+
+      withSQLConf(DeltaSQLConf.UNSAFE_ALLOW_REFERENCELESS_PARTITION_FILTERS.key -> "true") {
+        Seq(
+          Seq(randExpr),
+          Seq(randExpr, partitionFilter),
+          Seq(randExpr, dataFilter),
+          Seq(randExpr, partitionFilter, dataFilter),
+          Seq(randWithPartitionFilter),
+          Seq(randWithDataFilter)
+        ).foreach { exprs =>
+          val scan3 = getDeltaScan(exprs)
+
+          assert(!scan3.unusedFilters.exists(_.exists { _.isInstanceOf[Rand] }),
+            s"Unused filter should not contain rand")
+        }
+      }
+
+      // When an or is used, the filter does get pushed down, because we need to pull in other
+      // partitions as well
+      val scan4 = getDeltaScan(Seq(randOrPartitionFilter))
+      assert(scan4.partitionFilters.exists(_.exists { _.isInstanceOf[Rand] }),
+        "rand should be part of the partition filter in this case")
+      assert(!scan4.unusedFilters.exists(_.exists { _.isInstanceOf[Rand] }),
+        s"Unused filter should not contain rand: ${scan4.unusedFilters}")
     }
   }
 

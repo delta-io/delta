@@ -309,9 +309,10 @@ object DeltaTableUtils extends PredicateHelper
       partitionColumns: Seq[String],
       spark: SparkSession): Boolean = {
     val nameEquality = spark.sessionState.analyzer.resolver
-    condition.references.forall { r =>
-      partitionColumns.exists(nameEquality(r.name, _))
-    }
+    val allowReferencelessPartitionFilters = spark.sessionState.conf
+      .getConf(DeltaSQLConf.UNSAFE_ALLOW_REFERENCELESS_PARTITION_FILTERS)
+    (condition.references.nonEmpty || allowReferencelessPartitionFilters) &&
+      condition.references.forall { r => partitionColumns.exists(nameEquality(r.name, _)) }
   }
 
   /**
