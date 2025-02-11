@@ -2409,6 +2409,31 @@ class DeltaTableCreationSuite
       }
     }
   }
+
+  test("CREATE TABLE selecting from a table with removed column defaults") {
+      // Defaults are only possible for top level columns.
+      sql("""CREATE TABLE test_table(int_col INT DEFAULT 2)
+            |USING delta
+            |TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'supported')""".stripMargin)
+
+      def defaultsTableFeatureEnabled(tableName: String): Boolean = {
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+        val protocol = deltaLog.unsafeVolatileSnapshot.protocol
+        protocol.writerFeatureNames.contains(AllowColumnDefaultsTableFeature.name)
+      }
+
+      assert(defaultsTableFeatureEnabled("test_table"))
+
+      // @TODO: It is currently not possible to CTAS from a table with an active column default
+      //        without explicitly enabling the table feature.
+      assertThrows[DeltaAnalysisException] {
+        sql("CREATE TABLE test_table_2 USING DELTA AS SELECT * FROM test_table")
+      }
+      sql("ALTER TABLE test_table ALTER COLUMN int_col DROP DEFAULT")
+      sql("CREATE TABLE test_table_3 USING DELTA AS SELECT * FROM test_table")
+
+      assert(!defaultsTableFeatureEnabled("test_table_3"))
+  }
 }
 
 trait DeltaTableCreationColumnMappingSuiteBase extends DeltaColumnMappingSelectedTestMixin {
