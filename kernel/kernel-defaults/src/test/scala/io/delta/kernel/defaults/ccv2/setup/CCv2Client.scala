@@ -80,7 +80,7 @@ object CCv2Client {
 
       override def commit(
           commitAsVersion: Long,
-          actions: CloseableIterator[Row],
+          finalizedActions: CloseableIterator[Row],
           newProtocol: Optional[Protocol],
           newMetadata: Optional[Metadata]): Unit = {
         val logPath = s"$dataPath/_delta_log"
@@ -98,7 +98,7 @@ object CCv2Client {
         _logger.info("Write UUID commit file: START")
         engine
           .getJsonHandler
-          .writeJsonFileAtomically(commitFilePath, actions, false /* overwrite */)
+          .writeJsonFileAtomically(commitFilePath, finalizedActions, false /* overwrite */)
         _logger.info("Write UUID commit file: END")
 
         val hadoopFs = hadoopFileSystem.getFileStatus(new HadoopPath(commitFilePath))
@@ -156,6 +156,7 @@ object CCv2Client {
               val targetBackfilledPath = new HadoopPath(backfilledFilePath)
               _logger.info(s"Copying $sourceUnbackfilledPath to $targetBackfilledPath")
 
+              // TODO: This is not atomic btw
               FileUtil.copy(
                 hadoopFileSystem, // sourceFileSystem
                 sourceUnbackfilledPath, // sourcePath

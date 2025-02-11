@@ -66,7 +66,7 @@ public interface ResolvedMetadata {
   interface CommitFunction {
     void commit(
         long commitAsVersion,
-        CloseableIterator<Row> dataActions,
+        CloseableIterator<Row> finalizedActions,
         Optional<Protocol> newProtocol,
         Optional<Metadata> newMetadata);
   }

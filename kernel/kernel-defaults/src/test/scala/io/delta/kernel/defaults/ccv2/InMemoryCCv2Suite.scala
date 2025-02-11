@@ -1,7 +1,5 @@
 package io.delta.kernel.defaults.ccv2
 
-import java.util.Optional
-
 import io.delta.kernel.Operation
 import io.delta.kernel.ccv2.ResolvedTable
 import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch}
@@ -26,11 +24,13 @@ class InMemoryCCv2Suite extends AnyFunSuite
 
     for (min <- 11 to 131 by 10) {
       val max = min + 9
-      println("=" * 50)
+      printDiv
       appendDataHelper("table_001", createData(min to max))
+      printDiv
     }
-    println("=" * 50)
+    printDiv
     readTableHelper("table_001")
+    printDiv
   }
 
   private def createTableHelper(
@@ -77,6 +77,11 @@ class InMemoryCCv2Suite extends AnyFunSuite
       hook.threadSafeInvoke(defaultEngine)
       println("=" * 25)
     })
+  }
+
+  private def printDiv(): Unit = {
+    println("=" * 100)
+    println("=" * 100)
   }
 
   private def readTableHelper(tableName: String): Unit = {

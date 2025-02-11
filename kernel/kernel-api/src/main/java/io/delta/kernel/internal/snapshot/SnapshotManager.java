@@ -272,7 +272,11 @@ public class SnapshotManager {
             .getCheckpointVersionOpt()
             .map(v -> format("starting from checkpoint version %s.", v))
             .orElse(".");
-    logger.info("{}: Loading version {} {}", tablePath, initSegment.getVersion(), startingFromStr);
+    logger.info(
+        "{}: Creating snapshot for  version {} {}",
+        tablePath,
+        initSegment.getVersion(),
+        startingFromStr);
 
     long startTimeMillis = System.currentTimeMillis();
 
@@ -494,9 +498,9 @@ public class SnapshotManager {
 
     logDebugFileStatuses("suffixDeltasAfterCheckpoint", suffixDeltasAfterCheckpoint);
 
-    /////////////////////////////////////////////////////////////////////////////////////////
-    // Step 8: Merge the $listedDeltasAfterCheckpoint with the suffixDeltasAfterCheckpoint //
-    /////////////////////////////////////////////////////////////////////////////////////////
+    //////////////////////////////////////////////////////////////////////////////////////////
+    // Step 8: Merge the $listedDeltasAfterCheckpoint with the $suffixDeltasAfterCheckpoint //
+    //////////////////////////////////////////////////////////////////////////////////////////
 
     final List<FileStatus> allDeltasAfterCheckpoint =
         mergeListedDeltasAndSuffixDeltas(listedDeltasAfterCheckpoint, suffixDeltasAfterCheckpoint);
