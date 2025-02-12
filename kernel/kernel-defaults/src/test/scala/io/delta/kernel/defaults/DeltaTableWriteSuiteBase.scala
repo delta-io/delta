@@ -46,7 +46,7 @@ import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 import io.delta.kernel.utils.CloseableIterator
 import io.delta.kernel.Operation.CREATE_TABLE
 import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
-import io.delta.kernel.internal.checksum.{CRCInfo, ChecksumUtils}
+import io.delta.kernel.internal.checksum.CRCInfo
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
@@ -491,7 +491,7 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       .getJsonHandler()
       .readJsonFiles(
         singletonCloseableIterator(FileStatus.of(checksumFile.getPath)),
-        ChecksumUtils.CRC_FILE_SCHEMA,
+        CRCInfo.CRC_FILE_SCHEMA,
         Optional.empty()
       )
 
@@ -500,7 +500,7 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     assert(crcRow.getSize === 1, s"Expected single row, found ${crcRow.getSize}")
 
     val metadata = Metadata.fromColumnVector(
-      crcRow.getColumnVector(ChecksumUtils.CRC_FILE_SCHEMA.indexOf("metadata")),
+      crcRow.getColumnVector(CRCInfo.CRC_FILE_SCHEMA.indexOf("metadata")),
       0
     )
 
