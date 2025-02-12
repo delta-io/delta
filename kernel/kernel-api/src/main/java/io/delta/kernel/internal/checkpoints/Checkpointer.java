@@ -68,7 +68,6 @@ public class Checkpointer {
     validateWriteSupportedTable(
         snapshot.getProtocol(),
         snapshot.getMetadata(),
-        snapshot.getSchema(),
         snapshot.getDataPath().toString());
 
     final Path checkpointPath = FileNames.checkpointFileSingular(logPath, version);

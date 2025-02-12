@@ -21,7 +21,6 @@ import static io.delta.kernel.internal.TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED;
 
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
-import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.StructType;
 import java.util.*;
@@ -73,13 +72,11 @@ public class TableFeatures {
   // Helper Methods //
   ////////////////////
 
-  public static void validateReadSupportedTable(
-      Protocol protocol, String tablePath, Optional<Metadata> metadata) {
+  public static void validateReadSupportedTable(Protocol protocol, String tablePath) {
     switch (protocol.getMinReaderVersion()) {
       case 1:
         break;
       case 2:
-        metadata.ifPresent(ColumnMapping::throwOnUnsupportedColumnMappingMode);
         break;
       case 3:
         List<String> readerFeatures = protocol.getReaderFeatures();
@@ -87,9 +84,6 @@ public class TableFeatures {
           Set<String> unsupportedFeatures = new HashSet<>(readerFeatures);
           unsupportedFeatures.removeAll(SUPPORTED_READER_FEATURES);
           throw DeltaErrors.unsupportedReaderFeature(tablePath, unsupportedFeatures);
-        }
-        if (readerFeatures.contains("columnMapping")) {
-          metadata.ifPresent(ColumnMapping::throwOnUnsupportedColumnMappingMode);
         }
         break;
       default:
@@ -111,10 +105,9 @@ public class TableFeatures {
    *
    * @param protocol Table protocol
    * @param metadata Table metadata
-   * @param tableSchema Table schema
    */
   public static void validateWriteSupportedTable(
-      Protocol protocol, Metadata metadata, StructType tableSchema, String tablePath) {
+      Protocol protocol, Metadata metadata, String tablePath) {
     int minWriterVersion = protocol.getMinWriterVersion();
     switch (minWriterVersion) {
       case 1:
@@ -122,7 +115,7 @@ public class TableFeatures {
       case 2:
         // Append-only and column invariants are the writer features added in version 2
         // Append-only is supported, but not the invariants
-        validateNoInvariants(tableSchema);
+        validateNoInvariants(metadata.getSchema());
         break;
       case 3:
         // Check constraints are added in version 3
@@ -141,7 +134,7 @@ public class TableFeatures {
           if (writerFeature.equals(INVARIANTS_FEATURE_NAME)) {
             // For version 7, we allow 'invariants' to be present in the protocol's writerFeatures
             // to unblock certain use cases, provided that no invariants are defined in the schema.
-            validateNoInvariants(tableSchema);
+            validateNoInvariants(metadata.getSchema());
           } else if (!SUPPORTED_WRITER_FEATURES.contains(writerFeature)) {
             throw unsupportedWriterFeature(tablePath, writerFeature);
           }
