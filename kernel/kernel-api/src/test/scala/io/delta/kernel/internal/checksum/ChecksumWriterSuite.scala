@@ -17,7 +17,7 @@ package io.delta.kernel.internal.checksum
 
 import io.delta.kernel.data.Row
 import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
-import io.delta.kernel.internal.checksum.ChecksumUtils.CRC_FILE_SCHEMA
+import io.delta.kernel.internal.checksum.CRCInfo.CRC_FILE_SCHEMA
 import io.delta.kernel.internal.data.GenericRow
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.VectorUtils
