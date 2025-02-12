@@ -65,7 +65,7 @@ class ChecksumSimpleComparisonSuite extends AnyFunSuite with TestUtils {
       assertChecksumEquals(engine, sparkTablePath, kernelTablePath, 0)
 
       (1 to 10).foreach(
-        version => insertIntoUnpartitionedTable(engine, sparkTablePath, kernelTablePath, version)
+        version => insertIntoTable(engine, sparkTablePath, kernelTablePath, version)
       )
 
     }
@@ -259,9 +259,7 @@ class ChecksumSimpleComparisonSuite extends AnyFunSuite with TestUtils {
     txn
       .commit(engine, inMemoryIterable(dataActions))
       .getPostCommitHooks
-      .forEach(
-        hook => hook.threadSafeInvoke(engine)
-      )
+      .forEach(hook => hook.threadSafeInvoke(engine))
 
   }
 
