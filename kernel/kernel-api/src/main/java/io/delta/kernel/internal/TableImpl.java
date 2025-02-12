@@ -47,10 +47,22 @@ import org.slf4j.LoggerFactory;
 
 public class TableImpl implements Table {
 
+  //////////////////////////////////
+  // Static variables and methods //
+  //////////////////////////////////
+
   private static final Logger logger = LoggerFactory.getLogger(TableImpl.class);
 
   public static Table forPath(Engine engine, String path) {
     return forPath(engine, path, System::currentTimeMillis);
+  }
+
+  public static Table forPathWithTableId(Engine engine, String path, TableIdentifier tableId) {
+    return create(engine, path, Optional.of(tableId), System::currentTimeMillis);
+  }
+
+  public static Table forPath(Engine engine, String path, Clock clock) {
+    return create(engine, path, Optional.empty() /* tableId */, clock);
   }
 
   /**
@@ -59,27 +71,34 @@ public class TableImpl implements Table {
    *
    * @param engine {@link Engine} instance to use in Delta Kernel.
    * @param path location of the table.
+   * @param tableId the {@link TableIdentifier} to associate with the table.
    * @param clock {@link Clock} instance to use for time-related operations.
    * @return an instance of {@link Table} representing the Delta table at the given path
    */
-  public static Table forPath(Engine engine, String path, Clock clock) {
-    String resolvedPath;
+  private static Table create(
+      Engine engine, String path, Optional<TableIdentifier> tableId, Clock clock) {
     try {
-      resolvedPath =
+      final String resolvedPath =
           wrapEngineExceptionThrowsIO(
               () -> engine.getFileSystemClient().resolvePath(path), "Resolving path %s", path);
+      return new TableImpl(resolvedPath, tableId, clock);
     } catch (IOException io) {
       throw new UncheckedIOException(io);
     }
-    return new TableImpl(resolvedPath, clock);
   }
+
+  //////////////////////////////////
+  // Member variables and methods //
+  //////////////////////////////////
 
   private final SnapshotManager snapshotManager;
   private final String tablePath;
+  private final Optional<TableIdentifier> tableId;
   private final Clock clock;
 
-  public TableImpl(String tablePath, Clock clock) {
+  public TableImpl(String tablePath, Optional<TableIdentifier> tableId, Clock clock) {
     this.tablePath = tablePath;
+    this.tableId = tableId;
     final Path dataPath = new Path(tablePath);
     final Path logPath = new Path(dataPath, "_delta_log");
     this.snapshotManager = new SnapshotManager(logPath, dataPath);
@@ -89,6 +108,11 @@ public class TableImpl implements Table {
   @Override
   public String getPath(Engine engine) {
     return tablePath;
+  }
+
+  @Override
+  public Optional<TableIdentifier> getTableId() {
+    return tableId;
   }
 
   @Override
