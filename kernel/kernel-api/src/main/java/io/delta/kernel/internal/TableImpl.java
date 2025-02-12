@@ -25,6 +25,7 @@ import io.delta.kernel.exceptions.CheckpointAlreadyExistsException;
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.checkpoints.Checkpointer;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.metrics.SnapshotReportImpl;
@@ -74,15 +75,17 @@ public class TableImpl implements Table {
     return new TableImpl(resolvedPath, clock);
   }
 
-  private final SnapshotManager snapshotManager;
   private final String tablePath;
+  private final Checkpointer checkpointer;
+  private final SnapshotManager snapshotManager;
   private final Clock clock;
 
   public TableImpl(String tablePath, Clock clock) {
     this.tablePath = tablePath;
     final Path dataPath = new Path(tablePath);
     final Path logPath = new Path(dataPath, "_delta_log");
-    this.snapshotManager = new SnapshotManager(logPath, dataPath);
+    this.checkpointer = new Checkpointer(logPath);
+    this.snapshotManager = new SnapshotManager(dataPath);
     this.clock = clock;
   }
 
@@ -131,7 +134,9 @@ public class TableImpl implements Table {
   @Override
   public void checkpoint(Engine engine, long version)
       throws TableNotFoundException, CheckpointAlreadyExistsException, IOException {
-    snapshotManager.checkpoint(engine, clock, version);
+    final SnapshotImpl snapshotToCheckpoint =
+        (SnapshotImpl) getSnapshotAsOfVersion(engine, version);
+    checkpointer.checkpoint(engine, clock, snapshotToCheckpoint);
   }
 
   @Override
