@@ -64,7 +64,7 @@ public class TransactionStateRow extends GenericRow {
    * @param transactionState Transaction state state {@link Row}
    * @return Logical schema of the table as {@link StructType}
    */
-  public static StructType getLogicalSchema(Engine engine, Row transactionState) {
+  public static StructType getLogicalSchema(Row transactionState) {
     String serializedSchema =
         transactionState.getString(COL_NAME_TO_ORDINAL.get("logicalSchemaString"));
     return DataTypeJsonSerDe.deserializeStructType(serializedSchema);
