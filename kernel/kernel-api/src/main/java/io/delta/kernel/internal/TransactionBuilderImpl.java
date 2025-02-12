@@ -158,8 +158,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         protocol = protocol.withNewWriterFeatures(newWriterFeatures);
         List<String> curWriterFeatures = protocol.getWriterFeatures();
         checkArgument(!Objects.equals(oldWriterFeatures, curWriterFeatures));
-        TableFeatures.validateWriteSupportedTable(
-            protocol, metadata, metadata.getSchema(), table.getPath(engine));
+        TableFeatures.validateWriteSupportedTable(protocol, metadata, table.getPath(engine));
       }
     }
 
@@ -184,10 +183,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     String tablePath = table.getPath(engine);
     // Validate the table has no features that Kernel doesn't yet support writing into it.
     TableFeatures.validateWriteSupportedTable(
-        snapshot.getProtocol(),
-        snapshot.getMetadata(),
-        snapshot.getMetadata().getSchema(),
-        tablePath);
+        snapshot.getProtocol(), snapshot.getMetadata(), tablePath);
 
     if (!isNewTable) {
       if (schema.isPresent()) {
