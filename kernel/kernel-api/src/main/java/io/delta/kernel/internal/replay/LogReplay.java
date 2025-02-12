@@ -400,23 +400,25 @@ public class LogReplay {
     }
 
     long crcSearchLowerBound =
-            max(
-                    asList(
-                            // Prefer reading hint over CRC, so start listing from hint's version + 1.
-                            snapshotHint.map(SnapshotHint::getVersion).orElse(0L) + 1,
-                            logSegment.getCheckpointVersionOpt().orElse(0L),
-                            // Only find the CRC within 100 versions.
-                            snapshotVersion - 100));
+        max(
+            asList(
+                // Prefer reading hint over CRC, so start listing from hint's version + 1,
+                // if hint is not present, list from version 0.
+                snapshotHint.map(SnapshotHint::getVersion).orElse(-1L) + 1,
+                logSegment.getCheckpointVersionOpt().orElse(0L),
+                // Only find the CRC within 100 versions.
+                snapshotVersion - 100));
     Optional<CRCInfo> crcInfoOpt =
-            logSegment
-                    .getLatestChecksum()
-                    .flatMap(
-                            checksum -> {
-                              if (FileNames.getFileVersion(new Path(checksum.getPath())) < crcSearchLowerBound) {
-                                return Optional.empty();
-                              }
-                              return ChecksumReader.getCRCInfo(engine, checksum);
-                            });
+        logSegment
+            .getLatestChecksum()
+            .flatMap(
+                checksum -> {
+                  if (FileNames.getFileVersion(new Path(checksum.getPath()))
+                      < crcSearchLowerBound) {
+                    return Optional.empty();
+                  }
+                  return ChecksumReader.getCRCInfo(engine, checksum);
+                });
 
     if (!crcInfoOpt.isPresent()) {
       return new Tuple2<>(snapshotHint, Optional.empty());
