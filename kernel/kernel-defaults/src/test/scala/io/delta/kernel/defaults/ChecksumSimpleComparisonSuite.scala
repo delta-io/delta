@@ -89,7 +89,7 @@ class ChecksumSimpleComparisonSuite extends AnyFunSuite with TestUtils {
         assertChecksumEquals(engine, sparkTablePath, kernelTablePath, 0)
 
       (1 to 10).foreach(
-        version => insertIntoUnpartitionedTable(engine, sparkTablePath, kernelTablePath, version)
+        version => insertIntoTable(engine, sparkTablePath, kernelTablePath, version)
       )
     }
   }
@@ -106,9 +106,7 @@ class ChecksumSimpleComparisonSuite extends AnyFunSuite with TestUtils {
         .build(engine)
         .commit(engine, emptyIterable())
         .getPostCommitHooks
-        .forEach(
-          hook => hook.threadSafeInvoke(engine)
-        )
+        .forEach(hook => hook.threadSafeInvoke(engine))
       spark.sql(
         s"CREATE OR REPLACE TABLE delta.`${sparkTablePath}` " +
         s"(id Integer, part Integer) USING DELTA PARTITIONED BY (part)"
@@ -220,7 +218,7 @@ class ChecksumSimpleComparisonSuite extends AnyFunSuite with TestUtils {
     assertChecksumEquals(engine, sparkTablePath, kernelTablePath, versionAtCommit)
   }
 
-  private def insertIntoUnpartitionedTable(
+  private def insertIntoTable(
       engine: Engine,
       sparkTablePath: String,
       kernelTablePath: String,

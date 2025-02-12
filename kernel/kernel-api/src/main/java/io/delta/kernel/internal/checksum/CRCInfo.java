@@ -15,18 +15,39 @@
  */
 package io.delta.kernel.internal.checksum;
 
-import static io.delta.kernel.internal.checksum.ChecksumUtils.CRC_FILE_SCHEMA;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.types.LongType;
+import io.delta.kernel.types.StringType;
+import io.delta.kernel.types.StructType;
 import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public class CRCInfo {
   private static final Logger logger = LoggerFactory.getLogger(CRCInfo.class);
+
+  // Constants for schema field names
+  public static final String TABLE_SIZE_BYTES = "tableSizeBytes";
+  public static final String NUM_FILES = "numFiles";
+  public static final String NUM_METADATA = "numMetadata";
+  public static final String NUM_PROTOCOL = "numProtocol";
+  public static final String METADATA = "metadata";
+  public static final String PROTOCOL = "protocol";
+  public static final String TXN_ID = "txnId";
+
+  public static StructType CRC_FILE_SCHEMA =
+      new StructType()
+          .add(TABLE_SIZE_BYTES, LongType.LONG)
+          .add(NUM_FILES, LongType.LONG)
+          .add(NUM_METADATA, LongType.LONG)
+          .add(NUM_PROTOCOL, LongType.LONG)
+          .add(METADATA, Metadata.FULL_SCHEMA)
+          .add(PROTOCOL, Protocol.FULL_SCHEMA)
+          .add(TXN_ID, StringType.STRING, /*nullable*/ true);
 
   public static Optional<CRCInfo> fromColumnarBatch(
       long version, ColumnarBatch batch, int rowId, String crcFilePath) {

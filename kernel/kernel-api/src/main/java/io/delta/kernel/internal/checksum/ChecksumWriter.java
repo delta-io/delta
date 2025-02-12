@@ -16,7 +16,7 @@
 package io.delta.kernel.internal.checksum;
 
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
-import static io.delta.kernel.internal.checksum.ChecksumUtils.CRC_FILE_SCHEMA;
+import static io.delta.kernel.internal.checksum.CRCInfo.*;
 import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 import static java.util.Objects.requireNonNull;
 
@@ -37,14 +37,6 @@ public class ChecksumWriter {
   private static final Logger logger = LoggerFactory.getLogger(ChecksumWriter.class);
 
   private final Path logPath;
-  // Constants for schema field names
-  private static final String TABLE_SIZE_BYTES = "tableSizeBytes";
-  private static final String NUM_FILES = "numFiles";
-  private static final String NUM_METADATA = "numMetadata";
-  private static final String NUM_PROTOCOL = "numProtocol";
-  private static final String METADATA = "metadata";
-  private static final String PROTOCOL = "protocol";
-  private static final String TXN_ID = "txnId";
 
   public ChecksumWriter(Path logPath) {
     this.logPath = requireNonNull(logPath);
@@ -52,9 +44,8 @@ public class ChecksumWriter {
 
   /** Writes a checksum file */
   public void writeCheckSum(Engine engine, CRCInfo crcInfo) throws IOException {
-    // No sufficient information to write checksum file.
     Path newChecksumPath = FileNames.checksumFile(logPath, crcInfo.getVersion());
-    logger.debug("Writing checksum file to path: {}", newChecksumPath);
+    logger.info("Writing checksum file to path: {}", newChecksumPath);
     wrapEngineExceptionThrowsIO(
         () -> {
           engine

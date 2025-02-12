@@ -36,9 +36,9 @@ public interface PostCommitHook {
     CHECKPOINT,
     /**
      * Writes a checksum file at the version committed by the transaction. This hook is present when
-     * all required table statistics(e.g. table size) for checksum file are known when a transaction
-     * commits. This operation has a minimal latency with no requirement of reading previous
-     * checkpoint or logs.
+     * all required table statistics (e.g. table size) for checksum file are known when a
+     * transaction commits. This operation has a minimal latency with no requirement of reading
+     * previous checkpoint or logs.
      */
     CHECKSUM_SIMPLE
   }

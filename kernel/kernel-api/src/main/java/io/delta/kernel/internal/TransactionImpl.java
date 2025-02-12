@@ -455,38 +455,19 @@ public class TransactionImpl implements Transaction {
               metricsResult.getNumAddFiles(),
               Optional.of(txnId.toString())));
     }
-    // We cannot compute the table statistic if the crc info of commitAtVersion - 1 is missing
-    if (!readSnapshot.getCurrentCrcInfo().isPresent()
-        || commitAtVersion != readSnapshot.getCurrentCrcInfo().get().getVersion() + 1) {
-      return Optional.empty();
-    }
 
-    return calculateNewCrcInfo(commitAtVersion, metricsResult);
-  }
-
-  private Optional<CRCInfo> calculateNewCrcInfo(
-      long commitAtVersion, TransactionMetricsResult metricsResult) {
-    CRCInfo lastCrcInfo =
-        readSnapshot
-            .getCurrentCrcInfo()
-            .orElseThrow(() -> new IllegalStateException("CRC info must be present at this point"));
-
-    return Optional.of(
-        new CRCInfo(
-            commitAtVersion,
-            metadata,
-            protocol,
-            calculateNewTableSize(lastCrcInfo, metricsResult),
-            calculateNewFileCount(lastCrcInfo, metricsResult),
-            Optional.of(txnId.toString())));
-  }
-
-  private long calculateNewTableSize(CRCInfo lastCrcInfo, TransactionMetricsResult metricsResult) {
-    return lastCrcInfo.getTableSizeBytes() + metricsResult.getTotalAddFilesSizeInBytes();
-  }
-
-  private long calculateNewFileCount(CRCInfo lastCrcInfo, TransactionMetricsResult metricsResult) {
-    return lastCrcInfo.getNumFiles() + metricsResult.getNumAddFiles();
+    return readSnapshot
+        .getCurrentCrcInfo()
+        .filter(lastCrcInfo -> commitAtVersion == lastCrcInfo.getVersion() + 1)
+        .map(
+            lastCrcInfo ->
+                new CRCInfo(
+                    commitAtVersion,
+                    metadata,
+                    protocol,
+                    lastCrcInfo.getTableSizeBytes() + metricsResult.getTotalAddFilesSizeInBytes(),
+                    lastCrcInfo.getNumFiles() + metricsResult.getNumAddFiles(),
+                    Optional.of(txnId.toString())));
   }
 
   /**
