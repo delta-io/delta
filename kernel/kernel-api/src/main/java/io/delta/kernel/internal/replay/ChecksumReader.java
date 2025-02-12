@@ -16,13 +16,10 @@
 package io.delta.kernel.internal.replay;
 
 import static io.delta.kernel.internal.util.FileNames.*;
-import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 import static java.lang.Math.min;
 
-import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.fs.Path;
-import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import java.io.IOException;
@@ -91,34 +88,6 @@ public class ChecksumReader {
   }
 
   private static Optional<CRCInfo> readChecksumFile(Engine engine, Path filePath) {
-    try (CloseableIterator<ColumnarBatch> iter =
-        engine
-            .getJsonHandler()
-            .readJsonFiles(
-                singletonCloseableIterator(FileStatus.of(filePath.toString())),
-                CRCInfo.FULL_SCHEMA,
-                Optional.empty())) {
-      // We do this instead of iterating through the rows or using `getSingularRow` so we
-      // can use the existing fromColumnVector methods in Protocol, Metadata, Format etc
-      if (!iter.hasNext()) {
-        logger.warn("Checksum file is empty: {}", filePath);
-        return Optional.empty();
-      }
-
-      ColumnarBatch batch = iter.next();
-      if (batch.getSize() != 1) {
-        String msg = "Expected exactly one row in the checksum file {}, found {} rows";
-        logger.warn(msg, filePath, batch.getSize());
-        return Optional.empty();
-      }
-
-      long crcVersion = FileNames.checksumVersion(filePath);
-
-      return CRCInfo.fromColumnarBatch(crcVersion, batch, 0 /* rowId */, filePath.toString());
-    } catch (Exception e) {
-      // This can happen when the version does not have a checksum file
-      logger.warn("Failed to read checksum file {}", filePath, e);
-      return Optional.empty();
-    }
+    return Optional.empty();
   }
 }

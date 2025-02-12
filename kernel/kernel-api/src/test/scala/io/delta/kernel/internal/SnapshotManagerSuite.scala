@@ -60,7 +60,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
   // getLogSegmentForVersion tests
   //////////////////////////////////////////////////////////////////////////////////
 
-  private val snapshotManager = new SnapshotManager(logPath, dataPath)
+  private val snapshotManager = new SnapshotManager(dataPath)
 
   /* ------------------HELPER METHODS------------------ */
 

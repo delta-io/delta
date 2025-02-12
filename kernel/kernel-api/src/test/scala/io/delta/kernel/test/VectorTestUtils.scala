@@ -133,4 +133,16 @@ trait VectorTestUtils {
 
     override def getBoolean(rowId: Int): Boolean = rowId == selectRowId
   }
+
+  def intVector(values: Int*): ColumnVector = new ColumnVector {
+    override def getDataType: DataType = IntegerType.INTEGER
+
+    override def getSize: Int = values.size
+
+    override def close(): Unit = {}
+
+    override def isNullAt(rowId: Int): Boolean = false
+
+    override def getInt(rowId: Int): Int = values(rowId)
+  }
 }

@@ -19,6 +19,7 @@ package io.delta.kernel.internal.util;
 import io.delta.kernel.internal.fs.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public final class FileNames {
@@ -77,6 +78,8 @@ public final class FileNames {
 
   public static final String SIDECAR_DIRECTORY = "_sidecars";
 
+  public static final String COMMIT_SUBDIR = "_commits";
+
   ////////////////////////
   // Version extractors //
   ////////////////////////
@@ -109,6 +112,16 @@ public final class FileNames {
     final int slashIdx = path.lastIndexOf(Path.SEPARATOR);
     final String name = path.substring(slashIdx + 1);
     return Long.parseLong(name.split("\\.")[0]);
+  }
+
+  public static long uuidCommitDeltaVersion(String path) {
+    final int slashIdx = path.lastIndexOf(Path.SEPARATOR);
+    final String name = path.substring(slashIdx + 1);
+    final Matcher matcher = UUID_DELTA_FILE_REGEX.matcher(name);
+    if (matcher.matches()) {
+      return Long.parseLong(matcher.group(1));
+    }
+    throw new IllegalArgumentException("Invalid UUID commit file name: " + path);
   }
 
   /** Returns the version for the given checkpoint path. */
@@ -226,5 +239,23 @@ public final class FileNames {
 
   public static boolean isChecksumFile(String checksumFilePath) {
     return CHECK_SUM_FILE_PATTERN.matcher(new Path(checksumFilePath).getName()).matches();
+  }
+
+  public static boolean isUnbackfilledDeltaFile(String path) {
+    final Path p = new Path(path);
+    final String parentDirName = p.getParent().getName();
+    if (!parentDirName.equals(COMMIT_SUBDIR)) {
+      return false;
+    }
+    return UUID_DELTA_FILE_REGEX.matcher(p.getName()).matches();
+  }
+
+  public static boolean isBackfilledDeltaFile(String path) {
+    final Path p = new Path(path);
+    final String parentDirName = p.getParent().getName();
+    if (parentDirName.equals(COMMIT_SUBDIR)) {
+      return false;
+    }
+    return DELTA_FILE_PATTERN.matcher(p.getName()).matches();
   }
 }

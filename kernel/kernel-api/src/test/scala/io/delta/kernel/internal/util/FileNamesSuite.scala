@@ -29,6 +29,8 @@ class FileNamesSuite extends AnyFunSuite {
   private val checkpointV2Parquet = "/a/000000010.checkpoint.80a083e8-7026.parquet"
   private val commitNormal = "/a/0000000088.json"
   private val commitUUID = "/a/00000022.dc0f9f58-a1a0.json"
+  private val backfilledCommit = commitNormal
+  private val unbackfilledCommit = s"/a/_commits/00000022.dc0f9f58-a1a0.json"
 
   /////////////////////////////
   // Version extractor tests //
@@ -159,5 +161,13 @@ class FileNamesSuite extends AnyFunSuite {
   test("is commit file") {
     assert(isCommitFile(commitNormal))
     assert(isCommitFile(commitUUID))
+  }
+
+  test("is unbackfilled or backfilled delta file") {
+    assert(isUnbackfilledDeltaFile(unbackfilledCommit))
+    assert(!isUnbackfilledDeltaFile(backfilledCommit))
+
+    assert(isBackfilledDeltaFile(backfilledCommit))
+    assert(!isBackfilledDeltaFile(unbackfilledCommit))
   }
 }

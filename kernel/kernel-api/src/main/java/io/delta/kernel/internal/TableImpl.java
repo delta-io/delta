@@ -81,8 +81,7 @@ public class TableImpl implements Table {
   public TableImpl(String tablePath, Clock clock) {
     this.tablePath = tablePath;
     final Path dataPath = new Path(tablePath);
-    final Path logPath = new Path(dataPath, "_delta_log");
-    this.snapshotManager = new SnapshotManager(logPath, dataPath);
+    this.snapshotManager = new SnapshotManager(dataPath);
     this.clock = clock;
   }
 
@@ -137,7 +136,13 @@ public class TableImpl implements Table {
   @Override
   public TransactionBuilder createTransactionBuilder(
       Engine engine, String engineInfo, Operation operation) {
-    return new TransactionBuilderImpl(this, engineInfo, operation);
+    return new TransactionBuilderImpl(
+        getDataPath(),
+        engineInfo,
+        operation,
+        () -> (SnapshotImpl) getLatestSnapshot(engine),
+        Optional.empty() /* commitFunction */,
+        getClock());
   }
 
   public Clock getClock() {
