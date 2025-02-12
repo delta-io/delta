@@ -63,7 +63,8 @@ class ChecksumSimpleComparisonSuite extends AnyFunSuite with TestUtils {
       assertChecksumEquals(engine, sparkTablePath, kernelTablePath, 0)
 
       (1 to 10).foreach(
-        version => insertIntoTable(engine, sparkTablePath, kernelTablePath, version)
+        version => insertIntoUnpartitionedTableAndCheckCrc(
+          engine, sparkTablePath, kernelTablePath, version)
       )
 
     }
@@ -87,7 +88,8 @@ class ChecksumSimpleComparisonSuite extends AnyFunSuite with TestUtils {
       assertChecksumEquals(engine, sparkTablePath, kernelTablePath, 0)
 
       (1 to 10).foreach(
-        version => insertIntoTable(engine, sparkTablePath, kernelTablePath, version)
+        version => insertIntoUnpartitionedTableAndCheckCrc(
+          engine, sparkTablePath, kernelTablePath, version)
       )
     }
   }
@@ -112,7 +114,8 @@ class ChecksumSimpleComparisonSuite extends AnyFunSuite with TestUtils {
       assertChecksumEquals(engine, sparkTablePath, kernelTablePath, 0)
 
       (1 to 10).foreach(
-        version => insertIntoPartitionedTable(engine, sparkTablePath, kernelTablePath, version)
+        version => insertIntoUnpartitionedTableAndCheckCrc(
+          engine, sparkTablePath, kernelTablePath, version)
       )
     }
   }
@@ -143,7 +146,8 @@ class ChecksumSimpleComparisonSuite extends AnyFunSuite with TestUtils {
       assertChecksumEquals(engine, sparkTablePath, kernelTablePath, 0)
 
       (1 to 10).foreach(
-        version => insertIntoPartitionedTable(engine, sparkTablePath, kernelTablePath, version)
+        version => insertIntoPartitionedTableAndCheckCrc(
+          engine, sparkTablePath, kernelTablePath, version)
       )
     }
   }
@@ -185,7 +189,7 @@ class ChecksumSimpleComparisonSuite extends AnyFunSuite with TestUtils {
     assert(crc1.getMetadata.getPartitionColNames === crc2.getMetadata.getPartitionColNames)
   }
 
-  private def insertIntoPartitionedTable(
+  private def insertIntoPartitionedTableAndCheckCrc(
       engine: Engine,
       sparkTablePath: String,
       kernelTablePath: String,
@@ -216,7 +220,7 @@ class ChecksumSimpleComparisonSuite extends AnyFunSuite with TestUtils {
     assertChecksumEquals(engine, sparkTablePath, kernelTablePath, versionAtCommit)
   }
 
-  private def insertIntoTable(
+  private def insertIntoUnpartitionedTableAndCheckCrc(
       engine: Engine,
       sparkTablePath: String,
       kernelTablePath: String,
