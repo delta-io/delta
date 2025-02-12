@@ -1415,7 +1415,7 @@ Supported writers must write the two binary fields, and supported readers must r
 
 When Variant type is supported (`writerFeatures` field of a table's `protocol` action contains `variantType`), writers:
 - must write a column of type `variant` to parquet as a struct containing the fields `value` and `metadata` and storing values that conform to the [Variant binary encoding specification](https://github.com/apache/spark/blob/master/common/variant/README.md)
-- should not write a parquet struct field named `typed_value` to avoid confusion with fields required by [Variant shredding](https://github.com/apache/parquet-format/blob/master/VariantShredding.md).
+- must not write a parquet struct field named `typed_value` to avoid confusion with fields required by [Variant shredding](https://github.com/apache/parquet-format/blob/master/VariantShredding.md).
 
 ## Reader Requirements for Variant Data Type
 
