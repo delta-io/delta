@@ -114,7 +114,7 @@ class ChecksumSimpleComparisonSuite extends AnyFunSuite with TestUtils {
       assertChecksumEquals(engine, sparkTablePath, kernelTablePath, 0)
 
       (1 to 10).foreach(
-        version => insertIntoUnpartitionedTableAndCheckCrc(
+        version => insertIntoPartitionedTableAndCheckCrc(
           engine, sparkTablePath, kernelTablePath, version)
       )
     }
