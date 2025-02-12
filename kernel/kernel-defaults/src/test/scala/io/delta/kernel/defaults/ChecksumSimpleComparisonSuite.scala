@@ -58,9 +58,7 @@ class ChecksumSimpleComparisonSuite extends AnyFunSuite with TestUtils {
         .build(engine)
         .commit(engine, emptyIterable())
         .getPostCommitHooks
-        .forEach(
-          hook => hook.threadSafeInvoke(engine)
-        )
+        .forEach(hook => hook.threadSafeInvoke(engine))
       spark.sql(s"CREATE OR REPLACE TABLE delta.`${sparkTablePath}` (id Integer) USING DELTA")
       assertChecksumEquals(engine, sparkTablePath, kernelTablePath, 0)
 
