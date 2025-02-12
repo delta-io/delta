@@ -86,7 +86,7 @@ class ChecksumSimpleComparisonSuite extends AnyFunSuite with TestUtils {
 
       copyAndCommitTxnForUnpartitionedTable(txn, engine, sparkTablePath, versionAtCommit = 0)
 
-        assertChecksumEquals(engine, sparkTablePath, kernelTablePath, 0)
+      assertChecksumEquals(engine, sparkTablePath, kernelTablePath, 0)
 
       (1 to 10).foreach(
         version => insertIntoTable(engine, sparkTablePath, kernelTablePath, version)
