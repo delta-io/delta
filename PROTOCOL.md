@@ -1362,7 +1362,7 @@ The example above converts `configuration` field into JSON format, including esc
 
 # Variant Data Type
 
-This feature enables support for the Variant data type, for storing semi-structured data.
+This feature enables support for the `variant` data type, which stores semi-structured data.
 The schema serialization method is described in [Schema Serialization Format](#schema-serialization-format).
 
 To support this feature:
@@ -1409,13 +1409,13 @@ metadata | binary | The binary-encoded Variant metadata, as described in [Varian
 The parquet struct must include the two struct fields `value` and `metadata`.
 Supported writers must write the two binary fields, and supported readers must read the two binary fields.
 
-Variant shredding will be introduced in a separate `variantShredding` table feature.
+[Variant shredding](https://github.com/apache/parquet-format/blob/master/VariantShredding.md) will be introduced in a separate `variantShredding` table feature. will be introduced later, as a separate `variantShredding` table feature.
 
 ## Writer Requirements for Variant Data Type
 
 When Variant type is supported (`writerFeatures` field of a table's `protocol` action contains `variantType`), writers:
 - must write a column of type `variant` to parquet as a struct containing the fields `value` and `metadata` and storing values that conform to the [Variant binary encoding specification](https://github.com/apache/spark/blob/master/common/variant/README.md)
-- must not write additional parquet struct fields.
+- should not write a parquet struct field named `typed_value` to avoid confusion with fields required by [Variant shredding](https://github.com/apache/parquet-format/blob/master/VariantShredding.md).
 
 ## Reader Requirements for Variant Data Type
 
