@@ -412,7 +412,7 @@ public class LogReplay {
                     .getLatestChecksum()
                     .flatMap(
                             checksum -> {
-                              if (FileNames.getFileVersion(new Path(checksum.getPath())) < crcReadLowerBound) {
+                              if (FileNames.getFileVersion(new Path(checksum.getPath())) < crcSearchLowerBound) {
                                 return Optional.empty();
                               }
                               return ChecksumReader.getCRCInfo(engine, checksum);
