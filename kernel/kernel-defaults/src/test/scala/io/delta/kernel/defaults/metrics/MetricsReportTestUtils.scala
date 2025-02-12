@@ -19,9 +19,11 @@ import java.util
 
 import scala.collection.mutable.ArrayBuffer
 
+import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.engine._
 import io.delta.kernel.metrics.MetricsReport
+import org.apache.hadoop.conf.Configuration
 
 /**
  * Test utilities for testing the Kernel-API created [[MetricsReports]]s.
@@ -30,6 +32,14 @@ import io.delta.kernel.metrics.MetricsReport
  * to mock both file listings AND file contents.
  */
 trait MetricsReportTestUtils extends TestUtils {
+
+  override lazy val defaultEngine = DefaultEngine.create(new Configuration() {
+    {
+      // Set the batch sizes to small so that we get to test the multiple batch scenarios.
+      set("delta.kernel.default.parquet.reader.batch-size", "2");
+      set("delta.kernel.default.json.reader.batch-size", "2");
+    }
+  })
 
   // For now this just uses the default engine since we have no need to override it, if we would
   // like to use a specific engine in the future for other tests we can simply add another arg here

@@ -26,8 +26,15 @@ import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.internal.{SnapshotImpl, TableConfig, TableImpl}
 import io.delta.kernel.utils.FileStatus
-import io.delta.kernel.{Meta, Operation, Table, Transaction, TransactionBuilder, TransactionCommitResult}
-import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch, Row}
+import io.delta.kernel.{
+  Meta,
+  Operation,
+  Table,
+  Transaction,
+  TransactionBuilder,
+  TransactionCommitResult
+}
+import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch, Row}
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.expressions.Literal.ofInt
@@ -39,6 +46,7 @@ import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 import io.delta.kernel.utils.CloseableIterator
 import io.delta.kernel.Operation.CREATE_TABLE
+import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
@@ -139,10 +147,14 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     tablePath: String,
     result: TransactionCommitResult,
     expSize: Long): Unit = {
-    if (result.isReadyForCheckpoint) {
-      Table.forPath(engine, tablePath).checkpoint(engine, result.getVersion)
-      verifyLastCheckpointMetadata(tablePath, checkpointAt = result.getVersion, expSize)
-    }
+    result.getPostCommitHooks.forEach(
+      hook => {
+        if (hook.getType == PostCommitHookType.CHECKPOINT) {
+          hook.threadSafeInvoke(engine)
+          verifyLastCheckpointMetadata(tablePath, checkpointAt = result.getVersion, expSize)
+        }
+      }
+    )
   }
 
   /**
@@ -399,7 +411,7 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     expVersion: Long,
     expIsReadyForCheckpoint: Boolean): Unit = {
     assert(result.getVersion === expVersion)
-    assert(result.isReadyForCheckpoint === expIsReadyForCheckpoint)
+    assertCheckpointReadiness(result, expIsReadyForCheckpoint)
   }
 
   def verifyTableProperties(
@@ -420,5 +432,17 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     builder.append(s"delta.minWriterVersion=$minWriterVersion")
     builder.append("]")
     checkAnswer(resultProperties, Seq(builder.toString()).map(TestRow(_)))
+  }
+
+  def assertCheckpointReadiness(
+      txnResult: TransactionCommitResult,
+      isReadyForCheckpoint: Boolean): Unit = {
+    assert(
+      txnResult.getPostCommitHooks
+        .stream()
+        .anyMatch(
+          hook => hook.getType == PostCommitHookType.CHECKPOINT
+        ) === isReadyForCheckpoint
+    )
   }
 }

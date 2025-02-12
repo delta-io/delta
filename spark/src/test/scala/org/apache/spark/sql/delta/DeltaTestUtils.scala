@@ -282,7 +282,7 @@ trait DeltaTestUtilsBase {
   sealed trait ExpectedResult[-T]
   object ExpectedResult {
     case class Success[T](expected: T) extends ExpectedResult[T]
-    case class Failure[T](checkError: SparkThrowable => Unit) extends ExpectedResult[T]
+    case class Failure[T](checkError: SparkThrowable => Unit = _ => ()) extends ExpectedResult[T]
   }
 
   /** Utility method to check exception `e` is of type `E` or a cause of it is of type `E` */

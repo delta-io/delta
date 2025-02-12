@@ -74,6 +74,7 @@ trait SpaceFillingCurveClustering extends MultiDimClustering {
     val conf = df.sparkSession.sessionState.conf
     val numRanges = conf.getConf(DeltaSQLConf.MDC_NUM_RANGE_IDS)
     val addNoise = conf.getConf(DeltaSQLConf.MDC_ADD_NOISE)
+    val sortWithinFiles = conf.getConf(DeltaSQLConf.MDC_SORT_WITHIN_FILES)
 
     val cols = colNames.map(df(_))
     val mdcCol = getClusteringExpression(cols, numRanges)
@@ -88,6 +89,10 @@ trait SpaceFillingCurveClustering extends MultiDimClustering {
     } else {
       df.withColumn(repartitionKeyColName, mdcCol)
         .repartitionByRange(approxNumPartitions, col(repartitionKeyColName))
+    }
+
+    if (sortWithinFiles) {
+      repartitionedDf = repartitionedDf.sortWithinPartitions(repartitionKeyColName)
     }
 
     repartitionedDf.drop(repartitionKeyColName)
