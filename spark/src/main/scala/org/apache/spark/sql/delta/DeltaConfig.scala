@@ -762,6 +762,15 @@ trait DeltaConfigsBase extends DeltaLogging {
     validationFunction = _ => true,
     helpMessage = "Casting Iceberg TIME type to Spark Long type enabled"
   )
+
+  val IGNORE_ICEBERG_BUCKET_PARTITION = buildConfig[Boolean](
+    key = "ignoreIcebergBucketPartition",
+    defaultValue = "false",
+    fromString = _.toBoolean,
+    validationFunction = _ => true,
+    helpMessage = "Ignore Iceberg bucket partition, which means " +
+      "converting source iceberg table to a non-partition delta table"
+  )
   /**
    * Enable optimized writes into a Delta table. Optimized writes adds an adaptive shuffle before
    * the write to write compacted files into a Delta table during a write.
