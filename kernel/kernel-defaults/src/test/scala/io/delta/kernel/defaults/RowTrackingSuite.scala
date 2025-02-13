@@ -47,11 +47,11 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
       engine: Engine,
       tablePath: String,
       schema: StructType,
-      writerFeatures: Seq[String]): Unit = {
+      writerFeatures: Set[String]): Unit = {
     val protocol = new Protocol(
       3, // minReaderVersion
       7, // minWriterVersion
-      Collections.emptyList(), // readerFeatures
+      Collections.emptySet(), // readerFeatures
       writerFeatures.asJava // writerFeatures
     )
     val protocolAction = SingleAction.createProtocolSingleAction(protocol.toRow)
@@ -65,7 +65,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
       schema: StructType = testSchema): Unit = {
     createTxn(engine, tablePath, isNewTable = true, schema, Seq.empty)
       .commit(engine, emptyIterable())
-    setWriterFeatureSupported(engine, tablePath, schema, Seq("domainMetadata", "rowTracking"))
+    setWriterFeatureSupported(engine, tablePath, schema, Set("domainMetadata", "rowTracking"))
   }
 
   private def verifyBaseRowIDs(
@@ -243,7 +243,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
         .commit(engine, emptyIterable())
 
       // Only 'rowTracking' is supported, not 'domainMetadata'
-      setWriterFeatureSupported(engine, tablePath, testSchema, Seq("rowTracking"))
+      setWriterFeatureSupported(engine, tablePath, testSchema, Set("rowTracking"))
 
       val dataBatch1 = generateData(testSchema, Seq.empty, Map.empty, 100, 1)
       val e = intercept[KernelException] {
