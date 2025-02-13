@@ -419,14 +419,10 @@ public class LogReplay {
     Optional<CRCInfo> crcInfoOpt =
         logSegment
             .getLatestChecksum()
-            .flatMap(
-                checksum -> {
-                  if (FileNames.getFileVersion(new Path(checksum.getPath()))
-                      < crcSearchLowerBound) {
-                    return Optional.empty();
-                  }
-                  return ChecksumReader.getCRCInfo(engine, checksum);
-                });
+            .filter(
+                checksum ->
+                    FileNames.getFileVersion(new Path(checksum.getPath())) >= crcSearchLowerBound)
+            .flatMap(checksum -> ChecksumReader.getCRCInfo(engine, checksum));
 
     if (!crcInfoOpt.isPresent()) {
       return new Tuple2<>(snapshotHint, Optional.empty());
