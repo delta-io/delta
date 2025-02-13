@@ -16,11 +16,11 @@
 package io.delta.kernel.internal.util
 
 import io.delta.kernel.exceptions.KernelException
-import io.delta.kernel.internal.util.SchemaUtils.{filterRecursively, flattenNestedFieldNames, validateSchema}
+import io.delta.kernel.internal.util.SchemaUtils.{filterRecursively, validateSchema}
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.LongType.LONG
 import io.delta.kernel.types.TimestampType.TIMESTAMP
-import io.delta.kernel.types.{ArrayType, DataType, LongType, MapType, StringType, StructField, StructType, TimestampType}
+import io.delta.kernel.types.{ArrayType, MapType, StringType, StructField, StructType}
 import org.scalatest.funsuite.AnyFunSuite
 
 import java.util.Locale
