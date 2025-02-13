@@ -178,10 +178,6 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
     Antlr4 / antlr4Version := "4.9.3",
     Test / javaOptions ++= Seq("-Dlog4j.configurationFile=log4j2.properties"),
 
-    // Java-/Scala-/Uni-Doc Settings
-    scalacOptions ++= Seq(
-      "-P:genjavadoc:strictVisibility=true" // hide package private types and methods in javadoc
-    ),
     unidocSourceFilePatterns := Seq(SourceFilePattern("io/delta/tables/", "io/delta/exceptions/"))
   )
 
