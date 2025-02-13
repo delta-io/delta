@@ -16,7 +16,7 @@
 package io.delta.kernel.internal.util
 
 import io.delta.kernel.exceptions.KernelException
-import io.delta.kernel.internal.util.SchemaUtils.{filterRecursively, validateSchema}
+import io.delta.kernel.internal.util.SchemaUtils.{filterRecursively, flattenNestedFieldNames, validateSchema}
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.LongType.LONG
 import io.delta.kernel.types.TimestampType.TIMESTAMP
@@ -310,6 +310,14 @@ class SchemaUtilsSuite extends AnyFunSuite {
         .add("b", INTEGER),
       true)
     )
+  val flattenedTestSchema = {
+    SchemaUtils.filterRecursively(
+      testSchema,
+      /* visitListMapTypes = */ true,
+      /* stopOnFirstMatch = */ false,
+      (v1: StructField) => true
+    ).asScala.map(f => f._1.asScala.mkString(".") -> f._2).toMap
+  }
   Seq(
     // Format: (testPrefix, visitListMapTypes, stopOnFirstMatch, filter, expectedColumns)
     ("Filter by name 'b', stop on first match",
@@ -350,58 +358,15 @@ class SchemaUtilsSuite extends AnyFunSuite {
       test(s"filterRecursively - $testDescription | " +
         s"visitListMapTypes=$visitListMapTypes, stopOnFirstMatch=$stopOnFirstMatch") {
 
-        // Convert the filter function to a Java function for compatibility
-        val filterJava = new java.util.function.Function[StructField, java.lang.Boolean] {
-          override def apply(v1: StructField): java.lang.Boolean = filter(v1)
-        }
-
         val results =
-          filterRecursively(testSchema, visitListMapTypes, stopOnFirstMatch, filterJava)
+          filterRecursively(testSchema, visitListMapTypes, stopOnFirstMatch,
+              (v1: StructField) => filter(v1))
+            // convert to map of column path concatenated with '.' and the StructField
+            .asScala.map(f => (f._1.asScala.mkString("."), f._2)).toMap
 
         // Assert that the number of results matches the expected columns
-        assert(results.size() === expectedColumns.size)
-
-        // Helper function to get the expected `StructField` based on a column path
-        def expectedStructField(columnPath: String): StructField = {
-          val pathSegments = columnPath.split("\\.")
-          var currentDataType: DataType = testSchema
-
-          for (i <- 0 until pathSegments.length - 1) {
-            val elem = pathSegments(i)
-
-            currentDataType = elem match {
-              case "element" => currentDataType.asInstanceOf[ArrayType].getElementType
-              case "key" => currentDataType.asInstanceOf[MapType].getKeyType
-              case "value" => currentDataType.asInstanceOf[MapType].getValueType
-              case _ => currentDataType.asInstanceOf[StructType].get(elem).getDataType
-            }
-          }
-
-          currentDataType.asInstanceOf[StructType].get(pathSegments.last)
-        }
-
-        // Helper function to find a `StructField` in the results based on a column path
-        def findStructFieldInResults(columnPath: String): StructField = {
-          for (i <- 0 until results.size()) {
-            val result = results.get(i)
-            if (result._1.asScala.mkString(".") == columnPath) {
-              return result._2
-            }
-          }
-
-          null // Return null if not found
-        }
-
-        // Verify that all expected columns are present in the results and match the schema
-        expectedColumns.foreach { expectedColumn =>
-          val actual = findStructFieldInResults(expectedColumn)
-
-          assert(actual != null, s"Expected column $expectedColumn not found in results")
-
-          val expected = expectedStructField(expectedColumn)
-
-          assert(actual === expected)
-        }
+        assert(results.size === expectedColumns.size)
+        assert(results === flattenedTestSchema.filterKeys(expectedColumns.contains))
       }
   }
 }

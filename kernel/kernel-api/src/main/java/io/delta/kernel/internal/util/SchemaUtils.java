@@ -200,6 +200,37 @@ public class SchemaUtils {
   }
 
   /////////////////////////////////////////////////////////////////////////////////////////////////
+  /// Protected methods accessible in tests                                                     ///
+  /////////////////////////////////////////////////////////////////////////////////////////////////
+  /**
+   * Returns all column names in this schema as a flat list. For example, a schema like:
+   *
+   * <pre>
+   *   | - a
+   *   | | - 1
+   *   | | - 2
+   *   | - b
+   *   | - c
+   *   | | - nest
+   *   |   | - 3
+   *   will get flattened to: "a", "a.1", "a.2", "b", "c", "c.nest", "c.nest.3"
+   * </pre>
+   */
+  static List<String> flattenNestedFieldNames(StructType schema) {
+    List<Tuple2<List<String>, StructField>> columnPathToStructFields =
+        filterRecursively(
+            schema,
+            true /* recurseIntoMapOrArrayElements */,
+            false /* stopOnFirstMatch */,
+            sf -> true);
+
+    return columnPathToStructFields.stream()
+        .map(t -> t._1)
+        .map(SchemaUtils::concatWithDot)
+        .collect(Collectors.toList());
+  }
+
+  /////////////////////////////////////////////////////////////////////////////////////////////////
   /// Private methods                                                                           ///
   /////////////////////////////////////////////////////////////////////////////////////////////////
   private static List<Tuple2<List<String>, StructField>> recurseIntoComplexTypes(
@@ -265,50 +296,9 @@ public class SchemaUtils {
     return filtered;
   }
 
-  /**
-   * Returns all column names in this schema as a flat list. For example, a schema like:
-   *
-   * <pre>
-   *   | - a
-   *   | | - 1
-   *   | | - 2
-   *   | - b
-   *   | - c
-   *   | | - nest
-   *   |   | - 3
-   *   will get flattened to: "a", "a.1", "a.2", "b", "c", "c.nest", "c.nest.3"
-   * </pre>
-   */
-  private static List<String> flattenNestedFieldNames(StructType schema) {
-    List<String> fieldNames = new ArrayList<>();
-    for (StructField field : schema.fields()) {
-      String escapedName = escapeDots(field.getName());
-      fieldNames.add(escapedName);
-      fieldNames.addAll(flattenNestedFieldNamesRecursive(escapedName, field.getDataType()));
-    }
-    return fieldNames;
-  }
-
-  private static List<String> flattenNestedFieldNamesRecursive(String prefix, DataType type) {
-    List<String> fieldNames = new ArrayList<>();
-    if (type instanceof StructType) {
-      for (StructField field : ((StructType) type).fields()) {
-        String escapedName = escapeDots(field.getName());
-        fieldNames.add(prefix + "." + escapedName);
-        fieldNames.addAll(
-            flattenNestedFieldNamesRecursive(prefix + "." + escapedName, field.getDataType()));
-      }
-    } else if (type instanceof ArrayType) {
-      fieldNames.addAll(
-          flattenNestedFieldNamesRecursive(
-              prefix + ".element", ((ArrayType) type).getElementType()));
-    } else if (type instanceof MapType) {
-      MapType mapType = (MapType) type;
-      fieldNames.addAll(flattenNestedFieldNamesRecursive(prefix + ".key", mapType.getKeyType()));
-      fieldNames.addAll(
-          flattenNestedFieldNamesRecursive(prefix + ".value", mapType.getValueType()));
-    }
-    return fieldNames;
+  /** column name by concatenating the column path elements (think of nested) with dots */
+  private static String concatWithDot(List<String> columnPath) {
+    return columnPath.stream().map(SchemaUtils::escapeDots).collect(Collectors.joining("."));
   }
 
   private static String escapeDots(String name) {
