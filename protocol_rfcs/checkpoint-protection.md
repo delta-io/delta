@@ -34,7 +34,7 @@ There are two exceptions to this rule. If any of the two holds, the rule above c
 
 a) The writer does not create any checkpoints during history cleanup and does not erase any checkpoints after the truncation version.
 
-b) The writer verifies it supports all protocols between `[cleanup start version, min(checkpoint creation version, requireCheckpointProtectionBeforeVersion)]`.
+b) The writer verifies it supports all protocols between `[start, min(requireCheckpointProtectionBeforeVersion, targetCleanupVersion)]`.
 
 The `checkpointProtection` feature can only be removed if history is truncated up to at least the `requireCheckpointProtectionBeforeVersion`.
 
