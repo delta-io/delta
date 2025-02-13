@@ -17,14 +17,20 @@
 package io.delta.kernel.internal.tablefeatures;
 
 import static io.delta.kernel.internal.DeltaErrors.*;
-import static io.delta.kernel.internal.TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED;
+import static io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode.NONE;
+import static io.delta.kernel.types.TimestampNTZType.TIMESTAMP_NTZ;
+import static io.delta.kernel.types.VariantType.VARIANT;
 
+import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.internal.DeltaErrors;
+import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.util.CaseInsensitiveMap;
 import io.delta.kernel.internal.util.SchemaUtils;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.DataType;
+import io.delta.kernel.types.FieldMetadata;
 import io.delta.kernel.types.StructType;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -32,6 +38,325 @@ import java.util.stream.Collectors;
 /** Contains utility methods related to the Delta table feature support in protocol. */
 public class TableFeatures {
 
+  /////////////////////////////////////////////////////////////////////////////////
+  /// START: Define the {@link TableFeature}s                                   ///
+  /// If feature instance variable ends with                                    ///
+  ///  1) `_W_FEATURE` it is a writer only feature.                             ///
+  ///  2) `_RW_FEATURE` it is a reader-writer feature.                          ///
+  /////////////////////////////////////////////////////////////////////////////////
+  public static final TableFeature APPEND_ONLY_W_FEATURE = new AppendOnlyFeature();
+
+  private static class AppendOnlyFeature extends TableFeature.LegacyWriterFeature {
+    AppendOnlyFeature() {
+      super(/* featureName = */ "appendOnly", /* minWriterVersion = */ 2);
+    }
+
+    @Override
+    public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
+      return TableConfig.APPEND_ONLY_ENABLED.fromMetadata(metadata);
+    }
+
+    @Override
+    public boolean hasKernelWriteSupport(Metadata metadata) {
+      return true;
+    }
+  }
+
+  public static final TableFeature INVARIANTS_W_FEATURE = new InvariantsFeature();
+
+  private static class InvariantsFeature extends TableFeature.LegacyWriterFeature {
+    InvariantsFeature() {
+      super(/* featureName = */ "invariants", /* minWriterVersion = */ 2);
+    }
+
+    @Override
+    public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
+      return hasInvariants(metadata.getSchema());
+    }
+
+    @Override
+    public boolean hasKernelWriteSupport(Metadata metadata) {
+      // If there is no invariant, then the table is supported
+      return !hasInvariants(metadata.getSchema());
+    }
+  }
+
+  public static final TableFeature CONSTRAINTS_W_FEATURE = new ConstraintsFeature();
+
+  private static class ConstraintsFeature extends TableFeature.LegacyWriterFeature {
+    ConstraintsFeature() {
+      super("constraints", /* minWriterVersion = */ 3);
+    }
+
+    @Override
+    public boolean hasKernelWriteSupport(Metadata metadata) {
+      // Kernel doesn't support table with constraints.
+      return !hasCheckConstraints(metadata);
+    }
+
+    @Override
+    public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
+      return hasCheckConstraints(metadata);
+    }
+  }
+
+  public static final TableFeature COLUMN_MAPPING_RW_FEATURE = new ColumnMappingFeature();
+
+  private static class ColumnMappingFeature extends TableFeature.LegacyReaderWriterFeature {
+    ColumnMappingFeature() {
+      super("columnMapping", /* minReaderVersion = */ 2, /* minWriterVersion = */ 5);
+    }
+
+    @Override
+    public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
+      return TableConfig.COLUMN_MAPPING_MODE.fromMetadata(metadata) != NONE;
+    }
+
+    @Override
+    public boolean hasKernelReadSupport() {
+      return true;
+    }
+
+    @Override
+    public boolean hasKernelWriteSupport(Metadata metadata) {
+      return true;
+    }
+  }
+
+  public static final TableFeature IDENTITY_COLUMNS_W_FEATURE = new IdentityColumnsFeature();
+
+  private static class IdentityColumnsFeature extends TableFeature.LegacyWriterFeature {
+    IdentityColumnsFeature() {
+      super("identity", /* minWriterVersion = */ 6);
+    }
+
+    @Override
+    public boolean hasKernelWriteSupport(Metadata metadata) {
+      return !hasIdentityColumns(metadata);
+    }
+
+    @Override
+    public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
+      return hasIdentityColumns(metadata);
+    }
+  }
+
+  public static final TableFeature VARIANT_RW_FEATURE = new VariantTypeTableFeature("variantType");
+  public static final TableFeature VARIANT_RW_PREVIEW_FEATURE =
+      new VariantTypeTableFeature("variantType-preview");
+
+  static class VariantTypeTableFeature extends TableFeature.ReaderWriterFeature
+      implements FeatureAutoEnabledByMetadata {
+    VariantTypeTableFeature(String featureName) {
+      super(
+          /* featureName = */ featureName, /* minReaderVersion = */ 3, /* minWriterVersion = */ 7);
+    }
+
+    @Override
+    public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
+      return hasTypeColumn(metadata.getSchema(), VARIANT);
+    }
+
+    @Override
+    public boolean hasKernelWriteSupport(Metadata metadata) {
+      return false; // TODO: yet to be implemented in Kernel
+    }
+  }
+
+  public static final TableFeature DOMAIN_METADATA_W_FEATURE = new DomainMetadataFeature();
+
+  private static class DomainMetadataFeature extends TableFeature.WriterFeature {
+    DomainMetadataFeature() {
+      super("domainMetadata", /* minWriterVersion = */ 7);
+    }
+  }
+
+  public static final TableFeature ROW_TRACKING_W_FEATURE = new RowTrackingFeature();
+
+  private static class RowTrackingFeature extends TableFeature.WriterFeature
+      implements FeatureAutoEnabledByMetadata {
+    RowTrackingFeature() {
+      super("rowTracking", /* minWriterVersion = */ 7);
+    }
+
+    @Override
+    public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
+      return TableConfig.ROW_TRACKING_ENABLED.fromMetadata(metadata);
+    }
+
+    @Override
+    public Set<TableFeature> requiredFeatures() {
+      return Collections.singleton(DOMAIN_METADATA_W_FEATURE);
+    }
+
+    @Override
+    public boolean hasKernelWriteSupport(Metadata metadata) {
+      return true;
+    }
+  }
+
+  public static final TableFeature DELETION_VECTORS_RW_FEATURE = new DeletionVectorsTableFeature();
+
+  private static class DeletionVectorsTableFeature extends TableFeature.ReaderWriterFeature
+      implements FeatureAutoEnabledByMetadata {
+    DeletionVectorsTableFeature() {
+      super("deletionVectors", /* minReaderVersion = */ 3, /* minWriterVersion = */ 7);
+    }
+
+    @Override
+    public boolean hasKernelWriteSupport(Metadata metadata) {
+      // We currently only support blind appends. So we don't need to do anything special for
+      // writing into a table with deletion vectors enabled.
+      return true;
+    }
+
+    @Override
+    public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
+      return TableConfig.DELETION_VECTORS_CREATION_ENABLED.fromMetadata(metadata);
+    }
+  }
+
+  public static final TableFeature ICEBERG_COMPAT_V2_W_FEATURE = new IcebergCompatV2TableFeature();
+
+  private static class IcebergCompatV2TableFeature extends TableFeature.WriterFeature
+      implements FeatureAutoEnabledByMetadata {
+    IcebergCompatV2TableFeature() {
+      super("icebergCompatV2", /* minWriterVersion = */ 7);
+    }
+
+    @Override
+    public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
+      return TableConfig.ICEBERG_COMPAT_V2_ENABLED.fromMetadata(metadata);
+    }
+
+    public @Override Set<TableFeature> requiredFeatures() {
+      return Collections.singleton(COLUMN_MAPPING_RW_FEATURE);
+    }
+  }
+
+  public static final TableFeature TYPE_WIDENING_RW_FEATURE =
+      new TypeWideningTableFeature("typeWidening");
+  public static final TableFeature TYPE_WIDENING_PREVIEW_TABLE_FEATURE =
+      new TypeWideningTableFeature("typeWidening-preview");
+
+  private static class TypeWideningTableFeature extends TableFeature.ReaderWriterFeature
+      implements FeatureAutoEnabledByMetadata {
+    TypeWideningTableFeature(String featureName) {
+      super(featureName, /* minReaderVersion = */ 3, /* minWriterVersion = */ 7);
+    }
+
+    @Override
+    public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
+      return TableConfig.TYPE_WIDENING_ENABLED.fromMetadata(metadata);
+    }
+
+    @Override
+    public boolean hasKernelWriteSupport(Metadata metadata) {
+      return false; // TODO: yet to support it.
+    }
+  }
+
+  public static final TableFeature IN_COMMIT_TIMESTAMP_W_FEATURE =
+      new InCommitTimestampTableFeature();
+
+  private static class InCommitTimestampTableFeature extends TableFeature.WriterFeature
+      implements FeatureAutoEnabledByMetadata {
+    InCommitTimestampTableFeature() {
+      super("inCommitTimestamp", /* minWriterVersion = */ 7);
+    }
+
+    @Override
+    public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
+      return TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata);
+    }
+  }
+
+  public static final TableFeature TIMESTAMP_NTZ_RW_FEATURE = new TimestampNtzTableFeature();
+
+  private static class TimestampNtzTableFeature extends TableFeature.ReaderWriterFeature
+      implements FeatureAutoEnabledByMetadata {
+    TimestampNtzTableFeature() {
+      super("timestampNtz", /* minReaderVersion = */ 3, /* minWriterVersion = */ 7);
+    }
+
+    @Override
+    public boolean hasKernelWriteSupport(Metadata metadata) {
+      return false; // TODO: yet to be implemented in Kernel
+    }
+
+    @Override
+    public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
+      return hasTypeColumn(metadata.getSchema(), TIMESTAMP_NTZ);
+    }
+  }
+
+  public static final TableFeature CHECKPOINT_V2_RW_FEATURE = new CheckpointV2TableFeature();
+
+  private static class CheckpointV2TableFeature extends TableFeature.ReaderWriterFeature
+      implements FeatureAutoEnabledByMetadata {
+    CheckpointV2TableFeature() {
+      super("v2Checkpoint", /* minReaderVersion = */ 3, /* minWriterVersion = */ 7);
+    }
+
+    @Override
+    public boolean hasKernelWriteSupport(Metadata metadata) {
+      return true; // In order to commit, there is no extra work required. This affects
+      // the checkpoint format only. When v2 is enabled, writing classic checkpoints is
+      // still allowed.
+    }
+
+    @Override
+    public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
+      // TODO: define an enum for checkpoint policy when we start supporting writing v2 checkpoints
+      return "v2".equals(TableConfig.CHECKPOINT_POLICY.fromMetadata(metadata));
+    }
+  }
+
+  public static final TableFeature VACUUM_PROTOCOL_CHECK_RW_FEATURE =
+      new VacuumProtocolCheckTableFeature();
+
+  private static class VacuumProtocolCheckTableFeature extends TableFeature.ReaderWriterFeature {
+    VacuumProtocolCheckTableFeature() {
+      super("vacuumProtocolCheck", /* minReaderVersion = */ 3, /* minWriterVersion = */ 7);
+    }
+  }
+
+  /////////////////////////////////////////////////////////////////////////////////
+  /// END: Define the {@link TableFeature}s                                     ///
+  /////////////////////////////////////////////////////////////////////////////////
+
+  public static final List<TableFeature> TABLE_FEATURES =
+      Arrays.asList(
+          CHECKPOINT_V2_RW_FEATURE,
+          COLUMN_MAPPING_RW_FEATURE,
+          CONSTRAINTS_W_FEATURE,
+          DELETION_VECTORS_RW_FEATURE,
+          DOMAIN_METADATA_W_FEATURE,
+          ICEBERG_COMPAT_V2_W_FEATURE,
+          IDENTITY_COLUMNS_W_FEATURE,
+          IN_COMMIT_TIMESTAMP_W_FEATURE,
+          INVARIANTS_W_FEATURE,
+          ROW_TRACKING_W_FEATURE,
+          TIMESTAMP_NTZ_RW_FEATURE,
+          TYPE_WIDENING_PREVIEW_TABLE_FEATURE,
+          TYPE_WIDENING_RW_FEATURE,
+          VACUUM_PROTOCOL_CHECK_RW_FEATURE,
+          VARIANT_RW_FEATURE,
+          VARIANT_RW_PREVIEW_FEATURE);
+
+  public static final CaseInsensitiveMap<TableFeature> TABLE_FEATURE_MAP =
+      new CaseInsensitiveMap<TableFeature>() {
+        {
+          for (TableFeature feature : TABLE_FEATURES) {
+            put(feature.featureName(), feature);
+          }
+        }
+      };
+
+  /////////////////////////////////////////////////////////////////////////////////
+  /// Everything below will be removed once the Kernel upgrades to use the     ///
+  /// above interfaces.                                                         ///
+  /////////////////////////////////////////////////////////////////////////////////
   private static final Set<String> SUPPORTED_WRITER_FEATURES =
       Collections.unmodifiableSet(
           new HashSet<String>() {
@@ -257,7 +582,7 @@ public class TableFeatures {
       Metadata metadata, String feature) {
     switch (feature) {
       case "inCommitTimestamp":
-        return IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata);
+        return TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata);
       default:
         return false;
     }
@@ -288,6 +613,13 @@ public class TableFeatures {
         .isEmpty();
   }
 
+  static boolean hasCheckConstraints(Metadata metadata) {
+    return metadata.getConfiguration().entrySet().stream()
+        .findAny()
+        .map(entry -> entry.getKey().equals("delta.constraints."))
+        .orElse(false);
+  }
+
   /**
    * Check if the table schema has a column of type. Caution: works only for the primitive types.
    */
@@ -297,6 +629,33 @@ public class TableFeatures {
             /* recurseIntoMapOrArrayElements = */ true,
             /* stopOnFirstMatch */ true,
             /* filter */ field -> field.getDataType().equals(type))
+        .isEmpty();
+  }
+
+  static boolean hasIdentityColumns(Metadata metadata) {
+    return SchemaUtils.filterRecursively(
+            metadata.getSchema(),
+            /* recurseIntoMapOrArrayElements = */ false,
+            /* stopOnFirstMatch */ true,
+            /* filter */ field -> {
+              FieldMetadata fieldMetadata = field.getMetadata();
+
+              // Check if the metadata contains the required keys
+              boolean hasStart = fieldMetadata.contains("delta.identity.start");
+              boolean hasStep = fieldMetadata.contains("delta.identity.step");
+              boolean hasInsert = fieldMetadata.contains("delta.identity.allowExplicitInsert");
+
+              // Verify that all or none of the three fields are present
+              if (!((hasStart == hasStep) && (hasStart == hasInsert))) {
+                throw new KernelException(
+                    String.format(
+                        "Inconsistent IDENTITY metadata for column %s detected: %s, %s, %s",
+                        field.getName(), hasStart, hasStep, hasInsert));
+              }
+
+              // Return true only if all three fields are present
+              return hasStart && hasStep && hasInsert;
+            })
         .isEmpty();
   }
 }
