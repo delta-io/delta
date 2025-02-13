@@ -85,8 +85,8 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
     val protocol = new Protocol(
       3, // minReaderVersion
       7, // minWriterVersion
-      Collections.emptyList(), // readerFeatures
-      Seq("domainMetadata").asJava // writerFeatures
+      Collections.emptySet(), // readerFeatures
+      Set("domainMetadata").asJava // writerFeatures
     )
 
     val protocolAction = SingleAction.createProtocolSingleAction(protocol.toRow)

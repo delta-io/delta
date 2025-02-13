@@ -65,6 +65,9 @@ public class TableFeatures {
 
   public static final String INVARIANTS_FEATURE_NAME = "invariants";
 
+  /** The minimum reader version required to support table features. */
+  public static final int TABLE_FEATURES_MIN_READER_VERSION = 3;
+
   /** The minimum writer version required to support table features. */
   public static final int TABLE_FEATURES_MIN_WRITER_VERSION = 7;
 
@@ -79,7 +82,7 @@ public class TableFeatures {
       case 2:
         break;
       case 3:
-        List<String> readerFeatures = protocol.getReaderFeatures();
+        Set<String> readerFeatures = protocol.getReaderFeatures();
         if (!SUPPORTED_READER_FEATURES.containsAll(readerFeatures)) {
           Set<String> unsupportedFeatures = new HashSet<>(readerFeatures);
           unsupportedFeatures.removeAll(SUPPORTED_READER_FEATURES);
@@ -187,8 +190,7 @@ public class TableFeatures {
       Metadata metadata, Protocol protocol) {
     return TableFeatures.SUPPORTED_WRITER_FEATURES.stream()
         .filter(f -> metadataRequiresWriterFeatureToBeEnabled(metadata, f))
-        .filter(
-            f -> protocol.getWriterFeatures() == null || !protocol.getWriterFeatures().contains(f))
+        .filter(f -> !protocol.getWriterFeatures().contains(f))
         .collect(Collectors.toSet());
   }
 
@@ -270,11 +272,7 @@ public class TableFeatures {
   }
 
   private static boolean isWriterFeatureSupported(Protocol protocol, String featureName) {
-    List<String> writerFeatures = protocol.getWriterFeatures();
-    if (writerFeatures == null) {
-      return false;
-    }
-    return writerFeatures.contains(featureName)
+    return protocol.getWriterFeatures().contains(featureName)
         && protocol.getMinWriterVersion() >= TABLE_FEATURES_MIN_WRITER_VERSION;
   }
 }
