@@ -200,7 +200,7 @@ public class SchemaUtils {
   }
 
   /////////////////////////////////////////////////////////////////////////////////////////////////
-  /// Protected methods accessible in tests                                                     ///
+  /// Private methods                                                                           ///
   /////////////////////////////////////////////////////////////////////////////////////////////////
   /**
    * Returns all column names in this schema as a flat list. For example, a schema like:
@@ -216,7 +216,7 @@ public class SchemaUtils {
    *   will get flattened to: "a", "a.1", "a.2", "b", "c", "c.nest", "c.nest.3"
    * </pre>
    */
-  static List<String> flattenNestedFieldNames(StructType schema) {
+  private static List<String> flattenNestedFieldNames(StructType schema) {
     List<Tuple2<List<String>, StructField>> columnPathToStructFields =
         filterRecursively(
             schema,
@@ -230,9 +230,6 @@ public class SchemaUtils {
         .collect(Collectors.toList());
   }
 
-  /////////////////////////////////////////////////////////////////////////////////////////////////
-  /// Private methods                                                                           ///
-  /////////////////////////////////////////////////////////////////////////////////////////////////
   private static List<Tuple2<List<String>, StructField>> recurseIntoComplexTypes(
       DataType type,
       List<String> columnPath,
