@@ -16,12 +16,15 @@
 package io.delta.kernel.internal.util
 
 import io.delta.kernel.exceptions.KernelException
-import io.delta.kernel.internal.util.SchemaUtils.validateSchema
+import io.delta.kernel.internal.util.SchemaUtils.{filterRecursively, validateSchema}
 import io.delta.kernel.types.IntegerType.INTEGER
-import io.delta.kernel.types.{ArrayType, MapType, StringType, StructType}
+import io.delta.kernel.types.LongType.LONG
+import io.delta.kernel.types.TimestampType.TIMESTAMP
+import io.delta.kernel.types.{ArrayType, DataType, LongType, MapType, StringType, StructField, StructType, TimestampType}
 import org.scalatest.funsuite.AnyFunSuite
 
 import java.util.Locale
+import scala.collection.JavaConverters._
 
 class SchemaUtilsSuite extends AnyFunSuite {
   private def expectFailure(shouldContain: String*)(f: => Unit): Unit = {
@@ -272,5 +275,133 @@ class SchemaUtilsSuite extends AnyFunSuite {
         validateSchema(schema, true /* isColumnMappingEnabled */)
       }
     }
+  }
+
+  ///////////////////////////////////////////////////////////////////////////
+  // filterRecursively
+  ///////////////////////////////////////////////////////////////////////////
+  val testSchema = new StructType()
+    .add("a", INTEGER)
+    .add("b", INTEGER)
+    .add("c", LONG)
+    .add("s", new StructType()
+      .add("a", TIMESTAMP)
+      .add("e", INTEGER)
+      .add("f", LONG)
+      .add("g", new StructType()
+        .add("a", INTEGER)
+        .add("b", TIMESTAMP)
+        .add("c", LONG)
+      ).add("h", new MapType(
+        new StructType().add("a", TIMESTAMP),
+        new StructType().add("b", INTEGER),
+        true)
+      ).add("i", new ArrayType(
+        new StructType().add("b", TIMESTAMP),
+        true)
+      )
+    ).add("d", new MapType(
+      new StructType().add("b", TIMESTAMP),
+      new StructType().add("a", INTEGER),
+      true)
+    ).add("e", new ArrayType(
+      new StructType()
+        .add("f", TIMESTAMP)
+        .add("b", INTEGER),
+      true)
+    )
+  Seq(
+    // Format: (testPrefix, visitListMapTypes, stopOnFirstMatch, filter, expectedColumns)
+    ("Filter by name 'b', stop on first match",
+      true, true, (field: StructField) => field.getName == "b", Seq("b")),
+    ("Filter by name 'b', visit all matches",
+      false, false, (field: StructField) => field.getName == "b",
+      Seq("b", "s.g.b")),
+    ("Filter by name 'b', visit all matches including nested structures",
+      true, false, (field: StructField) => field.getName == "b",
+      Seq(
+        "b",
+        "s.g.b",
+        "s.h.value.b",
+        "s.i.element.b",
+        "d.key.b",
+        "e.element.b"
+      )),
+    ("Filter by TIMESTAMP type, stop on first match",
+      false, true, (field: StructField) => field.getDataType == TIMESTAMP,
+      Seq("s.a")),
+    ("Filter by TIMESTAMP type, visit all matches including nested structures",
+      true, false, (field: StructField) => field.getDataType == TIMESTAMP,
+      Seq(
+        "s.a",
+        "s.g.b",
+        "s.h.key.a",
+        "s.i.element.b",
+        "d.key.b",
+        "e.element.f"
+      )),
+    ("Filter by TIMESTAMP type and name 'f', visit all matches", true, false,
+      (field: StructField) => field.getDataType == TIMESTAMP && field.getName == "f",
+      Seq("e.element.f")),
+    ("Filter by non-existent field name 'z'",
+      true, false, (field: StructField) => field.getName == "z", Seq())
+  ).foreach {
+    case (testDescription, visitListMapTypes, stopOnFirstMatch, filter, expectedColumns) =>
+      test(s"filterRecursively - $testDescription | " +
+        s"visitListMapTypes=$visitListMapTypes, stopOnFirstMatch=$stopOnFirstMatch") {
+
+        // Convert the filter function to a Java function for compatibility
+        val filterJava = new java.util.function.Function[StructField, java.lang.Boolean] {
+          override def apply(v1: StructField): java.lang.Boolean = filter(v1)
+        }
+
+        val results =
+          filterRecursively(testSchema, visitListMapTypes, stopOnFirstMatch, filterJava)
+
+        // Assert that the number of results matches the expected columns
+        assert(results.size() === expectedColumns.size)
+
+        // Helper function to get the expected `StructField` based on a column path
+        def expectedStructField(columnPath: String): StructField = {
+          val pathSegments = columnPath.split("\\.")
+          var currentDataType: DataType = testSchema
+
+          for (i <- 0 until pathSegments.length - 1) {
+            val elem = pathSegments(i)
+
+            currentDataType = elem match {
+              case "element" => currentDataType.asInstanceOf[ArrayType].getElementType
+              case "key" => currentDataType.asInstanceOf[MapType].getKeyType
+              case "value" => currentDataType.asInstanceOf[MapType].getValueType
+              case _ => currentDataType.asInstanceOf[StructType].get(elem).getDataType
+            }
+          }
+
+          currentDataType.asInstanceOf[StructType].get(pathSegments.last)
+        }
+
+        // Helper function to find a `StructField` in the results based on a column path
+        def findStructFieldInResults(columnPath: String): StructField = {
+          for (i <- 0 until results.size()) {
+            val result = results.get(i)
+            if (result._1.asScala.mkString(".") == columnPath) {
+              return result._2
+            }
+          }
+
+          null // Return null if not found
+        }
+
+        // Verify that all expected columns are present in the results and match the schema
+        expectedColumns.foreach { expectedColumn =>
+          val actual = findStructFieldInResults(expectedColumn)
+
+          assert(actual != null, s"Expected column $expectedColumn not found in results")
+
+          val expected = expectedStructField(expectedColumn)
+
+          assert(actual === expected)
+        }
+      }
   }
 }

@@ -21,7 +21,9 @@ import static io.delta.kernel.internal.TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED;
 
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.util.SchemaUtils;
 import io.delta.kernel.internal.util.Tuple2;
+import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StructType;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -260,15 +262,6 @@ public class TableFeatures {
     }
   }
 
-  private static void validateNoInvariants(StructType tableSchema) {
-    boolean hasInvariants =
-        tableSchema.fields().stream()
-            .anyMatch(field -> field.getMetadata().contains("delta.invariants"));
-    if (hasInvariants) {
-      throw columnInvariantsNotSupported();
-    }
-  }
-
   private static boolean isWriterFeatureSupported(Protocol protocol, String featureName) {
     List<String> writerFeatures = protocol.getWriterFeatures();
     if (writerFeatures == null) {
@@ -276,5 +269,33 @@ public class TableFeatures {
     }
     return writerFeatures.contains(featureName)
         && protocol.getMinWriterVersion() >= TABLE_FEATURES_MIN_WRITER_VERSION;
+  }
+
+  private static void validateNoInvariants(StructType tableSchema) {
+    if (hasInvariants(tableSchema)) {
+      throw DeltaErrors.columnInvariantsNotSupported();
+    }
+  }
+
+  static boolean hasInvariants(StructType tableSchema) {
+    return !SchemaUtils.filterRecursively(
+            tableSchema,
+            /* recurseIntoMapOrArrayElements = */ false, // constraints are not allowed in maps or
+            // arrays
+            /* stopOnFirstMatch */ true,
+            /* filter */ field -> field.getMetadata().contains("delta.invariants"))
+        .isEmpty();
+  }
+
+  /**
+   * Check if the table schema has a column of type. Caution: works only for the primitive types.
+   */
+  static boolean hasTypeColumn(StructType tableSchema, DataType type) {
+    return !SchemaUtils.filterRecursively(
+            tableSchema,
+            /* recurseIntoMapOrArrayElements = */ true,
+            /* stopOnFirstMatch */ true,
+            /* filter */ field -> field.getDataType().equals(type))
+        .isEmpty();
   }
 }

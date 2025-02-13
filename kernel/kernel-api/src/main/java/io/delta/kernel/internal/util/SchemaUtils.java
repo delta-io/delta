@@ -22,6 +22,7 @@ import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.types.*;
 import java.util.*;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
@@ -175,6 +176,93 @@ public class SchemaUtils {
       }
     }
     return -1;
+  }
+
+  /**
+   * Finds `StructField`s that match a given check `f`. Returns the path to the column, and the
+   * field of all fields that match the check.
+   *
+   * @param schema The DataType to filter
+   * @param recurseIntoMapOrArrayElements This flag defines whether we should recurse into elements
+   *     types of ArrayType and MapType.
+   * @param f The function to check each StructField
+   * @param stopOnFirstMatch If true, stop the search when the first match is found
+   * @return A List of pairs, each containing a List of Strings (the path) and a StructField. If
+   *     {@code stopOnFirstMatch} is true, the list will contain at most one element.
+   */
+  public static List<Tuple2<List<String>, StructField>> filterRecursively(
+      DataType schema,
+      boolean recurseIntoMapOrArrayElements,
+      boolean stopOnFirstMatch,
+      Function<StructField, Boolean> f) {
+    return recurseIntoComplexTypes(
+        schema, new ArrayList<>(), recurseIntoMapOrArrayElements, stopOnFirstMatch, f);
+  }
+
+  /////////////////////////////////////////////////////////////////////////////////////////////////
+  /// Private methods                                                                           ///
+  /////////////////////////////////////////////////////////////////////////////////////////////////
+  private static List<Tuple2<List<String>, StructField>> recurseIntoComplexTypes(
+      DataType type,
+      List<String> columnPath,
+      boolean recurseIntoMapOrArrayElements,
+      boolean stopOnFirstMatch,
+      Function<StructField, Boolean> f) {
+    List<Tuple2<List<String>, StructField>> filtered = new ArrayList<>();
+
+    if (type instanceof StructType) {
+      StructType s = (StructType) type;
+      for (StructField sf : s.fields()) {
+        List<String> newColumnPath = new ArrayList<>(columnPath);
+        newColumnPath.add(sf.getName());
+
+        if (f.apply(sf)) {
+          filtered.add(new Tuple2<>(newColumnPath, sf));
+          if (stopOnFirstMatch) {
+            return filtered;
+          }
+        }
+
+        filtered.addAll(
+            recurseIntoComplexTypes(
+                sf.getDataType(),
+                newColumnPath,
+                recurseIntoMapOrArrayElements,
+                stopOnFirstMatch,
+                f));
+
+        if (stopOnFirstMatch && !filtered.isEmpty()) {
+          return filtered;
+        }
+      }
+    } else if (type instanceof ArrayType && recurseIntoMapOrArrayElements) {
+      ArrayType a = (ArrayType) type;
+      List<String> newColumnPath = new ArrayList<>(columnPath);
+      newColumnPath.add("element");
+      return recurseIntoComplexTypes(
+          a.getElementType(), newColumnPath, recurseIntoMapOrArrayElements, stopOnFirstMatch, f);
+    } else if (type instanceof MapType && recurseIntoMapOrArrayElements) {
+      MapType m = (MapType) type;
+      List<String> keyColumnPath = new ArrayList<>(columnPath);
+      keyColumnPath.add("key");
+      List<String> valueColumnPath = new ArrayList<>(columnPath);
+      valueColumnPath.add("value");
+      filtered.addAll(
+          recurseIntoComplexTypes(
+              m.getKeyType(), keyColumnPath, recurseIntoMapOrArrayElements, stopOnFirstMatch, f));
+      if (stopOnFirstMatch && !filtered.isEmpty()) {
+        return filtered;
+      }
+      filtered.addAll(
+          recurseIntoComplexTypes(
+              m.getValueType(),
+              valueColumnPath,
+              recurseIntoMapOrArrayElements,
+              stopOnFirstMatch,
+              f));
+    }
+
+    return filtered;
   }
 
   /**
