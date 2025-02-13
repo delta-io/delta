@@ -35,6 +35,7 @@ import org.apache.spark.sql.delta.stats.DeletedRecordCountsHistogram
 import org.apache.spark.sql.delta.stats.FileSizeHistogram
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
+import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.hadoop.fs.FileStatus
 import org.apache.hadoop.fs.Path
@@ -440,7 +441,7 @@ trait RecordChecksum extends DeltaLogging {
           deltaLog,
           opType = "delta.allFilesInCrc.checksumMismatch.aggregated",
           data = eventData)
-        if (Utils.isTesting) {
+        if (DeltaUtils.isTesting) {
           throw new IllegalStateException("Incrementally Computed State failed checksum check" +
             s" for commit $attemptVersion [$eventData]")
         }
@@ -825,7 +826,7 @@ trait ValidateChecksum extends DeltaLogging { self: Snapshot =>
       this.deltaLog,
       opType = "delta.allFilesInCrc.checksumMismatch.differentAllFiles",
       data = eventData)
-    if (Utils.isTesting) throw new IllegalStateException(message)
+    if (DeltaUtils.isTesting) throw new IllegalStateException(message)
     false
   }
   /**

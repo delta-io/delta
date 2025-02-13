@@ -26,7 +26,7 @@ import scala.collection.JavaConverters._
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterBySpec}
 import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
-import org.apache.spark.sql.delta.commands.AlterTableDropFeatureDeltaCommand
+import org.apache.spark.sql.delta.commands.{AlterTableDropFeatureDeltaCommand, DeltaGenerateCommand}
 import org.apache.spark.sql.delta.constraints.Constraints
 import org.apache.spark.sql.delta.hooks.AutoCompactType
 import org.apache.spark.sql.delta.hooks.PostCommitHook
@@ -1699,12 +1699,22 @@ trait DeltaErrorsBase
     ex
   }
 
-  def unsupportedGenerateModeException(modeName: String): Throwable = {
-    import org.apache.spark.sql.delta.commands.DeltaGenerateCommand
-    val supportedModes = DeltaGenerateCommand.modeNameToGenerationFunc.keys.toSeq.mkString(", ")
+  private def unsupportedModeException(modeName: String, supportedModes: String): Throwable = {
     new DeltaIllegalArgumentException(
       errorClass = "DELTA_MODE_NOT_SUPPORTED",
       messageParameters = Array(modeName, supportedModes))
+  }
+
+  def unsupportedColumnMappingModeException(modeName: String): Throwable = {
+    val supportedColumnMappingModes =
+      DeltaColumnMapping.supportedModes.map(_.name).toSeq.mkString(", ")
+    unsupportedModeException(modeName, supportedColumnMappingModes)
+  }
+
+  def unsupportedGenerateModeException(modeName: String): Throwable = {
+    val supportedGenerateCommandModes =
+      DeltaGenerateCommand.modeNameToGenerationFunc.keys.toSeq.mkString(", ")
+    unsupportedModeException(modeName, supportedGenerateCommandModes)
   }
 
   def illegalUsageException(option: String, operation: String): Throwable = {

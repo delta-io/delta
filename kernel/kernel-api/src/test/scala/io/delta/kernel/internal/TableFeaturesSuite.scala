@@ -47,15 +47,13 @@ class TableFeaturesSuite extends AnyFunSuite {
   test("validateWriteSupported: protocol 2 with invariants") {
     checkUnsupported(
       createTestProtocol(minWriterVersion = 2),
-      metadata = createTestMetadata(),
-      schema = createTestSchema(includeInvariant = true))
+      metadata = createTestMetadata(includeVariant = true))
   }
 
   test("validateWriteSupported: protocol 2, with appendOnly and invariants") {
     checkUnsupported(
       createTestProtocol(minWriterVersion = 2),
-      metadata = createTestMetadata(),
-      schema = createTestSchema(includeInvariant = true))
+      metadata = createTestMetadata(includeVariant = true))
   }
 
   Seq(3, 4, 5, 6).foreach { minWriterVersion =>
@@ -90,33 +88,28 @@ class TableFeaturesSuite extends AnyFunSuite {
 
   test("validateWriteSupported: protocol 7 with invariants, schema doesn't contain invariants") {
     checkSupported(
-      createTestProtocol(minWriterVersion = 7, "invariants"),
-      metadata = createTestMetadata(),
-      schema = createTestSchema(includeInvariant = false)
+      createTestProtocol(minWriterVersion = 7, "invariants")
     )
   }
 
   test("validateWriteSupported: protocol 7 with invariants, schema contains invariants") {
     checkUnsupported(
       createTestProtocol(minWriterVersion = 7, "invariants"),
-      metadata = createTestMetadata(),
-      schema = createTestSchema(includeInvariant = true)
+      metadata = createTestMetadata(includeVariant = true)
     )
   }
 
   def checkSupported(
     protocol: Protocol,
-    metadata: Metadata = null,
-    schema: StructType = createTestSchema()): Unit = {
-    validateWriteSupportedTable(protocol, metadata, schema, "/test/table")
+    metadata: Metadata = createTestMetadata()): Unit = {
+    validateWriteSupportedTable(protocol, metadata, "/test/table")
   }
 
   def checkUnsupported(
     protocol: Protocol,
-    metadata: Metadata = null,
-    schema: StructType = createTestSchema()): Unit = {
+    metadata: Metadata = createTestMetadata()): Unit = {
     intercept[KernelException] {
-      validateWriteSupportedTable(protocol, metadata, schema, "/test/table")
+      validateWriteSupportedTable(protocol, metadata, "/test/table")
     }
   }
 
@@ -131,18 +124,20 @@ class TableFeaturesSuite extends AnyFunSuite {
     )
   }
 
-  def createTestMetadata(withAppendOnly: Boolean = false): Metadata = {
+  def createTestMetadata(
+      withAppendOnly: Boolean = false, includeVariant: Boolean = false): Metadata = {
     var config: Map[String, String] = Map()
     if (withAppendOnly) {
       config = Map("delta.appendOnly" -> "true");
     }
+    val testSchema = createTestSchema(includeVariant);
     new Metadata(
       "id",
       Optional.of("name"),
       Optional.of("description"),
       new Format("parquet", Collections.emptyMap()),
-      "sss",
-      new StructType(),
+      testSchema.toJson,
+      testSchema,
       new ArrayValue() { // partitionColumns
         override def getSize = 1
 

@@ -107,6 +107,11 @@ public class LogReplay {
         .add(REMOVEFILE_FIELD_NAME, REMOVE_FILE_SCHEMA);
   }
 
+  /** Read schema when searching only for AddFiles */
+  public static StructType getAddReadSchema(boolean shouldReadStats) {
+    return new StructType().add(ADDFILE_FIELD_NAME, getAddSchema(shouldReadStats));
+  }
+
   public static int ADD_FILE_ORDINAL = 0;
   public static int ADD_FILE_PATH_ORDINAL = AddFile.SCHEMA_WITHOUT_STATS.indexOf("path");
   public static int ADD_FILE_DV_ORDINAL = AddFile.SCHEMA_WITHOUT_STATS.indexOf("deletionVector");
@@ -197,11 +202,15 @@ public class LogReplay {
       boolean shouldReadStats,
       Optional<Predicate> checkpointPredicate,
       ScanMetrics scanMetrics) {
+    // We do not need to look at any `remove` files from the checkpoints. Skip the column to save
+    // I/O. Note that we are still going to process the row groups. Adds and removes are randomly
+    // scattered through checkpoint part files, so row group push down is unlikely to be useful.
     final CloseableIterator<ActionWrapper> addRemoveIter =
         new ActionsIterator(
             engine,
             logSegment.allLogFilesReversed(),
             getAddRemoveReadSchema(shouldReadStats),
+            getAddReadSchema(shouldReadStats),
             checkpointPredicate);
     return new ActiveAddFilesIterator(engine, addRemoveIter, dataPath, scanMetrics);
   }
@@ -278,8 +287,7 @@ public class LogReplay {
 
               if (protocol != null) {
                 // Stop since we have found the latest Protocol and Metadata.
-                TableFeatures.validateReadSupportedTable(
-                    protocol, dataPath.toString(), Optional.of(metadata));
+                TableFeatures.validateReadSupportedTable(protocol, dataPath.toString());
                 return new Tuple2<>(protocol, metadata);
               }
 

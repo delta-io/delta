@@ -16,36 +16,25 @@
 
 package io.delta.kernel.internal.snapshot;
 
-import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
-import static io.delta.kernel.internal.TableConfig.EXPIRED_LOG_CLEANUP_ENABLED;
-import static io.delta.kernel.internal.TableConfig.LOG_RETENTION;
-import static io.delta.kernel.internal.TableFeatures.validateWriteSupportedTable;
 import static io.delta.kernel.internal.replay.LogReplayUtils.assertLogFilesBelongToTable;
-import static io.delta.kernel.internal.snapshot.MetadataCleanup.cleanupExpiredLogs;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.lang.String.format;
 
 import io.delta.kernel.*;
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.exceptions.CheckpointAlreadyExistsException;
 import io.delta.kernel.exceptions.InvalidTableException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.*;
-import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.checkpoints.*;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.ListUtils;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
-import io.delta.kernel.internal.replay.CreateCheckpointIterator;
 import io.delta.kernel.internal.replay.LogReplay;
-import io.delta.kernel.internal.util.Clock;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.FileNames.DeltaLogFileType;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.utils.FileStatus;
-import java.io.*;
-import java.nio.file.FileAlreadyExistsException;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
@@ -60,13 +49,13 @@ public class SnapshotManager {
    */
   private final AtomicReference<SnapshotHint> latestSnapshotHint;
 
-  private final Path logPath;
   private final Path tablePath;
+  private final Path logPath;
 
-  public SnapshotManager(Path logPath, Path tablePath) {
+  public SnapshotManager(Path tablePath) {
     this.latestSnapshotHint = new AtomicReference<>();
-    this.logPath = logPath;
     this.tablePath = tablePath;
+    this.logPath = new Path(tablePath, "_delta_log");
   }
 
   private static final Logger logger = LoggerFactory.getLogger(SnapshotManager.class);
@@ -102,7 +91,8 @@ public class SnapshotManager {
    * @throws TableNotFoundException if the table does not exist
    * @throws InvalidTableException if the table is in an invalid state
    */
-  public Snapshot getSnapshotAt(Engine engine, long version, SnapshotQueryContext snapshotContext)
+  public SnapshotImpl getSnapshotAt(
+      Engine engine, long version, SnapshotQueryContext snapshotContext)
       throws TableNotFoundException {
     final LogSegment logSegment =
         getLogSegmentForVersion(engine, Optional.of(version) /* versionToLoadOpt */);
@@ -146,65 +136,6 @@ public class SnapshotManager {
     snapshotContext.setVersion(versionToRead);
 
     return getSnapshotAt(engine, versionToRead, snapshotContext);
-  }
-
-  public void checkpoint(Engine engine, Clock clock, long version)
-      throws TableNotFoundException, IOException {
-    logger.info("{}: Starting checkpoint for version: {}", tablePath, version);
-    // Get the snapshot corresponding the version
-    SnapshotImpl snapshot =
-        (SnapshotImpl)
-            getSnapshotAt(
-                engine,
-                version,
-                SnapshotQueryContext.forVersionSnapshot(tablePath.toString(), version));
-
-    // Check if writing to the given table protocol version/features is supported in Kernel
-    validateWriteSupportedTable(
-        snapshot.getProtocol(), snapshot.getMetadata(), snapshot.getSchema(), tablePath.toString());
-
-    Path checkpointPath = FileNames.checkpointFileSingular(logPath, version);
-
-    long numberOfAddFiles = 0;
-    try (CreateCheckpointIterator checkpointDataIter =
-        snapshot.getCreateCheckpointIterator(engine)) {
-      // Write the iterator actions to the checkpoint using the Parquet handler
-      wrapEngineExceptionThrowsIO(
-          () -> {
-            engine
-                .getParquetHandler()
-                .writeParquetFileAtomically(checkpointPath.toString(), checkpointDataIter);
-            return null;
-          },
-          "Writing checkpoint file %s",
-          checkpointPath.toString());
-
-      logger.info("{}: Checkpoint file is written for version: {}", tablePath, version);
-
-      // Get the metadata of the checkpoint file
-      numberOfAddFiles = checkpointDataIter.getNumberOfAddActions();
-    } catch (FileAlreadyExistsException faee) {
-      throw new CheckpointAlreadyExistsException(version);
-    }
-
-    CheckpointMetaData checkpointMetaData =
-        new CheckpointMetaData(version, numberOfAddFiles, Optional.empty());
-
-    Checkpointer checkpointer = new Checkpointer(logPath);
-    checkpointer.writeLastCheckpointFile(engine, checkpointMetaData);
-
-    logger.info("{}: Last checkpoint metadata file is written for version: {}", tablePath, version);
-
-    logger.info("{}: Finished checkpoint for version: {}", tablePath, version);
-
-    // Clean up delta log files if enabled.
-    Metadata metadata = snapshot.getMetadata();
-    if (EXPIRED_LOG_CLEANUP_ENABLED.fromMetadata(metadata)) {
-      cleanupExpiredLogs(engine, clock, tablePath, LOG_RETENTION.fromMetadata(metadata));
-    } else {
-      logger.info(
-          "{}: Log cleanup is disabled. Skipping the deletion of expired log files", tablePath);
-    }
   }
 
   ////////////////////
@@ -621,10 +552,7 @@ public class SnapshotManager {
                       });
             })
         .orElseGet(
-            () -> {
-              logger.info("Loading last checkpoint from the _last_checkpoint file");
-              return new Checkpointer(logPath).readLastCheckpointFile(engine).map(x -> x.version);
-            });
+            () -> new Checkpointer(logPath).readLastCheckpointFile(engine).map(x -> x.version));
   }
 
   private void logDebugFileStatuses(String varName, List<FileStatus> fileStatuses) {

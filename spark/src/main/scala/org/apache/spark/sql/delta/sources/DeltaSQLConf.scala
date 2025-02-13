@@ -24,7 +24,7 @@ import org.apache.spark.network.util.ByteUnit
 import org.apache.spark.sql.catalyst.FileSourceOptions
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.storage.StorageLevel
-import org.apache.spark.util.Utils
+import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 
 /**
  * [[SQLConf]] entries for Delta features.
@@ -2423,21 +2423,21 @@ trait DeltaSQLConfBase {
       .internal()
       .doc("If true, post-commit hooks will by default throw an exception when they fail.")
       .booleanConf
-      .createWithDefault(Utils.isTesting)
+      .createWithDefault(DeltaUtils.isTesting)
 
   val TEST_FILE_NAME_PREFIX =
     buildStaticConf("testOnly.dataFileNamePrefix")
       .internal()
       .doc("[TEST_ONLY]: The prefix to use for the names of all Parquet data files.")
       .stringConf
-      .createWithDefault(if (Utils.isTesting) "test%file%prefix-" else "")
+      .createWithDefault(if (DeltaUtils.isTesting) "test%file%prefix-" else "")
 
   val TEST_DV_NAME_PREFIX =
     buildStaticConf("testOnly.dvFileNamePrefix")
       .internal()
       .doc("[TEST_ONLY]: The prefix to use for the names of all Deletion Vector files.")
       .stringConf
-      .createWithDefault(if (Utils.isTesting) "test%dv%prefix-" else "")
+      .createWithDefault(if (DeltaUtils.isTesting) "test%dv%prefix-" else "")
 
   ///////////
   // UTC TIMESTAMP PARTITION VALUES

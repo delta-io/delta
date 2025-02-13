@@ -33,13 +33,13 @@ import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.util.DeltaProgressReporter
 import org.apache.spark.sql.delta.util.JsonUtils
+import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.util.ScalaExtensions._
 
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkThrowable
 import org.apache.spark.internal.{LoggingShims, MDC, MessageWithContext}
-import org.apache.spark.util.Utils
 
 /**
  * Convenience wrappers for logging that include delta specific options and
@@ -153,7 +153,7 @@ trait DeltaLogging
       data: AnyRef = null,
       path: Option[Path] = None)
     : Unit = {
-    if (Utils.isTesting) {
+    if (DeltaUtils.isTesting) {
       assert(check, msg)
     } else if (!check) {
       recordDeltaEvent(
