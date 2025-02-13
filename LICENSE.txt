@@ -386,3 +386,13 @@ license, which is reproduced here as well:
    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
    See the License for the specific language governing permissions and
    limitations under the License.
+
+--------------------------------------------------------------------------------
+
+This product includes code from Apache Iceberg.
+
+* io.delta.kernel.internal.util.IcebergTypeToStructType visitor implementation based on org.apache.iceberg.spark.TypeToSparkType
+
+Copyright: 2018-2024 The Apache Software Foundation
+Home page: https://iceberg.apache.org/
+License: https://www.apache.org/licenses/LICENSE-2.0

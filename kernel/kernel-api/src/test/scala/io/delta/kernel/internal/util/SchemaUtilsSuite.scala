@@ -18,7 +18,10 @@ package io.delta.kernel.internal.util
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.util.SchemaUtils.validateSchema
 import io.delta.kernel.types.IntegerType.INTEGER
-import io.delta.kernel.types.{ArrayType, MapType, StringType, StructType}
+import io.delta.kernel.types.{ArrayType, BinaryType, BooleanType, DateType, DecimalType, DoubleType, FieldMetadata, FloatType, LongType, MapType, StringType, StructType, TimestampNTZType, TimestampType}
+import org.apache.iceberg.Schema
+import org.apache.iceberg.types.Types
+import org.apache.iceberg.types.Types.NestedField.{optional, required}
 import org.scalatest.funsuite.AnyFunSuite
 
 import java.util.Locale
@@ -272,5 +275,67 @@ class SchemaUtilsSuite extends AnyFunSuite {
         validateSchema(schema, true /* isColumnMappingEnabled */)
       }
     }
+  }
+
+  ///////////////////////////////////////////////////////////////////////////
+  // Iceberg Schema Conversion
+  ///////////////////////////////////////////////////////////////////////////
+  test("check Iceberg schema conversion") {
+    val icebergSchema = new Schema(Types.StructType.of(
+      optional(1, "intCol", Types.IntegerType.get),
+      optional(3, "longCol", Types.LongType.get),
+      required(9, "doubleCol", Types.DoubleType.get),
+      required(10, "uuidCol", Types.UUIDType.get),
+      optional(2, "booleanCol", Types.BooleanType.get),
+      optional(21, "fixedCol", Types.FixedType.ofLength(4096)),
+      required(22, "binaryCol", Types.BinaryType.get),
+      required(23, "stringCol", Types.StringType.get),
+      required(25, "floatCol", Types.FloatType.get),
+      optional(30, "dateCol", Types.DateType.get),
+      required(34, "timestampCol", Types.TimestampType.withZone),
+      required(35, "timestampNtzCol", Types.TimestampType.withoutZone()),
+      required(114, "dec_9_0", Types.DecimalType.of(9, 0)),
+      required(115, "dec_11_2", Types.DecimalType.of(11, 2)),
+      required(116, "dec_38_10", Types.DecimalType.of(38, 10)),
+      required(117, "struct", Types.StructType.of(
+        Types.NestedField.required(118, "nested_struct", Types.StructType.of(
+          Types.NestedField.required(119, "nested_integer", Types.IntegerType.get()),
+          Types.NestedField.optional(120, "nested_string", Types.StringType.get()))))),
+      required(121, "map", Types.MapType.ofRequired(
+        122, 123, Types.StringType.get(), Types.StringType.get())),
+      optional(124, "array", Types.ListType.ofRequired(125, Types.LongType.get()))).fields())
+
+    val convertedSchema = SchemaUtils.icebergToDeltaSchema(icebergSchema)
+
+    val expectedDeltaSchema = new StructType()
+    .add("intCol", INTEGER, true, icebergFieldMetadata(1))
+    .add("longCol", LongType.LONG, true, icebergFieldMetadata(3))
+    .add("doubleCol", DoubleType.DOUBLE, false, icebergFieldMetadata(9))
+    .add("uuidCol", StringType.STRING, false, icebergFieldMetadata(10))
+    .add("booleanCol", BooleanType.BOOLEAN, true, icebergFieldMetadata(2))
+    .add("fixedCol", BinaryType.BINARY, true, icebergFieldMetadata(21))
+    .add("binaryCol", BinaryType.BINARY, false, icebergFieldMetadata(22))
+    .add("stringCol", StringType.STRING, false, icebergFieldMetadata(23))
+    .add("floatCol", FloatType.FLOAT, false, icebergFieldMetadata(25))
+    .add("dateCol", DateType.DATE, true, icebergFieldMetadata(30))
+    .add("timestampCol", TimestampType.TIMESTAMP, false, icebergFieldMetadata(34))
+    .add("timestampNtzCol", TimestampNTZType.TIMESTAMP_NTZ, false, icebergFieldMetadata(35))
+    .add("dec_9_0", new DecimalType(9, 0), false, icebergFieldMetadata(114))
+    .add("dec_11_2", new DecimalType(11, 2), false, icebergFieldMetadata(115))
+    .add("dec_38_10", new DecimalType(38, 10), false, icebergFieldMetadata(116))
+    .add("struct", new StructType()
+      .add("nested_struct",
+        new StructType().add("nested_integer", INTEGER, false, icebergFieldMetadata(119))
+          .add("nested_string", StringType.STRING, true, icebergFieldMetadata(120)),
+        false, icebergFieldMetadata(118)), false, icebergFieldMetadata(117))
+    .add("map", new MapType(StringType.STRING, StringType.STRING, false),
+      false, icebergFieldMetadata(121))
+    .add("array", new ArrayType(LongType.LONG, false), true, icebergFieldMetadata(124))
+
+    assert(convertedSchema.equals(expectedDeltaSchema))
+  }
+
+  private def icebergFieldMetadata(id: Int): FieldMetadata = {
+    FieldMetadata.builder().putLong(ColumnMapping.COLUMN_MAPPING_ID_KEY, id).build()
   }
 }
