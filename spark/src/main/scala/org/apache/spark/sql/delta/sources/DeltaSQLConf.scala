@@ -24,7 +24,7 @@ import org.apache.spark.network.util.ByteUnit
 import org.apache.spark.sql.catalyst.FileSourceOptions
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.storage.StorageLevel
-import org.apache.spark.util.Utils
+import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 
 /**
  * [[SQLConf]] entries for Delta features.
@@ -1263,6 +1263,22 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_ALLOW_TYPE_WIDENING_STREAMING_SOURCE =
+    buildConf("typeWidening.allowTypeChangeStreamingDeltaSource")
+      .doc("Accept incoming widening type changes when streaming from a Delta source.")
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_TYPE_WIDENING_BYPASS_STREAMING_TYPE_CHANGE_CHECK =
+    buildConf("typeWidening.bypassStreamingTypeChangeCheck")
+      .doc("Controls the check performed when a type change is detected when streaming from a " +
+        "Delta source. This check fails the streaming query in case a type change may impact the " +
+        "semantics of the query and requests user intervention.")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
   /**
    * Internal config to bypass check that prevents applying type changes that are not supported by
    * Iceberg when Uniform is enabled with Iceberg compatibility.
@@ -1500,6 +1516,15 @@ trait DeltaSQLConfBase {
          "have a negative impact on overall min/max skipping effectiveness.")
       .booleanConf
       .createWithDefault(true)
+
+  val MDC_SORT_WITHIN_FILES =
+    SQLConf.buildConf("spark.databricks.io.skipping.mdc.sortWithinFiles")
+      .internal()
+      .doc("If enabled, sort within files by the specified MDC curve. " +
+         "This might improve row-group skipping and data compression, at " +
+         "the cost of additional overhead for sorting.")
+      .booleanConf
+      .createWithDefault(false)
 
   val DELTA_OPTIMIZE_ZORDER_COL_STAT_CHECK =
     buildConf("optimize.zorder.checkStatsCollection.enabled")
@@ -2398,21 +2423,21 @@ trait DeltaSQLConfBase {
       .internal()
       .doc("If true, post-commit hooks will by default throw an exception when they fail.")
       .booleanConf
-      .createWithDefault(Utils.isTesting)
+      .createWithDefault(DeltaUtils.isTesting)
 
   val TEST_FILE_NAME_PREFIX =
     buildStaticConf("testOnly.dataFileNamePrefix")
       .internal()
       .doc("[TEST_ONLY]: The prefix to use for the names of all Parquet data files.")
       .stringConf
-      .createWithDefault(if (Utils.isTesting) "test%file%prefix-" else "")
+      .createWithDefault(if (DeltaUtils.isTesting) "test%file%prefix-" else "")
 
   val TEST_DV_NAME_PREFIX =
     buildStaticConf("testOnly.dvFileNamePrefix")
       .internal()
       .doc("[TEST_ONLY]: The prefix to use for the names of all Deletion Vector files.")
       .stringConf
-      .createWithDefault(if (Utils.isTesting) "test%dv%prefix-" else "")
+      .createWithDefault(if (DeltaUtils.isTesting) "test%dv%prefix-" else "")
 
   ///////////
   // UTC TIMESTAMP PARTITION VALUES

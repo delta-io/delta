@@ -21,6 +21,7 @@ import java.sql.{Date, Timestamp}
 
 import scala.concurrent.duration._
 
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
 import org.apache.spark.sql.delta.sources.{DeltaSink, DeltaSQLConf}
 
 import org.apache.spark.{SparkArithmeticException, SparkThrowable}
@@ -119,7 +120,8 @@ abstract class DeltaSinkImplicitCastSuiteBase extends DeltaSinkTest {
 /**
  * Covers handling implicit casting to handle type mismatches when writing data to a Delta sink.
  */
-class DeltaSinkImplicitCastSuite extends DeltaSinkImplicitCastSuiteBase {
+class DeltaSinkImplicitCastSuite extends DeltaSinkImplicitCastSuiteBase
+  with CoordinatedCommitsBaseSuite {
   import testImplicits._
 
   test(s"write wider type - long -> int") {
@@ -549,4 +551,12 @@ class DeltaSinkImplicitCastSuite extends DeltaSinkImplicitCastSuiteBase {
       }
     }
   }
+}
+
+class DeltaSinkImplicitCastWithCoordinatedCommitsBatch1Suite extends DeltaSinkImplicitCastSuite {
+  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(1)
+}
+
+class DeltaSinkImplicitCastWithCoordinatedCommitsBatch100Suite extends DeltaSinkImplicitCastSuite {
+  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(100)
 }

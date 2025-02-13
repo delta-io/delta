@@ -1223,14 +1223,16 @@ trait DataSkippingReaderBase
     import DeltaTableUtils._
     val partitionColumns = metadata.partitionColumns
 
-    // For data skipping, avoid using the filters that involve subqueries.
-
-    val (subqueryFilters, flatFilters) = filters.partition {
-      case f => containsSubquery(f)
+    // For data skipping, avoid using the filters that either:
+    // 1. involve subqueries.
+    // 2. are non-deterministic.
+    var (ineligibleFilters, eligibleFilters) = filters.partition {
+      case f => containsSubquery(f) || !f.deterministic
     }
 
-    val (partitionFilters, dataFilters) = flatFilters
-        .partition(isPredicatePartitionColumnsOnly(_, partitionColumns, spark))
+
+    val (partitionFilters, dataFilters) = eligibleFilters
+      .partition(isPredicatePartitionColumnsOnly(_, partitionColumns, spark))
 
     if (dataFilters.isEmpty) recordDeltaOperation(deltaLog, "delta.skipping.partition") {
       // When there are only partition filters we can scan allFiles
@@ -1247,7 +1249,7 @@ trait DataSkippingReaderBase
         dataFilters = ExpressionSet(Nil),
         partitionLikeDataFilters = ExpressionSet(Nil),
         rewrittenPartitionLikeDataFilters = Set.empty,
-        unusedFilters = ExpressionSet(subqueryFilters),
+        unusedFilters = ExpressionSet(ineligibleFilters),
         scanDurationMs = System.currentTimeMillis() - startTime,
         dataSkippingType =
           getCorrectDataSkippingType(DeltaDataSkippingType.partitionFilteringOnlyV1)
@@ -1324,7 +1326,7 @@ trait DataSkippingReaderBase
         dataFilters = ExpressionSet(skippingFilters.map(_._1)),
         partitionLikeDataFilters = ExpressionSet(partitionLikeFilters.map(_._1)),
         rewrittenPartitionLikeDataFilters = partitionLikeFilters.map(_._2.expr.expr).toSet,
-        unusedFilters = ExpressionSet(unusedFilters.map(_._1) ++ subqueryFilters),
+        unusedFilters = ExpressionSet(unusedFilters.map(_._1) ++ ineligibleFilters),
         scanDurationMs = System.currentTimeMillis() - startTime,
         dataSkippingType = getCorrectDataSkippingType(dataSkippingType)
       )

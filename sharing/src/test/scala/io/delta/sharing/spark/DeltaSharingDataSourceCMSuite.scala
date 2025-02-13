@@ -473,7 +473,8 @@ class DeltaSharingDataSourceCMSuite
       )
     }.toString
     assert(error.contains("DELTA_STREAMING_CANNOT_CONTINUE_PROCESSING_POST_SCHEMA_EVOLUTION"))
-    assert(error.contains("delta.streaming.allowSourceColumnRenameAndDrop"))
+    assert(error.contains("delta.streaming.allowSourceColumnRename") ||
+      error.contains("delta.streaming.allowSourceColumnDrop"))
   }
 
   private def processWithSqlConf(
@@ -867,6 +868,88 @@ class DeltaSharingDataSourceCMSuite
               (1, "two", null),
               (null, "four", 4),
               (null, "five", 5)
+            ).toDF()
+          )
+        }
+      }
+    }
+  }
+
+  test("streaming works with column type widened") {
+    // Technically not a column mapping test, but type widening and column mapping are handled in
+    // the same way in DeltaSource, as non-additive schema changes.
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      val deltaTableName = "delta_table_column_type_widened"
+      withTable(deltaTableName) {
+        sql(s"""CREATE TABLE $deltaTableName (c1 BYTE, c2 STRING) USING DELTA PARTITIONED BY (c2)
+           |TBLPROPERTIES ('delta.enableTypeWidening' = 'true')
+           |""".stripMargin)
+        val sharedTableName = "shared_table_column_type_widened"
+        val profileFile = prepareProfileFile(inputDir)
+        val tablePath = profileFile.getCanonicalPath + s"#share1.default.$sharedTableName"
+
+        withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
+          // 1. Able to stream snapshot at version 1.
+          prepareProcessAndCheckInitSnapshot(
+            deltaTableName = deltaTableName,
+            sharedTableName = sharedTableName,
+            sharedTablePath = tablePath,
+            checkpointDirStr = checkpointDir.toString,
+            outputDir = outputDir,
+            useSchemaTracking = true
+          )
+
+          // Enable type widening on the sink to automatically change the type when writing to it
+          // after widening the type in the source.
+          sql(s"""ALTER TABLE delta.`$outputDir`
+              |SET TBLPROPERTIES ('delta.enableTypeWidening' = 'true')
+              |""".stripMargin)
+
+          // 2. change column type at version 2
+          sql(s"ALTER TABLE $deltaTableName ALTER COLUMN c1 TYPE INT")
+          prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+          prepareMockedClientMetadata(deltaTableName, sharedTableName)
+          prepareMockedClientAndFileSystemResultForStreaming(
+            deltaTableName,
+            sharedTableName,
+            2,
+            2
+          )
+
+          // Needs 3 restarts for deltaSource to catch up.
+          expectMetadataEvolutionException(tablePath, checkpointDir.toString, outputDir.toString)
+          val error = intercept[StreamingQueryException] {
+            processStreamWithSchemaTracking(tablePath, checkpointDir.toString, outputDir.toString)
+          }.toString()
+          assert(error.contains("DELTA_STREAMING_CANNOT_CONTINUE_PROCESSING_TYPE_WIDENING"))
+          assert(error.contains("delta.streaming.allowSourceColumnTypeChange"))
+
+          // Unblocking allows the type change to go through
+          spark.conf.set("spark.databricks.delta.streaming.allowSourceColumnTypeChange", "always")
+          processStreamWithSchemaTracking(tablePath, checkpointDir.toString, outputDir.toString)
+
+          // 3. insert at version 3
+          InsertToDeltaTable(deltaTableName, s"""(${Int.MaxValue}, "max")""")
+          prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+          prepareMockedClientAndFileSystemResultForStreaming(
+            deltaTableName,
+            sharedTableName,
+            2,
+            3
+          )
+
+          processStreamWithSchemaTracking(
+            tablePath,
+            checkpointDir.toString,
+            outputDir.toString
+          )
+          checkAnswer(
+            spark.read.format("delta").load(outputDir.getCanonicalPath),
+            Seq[(java.lang.Integer, String)](
+              (1, "one"),
+              (2, "one"),
+              (1, "two"),
+              (Int.MaxValue, "max")
             ).toDF()
           )
         }

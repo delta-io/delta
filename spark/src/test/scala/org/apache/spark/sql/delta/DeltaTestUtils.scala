@@ -32,7 +32,7 @@ import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
-import org.apache.spark.sql.delta.util.FileNames
+import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames}
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.scala.DefaultScalaModule
 import io.delta.tables.{DeltaTable => IODeltaTable}
@@ -282,7 +282,7 @@ trait DeltaTestUtilsBase {
   sealed trait ExpectedResult[-T]
   object ExpectedResult {
     case class Success[T](expected: T) extends ExpectedResult[T]
-    case class Failure[T](checkError: SparkThrowable => Unit) extends ExpectedResult[T]
+    case class Failure[T](checkError: SparkThrowable => Unit = _ => ()) extends ExpectedResult[T]
   }
 
   /** Utility method to check exception `e` is of type `E` or a cause of it is of type `E` */
@@ -450,6 +450,29 @@ object DeltaTestUtils extends DeltaTestUtilsBase {
     // Just a more readable version of `lteq`.
     def fulfillsVersionRequirements(actual: Protocol, requirement: Protocol): Boolean =
       lteq(requirement, actual)
+  }
+
+  def modifyCommitTimestamp(deltaLog: DeltaLog, version: Long, ts: Long): Unit = {
+    val filePath = DeltaCommitFileProvider(deltaLog.update()).deltaFile(version)
+    val file = new File(filePath.toUri)
+    InCommitTimestampTestUtils.overwriteICTInDeltaFile(
+      deltaLog,
+      new Path(file.getPath),
+      Some(ts))
+    file.setLastModified(ts)
+    if (FileNames.isUnbackfilledDeltaFile(filePath)) {
+      // Also change the ICT in the backfilled file if it exists.
+      val backfilledFilePath = FileNames.unsafeDeltaFile(deltaLog.logPath, version)
+      val fs = backfilledFilePath.getFileSystem(deltaLog.newDeltaHadoopConf())
+      if (fs.exists(backfilledFilePath)) {
+        InCommitTimestampTestUtils.overwriteICTInDeltaFile(deltaLog, backfilledFilePath, Some(ts))
+      }
+    }
+    val crc = new File(FileNames.checksumFile(deltaLog.logPath, version).toUri)
+    if (crc.exists()) {
+      InCommitTimestampTestUtils.overwriteICTInCrc(deltaLog, version, Some(ts))
+      crc.setLastModified(ts)
+    }
   }
 
   def withTimeZone(zone: String)(f: => Unit): Unit = {
