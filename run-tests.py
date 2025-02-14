@@ -209,6 +209,10 @@ def run_tests_in_docker(image_tag, test_group):
     if test_parallelism is not None:
         envs = envs + "-e TEST_PARALLELISM_COUNT=%s " % test_parallelism
 
+    disable_unidoc = os.getenv("DISABLE_UNIDOC")
+    if disable_unidoc is not None:
+        envs = envs + "-e DISABLE_UNIDOC=%s " % disable_unidoc
+
     cwd = os.getcwd()
     test_script = os.path.basename(__file__)
 
