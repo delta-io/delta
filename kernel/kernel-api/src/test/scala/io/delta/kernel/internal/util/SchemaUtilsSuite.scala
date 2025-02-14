@@ -16,12 +16,15 @@
 package io.delta.kernel.internal.util
 
 import io.delta.kernel.exceptions.KernelException
-import io.delta.kernel.internal.util.SchemaUtils.validateSchema
+import io.delta.kernel.internal.util.SchemaUtils.{filterRecursively, validateSchema}
 import io.delta.kernel.types.IntegerType.INTEGER
-import io.delta.kernel.types.{ArrayType, MapType, StringType, StructType}
+import io.delta.kernel.types.LongType.LONG
+import io.delta.kernel.types.TimestampType.TIMESTAMP
+import io.delta.kernel.types.{ArrayType, MapType, StringType, StructField, StructType}
 import org.scalatest.funsuite.AnyFunSuite
 
 import java.util.Locale
+import scala.collection.JavaConverters._
 
 class SchemaUtilsSuite extends AnyFunSuite {
   private def expectFailure(shouldContain: String*)(f: => Unit): Unit = {
@@ -272,5 +275,98 @@ class SchemaUtilsSuite extends AnyFunSuite {
         validateSchema(schema, true /* isColumnMappingEnabled */)
       }
     }
+  }
+
+  ///////////////////////////////////////////////////////////////////////////
+  // filterRecursively
+  ///////////////////////////////////////////////////////////////////////////
+  val testSchema = new StructType()
+    .add("a", INTEGER)
+    .add("b", INTEGER)
+    .add("c", LONG)
+    .add("s", new StructType()
+      .add("a", TIMESTAMP)
+      .add("e", INTEGER)
+      .add("f", LONG)
+      .add("g", new StructType()
+        .add("a", INTEGER)
+        .add("b", TIMESTAMP)
+        .add("c", LONG)
+      ).add("h", new MapType(
+        new StructType().add("a", TIMESTAMP),
+        new StructType().add("b", INTEGER),
+        true)
+      ).add("i", new ArrayType(
+        new StructType().add("b", TIMESTAMP),
+        true)
+      )
+    ).add("d", new MapType(
+      new StructType().add("b", TIMESTAMP),
+      new StructType().add("a", INTEGER),
+      true)
+    ).add("e", new ArrayType(
+      new StructType()
+        .add("f", TIMESTAMP)
+        .add("b", INTEGER),
+      true)
+    )
+  val flattenedTestSchema = {
+    SchemaUtils.filterRecursively(
+      testSchema,
+      /* visitListMapTypes = */ true,
+      /* stopOnFirstMatch = */ false,
+      (v1: StructField) => true
+    ).asScala.map(f => f._1.asScala.mkString(".") -> f._2).toMap
+  }
+  Seq(
+    // Format: (testPrefix, visitListMapTypes, stopOnFirstMatch, filter, expectedColumns)
+    ("Filter by name 'b', stop on first match",
+      true, true, (field: StructField) => field.getName == "b", Seq("b")),
+    ("Filter by name 'b', visit all matches",
+      false, false, (field: StructField) => field.getName == "b",
+      Seq("b", "s.g.b")),
+    ("Filter by name 'b', visit all matches including nested structures",
+      true, false, (field: StructField) => field.getName == "b",
+      Seq(
+        "b",
+        "s.g.b",
+        "s.h.value.b",
+        "s.i.element.b",
+        "d.key.b",
+        "e.element.b"
+      )),
+    ("Filter by TIMESTAMP type, stop on first match",
+      false, true, (field: StructField) => field.getDataType == TIMESTAMP,
+      Seq("s.a")),
+    ("Filter by TIMESTAMP type, visit all matches including nested structures",
+      true, false, (field: StructField) => field.getDataType == TIMESTAMP,
+      Seq(
+        "s.a",
+        "s.g.b",
+        "s.h.key.a",
+        "s.i.element.b",
+        "d.key.b",
+        "e.element.f"
+      )),
+    ("Filter by TIMESTAMP type and name 'f', visit all matches", true, false,
+      (field: StructField) => field.getDataType == TIMESTAMP && field.getName == "f",
+      Seq("e.element.f")),
+    ("Filter by non-existent field name 'z'",
+      true, false, (field: StructField) => field.getName == "z", Seq())
+  ).foreach {
+    case (testDescription, visitListMapTypes, stopOnFirstMatch, filter, expectedColumns) =>
+      test(s"filterRecursively - $testDescription | " +
+        s"visitListMapTypes=$visitListMapTypes, stopOnFirstMatch=$stopOnFirstMatch") {
+
+        val results =
+          filterRecursively(testSchema, visitListMapTypes, stopOnFirstMatch,
+              (v1: StructField) => filter(v1))
+            // convert to map of column path concatenated with '.' and the StructField
+            .asScala.map(f => (f._1.asScala.mkString("."), f._2)).toMap
+
+        // Assert that the number of results matches the expected columns
+        assert(results.size === expectedColumns.size)
+        assert(results === flattenedTestSchema.filterKeys(expectedColumns.contains))
+      }
   }
 }
