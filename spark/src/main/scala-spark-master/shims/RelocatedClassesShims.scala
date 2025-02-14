@@ -16,13 +16,11 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.Column
-import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.classic.{Dataset => DatasetImpl, SparkSession => SparkSessionImpl, DataFrameWriter => DataFrameWriterImpl}
 
-/**
- * Conversions from a [[org.apache.spark.sql.Column]] to an
- * [[org.apache.spark.sql.catalyst.expressions.Expression]], and vice versa.
- */
-object ClassicColumnConversions {
-  def expression(c: Column): Expression = c.expr
+object Relocated {
+  type Dataset[E] = DatasetImpl[E]
+  type SparkSession = SparkSessionImpl
+  def setActiveSession(session: SparkSession): Unit = SparkSessionImpl.setActiveSession(session)
+  val dataFrameWriterClassName = classOf[DataFrameWriterImpl[_]].getCanonicalName
 }

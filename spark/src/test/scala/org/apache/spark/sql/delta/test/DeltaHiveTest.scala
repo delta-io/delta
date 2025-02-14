@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.test
 
-import org.apache.spark.sql.delta.TestCompatibility._
+import org.apache.spark.sql.delta.Relocated._
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import io.delta.sql.DeltaSparkSessionExtension

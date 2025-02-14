@@ -21,6 +21,7 @@ import java.util.concurrent.TimeUnit
 
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.Relocated
 import org.apache.spark.sql.delta.DeltaColumnMapping.{dropColumnMappingMetadata, filterColumnMappingProperties}
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.actions.DomainMetadata
@@ -793,7 +794,7 @@ case class CreateDeltaTableCommand(
    */
   private def isV1Writer: Boolean = {
     Thread.currentThread().getStackTrace.exists(_.toString.contains(
-      classOf[DataFrameWriter[_]].getCanonicalName + "."))
+      Relocated.dataFrameWriterClassName + "."))
   }
 
   /** Returns true if the current operation could be replacing a table. */

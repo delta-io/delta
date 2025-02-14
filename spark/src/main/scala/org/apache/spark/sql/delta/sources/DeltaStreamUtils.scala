@@ -20,7 +20,9 @@ import scala.collection.mutable
 
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.{Column, DataFrame, Dataset, Encoder}
+import org.apache.spark.sql.delta.Relocated.Dataset
+
+import org.apache.spark.sql.{Column, DataFrame, Encoder}
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.execution.QueryExecution
 import org.apache.spark.sql.execution.streaming.{IncrementalExecution, IncrementalExecutionShims, StreamExecution}

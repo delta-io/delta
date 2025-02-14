@@ -35,8 +35,3 @@ object ClassicColumnConversions
   with ColumnConversions {
   override def converter: ColumnNodeToExpressionConverter = ColumnNodeToExpressionConverter
 }
-
-object TestCompatibility {
-  type SparkSession = SparkSessionImpl
-  def setActiveSession(session: SparkSession): Unit = SparkSessionImpl.setActiveSession(session)
-}
