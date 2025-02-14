@@ -85,7 +85,7 @@ public class TableFeatures {
 
   private static class ConstraintsFeature extends TableFeature.LegacyWriterFeature {
     ConstraintsFeature() {
-      super("constraints", /* minWriterVersion = */ 3);
+      super("checkConstraints", /* minWriterVersion = */ 3);
     }
 
     @Override
@@ -100,11 +100,29 @@ public class TableFeatures {
     }
   }
 
+  public static final TableFeature CHANGE_DATA_FEED_W_FEATURE = new ChangeDataFeedFeature();
+
+  private static class ChangeDataFeedFeature extends TableFeature.LegacyWriterFeature {
+    ChangeDataFeedFeature() {
+      super("changeDataFeed", /* minWriterVersion = */ 4);
+    }
+
+    @Override
+    public boolean hasKernelWriteSupport(Metadata metadata) {
+      return false; // TODO: yet to be implemented in Kernel
+    }
+
+    @Override
+    public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
+      return TableConfig.CHANGE_DATA_FEED_ENABLED.fromMetadata(metadata);
+    }
+  }
+
   public static final TableFeature COLUMN_MAPPING_RW_FEATURE = new ColumnMappingFeature();
 
   private static class ColumnMappingFeature extends TableFeature.LegacyReaderWriterFeature {
     ColumnMappingFeature() {
-      super("columnMapping", /* minReaderVersion = */ 2, /* minWriterVersion = */ 5);
+      super("columnMapping", /*minReaderVersion = */ 2, /* minWriterVersion = */ 5);
     }
 
     @Override
@@ -113,11 +131,30 @@ public class TableFeatures {
     }
   }
 
+  public static final TableFeature GENERATED_COLUMNS_W_FEATURE = new GeneratedColumnsFeature();
+
+  private static class GeneratedColumnsFeature extends TableFeature.LegacyWriterFeature {
+    GeneratedColumnsFeature() {
+      super("generatedColumns", /* minWriterVersion = */ 4);
+    }
+
+    @Override
+    public boolean hasKernelWriteSupport(Metadata metadata) {
+      // Kernel can write as long as there are no generated columns defined
+      return !hasGeneratedColumns(metadata);
+    }
+
+    @Override
+    public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
+      return hasGeneratedColumns(metadata);
+    }
+  }
+
   public static final TableFeature IDENTITY_COLUMNS_W_FEATURE = new IdentityColumnsFeature();
 
   private static class IdentityColumnsFeature extends TableFeature.LegacyWriterFeature {
     IdentityColumnsFeature() {
-      super("identity", /* minWriterVersion = */ 6);
+      super("identityColumns", /* minWriterVersion = */ 6);
     }
 
     @Override
@@ -306,32 +343,46 @@ public class TableFeatures {
   /////////////////////////////////////////////////////////////////////////////////
 
   public static final List<TableFeature> TABLE_FEATURES =
-      Arrays.asList(
-          CHECKPOINT_V2_RW_FEATURE,
-          COLUMN_MAPPING_RW_FEATURE,
-          CONSTRAINTS_W_FEATURE,
-          DELETION_VECTORS_RW_FEATURE,
-          DOMAIN_METADATA_W_FEATURE,
-          ICEBERG_COMPAT_V2_W_FEATURE,
-          IDENTITY_COLUMNS_W_FEATURE,
-          IN_COMMIT_TIMESTAMP_W_FEATURE,
-          INVARIANTS_W_FEATURE,
-          ROW_TRACKING_W_FEATURE,
-          TIMESTAMP_NTZ_RW_FEATURE,
-          TYPE_WIDENING_PREVIEW_TABLE_FEATURE,
-          TYPE_WIDENING_RW_FEATURE,
-          VACUUM_PROTOCOL_CHECK_RW_FEATURE,
-          VARIANT_RW_FEATURE,
-          VARIANT_RW_PREVIEW_FEATURE);
+      Collections.unmodifiableList(
+          Arrays.asList(
+              APPEND_ONLY_W_FEATURE,
+              CHECKPOINT_V2_RW_FEATURE,
+              CHANGE_DATA_FEED_W_FEATURE,
+              COLUMN_MAPPING_RW_FEATURE,
+              CONSTRAINTS_W_FEATURE,
+              DELETION_VECTORS_RW_FEATURE,
+              GENERATED_COLUMNS_W_FEATURE,
+              DOMAIN_METADATA_W_FEATURE,
+              ICEBERG_COMPAT_V2_W_FEATURE,
+              IDENTITY_COLUMNS_W_FEATURE,
+              IN_COMMIT_TIMESTAMP_W_FEATURE,
+              INVARIANTS_W_FEATURE,
+              ROW_TRACKING_W_FEATURE,
+              TIMESTAMP_NTZ_RW_FEATURE,
+              TYPE_WIDENING_PREVIEW_TABLE_FEATURE,
+              TYPE_WIDENING_RW_FEATURE,
+              VACUUM_PROTOCOL_CHECK_RW_FEATURE,
+              VARIANT_RW_FEATURE,
+              VARIANT_RW_PREVIEW_FEATURE));
 
-  public static final CaseInsensitiveMap<TableFeature> TABLE_FEATURE_MAP =
-      new CaseInsensitiveMap<TableFeature>() {
-        {
-          for (TableFeature feature : TABLE_FEATURES) {
-            put(feature.featureName(), feature);
-          }
-        }
-      };
+  public static final Map<String, TableFeature> TABLE_FEATURE_MAP =
+      Collections.unmodifiableMap(
+          new CaseInsensitiveMap<TableFeature>() {
+            {
+              for (TableFeature feature : TABLE_FEATURES) {
+                put(feature.featureName(), feature);
+              }
+            }
+          });
+
+  /** Get the table feature by name. Case-insensitive lookup. If not found, throws error. */
+  public static TableFeature getTableFeature(String featureName) {
+    TableFeature tableFeature = TABLE_FEATURE_MAP.get(featureName);
+    if (tableFeature == null) {
+      throw DeltaErrors.unsupportedTableFeature(featureName);
+    }
+    return tableFeature;
+  }
 
   /////////////////////////////////////////////////////////////////////////////////
   /// Everything below will be removed once the Kernel upgrades to use the     ///
@@ -583,27 +634,28 @@ public class TableFeatures {
     }
   }
 
-  static boolean hasInvariants(StructType tableSchema) {
+  private static boolean hasInvariants(StructType tableSchema) {
     return !SchemaUtils.filterRecursively(
             tableSchema,
-            /* recurseIntoMapOrArrayElements = */ false, // constraints are not allowed in maps or
+            /* recurseIntoMapOrArrayElements = */ false, // invariants are not allowed in maps or
+            // arrays
             // arrays
             /* stopOnFirstMatch */ true,
             /* filter */ field -> field.getMetadata().contains("delta.invariants"))
         .isEmpty();
   }
 
-  static boolean hasCheckConstraints(Metadata metadata) {
+  private static boolean hasCheckConstraints(Metadata metadata) {
     return metadata.getConfiguration().entrySet().stream()
         .findAny()
-        .map(entry -> entry.getKey().equals("delta.constraints."))
+        .map(entry -> entry.getKey().startsWith("delta.constraints."))
         .orElse(false);
   }
 
   /**
    * Check if the table schema has a column of type. Caution: works only for the primitive types.
    */
-  static boolean hasTypeColumn(StructType tableSchema, DataType type) {
+  private static boolean hasTypeColumn(StructType tableSchema, DataType type) {
     return !SchemaUtils.filterRecursively(
             tableSchema,
             /* recurseIntoMapOrArrayElements = */ true,
@@ -612,10 +664,11 @@ public class TableFeatures {
         .isEmpty();
   }
 
-  static boolean hasIdentityColumns(Metadata metadata) {
-    return SchemaUtils.filterRecursively(
+  private static boolean hasIdentityColumns(Metadata metadata) {
+    return !SchemaUtils.filterRecursively(
             metadata.getSchema(),
-            /* recurseIntoMapOrArrayElements = */ false,
+            /* recurseIntoMapOrArrayElements = */ false, // don't expected identity columns in
+            // nested columns
             /* stopOnFirstMatch */ true,
             /* filter */ field -> {
               FieldMetadata fieldMetadata = field.getMetadata();
@@ -636,6 +689,16 @@ public class TableFeatures {
               // Return true only if all three fields are present
               return hasStart && hasStep && hasInsert;
             })
+        .isEmpty();
+  }
+
+  private static boolean hasGeneratedColumns(Metadata metadata) {
+    return !SchemaUtils.filterRecursively(
+            metadata.getSchema(),
+            /* recurseIntoMapOrArrayElements = */ false, // don't expected generated columns in
+            // nested columns
+            /* stopOnFirstMatch */ true,
+            /* filter */ field -> field.getMetadata().contains("delta.generationExpression"))
         .isEmpty();
   }
 }

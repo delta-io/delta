@@ -183,7 +183,7 @@ public abstract class TableFeature {
 
   /** A base class for all table legacy reader-writer features. */
   public abstract static class LegacyReaderWriterFeature extends TableFeature
-      implements LegacyFeatureType {
+      implements LegacyFeatureType, ReaderWriterFeatureType {
     public LegacyReaderWriterFeature(
         String featureName, int minReaderVersion, int minWriterVersion) {
       super(featureName, minReaderVersion, minWriterVersion);
