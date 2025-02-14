@@ -16,25 +16,24 @@ With these changes, we can drop table features in a single command without needi
 
 --------
 
-
-> ***New Section***
+> ***Add a new section at the [Table Features](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#table-features) section***
 # Checkpoint Protection
 
-The `checkpointProtection` is a Writer feature that allows writers to clean up metadata iff metadata can be cleaned up to the `requireCheckpointProtectionBeforeVersion` table property in one go.
+The `checkpointProtection` is a Writer feature that allows writers to clean up metadata if and only if metadata can be cleaned up to the `requireCheckpointProtectionBeforeVersion` table property in one go.
 
 Enablement:
-- The table must be on Writer Version 7 and Reader Version 1.
+- The table must be at least on Writer Version 7 and Reader Version 1.
 - The feature `checkpointProtection` must exist in the table `protocol`'s `writerFeatures`.
 
 ## Writer Requirements for Checkpoint Protection
 
-For tables with `checkpointProtection` supported in the protocol, writers need to check `requireCheckpointProtectionBeforeVersion` before cleaning up metadata. Metadata clean up can proceed iff metadata can be cleaned up to the `requireCheckpointProtectionBeforeVersion` table property in one go. This means that a single cleanup operation should truncate up to `requireCheckpointProtectionBeforeVersion` as opposed to several cleanup operations truncating in chunks.
+For tables with `checkpointProtection` supported in the protocol, writers need to check `requireCheckpointProtectionBeforeVersion` before cleaning up metadata. Metadata clean up can proceed if and only if metadata can be cleaned up to the `requireCheckpointProtectionBeforeVersion` table property in one go. This means that a single cleanup operation should truncate up to `requireCheckpointProtectionBeforeVersion` as opposed to several cleanup operations truncating in chunks.
 
 There are two exceptions to this rule. If any of the two holds, the rule above can be ignored:
 
 a) The writer does not create any checkpoints during history cleanup and does not erase any checkpoints after the truncation version.
 
-b) The writer verifies it supports all protocols between `[start, min(requireCheckpointProtectionBeforeVersion, targetCleanupVersion)]`.
+b) The writer verifies it supports all protocols in the closed range `[start, min(requireCheckpointProtectionBeforeVersion, targetCleanupVersion)]`.
 
 The `checkpointProtection` feature can only be removed if history is truncated up to at least the `requireCheckpointProtectionBeforeVersion`.
 
