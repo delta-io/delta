@@ -407,7 +407,7 @@ public class LogReplay {
       snapshotHint = Optional.empty();
     }
 
-    long crcSearchLowerBound =
+    long crcReadLowerBound =
         max(
             asList(
                 // Prefer reading hint over CRC, so start listing from hint's version + 1,
@@ -421,7 +421,7 @@ public class LogReplay {
             .getLatestChecksum()
             .filter(
                 checksum ->
-                    FileNames.getFileVersion(new Path(checksum.getPath())) >= crcSearchLowerBound)
+                    FileNames.getFileVersion(new Path(checksum.getPath())) >= crcReadLowerBound)
             .flatMap(checksum -> ChecksumReader.getCRCInfo(engine, checksum));
 
     if (!crcInfoOpt.isPresent()) {

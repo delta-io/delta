@@ -218,8 +218,10 @@ public class DeltaLogActionUtils {
         startVersion,
         endVersionOpt);
 
+    // This variable is used to help determine if we should throw an error if the table history is
+    // not reconstructable. Only commit and checkpoint files are applicable.
     // Must be final to be used in lambda
-    final AtomicBoolean hasReturnedlogOrCheckPoint = new AtomicBoolean(false);
+    final AtomicBoolean hasReturnedCommitOrCheckpoint = new AtomicBoolean(false);
 
     return listLogDir(engine, tablePath, startVersion)
         .breakableFilter(
@@ -254,7 +256,7 @@ public class DeltaLogActionUtils {
                 final long endVersion = endVersionOpt.get();
 
                 if (fileVersion > endVersion) {
-                  if (mustBeRecreatable && !hasReturnedlogOrCheckPoint.get()) {
+                  if (mustBeRecreatable && !hasReturnedCommitOrCheckpoint.get()) {
                     final long earliestVersion =
                         DeltaHistoryManager.getEarliestRecreatableCommit(engine, logPath);
                     throw DeltaErrors.versionBeforeFirstAvailableCommit(
@@ -269,10 +271,9 @@ public class DeltaLogActionUtils {
                 }
               }
 
-              // Only log and checkpoint could use to construct table state.
               if (FileNames.isCommitFile(getName(fs.getPath()))
                   || FileNames.isCheckpointFile(getName(fs.getPath()))) {
-                hasReturnedlogOrCheckPoint.set(true);
+                hasReturnedCommitOrCheckpoint.set(true);
               }
 
               return BreakableFilterResult.INCLUDE;
