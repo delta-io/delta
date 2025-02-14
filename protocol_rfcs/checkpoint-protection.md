@@ -30,7 +30,7 @@ Enablement:
 
 For tables with `checkpointProtection` supported in the protocol, writers need to check `requireCheckpointProtectionBeforeVersion` before cleaning up metadata. Metadata clean up can proceed if and only if metadata can be cleaned up to the `requireCheckpointProtectionBeforeVersion` table property in one go. This means that a single cleanup operation should truncate up to `requireCheckpointProtectionBeforeVersion` as opposed to several cleanup operations truncating in chunks. Furthermore, before removing checkpoints, all associated commits need to be removed first. This operation should have the same atomicity guarantees (if any) as with the regular metadata cleanup operation.
 
-We can allow history truncation at an earlier commit, as long as checkpoints are removed together with the associated commits, if any of the two following exceptions hold:
+We can allow history truncation at an earlier commit, as long as checkpoints are removed together with the associated commits, and if any of the two following exceptions hold:
 
 a) The writer does not create any checkpoints during history cleanup and does not erase any checkpoints after the truncation version.
 
