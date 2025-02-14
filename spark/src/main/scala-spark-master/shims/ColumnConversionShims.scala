@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.classic.ClassicConversions
 import org.apache.spark.sql.classic.ColumnConversions
+import org.apache.spark.sql.classic.ColumnNodeToExpressionConverter
 
 /**
  * Conversions from a [[org.apache.spark.sql.Column]] to an
@@ -30,4 +31,6 @@ import org.apache.spark.sql.classic.ColumnConversions
  */
 object ClassicColumnConversions
   extends ClassicConversions
-  with ColumnConversions
+  with ColumnConversions {
+  override def converter: ColumnNodeToExpressionConverter = ColumnNodeToExpressionConverter
+}
