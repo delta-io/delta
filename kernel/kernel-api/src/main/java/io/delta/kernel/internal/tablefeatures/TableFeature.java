@@ -60,8 +60,8 @@ public abstract class TableFeature {
    * Constructor. Does validations to make sure:
    *
    * <ul>
-   *   <li>Feature name is not null or empty and has valid characters</li>
-   *   <li>minReaderVersion is always 0 for writer features</li>
+   *   <li>Feature name is not null or empty and has valid characters
+   *   <li>minReaderVersion is always 0 for writer features
    * </ul>
    *
    * @param featureName a globally-unique string indicator to represent the feature. All characters
