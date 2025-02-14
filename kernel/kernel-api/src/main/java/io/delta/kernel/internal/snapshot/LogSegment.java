@@ -51,7 +51,7 @@ public class LogSegment {
   private final List<FileStatus> deltas;
   private final List<FileStatus> checkpoints;
   private final Optional<Long> checkpointVersionOpt;
-  private final Optional<FileStatus> latestChecksum;
+  private final Optional<FileStatus> lastSeenChecksum;
   private final long lastCommitTimestamp;
   private final Lazy<List<FileStatus>> allFiles;
   private final Lazy<List<FileStatus>> allFilesReversed;
@@ -86,7 +86,7 @@ public class LogSegment {
       long version,
       List<FileStatus> deltas,
       List<FileStatus> checkpoints,
-      Optional<FileStatus> latestChecksum,
+      Optional<FileStatus> lastSeenChecksum,
       long lastCommitTimestamp) {
 
     ///////////////////////
@@ -164,7 +164,7 @@ public class LogSegment {
     this.version = version;
     this.deltas = deltas;
     this.checkpoints = checkpoints;
-    this.latestChecksum = latestChecksum;
+    this.lastSeenChecksum = lastSeenChecksum;
     this.lastCommitTimestamp = lastCommitTimestamp;
 
     this.allFiles =
@@ -221,6 +221,10 @@ public class LogSegment {
     return checkpointVersionOpt;
   }
 
+  public Optional<FileStatus> getLastSeenChecksum() {
+    return lastSeenChecksum;
+  }
+
   public long getLastCommitTimestamp() {
     return lastCommitTimestamp;
   }
@@ -249,7 +253,7 @@ public class LogSegment {
             + "  version=%d,\n"
             + "  deltas=[%s\n  ],\n"
             + "  checkpoints=[%s\n  ],\n"
-            + "  latestChecksum=%s,\n"
+            + "  lastSeenChecksum=%s,\n"
             + "  checkpointVersion=%s,\n"
             + "  lastCommitTimestamp=%d\n"
             + "}",
@@ -257,7 +261,7 @@ public class LogSegment {
         version,
         formatList(deltas),
         formatList(checkpoints),
-        latestChecksum.map(FileStatus::toString).orElse("None"),
+        lastSeenChecksum.map(FileStatus::toString).orElse("None"),
         checkpointVersionOpt.map(String::valueOf).orElse("None"),
         lastCommitTimestamp);
   }
@@ -268,9 +272,5 @@ public class LogSegment {
     }
     return "\n    "
         + list.stream().map(FileStatus::toString).collect(Collectors.joining(",\n    "));
-  }
-
-  public Optional<FileStatus> getLatestChecksum() {
-    return latestChecksum;
   }
 }

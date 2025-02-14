@@ -418,7 +418,7 @@ public class LogReplay {
                 snapshotVersion - 100));
     Optional<CRCInfo> crcInfoOpt =
         logSegment
-            .getLatestChecksum()
+            .getLastSeenChecksum()
             .filter(
                 checksum ->
                     FileNames.getFileVersion(new Path(checksum.getPath())) >= crcReadLowerBound)
@@ -429,7 +429,7 @@ public class LogReplay {
     }
     CRCInfo crcInfo = crcInfoOpt.get();
     checkArgument(
-        crcInfo.getVersion() >= crcSearchLowerBound && crcInfo.getVersion() <= snapshotVersion);
+        crcInfo.getVersion() >= crcReadLowerBound && crcInfo.getVersion() <= snapshotVersion);
     // We found a CRCInfo of a version (a) older than the one we are looking for (snapshotVersion)
     // but (b) newer than the current hint. Use this CRCInfo to create a new hint, and return this
     // crc info if it matches the current version.
