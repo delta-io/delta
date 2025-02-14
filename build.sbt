@@ -178,10 +178,6 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
     Antlr4 / antlr4Version := "4.9.3",
     Test / javaOptions ++= Seq("-Dlog4j.configurationFile=log4j2.properties"),
 
-    // Java-/Scala-/Uni-Doc Settings
-    scalacOptions ++= Seq(
-      "-P:genjavadoc:strictVisibility=true" // hide package private types and methods in javadoc
-    ),
     unidocSourceFilePatterns := Seq(SourceFilePattern("io/delta/tables/", "io/delta/exceptions/"))
   )
 
@@ -1570,7 +1566,16 @@ val createTargetClassesDir = taskKey[Unit]("create target classes dir")
 
 // Don't use these groups for any other projects
 lazy val sparkGroup = project
-  .aggregate(spark, contribs, storage, storageS3DynamoDB, iceberg, testDeltaIcebergJar, sharing, hudi)
+  .aggregate(spark, contribs, storage, storageS3DynamoDB, sharing, hudi)
+  .settings(
+    // crossScalaVersions must be set to Nil on the aggregating project
+    crossScalaVersions := Nil,
+    publishArtifact := false,
+    publish / skip := false,
+  )
+
+lazy val icebergGroup = project
+  .aggregate(iceberg, testDeltaIcebergJar)
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,
