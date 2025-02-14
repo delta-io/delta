@@ -94,9 +94,10 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
     }
   }
 
-  private def verifyMetadataAndProtocol(row: Row, metadata: Metadata, protocol: Protocol): Unit = {
-    checkMetadata(metadata, row.getStruct(METADATA))
-    checkProtocol(protocol, row.getStruct(PROTOCOL))
+  private def verifyMetadataAndProtocol(
+      row: Row, expectedMetadata: Metadata, expectedProtocol: Protocol): Unit = {
+    checkMetadata(expectedMetadata, row.getStruct(METADATA))
+    checkProtocol(expectedProtocol, row.getStruct(PROTOCOL))
   }
 
   private def createTestMetadata(): Metadata = {
