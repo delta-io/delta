@@ -161,7 +161,7 @@ trait TypeWideningInsertSchemaEvolutionTests
     // Enabling type widening after analysis doesn't impact the insert operation: the data is
     // already cast to conform to the current schema.
     enableTypeWidening(tempPath, enabled = true)
-    Dataset.ofRows(spark, insert).collect()
+    DataFrameUtils.ofRows(spark, insert).collect()
     assert(readDeltaTable(tempPath).schema == new StructType().add("a", ShortType))
     checkAnswer(readDeltaTable(tempPath), Row(1))
   }
@@ -173,7 +173,7 @@ trait TypeWideningInsertSchemaEvolutionTests
     // table while type widening is actually disabled during execution. We do actually widen the
     // table schema in that case because `short` and `int` are both stored as INT32 in parquet.
     enableTypeWidening(tempPath, enabled = false)
-    Dataset.ofRows(spark, insert).collect()
+    DataFrameUtils.ofRows(spark, insert).collect()
     assert(readDeltaTable(tempPath).schema == new StructType().add("a", IntegerType))
     checkAnswer(readDeltaTable(tempPath), Row(1))
   }

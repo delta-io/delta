@@ -22,7 +22,7 @@ import io.delta.sql.DeltaSparkSessionExtension
 import org.scalatest.BeforeAndAfterAll
 
 import org.apache.spark.{SparkContext, SparkFunSuite}
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.classic.SparkSession
 import org.apache.spark.sql.hive.test.{TestHive, TestHiveContext}
 import org.apache.spark.sql.internal.{SQLConf, StaticSQLConf}
 
