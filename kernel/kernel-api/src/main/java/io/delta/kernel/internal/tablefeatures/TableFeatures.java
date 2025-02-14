@@ -14,11 +14,12 @@
  * limitations under the License.
  */
 
-package io.delta.kernel.internal;
+package io.delta.kernel.internal.tablefeatures;
 
 import static io.delta.kernel.internal.DeltaErrors.*;
 import static io.delta.kernel.internal.TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED;
 
+import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.util.SchemaUtils;

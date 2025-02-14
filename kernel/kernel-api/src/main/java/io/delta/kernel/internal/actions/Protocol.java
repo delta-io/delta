@@ -18,8 +18,8 @@ package io.delta.kernel.internal.actions;
 import static io.delta.kernel.internal.util.VectorUtils.stringArrayValue;
 
 import io.delta.kernel.data.*;
-import io.delta.kernel.internal.TableFeatures;
 import io.delta.kernel.internal.data.GenericRow;
+import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.types.ArrayType;
