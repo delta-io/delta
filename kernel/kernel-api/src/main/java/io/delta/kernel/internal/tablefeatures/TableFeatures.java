@@ -111,16 +111,6 @@ public class TableFeatures {
     public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
       return TableConfig.COLUMN_MAPPING_MODE.fromMetadata(metadata) != NONE;
     }
-
-    @Override
-    public boolean hasKernelReadSupport() {
-      return true;
-    }
-
-    @Override
-    public boolean hasKernelWriteSupport(Metadata metadata) {
-      return true;
-    }
   }
 
   public static final TableFeature IDENTITY_COLUMNS_W_FEATURE = new IdentityColumnsFeature();
@@ -145,7 +135,7 @@ public class TableFeatures {
   public static final TableFeature VARIANT_RW_PREVIEW_FEATURE =
       new VariantTypeTableFeature("variantType-preview");
 
-  static class VariantTypeTableFeature extends TableFeature.ReaderWriterFeature
+  private static class VariantTypeTableFeature extends TableFeature.ReaderWriterFeature
       implements FeatureAutoEnabledByMetadata {
     VariantTypeTableFeature(String featureName) {
       super(
@@ -188,26 +178,19 @@ public class TableFeatures {
     public Set<TableFeature> requiredFeatures() {
       return Collections.singleton(DOMAIN_METADATA_W_FEATURE);
     }
-
-    @Override
-    public boolean hasKernelWriteSupport(Metadata metadata) {
-      return true;
-    }
   }
 
   public static final TableFeature DELETION_VECTORS_RW_FEATURE = new DeletionVectorsTableFeature();
 
+  /**
+   * Kernel currently only support blind appends. So we don't need to do anything special for
+   * writing into a table with deletion vectors enabled (i.e a table feature with DV enabled is both
+   * readable and writable.
+   */
   private static class DeletionVectorsTableFeature extends TableFeature.ReaderWriterFeature
       implements FeatureAutoEnabledByMetadata {
     DeletionVectorsTableFeature() {
       super("deletionVectors", /* minReaderVersion = */ 3, /* minWriterVersion = */ 7);
-    }
-
-    @Override
-    public boolean hasKernelWriteSupport(Metadata metadata) {
-      // We currently only support blind appends. So we don't need to do anything special for
-      // writing into a table with deletion vectors enabled.
-      return true;
     }
 
     @Override
@@ -292,17 +275,14 @@ public class TableFeatures {
 
   public static final TableFeature CHECKPOINT_V2_RW_FEATURE = new CheckpointV2TableFeature();
 
+  /**
+   * In order to commit, there is no extra work required when v2 checkpoint is enabled. This affects
+   * the checkpoint format only. When v2 is enabled, writing classic checkpoints is still allowed.
+   */
   private static class CheckpointV2TableFeature extends TableFeature.ReaderWriterFeature
       implements FeatureAutoEnabledByMetadata {
     CheckpointV2TableFeature() {
       super("v2Checkpoint", /* minReaderVersion = */ 3, /* minWriterVersion = */ 7);
-    }
-
-    @Override
-    public boolean hasKernelWriteSupport(Metadata metadata) {
-      return true; // In order to commit, there is no extra work required. This affects
-      // the checkpoint format only. When v2 is enabled, writing classic checkpoints is
-      // still allowed.
     }
 
     @Override

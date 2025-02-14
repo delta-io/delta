@@ -141,8 +141,8 @@ public abstract class TableFeature {
   }
 
   /**
-   * Does Kernel has support to write a table containing this feature? Default implementation *
-   * returns true. Features should override this method if they have special requirements * or not
+   * Does Kernel has support to write a table containing this feature? Default implementation
+   * returns true. Features should override this method if they have special requirements or not
    * supported by the Kernel yet.
    *
    * @param metadata the metadata of the table. Sometimes checking the metadata is necessary to know
