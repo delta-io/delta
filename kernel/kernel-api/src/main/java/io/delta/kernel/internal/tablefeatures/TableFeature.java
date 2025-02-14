@@ -60,9 +60,9 @@ public abstract class TableFeature {
    * Constructor. Does validations to make sure:
    *
    * <ul>
-   *   <li>Feature name is not null or empty and has valid characters
-   *   <li>minReaderVersion is always 0 for writer features
-   *   <li>all legacy features can be auto applied based on the metadata and protocol
+   *   <li>Feature name is not null or empty and has valid characters</li>
+   *   <li>minReaderVersion is always 0 for writer features</li>
+   * </ul>
    *
    * @param featureName a globally-unique string indicator to represent the feature. All characters
    *     must be letters (a-z, A-Z), digits (0-9), '-', or '_'. Words must be in camelCase.
