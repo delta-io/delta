@@ -78,26 +78,28 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
   }
 
   private def verifyChecksumContent(
-      row: Row,
-      tableSizeBytes: Long,
-      numFiles: Long,
-      txn: Optional[String]): Unit = {
-    assert(row.getLong(TABLE_SIZE_BYTES) == tableSizeBytes)
-    assert(row.getLong(NUM_FILES) == numFiles)
-    assert(row.getLong(NUM_METADATA) == 1L)
-    assert(row.getLong(NUM_PROTOCOL) == 1L)
+                                     actualCheckSumRow: Row,
+      expectedTableSizeBytes: Long,
+      expectedNumFiles: Long,
+      expectedTxnId: Optional[String]): Unit = {
+    assert(actualCheckSumRow.getLong(TABLE_SIZE_BYTES) == expectedTableSizeBytes)
+    assert(actualCheckSumRow.getLong(NUM_FILES) == expectedNumFiles)
+    assert(actualCheckSumRow.getLong(NUM_METADATA) == 1L)
+    assert(actualCheckSumRow.getLong(NUM_PROTOCOL) == 1L)
 
-    if (txn.isPresent) {
-      assert(row.getString(TXN_ID) == txn.get())
+    if (expectedTxnId.isPresent) {
+      assert(actualCheckSumRow.getString(TXN_ID) == expectedTxnId.get())
     } else {
-      assert(row.isNullAt(TXN_ID))
+      assert(actualCheckSumRow.isNullAt(TXN_ID))
     }
   }
 
   private def verifyMetadataAndProtocol(
-      row: Row, expectedMetadata: Metadata, expectedProtocol: Protocol): Unit = {
-    checkMetadata(expectedMetadata, row.getStruct(METADATA))
-    checkProtocol(expectedProtocol, row.getStruct(PROTOCOL))
+      actualRow: Row,
+      expectedMetadata: Metadata,
+      expectedProtocol: Protocol): Unit = {
+    checkMetadata(expectedMetadata, actualRow.getStruct(METADATA))
+    checkProtocol(expectedProtocol, actualRow.getStruct(PROTOCOL))
   }
 
   private def createTestMetadata(): Metadata = {
