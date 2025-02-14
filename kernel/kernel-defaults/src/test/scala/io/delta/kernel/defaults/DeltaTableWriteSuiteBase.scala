@@ -501,7 +501,7 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
 
     val metadata = Metadata.fromColumnVector(
       crcRow.getColumnVector(CRCInfo.CRC_FILE_SCHEMA.indexOf("metadata")),
-      0
+      /* rowId= */0
     )
 
     assert(
