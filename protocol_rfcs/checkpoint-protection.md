@@ -6,7 +6,8 @@ The motivation is to improve the drop feature functionality. Today, dropping a f
 
 We can improve this process by introducing `checkpointProtection`, which allows us to set up the table's history (including checkpoints) in such a way that older readers will be able to handle it correctly until we atomically delete it.
 
-A key component of this solution is a special set of protected checkpoints at the DROP FEATURE boundary that are guaranteed to persist until all history is truncated up to the checkpoints in one go. These checkpoints act as barriers that hide unsupported log records behind them. With the `checkpointProtection`, we can guarantee these checkpoints will persist until history is truncated.
+A key component of this solution is a special set of protected checkpoints at the DROP FEATURE boundary that are guaranteed to persist until all history is truncated up to the checkpoints in one go. These checkpoints act as barriers that hide unsupported commit
+records behind them. With the `checkpointProtection`, we can guarantee these checkpoints will persist until history is truncated.
 
 Furthermore, with the new drop feature method, validating against the latest protocol is no longer sufficient. Therefore, creating checkpoints to historical versions can lead to corruption if the writer does not support the target protocol. The `checkpointProtection` also protects against these cases by disallowing checkpoint creation before `requireCheckpointProtectionBeforeVersion`.
 
@@ -27,13 +28,13 @@ Enablement:
 
 ## Writer Requirements for Checkpoint Protection
 
-For tables with `checkpointProtection` supported in the protocol, writers need to check `requireCheckpointProtectionBeforeVersion` before cleaning up metadata. Metadata clean up can proceed if and only if metadata can be cleaned up to the `requireCheckpointProtectionBeforeVersion` table property in one go. This means that a single cleanup operation should truncate up to `requireCheckpointProtectionBeforeVersion` as opposed to several cleanup operations truncating in chunks.
+For tables with `checkpointProtection` supported in the protocol, writers need to check `requireCheckpointProtectionBeforeVersion` before cleaning up metadata. Metadata clean up can proceed if and only if metadata can be cleaned up to the `requireCheckpointProtectionBeforeVersion` table property in one go. This means that a single cleanup operation should truncate up to `requireCheckpointProtectionBeforeVersion` as opposed to several cleanup operations truncating in chunks. Furthermore, before removing checkpoints, all associated commits need to be removed first. This operation should have the same atomicity guarantees (if any) as with the regular metadata cleanup operation.
 
-There are two exceptions to this rule. If any of the two holds, the rule above can be ignored:
+We can allow history truncation at an earlier commit, as long as checkpoints are removed together with the associated commits, if any of the two following exceptions hold:
 
 a) The writer does not create any checkpoints during history cleanup and does not erase any checkpoints after the truncation version.
 
-b) The writer verifies it supports all protocols in the closed range `[start, min(requireCheckpointProtectionBeforeVersion, targetCleanupVersion)]`.
+b) The writer verifies it supports all protocols in the closed range `[start, min(requireCheckpointProtectionBeforeVersion, targetCleanupVersion)]` (assuming a single checkpoint is created at `targetCleanupVersion`).
 
 The `checkpointProtection` feature can only be removed if history is truncated up to at least the `requireCheckpointProtectionBeforeVersion`.
 
