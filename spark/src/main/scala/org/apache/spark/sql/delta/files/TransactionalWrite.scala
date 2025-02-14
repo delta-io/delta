@@ -313,9 +313,9 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
   protected def getStatsColExpr(
       statsDataSchema: Seq[Attribute],
       statsCollection: StatisticsCollection): (Expression, Seq[Attribute]) = {
-    val resolvedPlan = Dataset.ofRows(spark, LocalRelation(statsDataSchema))
+    val resolvedPlan = DataFrameUtils.ofRows(spark, LocalRelation(statsDataSchema))
       .select(to_json(statsCollection.statsCollector))
-      .optimizedPlan.analyzed
+      .queryExecution.optimizedPlan
 
     // We have to use the new attributes with regenerated attribute IDs, because the Analyzer
     // doesn't guarantee that attributes IDs will stay the same

@@ -198,7 +198,7 @@ case class CreateDeltaTableCommand(
           require(!query.isInstanceOf[RunnableCommand])
           // When using V1 APIs, the `query` plan is not yet optimized, therefore, it is safe
           // to once again go through analysis
-          val data = Dataset.ofRows(sparkSession, query)
+          val data = DataFrameUtils.ofRows(sparkSession, query)
           val options = new DeltaOptions(table.storage.properties, sparkSession.sessionState.conf)
           val deltaWriter = WriteIntoDelta(
             deltaLog = deltaLog,

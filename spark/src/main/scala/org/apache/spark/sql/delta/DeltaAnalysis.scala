@@ -23,6 +23,7 @@ import scala.util.control.NonFatal
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.catalyst.TimeTravel
+import org.apache.spark.sql.delta.DataFrameUtils
 import org.apache.spark.sql.delta.DeltaErrors.{TemporallyUnstableInputException, TimestampEarlierThanCommitRetentionException}
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
@@ -690,7 +691,8 @@ class DeltaAnalysis(session: SparkSession)
     val isCreate = statement.isCreateCommand
     val ifNotExists = statement.ifNotExists
 
-    import session.sessionState.analyzer.{NonSessionCatalogAndIdentifier, SessionCatalogAndIdentifier}
+    val analyzer = session.sessionState.analyzer
+    import analyzer.{NonSessionCatalogAndIdentifier, SessionCatalogAndIdentifier}
     val targetLocation = statement.targetLocation
     val (saveMode, tableCreationMode) = resolveCreateTableMode(isCreate, isReplace, ifNotExists)
     // We don't use information in the catalog if the table is time travelled
@@ -1435,7 +1437,7 @@ case class DeltaDynamicPartitionOverwriteCommand(
       deltaOptions,
       partitionColumns = Nil,
       deltaTable.deltaLog.unsafeVolatileSnapshot.metadata.configuration,
-      Dataset.ofRows(sparkSession, query),
+      DataFrameUtils.ofRows(sparkSession, query),
       deltaTable.catalogTable
     ).run(sparkSession)
   }

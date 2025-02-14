@@ -18,7 +18,8 @@ package org.apache.spark.sql.delta.util
 
 import scala.collection.mutable.ArrayBuffer
 
-import org.apache.spark.sql.delta.Snapshot
+import org.apache.spark.sql.delta.{DataFrameUtils, Snapshot}
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
@@ -67,7 +68,7 @@ trait StateCache extends DeltaLogging {
         cached += rdd
         val dsCache = datasetRefCache { () =>
           val logicalRdd = LogicalRDD(qe.analyzed.output, rdd)(spark)
-          Dataset.ofRows(spark, logicalRdd)
+          DataFrameUtils.ofRows(spark, logicalRdd)
         }
         Some(dsCache)
       } else {
@@ -93,14 +94,14 @@ trait StateCache extends DeltaLogging {
       if (cached.synchronized(isCached) && cachedDs.isDefined) {
         cachedDs.get.get
       } else {
-        Dataset.ofRows(spark, ds.queryExecution.logical)
+        DataFrameUtils.ofRows(spark, ds.queryExecution.logical)
       }
     }
 
     /**
      * Retrieves the cached RDD as a strongly-typed Dataset.
      */
-    def getDS: Dataset[A] = getDF.as[A](ds.exprEnc)
+    def getDS: Dataset[A] = getDF.as(ds.encoder)
   }
 
   /**
