@@ -52,15 +52,16 @@ public class ChecksumWriter {
               .getJsonHandler()
               .writeJsonFileAtomically(
                   newChecksumPath.toString(),
-                  singletonCloseableIterator(buildCheckSumRow(crcInfo)),
+                  singletonCloseableIterator(toRow(crcInfo)),
                   false /* overwrite */);
+          logger.info("Write checksum file `{}` succeeds", newChecksumPath);
           return null;
         },
         "Write checksum file `%s`",
         newChecksumPath);
   }
 
-  private Row buildCheckSumRow(CRCInfo crcInfo) {
+  private Row toRow(CRCInfo crcInfo) {
     Map<Integer, Object> values = new HashMap<>();
     // Add required fields
     values.put(getSchemaIndex(TABLE_SIZE_BYTES), crcInfo.getTableSizeBytes());

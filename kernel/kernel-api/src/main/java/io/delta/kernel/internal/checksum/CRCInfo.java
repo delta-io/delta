@@ -39,7 +39,7 @@ public class CRCInfo {
   public static final String PROTOCOL = "protocol";
   public static final String TXN_ID = "txnId";
 
-  public static StructType CRC_FILE_SCHEMA =
+  public static final StructType CRC_FILE_SCHEMA =
       new StructType()
           .add(TABLE_SIZE_BYTES, LongType.LONG)
           .add(NUM_FILES, LongType.LONG)
@@ -52,17 +52,15 @@ public class CRCInfo {
   public static Optional<CRCInfo> fromColumnarBatch(
       long version, ColumnarBatch batch, int rowId, String crcFilePath) {
     Protocol protocol =
-        Protocol.fromColumnVector(
-            batch.getColumnVector(CRC_FILE_SCHEMA.indexOf("protocol")), rowId);
+        Protocol.fromColumnVector(batch.getColumnVector(CRC_FILE_SCHEMA.indexOf(PROTOCOL)), rowId);
     Metadata metadata =
-        Metadata.fromColumnVector(
-            batch.getColumnVector(CRC_FILE_SCHEMA.indexOf("metadata")), rowId);
+        Metadata.fromColumnVector(batch.getColumnVector(CRC_FILE_SCHEMA.indexOf(METADATA)), rowId);
     long tableSizeBytes =
-        batch.getColumnVector(CRC_FILE_SCHEMA.indexOf("tableSizeBytes")).getLong(rowId);
-    long numFiles = batch.getColumnVector(CRC_FILE_SCHEMA.indexOf("numFiles")).getLong(rowId);
+        batch.getColumnVector(CRC_FILE_SCHEMA.indexOf(TABLE_SIZE_BYTES)).getLong(rowId);
+    long numFiles = batch.getColumnVector(CRC_FILE_SCHEMA.indexOf(NUM_FILES)).getLong(rowId);
     Optional<String> txnId =
         Optional.ofNullable(
-            batch.getColumnVector(CRC_FILE_SCHEMA.indexOf("txnId")).getString(rowId));
+            batch.getColumnVector(CRC_FILE_SCHEMA.indexOf(TXN_ID)).getString(rowId));
     //  protocol and metadata are nullable per fromColumnVector's implementation.
     if (protocol == null || metadata == null) {
       logger.warn("Invalid checksum file missing protocol and/or metadata: {}", crcFilePath);

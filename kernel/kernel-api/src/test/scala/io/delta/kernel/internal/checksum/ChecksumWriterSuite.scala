@@ -124,49 +124,53 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
     )
   }
 
-  private def checkMetadata(metadata: Metadata, metadataRow: Row): Unit = {
-    assert(metadataRow.getSchema == Metadata.FULL_SCHEMA)
+  private def checkMetadata(expectedMetadata: Metadata, actualMetadataRow: Row): Unit = {
+    assert(actualMetadataRow.getSchema == Metadata.FULL_SCHEMA)
 
     def getOptionalString(field: String): Optional[String] =
-      Optional.ofNullable(metadataRow.getString(Metadata.FULL_SCHEMA.indexOf(field)))
+      Optional.ofNullable(actualMetadataRow.getString(Metadata.FULL_SCHEMA.indexOf(field)))
 
-    assert(metadataRow.getString(Metadata.FULL_SCHEMA.indexOf("id")) == metadata.getId)
-    assert(getOptionalString("name") == metadata.getName)
-    assert(getOptionalString("description") == metadata.getDescription)
-
-    val formatRow = metadataRow.getStruct(Metadata.FULL_SCHEMA.indexOf("format"))
     assert(
-      formatRow.getString(Format.FULL_SCHEMA.indexOf("provider")) == metadata.getFormat.getProvider
+      actualMetadataRow.getString(Metadata.FULL_SCHEMA.indexOf("id")) == expectedMetadata.getId
+    )
+    assert(getOptionalString("name") == expectedMetadata.getName)
+    assert(getOptionalString("description") == expectedMetadata.getDescription)
+
+    val formatRow = actualMetadataRow.getStruct(Metadata.FULL_SCHEMA.indexOf("format"))
+    assert(
+      formatRow
+        .getString(Format.FULL_SCHEMA.indexOf("provider")) == expectedMetadata.getFormat.getProvider
     )
 
     assert(
-      metadataRow
-        .getString(Metadata.FULL_SCHEMA.indexOf("schemaString")) == metadata.getSchemaString
+      actualMetadataRow
+        .getString(Metadata.FULL_SCHEMA.indexOf("schemaString")) == expectedMetadata.getSchemaString
     )
     assert(
-      metadataRow
-        .getArray(Metadata.FULL_SCHEMA.indexOf("partitionColumns")) == metadata.getPartitionColumns
+      actualMetadataRow
+        .getArray(Metadata.FULL_SCHEMA.indexOf("partitionColumns"))
+      == expectedMetadata.getPartitionColumns
     )
     assert(
       Optional
-        .ofNullable(metadataRow.getLong(Metadata.FULL_SCHEMA.indexOf("createdTime")))
-      == metadata.getCreatedTime
+        .ofNullable(actualMetadataRow.getLong(Metadata.FULL_SCHEMA.indexOf("createdTime")))
+      == expectedMetadata.getCreatedTime
     )
     assert(
       VectorUtils
-        .toJavaMap(metadataRow.getMap(Metadata.FULL_SCHEMA.indexOf("configuration")))
-      == metadata.getConfiguration
+        .toJavaMap(actualMetadataRow.getMap(Metadata.FULL_SCHEMA.indexOf("configuration")))
+      == expectedMetadata.getConfiguration
     )
   }
 
-  private def checkProtocol(protocol: Protocol, protocolRow: Row): Unit = {
-    assert(protocolRow.getSchema == Protocol.FULL_SCHEMA)
+  private def checkProtocol(expectedProtocol: Protocol, actualProtocolRow: Row): Unit = {
+    assert(actualProtocolRow.getSchema == Protocol.FULL_SCHEMA)
     assert(
-      protocol.getMinReaderVersion == protocolRow
+      expectedProtocol.getMinReaderVersion == actualProtocolRow
         .getInt(Protocol.FULL_SCHEMA.indexOf("minReaderVersion"))
     )
     assert(
-      protocol.getMinWriterVersion == protocolRow
+      expectedProtocol.getMinWriterVersion == actualProtocolRow
         .getInt(Protocol.FULL_SCHEMA.indexOf("minWriterVersion"))
     )
   }
