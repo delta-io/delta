@@ -96,6 +96,31 @@ public final class VectorUtils {
   }
 
   /**
+   * Creates an {@link ArrayValue} from list of strings. The type {@code array(string)} is a common
+   * occurrence in Delta Log schema. We don't have any non-string array type in Delta Log. If we end
+   * up needing to support other types, we can make this generic.
+   *
+   * @param values list of strings
+   * @return an {@link ArrayValue} with the given values of type {@link StringType}
+   */
+  public static ArrayValue longArrayValue(List<Long> values) {
+    if (values == null) {
+      return null;
+    }
+    return new ArrayValue() {
+      @Override
+      public int getSize() {
+        return values.size();
+      }
+
+      @Override
+      public ColumnVector getElements() {
+        return longVector(values);
+      }
+    };
+  }
+
+  /**
    * Creates a {@link MapValue} from map of string keys and string values. The type {@code
    * map(string -> string)} is a common occurrence in Delta Log schema.
    *
@@ -158,6 +183,43 @@ public final class VectorUtils {
 
       @Override
       public String getString(int rowId) {
+        checkArgument(rowId >= 0 && rowId < values.size(), "Invalid rowId: %s", rowId);
+        return values.get(rowId);
+      }
+    };
+  }
+
+  /**
+   * Utility method to create a {@link ColumnVector} for given list of strings.
+   *
+   * @param values list of strings
+   * @return a {@link ColumnVector} with the given values of type {@link StringType}
+   */
+  public static ColumnVector longVector(List<Long> values) {
+    return new ColumnVector() {
+      @Override
+      public DataType getDataType() {
+        return LongType.LONG;
+      }
+
+      @Override
+      public int getSize() {
+        return values.size();
+      }
+
+      @Override
+      public void close() {
+        // no-op
+      }
+
+      @Override
+      public boolean isNullAt(int rowId) {
+        checkArgument(rowId >= 0 && rowId < values.size(), "Invalid rowId: %s", rowId);
+        return values.get(rowId) == null;
+      }
+
+      @Override
+      public long getLong(int rowId) {
         checkArgument(rowId >= 0 && rowId < values.size(), "Invalid rowId: %s", rowId);
         return values.get(rowId);
       }
