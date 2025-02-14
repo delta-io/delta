@@ -44,7 +44,11 @@ import java.util.stream.Collectors;
  * iterator of (ColumnarBatch, isFromCheckpoint) tuples, where the schema of the ColumnarBatch
  * semantically represents actions (or, a subset of action fields) parsed from the Delta Log.
  *
- * <p>Users must pass in a `readSchema` to select which actions and sub-fields they want to consume.
+ * <p>Users must pass in a `deltaReadSchema` to select which actions and sub-fields they want to
+ * consume.
+ *
+ * <p>Users can also pass in an optional `checkpointReadSchema` if it is different from
+ * `deltaReadSchema`.
  */
 public class ActionsIterator implements CloseableIterator<ActionWrapper> {
   private final Engine engine;
@@ -60,7 +64,14 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
    */
   private final LinkedList<DeltaLogFile> filesList;
 
-  private final StructType readSchema;
+  /** Schema used for reading delta files. */
+  private final StructType deltaReadSchema;
+
+  /**
+   * Schema to be used for reading checkpoint files. Checkpoint files can be Parquet or JSON in the
+   * case of v2 checkpoints.
+   */
+  private final StructType checkpointReadSchema;
 
   private final boolean schemaContainsAddOrRemoveFiles;
 
@@ -77,16 +88,26 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
   public ActionsIterator(
       Engine engine,
       List<FileStatus> files,
-      StructType readSchema,
+      StructType deltaReadSchema,
+      Optional<Predicate> checkpointPredicate) {
+    this(engine, files, deltaReadSchema, deltaReadSchema, checkpointPredicate);
+  }
+
+  public ActionsIterator(
+      Engine engine,
+      List<FileStatus> files,
+      StructType deltaReadSchema,
+      StructType checkpointReadSchema,
       Optional<Predicate> checkpointPredicate) {
     this.engine = engine;
     this.checkpointPredicate = checkpointPredicate;
     this.filesList = new LinkedList<>();
     this.filesList.addAll(
         files.stream().map(DeltaLogFile::forCommitOrCheckpoint).collect(Collectors.toList()));
-    this.readSchema = readSchema;
+    this.deltaReadSchema = deltaReadSchema;
+    this.checkpointReadSchema = checkpointReadSchema;
     this.actionsIter = Optional.empty();
-    this.schemaContainsAddOrRemoveFiles = LogReplay.containsAddOrRemoveFileActions(readSchema);
+    this.schemaContainsAddOrRemoveFiles = LogReplay.containsAddOrRemoveFileActions(deltaReadSchema);
   }
 
   @Override
@@ -105,7 +126,8 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
 
   /**
    * @return a tuple of (ColumnarBatch, isFromCheckpoint), where ColumnarBatch conforms to the
-   *     instance {@link #readSchema}.
+   *     instance {@link #deltaReadSchema} or {@link #checkpointReadSchema} (the latter when when
+   *     isFromCheckpoint=true).
    */
   @Override
   public ActionWrapper next() {
@@ -176,9 +198,9 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
       FileStatus file, String fileName) throws IOException {
     // If the sidecars may contain the current action, read sidecars from the top-level v2
     // checkpoint file(to be read later).
-    StructType modifiedReadSchema = readSchema;
+    StructType modifiedReadSchema = checkpointReadSchema;
     if (schemaContainsAddOrRemoveFiles) {
-      modifiedReadSchema = LogReplay.withSidecarFileSchema(readSchema);
+      modifiedReadSchema = LogReplay.withSidecarFileSchema(checkpointReadSchema);
     }
 
     long checkpointVersion = checkpointVersion(file.getPath());
@@ -195,7 +217,8 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
       checkpointPredicateIncludingSidecars = checkpointPredicate;
     }
     final CloseableIterator<ColumnarBatch> topLevelIter;
-    StructType finalModifiedReadSchema = modifiedReadSchema;
+    StructType finalReadSchema = modifiedReadSchema;
+
     if (fileName.endsWith(".parquet")) {
       topLevelIter =
           wrapEngineExceptionThrowsIO(
@@ -204,11 +227,11 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
                       .getParquetHandler()
                       .readParquetFiles(
                           singletonCloseableIterator(file),
-                          finalModifiedReadSchema,
+                          finalReadSchema,
                           checkpointPredicateIncludingSidecars),
               "Reading parquet log file `%s` with readSchema=%s and predicate=%s",
               file,
-              modifiedReadSchema,
+              finalReadSchema,
               checkpointPredicateIncludingSidecars);
     } else if (fileName.endsWith(".json")) {
       topLevelIter =
@@ -218,11 +241,11 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
                       .getJsonHandler()
                       .readJsonFiles(
                           singletonCloseableIterator(file),
-                          finalModifiedReadSchema,
+                          finalReadSchema,
                           checkpointPredicateIncludingSidecars),
               "Reading JSON log file `%s` with readSchema=%s and predicate=%s",
               file,
-              modifiedReadSchema,
+              finalReadSchema,
               checkpointPredicateIncludingSidecars);
     } else {
       throw new IOException("Unrecognized top level v2 checkpoint file format: " + fileName);
@@ -309,10 +332,12 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
                         engine
                             .getJsonHandler()
                             .readJsonFiles(
-                                singletonCloseableIterator(nextFile), readSchema, Optional.empty()),
+                                singletonCloseableIterator(nextFile),
+                                deltaReadSchema,
+                                Optional.empty()),
                     "Reading JSON log file `%s` with readSchema=%s",
                     nextFile,
-                    readSchema);
+                    deltaReadSchema);
 
             return combine(
                 dataIter,
@@ -344,10 +369,11 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
                     () ->
                         engine
                             .getParquetHandler()
-                            .readParquetFiles(checkpointFiles, readSchema, checkpointPredicate),
+                            .readParquetFiles(
+                                checkpointFiles, deltaReadSchema, checkpointPredicate),
                     "Reading checkpoint sidecars [%s] with readSchema=%s and predicate=%s",
                     checkpointFiles,
-                    readSchema,
+                    deltaReadSchema,
                     checkpointPredicate);
 
             long version = checkpointVersion(nextFilePath);

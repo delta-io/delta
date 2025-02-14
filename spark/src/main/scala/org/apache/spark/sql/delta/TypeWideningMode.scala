@@ -22,6 +22,7 @@ import org.apache.spark.sql.types.AtomicType
  * A type widening mode captures a specific set of type changes that are allowed to be applied.
  * Currently:
  *  - NoTypeWidening: No type change is allowed.
+ *  - AllTypeWidening: All supported type widening changes are allowed.
  *  - TypeEvolution(uniformIcebergCompatibleOnly = true): Type changes that are eligible to be
  *    applied automatically during schema evolution and that are supported by Iceberg are allowed.
  *  - TypeEvolution(uniformIcebergCompatibleOnly = false): Type changes that are eligible to be
@@ -38,6 +39,12 @@ object TypeWideningMode {
    */
   case object NoTypeWidening extends TypeWideningMode {
     override def shouldWidenType(fromType: AtomicType, toType: AtomicType): Boolean = false
+  }
+
+  /** All supported type widening changes are allowed. */
+  case object AllTypeWidening extends TypeWideningMode {
+    override def shouldWidenType(fromType: AtomicType, toType: AtomicType): Boolean =
+      TypeWidening.isTypeChangeSupported(fromType = fromType, toType = toType)
   }
 
   /**

@@ -20,6 +20,7 @@ import java.util.{Date, UUID}
 
 import org.apache.spark.sql.delta.DeltaOptions
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
+import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileAlreadyExistsException, Path}
 import org.apache.hadoop.mapreduce._
@@ -188,7 +189,7 @@ object DeltaFileFormatWriter extends LoggingShims {
     // 1) When the planned write config is disabled.
     // 2) When the concurrent writers are enabled (in this case the required ordering of a
     //    V1 write command will be empty).
-    if (Utils.isTesting) outputOrderingMatched = orderingMatched
+    if (DeltaUtils.isTesting) outputOrderingMatched = orderingMatched
 
     if (writeFilesOpt.isDefined) {
       // build `WriteFilesSpec` for `WriteFiles`
@@ -248,7 +249,7 @@ object DeltaFileFormatWriter extends LoggingShims {
       }
 
       // In testing, this is the only way to get hold of the actually executed plan written to file
-      if (Utils.isTesting) executedPlan = Some(planToExecute)
+      if (DeltaUtils.isTesting) executedPlan = Some(planToExecute)
 
       val rdd = planToExecute.execute()
 
@@ -331,7 +332,7 @@ object DeltaFileFormatWriter extends LoggingShims {
     val description = writeFilesSpec.description
 
     // In testing, this is the only way to get hold of the actually executed plan written to file
-    if (Utils.isTesting) executedPlan = Some(planForWrites)
+    if (DeltaUtils.isTesting) executedPlan = Some(planForWrites)
 
     writeAndCommit(job, description, committer) {
       val rdd = planForWrites.executeWrite(writeFilesSpec)

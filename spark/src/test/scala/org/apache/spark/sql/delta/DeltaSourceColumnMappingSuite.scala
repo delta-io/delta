@@ -54,24 +54,24 @@ trait ColumnMappingStreamingTestUtils extends StreamTest with DeltaColumnMapping
   protected def isColumnMappingSchemaIncompatibleFailure(
       t: Throwable,
       detectedDuringStreaming: Boolean): Boolean = t match {
-    case e: DeltaStreamingColumnMappingSchemaIncompatibleException =>
+    case e: DeltaStreamingNonAdditiveSchemaIncompatibleException =>
       e.additionalProperties.get("detectedDuringStreaming")
         .exists(_.toBoolean == detectedDuringStreaming)
     case _ => false
   }
 
   protected val ExpectStreamStartInCompatibleSchemaFailure =
-    ExpectFailure[DeltaStreamingColumnMappingSchemaIncompatibleException] { t =>
+    ExpectFailure[DeltaStreamingNonAdditiveSchemaIncompatibleException] { t =>
       assert(isColumnMappingSchemaIncompatibleFailure(t, detectedDuringStreaming = false))
     }
 
   protected val ExpectInStreamSchemaChangeFailure =
-    ExpectFailure[DeltaStreamingColumnMappingSchemaIncompatibleException] { t =>
+    ExpectFailure[DeltaStreamingNonAdditiveSchemaIncompatibleException] { t =>
       assert(isColumnMappingSchemaIncompatibleFailure(t, detectedDuringStreaming = true))
     }
 
   protected val ExpectGenericSchemaIncompatibleFailure =
-    ExpectFailure[DeltaStreamingColumnMappingSchemaIncompatibleException]()
+    ExpectFailure[DeltaStreamingNonAdditiveSchemaIncompatibleException]()
 
   // Failure thrown by the current DeltaSource schema change incompatible check
   protected val ExistingRetryableInStreamSchemaChangeFailure = Execute { q =>

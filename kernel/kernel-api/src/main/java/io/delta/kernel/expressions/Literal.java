@@ -22,6 +22,7 @@ import io.delta.kernel.types.*;
 import java.math.BigDecimal;
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * A literal value.
@@ -246,5 +247,17 @@ public final class Literal implements Expression {
   @Override
   public List<Expression> getChildren() {
     return Collections.emptyList();
+  }
+
+  @Override
+  public boolean equals(Object o) {
+    if (this == o) {
+      return true;
+    }
+    if (o == null || getClass() != o.getClass()) {
+      return false;
+    }
+    Literal other = (Literal) o;
+    return Objects.equals(dataType, other.dataType) && Objects.equals(value, other.value);
   }
 }

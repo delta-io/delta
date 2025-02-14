@@ -23,6 +23,7 @@ import scala.util.control.NonFatal
 import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingMode, DeltaErrors, DeltaLog, GeneratedColumn, NoMapping, TypeWidening, TypeWideningMode}
 import org.apache.spark.sql.delta.{RowCommitVersion, RowId}
 import org.apache.spark.sql.delta.ClassicColumnConversions._
+import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
@@ -43,7 +44,6 @@ import org.apache.spark.sql.execution.streaming.IncrementalExecution
 import org.apache.spark.sql.functions.{col, struct}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
-import org.apache.spark.util.Utils
 
 object SchemaUtils extends DeltaLogging {
   // We use case insensitive resolution while writing into Delta
@@ -290,7 +290,7 @@ def normalizeColumnNamesInDataType(
         // The integral types can be cast to each other later on.
         sourceDataType
       case _ =>
-        if (Utils.isTesting) {
+        if (DeltaUtils.isTesting) {
           assert(sourceDataType == tableDataType,
             s"Types without nesting should match but $sourceDataType != $tableDataType")
         } else if (sourceDataType != tableDataType) {
@@ -387,7 +387,8 @@ def normalizeColumnNamesInDataType(
    * As the Delta snapshots update, the schema may change as well. This method defines whether the
    * new schema of a Delta table can be used with a previously analyzed LogicalPlan. Our
    * rules are to return false if:
-   *   - Dropping any column that was present in the existing schema, if not allowMissingColumns
+   *   - Dropping any column or struct field that was present in the existing schema, if not
+   *     allowMissingColumns
    *   - Any change of datatype, unless eligible for widening. The caller specifies eligible type
    *     changes via `typeWideningMode`.
    *   - Change of partition columns. Although analyzed LogicalPlan is not changed,
@@ -425,7 +426,11 @@ def normalizeColumnNamesInDataType(
     def isDatatypeReadCompatible(existing: DataType, newtype: DataType): Boolean = {
       (existing, newtype) match {
         case (e: StructType, n: StructType) =>
-          isReadCompatible(e, n, forbidTightenNullability, typeWideningMode = typeWideningMode)
+          isReadCompatible(e, n,
+            forbidTightenNullability,
+            typeWideningMode = typeWideningMode,
+            allowMissingColumns = allowMissingColumns
+          )
         case (e: ArrayType, n: ArrayType) =>
           // if existing elements are non-nullable, so should be the new element
           isNullabilityCompatible(e.containsNull, n.containsNull) &&
