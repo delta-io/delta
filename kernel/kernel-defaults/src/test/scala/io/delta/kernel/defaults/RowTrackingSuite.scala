@@ -54,8 +54,8 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
     val protocol = new Protocol(
       3, // minReaderVersion
       7, // minWriterVersion
-      Collections.emptyList(), // readerFeatures
-      writerFeatures.asJava // writerFeatures
+      Collections.emptySet(), // readerFeatures
+      writerFeatures.toSet.asJava // writerFeatures
     )
     val protocolAction = SingleAction.createProtocolSingleAction(protocol.toRow)
     val txn = createTxn(engine, tablePath, isNewTable = false, schema, Seq.empty)
