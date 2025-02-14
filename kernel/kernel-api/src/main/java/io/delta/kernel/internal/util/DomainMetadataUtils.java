@@ -70,7 +70,7 @@ public class DomainMetadataUtils {
     if (domainMetadataActions.isEmpty()) return;
 
     // The list of domain metadata is non-empty, so the protocol must support domain metadata
-    if (!TableFeatures.isDomainMetadataSupported(protocol)) {
+    if (!TableFeatures.isDomainMetadataEnabled(protocol)) {
       throw DeltaErrors.domainMetadataUnsupported();
     }
 

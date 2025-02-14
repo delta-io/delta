@@ -431,23 +431,6 @@ public class Protocol {
     return mergedProtocol.denormalizedNormalized();
   }
 
-  /////////////////////////////////////////////////////////////////////////////////////////////////
-  /// Legacy method which will be removed after the table feature integration is done           ///
-  /////////////////////////////////////////////////////////////////////////////////////////////////
-  public Protocol withNewWriterFeatures(Set<String> writerFeatures) {
-    Tuple2<Integer, Integer> newProtocolVersions =
-        TableFeatures.minProtocolVersionFromAutomaticallyEnabledFeatures(writerFeatures);
-    Set<String> newWriterFeatures = new HashSet<>(writerFeatures);
-    if (this.writerFeatures != null) {
-      newWriterFeatures.addAll(this.writerFeatures);
-    }
-    return new Protocol(
-        newProtocolVersions._1,
-        newProtocolVersions._2,
-        this.readerFeatures == null ? null : new HashSet<>(this.readerFeatures),
-        newWriterFeatures);
-  }
-
   /** Validate the protocol contents represents a valid state */
   protected void validate() {
     checkArgument(minReaderVersion >= 1, "minReaderVersion should be at least 1");

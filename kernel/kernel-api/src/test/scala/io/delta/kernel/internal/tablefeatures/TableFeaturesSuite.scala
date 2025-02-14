@@ -16,7 +16,6 @@
 package io.delta.kernel.internal.tablefeatures
 
 import java.util.{Collections, Optional}
-import java.util.stream.Collectors
 import java.util.stream.Collectors.toList
 
 import scala.collection.JavaConverters._
@@ -24,7 +23,7 @@ import scala.collection.JavaConverters._
 import io.delta.kernel.data.{ArrayValue, ColumnVector, MapValue}
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
-import io.delta.kernel.internal.tablefeatures.TableFeatures.{validateWriteSupportedTable, TABLE_FEATURES}
+import io.delta.kernel.internal.tablefeatures.TableFeatures.{TABLE_FEATURES, validateKernelCanWriteToTable}
 import io.delta.kernel.internal.util.InternalUtils.singletonStringColumnVector
 import io.delta.kernel.internal.util.VectorUtils.stringVector
 import io.delta.kernel.types._
@@ -286,6 +285,8 @@ class TableFeaturesSuite extends AnyFunSuite {
     }
   }
 
+  // This should be updated as we allow reading when the protoocl supports these features,
+  // but are not enabled through metadata
   Seq(
     "checkConstraints",
     "generatedColumns",
@@ -318,14 +319,14 @@ class TableFeaturesSuite extends AnyFunSuite {
   def checkSupported(
       protocol: Protocol,
       metadata: Metadata = testMetadata()): Unit = {
-    validateWriteSupportedTable(protocol, metadata, "/test/table")
+    validateKernelCanWriteToTable(protocol, metadata, "/test/table")
   }
 
   def checkUnsupported(
       protocol: Protocol,
       metadata: Metadata = testMetadata()): Unit = {
     intercept[KernelException] {
-      validateWriteSupportedTable(protocol, metadata, "/test/table")
+      validateKernelCanWriteToTable(protocol, metadata, "/test/table")
     }
   }
 

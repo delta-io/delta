@@ -69,7 +69,7 @@ public class RowTracking {
       long currCommitVersion,
       CloseableIterable<Row> txnDataActions) {
     checkArgument(
-        TableFeatures.isRowTrackingSupported(txnProtocol),
+        TableFeatures.isRowTrackingEnabled(txnProtocol),
         "Base row ID and default row commit version are assigned "
             + "only when feature 'rowTracking' is supported.");
 
@@ -154,7 +154,7 @@ public class RowTracking {
       CloseableIterable<Row> txnDataActions,
       List<DomainMetadata> txnDomainMetadatas) {
     checkArgument(
-        TableFeatures.isRowTrackingSupported(txnProtocol),
+        TableFeatures.isRowTrackingEnabled(txnProtocol),
         "Row ID high watermark is updated only when feature 'rowTracking' is supported.");
 
     // Filter out existing row tracking domainMetadata action, if any

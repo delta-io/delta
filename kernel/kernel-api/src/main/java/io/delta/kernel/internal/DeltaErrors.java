@@ -159,7 +159,7 @@ public final class DeltaErrors {
     return new KernelException(message);
   }
 
-  public static KernelException unsupportedReaderFeature(
+  public static KernelException unsupportedReaderFeatures(
       String tablePath, Set<String> unsupportedFeatures) {
     String message =
         String.format(
@@ -179,7 +179,8 @@ public final class DeltaErrors {
     return new KernelException(message);
   }
 
-  public static KernelException unsupportedWriterFeature(String tablePath, String writerFeature) {
+  public static KernelException unsupportedWriterFeatures(
+      String tablePath, Set<String> writerFeature) {
     String message =
         String.format(
             "Unsupported Delta writer feature: table `%s` requires writer table feature \"%s\" "
