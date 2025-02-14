@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.Column
+import org.apache.spark.sql.{Column, SparkSession => SparkSessionImpl}
 import org.apache.spark.sql.catalyst.expressions.Expression
 
 /**
@@ -25,4 +25,9 @@ import org.apache.spark.sql.catalyst.expressions.Expression
  */
 object ClassicColumnConversions {
   def expression(c: Column): Expression = c.expr
+}
+
+object TestCompatibility {
+  type SparkSession = SparkSessionImpl
+  def setActiveSession(session: SparkSession): Unit = SparkSessionImpl.setActiveSession(session)
 }

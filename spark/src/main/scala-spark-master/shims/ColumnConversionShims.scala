@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.classic.ClassicConversions
 import org.apache.spark.sql.classic.ColumnConversions
 import org.apache.spark.sql.classic.ColumnNodeToExpressionConverter
+import org.apache.spark.sql.classic.{SparkSession => SparkSessionImpl}
 
 /**
  * Conversions from a [[org.apache.spark.sql.Column]] to an
@@ -33,4 +34,9 @@ object ClassicColumnConversions
   extends ClassicConversions
   with ColumnConversions {
   override def converter: ColumnNodeToExpressionConverter = ColumnNodeToExpressionConverter
+}
+
+object TestCompatibility {
+  type SparkSession = SparkSessionImpl
+  def setActiveSession(session: SparkSession): Unit = SparkSessionImpl.setActiveSession(session)
 }
