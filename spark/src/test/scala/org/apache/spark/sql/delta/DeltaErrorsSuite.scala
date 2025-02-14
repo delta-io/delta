@@ -3312,32 +3312,21 @@ trait DeltaErrorsSuiteBase
         DeltaErrors.multipleSourceRowMatchingTargetRowInMergeException(spark)
       assert(exceptionWithContext.getMessage.contains("https") === true)
 
-      withCustomContext(spark, null) {
-        val exceptionWithoutContext =
-          DeltaErrors.multipleSourceRowMatchingTargetRowInMergeException(spark)
-        assert(exceptionWithoutContext.getMessage.contains("https") === false)
-      }
+      val newSession = spark.newSession()
+      setCustomContext(newSession, null)
+      val exceptionWithoutContext =
+        DeltaErrors.multipleSourceRowMatchingTargetRowInMergeException(newSession)
+      assert(exceptionWithoutContext.getMessage.contains("https") === false)
     }
   }
 
   private def setCustomContext(session: SparkSession, context: SparkContext): Unit = {
-    val scField = classOf[SparkSession].getDeclaredField("sparkContext")
+    val scField = session.getClass.getDeclaredField("sparkContext")
     scField.setAccessible(true)
     try {
       scField.set(session, context)
     } finally {
       scField.setAccessible(false)
-    }
-  }
-
-  /** Runs `f` with custom context used in spark session. */
-  private def withCustomContext(session: SparkSession, context: SparkContext)(f: => Unit): Unit = {
-    val originalContext = session.sparkContext
-    try {
-      setCustomContext(session, context)
-      f
-    } finally {
-      setCustomContext(session, originalContext)
     }
   }
 }
