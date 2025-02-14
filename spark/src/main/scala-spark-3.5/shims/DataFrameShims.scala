@@ -15,9 +15,14 @@
  */
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.{Column, DataFrame, Dataset, SparkSession}
+import org.apache.spark.sql.{Column, DataFrame, Dataset, Encoders, SparkSession}
+import org.apache.spark.sql.execution.QueryExecution
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 
 object DataFrameUtils {
   def ofRows(spark: SparkSession, plan: LogicalPlan): DataFrame = Dataset.ofRows(spark, plan)
+  def ofRows(queryExecution: QueryExecution): DataFrame = {
+    val ds = new Dataset(queryExecution, Encoders.row(queryExecution.analyzed.schema))
+    ds.asInstanceOf[DataFrame]
+  }
 }

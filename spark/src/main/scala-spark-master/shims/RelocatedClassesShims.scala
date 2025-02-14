@@ -16,10 +16,9 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.classic.{Dataset => DatasetImpl, SparkSession => SparkSessionImpl, DataFrameWriter => DataFrameWriterImpl}
+import org.apache.spark.sql.classic.{SparkSession => SparkSessionImpl, DataFrameWriter => DataFrameWriterImpl}
 
 object Relocated {
-  type Dataset[E] = DatasetImpl[E]
   type SparkSession = SparkSessionImpl
   def setActiveSession(session: SparkSession): Unit = SparkSessionImpl.setActiveSession(session)
   val dataFrameWriterClassName = classOf[DataFrameWriterImpl[_]].getCanonicalName

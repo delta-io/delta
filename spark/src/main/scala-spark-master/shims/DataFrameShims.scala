@@ -15,11 +15,16 @@
  */
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.{Column, DataFrame, SparkSession}
+import org.apache.spark.sql.{Column, DataFrame, Encoders, SparkSession}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.classic.ClassicConversions._
 import org.apache.spark.sql.classic.Dataset
+import org.apache.spark.sql.execution.QueryExecution
 
 object DataFrameUtils {
   def ofRows(spark: SparkSession, plan: LogicalPlan): DataFrame = Dataset.ofRows(spark, plan)
+  def ofRows(queryExecution: QueryExecution): DataFrame = {
+    val ds = new Dataset(queryExecution, Encoders.row(queryExecution.analyzed.schema))
+    ds.asInstanceOf[DataFrame]
+  }
 }

@@ -143,7 +143,7 @@ object IdentityColumn extends DeltaLogging {
     // Resolve the collection expression by constructing a query to select the expression from a
     // table with the statsSchema and get the analyzed expression.
     val resolvedPlan = DataFrameUtils.ofRows(spark, LocalRelation(statsDataSchema))
-      .select(unresolvedExpr).queryExecution.analyzed
+      .select(unresolvedExpr).queryExecution.optimizedPlan
 
     // We have to use the new attributes with regenerated attribute IDs, because the Analyzer
     // doesn't guarantee that attributes IDs will stay the same
