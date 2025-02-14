@@ -199,6 +199,10 @@ class ChecksumSimpleComparisonSuite extends AnyFunSuite with TestUtils {
     assertChecksumEquals(engine, sparkTablePath, kernelTablePath, versionAtCommit)
   }
 
+  /**
+   * Read the spark table's commit log file, translate the added file for each partition
+   * in the log to kernel's append action, and commit to kernel table
+   * */
   private def convertSparkDeltaLogToKernelCommitForPartitionedTable(
       txn: Transaction,
       engine: Engine,
@@ -237,6 +241,10 @@ class ChecksumSimpleComparisonSuite extends AnyFunSuite with TestUtils {
 
   }
 
+  /**
+   * Read the spark table's commit log file, translate the added file
+   * in the log to kernel's append action, and commit to kernel table
+   * */
   private def convertSparkDeltaLogToKernelCommitForUnpartitionedTable(
       txn: Transaction,
       engine: Engine,
