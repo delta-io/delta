@@ -34,6 +34,7 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.{InternalRow, TableIdentifier}
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{Cast, Expression, GenericInternalRow, Literal}
 import org.apache.spark.sql.execution.datasources._
 import org.apache.spark.sql.types.StructType
@@ -244,6 +245,7 @@ case class TahoeLogFileIndex(
     override val deltaLog: DeltaLog,
     override val path: Path,
     snapshotAtAnalysis: SnapshotDescriptor,
+    catalogTableOpt: Option[CatalogTable],
     partitionFilters: Seq[Expression],
     isTimeTravelQuery: Boolean)
   extends TahoeFileIndex(spark, deltaLog, path) {
@@ -253,6 +255,7 @@ case class TahoeLogFileIndex(
     deltaLog: DeltaLog,
     path: Path,
     snapshotAtAnalysis: Snapshot,
+    catalogTableOpt: Option[CatalogTable],
     partitionFilters: Seq[Expression] = Nil,
     isTimeTravelQuery: Boolean = false
   ) = this (
@@ -261,6 +264,7 @@ case class TahoeLogFileIndex(
     path,
     if (isTimeTravelQuery) snapshotAtAnalysis
     else new ShallowSnapshotDescriptor(snapshotAtAnalysis),
+    catalogTableOpt,
     partitionFilters,
     isTimeTravelQuery)
 
@@ -288,7 +292,7 @@ case class TahoeLogFileIndex(
     if (isTimeTravelQuery) {
       snapshotAtAnalysis.asInstanceOf[Snapshot]
     } else {
-      deltaLog.update(stalenessAcceptable = true)
+      deltaLog.update(stalenessAcceptable = true, catalogTableOpt = catalogTableOpt)
     }
   }
 
@@ -366,19 +370,23 @@ case class TahoeLogFileIndex(
 }
 
 object TahoeLogFileIndex {
-  def apply(spark: SparkSession, deltaLog: DeltaLog): TahoeLogFileIndex =
-    new TahoeLogFileIndex(spark, deltaLog, deltaLog.dataPath, deltaLog.unsafeVolatileSnapshot)
+  def apply(
+      spark: SparkSession,
+      deltaLog: DeltaLog,
+      catalogTableOpt: Option[CatalogTable]): TahoeLogFileIndex =
+    new TahoeLogFileIndex(
+      spark, deltaLog, deltaLog.dataPath, deltaLog.unsafeVolatileSnapshot, catalogTableOpt)
 
   def apply(
     spark: SparkSession,
     deltaLog: DeltaLog,
     path: Path,
     snapshotAtAnalysis: Snapshot,
+    catalogTableOpt: Option[CatalogTable],
     partitionFilters: Seq[Expression] = Nil,
     isTimeTravelQuery: Boolean = false): TahoeLogFileIndex
   = new TahoeLogFileIndex(
-    spark, deltaLog, path, snapshotAtAnalysis, partitionFilters, isTimeTravelQuery
-  )
+    spark, deltaLog, path, snapshotAtAnalysis, catalogTableOpt, partitionFilters, isTimeTravelQuery)
 }
 
 /**
