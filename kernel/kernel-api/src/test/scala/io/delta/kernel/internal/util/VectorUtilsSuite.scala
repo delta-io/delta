@@ -16,9 +16,13 @@
 
 package io.delta.kernel.internal.util
 
+import io.delta.kernel.data.{ArrayValue, ColumnVector, MapValue, Row}
+import io.delta.kernel.internal.data.GenericRow
+
 import java.sql.{Date, Timestamp}
 import io.delta.kernel.test.VectorTestUtils
 import io.delta.kernel.types.{
+  ArrayType,
   BinaryType,
   BooleanType,
   ByteType,
@@ -28,8 +32,10 @@ import io.delta.kernel.types.{
   FloatType,
   IntegerType,
   LongType,
+  MapType,
   ShortType,
   StringType,
+  StructType,
   TimestampType
 }
 
@@ -47,6 +53,7 @@ import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.prop.Tables.Table
 
 import java.math.BigDecimal
+import java.util
 
 class VectorUtilsSuite extends AnyFunSuite with VectorTestUtils {
 
@@ -145,4 +152,274 @@ class VectorUtilsSuite extends AnyFunSuite with VectorTestUtils {
         assert(columnVector.isNullAt(3))
       }
   )
+
+  test(s"handle array of struct correctly") {
+    val structType =
+      new StructType().add("name", StringType.STRING).add("value", IntegerType.INTEGER)
+
+    val arrayType = new ArrayType(structType, true)
+
+    def row(name: String, value: Integer): Row = {
+      val map = new util.HashMap[Integer, AnyRef]
+      map.put(0, name)
+      map.put(1, value)
+      new GenericRow(structType, map)
+    }
+
+    val values = List[ArrayValue](
+      new ArrayValue {
+        override def getSize: Int = 2
+        override def getElements: ColumnVector = VectorUtils.buildColumnVector(
+          List[Row](
+            row("a1", 1),
+            row("a2", 2)
+          ).asJava,
+          structType
+        )
+      },
+      new ArrayValue {
+        override def getSize: Int = 2
+        override def getElements: ColumnVector = VectorUtils.buildColumnVector(
+          List[Row](
+            row("b1", 3),
+            row("b2", 4)
+          ).asJava,
+          structType
+        )
+      },
+      new ArrayValue {
+        override def getSize: Int = 2
+        override def getElements: ColumnVector = VectorUtils.buildColumnVector(
+          List[Row](
+            row("c1", 5),
+            row("c2", 6)
+          ).asJava,
+          structType
+        )
+      },
+      null
+    )
+
+    val columnVector = VectorUtils.buildColumnVector(values.asJava, arrayType)
+
+    // Test size
+    assert(columnVector.getSize == 4)
+
+    // Test first array
+    val array0 = columnVector.getArray(0)
+    val struct0 = array0.getElements
+    assert(struct0.getSize == 2)
+
+    val nameVector0 = struct0.getChild(0)
+    val valueVector0 = struct0.getChild(1)
+    assert(nameVector0.getString(0) == "a1")
+    assert(valueVector0.getInt(0) == 1)
+    assert(nameVector0.getString(1) == "a2")
+    assert(valueVector0.getInt(1) == 2)
+
+    // Test second array
+    val array1 = columnVector.getArray(1)
+    val struct1 = array1.getElements
+    assert(struct1.getSize == 2)
+
+    val nameVector1 = struct1.getChild(0)
+    val valueVector1 = struct1.getChild(1)
+    assert(nameVector1.getString(0) == "b1")
+    assert(valueVector1.getInt(0) == 3)
+    assert(nameVector1.getString(1) == "b2")
+    assert(valueVector1.getInt(1) == 4)
+
+    // Test third array
+    val array2 = columnVector.getArray(2)
+    val struct2 = array2.getElements
+    assert(struct2.getSize == 2)
+
+    val nameVector2 = struct2.getChild(0)
+    val valueVector2 = struct2.getChild(1)
+    assert(nameVector2.getString(0) == "c1")
+    assert(valueVector2.getInt(0) == 5)
+    assert(nameVector2.getString(1) == "c2")
+    assert(valueVector2.getInt(1) == 6)
+
+    // Test null value
+    assert(columnVector.isNullAt(3))
+  }
+
+  test(s"handle array of map correctly") {
+    val mapType = new MapType(StringType.STRING, IntegerType.INTEGER, true)
+    val arrayType = new ArrayType(mapType, true)
+
+    val values = List[ArrayValue](
+      new ArrayValue {
+        override def getSize: Int = 2
+        override def getElements: ColumnVector = VectorUtils.buildColumnVector(
+          List[MapValue](
+            new MapValue {
+              override def getSize: Int = 2
+              override def getKeys: ColumnVector =
+                VectorUtils.buildColumnVector(List("a1", "a2").asJava, StringType.STRING)
+              override def getValues: ColumnVector =
+                VectorUtils.buildColumnVector(List[IntegerJ](1, 2).asJava, IntegerType.INTEGER)
+            },
+            new MapValue {
+              override def getSize: Int = 2
+              override def getKeys: ColumnVector =
+                VectorUtils.buildColumnVector(List("a3", "a4").asJava, StringType.STRING)
+              override def getValues: ColumnVector =
+                VectorUtils.buildColumnVector(List[IntegerJ](3, 4).asJava, IntegerType.INTEGER)
+            }
+          ).asJava,
+          mapType
+        )
+      },
+      new ArrayValue {
+        override def getSize: Int = 2
+        override def getElements: ColumnVector = VectorUtils.buildColumnVector(
+          List[MapValue](
+            new MapValue {
+              override def getSize: Int = 2
+              override def getKeys: ColumnVector =
+                VectorUtils.buildColumnVector(List("b1", "b2").asJava, StringType.STRING)
+              override def getValues: ColumnVector =
+                VectorUtils.buildColumnVector(List[IntegerJ](5, 6).asJava, IntegerType.INTEGER)
+            },
+            new MapValue {
+              override def getSize: Int = 2
+              override def getKeys: ColumnVector =
+                VectorUtils.buildColumnVector(List("b3", "b4").asJava, StringType.STRING)
+              override def getValues: ColumnVector =
+                VectorUtils.buildColumnVector(List[IntegerJ](7, 8).asJava, IntegerType.INTEGER)
+            }
+          ).asJava,
+          mapType
+        )
+      },
+      null
+    )
+
+    val columnVector = VectorUtils.buildColumnVector(values.asJava, arrayType)
+
+    // Test size
+    assert(columnVector.getSize == 3)
+
+    // Test first array
+    val firstArray = columnVector.getArray(0)
+    val firstArrayMaps = firstArray.getElements
+    assert(firstArrayMaps.getSize == 2)
+
+    val firstArrayFirstMap = firstArrayMaps.getMap(0)
+    assert(firstArrayFirstMap.getKeys.getString(0) == "a1")
+    assert(firstArrayFirstMap.getKeys.getString(1) == "a2")
+    assert(firstArrayFirstMap.getValues.getInt(0) == 1)
+    assert(firstArrayFirstMap.getValues.getInt(1) == 2)
+
+    val firstArraySecondMap = firstArrayMaps.getMap(1)
+    assert(firstArraySecondMap.getKeys.getString(0) == "a3")
+    assert(firstArraySecondMap.getKeys.getString(1) == "a4")
+    assert(firstArraySecondMap.getValues.getInt(0) == 3)
+    assert(firstArraySecondMap.getValues.getInt(1) == 4)
+
+    // Test second array
+    val secondArray = columnVector.getArray(1)
+    val secondArrayMaps = secondArray.getElements
+    assert(secondArrayMaps.getSize == 2)
+
+    val secondArrayFirstMap = secondArrayMaps.getMap(0)
+    assert(secondArrayFirstMap.getKeys.getString(0) == "b1")
+    assert(secondArrayFirstMap.getKeys.getString(1) == "b2")
+    assert(secondArrayFirstMap.getValues.getInt(0) == 5)
+    assert(secondArrayFirstMap.getValues.getInt(1) == 6)
+
+    val secondArraySecondMap = secondArrayMaps.getMap(1)
+    assert(secondArraySecondMap.getKeys.getString(0) == "b3")
+    assert(secondArraySecondMap.getKeys.getString(1) == "b4")
+    assert(secondArraySecondMap.getValues.getInt(0) == 7)
+    assert(secondArraySecondMap.getValues.getInt(1) == 8)
+
+    // Test null value
+    assert(columnVector.isNullAt(2))
+  }
+
+  test(s"handle array of array correctly") {
+    val innerArrayType = new ArrayType(IntegerType.INTEGER, true)
+    val outerArrayType = new ArrayType(innerArrayType, true)
+
+    val values = List[ArrayValue](
+      new ArrayValue {
+        override def getSize: Int = 2
+        override def getElements: ColumnVector = VectorUtils.buildColumnVector(
+          List[ArrayValue](
+            new ArrayValue {
+              override def getSize: Int = 2
+              override def getElements: ColumnVector =
+                VectorUtils.buildColumnVector(List[IntegerJ](1, 2).asJava, IntegerType.INTEGER)
+            },
+            new ArrayValue {
+              override def getSize: Int = 2
+              override def getElements: ColumnVector =
+                VectorUtils.buildColumnVector(List[IntegerJ](3, 4).asJava, IntegerType.INTEGER)
+            }
+          ).asJava,
+          innerArrayType
+        )
+      },
+      new ArrayValue {
+        override def getSize: Int = 2
+        override def getElements: ColumnVector = VectorUtils.buildColumnVector(
+          List[ArrayValue](
+            new ArrayValue {
+              override def getSize: Int = 2
+              override def getElements: ColumnVector =
+                VectorUtils.buildColumnVector(List[IntegerJ](5, 6).asJava, IntegerType.INTEGER)
+            },
+            new ArrayValue {
+              override def getSize: Int = 2
+              override def getElements: ColumnVector =
+                VectorUtils.buildColumnVector(List[IntegerJ](7, 8).asJava, IntegerType.INTEGER)
+            }
+          ).asJava,
+          innerArrayType
+        )
+      },
+      null
+    )
+
+    val columnVector = VectorUtils.buildColumnVector(values.asJava, outerArrayType)
+
+    // Test size
+    assert(columnVector.getSize == 3)
+
+    // Test first outer array
+    val firstOuterArray = columnVector.getArray(0)
+    val firstOuterArrayElements = firstOuterArray.getElements
+    assert(firstOuterArrayElements.getSize == 2)
+
+    val firstOuterArrayFirstInner = firstOuterArrayElements.getArray(0)
+    val firstOuterArrayFirstInnerElements = firstOuterArrayFirstInner.getElements
+    assert(firstOuterArrayFirstInnerElements.getInt(0) == 1)
+    assert(firstOuterArrayFirstInnerElements.getInt(1) == 2)
+
+    val firstOuterArraySecondInner = firstOuterArrayElements.getArray(1)
+    val firstOuterArraySecondInnerElements = firstOuterArraySecondInner.getElements
+    assert(firstOuterArraySecondInnerElements.getInt(0) == 3)
+    assert(firstOuterArraySecondInnerElements.getInt(1) == 4)
+
+    // Test second outer array
+    val secondOuterArray = columnVector.getArray(1)
+    val secondOuterArrayElements = secondOuterArray.getElements
+    assert(secondOuterArrayElements.getSize == 2)
+
+    val secondOuterArrayFirstInner = secondOuterArrayElements.getArray(0)
+    val secondOuterArrayFirstInnerElements = secondOuterArrayFirstInner.getElements
+    assert(secondOuterArrayFirstInnerElements.getInt(0) == 5)
+    assert(secondOuterArrayFirstInnerElements.getInt(1) == 6)
+
+    val secondOuterArraySecondInner = secondOuterArrayElements.getArray(1)
+    val secondOuterArraySecondInnerElements = secondOuterArraySecondInner.getElements
+    assert(secondOuterArraySecondInnerElements.getInt(0) == 7)
+    assert(secondOuterArraySecondInnerElements.getInt(1) == 8)
+
+    // Test null value
+    assert(columnVector.isNullAt(2))
+  }
 }
