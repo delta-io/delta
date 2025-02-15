@@ -22,8 +22,6 @@ import io.delta.kernel.defaults.utils.DefaultKernelTestUtils.getValueAsObject
 import io.delta.kernel.test.VectorTestUtils
 import io.delta.kernel.types._
 
-
-
 trait DefaultVectorTestUtils extends VectorTestUtils {
   /**
    * Returns a [[ColumnarBatch]] with each given vector is a top-level column col_i where i is
