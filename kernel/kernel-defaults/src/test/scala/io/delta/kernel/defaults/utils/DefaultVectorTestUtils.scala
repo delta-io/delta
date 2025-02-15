@@ -18,7 +18,6 @@ package io.delta.kernel.defaults.utils
 
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
 import io.delta.kernel.data.{ColumnVector, ColumnarBatch}
-import io.delta.kernel.defaults.utils.DefaultKernelTestUtils.getValueAsObject
 import io.delta.kernel.test.VectorTestUtils
 import io.delta.kernel.types._
 
