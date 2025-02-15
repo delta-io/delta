@@ -72,7 +72,6 @@ public final class VectorUtils {
     return values;
   }
 
-
   /**
    * Creates a {@link MapValue} from map of string keys and string values. The type {@code
    * map(string -> string)} is a common occurrence in Delta Log schema.
@@ -105,9 +104,7 @@ public final class VectorUtils {
     };
   }
 
-  /**
-   * Creates an {@link ArrayValue} from list of objects.
-   */
+  /** Creates an {@link ArrayValue} from list of objects. */
   public static ArrayValue buildArrayValue(List<?> values, DataType dataType) {
     if (values == null) {
       return null;
@@ -175,13 +172,13 @@ public final class VectorUtils {
 
       @Override
       public int getInt(int rowId) {
-        checkArgument(IntegerType.INTEGER.equals(dataType));
+        checkArgument(IntegerType.INTEGER.equals(dataType) || DateType.DATE.equals(dataType));
         return (Integer) getValidatedValue(rowId, Integer.class);
       }
 
       @Override
       public long getLong(int rowId) {
-        checkArgument(LongType.LONG.equals(dataType));
+        checkArgument(LongType.LONG.equals(dataType) || TimestampType.TIMESTAMP.equals(dataType));
         return (Long) getValidatedValue(rowId, Long.class);
       }
 
@@ -245,16 +242,17 @@ public final class VectorUtils {
       private Object getValidatedValue(int rowId, Class<?> expectedType) {
         validateRowId(rowId);
         Object value = values.get(rowId);
-        checkArgument(expectedType.isInstance(value),
-                "Value must be of type %s", expectedType.getSimpleName());
+        checkArgument(
+            expectedType.isInstance(value),
+            "Value must be of type %s",
+            expectedType.getSimpleName());
         return value;
       }
 
-
       private List<?> extractChildValues(int ordinal, DataType childDatatype) {
         return values.stream()
-                .map(e -> extractChildValue(e, ordinal, childDatatype))
-                .collect(Collectors.toList());
+            .map(e -> extractChildValue(e, ordinal, childDatatype))
+            .collect(Collectors.toList());
       }
 
       private Object extractChildValue(Object element, int ordinal, DataType childDatatype) {
@@ -270,28 +268,52 @@ public final class VectorUtils {
 
       private Object extractTypedValue(Row row, int ordinal, DataType childDatatype) {
         // Primitive Types
-        if (childDatatype instanceof BooleanType) return row.getBoolean(ordinal);
-        if (childDatatype instanceof ByteType) return row.getByte(ordinal);
-        if (childDatatype instanceof ShortType) return row.getShort(ordinal);
-        if (childDatatype instanceof IntegerType ||
-                childDatatype instanceof DateType) return row.getInt(ordinal);
-        if (childDatatype instanceof LongType ||
-                childDatatype instanceof TimestampType) return row.getLong(ordinal);
-        if (childDatatype instanceof FloatType) return row.getFloat(ordinal);
-        if (childDatatype instanceof DoubleType) return row.getDouble(ordinal);
+        if (childDatatype instanceof BooleanType) {
+          return row.getBoolean(ordinal);
+        }
+        if (childDatatype instanceof ByteType) {
+          return row.getByte(ordinal);
+        }
+        if (childDatatype instanceof ShortType) {
+          return row.getShort(ordinal);
+        }
+        if (childDatatype instanceof IntegerType || childDatatype instanceof DateType) {
+          return row.getInt(ordinal);
+        }
+        if (childDatatype instanceof LongType || childDatatype instanceof TimestampType) {
+          return row.getLong(ordinal);
+        }
+        if (childDatatype instanceof FloatType) {
+          return row.getFloat(ordinal);
+        }
+        if (childDatatype instanceof DoubleType) {
+          return row.getDouble(ordinal);
+        }
 
         // Complex Types
-        if (childDatatype instanceof StringType) return row.getString(ordinal);
-        if (childDatatype instanceof BinaryType) return row.getBinary(ordinal);
-        if (childDatatype instanceof DecimalType) return row.getDecimal(ordinal);
+        if (childDatatype instanceof StringType) {
+          return row.getString(ordinal);
+        }
+        if (childDatatype instanceof BinaryType) {
+          return row.getBinary(ordinal);
+        }
+        if (childDatatype instanceof DecimalType) {
+          return row.getDecimal(ordinal);
+        }
 
         // Nested Types
-        if (childDatatype instanceof StructType) return row.getStruct(ordinal);
-        if (childDatatype instanceof ArrayType) return row.getArray(ordinal);
-        if (childDatatype instanceof MapType) return row.getMap(ordinal);
+        if (childDatatype instanceof StructType) {
+          return row.getStruct(ordinal);
+        }
+        if (childDatatype instanceof ArrayType) {
+          return row.getArray(ordinal);
+        }
+        if (childDatatype instanceof MapType) {
+          return row.getMap(ordinal);
+        }
 
         throw new UnsupportedOperationException(
-                String.format("Unsupported data type: %s", childDatatype.getClass().getSimpleName()));
+            String.format("Unsupported data type: %s", childDatatype.getClass().getSimpleName()));
       }
     };
   }
