@@ -102,8 +102,8 @@ trait ExpressionSuiteBase extends TestUtils with DefaultVectorTestUtils {
         assert(
           actual.getString(rowId) === expected.getString(rowId),
           s"unexpected value at $rowId: " +
-           s"expected: ${expected.getString(rowId)} " +
-           s"actual: ${actual.getString(rowId)} "
+            s"expected: ${expected.getString(rowId)} " +
+            s"actual: ${actual.getString(rowId)} "
         )
       }
     }
