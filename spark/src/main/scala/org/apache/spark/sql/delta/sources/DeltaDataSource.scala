@@ -439,7 +439,6 @@ object DeltaDataSource extends DatabricksLogging {
       parameters: Map[String, String],
       sourceMetadataPathOpt: Option[String] = None,
       mergeConsecutiveSchemaChanges: Boolean = false): Option[DeltaSourceMetadataTrackingLog] = {
-    val options = new CaseInsensitiveStringMap(parameters.asJava)
 
     DeltaDataSource.extractSchemaTrackingLocationConfig(spark, parameters)
       .map { schemaTrackingLocation =>
