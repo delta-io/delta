@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.util.ScalaExtensions._
+
 import org.apache.spark.sql.types.AtomicType
 
 /**
@@ -28,9 +30,14 @@ import org.apache.spark.sql.types.AtomicType
  *  - TypeEvolution(uniformIcebergCompatibleOnly = false): Type changes that are eligible to be
  *    applied automatically during schema evolution are allowed, even if they are not supported by
  *    Iceberg.
+ *
+ * AllTypeWidening & TypeEvolution also have a "bidirectional" variant: instead of only allowing
+ * 'from' to be widened to 'to', these also allow 'to' to be widened to 'from'. Useful when there's
+ * no actual relation between 'from' and 'to' and we just want to use the wider type of the two,
+ * e.g. when merging two unrelated schemas.
  */
 sealed trait TypeWideningMode {
-  def shouldWidenType(fromType: AtomicType, toType: AtomicType): Boolean
+  def getWidenedType(fromType: AtomicType, toType: AtomicType): Option[AtomicType]
 }
 
 object TypeWideningMode {
@@ -38,13 +45,29 @@ object TypeWideningMode {
    * No type change allowed. Typically because type widening and/or schema evolution isn't enabled.
    */
   case object NoTypeWidening extends TypeWideningMode {
-    override def shouldWidenType(fromType: AtomicType, toType: AtomicType): Boolean = false
+    override def getWidenedType(fromType: AtomicType, toType: AtomicType): Option[AtomicType] = None
   }
 
   /** All supported type widening changes are allowed. */
   case object AllTypeWidening extends TypeWideningMode {
-    override def shouldWidenType(fromType: AtomicType, toType: AtomicType): Boolean =
-      TypeWidening.isTypeChangeSupported(fromType = fromType, toType = toType)
+    override def getWidenedType(fromType: AtomicType, toType: AtomicType): Option[AtomicType] =
+      Option.when(TypeWidening.isTypeChangeSupported(fromType = fromType, toType = toType))(toType)
+  }
+
+  /**
+   * All supported type widening changes are allowed. Unlike [[AllTypeWidening]], this also allows
+   * widening `to` to `from`. Use for example when merging two unrelated schemas and we want just
+   * want to get user the wider type of `from` and `to`.
+   */
+  case object AllTypeWideningBidirectional extends TypeWideningMode {
+    override def getWidenedType(left: AtomicType, right: AtomicType): Option[AtomicType] =
+      if (TypeWidening.isTypeChangeSupported(fromType = left, toType = right)) {
+        Some(right)
+      } else if (TypeWidening.isTypeChangeSupported(fromType = right, toType = left)) {
+        Some(left)
+      } else {
+        None
+      }
   }
 
   /**
@@ -52,8 +75,28 @@ object TypeWideningMode {
    * Can be restricted to only type changes supported by Iceberg.
    */
   case class TypeEvolution(uniformIcebergCompatibleOnly: Boolean) extends TypeWideningMode {
-    override def shouldWidenType(fromType: AtomicType, toType: AtomicType): Boolean =
-        TypeWidening.isTypeChangeSupportedForSchemaEvolution(
-          fromType = fromType, toType = toType, uniformIcebergCompatibleOnly)
+    override def getWidenedType(fromType: AtomicType, toType: AtomicType): Option[AtomicType] =
+        Option.when(TypeWidening.isTypeChangeSupportedForSchemaEvolution(
+          fromType = fromType, toType = toType, uniformIcebergCompatibleOnly))(toType)
+  }
+
+  /**
+   * Type changes that are eligible to be applied automatically during schema evolution are allowed.
+   * Can be restricted to only type changes supported by Iceberg. Unlike [[TypeEvolution]], this
+   * also allows widening `to` to `from`. Use for example when merging two unrelated schemas and we
+   * want just want to get user the wider type of `from` and `to`.
+   */
+  case class TypeEvolutionBidirectional(uniformIcebergCompatibleOnly: Boolean)
+    extends TypeWideningMode {
+    override def getWidenedType(fromType: AtomicType, toType: AtomicType): Option[AtomicType] =
+      if (TypeWidening.isTypeChangeSupportedForSchemaEvolution(
+        fromType = fromType, toType = toType, uniformIcebergCompatibleOnly)) {
+        Some(toType)
+      } else if (TypeWidening.isTypeChangeSupportedForSchemaEvolution(
+        fromType = toType, toType = fromType, uniformIcebergCompatibleOnly)) {
+        Some(fromType)
+      } else {
+        None
+      }
   }
 }

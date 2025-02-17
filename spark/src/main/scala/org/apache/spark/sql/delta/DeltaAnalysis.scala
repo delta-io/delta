@@ -925,7 +925,7 @@ class DeltaAnalysis(session: SparkSession)
         if s != t && sNull == tNull =>
         addCastsToArrayStructs(tblName, attr, s, t, sNull, typeWideningMode)
       case (s: AtomicType, t: AtomicType)
-        if typeWideningMode.shouldWidenType(fromType = t, toType = s) =>
+        if typeWideningMode.getWidenedType(fromType = t, toType = s).nonEmpty =>
         // Keep the type from the query, the target schema will be updated to widen the existing
         // type to match it.
         attr
@@ -1097,7 +1097,7 @@ class DeltaAnalysis(session: SparkSession)
 
       case (StructField(name, sourceType: AtomicType, _, _),
             i @ TargetIndex(StructField(targetName, targetType: AtomicType, _, targetMetadata)))
-          if typeWideningMode.shouldWidenType(fromType = targetType, toType = sourceType) =>
+          if typeWideningMode.getWidenedType(fromType = targetType, toType = sourceType).nonEmpty =>
         Alias(
           GetStructField(parent, i, Option(name)),
           targetName)(explicitMetadata = Option(targetMetadata))

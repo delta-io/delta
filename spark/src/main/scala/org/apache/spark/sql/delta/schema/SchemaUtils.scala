@@ -443,7 +443,7 @@ def normalizeColumnNamesInDataType(
             isDatatypeReadCompatible(e.keyType, n.keyType) &&
             isDatatypeReadCompatible(e.valueType, n.valueType)
         case (e: AtomicType, n: AtomicType)
-          if typeWideningMode.shouldWidenType(fromType = e, toType = n) => true
+          if typeWideningMode.getWidenedType(fromType = e, toType = n).nonEmpty => true
         case (a, b) => a == b
       }
     }

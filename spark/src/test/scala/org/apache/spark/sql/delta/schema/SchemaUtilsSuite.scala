@@ -22,7 +22,7 @@ import java.util.regex.Pattern
 
 import scala.annotation.tailrec
 
-import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaLog, DeltaTestUtils, TypeWideningMode}
+import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaExcludedBySparkVersionTestMixinShims, DeltaLog, DeltaTestUtils, TypeWideningMode}
 import org.apache.spark.sql.delta.RowCommitVersion
 import org.apache.spark.sql.delta.RowId
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -48,7 +48,8 @@ class SchemaUtilsSuite extends QueryTest
   with SharedSparkSession
   with GivenWhenThen
   with DeltaSQLTestUtils
-  with DeltaSQLCommandTest {
+  with DeltaSQLCommandTest
+  with DeltaExcludedBySparkVersionTestMixinShims {
   import SchemaUtils._
   import testImplicits._
 
@@ -71,8 +72,11 @@ class SchemaUtilsSuite extends QueryTest
       s"Error message '${e.getMessage}' didn't contain the patterns: $shouldContainPatterns")
   }
 
-  private def expectAnalysisErrorClass(errorClass: String, params: Map[String, String])
-                                      (f: => Unit): Unit = {
+  private def expectAnalysisErrorClass(
+      errorClass: String,
+      params: Map[String, String],
+      matchPVals: Boolean = true)(
+      f: => Unit): Unit = {
     val e = intercept[AnalysisException] {
       f
     }
@@ -90,7 +94,7 @@ class SchemaUtilsSuite extends QueryTest
       err.get,
       errorClass,
       parameters = params,
-      matchPVals = true)
+      matchPVals = matchPVals)
   }
 
   /////////////////////////////
@@ -2567,6 +2571,170 @@ class SchemaUtilsSuite extends QueryTest
         keepExistingType = true
       )
     assert(mergedSchema === expected)
+  }
+
+  test("typeWideningMode - byte->short->int is always allowed") {
+    import TypeWideningMode._
+    val narrow = new StructType()
+      .add("a", ByteType)
+      .add("b", ByteType)
+      .add("c", ShortType)
+    val wide = new StructType()
+      .add("a", ShortType)
+      .add("b", IntegerType)
+      .add("c", IntegerType)
+
+    for (typeWideningMode <- Seq(
+        NoTypeWidening,
+        AllTypeWidening,
+        TypeEvolution(uniformIcebergCompatibleOnly = false),
+        TypeEvolution(uniformIcebergCompatibleOnly = true),
+        AllTypeWideningBidirectional,
+        TypeEvolutionBidirectional(uniformIcebergCompatibleOnly = false),
+        TypeEvolutionBidirectional(uniformIcebergCompatibleOnly = true))) {
+      // byte, short, int are all stored as INT64 in parquet, [[mergeSchemas]] always allows
+      // widening between them. This was already the case before typeWideningMode was introduced.
+      val merged1 = mergeSchemas(narrow, wide, typeWideningMode = typeWideningMode)
+      assert(merged1 === wide)
+      val merged2 = mergeSchemas(wide, narrow, typeWideningMode = typeWideningMode)
+      assert(merged2 === wide)
+    }
+  }
+
+  // These type changes will only be available once Delta uses Spark 4.0.
+  for ((fromType, toType) <- Seq(
+    IntegerType -> LongType,
+    new StructType().add("x", IntegerType) -> new StructType().add("x", LongType),
+    MapType(IntegerType, IntegerType) -> MapType(LongType, LongType),
+    ArrayType(IntegerType) -> ArrayType(LongType)
+  ))
+  testSparkMasterOnly(s"typeWideningMode ${fromType.sql} -> ${toType.sql}") {
+    import TypeWideningMode._
+
+    val narrow = new StructType().add("a", fromType)
+    val wide = new StructType().add("a", toType)
+
+    for (typeWideningMode <- Seq(
+        NoTypeWidening,
+        AllTypeWidening,
+        TypeEvolution(uniformIcebergCompatibleOnly = false),
+        TypeEvolution(uniformIcebergCompatibleOnly = true))) {
+      // Narrowing is not allowed.
+      expectAnalysisErrorClass("DELTA_MERGE_INCOMPATIBLE_DATATYPE",
+        Map("currentDataType" -> "LongType", "updateDataType" -> "IntegerType")) {
+        mergeSchemas(wide, narrow, typeWideningMode = typeWideningMode)
+      }
+    }
+
+    for (typeWideningMode <- Seq(
+        AllTypeWideningBidirectional,
+        TypeEvolutionBidirectional(uniformIcebergCompatibleOnly = false),
+        TypeEvolutionBidirectional(uniformIcebergCompatibleOnly = true))) {
+      // Bidirectional doesn't enforce an order on the inputs, widening from second schema to first
+      // is allowed.
+      val merged = mergeSchemas(wide, narrow, typeWideningMode = typeWideningMode)
+      assert(merged === wide)
+    }
+
+    for (typeWideningMode <- Seq(
+        AllTypeWidening,
+        TypeEvolution(uniformIcebergCompatibleOnly = false),
+        TypeEvolution(uniformIcebergCompatibleOnly = true),
+        AllTypeWideningBidirectional,
+        TypeEvolutionBidirectional(uniformIcebergCompatibleOnly = false),
+        TypeEvolutionBidirectional(uniformIcebergCompatibleOnly = true))) {
+      // Widening is allowed, unless mode is NoTypeWidening.
+      val merged = mergeSchemas(narrow, wide, typeWideningMode = typeWideningMode)
+      assert(merged === wide)
+    }
+    expectAnalysisErrorClass("DELTA_MERGE_INCOMPATIBLE_DATATYPE",
+      Map("currentDataType" -> "LongType", "updateDataType" -> "IntegerType")) {
+      mergeSchemas(wide, narrow, typeWideningMode = NoTypeWidening)
+    }
+  }
+
+  for ((fromType, toType) <- Seq(
+    ShortType -> DoubleType,
+    IntegerType -> DecimalType(10, 0)
+  ))
+  testSparkMasterOnly(
+    s"typeWideningMode - blocked type evolution ${fromType.sql} -> ${toType.sql}") {
+    import TypeWideningMode._
+
+    val narrow = new StructType().add("a", fromType)
+    val wide = new StructType().add("a", toType)
+
+    for (typeWideningMode <- Seq(
+        TypeEvolution(uniformIcebergCompatibleOnly = false),
+        TypeEvolutionBidirectional(uniformIcebergCompatibleOnly = false),
+        TypeEvolution(uniformIcebergCompatibleOnly = true),
+        TypeEvolutionBidirectional(uniformIcebergCompatibleOnly = true))) {
+      expectAnalysisErrorClass(
+        "DELTA_MERGE_INCOMPATIBLE_DATATYPE",
+        Map("currentDataType" -> fromType.toString, "updateDataType" -> toType.toString),
+        matchPVals = false) {
+        mergeSchemas(narrow, wide, typeWideningMode = typeWideningMode)
+      }
+      expectAnalysisErrorClass(
+        "DELTA_MERGE_INCOMPATIBLE_DATATYPE",
+        Map("currentDataType" -> toType.toString, "updateDataType" -> fromType.toString),
+        matchPVals = false) {
+        mergeSchemas(wide, narrow, typeWideningMode = typeWideningMode)
+      }
+    }
+  }
+
+  for ((fromType, toType) <- Seq(
+    DateType -> TimestampNTZType,
+    DecimalType(10, 2) -> DecimalType(12, 4)
+  ))
+  testSparkMasterOnly(
+      s"typeWideningMode - Uniform Iceberg compatibility ${fromType.sql} -> ${toType.sql}") {
+    import TypeWideningMode._
+
+    val narrow = new StructType().add("a", fromType)
+    val wide = new StructType().add("a", toType)
+
+    def checkAnalysisException(f: => Unit): Unit = {
+      val ex = intercept[DeltaAnalysisException](f).getCause.asInstanceOf[AnalysisException]
+      // Decimal scale increase return a slightly different error class.
+      assert(ex.errorClass.contains("DELTA_MERGE_INCOMPATIBLE_DATATYPE") ||
+        ex.errorClass.contains("DELTA_MERGE_INCOMPATIBLE_DECIMAL_TYPE"))
+    }
+
+    for (typeWideningMode <- Seq(
+        TypeEvolution(uniformIcebergCompatibleOnly = false),
+        TypeEvolutionBidirectional(uniformIcebergCompatibleOnly = false))) {
+        // Unsupported type changes by Iceberg are allowed without Iceberg compatibility.
+      val merged = mergeSchemas(narrow, wide, typeWideningMode = typeWideningMode)
+      assert(merged === wide)
+    }
+
+    for (typeWideningMode <- Seq(
+        TypeEvolution(uniformIcebergCompatibleOnly = true),
+        TypeEvolutionBidirectional(uniformIcebergCompatibleOnly = true))) {
+      // Widening is blocked for unsupported type changes with Iceberg compatibility.
+      checkAnalysisException {
+        mergeSchemas(wide, narrow, typeWideningMode = typeWideningMode)
+      }
+    }
+
+    // Bidirectional doesn't enforce an order on the inputs, widening from second schema to first
+    // is allowed without Iceberg compatibility.
+    val merged = mergeSchemas(wide, narrow,
+      typeWideningMode = TypeEvolutionBidirectional(uniformIcebergCompatibleOnly = false))
+    assert(merged === wide)
+
+    for (typeWideningMode <- Seq(
+        TypeEvolution(uniformIcebergCompatibleOnly = true),
+        TypeEvolutionBidirectional(uniformIcebergCompatibleOnly = true),
+        TypeEvolution(uniformIcebergCompatibleOnly = true))) {
+      // Rejected either because this is a narrowing type change, or for the bidirectional mode,
+      // because it is not supported by Iceberg.
+      checkAnalysisException {
+        mergeSchemas(wide, narrow, typeWideningMode = typeWideningMode)
+      }
+    }
   }
 
   ////////////////////////////
