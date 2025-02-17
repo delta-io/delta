@@ -396,7 +396,7 @@ trait TypeWideningStreamingSourceTests
     ("unblock stream", (hash: Int) => s"allowSourceColumnTypeChange.ckpt_$hash", "always"),
     ("unblock version", (hash: Int) => s"allowSourceColumnTypeChange.ckpt_$hash", "2")
   )) {
-    test(s"unblocking stream after type change - $name") {
+    test(s"unblocking stream with sql conf after type change - $name") {
       withTempDir { dir =>
         sql(s"CREATE TABLE delta.`$dir` (widened byte, other byte) USING DELTA")
         // Getting the checkpoint dir through the delta log to ensure the format is consistent with
@@ -436,6 +436,44 @@ trait TypeWideningStreamingSourceTests
     }
   }
 
+  for ((name, optionValue) <- Seq(
+    ("unblock stream", "always"),
+    ("unblock version", "2")
+  )) {
+    test(s"unblocking stream with reader option after type change - $name") {
+      withTempDir { dir =>
+        sql(s"CREATE TABLE delta.`$dir` (widened byte, other byte) USING DELTA")
+        val checkpointDir = new File(dir, "sink_checkpoint")
+
+        def readWithAgg(options: Map[String, String] = Map.empty): DataFrame =
+          readStream(dir, checkpointDir, options)
+            .groupBy("other")
+            .agg(count(col("widened")))
+
+        testStream(readWithAgg(), outputMode = OutputMode.Complete())(
+          StartStream(checkpointLocation = checkpointDir.toString),
+          Execute { _ => sql(s"INSERT INTO delta.`$dir` VALUES (1, 1)") },
+          Execute { _ => sql(s"ALTER TABLE delta.`$dir`ALTER COLUMN widened TYPE int") },
+          ExpectMetadataEvolutionException()
+        )
+
+        testStream(readWithAgg(), outputMode = OutputMode.Complete())(
+          StartStream(checkpointLocation = checkpointDir.toString),
+          ExpectTypeChangeBlockedException()
+        )
+
+        testStream(
+            readWithAgg(Map("allowSourceColumnTypeChange" -> optionValue)),
+            outputMode = OutputMode.Complete())(
+          StartStream(checkpointLocation = checkpointDir.toString),
+          Execute { _ => sql(s"INSERT INTO delta.`$dir` VALUES (123456789, 1)") },
+          ProcessAllAvailable(),
+          CheckLastBatch(Row(1, 2))
+        )
+      }
+    }
+  }
+
   test(s"overwrite schema with type change and dropped column") {
     withTempDir { dir =>
       sql(s"CREATE TABLE delta.`$dir` (a byte, b int) USING DELTA")
@@ -470,8 +508,10 @@ trait TypeWideningStreamingSourceTests
               "opType" -> "DROP AND TYPE WIDENING",
               "previousSchemaChangeVersion" -> "0",
               "currentSchemaChangeVersion" -> "2",
-              "readerOptions" -> (
-                ".*allowSourceColumnDrop(.|\\n)*allowSourceColumnTypeChange.*"),
+              "unblockChangeOptions" ->
+                ".*allowSourceColumnDrop(.|\\n)*allowSourceColumnTypeChange.*",
+              "unblockStreamOptions" ->
+                ".*allowSourceColumnDrop(.|\\n)*allowSourceColumnTypeChange.*",
               "unblockChangeConfs" ->
                 ".*allowSourceColumnDrop(.|\\n)*allowSourceColumnTypeChange.*",
               "unblockStreamConfs" ->

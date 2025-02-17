@@ -2732,9 +2732,12 @@ trait DeltaErrorsSuiteBase
           "opType" -> "RENAME AND TYPE WIDENING",
           "previousSchemaChangeVersion" -> "0",
           "currentSchemaChangeVersion" -> "1",
-          "readerOptions" ->
-            s"""  .option("allowSourceColumnRename", "true")
-               |  .option("allowSourceColumnTypeChange", "true")""".stripMargin,
+          "unblockChangeOptions" ->
+            s"""  .option("allowSourceColumnRename", "1")
+               |  .option("allowSourceColumnTypeChange", "1")""".stripMargin,
+          "unblockStreamOptions" ->
+            s"""  .option("allowSourceColumnRename", "always")
+               |  .option("allowSourceColumnTypeChange", "always")""".stripMargin,
           "unblockChangeConfs" ->
             s"""  SET spark.databricks.delta.streaming.allowSourceColumnRename.ckpt_15 = 1;
                |  SET spark.databricks.delta.streaming.allowSourceColumnTypeChange.ckpt_15 = 1;""".stripMargin,
@@ -2763,7 +2766,8 @@ trait DeltaErrorsSuiteBase
           "previousSchemaChangeVersion" -> "0",
           "currentSchemaChangeVersion" -> "1",
           "wideningTypeChanges" -> "  a: INT -> BIGINT",
-          "readerOptions" -> "  .option(\"allowSourceColumnTypeChange\", \"true\")",
+          "unblockChangeOptions" -> "  .option(\"allowSourceColumnTypeChange\", \"1\")",
+          "unblockStreamOptions" -> "  .option(\"allowSourceColumnTypeChange\", \"always\")",
           "unblockChangeConfs" ->
             "  SET spark.databricks.delta.streaming.allowSourceColumnTypeChange.ckpt_15 = 1;",
           "unblockStreamConfs" ->

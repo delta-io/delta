@@ -300,7 +300,7 @@ object DeltaSourceMetadataTrackingLog extends Logging {
     (log.getPreviousTrackedMetadata, log.getCurrentTrackedMetadata, sourceMetadataPathOpt) match {
       case (Some(prev), Some(curr), Some(metadataPath)) =>
         DeltaSourceMetadataEvolutionSupport
-          .validateIfSchemaChangeCanBeUnblockedWithSQLConf(
+          .validateIfSchemaChangeCanBeUnblocked(
             sparkSession, parameters, metadataPath, curr, prev)
       case _ =>
     }

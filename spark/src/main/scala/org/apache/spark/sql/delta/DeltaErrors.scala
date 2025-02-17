@@ -3122,8 +3122,11 @@ trait DeltaErrorsBase
       checkpointHash: Int,
       readerOptionsUnblock: Seq[String],
       sqlConfsUnblock: Seq[String]): Throwable = {
-    val readerOptions = readerOptionsUnblock.map { option =>
-        s"""  .option("$option", "true")"""
+    val unblockChangeOptions = readerOptionsUnblock.map { option =>
+        s"""  .option("$option", "$currentSchemaChangeVersion")"""
+      }.mkString("\n")
+    val unblockStreamOptions = readerOptionsUnblock.map { option =>
+        s"""  .option("$option", "always")"""
       }.mkString("\n")
     val unblockChangeConfs = sqlConfsUnblock.map { conf =>
         s"""  SET $conf.ckpt_$checkpointHash = $currentSchemaChangeVersion;"""
@@ -3142,7 +3145,8 @@ trait DeltaErrorsBase
         previousSchemaChangeVersion.toString,
         currentSchemaChangeVersion.toString,
         currentSchemaChangeVersion.toString,
-        readerOptions,
+        unblockChangeOptions,
+        unblockStreamOptions,
         unblockChangeConfs,
         unblockStreamConfs,
         unblockAllConfs
@@ -3163,8 +3167,11 @@ trait DeltaErrorsBase
         s"${change.toType.sql}"
       }.mkString("\n")
 
-    val readerOptions = readerOptionsUnblock.map { option =>
-        s"""  .option("$option", "true")"""
+    val unblockChangeOptions = readerOptionsUnblock.map { option =>
+        s"""  .option("$option", "$currentSchemaChangeVersion")"""
+      }.mkString("\n")
+    val unblockStreamOptions = readerOptionsUnblock.map { option =>
+        s"""  .option("$option", "always")"""
       }.mkString("\n")
     val unblockChangeConfs = sqlConfsUnblock.map { conf =>
         s"""  SET $conf.ckpt_$checkpointHash = $currentSchemaChangeVersion;"""
@@ -3183,7 +3190,8 @@ trait DeltaErrorsBase
         currentSchemaChangeVersion.toString,
         wideningTypeChangesStr,
         currentSchemaChangeVersion.toString,
-        readerOptions,
+        unblockChangeOptions,
+        unblockStreamOptions,
         unblockChangeConfs,
         unblockStreamConfs,
         unblockAllConfs

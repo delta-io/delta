@@ -214,13 +214,10 @@ trait DeltaReadOptions extends DeltaOptionParser {
   val sourceTrackingId = options.get(STREAMING_SOURCE_TRACKING_ID)
 
   val allowSourceColumnRename = options.get(ALLOW_SOURCE_COLUMN_RENAME)
-    .exists(toBoolean(_, ALLOW_SOURCE_COLUMN_RENAME))
 
   val allowSourceColumnDrop = options.get(ALLOW_SOURCE_COLUMN_DROP)
-    .exists(toBoolean(_, ALLOW_SOURCE_COLUMN_DROP))
 
   val allowSourceColumnTypeChange = options.get(ALLOW_SOURCE_COLUMN_TYPE_CHANGE)
-    .exists(toBoolean(_, ALLOW_SOURCE_COLUMN_TYPE_CHANGE))
 }
 
 

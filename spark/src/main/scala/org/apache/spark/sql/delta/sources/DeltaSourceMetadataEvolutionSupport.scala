@@ -449,7 +449,7 @@ object DeltaSourceMetadataEvolutionSupport {
 
   /**
    * Defining the different combinations of non-additive schema changes to detect them and allow
-   * users to vet and unblock them using a corresponding SQL conf:
+   * users to vet and unblock them using a corresponding SQL conf or reader option:
    * - dropping columns
    * - renaming columns
    * - widening data types
@@ -554,7 +554,7 @@ object DeltaSourceMetadataEvolutionSupport {
 
   /**
    * Returns whether the given type of non-additive schema change was unblocked by setting one of
-   * the corresponding SQL confs.
+   * the corresponding SQL confs or reader options.
    */
   private def isChangeUnblocked(
       spark: SparkSession,
@@ -575,13 +575,20 @@ object DeltaSourceMetadataEvolutionSupport {
       validConfKeysValuePair.exists(p => getConf(p._1).contains(p._2))
     }
 
-    val isBlockedRename = change.isRename && !options.allowSourceColumnRename &&
+    def isUnblockedByReaderOption(readerOption: Option[String]): Boolean = {
+      readerOption.contains("always") || readerOption.contains(schemaChangeVersion.toString)
+    }
+
+    val isBlockedRename = change.isRename &&
+      !isUnblockedByReaderOption(options.allowSourceColumnRename) &&
       !isUnblockedBySQLConf(SQL_CONF_UNBLOCK_RENAME) &&
       !isUnblockedBySQLConf(SQL_CONF_UNBLOCK_RENAME_DROP)
-    val isBlockedDrop = change.isDrop && !options.allowSourceColumnDrop &&
+    val isBlockedDrop = change.isDrop &&
+      !isUnblockedByReaderOption(options.allowSourceColumnDrop) &&
       !isUnblockedBySQLConf(SQL_CONF_UNBLOCK_DROP) &&
       !isUnblockedBySQLConf(SQL_CONF_UNBLOCK_RENAME_DROP)
-    val isBlockedTypeChange = change.isTypeWidening && !options.allowSourceColumnTypeChange &&
+    val isBlockedTypeChange = change.isTypeWidening &&
+      !isUnblockedByReaderOption(options.allowSourceColumnTypeChange) &&
       !isUnblockedBySQLConf(SQL_CONF_UNBLOCK_TYPE_CHANGE)
 
     !isBlockedRename && !isBlockedDrop && !isBlockedTypeChange
@@ -592,7 +599,7 @@ object DeltaSourceMetadataEvolutionSupport {
   /**
    * Whether to accept widening type changes:
    *   - when true, widening type changes cause the stream to fail, requesting user to review and
-   *     unblock them via a SQL conf.
+   *     unblock them via a SQL conf or reader option.
    *   - when false, widening type changes are rejected without possibility to unblock, similar to
    *     any other arbitrary type change.
    */
@@ -611,30 +618,39 @@ object DeltaSourceMetadataEvolutionSupport {
   // scalastyle:off
   /**
    * Given a non-additive operation type from a previous schema evolution, check we can process
-   * using the new schema given any SQL conf users have explicitly set to unblock.
+   * using the new schema given any SQL conf or dataframe reader option users have explicitly set to
+   * unblock.
    * The SQL conf can take one of following formats:
    * 1. spark.databricks.delta.streaming.allowSourceColumn$action = "always"
    *    -> allows non-additive schema change to propagate for all streams.
    * 2. spark.databricks.delta.streaming.allowSourceColumn$action.$checkpointHash = "always"
    *    -> allows non-additive schema change to propagate for this particular stream.
    * 3. spark.databricks.delta.streaming.allowSourceColumn$action.$checkpointHash = $deltaVersion
-   *     -> allow non-additive schema change to propagate only for this particular stream source
+   *    -> allow non-additive schema change to propagate only for this particular stream source
+   *        table version.
+   * The reader options can take one of the following format:
+   * 1.  .option("allowSourceColumn$action", "always")
+   *    -> allows non-additive schema change to propagate for this particular stream.
+   * 2.  .option("allowSourceColumn$action", "$deltaVersion")
+   *    -> allow non-additive schema change to propagate only for this particular stream source
    *        table version.
    * where `allowSourceColumn$action` is one of:
    * 1. `allowSourceColumnRename` to allow column renames.
    * 2. `allowSourceColumnDrop` to allow column drops.
-   * 3. `allowSourceColumnRenameAndDrop` to allow both column drops and renames.
-   * 4. `allowSourceColumnTypeChange` to allow widening type changes.
+   * 3. `allowSourceColumnTypeChange` to allow widening type changes.
+   * For SQL confs only, action can also be `allowSourceColumnRenameAndDrop` to allow both column
+   * drops and renames.
    *
    * We will check for any of these configs given the non-additive operation, and throw a proper
-   * error message to instruct the user to set the SQL conf if they would like to unblock.
+   * error message to instruct the user to set the SQL conf / reader options if they would like to
+   * unblock.
    *
    * @param metadataPath The path to the source-unique metadata location under checkpoint
    * @param currentSchema The current persisted schema
    * @param previousSchema The previous persisted schema
    */
   // scalastyle:on
-  protected[sources] def validateIfSchemaChangeCanBeUnblockedWithSQLConf(
+  protected[sources] def validateIfSchemaChangeCanBeUnblocked(
       spark: SparkSession,
       parameters: Map[String, String],
       metadataPath: String,
