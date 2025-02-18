@@ -40,7 +40,7 @@ public class ChecksumWriter {
 
   /** Writes a checksum file */
   public void writeCheckSum(Engine engine, CRCInfo crcInfo) throws IOException {
-    checkArgument(crcInfo.getNumFiles() >= 0 && crcInfo.getTableSizeBytes() >=0);
+    checkArgument(crcInfo.getNumFiles() >= 0 && crcInfo.getTableSizeBytes() >= 0);
     Path newChecksumPath = FileNames.checksumFile(logPath, crcInfo.getVersion());
     logger.info("Writing checksum file to path: {}", newChecksumPath);
     wrapEngineExceptionThrowsIO(
