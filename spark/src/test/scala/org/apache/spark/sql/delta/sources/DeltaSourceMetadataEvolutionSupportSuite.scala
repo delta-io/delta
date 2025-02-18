@@ -658,8 +658,8 @@ class DeltaSourceMetadataEvolutionSupportSuite
       spark,
       parameters = Map("allowSourceColumnTypeChange" -> "0"),
       metadataPath = "sourceMetadataPath",
-      currentSchema = persistedMetadata("a long", Map.empty),
-      previousSchema = persistedMetadata("a int", Map.empty)
+      currentSchema = persistedMetadata("a int", Map.empty),
+      previousSchema = persistedMetadata("a byte", Map.empty)
     )
   }
 }
