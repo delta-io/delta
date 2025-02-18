@@ -131,7 +131,7 @@ trait TypeWideningCompatibilityTests {
     assert(readDeltaTable(tempPath).schema ===
       new StructType()
         .add("a", ShortType, nullable = true,
-          metadata = typeWideningMetadata(version = 2, ByteType, ShortType))
+          metadata = typeWideningMetadata(ByteType, ShortType))
         .add("c", StringType, nullable = true,
           metadata = new MetadataBuilder()
             .putString("__CHAR_VARCHAR_TYPE_STRING", "char(3)")
@@ -149,7 +149,7 @@ trait TypeWideningCompatibilityTests {
     assert(readDeltaTable(tempPath).schema ===
       new StructType()
         .add("a", ShortType, nullable = true,
-          metadata = typeWideningMetadata(version = 2, ByteType, ShortType))
+          metadata = typeWideningMetadata(ByteType, ShortType))
         .add("c", StringType)
         .add("v", StringType))
     checkAnswer(readDeltaTable(tempPath),
