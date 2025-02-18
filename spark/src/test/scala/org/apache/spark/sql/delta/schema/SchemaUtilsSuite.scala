@@ -2579,19 +2579,26 @@ class SchemaUtilsSuite extends QueryTest
       .add("a", ByteType)
       .add("b", ByteType)
       .add("c", ShortType)
+      .add("s", new StructType().add("x", ByteType))
+      .add("m", MapType(ByteType, ShortType))
+      .add("ar", ArrayType(ByteType))
+
     val wide = new StructType()
       .add("a", ShortType)
       .add("b", IntegerType)
       .add("c", IntegerType)
+      .add("s", new StructType().add("x", IntegerType))
+      .add("m", MapType(ShortType, IntegerType))
+      .add("ar", ArrayType(IntegerType))
 
     for (typeWideningMode <- Seq(
         NoTypeWidening,
         AllTypeWidening,
         TypeEvolution(uniformIcebergCompatibleOnly = false),
         TypeEvolution(uniformIcebergCompatibleOnly = true),
-        AllTypeWideningBidirectional,
-        TypeEvolutionBidirectional(uniformIcebergCompatibleOnly = false),
-        TypeEvolutionBidirectional(uniformIcebergCompatibleOnly = true))) {
+        AllTypeWideningToCommonWiderType,
+        TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = false),
+        TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = true))) {
       // byte, short, int are all stored as INT64 in parquet, [[mergeSchemas]] always allows
       // widening between them. This was already the case before typeWideningMode was introduced.
       val merged1 = mergeSchemas(narrow, wide, typeWideningMode = typeWideningMode)
@@ -2627,9 +2634,9 @@ class SchemaUtilsSuite extends QueryTest
     }
 
     for (typeWideningMode <- Seq(
-        AllTypeWideningBidirectional,
-        TypeEvolutionBidirectional(uniformIcebergCompatibleOnly = false),
-        TypeEvolutionBidirectional(uniformIcebergCompatibleOnly = true))) {
+        AllTypeWideningToCommonWiderType,
+        TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = false),
+        TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = true))) {
       // Bidirectional doesn't enforce an order on the inputs, widening from second schema to first
       // is allowed.
       val merged = mergeSchemas(wide, narrow, typeWideningMode = typeWideningMode)
@@ -2640,9 +2647,9 @@ class SchemaUtilsSuite extends QueryTest
         AllTypeWidening,
         TypeEvolution(uniformIcebergCompatibleOnly = false),
         TypeEvolution(uniformIcebergCompatibleOnly = true),
-        AllTypeWideningBidirectional,
-        TypeEvolutionBidirectional(uniformIcebergCompatibleOnly = false),
-        TypeEvolutionBidirectional(uniformIcebergCompatibleOnly = true))) {
+        AllTypeWideningToCommonWiderType,
+        TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = false),
+        TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = true))) {
       // Widening is allowed, unless mode is NoTypeWidening.
       val merged = mergeSchemas(narrow, wide, typeWideningMode = typeWideningMode)
       assert(merged === wide)
@@ -2666,9 +2673,9 @@ class SchemaUtilsSuite extends QueryTest
 
     for (typeWideningMode <- Seq(
         TypeEvolution(uniformIcebergCompatibleOnly = false),
-        TypeEvolutionBidirectional(uniformIcebergCompatibleOnly = false),
+        TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = false),
         TypeEvolution(uniformIcebergCompatibleOnly = true),
-        TypeEvolutionBidirectional(uniformIcebergCompatibleOnly = true))) {
+        TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = true))) {
       expectAnalysisErrorClass(
         "DELTA_MERGE_INCOMPATIBLE_DATATYPE",
         Map("currentDataType" -> fromType.toString, "updateDataType" -> toType.toString),
@@ -2704,7 +2711,7 @@ class SchemaUtilsSuite extends QueryTest
 
     for (typeWideningMode <- Seq(
         TypeEvolution(uniformIcebergCompatibleOnly = false),
-        TypeEvolutionBidirectional(uniformIcebergCompatibleOnly = false))) {
+        TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = false))) {
         // Unsupported type changes by Iceberg are allowed without Iceberg compatibility.
       val merged = mergeSchemas(narrow, wide, typeWideningMode = typeWideningMode)
       assert(merged === wide)
@@ -2712,7 +2719,7 @@ class SchemaUtilsSuite extends QueryTest
 
     for (typeWideningMode <- Seq(
         TypeEvolution(uniformIcebergCompatibleOnly = true),
-        TypeEvolutionBidirectional(uniformIcebergCompatibleOnly = true))) {
+        TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = true))) {
       // Widening is blocked for unsupported type changes with Iceberg compatibility.
       checkAnalysisException {
         mergeSchemas(wide, narrow, typeWideningMode = typeWideningMode)
@@ -2722,17 +2729,84 @@ class SchemaUtilsSuite extends QueryTest
     // Bidirectional doesn't enforce an order on the inputs, widening from second schema to first
     // is allowed without Iceberg compatibility.
     val merged = mergeSchemas(wide, narrow,
-      typeWideningMode = TypeEvolutionBidirectional(uniformIcebergCompatibleOnly = false))
+      typeWideningMode = TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = false))
     assert(merged === wide)
 
     for (typeWideningMode <- Seq(
         TypeEvolution(uniformIcebergCompatibleOnly = true),
-        TypeEvolutionBidirectional(uniformIcebergCompatibleOnly = true),
+        TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = true),
         TypeEvolution(uniformIcebergCompatibleOnly = true))) {
       // Rejected either because this is a narrowing type change, or for the bidirectional mode,
       // because it is not supported by Iceberg.
       checkAnalysisException {
         mergeSchemas(wide, narrow, typeWideningMode = typeWideningMode)
+      }
+    }
+  }
+
+  testSparkMasterOnly(
+    s"typeWideningMode - widen to common wider decimal") {
+    import TypeWideningMode._
+    val left = new StructType().add("a", DecimalType(10, 2))
+    val right = new StructType().add("a", DecimalType(5, 4))
+    val wider = new StructType().add("a", DecimalType(12, 4))
+
+    for (typeWideningMode <- Seq(
+        NoTypeWidening,
+        AllTypeWidening,
+        TypeEvolution(uniformIcebergCompatibleOnly = false),
+        TypeEvolution(uniformIcebergCompatibleOnly = true),
+        // Increasing decimal scale isn't supported by Iceberg.
+        TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = true))) {
+      expectAnalysisErrorClass(
+        "DELTA_MERGE_INCOMPATIBLE_DECIMAL_TYPE",
+        Map("decimalRanges" -> "precision 10 and 5 & scale 2 and 4"),
+        matchPVals = false) {
+        mergeSchemas(left, right, typeWideningMode = typeWideningMode)
+      }
+      expectAnalysisErrorClass(
+        "DELTA_MERGE_INCOMPATIBLE_DECIMAL_TYPE",
+        Map("decimalRanges" -> "precision 5 and 10 & scale 4 and 2"),
+        matchPVals = false) {
+        mergeSchemas(right, left, typeWideningMode = typeWideningMode)
+      }
+    }
+
+    for (typeWideningMode <- Seq(
+        // Widening to a common wider decimal is allowed.
+        TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = false),
+        AllTypeWideningToCommonWiderType)) {
+      assert(mergeSchemas(left, right, typeWideningMode = typeWideningMode) === wider)
+      assert(mergeSchemas(right, left, typeWideningMode = typeWideningMode) === wider)
+    }
+  }
+
+  testSparkMasterOnly(
+    s"typeWideningMode - widen to common wider decimal exceeds max decimal precision") {
+    import TypeWideningMode._
+    // We'd need a DecimalType(40, 19) to fit both types, which exceeds max decimal precision of 38.
+    val left = new StructType().add("a", DecimalType(20, 19))
+    val right = new StructType().add("a", DecimalType(21, 0))
+
+    for (typeWideningMode <- Seq(
+        NoTypeWidening,
+        AllTypeWidening,
+        TypeEvolution(uniformIcebergCompatibleOnly = false),
+        TypeEvolution(uniformIcebergCompatibleOnly = true),
+        TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = true),
+        TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = false),
+        AllTypeWideningToCommonWiderType)) {
+      expectAnalysisErrorClass(
+        "DELTA_MERGE_INCOMPATIBLE_DECIMAL_TYPE",
+        Map("decimalRanges" -> "precision 20 and 21 & scale 19 and 0"),
+        matchPVals = false) {
+        mergeSchemas(left, right, typeWideningMode = typeWideningMode)
+      }
+      expectAnalysisErrorClass(
+        "DELTA_MERGE_INCOMPATIBLE_DECIMAL_TYPE",
+        Map("decimalRanges" -> "precision 21 and 20 & scale 0 and 19"),
+        matchPVals = false) {
+        mergeSchemas(right, left, typeWideningMode = typeWideningMode)
       }
     }
   }

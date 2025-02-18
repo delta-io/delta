@@ -18,26 +18,27 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.util.ScalaExtensions._
 
-import org.apache.spark.sql.types.AtomicType
+import org.apache.spark.sql.catalyst.analysis.DecimalPrecisionTypeCoercion
+import org.apache.spark.sql.types.{AtomicType, DecimalType}
 
 /**
  * A type widening mode captures a specific set of type changes that are allowed to be applied.
  * Currently:
  *  - NoTypeWidening: No type change is allowed.
- *  - AllTypeWidening: All supported type widening changes are allowed.
- *  - TypeEvolution(uniformIcebergCompatibleOnly = true): Type changes that are eligible to be
- *    applied automatically during schema evolution and that are supported by Iceberg are allowed.
- *  - TypeEvolution(uniformIcebergCompatibleOnly = false): Type changes that are eligible to be
- *    applied automatically during schema evolution are allowed, even if they are not supported by
- *    Iceberg.
- *
- * AllTypeWidening & TypeEvolution also have a "bidirectional" variant: instead of only allowing
- * 'from' to be widened to 'to', these also allow 'to' to be widened to 'from'. Useful when there's
- * no actual relation between 'from' and 'to' and we just want to use the wider type of the two,
- * e.g. when merging two unrelated schemas.
+ *  - AllTypeWidening: Allows widening to the target type using any supported type change.
+ *  - TypeEvolution: Only allows widening to the target type if the type change is eligible to be
+ *      applied automatically during schema evolution.
+ *  - AllTypeWideningToCommonWiderType: Allows widening to a common (possibly different) wider type
+ *      using any supported type change.
+ *  - TypeEvolutionToCommonWiderType: Allows widening to a common (possibly different) wider type
+ *      using only type changes that are eligible to be applied automatically during schema
+ *      evolution.
  */
 sealed trait TypeWideningMode {
   def getWidenedType(fromType: AtomicType, toType: AtomicType): Option[AtomicType]
+
+  def shouldWidenTo(fromType: AtomicType, toType: AtomicType): Boolean =
+    getWidenedType(fromType, toType).contains(toType)
 }
 
 object TypeWideningMode {
@@ -55,22 +56,6 @@ object TypeWideningMode {
   }
 
   /**
-   * All supported type widening changes are allowed. Unlike [[AllTypeWidening]], this also allows
-   * widening `to` to `from`. Use for example when merging two unrelated schemas and we want just
-   * want to get user the wider type of `from` and `to`.
-   */
-  case object AllTypeWideningBidirectional extends TypeWideningMode {
-    override def getWidenedType(left: AtomicType, right: AtomicType): Option[AtomicType] =
-      if (TypeWidening.isTypeChangeSupported(fromType = left, toType = right)) {
-        Some(right)
-      } else if (TypeWidening.isTypeChangeSupported(fromType = right, toType = left)) {
-        Some(left)
-      } else {
-        None
-      }
-  }
-
-  /**
    * Type changes that are eligible to be applied automatically during schema evolution are allowed.
    * Can be restricted to only type changes supported by Iceberg.
    */
@@ -81,22 +66,46 @@ object TypeWideningMode {
   }
 
   /**
+   * All supported type widening changes are allowed. Unlike [[AllTypeWidening]], this also allows
+   * widening `to` to `from`, and for decimals, widening to a different decimal type that is wider
+   * than both input types. Use for example when merging two unrelated schemas and we want just want
+   * to find a wider schema to use.
+   */
+  case object AllTypeWideningToCommonWiderType extends TypeWideningMode {
+    override def getWidenedType(left: AtomicType, right: AtomicType): Option[AtomicType] =
+      (left, right) match {
+        case (l, r) if TypeWidening.isTypeChangeSupported(l, r) => Some(r)
+        case (l, r) if TypeWidening.isTypeChangeSupported(r, l) => Some(l)
+        case (l: DecimalType, r: DecimalType) =>
+          val wider = DecimalPrecisionTypeCoercion.widerDecimalType(l, r)
+          Option.when(
+            TypeWidening.isTypeChangeSupported(l, wider) &&
+            TypeWidening.isTypeChangeSupported(r, wider))(wider)
+        case _ => None
+      }
+  }
+
+  /**
    * Type changes that are eligible to be applied automatically during schema evolution are allowed.
    * Can be restricted to only type changes supported by Iceberg. Unlike [[TypeEvolution]], this
-   * also allows widening `to` to `from`. Use for example when merging two unrelated schemas and we
-   * want just want to get user the wider type of `from` and `to`.
+   * also allows widening `to` to `from`, and for decimals, widening to a different decimal type
+   * that is wider han both input types. Use for example when merging two unrelated schemas and we
+   * want just want to find a wider schema to use.
    */
-  case class TypeEvolutionBidirectional(uniformIcebergCompatibleOnly: Boolean)
+  case class TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly: Boolean)
     extends TypeWideningMode {
-    override def getWidenedType(fromType: AtomicType, toType: AtomicType): Option[AtomicType] =
-      if (TypeWidening.isTypeChangeSupportedForSchemaEvolution(
-        fromType = fromType, toType = toType, uniformIcebergCompatibleOnly)) {
-        Some(toType)
-      } else if (TypeWidening.isTypeChangeSupportedForSchemaEvolution(
-        fromType = toType, toType = fromType, uniformIcebergCompatibleOnly)) {
-        Some(fromType)
-      } else {
-        None
+    override def getWidenedType(left: AtomicType, right: AtomicType): Option[AtomicType] = {
+      def typeChangeSupported: (AtomicType, AtomicType) => Boolean =
+        TypeWidening.isTypeChangeSupportedForSchemaEvolution(_, _, uniformIcebergCompatibleOnly)
+
+      (left, right) match {
+        case (l, r) if typeChangeSupported(l, r) => Some(r)
+        case (l, r) if typeChangeSupported(r, l) => Some(l)
+        case (l: DecimalType, r: DecimalType) =>
+          val wider = DecimalPrecisionTypeCoercion.widerDecimalType(l, r)
+          Option.when(typeChangeSupported(l, wider) && typeChangeSupported(r, wider))(wider)
+        case _ => None
       }
+    }
   }
 }
