@@ -561,7 +561,7 @@ trait TypeWideningTableFeatureTests
         "fieldPath" -> "a",
         "fromType" -> "INT",
         "toType" -> "BIGINT",
-        "typeWideningFeatureName" -> "typeWidening-preview"
+        "typeWideningFeatureName" -> "typeWidening"
       )
     )
   }
