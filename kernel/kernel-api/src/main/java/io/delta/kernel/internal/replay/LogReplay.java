@@ -26,7 +26,6 @@ import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Predicate;
-import io.delta.kernel.internal.TableFeatures;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.checkpoints.SidecarFile;
 import io.delta.kernel.internal.fs.Path;
@@ -35,6 +34,7 @@ import io.delta.kernel.internal.metrics.ScanMetrics;
 import io.delta.kernel.internal.metrics.SnapshotMetrics;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.SnapshotHint;
+import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.DomainMetadataUtils;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.StringType;
@@ -104,6 +104,11 @@ public class LogReplay {
     return new StructType()
         .add(ADDFILE_FIELD_NAME, getAddSchema(shouldReadStats))
         .add(REMOVEFILE_FIELD_NAME, REMOVE_FILE_SCHEMA);
+  }
+
+  /** Read schema when searching only for AddFiles */
+  public static StructType getAddReadSchema(boolean shouldReadStats) {
+    return new StructType().add(ADDFILE_FIELD_NAME, getAddSchema(shouldReadStats));
   }
 
   public static int ADD_FILE_ORDINAL = 0;
@@ -196,11 +201,15 @@ public class LogReplay {
       boolean shouldReadStats,
       Optional<Predicate> checkpointPredicate,
       ScanMetrics scanMetrics) {
+    // We do not need to look at any `remove` files from the checkpoints. Skip the column to save
+    // I/O. Note that we are still going to process the row groups. Adds and removes are randomly
+    // scattered through checkpoint part files, so row group push down is unlikely to be useful.
     final CloseableIterator<ActionWrapper> addRemoveIter =
         new ActionsIterator(
             engine,
             logSegment.allLogFilesReversed(),
             getAddRemoveReadSchema(shouldReadStats),
+            getAddReadSchema(shouldReadStats),
             checkpointPredicate);
     return new ActiveAddFilesIterator(engine, addRemoveIter, dataPath, scanMetrics);
   }
@@ -277,8 +286,7 @@ public class LogReplay {
 
               if (protocol != null) {
                 // Stop since we have found the latest Protocol and Metadata.
-                TableFeatures.validateReadSupportedTable(
-                    protocol, dataPath.toString(), Optional.of(metadata));
+                TableFeatures.validateReadSupportedTable(protocol, dataPath.toString());
                 return new Tuple2<>(protocol, metadata);
               }
 

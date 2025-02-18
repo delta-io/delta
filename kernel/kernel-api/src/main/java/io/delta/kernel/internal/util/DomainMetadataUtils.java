@@ -18,9 +18,9 @@ package io.delta.kernel.internal.util;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.internal.DeltaErrors;
-import io.delta.kernel.internal.TableFeatures;
 import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
