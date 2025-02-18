@@ -23,6 +23,7 @@ import scala.util.control.NonFatal
 import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingMode, DeltaErrors, DeltaLog, GeneratedColumn, NoMapping, TypeWidening, TypeWideningMode}
 import org.apache.spark.sql.delta.{RowCommitVersion, RowId}
 import org.apache.spark.sql.delta.ClassicColumnConversions._
+import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
@@ -43,7 +44,6 @@ import org.apache.spark.sql.execution.streaming.IncrementalExecution
 import org.apache.spark.sql.functions.{col, struct}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
-import org.apache.spark.util.Utils
 
 object SchemaUtils extends DeltaLogging {
   // We use case insensitive resolution while writing into Delta
@@ -286,11 +286,13 @@ def normalizeColumnNamesInDataType(
         // When schema evolution adds a new column during MERGE, it can be represented with
         // a NullType in the schema of the data written by the MERGE.
         sourceDataType
-      case (_: IntegralType, _: IntegralType) =>
-        // The integral types can be cast to each other later on.
+      case (_: AtomicType, _: AtomicType) =>
+        // Some atomic types (e.g. integral types) can be cast to each other later on. For now,
+        // it's enough to know that there are no nested fields inside the atomic types that might
+        // require normalization.
         sourceDataType
       case _ =>
-        if (Utils.isTesting) {
+        if (DeltaUtils.isTesting) {
           assert(sourceDataType == tableDataType,
             s"Types without nesting should match but $sourceDataType != $tableDataType")
         } else if (sourceDataType != tableDataType) {

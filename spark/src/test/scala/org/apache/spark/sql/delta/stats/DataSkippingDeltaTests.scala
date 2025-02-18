@@ -36,6 +36,7 @@ import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.QueryPlanningTracker
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal, PredicateHelper}
+import org.apache.spark.sql.catalyst.plans.logical.Filter
 import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
@@ -1926,6 +1927,71 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
         .map(addFile => (addFile.path, addFile)).toMap
       assert(result4.size == 1)
       assert(result4(file6).stats == expectedStatsForFile(6, "x", deltaLog))
+    }
+  }
+
+  test("File skipping with non-deterministic filters") {
+    withTable("tbl") {
+      // Create the table.
+      val df = spark.range(100).toDF()
+      df.write.mode("overwrite").format("delta").saveAsTable("tbl")
+
+      // Append 9 times to the table.
+      for (i <- 1 to 9) {
+        val df = spark.range(i * 100, (i + 1) * 100).toDF()
+        df.write.mode("append").format("delta").insertInto("tbl")
+      }
+
+      val query = "SELECT count(*) FROM tbl WHERE rand(0) < 0.25"
+      val result = sql(query).collect().head.getLong(0)
+      assert(result > 150, s"Expected around 250 rows (~0.25 * 1000), got: $result")
+
+      val predicates = sql(query).queryExecution.optimizedPlan.collect {
+        case Filter(condition, _) => condition
+      }.flatMap(splitConjunctivePredicates)
+      val scanResult = DeltaLog.forTable(spark, TableIdentifier("tbl"))
+        .update().filesForScan(predicates)
+      assert(scanResult.unusedFilters.nonEmpty)
+    }
+  }
+
+  test("File skipping with non-deterministic filters on partitioned tables") {
+    withTable("tbl_partitioned") {
+      import org.apache.spark.sql.functions.col
+
+      // Create initial DataFrame and add a partition column.
+      val df = spark.range(100).toDF().withColumn("p", col("id") % 10)
+      df.write
+        .mode("overwrite")
+        .format("delta")
+        .partitionBy("p")
+        .saveAsTable("tbl_partitioned")
+
+      // Append 9 more times to the table.
+      for (i <- 1 to 9) {
+        val newDF = spark.range(i * 100, (i + 1) * 100).toDF().withColumn("p", col("id") % 10)
+        newDF.write.mode("append").format("delta").insertInto("tbl_partitioned")
+      }
+
+      // Run query with a nondeterministic filter.
+      val query = "SELECT count(*) FROM tbl_partitioned WHERE rand(0) < 0.25"
+      val result = sql(query).collect().head.getLong(0)
+      // Assert that the row count is as expected (e.g., roughly 25% of rows).
+      assert(result > 150, s"Expected a reasonable number of rows, got: $result")
+
+      val predicates = sql(query).queryExecution.optimizedPlan.collect {
+        case Filter(condition, _) => condition
+      }.flatMap(splitConjunctivePredicates)
+      val scanResult = DeltaLog.forTable(spark, TableIdentifier("tbl_partitioned"))
+        .update().filesForScan(predicates)
+      assert(scanResult.unusedFilters.nonEmpty)
+
+      // Assert that entries are fetched from all 10 partitions
+      val distinctPartitions =
+        sql("SELECT DISTINCT p FROM tbl_partitioned WHERE rand(0) < 0.25")
+        .collect()
+        .length
+      assert(distinctPartitions == 10)
     }
   }
 

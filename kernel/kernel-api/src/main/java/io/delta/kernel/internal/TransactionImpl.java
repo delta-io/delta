@@ -39,6 +39,7 @@ import io.delta.kernel.internal.metrics.TransactionReportImpl;
 import io.delta.kernel.internal.replay.ConflictChecker;
 import io.delta.kernel.internal.replay.ConflictChecker.TransactionRebaseState;
 import io.delta.kernel.internal.rowtracking.RowTracking;
+import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.*;
 import io.delta.kernel.metrics.TransactionMetricsResult;
 import io.delta.kernel.metrics.TransactionReport;

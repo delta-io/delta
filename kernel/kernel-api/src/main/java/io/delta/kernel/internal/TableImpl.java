@@ -25,10 +25,12 @@ import io.delta.kernel.exceptions.CheckpointAlreadyExistsException;
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.checkpoints.Checkpointer;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.metrics.SnapshotReportImpl;
 import io.delta.kernel.internal.snapshot.SnapshotManager;
+import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.Clock;
 import io.delta.kernel.metrics.SnapshotReport;
 import io.delta.kernel.types.StructField;
@@ -39,7 +41,6 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
@@ -74,15 +75,17 @@ public class TableImpl implements Table {
     return new TableImpl(resolvedPath, clock);
   }
 
-  private final SnapshotManager snapshotManager;
   private final String tablePath;
+  private final Checkpointer checkpointer;
+  private final SnapshotManager snapshotManager;
   private final Clock clock;
 
   public TableImpl(String tablePath, Clock clock) {
     this.tablePath = tablePath;
     final Path dataPath = new Path(tablePath);
     final Path logPath = new Path(dataPath, "_delta_log");
-    this.snapshotManager = new SnapshotManager(logPath, dataPath);
+    this.checkpointer = new Checkpointer(logPath);
+    this.snapshotManager = new SnapshotManager(dataPath);
     this.clock = clock;
   }
 
@@ -131,7 +134,9 @@ public class TableImpl implements Table {
   @Override
   public void checkpoint(Engine engine, long version)
       throws TableNotFoundException, CheckpointAlreadyExistsException, IOException {
-    snapshotManager.checkpoint(engine, clock, version);
+    final SnapshotImpl snapshotToCheckpoint =
+        (SnapshotImpl) getSnapshotAsOfVersion(engine, version);
+    checkpointer.checkpoint(engine, clock, snapshotToCheckpoint);
   }
 
   @Override
@@ -192,8 +197,7 @@ public class TableImpl implements Table {
               for (int rowId = 0; rowId < protocolVector.getSize(); rowId++) {
                 if (!protocolVector.isNullAt(rowId)) {
                   Protocol protocol = Protocol.fromColumnVector(protocolVector, rowId);
-                  TableFeatures.validateReadSupportedTable(
-                      protocol, getDataPath().toString(), Optional.empty());
+                  TableFeatures.validateReadSupportedTable(protocol, getDataPath().toString());
                 }
               }
               if (shouldDropProtocolColumn) {

@@ -38,6 +38,7 @@ import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources._
 import org.apache.spark.sql.delta.storage.LogStoreProvider
 import org.apache.spark.sql.delta.util.FileNames
+import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import com.google.common.cache.{Cache, CacheBuilder, RemovalNotification}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
@@ -152,7 +153,8 @@ class DeltaLog private(
 
   private[delta] def shouldVerifyIncrementalCommit: Boolean = {
     spark.conf.get(DeltaSQLConf.INCREMENTAL_COMMIT_VERIFY) ||
-      (Utils.isTesting && spark.conf.get(DeltaSQLConf.INCREMENTAL_COMMIT_FORCE_VERIFY_IN_TESTS))
+      (DeltaUtils.isTesting
+        && spark.conf.get(DeltaSQLConf.INCREMENTAL_COMMIT_FORCE_VERIFY_IN_TESTS))
   }
 
   /** The unique identifier for this table. */
@@ -580,7 +582,7 @@ class DeltaLog private(
     }
 
     val fileIndex = TahoeLogFileIndex(
-      spark, this, dataPath, snapshotToUse, partitionFilters, isTimeTravelQuery)
+      spark, this, dataPath, snapshotToUse, catalogTableOpt, partitionFilters, isTimeTravelQuery)
     var bucketSpec: Option[BucketSpec] = None
 
     val r = buildHadoopFsRelationWithFileIndex(snapshotToUse, fileIndex, bucketSpec = bucketSpec)

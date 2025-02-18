@@ -29,14 +29,14 @@ import scala.language.implicitConversions
 import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED
 import org.apache.spark.sql.delta.DeltaHistoryManagerSuiteShims._
-import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
+import org.apache.spark.sql.delta.DeltaTestUtils.{createTestAddFile, modifyCommitTimestamp}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.StatsUtils
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames}
+import org.apache.spark.sql.delta.util.FileNames
 import org.scalatest.GivenWhenThen
 
 import org.apache.spark.{SparkConf, SparkException}
@@ -63,31 +63,6 @@ trait DeltaTimeTravelTests extends QueryTest
   protected implicit def longToTimestamp(ts: Long): Timestamp = new Timestamp(ts)
 
   protected val timeFormatter = new SimpleDateFormat("yyyyMMddHHmmssSSS")
-
-  protected def modifyCommitTimestamp(deltaLog: DeltaLog, version: Long, ts: Long): Unit = {
-    val filePath = DeltaCommitFileProvider(deltaLog.update()).deltaFile(version)
-    val crc = new File(FileNames.checksumFile(deltaLog.logPath, version).toUri)
-    if (isICTEnabledForNewTables) {
-      InCommitTimestampTestUtils.overwriteICTInDeltaFile(deltaLog, filePath, Some(ts))
-      if (FileNames.isUnbackfilledDeltaFile(filePath)) {
-        // Also change the ICT in the backfilled file if it exists.
-        val backfilledFilePath = FileNames.unsafeDeltaFile(deltaLog.logPath, version)
-        val fs = backfilledFilePath.getFileSystem(deltaLog.newDeltaHadoopConf())
-        if (fs.exists(backfilledFilePath)) {
-          InCommitTimestampTestUtils.overwriteICTInDeltaFile(deltaLog, backfilledFilePath, Some(ts))
-        }
-      }
-      if (crc.exists()) {
-        InCommitTimestampTestUtils.overwriteICTInCrc(deltaLog, version, Some(ts))
-      }
-    } else {
-      val file = new File(filePath.toUri)
-      file.setLastModified(ts)
-      if (crc.exists()) {
-        crc.setLastModified(ts)
-      }
-    }
-  }
 
   protected def versionAsOf(table: String, version: Long): String = {
     s"$table version as of $version"
