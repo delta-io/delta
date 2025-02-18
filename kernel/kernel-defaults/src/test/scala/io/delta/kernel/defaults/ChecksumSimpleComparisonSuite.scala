@@ -16,7 +16,6 @@
 package io.delta.kernel.defaults
 
 import io.delta.kernel.Operation.CREATE_TABLE
-import io.delta.kernel.{Operation, Table, Transaction}
 import io.delta.kernel.data.{ColumnarBatch, Row}
 import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.engine.Engine
@@ -24,12 +23,13 @@ import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.actions.{AddFile, SingleAction}
 import io.delta.kernel.internal.checksum.{CRCInfo, ChecksumReader}
 import io.delta.kernel.internal.fs.Path
-import io.delta.kernel.internal.util.{FileNames, VectorUtils}
 import io.delta.kernel.internal.util.Utils.{singletonCloseableIterator, toCloseableIterator}
+import io.delta.kernel.internal.util.{FileNames, VectorUtils}
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 import io.delta.kernel.utils.{CloseableIterator, DataFileStatus, FileStatus}
+import io.delta.kernel.{Operation, Table, Transaction}
 import org.scalatest.funsuite.AnyFunSuite
 
 import java.io.File
@@ -65,8 +65,8 @@ class ChecksumSimpleComparisonSuite extends AnyFunSuite with TestUtils {
       assertChecksumEquals(engine, sparkTablePath, kernelTablePath, 0)
 
       (1 to 10).foreach(
-        version => insertIntoUnpartitionedTableAndCheckCrc(
-          engine, sparkTablePath, kernelTablePath, version)
+        version =>
+          insertIntoUnpartitionedTableAndCheckCrc(engine, sparkTablePath, kernelTablePath, version)
       )
 
     }
@@ -92,10 +92,45 @@ class ChecksumSimpleComparisonSuite extends AnyFunSuite with TestUtils {
       assertChecksumEquals(engine, sparkTablePath, kernelTablePath, 0)
 
       (1 to 10).foreach(
-        version => insertIntoPartitionedTableAndCheckCrc(
-          engine, sparkTablePath, kernelTablePath, version)
+        version =>
+          insertIntoPartitionedTableAndCheckCrc(engine, sparkTablePath, kernelTablePath, version)
       )
     }
+  }
+
+  /**
+   * Insert into partition spark table, copy the commit log to kernel table
+   * and verify the checksum files for are consistent between spark and kernel
+   * */
+  private def insertIntoPartitionedTableAndCheckCrc(
+      engine: Engine,
+      sparkTablePath: String,
+      kernelTablePath: String,
+      versionAtCommit: Long): Unit = {
+    var valueToAppend = "(0, 0)"
+    var addedPartition = Set(0)
+    (0L to versionAtCommit).foreach(i => {
+      val partitionValue = 2 * i
+      addedPartition = addedPartition + partitionValue.toInt
+      valueToAppend = valueToAppend + s",($i, $partitionValue)"
+    })
+    spark.sql(
+      s"INSERT INTO delta.`$sparkTablePath` values $valueToAppend"
+    )
+
+    val txn = Table
+      .forPath(engine, kernelTablePath)
+      .createTransactionBuilder(engine, "test-engine", Operation.WRITE)
+      .build(engine)
+
+    convertSparkDeltaLogToKernelCommitForPartitionedTable(
+      txn,
+      engine,
+      sparkTablePath,
+      addedPartition,
+      versionAtCommit
+    )
+    assertChecksumEquals(engine, sparkTablePath, kernelTablePath, versionAtCommit)
   }
 
   private def assertChecksumEquals(
@@ -137,70 +172,6 @@ class ChecksumSimpleComparisonSuite extends AnyFunSuite with TestUtils {
   }
 
   /**
-   * Insert into partition spark table, copy the commit log to kernel table
-   * and verify the checksum files for are consistent between spark and kernel
-   * */
-  private def insertIntoPartitionedTableAndCheckCrc(
-      engine: Engine,
-      sparkTablePath: String,
-      kernelTablePath: String,
-      versionAtCommit: Long): Unit = {
-    var valueToAppend = "(0, 0)"
-    var addedPartition = Set(0)
-    (0L to versionAtCommit).foreach(i => {
-      val partitionValue = 2 * i
-      addedPartition = addedPartition + partitionValue.toInt
-      valueToAppend = valueToAppend + s",($i, $partitionValue)"
-    })
-    spark.sql(
-      s"INSERT INTO delta.`$sparkTablePath` values $valueToAppend"
-    )
-
-    val txn = Table
-      .forPath(engine, kernelTablePath)
-      .createTransactionBuilder(engine, "test-engine", Operation.WRITE)
-      .build(engine)
-
-    convertSparkDeltaLogToKernelCommitForPartitionedTable(
-      txn,
-      engine,
-      sparkTablePath,
-      addedPartition,
-      versionAtCommit
-    )
-    assertChecksumEquals(engine, sparkTablePath, kernelTablePath, versionAtCommit)
-  }
-
-  /**
-   * Insert into unpartitioned spark table, copy the commit log to kernel table
-   * and verify the checksum files for are consistent between spark and kernel
-   * */
-  private def insertIntoUnpartitionedTableAndCheckCrc(
-      engine: Engine,
-      sparkTablePath: String,
-      kernelTablePath: String,
-      versionAtCommit: Long): Unit = {
-    var valueToAppend = "(0)"
-    (0L to versionAtCommit).foreach(i => valueToAppend = valueToAppend + s",($i)")
-    spark.sql(
-      s"INSERT INTO delta.`$sparkTablePath` values $valueToAppend"
-    )
-
-    val txn = Table
-      .forPath(engine, kernelTablePath)
-      .createTransactionBuilder(engine, "test-engine", Operation.WRITE)
-      .build(engine)
-
-    convertSparkDeltaLogToKernelCommitForUnpartitionedTable(
-      txn,
-      engine,
-      sparkTablePath,
-      versionAtCommit
-    )
-    assertChecksumEquals(engine, sparkTablePath, kernelTablePath, versionAtCommit)
-  }
-
-  /**
    * Read the spark table's commit log file, translate the added file for each partition
    * in the log to kernel's append action, and commit to kernel table
    * */
@@ -222,15 +193,19 @@ class ChecksumSimpleComparisonSuite extends AnyFunSuite with TestUtils {
           singletonMap(PARTITION_COLUMN, Literal.ofInt(partition))
         )
 
-    Transaction.generateAppendActions(
-            engine,
-            txnState,
-            convertSparkTableDeltaLogToKernelAppendActions(
+      Transaction
+        .generateAppendActions(
+          engine,
+          txnState,
+          convertSparkTableDeltaLogToKernelAppendActions(
             engine,
             sparkTablePath,
             versionToCovert,
-            Some(partition.toString)),
-            writeContext).forEach(action => dataActions.add(action))
+            Some(partition.toString)
+          ),
+          writeContext
+        )
+        .forEach(action => dataActions.add(action))
     })
 
     txn
@@ -240,39 +215,6 @@ class ChecksumSimpleComparisonSuite extends AnyFunSuite with TestUtils {
         hook => hook.threadSafeInvoke(engine)
       )
 
-  }
-
-  /**
-   * Read the spark table's commit log file, translate the added file
-   * in the log to kernel's append action, and commit to kernel table
-   * */
-  private def convertSparkDeltaLogToKernelCommitForUnpartitionedTable(
-      txn: Transaction,
-      engine: Engine,
-      sparkTablePath: String,
-      versionToConvert: Long): Unit = {
-    val txnState = txn.getTransactionState(engine);
-
-    val writeContext = Transaction
-      .getWriteContext(engine, txnState, emptyMap())
-
-    val dataActions = Transaction
-      .generateAppendActions(
-        engine,
-        txnState,
-        convertSparkTableDeltaLogToKernelAppendActions(
-          engine,
-          sparkTablePath,
-          versionToConvert,
-          Option.empty
-        ),
-        writeContext
-      )
-
-    txn
-      .commit(engine, inMemoryIterable(dataActions))
-      .getPostCommitHooks
-      .forEach(hook => hook.threadSafeInvoke(engine))
   }
 
   private def convertSparkTableDeltaLogToKernelAppendActions(
@@ -289,7 +231,8 @@ class ChecksumSimpleComparisonSuite extends AnyFunSuite with TestUtils {
     val columnarBatches = engine.getJsonHandler.readJsonFiles(
       singletonCloseableIterator(deltaFile),
       SingleAction.FULL_SCHEMA,
-      Optional.empty())
+      Optional.empty()
+    )
 
     while (columnarBatches.hasNext) {
       processColumnarBatch(columnarBatches.next(), partition, addFiles)
@@ -335,5 +278,67 @@ class ChecksumSimpleComparisonSuite extends AnyFunSuite with TestUtils {
   private def shouldIncludeFile(addFile: AddFile, partition: Option[String]): Boolean = {
     partition.isEmpty ||
     partition.get == VectorUtils.toJavaMap(addFile.getPartitionValues).get(PARTITION_COLUMN)
+  }
+
+  /**
+   * Insert into unpartitioned spark table, copy the commit log to kernel table
+   * and verify the checksum files for are consistent between spark and kernel
+   * */
+  private def insertIntoUnpartitionedTableAndCheckCrc(
+      engine: Engine,
+      sparkTablePath: String,
+      kernelTablePath: String,
+      versionAtCommit: Long): Unit = {
+    var valueToAppend = "(0)"
+    (0L to versionAtCommit).foreach(i => valueToAppend = valueToAppend + s",($i)")
+    spark.sql(
+      s"INSERT INTO delta.`$sparkTablePath` values $valueToAppend"
+    )
+
+    val txn = Table
+      .forPath(engine, kernelTablePath)
+      .createTransactionBuilder(engine, "test-engine", Operation.WRITE)
+      .build(engine)
+
+    convertSparkDeltaLogToKernelCommitForUnpartitionedTable(
+      txn,
+      engine,
+      sparkTablePath,
+      versionAtCommit
+    )
+    assertChecksumEquals(engine, sparkTablePath, kernelTablePath, versionAtCommit)
+  }
+
+  /**
+   * Read the spark table's commit log file, translate the added file
+   * in the log to kernel's append action, and commit to kernel table
+   * */
+  private def convertSparkDeltaLogToKernelCommitForUnpartitionedTable(
+      txn: Transaction,
+      engine: Engine,
+      sparkTablePath: String,
+      versionToConvert: Long): Unit = {
+    val txnState = txn.getTransactionState(engine);
+
+    val writeContext = Transaction
+      .getWriteContext(engine, txnState, emptyMap())
+
+    val dataActions = Transaction
+      .generateAppendActions(
+        engine,
+        txnState,
+        convertSparkTableDeltaLogToKernelAppendActions(
+          engine,
+          sparkTablePath,
+          versionToConvert,
+          Option.empty
+        ),
+        writeContext
+      )
+
+    txn
+      .commit(engine, inMemoryIterable(dataActions))
+      .getPostCommitHooks
+      .forEach(hook => hook.threadSafeInvoke(engine))
   }
 }
