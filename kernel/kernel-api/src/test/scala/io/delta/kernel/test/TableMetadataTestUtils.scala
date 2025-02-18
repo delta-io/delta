@@ -15,15 +15,13 @@
  */
 package io.delta.kernel.test
 import io.delta.kernel.data.{ArrayValue, ColumnVector, MapValue}
-import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
 import io.delta.kernel.internal.util.InternalUtils.singletonStringColumnVector
 import io.delta.kernel.internal.util.VectorUtils.stringVector
-import io.delta.kernel.types.{FieldMetadata, IntegerType, StringType, StructType, TimestampNTZType, TimestampType, VariantType}
+import io.delta.kernel.types._
 
 import java.util.{Collections, Optional}
 import scala.collection.JavaConverters.seqAsJavaListConverter
-
 
 /**
  * Utilities to provide sample table metadata related object such as protocol, metadata, schema
@@ -42,18 +40,19 @@ trait TableMetadataTestUtils {
   }
 
   def testMetadata(
-                    includeInvaraint: Boolean = false,
-                    includeTimestampNtzTypeCol: Boolean = false,
-                    includeVariantTypeCol: Boolean = false,
-                    includeGeneratedColumn: Boolean = false,
-                    includeIdentityColumn: Boolean = false,
-                    tblProps: Map[String, String] = Map.empty): Metadata = {
+      includeInvaraint: Boolean = false,
+      includeTimestampNtzTypeCol: Boolean = false,
+      includeVariantTypeCol: Boolean = false,
+      includeGeneratedColumn: Boolean = false,
+      includeIdentityColumn: Boolean = false,
+      tblProps: Map[String, String] = Map.empty): Metadata = {
     val testSchema = createTestSchema(
       includeInvaraint,
       includeTimestampNtzTypeCol,
       includeVariantTypeCol,
       includeGeneratedColumn,
-      includeIdentityColumn)
+      includeIdentityColumn
+    )
     new Metadata(
       "id",
       Optional.of("name"),
@@ -76,11 +75,11 @@ trait TableMetadataTestUtils {
   }
 
   def createTestSchema(
-                        includeInvariant: Boolean = false,
-                        includeTimestampNtzTypeCol: Boolean = false,
-                        includeVariantTypeCol: Boolean = false,
-                        includeGeneratedColumn: Boolean = false,
-                        includeIdentityColumn: Boolean = false): StructType = {
+      includeInvariant: Boolean = false,
+      includeTimestampNtzTypeCol: Boolean = false,
+      includeVariantTypeCol: Boolean = false,
+      includeGeneratedColumn: Boolean = false,
+      includeIdentityColumn: Boolean = false): StructType = {
     var structType = new StructType()
       .add("c1", IntegerType.INTEGER)
       .add("c2", StringType.STRING)
@@ -88,9 +87,11 @@ trait TableMetadataTestUtils {
       structType = structType.add(
         "c3",
         TimestampType.TIMESTAMP,
-        FieldMetadata.builder()
+        FieldMetadata
+          .builder()
           .putString("delta.invariants", "{\"expression\": { \"expression\": \"x > 3\"} }")
-          .build())
+          .build()
+      )
     }
     if (includeTimestampNtzTypeCol) {
       structType = structType.add("c4", TimestampNTZType.TIMESTAMP_NTZ)
@@ -102,23 +103,24 @@ trait TableMetadataTestUtils {
       structType = structType.add(
         "c6",
         IntegerType.INTEGER,
-        FieldMetadata.builder()
+        FieldMetadata
+          .builder()
           .putString("delta.generationExpression", "{\"expression\": \"c1 + 1\"}")
-          .build())
+          .build()
+      )
     }
     if (includeIdentityColumn) {
       structType = structType.add(
         "c7",
         IntegerType.INTEGER,
-        FieldMetadata.builder()
+        FieldMetadata
+          .builder()
           .putLong("delta.identity.start", 1L)
           .putLong("delta.identity.step", 2L)
           .putBoolean("delta.identity.allowExplicitInsert", true)
-          .build())
+          .build()
+      )
     }
-
     structType
   }
-
-
 }
