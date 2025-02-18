@@ -71,7 +71,7 @@ class InMemoryCatalogClient(workspace: Path = new Path("/tmp/in_memory_catalog/"
         val tableCommitsStr = tableData.commits.map(f => s"  - ${f.getPath}").mkString("\n")
         logger.info(s"tableData.commits (size=${tableData.commits.size}):\n$tableCommitsStr")
 
-        GetCommitsResponse.Success(tableData.commits)
+        GetCommitsResponse.Success(tableData.commits.toList) // return an IMMUTABLE COPY
     }
   }
 
@@ -149,13 +149,11 @@ class InMemoryCatalogClient(workspace: Path = new Path("/tmp/in_memory_catalog/"
             .commits
             .filter(f => FileNames.isUnbackfilledDeltaFile(f.getPath))
             .dropWhile(f => {
-              // TODO: THIS IS A TEST SETUP WHERE WE KEEP THE UNBACKFILLED FILE FOR THE LAST
-              //       BACKFILLED FILE. THIS SHOULD REALLY BE <= INSTEAD OF <
-              val doDrop = FileNames.uuidCommitDeltaVersion(f.getPath) < latestBackfilledVersion
+              val doDrop = FileNames.uuidCommitDeltaVersion(f.getPath) <= latestBackfilledVersion
               logger.info(s"Checking if we should drop ${f.getPath}: $doDrop")
               doDrop
             })
-          logger.info(s"Removed commits older than or equal to $latestBackfilledVersion")
+          logger.info(s"Removed catalog commits older than or equal to $latestBackfilledVersion")
         }
         SetLatestBackfilledVersionResponse.Success
     }

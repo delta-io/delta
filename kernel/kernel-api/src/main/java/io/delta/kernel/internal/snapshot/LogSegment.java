@@ -133,7 +133,9 @@ public class LogSegment {
         // Check the last delta version
         checkArgument(
             ListUtils.getLast(deltaVersions) == version,
-            "Last delta file version must equal the version of this LogSegment");
+            String.format(
+                "Last delta file version (%d) must equal the version of this LogSegment (%d)",
+                ListUtils.getLast(deltaVersions), version));
 
         // Ensure the delta versions are contiguous
         for (int i = 1; i < deltaVersions.size(); i++) {

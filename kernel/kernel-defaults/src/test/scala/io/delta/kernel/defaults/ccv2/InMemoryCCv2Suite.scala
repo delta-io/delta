@@ -8,7 +8,6 @@ import io.delta.kernel.defaults.ccv2.setup.{CCv2Client, InMemoryCatalogClient}
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
 import io.delta.kernel.defaults.utils.TestRow
 import io.delta.kernel.test.VectorTestUtils
-import io.delta.kernel.utils.CloseableIterable
 import org.scalatest.funsuite.AnyFunSuite
 
 // scalastyle:off println
@@ -52,8 +51,15 @@ class InMemoryCCv2Suite extends AnyFunSuite
 
     val txnState = txn.getTransactionState(defaultEngine)
     val stagedFiles = stageData(txnState, Map.empty, data.toList)
-    val stagedActionsIterable = CloseableIterable.inMemoryIterable(stagedFiles)
-    txn.commit(defaultEngine, stagedActionsIterable)
+//    val stagedActionsIterable = CloseableIterable.inMemoryIterable(stagedFiles)
+//    txn.commit(defaultEngine, stagedActionsIterable)
+
+    stagingTableMetadata.commit(
+      txn.commitAsVersion(),
+      txn.finalizeActions(defaultEngine, stagedFiles),
+      txn.getUpdatedProtocol,
+      txn.getUpdatedMetadata
+    )
   }
 
   private def appendDataHelper(tableName: String, data: Seq[FilteredColumnarBatch]): Unit = {
@@ -66,17 +72,25 @@ class InMemoryCCv2Suite extends AnyFunSuite
 
     val txnState = txn.getTransactionState(defaultEngine)
     val stagedFiles = stageData(txnState, Map.empty, data.toList)
-    val stagedActionsIterable = CloseableIterable.inMemoryIterable(stagedFiles)
-    val txnCommitResult = txn.commit(defaultEngine, stagedActionsIterable)
-    println(s"Successfully committed transaction with version ${txnCommitResult.getVersion}")
+
+    resolvedMetadata.commit(
+      txn.commitAsVersion(),
+      txn.finalizeActions(defaultEngine, stagedFiles),
+      txn.getUpdatedProtocol,
+      txn.getUpdatedMetadata
+    )
+
+//    val stagedActionsIterable = CloseableIterable.inMemoryIterable(stagedFiles)
+//    val txnCommitResult = txn.commit(defaultEngine, stagedActionsIterable)
+//    println(s"Successfully committed transaction with version ${txnCommitResult.getVersion}")
 
     // TODO: this is jenky -- the backfill might not yet be done
-    txnCommitResult.getPostCommitHooks.forEach(hook => {
-      println("=" * 25)
-      println("Invoking post commit hook ...")
-      hook.threadSafeInvoke(defaultEngine)
-      println("=" * 25)
-    })
+//    txnCommitResult.getPostCommitHooks.forEach(hook => {
+//      println("=" * 25)
+//      println("Invoking post commit hook ...")
+//      hook.threadSafeInvoke(defaultEngine)
+//      println("=" * 25)
+//    })
   }
 
   private def printDiv(): Unit = {

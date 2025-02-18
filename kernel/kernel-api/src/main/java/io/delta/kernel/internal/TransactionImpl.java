@@ -19,11 +19,9 @@ import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 import static io.delta.kernel.internal.TableConfig.*;
 import static io.delta.kernel.internal.actions.SingleAction.*;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
-import static io.delta.kernel.internal.util.Preconditions.checkState;
 import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
 
 import io.delta.kernel.*;
-import io.delta.kernel.ccv2.ResolvedMetadata.CommitFunction;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.ConcurrentWriteException;
@@ -68,7 +66,6 @@ public class TransactionImpl implements Transaction {
   private final SnapshotImpl readSnapshot;
   private final Optional<SetTransaction> setTxnOpt;
   private final boolean shouldUpdateProtocol;
-  private final Optional<CommitFunction> commitFunctionOpt;
   private final Clock clock;
   private List<DomainMetadata> domainMetadatas = new ArrayList<>();
   private Metadata metadata;
@@ -90,7 +87,6 @@ public class TransactionImpl implements Transaction {
       boolean shouldUpdateMetadata,
       boolean shouldUpdateProtocol,
       int maxRetries,
-      Optional<CommitFunction> commitFunctionOpt,
       Clock clock) {
     this.isNewTable = isNewTable;
     this.dataPath = dataPath;
@@ -104,7 +100,6 @@ public class TransactionImpl implements Transaction {
     this.shouldUpdateMetadata = shouldUpdateMetadata;
     this.shouldUpdateProtocol = shouldUpdateProtocol;
     this.maxRetries = maxRetries;
-    this.commitFunctionOpt = commitFunctionOpt;
     this.clock = clock;
   }
 
@@ -145,88 +140,123 @@ public class TransactionImpl implements Transaction {
   }
 
   @Override
-  public TransactionCommitResult commit(Engine engine, CloseableIterable<Row> dataActions)
-      throws ConcurrentWriteException {
-    checkState(!closed, "Transaction is already attempted to commit. Create a new transaction.");
-    TransactionMetrics transactionMetrics = new TransactionMetrics();
-    try {
-      TransactionCommitResult result =
-          transactionMetrics.totalCommitTimer.time(
-              () -> commitWithRetry(engine, dataActions, transactionMetrics));
-      recordTransactionReport(
-          engine,
-          Optional.of(result.getVersion()) /* committedVersion */,
-          transactionMetrics,
-          Optional.empty() /* exception */);
-      return result;
-    } catch (Exception e) {
-      recordTransactionReport(
-          engine,
-          Optional.empty() /* committedVersion */,
-          transactionMetrics,
-          Optional.of(e) /* exception */);
-      throw e;
+  public Optional<Protocol> getUpdatedProtocol() {
+    if (shouldUpdateProtocol || isNewTable) {
+      return Optional.of(protocol);
     }
+    return Optional.empty();
   }
 
-  private TransactionCommitResult commitWithRetry(
-      Engine engine, CloseableIterable<Row> dataActions, TransactionMetrics transactionMetrics) {
-    try {
-      long commitAsVersion = readSnapshot.getVersion() + 1;
-      // Generate the commit action with the inCommitTimestamp if ICT is enabled.
-      CommitInfo attemptCommitInfo = generateCommitAction(engine);
-      updateMetadataWithICTIfRequired(
-          engine, attemptCommitInfo.getInCommitTimestamp(), readSnapshot.getVersion());
+  @Override
+  public Optional<Metadata> getUpdatedMetadata() {
+    if (shouldUpdateMetadata || isNewTable) {
+      return Optional.of(metadata);
+    }
+    return Optional.empty();
+  }
 
-      // If row tracking is supported, assign base row IDs and default row commit versions to any
-      // AddFile actions that do not yet have them. If the row ID high watermark changes, emit a
-      // DomainMetadata action to update it.
-      if (TableFeatures.isRowTrackingSupported(protocol)) {
-        domainMetadatas =
-            RowTracking.updateRowIdHighWatermarkIfNeeded(
-                readSnapshot,
-                protocol,
-                Optional.empty() /* winningTxnRowIdHighWatermark */,
-                dataActions,
-                domainMetadatas);
-        dataActions =
-            RowTracking.assignBaseRowIdAndDefaultRowCommitVersion(
-                readSnapshot,
-                protocol,
-                Optional.empty() /* winningTxnRowIdHighWatermark */,
-                Optional.empty() /* prevCommitVersion */,
-                commitAsVersion,
-                dataActions);
-      }
+  @Override
+  public long commitAsVersion() {
+    // TODO: super jenky/hacky; does not work for retries
+    return readSnapshot.getVersion() + 1;
+  }
 
-      int numTries = 0;
-      while (numTries <= maxRetries) { // leq because the first is a try, not a retry
-        logger.info("Committing transaction as version = {}.", commitAsVersion);
-        try {
-          transactionMetrics.commitAttemptsCounter.increment();
-          return doCommit(
-              engine, commitAsVersion, attemptCommitInfo, dataActions, transactionMetrics);
-        } catch (FileAlreadyExistsException fnfe) {
-          logger.info(
-              "Concurrent write detected when committing as version = {}.", commitAsVersion);
-          if (numTries < maxRetries) {
-            // only try and resolve conflicts if we're going to retry
-            TransactionRebaseState rebaseState =
-                resolveConflicts(engine, commitAsVersion, attemptCommitInfo, numTries, dataActions);
-            commitAsVersion = rebaseState.getLatestVersion() + 1;
-            dataActions = rebaseState.getUpdatedDataActions();
-            domainMetadatas = rebaseState.getUpdatedDomainMetadatas();
-          }
-        }
-        numTries++;
-      }
-    } finally {
-      closed = true;
+  @Override
+  public CloseableIterator<Row> finalizeActions(
+      Engine engine, CloseableIterator<Row> dataActionsIterOrig) {
+    // TODO: transaction metrics ??
+    // TODO: this iterable -> iterator is a temporary hack due to the domainMetadatas stuff
+    CloseableIterable<Row> dataActions = CloseableIterable.inMemoryIterable(dataActionsIterOrig);
+
+    final long commitAsVersion = readSnapshot.getVersion() + 1;
+
+    // Generate the commit action with the inCommitTimestamp if ICT is enabled.
+    CommitInfo attemptCommitInfo = generateCommitAction(engine);
+    updateMetadataWithICTIfRequired(
+        engine, attemptCommitInfo.getInCommitTimestamp(), readSnapshot.getVersion());
+
+    // If row tracking is supported, assign base row IDs and default row commit versions to any
+    // AddFile actions that do not yet have them. If the row ID high watermark changes, emit a
+    // DomainMetadata action to update it.
+    if (TableFeatures.isRowTrackingSupported(protocol)) {
+      domainMetadatas =
+          RowTracking.updateRowIdHighWatermarkIfNeeded(
+              readSnapshot,
+              protocol,
+              Optional.empty() /* winningTxnRowIdHighWatermark */,
+              dataActions,
+              domainMetadatas);
+      dataActions =
+          RowTracking.assignBaseRowIdAndDefaultRowCommitVersion(
+              readSnapshot,
+              protocol,
+              Optional.empty() /* winningTxnRowIdHighWatermark */,
+              Optional.empty() /* prevCommitVersion */,
+              commitAsVersion,
+              dataActions);
     }
 
-    // we have exhausted the number of retries, give up.
-    logger.info("Exhausted maximum retries ({}) for committing transaction.", maxRetries);
-    throw new ConcurrentWriteException();
+    List<Row> metadataActions = new ArrayList<>();
+    metadataActions.add(createCommitInfoSingleAction(attemptCommitInfo.toRow()));
+    if (shouldUpdateMetadata || isNewTable) {
+      this.metadata =
+          ColumnMapping.updateColumnMappingMetadata(
+              metadata,
+              ColumnMapping.getColumnMappingMode(metadata.getConfiguration()),
+              isNewTable);
+      metadataActions.add(createMetadataSingleAction(metadata.toRow()));
+    }
+    if (shouldUpdateProtocol || isNewTable) {
+      // In the future, we need to add metadata and action when there are any changes to them.
+      metadataActions.add(createProtocolSingleAction(protocol.toRow()));
+    }
+    setTxnOpt.ifPresent(setTxn -> metadataActions.add(createTxnSingleAction(setTxn.toRow())));
+
+    // Check for duplicate domain metadata and if the protocol supports
+    DomainMetadataUtils.validateDomainMetadatas(domainMetadatas, protocol);
+
+    domainMetadatas.forEach(
+        dm -> metadataActions.add(createDomainMetadataSingleAction(dm.toRow())));
+
+    final CloseableIterator<Row> stageDataIter = dataActions.iterator();
+
+    // Create a new CloseableIterator that will return the metadata actions followed by the
+    // data actions.
+    CloseableIterator<Row> dataAndMetadataActions =
+        toCloseableIterator(metadataActions.iterator()).combine(stageDataIter);
+
+    if (commitAsVersion == 0) {
+
+      // TODO: has to be a better place to do this
+      try {
+        // New table, create a delta log directory
+        if (!wrapEngineExceptionThrowsIO(
+            () -> engine.getFileSystemClient().mkdirs(logPath.toString()),
+            "Creating directories for path %s",
+            logPath)) {
+          throw new RuntimeException("Failed to create delta log directory: " + logPath);
+        }
+
+        final String uuidCommitsPath = new Path(logPath, "_commits").toString();
+        if (!wrapEngineExceptionThrowsIO(
+            () -> engine.getFileSystemClient().mkdirs(uuidCommitsPath),
+            "Creating directories for path %s",
+            uuidCommitsPath)) {
+          throw new RuntimeException("Failed to create delta log directory: " + uuidCommitsPath);
+        }
+      } catch (IOException ex) {
+        throw new UncheckedIOException(ex);
+      }
+    }
+
+    return dataAndMetadataActions;
+  }
+
+  @Override
+  public TransactionCommitResult commit(Engine engine, CloseableIterable<Row> dataActions)
+      throws ConcurrentWriteException {
+    throw new UnsupportedOperationException(
+        "This method should not be called directly. Use finalizeActions instead.");
   }
 
   private TransactionRebaseState resolveConflicts(
@@ -357,30 +387,19 @@ public class TransactionImpl implements Transaction {
                 return action;
               });
 
-      if (commitFunctionOpt.isPresent()) {
-        logger.info("Using custom commit function for commit as version = {}.", commitAsVersion);
-        commitFunctionOpt
-            .get()
-            .commit(
-                commitAsVersion,
-                finalActionsWithMetrics,
-                Optional.of(protocol),
-                Optional.of(metadata));
-      } else {
-        // Write the staged data to a delta file
-        wrapEngineExceptionThrowsIO(
-            () -> {
-              engine
-                  .getJsonHandler()
-                  .writeJsonFileAtomically(
-                      FileNames.deltaFile(logPath, commitAsVersion),
-                      finalActionsWithMetrics,
-                      false /* overwrite */);
-              return null;
-            },
-            "Write file actions to JSON log file `%s`",
-            FileNames.deltaFile(logPath, commitAsVersion));
-      }
+      // Write the staged data to a delta file
+      wrapEngineExceptionThrowsIO(
+          () -> {
+            engine
+                .getJsonHandler()
+                .writeJsonFileAtomically(
+                    FileNames.deltaFile(logPath, commitAsVersion),
+                    finalActionsWithMetrics,
+                    false /* overwrite */);
+            return null;
+          },
+          "Write file actions to JSON log file `%s`",
+          FileNames.deltaFile(logPath, commitAsVersion));
 
       List<PostCommitHook> postCommitHooks = new ArrayList<>();
       if (isReadyForCheckpoint(commitAsVersion)) {

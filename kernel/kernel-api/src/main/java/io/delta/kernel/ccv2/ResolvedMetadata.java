@@ -60,14 +60,9 @@ public interface ResolvedMetadata {
   // APIs for Kernel to interact with the invoking connector //
   /////////////////////////////////////////////////////////////
 
-  CommitFunction getCommitFunction();
-
-  @FunctionalInterface
-  interface CommitFunction {
-    void commit(
-        long commitAsVersion,
-        CloseableIterator<Row> finalizedActions,
-        Optional<Protocol> newProtocol,
-        Optional<Metadata> newMetadata);
-  }
+  void commit(
+      long commitAsVersion,
+      CloseableIterator<Row> finalizedActions,
+      Optional<Protocol> newProtocol,
+      Optional<Metadata> newMetadata);
 }

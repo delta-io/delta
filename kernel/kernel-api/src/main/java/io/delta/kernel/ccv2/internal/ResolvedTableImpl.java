@@ -102,7 +102,6 @@ public class ResolvedTableImpl implements ResolvedTable {
         engineInfo,
         operation,
         () -> (SnapshotImpl) getSnapshot() /* snapshotSupplier */,
-        Optional.of(resolvedMetadata.getCommitFunction()),
         System::currentTimeMillis /* clock */);
   }
 

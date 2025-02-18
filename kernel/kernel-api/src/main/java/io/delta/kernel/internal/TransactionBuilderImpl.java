@@ -27,7 +27,6 @@ import static io.delta.kernel.internal.util.VectorUtils.stringStringMapValue;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.*;
-import io.delta.kernel.ccv2.ResolvedMetadata.CommitFunction;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.actions.*;
@@ -56,7 +55,6 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   private final Supplier<SnapshotImpl> readSnapshotSupplier;
   private final String engineInfo;
   private final Operation operation;
-  private final Optional<CommitFunction> commitFunctionOpt;
   private final Clock clock;
   private Optional<StructType> schema = Optional.empty();
   private Optional<List<String>> partitionColumns = Optional.empty();
@@ -75,14 +73,12 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       String engineInfo,
       Operation operation,
       Supplier<SnapshotImpl> readSnapshotSupplier,
-      Optional<CommitFunction> commitFunctionOpt,
       Clock clock) {
     this.tablePath = tablePath;
     this.logPath = new Path(tablePath, "_delta_log");
     this.engineInfo = engineInfo;
     this.operation = operation;
     this.readSnapshotSupplier = readSnapshotSupplier;
-    this.commitFunctionOpt = commitFunctionOpt;
     this.clock = clock;
   }
 
@@ -191,7 +187,6 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         shouldUpdateMetadata,
         shouldUpdateProtocol,
         maxRetries,
-        commitFunctionOpt,
         clock);
   }
 
