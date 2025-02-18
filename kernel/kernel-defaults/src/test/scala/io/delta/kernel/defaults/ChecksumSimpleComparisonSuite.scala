@@ -15,7 +15,6 @@
  */
 package io.delta.kernel.defaults
 
-import io.delta.kernel.Operation.CREATE_TABLE
 import io.delta.kernel.data.{ColumnarBatch, Row}
 import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.engine.Engine
@@ -30,14 +29,13 @@ import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 import io.delta.kernel.utils.{CloseableIterator, DataFileStatus, FileStatus}
 import io.delta.kernel.{Operation, Table, Transaction}
-import org.scalatest.funsuite.AnyFunSuite
 
 import java.io.File
 import java.nio.file.Files
 import java.util
 import java.util.Collections.{emptyMap, singletonMap}
 import java.util.Optional
-import scala.collection.JavaConverters._
+import scala.collection.immutable.Seq
 
 /**
  * Test suite to verify checksum file correctness by comparing
@@ -45,7 +43,7 @@ import scala.collection.JavaConverters._
  * This suite ensures that both implementations generate consistent checksums
  * for various table operations.
  */
-class ChecksumSimpleComparisonSuite extends AnyFunSuite with TestUtils {
+class ChecksumSimpleComparisonSuite extends DeltaTableWriteSuiteBase with TestUtils {
 
   private val PARTITION_COLUMN = "part"
 
@@ -53,12 +51,14 @@ class ChecksumSimpleComparisonSuite extends AnyFunSuite with TestUtils {
     withTempDirAndEngine { (tablePath, engine) =>
       val sparkTablePath = tablePath + "spark"
       val kernelTablePath = tablePath + "kernel"
-      Table
-        .forPath(engine, kernelTablePath)
-        .createTransactionBuilder(engine, "test-engine", CREATE_TABLE)
-        .withSchema(engine, new StructType().add("id", INTEGER))
-        .build(engine)
-        .commit(engine, emptyIterable())
+
+      createTxn(
+        engine,
+        kernelTablePath,
+        isNewTable = true,
+        schema = new StructType().add("id", INTEGER),
+        partCols = Seq.empty
+      ).commit(engine, emptyIterable())
         .getPostCommitHooks
         .forEach(hook => hook.threadSafeInvoke(engine))
       spark.sql(s"CREATE OR REPLACE TABLE delta.`${sparkTablePath}` (id Integer) USING DELTA")
@@ -76,13 +76,14 @@ class ChecksumSimpleComparisonSuite extends AnyFunSuite with TestUtils {
     withTempDirAndEngine { (tablePath, engine) =>
       val sparkTablePath = tablePath + "spark"
       val kernelTablePath = tablePath + "kernel"
-      Table
-        .forPath(engine, kernelTablePath)
-        .createTransactionBuilder(engine, "test-engine", CREATE_TABLE)
-        .withSchema(engine, new StructType().add("id", INTEGER).add(PARTITION_COLUMN, INTEGER))
-        .withPartitionColumns(engine, Seq(PARTITION_COLUMN).asJava)
-        .build(engine)
-        .commit(engine, emptyIterable())
+
+      createTxn(
+        engine,
+        kernelTablePath,
+        isNewTable = true,
+        schema = new StructType().add("id", INTEGER).add(PARTITION_COLUMN, INTEGER),
+        partCols = Seq(PARTITION_COLUMN)
+      ).commit(engine, emptyIterable())
         .getPostCommitHooks
         .forEach(hook => hook.threadSafeInvoke(engine))
       spark.sql(
