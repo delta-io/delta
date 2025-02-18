@@ -22,7 +22,7 @@ import io.delta.kernel.test.TableMetadataTestUtils
 import org.scalatest.funsuite.AnyFunSuite
 
 import java.util.stream.Collectors.toList
-import java.util.{Collections}
+import java.util.Collections
 import scala.collection.JavaConverters._
 
 /**
