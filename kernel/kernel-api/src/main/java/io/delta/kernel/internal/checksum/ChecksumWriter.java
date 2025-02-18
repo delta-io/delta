@@ -16,18 +16,14 @@
 package io.delta.kernel.internal.checksum;
 
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
-import static io.delta.kernel.internal.checksum.CRCInfo.*;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 import static java.util.Objects.requireNonNull;
 
-import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.FileNames;
 import java.io.IOException;
-import java.util.HashMap;
-import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -44,6 +40,7 @@ public class ChecksumWriter {
 
   /** Writes a checksum file */
   public void writeCheckSum(Engine engine, CRCInfo crcInfo) throws IOException {
+    checkArgument(crcInfo.getNumFiles() >= 0 && crcInfo.getTableSizeBytes() >=0);
     Path newChecksumPath = FileNames.checksumFile(logPath, crcInfo.getVersion());
     logger.info("Writing checksum file to path: {}", newChecksumPath);
     wrapEngineExceptionThrowsIO(
@@ -52,31 +49,12 @@ public class ChecksumWriter {
               .getJsonHandler()
               .writeJsonFileAtomically(
                   newChecksumPath.toString(),
-                  singletonCloseableIterator(toRow(crcInfo)),
+                  singletonCloseableIterator(crcInfo.toRow()),
                   false /* overwrite */);
           logger.info("Write checksum file `{}` succeeds", newChecksumPath);
           return null;
         },
         "Write checksum file `%s`",
         newChecksumPath);
-  }
-
-  private Row toRow(CRCInfo crcInfo) {
-    Map<Integer, Object> values = new HashMap<>();
-    // Add required fields
-    values.put(getSchemaIndex(TABLE_SIZE_BYTES), crcInfo.getTableSizeBytes());
-    values.put(getSchemaIndex(NUM_FILES), crcInfo.getNumFiles());
-    values.put(getSchemaIndex(NUM_METADATA), 1L);
-    values.put(getSchemaIndex(NUM_PROTOCOL), 1L);
-    values.put(getSchemaIndex(METADATA), crcInfo.getMetadata().toRow());
-    values.put(getSchemaIndex(PROTOCOL), crcInfo.getProtocol().toRow());
-
-    // Add optional fields
-    crcInfo.getTxnId().ifPresent(txn -> values.put(getSchemaIndex(TXN_ID), txn));
-    return new GenericRow(CRC_FILE_SCHEMA, values);
-  }
-
-  private int getSchemaIndex(String fieldName) {
-    return CRC_FILE_SCHEMA.indexOf(fieldName);
   }
 }

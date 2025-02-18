@@ -18,11 +18,15 @@ package io.delta.kernel.internal.checksum;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.data.Row;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,13 +35,13 @@ public class CRCInfo {
   private static final Logger logger = LoggerFactory.getLogger(CRCInfo.class);
 
   // Constants for schema field names
-  public static final String TABLE_SIZE_BYTES = "tableSizeBytes";
-  public static final String NUM_FILES = "numFiles";
-  public static final String NUM_METADATA = "numMetadata";
-  public static final String NUM_PROTOCOL = "numProtocol";
-  public static final String METADATA = "metadata";
-  public static final String PROTOCOL = "protocol";
-  public static final String TXN_ID = "txnId";
+  private static final String TABLE_SIZE_BYTES = "tableSizeBytes";
+  private static final String NUM_FILES = "numFiles";
+  private static final String NUM_METADATA = "numMetadata";
+  private static final String NUM_PROTOCOL = "numProtocol";
+  private static final String METADATA = "metadata";
+  private static final String PROTOCOL = "protocol";
+  private static final String TXN_ID = "txnId";
 
   public static final StructType CRC_FILE_SCHEMA =
       new StructType()
@@ -116,5 +120,29 @@ public class CRCInfo {
 
   public Optional<String> getTxnId() {
     return txnId;
+  }
+
+  /**
+   * Encode as a {@link Row} object with the schema {@link CRCInfo#CRC_FILE_SCHEMA}.
+   *
+   * @return {@link Row} object with the schema {@link CRCInfo#CRC_FILE_SCHEMA}
+   */
+  public Row toRow() {
+    Map<Integer, Object> values = new HashMap<>();
+    // Add required fields
+    values.put(getSchemaIndex(TABLE_SIZE_BYTES), tableSizeBytes);
+    values.put(getSchemaIndex(NUM_FILES), numFiles);
+    values.put(getSchemaIndex(NUM_METADATA), 1L);
+    values.put(getSchemaIndex(NUM_PROTOCOL), 1L);
+    values.put(getSchemaIndex(METADATA), metadata.toRow());
+    values.put(getSchemaIndex(PROTOCOL), protocol.toRow());
+
+    // Add optional fields
+    txnId.ifPresent(txn -> values.put(getSchemaIndex(TXN_ID), txn));
+    return new GenericRow(CRC_FILE_SCHEMA, values);
+  }
+
+  private int getSchemaIndex(String fieldName) {
+    return CRC_FILE_SCHEMA.indexOf(fieldName);
   }
 }
