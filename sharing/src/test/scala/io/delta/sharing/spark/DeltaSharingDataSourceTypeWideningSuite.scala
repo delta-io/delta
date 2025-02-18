@@ -104,7 +104,6 @@ class DeltaSharingDataSourceTypeWideningSuite
       .putMetadataArray(
         "delta.typeChanges", Array(
           new MetadataBuilder()
-            .putLong("tableVersion", 2)
             .putString("fromType", "short")
             .putString("toType", "integer")
             .build()))

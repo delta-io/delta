@@ -144,7 +144,7 @@ class TypeWideningStreamingSinkSuite
       stream.write((12, 3456))("CAST(_1 AS INT) AS a", "CAST(_2 AS DECIMAL(10, 2)) AS b")
       assert(stream.currentSchema === new StructType()
         .add("a", IntegerType, nullable = true,
-          metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType))
+          metadata = typeWideningMetadata(from = ShortType, to = IntegerType))
         .add("b", DecimalType(10, 2)))
       checkAnswer(stream.read(), Row(17, null) :: Row(12, 3456) :: Nil)
     }
@@ -161,7 +161,7 @@ class TypeWideningStreamingSinkSuite
       stream.write((12, -1))("CAST(_1 AS INT) AS a")
       assert(stream.currentSchema === new StructType()
         .add("a", IntegerType, nullable = true,
-          metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType))
+          metadata = typeWideningMetadata(from = ShortType, to = IntegerType))
         .add("b", LongType))
       checkAnswer(stream.read(), Row(17, 45) :: Row(12, null) :: Nil)
     }
@@ -189,7 +189,7 @@ class TypeWideningStreamingSinkSuite
 
       stream.write((12, -1))("CAST(_1 AS INT) AS c")
       assert(stream.currentSchema === new StructType().add("c", IntegerType, nullable = true,
-          metadata = typeWideningMetadata(version = 4, from = ShortType, to = IntegerType)))
+          metadata = typeWideningMetadata(from = ShortType, to = IntegerType)))
       checkAnswer(stream.read(), Row(17) :: Row(12) :: Nil)
     }
   }
@@ -221,7 +221,7 @@ class TypeWideningStreamingSinkSuite
         sink.addBatch(1, data)
         val df = spark.read.format("delta").load(tablePath)
         assert(df.schema === new StructType().add("value", IntegerType, nullable = true,
-          metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType)))
+          metadata = typeWideningMetadata(from = ShortType, to = IntegerType)))
         checkAnswer(df, Row(0) :: Row(1) :: Row(2) :: Row(3) :: Nil)
       }
     }
