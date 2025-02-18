@@ -1,13 +1,14 @@
 package io.delta.kernel.defaults.ccv2
 
-import io.delta.kernel.Operation
-import io.delta.kernel.ccv2.ResolvedTable
-import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch}
+import io.delta.kernel.{Operation, Transaction}
+import io.delta.kernel.ccv2.{CommitResult, ResolvedMetadata, ResolvedTable}
+import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch, Row}
 import io.delta.kernel.defaults.DeltaTableWriteSuiteBase
 import io.delta.kernel.defaults.ccv2.setup.{CCv2Client, InMemoryCatalogClient}
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
 import io.delta.kernel.defaults.utils.TestRow
 import io.delta.kernel.test.VectorTestUtils
+import io.delta.kernel.utils.CloseableIterator
 import org.scalatest.funsuite.AnyFunSuite
 
 // scalastyle:off println
@@ -51,15 +52,8 @@ class InMemoryCCv2Suite extends AnyFunSuite
 
     val txnState = txn.getTransactionState(defaultEngine)
     val stagedFiles = stageData(txnState, Map.empty, data.toList)
-//    val stagedActionsIterable = CloseableIterable.inMemoryIterable(stagedFiles)
-//    txn.commit(defaultEngine, stagedActionsIterable)
 
-    stagingTableMetadata.commit(
-      txn.commitAsVersion(),
-      txn.finalizeActions(defaultEngine, stagedFiles),
-      txn.getUpdatedProtocol,
-      txn.getUpdatedMetadata
-    )
+    doCommitLoop(stagingTableMetadata, txn, stagedFiles)
   }
 
   private def appendDataHelper(tableName: String, data: Seq[FilteredColumnarBatch]): Unit = {
@@ -73,24 +67,29 @@ class InMemoryCCv2Suite extends AnyFunSuite
     val txnState = txn.getTransactionState(defaultEngine)
     val stagedFiles = stageData(txnState, Map.empty, data.toList)
 
-    resolvedMetadata.commit(
-      txn.commitAsVersion(),
+    doCommitLoop(resolvedMetadata, txn, stagedFiles)
+  }
+
+  private def doCommitLoop(
+      rm: ResolvedMetadata, txn: Transaction, stagedFiles: CloseableIterator[Row]): Unit = {
+    val result = rm.commit(
+      txn.getCommitAsVersion,
       txn.finalizeActions(defaultEngine, stagedFiles),
       txn.getUpdatedProtocol,
       txn.getUpdatedMetadata
     )
 
-//    val stagedActionsIterable = CloseableIterable.inMemoryIterable(stagedFiles)
-//    val txnCommitResult = txn.commit(defaultEngine, stagedActionsIterable)
-//    println(s"Successfully committed transaction with version ${txnCommitResult.getVersion}")
+    println("Commit result type: " + result.resultString())
+    println("Commit result attempt version: " + result.getCommitAttemptVersion)
 
-    // TODO: this is jenky -- the backfill might not yet be done
-//    txnCommitResult.getPostCommitHooks.forEach(hook => {
-//      println("=" * 25)
-//      println("Invoking post commit hook ...")
-//      hook.threadSafeInvoke(defaultEngine)
-//      println("=" * 25)
-//    })
+    result match {
+      case success: CommitResult.Success =>
+        println(s"Commit succeeded with version ${success.getCommitVersion}")
+      case fail: CommitResult.NonRetryableFailure =>
+        println(s"Commit failed (non-retryable) with: ${fail.getMessage}")
+      case retryable: CommitResult.RetryableFailure =>
+        println(s"Commit failed (retryable) with: ${retryable.getMessage}")
+    }
   }
 
   private def printDiv(): Unit = {

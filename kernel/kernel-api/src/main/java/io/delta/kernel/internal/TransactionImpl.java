@@ -26,11 +26,9 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.ConcurrentWriteException;
 import io.delta.kernel.expressions.Column;
-import io.delta.kernel.hook.PostCommitHook;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.internal.fs.Path;
-import io.delta.kernel.internal.hook.CheckpointHook;
 import io.delta.kernel.internal.metrics.TransactionMetrics;
 import io.delta.kernel.internal.metrics.TransactionReportImpl;
 import io.delta.kernel.internal.replay.ConflictChecker;
@@ -43,7 +41,6 @@ import io.delta.kernel.utils.CloseableIterable;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
 import java.io.UncheckedIOException;
-import java.nio.file.FileAlreadyExistsException;
 import java.util.*;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
@@ -156,7 +153,7 @@ public class TransactionImpl implements Transaction {
   }
 
   @Override
-  public long commitAsVersion() {
+  public long getCommitAsVersion() {
     // TODO: super jenky/hacky; does not work for retries
     return readSnapshot.getVersion() + 1;
   }
@@ -315,103 +312,6 @@ public class TransactionImpl implements Transaction {
       return Optional.of(updatedInCommitTimestamp);
     }
     return attemptInCommitTimestamp;
-  }
-
-  private TransactionCommitResult doCommit(
-      Engine engine,
-      long commitAsVersion,
-      CommitInfo attemptCommitInfo,
-      CloseableIterable<Row> dataActions,
-      TransactionMetrics transactionMetrics)
-      throws FileAlreadyExistsException {
-    List<Row> metadataActions = new ArrayList<>();
-    metadataActions.add(createCommitInfoSingleAction(attemptCommitInfo.toRow()));
-    if (shouldUpdateMetadata || isNewTable) {
-      this.metadata =
-          ColumnMapping.updateColumnMappingMetadata(
-              metadata,
-              ColumnMapping.getColumnMappingMode(metadata.getConfiguration()),
-              isNewTable);
-      metadataActions.add(createMetadataSingleAction(metadata.toRow()));
-    }
-    if (shouldUpdateProtocol || isNewTable) {
-      // In the future, we need to add metadata and action when there are any changes to them.
-      metadataActions.add(createProtocolSingleAction(protocol.toRow()));
-    }
-    setTxnOpt.ifPresent(setTxn -> metadataActions.add(createTxnSingleAction(setTxn.toRow())));
-
-    // Check for duplicate domain metadata and if the protocol supports
-    DomainMetadataUtils.validateDomainMetadatas(domainMetadatas, protocol);
-
-    domainMetadatas.forEach(
-        dm -> metadataActions.add(createDomainMetadataSingleAction(dm.toRow())));
-
-    try (CloseableIterator<Row> stageDataIter = dataActions.iterator()) {
-      // Create a new CloseableIterator that will return the metadata actions followed by the
-      // data actions.
-      CloseableIterator<Row> dataAndMetadataActions =
-          toCloseableIterator(metadataActions.iterator()).combine(stageDataIter);
-
-      if (commitAsVersion == 0) {
-        // New table, create a delta log directory
-        if (!wrapEngineExceptionThrowsIO(
-            () -> engine.getFileSystemClient().mkdirs(logPath.toString()),
-            "Creating directories for path %s",
-            logPath)) {
-          throw new RuntimeException("Failed to create delta log directory: " + logPath);
-        }
-
-        final String uuidCommitsPath = new Path(logPath, "_commits").toString();
-        if (!wrapEngineExceptionThrowsIO(
-            () -> engine.getFileSystemClient().mkdirs(uuidCommitsPath),
-            "Creating directories for path %s",
-            uuidCommitsPath)) {
-          throw new RuntimeException("Failed to create delta log directory: " + uuidCommitsPath);
-        }
-      }
-
-      // Action counters may be partially incremented from previous tries, reset the counters to 0
-      transactionMetrics.resetActionCounters();
-
-      final CloseableIterator<Row> finalActionsWithMetrics =
-          dataAndMetadataActions.map(
-              action -> {
-                transactionMetrics.totalActionsCounter.increment();
-                if (!action.isNullAt(ADD_FILE_ORDINAL)) {
-                  transactionMetrics.addFilesCounter.increment();
-                  transactionMetrics.addFilesSizeInBytesCounter.increment(
-                      new AddFile(action.getStruct(ADD_FILE_ORDINAL)).getSize());
-                } else if (!action.isNullAt(REMOVE_FILE_ORDINAL)) {
-                  transactionMetrics.removeFilesCounter.increment();
-                }
-                return action;
-              });
-
-      // Write the staged data to a delta file
-      wrapEngineExceptionThrowsIO(
-          () -> {
-            engine
-                .getJsonHandler()
-                .writeJsonFileAtomically(
-                    FileNames.deltaFile(logPath, commitAsVersion),
-                    finalActionsWithMetrics,
-                    false /* overwrite */);
-            return null;
-          },
-          "Write file actions to JSON log file `%s`",
-          FileNames.deltaFile(logPath, commitAsVersion));
-
-      List<PostCommitHook> postCommitHooks = new ArrayList<>();
-      if (isReadyForCheckpoint(commitAsVersion)) {
-        postCommitHooks.add(new CheckpointHook(dataPath, commitAsVersion));
-      }
-
-      return new TransactionCommitResult(commitAsVersion, postCommitHooks);
-    } catch (FileAlreadyExistsException e) {
-      throw e;
-    } catch (IOException ioe) {
-      throw new UncheckedIOException(ioe);
-    }
   }
 
   public boolean isBlindAppend() {

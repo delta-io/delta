@@ -14,6 +14,8 @@ trait CatalogClient {
 
   def getCommits(tableName: String): GetCommitsResponse
 
+  // TODO: we might want to pass the commit timestamp? For the case of ICT?
+  // TODO: can we avoid passing in Kernel/Delta types to the catalog?
   def commit(
       tableName: String,
       commitFile: FileStatus,
@@ -56,12 +58,13 @@ object ResolveTableResponse {
 sealed trait GetCommitsResponse
 
 object GetCommitsResponse {
-  final case class Success(commits: Seq[FileStatus]) extends GetCommitsResponse
+  final case class Success(
+      commits: scala.collection.immutable.Seq[FileStatus]) extends GetCommitsResponse
 
   final case class TableDoesNotExist(tableName: String) extends GetCommitsResponse
 }
 
-// ===== CommitResponse =====
+// ===== CommitResponse =====commits
 
 sealed trait CommitResponse
 

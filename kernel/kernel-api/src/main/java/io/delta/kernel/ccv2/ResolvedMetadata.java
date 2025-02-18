@@ -60,7 +60,8 @@ public interface ResolvedMetadata {
   // APIs for Kernel to interact with the invoking connector //
   /////////////////////////////////////////////////////////////
 
-  void commit(
+  // TODO: CommitInfo / timestamp
+  CommitResult commit(
       long commitAsVersion,
       CloseableIterator<Row> finalizedActions,
       Optional<Protocol> newProtocol,

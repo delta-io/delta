@@ -4,10 +4,9 @@ import java.util.{Collections, Optional, UUID}
 
 import scala.collection.JavaConverters._
 
-import io.delta.kernel.ccv2.ResolvedMetadata
+import io.delta.kernel.ccv2.{CommitResult, ResolvedMetadata}
 import io.delta.kernel.data.Row
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.exceptions.ConcurrentWriteException
 import io.delta.kernel.internal.actions.{Metadata, Protocol}
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.snapshot.LogSegment
@@ -55,7 +54,7 @@ trait ResolvedCatalogMetadataCommitter extends { self: ResolvedMetadata =>
       commitAsVersion: Long,
       finalizedActions: CloseableIterator[Row],
       newProtocol: Optional[Protocol],
-      newMetadata: Optional[Metadata]): Unit = {
+      newMetadata: Optional[Metadata]): CommitResult = {
     val logPath = s"$getPath/_delta_log"
     val uuidCommitsPath = s"$logPath/_commits"
     val commitFilePath =
@@ -84,16 +83,26 @@ trait ResolvedCatalogMetadataCommitter extends { self: ResolvedMetadata =>
 
     logger.info("Commit to catalog: START")
 
-    catalogClient
+    val result = catalogClient
       .commit(tableName, kernelFs, newProtocol.asScala, newMetadata.asScala) match {
       case CommitResponse.Success =>
         logger.info("Commit to catalog: SUCCESS")
+        new CommitResult.Success {
+          override def getCommitVersion: Long = commitAsVersion
+          override def getCommitAttemptVersion: Long = commitAsVersion
+        }
       case CommitResponse.TableDoesNotExist(tableName) =>
         logger.info("Commit to catalog: TABLE DOES NOT EXIST")
-        throw new RuntimeException(s"Table $tableName does not exist in the catalog")
+        new CommitResult.NonRetryableFailure {
+          override def getMessage: String = s"Table $tableName does not exist"
+          override def getCommitAttemptVersion: Long = commitAsVersion
+        }
       case CommitResponse.CommitVersionConflict(attempted, expected) =>
-        logger.info("Commit to catalog: COMMIT VERSION CONFLICT")
-        throw new ConcurrentWriteException()
+        new CommitResult.RetryableFailure {
+          override def getMessage: String =
+            s"Commit version conflict: attempted=$attempted, expected=$expected"
+          override def getCommitAttemptVersion: Long = commitAsVersion
+        }
     }
 
     try {
@@ -105,6 +114,8 @@ trait ResolvedCatalogMetadataCommitter extends { self: ResolvedMetadata =>
     } catch {
       case e: Throwable => logger.warn("Backfill failed, ignoring", e)
     }
+
+    result
   }
 
   private def backfill(commitAsVersion: Long, committedFileStatus: FileStatus): Unit = {
