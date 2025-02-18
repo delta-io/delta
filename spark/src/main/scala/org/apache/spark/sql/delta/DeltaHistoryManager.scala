@@ -856,24 +856,23 @@ object DeltaHistoryManager extends DeltaLogging {
      */
     private def queueFilesInBuffer(): Unit = {
       var continueBuffering = true
-      while (continueBuffering) {
-        if (!underlying.hasNext) {
-          flushBuffer()
-          return
-        }
-
+      while (continueBuffering && underlying.hasNext) {
         var currentFile = underlying.next()
         require(currentFile != null, "FileStatus iterator returned null")
+
         if (needsTimeAdjustment(currentFile)) {
           currentFile = new FileStatus(
             currentFile.getLen, currentFile.isDirectory, currentFile.getReplication,
             currentFile.getBlockSize, lastFile.getModificationTime + 1, currentFile.getPath)
-          maybeDeleteFiles.append(currentFile)
-        } else {
+        } else if (FileNames.isCheckpointFile(currentFile)
+          && shouldDeleteFile(currentFile)
+          && (versionGetter(currentFile.getPath) > versionGetter(lastFile.getPath))) {
+          // Need to keep at least one expired checkpoint
+          // Version check is to handle multi-part checkpoint
           flushBuffer()
-          maybeDeleteFiles.append(currentFile)
           continueBuffering = false
         }
+        maybeDeleteFiles.append(currentFile)
         lastFile = currentFile
       }
     }
