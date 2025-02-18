@@ -25,10 +25,10 @@ import io.delta.kernel.internal.util.VectorUtils.{stringArrayValue, stringString
 import io.delta.kernel.test.{BaseMockJsonHandler, MockEngineUtils}
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.CloseableIterator
+import org.scalatest.funsuite.AnyFunSuite
 
 import java.util
-import java.util.{Collections, Optional, OptionalLong}
-import org.scalatest.funsuite.AnyFunSuite
+import java.util.{Collections, Optional}
 
 /**
  * Test suite for ChecksumWriter functionality.
@@ -102,31 +102,6 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
     checkProtocol(expectedProtocol, actualRow.getStruct(PROTOCOL))
   }
 
-  private def createTestMetadata(): Metadata = {
-    new Metadata(
-      "id",
-      Optional.of("name"),
-      Optional.of("description"),
-      new Format("parquet", Collections.emptyMap()),
-      "schemaString",
-      new StructType(),
-      stringArrayValue(util.Arrays.asList("c3")),
-      Optional.of(123),
-      stringStringMapValue(new util.HashMap[String, String]() {
-        put("delta.appendOnly", "true")
-      })
-    )
-  }
-
-  private def createTestProtocol(): Protocol = {
-    new Protocol(
-      /* minReaderVersion= */ 1,
-      /* minWriterVersion= */ 2,
-      Collections.emptyList(),
-      Collections.emptyList()
-    )
-  }
-
   private def checkMetadata(expectedMetadata: Metadata, actualMetadataRow: Row): Unit = {
     assert(actualMetadataRow.getSchema == Metadata.FULL_SCHEMA)
 
@@ -175,6 +150,31 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
     assert(
       expectedProtocol.getMinWriterVersion == actualProtocolRow
         .getInt(Protocol.FULL_SCHEMA.indexOf("minWriterVersion"))
+    )
+  }
+
+  private def createTestMetadata(): Metadata = {
+    new Metadata(
+      "id",
+      Optional.of("name"),
+      Optional.of("description"),
+      new Format("parquet", Collections.emptyMap()),
+      "schemaString",
+      new StructType(),
+      stringArrayValue(util.Arrays.asList("c3")),
+      Optional.of(123),
+      stringStringMapValue(new util.HashMap[String, String]() {
+        put("delta.appendOnly", "true")
+      })
+    )
+  }
+
+  private def createTestProtocol(): Protocol = {
+    new Protocol(
+      /* minReaderVersion= */ 1,
+      /* minWriterVersion= */ 2,
+      Collections.emptyList(),
+      Collections.emptyList()
     )
   }
 }
