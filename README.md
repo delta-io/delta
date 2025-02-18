@@ -53,7 +53,7 @@ See the [online documentation](https://docs.delta.io/latest/) for the latest rel
 
 ## API Documentation
 
-* [Scala API docs](https://docs.delta.io/latest/delta-apidoc.html)
+* [Scala API docs](https://docs.delta.io/latest/api/scala/spark/io/delta/tables/index.html)
 * [Java API docs](https://docs.delta.io/latest/api/java/spark/index.html)
 * [Python API docs](https://docs.delta.io/latest/api/python/spark/index.html)
 
