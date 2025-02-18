@@ -123,13 +123,37 @@ class ChecksumSimpleComparisonSuite extends AnyFunSuite with TestUtils {
       .createTransactionBuilder(engine, "test-engine", Operation.WRITE)
       .build(engine)
 
-    convertSparkDeltaLogToKernelCommitForPartitionedTable(
+    convertSparkDeltaLogToKernelCommit(
       txn,
       engine,
       sparkTablePath,
-      addedPartition,
-      versionAtCommit
+      versionAtCommit,
+      Some(addedPartition)
     )
+    assertChecksumEquals(engine, sparkTablePath, kernelTablePath, versionAtCommit)
+  }
+
+  /**
+   * Insert into unpartitioned spark table, copy the commit log to kernel table
+   * and verify the checksum files for are consistent between spark and kernel
+   * */
+  private def insertIntoUnpartitionedTableAndCheckCrc(
+      engine: Engine,
+      sparkTablePath: String,
+      kernelTablePath: String,
+      versionAtCommit: Long): Unit = {
+    var valueToAppend = "(0)"
+    (0L to versionAtCommit).foreach(i => valueToAppend = valueToAppend + s",($i)")
+    spark.sql(
+      s"INSERT INTO delta.`$sparkTablePath` values $valueToAppend"
+    )
+
+    val txn = Table
+      .forPath(engine, kernelTablePath)
+      .createTransactionBuilder(engine, "test-engine", Operation.WRITE)
+      .build(engine)
+
+    convertSparkDeltaLogToKernelCommit(txn, engine, sparkTablePath, versionAtCommit)
     assertChecksumEquals(engine, sparkTablePath, kernelTablePath, versionAtCommit)
   }
 
@@ -171,50 +195,62 @@ class ChecksumSimpleComparisonSuite extends AnyFunSuite with TestUtils {
     assert(crc1.getMetadata.getPartitionColNames === crc2.getMetadata.getPartitionColNames)
   }
 
-  /**
-   * Read the spark table's commit log file, translate the added file for each partition
-   * in the log to kernel's append action, and commit to kernel table
-   * */
-  private def convertSparkDeltaLogToKernelCommitForPartitionedTable(
+  private def convertSparkDeltaLogToKernelCommit(
       txn: Transaction,
       engine: Engine,
       sparkTablePath: String,
-      updatedPartition: Set[Int],
-      versionToCovert: Long): Unit = {
-    val txnState = txn.getTransactionState(engine);
+      versionToConvert: Long,
+      addedPartition: Option[(Set[Int])] = None): Unit = {
 
-    val dataActions = new util.ArrayList[Row]()
+    val txnState = txn.getTransactionState(engine)
 
-    updatedPartition.foreach({ partition =>
-      val writeContext = Transaction
-        .getWriteContext(
-          engine,
-          txnState,
-          singletonMap(PARTITION_COLUMN, Literal.ofInt(partition))
-        )
-
-      Transaction
-        .generateAppendActions(
+    val dataActionsIterator = addedPartition match {
+      case None =>
+        // Unpartitioned table case
+        val writeContext = Transaction.getWriteContext(engine, txnState, emptyMap())
+        Transaction.generateAppendActions(
           engine,
           txnState,
           convertSparkTableDeltaLogToKernelAppendActions(
             engine,
             sparkTablePath,
-            versionToCovert,
-            Some(partition.toString)
+            versionToConvert,
+            None
           ),
           writeContext
         )
-        .forEach(action => dataActions.add(action))
-    })
+
+      case Some(partitions) =>
+        // Partitioned table case
+        val actions = new util.ArrayList[Row]()
+        partitions.foreach { partition =>
+          val writeContext = Transaction.getWriteContext(
+            engine,
+            txnState,
+            singletonMap(PARTITION_COLUMN, Literal.ofInt(partition))
+          )
+
+          Transaction
+            .generateAppendActions(
+              engine,
+              txnState,
+              convertSparkTableDeltaLogToKernelAppendActions(
+                engine,
+                sparkTablePath,
+                versionToConvert,
+                Some(partition.toString)
+              ),
+              writeContext
+            )
+            .forEach(action => actions.add(action))
+        }
+        actions.iterator()
+    }
 
     txn
-      .commit(engine, inMemoryIterable(toCloseableIterator(dataActions.iterator())))
+      .commit(engine, inMemoryIterable(toCloseableIterator(dataActionsIterator)))
       .getPostCommitHooks
-      .forEach(
-        hook => hook.threadSafeInvoke(engine)
-      )
-
+      .forEach(_.threadSafeInvoke(engine))
   }
 
   private def convertSparkTableDeltaLogToKernelAppendActions(
@@ -280,65 +316,4 @@ class ChecksumSimpleComparisonSuite extends AnyFunSuite with TestUtils {
     partition.get == VectorUtils.toJavaMap(addFile.getPartitionValues).get(PARTITION_COLUMN)
   }
 
-  /**
-   * Insert into unpartitioned spark table, copy the commit log to kernel table
-   * and verify the checksum files for are consistent between spark and kernel
-   * */
-  private def insertIntoUnpartitionedTableAndCheckCrc(
-      engine: Engine,
-      sparkTablePath: String,
-      kernelTablePath: String,
-      versionAtCommit: Long): Unit = {
-    var valueToAppend = "(0)"
-    (0L to versionAtCommit).foreach(i => valueToAppend = valueToAppend + s",($i)")
-    spark.sql(
-      s"INSERT INTO delta.`$sparkTablePath` values $valueToAppend"
-    )
-
-    val txn = Table
-      .forPath(engine, kernelTablePath)
-      .createTransactionBuilder(engine, "test-engine", Operation.WRITE)
-      .build(engine)
-
-    convertSparkDeltaLogToKernelCommitForUnpartitionedTable(
-      txn,
-      engine,
-      sparkTablePath,
-      versionAtCommit
-    )
-    assertChecksumEquals(engine, sparkTablePath, kernelTablePath, versionAtCommit)
-  }
-
-  /**
-   * Read the spark table's commit log file, translate the added file
-   * in the log to kernel's append action, and commit to kernel table
-   * */
-  private def convertSparkDeltaLogToKernelCommitForUnpartitionedTable(
-      txn: Transaction,
-      engine: Engine,
-      sparkTablePath: String,
-      versionToConvert: Long): Unit = {
-    val txnState = txn.getTransactionState(engine);
-
-    val writeContext = Transaction
-      .getWriteContext(engine, txnState, emptyMap())
-
-    val dataActions = Transaction
-      .generateAppendActions(
-        engine,
-        txnState,
-        convertSparkTableDeltaLogToKernelAppendActions(
-          engine,
-          sparkTablePath,
-          versionToConvert,
-          Option.empty
-        ),
-        writeContext
-      )
-
-    txn
-      .commit(engine, inMemoryIterable(dataActions))
-      .getPostCommitHooks
-      .forEach(hook => hook.threadSafeInvoke(engine))
-  }
 }
