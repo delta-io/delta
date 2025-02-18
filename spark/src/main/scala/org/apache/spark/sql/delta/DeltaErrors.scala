@@ -2126,6 +2126,12 @@ trait DeltaErrorsBase
       messageParameters = Array(oldMode, newMode))
   }
 
+  def enablingColumnMappingDisallowedWhenColumnMappingMetadataAlreadyExists(): Throwable = {
+    new DeltaColumnMappingUnsupportedException(
+      errorClass =
+        "DELTA_ENABLING_COLUMN_MAPPING_DISALLOWED_WHEN_COLUMN_MAPPING_METADATA_ALREADY_EXISTS")
+  }
+
   def generateManifestWithColumnMappingNotSupported: Throwable = {
     new DeltaColumnMappingUnsupportedException(
       errorClass = "DELTA_UNSUPPORTED_MANIFEST_GENERATION_WITH_COLUMN_MAPPING")

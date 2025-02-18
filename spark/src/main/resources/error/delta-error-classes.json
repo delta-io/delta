@@ -869,6 +869,12 @@
     ],
     "sqlState" : "42K03"
   },
+  "DELTA_ENABLING_COLUMN_MAPPING_DISALLOWED_WHEN_COLUMN_MAPPING_METADATA_ALREADY_EXISTS" : {
+    "message" : [
+      "Enabling column mapping when column mapping metadata is already present in schema is not supported."
+    ],
+    "sqlState" : "XXKDS"
+  },
   "DELTA_EXCEED_CHAR_VARCHAR_LIMIT" : {
     "message" : [
       "Value \"<value>\" exceeds char/varchar type length limitation. Failed check: <expr>."
