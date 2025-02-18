@@ -127,6 +127,7 @@ class ChecksumSimpleComparisonSuite extends AnyFunSuite with TestUtils {
     new File(f"$basePath/_delta_log/$version%020d.crc").toPath
   }
 
+  // TODO: Add equals/hashCode to metadata, protocol then CRCInfo.
   private def assertCrcInfoEquals(crc1: CRCInfo, crc2: CRCInfo): Unit = {
     assert(crc1.getVersion === crc2.getVersion)
     assert(crc1.getNumFiles === crc2.getNumFiles)

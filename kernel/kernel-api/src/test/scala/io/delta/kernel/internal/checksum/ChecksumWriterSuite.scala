@@ -78,7 +78,7 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
   }
 
   private def verifyChecksumContent(
-                                     actualCheckSumRow: Row,
+      actualCheckSumRow: Row,
       expectedTableSizeBytes: Long,
       expectedNumFiles: Long,
       expectedTxnId: Optional[String]): Unit = {
