@@ -36,6 +36,7 @@ import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.SnapshotHint;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.DomainMetadataUtils;
+import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
@@ -414,11 +415,15 @@ public class LogReplay {
                 snapshotHint.map(SnapshotHint::getVersion).orElse(-1L) + 1,
                 logSegment.getCheckpointVersionOpt().orElse(0L),
                 // Only find the CRC within 100 versions.
-                snapshotVersion - 100,
-                0L));
+                snapshotVersion - 100));
     Optional<CRCInfo> crcInfoOpt =
-        ChecksumReader.getCRCInfo(
-            engine, logSegment.getLogPath(), snapshotVersion, crcSearchLowerBound);
+        logSegment
+            .getLatestChecksum()
+            .filter(
+                checksum ->
+                    FileNames.getFileVersion(new Path(checksum.getPath())) >= crcSearchLowerBound)
+            .flatMap(checksum -> ChecksumReader.getCRCInfo(engine, checksum));
+
     if (!crcInfoOpt.isPresent()) {
       return new Tuple2<>(snapshotHint, Optional.empty());
     }
