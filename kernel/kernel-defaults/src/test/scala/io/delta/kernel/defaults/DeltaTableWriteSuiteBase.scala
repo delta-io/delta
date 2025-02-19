@@ -24,8 +24,8 @@ import io.delta.kernel.internal.actions.{Metadata, Protocol, SingleAction}
 import io.delta.kernel.internal.fs.{Path => DeltaPath}
 import io.delta.kernel.internal.util.{Clock, FileNames, VectorUtils}
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
-import io.delta.kernel.internal.{SnapshotImpl, TableConfig, TableImpl}
-import io.delta.kernel.utils.FileStatus
+import io.delta.kernel.internal.{SnapshotImpl, TableConfig, TableImpl, TransactionImpl}
+import io.delta.kernel.utils.{CloseableIterable, CloseableIterator, FileStatus}
 import io.delta.kernel.{
   Meta,
   Operation,
@@ -43,7 +43,6 @@ import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
-import io.delta.kernel.utils.CloseableIterator
 import io.delta.kernel.Operation.CREATE_TABLE
 import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
 import io.delta.kernel.internal.checksum.CRCInfo
@@ -311,7 +310,7 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     }
 
     val combineActions = inMemoryIterable(actions.reduceLeft(_ combine _))
-    txn.commit(engine, combineActions)
+    commitTransaction(txn, engine, combineActions)
   }
 
   def appendData(
@@ -370,13 +369,12 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     assertMetadataProp(snapshot, key, expectedValue)
   }
 
-  def verifyWrittenContent(
+  protected def verifyWrittenContent(
       path: String,
       expSchema: StructType,
       expData: Seq[TestRow],
       expPartitionColumns: Seq[String] = Seq(),
-      version: Option[Long] = Option.empty,
-      checksumWritten: Boolean = false): Unit = {
+      version: Option[Long] = Option.empty): Unit = {
     val actSchema = tableSchema(path)
     assert(actSchema === expSchema)
 
@@ -394,10 +392,6 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
         .collect()
         .map(TestRow(_))
       checkAnswer(resultSpark, expData)
-    }
-
-    if (checksumWritten) {
-      checkChecksumContent(path, version, expSchema, expPartitionColumns)
     }
   }
 
@@ -477,46 +471,10 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     )
   }
 
-  def checkChecksumContent(
-      tablePath: String,
-      version: Option[Long],
-      expSchema: StructType,
-      expPartitionColumns: Seq[String]): Unit = {
-    val checksumVersion = version.getOrElse(latestSnapshot(tablePath, defaultEngine).getVersion)
-    val checksumFile = new File(f"$tablePath/_delta_log/$checksumVersion%020d.crc")
-
-    assert(Files.exists(checksumFile.toPath), s"Checksum file not found: ${checksumFile.getPath}")
-
-    val columnarBatches = defaultEngine
-      .getJsonHandler()
-      .readJsonFiles(
-        singletonCloseableIterator(FileStatus.of(checksumFile.getPath)),
-        CRCInfo.CRC_FILE_SCHEMA,
-        Optional.empty()
-      )
-
-    assert(columnarBatches.hasNext, "Empty checksum file")
-    val crcRow = columnarBatches.next()
-    assert(crcRow.getSize === 1, s"Expected single row, found ${crcRow.getSize}")
-
-    val metadata = Metadata.fromColumnVector(
-      crcRow.getColumnVector(CRCInfo.CRC_FILE_SCHEMA.indexOf("metadata")),
-      /* rowId= */0
-    )
-
-    assert(
-      metadata.getSchema === expSchema,
-      s"Schema mismatch.\nExpected: $expSchema\nActual: ${metadata.getSchema}"
-    )
-
-    val normalizedPartitions = expPartitionColumns.map(_.toLowerCase(Locale.ROOT)).toSet
-    assert(
-      metadata.getPartitionColNames.asScala === normalizedPartitions,
-      s"Partition columns mismatch.\n" +
-      s"Expected: $normalizedPartitions\n" +
-      s"Actual: ${metadata.getPartitionColNames.asScala}"
-    )
-
-    assert(!columnarBatches.hasNext, "Unexpected additional data in checksum file")
+  protected def commitTransaction(
+      txn: Transaction,
+      engine: Engine,
+      dataActions: CloseableIterable[Row]): TransactionCommitResult = {
+    txn.commit(engine, dataActions)
   }
 }
