@@ -467,6 +467,7 @@ public class TransactionImpl implements Transaction {
                     commitAtVersion,
                     metadata,
                     protocol,
+                    // TODO: handle RemoveFiles for calculating table size and num of files.
                     lastCrcInfo.getTableSizeBytes() + metricsResult.getTotalAddFilesSizeInBytes(),
                     lastCrcInfo.getNumFiles() + metricsResult.getNumAddFiles(),
                     Optional.of(txnId.toString())));
