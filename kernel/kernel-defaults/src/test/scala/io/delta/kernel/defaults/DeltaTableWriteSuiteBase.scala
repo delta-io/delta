@@ -330,13 +330,9 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       partCols: Seq[String] = null,
       data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])],
       clock: Clock = () => System.currentTimeMillis,
-      tableProperties: Map[String, String] = null,
-      executePostCommitHook: Boolean = false): TransactionCommitResult = {
+      tableProperties: Map[String, String] = null): TransactionCommitResult = {
     val txn = createTxn(engine, tablePath, isNewTable, schema, partCols, tableProperties, clock)
     val commitResult = commitAppendData(engine, txn, data)
-    if (executePostCommitHook) {
-      commitResult.getPostCommitHooks.forEach(hook => hook.threadSafeInvoke(engine))
-    }
     commitResult
   }
 
