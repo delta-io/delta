@@ -332,8 +332,7 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       clock: Clock = () => System.currentTimeMillis,
       tableProperties: Map[String, String] = null): TransactionCommitResult = {
     val txn = createTxn(engine, tablePath, isNewTable, schema, partCols, tableProperties, clock)
-    val commitResult = commitAppendData(engine, txn, data)
-    commitResult
+    commitAppendData(engine, txn, data)
   }
 
   def assertMetadataProp(
