@@ -871,7 +871,8 @@
   },
   "DELTA_ENABLING_COLUMN_MAPPING_DISALLOWED_WHEN_COLUMN_MAPPING_METADATA_ALREADY_EXISTS" : {
     "message" : [
-      "Enabling column mapping when column mapping metadata is already present in schema is not supported."
+      "Enabling column mapping when column mapping metadata is already present in schema is not supported.",
+      "To use column mapping, create a new table and reload the data into it."
     ],
     "sqlState" : "XXKDS"
   },
