@@ -66,7 +66,7 @@ public class CRCInfo {
         Metadata.fromColumnVector(batch.getColumnVector(getSchemaIndex(METADATA)), rowId);
     long tableSizeBytes = batch.getColumnVector(getSchemaIndex(TABLE_SIZE_BYTES)).getLong(rowId);
     long numFiles = batch.getColumnVector(getSchemaIndex(NUM_FILES)).getLong(rowId);
-    // Read optional field
+    // Read optional fields
     ColumnVector txnIdColumnVector = batch.getColumnVector(getSchemaIndex(TXN_ID));
     Optional<String> txnId =
         txnIdColumnVector.isNullAt(rowId)
