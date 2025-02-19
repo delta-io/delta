@@ -460,6 +460,8 @@ public class TransactionImpl implements Transaction {
 
     return readSnapshot
         .getCurrentCrcInfo()
+        // in the case of a conflicting txn and successful retry the readSnapshot may not be
+        // commitVersion - 1
         .filter(lastCrcInfo -> commitAtVersion == lastCrcInfo.getVersion() + 1)
         .map(
             lastCrcInfo ->
