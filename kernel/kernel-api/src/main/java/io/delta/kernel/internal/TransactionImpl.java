@@ -345,6 +345,7 @@ public class TransactionImpl implements Transaction {
                     dataAndMetadataActions.map(
                         action -> {
                           transactionMetrics.totalActionsCounter.increment();
+                          // TODO: handle RemoveFiles.
                           if (!action.isNullAt(ADD_FILE_ORDINAL)) {
                             transactionMetrics.addFilesCounter.increment();
                             transactionMetrics.addFilesSizeInBytesCounter.increment(
@@ -446,7 +447,6 @@ public class TransactionImpl implements Transaction {
 
   private Optional<CRCInfo> buildPostCommitCrcInfoIfCurrentCrcAvailable(
       long commitAtVersion, TransactionMetricsResult metricsResult) {
-    // Create table
     if (isNewTable) {
       return Optional.of(
           new CRCInfo(

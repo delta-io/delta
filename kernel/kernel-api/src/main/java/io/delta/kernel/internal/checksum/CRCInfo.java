@@ -18,6 +18,7 @@ package io.delta.kernel.internal.checksum;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
+import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.internal.actions.Metadata;
@@ -56,20 +57,21 @@ public class CRCInfo {
 
   public static Optional<CRCInfo> fromColumnarBatch(
       long version, ColumnarBatch batch, int rowId, String crcFilePath) {
+    checkArgument(!batch.getColumnVector(getSchemaIndex(TABLE_SIZE_BYTES)).isNullAt(rowId));
+    checkArgument(!batch.getColumnVector(getSchemaIndex(NUM_FILES)).isNullAt(rowId));
+    // Read required fields.
     Protocol protocol =
-        Protocol.fromColumnVector(batch.getColumnVector(CRC_FILE_SCHEMA.indexOf(PROTOCOL)), rowId);
+        Protocol.fromColumnVector(batch.getColumnVector(getSchemaIndex(PROTOCOL)), rowId);
     Metadata metadata =
-        Metadata.fromColumnVector(batch.getColumnVector(CRC_FILE_SCHEMA.indexOf(METADATA)), rowId);
-    checkArgument(
-        !batch.getColumnVector(CRC_FILE_SCHEMA.indexOf(TABLE_SIZE_BYTES)).isNullAt(rowId));
-    long tableSizeBytes =
-        batch.getColumnVector(CRC_FILE_SCHEMA.indexOf(TABLE_SIZE_BYTES)).getLong(rowId);
-    checkArgument(!batch.getColumnVector(CRC_FILE_SCHEMA.indexOf(NUM_FILES)).isNullAt(rowId));
-    long numFiles = batch.getColumnVector(CRC_FILE_SCHEMA.indexOf(NUM_FILES)).getLong(rowId);
+        Metadata.fromColumnVector(batch.getColumnVector(getSchemaIndex(METADATA)), rowId);
+    long tableSizeBytes = batch.getColumnVector(getSchemaIndex(TABLE_SIZE_BYTES)).getLong(rowId);
+    long numFiles = batch.getColumnVector(getSchemaIndex(NUM_FILES)).getLong(rowId);
+    // Read optional field
+    ColumnVector txnIdColumnVector = batch.getColumnVector(getSchemaIndex(TXN_ID));
     Optional<String> txnId =
-        batch.getColumnVector(CRC_FILE_SCHEMA.indexOf(TXN_ID)).isNullAt(rowId)
+        txnIdColumnVector.isNullAt(rowId)
             ? Optional.empty()
-            : Optional.of(batch.getColumnVector(CRC_FILE_SCHEMA.indexOf(TXN_ID)).getString(rowId));
+            : Optional.of(txnIdColumnVector.getString(rowId));
     //  protocol and metadata are nullable per fromColumnVector's implementation.
     if (protocol == null || metadata == null) {
       logger.warn("Invalid checksum file missing protocol and/or metadata: {}", crcFilePath);
@@ -149,7 +151,7 @@ public class CRCInfo {
     return new GenericRow(CRC_FILE_SCHEMA, values);
   }
 
-  private int getSchemaIndex(String fieldName) {
+  private static int getSchemaIndex(String fieldName) {
     return CRC_FILE_SCHEMA.indexOf(fieldName);
   }
 }
