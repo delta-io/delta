@@ -125,7 +125,7 @@ class ChecksumSimpleComparisonSuite extends DeltaTableWriteSuiteBase with TestUt
   }
 
   /**
-   * Insert into partitioned spark table, read the added file from the commit log,
+   * Insert into partitioned spark table, read the added files from the commit log,
    * commit them to kernel table and verify the checksum files are consistent
    * between spark and kernel
    * */
