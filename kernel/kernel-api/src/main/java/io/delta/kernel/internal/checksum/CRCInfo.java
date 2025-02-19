@@ -24,6 +24,7 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.data.GenericRow;
+import io.delta.kernel.internal.util.InternalUtils;
 import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
@@ -62,8 +63,14 @@ public class CRCInfo {
         Protocol.fromColumnVector(batch.getColumnVector(getSchemaIndex(PROTOCOL)), rowId);
     Metadata metadata =
         Metadata.fromColumnVector(batch.getColumnVector(getSchemaIndex(METADATA)), rowId);
-    long tableSizeBytes = batch.getColumnVector(getSchemaIndex(TABLE_SIZE_BYTES)).getLong(rowId);
-    long numFiles = batch.getColumnVector(getSchemaIndex(NUM_FILES)).getLong(rowId);
+    long tableSizeBytes =
+        InternalUtils.requireNonNull(
+                batch.getColumnVector(getSchemaIndex(TABLE_SIZE_BYTES)), rowId, TABLE_SIZE_BYTES)
+            .getLong(rowId);
+    long numFiles =
+        InternalUtils.requireNonNull(
+                batch.getColumnVector(getSchemaIndex(NUM_FILES)), rowId, NUM_FILES)
+            .getLong(rowId);
 
     // Read optional fields
     ColumnVector txnIdColumnVector = batch.getColumnVector(getSchemaIndex(TXN_ID));
@@ -72,8 +79,6 @@ public class CRCInfo {
             ? Optional.empty()
             : Optional.of(txnIdColumnVector.getString(rowId));
 
-    checkArgument(!batch.getColumnVector(getSchemaIndex(TABLE_SIZE_BYTES)).isNullAt(rowId));
-    checkArgument(!batch.getColumnVector(getSchemaIndex(NUM_FILES)).isNullAt(rowId));
     //  protocol and metadata are nullable per fromColumnVector's implementation.
     if (protocol == null || metadata == null) {
       logger.warn("Invalid checksum file missing protocol and/or metadata: {}", crcFilePath);
