@@ -125,9 +125,9 @@ class ChecksumSimpleComparisonSuite extends DeltaTableWriteSuiteBase with TestUt
   }
 
   /**
-   * Insert into partitioned spark table, read the added files from the commit log,
-   * commit them to kernel table and verify the checksum files are consistent
-   * between spark and kernel
+   * Insert into partitioned spark table, load the added files from the spark table's commit log,
+   * commit them to kernel table and verify the checksum files are consistent between spark
+   * and kernel
    * */
   private def insertIntoPartitionedTableAndCheckCrc(
       engine: Engine,
