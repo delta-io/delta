@@ -28,8 +28,10 @@ import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.internal.util.VectorUtils
 import io.delta.kernel.internal.util.VectorUtils.stringStringMapValue
 import io.delta.kernel.test.{MockEngineUtils, VectorTestUtils}
+import io.delta.kernel.statistics.DataFileStatistics
+import io.delta.kernel.test.{BaseMockJsonHandler, MockEngineUtils, VectorTestUtils}
 import io.delta.kernel.types.{LongType, StringType, StructType}
-import io.delta.kernel.utils.{CloseableIterator, DataFileStatistics, DataFileStatus}
+import io.delta.kernel.utils.{CloseableIterator, DataFileStatus}
 import org.scalatest.funsuite.AnyFunSuite
 
 import java.lang.{Long => JLong}
@@ -122,7 +124,9 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
           actStats = actStats :+ add.getString(statsOrdinal)
         }
 
-      assert(actStats === Seq("{\"numRecords\":10}", "{\"numRecords\":20}"))
+      assert(actStats === Seq(
+        "{\"numRecords\":10,\"minValues\":{},\"maxValues\":{},\"nullCounts\":{}}",
+        "{\"numRecords\":20,\"minValues\":{},\"maxValues\":{},\"nullCounts\":{}}"))
     }
   }
 }
@@ -208,6 +212,7 @@ object TransactionSuite extends VectorTestUtils with MockEngineUtils {
   def testStats(numRowsOpt: Option[Long]): Option[DataFileStatistics] = {
     numRowsOpt.map(numRows => {
       new DataFileStatistics(
+        testSchema,
         numRows,
         Map.empty[Column, Literal].asJava, // minValues - empty value as this is just for tests.
         Map.empty[Column, Literal].asJava, // maxValues - empty value as this is just for tests.

@@ -15,17 +15,15 @@
  */
 package io.delta.kernel.internal.actions
 
-import org.scalatest.funsuite.AnyFunSuite
-
-import scala.collection.JavaConverters._
-
 import io.delta.kernel.data.Row
 import io.delta.kernel.internal.util.VectorUtils
 import io.delta.kernel.internal.util.VectorUtils.stringStringMapValue
-import io.delta.kernel.utils.DataFileStatistics.deserializeFromJson
+import io.delta.kernel.statistics.DataFileStatistics
+import org.scalatest.funsuite.AnyFunSuite
 
-import java.util.Optional
 import java.lang.{Boolean => JBoolean, Long => JLong}
+import java.util.Optional
+import scala.collection.JavaConverters._
 
 class AddFileSuite extends AnyFunSuite {
 
@@ -59,7 +57,7 @@ class AddFileSuite extends AnyFunSuite {
       toJavaOptional(tags.map(_.asJava).map(stringStringMapValue)),
       toJavaOptional(baseRowId.asInstanceOf[Option[JLong]]),
       toJavaOptional(defaultRowCommitVersion.asInstanceOf[Option[JLong]]),
-      deserializeFromJson(stats.getOrElse(""))
+      DataFileStatistics.deserializeFromJson(stats.getOrElse(""))
     )
   }
 
