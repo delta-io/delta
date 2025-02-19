@@ -22,22 +22,16 @@ import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.actions.{Metadata, Protocol, SingleAction}
 import io.delta.kernel.internal.fs.{Path => DeltaPath}
-import io.delta.kernel.internal.util.{Clock, FileNames, VectorUtils}
+import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
-import io.delta.kernel.internal.{SnapshotImpl, TableConfig, TableImpl, TransactionImpl}
+import io.delta.kernel.internal.{SnapshotImpl, TableConfig, TableImpl}
 import io.delta.kernel.utils.{CloseableIterable, CloseableIterator, FileStatus}
-import io.delta.kernel.{
-  Meta,
-  Operation,
-  Table,
-  Transaction,
-  TransactionBuilder,
-  TransactionCommitResult
-}
+import io.delta.kernel.{Meta, Operation, Table, Transaction, TransactionBuilder, TransactionCommitResult}
 import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch, Row}
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.expressions.Literal.ofInt
+import io.delta.kernel.internal.util.Clock
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.types.IntegerType.INTEGER
@@ -45,17 +39,15 @@ import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 import io.delta.kernel.Operation.CREATE_TABLE
 import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
-import io.delta.kernel.internal.checksum.CRCInfo
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.delta.VersionNotFoundException
 import org.scalatest.funsuite.AnyFunSuite
-import org.scalatest.matchers.should.Matchers.convertToAnyShouldWrapper
 
 import java.io.File
 import java.nio.file.{Files, Paths}
-import java.util.{Locale, Optional}
+import java.util.Optional
 import scala.collection.JavaConverters._
 import scala.collection.immutable.{ListMap, Seq}
 
@@ -458,16 +450,6 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
         .anyMatch(
           hook => hook.getType == PostCommitHookType.CHECKPOINT
         ) === isReadyForCheckpoint
-    )
-  }
-
-  def assertChecksumSimpleReadiness(txnResult: TransactionCommitResult): Unit = {
-    assert(
-      txnResult.getPostCommitHooks
-        .stream()
-        .anyMatch(
-          hook => hook.getType == PostCommitHookType.CHECKSUM_SIMPLE
-        )
     )
   }
 
