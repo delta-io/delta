@@ -411,8 +411,7 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       partitionCols: Seq[String] = Seq.empty,
       isBlindAppend: Boolean = true,
       operation: Operation = CREATE_TABLE): Unit = {
-    val row = spark
-      .sql(s"DESCRIBE HISTORY delta.`$tablePath`")
+    val row = spark.sql(s"DESCRIBE HISTORY delta.`$tablePath`")
       .filter(s"version = $version")
       .select(
         "version",
