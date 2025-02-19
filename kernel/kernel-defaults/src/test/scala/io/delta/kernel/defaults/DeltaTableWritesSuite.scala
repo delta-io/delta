@@ -831,7 +831,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       }
 
       def commitAndVerify(newTbl: Boolean, txn: Transaction,
-                          actions: CloseableIterable[Row], expTblVer: Long): Unit = {
+          actions: CloseableIterable[Row], expTblVer: Long): Unit = {
         val commitResult = commitTransaction(txn, engine, actions)
 
         expData = expData ++ data.flatMap(_._2).flatMap(_.toTestRows)
@@ -1021,7 +1021,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
   }
 
   def createTestTxn(
-                     engine: Engine, tablePath: String, schema: Option[StructType] = None): Transaction = {
+      engine: Engine, tablePath: String, schema: Option[StructType] = None): Transaction = {
     val table = Table.forPath(engine, tablePath)
     var txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
     schema.foreach(s => txnBuilder = txnBuilder.withSchema(engine, s))
@@ -1266,9 +1266,9 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
   }
 
   private def assertColumnMapping(
-                                   field: StructField,
-                                   expId: Long,
-                                   expPhyName: String = "UUID"): Unit = {
+      field: StructField,
+      expId: Long,
+      expPhyName: String = "UUID"): Unit = {
     val meta = field.getMetadata
     assert(meta.get(ColumnMapping.COLUMN_MAPPING_ID_KEY) == expId)
     // For new tables the physical column name is a UUID. For existing tables, we
