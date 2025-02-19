@@ -57,8 +57,6 @@ public class CRCInfo {
 
   public static Optional<CRCInfo> fromColumnarBatch(
       long version, ColumnarBatch batch, int rowId, String crcFilePath) {
-    checkArgument(!batch.getColumnVector(getSchemaIndex(TABLE_SIZE_BYTES)).isNullAt(rowId));
-    checkArgument(!batch.getColumnVector(getSchemaIndex(NUM_FILES)).isNullAt(rowId));
     // Read required fields.
     Protocol protocol =
         Protocol.fromColumnVector(batch.getColumnVector(getSchemaIndex(PROTOCOL)), rowId);
@@ -66,12 +64,16 @@ public class CRCInfo {
         Metadata.fromColumnVector(batch.getColumnVector(getSchemaIndex(METADATA)), rowId);
     long tableSizeBytes = batch.getColumnVector(getSchemaIndex(TABLE_SIZE_BYTES)).getLong(rowId);
     long numFiles = batch.getColumnVector(getSchemaIndex(NUM_FILES)).getLong(rowId);
+
     // Read optional fields
     ColumnVector txnIdColumnVector = batch.getColumnVector(getSchemaIndex(TXN_ID));
     Optional<String> txnId =
         txnIdColumnVector.isNullAt(rowId)
             ? Optional.empty()
             : Optional.of(txnIdColumnVector.getString(rowId));
+
+    checkArgument(!batch.getColumnVector(getSchemaIndex(TABLE_SIZE_BYTES)).isNullAt(rowId));
+    checkArgument(!batch.getColumnVector(getSchemaIndex(NUM_FILES)).isNullAt(rowId));
     //  protocol and metadata are nullable per fromColumnVector's implementation.
     if (protocol == null || metadata == null) {
       logger.warn("Invalid checksum file missing protocol and/or metadata: {}", crcFilePath);
