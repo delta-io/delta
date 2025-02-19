@@ -32,6 +32,7 @@ import org.apache.spark.sql.delta.hooks.AutoCompactType
 import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.redirect.NoRedirectRule
+import org.apache.spark.sql.delta.redirect.RedirectSpec
 import org.apache.spark.sql.delta.redirect.RedirectState
 import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, InvariantViolationException, SchemaUtils, UnsupportedDataTypeInfo}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -357,19 +358,25 @@ trait DeltaErrorsBase
     )
   }
 
+  def unrecognizedRedirectSpec(spec: RedirectSpec): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_TABLE_UNRECOGNIZED_REDIRECT_SPEC",
+      messageParameters = Array(spec.toString)
+    )
+  }
+
   def invalidRedirectStateTransition(
       table: String,
       oldState: RedirectState,
       newState: RedirectState): Unit = {
-    new DeltaIllegalStateException(
+    throw new DeltaIllegalStateException(
       errorClass = "DELTA_TABLE_INVALID_REDIRECT_STATE_TRANSITION",
-      messageParameters = Array(
-        table, table, oldState.name, newState.name)
+      messageParameters = Array(table, oldState.name, newState.name)
     )
   }
 
   def invalidRemoveTableRedirect(table: String, currentState: RedirectState): Unit = {
-    new DeltaIllegalStateException(
+    throw new DeltaIllegalStateException(
       errorClass = "DELTA_TABLE_INVALID_REMOVE_TABLE_REDIRECT",
       messageParameters = Array(table, table, currentState.name)
     )

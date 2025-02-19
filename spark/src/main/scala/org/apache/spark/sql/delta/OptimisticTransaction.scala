@@ -1267,12 +1267,13 @@ trait OptimisticTransactionImpl extends DeltaTransaction
       op: DeltaOperations.Operation,
       redirectConfig: TableRedirectConfiguration
   ): Unit = {
+    if (redirectConfig.spec.isRedirectDest(snapshot.path.toUri.getPath)) return
     // Find all rules that match with the current application name.
     // If appName is not present, its no-redirect-rule are included.
     // If appName is present, includes its no-redirect-rule only when appName
     // matches with "spark.app.name".
     val rulesOfMatchedApps = redirectConfig.noRedirectRules.filter { rule =>
-      rule.appName.forall(_.equalsIgnoreCase(spark.conf.get("spark.app.name")))
+      rule.appName.forall(_.equalsIgnoreCase(spark.appName))
     }
     // Determine whether any rule is satisfied the given operation.
     val noRuleSatisfied = !rulesOfMatchedApps.exists(_.allowedOperations.contains(op.name))

@@ -602,7 +602,7 @@ class DeltaLogSuite extends QueryTest
       assert(snapshot.version === 0)
 
       val deltaLog2 = DeltaLog.forTable(spark, path)
-      assert(deltaLog2.snapshot.version === 0) // This shouldn't update
+      assert(deltaLog2.snapshot.version === 0)
       val (_, snapshot2) = DeltaLog.forTableWithSnapshot(spark, path)
       assert(snapshot2.version === 1) // This should get the latest snapshot
     }

@@ -2293,6 +2293,13 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val ENABLE_TABLE_REDIRECT_FEATURE =
+    buildConf("enableTableRedirectFeature")
+      .doc("True if disabling the table redirect feature.")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_OPTIMIZE_WRITE_MAX_SHUFFLE_PARTITIONS =
     buildConf("optimizeWrite.maxShufflePartitions")
       .internal()
