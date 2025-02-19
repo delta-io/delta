@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.internal.checksum;
 
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.data.ColumnarBatch;
@@ -87,12 +88,14 @@ public class CRCInfo {
       long tableSizeBytes,
       long numFiles,
       Optional<String> txnId) {
+    checkArgument(tableSizeBytes >= 0);
+    checkArgument(numFiles >=0 );
     this.version = version;
     this.metadata = requireNonNull(metadata);
     this.protocol = requireNonNull(protocol);
     this.tableSizeBytes = tableSizeBytes;
     this.numFiles = numFiles;
-    this.txnId = txnId;
+    this.txnId = requireNonNull(txnId);
   }
 
   /** The version of the Delta table that this CRCInfo represents. */

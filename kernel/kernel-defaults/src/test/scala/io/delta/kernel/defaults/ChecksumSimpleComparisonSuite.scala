@@ -100,8 +100,34 @@ class ChecksumSimpleComparisonSuite extends DeltaTableWriteSuiteBase with TestUt
   }
 
   /**
-   * Insert into partition spark table, copy the commit log to kernel table
-   * and verify the checksum files for are consistent between spark and kernel
+   * Insert into unpartitioned spark table, read the added file from the commit log,
+   * commit them to kernel table and verify the checksum files are consistent
+   * between spark and kernel
+   * */
+  private def insertIntoUnpartitionedTableAndCheckCrc(
+      engine: Engine,
+      sparkTablePath: String,
+      kernelTablePath: String,
+      versionAtCommit: Long): Unit = {
+    var valueToAppend = "(0)"
+    (0L to versionAtCommit).foreach(i => valueToAppend = valueToAppend + s",($i)")
+    spark.sql(
+      s"INSERT INTO delta.`$sparkTablePath` values $valueToAppend"
+    )
+
+    val txn = Table
+      .forPath(engine, kernelTablePath)
+      .createTransactionBuilder(engine, "test-engine", Operation.WRITE)
+      .build(engine)
+
+    convertSparkDeltaLogToKernelCommit(txn, engine, sparkTablePath, versionAtCommit)
+    assertChecksumEquals(engine, sparkTablePath, kernelTablePath, versionAtCommit)
+  }
+
+  /**
+   * Insert into partitioned spark table, read the added file from the commit log,
+   * commit them to kernel table and verify the checksum files are consistent
+   * between spark and kernel
    * */
   private def insertIntoPartitionedTableAndCheckCrc(
       engine: Engine,
@@ -131,30 +157,6 @@ class ChecksumSimpleComparisonSuite extends DeltaTableWriteSuiteBase with TestUt
       versionAtCommit,
       Some(addedPartition)
     )
-    assertChecksumEquals(engine, sparkTablePath, kernelTablePath, versionAtCommit)
-  }
-
-  /**
-   * Insert into unpartitioned spark table, copy the commit log to kernel table
-   * and verify the checksum files for are consistent between spark and kernel
-   * */
-  private def insertIntoUnpartitionedTableAndCheckCrc(
-      engine: Engine,
-      sparkTablePath: String,
-      kernelTablePath: String,
-      versionAtCommit: Long): Unit = {
-    var valueToAppend = "(0)"
-    (0L to versionAtCommit).foreach(i => valueToAppend = valueToAppend + s",($i)")
-    spark.sql(
-      s"INSERT INTO delta.`$sparkTablePath` values $valueToAppend"
-    )
-
-    val txn = Table
-      .forPath(engine, kernelTablePath)
-      .createTransactionBuilder(engine, "test-engine", Operation.WRITE)
-      .build(engine)
-
-    convertSparkDeltaLogToKernelCommit(txn, engine, sparkTablePath, versionAtCommit)
     assertChecksumEquals(engine, sparkTablePath, kernelTablePath, versionAtCommit)
   }
 
@@ -272,49 +274,36 @@ class ChecksumSimpleComparisonSuite extends DeltaTableWriteSuiteBase with TestUt
     )
 
     while (columnarBatches.hasNext) {
-      processColumnarBatch(columnarBatches.next(), partition, addFiles)
+      collectAddFilesFromLogRows(columnarBatches.next(), partition, addFiles)
     }
-
     toCloseableIterator(addFiles.iterator())
   }
 
-  private def processColumnarBatch(
-      batch: ColumnarBatch,
+  private def collectAddFilesFromLogRows(
+      logFileRows: ColumnarBatch,
       partition: Option[String],
       addFiles: util.ArrayList[DataFileStatus]): Unit = {
-    val rows = batch.getRows
+    val rows = logFileRows.getRows
     while (rows.hasNext) {
       val row = rows.next()
       val addIndex = row.getSchema.indexOf("add")
 
       if (!row.isNullAt(addIndex)) {
-        processAddFile(row.getStruct(addIndex), partition, addFiles)
+        val addFile = new AddFile(row.getStruct(addIndex))
+        if (partition.isEmpty ||
+          partition.get == VectorUtils
+            .toJavaMap(addFile.getPartitionValues)
+            .get(PARTITION_COLUMN)) {
+          addFiles.add(
+            new DataFileStatus(
+              addFile.getPath,
+              addFile.getSize,
+              addFile.getModificationTime,
+              Optional.empty() // TODO: populate stats once #4139 is fixed
+            )
+          )
+        }
       }
     }
   }
-
-  private def processAddFile(
-      addFileRow: Row,
-      partition: Option[String],
-      addFiles: util.ArrayList[DataFileStatus]): Unit = {
-
-    val addFile = new AddFile(addFileRow)
-
-    if (shouldIncludeFile(addFile, partition)) {
-      addFiles.add(
-        new DataFileStatus(
-          addFile.getPath,
-          addFile.getSize,
-          addFile.getModificationTime,
-          Optional.empty() // TODO: populate stats once #4139 is fixed
-        )
-      )
-    }
-  }
-
-  private def shouldIncludeFile(addFile: AddFile, partition: Option[String]): Boolean = {
-    partition.isEmpty ||
-    partition.get == VectorUtils.toJavaMap(addFile.getPartitionValues).get(PARTITION_COLUMN)
-  }
-
 }
