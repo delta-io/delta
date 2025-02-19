@@ -331,6 +331,7 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])],
       clock: Clock = () => System.currentTimeMillis,
       tableProperties: Map[String, String] = null): TransactionCommitResult = {
+
     val txn = createTxn(engine, tablePath, isNewTable, schema, partCols, tableProperties, clock)
     commitAppendData(engine, txn, data)
   }
