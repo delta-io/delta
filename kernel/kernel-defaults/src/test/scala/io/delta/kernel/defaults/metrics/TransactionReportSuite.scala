@@ -22,14 +22,15 @@ import scala.collection.JavaConverters._
 import io.delta.kernel._
 import io.delta.kernel.data.Row
 import io.delta.kernel.engine._
-import io.delta.kernel.internal.metrics.Timer
-import io.delta.kernel.internal.util.Utils
 import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.actions.{RemoveFile, SingleAction}
 import io.delta.kernel.internal.data.GenericRow
+import io.delta.kernel.internal.metrics.Timer
+import io.delta.kernel.internal.util.Utils
 import io.delta.kernel.metrics.{SnapshotReport, TransactionReport}
 import io.delta.kernel.types.{IntegerType, StructType}
 import io.delta.kernel.utils.{CloseableIterable, CloseableIterator, DataFileStatus}
+
 import org.scalatest.funsuite.AnyFunSuite
 
 class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
@@ -48,10 +49,10 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
    * @return (TransactionReport, durationToCommit, SnapshotReportIfPresent, ExceptionIfThrown)
    */
   def getTransactionAndSnapshotReport(
-    createTransaction: Engine => Transaction,
-    generateCommitActions: (Transaction, Engine) => CloseableIterable[Row],
-    expectException: Boolean
-  ): (TransactionReport, Long, Option[SnapshotReport], Option[Exception]) = {
+      createTransaction: Engine => Transaction,
+      generateCommitActions: (Transaction, Engine) => CloseableIterable[Row],
+      expectException: Boolean)
+      : (TransactionReport, Long, Option[SnapshotReport], Option[Exception]) = {
     val timer = new Timer()
 
     val (metricsReports, exception) = collectMetricsReports(
@@ -60,15 +61,17 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         val actionsToCommit = generateCommitActions(transaction, engine)
         timer.time(() => transaction.commit(engine, actionsToCommit)) // Time the actual operation
       },
-      expectException
-    )
+      expectException)
 
     val transactionReports = metricsReports.filter(_.isInstanceOf[TransactionReport])
     assert(transactionReports.length == 1, "Expected exactly 1 TransactionReport")
     val snapshotReports = metricsReports.filter(_.isInstanceOf[SnapshotReport])
     assert(snapshotReports.length <= 1, "Expected at most 1 SnapshotReport")
-    (transactionReports.head.asInstanceOf[TransactionReport], timer.totalDurationNs(),
-      snapshotReports.headOption.map(_.asInstanceOf[SnapshotReport]), exception)
+    (
+      transactionReports.head.asInstanceOf[TransactionReport],
+      timer.totalDurationNs(),
+      snapshotReports.headOption.map(_.asInstanceOf[SnapshotReport]),
+      exception)
   }
 
   /**
@@ -91,29 +94,30 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
    */
   // scalastyle:off
   def checkTransactionReport(
-    generateCommitActions: (Transaction, Engine) => CloseableIterable[Row],
-    path: String,
-    expectException: Boolean,
-    expectedBaseSnapshotVersion: Long,
-    expectedNumAddFiles: Long = 0,
-    expectedNumRemoveFiles: Long = 0,
-    expectedNumTotalActions: Long = 0,
-    expectedCommitVersion: Option[Long] = None,
-    expectedNumAttempts: Long = 1,
-    expectedTotalAddFilesSizeInBytes: Long = 0,
-    buildTransaction: (TransactionBuilder, Engine) => Transaction = (tb, e) => tb.build(e),
-    engineInfo: String = "test-engine-info",
-    operation: Operation = Operation.MANUAL_UPDATE
-  ): Unit = {
+      generateCommitActions: (Transaction, Engine) => CloseableIterable[Row],
+      path: String,
+      expectException: Boolean,
+      expectedBaseSnapshotVersion: Long,
+      expectedNumAddFiles: Long = 0,
+      expectedNumRemoveFiles: Long = 0,
+      expectedNumTotalActions: Long = 0,
+      expectedCommitVersion: Option[Long] = None,
+      expectedNumAttempts: Long = 1,
+      expectedTotalAddFilesSizeInBytes: Long = 0,
+      buildTransaction: (TransactionBuilder, Engine) => Transaction = (tb, e) => tb.build(e),
+      engineInfo: String = "test-engine-info",
+      operation: Operation = Operation.MANUAL_UPDATE): Unit = {
     // scalastyle:on
     assert(expectException == expectedCommitVersion.isEmpty)
 
     val (transactionReport, duration, snapshotReportOpt, exception) =
       getTransactionAndSnapshotReport(
-        engine => buildTransaction(
-          Table.forPath(engine, path).createTransactionBuilder(engine, engineInfo, operation),
-          engine
-        ), generateCommitActions, expectException)
+        engine =>
+          buildTransaction(
+            Table.forPath(engine, path).createTransactionBuilder(engine, engineInfo, operation),
+            engine),
+        generateCommitActions,
+        expectException)
 
     // Verify contents
     assert(transactionReport.getTablePath == defaultEngine.getFileSystemClient.resolvePath(path))
@@ -135,7 +139,7 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
     } else {
       assert(snapshotReportOpt.exists { snapshotReport =>
         snapshotReport.getVersion.toScala.contains(expectedBaseSnapshotVersion) &&
-          transactionReport.getSnapshotReportUUID.toScala.contains(snapshotReport.getReportUUID)
+        transactionReport.getSnapshotReportUUID.toScala.contains(snapshotReport.getReportUUID)
       })
     }
     assert(transactionReport.getCommittedVersion.toScala == expectedCommitVersion)
@@ -148,18 +152,21 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
     assert(transactionReport.getTransactionMetrics.getNumCommitAttempts == expectedNumAttempts)
     assert(transactionReport.getTransactionMetrics.getNumAddFiles == expectedNumAddFiles)
     assert(transactionReport.getTransactionMetrics.getTotalAddFilesSizeInBytes
-        == expectedTotalAddFilesSizeInBytes)
+      == expectedTotalAddFilesSizeInBytes)
     assert(transactionReport.getTransactionMetrics.getNumRemoveFiles == expectedNumRemoveFiles)
     assert(transactionReport.getTransactionMetrics.getNumTotalActions == expectedNumTotalActions)
   }
 
-  def generateAppendActions(fileStatusIter: CloseableIterator[DataFileStatus])
-    (trans: Transaction, engine: Engine): CloseableIterable[Row] = {
+  def generateAppendActions(fileStatusIter: CloseableIterator[DataFileStatus])(
+      trans: Transaction,
+      engine: Engine): CloseableIterable[Row] = {
     val transState = trans.getTransactionState(engine)
     CloseableIterable.inMemoryIterable(
-      Transaction.generateAppendActions(engine, transState, fileStatusIter,
-        Transaction.getWriteContext(engine, transState, Collections.emptyMap()))
-    )
+      Transaction.generateAppendActions(
+        engine,
+        transState,
+        fileStatusIter,
+        Transaction.getWriteContext(engine, transState, Collections.emptyMap())))
   }
 
   test("TransactionReport: Basic append to existing table + update metadata") {
@@ -177,8 +184,7 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         expectedNumAddFiles = 1,
         expectedNumTotalActions = 2, // commitInfo + addFile
         expectedCommitVersion = Some(1),
-        expectedTotalAddFilesSizeInBytes = 100
-      )
+        expectedTotalAddFilesSizeInBytes = 100)
 
       // Commit 2 AddFiles
       checkTransactionReport(
@@ -191,8 +197,7 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         expectedCommitVersion = Some(2),
         engineInfo = "foo",
         expectedTotalAddFilesSizeInBytes = 200,
-        operation = Operation.WRITE
-      )
+        operation = Operation.WRITE)
 
       // Update metadata only
       checkTransactionReport(
@@ -206,8 +211,7 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
           transBuilder
             .withTableProperties(engine, Map(TableConfig.CHECKPOINT_INTERVAL.getKey -> "2").asJava)
             .build(engine)
-        }
-      )
+        })
     }
   }
 
@@ -226,8 +230,7 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
           transBuilder
             .withSchema(engine, new StructType().add("id", IntegerType.INTEGER))
             .build(engine)
-        }
-      )
+        })
 
       // Commit 2 AddFiles
       checkTransactionReport(
@@ -238,8 +241,7 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         expectedNumAddFiles = 2,
         expectedNumTotalActions = 3, // commitInfo + addFile
         expectedCommitVersion = Some(1),
-        expectedTotalAddFilesSizeInBytes = 200
-      )
+        expectedTotalAddFilesSizeInBytes = 200)
     }
   }
 
@@ -260,8 +262,7 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
           transBuilder
             .withSchema(engine, new StructType().add("id", IntegerType.INTEGER))
             .build(engine)
-        }
-      )
+        })
     }
   }
 
@@ -274,23 +275,21 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
       val removeFileRow: Row = {
         val fieldMap: Map[Integer, AnyRef] = Map(
           Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("path")) -> "/path/for/remove/file",
-          Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("dataChange")) -> java.lang.Boolean.TRUE
-        )
+          Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("dataChange")) -> java.lang.Boolean.TRUE)
         new GenericRow(RemoveFile.FULL_SCHEMA, fieldMap.asJava)
       }
 
       checkTransactionReport(
-        generateCommitActions = (_, _) => CloseableIterable.inMemoryIterable(
-          Utils.toCloseableIterator(
-            Seq(SingleAction.createRemoveFileSingleAction(removeFileRow)).iterator.asJava
-          )),
+        generateCommitActions = (_, _) =>
+          CloseableIterable.inMemoryIterable(
+            Utils.toCloseableIterator(
+              Seq(SingleAction.createRemoveFileSingleAction(removeFileRow)).iterator.asJava)),
         path,
         expectException = false,
         expectedBaseSnapshotVersion = 0,
         expectedNumRemoveFiles = 1,
         expectedNumTotalActions = 2, // commitInfo + removeFile
-        expectedCommitVersion = Some(1)
-      )
+        expectedCommitVersion = Some(1))
     }
   }
 
@@ -312,8 +311,7 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         expectedNumTotalActions = 2, // commitInfo + removeFile
         expectedCommitVersion = Some(2),
         expectedNumAttempts = 2,
-        expectedTotalAddFilesSizeInBytes = 100
-      )
+        expectedTotalAddFilesSizeInBytes = 100)
     }
   }
 
@@ -330,8 +328,7 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         },
         path,
         expectException = true,
-        expectedBaseSnapshotVersion = 0
-      )
+        expectedBaseSnapshotVersion = 0)
     }
   }
 
@@ -344,7 +341,8 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
       // This writes a concurrent append everytime the iterable is asked for an iterator. This means
       // there should be a conflicting transaction committed everytime Kernel tries to commit
       def actionsIterableWithConcurrentAppend(
-        trans: Transaction, engine: Engine): CloseableIterable[Row] = {
+          trans: Transaction,
+          engine: Engine): CloseableIterable[Row] = {
         val transState = trans.getTransactionState(engine)
         val writeContext = Transaction.getWriteContext(engine, transState, Collections.emptyMap())
 
@@ -365,8 +363,7 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         expectException = true,
         expectedBaseSnapshotVersion = 0,
         expectedNumAttempts = 6, // 1 first try + 6 retries
-        buildTransaction = (builder, engine) => builder.withMaxRetries(5).build(engine)
-      )
+        buildTransaction = (builder, engine) => builder.withMaxRetries(5).build(engine))
     }
   }
 
@@ -375,13 +372,10 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
   ////////////////////
 
   private def fileStatusIter1 = Utils.toCloseableIterator(
-    Seq(new DataFileStatus("/path/to/file", 100, 100, Optional.empty())).iterator.asJava
-  )
+    Seq(new DataFileStatus("/path/to/file", 100, 100, Optional.empty())).iterator.asJava)
 
   private def fileStatusIter2 = Utils.toCloseableIterator(
     Seq(
       new DataFileStatus("/path/to/file1", 100, 100, Optional.empty()),
-      new DataFileStatus("/path/to/file2", 100, 100, Optional.empty())
-    ).iterator.asJava
-  )
+      new DataFileStatus("/path/to/file2", 100, 100, Optional.empty())).iterator.asJava)
 }

@@ -15,9 +15,14 @@
  */
 package io.delta.kernel.defaults
 
+import java.util.{Locale, Optional}
+
+import scala.collection.JavaConverters._
+import scala.collection.immutable.Seq
+
 import io.delta.golden.GoldenTableUtils.goldenTablePath
-import io.delta.kernel.Operation.{CREATE_TABLE, WRITE}
 import io.delta.kernel._
+import io.delta.kernel.Operation.{CREATE_TABLE, WRITE}
 import io.delta.kernel.data.{ColumnarBatch, FilteredColumnarBatch, Row}
 import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
 import io.delta.kernel.defaults.utils.TestRow
@@ -26,23 +31,19 @@ import io.delta.kernel.exceptions._
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
-import io.delta.kernel.internal.checkpoints.CheckpointerSuite.selectSingleElement
-import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
 import io.delta.kernel.internal.{SnapshotImpl, TableConfig}
+import io.delta.kernel.internal.checkpoints.CheckpointerSuite.selectSingleElement
 import io.delta.kernel.internal.util.ColumnMapping
+import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
+import io.delta.kernel.types._
 import io.delta.kernel.types.DateType.DATE
 import io.delta.kernel.types.DoubleType.DOUBLE
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.StringType.STRING
 import io.delta.kernel.types.TimestampNTZType.TIMESTAMP_NTZ
 import io.delta.kernel.types.TimestampType.TIMESTAMP
-import io.delta.kernel.types._
-import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 import io.delta.kernel.utils.CloseableIterable
-
-import java.util.{Locale, Optional}
-import scala.collection.JavaConverters._
-import scala.collection.immutable.Seq
+import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 
 class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
 
@@ -172,8 +173,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       appendData(
         engine,
         tablePath,
-        data = Seq(Map.empty[String, Literal] -> dataBatches1)
-      )
+        data = Seq(Map.empty[String, Literal] -> dataBatches1))
       val ver1Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
       assertMetadataProp(ver1Snapshot, TableConfig.CHECKPOINT_INTERVAL, 2)
     }
@@ -194,8 +194,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       appendData(
         engine,
         tablePath,
-        data = Seq(Map.empty[String, Literal] -> dataBatches1)
-      )
+        data = Seq(Map.empty[String, Literal] -> dataBatches1))
 
       val ver1Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
       assertMetadataProp(ver1Snapshot, TableConfig.CHECKPOINT_INTERVAL, 10)
@@ -225,8 +224,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       appendData(
         engine,
         tablePath,
-        data = Seq(Map.empty[String, Literal] -> dataBatches1)
-      )
+        data = Seq(Map.empty[String, Literal] -> dataBatches1))
 
       val ver1Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
       assertMetadataProp(ver1Snapshot, TableConfig.CHECKPOINT_INTERVAL, 10)
@@ -387,8 +385,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         isNewTable = true,
         testSchema,
         partCols = Seq.empty,
-        data = Seq(Map.empty[String, Literal] -> (dataBatches1 ++ dataBatches2))
-      )
+        data = Seq(Map.empty[String, Literal] -> (dataBatches1 ++ dataBatches2)))
 
       val expectedAnswer = dataBatches1.flatMap(_.toTestRows) ++ dataBatches2.flatMap(_.toTestRows)
 
@@ -406,8 +403,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         isNewTable = true,
         testSchema,
         partCols = Seq.empty,
-        data = Seq(Map.empty[String, Literal] -> dataBatches1)
-      )
+        data = Seq(Map.empty[String, Literal] -> dataBatches1))
 
       verifyCommitResult(commitResult0, expVersion = 0, expIsReadyForCheckpoint = false)
       verifyCommitInfo(tblPath, version = 0, partitionCols = Seq.empty, operation = WRITE)
@@ -416,8 +412,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       val commitResult1 = appendData(
         engine,
         tblPath,
-        data = Seq(Map.empty[String, Literal] -> dataBatches2)
-      )
+        data = Seq(Map.empty[String, Literal] -> dataBatches2))
 
       val expAnswer = dataBatches1.flatMap(_.toTestRows) ++ dataBatches2.flatMap(_.toTestRows)
 
@@ -461,9 +456,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         testPartitionColumns,
         Seq(
           Map("part1" -> ofInt(1), "part2" -> ofInt(2)) -> dataPartitionBatches1,
-          Map("part1" -> ofInt(4), "part2" -> ofInt(5)) -> dataPartitionBatches2
-        )
-      )
+          Map("part1" -> ofInt(4), "part2" -> ofInt(5)) -> dataPartitionBatches2))
 
       val expData = dataPartitionBatches1.flatMap(_.toTestRows) ++
         dataPartitionBatches2.flatMap(_.toTestRows)
@@ -486,8 +479,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
           isNewTable = true,
           testPartitionSchema,
           testPartitionColumns,
-          data = Seq(Map("part1" -> ofInt(1), "part2" -> ofInt(2)) -> dataPartitionBatches1)
-        )
+          data = Seq(Map("part1" -> ofInt(1), "part2" -> ofInt(2)) -> dataPartitionBatches1))
 
         val expData = dataPartitionBatches1.flatMap(_.toTestRows)
 
@@ -499,8 +491,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         val commitResult1 = appendData(
           engine,
           tblPath,
-          data = Seq(Map("part1" -> ofInt(4), "part2" -> ofInt(5)) -> dataPartitionBatches2)
-        )
+          data = Seq(Map("part1" -> ofInt(4), "part2" -> ofInt(5)) -> dataPartitionBatches2))
 
         val expData = dataPartitionBatches1.flatMap(_.toTestRows) ++
           dataPartitionBatches2.flatMap(_.toTestRows)
@@ -552,8 +543,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
       val dataPerVersion = Map(
         0 -> Seq(v0Part0Values -> v0Part0Data, v0Part1Values -> v0Part1Data),
-        1 -> Seq(v1Part0Values -> v1Part0Data, v1Part1Values -> v1Part1Data)
-      )
+        1 -> Seq(v1Part0Values -> v1Part0Data, v1Part1Values -> v1Part1Data))
 
       val expV0Data = v0Part0Data.flatMap(_.toTestRows) ++ v0Part1Data.flatMap(_.toTestRows)
       val expV1Data = v1Part0Data.flatMap(_.toTestRows) ++ v1Part1Data.flatMap(_.toTestRows)
@@ -650,7 +640,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         val commitResult = appendData(engine, tblPath, data = dataWithPartInfo)
 
         expData = expData ++ dataWithPartInfo.flatMap(_._2).flatMap(_.toTestRows)
-        checkpointIfReady(engine, tblPath, commitResult, expSize = i /* one file per version */)
+        checkpointIfReady(engine, tblPath, commitResult, expSize = i /* one file per version */ )
 
         verifyCommitResult(commitResult, expVersion = i, i % checkpointInterval == 0)
         verifyCommitInfo(tblPath, version = i, null, operation = WRITE)
@@ -676,8 +666,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         "stringType",
         "binaryType",
         "dateType",
-        "timestampType"
-      )
+        "timestampType")
       val casePreservingPartCols =
         casePreservingPartitionColNames(schema, partCols.asJava).asScala.to[Seq]
 
@@ -770,7 +759,8 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
   test("insert into table - missing partition column info") {
     withTempDirAndEngine { (tblPath, engine) =>
       val ex = intercept[IllegalArgumentException] {
-        appendData(engine,
+        appendData(
+          engine,
           tblPath,
           isNewTable = true,
           testPartitionSchema,
@@ -789,7 +779,8 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         // part2 type should be int, be giving a string value
         val data = Seq(Map("part1" -> ofInt(1), "part2" -> ofString("sdsd"))
           -> dataPartitionBatches1)
-        appendData(engine,
+        appendData(
+          engine,
           tblPath,
           isNewTable = true,
           testPartitionSchema,
@@ -807,7 +798,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       var expData = Seq.empty[TestRow] // as the data in inserted, update this.
 
       def prepTxnAndActions(newTbl: Boolean, appId: String, txnVer: Long)
-      : (Transaction, CloseableIterable[Row]) = {
+          : (Transaction, CloseableIterable[Row]) = {
         var txnBuilder = createWriteTxnBuilder(Table.forPath(engine, tblPath))
 
         if (appId != null) txnBuilder = txnBuilder.withTransactionId(engine, appId, txnVer)
@@ -826,8 +817,11 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         (txn, combinedActions)
       }
 
-      def commitAndVerify(newTbl: Boolean, txn: Transaction,
-          actions: CloseableIterable[Row], expTblVer: Long): Unit = {
+      def commitAndVerify(
+          newTbl: Boolean,
+          txn: Transaction,
+          actions: CloseableIterable[Row],
+          expTblVer: Long): Unit = {
         val commitResult = txn.commit(engine, actions)
 
         expData = expData ++ data.flatMap(_._2).flatMap(_.toTestRows)
@@ -970,7 +964,9 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         val txn1Result = txn1.commit(engine, actions)
 
         verifyCommitResult(
-          txn1Result, expVersion = numWinningTxs + 1, expIsReadyForCheckpoint = false)
+          txn1Result,
+          expVersion = numWinningTxs + 1,
+          expIsReadyForCheckpoint = false)
         verifyCommitInfo(tablePath = tablePath, version = 0, operation = WRITE)
         verifyWrittenContent(tablePath, testSchema, expData)
       }
@@ -1012,7 +1008,9 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
   }
 
   def createTestTxn(
-    engine: Engine, tablePath: String, schema: Option[StructType] = None): Transaction = {
+      engine: Engine,
+      tablePath: String,
+      schema: Option[StructType] = None): Transaction = {
     val table = Table.forPath(engine, tablePath)
     var txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
     schema.foreach(s => txnBuilder = txnBuilder.withSchema(engine, s))
@@ -1022,7 +1020,12 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
   test("create table with unsupported column mapping mode") {
     withTempDirAndEngine { (tablePath, engine) =>
       val ex = intercept[InvalidConfigurationValueException] {
-        createTxn(engine, tablePath, isNewTable = true, testSchema, partCols = Seq.empty,
+        createTxn(
+          engine,
+          tablePath,
+          isNewTable = true,
+          testSchema,
+          partCols = Seq.empty,
           tableProperties = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "invalid"))
           .commit(engine, emptyIterable())
       }
@@ -1033,7 +1036,12 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
   test("create table with column mapping mode = none") {
     withTempDirAndEngine { (tablePath, engine) =>
-      createTxn(engine, tablePath, isNewTable = true, testSchema, partCols = Seq.empty,
+      createTxn(
+        engine,
+        tablePath,
+        isNewTable = true,
+        testSchema,
+        partCols = Seq.empty,
         tableProperties = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "none"))
         .commit(engine, emptyIterable())
 
@@ -1063,7 +1071,12 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
   test("cannot update table with unsupported column mapping mode change") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
-      createTxn(engine, tablePath, isNewTable = true, testSchema, partCols = Seq.empty,
+      createTxn(
+        engine,
+        tablePath,
+        isNewTable = true,
+        testSchema,
+        partCols = Seq.empty,
         tableProperties = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "name"))
         .commit(engine, emptyIterable())
 
@@ -1086,7 +1099,12 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         .add("a", StringType.STRING, true)
         .add("b", IntegerType.INTEGER, true)
 
-      createTxn(engine, tablePath, isNewTable = true, schema, partCols = Seq.empty,
+      createTxn(
+        engine,
+        tablePath,
+        isNewTable = true,
+        schema,
+        partCols = Seq.empty,
         tableProperties = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "id"))
         .commit(engine, emptyIterable())
 
@@ -1114,7 +1132,12 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         .add("a", StringType.STRING, true)
         .add("b", IntegerType.INTEGER, true)
 
-      createTxn(engine, tablePath, isNewTable = true, schema, partCols = Seq.empty,
+      createTxn(
+        engine,
+        tablePath,
+        isNewTable = true,
+        schema,
+        partCols = Seq.empty,
         tableProperties = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "name"))
         .commit(engine, emptyIterable())
 
@@ -1161,7 +1184,6 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
-
   test("unsupported protocol version with column mapping mode and no protocol update in metadata") {
     // TODO
   }
@@ -1177,7 +1199,12 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         .add("a", StringType.STRING, true)
         .add("b", IntegerType.INTEGER, true)
 
-      createTxn(engine, tablePath, isNewTable = true, schema, partCols = Seq.empty,
+      createTxn(
+        engine,
+        tablePath,
+        isNewTable = true,
+        schema,
+        partCols = Seq.empty,
         tableProperties = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "name"))
         .commit(engine, emptyIterable())
 
@@ -1194,7 +1221,12 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         .add("a", StringType.STRING, true)
         .add("b", IntegerType.INTEGER, true)
 
-      createTxn(engine, tablePath, isNewTable = true, schema, partCols = Seq.empty,
+      createTxn(
+        engine,
+        tablePath,
+        isNewTable = true,
+        schema,
+        partCols = Seq.empty,
         tableProperties = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "id"))
         .commit(engine, emptyIterable())
 
@@ -1235,14 +1267,21 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       val table = Table.forPath(engine, tablePath)
       val schema = new StructType()
         .add("a", StringType.STRING, true)
-        .add("b",
+        .add(
+          "b",
           new StructType()
             .add("d", IntegerType.INTEGER, true)
             .add("e", IntegerType.INTEGER, true))
         .add("c", IntegerType.INTEGER, true)
 
-      createTxn(engine, tablePath, isNewTable = true, schema, partCols = Seq.empty,
-        tableProperties = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
+      createTxn(
+        engine,
+        tablePath,
+        isNewTable = true,
+        schema,
+        partCols = Seq.empty,
+        tableProperties = Map(
+          TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
           TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"))
         .commit(engine, emptyIterable())
 
@@ -1257,9 +1296,9 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
   }
 
   private def assertColumnMapping(
-    field: StructField,
-    expId: Long,
-    expPhyName: String = "UUID"): Unit = {
+      field: StructField,
+      expId: Long,
+      expPhyName: String = "UUID"): Unit = {
     val meta = field.getMetadata
     assert(meta.get(ColumnMapping.COLUMN_MAPPING_ID_KEY) == expId)
     // For new tables the physical column name is a UUID. For existing tables, we

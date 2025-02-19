@@ -16,9 +16,11 @@
 package io.delta.kernel.internal.replay
 
 import scala.collection.JavaConverters._
+
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.replay.LogReplayUtils.assertLogFilesBelongToTable
 import io.delta.kernel.utils.FileStatus
+
 import org.scalatest.funsuite.AnyFunSuite
 
 class TestLogReplay extends AnyFunSuite {
@@ -30,8 +32,7 @@ class TestLogReplay extends AnyFunSuite {
       FileStatus.of("s3://bucket/logPath/deltafile1", 0L, 0L),
       FileStatus.of("s3://bucket/logPath/deltafile2", 0L, 0L),
       FileStatus.of("s3://bucket/logPath/checkpointfile1", 0L, 0L),
-      FileStatus.of("s3://bucket/logPath/checkpointfile2", 0L, 0L)
-    ).asJava
+      FileStatus.of("s3://bucket/logPath/checkpointfile2", 0L, 0L)).asJava
 
     assertLogFilesBelongToTable(tablePath, logFiles)
   }
@@ -41,8 +42,7 @@ class TestLogReplay extends AnyFunSuite {
       FileStatus.of("s3://bucket/logPath/deltafile1", 0L, 0L),
       FileStatus.of("s3://bucket/invalidLogPath/deltafile2", 0L, 0L),
       FileStatus.of("s3://bucket/logPath/checkpointfile1", 0L, 0L),
-      FileStatus.of("s3://bucket/invalidLogPath/checkpointfile2", 0L, 0L)
-    ).asJava
+      FileStatus.of("s3://bucket/invalidLogPath/checkpointfile2", 0L, 0L)).asJava
 
     // Test that files with incorrect log paths trigger the assertion
     val ex = intercept[RuntimeException] {

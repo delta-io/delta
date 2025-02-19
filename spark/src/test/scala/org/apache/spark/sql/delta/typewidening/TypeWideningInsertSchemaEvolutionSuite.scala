@@ -186,7 +186,7 @@ trait TypeWideningInsertSchemaEvolutionTests
     expectedResult = ExpectedResult.Success(new StructType()
       .add("a", IntegerType)
       .add("b", IntegerType, nullable = true,
-        metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType)))
+        metadata = typeWideningMetadata(from = ShortType, to = IntegerType)))
   )
 
   testInserts("top-level type evolution with column upcast")(
@@ -197,7 +197,7 @@ trait TypeWideningInsertSchemaEvolutionTests
     expectedResult = ExpectedResult.Success(new StructType()
       .add("a", IntegerType)
       .add("b", IntegerType, nullable = true,
-        metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType))
+        metadata = typeWideningMetadata(from = ShortType, to = IntegerType))
       .add("c", IntegerType))
   )
 
@@ -209,7 +209,7 @@ trait TypeWideningInsertSchemaEvolutionTests
     expectedResult = ExpectedResult.Success(new StructType()
       .add("a", IntegerType)
       .add("b", IntegerType, nullable = true,
-        metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType))
+        metadata = typeWideningMetadata(from = ShortType, to = IntegerType))
       .add("c", IntegerType)),
     // SQL INSERT by name doesn't support schema evolution.
     excludeInserts = insertsSQL.intersect(insertsByName)
@@ -230,16 +230,14 @@ trait TypeWideningInsertSchemaEvolutionTests
       .add("s", new StructType()
         .add("x", ShortType)
         .add("y", IntegerType, nullable = true,
-          metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType)))
+          metadata = typeWideningMetadata(from = ShortType, to = IntegerType)))
       .add("m", MapType(StringType, IntegerType), nullable = true,
         metadata = typeWideningMetadata(
-          version = 1,
           from = ShortType,
           to = IntegerType,
           path = Seq("value")))
       .add("a", ArrayType(IntegerType), nullable = true,
         metadata = typeWideningMetadata(
-          version = 1,
           from = ShortType,
           to = IntegerType,
           path = Seq("element"))))
@@ -260,17 +258,15 @@ trait TypeWideningInsertSchemaEvolutionTests
       .add("s", new StructType()
         .add("x", ShortType)
         .add("y", IntegerType, nullable = true,
-          metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType))
+          metadata = typeWideningMetadata(from = ShortType, to = IntegerType))
         .add("z", IntegerType))
       .add("m", MapType(StringType, IntegerType), nullable = true,
         metadata = typeWideningMetadata(
-          version = 1,
           from = ShortType,
           to = IntegerType,
           path = Seq("value")))
       .add("a", ArrayType(IntegerType), nullable = true,
         metadata = typeWideningMetadata(
-          version = 1,
           from = ShortType,
           to = IntegerType,
           path = Seq("element"))))
@@ -291,7 +287,7 @@ trait TypeWideningInsertSchemaEvolutionTests
       .add("s", new StructType()
         .add("x", IntegerType)
         .add("y", IntegerType, nullable = true,
-          metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType))))
+          metadata = typeWideningMetadata(from = ShortType, to = IntegerType))))
   )
 
   // Interestingly, we introduced a special case to handle schema evolution / casting for structs
@@ -311,7 +307,7 @@ trait TypeWideningInsertSchemaEvolutionTests
       .add("a", ArrayType(new StructType()
         .add("x", IntegerType)
         .add("y", IntegerType, nullable = true,
-          metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType)))))
+          metadata = typeWideningMetadata(from = ShortType, to = IntegerType)))))
   )
 
   // maps now allow type evolution for INSERT by position and name in SQL and dataframe.
@@ -330,6 +326,6 @@ trait TypeWideningInsertSchemaEvolutionTests
       .add("m", MapType(StringType, new StructType()
         .add("x", IntegerType)
         .add("y", IntegerType, nullable = true,
-          metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType)))))
+          metadata = typeWideningMetadata(from = ShortType, to = IntegerType)))))
   )
 }

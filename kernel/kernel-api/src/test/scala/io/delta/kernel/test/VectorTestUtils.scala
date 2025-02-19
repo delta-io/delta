@@ -15,12 +15,13 @@
  */
 package io.delta.kernel.test
 
+import java.lang.{Boolean => BooleanJ, Double => DoubleJ, Float => FloatJ}
+
+import scala.collection.JavaConverters._
+
 import io.delta.kernel.data.{ColumnVector, MapValue}
 import io.delta.kernel.internal.util.VectorUtils
 import io.delta.kernel.types._
-
-import java.lang.{Boolean => BooleanJ, Double => DoubleJ, Float => FloatJ}
-import scala.collection.JavaConverters._
 
 trait VectorTestUtils {
 
