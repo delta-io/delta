@@ -1108,9 +1108,11 @@ trait OptimisticTransactionImpl extends DeltaTransaction
   def createAutoCompactStatsCollector(): AutoCompactPartitionStatsCollector = {
     try {
       if (spark.conf.get(DeltaSQLConf.DELTA_AUTO_COMPACT_RECORD_PARTITION_STATS_ENABLED)) {
+        val maxFileSize = spark.conf
+          .get(DeltaSQLConf.DELTA_AUTO_COMPACT_MAX_FILE_SIZE)
         val minFileSize = spark.conf
               .get(DeltaSQLConf.DELTA_AUTO_COMPACT_MIN_FILE_SIZE)
-              .getOrElse(Long.MaxValue)
+              .getOrElse(maxFileSize / 2L)
         return AutoCompactPartitionStats.instance(spark)
           .createStatsCollector(minFileSize, reportAutoCompactStatsError)
       }
