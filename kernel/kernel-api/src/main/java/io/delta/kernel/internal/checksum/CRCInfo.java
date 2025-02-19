@@ -60,8 +60,10 @@ public class CRCInfo {
         Protocol.fromColumnVector(batch.getColumnVector(CRC_FILE_SCHEMA.indexOf(PROTOCOL)), rowId);
     Metadata metadata =
         Metadata.fromColumnVector(batch.getColumnVector(CRC_FILE_SCHEMA.indexOf(METADATA)), rowId);
+    checkArgument(!batch.getColumnVector(CRC_FILE_SCHEMA.indexOf(TABLE_SIZE_BYTES)).isNullAt(rowId));
     long tableSizeBytes =
         batch.getColumnVector(CRC_FILE_SCHEMA.indexOf(TABLE_SIZE_BYTES)).getLong(rowId);
+    checkArgument(!batch.getColumnVector(CRC_FILE_SCHEMA.indexOf(NUM_FILES)).isNullAt(rowId));
     long numFiles = batch.getColumnVector(CRC_FILE_SCHEMA.indexOf(NUM_FILES)).getLong(rowId);
     Optional<String> txnId =
         batch.getColumnVector(CRC_FILE_SCHEMA.indexOf(TXN_ID)).isNullAt(rowId)
