@@ -22,6 +22,7 @@ import scala.collection.JavaConverters._
 
 import io.delta.kernel.test.MockFileSystemClientUtils
 import io.delta.kernel.utils.FileStatus
+
 import org.scalatest.funsuite.AnyFunSuite
 
 class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils {

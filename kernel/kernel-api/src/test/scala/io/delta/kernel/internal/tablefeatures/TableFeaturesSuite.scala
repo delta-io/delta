@@ -15,19 +15,21 @@
  */
 package io.delta.kernel.internal.tablefeatures
 
+import java.util.{Collections, Optional}
+import java.util.stream.Collectors
+import java.util.stream.Collectors.toList
+
+import scala.collection.JavaConverters._
+
 import io.delta.kernel.data.{ArrayValue, ColumnVector, MapValue}
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
-import io.delta.kernel.internal.tablefeatures.TableFeatures.{TABLE_FEATURES, validateWriteSupportedTable}
+import io.delta.kernel.internal.tablefeatures.TableFeatures.{validateWriteSupportedTable, TABLE_FEATURES}
 import io.delta.kernel.internal.util.InternalUtils.singletonStringColumnVector
 import io.delta.kernel.internal.util.VectorUtils.stringVector
 import io.delta.kernel.types._
-import org.scalatest.funsuite.AnyFunSuite
 
-import java.util.stream.Collectors
-import java.util.stream.Collectors.toList
-import java.util.{Collections, Optional}
-import scala.collection.JavaConverters._
+import org.scalatest.funsuite.AnyFunSuite
 
 /**
  * Suite that tests Kernel throws error when it receives a unsupported protocol and metadata
@@ -37,16 +39,37 @@ class TableFeaturesSuite extends AnyFunSuite {
   /////////////////////////////////////////////////////////////////////////////////////////////////
   // Tests for [[TableFeature]] implementations                                                  //
   /////////////////////////////////////////////////////////////////////////////////////////////////
-  val readerWriterFeatures = Seq("columnMapping", "deletionVectors", "timestampNtz",
-    "typeWidening", "typeWidening-preview", "v2Checkpoint", "vacuumProtocolCheck",
-    "variantType", "variantType-preview")
+  val readerWriterFeatures = Seq(
+    "columnMapping",
+    "deletionVectors",
+    "timestampNtz",
+    "typeWidening",
+    "typeWidening-preview",
+    "v2Checkpoint",
+    "vacuumProtocolCheck",
+    "variantType",
+    "variantType-preview")
 
-  val writerOnlyFeatures = Seq("appendOnly", "invariants", "checkConstraints",
-    "generatedColumns", "changeDataFeed", "identityColumns",
-    "rowTracking", "domainMetadata", "icebergCompatV2", "inCommitTimestamp")
+  val writerOnlyFeatures = Seq(
+    "appendOnly",
+    "invariants",
+    "checkConstraints",
+    "generatedColumns",
+    "changeDataFeed",
+    "identityColumns",
+    "rowTracking",
+    "domainMetadata",
+    "icebergCompatV2",
+    "inCommitTimestamp")
 
-  val legacyFeatures = Seq("appendOnly", "invariants", "checkConstraints",
-    "generatedColumns", "changeDataFeed", "identityColumns", "columnMapping")
+  val legacyFeatures = Seq(
+    "appendOnly",
+    "invariants",
+    "checkConstraints",
+    "generatedColumns",
+    "changeDataFeed",
+    "identityColumns",
+    "columnMapping")
 
   test("basic properties checks") {
 
@@ -84,39 +107,55 @@ class TableFeaturesSuite extends AnyFunSuite {
     ("checkConstraints", testMetadata(), false),
     ("generatedColumns", testMetadata(includeGeneratedColumn = true), true),
     ("generatedColumns", testMetadata(includeGeneratedColumn = false), false),
-    ("changeDataFeed",
-      testMetadata(tblProps = Map("delta.enableChangeDataFeed" -> "true")), true),
-    ("changeDataFeed",
-      testMetadata(tblProps = Map("delta.enableChangeDataFeed" -> "false")), false),
+    ("changeDataFeed", testMetadata(tblProps = Map("delta.enableChangeDataFeed" -> "true")), true),
+    (
+      "changeDataFeed",
+      testMetadata(tblProps = Map("delta.enableChangeDataFeed" -> "false")),
+      false),
     ("identityColumns", testMetadata(includeIdentityColumn = true), true),
     ("identityColumns", testMetadata(includeIdentityColumn = false), false),
     ("columnMapping", testMetadata(tblProps = Map("delta.columnMapping.mode" -> "id")), true),
     ("columnMapping", testMetadata(tblProps = Map("delta.columnMapping.mode" -> "none")), false),
-    ("typeWidening-preview",
-      testMetadata(tblProps = Map("delta.enableTypeWidening" -> "true")), true),
-    ("typeWidening-preview",
-      testMetadata(tblProps = Map("delta.enableTypeWidening" -> "false")), false),
+    (
+      "typeWidening-preview",
+      testMetadata(tblProps = Map("delta.enableTypeWidening" -> "true")),
+      true),
+    (
+      "typeWidening-preview",
+      testMetadata(tblProps = Map("delta.enableTypeWidening" -> "false")),
+      false),
     ("typeWidening", testMetadata(tblProps = Map("delta.enableTypeWidening" -> "true")), true),
     ("typeWidening", testMetadata(tblProps = Map("delta.enableTypeWidening" -> "false")), false),
     ("rowTracking", testMetadata(tblProps = Map("delta.enableRowTracking" -> "true")), true),
     ("rowTracking", testMetadata(tblProps = Map("delta.enableRowTracking" -> "false")), false),
-    ("deletionVectors",
-      testMetadata(tblProps = Map("delta.enableDeletionVectors" -> "true")), true),
-    ("deletionVectors",
-      testMetadata(tblProps = Map("delta.enableDeletionVectors" -> "false")), false),
+    (
+      "deletionVectors",
+      testMetadata(tblProps = Map("delta.enableDeletionVectors" -> "true")),
+      true),
+    (
+      "deletionVectors",
+      testMetadata(tblProps = Map("delta.enableDeletionVectors" -> "false")),
+      false),
     ("timestampNtz", testMetadata(includeTimestampNtzTypeCol = true), true),
     ("timestampNtz", testMetadata(includeTimestampNtzTypeCol = false), false),
     ("v2Checkpoint", testMetadata(tblProps = Map("delta.checkpointPolicy" -> "v2")), true),
     ("v2Checkpoint", testMetadata(tblProps = Map("delta.checkpointPolicy" -> "classic")), false),
-    ("icebergCompatV2",
-      testMetadata(tblProps = Map("delta.enableIcebergCompatV2" -> "true")), true),
-    ("icebergCompatV2",
-      testMetadata(tblProps = Map("delta.enableIcebergCompatV2" -> "false")), false),
-    ("inCommitTimestamp",
-      testMetadata(tblProps = Map("delta.enableInCommitTimestamps" -> "true")), true),
-    ("inCommitTimestamp",
-      testMetadata(tblProps = Map("delta.enableInCommitTimestamps" -> "false")), false)
-  ).foreach({ case (feature, metadata, expected) =>
+    (
+      "icebergCompatV2",
+      testMetadata(tblProps = Map("delta.enableIcebergCompatV2" -> "true")),
+      true),
+    (
+      "icebergCompatV2",
+      testMetadata(tblProps = Map("delta.enableIcebergCompatV2" -> "false")),
+      false),
+    (
+      "inCommitTimestamp",
+      testMetadata(tblProps = Map("delta.enableInCommitTimestamps" -> "true")),
+      true),
+    (
+      "inCommitTimestamp",
+      testMetadata(tblProps = Map("delta.enableInCommitTimestamps" -> "false")),
+      false)).foreach({ case (feature, metadata, expected) =>
     test(s"metadataRequiresFeatureToBeEnabled - $feature - $metadata") {
       val tableFeature = TableFeatures.getTableFeature(feature)
       assert(tableFeature.isInstanceOf[FeatureAutoEnabledByMetadata])
@@ -138,9 +177,16 @@ class TableFeaturesSuite extends AnyFunSuite {
       .filter(_.hasKernelReadSupport())
       .collect(toList()).asScala
 
-    val expected = Seq("columnMapping", "v2Checkpoint", "variantType",
-      "variantType-preview", "typeWidening", "typeWidening-preview", "deletionVectors",
-      "timestampNtz", "vacuumProtocolCheck")
+    val expected = Seq(
+      "columnMapping",
+      "v2Checkpoint",
+      "variantType",
+      "variantType-preview",
+      "typeWidening",
+      "typeWidening-preview",
+      "deletionVectors",
+      "timestampNtz",
+      "vacuumProtocolCheck")
 
     assert(results.map(_.featureName()).toSet == expected.toSet)
   }
@@ -152,11 +198,20 @@ class TableFeaturesSuite extends AnyFunSuite {
 
     // checkConstraints, generatedColumns, identityColumns, invariants are writable
     // because the metadata has not been set the info that these features are enabled
-    val expected = Seq("columnMapping", "v2Checkpoint", "deletionVectors",
-      "vacuumProtocolCheck", "rowTracking", "domainMetadata", "icebergCompatV2",
-      "inCommitTimestamp", "appendOnly", "invariants",
-      "checkConstraints", "generatedColumns", "identityColumns"
-    )
+    val expected = Seq(
+      "columnMapping",
+      "v2Checkpoint",
+      "deletionVectors",
+      "vacuumProtocolCheck",
+      "rowTracking",
+      "domainMetadata",
+      "icebergCompatV2",
+      "inCommitTimestamp",
+      "appendOnly",
+      "invariants",
+      "checkConstraints",
+      "generatedColumns",
+      "identityColumns")
 
     assert(results.map(_.featureName()).toSet == expected.toSet)
   }
@@ -166,12 +221,12 @@ class TableFeaturesSuite extends AnyFunSuite {
     ("invariants", testMetadata(includeInvaraint = true), false),
     ("checkConstraints", testMetadata(tblProps = Map("delta.constraints.a" -> "a = b")), false),
     ("generatedColumns", testMetadata(includeGeneratedColumn = true), false),
-    ("identityColumns", testMetadata(includeIdentityColumn = true), false)
-  ).foreach({ case (feature, metadata, expected) =>
-    test(s"hasKernelWriteSupport - $feature has metadata") {
-      val tableFeature = TableFeatures.getTableFeature(feature)
-      assert(tableFeature.hasKernelWriteSupport(metadata) == expected)
-    }
+    ("identityColumns", testMetadata(includeIdentityColumn = true), false)).foreach({
+    case (feature, metadata, expected) =>
+      test(s"hasKernelWriteSupport - $feature has metadata") {
+        val tableFeature = TableFeatures.getTableFeature(feature)
+        assert(tableFeature.hasKernelWriteSupport(metadata) == expected)
+      }
   })
 
   /////////////////////////////////////////////////////////////////////////////////////////////////
@@ -213,8 +268,14 @@ class TableFeaturesSuite extends AnyFunSuite {
     checkSupported(createTestProtocol(minWriterVersion = 7))
   }
 
-  Seq("appendOnly", "inCommitTimestamp", "columnMapping", "typeWidening-preview", "typeWidening",
-    "domainMetadata", "rowTracking").foreach { supportedWriterFeature =>
+  Seq(
+    "appendOnly",
+    "inCommitTimestamp",
+    "columnMapping",
+    "typeWidening-preview",
+    "typeWidening",
+    "domainMetadata",
+    "rowTracking").foreach { supportedWriterFeature =>
     test(s"validateWriteSupported: protocol 7 with $supportedWriterFeature") {
       val protocol = if (supportedWriterFeature == "rowTracking") {
         createTestProtocol(minWriterVersion = 7, supportedWriterFeature, "domainMetadata")
@@ -225,9 +286,19 @@ class TableFeaturesSuite extends AnyFunSuite {
     }
   }
 
-  Seq("checkConstraints", "generatedColumns", "allowColumnDefaults", "changeDataFeed",
-    "identityColumns", "deletionVectors", "timestampNtz", "v2Checkpoint", "icebergCompatV1",
-    "icebergCompatV2", "clustering", "vacuumProtocolCheck").foreach { unsupportedWriterFeature =>
+  Seq(
+    "checkConstraints",
+    "generatedColumns",
+    "allowColumnDefaults",
+    "changeDataFeed",
+    "identityColumns",
+    "deletionVectors",
+    "timestampNtz",
+    "v2Checkpoint",
+    "icebergCompatV1",
+    "icebergCompatV2",
+    "clustering",
+    "vacuumProtocolCheck").foreach { unsupportedWriterFeature =>
     test(s"validateWriteSupported: protocol 7 with $unsupportedWriterFeature") {
       checkUnsupported(createTestProtocol(minWriterVersion = 7, unsupportedWriterFeature))
     }
@@ -235,26 +306,24 @@ class TableFeaturesSuite extends AnyFunSuite {
 
   test("validateWriteSupported: protocol 7 with invariants, schema doesn't contain invariants") {
     checkSupported(
-      createTestProtocol(minWriterVersion = 7, "invariants")
-    )
+      createTestProtocol(minWriterVersion = 7, "invariants"))
   }
 
   test("validateWriteSupported: protocol 7 with invariants, schema contains invariants") {
     checkUnsupported(
       createTestProtocol(minWriterVersion = 7, "invariants"),
-      metadata = testMetadata(includeInvaraint = true)
-    )
+      metadata = testMetadata(includeInvaraint = true))
   }
 
   def checkSupported(
-    protocol: Protocol,
-    metadata: Metadata = testMetadata()): Unit = {
+      protocol: Protocol,
+      metadata: Metadata = testMetadata()): Unit = {
     validateWriteSupportedTable(protocol, metadata, "/test/table")
   }
 
   def checkUnsupported(
-    protocol: Protocol,
-    metadata: Metadata = testMetadata()): Unit = {
+      protocol: Protocol,
+      metadata: Metadata = testMetadata()): Unit = {
     intercept[KernelException] {
       validateWriteSupportedTable(protocol, metadata, "/test/table")
     }
@@ -267,8 +336,7 @@ class TableFeaturesSuite extends AnyFunSuite {
       minWriterVersion,
       // reader features - it doesn't matter as the read fails anyway before the writer check
       Collections.emptyList(),
-      writerFeatures.toSeq.asJava
-    )
+      writerFeatures.toSeq.asJava)
   }
 
   def testMetadata(
@@ -301,8 +369,7 @@ class TableFeaturesSuite extends AnyFunSuite {
         override def getSize = tblProps.size
         override def getKeys: ColumnVector = stringVector(tblProps.toSeq.map(_._1).asJava)
         override def getValues: ColumnVector = stringVector(tblProps.toSeq.map(_._2).asJava)
-      }
-    )
+      })
   }
 
   def createTestSchema(

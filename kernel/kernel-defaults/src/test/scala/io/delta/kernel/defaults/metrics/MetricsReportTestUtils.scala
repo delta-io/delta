@@ -23,6 +23,7 @@ import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.engine._
 import io.delta.kernel.metrics.MetricsReport
+
 import org.apache.hadoop.conf.Configuration
 
 /**
@@ -48,13 +49,13 @@ trait MetricsReportTestUtils extends TestUtils {
    * If [[expectException]], catches any exception thrown by [[f]] and returns it with the reports.
    */
   def collectMetricsReports(
-    f: Engine => Unit, expectException: Boolean): (Seq[MetricsReport], Option[Exception]) = {
+      f: Engine => Unit,
+      expectException: Boolean): (Seq[MetricsReport], Option[Exception]) = {
     // Initialize a buffer for any metric reports and wrap the engine so that they are recorded
     val reports = ArrayBuffer.empty[MetricsReport]
     if (expectException) {
       val e = intercept[Exception](
-        f(new EngineWithInMemoryMetricsReporter(reports, defaultEngine))
-      )
+        f(new EngineWithInMemoryMetricsReporter(reports, defaultEngine)))
       (reports, Some(e))
     } else {
       f(new EngineWithInMemoryMetricsReporter(reports, defaultEngine))
@@ -67,16 +68,18 @@ trait MetricsReportTestUtils extends TestUtils {
    * to the provided in memory buffer.
    */
   class EngineWithInMemoryMetricsReporter(buf: ArrayBuffer[MetricsReport], baseEngine: Engine)
-    extends Engine {
+      extends Engine {
 
     private val inMemoryMetricsReporter = new MetricsReporter {
       override def report(report: MetricsReport): Unit = buf.append(report)
     }
 
-    private val metricsReporters = new util.ArrayList[MetricsReporter]() {{
-      addAll(baseEngine.getMetricsReporters)
-      add(inMemoryMetricsReporter)
-    }}
+    private val metricsReporters = new util.ArrayList[MetricsReporter]() {
+      {
+        addAll(baseEngine.getMetricsReporters)
+        add(inMemoryMetricsReporter)
+      }
+    }
 
     override def getExpressionHandler: ExpressionHandler = baseEngine.getExpressionHandler
 
