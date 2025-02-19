@@ -60,7 +60,8 @@ public class CRCInfo {
         Protocol.fromColumnVector(batch.getColumnVector(CRC_FILE_SCHEMA.indexOf(PROTOCOL)), rowId);
     Metadata metadata =
         Metadata.fromColumnVector(batch.getColumnVector(CRC_FILE_SCHEMA.indexOf(METADATA)), rowId);
-    checkArgument(!batch.getColumnVector(CRC_FILE_SCHEMA.indexOf(TABLE_SIZE_BYTES)).isNullAt(rowId));
+    checkArgument(
+        !batch.getColumnVector(CRC_FILE_SCHEMA.indexOf(TABLE_SIZE_BYTES)).isNullAt(rowId));
     long tableSizeBytes =
         batch.getColumnVector(CRC_FILE_SCHEMA.indexOf(TABLE_SIZE_BYTES)).getLong(rowId);
     checkArgument(!batch.getColumnVector(CRC_FILE_SCHEMA.indexOf(NUM_FILES)).isNullAt(rowId));
@@ -92,7 +93,7 @@ public class CRCInfo {
       long numFiles,
       Optional<String> txnId) {
     checkArgument(tableSizeBytes >= 0);
-    checkArgument(numFiles >=0 );
+    checkArgument(numFiles >= 0);
     this.version = version;
     this.metadata = requireNonNull(metadata);
     this.protocol = requireNonNull(protocol);

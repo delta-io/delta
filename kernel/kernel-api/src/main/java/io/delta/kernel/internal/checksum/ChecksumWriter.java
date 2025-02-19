@@ -16,7 +16,6 @@
 package io.delta.kernel.internal.checksum;
 
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
-import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 import static java.util.Objects.requireNonNull;
 
