@@ -38,13 +38,13 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
   private val FAKE_DELTA_LOG_PATH = new Path("/path/to/delta/log")
 
   // Schema field indices in crc file
-  private val TABLE_SIZE_BYTES = CRC_FILE_SCHEMA.indexOf("tableSizeBytes")
-  private val NUM_FILES = CRC_FILE_SCHEMA.indexOf("numFiles")
-  private val NUM_METADATA = CRC_FILE_SCHEMA.indexOf("numMetadata")
-  private val NUM_PROTOCOL = CRC_FILE_SCHEMA.indexOf("numProtocol")
-  private val TXN_ID = CRC_FILE_SCHEMA.indexOf("txnId")
-  private val METADATA = CRC_FILE_SCHEMA.indexOf("metadata")
-  private val PROTOCOL = CRC_FILE_SCHEMA.indexOf("protocol")
+  private val TABLE_SIZE_BYTES_IDX = CRC_FILE_SCHEMA.indexOf("tableSizeBytes")
+  private val NUM_FILES_IDX = CRC_FILE_SCHEMA.indexOf("numFiles")
+  private val NUM_METADATA_IDX = CRC_FILE_SCHEMA.indexOf("numMetadata")
+  private val NUM_PROTOCOL_IDX = CRC_FILE_SCHEMA.indexOf("numProtocol")
+  private val TXN_ID_IDX = CRC_FILE_SCHEMA.indexOf("txnId")
+  private val METADATA_IDX = CRC_FILE_SCHEMA.indexOf("metadata")
+  private val PROTOCOL_IDX = CRC_FILE_SCHEMA.indexOf("protocol")
 
   test("write checksum") {
     val jsonHandler = new MockCheckSumFileJsonWriter()
@@ -63,8 +63,9 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
       )
 
       verifyChecksumFile(jsonHandler, version)
-      verifyChecksumContent(jsonHandler.capturedCrcRow, tableSizeBytes, numFiles, txn)
-      verifyMetadataAndProtocol(jsonHandler.capturedCrcRow, metadata, protocol)
+      assert(jsonHandler.capturedCrcRow.isDefined)
+      verifyChecksumContent(jsonHandler.capturedCrcRow.get, tableSizeBytes, numFiles, txn)
+      verifyMetadataAndProtocol(jsonHandler.capturedCrcRow.get, metadata, protocol)
     }
 
     // Test with and without transaction ID
@@ -74,7 +75,8 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
 
   private def verifyChecksumFile(jsonHandler: MockCheckSumFileJsonWriter, version: Long): Unit = {
     assert(jsonHandler.checksumFilePath == s"$FAKE_DELTA_LOG_PATH/${"%020d".format(version)}.crc")
-    assert(jsonHandler.capturedCrcRow.getSchema == CRC_FILE_SCHEMA)
+    assert(jsonHandler.capturedCrcRow.isDefined)
+    assert(jsonHandler.capturedCrcRow.get.getSchema == CRC_FILE_SCHEMA)
   }
 
   private def verifyChecksumContent(
@@ -82,15 +84,15 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
       expectedTableSizeBytes: Long,
       expectedNumFiles: Long,
       expectedTxnId: Optional[String]): Unit = {
-    assert(actualCheckSumRow.getLong(TABLE_SIZE_BYTES) == expectedTableSizeBytes)
-    assert(actualCheckSumRow.getLong(NUM_FILES) == expectedNumFiles)
-    assert(actualCheckSumRow.getLong(NUM_METADATA) == 1L)
-    assert(actualCheckSumRow.getLong(NUM_PROTOCOL) == 1L)
+    assert(actualCheckSumRow.getLong(TABLE_SIZE_BYTES_IDX) == expectedTableSizeBytes)
+    assert(actualCheckSumRow.getLong(NUM_FILES_IDX) == expectedNumFiles)
+    assert(actualCheckSumRow.getLong(NUM_METADATA_IDX) == 1L)
+    assert(actualCheckSumRow.getLong(NUM_PROTOCOL_IDX) == 1L)
 
     if (expectedTxnId.isPresent) {
-      assert(actualCheckSumRow.getString(TXN_ID) == expectedTxnId.get())
+      assert(actualCheckSumRow.getString(TXN_ID_IDX) == expectedTxnId.get())
     } else {
-      assert(actualCheckSumRow.isNullAt(TXN_ID))
+      assert(actualCheckSumRow.isNullAt(TXN_ID_IDX))
     }
   }
 
@@ -98,10 +100,11 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
       actualRow: Row,
       expectedMetadata: Metadata,
       expectedProtocol: Protocol): Unit = {
-    checkMetadata(expectedMetadata, actualRow.getStruct(METADATA))
-    checkProtocol(expectedProtocol, actualRow.getStruct(PROTOCOL))
+    checkMetadata(expectedMetadata, actualRow.getStruct(METADATA_IDX))
+    checkProtocol(expectedProtocol, actualRow.getStruct(PROTOCOL_IDX))
   }
 
+  // TODO: implement compare in Metadata and remove this method
   private def checkMetadata(expectedMetadata: Metadata, actualMetadataRow: Row): Unit = {
     assert(actualMetadataRow.getSchema == Metadata.FULL_SCHEMA)
 
@@ -141,6 +144,7 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
     )
   }
 
+  // TODO: implement compare in Protocol and remove this method
   private def checkProtocol(expectedProtocol: Protocol, actualProtocolRow: Row): Unit = {
     assert(actualProtocolRow.getSchema == Protocol.FULL_SCHEMA)
     assert(
@@ -183,7 +187,7 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
  * Mock implementation of JsonHandler for testing checksum file writing.
  */
 class MockCheckSumFileJsonWriter extends BaseMockJsonHandler {
-  var capturedCrcRow: Row = new GenericRow(new StructType(), new util.HashMap[Integer, AnyRef])
+  var capturedCrcRow: Option[Row] = None
   var checksumFilePath: String = ""
 
   override def writeJsonFileAtomically(
@@ -192,7 +196,7 @@ class MockCheckSumFileJsonWriter extends BaseMockJsonHandler {
       overwrite: Boolean): Unit = {
     checksumFilePath = filePath
     assert(data.hasNext, "Expected data iterator to contain exactly one row")
-    capturedCrcRow = data.next()
+    capturedCrcRow = Some(data.next())
     assert(!data.hasNext, "Expected data iterator to contain exactly one row")
   }
 }

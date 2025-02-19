@@ -63,8 +63,9 @@ public class CRCInfo {
         batch.getColumnVector(CRC_FILE_SCHEMA.indexOf(TABLE_SIZE_BYTES)).getLong(rowId);
     long numFiles = batch.getColumnVector(CRC_FILE_SCHEMA.indexOf(NUM_FILES)).getLong(rowId);
     Optional<String> txnId =
-        Optional.ofNullable(
-            batch.getColumnVector(CRC_FILE_SCHEMA.indexOf(TXN_ID)).getString(rowId));
+        batch.getColumnVector(CRC_FILE_SCHEMA.indexOf(TXN_ID)).isNullAt(rowId)
+            ? Optional.empty()
+            : Optional.of(batch.getColumnVector(CRC_FILE_SCHEMA.indexOf(TXN_ID)).getString(rowId));
     //  protocol and metadata are nullable per fromColumnVector's implementation.
     if (protocol == null || metadata == null) {
       logger.warn("Invalid checksum file missing protocol and/or metadata: {}", crcFilePath);

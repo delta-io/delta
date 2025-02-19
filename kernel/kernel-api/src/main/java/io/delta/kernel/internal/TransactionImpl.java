@@ -365,7 +365,8 @@ public class TransactionImpl implements Transaction {
         postCommitHooks.add(new CheckpointHook(dataPath, commitAsVersion));
       }
 
-      buildPostCommitCrcInfo(commitAsVersion, transactionMetrics.captureTransactionMetricsResult())
+      buildPostCommitCrcInfoIfCurrentCrcAvailable(
+              commitAsVersion, transactionMetrics.captureTransactionMetricsResult())
           .ifPresent(crcInfo -> postCommitHooks.add(new ChecksumSimpleHook(crcInfo, logPath)));
 
       return new TransactionCommitResult(commitAsVersion, postCommitHooks);
@@ -443,7 +444,7 @@ public class TransactionImpl implements Transaction {
     engine.getMetricsReporters().forEach(reporter -> reporter.report(transactionReport));
   }
 
-  private Optional<CRCInfo> buildPostCommitCrcInfo(
+  private Optional<CRCInfo> buildPostCommitCrcInfoIfCurrentCrcAvailable(
       long commitAtVersion, TransactionMetricsResult metricsResult) {
     // Create table
     if (isNewTable) {
