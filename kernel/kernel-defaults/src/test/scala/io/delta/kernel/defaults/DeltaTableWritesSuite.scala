@@ -751,7 +751,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         verifyCommitResult(commitResult, expVersion = i, i % checkpointInterval == 0)
         verifyCommitInfo(tblPath, version = i, partitionCols = null, operation = WRITE)
         verifyWrittenContent(tblPath, schema, expData, partCols)
-        }
+      }
 
       assertCheckpointExists(tblPath, atVersion = checkpointInterval)
     }
