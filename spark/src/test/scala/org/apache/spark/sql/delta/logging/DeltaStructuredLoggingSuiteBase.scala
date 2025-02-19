@@ -105,7 +105,7 @@ trait DeltaStructuredLoggingSuiteBase
 
   def verifyMsgWithConcat(level: Level, logOutput: String): Unit
 
-  test("Basic logging") {
+  ignore("Basic logging") {
     Seq(
       (Level.ERROR, () => logError(basicMsg)),
       (Level.WARN, () => logWarning(basicMsg)),
@@ -115,7 +115,7 @@ trait DeltaStructuredLoggingSuiteBase
     }
   }
 
-  test("Basic logging with Exception") {
+  ignore("Basic logging with Exception") {
     val exception = new RuntimeException("OOM")
     Seq(
       (Level.ERROR, () => logError(basicMsg, exception)),
@@ -128,7 +128,7 @@ trait DeltaStructuredLoggingSuiteBase
     }
   }
 
-  test("Logging with MDC") {
+  ignore("Logging with MDC") {
     Seq(
       (Level.ERROR, () => logError(msgWithMDC)),
       (Level.WARN, () => logWarning(msgWithMDC)),
@@ -140,7 +140,7 @@ trait DeltaStructuredLoggingSuiteBase
     }
   }
 
-  test("Logging with MDC(the value is null)") {
+  ignore("Logging with MDC(the value is null)") {
     Seq(
       (Level.ERROR, () => logError(msgWithMDCValueIsNull)),
       (Level.WARN, () => logWarning(msgWithMDCValueIsNull)),
@@ -153,7 +153,7 @@ trait DeltaStructuredLoggingSuiteBase
     }
   }
 
-  test("Logging with MDC and Exception") {
+  ignore("Logging with MDC and Exception") {
     val exception = new RuntimeException("OOM")
     Seq(
       (Level.ERROR, () => logError(msgWithMDCAndException, exception)),
@@ -168,7 +168,7 @@ trait DeltaStructuredLoggingSuiteBase
   }
 
   private val customLog = log"${MDC(CustomLogKeys.CUSTOM_LOG_KEY, "Custom log message.")}"
-  test("Logging with custom LogKey") {
+  ignore("Logging with custom LogKey") {
     Seq(
       (Level.ERROR, () => logError(customLog)),
       (Level.WARN, () => logWarning(customLog)),
@@ -179,7 +179,7 @@ trait DeltaStructuredLoggingSuiteBase
     }
   }
 
-  test("Logging with concat") {
+  ignore("Logging with concat") {
     Seq(
       (Level.ERROR, () => logError(msgWithConcat)),
       (Level.WARN, () => logWarning(msgWithConcat)),

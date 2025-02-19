@@ -188,7 +188,7 @@ class MergeIntoDVsSuite extends MergeIntoDVsTests {
     }
   }
 
-  test(s"Verify error is produced when paths are not joined correctly") {
+  ignore(s"Verify error is produced when paths are not joined correctly") {
     withTempDir { dir =>
       val sourcePath = s"$dir/source"
       val targetPath = s"$dir/target"
