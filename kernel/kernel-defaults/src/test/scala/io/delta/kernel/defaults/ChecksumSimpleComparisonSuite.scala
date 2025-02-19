@@ -15,27 +15,28 @@
  */
 package io.delta.kernel.defaults
 
-import io.delta.kernel.data.{ColumnarBatch, Row}
-import io.delta.kernel.defaults.utils.TestUtils
-import io.delta.kernel.engine.Engine
-import io.delta.kernel.expressions.Literal
-import io.delta.kernel.internal.actions.{AddFile, SingleAction}
-import io.delta.kernel.internal.checksum.{CRCInfo, ChecksumReader}
-import io.delta.kernel.internal.fs.Path
-import io.delta.kernel.internal.util.Utils.{singletonCloseableIterator, toCloseableIterator}
-import io.delta.kernel.internal.util.{FileNames, VectorUtils}
-import io.delta.kernel.types.IntegerType.INTEGER
-import io.delta.kernel.types.StructType
-import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
-import io.delta.kernel.utils.{CloseableIterator, DataFileStatus, FileStatus}
-import io.delta.kernel.{Operation, Table, Transaction}
-
 import java.io.File
 import java.nio.file.Files
 import java.util
 import java.util.Collections.{emptyMap, singletonMap}
 import java.util.Optional
+
 import scala.collection.immutable.Seq
+
+import io.delta.kernel.{Operation, Table, Transaction}
+import io.delta.kernel.data.{ColumnarBatch, Row}
+import io.delta.kernel.defaults.utils.TestUtils
+import io.delta.kernel.engine.Engine
+import io.delta.kernel.expressions.Literal
+import io.delta.kernel.internal.actions.{AddFile, SingleAction}
+import io.delta.kernel.internal.checksum.{ChecksumReader, CRCInfo}
+import io.delta.kernel.internal.fs.Path
+import io.delta.kernel.internal.util.{FileNames, VectorUtils}
+import io.delta.kernel.internal.util.Utils.{singletonCloseableIterator, toCloseableIterator}
+import io.delta.kernel.types.IntegerType.INTEGER
+import io.delta.kernel.types.StructType
+import io.delta.kernel.utils.{CloseableIterator, DataFileStatus, FileStatus}
+import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 
 /**
  * Test suite to verify checksum file correctness by comparing
@@ -57,17 +58,14 @@ class ChecksumSimpleComparisonSuite extends DeltaTableWriteSuiteBase with TestUt
         kernelTablePath,
         isNewTable = true,
         schema = new StructType().add("id", INTEGER),
-        partCols = Seq.empty
-      ).commit(engine, emptyIterable())
+        partCols = Seq.empty).commit(engine, emptyIterable())
         .getPostCommitHooks
         .forEach(hook => hook.threadSafeInvoke(engine))
       spark.sql(s"CREATE OR REPLACE TABLE delta.`${sparkTablePath}` (id Integer) USING DELTA")
       assertChecksumEquals(engine, sparkTablePath, kernelTablePath, 0)
 
-      (1 to 10).foreach(
-        version =>
-          insertIntoUnpartitionedTableAndCheckCrc(engine, sparkTablePath, kernelTablePath, version)
-      )
+      (1 to 10).foreach(version =>
+        insertIntoUnpartitionedTableAndCheckCrc(engine, sparkTablePath, kernelTablePath, version))
 
     }
   }
@@ -82,20 +80,16 @@ class ChecksumSimpleComparisonSuite extends DeltaTableWriteSuiteBase with TestUt
         kernelTablePath,
         isNewTable = true,
         schema = new StructType().add("id", INTEGER).add(PARTITION_COLUMN, INTEGER),
-        partCols = Seq(PARTITION_COLUMN)
-      ).commit(engine, emptyIterable())
+        partCols = Seq(PARTITION_COLUMN)).commit(engine, emptyIterable())
         .getPostCommitHooks
         .forEach(hook => hook.threadSafeInvoke(engine))
       spark.sql(
         s"CREATE OR REPLACE TABLE delta.`${sparkTablePath}` " +
-        s"(id Integer, part Integer) USING DELTA PARTITIONED BY (part)"
-      )
+          s"(id Integer, part Integer) USING DELTA PARTITIONED BY (part)")
       assertChecksumEquals(engine, sparkTablePath, kernelTablePath, 0)
 
-      (1 to 10).foreach(
-        version =>
-          insertIntoPartitionedTableAndCheckCrc(engine, sparkTablePath, kernelTablePath, version)
-      )
+      (1 to 10).foreach(version =>
+        insertIntoPartitionedTableAndCheckCrc(engine, sparkTablePath, kernelTablePath, version))
     }
   }
 
@@ -103,7 +97,7 @@ class ChecksumSimpleComparisonSuite extends DeltaTableWriteSuiteBase with TestUt
    * Insert into unpartitioned spark table, load the added files from the spark table's commit log,
    * commit them to kernel table and verify the checksum files are consistent between spark
    * and kernel.
-   * */
+   */
   private def insertIntoUnpartitionedTableAndCheckCrc(
       engine: Engine,
       sparkTablePath: String,
@@ -112,8 +106,7 @@ class ChecksumSimpleComparisonSuite extends DeltaTableWriteSuiteBase with TestUt
     var valueToAppend = "(0)"
     (0L to versionAtCommit).foreach(i => valueToAppend = valueToAppend + s",($i)")
     spark.sql(
-      s"INSERT INTO delta.`$sparkTablePath` values $valueToAppend"
-    )
+      s"INSERT INTO delta.`$sparkTablePath` values $valueToAppend")
 
     val txn = Table
       .forPath(engine, kernelTablePath)
@@ -128,7 +121,7 @@ class ChecksumSimpleComparisonSuite extends DeltaTableWriteSuiteBase with TestUt
    * Insert into partitioned spark table, load the added files from the spark table's commit log,
    * commit them to kernel table and verify the checksum files are consistent between spark
    * and kernel.
-   * */
+   */
   private def insertIntoPartitionedTableAndCheckCrc(
       engine: Engine,
       sparkTablePath: String,
@@ -142,8 +135,7 @@ class ChecksumSimpleComparisonSuite extends DeltaTableWriteSuiteBase with TestUt
       valueToAppend = valueToAppend + s",($i, $partitionValue)"
     })
     spark.sql(
-      s"INSERT INTO delta.`$sparkTablePath` values $valueToAppend"
-    )
+      s"INSERT INTO delta.`$sparkTablePath` values $valueToAppend")
 
     val txn = Table
       .forPath(engine, kernelTablePath)
@@ -155,8 +147,7 @@ class ChecksumSimpleComparisonSuite extends DeltaTableWriteSuiteBase with TestUt
       engine,
       sparkTablePath,
       versionAtCommit,
-      Some(addedPartition)
-    )
+      Some(addedPartition))
     assertChecksumEquals(engine, sparkTablePath, kernelTablePath, versionAtCommit)
   }
 
@@ -170,8 +161,7 @@ class ChecksumSimpleComparisonSuite extends DeltaTableWriteSuiteBase with TestUt
 
     assert(
       Files.exists(sparkCrcPath) && Files.exists(kernelCrcPath),
-      s"CRC files not found for version $version"
-    )
+      s"CRC files not found for version $version")
 
     val sparkCrc = readCrcInfo(engine, sparkTablePath, version)
     val kernelCrc = readCrcInfo(engine, kernelTablePath, version)
@@ -218,10 +208,8 @@ class ChecksumSimpleComparisonSuite extends DeltaTableWriteSuiteBase with TestUt
             engine,
             sparkTablePath,
             versionToConvert,
-            None
-          ),
-          writeContext
-        )
+            None),
+          writeContext)
 
       case Some(partitions) =>
         // Partitioned table case
@@ -230,8 +218,7 @@ class ChecksumSimpleComparisonSuite extends DeltaTableWriteSuiteBase with TestUt
           val writeContext = Transaction.getWriteContext(
             engine,
             txnState,
-            singletonMap(PARTITION_COLUMN, Literal.ofInt(partition))
-          )
+            singletonMap(PARTITION_COLUMN, Literal.ofInt(partition)))
 
           Transaction
             .generateAppendActions(
@@ -241,10 +228,8 @@ class ChecksumSimpleComparisonSuite extends DeltaTableWriteSuiteBase with TestUt
                 engine,
                 sparkTablePath,
                 versionToConvert,
-                Some(partition.toString)
-              ),
-              writeContext
-            )
+                Some(partition.toString)),
+              writeContext)
             .forEach(action => actions.add(action))
         }
         actions.iterator()
@@ -270,8 +255,7 @@ class ChecksumSimpleComparisonSuite extends DeltaTableWriteSuiteBase with TestUt
     val columnarBatches = engine.getJsonHandler.readJsonFiles(
       singletonCloseableIterator(deltaFile),
       SingleAction.FULL_SCHEMA,
-      Optional.empty()
-    )
+      Optional.empty())
 
     while (columnarBatches.hasNext) {
       collectAddFilesFromLogRows(columnarBatches.next(), partition, addFiles)
@@ -290,18 +274,19 @@ class ChecksumSimpleComparisonSuite extends DeltaTableWriteSuiteBase with TestUt
 
       if (!row.isNullAt(addIndex)) {
         val addFile = new AddFile(row.getStruct(addIndex))
-        if (partition.isEmpty ||
+        if (
+          partition.isEmpty ||
           partition.get == VectorUtils
             .toJavaMap(addFile.getPartitionValues)
-            .get(PARTITION_COLUMN)) {
+            .get(PARTITION_COLUMN)
+        ) {
           addFiles.add(
             new DataFileStatus(
               addFile.getPath,
               addFile.getSize,
               addFile.getModificationTime,
               Optional.empty() // TODO: populate stats once #4139 is fixed
-            )
-          )
+            ))
         }
       }
     }

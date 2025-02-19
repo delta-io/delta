@@ -15,7 +15,12 @@
  */
 package io.delta.kernel.internal.checkpoints
 
-import io.delta.kernel.data.{ColumnVector, ColumnarBatch}
+import java.io.{FileNotFoundException, IOException}
+import java.util.Optional
+
+import scala.util.control.NonFatal
+
+import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
 import io.delta.kernel.exceptions.KernelEngineException
 import io.delta.kernel.expressions.Predicate
 import io.delta.kernel.internal.checkpoints.Checkpointer.findLastCompleteCheckpointBeforeHelper
@@ -25,11 +30,8 @@ import io.delta.kernel.internal.util.Utils
 import io.delta.kernel.test.{BaseMockJsonHandler, MockFileSystemClientUtils, VectorTestUtils}
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
-import org.scalatest.funsuite.AnyFunSuite
 
-import java.io.{FileNotFoundException, IOException}
-import java.util.Optional
-import scala.util.control.NonFatal
+import org.scalatest.funsuite.AnyFunSuite
 
 class CheckpointerSuite extends AnyFunSuite with MockFileSystemClientUtils {
   import CheckpointerSuite._
@@ -91,7 +93,7 @@ class CheckpointerSuite extends AnyFunSuite with MockFileSystemClientUtils {
   test("findLastCompleteCheckpointBefore - no checkpoints") {
     val files = deltaFileStatuses(Seq.range(0, 25))
 
-    Seq((0, 0), (10, 10), (20, 20), (27, 25 /* no delta log files after version 24 */)).foreach {
+    Seq((0, 0), (10, 10), (20, 20), (27, 25 /* no delta log files after version 24 */ )).foreach {
       case (beforeVersion, expNumFilesListed) =>
         assertNoLastCheckpoint(files, beforeVersion, expNumFilesListed)
     }
@@ -142,7 +144,7 @@ class CheckpointerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       // Listing size is 1000 delta versions (i.e list _delta_log/0001000* to _delta_log/0001999*)
       val versionsListed = Math.min(beforeVersion, 1000)
       val expNumFilesListed =
-          versionsListed /* delta files */ +
+        versionsListed /* delta files */ +
           (versionsListed / 10) * 20 /* checkpoints */
       assertLastCheckpoint(files, beforeVersion, expCheckpointVersion, expNumFilesListed)
     }
@@ -167,7 +169,7 @@ class CheckpointerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       val expNumFilesListed =
         numListCalls - 1 /* last file scanned that fails the search and stops */ +
           versionsListed /* delta files */ +
-           50 /* one multi-part checkpoint */
+          50 /* one multi-part checkpoint */
       assertLastCheckpoint(files, beforeVersion, expCheckpointVersion, expNumFilesListed)
     }
   }
@@ -177,7 +179,10 @@ class CheckpointerSuite extends AnyFunSuite with MockFileSystemClientUtils {
     val files = deltaFileStatuses(Seq.range(0, 25)) ++
       singularCheckpointFileStatuses(Seq(10)) ++
       Seq(FileStatus.of(
-        checkpointFileSingular(logPath, 20).toString, 0, 0)) // zero-sized CP
+        checkpointFileSingular(logPath, 20).toString,
+        0,
+        0
+      )) // zero-sized CP
 
     Seq((0, 0), (4, 4), (9, 9), (10, 10)).foreach {
       case (beforeVersion, expNumFilesListed) =>
@@ -284,7 +289,6 @@ class MockLastCheckpointMetadataFileReader(maxFailures: Int) extends BaseMockJso
         }
       } catch {
         case NonFatal(e) => throw new KernelEngineException("Failed to read last checkpoint", e);
-      }
-    )
+      })
   }
 }

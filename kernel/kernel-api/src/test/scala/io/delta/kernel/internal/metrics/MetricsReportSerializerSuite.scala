@@ -20,6 +20,7 @@ import java.util.{Optional, UUID}
 import io.delta.kernel.expressions.{Column, Literal, Predicate}
 import io.delta.kernel.metrics.{ScanReport, SnapshotReport, TransactionReport}
 import io.delta.kernel.types.{IntegerType, StructType}
+
 import org.scalatest.funsuite.AnyFunSuite
 
 class MetricsReportSerializerSuite extends AnyFunSuite {
@@ -68,8 +69,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
 
     val snapshotReport1 = SnapshotReportImpl.forError(
       snapshotContext1,
-      exception
-    )
+      exception)
 
     // Manually check expected JSON
     val expectedJson =
@@ -147,8 +147,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
       Optional.of(2), /* committedVersion */
       transactionMetrics1,
       snapshotReport1,
-      Optional.of(exception)
-    )
+      Optional.of(exception))
 
     // Manually check expected JSON
     val expectedJson =
@@ -191,7 +190,6 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
     )
     testTransactionReport(transactionReport2)
   }
-
 
   private def testScanReport(scanReport: ScanReport): Unit = {
     val exception: Optional[String] = scanReport.getException().map(_.toString)
@@ -254,8 +252,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
       Optional.empty(),
       true,
       scanMetrics,
-      Optional.of(exception)
-    )
+      Optional.of(exception))
 
     // Manually check expected JSON
     val expectedJson =
@@ -300,8 +297,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
       Optional.empty(),
       false, // isFullyConsumed
       new ScanMetrics(),
-      Optional.empty()
-    )
+      Optional.empty())
     testScanReport(scanReport2)
   }
 }

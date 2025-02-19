@@ -15,6 +15,9 @@
  */
 package io.delta.kernel.internal.checksum
 
+import java.util
+import java.util.{Collections, Optional}
+
 import io.delta.kernel.data.Row
 import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
 import io.delta.kernel.internal.checksum.CRCInfo.CRC_FILE_SCHEMA
@@ -25,10 +28,8 @@ import io.delta.kernel.internal.util.VectorUtils.{stringArrayValue, stringString
 import io.delta.kernel.test.{BaseMockJsonHandler, MockEngineUtils}
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.CloseableIterator
-import org.scalatest.funsuite.AnyFunSuite
 
-import java.util
-import java.util.{Collections, Optional}
+import org.scalatest.funsuite.AnyFunSuite
 
 /**
  * Test suite for ChecksumWriter functionality.
@@ -59,8 +60,7 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
 
       checksumWriter.writeCheckSum(
         mockEngine(jsonHandler = jsonHandler),
-        new CRCInfo(version, metadata, protocol, tableSizeBytes, numFiles, txn)
-      )
+        new CRCInfo(version, metadata, protocol, tableSizeBytes, numFiles, txn))
 
       verifyChecksumFile(jsonHandler, version)
       assert(jsonHandler.capturedCrcRow.isDefined)
@@ -112,36 +112,32 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
       Optional.ofNullable(actualMetadataRow.getString(Metadata.FULL_SCHEMA.indexOf(field)))
 
     assert(
-      actualMetadataRow.getString(Metadata.FULL_SCHEMA.indexOf("id")) == expectedMetadata.getId
-    )
+      actualMetadataRow.getString(Metadata.FULL_SCHEMA.indexOf("id")) == expectedMetadata.getId)
     assert(getOptionalString("name") == expectedMetadata.getName)
     assert(getOptionalString("description") == expectedMetadata.getDescription)
 
     val formatRow = actualMetadataRow.getStruct(Metadata.FULL_SCHEMA.indexOf("format"))
     assert(
       formatRow
-        .getString(Format.FULL_SCHEMA.indexOf("provider")) == expectedMetadata.getFormat.getProvider
-    )
+        .getString(
+          Format.FULL_SCHEMA.indexOf("provider")) == expectedMetadata.getFormat.getProvider)
 
     assert(
       actualMetadataRow
-        .getString(Metadata.FULL_SCHEMA.indexOf("schemaString")) == expectedMetadata.getSchemaString
-    )
+        .getString(
+          Metadata.FULL_SCHEMA.indexOf("schemaString")) == expectedMetadata.getSchemaString)
     assert(
       actualMetadataRow
         .getArray(Metadata.FULL_SCHEMA.indexOf("partitionColumns"))
-      == expectedMetadata.getPartitionColumns
-    )
+        == expectedMetadata.getPartitionColumns)
     assert(
       Optional
         .ofNullable(actualMetadataRow.getLong(Metadata.FULL_SCHEMA.indexOf("createdTime")))
-      == expectedMetadata.getCreatedTime
-    )
+        == expectedMetadata.getCreatedTime)
     assert(
       VectorUtils
         .toJavaMap(actualMetadataRow.getMap(Metadata.FULL_SCHEMA.indexOf("configuration")))
-      == expectedMetadata.getConfiguration
-    )
+        == expectedMetadata.getConfiguration)
   }
 
   // TODO: implement compare in Protocol and remove this method
@@ -149,12 +145,10 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
     assert(actualProtocolRow.getSchema == Protocol.FULL_SCHEMA)
     assert(
       expectedProtocol.getMinReaderVersion == actualProtocolRow
-        .getInt(Protocol.FULL_SCHEMA.indexOf("minReaderVersion"))
-    )
+        .getInt(Protocol.FULL_SCHEMA.indexOf("minReaderVersion")))
     assert(
       expectedProtocol.getMinWriterVersion == actualProtocolRow
-        .getInt(Protocol.FULL_SCHEMA.indexOf("minWriterVersion"))
-    )
+        .getInt(Protocol.FULL_SCHEMA.indexOf("minWriterVersion")))
   }
 
   private def createTestMetadata(): Metadata = {
@@ -169,8 +163,7 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
       Optional.of(123),
       stringStringMapValue(new util.HashMap[String, String]() {
         put("delta.appendOnly", "true")
-      })
-    )
+      }))
   }
 
   private def createTestProtocol(): Protocol = {
@@ -178,8 +171,7 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
       /* minReaderVersion= */ 1,
       /* minWriterVersion= */ 2,
       Collections.emptyList(),
-      Collections.emptyList()
-    )
+      Collections.emptyList())
   }
 }
 

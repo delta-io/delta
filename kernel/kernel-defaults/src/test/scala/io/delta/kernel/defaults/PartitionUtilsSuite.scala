@@ -20,6 +20,7 @@ import io.delta.kernel.Table
 import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestUtils}
 import io.delta.kernel.expressions.Literal.ofInt
 import io.delta.kernel.utils.PartitionUtils
+
 import org.apache.spark.sql.functions.{col => sparkCol}
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -47,8 +48,7 @@ class PartitionUtilsSuite extends AnyFunSuite with TestUtils with ExpressionTest
       {
         val badPredicate = and(
           predicate("=", col("part1"), ofInt(0)),
-          predicate("=", col("col1"), ofInt(0))
-        )
+          predicate("=", col("col1"), ofInt(0)))
         val exMsg = intercept[IllegalArgumentException] {
           PartitionUtils.partitionExists(engine, snapshot, badPredicate)
         }.getMessage

@@ -14,8 +14,16 @@
  * limitations under the License.
  */
 package io.delta.kernel.defaults
-import io.delta.kernel.data.Row
+import java.io.File
+import java.nio.file.Files
+import java.util.{Locale, Optional}
+
+import scala.collection.immutable.Seq
+import scala.jdk.CollectionConverters.{asScalaBufferConverter, asScalaSetConverter}
+import scala.language.implicitConversions
+
 import io.delta.kernel.{Transaction, TransactionCommitResult}
+import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.utils.TestRow
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
@@ -25,13 +33,6 @@ import io.delta.kernel.internal.checksum.CRCInfo
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.{CloseableIterable, FileStatus}
-
-import java.io.File
-import java.nio.file.Files
-import java.util.{Locale, Optional}
-import scala.collection.immutable.Seq
-import scala.jdk.CollectionConverters.{asScalaBufferConverter, asScalaSetConverter}
-import scala.language.implicitConversions
 
 class DeltaTableWriteWithCrcSuite extends DeltaTableWritesSuite {
 
@@ -43,9 +44,7 @@ class DeltaTableWriteWithCrcSuite extends DeltaTableWritesSuite {
       result.getPostCommitHooks
         .stream()
         .filter(hook => hook.getType == PostCommitHookType.CHECKSUM_SIMPLE)
-        .forEach(
-          hook => hook.threadSafeInvoke(engine)
-        )
+        .forEach(hook => hook.threadSafeInvoke(engine))
       result
     }
   }
@@ -100,8 +99,7 @@ class DeltaTableWriteWithCrcSuite extends DeltaTableWritesSuite {
       .readJsonFiles(
         singletonCloseableIterator(FileStatus.of(checksumFile.getPath)),
         CRCInfo.CRC_FILE_SCHEMA,
-        Optional.empty()
-      )
+        Optional.empty())
 
     assert(columnarBatches.hasNext, "Empty checksum file")
     val crcRow = columnarBatches.next()
@@ -109,21 +107,18 @@ class DeltaTableWriteWithCrcSuite extends DeltaTableWritesSuite {
 
     val metadata = Metadata.fromColumnVector(
       crcRow.getColumnVector(CRCInfo.CRC_FILE_SCHEMA.indexOf("metadata")),
-      /* rowId= */ 0
-    )
+      /* rowId= */ 0)
 
     assert(
       metadata.getSchema === expSchema,
-      s"Schema mismatch.\nExpected: $expSchema\nActual: ${metadata.getSchema}"
-    )
+      s"Schema mismatch.\nExpected: $expSchema\nActual: ${metadata.getSchema}")
 
     val normalizedPartitions = expPartitionColumns.map(_.toLowerCase(Locale.ROOT)).toSet
     assert(
       metadata.getPartitionColNames.asScala === normalizedPartitions,
       s"Partition columns mismatch.\n" +
-      s"Expected: $normalizedPartitions\n" +
-      s"Actual: ${metadata.getPartitionColNames.asScala}"
-    )
+        s"Expected: $normalizedPartitions\n" +
+        s"Actual: ${metadata.getPartitionColNames.asScala}")
 
     assert(!columnarBatches.hasNext, "Unexpected additional data in checksum file")
   }
