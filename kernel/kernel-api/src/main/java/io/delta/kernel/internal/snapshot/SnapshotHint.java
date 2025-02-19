@@ -18,7 +18,7 @@ package io.delta.kernel.internal.snapshot;
 
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
-import io.delta.kernel.internal.replay.CRCInfo;
+import io.delta.kernel.internal.checksum.CRCInfo;
 
 /** Contains summary information of a {@link io.delta.kernel.Snapshot}. */
 public class SnapshotHint {

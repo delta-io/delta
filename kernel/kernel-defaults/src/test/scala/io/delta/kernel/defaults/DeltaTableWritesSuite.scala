@@ -95,7 +95,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
 
       val txn = txnBuilder.withSchema(engine, testSchema).build(engine)
-      txn.commit(engine, emptyIterable())
+      commitTransaction(txn, engine, emptyIterable())
 
       {
         val ex = intercept[TableAlreadyExistsException] {
@@ -129,7 +129,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
       assert(txn.getSchema(engine) === testSchema)
       assert(txn.getPartitionColumns(engine) === Seq.empty.asJava)
-      val txnResult = txn.commit(engine, emptyIterable())
+      val txnResult = commitTransaction(txn, engine, emptyIterable())
 
       assert(txnResult.getVersion === 0)
       assertCheckpointReadiness(txnResult, isReadyForCheckpoint = false)
@@ -348,13 +348,13 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       assert(txn.getSchema(engine) === schema)
       // Expect the partition column name is exactly same as the one in the schema
       assert(txn.getPartitionColumns(engine) === Seq("Part1", "part2").asJava)
-      val txnResult = txn.commit(engine, emptyIterable())
+      val txnResult = commitTransaction(txn, engine, emptyIterable())
 
       assert(txnResult.getVersion === 0)
       assertCheckpointReadiness(txnResult, isReadyForCheckpoint = false)
 
       verifyCommitInfo(tablePath, version = 0, Seq("Part1", "part2"))
-      verifyWrittenContent(tablePath, schema, Seq.empty)
+      verifyWrittenContent(tablePath, schema, Seq.empty, Seq("Part1", "part2"))
     }
   }
 
@@ -366,7 +366,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       val table = Table.forPath(engine, tablePath)
       val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
       val txn = txnBuilder.withSchema(engine, schema).build(engine)
-      val txnResult = txn.commit(engine, emptyIterable())
+      val txnResult = commitTransaction(txn, engine, emptyIterable())
 
       assert(txnResult.getVersion === 0)
       assertCheckpointReadiness(txnResult, isReadyForCheckpoint = false)
@@ -439,12 +439,12 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       val stagedFiles = stageData(txnState, Map.empty, dataBatches1)
 
       val stagedActionsIterable = inMemoryIterable(stagedFiles)
-      val commitResult = txn.commit(engine, stagedActionsIterable)
+      val commitResult = commitTransaction(txn, engine, stagedActionsIterable)
       assert(commitResult.getVersion == 0)
 
       // try to commit the same transaction and expect failure
       val ex = intercept[IllegalStateException] {
-        txn.commit(engine, stagedActionsIterable)
+        commitTransaction(txn, engine, stagedActionsIterable)
       }
       assert(ex.getMessage.contains(
         "Transaction is already attempted to commit. Create a new transaction."))
@@ -470,7 +470,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
       verifyCommitResult(commitResult0, expVersion = 0, expIsReadyForCheckpoint = false)
       verifyCommitInfo(tblPath, version = 0, testPartitionColumns, operation = WRITE)
-      verifyWrittenContent(tblPath, testPartitionSchema, expData)
+      verifyWrittenContent(tblPath, testPartitionSchema, expData, testPartitionColumns)
     }
   }
 
@@ -493,7 +493,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
         verifyCommitResult(commitResult0, expVersion = 0, expIsReadyForCheckpoint = false)
         verifyCommitInfo(tblPath, version = 0, partitionCols, operation = WRITE)
-        verifyWrittenContent(tblPath, testPartitionSchema, expData)
+        verifyWrittenContent(tblPath, testPartitionSchema, expData, partitionCols)
       }
       {
         val commitResult1 = appendData(
@@ -507,7 +507,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
         verifyCommitResult(commitResult1, expVersion = 1, expIsReadyForCheckpoint = false)
         verifyCommitInfo(tblPath, version = 1, partitionCols = null, operation = WRITE)
-        verifyWrittenContent(tblPath, testPartitionSchema, expData)
+        verifyWrittenContent(tblPath, testPartitionSchema, expData, partitionCols)
       }
     }
   }
@@ -571,7 +571,8 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         // partition cols are not written in the commit info for inserts
         val partitionBy = if (i == 0) expPartCols else null
         verifyCommitInfo(tblPath, version = i, partitionBy, operation = WRITE)
-        verifyWrittenContent(tblPath, schema, if (i == 0) expV0Data else expV0Data ++ expV1Data)
+        verifyWrittenContent(tblPath,
+          schema, if (i == 0) expV0Data else expV0Data ++ expV1Data, partCols)
       }
     }
   }
@@ -626,7 +627,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         // delete all commit files before version 30 in both cases and expect the read to pass as
         // there is a checkpoint at version 30 and should be used for state reconstruction.
         deleteDeltaFilesBefore(tblPath, beforeVersion = 30)
-        verifyWrittenContent(tblPath, schema, expData)
+        verifyWrittenContent(tblPath, schema, expData, partCols)
       }
     }
   }
@@ -749,8 +750,8 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
         verifyCommitResult(commitResult, expVersion = i, i % checkpointInterval == 0)
         verifyCommitInfo(tblPath, version = i, partitionCols = null, operation = WRITE)
-        verifyWrittenContent(tblPath, schema, expData)
-      }
+        verifyWrittenContent(tblPath, schema, expData, partCols)
+        }
 
       assertCheckpointExists(tblPath, atVersion = checkpointInterval)
     }
@@ -803,6 +804,9 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
   test("insert into table - idempotent writes") {
     withTempDirAndEngine { (tblPath, engine) =>
+
+      // TODO: re-enable when CRC_FULL post commit hook is added, txn2 requires CRC_FULL
+      assume(this.suiteName != ("DeltaTableWriteWithCrcSuite"))
       val data = Seq(Map("part1" -> ofInt(1), "part2" -> ofInt(2)) -> dataPartitionBatches1)
       var expData = Seq.empty[TestRow] // as the data in inserted, update this.
 
@@ -827,8 +831,8 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       }
 
       def commitAndVerify(newTbl: Boolean, txn: Transaction,
-          actions: CloseableIterable[Row], expTblVer: Long): Unit = {
-        val commitResult = txn.commit(engine, actions)
+                          actions: CloseableIterable[Row], expTblVer: Long): Unit = {
+        val commitResult = commitTransaction(txn, engine, actions)
 
         expData = expData ++ data.flatMap(_._2).flatMap(_.toTestRows)
 
@@ -897,6 +901,9 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
   test("conflicts - creating new table - table created by other txn after current txn start") {
     withTempDirAndEngine { (tablePath, engine) =>
+
+      // TODO: re-enable when CRC_FULL post commit hook is added
+      assume(this.suiteName != ("DeltaTableWriteWithCrcSuite"))
       val losingTx = createTestTxn(engine, tablePath, Some(testSchema))
 
       // don't commit losingTxn, instead create a new txn and commit it
@@ -945,6 +952,8 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
   // Different scenarios that have multiple winning txns and with a checkpoint in between.
   Seq(1, 5, 12).foreach { numWinningTxs =>
     test(s"conflicts - concurrent data append ($numWinningTxs) after the losing txn has started") {
+      // TODO: re-enable when CRC_FULL post commit hook is added
+      assume(this.suiteName != ("DeltaTableWriteWithCrcSuite"))
       withTempDirAndEngine { (tablePath, engine) =>
         val testData = Seq(Map.empty[String, Literal] -> dataBatches1)
         var expData = Seq.empty[TestRow]
@@ -1012,7 +1021,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
   }
 
   def createTestTxn(
-    engine: Engine, tablePath: String, schema: Option[StructType] = None): Transaction = {
+                     engine: Engine, tablePath: String, schema: Option[StructType] = None): Transaction = {
     val table = Table.forPath(engine, tablePath)
     var txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
     schema.foreach(s => txnBuilder = txnBuilder.withSchema(engine, s))
@@ -1257,9 +1266,9 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
   }
 
   private def assertColumnMapping(
-    field: StructField,
-    expId: Long,
-    expPhyName: String = "UUID"): Unit = {
+                                   field: StructField,
+                                   expId: Long,
+                                   expPhyName: String = "UUID"): Unit = {
     val meta = field.getMetadata
     assert(meta.get(ColumnMapping.COLUMN_MAPPING_ID_KEY) == expId)
     // For new tables the physical column name is a UUID. For existing tables, we

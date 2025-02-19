@@ -22,10 +22,10 @@ import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.actions.{Metadata, Protocol, SingleAction}
 import io.delta.kernel.internal.fs.{Path => DeltaPath}
-import io.delta.kernel.internal.util.FileNames
+import io.delta.kernel.internal.util.{Clock, FileNames, VectorUtils}
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
-import io.delta.kernel.internal.{SnapshotImpl, TableConfig, TableImpl}
-import io.delta.kernel.utils.FileStatus
+import io.delta.kernel.internal.{SnapshotImpl, TableConfig, TableImpl, TransactionImpl}
+import io.delta.kernel.utils.{CloseableIterable, CloseableIterator, FileStatus}
 import io.delta.kernel.{
   Meta,
   Operation,
@@ -38,24 +38,24 @@ import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch,
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.expressions.Literal.ofInt
-import io.delta.kernel.internal.util.Clock
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
-import io.delta.kernel.utils.CloseableIterator
 import io.delta.kernel.Operation.CREATE_TABLE
 import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
+import io.delta.kernel.internal.checksum.CRCInfo
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.delta.VersionNotFoundException
 import org.scalatest.funsuite.AnyFunSuite
+import org.scalatest.matchers.should.Matchers.convertToAnyShouldWrapper
 
 import java.io.File
 import java.nio.file.{Files, Paths}
-import java.util.Optional
+import java.util.{Locale, Optional}
 import scala.collection.JavaConverters._
 import scala.collection.immutable.{ListMap, Seq}
 
@@ -310,7 +310,7 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     }
 
     val combineActions = inMemoryIterable(actions.reduceLeft(_ combine _))
-    txn.commit(engine, combineActions)
+    commitTransaction(txn, engine, combineActions)
   }
 
   def appendData(
@@ -321,10 +321,14 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     partCols: Seq[String] = null,
     data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])],
     clock: Clock = () => System.currentTimeMillis,
-    tableProperties: Map[String, String] = null): TransactionCommitResult = {
-
+    tableProperties: Map[String, String] = null,
+    executePostCommitHook: Boolean = false): TransactionCommitResult = {
     val txn = createTxn(engine, tablePath, isNewTable, schema, partCols, tableProperties, clock)
-    commitAppendData(engine, txn, data)
+    val commitResult = commitAppendData(engine, txn, data)
+    if (executePostCommitHook) {
+      commitResult.getPostCommitHooks.forEach(hook => hook.threadSafeInvoke(engine))
+    }
+    commitResult
   }
 
   def assertMetadataProp(
@@ -365,7 +369,12 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     assertMetadataProp(snapshot, key, expectedValue)
   }
 
-  def verifyWrittenContent(path: String, expSchema: StructType, expData: Seq[TestRow]): Unit = {
+  protected def verifyWrittenContent(
+      path: String,
+      expSchema: StructType,
+      expData: Seq[TestRow],
+      expPartitionColumns: Seq[String] = Seq(),
+      version: Option[Long] = Option.empty): Unit = {
     val actSchema = tableSchema(path)
     assert(actSchema === expSchema)
 
@@ -376,7 +385,12 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     // Spark reads the timestamp partition columns in local timezone vs. Kernel reads in UTC. We
     // need to set the timezone to UTC before reading the data using Spark to make the tests pass
     withSparkTimeZone("UTC") {
-      val resultSpark = spark.sql(s"SELECT * FROM delta.`$path`").collect().map(TestRow(_))
+      val resultSpark = spark
+        .sql(s"SELECT * FROM delta.`$path`" + {
+          if (version.isDefined) s" VERSION AS OF ${version.get}" else ""
+        })
+        .collect()
+        .map(TestRow(_))
       checkAnswer(resultSpark, expData)
     }
   }
@@ -387,7 +401,8 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     partitionCols: Seq[String] = Seq.empty,
     isBlindAppend: Boolean = true,
     operation: Operation = CREATE_TABLE): Unit = {
-    val row = spark.sql(s"DESCRIBE HISTORY delta.`$tablePath`")
+    val row = spark
+      .sql(s"DESCRIBE HISTORY delta.`$tablePath`")
       .filter(s"version = $version")
       .select(
         "version",
@@ -444,5 +459,22 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
           hook => hook.getType == PostCommitHookType.CHECKPOINT
         ) === isReadyForCheckpoint
     )
+  }
+
+  def assertChecksumSimpleReadiness(txnResult: TransactionCommitResult): Unit = {
+    assert(
+      txnResult.getPostCommitHooks
+        .stream()
+        .anyMatch(
+          hook => hook.getType == PostCommitHookType.CHECKSUM_SIMPLE
+        )
+    )
+  }
+
+  protected def commitTransaction(
+      txn: Transaction,
+      engine: Engine,
+      dataActions: CloseableIterable[Row]): TransactionCommitResult = {
+    txn.commit(engine, dataActions)
   }
 }

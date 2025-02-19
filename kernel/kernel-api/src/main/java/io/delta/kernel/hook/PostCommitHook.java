@@ -33,7 +33,14 @@ public interface PostCommitHook {
      * perform this operation, reading previous checkpoint + logs is required to construct a new
      * checkpoint, with latency scaling based on log size (typically seconds to minutes).
      */
-    CHECKPOINT
+    CHECKPOINT,
+    /**
+     * Writes a checksum file at the version committed by the transaction. This hook is present when
+     * all required table statistics (e.g. table size) for checksum file are known when a
+     * transaction commits. This operation has a minimal latency with no requirement of reading
+     * previous checkpoint or logs.
+     */
+    CHECKSUM_SIMPLE
   }
 
   /** Invokes the post commit operation whose implementation must be thread safe. */

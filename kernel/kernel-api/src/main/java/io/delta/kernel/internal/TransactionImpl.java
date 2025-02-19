@@ -29,9 +29,11 @@ import io.delta.kernel.exceptions.ConcurrentWriteException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.hook.PostCommitHook;
 import io.delta.kernel.internal.actions.*;
+import io.delta.kernel.internal.checksum.CRCInfo;
 import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.hook.CheckpointHook;
+import io.delta.kernel.internal.hook.ChecksumSimpleHook;
 import io.delta.kernel.internal.metrics.TransactionMetrics;
 import io.delta.kernel.internal.metrics.TransactionReportImpl;
 import io.delta.kernel.internal.replay.ConflictChecker;
@@ -39,6 +41,7 @@ import io.delta.kernel.internal.replay.ConflictChecker.TransactionRebaseState;
 import io.delta.kernel.internal.rowtracking.RowTracking;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.*;
+import io.delta.kernel.metrics.TransactionMetricsResult;
 import io.delta.kernel.metrics.TransactionReport;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterable;
@@ -362,6 +365,10 @@ public class TransactionImpl implements Transaction {
         postCommitHooks.add(new CheckpointHook(dataPath, commitAsVersion));
       }
 
+      buildPostCommitCrcInfoIfCurrentCrcAvailable(
+              commitAsVersion, transactionMetrics.captureTransactionMetricsResult())
+          .ifPresent(crcInfo -> postCommitHooks.add(new ChecksumSimpleHook(crcInfo, logPath)));
+
       return new TransactionCommitResult(commitAsVersion, postCommitHooks);
     } catch (FileAlreadyExistsException e) {
       throw e;
@@ -435,6 +442,34 @@ public class TransactionImpl implements Transaction {
             readSnapshot.getSnapshotReport(),
             exception);
     engine.getMetricsReporters().forEach(reporter -> reporter.report(transactionReport));
+  }
+
+  private Optional<CRCInfo> buildPostCommitCrcInfoIfCurrentCrcAvailable(
+      long commitAtVersion, TransactionMetricsResult metricsResult) {
+    // Create table
+    if (isNewTable) {
+      return Optional.of(
+          new CRCInfo(
+              commitAtVersion,
+              metadata,
+              protocol,
+              metricsResult.getTotalAddFilesSizeInBytes(),
+              metricsResult.getNumAddFiles(),
+              Optional.of(txnId.toString())));
+    }
+
+    return readSnapshot
+        .getCurrentCrcInfo()
+        .filter(lastCrcInfo -> commitAtVersion == lastCrcInfo.getVersion() + 1)
+        .map(
+            lastCrcInfo ->
+                new CRCInfo(
+                    commitAtVersion,
+                    metadata,
+                    protocol,
+                    lastCrcInfo.getTableSizeBytes() + metricsResult.getTotalAddFilesSizeInBytes(),
+                    lastCrcInfo.getNumFiles() + metricsResult.getNumAddFiles(),
+                    Optional.of(txnId.toString())));
   }
 
   /**
