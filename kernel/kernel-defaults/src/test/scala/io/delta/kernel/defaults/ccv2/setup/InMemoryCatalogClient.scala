@@ -67,11 +67,13 @@ class InMemoryCatalogClient(workspace: Path = new Path("/tmp/in_memory_catalog/"
         logger.info(s"table does not exist :: $tableName")
         GetCommitsResponse.TableDoesNotExist(tableName)
       case tableData =>
-        logger.info(s"table exists :: $tableName")
-        val tableCommitsStr = tableData.commits.map(f => s"  - ${f.getPath}").mkString("\n")
-        logger.info(s"tableData.commits (size=${tableData.commits.size}):\n$tableCommitsStr")
+        tableData.synchronized {
+          logger.info(s"table exists :: $tableName")
+          val tableCommitsStr = tableData.commits.map(f => s"  - ${f.getPath}").mkString("\n")
+          logger.info(s"tableData.commits (size=${tableData.commits.size}):\n$tableCommitsStr")
 
-        GetCommitsResponse.Success(tableData.commits.toList) // return an IMMUTABLE COPY
+          GetCommitsResponse.Success(tableData.commits.toList) // return an IMMUTABLE COPY
+        }
     }
   }
 
@@ -108,32 +110,34 @@ class InMemoryCatalogClient(workspace: Path = new Path("/tmp/in_memory_catalog/"
             CommitResponse.Success
         }
       case tableData =>
-        logger.info(s"table exists :: $tableName")
-        logger.info(s"commitFile: ${commitFile.getPath}")
+        tableData.synchronized {
+          logger.info(s"table exists :: $tableName")
+          logger.info(s"commitFile: ${commitFile.getPath}")
 
-        val expectedCommitVersion = tableData.maxCommitVersion + 1
-        val commitVersion = FileNames.uuidCommitDeltaVersion(commitFile.getPath)
+          val expectedCommitVersion = tableData.maxCommitVersion + 1
+          val commitVersion = FileNames.uuidCommitDeltaVersion(commitFile.getPath)
 
-        logger.info(s"expectedCommitVersion: $expectedCommitVersion")
-        logger.info(s"commitVersion: $commitVersion")
+          logger.info(s"expectedCommitVersion: $expectedCommitVersion")
+          logger.info(s"commitVersion: $commitVersion")
 
-        if (commitVersion != expectedCommitVersion) {
-          return CommitResponse.CommitVersionConflict(
-            commitVersion,
-            expectedCommitVersion,
-            tableData.commits.toList // return an IMMUTABLE COPY
-          )
+          if (commitVersion != expectedCommitVersion) {
+            return CommitResponse.CommitVersionConflict(
+              commitVersion,
+              expectedCommitVersion,
+              tableData.commits.toList // return an IMMUTABLE COPY
+            )
+          }
+
+          tableData.maxCommitVersion = commitVersion
+          tableData.commits += commitFile
+          updatedProtocol.foreach(newP => tableData.latestProtocol = Some(newP))
+          updatedMetadata.foreach(newM => tableData.latestMetadata = Some(newM))
+
+          val tableCommitsStr = tableData.commits.map(f => s"  - ${f.getPath}").mkString("\n")
+          logger.info(s"tableData.commits:\n$tableCommitsStr")
+
+          CommitResponse.Success
         }
-
-        tableData.maxCommitVersion = commitVersion
-        tableData.commits += commitFile
-        updatedProtocol.foreach(newP => tableData.latestProtocol = Some(newP))
-        updatedMetadata.foreach(newM => tableData.latestMetadata = Some(newM))
-
-        val tableCommitsStr = tableData.commits.map(f => s"  - ${f.getPath}").mkString("\n")
-        logger.info(s"tableData.commits:\n$tableCommitsStr")
-
-        CommitResponse.Success
     }
   }
 
@@ -145,21 +149,23 @@ class InMemoryCatalogClient(workspace: Path = new Path("/tmp/in_memory_catalog/"
     catalogTables.get(tableName) match {
       case null => SetLatestBackfilledVersionResponse.TableDoesNotExist(tableName)
       case tableData =>
-        if (latestBackfilledVersion > tableData.latestBackfilledVersion.getOrElse(-1L)) {
-          tableData.latestBackfilledVersion = Some(latestBackfilledVersion)
-          logger.info(s"Updated latestBackfilledVersion to $latestBackfilledVersion")
+        tableData.synchronized {
+          if (latestBackfilledVersion > tableData.latestBackfilledVersion.getOrElse(-1L)) {
+            tableData.latestBackfilledVersion = Some(latestBackfilledVersion)
+            logger.info(s"Updated latestBackfilledVersion to $latestBackfilledVersion")
 
-          tableData.commits = tableData
-            .commits
-            .filter(f => FileNames.isUnbackfilledDeltaFile(f.getPath))
-            .dropWhile(f => {
-              val doDrop = FileNames.uuidCommitDeltaVersion(f.getPath) <= latestBackfilledVersion
-              logger.info(s"Checking if we should drop ${f.getPath}: $doDrop")
-              doDrop
-            })
-          logger.info(s"Removed catalog commits older than or equal to $latestBackfilledVersion")
+            tableData.commits = tableData
+              .commits
+              .filter(f => FileNames.isUnbackfilledDeltaFile(f.getPath))
+              .dropWhile(f => {
+                val doDrop = FileNames.uuidCommitDeltaVersion(f.getPath) <= latestBackfilledVersion
+                logger.info(s"Checking if we should drop ${f.getPath}: $doDrop")
+                doDrop
+              })
+            logger.info(s"Removed catalog commits older than or equal to $latestBackfilledVersion")
+          }
+          SetLatestBackfilledVersionResponse.Success
         }
-        SetLatestBackfilledVersionResponse.Success
     }
   }
 }
