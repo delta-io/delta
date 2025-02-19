@@ -16,6 +16,9 @@
 
 package io.delta.kernel.ccv2;
 
+import io.delta.kernel.utils.FileStatus;
+import java.util.List;
+
 public interface CommitResult {
 
   String resultString();
@@ -28,8 +31,6 @@ public interface CommitResult {
     default String resultString() {
       return "Success";
     }
-
-    long getCommitVersion();
   }
 
   interface NonRetryableFailure extends CommitResult {
@@ -50,5 +51,9 @@ public interface CommitResult {
     }
 
     String getMessage();
+
+    // TODO: just call this catalog-registered commits? might be unbackfilled, might be backfilled,
+    //       but we can all agree that they are registered in the catalog
+    List<FileStatus> unbackfilledCommits();
   }
 }

@@ -75,7 +75,8 @@ object CommitResponse {
 
   final case class CommitVersionConflict(
       attemptedCommitVersion: Long,
-      expectedVersion: Long) extends CommitResponse
+      expectedVersion: Long,
+      commits: scala.collection.immutable.Seq[FileStatus]) extends CommitResponse
 }
 
 // ===== SetLatestBackfilledVersionResponse =====

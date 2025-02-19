@@ -118,7 +118,11 @@ class InMemoryCatalogClient(workspace: Path = new Path("/tmp/in_memory_catalog/"
         logger.info(s"commitVersion: $commitVersion")
 
         if (commitVersion != expectedCommitVersion) {
-          return CommitResponse.CommitVersionConflict(commitVersion, expectedCommitVersion)
+          return CommitResponse.CommitVersionConflict(
+            commitVersion,
+            expectedCommitVersion,
+            tableData.commits.toList // return an IMMUTABLE COPY
+          )
         }
 
         tableData.maxCommitVersion = commitVersion

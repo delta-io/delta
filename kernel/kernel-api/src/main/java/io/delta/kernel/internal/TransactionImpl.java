@@ -19,6 +19,7 @@ import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 import static io.delta.kernel.internal.TableConfig.*;
 import static io.delta.kernel.internal.actions.SingleAction.*;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import static io.delta.kernel.internal.util.Preconditions.checkState;
 import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
 
 import io.delta.kernel.*;
@@ -29,6 +30,7 @@ import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.lang.ListUtils;
 import io.delta.kernel.internal.metrics.TransactionMetrics;
 import io.delta.kernel.internal.metrics.TransactionReportImpl;
 import io.delta.kernel.internal.replay.ConflictChecker;
@@ -39,6 +41,7 @@ import io.delta.kernel.metrics.TransactionReport;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.kernel.utils.CloseableIterator;
+import io.delta.kernel.utils.FileStatus;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.*;
@@ -71,6 +74,9 @@ public class TransactionImpl implements Transaction {
 
   private boolean closed; // To avoid trying to commit the same transaction again.
 
+  private long commitAsVersion;
+  private Optional<CloseableIterable<Row>> dataActionsIterable;
+
   public TransactionImpl(
       boolean isNewTable,
       Path dataPath,
@@ -98,6 +104,9 @@ public class TransactionImpl implements Transaction {
     this.shouldUpdateProtocol = shouldUpdateProtocol;
     this.maxRetries = maxRetries;
     this.clock = clock;
+
+    this.commitAsVersion = readSnapshot.getVersion() + 1;
+    this.dataActionsIterable = Optional.empty();
   }
 
   @Override
@@ -154,16 +163,19 @@ public class TransactionImpl implements Transaction {
 
   @Override
   public long getCommitAsVersion() {
-    // TODO: super jenky/hacky; does not work for retries
-    return readSnapshot.getVersion() + 1;
+    return commitAsVersion;
   }
 
   @Override
-  public CloseableIterator<Row> finalizeActions(
-      Engine engine, CloseableIterator<Row> dataActionsIterOrig) {
-    // TODO: transaction metrics ??
-    // TODO: this iterable -> iterator is a temporary hack due to the domainMetadatas stuff
-    CloseableIterable<Row> dataActions = CloseableIterable.inMemoryIterable(dataActionsIterOrig);
+  public void setInitialDataActions(Engine engine, CloseableIterable<Row> dataActions) {
+    this.dataActionsIterable = Optional.of(dataActions);
+  }
+
+  @Override
+  public CloseableIterator<Row> getFinalizedActions(Engine engine) {
+    checkState(dataActionsIterable.isPresent(), "Initial data actions not set.");
+
+    CloseableIterable<Row> dataActions = dataActionsIterable.get();
 
     final long commitAsVersion = readSnapshot.getVersion() + 1;
 
@@ -247,6 +259,40 @@ public class TransactionImpl implements Transaction {
     }
 
     return dataAndMetadataActions;
+  }
+
+  @Override
+  public void resolveConflictsAndRebase(Engine engine, List<FileStatus> unbackfilledCommits) {
+    // TODO: what about metadata-only commits?
+    checkState(dataActionsIterable.isPresent(), "Initial data actions not set.");
+
+    if (!unbackfilledCommits.isEmpty()) {
+      logger.info(
+          "[Table {}] Found unbackfilled commits: {}. Trying to resolve conflicts and rebase.",
+          dataPath,
+          unbackfilledCommits);
+
+      this.commitAsVersion =
+          FileNames.uuidCommitDeltaVersion(ListUtils.getLast(unbackfilledCommits).getPath()) + 1;
+    } else {
+      logger.info(
+          "[Table {}] No unbackfilled commits found. Trying to resolve conflicts and rebase.",
+          dataPath);
+      TransactionRebaseState rebaseState =
+          ConflictChecker.resolveConflicts(
+              engine, readSnapshot, commitAsVersion, this, dataActionsIterable.get());
+      this.commitAsVersion = rebaseState.getLatestVersion() + 1;
+    }
+
+    logger.info(
+        "[Table {}] Resolved conflicts and rebased to commit as version {}.",
+        dataPath,
+        commitAsVersion);
+  }
+
+  @Override
+  public TransactionCommitResult registerCommitSuccess(long commitVersion) {
+    return null;
   }
 
   @Override

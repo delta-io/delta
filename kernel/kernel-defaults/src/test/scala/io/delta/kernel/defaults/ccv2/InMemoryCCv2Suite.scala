@@ -8,7 +8,7 @@ import io.delta.kernel.defaults.ccv2.setup.{CCv2Client, InMemoryCatalogClient}
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
 import io.delta.kernel.defaults.utils.TestRow
 import io.delta.kernel.test.VectorTestUtils
-import io.delta.kernel.utils.CloseableIterator
+import io.delta.kernel.utils.{CloseableIterable, CloseableIterator}
 import org.scalatest.funsuite.AnyFunSuite
 
 // scalastyle:off println
@@ -72,24 +72,36 @@ class InMemoryCCv2Suite extends AnyFunSuite
 
   private def doCommitLoop(
       rm: ResolvedMetadata, txn: Transaction, stagedFiles: CloseableIterator[Row]): Unit = {
-    val result = rm.commit(
-      txn.getCommitAsVersion,
-      txn.finalizeActions(defaultEngine, stagedFiles),
-      txn.getUpdatedProtocol,
-      txn.getUpdatedMetadata
-    )
+    val stagedFilesIterable = CloseableIterable.inMemoryIterable(stagedFiles)
+    txn.setInitialDataActions(defaultEngine, stagedFilesIterable)
 
-    println("Commit result type: " + result.resultString())
-    println("Commit result attempt version: " + result.getCommitAttemptVersion)
+    var attempt = 1
+    var commitSuccess = false
 
-    result match {
-      case success: CommitResult.Success =>
-        println(s"Commit succeeded with version ${success.getCommitVersion}")
-      case fail: CommitResult.NonRetryableFailure =>
-        println(s"Commit failed (non-retryable) with: ${fail.getMessage}")
-      case retryable: CommitResult.RetryableFailure =>
-        println(s"Commit failed (retryable) with: ${retryable.getMessage}")
+    while (attempt <= 3 && !commitSuccess) {
+      val result = rm.commit(
+        txn.getCommitAsVersion,
+        txn.getFinalizedActions(defaultEngine),
+        txn.getUpdatedProtocol,
+        txn.getUpdatedMetadata
+      )
+
+      println("Commit result type: " + result.resultString())
+      println("Commit result attempt version: " + result.getCommitAttemptVersion)
+
+      result match {
+        case success: CommitResult.Success =>
+          println(s"Commit succeeded with version ${txn.getCommitAsVersion}")
+          commitSuccess = true
+        case fail: CommitResult.NonRetryableFailure =>
+          println(s"Commit failed (non-retryable) with: ${fail.getMessage}")
+        case retryable: CommitResult.RetryableFailure =>
+          println(s"Commit failed (retryable) with: ${retryable.getMessage}. " +
+            s"Unbackfilled commits: ${retryable.unbackfilledCommits()}")
+      }
     }
+
+
   }
 
   private def printDiv(): Unit = {

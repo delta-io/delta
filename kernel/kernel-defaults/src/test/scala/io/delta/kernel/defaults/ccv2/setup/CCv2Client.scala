@@ -1,5 +1,6 @@
 package io.delta.kernel.defaults.ccv2.setup
 
+import java.util
 import java.util.{Collections, Optional, UUID}
 
 import scala.collection.JavaConverters._
@@ -88,7 +89,6 @@ trait ResolvedCatalogMetadataCommitter extends { self: ResolvedMetadata =>
       case CommitResponse.Success =>
         logger.info("Commit to catalog: SUCCESS")
         new CommitResult.Success {
-          override def getCommitVersion: Long = commitAsVersion
           override def getCommitAttemptVersion: Long = commitAsVersion
         }
       case CommitResponse.TableDoesNotExist(tableName) =>
@@ -97,11 +97,13 @@ trait ResolvedCatalogMetadataCommitter extends { self: ResolvedMetadata =>
           override def getMessage: String = s"Table $tableName does not exist"
           override def getCommitAttemptVersion: Long = commitAsVersion
         }
-      case CommitResponse.CommitVersionConflict(attempted, expected) =>
+      case CommitResponse.CommitVersionConflict(attempted, expected, commits) =>
         new CommitResult.RetryableFailure {
           override def getMessage: String =
             s"Commit version conflict: attempted=$attempted, expected=$expected"
           override def getCommitAttemptVersion: Long = commitAsVersion
+
+          override def unbackfilledCommits(): util.List[FileStatus] = commits.toList.asJava
         }
     }
 
