@@ -69,8 +69,7 @@ class AutoCompactPartitionStats(
       var wasAutoCompacted: Boolean = false) {
 
     /**
-     * Determine whether this partition can be autocompacted based on the number of small files and
-     * if this [[AutoCompactPartitionStats]] instance has not auto compacted it yet.
+     * Determine whether this partition can be autocompacted based on the number of small files.
      * @param minNumFiles The minimum number of files this table-partition should have to trigger
      *                    Auto Compaction in case it has already been compacted once.
      */
