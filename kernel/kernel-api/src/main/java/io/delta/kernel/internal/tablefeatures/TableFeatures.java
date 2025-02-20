@@ -393,12 +393,12 @@ public class TableFeatures {
     return tableFeature;
   }
 
-  /** Does reader version has support explicitly specifying reader feature set in protocol? */
+  /** Does reader version supports explicitly specifying reader feature set in protocol? */
   public static boolean supportsReaderFeatures(int minReaderVersion) {
     return minReaderVersion >= TABLE_FEATURES_MIN_READER_VERSION;
   }
 
-  /** Does writer version has support explicitly specifying writer feature set in protocol? */
+  /** Does writer version supports explicitly specifying writer feature set in protocol? */
   public static boolean supportsWriterFeatures(int minWriterVersion) {
     return minWriterVersion >= TABLE_FEATURES_MIN_WRITER_VERSION;
   }
@@ -411,11 +411,11 @@ public class TableFeatures {
     int minWriterVersion =
         features.stream().mapToInt(TableFeature::minWriterVersion).max().orElse(0);
 
-    return new Tuple2<>(Math.max(minReaderVersion, 1), Math.max(minWriterVersion, 2));
+    return new Tuple2<>(Math.max(minReaderVersion, 1), Math.max(minWriterVersion, 1));
   }
 
   /////////////////////////////////////////////////////////////////////////////////
-  /// Everything below will be removed once the Kernel upgrades to use the     ///
+  /// Everything below will be removed once the Kernel upgrades to use the      ///
   /// above interfaces.                                                         ///
   /////////////////////////////////////////////////////////////////////////////////
   private static final Set<String> SUPPORTED_WRITER_FEATURES =

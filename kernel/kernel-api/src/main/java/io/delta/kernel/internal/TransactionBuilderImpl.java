@@ -287,10 +287,6 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   }
 
   private Protocol getInitialProtocol() {
-    return new Protocol(
-        DEFAULT_READ_VERSION,
-        DEFAULT_WRITE_VERSION,
-        null /* readerFeatures */,
-        null /* writerFeatures */);
+    return new Protocol(DEFAULT_READ_VERSION, DEFAULT_WRITE_VERSION);
   }
 }

@@ -16,8 +16,11 @@
 package io.delta.kernel.internal.actions;
 
 import static io.delta.kernel.internal.tablefeatures.TableFeatures.TABLE_FEATURES_MIN_WRITER_VERSION;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.VectorUtils.stringArrayValue;
+import static java.lang.String.format;
 import static java.util.Collections.emptySet;
+import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.data.*;
 import io.delta.kernel.internal.data.GenericRow;
@@ -31,12 +34,12 @@ import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import java.util.*;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 public class Protocol {
 
   /////////////////////////////////////////////////////////////////////////////////////////////////
-  /// Public static variables and methods
-  //   ///
+  /// Public static variables and methods                                                       ///
   /////////////////////////////////////////////////////////////////////////////////////////////////
 
   public static Protocol fromColumnVector(ColumnVector vector, int rowId) {
@@ -48,10 +51,10 @@ public class Protocol {
         vector.getChild(0).getInt(rowId),
         vector.getChild(1).getInt(rowId),
         vector.getChild(2).isNullAt(rowId)
-            ? null
+            ? emptySet()
             : new HashSet<>(VectorUtils.toJavaList(vector.getChild(2).getArray(rowId))),
         vector.getChild(3).isNullAt(rowId)
-            ? null
+            ? emptySet()
             : new HashSet<>(VectorUtils.toJavaList(vector.getChild(3).getArray(rowId))));
   }
 
@@ -72,7 +75,7 @@ public class Protocol {
   private final boolean supportsWriterFeatures;
 
   public Protocol(int minReaderVersion, int minWriterVersion) {
-    this(minReaderVersion, minWriterVersion, null, null);
+    this(minReaderVersion, minWriterVersion, emptySet(), emptySet());
   }
 
   public Protocol(
@@ -82,8 +85,8 @@ public class Protocol {
       Set<String> writerFeatures) {
     this.minReaderVersion = minReaderVersion;
     this.minWriterVersion = minWriterVersion;
-    this.readerFeatures = readerFeatures;
-    this.writerFeatures = writerFeatures;
+    this.readerFeatures = requireNonNull(readerFeatures, "readerFeatures cannot be null");
+    this.writerFeatures = requireNonNull(writerFeatures, "writerFeatures cannot be null");
     this.supportsReaderFeatures = TableFeatures.supportsReaderFeatures(minReaderVersion);
     this.supportsWriterFeatures = TableFeatures.supportsWriterFeatures(minWriterVersion);
   }
@@ -134,6 +137,7 @@ public class Protocol {
 
   /**
    * Encode as a {@link Row} object with the schema {@link Protocol#FULL_SCHEMA}.
+   * Write any empty `readerFeatures` and `writerFeatures` as null.
    *
    * @return {@link Row} object with the schema {@link Protocol#FULL_SCHEMA}
    */
@@ -141,8 +145,12 @@ public class Protocol {
     Map<Integer, Object> protocolMap = new HashMap<>();
     protocolMap.put(0, minReaderVersion);
     protocolMap.put(1, minWriterVersion);
-    protocolMap.put(2, stringArrayValue(new ArrayList<>(readerFeatures)));
-    protocolMap.put(3, stringArrayValue(new ArrayList<>(writerFeatures)));
+    if (!readerFeatures.isEmpty()) {
+      protocolMap.put(2, stringArrayValue(new ArrayList<>(readerFeatures)));
+    }
+    if (!writerFeatures.isEmpty()) {
+      protocolMap.put(3, stringArrayValue(new ArrayList<>(writerFeatures)));
+    }
 
     return new GenericRow(Protocol.FULL_SCHEMA, protocolMap);
   }
@@ -151,11 +159,19 @@ public class Protocol {
   /// Public methods related to table features interaction with the protocol                    ///
   /////////////////////////////////////////////////////////////////////////////////////////////////
   /**
-   * Get the set of features that are implicitly enabled by the protocol. Features are implicitly
-   * enabled if they reader and/or writer version is less than the versions that support the
-   * explicit features specifying in `readerFeatures` and `writerFeatures` sets.
+   * Get the set of features that are implicitly supported by the protocol. Features are implicitly
+   * supported if the reader and/or writer version is less than the versions that supports the
+   * explicit features specified in `readerFeatures` and `writerFeatures` sets. Examples:
+   * <p>
+   *     <ul>
+   * <li>(minRV = 1, minWV = 7, readerFeatures=[], writerFeatures=[domainMetadata]) => []
+   * <li>(minRV = 1, minWV = 3) => [appendOnly, invariants, checkConstraints]
+   * <li>(minRV = 3, minWV = 7, readerFeatures=[v2Checkpoint], writerFeatures=[v2Checkpoint]) => []
+   * <li>(minRV = 2, minWV = 6) => [appendOnly, invariants, checkConstraints,
+   *  changeDataFeed, generatedColumns, columnMapping, identityColumns]
+   *  </ul>
    */
-  public Set<TableFeature> getImplicitlyEnabledFeatures() {
+  public Set<TableFeature> getImplicitlySupportedFeatures() {
     if (supportsReaderFeatures && supportsWriterFeatures) {
       return emptySet();
     } else {
@@ -167,32 +183,37 @@ public class Protocol {
   }
 
   /**
-   * Get the set of features that are explicitly enabled by the protocol. Features are explicitly
-   * enabled if they are present in the `readerFeatures` and/or `writerFeatures` sets.
+   * Get the set of features that are explicitly supported by the protocol. Features are explicitly
+   * supported if they are present in the `readerFeatures` and/or `writerFeatures` sets. Examples:
+   * <p>
+   *    <ul>
+   * <li>(minRV = 1, minWV = 7, writerFeatures=[appendOnly, invariants, checkConstraints]) =>
+   *    [appendOnly, invariants, checkConstraints]
+   * </li>(minRV = 3, minWV = 7, readerFeatures = [columnMapping], writerFeatures=[columnMapping, invariants]) =>
+   *    [columnMapping, invariants]
+   * </li>(minRV = 1, minWV = 2, readerFeatures = [], writerFeatures=[]) => []
+   * </ul>
    */
-  public Set<TableFeature> getExplicitlyEnabledFeatures() {
-    // TODO: Should we throw an exception if we encounter a feature that is not known to Kernel yet?
-    return TableFeatures.TABLE_FEATURES.stream()
-        .filter(
-            f ->
-                readerFeatures.contains(f.featureName())
-                    || writerFeatures.contains(f.featureName()))
+  public Set<TableFeature> getExplicitlySupportedFeatures() {
+    return Stream.of(readerFeatures, writerFeatures)
+        .flatMap(Set::stream)
+        .map(TableFeatures::getTableFeature) // if a feature is not known, will throw an exception
         .collect(Collectors.toSet());
   }
 
   /**
-   * Get the set of features that are both implicitly and explicitly enabled by the protocol.
+   * Get the set of features that are both implicitly and explicitly supported by the protocol.
    * Usually, the protocol has either implicit or explicit features, but not both. This API provides
    * a way to get all enabled features.
    */
-  public Set<TableFeature> getImplicitlyAndExplicitlyEnabledFeatures() {
-    Set<TableFeature> enabledFeatures = new HashSet<>();
-    enabledFeatures.addAll(getImplicitlyEnabledFeatures());
-    enabledFeatures.addAll(getExplicitlyEnabledFeatures());
-    return enabledFeatures;
+  public Set<TableFeature> getImplicitlyAndExplicitlySupportedFeatures() {
+    Set<TableFeature> supportedFeatures = new HashSet<>();
+    supportedFeatures.addAll(getImplicitlySupportedFeatures());
+    supportedFeatures.addAll(getExplicitlySupportedFeatures());
+    return supportedFeatures;
   }
 
-  /** Create a new {@link Protocol} object with the given {@link TableFeature} enabled. */
+  /** Create a new {@link Protocol} object with the given {@link TableFeature} supported. */
   public Protocol withFeatures(Iterable<TableFeature> newFeatures) {
     Protocol result = this;
     for (TableFeature feature : newFeatures) {
@@ -211,6 +232,17 @@ public class Protocol {
    * the feature will not be explicitly added to the protocol's `readerFeatures` or
    * `writerFeatures`. This is to avoid unnecessary protocol upgrade for feature that it already
    * supports.
+   * <p>
+   * Examples:
+   * <ul>
+   *     <li>current protocol (2, 5) and new feature to add 'invariants` -> (2, 5) as this protocol
+   *     already supports 'invariants' implicitly.
+   *     <li>current protocol is (1, 7, writerFeature='rowTracking,domainMetadata' and the new
+   *     feature to add is 'appendOnly' -> (1, 7, writerFeature='rowTracking,domainMetadata,appendOnly')
+   *     <li>current protocol is (1, 7, writerFeature='rowTracking,domainMetadata' and the new feature
+   *     to add is 'columnMapping' -> throws UnsupportedOperationException as 'columnMapping' requires
+   *     higher reader version (2) than the current protocol's reader version (1).
+   * </ul>
    */
   public Protocol withFeature(TableFeature feature) {
     // Add required dependencies of the feature
@@ -246,7 +278,6 @@ public class Protocol {
       newWriterFeatures.add(feature.featureName());
     }
 
-    // TODO: check if taking minReaderVersion and minWriterVersion is correct.
     return new Protocol(
         protocolWithDependencies.minReaderVersion,
         protocolWithDependencies.minWriterVersion,
@@ -266,8 +297,8 @@ public class Protocol {
    * </ul>
    */
   public boolean canUpgradeTo(Protocol to) {
-    return to.getImplicitlyAndExplicitlyEnabledFeatures()
-        .containsAll(this.getImplicitlyAndExplicitlyEnabledFeatures());
+    return to.getImplicitlyAndExplicitlySupportedFeatures()
+        .containsAll(this.getImplicitlyAndExplicitlySupportedFeatures());
   }
 
   /**
@@ -293,21 +324,21 @@ public class Protocol {
     }
 
     Tuple2<Integer, Integer> versions =
-        TableFeatures.minimumRequiredVersions(getExplicitlyEnabledFeatures());
+        TableFeatures.minimumRequiredVersions(getExplicitlySupportedFeatures());
     int minReaderVersion = versions._1;
     int minWriterVersion = versions._2;
     Protocol newProtocol = new Protocol(minReaderVersion, minWriterVersion);
 
-    if (this.getImplicitlyAndExplicitlyEnabledFeatures()
-        .equals(newProtocol.getImplicitlyAndExplicitlyEnabledFeatures())) {
+    if (this.getImplicitlyAndExplicitlySupportedFeatures()
+        .equals(newProtocol.getImplicitlyAndExplicitlySupportedFeatures())) {
       return newProtocol;
     } else {
-      // means we have some that is added after table feature support.
+      // means we have some feature that is added after table feature support.
       // Whatever the feature (reader or readerWriter), it is always going to
-      // be have minWriterVersion as 7. Overall required minReaderVersion
-      // should be based on the supported feature requirements.
+      // have minWriterVersion as 7. Required minReaderVersion
+      // should be based on the supported features.
       return new Protocol(minReaderVersion, TABLE_FEATURES_MIN_WRITER_VERSION)
-          .withFeatures(getExplicitlyEnabledFeatures());
+          .withFeatures(getExplicitlySupportedFeatures());
     }
   }
 
@@ -315,7 +346,17 @@ public class Protocol {
    * Protocol denormalization is the process of converting a legacy protocol to the equivalent table
    * features protocol. This is the inverse of protocol normalization. It can be used to allow
    * operations on legacy protocols that yield results which cannot be represented anymore by a
-   * legacy protocol.
+   * legacy protocol. For example
+   *
+   * <ul>
+   *   <li>(1, 3) ->
+   *       (1, 7, readerFeatures=[], writerFeatures=[appendOnly, invariants, checkConstraints])
+   *   <li>(2, 5) ->
+   *       (2, 7,
+   *          readerFeatures=[],
+   *          writerFeatures=[appendOnly, invariants, checkConstraints,
+   *              changeDataFeed, generatedColumns, columnMapping])
+   * </ul>
    */
   public Protocol denormalized() {
     // Denormalization can only be applied to legacy protocols.
@@ -324,11 +365,11 @@ public class Protocol {
     }
 
     Tuple2<Integer, Integer> versions =
-        TableFeatures.minimumRequiredVersions(getImplicitlyEnabledFeatures());
+        TableFeatures.minimumRequiredVersions(getImplicitlySupportedFeatures());
     int minReaderVersion = versions._1;
 
     return new Protocol(minReaderVersion, TABLE_FEATURES_MIN_WRITER_VERSION)
-        .withFeatures(getImplicitlyEnabledFeatures());
+        .withFeatures(getImplicitlySupportedFeatures());
   }
 
   /**
@@ -363,7 +404,7 @@ public class Protocol {
 
     Set<TableFeature> mergedImplicitFeatures =
         protocols.stream()
-            .flatMap(p -> p.getImplicitlyEnabledFeatures().stream())
+            .flatMap(p -> p.getImplicitlySupportedFeatures().stream())
             .collect(Collectors.toSet());
 
     Protocol mergedProtocol =
@@ -397,5 +438,57 @@ public class Protocol {
         newProtocolVersions._2,
         this.readerFeatures == null ? null : new HashSet<>(this.readerFeatures),
         newWriterFeatures);
+  }
+
+  /** Validate the protocol contents represents a valid state */
+  protected void validate() {
+    checkArgument(minReaderVersion >= 1, "minReaderVersion should be at least 1");
+    checkArgument(minWriterVersion >= 1, "minWriterVersion should be at least 1");
+
+    // expect the reader and writer features to be empty if the protocol version does not support
+    checkArgument(
+            readerFeatures.isEmpty() || supportsReaderFeatures,
+            "Reader features are not supported for the reader version: " + minReaderVersion);
+    checkArgument(writerFeatures.isEmpty() || supportsWriterFeatures,
+            "Writer features are not supported for the writer version: " + minWriterVersion);
+
+    // If reader versions are supported, expect the writer versions to be supported as well
+    // We don't have any reader only features.
+    if (supportsReaderFeatures) {
+      checkArgument(supportsWriterFeatures,
+              "writer version doesn't support writer features: " + minWriterVersion);
+    }
+
+    if (supportsWriterFeatures) {
+      // ensure that the reader version supports all the readerWriter features
+      Set<TableFeature> supportedFeatures = getExplicitlySupportedFeatures();
+      supportedFeatures.stream()
+                      .filter(TableFeature::isReaderWriterFeature)
+                      .forEach(feature -> {
+                                checkArgument(feature.minReaderVersion() <= minReaderVersion,
+                                        format("Reader version %d does not support readerWriter feature %s",
+                                                minReaderVersion, feature.featureName()));
+
+                                if (supportsReaderFeatures) {
+                                  // if the protocol supports reader features, then it should be part of the readerFeatures
+                                    checkArgument(readerFeatures.contains(feature.featureName()),
+                                            format("ReaderWriter feature %s is not present in readerFeatures", feature.featureName()));
+                                }
+                              });
+    } else {
+      // ensure we don't get (minReaderVersion, minWriterVersion) that satisfy the readerWriter feature
+      // version requirements. E.g. (1, 5) is invalid as writer version indicates columnMapping supported
+      // but reader version does not support it (requires 2).
+      TableFeatures.TABLE_FEATURES.stream()
+              .filter(TableFeature::isReaderWriterFeature)
+              .forEach(f -> {
+                if (f.minWriterVersion() <= minWriterVersion) {
+                  checkArgument(
+                          f.minReaderVersion() <= minReaderVersion,
+                          format("Reader version %d does not support readerWriter feature %s", minReaderVersion, f.featureName())
+                  );
+                }
+              });
+    }
   }
 }
