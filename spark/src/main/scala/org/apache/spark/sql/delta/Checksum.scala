@@ -94,6 +94,7 @@ trait RecordChecksum extends DeltaLogging {
   private def getChecksum(snapshot: Snapshot): VersionChecksum = snapshot.computeChecksum
 
   protected def writeChecksumFile(txnId: String, snapshot: Snapshot): Unit = {
+    // scalastyle:off println
     if (!spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED)) {
       return
     }

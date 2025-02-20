@@ -176,7 +176,7 @@ class ChecksumSimpleComparisonSuite extends DeltaTableWriteSuiteBase with TestUt
   }
 
   private def buildCrcPath(basePath: String, version: Long): java.nio.file.Path = {
-    new File(FileNames.checksumFile(new Path(basePath), version).toString).toPath
+    new File(FileNames.checksumFile(new Path(f"$basePath/_delta_log"), version).toString).toPath
   }
 
   // TODO: Add equals/hashCode to metadata, protocol then CRCInfo.
