@@ -197,9 +197,8 @@ class AutoCompactSuite extends
     df.write.format("delta").mode("append").save(dir)
     val deltaLog = DeltaLog.forTable(spark, dir)
     val newSnapshot = deltaLog.update()
-    assert(newSnapshot.version === 0) // 0 is the first commit, no compaction
-    // due to the count of small files
-    assert(deltaLog.update().numOfFiles > 1)
+    assert(newSnapshot.version === 1)
+    assert(deltaLog.update().numOfFiles === 1)
 
     val isLogged = checkAutoOptimizeLogging {
       df.write.format("delta").mode("append").save(dir)
