@@ -63,7 +63,6 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
         new CRCInfo(version, metadata, protocol, tableSizeBytes, numFiles, txn))
 
       verifyChecksumFile(jsonHandler, version)
-      assert(jsonHandler.capturedCrcRow.isDefined)
       verifyChecksumContent(jsonHandler.capturedCrcRow.get, tableSizeBytes, numFiles, txn)
       verifyMetadataAndProtocol(jsonHandler.capturedCrcRow.get, metadata, protocol)
     }
@@ -84,10 +83,14 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
       expectedTableSizeBytes: Long,
       expectedNumFiles: Long,
       expectedTxnId: Optional[String]): Unit = {
-    assert(actualCheckSumRow.getLong(TABLE_SIZE_BYTES_IDX) == expectedTableSizeBytes)
-    assert(actualCheckSumRow.getLong(NUM_FILES_IDX) == expectedNumFiles)
-    assert(actualCheckSumRow.getLong(NUM_METADATA_IDX) == 1L)
-    assert(actualCheckSumRow.getLong(NUM_PROTOCOL_IDX) == 1L)
+    assert(!actualCheckSumRow.isNullAt(TABLE_SIZE_BYTES_IDX) && actualCheckSumRow.getLong(
+      TABLE_SIZE_BYTES_IDX) == expectedTableSizeBytes)
+    assert(!actualCheckSumRow.isNullAt(
+      NUM_FILES_IDX) && actualCheckSumRow.getLong(NUM_FILES_IDX) == expectedNumFiles)
+    assert(!actualCheckSumRow.isNullAt(
+      NUM_METADATA_IDX) && actualCheckSumRow.getLong(NUM_METADATA_IDX) == 1L)
+    assert(!actualCheckSumRow.isNullAt(
+      NUM_PROTOCOL_IDX) && actualCheckSumRow.getLong(NUM_PROTOCOL_IDX) == 1L)
 
     if (expectedTxnId.isPresent) {
       assert(actualCheckSumRow.getString(TXN_ID_IDX) == expectedTxnId.get())

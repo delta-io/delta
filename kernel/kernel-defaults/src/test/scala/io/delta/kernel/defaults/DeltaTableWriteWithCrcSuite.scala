@@ -17,17 +17,15 @@ package io.delta.kernel.defaults
 import java.io.File
 import java.nio.file.Files
 import java.util.{Locale, Optional}
-
 import scala.collection.immutable.Seq
 import scala.jdk.CollectionConverters.{asScalaBufferConverter, asScalaSetConverter}
 import scala.language.implicitConversions
-
 import io.delta.kernel.{Transaction, TransactionCommitResult}
 import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.utils.TestRow
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
-import io.delta.kernel.internal.TransactionImpl
+import io.delta.kernel.internal.{SnapshotImpl, TransactionImpl}
 import io.delta.kernel.internal.actions.Metadata
 import io.delta.kernel.internal.checksum.CRCInfo
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
@@ -36,24 +34,16 @@ import io.delta.kernel.utils.{CloseableIterable, FileStatus}
 
 class DeltaTableWriteWithCrcSuite extends DeltaTableWritesSuite {
 
-  implicit class TransactionOps(txn: Transaction) {
-    def commitAndGenerateCrc(
-        engine: Engine,
-        dataActions: CloseableIterable[Row]): TransactionCommitResult = {
-      val result = txn.commit(engine, dataActions)
-      result.getPostCommitHooks
-        .stream()
-        .filter(hook => hook.getType == PostCommitHookType.CHECKSUM_SIMPLE)
-        .forEach(hook => hook.threadSafeInvoke(engine))
-      result
-    }
-  }
-
   override def commitTransaction(
       txn: Transaction,
       engine: Engine,
       dataActions: CloseableIterable[Row]): TransactionCommitResult = {
-    txn.commitAndGenerateCrc(engine, dataActions)
+    val result = txn.commit(engine, dataActions)
+    result.getPostCommitHooks
+      .stream()
+      .filter(hook => hook.getType == PostCommitHookType.CHECKSUM_SIMPLE)
+      .forEach(hook => hook.threadSafeInvoke(engine))
+    result
   }
 
   override def verifyWrittenContent(
