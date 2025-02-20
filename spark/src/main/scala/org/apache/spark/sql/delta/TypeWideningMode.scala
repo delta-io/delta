@@ -16,9 +16,9 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.DecimalPrecisionTypeCoercionShims
 import org.apache.spark.sql.util.ScalaExtensions._
 
-import org.apache.spark.sql.catalyst.analysis.DecimalPrecisionTypeCoercion
 import org.apache.spark.sql.types.{AtomicType, DecimalType}
 
 /**
@@ -81,7 +81,7 @@ object TypeWideningMode {
         case (l, r) if TypeWidening.isTypeChangeSupported(l, r) => Some(r)
         case (l, r) if TypeWidening.isTypeChangeSupported(r, l) => Some(l)
         case (l: DecimalType, r: DecimalType) =>
-          val wider = DecimalPrecisionTypeCoercion.widerDecimalType(l, r)
+          val wider = DecimalPrecisionTypeCoercionShims.widerDecimalType(l, r)
           Option.when(
             TypeWidening.isTypeChangeSupported(l, wider) &&
             TypeWidening.isTypeChangeSupported(r, wider))(wider)
@@ -106,7 +106,7 @@ object TypeWideningMode {
         case (l, r) if typeChangeSupported(l, r) => Some(r)
         case (l, r) if typeChangeSupported(r, l) => Some(l)
         case (l: DecimalType, r: DecimalType) =>
-          val wider = DecimalPrecisionTypeCoercion.widerDecimalType(l, r)
+          val wider = DecimalPrecisionTypeCoercionShims.widerDecimalType(l, r)
           Option.when(typeChangeSupported(l, wider) && typeChangeSupported(r, wider))(wider)
         case _ => None
       }
