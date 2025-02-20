@@ -173,8 +173,8 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
     new Protocol(
       /* minReaderVersion= */ 1,
       /* minWriterVersion= */ 2,
-      Collections.emptyList(),
-      Collections.emptyList())
+      Collections.emptySet(),
+      Collections.emptySet())
   }
 }
 
