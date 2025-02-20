@@ -33,11 +33,11 @@ import io.delta.kernel.internal.TableImpl
 import io.delta.kernel.internal.actions.{AddFile, SingleAction}
 import io.delta.kernel.internal.checksum.{ChecksumReader, CRCInfo}
 import io.delta.kernel.internal.fs.Path
+import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.StructType
-import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
-import  io.delta.kernel.internal.util.FileNames;
+import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable};
 
 /**
  * Test suite to verify checksum file correctness by comparing
