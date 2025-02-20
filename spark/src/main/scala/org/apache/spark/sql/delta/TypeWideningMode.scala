@@ -33,6 +33,10 @@ import org.apache.spark.sql.types.{AtomicType, DecimalType}
  *  - TypeEvolutionToCommonWiderType: Allows widening to a common (possibly different) wider type
  *      using only type changes that are eligible to be applied automatically during schema
  *      evolution.
+ *
+ * TypeEvolution modes can be restricted to only type changes supported by Iceberg by passing
+ * `uniformIcebergCompatibleOnly = truet`, to ensure that we don't automatically apply a type change
+ * that would break Iceberg compatibility.
  */
 sealed trait TypeWideningMode {
   def getWidenedType(fromType: AtomicType, toType: AtomicType): Option[AtomicType]
