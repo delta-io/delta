@@ -169,12 +169,12 @@ public class Protocol {
    * <p>
    *
    * <ul>
-   *   <li>(minRV = 1, minWV = 7, readerFeatures=[], writerFeatures=[domainMetadata]) => []
-   *   <li>(minRV = 1, minWV = 3) => [appendOnly, invariants, checkConstraints]
-   *   <li>(minRV = 3, minWV = 7, readerFeatures=[v2Checkpoint], writerFeatures=[v2Checkpoint]) =>
-   *       []
-   *   <li>(minRV = 2, minWV = 6) => [appendOnly, invariants, checkConstraints, changeDataFeed,
-   *       generatedColumns, columnMapping, identityColumns]
+   *   <li>(minRV = 1, minWV = 7, readerFeatures=[], writerFeatures=[domainMetadata]) results in []
+   *   <li>(minRV = 1, minWV = 3) -> [appendOnly, invariants, checkConstraints]
+   *   <li>(minRV = 3, minWV = 7, readerFeatures=[v2Checkpoint], writerFeatures=[v2Checkpoint])
+   *       results in []
+   *   <li>(minRV = 2, minWV = 6) results in [appendOnly, invariants, checkConstraints,
+   *       changeDataFeed, generatedColumns, columnMapping, identityColumns]
    * </ul>
    */
   public Set<TableFeature> getImplicitlySupportedFeatures() {
@@ -195,11 +195,11 @@ public class Protocol {
    * <p>
    *
    * <ul>
-   *   <li>(minRV = 1, minWV = 7, writerFeatures=[appendOnly, invariants, checkConstraints]) =>
-   *       [appendOnly, invariants, checkConstraints]
+   *   <li>(minRV = 1, minWV = 7, writerFeatures=[appendOnly, invariants, checkConstraints]) results
+   *       in [appendOnly, invariants, checkConstraints]
    *   <li>(minRV = 3, minWV = 7, readerFeatures = [columnMapping], writerFeatures=[columnMapping,
-   *       invariants]) => [columnMapping, invariants] (minRV = 1, minWV = 2, readerFeatures = [],
-   *       writerFeatures=[]) => []
+   *       invariants]) results in [columnMapping, invariants]
+   *   <li>(minRV = 1, minWV = 2, readerFeatures = [], writerFeatures=[]) results in []
    * </ul>
    */
   public Set<TableFeature> getExplicitlySupportedFeatures() {
@@ -301,8 +301,8 @@ public class Protocol {
    * <p>Examples regarding feature status:
    *
    * <ul>
-   *   <li>from `[appendOnly]` to `[appendOnly]` => allowed.
-   *   <li>from `[appendOnly, changeDataFeed]` to `[appendOnly]` => not allowed.
+   *   <li>`[appendOnly]` to `[appendOnly]` results in allowed.
+   *   <li>`[appendOnly, changeDataFeed]` to `[appendOnly]` results in not allowed.
    * </ul>
    */
   public boolean canUpgradeTo(Protocol to) {
