@@ -152,12 +152,13 @@ class AutoCompactSuite extends
           DeltaSQLConf.DELTA_AUTO_COMPACT_ENABLED.key -> s"true",
           DeltaSQLConf.DELTA_AUTO_COMPACT_MIN_NUM_FILES.key -> "30") {
         val path = dir.getCanonicalPath
-        // Append 1 file to each partition: record runOnModifiedPartitions event, as is first write
+        // Append 1 file to each partition: record skipInsufficientFilesInModifiedPartitions event, 
+        // as not enough small files exist
         var usageLogs = captureOptimizeLogs(AutoCompact.OP_TYPE) {
           createFilesToPartitions(numFilePartitions = 3, numFilesPerPartition = 1, path)
         }
         var log = JsonUtils.mapper.readValue[Map[String, String]](usageLogs.head.blob)
-        assert(log("status") == "runOnModifiedPartitions" && log("partitions") == "3")
+        assert(log("status") == "skipInsufficientFilesInModifiedPartitions")
         // Append 10 more file to each partition: record skipInsufficientFilesInModifiedPartitions
         // event.
         usageLogs = captureOptimizeLogs(AutoCompact.OP_TYPE) {
@@ -196,8 +197,9 @@ class AutoCompactSuite extends
     df.write.format("delta").mode("append").save(dir)
     val deltaLog = DeltaLog.forTable(spark, dir)
     val newSnapshot = deltaLog.update()
-    assert(newSnapshot.version === 1) // 0 is the first commit, 1 is optimize
-    assert(deltaLog.update().numOfFiles === 1)
+    assert(newSnapshot.version === 0) // 0 is the first commit, no compaction
+    // due to the count of small files
+    assert(deltaLog.update().numOfFiles > 1)
 
     val isLogged = checkAutoOptimizeLogging {
       df.write.format("delta").mode("append").save(dir)
@@ -286,7 +288,7 @@ class AutoCompactSuite extends
     "enough small files") { dir =>
     withSQLConf(
       DeltaSQLConf.DELTA_AUTO_COMPACT_MIN_NUM_FILES.key -> "6",
-      DeltaSQLConf.DELTA_AUTO_COMPACT_MAX_FILE_SIZE.key -> "3800b"
+      DeltaSQLConf.DELTA_AUTO_COMPACT_MAX_FILE_SIZE.key -> "3800"
     ) {
       AutoCompactPartitionStats.instance(spark).resetTestOnly()
 
