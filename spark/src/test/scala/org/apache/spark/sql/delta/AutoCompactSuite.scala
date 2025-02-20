@@ -287,7 +287,7 @@ class AutoCompactSuite extends
     "enough small files") { dir =>
     withSQLConf(
       DeltaSQLConf.DELTA_AUTO_COMPACT_MIN_NUM_FILES.key -> "6",
-      DeltaSQLConf.DELTA_AUTO_COMPACT_MAX_FILE_SIZE.key -> "2000"
+      DeltaSQLConf.DELTA_AUTO_COMPACT_MAX_FILE_SIZE.key -> "20000"
     ) {
       AutoCompactPartitionStats.instance(spark).resetTestOnly()
 
@@ -299,7 +299,7 @@ class AutoCompactSuite extends
       assert(deltaLog.update().numOfFiles === 4, "Should have 4 initial small files")
 
       // Second write - 4 large files
-      spark.range(1000).repartition(4).write.format("delta").mode("append").save(dir)
+      spark.range(10000).repartition(4).write.format("delta").mode("append").save(dir)
 
       val writeEvent = deltaLog.history.getHistory(Some(1)).head
       assert(writeEvent.operation === "WRITE",
