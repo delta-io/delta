@@ -101,8 +101,8 @@ class TableFeaturesSuite extends AnyFunSuite {
     // Test feature, metadata, expected result
     ("appendOnly", testMetadata(tblProps = Map("delta.appendOnly" -> "true")), true),
     ("appendOnly", testMetadata(tblProps = Map("delta.appendOnly" -> "false")), false),
-    ("invariants", testMetadata(includeInvaraint = true), true),
-    ("invariants", testMetadata(includeInvaraint = false), false),
+    ("invariants", testMetadata(includeInvariant = true), true),
+    ("invariants", testMetadata(includeInvariant = false), false),
     ("checkConstraints", testMetadata(tblProps = Map("delta.constraints.a" -> "a = b")), true),
     ("checkConstraints", testMetadata(), false),
     ("generatedColumns", testMetadata(includeGeneratedColumn = true), true),
@@ -218,7 +218,7 @@ class TableFeaturesSuite extends AnyFunSuite {
 
   Seq(
     // Test format: feature, metadata, expected value
-    ("invariants", testMetadata(includeInvaraint = true), false),
+    ("invariants", testMetadata(includeInvariant = true), false),
     ("checkConstraints", testMetadata(tblProps = Map("delta.constraints.a" -> "a = b")), false),
     ("generatedColumns", testMetadata(includeGeneratedColumn = true), false),
     ("identityColumns", testMetadata(includeIdentityColumn = true), false)).foreach({
@@ -249,13 +249,13 @@ class TableFeaturesSuite extends AnyFunSuite {
   test("validateWriteSupported: protocol 2 with invariants") {
     checkUnsupported(
       createTestProtocol(minWriterVersion = 2),
-      metadata = testMetadata(includeInvaraint = true))
+      metadata = testMetadata(includeInvariant = true))
   }
 
   test("validateWriteSupported: protocol 2, with appendOnly and invariants") {
     checkUnsupported(
       createTestProtocol(minWriterVersion = 2),
-      metadata = testMetadata(includeInvaraint = true))
+      metadata = testMetadata(includeInvariant = true))
   }
 
   Seq(3, 4, 5, 6).foreach { minWriterVersion =>
@@ -312,7 +312,7 @@ class TableFeaturesSuite extends AnyFunSuite {
   test("validateWriteSupported: protocol 7 with invariants, schema contains invariants") {
     checkUnsupported(
       createTestProtocol(minWriterVersion = 7, "invariants"),
-      metadata = testMetadata(includeInvaraint = true))
+      metadata = testMetadata(includeInvariant = true))
   }
 
   def checkSupported(
@@ -340,14 +340,14 @@ class TableFeaturesSuite extends AnyFunSuite {
   }
 
   def testMetadata(
-      includeInvaraint: Boolean = false,
+      includeInvariant: Boolean = false,
       includeTimestampNtzTypeCol: Boolean = false,
       includeVariantTypeCol: Boolean = false,
       includeGeneratedColumn: Boolean = false,
       includeIdentityColumn: Boolean = false,
       tblProps: Map[String, String] = Map.empty): Metadata = {
     val testSchema = createTestSchema(
-      includeInvaraint,
+      includeInvariant,
       includeTimestampNtzTypeCol,
       includeVariantTypeCol,
       includeGeneratedColumn,
