@@ -20,6 +20,7 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.VectorUtils.stringArrayValue;
 import static java.lang.String.format;
 import static java.util.Collections.emptySet;
+import static java.util.Collections.unmodifiableSet;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.data.*;
@@ -85,8 +86,10 @@ public class Protocol {
       Set<String> writerFeatures) {
     this.minReaderVersion = minReaderVersion;
     this.minWriterVersion = minWriterVersion;
-    this.readerFeatures = requireNonNull(readerFeatures, "readerFeatures cannot be null");
-    this.writerFeatures = requireNonNull(writerFeatures, "writerFeatures cannot be null");
+    this.readerFeatures =
+        unmodifiableSet(requireNonNull(readerFeatures, "readerFeatures cannot be null"));
+    this.writerFeatures =
+        unmodifiableSet(requireNonNull(writerFeatures, "writerFeatures cannot be null"));
     this.supportsReaderFeatures = TableFeatures.supportsReaderFeatures(minReaderVersion);
     this.supportsWriterFeatures = TableFeatures.supportsWriterFeatures(minWriterVersion);
   }
@@ -145,10 +148,10 @@ public class Protocol {
     Map<Integer, Object> protocolMap = new HashMap<>();
     protocolMap.put(0, minReaderVersion);
     protocolMap.put(1, minWriterVersion);
-    if (!readerFeatures.isEmpty()) {
+    if (supportsReaderFeatures) {
       protocolMap.put(2, stringArrayValue(new ArrayList<>(readerFeatures)));
     }
-    if (!writerFeatures.isEmpty()) {
+    if (supportsWriterFeatures) {
       protocolMap.put(3, stringArrayValue(new ArrayList<>(writerFeatures)));
     }
 
@@ -193,9 +196,10 @@ public class Protocol {
    *
    * <ul>
    *   <li>(minRV = 1, minWV = 7, writerFeatures=[appendOnly, invariants, checkConstraints]) =>
-   *       [appendOnly, invariants, checkConstraints] (minRV = 3, minWV = 7, readerFeatures =
-   *       [columnMapping], writerFeatures=[columnMapping, invariants]) => [columnMapping,
-   *       invariants] (minRV = 1, minWV = 2, readerFeatures = [], writerFeatures=[]) => []
+   *       [appendOnly, invariants, checkConstraints]
+   *   <li>(minRV = 3, minWV = 7, readerFeatures = [columnMapping], writerFeatures=[columnMapping,
+   *       invariants]) => [columnMapping, invariants] (minRV = 1, minWV = 2, readerFeatures = [],
+   *       writerFeatures=[]) => []
    * </ul>
    */
   public Set<TableFeature> getExplicitlySupportedFeatures() {
@@ -324,7 +328,7 @@ public class Protocol {
    */
   public Protocol normalized() {
     // Normalization can only be applied to table feature protocols.
-    if (!supportsWriterFeatures) {
+    if (!isFeatureProtocol()) {
       return this;
     }
 
@@ -362,7 +366,7 @@ public class Protocol {
    */
   public Protocol denormalized() {
     // Denormalization can only be applied to legacy protocols.
-    if (supportsWriterFeatures) {
+    if (!isLegacyProtocol()) {
       return this;
     }
 
@@ -488,10 +492,8 @@ public class Protocol {
               });
     } else {
       // ensure we don't get (minReaderVersion, minWriterVersion) that satisfy the readerWriter
-      // feature
-      // version requirements. E.g. (1, 5) is invalid as writer version indicates columnMapping
-      // supported
-      // but reader version does not support it (requires 2).
+      // feature version requirements. E.g. (1, 5) is invalid as writer version indicates
+      // columnMapping supported but reader version does not support it (requires 2).
       TableFeatures.TABLE_FEATURES.stream()
           .filter(TableFeature::isReaderWriterFeature)
           .forEach(
@@ -505,5 +507,17 @@ public class Protocol {
                 }
               });
     }
+  }
+
+  /** is the protocol a legacy protocol, i.e before (3, 7) */
+  private boolean isLegacyProtocol() {
+    return !supportsReaderFeatures && !supportsWriterFeatures;
+  }
+
+  /** is the protocol a table feature protocol, i.e after (3, 7) */
+  private boolean isFeatureProtocol() {
+    // checking for writer feature support is enough as we have
+    // writerOnly or readerWriter features, but no readerOnly features.
+    return supportsWriterFeatures;
   }
 }
