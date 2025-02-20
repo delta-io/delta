@@ -14,12 +14,7 @@
  * limitations under the License.
  */
 package io.delta.kernel.defaults
-import java.io.File
-import java.nio.file.Files
-import java.util.{Locale, Optional}
-
 import scala.collection.immutable.Seq
-import scala.jdk.CollectionConverters.{asScalaBufferConverter, asScalaSetConverter}
 import scala.language.implicitConversions
 
 import io.delta.kernel.{Transaction, TransactionCommitResult}
@@ -27,14 +22,15 @@ import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.utils.TestRow
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
-import io.delta.kernel.internal.{SnapshotImpl, TransactionImpl}
-import io.delta.kernel.internal.actions.Metadata
-import io.delta.kernel.internal.checksum.{ChecksumReader, CRCInfo}
+import io.delta.kernel.internal.checksum.ChecksumReader
 import io.delta.kernel.internal.fs.Path
-import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.types.StructType
-import io.delta.kernel.utils.{CloseableIterable, FileStatus}
+import io.delta.kernel.utils.CloseableIterable
 
+/**
+ * Test suite that run all tests in DeltaTableWritesSuite with CRC file written
+ * after each delta commit. This test suite will verify that the written CRC files are valid.
+ */
 class DeltaTableWriteWithCrcSuite extends DeltaTableWritesSuite {
 
   override def commitTransaction(
@@ -54,12 +50,12 @@ class DeltaTableWriteWithCrcSuite extends DeltaTableWritesSuite {
       expSchema: StructType,
       expData: Seq[TestRow]): Unit = {
     super.verifyWrittenContent(path, expSchema, expData)
-    checkChecksum(path, expSchema)
+    verifyChecksumValid(path)
   }
 
-  def checkChecksum(
-      tablePath: String,
-      expSchema: StructType): Unit = {
+  /** Ensure checksum is readable by CRC reader. */
+  def verifyChecksumValid(
+      tablePath: String): Unit = {
     val checksumVersion = latestSnapshot(tablePath, defaultEngine).getVersion
     val crcInfo = ChecksumReader.getCRCInfo(
       defaultEngine,

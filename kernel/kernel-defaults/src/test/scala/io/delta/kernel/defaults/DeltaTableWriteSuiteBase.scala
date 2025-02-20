@@ -463,6 +463,10 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
         .anyMatch(hook => hook.getType == PostCommitHookType.CHECKPOINT) === isReadyForCheckpoint)
   }
 
+  /**
+   * Commit transaction, all child suites should use this instead of txn.commit
+   * directly and could override it for specific test cases (e.g. commit and write CRC).
+   */
   protected def commitTransaction(
       txn: Transaction,
       engine: Engine,
