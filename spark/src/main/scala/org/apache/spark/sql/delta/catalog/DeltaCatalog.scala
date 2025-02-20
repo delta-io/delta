@@ -38,8 +38,8 @@ import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.spark.sql.delta.tablefeatures.DropFeature
-import org.apache.spark.sql.delta.util.PartitionUtils
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
+import org.apache.spark.sql.delta.util.PartitionUtils
 import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.fs.Path
 
