@@ -20,7 +20,6 @@ import static io.delta.kernel.internal.DeltaErrors.*;
 import static io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode.NONE;
 import static io.delta.kernel.types.TimestampNTZType.TIMESTAMP_NTZ;
 import static io.delta.kernel.types.VariantType.VARIANT;
-import static java.util.stream.Collectors.toList;
 import static java.util.stream.Collectors.toSet;
 
 import io.delta.kernel.exceptions.KernelException;
@@ -416,53 +415,28 @@ public class TableFeatures {
   }
 
   /**
-   * Upgrade the current protocol to satisfy all auto-update capable features required by the table
+   * Upgrade the current protocol to satisfy all auto-update capable features required by the given
    * metadata. If the current protocol already satisfies the metadata requirements, return empty.
+   *
+   * @return the upgraded protocol and the set of new features that were enabled in the upgrade.
    */
-  public Optional<Protocol> upgradeProtocolFromMetadataForExistingTable(
-      Metadata metadata, Protocol current) {
+  public static Optional<Tuple2<Protocol, Set<TableFeature>>> autoUpgradeProtocolBasedOnMetadata(
+      Metadata newMetadata, Protocol currentProtocol) {
     Protocol required =
         new Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
-            .withFeatures(extractAutomaticallyEnabledFeatures(metadata, current))
+            .withFeatures(extractAutomaticallyEnabledNewFeatures(newMetadata, currentProtocol))
             .normalized();
 
-    if (!required.canUpgradeTo(current)) {
-      // When the current protocol does not satisfy metadata requirement, some additional features
-      // must be supported by the protocol. We assert those features can actually perform the
-      // auto-update.
-      assertMetadataTableFeaturesAutomaticallySupported(
-          current.getImplicitlyAndExplicitlySupportedFeatures(),
-          required.getImplicitlyAndExplicitlySupportedFeatures());
-      return Optional.of(required.merge(current));
+    // See if all the required features are already supported in the current protocol.
+    if (!required.canUpgradeTo(currentProtocol)) {
+      // `required` has one or more features that are not supported in `currentProtocol`.
+      Set<TableFeature> newFeatures =
+          new HashSet<>(required.getImplicitlyAndExplicitlySupportedFeatures());
+      newFeatures.removeAll(currentProtocol.getImplicitlyAndExplicitlySupportedFeatures());
+      return Optional.of(new Tuple2<>(required.merge(currentProtocol), newFeatures));
     } else {
       return Optional.empty();
     }
-  }
-
-  /**
-   * Extracts all table features that are enabled by the given metadata and the optional protocol.
-   * This includes all already enabled features (if a protocol is provided), the features enabled
-   * directly by metadata, and all of their (transitive) dependencies.
-   */
-  public static Set<TableFeature> extractAutomaticallyEnabledFeatures(
-      Metadata metadata, Protocol protocol) {
-    Set<TableFeature> protocolEnabledFeatures =
-        protocol.getWriterFeatures().stream().map(TableFeatures::getTableFeature).collect(toSet());
-
-    Set<TableFeature> metadataEnabledFeatures =
-        TableFeatures.TABLE_FEATURES.stream()
-            .filter(f -> f instanceof FeatureAutoEnabledByMetadata)
-            .filter(
-                f ->
-                    ((FeatureAutoEnabledByMetadata) f)
-                        .metadataRequiresFeatureToBeEnabled(protocol, metadata))
-            .collect(toSet());
-
-    Set<TableFeature> combinedFeatures = new HashSet<>(protocolEnabledFeatures);
-    combinedFeatures.addAll(metadataEnabledFeatures);
-
-    // Qn for Paddy: Why do we need to add the dependencies here and also in `Protocol.withFeature`
-    return getDependencyClosure(combinedFeatures);
   }
 
   /** Utility method to check if the table with given protocol is readable by the Kernel. */
@@ -503,61 +477,67 @@ public class TableFeatures {
     }
   }
 
-  public static boolean isRowTrackingEnabled(Protocol protocol) {
+  public static boolean isRowTrackingSupported(Protocol protocol) {
     return protocol.getImplicitlyAndExplicitlySupportedFeatures().contains(ROW_TRACKING_W_FEATURE);
   }
 
-  public static boolean isDomainMetadataEnabled(Protocol protocol) {
-    return protocol.getImplicitlyAndExplicitlySupportedFeatures().contains(DOMAIN_METADATA_W_FEATURE);
+  public static boolean isDomainMetadataSupported(Protocol protocol) {
+    return protocol
+        .getImplicitlyAndExplicitlySupportedFeatures()
+        .contains(DOMAIN_METADATA_W_FEATURE);
   }
 
+  /////////////////////////////////////////////////////////////////////////////////
+  /// Private methods                                                           ///
+  /////////////////////////////////////////////////////////////////////////////////
   /**
-   * Ensure all features listed in `currentFeatures` are also listed in `requiredFeatures`, or, if
-   * one is not listed, it must be capable to auto-update a protocol.
-   *
-   * <p>Note: Caller must make sure `requiredFeatures` is obtained from a min protocol that
-   * satisfies a table metadata.
+   * Extracts all new table features (and their dependency features) that are supported by the given
+   * metadata. A feature is considered new if it is not already supported by the current protocol.
    */
-  private void assertMetadataTableFeaturesAutomaticallySupported(
-      Set<TableFeature> currentFeatures, Set<TableFeature> requiredFeatures) {
+  private static Set<TableFeature> extractAutomaticallyEnabledNewFeatures(
+      Metadata newMetadata, Protocol currentProtocol) {
+    Set<TableFeature> protocolSupportedFeatures =
+        currentProtocol.getImplicitlyAndExplicitlySupportedFeatures();
 
-    Set<TableFeature> newFeatures = new HashSet<>(requiredFeatures);
-    newFeatures.removeAll(currentFeatures);
+    Set<TableFeature> metadataEnabledFeatures =
+        TableFeatures.TABLE_FEATURES.stream()
+            .filter(f -> f instanceof FeatureAutoEnabledByMetadata)
+            .filter(
+                f ->
+                    ((FeatureAutoEnabledByMetadata) f)
+                        .metadataRequiresFeatureToBeEnabled(currentProtocol, newMetadata))
+            .collect(toSet());
 
-    List<TableFeature> nonAutoUpdateCapableFeatures =
-        newFeatures.stream()
-            .filter(f -> !(f instanceof FeatureAutoEnabledByMetadata))
-            .collect(toList());
+    Set<TableFeature> combinedFeatures = new HashSet<>(protocolSupportedFeatures);
+    combinedFeatures.addAll(metadataEnabledFeatures);
 
-    if (!nonAutoUpdateCapableFeatures.isEmpty()) {
-      // TODO: fix this error message to be more informative, may be a Kernel exception
-      throw new UnsupportedOperationException(
-          "The current protocol does not support auto upgrading following features"
-              + nonAutoUpdateCapableFeatures);
-    }
+    // Each feature may have dependencies that are not yet enabled in the protocol.
+    Set<TableFeature> newFeatures = getDependencyFeatures(combinedFeatures);
+    newFeatures.removeAll(protocolSupportedFeatures);
+
+    return newFeatures;
   }
 
   /**
    * Returns the smallest set of table features that contains `features` and that also contains all
    * dependencies of all features in the returned set.
    */
-  private static Set<TableFeature> getDependencyClosure(Set<TableFeature> features) {
+  private static Set<TableFeature> getDependencyFeatures(Set<TableFeature> features) {
     Set<TableFeature> requiredFeatures = new HashSet<>(features);
     features.forEach(feature -> requiredFeatures.addAll(feature.requiredFeatures()));
 
     if (features.equals(requiredFeatures)) {
       return features;
     } else {
-      return getDependencyClosure(requiredFeatures);
+      return getDependencyFeatures(requiredFeatures);
     }
   }
 
   private static boolean hasInvariants(StructType tableSchema) {
     return !SchemaUtils.filterRecursively(
             tableSchema,
-            /* recurseIntoMapOrArrayElements = */ false, // invariants are not allowed in maps or
-            // arrays
-            // arrays
+            // invariants are not allowed in maps or arrays
+            /* recurseIntoMapOrArrayElements = */ false,
             /* stopOnFirstMatch */ true,
             /* filter */ field -> field.getMetadata().contains("delta.invariants"))
         .isEmpty();

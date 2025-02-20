@@ -152,14 +152,15 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         metadata = metadata.withNewConfiguration(newProperties);
       }
 
-      Set<TableFeature> newWriterFeatures =
-          TableFeatures.extractAutomaticallyEnabledFeatures(metadata, protocol);
-      if (!newWriterFeatures.isEmpty()) {
+      Optional<Tuple2<Protocol, Set<TableFeature>>> newProtocolAndFeatures =
+          TableFeatures.autoUpgradeProtocolBasedOnMetadata(metadata, protocol);
+      if (newProtocolAndFeatures.isPresent()) {
         logger.info(
-            "Automatically enabling writer features: {}",
-            newWriterFeatures.stream().map(TableFeature::featureName).collect(toSet()));
-        shouldUpdateProtocol = true;
-        protocol = protocol.withFeatures(newWriterFeatures);
+            "Automatically enabling table features: {}",
+            newProtocolAndFeatures.get()._2.stream()
+                .map(TableFeature::featureName)
+                .collect(toSet()));
+
         TableFeatures.validateKernelCanWriteToTable(protocol, metadata, table.getPath(engine));
       }
     }

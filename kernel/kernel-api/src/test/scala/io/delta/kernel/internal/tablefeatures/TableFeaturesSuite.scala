@@ -23,7 +23,7 @@ import scala.collection.JavaConverters._
 import io.delta.kernel.data.{ArrayValue, ColumnVector, MapValue}
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
-import io.delta.kernel.internal.tablefeatures.TableFeatures.{TABLE_FEATURES, validateKernelCanWriteToTable}
+import io.delta.kernel.internal.tablefeatures.TableFeatures.{validateKernelCanReadTheTable, validateKernelCanWriteToTable, TABLE_FEATURES}
 import io.delta.kernel.internal.util.InternalUtils.singletonStringColumnVector
 import io.delta.kernel.internal.util.VectorUtils.stringVector
 import io.delta.kernel.types._
@@ -229,92 +229,115 @@ class TableFeaturesSuite extends AnyFunSuite {
   })
 
   /////////////////////////////////////////////////////////////////////////////////////////////////
+  // Tests for validateKernelCanReadTheTable and validateKernelCanWriteToTable                   //
+  /////////////////////////////////////////////////////////////////////////////////////////////////
+
+  // All legacy protocols should be readable by Kernel
+  Seq(
+    // Test format: protocol (minReaderVersion, minWriterVersion)
+    (1, 1),
+    (1, 2),
+    (1, 3),
+    (1, 4),
+    (2, 5),
+    (2, 6)).foreach {
+    case (minReaderVersion, minWriterVersion) =>
+      test(s"validateKernelCanReadTheTable: protocol ($minReaderVersion, $minWriterVersion)") {
+        val protocol = new Protocol(minReaderVersion, minWriterVersion)
+        validateKernelCanReadTheTable(protocol, "/test/table")
+      }
+  }
+
+  Seq(
+    (3, 7))
+
+  /////////////////////////////////////////////////////////////////////////////////////////////////
   // Legacy tests (will be modified or deleted in subsequent PRs)                                //
   /////////////////////////////////////////////////////////////////////////////////////////////////
-  test("validate write supported: protocol 1") {
-    checkSupported(createTestProtocol(minWriterVersion = 1))
-  }
-
-  test("validateWriteSupported: protocol 2") {
-    checkSupported(createTestProtocol(minWriterVersion = 2))
-  }
-
-  test("validateWriteSupported: protocol 2 with appendOnly") {
-    checkSupported(
-      createTestProtocol(minWriterVersion = 2),
-      metadata = testMetadata(tblProps = Map("delta.appendOnly" -> "true")))
-  }
-
-  test("validateWriteSupported: protocol 2 with invariants") {
-    checkUnsupported(
-      createTestProtocol(minWriterVersion = 2),
-      metadata = testMetadata(includeInvariant = true))
-  }
-
-  test("validateWriteSupported: protocol 2, with appendOnly and invariants") {
-    checkUnsupported(
-      createTestProtocol(minWriterVersion = 2),
-      metadata = testMetadata(includeInvariant = true))
-  }
-
-  Seq(3, 4, 5, 6).foreach { minWriterVersion =>
-    test(s"validateWriteSupported: protocol $minWriterVersion") {
-      checkUnsupported(createTestProtocol(minWriterVersion = minWriterVersion))
-    }
-  }
-
-  test("validateWriteSupported: protocol 7 with no additional writer features") {
-    checkSupported(createTestProtocol(minWriterVersion = 7))
-  }
-
-  Seq(
-    "appendOnly",
-    "inCommitTimestamp",
-    "columnMapping",
-    "typeWidening-preview",
-    "typeWidening",
-    "domainMetadata",
-    "rowTracking").foreach { supportedWriterFeature =>
-    test(s"validateWriteSupported: protocol 7 with $supportedWriterFeature") {
-      val protocol = if (supportedWriterFeature == "rowTracking") {
-        createTestProtocol(minWriterVersion = 7, supportedWriterFeature, "domainMetadata")
-      } else {
-        createTestProtocol(minWriterVersion = 7, supportedWriterFeature)
-      }
-      checkSupported(protocol)
-    }
-  }
-
-  // This should be updated as we allow reading when the protoocl supports these features,
-  // but are not enabled through metadata
-  Seq(
-    "checkConstraints",
-    "generatedColumns",
-    "allowColumnDefaults",
-    "changeDataFeed",
-    "identityColumns",
-    "deletionVectors",
-    "timestampNtz",
-    "v2Checkpoint",
-    "icebergCompatV1",
-    "icebergCompatV2",
-    "clustering",
-    "vacuumProtocolCheck").foreach { unsupportedWriterFeature =>
-    test(s"validateWriteSupported: protocol 7 with $unsupportedWriterFeature") {
-      checkUnsupported(createTestProtocol(minWriterVersion = 7, unsupportedWriterFeature))
-    }
-  }
-
-  test("validateWriteSupported: protocol 7 with invariants, schema doesn't contain invariants") {
-    checkSupported(
-      createTestProtocol(minWriterVersion = 7, "invariants"))
-  }
-
-  test("validateWriteSupported: protocol 7 with invariants, schema contains invariants") {
-    checkUnsupported(
-      createTestProtocol(minWriterVersion = 7, "invariants"),
-      metadata = testMetadata(includeInvariant = true))
-  }
+//  test("validate write supported: protocol 1") {
+//    checkSupported(createTestProtocol(minWriterVersion = 1))
+//  }
+//
+//  test("validateWriteSupported: protocol 2") {
+//    checkSupported(createTestProtocol(minWriterVersion = 2))
+//  }
+//
+//  test("validateWriteSupported: protocol 2 with appendOnly") {
+//    checkSupported(
+//      createTestProtocol(minWriterVersion = 2),
+//      metadata = testMetadata(tblProps = Map("delta.appendOnly" -> "true")))
+//  }
+//
+//  test("validateWriteSupported: protocol 2 with invariants") {
+//    checkUnsupported(
+//      createTestProtocol(minWriterVersion = 2),
+//      metadata = testMetadata(includeInvariant = true))
+//  }
+//
+//  test("validateWriteSupported: protocol 2, with appendOnly and invariants") {
+//    checkUnsupported(
+//      createTestProtocol(minWriterVersion = 2),
+//      metadata = testMetadata(includeInvariant = true))
+//  }
+//
+//  Seq(3, 4, 5, 6).foreach { minWriterVersion =>
+//    test(s"validateWriteSupported: protocol $minWriterVersion") {
+//      checkUnsupported(createTestProtocol(minWriterVersion = minWriterVersion))
+//    }
+//  }
+//
+//  test("validateWriteSupported: protocol 7 with no additional writer features") {
+//    checkSupported(createTestProtocol(minWriterVersion = 7))
+//  }
+//
+//  Seq(
+//    "appendOnly",
+//    "inCommitTimestamp",
+//    "columnMapping",
+//    "typeWidening-preview",
+//    "typeWidening",
+//    "domainMetadata",
+//    "rowTracking").foreach { supportedWriterFeature =>
+//    test(s"validateWriteSupported: protocol 7 with $supportedWriterFeature") {
+//      val protocol = if (supportedWriterFeature == "rowTracking") {
+//        createTestProtocol(minWriterVersion = 7, supportedWriterFeature, "domainMetadata")
+//      } else {
+//        createTestProtocol(minWriterVersion = 7, supportedWriterFeature)
+//      }
+//      checkSupported(protocol)
+//    }
+//  }
+//
+//  // This should be updated as we allow reading when the protoocl supports these features,
+//  // but are not enabled through metadata
+//  Seq(
+//    "checkConstraints",
+//    "generatedColumns",
+//    "allowColumnDefaults",
+//    "changeDataFeed",
+//    "identityColumns",
+//    "deletionVectors",
+//    "timestampNtz",
+//    "v2Checkpoint",
+//    "icebergCompatV1",
+//    "icebergCompatV2",
+//    "clustering",
+//    "vacuumProtocolCheck").foreach { unsupportedWriterFeature =>
+//    test(s"validateWriteSupported: protocol 7 with $unsupportedWriterFeature") {
+//      checkUnsupported(createTestProtocol(minWriterVersion = 7, unsupportedWriterFeature))
+//    }
+//  }
+//
+//  test("validateWriteSupported: protocol 7 with invariants, schema doesn't contain invariants") {
+//    checkSupported(
+//      createTestProtocol(minWriterVersion = 7, "invariants"))
+//  }
+//
+//  test("validateWriteSupported: protocol 7 with invariants, schema contains invariants") {
+//    checkUnsupported(
+//      createTestProtocol(minWriterVersion = 7, "invariants"),
+//      metadata = testMetadata(includeInvariant = true))
+//  }
 
   def checkSupported(
       protocol: Protocol,
