@@ -69,13 +69,12 @@ class AutoCompactPartitionStats(
       var wasAutoCompacted: Boolean = false) {
 
     /**
-     * Determine whether this partition can be autocompacted based on the number of small files or
-     * if this [[AutoCompactPartitionStats]] instance has not auto compacted it yet.
+     * Determine whether this partition can be autocompacted based on the number of small files.
      * @param minNumFiles The minimum number of files this table-partition should have to trigger
      *                    Auto Compaction in case it has already been compacted once.
      */
-    def hasSufficientSmallFilesOrHasNotBeenCompacted(minNumFiles: Long): Boolean =
-      !wasAutoCompacted || hasSufficientFiles(minNumFiles)
+    def hasSufficientSmallFilesAndHasNotBeenCompacted(minNumFiles: Long): Boolean =
+      hasSufficientFiles(minNumFiles)
 
     def hasSufficientFiles(minNumFiles: Long): Boolean = numFiles >= minNumFiles
   }
@@ -305,7 +304,7 @@ class AutoCompactPartitionStats(
     tablePartitionStatsCache.get(tableId).map { tablePartitionStates =>
       targetPartitions.filter { partitionKey =>
         tablePartitionStates.get(partitionKey.##).exists { partitionState =>
-          partitionState.hasSufficientSmallFilesOrHasNotBeenCompacted(minNumFiles)
+          partitionState.hasSufficientSmallFilesAndHasNotBeenCompacted(minNumFiles)
         }
       }
     }.getOrElse(Set.empty)
