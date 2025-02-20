@@ -486,7 +486,11 @@ The `remove` action includes a timestamp that indicates when the removal occurre
 Physical deletion of physical files can happen lazily after some user-specified expiration time threshold.
 This delay allows concurrent readers to continue to execute against a stale snapshot of the data.
 A `remove` action should remain in the state of the table as a _tombstone_ until it has expired.
-A tombstone expires when *current time* (according to the node performing the cleanup) exceeds the expiration threshold added to the `remove` action timestamp.
+A tombstone expires when *current time* (according to the node performing the cleanup) exceeds the expiration
+threshold added to the `remove` action timestamp. Because it is possible to represent the same physical file name with
+many different URI layouts and URI encodings, all add and remove actions that refer to the same physical file must use
+the same (byte-identical) path string. For example, [Action Reconciliation](#action-reconciliation) will treat
+a relative path as distinct from an absolute path, and `a` as distinct from `%65`, because they are not byte-identical.
 
 In the following statements, `dvId` can refer to either the unique id of a specific Deletion Vector (`deletionVector.uniqueId`) or to `NULL`, indicating that no rows are invalidated. Since actions within a given Delta commit are not guaranteed to be applied in order, a **valid** version is restricted to contain at most one file action *of the same type* (i.e. `add`/`remove`) for any one combination of `path` and `dvId`. Moreover, for simplicity it is required that there is at most one file action of the same type for any `path` (regardless of `dvId`).
 That means specifically that for any commit…
@@ -553,7 +557,7 @@ The schema of the `remove` action is as follows:
 
 Field Name | Data Type | Description | optional/required
 -|-|-|-
-path| String | A relative path to a file from the root of the table or an absolute path to a file that should be removed from the table. The path is a URI as specified by [RFC 2396 URI Generic Syntax](https://www.ietf.org/rfc/rfc2396.txt), which needs to be decoded to get the data file path. The path must string match the corresponding `add` action. | required
+path| String | A relative path to a file from the root of the table or an absolute path to a file that should be removed from the table. The path is a URI as specified by [RFC 2396 URI Generic Syntax](https://www.ietf.org/rfc/rfc2396.txt), which needs to be decoded to get the data file path. The path must be a byte-identical copy of the corresponding `add.path`. | required
 deletionTimestamp | Option[Long] | The time the deletion occurred, represented as milliseconds since the epoch | optional
 dataChange | Boolean | When `false` the records in the removed file must be contained in one or more `add` file actions in the same version | required
 extendedFileMetadata | Boolean | When `true` the fields `partitionValues`, `size`, and `tags` are present | optional
@@ -842,7 +846,7 @@ To achieve the requirements above, related actions from different delta files ne
  - The latest `metaData` action seen wins
  - For `txn` actions, the latest `version` seen for a given `appId` wins
  - For `domainMetadata`, the latest `domainMetadata` seen for a given `domain` wins. The actions with `removed=true` act as tombstones to suppress earlier versions. Snapshot reads do _not_ return removed `domainMetadata` actions.
- - Logical files in a table are identified by their `(path, deletionVector.uniqueId)` primary key. File actions (`add` or `remove`) reference logical files, and a log can contain any number of references to a single file. `add` and `remove` are considered the same only if the paths are string equal.
+ - Logical files in a table are identified by their `(path, deletionVector.uniqueId)` primary key. File actions (`add` or `remove`) reference logical files, and a log can contain any number of references to a single file. Two file actions refer to the same file only if their path strings are byte-identical (before URI decoding).
  - To replay the log, scan all file actions and keep only the newest reference for each logical file.
  - `add` actions in the result identify logical files currently present in the table (for queries). `remove` actions in the result identify tombstones of logical files no longer present in the table (for VACUUM).
  - [v2 checkpoint spec](#v2-spec) actions are not allowed in normal commit files, and do not participate in log replay.
