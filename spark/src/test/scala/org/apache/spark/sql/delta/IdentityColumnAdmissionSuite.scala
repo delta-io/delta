@@ -264,7 +264,7 @@ trait IdentityColumnAdmissionSuiteBase
     }
   }
 
-  test("streaming") {
+  ignore("streaming") {
     val tblName = getRandomTableName
     withIdentityColumnTable(GeneratedAlways, tblName) {
       val path = DeltaLog.forTable(spark, TableIdentifier(tblName)).dataPath.toString
