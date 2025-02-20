@@ -170,7 +170,7 @@ public class Protocol {
    *
    * <ul>
    *   <li>(minRV = 1, minWV = 7, readerFeatures=[], writerFeatures=[domainMetadata]) results in []
-   *   <li>(minRV = 1, minWV = 3) -> [appendOnly, invariants, checkConstraints]
+   *   <li>(minRV = 1, minWV = 3) results in [appendOnly, invariants, checkConstraints]
    *   <li>(minRV = 3, minWV = 7, readerFeatures=[v2Checkpoint], writerFeatures=[v2Checkpoint])
    *       results in []
    *   <li>(minRV = 2, minWV = 6) results in [appendOnly, invariants, checkConstraints,
@@ -244,13 +244,15 @@ public class Protocol {
    * <p>Examples:
    *
    * <ul>
-   *   <li>current protocol (2, 5) and new feature to add 'invariants` -> (2, 5) as this protocol
-   *       already supports 'invariants' implicitly.
+   *   <li>current protocol (2, 5) and new feature to add 'invariants` result in (2, 5) as this
+   *       protocol already supports 'invariants' implicitly.
    *   <li>current protocol is (1, 7, writerFeature='rowTracking,domainMetadata' and the new feature
-   *       to add is 'appendOnly' -> (1, 7, writerFeature='rowTracking,domainMetadata,appendOnly')
+   *       to add is 'appendOnly' results in (1, 7,
+   *       writerFeature='rowTracking,domainMetadata,appendOnly')
    *   <li>current protocol is (1, 7, writerFeature='rowTracking,domainMetadata' and the new feature
-   *       to add is 'columnMapping' -> throws UnsupportedOperationException as 'columnMapping'
-   *       requires higher reader version (2) than the current protocol's reader version (1).
+   *       to add is 'columnMapping' results in throwing UnsupportedOperationException as
+   *       'columnMapping' requires higher reader version (2) than the current protocol's reader
+   *       version (1).
    * </ul>
    */
   public Protocol withFeature(TableFeature feature) {
@@ -322,8 +324,8 @@ public class Protocol {
    * <p>For example:
    *
    * <ul>
-   *   <li>(1, 7, AppendOnly, Invariants, CheckConstraints) -> (1, 3)
-   *   <li>(3, 7, RowTracking) -> (1, 7, RowTracking)
+   *   <li>(1, 7, AppendOnly, Invariants, CheckConstraints) results in (1, 3)
+   *   <li>(3, 7, RowTracking) results in (1, 7, RowTracking)
    * </ul>
    */
   public Protocol normalized() {
@@ -358,9 +360,9 @@ public class Protocol {
    * legacy protocol. For example
    *
    * <ul>
-   *   <li>(1, 3) -> (1, 7, readerFeatures=[], writerFeatures=[appendOnly, invariants,
+   *   <li>(1, 3) results in (1, 7, readerFeatures=[], writerFeatures=[appendOnly, invariants,
    *       checkConstraints])
-   *   <li>(2, 5) -> (2, 7, readerFeatures=[], writerFeatures=[appendOnly, invariants,
+   *   <li>(2, 5) results in (2, 7, readerFeatures=[], writerFeatures=[appendOnly, invariants,
    *       checkConstraints, changeDataFeed, generatedColumns, columnMapping])
    * </ul>
    */
