@@ -37,6 +37,7 @@ import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
+import  io.delta.kernel.internal.util.FileNames;
 
 /**
  * Test suite to verify checksum file correctness by comparing
@@ -175,7 +176,7 @@ class ChecksumSimpleComparisonSuite extends DeltaTableWriteSuiteBase with TestUt
   }
 
   private def buildCrcPath(basePath: String, version: Long): java.nio.file.Path = {
-    new File(f"$basePath/_delta_log/$version%020d.crc").toPath
+    new File(FileNames.checksumFile(new Path(basePath), version).toString).toPath
   }
 
   // TODO: Add equals/hashCode to metadata, protocol then CRCInfo.
