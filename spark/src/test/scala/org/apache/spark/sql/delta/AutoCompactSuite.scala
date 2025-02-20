@@ -300,10 +300,8 @@ class AutoCompactSuite extends
       assert(deltaLog.update().numOfFiles === 4, "Should have 4 initial small files")
 
       // Second write - 4 large files
-      val isLogged2 = checkAutoOptimizeLogging {
-        spark.range(1000).repartition(4).write.format("delta").mode("append").save(dir)
-      }
-      assert(isLogged2)
+      spark.range(1000).repartition(4).write.format("delta").mode("append").save(dir)
+
       val writeEvent = deltaLog.history.getHistory(Some(1)).head
       assert(writeEvent.operation === "WRITE",
         "Large files shouldn't trigger auto compaction")
@@ -311,7 +309,10 @@ class AutoCompactSuite extends
         "Should have 4 small + 4 large files")
 
       // Third write - 2 more small files to reach minNumFiles
-      spark.range(10).repartition(2).write.format("delta").mode("append").save(dir)
+      val isLogged2 = checkAutoOptimizeLogging {
+        spark.range(10).repartition(2).write.format("delta").mode("append").save(dir)
+      }
+      assert(isLogged2)
       val compactionEvent = deltaLog.history.getHistory(Some(3)).head
       assert(compactionEvent.operation === "OPTIMIZE",
         "Should trigger compaction with 6 small files")
