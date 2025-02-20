@@ -75,7 +75,7 @@ class AutoCompactPartitionStats(
      *                    Auto Compaction in case it has already been compacted once.
      */
     def hasSufficientSmallFilesAndHasNotBeenCompacted(minNumFiles: Long): Boolean =
-      !wasAutoCompacted && hasSufficientFiles(minNumFiles)
+      hasSufficientFiles(minNumFiles)
 
     def hasSufficientFiles(minNumFiles: Long): Boolean = numFiles >= minNumFiles
   }
