@@ -26,7 +26,8 @@ import io.delta.connect.proto
 import io.delta.tables.DeltaTable
 
 import org.apache.spark.SparkEnv
-import org.apache.spark.sql.{Dataset, Encoders, SparkSession}
+import org.apache.spark.sql.Encoders
+import org.apache.spark.sql.classic.{Dataset, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.connect.common.{DataTypeProtoConverter, InvalidPlanInput}

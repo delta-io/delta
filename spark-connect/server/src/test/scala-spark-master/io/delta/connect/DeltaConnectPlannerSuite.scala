@@ -33,7 +33,8 @@ import io.delta.connect.spark.{proto => spark_proto}
 import io.delta.tables.DeltaTable
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.{Dataset, QueryTest, Row, SparkSession}
+import org.apache.spark.sql.classic.{Dataset, SparkSession}
+import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.ResolvedTable
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
@@ -63,44 +64,37 @@ class DeltaConnectPlannerSuite
     spark_proto.Command.newBuilder().setExtension(protobuf.Any.pack(command.build())).build()
   }
 
-  def transform(spark: SparkSession, command: spark_proto.Command): Unit = {
-    val executeHolder = buildExecutePlanHolder(spark, command)
-    new SparkConnectPlanner(executeHolder).process(command, new MockObserver())
-  }
+//  def transform(spark: SparkSession, command: spark_proto.Command): Unit = {
+//    val executeHolder = buildExecutePlanHolder(spark, command)
+//    new SparkConnectPlanner(executeHolder).processWithoutResponseObserverForTesting(command)
+//  }
 
-  private def buildExecutePlanHolder(
-      spark: SparkSession,
-      command: spark_proto.Command): ExecuteHolder = {
-    val sessionHolder = SparkConnectTestUtils.createDummySessionHolder(spark)
-    sessionHolder.eventManager.status_(SessionStatus.Started)
-
-    val context = spark_proto.UserContext
-      .newBuilder()
-      .setUserId(sessionHolder.userId)
-      .build()
-    val plan = spark_proto.Plan
-      .newBuilder()
-      .setCommand(command)
-      .build()
-    val request = spark_proto.ExecutePlanRequest
-      .newBuilder()
-      .setPlan(plan)
-      .setSessionId(sessionHolder.sessionId)
-      .setUserContext(context)
-      .build()
-
-    val executeHolder = SparkConnectService.executionManager.createExecuteHolder(request)
-    executeHolder.eventsManager.status_(ExecuteStatus.Started)
-    executeHolder
-  }
-
-  private class MockObserver extends org.sparkproject.connect.grpc.stub.StreamObserver[spark_proto.ExecutePlanResponse] {
-    override def onNext(value: spark_proto.ExecutePlanResponse): Unit = {}
-
-    override def onError(t: Throwable): Unit = {}
-
-    override def onCompleted(): Unit = {}
-  }
+//  private def buildExecutePlanHolder(
+//      spark: SparkSession,
+//      command: spark_proto.Command): ExecuteHolder = {
+//    val sessionHolder = createDummySessionHolder(spark)
+////    sessionHolder.eventManager.status_(SessionStatus.Started)
+//
+//    val context = spark_proto.UserContext
+//      .newBuilder()
+//      .setUserId(sessionHolder.userId)
+//      .build()
+//    val plan = spark_proto.Plan
+//      .newBuilder()
+//      .setCommand(command)
+//      .build()
+//    val request = spark_proto.ExecutePlanRequest
+//      .newBuilder()
+//      .setPlan(plan)
+//      .setSessionId(sessionHolder.sessionId)
+//      .setUserContext(context)
+//      .build()
+//
+////    val sparkRequest = ImplicitProtoConversions.convertCommandToSpark(request)
+//    val executeHolder = SparkConnectService.executionManager.createExecuteHolder(request)
+//    executeHolder.eventsManager.status_(ExecuteStatus.Started)
+//    executeHolder
+//  }
 
   def createDummySessionHolder(session: SparkSession): SessionHolder = {
     val ret = SessionHolder(
@@ -408,7 +402,7 @@ class DeltaConnectPlannerSuite
     val tableName = "test_table"
 
     def runVacuum(): Unit = {
-      transform(spark, createSparkCommand(
+      transform(createSparkCommand(
         proto.DeltaCommand.newBuilder()
           .setVacuumTable(
             proto.VacuumTable.newBuilder()
@@ -450,7 +444,7 @@ class DeltaConnectPlannerSuite
     val tableName = "test_table"
 
     def runVacuum(retentionHours: Float): Unit = {
-      transform(spark, createSparkCommand(
+      transform(createSparkCommand(
         proto.DeltaCommand.newBuilder()
           .setVacuumTable(
             proto.VacuumTable.newBuilder()
@@ -502,7 +496,7 @@ class DeltaConnectPlannerSuite
       // Use Delta Connect to upgrade the protocol of the table.
       val newReaderVersion = 3
       val newWriterVersion = 7
-      transform(spark, createSparkCommand(
+    transform(createSparkCommand(
         proto.DeltaCommand.newBuilder()
           .setUpgradeTableProtocol(
             proto.UpgradeTableProtocol.newBuilder()
@@ -526,7 +520,7 @@ class DeltaConnectPlannerSuite
       val manifestFile = new File(dir, GenerateSymlinkManifest.MANIFEST_LOCATION)
       assert(!manifestFile.exists())
 
-      transform(spark, createSparkCommand(
+      transform(createSparkCommand(
         proto.DeltaCommand.newBuilder()
           .setGenerate(
             proto.Generate.newBuilder()
