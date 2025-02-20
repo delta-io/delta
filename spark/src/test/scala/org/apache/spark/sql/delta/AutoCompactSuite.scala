@@ -152,7 +152,7 @@ class AutoCompactSuite extends
           DeltaSQLConf.DELTA_AUTO_COMPACT_ENABLED.key -> s"true",
           DeltaSQLConf.DELTA_AUTO_COMPACT_MIN_NUM_FILES.key -> "30") {
         val path = dir.getCanonicalPath
-        // Append 1 file to each partition: record skipInsufficientFilesInModifiedPartitions event, 
+        // Append 1 file to each partition: record skipInsufficientFilesInModifiedPartitions event,
         // as not enough small files exist
         var usageLogs = captureOptimizeLogs(AutoCompact.OP_TYPE) {
           createFilesToPartitions(numFilePartitions = 3, numFilesPerPartition = 1, path)
