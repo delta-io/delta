@@ -96,7 +96,7 @@ class TableFeaturesSuite extends AnyFunSuite {
       TableFeatures.TABLE_FEATURES.size() == readerWriterFeatures.size + writerOnlyFeatures.size)
   }
 
-  val testProtocol = new Protocol(1, 2, Collections.emptyList(), Collections.emptyList())
+  val testProtocol = new Protocol(1, 2, Collections.emptySet(), Collections.emptySet())
   Seq(
     // Test feature, metadata, expected result
     ("appendOnly", testMetadata(tblProps = Map("delta.appendOnly" -> "true")), true),
@@ -335,8 +335,8 @@ class TableFeaturesSuite extends AnyFunSuite {
       0,
       minWriterVersion,
       // reader features - it doesn't matter as the read fails anyway before the writer check
-      Collections.emptyList(),
-      writerFeatures.toSeq.asJava)
+      Collections.emptySet(),
+      writerFeatures.toSet.asJava)
   }
 
   def testMetadata(
