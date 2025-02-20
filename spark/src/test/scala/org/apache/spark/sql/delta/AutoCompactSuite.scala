@@ -288,7 +288,7 @@ class AutoCompactSuite extends
     "enough small files") { dir =>
     withSQLConf(
       DeltaSQLConf.DELTA_AUTO_COMPACT_MIN_NUM_FILES.key -> "6",
-      DeltaSQLConf.DELTA_AUTO_COMPACT_MAX_FILE_SIZE.key -> "3800"
+      DeltaSQLConf.DELTA_AUTO_COMPACT_MAX_FILE_SIZE.key -> "2000"
     ) {
       AutoCompactPartitionStats.instance(spark).resetTestOnly()
 
