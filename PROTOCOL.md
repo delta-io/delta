@@ -842,7 +842,7 @@ To achieve the requirements above, related actions from different delta files ne
  - The latest `metaData` action seen wins
  - For `txn` actions, the latest `version` seen for a given `appId` wins
  - For `domainMetadata`, the latest `domainMetadata` seen for a given `domain` wins. The actions with `removed=true` act as tombstones to suppress earlier versions. Snapshot reads do _not_ return removed `domainMetadata` actions.
- - Logical files in a table are identified by their `(path, deletionVector.uniqueId)` primary key. File actions (`add` or `remove`) reference logical files, and a log can contain any number of references to a single file.
+ - Logical files in a table are identified by their `(path, deletionVector.uniqueId)` primary key. File actions (`add` or `remove`) reference logical files, and a log can contain any number of references to a single file. `add` and `remove` are considered the same only if the paths are string equal.
  - To replay the log, scan all file actions and keep only the newest reference for each logical file.
  - `add` actions in the result identify logical files currently present in the table (for queries). `remove` actions in the result identify tombstones of logical files no longer present in the table (for VACUUM).
  - [v2 checkpoint spec](#v2-spec) actions are not allowed in normal commit files, and do not participate in log replay.
