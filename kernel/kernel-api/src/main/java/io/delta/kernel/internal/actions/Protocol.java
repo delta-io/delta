@@ -136,8 +136,8 @@ public class Protocol {
   }
 
   /**
-   * Encode as a {@link Row} object with the schema {@link Protocol#FULL_SCHEMA}.
-   * Write any empty `readerFeatures` and `writerFeatures` as null.
+   * Encode as a {@link Row} object with the schema {@link Protocol#FULL_SCHEMA}. Write any empty
+   * `readerFeatures` and `writerFeatures` as null.
    *
    * @return {@link Row} object with the schema {@link Protocol#FULL_SCHEMA}
    */
@@ -162,14 +162,17 @@ public class Protocol {
    * Get the set of features that are implicitly supported by the protocol. Features are implicitly
    * supported if the reader and/or writer version is less than the versions that supports the
    * explicit features specified in `readerFeatures` and `writerFeatures` sets. Examples:
+   *
    * <p>
-   *     <ul>
-   * <li>(minRV = 1, minWV = 7, readerFeatures=[], writerFeatures=[domainMetadata]) => []
-   * <li>(minRV = 1, minWV = 3) => [appendOnly, invariants, checkConstraints]
-   * <li>(minRV = 3, minWV = 7, readerFeatures=[v2Checkpoint], writerFeatures=[v2Checkpoint]) => []
-   * <li>(minRV = 2, minWV = 6) => [appendOnly, invariants, checkConstraints,
-   *  changeDataFeed, generatedColumns, columnMapping, identityColumns]
-   *  </ul>
+   *
+   * <ul>
+   *   <li>(minRV = 1, minWV = 7, readerFeatures=[], writerFeatures=[domainMetadata]) => []
+   *   <li>(minRV = 1, minWV = 3) => [appendOnly, invariants, checkConstraints]
+   *   <li>(minRV = 3, minWV = 7, readerFeatures=[v2Checkpoint], writerFeatures=[v2Checkpoint]) =>
+   *       []
+   *   <li>(minRV = 2, minWV = 6) => [appendOnly, invariants, checkConstraints, changeDataFeed,
+   *       generatedColumns, columnMapping, identityColumns]
+   * </ul>
    */
   public Set<TableFeature> getImplicitlySupportedFeatures() {
     if (supportsReaderFeatures && supportsWriterFeatures) {
@@ -185,13 +188,14 @@ public class Protocol {
   /**
    * Get the set of features that are explicitly supported by the protocol. Features are explicitly
    * supported if they are present in the `readerFeatures` and/or `writerFeatures` sets. Examples:
+   *
    * <p>
-   *    <ul>
-   * <li>(minRV = 1, minWV = 7, writerFeatures=[appendOnly, invariants, checkConstraints]) =>
-   *    [appendOnly, invariants, checkConstraints]
-   * </li>(minRV = 3, minWV = 7, readerFeatures = [columnMapping], writerFeatures=[columnMapping, invariants]) =>
-   *    [columnMapping, invariants]
-   * </li>(minRV = 1, minWV = 2, readerFeatures = [], writerFeatures=[]) => []
+   *
+   * <ul>
+   *   <li>(minRV = 1, minWV = 7, writerFeatures=[appendOnly, invariants, checkConstraints]) =>
+   *       [appendOnly, invariants, checkConstraints] (minRV = 3, minWV = 7, readerFeatures =
+   *       [columnMapping], writerFeatures=[columnMapping, invariants]) => [columnMapping,
+   *       invariants] (minRV = 1, minWV = 2, readerFeatures = [], writerFeatures=[]) => []
    * </ul>
    */
   public Set<TableFeature> getExplicitlySupportedFeatures() {
@@ -232,16 +236,17 @@ public class Protocol {
    * the feature will not be explicitly added to the protocol's `readerFeatures` or
    * `writerFeatures`. This is to avoid unnecessary protocol upgrade for feature that it already
    * supports.
-   * <p>
-   * Examples:
+   *
+   * <p>Examples:
+   *
    * <ul>
-   *     <li>current protocol (2, 5) and new feature to add 'invariants` -> (2, 5) as this protocol
-   *     already supports 'invariants' implicitly.
-   *     <li>current protocol is (1, 7, writerFeature='rowTracking,domainMetadata' and the new
-   *     feature to add is 'appendOnly' -> (1, 7, writerFeature='rowTracking,domainMetadata,appendOnly')
-   *     <li>current protocol is (1, 7, writerFeature='rowTracking,domainMetadata' and the new feature
-   *     to add is 'columnMapping' -> throws UnsupportedOperationException as 'columnMapping' requires
-   *     higher reader version (2) than the current protocol's reader version (1).
+   *   <li>current protocol (2, 5) and new feature to add 'invariants` -> (2, 5) as this protocol
+   *       already supports 'invariants' implicitly.
+   *   <li>current protocol is (1, 7, writerFeature='rowTracking,domainMetadata' and the new feature
+   *       to add is 'appendOnly' -> (1, 7, writerFeature='rowTracking,domainMetadata,appendOnly')
+   *   <li>current protocol is (1, 7, writerFeature='rowTracking,domainMetadata' and the new feature
+   *       to add is 'columnMapping' -> throws UnsupportedOperationException as 'columnMapping'
+   *       requires higher reader version (2) than the current protocol's reader version (1).
    * </ul>
    */
   public Protocol withFeature(TableFeature feature) {
@@ -349,13 +354,10 @@ public class Protocol {
    * legacy protocol. For example
    *
    * <ul>
-   *   <li>(1, 3) ->
-   *       (1, 7, readerFeatures=[], writerFeatures=[appendOnly, invariants, checkConstraints])
-   *   <li>(2, 5) ->
-   *       (2, 7,
-   *          readerFeatures=[],
-   *          writerFeatures=[appendOnly, invariants, checkConstraints,
-   *              changeDataFeed, generatedColumns, columnMapping])
+   *   <li>(1, 3) -> (1, 7, readerFeatures=[], writerFeatures=[appendOnly, invariants,
+   *       checkConstraints])
+   *   <li>(2, 5) -> (2, 7, readerFeatures=[], writerFeatures=[appendOnly, invariants,
+   *       checkConstraints, changeDataFeed, generatedColumns, columnMapping])
    * </ul>
    */
   public Protocol denormalized() {
@@ -447,46 +449,59 @@ public class Protocol {
 
     // expect the reader and writer features to be empty if the protocol version does not support
     checkArgument(
-            readerFeatures.isEmpty() || supportsReaderFeatures,
-            "Reader features are not supported for the reader version: " + minReaderVersion);
-    checkArgument(writerFeatures.isEmpty() || supportsWriterFeatures,
-            "Writer features are not supported for the writer version: " + minWriterVersion);
+        readerFeatures.isEmpty() || supportsReaderFeatures,
+        "Reader features are not supported for the reader version: " + minReaderVersion);
+    checkArgument(
+        writerFeatures.isEmpty() || supportsWriterFeatures,
+        "Writer features are not supported for the writer version: " + minWriterVersion);
 
     // If reader versions are supported, expect the writer versions to be supported as well
     // We don't have any reader only features.
     if (supportsReaderFeatures) {
-      checkArgument(supportsWriterFeatures,
-              "writer version doesn't support writer features: " + minWriterVersion);
+      checkArgument(
+          supportsWriterFeatures,
+          "writer version doesn't support writer features: " + minWriterVersion);
     }
 
     if (supportsWriterFeatures) {
       // ensure that the reader version supports all the readerWriter features
       Set<TableFeature> supportedFeatures = getExplicitlySupportedFeatures();
       supportedFeatures.stream()
-                      .filter(TableFeature::isReaderWriterFeature)
-                      .forEach(feature -> {
-                                checkArgument(feature.minReaderVersion() <= minReaderVersion,
-                                        format("Reader version %d does not support readerWriter feature %s",
-                                                minReaderVersion, feature.featureName()));
+          .filter(TableFeature::isReaderWriterFeature)
+          .forEach(
+              feature -> {
+                checkArgument(
+                    feature.minReaderVersion() <= minReaderVersion,
+                    format(
+                        "Reader version %d does not support readerWriter feature %s",
+                        minReaderVersion, feature.featureName()));
 
-                                if (supportsReaderFeatures) {
-                                  // if the protocol supports reader features, then it should be part of the readerFeatures
-                                    checkArgument(readerFeatures.contains(feature.featureName()),
-                                            format("ReaderWriter feature %s is not present in readerFeatures", feature.featureName()));
-                                }
-                              });
+                if (supportsReaderFeatures) {
+                  // if the protocol supports reader features, then it should be part of the
+                  // readerFeatures
+                  checkArgument(
+                      readerFeatures.contains(feature.featureName()),
+                      format(
+                          "ReaderWriter feature %s is not present in readerFeatures",
+                          feature.featureName()));
+                }
+              });
     } else {
-      // ensure we don't get (minReaderVersion, minWriterVersion) that satisfy the readerWriter feature
-      // version requirements. E.g. (1, 5) is invalid as writer version indicates columnMapping supported
+      // ensure we don't get (minReaderVersion, minWriterVersion) that satisfy the readerWriter
+      // feature
+      // version requirements. E.g. (1, 5) is invalid as writer version indicates columnMapping
+      // supported
       // but reader version does not support it (requires 2).
       TableFeatures.TABLE_FEATURES.stream()
-              .filter(TableFeature::isReaderWriterFeature)
-              .forEach(f -> {
+          .filter(TableFeature::isReaderWriterFeature)
+          .forEach(
+              f -> {
                 if (f.minWriterVersion() <= minWriterVersion) {
                   checkArgument(
-                          f.minReaderVersion() <= minReaderVersion,
-                          format("Reader version %d does not support readerWriter feature %s", minReaderVersion, f.featureName())
-                  );
+                      f.minReaderVersion() <= minReaderVersion,
+                      format(
+                          "Reader version %d does not support readerWriter feature %s",
+                          minReaderVersion, f.featureName()));
                 }
               });
     }
