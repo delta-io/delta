@@ -383,9 +383,7 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
   protected def verifyWrittenContent(
       path: String,
       expSchema: StructType,
-      expData: Seq[TestRow],
-      expPartitionColumns: Seq[String] = Seq(),
-      version: Option[Long] = Option.empty): Unit = {
+      expData: Seq[TestRow]): Unit = {
     val actSchema = tableSchema(path)
     assert(actSchema === expSchema)
 
@@ -396,12 +394,7 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     // Spark reads the timestamp partition columns in local timezone vs. Kernel reads in UTC. We
     // need to set the timezone to UTC before reading the data using Spark to make the tests pass
     withSparkTimeZone("UTC") {
-      val resultSpark = spark
-        .sql(s"SELECT * FROM delta.`$path`" + {
-          if (version.isDefined) s" VERSION AS OF ${version.get}" else ""
-        })
-        .collect()
-        .map(TestRow(_))
+      val resultSpark = spark.sql(s"SELECT * FROM delta.`$path`").collect().map(TestRow(_))
       checkAnswer(resultSpark, expData)
     }
   }

@@ -352,7 +352,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       assertCheckpointReadiness(txnResult, isReadyForCheckpoint = false)
 
       verifyCommitInfo(tablePath, version = 0, Seq("Part1", "part2"))
-      verifyWrittenContent(tablePath, schema, Seq.empty, Seq("Part1", "part2"))
+      verifyWrittenContent(tablePath, schema, Seq.empty)
     }
   }
 
@@ -463,7 +463,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
       verifyCommitResult(commitResult0, expVersion = 0, expIsReadyForCheckpoint = false)
       verifyCommitInfo(tblPath, version = 0, testPartitionColumns, operation = WRITE)
-      verifyWrittenContent(tblPath, testPartitionSchema, expData, testPartitionColumns)
+      verifyWrittenContent(tblPath, testPartitionSchema, expData)
     }
   }
 
@@ -485,7 +485,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
         verifyCommitResult(commitResult0, expVersion = 0, expIsReadyForCheckpoint = false)
         verifyCommitInfo(tblPath, version = 0, partitionCols, operation = WRITE)
-        verifyWrittenContent(tblPath, testPartitionSchema, expData, partitionCols)
+        verifyWrittenContent(tblPath, testPartitionSchema, expData)
       }
       {
         val commitResult1 = appendData(
@@ -498,7 +498,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
         verifyCommitResult(commitResult1, expVersion = 1, expIsReadyForCheckpoint = false)
         verifyCommitInfo(tblPath, version = 1, partitionCols = null, operation = WRITE)
-        verifyWrittenContent(tblPath, testPartitionSchema, expData, partitionCols)
+        verifyWrittenContent(tblPath, testPartitionSchema, expData)
       }
     }
   }
@@ -564,8 +564,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         verifyWrittenContent(
           tblPath,
           schema,
-          if (i == 0) expV0Data else expV0Data ++ expV1Data,
-          partCols)
+          if (i == 0) expV0Data else expV0Data ++ expV1Data)
       }
     }
   }
@@ -620,7 +619,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         // delete all commit files before version 30 in both cases and expect the read to pass as
         // there is a checkpoint at version 30 and should be used for state reconstruction.
         deleteDeltaFilesBefore(tblPath, beforeVersion = 30)
-        verifyWrittenContent(tblPath, schema, expData, partCols)
+        verifyWrittenContent(tblPath, schema, expData)
       }
     }
   }
@@ -742,7 +741,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
         verifyCommitResult(commitResult, expVersion = i, i % checkpointInterval == 0)
         verifyCommitInfo(tblPath, version = i, partitionCols = null, operation = WRITE)
-        verifyWrittenContent(tblPath, schema, expData, partCols)
+        verifyWrittenContent(tblPath, schema, expData)
       }
 
       assertCheckpointExists(tblPath, atVersion = checkpointInterval)
