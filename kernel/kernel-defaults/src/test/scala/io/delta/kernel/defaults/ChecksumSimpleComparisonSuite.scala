@@ -18,24 +18,24 @@ package io.delta.kernel.defaults
 import java.io.File
 import java.nio.file.Files
 import java.util
-import java.util.Collections.{emptyMap, singletonMap}
+import java.util.Collections.emptyMap
 import java.util.Optional
 
 import scala.collection.immutable.Seq
+import scala.jdk.CollectionConverters.setAsJavaSetConverter
 
 import io.delta.kernel.{Operation, Table, Transaction}
-import io.delta.kernel.data.{ColumnarBatch, Row}
+import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.expressions.Literal
+import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction
+import io.delta.kernel.internal.TableImpl
 import io.delta.kernel.internal.actions.{AddFile, SingleAction}
 import io.delta.kernel.internal.checksum.{ChecksumReader, CRCInfo}
 import io.delta.kernel.internal.fs.Path
-import io.delta.kernel.internal.util.{FileNames, VectorUtils}
-import io.delta.kernel.internal.util.Utils.{singletonCloseableIterator, toCloseableIterator}
+import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.StructType
-import io.delta.kernel.utils.{CloseableIterator, DataFileStatus, FileStatus}
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 
 /**
@@ -113,7 +113,7 @@ class ChecksumSimpleComparisonSuite extends DeltaTableWriteSuiteBase with TestUt
       .createTransactionBuilder(engine, "test-engine", Operation.WRITE)
       .build(engine)
 
-    convertSparkDeltaLogToKernelCommit(txn, engine, sparkTablePath, versionAtCommit)
+    commitSparkChangeToKernel(txn, engine, sparkTablePath, versionAtCommit)
     assertChecksumEquals(engine, sparkTablePath, kernelTablePath, versionAtCommit)
   }
 
@@ -142,12 +142,11 @@ class ChecksumSimpleComparisonSuite extends DeltaTableWriteSuiteBase with TestUt
       .createTransactionBuilder(engine, "test-engine", Operation.WRITE)
       .build(engine)
 
-    convertSparkDeltaLogToKernelCommit(
+    commitSparkChangeToKernel(
       txn,
       engine,
       sparkTablePath,
-      versionAtCommit,
-      Some(addedPartition))
+      versionAtCommit)
     assertChecksumEquals(engine, sparkTablePath, kernelTablePath, versionAtCommit)
   }
 
@@ -188,107 +187,31 @@ class ChecksumSimpleComparisonSuite extends DeltaTableWriteSuiteBase with TestUt
     assert(crc1.getMetadata.getPartitionColNames === crc2.getMetadata.getPartitionColNames)
   }
 
-  private def convertSparkDeltaLogToKernelCommit(
+  private def commitSparkChangeToKernel(
       txn: Transaction,
       engine: Engine,
       sparkTablePath: String,
-      versionToConvert: Long,
-      addedPartition: Option[(Set[Int])] = None): Unit = {
+      versionToConvert: Long): Unit = {
 
-    val txnState = txn.getTransactionState(engine)
+    val tableChange = Table.forPath(engine, sparkTablePath).asInstanceOf[TableImpl].getChanges(
+      engine,
+      versionToConvert,
+      versionToConvert,
+      Set(DeltaAction.ADD).asJava)
 
-    val dataActionsIterator = addedPartition match {
-      case None =>
-        // Unpartitioned table case
-        val writeContext = Transaction.getWriteContext(engine, txnState, emptyMap())
-        Transaction.generateAppendActions(
-          engine,
-          txnState,
-          convertSparkTableDeltaLogToKernelAppendActions(
-            engine,
-            sparkTablePath,
-            versionToConvert,
-            None),
-          writeContext)
-
-      case Some(partitions) =>
-        // Partitioned table case
-        val actions = new util.ArrayList[Row]()
-        partitions.foreach { partition =>
-          val writeContext = Transaction.getWriteContext(
-            engine,
-            txnState,
-            singletonMap(PARTITION_COLUMN, Literal.ofInt(partition)))
-
-          Transaction
-            .generateAppendActions(
-              engine,
-              txnState,
-              convertSparkTableDeltaLogToKernelAppendActions(
-                engine,
-                sparkTablePath,
-                versionToConvert,
-                Some(partition.toString)),
-              writeContext)
-            .forEach(action => actions.add(action))
+    val addFilesRows = new util.ArrayList[Row]()
+    tableChange.forEach(batch =>
+      batch.getRows.forEach(row => {
+        val addIndex = row.getSchema.indexOf("add")
+        if (!row.isNullAt(addIndex)) {
+          addFilesRows.add(
+            SingleAction.createAddFileSingleAction(new AddFile(row.getStruct(addIndex)).toRow))
         }
-        actions.iterator()
-    }
+      }))
 
     txn
-      .commit(engine, inMemoryIterable(toCloseableIterator(dataActionsIterator)))
+      .commit(engine, inMemoryIterable(toCloseableIterator(addFilesRows.iterator())))
       .getPostCommitHooks
       .forEach(_.threadSafeInvoke(engine))
-  }
-
-  private def convertSparkTableDeltaLogToKernelAppendActions(
-      engine: Engine,
-      sparkTablePath: String,
-      version: Long,
-      partition: Option[String]): CloseableIterator[DataFileStatus] = {
-
-    val logPath = new Path(sparkTablePath, "_delta_log")
-    val deltaFile = FileStatus.of(FileNames.deltaFile(logPath, version), 0, 0)
-
-    val addFiles = new util.ArrayList[DataFileStatus]()
-
-    val columnarBatches = engine.getJsonHandler.readJsonFiles(
-      singletonCloseableIterator(deltaFile),
-      SingleAction.FULL_SCHEMA,
-      Optional.empty())
-
-    while (columnarBatches.hasNext) {
-      collectAddFilesFromLogRows(columnarBatches.next(), partition, addFiles)
-    }
-    toCloseableIterator(addFiles.iterator())
-  }
-
-  private def collectAddFilesFromLogRows(
-      logFileRows: ColumnarBatch,
-      partition: Option[String],
-      addFiles: util.ArrayList[DataFileStatus]): Unit = {
-    val rows = logFileRows.getRows
-    while (rows.hasNext) {
-      val row = rows.next()
-      val addIndex = row.getSchema.indexOf("add")
-
-      if (!row.isNullAt(addIndex)) {
-        val addFile = new AddFile(row.getStruct(addIndex))
-        if (
-          partition.isEmpty ||
-          partition.get == VectorUtils
-            .toJavaMap(addFile.getPartitionValues)
-            .get(PARTITION_COLUMN)
-        ) {
-          addFiles.add(
-            new DataFileStatus(
-              addFile.getPath,
-              addFile.getSize,
-              addFile.getModificationTime,
-              Optional.empty() // TODO: populate stats once #4139 is fixed
-            ))
-        }
-      }
-    }
   }
 }
