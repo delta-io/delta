@@ -32,7 +32,7 @@ import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.conf.Configuration
-import shadedForDelta.org.apache.iceberg.{AppendFiles, DeleteFiles, OverwriteFiles, PendingUpdate, RewriteFiles, Transaction => IcebergTransaction}
+import shadedForDelta.org.apache.iceberg.{AppendFiles, DeleteFiles, OverwriteFiles, PartitionSpec, PendingUpdate, RewriteFiles, Transaction => IcebergTransaction}
 import shadedForDelta.org.apache.iceberg.ExpireSnapshots
 import shadedForDelta.org.apache.iceberg.mapping.MappingUtil
 import shadedForDelta.org.apache.iceberg.mapping.NameMappingParser
@@ -64,7 +64,8 @@ class IcebergConversionTransaction(
     protected val postCommitSnapshot: Snapshot,
     protected val tableOp: IcebergTableOp = WRITE_TABLE,
     protected val lastConvertedIcebergSnapshotId: Option[Long] = None,
-    protected val lastConvertedDeltaVersion: Option[Long] = None) extends DeltaLogging {
+    protected val lastConvertedDeltaVersion: Option[Long] = None
+    ) extends DeltaLogging {
 
   ///////////////////////////
   // Nested Helper Classes //
@@ -100,7 +101,7 @@ class IcebergConversionTransaction(
         convertDeltaAddFileToIcebergDataFile(
           add,
           tablePath,
-          partitionSpec,
+          currentPartitionSpec,
           logicalToPhysicalPartitionNames,
           statsParser,
           postCommitSnapshot
@@ -141,7 +142,7 @@ class IcebergConversionTransaction(
         convertDeltaAddFileToIcebergDataFile(
           add,
           tablePath,
-          partitionSpec,
+          currentPartitionSpec,
           logicalToPhysicalPartitionNames,
           statsParser,
           postCommitSnapshot
@@ -154,7 +155,7 @@ class IcebergConversionTransaction(
         convertDeltaRemoveFileToIcebergDataFile(
           remove,
           tablePath,
-          partitionSpec,
+          currentPartitionSpec,
           logicalToPhysicalPartitionNames,
           postCommitSnapshot)
       )
@@ -178,7 +179,7 @@ class IcebergConversionTransaction(
         convertDeltaRemoveFileToIcebergDataFile(
           f,
           tablePath,
-          partitionSpec,
+          currentPartitionSpec,
           logicalToPhysicalPartitionNames,
           postCommitSnapshot)
       }.toSet.asJava
@@ -188,7 +189,7 @@ class IcebergConversionTransaction(
         convertDeltaAddFileToIcebergDataFile(
           f,
           tablePath,
-          partitionSpec,
+          currentPartitionSpec,
           logicalToPhysicalPartitionNames,
           statsParser,
           postCommitSnapshot
@@ -212,8 +213,15 @@ class IcebergConversionTransaction(
   protected val tablePath = postCommitSnapshot.deltaLog.dataPath
   protected val icebergSchema =
     convertDeltaSchemaToIcebergSchema(postCommitSnapshot.metadata.schema)
+  // Initial partition spec converted from Delta
   protected val partitionSpec =
     createPartitionSpec(icebergSchema, postCommitSnapshot.metadata.partitionColumns)
+
+  // Current partition spec from iceberg table
+  def currentPartitionSpec: PartitionSpec = {
+    Some(txn.table()).map(_.spec()).getOrElse(partitionSpec)
+  }
+
   private val logicalToPhysicalPartitionNames =
     getPartitionPhysicalNameMapping(postCommitSnapshot.metadata.partitionSchema)
 
