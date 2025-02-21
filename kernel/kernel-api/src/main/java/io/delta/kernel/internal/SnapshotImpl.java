@@ -118,7 +118,7 @@ public class SnapshotImpl implements Snapshot {
   }
 
   @Override
-  public Optional<String> getDomainMetadataConfig(String domain) {
+  public Optional<String> getDomainMetadata(String domain) {
     return Optional.ofNullable(getDomainMetadataMap().get(domain))
         .filter(dm -> !dm.isRemoved()) // only consider active domain metadatas (not tombstones)
         .map(DomainMetadata::getConfiguration);

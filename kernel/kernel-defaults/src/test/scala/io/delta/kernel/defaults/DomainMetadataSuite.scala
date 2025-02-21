@@ -48,7 +48,7 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
     assert(expectedValue === snapshot.getDomainMetadataMap.asScala)
     // Verify public API
     expectedValue.foreach { case (key, domainMetadata) =>
-      snapshot.getDomainMetadataConfig(key).toScala match {
+      snapshot.getDomainMetadata(key).toScala match {
         case Some(config) =>
           assert(!domainMetadata.isRemoved && config == domainMetadata.getConfiguration)
         case None =>
@@ -759,13 +759,13 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
       createTableWithDomainMetadataSupported(engine, tablePath)
 
       // Non-existent domain is not returned
-      assert(!latestSnapshot(tablePath).getDomainMetadataConfig("foo").isPresent)
+      assert(!latestSnapshot(tablePath).getDomainMetadata("foo").isPresent)
 
       // Commit domain foo
       val fooDm = new DomainMetadata("foo", "foo!", false)
       commitDomainMetadataAndVerify(engine, tablePath, List(fooDm), Map("foo" -> fooDm))
       assert( // Check here even though already verified in commitDomainMetadataAndVerify
-        latestSnapshot(tablePath).getDomainMetadataConfig("foo").toScala.contains("foo!"))
+        latestSnapshot(tablePath).getDomainMetadata("foo").toScala.contains("foo!"))
 
       // Remove domain foo (so tombstone exists but should not be returned)
       val fooDm_removed = fooDm.removed()
@@ -775,7 +775,7 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
         List(fooDm_removed),
         Map("foo" -> fooDm_removed))
       // Already checked in commitDomainMetadataAndVerify but check again
-      assert(!latestSnapshot(tablePath).getDomainMetadataConfig("foo").isPresent)
+      assert(!latestSnapshot(tablePath).getDomainMetadata("foo").isPresent)
     }
   }
 
