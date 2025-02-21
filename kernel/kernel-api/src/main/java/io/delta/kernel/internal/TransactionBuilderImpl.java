@@ -127,8 +127,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         !domainMetadatasRemoved.contains(domain),
         "Cannot add a domain that is removed in this transaction");
     // we override any existing value
-    domainMetadatasToCommit.put(
-        domain, new DomainMetadata(domain, config, false /* removed */));
+    domainMetadatasToCommit.put(domain, new DomainMetadata(domain, config, false /* removed */));
     return this;
   }
 
