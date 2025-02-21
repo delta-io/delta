@@ -29,7 +29,7 @@ import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsUtils
 import org.apache.spark.sql.delta.hooks.{HudiConverterHook, IcebergConverterHook, UpdateCatalog, UpdateCatalogFactory}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
+import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
@@ -40,13 +40,12 @@ import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.catalyst.util.ResolveDefaultColumnsUtils
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.execution.command.{LeafRunnableCommand, RunnableCommand}
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.types.{MetadataBuilder, StructField, StructType}
+import org.apache.spark.sql.types.StructType
 
 /**
  * Single entry point for all write or declaration operations for Delta tables accessed through
@@ -315,29 +314,7 @@ case class CreateDeltaTableCommand(
             txn.snapshot.domainMetadata, newDomainMetadata)
         taggedCommitData = taggedCommitData.copy(actions = newActions)
       }
-
-      def schemaContainsExistsColumnMetadata(schema: StructType): Boolean = {
-        schema.exists(
-          _.metadata.contains(ResolveDefaultColumnsUtils.EXISTS_DEFAULT_COLUMN_METADATA_KEY))
-      }
-      val metadataForOp =
-        if (schemaContainsExistsColumnMetadata(txn.metadata.schema)) {
-          val newSchema = SchemaMergingUtils.transformColumns(schema) {
-            case (_, field: StructField, _) if field.metadata.contains(
-                ResolveDefaultColumnsUtils.EXISTS_DEFAULT_COLUMN_METADATA_KEY) =>
-              val newMetadata = new MetadataBuilder()
-                .withMetadata(field.metadata)
-                .remove(ResolveDefaultColumnsUtils.EXISTS_DEFAULT_COLUMN_METADATA_KEY)
-                .build()
-              field.copy(metadata = newMetadata)
-            case (_, field: StructField, _) => field
-          }
-          txn.metadata.copy(schemaString = newSchema.json)
-        } else {
-          txn.metadata
-        }
-
-      val op = getOperation(metadataForOp, isManagedTable, Some(options),
+      val op = getOperation(txn.metadata, isManagedTable, Some(options),
         clusterBy = ClusteredTableUtils.getLogicalClusteringColumnNames(
           txn, taggedCommitData.actions)
       )

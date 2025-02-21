@@ -618,6 +618,18 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val REMOVE_EXISTS_DEFAULT_FROM_SCHEMA_ON_EVERY_METADATA_CHANGE =
+    buildConf("allowColumnDefaults.removeExistsDefaultFromSchemaOnMetadataChange")
+      .internal()
+      .doc("When enabled, remove all field metadata entries using the 'EXISTS_DEFAULT' key " +
+        "from the schema whenever the table metadata is updated. 'EXISTS_DEFAULT' holds values " +
+        "that are used in Spark for existing rows when a new column with a default value is" +
+        "added to a table. Since we do not support adding columns with a default value in " +
+        "Delta, this configuration should always be removed, also when it was written by an " +
+        "older version that still put it into the schema.")
+      .booleanConf
+      .createWithDefault(true)
+
   //////////////////////////////////////////////
   // DynamoDB Commit Coordinator-specific configs
   /////////////////////////////////////////////
