@@ -45,9 +45,9 @@ export RELATIVE_DELTA_TABLE_PATH=___
 export DELTA_DYNAMO_TABLE_NAME=___
 
 ./run-integration-tests.py --use-local --run-dynamodb-commit-coordinator-integration-tests \
-    --dbb-packages org.apache.hadoop:hadoop-aws:3.4.0,com.amazonaws:aws-java-sdk-bundle:1.12.262 \
-    --dbb-conf io.delta.storage.credentials.provider=com.amazonaws.auth.profile.ProfileCredentialsProvider \
-               spark.hadoop.fs.s3a.aws.credentials.provider=com.amazonaws.auth.profile.ProfileCredentialsProvider
+    --dbb-packages org.apache.hadoop:hadoop-aws:3.4.0,software.amazon.awssdk:aws-sdk-java:2.29.44 \
+    --dbb-conf io.delta.storage.credentials.provider=software.amazon.awssdk.auth.credentials.ProfileCredentialsProvider \
+               spark.hadoop.fs.s3a.aws.credentials.provider=software.amazon.awssdk.auth.credentials.ProfileCredentialsProvider
 """
 
 # ===== Mandatory input from user =====
