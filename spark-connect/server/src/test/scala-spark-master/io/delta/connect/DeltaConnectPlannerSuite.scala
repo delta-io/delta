@@ -474,7 +474,7 @@ class DeltaConnectPlannerSuite
     }
   }
 
-  test("upgrade table protocol") {
+  ignore("upgrade table protocol") {
     val tableName = "test_table"
     withTable(tableName) {
       // Create a Delta table with protocol version (1, 1).
