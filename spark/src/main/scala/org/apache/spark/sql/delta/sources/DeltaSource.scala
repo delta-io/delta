@@ -663,7 +663,7 @@ trait DeltaSourceBase extends Source
       // check whether we can use `schema` (the fixed source schema we use in the same run of the
       // query) to read these new files safely.
       val backfilling = version < snapshotAtSourceInit.version
-      // We forbid the case when the the schemaChange is nullable while the read schema is NOT
+      // We forbid the case when the schemaChange is nullable while the read schema is NOT
       // nullable, or in other words, `schema` should not tighten nullability from `schemaChange`,
       // because we don't ever want to read back any nulls when the read schema is non-nullable.
       val shouldForbidTightenNullability = !forceEnableUnsafeReadOnNullabilityChange
