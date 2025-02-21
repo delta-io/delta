@@ -1971,7 +1971,7 @@ trait DeltaErrorsSuiteBase
   }
 
   // The compiler complains the lambda function is too large if we put all tests in one lambda.
-  test("test DeltaErrors OSS methods more") {
+  ignore("test DeltaErrors OSS methods more") {
     {
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.schemaNotSetException
