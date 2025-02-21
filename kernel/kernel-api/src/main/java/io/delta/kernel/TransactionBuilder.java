@@ -116,7 +116,7 @@ public interface TransactionBuilder {
   TransactionBuilder withDomainMetadata(String domain, String config);
 
   /**
-   * Mark the domain metadata with identifier {@domain} as removed in this transaction. If this
+   * Mark the domain metadata with identifier {@code domain} as removed in this transaction. If this
    * domain does not exist in the latest version of the table will throw a {@link
    * DomainDoesNotExistException} upon calling {@link TransactionBuilder#build(Engine)}. Adding and
    * removing a domain with the same identifier in one txn is not allowed.
