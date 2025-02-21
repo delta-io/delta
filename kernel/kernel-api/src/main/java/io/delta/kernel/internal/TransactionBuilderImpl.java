@@ -139,26 +139,22 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     Metadata metadata = snapshot.getMetadata();
     Protocol protocol = snapshot.getProtocol();
     Map<String, String> validatedProperties =
-          TableConfig.validateDeltaProperties(tableProperties.orElse(Collections.emptyMap()));
-    Map<String, String> newProperties =
-          metadata.filterOutUnchangedProperties(validatedProperties);
+        TableConfig.validateDeltaProperties(tableProperties.orElse(Collections.emptyMap()));
+    Map<String, String> newProperties = metadata.filterOutUnchangedProperties(validatedProperties);
 
     if (!newProperties.isEmpty()) {
       shouldUpdateMetadata = true;
       metadata = metadata.withNewConfiguration(newProperties);
     }
 
-    ColumnMapping.verifyColumnMappingChange(
-            metadata.getConfiguration(), newProperties, isNewTable);
+    ColumnMapping.verifyColumnMappingChange(metadata.getConfiguration(), newProperties, isNewTable);
 
     Optional<Tuple2<Protocol, Set<TableFeature>>> newProtocolAndFeatures =
         TableFeatures.autoUpgradeProtocolBasedOnMetadata(metadata, protocol);
     if (newProtocolAndFeatures.isPresent()) {
       logger.info(
-              "Automatically enabling table features: {}",
-              newProtocolAndFeatures.get()._2.stream()
-                      .map(TableFeature::featureName)
-                      .collect(toSet()));
+          "Automatically enabling table features: {}",
+          newProtocolAndFeatures.get()._2.stream().map(TableFeature::featureName).collect(toSet()));
 
       shouldUpdateProtocol = true;
       protocol = newProtocolAndFeatures.get()._1;
