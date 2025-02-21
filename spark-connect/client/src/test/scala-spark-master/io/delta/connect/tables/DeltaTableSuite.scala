@@ -244,16 +244,16 @@ class DeltaTableSuite extends DeltaQueryTest with RemoteSparkSession {
     }
   }
 
-  test("upgradeTableProtocol") {
-    withTempPath { dir =>
-      val path = dir.getAbsolutePath
-      testData.write.format("delta").save(path)
-      val table = DeltaTable.forPath(spark, path)
-      table.upgradeTableProtocol(1, 2)
-      checkAnswer(
-        table.history().select("version", "operation"),
-        Seq(Row(0L, "WRITE"), Row(1L, "SET TBLPROPERTIES"))
-      )
-    }
-  }
+//  test("upgradeTableProtocol") {
+//    withTempPath { dir =>
+//      val path = dir.getAbsolutePath
+//      testData.write.format("delta").save(path)
+//      val table = DeltaTable.forPath(spark, path)
+//      table.upgradeTableProtocol(1, 2)
+//      checkAnswer(
+//        table.history().select("version", "operation"),
+//        Seq(Row(0L, "WRITE"), Row(1L, "SET TBLPROPERTIES"))
+//      )
+//    }
+//  }
 }

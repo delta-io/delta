@@ -43,7 +43,9 @@ import java.util.TimeZone
 import org.scalatest.Assertions
 import org.scalatest.funsuite.AnyFunSuite
 
-import org.apache.spark.sql.{DataFrame, Dataset, Row, SparkSession}
+import org.apache.spark.sql.connect.{DataFrame, Dataset, SparkSession}
+import org.apache.spark.sql.connect.test.SQLHelper
+import org.apache.spark.sql.Row
 import org.apache.spark.sql.catalyst.util.SparkStringUtils.sideBySide
 import org.apache.spark.util.ArrayImplicits._
 
