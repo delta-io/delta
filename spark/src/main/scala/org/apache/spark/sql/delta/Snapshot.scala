@@ -238,7 +238,7 @@ class Snapshot(
     DeltaLogFileIndex(DeltaLogFileIndex.COMMIT_FILE_FORMAT, logSegment.deltas)
   }
 
-  protected lazy val fileIndices: Seq[DeltaLogFileIndex] = {
+  protected[delta] lazy val fileIndices: Seq[DeltaLogFileIndex] = {
     val checkpointFileIndexes = checkpointProvider.allActionsFileIndexes()
     checkpointFileIndexes ++ deltaFileIndexOpt.toSeq
   }
@@ -544,8 +544,12 @@ class Snapshot(
   }
 
   private[delta] def getNumPartitions: Int = {
-    spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SNAPSHOT_PARTITIONS)
-      .getOrElse(Snapshot.defaultNumSnapshotPartitions)
+    spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SNAPSHOT_PARTITIONS).orElse {
+      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SNAPSHOT_PARTITION_BYTES).map { bytes =>
+        (fileIndices.map(_.sizeInBytes).sum / bytes + 1).toInt
+      }
+    }
+    .getOrElse(Snapshot.defaultNumSnapshotPartitions)
   }
 
   /**
