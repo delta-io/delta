@@ -26,8 +26,8 @@ import org.apache.spark.sql.delta.{CheckConstraintsTableFeature, DeltaLog, Delta
 import org.apache.spark.sql.delta.actions.{Metadata, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.constraints.{Constraint, Constraints, Invariants}
-import org.apache.spark.sql.delta.constraints.Constraints.NotNull
-import org.apache.spark.sql.delta.constraints.Invariants.PersistedExpression
+import org.apache.spark.sql.delta.constraints.Constraints.{Check, NotNull}
+import org.apache.spark.sql.delta.constraints.Invariants.{ArbitraryExpression, PersistedExpression}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
@@ -192,17 +192,15 @@ class InvariantEnforcementSuite extends QueryTest
         .add("key", StringType, nullable = false)
         .add("value", IntegerType))
     testBatchWriteRejection(
-      NotNull(Seq("key")),
+      Check("", ArbitraryExpression(spark, "top is null or top.key is not null").expression),
       schema,
       spark.createDataFrame(Seq(Row(Row("a", 1)), Row(Row(null, 2))).asJava, schema.asNullable),
       "top.key"
     )
-    testBatchWriteRejection(
-      NotNull(Seq("key")),
-      schema,
-      spark.createDataFrame(Seq(Row(Row("a", 1)), Row(null)).asJava, schema.asNullable),
-      "top.key"
-    )
+    tableWithSchema(schema) { path =>
+      spark.createDataFrame(Seq(Row(Row("a", 1)), Row(null)).asJava, schema.asNullable)
+        .write.mode("append").format("delta").save(path)
+    }
   }
 
   testQuietly("reject non-nullable array column") {
