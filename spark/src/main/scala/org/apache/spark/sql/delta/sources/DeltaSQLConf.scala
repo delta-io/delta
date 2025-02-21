@@ -536,6 +536,13 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val PERSIST_VACUUM_INFO_ENABLED =
+    buildConf("vacuum.info.persist.enabled")
+      .doc("computes latestCommitVersionOutsideOfRetentionWindow and persists it in vacuum" +
+        " info file even for FULL vacuum ")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_VACUUM_RETENTION_CHECK_ENABLED =
     buildConf("retentionDurationCheck.enabled")
       .doc("Adds a check preventing users from running vacuum with a very short retention " +
