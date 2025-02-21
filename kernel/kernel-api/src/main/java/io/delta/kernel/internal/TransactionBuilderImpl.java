@@ -359,7 +359,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
           throw new DomainDoesNotExistException(
               table.getDataPath().toString(), domainName, snapshot.getVersion());
         }
-        domainMetadatasAdded.put(domainName, domainToRemove.removed());
+        finalDomainMetadatas.add(domainToRemove.removed());
       } else {
         // We must throw an error if the domain does not exist. Otherwise, there could be unexpected
         // behavior within conflict resolution. For example, consider the following
