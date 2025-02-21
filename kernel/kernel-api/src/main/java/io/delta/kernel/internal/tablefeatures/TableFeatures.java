@@ -109,7 +109,8 @@ public class TableFeatures {
 
     @Override
     public boolean hasKernelWriteSupport(Metadata metadata) {
-      return false; // TODO: yet to be implemented in Kernel
+      // writable if change data feed is disabled
+      return !TableConfig.CHANGE_DATA_FEED_ENABLED.fromMetadata(metadata);
     }
 
     @Override
@@ -301,7 +302,9 @@ public class TableFeatures {
 
     @Override
     public boolean hasKernelWriteSupport(Metadata metadata) {
-      return false; // TODO: yet to be implemented in Kernel
+      // Kernel can write as long as there are no timestamp_ntz columns defined
+      // TODO: implement support for writing timestamp_ntz columns
+      return !hasTypeColumn(metadata.getSchema(), TIMESTAMP_NTZ);
     }
 
     @Override
@@ -460,16 +463,10 @@ public class TableFeatures {
       Protocol protocol, Metadata metadata, String tablePath) {
     Set<TableFeature> unsupportedFeatures =
         protocol.getImplicitlyAndExplicitlySupportedFeatures().stream()
-            .filter(f -> !f.hasKernelWriteSupport(metadata))
-            .filter(
-                f -> {
-                  if (f.isReaderWriterFeature()) {
-                    return !f.hasKernelReadSupport();
-                  } else {
-                    return true;
-                  }
-                })
-            .collect(toSet());
+            .filter(f ->
+              !f.hasKernelWriteSupport(metadata) ||
+                      (f.isReaderWriterFeature() && !f.hasKernelReadSupport())
+            ).collect(toSet());
 
     if (!unsupportedFeatures.isEmpty()) {
       throw unsupportedWriterFeatures(
