@@ -92,6 +92,33 @@ public interface TransactionBuilder {
   TransactionBuilder withMaxRetries(int maxRetries);
 
   /**
+   * Commit the provided domain metadata as part of this transaction. If this is called more than
+   * once with the same {@code domain} the latest provided {@code config} will be committed in
+   * the transaction. Only user-controlled domains are allowed (aka. domains with a `delta.` prefix
+   * are not allowed).
+   *
+   * <p>See the Delta protocol for more information on how to use domain metadata <a
+   * href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#domain-metadata">
+   * Domain Metadata</a>.
+   *
+   * @param domain the domain identifier
+   * @param config configuration string for this domain
+   * @return updated {@link TransactionBuilder} instance
+   */
+  TransactionBuilder withDomainMetadata(String domain, String config);
+
+  /**
+   * Mark the domain metadata with identifier {@domain} as removed in this transaction.
+   *
+   * TODO what to do if it doesn't exist
+   * (I think we need to throw an exception, because what if a conflicting transaction adds that
+   * domain you would expect it to be removed)
+   * @param domain the domain identifier for the domain to remove
+   * @return updated {@link TransactionBuilder} instance
+   */
+  TransactionBuilder withDomainMetadataRemoved(String domain);
+
+  /**
    * Build the transaction. Also validates the given info to ensure that a valid transaction can be
    * created.
    *
@@ -101,6 +128,7 @@ public interface TransactionBuilder {
    * @throws InvalidConfigurationValueException if the value of the property is invalid.
    * @throws UnknownConfigurationException if any of the properties are unknown to {@link
    *     TableConfig}.
+   * @throws ?? TODO when domain metadata does not exist ??
    */
   Transaction build(Engine engine);
 }

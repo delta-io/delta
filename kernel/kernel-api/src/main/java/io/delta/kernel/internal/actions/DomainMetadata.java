@@ -117,6 +117,11 @@ public class DomainMetadata {
     return new GenericRow(DomainMetadata.FULL_SCHEMA, domainMetadataMap);
   }
 
+  public DomainMetadata removed() {
+    // checkArgument(!removed, "TODO message");
+    return new DomainMetadata(domain, configuration, true /* removed */);
+  }
+
   @Override
   public String toString() {
     return String.format(

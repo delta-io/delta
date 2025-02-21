@@ -60,12 +60,17 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
       tablePath: String,
       domainMetadatas: Seq[DomainMetadata]): Transaction = {
 
-    val txnBuilder = createWriteTxnBuilder(TableImpl.forPath(engine, tablePath))
-      .asInstanceOf[TransactionBuilderImpl]
+    var txnBuilder = createWriteTxnBuilder(TableImpl.forPath(engine, tablePath))
 
-    val txn = txnBuilder.build(engine).asInstanceOf[TransactionImpl]
-    txn.addDomainMetadatas(domainMetadatas.asJava)
-    txn
+    domainMetadatas.foreach { dm =>
+      if (dm.isRemoved) {
+        txnBuilder = txnBuilder.withDomainMetadataRemoved(dm.getDomain())
+      } else {
+        txnBuilder = txnBuilder.withDomainMetadata(dm.getDomain(), dm.getConfiguration())
+      }
+    }
+
+    txnBuilder.build(engine)
   }
 
   private def commitDomainMetadataAndVerify(
@@ -270,7 +275,7 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
       val dm2 = new DomainMetadata("domain2", "", false)
       val dm3 = new DomainMetadata("domain3", """{"key3":"3"}""", false)
       val dm1_2 = new DomainMetadata("domain1", """{"key1":"10"}""", false)
-      val dm3_2 = new DomainMetadata("domain3", """{"key3":"30"}""", true)
+      val dm3_2 = new DomainMetadata("domain3", """{"key3":"3"}""", true)
 
       Seq(
         (Seq(dm1), Map("domain1" -> dm1)),
@@ -593,4 +598,14 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
       }
     }
   }
+
+  // todo review existing tests
+  // todo add tests for the API added
+  // i.e. non system controlled vs system controlled
+  // i.e. duplicates
+  // i.e. anything else not covered by existing checks?
+
+  // test in kernelApi suite? i.e. TransactionBuilderSuite?
+
+  // either we need to keep supporting directly setting it, or add support for removing them
 }

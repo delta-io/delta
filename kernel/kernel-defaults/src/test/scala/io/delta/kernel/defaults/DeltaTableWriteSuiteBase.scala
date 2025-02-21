@@ -43,9 +43,8 @@ import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.StructType
+import io.delta.kernel.utils.{CloseableIterable, CloseableIterator, FileStatus}
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
-import io.delta.kernel.utils.CloseableIterator
-import io.delta.kernel.utils.FileStatus
 
 import org.apache.spark.sql.delta.VersionNotFoundException
 

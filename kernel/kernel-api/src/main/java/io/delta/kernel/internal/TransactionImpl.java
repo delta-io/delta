@@ -69,7 +69,9 @@ public class TransactionImpl implements Transaction {
   private final Optional<SetTransaction> setTxnOpt;
   private final boolean shouldUpdateProtocol;
   private final Clock clock;
-  private List<DomainMetadata> domainMetadatas = new ArrayList<>();
+  // TODO what if we make this final so that it can only be modified but not overwritten?
+  // I think this doesn't really make sense...
+  private List<DomainMetadata> domainMetadatas;
   private Metadata metadata;
   private boolean shouldUpdateMetadata;
   private int maxRetries;
@@ -89,7 +91,8 @@ public class TransactionImpl implements Transaction {
       boolean shouldUpdateMetadata,
       boolean shouldUpdateProtocol,
       int maxRetries,
-      Clock clock) {
+      Clock clock,
+      List<DomainMetadata> domainMetadatas) {
     this.isNewTable = isNewTable;
     this.dataPath = dataPath;
     this.logPath = logPath;
@@ -103,6 +106,8 @@ public class TransactionImpl implements Transaction {
     this.shouldUpdateProtocol = shouldUpdateProtocol;
     this.maxRetries = maxRetries;
     this.clock = clock;
+    // require non null?
+    this.domainMetadatas = domainMetadatas;
   }
 
   @Override
@@ -129,6 +134,8 @@ public class TransactionImpl implements Transaction {
    *
    * @param domainMetadatas List of domain metadata to be added to the transaction.
    */
+  // where do we use this?
+  // todo can we refactor to use public method in test instead?
   public void addDomainMetadatas(List<DomainMetadata> domainMetadatas) {
     this.domainMetadatas.addAll(domainMetadatas);
   }
@@ -179,6 +186,8 @@ public class TransactionImpl implements Transaction {
       // AddFile actions that do not yet have them. If the row ID high watermark changes, emit a
       // DomainMetadata action to update it.
       if (TableFeatures.isRowTrackingSupported(protocol)) {
+        // this probably shouldn't override them, or is that okay?
+        // is there a better way to do this?...
         domainMetadatas =
             RowTracking.updateRowIdHighWatermarkIfNeeded(
                 readSnapshot,

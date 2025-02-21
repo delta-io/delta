@@ -19,6 +19,7 @@ import static io.delta.kernel.internal.DeltaErrors.requiresSchemaForNewTable;
 import static io.delta.kernel.internal.DeltaErrors.tableAlreadyExists;
 import static io.delta.kernel.internal.TransactionImpl.DEFAULT_READ_VERSION;
 import static io.delta.kernel.internal.TransactionImpl.DEFAULT_WRITE_VERSION;
+import static io.delta.kernel.internal.tablefeatures.TableFeatures.DOMAIN_METADATA_W_FEATURE;
 import static io.delta.kernel.internal.util.ColumnMapping.isColumnMappingModeEnabled;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames;
@@ -57,6 +58,9 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   private Optional<List<String>> partitionColumns = Optional.empty();
   private Optional<SetTransaction> setTxnOpt = Optional.empty();
   private Optional<Map<String, String>> tableProperties = Optional.empty();
+  // todo rename??
+  private final Map<String, DomainMetadata> metadataDomainsSet = new HashMap<>();
+  private final Set<String> metadataDomainsRemoved = new HashSet<>();
 
   /**
    * Number of retries for concurrent write exceptions to resolve conflicts and retry commit. In
@@ -107,6 +111,26 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   public TransactionBuilder withMaxRetries(int maxRetries) {
     checkArgument(maxRetries >= 0, "maxRetries must be >= 0");
     this.maxRetries = maxRetries;
+    return this;
+  }
+
+  @Override
+  public TransactionBuilder withDomainMetadata(String domainName, String config) {
+    checkArgument(
+        !domainName.toLowerCase(Locale.ROOT).startsWith("delta."),
+        "Setting a system-controlled domain is not allowed: " + domainName);
+    // we override any existing value
+    metadataDomainsSet.put(
+        domainName, new DomainMetadata(domainName, config, false /* removed */));
+    return this;
+  }
+
+  @Override
+  public TransactionBuilder withDomainMetadataRemoved(String domainName) {
+    checkArgument(
+        !domainName.toLowerCase(Locale.ROOT).startsWith("delta."),
+        "Removing a system-controlled domain is not allowed: " + domainName);
+    metadataDomainsRemoved.add(domainName);
     return this;
   }
 
@@ -163,6 +187,51 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       }
     }
 
+    /* --------------- Handle Domain Metadata ------------ */
+    // Enable the feature if necessary
+    if (!protocol.getWriterFeatures().contains(DOMAIN_METADATA_W_FEATURE.featureName())) {
+      if (!metadataDomainsSet.isEmpty()) {
+        // This txn is setting a domain metadata, enable the feature in the protocol
+        logger.info("Automatically enabling writer feature: {}",
+            DOMAIN_METADATA_W_FEATURE.featureName());
+        protocol = protocol.withNewWriterFeatures(
+            Collections.singleton(DOMAIN_METADATA_W_FEATURE.featureName()));
+      }
+      if (!metadataDomainsRemoved.isEmpty()) {
+        // Do nothing here, we will throw an exception when the domain does not exist in the
+        // current snapshot
+      }
+    }
+    // Generate the tombstones for the removed domain metadatas
+    Map<String, DomainMetadata> snapshotDomainMetadataMap = snapshot.getDomainMetadataMap();
+    for (String domainName : metadataDomainsRemoved) {
+      if (snapshotDomainMetadataMap.containsKey(domainName)) {
+        DomainMetadata domainToRemove = snapshotDomainMetadataMap.get(domainName);
+        // It is possible that domainToRemove is a tombstone (and already removed) in the snapshot.
+        // In this case, we still add it to the metadata domains as removed so that it can be
+        // correctly resolved in the case of conflict resolution
+
+        // But this can lead to different behavior across checkpoints vs log files (whether
+        // tombstones are present in the snapshot or not)... we should probably just fail to be safe
+
+        // what if we try to remove it
+        // it's already been removed
+        // conflicting transaction ADDS IT
+        // should fail since same domain?
+        metadataDomainsSet.put(domainName, domainToRemove.removed());
+      } else {
+        // We must throw an error if the domain does not exist. Otherwise, there could be unexpected
+        // behavior within conflict resolution. For example, consider the following
+        // 1. Table has no domains set V0
+        // 2. txnA is started and wants to remove domain "foo"
+        // 3. txnB is started and adds domain "foo" and commits V1 before txnA
+        // 4. txnA performs conflict resolution against the V1 commit from txnB -> behavior is
+        //    undefined
+        // TODO throw real exception
+        throw new RuntimeException("Cannot remove domain that does not exist in readSnapshot");
+      }
+    }
+
     return new TransactionImpl(
         isNewTable,
         table.getDataPath(),
@@ -176,7 +245,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         shouldUpdateMetadata,
         shouldUpdateProtocol,
         maxRetries,
-        table.getClock());
+        table.getClock(),
+        new ArrayList<>(metadataDomainsSet.values()));
   }
 
   /** Validate the given parameters for the transaction. */
