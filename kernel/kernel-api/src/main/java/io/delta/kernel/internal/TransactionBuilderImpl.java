@@ -203,22 +203,11 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       }
     }
     // Generate the tombstones for the removed domain metadatas
-    Map<String, DomainMetadata> snapshotDomainMetadataMap = snapshot.getDomainMetadataMap();
     for (String domainName : metadataDomainsRemoved) {
-      if (snapshotDomainMetadataMap.containsKey(domainName)) {
-        DomainMetadata domainToRemove = snapshotDomainMetadataMap.get(domainName);
-        // It is possible that domainToRemove is a tombstone (and already removed) in the snapshot.
-        // In this case, we still add it to the metadata domains as removed so that it can be
-        // correctly resolved in the case of conflict resolution
-
-        // But this can lead to different behavior across checkpoints vs log files (whether
-        // tombstones are present in the snapshot or not)... we should probably just fail to be safe
-
-        // what if we try to remove it
-        // it's already been removed
-        // conflicting transaction ADDS IT
-        // should fail since same domain?
-        metadataDomainsSet.put(domainName, domainToRemove.removed());
+      Optional<String> existingConfiguration = snapshot.getDomainMetadataConfiguration(domainName);
+      if (existingConfiguration.isPresent()) {
+        metadataDomainsSet.put(domainName,
+            new DomainMetadata(domainName, existingConfiguration.get(), true /* removed */));
       } else {
         // We must throw an error if the domain does not exist. Otherwise, there could be unexpected
         // behavior within conflict resolution. For example, consider the following
@@ -230,6 +219,11 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         // TODO throw real exception
         throw new RuntimeException("Cannot remove domain that does not exist in readSnapshot");
       }
+
+      // what if you read table, not removed
+      // try to remove domain
+      // before build() another txn has already removed it
+      // ???
     }
 
     return new TransactionImpl(

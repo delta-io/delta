@@ -17,6 +17,7 @@ package io.delta.kernel;
 
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.DomainDoesNotExistException;
 import io.delta.kernel.exceptions.ConcurrentTransactionException;
 import io.delta.kernel.exceptions.InvalidConfigurationValueException;
 import io.delta.kernel.exceptions.UnknownConfigurationException;
@@ -128,7 +129,10 @@ public interface TransactionBuilder {
    * @throws InvalidConfigurationValueException if the value of the property is invalid.
    * @throws UnknownConfigurationException if any of the properties are unknown to {@link
    *     TableConfig}.
-   * @throws ?? TODO when domain metadata does not exist ??
+   * @throws DomainDoesNotExistException if removing a domain that does not exist in the latest
+   *     version of the table
+   *
+   *
    */
   Transaction build(Engine engine);
 }
