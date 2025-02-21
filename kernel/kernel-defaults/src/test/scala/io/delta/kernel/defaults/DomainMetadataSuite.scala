@@ -48,7 +48,7 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
     assert(expectedValue === snapshot.getDomainMetadataMap.asScala)
     // Verify public API
     expectedValue.foreach { case (key, domainMetadata) =>
-      snapshot.getDomainMetadataConfiguration(key).toScala match {
+      snapshot.getDomainMetadataConfig(key).toScala match {
         case Some(config) =>
           assert(!domainMetadata.isRemoved && config == domainMetadata.getConfiguration)
         case None =>
@@ -681,8 +681,10 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
         List(dm1_removed, dm1_removed, dm1_removed),
         Map("domain1" -> dm1_removed))
     }
+  }
 
-    // Remove domain that does not exist
+  test("txnBuilder.withDomainMetadataRemoved removing a non-existent domain") {
+    // Remove domain that does not exist and has never existed
     withTempDirAndEngine { (tablePath, engine) =>
       createTableWithDomainMetadataSupported(engine, tablePath)
 
@@ -694,7 +696,6 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
     }
 
     // Remove domain that exists as a tombstone
-    // TODO decide on behavior for this
     withTempDirAndEngine { (tablePath, engine) =>
       createTableWithDomainMetadataSupported(engine, tablePath)
 
@@ -710,12 +711,14 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
         List(dm1_removed),
         Map("domain1" -> dm1_removed))
 
-      // Remove it again
-      commitDomainMetadataAndVerify(
-        engine,
-        tablePath,
-        List(dm1_removed),
-        Map("domain1" -> dm1_removed))
+      // Removing it again should fail since it doesn't exist
+      intercept[DomainDoesNotExistException] {
+        commitDomainMetadataAndVerify(
+          engine,
+          tablePath,
+          List(dm1_removed),
+          Map("domain1" -> dm1_removed))
+      }
     }
   }
 
@@ -756,13 +759,13 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
       createTableWithDomainMetadataSupported(engine, tablePath)
 
       // Non-existent domain is not returned
-      assert(!latestSnapshot(tablePath).getDomainMetadataConfiguration("foo").isPresent)
+      assert(!latestSnapshot(tablePath).getDomainMetadataConfig("foo").isPresent)
 
       // Commit domain foo
-      val fooDm = new DomainMetadata("foo", """foo!""", false)
+      val fooDm = new DomainMetadata("foo", "foo!", false)
       commitDomainMetadataAndVerify(engine, tablePath, List(fooDm), Map("foo" -> fooDm))
       assert( // Check here even though already verified in commitDomainMetadataAndVerify
-        latestSnapshot(tablePath).getDomainMetadataConfiguration("foo").toScala.contains("foo!"))
+        latestSnapshot(tablePath).getDomainMetadataConfig("foo").toScala.contains("foo!"))
 
       // Remove domain foo (so tombstone exists but should not be returned)
       val fooDm_removed = fooDm.removed()
@@ -771,50 +774,73 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
         tablePath,
         List(fooDm_removed),
         Map("foo" -> fooDm_removed))
-      // ALready checked in commitDomainMetadataAndVerify but check again
-      assert(!latestSnapshot(tablePath).getDomainMetadataConfiguration("foo").isPresent)
+      // Already checked in commitDomainMetadataAndVerify but check again
+      assert(!latestSnapshot(tablePath).getDomainMetadataConfig("foo").isPresent)
     }
   }
 
-  test("automatically enables DomainMetadata when public APIs are used") {
+  /* --------------- Automatic upgrade table feature tests -------------- */
 
-    def verifyDomainMetadataSupport(
-        engine: Engine,
-        tablePath: String,
-        isSupported: Boolean = true): Unit = {
-      val snapshotImpl = Table.forPath(engine, tablePath).getLatestSnapshot(engine)
-        .asInstanceOf[SnapshotImpl]
-      assert(TableFeatures.isDomainMetadataSupported(snapshotImpl.getProtocol) == isSupported)
+  private def verifyDomainMetadataFeatureSupport(
+      engine: Engine,
+      tablePath: String,
+      isSupported: Boolean = true): Unit = {
+    val snapshotImpl = Table.forPath(engine, tablePath).getLatestSnapshot(engine)
+      .asInstanceOf[SnapshotImpl]
+    assert(TableFeatures.isDomainMetadataSupported(snapshotImpl.getProtocol) == isSupported)
+  }
+
+  /**
+   * For the given tablePath, commit a transaction that sets a domain metadata using
+   * withDomainMetadata when building the transaction (which should automatically upgrade the table
+   * protocol). Verifies that the domain metadata table feature is unsupported before committing
+   * (for an existing table) and is supported after committing.
+   *
+   * @param isNewTable if true, sets a schema during transaction building to create a new table
+   * @param tableProperties if provided sets the table properties during transaction building
+   */
+  private def verifyAutomaticUpgrade(
+      engine: Engine,
+      tablePath: String,
+      isNewTable: Boolean = false,
+      tableProperties: Option[Map[String, String]] = None): Unit = {
+    if (!isNewTable) {
+      // Verify it's not supported yet
+      verifyDomainMetadataFeatureSupport(engine, tablePath, isSupported = false)
     }
+    // Commit to table using withDomainMetadata and upgrade protocol
+    var txnBuilder = createWriteTxnBuilder(Table.forPath(engine, tablePath))
+      .withDomainMetadata("foo", "configuration string")
+    if (isNewTable) {
+      txnBuilder = txnBuilder.withSchema(engine, testSchema)
+    }
+    if (tableProperties.nonEmpty) {
+      txnBuilder = txnBuilder.withTableProperties(engine, tableProperties.get.asJava)
+    }
+    txnBuilder.build(engine).commit(engine, emptyIterable())
+    // Check the feature is now supported
+    verifyDomainMetadataFeatureSupport(engine, tablePath)
+  }
 
+  test("automatically enable DomainMetadata when using withDomainMetadata - new table") {
     // New table using the withDomainMetadata API
     withTempDirAndEngine { (tablePath, engine) =>
-      createWriteTxnBuilder(Table.forPath(engine, tablePath))
-        .withSchema(engine, testSchema)
-        .withDomainMetadata("foo", "configuration string")
-        .build(engine)
-        .commit(engine, emptyIterable())
-      verifyDomainMetadataSupport(engine, tablePath)
+      verifyAutomaticUpgrade(engine, tablePath, isNewTable = true)
     }
+  }
 
-    def checkAutomaticUpgrade(engine: Engine, tablePath: String): Unit = {
-      verifyDomainMetadataSupport(engine, tablePath, isSupported = false)
-      createWriteTxnBuilder(Table.forPath(engine, tablePath))
-        .withDomainMetadata("foo", "configuration string")
-        .build(engine)
-        .commit(engine, emptyIterable())
-      verifyDomainMetadataSupport(engine, tablePath)
-    }
-
-    // Upgrade on existing table with legacy protocol
+  test("automatically enable DomainMetadata when using withDomainMetadata - existing " +
+    "table with legacy protocol") {
     withTempDirAndEngine { (tablePath, engine) =>
       // Create table with legacy protocol
       createTxn(tablePath = tablePath, isNewTable = true, schema = testSchema, partCols = Seq())
         .commit(engine, emptyIterable())
-      checkAutomaticUpgrade(engine, tablePath)
+      verifyAutomaticUpgrade(engine, tablePath)
     }
+  }
 
-    // Upgrade on existing table with table features
+  test("automatically enable DomainMetadata when using withDomainMetadata - existing " +
+    "table with TF protocol") {
     withTempDirAndEngine { (tablePath, engine) =>
       // Create table with table feature protocol
       createTxn(
@@ -825,26 +851,25 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
         // Enable inCommitTimestamps to bump the protocol
         tableProperties = Map(TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true"))
         .commit(engine, emptyIterable())
-      checkAutomaticUpgrade(engine, tablePath)
+      verifyAutomaticUpgrade(engine, tablePath)
     }
+  }
 
-    // Upgrade at the same time as enabling another table feature
+  test("automatically enable DomainMetadata when using withDomainMetadata - existing " +
+    "table, upgrade two TF in same txn") {
     withTempDirAndEngine { (tablePath, engine) =>
       // Create table with legacy protocol
       createTxn(tablePath = tablePath, isNewTable = true, schema = testSchema, partCols = Seq())
         .commit(engine, emptyIterable())
-      createWriteTxnBuilder(Table.forPath(engine, tablePath))
-        .withDomainMetadata("foo", "configuration string")
-        .withTableProperties(
-          // Enable inCommitTimestamps at the same time
-          engine,
-          Map(TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true").asJava)
-        .build(engine)
-        .commit(engine, emptyIterable())
-      verifyDomainMetadataSupport(engine, tablePath)
+      verifyAutomaticUpgrade(
+        engine,
+        tablePath,
+        // Enable inCommitTimestamps as well
+        tableProperties = Some(Map(TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true")))
     }
+  }
 
-    // Removing a domain on a table without DM support should fail
+  test("removing a domain on a table without DomainMetadata support") {
     withTempDirAndEngine { (tablePath, engine) =>
       // Create table with legacy protocol
       createTxn(tablePath = tablePath, isNewTable = true, schema = testSchema, partCols = Seq())

@@ -20,11 +20,11 @@ import io.delta.kernel.annotation.Evolving;
 /** Thrown when attempting to remove a domain metadata that does not exist in the read snapshot. */
 @Evolving
 public class DomainDoesNotExistException extends KernelException {
-  public DomainDoesNotExistException(String domain, long snapshotVersion) {
+  public DomainDoesNotExistException(String tablePath, String domain, long snapshotVersion) {
     super(
         String.format(
-            "Cannot remove domain metadata with identifier %s because it does not exist in the "
+            "%s: Cannot remove domain metadata with identifier %s because it does not exist in the "
                 + "read snapshot at version %s",
-            domain, snapshotVersion));
+            tablePath, domain, snapshotVersion));
   }
 }

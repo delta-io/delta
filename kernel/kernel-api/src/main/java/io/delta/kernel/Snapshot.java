@@ -66,9 +66,11 @@ public interface Snapshot {
    * Returns the configuration for the provided {@code domain} if it exists in the snapshot. Returns
    * empty if the {@code domain} is not present in the snapshot.
    *
+   * <p>TODO get agreement on system-controlled domain accessibility + update docs
+   *
    * @return the configuration for the provided domain if it exists
    */
-  Optional<String> getDomainMetadataConfiguration(String domain);
+  Optional<String> getDomainMetadataConfig(String domain);
 
   /**
    * Create a scan builder to construct a {@link Scan} to read data from this snapshot.
