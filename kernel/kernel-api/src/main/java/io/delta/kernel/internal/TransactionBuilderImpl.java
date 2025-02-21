@@ -119,28 +119,28 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   }
 
   @Override
-  public TransactionBuilder withDomainMetadata(String domainName, String config) {
+  public TransactionBuilder withDomainMetadata(String domain, String config) {
     checkArgument(
-        !domainName.toLowerCase(Locale.ROOT).startsWith("delta."),
-        "Setting a system-controlled domain is not allowed: " + domainName);
+        DomainMetadata.isUserControlledDomain(domain),
+        "Setting a system-controlled domain is not allowed: " + domain);
     checkArgument(
-        !domainMetadatasRemoved.contains(domainName),
+        !domainMetadatasRemoved.contains(domain),
         "Cannot add a domain that is removed in this transaction");
     // we override any existing value
     domainMetadatasToCommit.put(
-        domainName, new DomainMetadata(domainName, config, false /* removed */));
+        domain, new DomainMetadata(domain, config, false /* removed */));
     return this;
   }
 
   @Override
-  public TransactionBuilder withDomainMetadataRemoved(String domainName) {
+  public TransactionBuilder withDomainMetadataRemoved(String domain) {
     checkArgument(
-        !domainName.toLowerCase(Locale.ROOT).startsWith("delta."),
-        "Removing a system-controlled domain is not allowed: " + domainName);
+        DomainMetadata.isUserControlledDomain(domain),
+        "Removing a system-controlled domain is not allowed: " + domain);
     checkArgument(
-        !domainMetadatasToCommit.containsKey(domainName),
+        !domainMetadatasToCommit.containsKey(domain),
         "Cannot remove a domain that is added in this transaction");
-    domainMetadatasRemoved.add(domainName);
+    domainMetadatasRemoved.add(domain);
     return this;
   }
 
