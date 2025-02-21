@@ -16,8 +16,10 @@
 package io.delta.kernel.defaults
 
 import scala.collection.immutable.Seq
+
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.Literal
+
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.actions.Protocol
 

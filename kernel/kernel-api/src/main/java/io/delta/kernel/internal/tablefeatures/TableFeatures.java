@@ -463,10 +463,11 @@ public class TableFeatures {
       Protocol protocol, Metadata metadata, String tablePath) {
     Set<TableFeature> unsupportedFeatures =
         protocol.getImplicitlyAndExplicitlySupportedFeatures().stream()
-            .filter(f ->
-              !f.hasKernelWriteSupport(metadata) ||
-                      (f.isReaderWriterFeature() && !f.hasKernelReadSupport())
-            ).collect(toSet());
+            .filter(
+                f ->
+                    !f.hasKernelWriteSupport(metadata)
+                        || (f.isReaderWriterFeature() && !f.hasKernelReadSupport()))
+            .collect(toSet());
 
     if (!unsupportedFeatures.isEmpty()) {
       throw unsupportedWriterFeatures(
