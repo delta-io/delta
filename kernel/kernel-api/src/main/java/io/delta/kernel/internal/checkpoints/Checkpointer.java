@@ -19,7 +19,6 @@ import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 import static io.delta.kernel.internal.TableConfig.EXPIRED_LOG_CLEANUP_ENABLED;
 import static io.delta.kernel.internal.TableConfig.LOG_RETENTION;
 import static io.delta.kernel.internal.snapshot.MetadataCleanup.cleanupExpiredLogs;
-import static io.delta.kernel.internal.tablefeatures.TableFeatures.validateWriteSupportedTable;
 import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 
 import io.delta.kernel.data.ColumnarBatch;
@@ -32,6 +31,7 @@ import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.replay.CreateCheckpointIterator;
+import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.*;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
@@ -65,7 +65,7 @@ public class Checkpointer {
     logger.info("{}: Starting checkpoint for version: {}", tablePath, version);
 
     // Check if writing to the given table protocol version/features is supported in Kernel
-    validateWriteSupportedTable(
+    TableFeatures.validateKernelCanWriteToTable(
         snapshot.getProtocol(), snapshot.getMetadata(), snapshot.getDataPath().toString());
 
     final Path checkpointPath = FileNames.checkpointFileSingular(logPath, version);

@@ -111,7 +111,8 @@ public class SchemaUtils {
                   || dataType instanceof StringType
                   || dataType instanceof BinaryType
                   || dataType instanceof DateType
-                  || dataType instanceof TimestampType)) {
+                  || dataType instanceof TimestampType
+                  || dataType instanceof TimestampNTZType)) {
                 throw unsupportedPartitionDataType(partitionCol, dataType);
               }
             });
@@ -329,7 +330,8 @@ public class SchemaUtils {
         || dataType instanceof StringType
         || dataType instanceof BinaryType
         || dataType instanceof DateType
-        || dataType instanceof TimestampType) {
+        || dataType instanceof TimestampType
+        || dataType instanceof TimestampNTZType) {
       // supported types
       return;
     } else if (dataType instanceof StructType) {

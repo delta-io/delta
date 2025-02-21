@@ -25,6 +25,7 @@ import static io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionC
 import static io.delta.kernel.internal.util.VectorUtils.stringArrayValue;
 import static io.delta.kernel.internal.util.VectorUtils.stringStringMapValue;
 import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.toSet;
 
 import io.delta.kernel.*;
 import io.delta.kernel.engine.Engine;
@@ -36,6 +37,7 @@ import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.SnapshotHint;
+import io.delta.kernel.internal.tablefeatures.TableFeature;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
@@ -136,31 +138,27 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     boolean shouldUpdateProtocol = false;
     Metadata metadata = snapshot.getMetadata();
     Protocol protocol = snapshot.getProtocol();
-    if (tableProperties.isPresent()) {
-      Map<String, String> validatedProperties =
-          TableConfig.validateDeltaProperties(tableProperties.get());
-      Map<String, String> newProperties =
-          metadata.filterOutUnchangedProperties(validatedProperties);
+    Map<String, String> validatedProperties =
+        TableConfig.validateDeltaProperties(tableProperties.orElse(Collections.emptyMap()));
+    Map<String, String> newProperties = metadata.filterOutUnchangedProperties(validatedProperties);
 
-      ColumnMapping.verifyColumnMappingChange(
-          metadata.getConfiguration(), newProperties, isNewTable);
+    if (!newProperties.isEmpty()) {
+      shouldUpdateMetadata = true;
+      metadata = metadata.withNewConfiguration(newProperties);
+    }
 
-      if (!newProperties.isEmpty()) {
-        shouldUpdateMetadata = true;
-        metadata = metadata.withNewConfiguration(newProperties);
-      }
+    ColumnMapping.verifyColumnMappingChange(metadata.getConfiguration(), newProperties, isNewTable);
 
-      Set<String> newWriterFeatures =
-          TableFeatures.extractAutomaticallyEnabledWriterFeatures(metadata, protocol);
-      if (!newWriterFeatures.isEmpty()) {
-        logger.info("Automatically enabling writer features: {}", newWriterFeatures);
-        shouldUpdateProtocol = true;
-        Set<String> oldWriterFeatures = protocol.getWriterFeatures();
-        protocol = protocol.withNewWriterFeatures(newWriterFeatures);
-        Set<String> curWriterFeatures = protocol.getWriterFeatures();
-        checkArgument(!Objects.equals(oldWriterFeatures, curWriterFeatures));
-        TableFeatures.validateWriteSupportedTable(protocol, metadata, table.getPath(engine));
-      }
+    Optional<Tuple2<Protocol, Set<TableFeature>>> newProtocolAndFeatures =
+        TableFeatures.autoUpgradeProtocolBasedOnMetadata(metadata, protocol);
+    if (newProtocolAndFeatures.isPresent()) {
+      logger.info(
+          "Automatically enabling table features: {}",
+          newProtocolAndFeatures.get()._2.stream().map(TableFeature::featureName).collect(toSet()));
+
+      shouldUpdateProtocol = true;
+      protocol = newProtocolAndFeatures.get()._1;
+      TableFeatures.validateKernelCanWriteToTable(protocol, metadata, table.getPath(engine));
     }
 
     return new TransactionImpl(
@@ -183,7 +181,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   private void validate(Engine engine, SnapshotImpl snapshot, boolean isNewTable) {
     String tablePath = table.getPath(engine);
     // Validate the table has no features that Kernel doesn't yet support writing into it.
-    TableFeatures.validateWriteSupportedTable(
+    TableFeatures.validateKernelCanWriteToTable(
         snapshot.getProtocol(), snapshot.getMetadata(), tablePath);
 
     if (!isNewTable) {

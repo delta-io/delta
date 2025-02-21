@@ -16,7 +16,7 @@
 package io.delta.kernel.internal.tablefeatures
 
 import java.util.{Collections, Optional}
-import java.util.stream.Collectors
+import java.util.Collections.{emptySet, singleton}
 import java.util.stream.Collectors.toList
 
 import scala.collection.JavaConverters._
@@ -24,7 +24,7 @@ import scala.collection.JavaConverters._
 import io.delta.kernel.data.{ArrayValue, ColumnVector, MapValue}
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
-import io.delta.kernel.internal.tablefeatures.TableFeatures.{validateWriteSupportedTable, TABLE_FEATURES}
+import io.delta.kernel.internal.tablefeatures.TableFeatures.{validateKernelCanReadTheTable, validateKernelCanWriteToTable, TABLE_FEATURES}
 import io.delta.kernel.internal.util.InternalUtils.singletonStringColumnVector
 import io.delta.kernel.internal.util.VectorUtils.stringVector
 import io.delta.kernel.types._
@@ -96,7 +96,7 @@ class TableFeaturesSuite extends AnyFunSuite {
       TableFeatures.TABLE_FEATURES.size() == readerWriterFeatures.size + writerOnlyFeatures.size)
   }
 
-  val testProtocol = new Protocol(1, 2, Collections.emptySet(), Collections.emptySet())
+  val testProtocol = new Protocol(1, 2, emptySet(), emptySet())
   Seq(
     // Test feature, metadata, expected result
     ("appendOnly", testMetadata(tblProps = Map("delta.appendOnly" -> "true")), true),
@@ -196,8 +196,9 @@ class TableFeaturesSuite extends AnyFunSuite {
       .filter(_.hasKernelWriteSupport(testMetadata()))
       .collect(toList()).asScala
 
-    // checkConstraints, generatedColumns, identityColumns, invariants are writable
-    // because the metadata has not been set the info that these features are enabled
+    // checkConstraints, generatedColumns, identityColumns, invariants, changeDataFeed,
+    // timestampNtz are writable because the metadata has not been set the info that
+    // these features are enabled
     val expected = Seq(
       "columnMapping",
       "v2Checkpoint",
@@ -211,6 +212,8 @@ class TableFeaturesSuite extends AnyFunSuite {
       "invariants",
       "checkConstraints",
       "generatedColumns",
+      "changeDataFeed",
+      "timestampNtz",
       "identityColumns")
 
     assert(results.map(_.featureName()).toSet == expected.toSet)
@@ -230,113 +233,314 @@ class TableFeaturesSuite extends AnyFunSuite {
   })
 
   /////////////////////////////////////////////////////////////////////////////////////////////////
-  // Legacy tests (will be modified or deleted in subsequent PRs)                                //
+  // Tests for validateKernelCanReadTheTable and validateKernelCanWriteToTable                   //
   /////////////////////////////////////////////////////////////////////////////////////////////////
-  test("validate write supported: protocol 1") {
-    checkSupported(createTestProtocol(minWriterVersion = 1))
-  }
 
-  test("validateWriteSupported: protocol 2") {
-    checkSupported(createTestProtocol(minWriterVersion = 2))
-  }
-
-  test("validateWriteSupported: protocol 2 with appendOnly") {
-    checkSupported(
-      createTestProtocol(minWriterVersion = 2),
-      metadata = testMetadata(tblProps = Map("delta.appendOnly" -> "true")))
-  }
-
-  test("validateWriteSupported: protocol 2 with invariants") {
-    checkUnsupported(
-      createTestProtocol(minWriterVersion = 2),
-      metadata = testMetadata(includeInvariant = true))
-  }
-
-  test("validateWriteSupported: protocol 2, with appendOnly and invariants") {
-    checkUnsupported(
-      createTestProtocol(minWriterVersion = 2),
-      metadata = testMetadata(includeInvariant = true))
-  }
-
-  Seq(3, 4, 5, 6).foreach { minWriterVersion =>
-    test(s"validateWriteSupported: protocol $minWriterVersion") {
-      checkUnsupported(createTestProtocol(minWriterVersion = minWriterVersion))
-    }
-  }
-
-  test("validateWriteSupported: protocol 7 with no additional writer features") {
-    checkSupported(createTestProtocol(minWriterVersion = 7))
-  }
-
+  // Reads: All legacy protocols should be readable by Kernel
   Seq(
-    "appendOnly",
-    "inCommitTimestamp",
-    "columnMapping",
-    "typeWidening-preview",
-    "typeWidening",
-    "domainMetadata",
-    "rowTracking").foreach { supportedWriterFeature =>
-    test(s"validateWriteSupported: protocol 7 with $supportedWriterFeature") {
-      val protocol = if (supportedWriterFeature == "rowTracking") {
-        createTestProtocol(minWriterVersion = 7, supportedWriterFeature, "domainMetadata")
-      } else {
-        createTestProtocol(minWriterVersion = 7, supportedWriterFeature)
+    // Test format: protocol (minReaderVersion, minWriterVersion)
+    (1, 1),
+    (1, 2),
+    (1, 3),
+    (1, 4),
+    (2, 5),
+    (2, 6)).foreach {
+    case (minReaderVersion, minWriterVersion) =>
+      test(s"validateKernelCanReadTheTable: protocol ($minReaderVersion, $minWriterVersion)") {
+        val protocol = new Protocol(minReaderVersion, minWriterVersion)
+        validateKernelCanReadTheTable(protocol, "/test/table")
       }
-      checkSupported(protocol)
-    }
   }
 
+  // Reads: Supported table features represented as readerFeatures in the protocol
   Seq(
-    "checkConstraints",
-    "generatedColumns",
-    "allowColumnDefaults",
-    "changeDataFeed",
-    "identityColumns",
+    "variantType",
+    "variantType-preview",
     "deletionVectors",
+    "typeWidening",
+    "typeWidening-preview",
     "timestampNtz",
     "v2Checkpoint",
-    "icebergCompatV1",
-    "icebergCompatV2",
-    "clustering",
-    "vacuumProtocolCheck").foreach { unsupportedWriterFeature =>
-    test(s"validateWriteSupported: protocol 7 with $unsupportedWriterFeature") {
-      checkUnsupported(createTestProtocol(minWriterVersion = 7, unsupportedWriterFeature))
+    "vacuumProtocolCheck",
+    "columnMapping").foreach { feature =>
+    test(s"validateKernelCanReadTheTable: protocol 3 with $feature") {
+      val protocol = new Protocol(3, 1, singleton(feature), Set().asJava)
+      validateKernelCanReadTheTable(protocol, "/test/table")
     }
   }
 
-  test("validateWriteSupported: protocol 7 with invariants, schema doesn't contain invariants") {
-    checkSupported(
-      createTestProtocol(minWriterVersion = 7, "invariants"))
+  // Writes
+  checkWriteSupported(
+    "validateKernelCanWriteToTable: protocol 1",
+    new Protocol(1, 1),
+    testMetadata())
+
+  checkWriteSupported(
+    "validateKernelCanWriteToTable: protocol 2",
+    new Protocol(1, 2),
+    testMetadata())
+
+  checkWriteSupported(
+    "validateKernelCanWriteToTable: protocol 2 with appendOnly",
+    new Protocol(1, 2),
+    testMetadata(tblProps = Map("delta.appendOnly" -> "true")))
+
+  checkWriteUnsupported(
+    "validateKernelCanWriteToTable: protocol 2 with invariants",
+    new Protocol(1, 2),
+    testMetadata(includeInvariant = true))
+
+  checkWriteUnsupported(
+    "validateKernelCanWriteToTable: protocol 2, with appendOnly and invariants",
+    new Protocol(1, 2),
+    testMetadata(includeInvariant = true, tblProps = Map("delta.appendOnly" -> "true")))
+
+  checkWriteSupported(
+    "validateKernelCanWriteToTable: protocol 3",
+    new Protocol(1, 3))
+
+  checkWriteUnsupported(
+    "validateKernelCanWriteToTable: protocol 3 with checkConstraints",
+    new Protocol(1, 3),
+    testMetadata(tblProps = Map("delta.constraints.a" -> "a = b")))
+
+  checkWriteSupported(
+    "validateKernelCanWriteToTable: protocol 4",
+    new Protocol(1, 4))
+
+  checkWriteUnsupported(
+    "validateKernelCanWriteToTable: protocol 4 with generatedColumns",
+    new Protocol(1, 4),
+    testMetadata(includeGeneratedColumn = true))
+
+  checkWriteUnsupported(
+    "validateKernelCanWriteToTable: protocol 4 with changeDataFeed",
+    new Protocol(1, 4),
+    testMetadata(tblProps = Map("delta.enableChangeDataFeed" -> "true")))
+
+  checkWriteSupported(
+    "validateKernelCanWriteToTable: protocol 5 with columnMapping",
+    new Protocol(2, 5),
+    testMetadata(tblProps = Map("delta.columnMapping.mode" -> "id")))
+
+  checkWriteSupported(
+    "validateKernelCanWriteToTable: protocol 6",
+    new Protocol(2, 6),
+    testMetadata(tblProps = Map("delta.columnMapping.mode" -> "none")))
+
+  checkWriteUnsupported(
+    "validateKernelCanWriteToTable: protocol 6 with identityColumns",
+    new Protocol(2, 6),
+    testMetadata(includeIdentityColumn = true))
+
+  checkWriteSupported(
+    "validateKernelCanWriteToTable: protocol 7 with appendOnly supported",
+    new Protocol(1, 7, Set().asJava, singleton("appendOnly")),
+    testMetadata(tblProps = Map("delta.appendOnly" -> "true")))
+
+  checkWriteSupported(
+    "validateKernelCanWriteToTable: protocol 7 with invariants, " +
+      "schema doesn't contain invariants",
+    new Protocol(1, 7, Set().asJava, singleton("invariants")),
+    testMetadata(includeInvariant = false))
+
+  checkWriteUnsupported(
+    "validateKernelCanWriteToTable: protocol 7 with invariants, " +
+      "schema contains invariants",
+    new Protocol(1, 7, Set().asJava, singleton("invariants")),
+    testMetadata(includeInvariant = true))
+
+  checkWriteSupported(
+    "validateKernelCanWriteToTable: protocol 7 with checkConstraints, " +
+      "metadata doesn't contains any constraints",
+    new Protocol(1, 7, Set().asJava, singleton("checkConstraints")),
+    testMetadata())
+
+  checkWriteUnsupported(
+    "validateKernelCanWriteToTable: protocol 7 with checkConstraints, " +
+      "metadata contains constraints",
+    new Protocol(1, 7, Set().asJava, singleton("checkConstraints")),
+    testMetadata(tblProps = Map("delta.constraints.a" -> "a = b")))
+
+  checkWriteSupported(
+    "validateKernelCanWriteToTable: protocol 7 with generatedColumns, " +
+      "metadata doesn't contains any generated columns",
+    new Protocol(1, 7, Set().asJava, singleton("generatedColumns")),
+    testMetadata())
+
+  checkWriteUnsupported(
+    "validateKernelCanWriteToTable: protocol 7 with generatedColumns, " +
+      "metadata contains generated columns",
+    new Protocol(1, 7, Set().asJava, singleton("generatedColumns")),
+    testMetadata(includeGeneratedColumn = true))
+
+  checkWriteSupported(
+    "validateKernelCanWriteToTable: protocol 7 with changeDataFeed, " +
+      "metadata doesn't contains changeDataFeed",
+    new Protocol(1, 7, Set().asJava, singleton("changeDataFeed")),
+    testMetadata())
+
+  checkWriteUnsupported(
+    "validateKernelCanWriteToTable: protocol 7 with changeDataFeed, " +
+      "metadata contains changeDataFeed",
+    new Protocol(1, 7, Set().asJava, singleton("changeDataFeed")),
+    testMetadata(tblProps = Map("delta.enableChangeDataFeed" -> "true")))
+
+  checkWriteSupported(
+    "validateKernelCanWriteToTable: protocol 7 with columnMapping, " +
+      "metadata doesn't contains columnMapping",
+    new Protocol(2, 7, Set().asJava, singleton("columnMapping")),
+    testMetadata())
+
+  checkWriteSupported(
+    "validateKernelCanWriteToTable: protocol 7 with columnMapping, " +
+      "metadata contains columnMapping",
+    new Protocol(2, 7, Set().asJava, singleton("columnMapping")),
+    testMetadata(tblProps = Map("delta.columnMapping.mode" -> "id")))
+
+  checkWriteSupported(
+    "validateKernelCanWriteToTable: protocol 7 with identityColumns, " +
+      "schema doesn't contains identity columns",
+    new Protocol(2, 7, Set().asJava, singleton("identityColumns")),
+    testMetadata())
+
+  checkWriteUnsupported(
+    "validateKernelCanWriteToTable: protocol 7 with identityColumns, " +
+      "schema contains identity columns",
+    new Protocol(2, 7, Set().asJava, singleton("identityColumns")),
+    testMetadata(includeIdentityColumn = true))
+
+  checkWriteSupported(
+    "validateKernelCanWriteToTable: protocol 7 with deletionVectors, " +
+      "metadata doesn't contains deletionVectors",
+    new Protocol(2, 7, Set().asJava, singleton("deletionVectors")),
+    testMetadata())
+
+  checkWriteSupported(
+    "validateKernelCanWriteToTable: protocol 7 with deletionVectors, " +
+      "metadata contains deletionVectors",
+    new Protocol(2, 7, Set().asJava, singleton("deletionVectors")),
+    testMetadata(tblProps = Map("delta.enableDeletionVectors" -> "true")))
+
+  checkWriteSupported(
+    "validateKernelCanWriteToTable: protocol 7 with timestampNtz, " +
+      "schema doesn't contains timestampNtz",
+    new Protocol(3, 7, singleton("timestampNtz"), singleton("timestampNtz")),
+    testMetadata())
+
+  checkWriteUnsupported(
+    "validateKernelCanWriteToTable: protocol 7 with timestampNtz, " +
+      "schema contains timestampNtz",
+    new Protocol(3, 7, singleton("timestampNtz"), singleton("timestampNtz")),
+    testMetadata(includeTimestampNtzTypeCol = true))
+
+  Seq("typeWidening", "typeWidening-preview").foreach { feature =>
+    checkWriteUnsupported(
+      s"validateKernelCanWriteToTable: protocol 7 with $feature, " +
+        s"metadata doesn't contains $feature",
+      new Protocol(3, 7, singleton(feature), singleton(feature)),
+      testMetadata())
+
+    checkWriteUnsupported(
+      s"validateKernelCanWriteToTable: protocol 7 with $feature, " +
+        s"metadata contains $feature",
+      new Protocol(3, 7, singleton(feature), singleton(feature)),
+      testMetadata(tblProps = Map("delta.enableTypeWidening" -> "true")))
   }
 
-  test("validateWriteSupported: protocol 7 with invariants, schema contains invariants") {
-    checkUnsupported(
-      createTestProtocol(minWriterVersion = 7, "invariants"),
-      metadata = testMetadata(includeInvariant = true))
+  Seq("variantType", "variantType-preview").foreach { feature =>
+    checkWriteUnsupported(
+      s"validateKernelCanWriteToTable: protocol 7 with $feature, " +
+        s"metadata doesn't contains $feature",
+      new Protocol(3, 7, singleton(feature), singleton(feature)),
+      testMetadata())
+
+    checkWriteUnsupported(
+      s"validateKernelCanWriteToTable: protocol 7 with $feature, " +
+        s"metadata contains $feature",
+      new Protocol(3, 7, singleton(feature), singleton(feature)),
+      testMetadata(tblProps = Map("delta.enableTypeWidening" -> "true")))
   }
 
-  def checkSupported(
-      protocol: Protocol,
-      metadata: Metadata = testMetadata()): Unit = {
-    validateWriteSupportedTable(protocol, metadata, "/test/table")
-  }
+  checkWriteSupported(
+    "validateKernelCanWriteToTable: protocol 7 with vacuumProtocolCheck, " +
+      "metadata doesn't contains vacuumProtocolCheck",
+    new Protocol(3, 7, singleton("vacuumProtocolCheck"), singleton("vacuumProtocolCheck")),
+    testMetadata())
 
-  def checkUnsupported(
-      protocol: Protocol,
-      metadata: Metadata = testMetadata()): Unit = {
-    intercept[KernelException] {
-      validateWriteSupportedTable(protocol, metadata, "/test/table")
-    }
-  }
+  checkWriteSupported(
+    "validateKernelCanWriteToTable: protocol 7 with domainMetadata",
+    new Protocol(3, 7, emptySet(), singleton("domainMetadata")),
+    testMetadata())
 
-  def createTestProtocol(minWriterVersion: Int, writerFeatures: String*): Protocol = {
+  checkWriteSupported(
+    "validateKernelCanWriteToTable: protocol 7 with rowTracking",
+    new Protocol(3, 7, emptySet(), singleton("rowTracking")),
+    testMetadata())
+
+  checkWriteSupported(
+    "validateKernelCanWriteToTable: protocol 7 with inCommitTimestamp",
+    new Protocol(3, 7, emptySet(), singleton("inCommitTimestamp")),
+    testMetadata())
+
+  checkWriteSupported(
+    "validateKernelCanWriteToTable: protocol 7 with icebergCompatV2",
+    new Protocol(3, 7, emptySet(), singleton("icebergCompatV2")),
+    testMetadata(tblProps = Map("delta.enableIcebergCompatV2" -> "true")))
+
+  checkWriteSupported(
+    "validateKernelCanWriteToTable: protocol 7 with v2Checkpoint, " +
+      "metadata enables v2Checkpoint",
+    new Protocol(3, 7, singleton("v2Checkpoint"), singleton("v2Checkpoint")),
+    testMetadata(tblProps = Map("delta.checkpointPolicy" -> "v2")))
+
+  checkWriteSupported(
+    "validateKernelCanWriteToTable: protocol 7 with multiple features supported",
     new Protocol(
-      // minReaderVersion - it doesn't matter as the read fails anyway before the writer check
-      0,
-      minWriterVersion,
-      // reader features - it doesn't matter as the read fails anyway before the writer check
-      Collections.emptySet(),
-      writerFeatures.toSet.asJava)
+      3,
+      7,
+      Set("v2Checkpoint", "columnMapping").asJava,
+      Set("v2Checkpoint", "columnMapping", "rowTracking", "domainMetadata").asJava),
+    testMetadata(tblProps = Map(
+      "delta.checkpointPolicy" -> "v2",
+      "delta.columnMapping.mode" -> "id",
+      "delta.enableRowTracking" -> "true")))
+
+  checkWriteUnsupported(
+    "validateKernelCanWriteToTable: protocol 7 with multiple features supported, " +
+      "with one of the features not supported by Kernel for writing",
+    new Protocol(
+      3,
+      7,
+      Set("v2Checkpoint", "columnMapping", "timestampNtz").asJava,
+      Set("v2Checkpoint", "columnMapping", "timestampNtz").asJava),
+    testMetadata(
+      includeTimestampNtzTypeCol = true,
+      tblProps = Map(
+        "delta.checkpointPolicy" -> "v2",
+        "delta.enableRowTracking" -> "true")))
+
+  /////////////////////////////////////////////////////////////////////////////////////////////////
+  // Test utility methods.                                                                       //
+  /////////////////////////////////////////////////////////////////////////////////////////////////
+  def checkWriteSupported(
+      testDesc: String,
+      protocol: Protocol,
+      metadata: Metadata = testMetadata()): Unit = {
+    test(testDesc) {
+      validateKernelCanWriteToTable(protocol, metadata, "/test/table")
+    }
+  }
+
+  def checkWriteUnsupported(
+      testDesc: String,
+      protocol: Protocol,
+      metadata: Metadata = testMetadata()): Unit = {
+    test(testDesc) {
+      intercept[KernelException] {
+        validateKernelCanWriteToTable(protocol, metadata, "/test/table")
+      }
+    }
   }
 
   def testMetadata(

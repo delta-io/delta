@@ -197,7 +197,7 @@ public class TableImpl implements Table {
               for (int rowId = 0; rowId < protocolVector.getSize(); rowId++) {
                 if (!protocolVector.isNullAt(rowId)) {
                   Protocol protocol = Protocol.fromColumnVector(protocolVector, rowId);
-                  TableFeatures.validateReadSupportedTable(protocol, getDataPath().toString());
+                  TableFeatures.validateKernelCanReadTheTable(protocol, getDataPath().toString());
                 }
               }
               if (shouldDropProtocolColumn) {
