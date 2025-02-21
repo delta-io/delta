@@ -29,6 +29,7 @@ import io.delta.kernel.exceptions.ConcurrentWriteException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.hook.PostCommitHook;
 import io.delta.kernel.internal.actions.*;
+import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.hook.CheckpointHook;
@@ -131,9 +132,7 @@ public class TransactionImpl implements Transaction {
    *
    * @param domainMetadatas List of domain metadata to be added to the transaction.
    */
-  // todo?
-  // where do we use this?
-  // todo can we refactor to use public method in test instead?
+  @VisibleForTesting
   public void addDomainMetadatas(List<DomainMetadata> domainMetadatas) {
     this.domainMetadatas.addAll(domainMetadatas);
   }

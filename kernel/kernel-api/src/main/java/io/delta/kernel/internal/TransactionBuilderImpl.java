@@ -119,6 +119,9 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     checkArgument(
         !domainName.toLowerCase(Locale.ROOT).startsWith("delta."),
         "Setting a system-controlled domain is not allowed: " + domainName);
+    checkArgument(
+        !domainMetadatasRemoved.contains(domainName),
+        "Cannot add a domain that is removed in this transaction");
     // we override any existing value
     domainMetadatasAdded.put(
         domainName, new DomainMetadata(domainName, config, false /* removed */));
@@ -130,6 +133,9 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     checkArgument(
         !domainName.toLowerCase(Locale.ROOT).startsWith("delta."),
         "Removing a system-controlled domain is not allowed: " + domainName);
+    checkArgument(
+        !domainMetadatasAdded.containsKey(domainName),
+        "Cannot remove a domain that is added in this transaction");
     domainMetadatasRemoved.add(domainName);
     return this;
   }
@@ -197,6 +203,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         protocol =
             protocol.withNewWriterFeatures(
                 Collections.singleton(DOMAIN_METADATA_W_FEATURE.featureName()));
+        shouldUpdateProtocol = true;
       }
       if (!domainMetadatasRemoved.isEmpty()) {
         // Do nothing here, we will throw an exception when the domain does not exist in the

@@ -594,6 +594,7 @@ public class TableFeatures {
    */
   private static int getMinWriterVersion(String feature) {
     switch (feature) {
+      case "domainMetadata": // fall through
       case "inCommitTimestamp":
         return 7;
       default:

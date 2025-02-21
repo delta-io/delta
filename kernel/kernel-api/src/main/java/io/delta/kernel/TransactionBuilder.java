@@ -96,7 +96,7 @@ public interface TransactionBuilder {
    * Commit the provided domain metadata as part of this transaction. If this is called more than
    * once with the same {@code domain} the latest provided {@code config} will be committed in the
    * transaction. Only user-controlled domains are allowed (aka. domains with a `delta.` prefix are
-   * not allowed).
+   * not allowed). Adding and removing a domain with the same identifier in one txn is not allowed.
    *
    * <p>See the Delta protocol for more information on how to use domain metadata <a
    * href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#domain-metadata">Domain
@@ -111,7 +111,8 @@ public interface TransactionBuilder {
   /**
    * Mark the domain metadata with identifier {@domain} as removed in this transaction. If this
    * domain does not exist in the latest version of the table will throw a {@link
-   * DomainDoesNotExistException} upon calling {@link TransactionBuilder#build(Engine)}.
+   * DomainDoesNotExistException} upon calling {@link TransactionBuilder#build(Engine)}. Adding and
+   * removing a domain with the same identifier in one txn is not allowed.
    *
    * <p>TODO clarify this based on what we decide w.r.t. tombstones vs active domains
    *
