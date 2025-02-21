@@ -428,7 +428,7 @@ class TableFeaturesSuite extends AnyFunSuite {
     new Protocol(3, 7, singleton("timestampNtz"), singleton("timestampNtz")),
     testMetadata())
 
-  checkWriteUnsupported(
+  checkWriteSupported(
     "validateKernelCanWriteToTable: protocol 7 with timestampNtz, " +
       "schema contains timestampNtz",
     new Protocol(3, 7, singleton("timestampNtz"), singleton("timestampNtz")),
@@ -512,10 +512,10 @@ class TableFeaturesSuite extends AnyFunSuite {
     new Protocol(
       3,
       7,
-      Set("v2Checkpoint", "columnMapping", "timestampNtz").asJava,
-      Set("v2Checkpoint", "columnMapping", "timestampNtz").asJava),
+      Set("v2Checkpoint", "columnMapping", "invariants").asJava,
+      Set("v2Checkpoint", "columnMapping", "invariants").asJava),
     testMetadata(
-      includeTimestampNtzTypeCol = true,
+      includeInvariant = true, // unsupported feature
       tblProps = Map(
         "delta.checkpointPolicy" -> "v2",
         "delta.enableRowTracking" -> "true")))
