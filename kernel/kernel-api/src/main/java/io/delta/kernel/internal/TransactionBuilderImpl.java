@@ -138,33 +138,31 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     boolean shouldUpdateProtocol = false;
     Metadata metadata = snapshot.getMetadata();
     Protocol protocol = snapshot.getProtocol();
-    if (tableProperties.isPresent()) {
-      Map<String, String> validatedProperties =
-          TableConfig.validateDeltaProperties(tableProperties.get());
-      Map<String, String> newProperties =
+    Map<String, String> validatedProperties =
+          TableConfig.validateDeltaProperties(tableProperties.orElse(Collections.emptyMap()));
+    Map<String, String> newProperties =
           metadata.filterOutUnchangedProperties(validatedProperties);
 
-      ColumnMapping.verifyColumnMappingChange(
-          metadata.getConfiguration(), newProperties, isNewTable);
+    if (!newProperties.isEmpty()) {
+      shouldUpdateMetadata = true;
+      metadata = metadata.withNewConfiguration(newProperties);
+    }
 
-      if (!newProperties.isEmpty()) {
-        shouldUpdateMetadata = true;
-        metadata = metadata.withNewConfiguration(newProperties);
-      }
+    ColumnMapping.verifyColumnMappingChange(
+            metadata.getConfiguration(), newProperties, isNewTable);
 
-      Optional<Tuple2<Protocol, Set<TableFeature>>> newProtocolAndFeatures =
-          TableFeatures.autoUpgradeProtocolBasedOnMetadata(metadata, protocol);
-      if (newProtocolAndFeatures.isPresent()) {
-        logger.info(
-            "Automatically enabling table features: {}",
-            newProtocolAndFeatures.get()._2.stream()
-                .map(TableFeature::featureName)
-                .collect(toSet()));
+    Optional<Tuple2<Protocol, Set<TableFeature>>> newProtocolAndFeatures =
+        TableFeatures.autoUpgradeProtocolBasedOnMetadata(metadata, protocol);
+    if (newProtocolAndFeatures.isPresent()) {
+      logger.info(
+              "Automatically enabling table features: {}",
+              newProtocolAndFeatures.get()._2.stream()
+                      .map(TableFeature::featureName)
+                      .collect(toSet()));
 
-        shouldUpdateProtocol = true;
-        protocol = newProtocolAndFeatures.get()._1;
-        TableFeatures.validateKernelCanWriteToTable(protocol, metadata, table.getPath(engine));
-      }
+      shouldUpdateProtocol = true;
+      protocol = newProtocolAndFeatures.get()._1;
+      TableFeatures.validateKernelCanWriteToTable(protocol, metadata, table.getPath(engine));
     }
 
     return new TransactionImpl(

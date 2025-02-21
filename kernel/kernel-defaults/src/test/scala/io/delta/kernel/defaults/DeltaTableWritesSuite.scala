@@ -654,98 +654,102 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
-  test("insert into partitioned table - all supported partition column types data") {
-    withTempDirAndEngine { (tblPath, engine) =>
-      val parquetAllTypes = goldenTablePath("parquet-all-types")
-      val schema = removeUnsupportedTypes(tableSchema(parquetAllTypes))
-      val partCols = Seq(
-        "byteType",
-        "shortType",
-        "integerType",
-        "longType",
-        "floatType",
-        "doubleType",
-        "decimal",
-        "booleanType",
-        "stringType",
-        "binaryType",
-        "dateType",
-        "timestampType")
-      val casePreservingPartCols =
-        casePreservingPartitionColNames(schema, partCols.asJava).asScala.to[Seq]
+  Seq(true, false).foreach { includeTimestampNtz =>
+    test(s"insert into partitioned table - all supported partition column types data - " +
+      s"timesatmp_ntz included = $includeTimestampNtz") {
+      withTempDirAndEngine { (tblPath, engine) =>
+        val parquetAllTypes = goldenTablePath("parquet-all-types")
+        val schema = removeUnsupportedTypes(tableSchema(parquetAllTypes))
+        val partCols = Seq(
+          "byteType",
+          "shortType",
+          "integerType",
+          "longType",
+          "floatType",
+          "doubleType",
+          "decimal",
+          "booleanType",
+          "stringType",
+          "binaryType",
+          "dateType",
+          "timestampType") ++ (if (includeTimestampNtz) Seq("timestampNtzType") else Seq.empty)
+        val casePreservingPartCols =
+          casePreservingPartitionColNames(schema, partCols.asJava).asScala.to[Seq]
 
-      // get the partition values from the data batch at the given rowId
-      def getPartitionValues(batch: ColumnarBatch, rowId: Int): Map[String, Literal] = {
-        casePreservingPartCols.map { partCol =>
-          val colIndex = schema.indexOf(partCol)
-          val vector = batch.getColumnVector(colIndex)
+        // get the partition values from the data batch at the given rowId
+        def getPartitionValues(batch: ColumnarBatch, rowId: Int): Map[String, Literal] = {
+          casePreservingPartCols.map { partCol =>
+            val colIndex = schema.indexOf(partCol)
+            val vector = batch.getColumnVector(colIndex)
 
-          val literal = if (vector.isNullAt(rowId)) {
-            Literal.ofNull(vector.getDataType)
-          } else {
-            vector.getDataType match {
-              case _: ByteType => Literal.ofByte(vector.getByte(rowId))
-              case _: ShortType => Literal.ofShort(vector.getShort(rowId))
-              case _: IntegerType => Literal.ofInt(vector.getInt(rowId))
-              case _: LongType => Literal.ofLong(vector.getLong(rowId))
-              case _: FloatType => Literal.ofFloat(vector.getFloat(rowId))
-              case _: DoubleType => Literal.ofDouble(vector.getDouble(rowId))
-              case dt: DecimalType =>
-                Literal.ofDecimal(vector.getDecimal(rowId), dt.getPrecision, dt.getScale)
-              case _: BooleanType => Literal.ofBoolean(vector.getBoolean(rowId))
-              case _: StringType => Literal.ofString(vector.getString(rowId))
-              case _: BinaryType => Literal.ofBinary(vector.getBinary(rowId))
-              case _: DateType => Literal.ofDate(vector.getInt(rowId))
-              case _: TimestampType => Literal.ofTimestamp(vector.getLong(rowId))
-              case _ =>
-                throw new IllegalArgumentException(s"Unsupported type: ${vector.getDataType}")
+            val literal = if (vector.isNullAt(rowId)) {
+              Literal.ofNull(vector.getDataType)
+            } else {
+              vector.getDataType match {
+                case _: ByteType => Literal.ofByte(vector.getByte(rowId))
+                case _: ShortType => Literal.ofShort(vector.getShort(rowId))
+                case _: IntegerType => Literal.ofInt(vector.getInt(rowId))
+                case _: LongType => Literal.ofLong(vector.getLong(rowId))
+                case _: FloatType => Literal.ofFloat(vector.getFloat(rowId))
+                case _: DoubleType => Literal.ofDouble(vector.getDouble(rowId))
+                case dt: DecimalType =>
+                  Literal.ofDecimal(vector.getDecimal(rowId), dt.getPrecision, dt.getScale)
+                case _: BooleanType => Literal.ofBoolean(vector.getBoolean(rowId))
+                case _: StringType => Literal.ofString(vector.getString(rowId))
+                case _: BinaryType => Literal.ofBinary(vector.getBinary(rowId))
+                case _: DateType => Literal.ofDate(vector.getInt(rowId))
+                case _: TimestampType => Literal.ofTimestamp(vector.getLong(rowId))
+                case _: TimestampNTZType => Literal.ofTimestampNtz(vector.getLong(rowId))
+                case _ =>
+                  throw new IllegalArgumentException(s"Unsupported type: ${vector.getDataType}")
+              }
             }
-          }
-          (partCol, literal)
-        }.toMap
-      }
-
-      val data = readTableUsingKernel(engine, parquetAllTypes, schema).to[Seq]
-
-      // From the above table read data, convert each row as a new batch with partition info
-      // Take the values of the partitionCols from the data and create a new batch with the
-      // selection vector to just select a single row.
-      var dataWithPartInfo = Seq.empty[(Map[String, Literal], Seq[FilteredColumnarBatch])]
-
-      data.foreach { filteredBatch =>
-        val batch = filteredBatch.getData
-        Seq.range(0, batch.getSize).foreach { rowId =>
-          val partValues = getPartitionValues(batch, rowId)
-          val filteredBatch = new FilteredColumnarBatch(
-            batch,
-            Optional.of(selectSingleElement(batch.getSize, rowId)))
-          dataWithPartInfo = dataWithPartInfo :+ (partValues, Seq(filteredBatch))
+            (partCol, literal)
+          }.toMap
         }
+
+        val data = readTableUsingKernel(engine, parquetAllTypes, schema).to[Seq]
+
+        // From the above table read data, convert each row as a new batch with partition info
+        // Take the values of the partitionCols from the data and create a new batch with the
+        // selection vector to just select a single row.
+        var dataWithPartInfo = Seq.empty[(Map[String, Literal], Seq[FilteredColumnarBatch])]
+
+        data.foreach { filteredBatch =>
+          val batch = filteredBatch.getData
+          Seq.range(0, batch.getSize).foreach { rowId =>
+            val partValues = getPartitionValues(batch, rowId)
+            val filteredBatch = new FilteredColumnarBatch(
+              batch,
+              Optional.of(selectSingleElement(batch.getSize, rowId)))
+            dataWithPartInfo = dataWithPartInfo :+ (partValues, Seq(filteredBatch))
+          }
+        }
+
+        appendData(engine, tblPath, isNewTable = true, schema, partCols, dataWithPartInfo)
+        verifyCommitInfo(tblPath, version = 0, casePreservingPartCols, operation = WRITE)
+
+        var expData = dataWithPartInfo.flatMap(_._2).flatMap(_.toTestRows)
+
+        val checkpointInterval = 2
+        setCheckpointInterval(tblPath, checkpointInterval) // version 1
+
+        for (i <- 2 until 4) {
+          // insert until a checkpoint is required
+          val commitResult = appendData(engine, tblPath, data = dataWithPartInfo)
+
+          expData = expData ++ dataWithPartInfo.flatMap(_._2).flatMap(_.toTestRows)
+
+          val fileCount = dataFileCount(tblPath)
+          checkpointIfReady(engine, tblPath, commitResult, expSize = fileCount)
+
+          verifyCommitResult(commitResult, expVersion = i, i % checkpointInterval == 0)
+          verifyCommitInfo(tblPath, version = i, partitionCols = null, operation = WRITE)
+          verifyWrittenContent(tblPath, schema, expData)
+        }
+
+        assertCheckpointExists(tblPath, atVersion = checkpointInterval)
       }
-
-      appendData(engine, tblPath, isNewTable = true, schema, partCols, dataWithPartInfo)
-      verifyCommitInfo(tblPath, version = 0, casePreservingPartCols, operation = WRITE)
-
-      var expData = dataWithPartInfo.flatMap(_._2).flatMap(_.toTestRows)
-
-      val checkpointInterval = 2
-      setCheckpointInterval(tblPath, checkpointInterval) // version 1
-
-      for (i <- 2 until 4) {
-        // insert until a checkpoint is required
-        val commitResult = appendData(engine, tblPath, data = dataWithPartInfo)
-
-        expData = expData ++ dataWithPartInfo.flatMap(_._2).flatMap(_.toTestRows)
-
-        val fileCount = dataFileCount(tblPath)
-        checkpointIfReady(engine, tblPath, commitResult, expSize = fileCount)
-
-        verifyCommitResult(commitResult, expVersion = i, i % checkpointInterval == 0)
-        verifyCommitInfo(tblPath, version = i, partitionCols = null, operation = WRITE)
-        verifyWrittenContent(tblPath, schema, expData)
-      }
-
-      assertCheckpointExists(tblPath, atVersion = checkpointInterval)
     }
   }
 
@@ -996,7 +1000,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
             Some(new MapType(newKeyType, newValueType, m.isValueContainsNull))
           case _ => None
         }
-      case _: TimestampNTZType => None // ignore
+      // case _: TimestampNTZType => None // ignore
       case s: StructType =>
         val newType = removeUnsupportedTypes(s);
         if (newType.length() > 0) {

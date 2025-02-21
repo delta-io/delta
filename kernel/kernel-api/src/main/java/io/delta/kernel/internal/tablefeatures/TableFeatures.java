@@ -301,13 +301,6 @@ public class TableFeatures {
     }
 
     @Override
-    public boolean hasKernelWriteSupport(Metadata metadata) {
-      // Kernel can write as long as there are no timestamp_ntz columns defined
-      // TODO: implement support for writing timestamp_ntz columns
-      return !hasTypeColumn(metadata.getSchema(), TIMESTAMP_NTZ);
-    }
-
-    @Override
     public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
       return hasTypeColumn(metadata.getSchema(), TIMESTAMP_NTZ);
     }
