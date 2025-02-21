@@ -132,7 +132,7 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
         deltaTxn,
         dataSkippedFiles,
         columnsToDrop)
-    val targetDF = Dataset.ofRows(spark, targetPlan)
+    val targetDF = DataFrameUtils.ofRows(spark, targetPlan)
       .withColumn(ROW_ID_COL, monotonically_increasing_id())
       .withColumn(FILE_NAME_COL, input_file_name())
 
@@ -312,7 +312,7 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
       filesToRewrite,
       columnsToDrop = Nil)
     val baseTargetDF = RowTracking.preserveRowTrackingColumns(
-      dfWithoutRowTrackingColumns = Dataset.ofRows(spark, targetPlan),
+      dfWithoutRowTrackingColumns = DataFrameUtils.ofRows(spark, targetPlan),
       snapshot = deltaTxn.snapshot)
 
     val joinType = if (writeUnmodifiedRows) {

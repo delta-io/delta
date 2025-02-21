@@ -721,7 +721,7 @@ trait CDCReaderImpl extends DeltaLogging {
       isStreaming = isStreaming
     )(spark.sqlContext.sparkSession, Some(Statistics(0, Some(0))))
     val emptyDf =
-      Dataset.ofRows(spark.sqlContext.sparkSession, emptyRdd)
+      DataFrameUtils.ofRows(spark.sqlContext.sparkSession, emptyRdd)
 
     CDCVersionDiffInfo(
       (emptyDf +: dfs).reduce((df1, df2) => df1.union(
@@ -987,7 +987,7 @@ trait CDCReaderImpl extends DeltaLogging {
       new DeltaParquetFileFormat(index.protocol, index.metadata, isCDCRead = true),
       options = index.deltaLog.options)(spark)
     val plan = LogicalRelation(relation, isStreaming = isStreaming)
-    Dataset.ofRows(spark, plan)
+    DataFrameUtils.ofRows(spark, plan)
   }
 
   /**

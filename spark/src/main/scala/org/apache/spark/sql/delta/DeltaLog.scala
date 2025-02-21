@@ -28,6 +28,7 @@ import scala.util.Try
 import scala.util.control.NonFatal
 
 import com.databricks.spark.util.TagDefinitions._
+import org.apache.spark.sql.delta.DataFrameUtils
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
@@ -187,7 +188,7 @@ class DeltaLog private(
   def loadIndex(
       index: DeltaLogFileIndex,
       schema: StructType = Action.logSchema): DataFrame = {
-    Dataset.ofRows(spark, indexToRelation(index, schema))
+    DataFrameUtils.ofRows(spark, indexToRelation(index, schema))
   }
 
   /* ------------------ *
@@ -557,7 +558,7 @@ class DeltaLog private(
       fileIndex,
       bucketSpec = None,
       dropNullTypeColumnsFromSchema = dropNullTypeColumnsFromSchema)
-    Dataset.ofRows(spark, LogicalRelation(relation, isStreaming = isStreaming))
+    DataFrameUtils.ofRows(spark, LogicalRelation(relation, isStreaming = isStreaming))
   }
 
   /**

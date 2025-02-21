@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.commands.merge
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog}
+import org.apache.spark.sql.delta.{DataFrameUtils, DeltaErrors, DeltaLog}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -296,7 +296,7 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
       // Does not materialize, simply return the dataframe from source plan
       mergeSource = Some(
         MergeSource(
-          df = Dataset.ofRows(spark, source),
+          df = DataFrameUtils.ofRows(spark, source),
           isMaterialized = false,
           materializeReason = materializeReason
         )
@@ -308,7 +308,7 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
       getReferencedSourceColumns(source, condition, matchedClauses, notMatchedClauses)
     // When we materialize the source, we want to make sure that columns got pruned before caching.
     val sourceWithSelectedColumns = Project(referencedSourceColumns, source)
-    val baseSourcePlanDF = Dataset.ofRows(spark, sourceWithSelectedColumns)
+    val baseSourcePlanDF = DataFrameUtils.ofRows(spark, sourceWithSelectedColumns)
 
     // Caches the source in RDD cache using localCheckpoint, which cuts away the RDD lineage,
     // which shall ensure that the source cannot be recomputed and thus become inconsistent.
@@ -329,7 +329,7 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
 
     mergeSource = Some(
       MergeSource(
-        df = Dataset.ofRows(spark, checkpointedPlan),
+        df = DataFrameUtils.ofRows(spark, checkpointedPlan),
         isMaterialized = true,
         materializeReason = materializeReason
       )
