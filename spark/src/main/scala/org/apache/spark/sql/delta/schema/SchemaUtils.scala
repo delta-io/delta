@@ -286,8 +286,10 @@ def normalizeColumnNamesInDataType(
         // When schema evolution adds a new column during MERGE, it can be represented with
         // a NullType in the schema of the data written by the MERGE.
         sourceDataType
-      case (_: IntegralType, _: IntegralType) =>
-        // The integral types can be cast to each other later on.
+      case (_: AtomicType, _: AtomicType) =>
+        // Some atomic types (e.g. integral types) can be cast to each other later on. For now,
+        // it's enough to know that there are no nested fields inside the atomic types that might
+        // require normalization.
         sourceDataType
       case _ =>
         if (DeltaUtils.isTesting) {
@@ -441,7 +443,7 @@ def normalizeColumnNamesInDataType(
             isDatatypeReadCompatible(e.keyType, n.keyType) &&
             isDatatypeReadCompatible(e.valueType, n.valueType)
         case (e: AtomicType, n: AtomicType)
-          if typeWideningMode.shouldWidenType(fromType = e, toType = n) => true
+          if typeWideningMode.shouldWidenTo(fromType = e, toType = n) => true
         case (a, b) => a == b
       }
     }

@@ -36,6 +36,7 @@ import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.SnapshotHint;
+import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
 import io.delta.kernel.internal.util.SchemaUtils;
@@ -154,12 +155,11 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       if (!newWriterFeatures.isEmpty()) {
         logger.info("Automatically enabling writer features: {}", newWriterFeatures);
         shouldUpdateProtocol = true;
-        List<String> oldWriterFeatures = protocol.getWriterFeatures();
+        Set<String> oldWriterFeatures = protocol.getWriterFeatures();
         protocol = protocol.withNewWriterFeatures(newWriterFeatures);
-        List<String> curWriterFeatures = protocol.getWriterFeatures();
+        Set<String> curWriterFeatures = protocol.getWriterFeatures();
         checkArgument(!Objects.equals(oldWriterFeatures, curWriterFeatures));
-        TableFeatures.validateWriteSupportedTable(
-            protocol, metadata, metadata.getSchema(), table.getPath(engine));
+        TableFeatures.validateWriteSupportedTable(protocol, metadata, table.getPath(engine));
       }
     }
 
@@ -184,10 +184,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     String tablePath = table.getPath(engine);
     // Validate the table has no features that Kernel doesn't yet support writing into it.
     TableFeatures.validateWriteSupportedTable(
-        snapshot.getProtocol(),
-        snapshot.getMetadata(),
-        snapshot.getMetadata().getSchema(),
-        tablePath);
+        snapshot.getProtocol(), snapshot.getMetadata(), tablePath);
 
     if (!isNewTable) {
       if (schema.isPresent()) {
@@ -290,10 +287,6 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   }
 
   private Protocol getInitialProtocol() {
-    return new Protocol(
-        DEFAULT_READ_VERSION,
-        DEFAULT_WRITE_VERSION,
-        null /* readerFeatures */,
-        null /* writerFeatures */);
+    return new Protocol(DEFAULT_READ_VERSION, DEFAULT_WRITE_VERSION);
   }
 }

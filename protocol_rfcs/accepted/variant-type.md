@@ -1,4 +1,6 @@
 # Variant Data Type
+**Folded into [PROTOCOL.md](../../protocol.md#variant-data-type)**
+
 **Associated Github issue for discussions: https://github.com/delta-io/delta/issues/2864**
 
 This protocol change adds support for the Variant data type.
@@ -10,7 +12,7 @@ The Variant data type is beneficial for storing and processing semi-structured d
 
 # Variant Data Type
 
-This feature enables support for the Variant data type, for storing semi-structured data.
+This feature enables support for the `variant` data type, which stores semi-structured data.
 The schema serialization method is described in [Schema Serialization Format](#schema-serialization-format).
 
 To support this feature:
@@ -56,13 +58,14 @@ metadata | binary | The binary-encoded Variant metadata, as described in [Varian
 
 The parquet struct must include the two struct fields `value` and `metadata`.
 Supported writers must write the two binary fields, and supported readers must read the two binary fields.
-Struct fields which start with `_` (underscore) can be safely ignored.
+
+[Variant shredding](https://github.com/apache/parquet-format/blob/master/VariantShredding.md) will be introduced in a separate `variantShredding` table feature. will be introduced later, as a separate `variantShredding` table feature.
 
 ## Writer Requirements for Variant Data Type
 
 When Variant type is supported (`writerFeatures` field of a table's `protocol` action contains `variantType`), writers:
 - must write a column of type `variant` to parquet as a struct containing the fields `value` and `metadata` and storing values that conform to the [Variant binary encoding specification](https://github.com/apache/spark/blob/master/common/variant/README.md)
-- must not write additional, non-ignorable parquet struct fields. Writing additional struct fields with names starting with `_` (underscore) is allowed.
+- must not write a parquet struct field named `typed_value` to avoid confusion with the field required by [Variant shredding](https://github.com/apache/parquet-format/blob/master/VariantShredding.md) with the same name.
 
 ## Reader Requirements for Variant Data Type
 

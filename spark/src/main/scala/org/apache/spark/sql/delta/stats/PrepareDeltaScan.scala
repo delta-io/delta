@@ -114,22 +114,20 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
       limitOpt: Option[Int],
       filters: Seq[Expression],
       delta: LogicalRelation): DeltaScan = {
-    // Remove non-deterministic filters (e.g., rand() < 0.25) to prevent incorrect file pruning.
-    val deterministicFilters = filters.filter(_.deterministic)
     withStatusCode("DELTA", "Filtering files for query") {
       if (limitOpt.nonEmpty) {
         // If we trigger limit push down, the filters must be partition filters. Since
         // there are no data filters, we don't need to apply Generated Columns
         // optimization. See `DeltaTableScan` for more details.
-        return scanGenerator.filesForScan(limitOpt.get, deterministicFilters)
+        return scanGenerator.filesForScan(limitOpt.get, filters)
       }
       val filtersForScan =
         if (!GeneratedColumn.partitionFilterOptimizationEnabled(spark)) {
-          deterministicFilters
+          filters
         } else {
           val generatedPartitionFilters = GeneratedColumn.generatePartitionFilters(
-            spark, scanGenerator.snapshotToScan, deterministicFilters, delta)
-          deterministicFilters ++ generatedPartitionFilters
+            spark, scanGenerator.snapshotToScan, filters, delta)
+          filters ++ generatedPartitionFilters
         }
       scanGenerator.filesForScan(filtersForScan)
     }

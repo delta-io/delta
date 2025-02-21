@@ -16,17 +16,27 @@
 package io.delta.kernel.internal.checkpoints;
 
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
+import static io.delta.kernel.internal.TableConfig.EXPIRED_LOG_CLEANUP_ENABLED;
+import static io.delta.kernel.internal.TableConfig.LOG_RETENTION;
+import static io.delta.kernel.internal.snapshot.MetadataCleanup.cleanupExpiredLogs;
+import static io.delta.kernel.internal.tablefeatures.TableFeatures.validateWriteSupportedTable;
 import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.CheckpointAlreadyExistsException;
 import io.delta.kernel.exceptions.KernelEngineException;
+import io.delta.kernel.exceptions.TableNotFoundException;
+import io.delta.kernel.internal.SnapshotImpl;
+import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.replay.CreateCheckpointIterator;
 import io.delta.kernel.internal.util.*;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import java.io.*;
+import java.nio.file.FileAlreadyExistsException;
 import java.util.*;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
@@ -34,10 +44,72 @@ import org.slf4j.LoggerFactory;
 
 /** Class to load and write the {@link CheckpointMetaData} from `_last_checkpoint` file. */
 public class Checkpointer {
+
+  ////////////////////////////////
+  // Static variables / methods //
+  ////////////////////////////////
+
   private static final Logger logger = LoggerFactory.getLogger(Checkpointer.class);
+
+  private static final int READ_LAST_CHECKPOINT_FILE_MAX_RETRIES = 3;
 
   /** The name of the last checkpoint file */
   public static final String LAST_CHECKPOINT_FILE_NAME = "_last_checkpoint";
+
+  public static void checkpoint(Engine engine, Clock clock, SnapshotImpl snapshot)
+      throws TableNotFoundException, IOException {
+    final Path tablePath = snapshot.getDataPath();
+    final Path logPath = snapshot.getLogPath();
+    final long version = snapshot.getVersion();
+
+    logger.info("{}: Starting checkpoint for version: {}", tablePath, version);
+
+    // Check if writing to the given table protocol version/features is supported in Kernel
+    validateWriteSupportedTable(
+        snapshot.getProtocol(), snapshot.getMetadata(), snapshot.getDataPath().toString());
+
+    final Path checkpointPath = FileNames.checkpointFileSingular(logPath, version);
+
+    long numberOfAddFiles = 0;
+    try (CreateCheckpointIterator checkpointDataIter =
+        snapshot.getCreateCheckpointIterator(engine)) {
+      // Write the iterator actions to the checkpoint using the Parquet handler
+      wrapEngineExceptionThrowsIO(
+          () -> {
+            engine
+                .getParquetHandler()
+                .writeParquetFileAtomically(checkpointPath.toString(), checkpointDataIter);
+
+            logger.info("{}: Finished writing checkpoint file for version: {}", tablePath, version);
+
+            return null;
+          },
+          "Writing checkpoint file %s",
+          checkpointPath.toString());
+
+      // Get the metadata of the checkpoint file
+      numberOfAddFiles = checkpointDataIter.getNumberOfAddActions();
+    } catch (FileAlreadyExistsException faee) {
+      throw new CheckpointAlreadyExistsException(version);
+    }
+
+    final CheckpointMetaData checkpointMetaData =
+        new CheckpointMetaData(version, numberOfAddFiles, Optional.empty());
+
+    new Checkpointer(logPath).writeLastCheckpointFile(engine, checkpointMetaData);
+
+    logger.info(
+        "{}: Finished writing last checkpoint metadata file for version: {}", tablePath, version);
+
+    // Clean up delta log files if enabled.
+    final Metadata metadata = snapshot.getMetadata();
+    if (EXPIRED_LOG_CLEANUP_ENABLED.fromMetadata(metadata)) {
+      cleanupExpiredLogs(engine, clock, tablePath, LOG_RETENTION.fromMetadata(metadata));
+    } else {
+      logger.info(
+          "{}: Log cleanup is disabled. Skipping the deletion of expired log files", tablePath);
+    }
+  }
 
   /**
    * Given a list of checkpoint files, pick the latest complete checkpoint instance which is not
@@ -82,8 +154,8 @@ public class Checkpointer {
    * Helper method for `findLastCompleteCheckpointBefore` which also return the number of files
    * searched. This helps in testing
    */
-  protected static Tuple2<Optional<CheckpointInstance>, Long>
-      findLastCompleteCheckpointBeforeHelper(Engine engine, Path tableLogPath, long version) {
+  public static Tuple2<Optional<CheckpointInstance>, Long> findLastCompleteCheckpointBeforeHelper(
+      Engine engine, Path tableLogPath, long version) {
     CheckpointInstance upperBoundCheckpoint = new CheckpointInstance(version);
     logger.info("Try to find the last complete checkpoint before version {}", version);
 
@@ -166,11 +238,15 @@ public class Checkpointer {
         && fileStatus.getSize() > 0;
   }
 
+  ////////////////////////////////
+  // Member variables / methods //
+  ////////////////////////////////
+
   /** The path to the file that holds metadata about the most recent checkpoint. */
   private final Path lastCheckpointFilePath;
 
-  public Checkpointer(Path tableLogPath) {
-    this.lastCheckpointFilePath = new Path(tableLogPath, LAST_CHECKPOINT_FILE_NAME);
+  public Checkpointer(Path logPath) {
+    this.lastCheckpointFilePath = new Path(logPath, LAST_CHECKPOINT_FILE_NAME);
   }
 
   /** Returns information about the most recent checkpoint. */
@@ -204,19 +280,24 @@ public class Checkpointer {
   /**
    * Loads the checkpoint metadata from the _last_checkpoint file.
    *
-   * <p>
-   *
    * @param engine {@link Engine instance to use}
    * @param tries Number of times already tried to load the metadata before this call.
    */
   private Optional<CheckpointMetaData> loadMetadataFromFile(Engine engine, int tries) {
-    if (tries >= 3) {
+    if (tries >= READ_LAST_CHECKPOINT_FILE_MAX_RETRIES) {
       // We have tried 3 times and failed. Assume the checkpoint metadata file is corrupt.
       logger.warn(
-          "Failed to load checkpoint metadata from file {} after 3 attempts.",
-          lastCheckpointFilePath);
+          "Failed to load checkpoint metadata from file {} after {} attempts.",
+          lastCheckpointFilePath,
+          READ_LAST_CHECKPOINT_FILE_MAX_RETRIES);
       return Optional.empty();
     }
+
+    logger.info(
+        "Loading last checkpoint from the _last_checkpoint file. Attempt: {} / {}",
+        tries + 1,
+        READ_LAST_CHECKPOINT_FILE_MAX_RETRIES);
+
     try {
       // Use arbitrary values for size and mod time as they are not available.
       // We could list and find the values, but it is an unnecessary FS call.

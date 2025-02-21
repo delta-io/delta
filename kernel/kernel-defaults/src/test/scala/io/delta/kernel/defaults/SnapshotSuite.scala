@@ -16,13 +16,14 @@
 
 package io.delta.kernel.defaults
 
+import scala.collection.JavaConverters._
+
 import io.delta.kernel.{Operation, Table}
 import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.types.{IntegerType, StructField, StructType}
 import io.delta.kernel.utils.CloseableIterable
-import org.scalatest.funsuite.AnyFunSuite
 
-import scala.collection.JavaConverters._
+import org.scalatest.funsuite.AnyFunSuite
 
 class SnapshotSuite extends AnyFunSuite with TestUtils {
 
@@ -38,7 +39,7 @@ class SnapshotSuite extends AnyFunSuite with TestUtils {
         val table = Table.forPath(defaultEngine, dir.getCanonicalPath)
 
         val columns = (partCols ++ Seq("col1", "col2")).map { colName =>
-          new StructField(colName, IntegerType.INTEGER, true /* nullable */)
+          new StructField(colName, IntegerType.INTEGER, true /* nullable */ )
         }
 
         val schema = new StructType(columns.asJava)

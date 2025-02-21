@@ -66,13 +66,12 @@ trait TypeWideningTestMixin extends DeltaSQLCommandTest with DeltaDMLTestUtils {
 
   /** Short-hand to create type widening metadata for struct fields. */
   protected def typeWideningMetadata(
-      version: Long,
       from: AtomicType,
       to: AtomicType,
       path: Seq[String] = Seq.empty): Metadata =
     new MetadataBuilder()
       .putMetadataArray(
-        "delta.typeChanges", Array(TypeChange(Some(version), from, to, path).toMetadata))
+        "delta.typeChanges", Array(TypeChange(None, from, to, path).toMetadata))
       .build()
 
   def addSingleFile[T: Encoder](values: Seq[T], dataType: DataType): Unit =
@@ -136,7 +135,7 @@ trait TypeWideningDropFeatureTestMixin
    * files all contain the expected type for specified columns.
    */
   def dropTableFeature(
-      feature: TableFeature = TypeWideningPreviewTableFeature,
+      feature: TableFeature = TypeWideningTableFeature,
       expectedOutcome: ExpectedOutcome.Value,
       expectedNumFilesRewritten: Long,
       expectedColumnTypes: Map[String, DataType]): Unit = {

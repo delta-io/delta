@@ -16,16 +16,18 @@
 package io.delta.kernel.defaults.engine
 
 import java.math.{BigDecimal => JBigDecimal}
+import java.nio.file.FileAlreadyExistsException
 import java.util.Optional
+
 import scala.collection.JavaConverters._
+
 import io.delta.kernel.data.ColumnVector
 import io.delta.kernel.defaults.utils.{DefaultVectorTestUtils, TestRow, TestUtils}
 import io.delta.kernel.internal.util.InternalUtils.singletonStringColumnVector
 import io.delta.kernel.types._
+
 import org.apache.hadoop.conf.Configuration
 import org.scalatest.funsuite.AnyFunSuite
-
-import java.nio.file.FileAlreadyExistsException
 
 class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVectorTestUtils {
 
@@ -39,35 +41,33 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
   /////////////////////////////////////////////////////////////////////////////////////////////////
 
   def testJsonParserWithSchema(
-    jsonString: String,
-    schema: StructType,
-    expectedRow: TestRow): Unit = {
+      jsonString: String,
+      schema: StructType,
+      expectedRow: TestRow): Unit = {
     val batchRows = jsonHandler.parseJson(
       singletonStringColumnVector(jsonString),
       schema,
-      Optional.empty()
-    ).getRows.toSeq
+      Optional.empty()).getRows.toSeq
     checkAnswer(batchRows, Seq(expectedRow))
   }
 
   def testJsonParserForSingleType(
-    jsonString: String,
-    dataType: DataType,
-    numColumns: Int,
-    expectedRow: TestRow): Unit = {
+      jsonString: String,
+      dataType: DataType,
+      numColumns: Int,
+      expectedRow: TestRow): Unit = {
     val schema = new StructType(
       (1 to numColumns).map(i => new StructField(s"col$i", dataType, true)).asJava)
     testJsonParserWithSchema(jsonString, schema, expectedRow)
   }
 
   def testOutOfRangeValue(stringValue: String, dataType: DataType): Unit = {
-    val e = intercept[RuntimeException]{
+    val e = intercept[RuntimeException] {
       testJsonParserForSingleType(
         jsonString = s"""{"col1":$stringValue}""",
         dataType = dataType,
         numColumns = 1,
-        expectedRow = TestRow()
-      )
+        expectedRow = TestRow())
     }
     assert(e.getMessage.contains(s"Couldn't decode $stringValue"))
   }
@@ -77,8 +77,7 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
       jsonString = """{"col1":0,"col2":-127,"col3":127, "col4":null}""",
       dataType = ByteType.BYTE,
       4,
-      TestRow(0.toByte, -127.toByte, 127.toByte, null)
-    )
+      TestRow(0.toByte, -127.toByte, 127.toByte, null))
     testOutOfRangeValue("128", ByteType.BYTE)
     testOutOfRangeValue("-129", ByteType.BYTE)
     testOutOfRangeValue("2147483648", ByteType.BYTE)
@@ -89,8 +88,7 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
       jsonString = """{"col1":-32767,"col2":8,"col3":32767, "col4":null}""",
       dataType = ShortType.SHORT,
       4,
-      TestRow(-32767.toShort, 8.toShort, 32767.toShort, null)
-    )
+      TestRow(-32767.toShort, 8.toShort, 32767.toShort, null))
     testOutOfRangeValue("32768", ShortType.SHORT)
     testOutOfRangeValue("-32769", ShortType.SHORT)
     testOutOfRangeValue("2147483648", ShortType.SHORT)
@@ -101,8 +99,7 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
       jsonString = """{"col1":-2147483648,"col2":8,"col3":2147483647, "col4":null}""",
       dataType = IntegerType.INTEGER,
       4,
-      TestRow(-2147483648, 8, 2147483647, null)
-    )
+      TestRow(-2147483648, 8, 2147483647, null))
     testOutOfRangeValue("2147483648", IntegerType.INTEGER)
     testOutOfRangeValue("-2147483649", IntegerType.INTEGER)
   }
@@ -110,11 +107,10 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
   test("parse long type") {
     testJsonParserForSingleType(
       jsonString =
-      """{"col1":-9223372036854775808,"col2":8,"col3":9223372036854775807, "col4":null}""",
+        """{"col1":-9223372036854775808,"col2":8,"col3":9223372036854775807, "col4":null}""",
       dataType = LongType.LONG,
       4,
-      TestRow(-9223372036854775808L, 8L, 9223372036854775807L, null)
-    )
+      TestRow(-9223372036854775808L, 8L, 9223372036854775807L, null))
     testOutOfRangeValue("9223372036854775808", LongType.LONG)
     testOutOfRangeValue("-9223372036854775809", LongType.LONG)
   }
@@ -127,8 +123,7 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
           |"col4":1.23E-7,"col5":0.004444444, "col6":null}""".stripMargin,
       dataType = FloatType.FLOAT,
       6,
-      TestRow(-9223.33F, 0.4F, 120000000.0F, 0.000000123F, 0.004444444F, null)
-    )
+      TestRow(-9223.33f, 0.4f, 120000000.0f, 0.000000123f, 0.004444444f, null))
     testOutOfRangeValue("3.4028235E+39", FloatType.FLOAT)
   }
 
@@ -140,17 +135,15 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
           |"col4":1.234444444E-7,"col5":0.0444444444, "col6":null}""".stripMargin,
       dataType = DoubleType.DOUBLE,
       6,
-      TestRow(-922333333.33D, 0.4D, 120000000.0D, 0.0000001234444444D, 0.0444444444D, null)
-    )
+      TestRow(-922333333.33d, 0.4d, 120000000.0d, 0.0000001234444444d, 0.0444444444d, null))
     // For some reason out-of-range doubles are parsed initially as Double.INFINITY instead of
     // a BigDecimal
-    val e = intercept[RuntimeException]{
+    val e = intercept[RuntimeException] {
       testJsonParserForSingleType(
         jsonString = s"""{"col1":1.7976931348623157E+309}""",
         dataType = DoubleType.DOUBLE,
         numColumns = 1,
-        expectedRow = TestRow()
-      )
+        expectedRow = TestRow())
     }
     assert(e.getMessage.contains(s"Couldn't decode"))
   }
@@ -160,8 +153,7 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
       jsonString = """{"col1": "foo", "col2": "", "col3": null}""",
       dataType = StringType.STRING,
       3,
-      TestRow("foo", "", null)
-    )
+      TestRow("foo", "", null))
   }
 
   test("parse decimal type") {
@@ -189,9 +181,7 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
         new JBigDecimal("123456789123456789123456789123456789"),
         new JBigDecimal("1234567891234567891234567891.2345678900"),
         new JBigDecimal("1.23"),
-        null
-      )
-    )
+        null))
   }
 
   test("parse date type") {
@@ -199,8 +189,7 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
       jsonString = """{"col1":"2020-12-31", "col2":"1965-01-31", "col3": null}""",
       dataType = DateType.DATE,
       3,
-      TestRow(18627, -1796, null)
-    )
+      TestRow(18627, -1796, null))
   }
 
   test("parse timestamp type") {
@@ -216,8 +205,7 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
           | """.stripMargin,
       dataType = TimestampType.TIMESTAMP,
       numColumns = 4,
-      TestRow(2524636800000000L, 23423523000L, -315583200000000L, null)
-    )
+      TestRow(2524636800000000L, 23423523000L, -315583200000000L, null))
   }
 
   test("parse null input") {
@@ -227,8 +215,7 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
     val batch = jsonHandler.parseJson(
       singletonStringColumnVector(null),
       schema,
-      Optional.empty()
-    )
+      Optional.empty())
     assert(batch.getColumnVector(0).getChild(0).isNullAt(0))
   }
 
@@ -239,19 +226,23 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
         schema = new StructType()
           .add("col1", FloatType.FLOAT)
           .add("col2", DoubleType.DOUBLE),
-        output
-      )
+        output)
     }
     testSpecifiedString("""{"col1":"NaN","col2":"NaN"}""", TestRow(Float.NaN, Double.NaN))
-    testSpecifiedString("""{"col1":"+INF","col2":"+INF"}""",
+    testSpecifiedString(
+      """{"col1":"+INF","col2":"+INF"}""",
       TestRow(Float.PositiveInfinity, Double.PositiveInfinity))
-    testSpecifiedString("""{"col1":"+Infinity","col2":"+Infinity"}""",
+    testSpecifiedString(
+      """{"col1":"+Infinity","col2":"+Infinity"}""",
       TestRow(Float.PositiveInfinity, Double.PositiveInfinity))
-    testSpecifiedString("""{"col1":"Infinity","col2":"Infinity"}""",
+    testSpecifiedString(
+      """{"col1":"Infinity","col2":"Infinity"}""",
       TestRow(Float.PositiveInfinity, Double.PositiveInfinity))
-    testSpecifiedString("""{"col1":"-INF","col2":"-INF"}""",
+    testSpecifiedString(
+      """{"col1":"-INF","col2":"-INF"}""",
       TestRow(Float.NegativeInfinity, Double.NegativeInfinity))
-    testSpecifiedString("""{"col1":"-Infinity","col2":"-Infinity"}""",
+    testSpecifiedString(
+      """{"col1":"-Infinity","col2":"-Infinity"}""",
       TestRow(Float.NegativeInfinity, Double.NegativeInfinity))
   }
 
@@ -263,8 +254,7 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
       jsonVector,
       new StructType()
         .add("col1", IntegerType.INTEGER),
-      Optional.of(selectionVector)
-    ).getRows.toSeq
+      Optional.of(selectionVector)).getRows.toSeq
     assert(!batchRows(0).isNullAt(0) && batchRows(0).getInt(0) == 1)
     assert(batchRows(1).isNullAt(0) && batchRows(2).isNullAt(0))
   }
@@ -277,26 +267,20 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
       TestRow("part-00000-0441e99a-c421-400e-83a1-212aa6c84c73-c000.snappy.parquet", 650L, true),
       TestRow("part-00001-34c8c673-3f44-4fa7-b94e-07357ec28a7d-c000.snappy.parquet", 650L, true),
       TestRow("part-00000-842017c2-3e02-44b5-a3d6-5b9ae1745045-c000.snappy.parquet", 649L, true),
-      TestRow("part-00001-e62ca5a1-923c-4ee6-998b-c61d1cfb0b1c-c000.snappy.parquet", 649L, true)
-    )
+      TestRow("part-00001-e62ca5a1-923c-4ee6-998b-c61d1cfb0b1c-c000.snappy.parquet", 649L, true))
     Seq(
       (
         fsClient.listFrom(getTestResourceFilePath("json-files/1.json")),
-        expResults
-      ),
+        expResults),
       (
         fsClient.listFrom(getTestResourceFilePath("json-files-with-empty/1.json")),
-        expResults
-      ),
+        expResults),
       (
         fsClient.listFrom(getTestResourceFilePath("json-files-with-empty/5.json")),
-        expResults.takeRight(2)
-      ),
+        expResults.takeRight(2)),
       (
         fsClient.listFrom(getTestResourceFilePath("json-files-all-empty/1.json")),
-        Seq()
-      )
-    ).foreach {
+        Seq())).foreach {
       case (testFiles, expResults) =>
         val actResult = jsonHandler.readJsonFiles(
           testFiles,
@@ -304,8 +288,7 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
             .add("path", StringType.STRING)
             .add("size", LongType.LONG)
             .add("dataChange", BooleanType.BOOLEAN),
-          Optional.empty()
-        ).toSeq.map(batch => TestRow(batch.getRows.next))
+          Optional.empty()).toSeq.map(batch => TestRow(batch.getRows.next))
 
         checkAnswer(actResult, expResults)
     }
@@ -328,8 +311,9 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
       .add("dataChange", BooleanType.BOOLEAN)
 
     val batch = jsonHandler.parseJson(
-      singletonStringColumnVector(input), readSchema, Optional.empty[ColumnVector]()
-    )
+      singletonStringColumnVector(input),
+      readSchema,
+      Optional.empty[ColumnVector]())
     assert(batch.getSize == 1)
 
     val actResult = Seq(TestRow(batch.getRows.next))
@@ -337,8 +321,7 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
       "part-00000-d83dafd8-c344-49f0-ab1c-acd944e32493-c000.snappy.parquet",
       Map("p1" -> "0", "p2" -> "str"),
       348L,
-      true
-    ))
+      true))
 
     checkAnswer(actResult, expResult)
   }
@@ -363,21 +346,18 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
         new MapType(
           StringType.STRING,
           new MapType(StringType.STRING, new ArrayType(IntegerType.INTEGER, true), true),
-          true
-        )
-      )
+          true))
       .add(
         "array_of_struct",
         new ArrayType(
           new StructType()
             .add("field1", StringType.STRING, true)
             .add("field2", IntegerType.INTEGER, true),
-          true
-        )
-      )
+          true))
     val batch = jsonHandler.parseJson(
-      singletonStringColumnVector(json), schema, Optional.empty[ColumnVector]()
-    )
+      singletonStringColumnVector(json),
+      schema,
+      Optional.empty[ColumnVector]())
 
     val actResult = Seq(TestRow(batch.getRows.next))
     val expResult = Seq(TestRow(
@@ -387,12 +367,9 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
       Map(
         "a" -> Map(
           "one" -> Vector(),
-          "two" -> Vector(1, 2, 3)
-        ),
-        "b" -> Map()
-      ),
-      Vector(TestRow.fromSeq(Seq("foo", 3)), TestRow.fromSeq(Seq(null, null)))
-    ))
+          "two" -> Vector(1, 2, 3)),
+        "b" -> Map()),
+      Vector(TestRow.fromSeq(Seq("foo", 3)), TestRow.fromSeq(Seq(null, null)))))
 
     checkAnswer(actResult, expResult)
   }
@@ -419,8 +396,7 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
           |    "dataChange":true
           |  }
           |}
-          |""".stripMargin.linesIterator.mkString
-      )
+          |""".stripMargin.linesIterator.mkString)
 
       val addRemoveSchema = new StructType()
         .add("path", StringType.STRING)
@@ -441,7 +417,9 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
 
         // read it back and verify the contents are correct
         val source = scala.io.Source.fromFile(filePath)
-        val result = try source.getLines().mkString(",") finally source.close()
+        val result =
+          try source.getLines().mkString(",")
+          finally source.close()
 
         // remove the whitespaces from the input to compare
         assert(input.map(_.replaceAll(" ", "")).mkString(",") === result)
@@ -451,7 +429,7 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
 
       // Try to write as same file with overwrite as false and expect an error
       intercept[FileAlreadyExistsException] {
-        jsonHandler.writeJsonFileAtomically(filePath, batch.getRows, false /* overwrite */)
+        jsonHandler.writeJsonFileAtomically(filePath, batch.getRows, false /* overwrite */ )
       }
 
       // Try to write as file with overwrite set to true

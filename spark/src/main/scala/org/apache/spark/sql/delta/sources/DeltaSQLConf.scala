@@ -1965,6 +1965,18 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_COLUMN_MAPPING_DISALLOW_ENABLING_WHEN_METADATA_ALREADY_EXISTS =
+    buildConf("columnMapping.disallowEnablingWhenColumnMappingMetadataAlreadyExists")
+      .doc(
+        """
+          |If Delta table already has column mapping metadata before the feature is enabled, it is
+          |as a result of a corruption or a bug. Enabling column mapping in such a case can lead to
+          |further corruption of the table and should be disallowed.
+          |""".stripMargin)
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
+
   val DYNAMIC_PARTITION_OVERWRITE_ENABLED =
     buildConf("dynamicPartitionOverwrite.enabled")
       .doc("Whether to overwrite partitions dynamically when 'partitionOverwriteMode' is set to " +

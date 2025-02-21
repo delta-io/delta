@@ -24,6 +24,7 @@ import org.apache.spark.sql.delta.actions.{Action, AddFile, Metadata, Protocol}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.optimize.OptimizeMetrics
 import org.apache.spark.sql.delta.coordinatedcommits.TableCommitCoordinatorClient
+import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.hooks.AutoCompact
 import org.apache.spark.sql.delta.stats.StatisticsCollection
 import io.delta.storage.commit.{CommitResponse, GetCommitsResponse, UpdatedActions}
@@ -179,6 +180,12 @@ object DeltaTestImplicits {
   implicit class DeltaTableV2TestHelper(deltaTable: DeltaTableV2) {
     /** For backward compatibility with existing unit tests */
     def snapshot: Snapshot = deltaTable.initialSnapshot
+  }
+
+  implicit class TahoeLogFileIndexObjectTestHelper(index: TahoeLogFileIndex.type) {
+    def apply(spark: SparkSession, deltaLog: DeltaLog): TahoeLogFileIndex = {
+      index.apply(spark, deltaLog, catalogTableOpt = None)
+    }
   }
 
   implicit class AutoCompactObjectTestHelper(ac: AutoCompact.type) {

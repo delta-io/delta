@@ -233,9 +233,13 @@ public class ActiveAddFilesIterator implements CloseableIterator<FilteredColumna
       }
     }
 
+    ColumnarBatch scanAddFiles = addRemoveColumnarBatch;
     // Step 3: Drop the RemoveFile column and use the selection vector to build a new
     //         FilteredColumnarBatch
-    ColumnarBatch scanAddFiles = addRemoveColumnarBatch.withDeletedColumnAt(1);
+    // For checkpoint files, we would only have read the adds, not the removes.
+    if (!isFromCheckpoint) {
+      scanAddFiles = scanAddFiles.withDeletedColumnAt(1);
+    }
 
     // Step 4: TODO: remove this step. This is a temporary requirement until the path
     //         in `add` is converted to absolute path.

@@ -140,6 +140,14 @@ public final class DeltaErrors {
   }
 
   /* ------------------------ PROTOCOL EXCEPTIONS ----------------------------- */
+  public static KernelException unsupportedTableFeature(String feature) {
+    String message =
+        String.format(
+            "Unsupported Delta table feature: table requires feature \"%s\" "
+                + "which is unsupported by this version of Delta Kernel.",
+            feature);
+    return new KernelException(message);
+  }
 
   public static KernelException unsupportedReaderProtocol(
       String tablePath, int tableReaderVersion) {

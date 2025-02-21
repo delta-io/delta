@@ -82,16 +82,6 @@ public class ColumnMapping {
   }
 
   /**
-   * Checks if the given column mapping mode in the given table metadata is supported. Throws on
-   * unsupported modes.
-   *
-   * @param metadata Metadata of the table
-   */
-  public static void throwOnUnsupportedColumnMappingMode(Metadata metadata) {
-    getColumnMappingMode(metadata.getConfiguration());
-  }
-
-  /**
    * Helper method that converts the logical schema (requested by the connector) to physical schema
    * of the data stored in data files based on the table's column mapping mode.
    *
