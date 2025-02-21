@@ -55,11 +55,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   private final TableImpl table;
   private final String engineInfo;
   private final Operation operation;
-  /*
-  Initially this stores just the added metadata domains but during .build() we add the
-  tombstones before passing it to the TransactionImpl
-  */
-  private final Map<String, DomainMetadata> domainMetadatasToCommit = new HashMap<>();
+  private final Map<String, DomainMetadata> domainMetadatasAdded = new HashMap<>();
   private final Set<String> domainMetadatasRemoved = new HashSet<>();
   private Optional<StructType> schema = Optional.empty();
   private Optional<List<String>> partitionColumns = Optional.empty();
@@ -127,7 +123,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         !domainMetadatasRemoved.contains(domain),
         "Cannot add a domain that is removed in this transaction");
     // we override any existing value
-    domainMetadatasToCommit.put(domain, new DomainMetadata(domain, config, false /* removed */));
+    domainMetadatasAdded.put(domain, new DomainMetadata(domain, config, false /* removed */));
     return this;
   }
 
@@ -137,7 +133,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         DomainMetadata.isUserControlledDomain(domain),
         "Removing a system-controlled domain is not allowed: " + domain);
     checkArgument(
-        !domainMetadatasToCommit.containsKey(domain),
+        !domainMetadatasAdded.containsKey(domain),
         "Cannot remove a domain that is added in this transaction");
     domainMetadatasRemoved.add(domain);
     return this;
@@ -196,10 +192,9 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       }
     }
 
-    /* --------------- Handle Domain Metadata ------------ */
-    // Enable the feature if necessary
+    /* --------------- Domain Metadata Protocol upgrade if necessary------------ */
     if (!TableFeatures.isDomainMetadataSupported(protocol)) {
-      if (!domainMetadatasToCommit.isEmpty()) {
+      if (!domainMetadatasAdded.isEmpty()) {
         // This txn is setting a domain metadata, enable the feature in the protocol
         logger.info(
             "Automatically enabling writer feature: {}", DOMAIN_METADATA_W_FEATURE.featureName());
@@ -208,34 +203,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
                 Collections.singleton(DOMAIN_METADATA_W_FEATURE.featureName()));
         shouldUpdateProtocol = true;
       }
-      // If domainMetadatasRemoved is non-empty we do nothing. A DomainDoesNotExistException
-      // will be thrown later since the domain cannot exist in the readSnapshot.
-    }
-    // Generate the tombstones for the removed domain metadatas
-    Map<String, DomainMetadata> snapshotDomainMetadataMap = snapshot.getDomainMetadataMap();
-    for (String domainName : domainMetadatasRemoved) {
-      if (snapshotDomainMetadataMap.containsKey(domainName)) {
-        DomainMetadata domainToRemove = snapshotDomainMetadataMap.get(domainName);
-        if (domainToRemove.isRemoved()) {
-          // If the domain is already removed we throw an error to avoid any inconsistencies or
-          // ambiguity. The snapshot read by the connector is inconsistent with the snapshot
-          // loaded here as the domain to remove no longer exists.
-          throw new DomainDoesNotExistException(
-              table.getDataPath().toString(), domainName, snapshot.getVersion());
-        }
-        domainMetadatasToCommit.put(domainName, domainToRemove.removed());
-      } else {
-        // We must throw an error if the domain does not exist. Otherwise, there could be unexpected
-        // behavior within conflict resolution. For example, consider the following
-        // 1. Table has no domains set in V0
-        // 2. txnA is started and wants to remove domain "foo"
-        // 3. txnB is started and adds domain "foo" and commits V1 before txnA
-        // 4. txnA needs to perform conflict resolution against the V1 commit from txnB
-        // Conflict resolution should fail but since the domain does not exist we cannot create
-        // a tombstone to mark it as removed and correctly perform conflict resolution.
-        throw new DomainDoesNotExistException(
-            table.getDataPath().toString(), domainName, snapshot.getVersion());
-      }
+      // If domainMetadatasRemoved is non-empty we do nothing. A DomainDoesNotExistException will be
+      // thrown in `getDomainMetadatasToCommit` since the domain cannot exist in the readSnapshot.
     }
 
     return new TransactionImpl(
@@ -252,7 +221,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         shouldUpdateProtocol,
         maxRetries,
         table.getClock(),
-        new ArrayList<>(domainMetadatasToCommit.values()));
+        getDomainMetadatasToCommit(snapshot));
   }
 
   /** Validate the given parameters for the transaction. */
@@ -364,5 +333,46 @@ public class TransactionBuilderImpl implements TransactionBuilder {
 
   private Protocol getInitialProtocol() {
     return new Protocol(DEFAULT_READ_VERSION, DEFAULT_WRITE_VERSION);
+  }
+
+  /**
+   * Returns a list of the domain metadatas to commit. This consists of the domain metadatas added
+   * in the transaction using {@link TransactionBuilder#withDomainMetadata(String, String)} and the
+   * tombstones for the domain metadatas removed in the transaction using
+   * {@link TransactionBuilder#withDomainMetadataRemoved(String)}.
+   */
+  private List<DomainMetadata> getDomainMetadatasToCommit(SnapshotImpl snapshot) {
+    // Add all domain metadatas added in the transaction
+    List<DomainMetadata> finalDomainMetadatas = new ArrayList<>(domainMetadatasAdded.values());
+
+    // Generate the tombstones for the removed domain metadatas
+    Map<String, DomainMetadata> snapshotDomainMetadataMap = snapshot.getDomainMetadataMap();
+    for (String domainName : domainMetadatasRemoved) {
+      // Note: we know domainName is not already in finalDomainMetadatas because we do not allow
+      // removing and adding a domain with the same identifier in a single txn!
+      if (snapshotDomainMetadataMap.containsKey(domainName)) {
+        DomainMetadata domainToRemove = snapshotDomainMetadataMap.get(domainName);
+        if (domainToRemove.isRemoved()) {
+          // If the domain is already removed we throw an error to avoid any inconsistencies or
+          // ambiguity. The snapshot read by the connector is inconsistent with the snapshot
+          // loaded here as the domain to remove no longer exists.
+          throw new DomainDoesNotExistException(table.getDataPath().toString(), domainName,
+              snapshot.getVersion());
+        }
+        domainMetadatasAdded.put(domainName, domainToRemove.removed());
+      } else {
+        // We must throw an error if the domain does not exist. Otherwise, there could be unexpected
+        // behavior within conflict resolution. For example, consider the following
+        // 1. Table has no domains set in V0
+        // 2. txnA is started and wants to remove domain "foo"
+        // 3. txnB is started and adds domain "foo" and commits V1 before txnA
+        // 4. txnA needs to perform conflict resolution against the V1 commit from txnB
+        // Conflict resolution should fail but since the domain does not exist we cannot create
+        // a tombstone to mark it as removed and correctly perform conflict resolution.
+        throw new DomainDoesNotExistException(table.getDataPath().toString(), domainName,
+            snapshot.getVersion());
+      }
+    }
+    return finalDomainMetadatas;
   }
 }
