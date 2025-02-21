@@ -161,6 +161,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
                 .map(TableFeature::featureName)
                 .collect(toSet()));
 
+        shouldUpdateProtocol = true;
+        protocol = newProtocolAndFeatures.get()._1;
         TableFeatures.validateKernelCanWriteToTable(protocol, metadata, table.getPath(engine));
       }
     }
