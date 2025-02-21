@@ -2476,7 +2476,6 @@ class DeltaTableCreationSuite
             -> (!sourceTableSchemaContainsKey).toString) {
             // Defaults are only possible for top level columns.
             sql("""CREATE TABLE test_table(int_col INT DEFAULT 2)
-            */
                   |USING delta
                   |TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'supported')""".stripMargin)
           }
