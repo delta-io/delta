@@ -152,10 +152,13 @@ object CloneTableCommand {
 
 /** A delta table source to be cloned from */
 class CloneDeltaSource(
-  sourceTable: DeltaTableV2) extends CloneSource {
+    val sourceTable: DeltaTableV2,
+    sourceSnapshot: Snapshot)
+  extends CloneSource {
 
-  private val deltaLog = sourceTable.deltaLog
-  private val sourceSnapshot = sourceTable.initialSnapshot
+  def this(sourceTable: DeltaTableV2) = this(sourceTable, sourceTable.getFreshSnapshot())
+
+  private def deltaLog = sourceSnapshot.deltaLog
 
   def format: String = CloneSourceFormat.DELTA
 
