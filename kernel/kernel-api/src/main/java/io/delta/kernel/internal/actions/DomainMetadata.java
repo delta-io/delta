@@ -26,10 +26,19 @@ import io.delta.kernel.types.BooleanType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 
 /** Delta log action representing an `DomainMetadata` action */
 public class DomainMetadata {
+
+  /** Whether the provided {@code domain} is a user-controlled domain */
+  public static boolean isUserControlledDomain(String domain) {
+    // Domain identifiers are case-sensitive, but we don't want to allow users to set domains
+    // with prefixes like `DELTA.` either, so perform case-insensitive check for this purpose
+    return !domain.toLowerCase(Locale.ROOT).startsWith("delta.");
+  }
+
   /** Full schema of the {@link DomainMetadata} action in the Delta Log. */
   public static final StructType FULL_SCHEMA =
       new StructType()
@@ -115,6 +124,11 @@ public class DomainMetadata {
     domainMetadataMap.put(2, removed);
 
     return new GenericRow(DomainMetadata.FULL_SCHEMA, domainMetadataMap);
+  }
+
+  public DomainMetadata removed() {
+    checkArgument(!removed, "Cannot remove a domain metadata tombstone (already removed)");
+    return new DomainMetadata(domain, configuration, true /* removed */);
   }
 
   @Override

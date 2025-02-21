@@ -18,6 +18,7 @@ package io.delta.kernel;
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.ConcurrentTransactionException;
+import io.delta.kernel.exceptions.DomainDoesNotExistException;
 import io.delta.kernel.exceptions.InvalidConfigurationValueException;
 import io.delta.kernel.exceptions.UnknownConfigurationException;
 import io.delta.kernel.internal.TableConfig;
@@ -92,6 +93,40 @@ public interface TransactionBuilder {
   TransactionBuilder withMaxRetries(int maxRetries);
 
   /**
+   * Commit the provided domain metadata as part of this transaction. If this is called more than
+   * once with the same {@code domain} the latest provided {@code config} will be committed in the
+   * transaction. Only user-controlled domains are allowed (aka. domains with a `delta.` prefix are
+   * not allowed). Adding and removing a domain with the same identifier in the same txn is not
+   * allowed.
+   *
+   * <p>See the Delta protocol for more information on how to use domain metadata <a
+   * href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#domain-metadata">Domain
+   * Metadata</a>.
+   *
+   * <p>Please note using this API will automatically upgrade the protocol of the table to support
+   * Domain Metadata if it is not already supported. See <a
+   * href="https://docs.delta.io/latest/versioning.html#how-does-delta-lake-manage-feature-compatibility">
+   * How does Delta Lake manage feature compatibility?</a> for more details. This may break existing
+   * writers that do not support the Domain Metadata feature; readers will be unaffected.
+   *
+   * @param domain the domain identifier
+   * @param config configuration string for this domain
+   * @return updated {@link TransactionBuilder} instance
+   */
+  TransactionBuilder withDomainMetadata(String domain, String config);
+
+  /**
+   * Mark the domain metadata with identifier {@code domain} as removed in this transaction. If this
+   * domain does not exist in the latest version of the table will throw a {@link
+   * DomainDoesNotExistException} upon calling {@link TransactionBuilder#build(Engine)}. Adding and
+   * removing a domain with the same identifier in one txn is not allowed.
+   *
+   * @param domain the domain identifier for the domain to remove
+   * @return updated {@link TransactionBuilder} instance
+   */
+  TransactionBuilder withDomainMetadataRemoved(String domain);
+
+  /**
    * Build the transaction. Also validates the given info to ensure that a valid transaction can be
    * created.
    *
@@ -101,6 +136,8 @@ public interface TransactionBuilder {
    * @throws InvalidConfigurationValueException if the value of the property is invalid.
    * @throws UnknownConfigurationException if any of the properties are unknown to {@link
    *     TableConfig}.
+   * @throws DomainDoesNotExistException if removing a domain that does not exist in the latest
+   *     version of the table
    */
   Transaction build(Engine engine);
 }
