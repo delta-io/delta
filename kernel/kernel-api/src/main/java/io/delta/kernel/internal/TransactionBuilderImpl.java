@@ -338,8 +338,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   /**
    * Returns a list of the domain metadatas to commit. This consists of the domain metadatas added
    * in the transaction using {@link TransactionBuilder#withDomainMetadata(String, String)} and the
-   * tombstones for the domain metadatas removed in the transaction using
-   * {@link TransactionBuilder#withDomainMetadataRemoved(String)}.
+   * tombstones for the domain metadatas removed in the transaction using {@link
+   * TransactionBuilder#withDomainMetadataRemoved(String)}.
    */
   private List<DomainMetadata> getDomainMetadatasToCommit(SnapshotImpl snapshot) {
     // Add all domain metadatas added in the transaction
@@ -356,8 +356,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
           // If the domain is already removed we throw an error to avoid any inconsistencies or
           // ambiguity. The snapshot read by the connector is inconsistent with the snapshot
           // loaded here as the domain to remove no longer exists.
-          throw new DomainDoesNotExistException(table.getDataPath().toString(), domainName,
-              snapshot.getVersion());
+          throw new DomainDoesNotExistException(
+              table.getDataPath().toString(), domainName, snapshot.getVersion());
         }
         domainMetadatasAdded.put(domainName, domainToRemove.removed());
       } else {
@@ -369,8 +369,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         // 4. txnA needs to perform conflict resolution against the V1 commit from txnB
         // Conflict resolution should fail but since the domain does not exist we cannot create
         // a tombstone to mark it as removed and correctly perform conflict resolution.
-        throw new DomainDoesNotExistException(table.getDataPath().toString(), domainName,
-            snapshot.getVersion());
+        throw new DomainDoesNotExistException(
+            table.getDataPath().toString(), domainName, snapshot.getVersion());
       }
     }
     return finalDomainMetadatas;
