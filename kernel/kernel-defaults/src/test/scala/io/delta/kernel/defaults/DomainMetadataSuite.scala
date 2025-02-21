@@ -33,7 +33,7 @@ import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 
 import org.apache.spark.sql.delta.DeltaLog
-import org.apache.spark.sql.delta.RowId.{ROW_ID, RowTrackingMetadataDomain => SparkRowTrackingMetadataDomain}
+import org.apache.spark.sql.delta.RowId.{RowTrackingMetadataDomain => SparkRowTrackingMetadataDomain}
 import org.apache.spark.sql.delta.actions.{DomainMetadata => SparkDomainMetadata}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits.OptimisticTxnTestHelper
 
@@ -70,7 +70,6 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
       engine: Engine,
       tablePath: String,
       domainMetadatas: Seq[DomainMetadata],
-      // document why
       useInternalApi: Boolean = false): Transaction = {
 
     var txnBuilder = createWriteTxnBuilder(TableImpl.forPath(engine, tablePath))
@@ -96,7 +95,6 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
       tablePath: String,
       domainMetadatas: Seq[DomainMetadata],
       expectedValue: Map[String, DomainMetadata],
-      // todo document why
       useInternalApi: Boolean = false): Unit = {
     // Create the transaction with domain metadata and commit
     val txn = createTxnWithDomainMetadatas(engine, tablePath, domainMetadatas, useInternalApi)
