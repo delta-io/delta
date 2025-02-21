@@ -43,9 +43,8 @@ import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.StructType
+import io.delta.kernel.utils.{CloseableIterable, CloseableIterator, FileStatus}
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
-import io.delta.kernel.utils.CloseableIterator
-import io.delta.kernel.utils.FileStatus
 
 import org.apache.spark.sql.delta.VersionNotFoundException
 
@@ -320,7 +319,7 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     }
 
     val combineActions = inMemoryIterable(actions.reduceLeft(_ combine _))
-    txn.commit(engine, combineActions)
+    commitTransaction(txn, engine, combineActions)
   }
 
   def appendData(
@@ -381,7 +380,10 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     assertMetadataProp(snapshot, key, expectedValue)
   }
 
-  def verifyWrittenContent(path: String, expSchema: StructType, expData: Seq[TestRow]): Unit = {
+  protected def verifyWrittenContent(
+      path: String,
+      expSchema: StructType,
+      expData: Seq[TestRow]): Unit = {
     val actSchema = tableSchema(path)
     assert(actSchema === expSchema)
 
@@ -459,5 +461,16 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       txnResult.getPostCommitHooks
         .stream()
         .anyMatch(hook => hook.getType == PostCommitHookType.CHECKPOINT) === isReadyForCheckpoint)
+  }
+
+  /**
+   * Commit transaction, all child suites should use this instead of txn.commit
+   * directly and could override it for specific test cases (e.g. commit and write CRC).
+   */
+  protected def commitTransaction(
+      txn: Transaction,
+      engine: Engine,
+      dataActions: CloseableIterable[Row]): TransactionCommitResult = {
+    txn.commit(engine, dataActions)
   }
 }
