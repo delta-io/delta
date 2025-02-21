@@ -862,6 +862,16 @@ trait DeltaErrorsBase
       messageParameters = Array(confKey, DeltaSQLConf.ALLOW_ARBITRARY_TABLE_PROPERTIES.key))
   }
 
+  def ambiguousConfigurationKeysException(
+      confKeyA: String,
+      valueA: String,
+      confKeyB: String,
+      valueB: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_AMBIGUOUS_CONFIGURATIONS",
+      messageParameters = Array(confKeyA, valueA, confKeyB, valueB))
+  }
+
   def cdcNotAllowedInThisVersion(): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_CDC_NOT_ALLOWED_IN_THIS_VERSION",
