@@ -63,8 +63,8 @@ public interface Snapshot {
   StructType getSchema();
 
   /**
-   * Returns the configuration for the provided {@code domain} if it exists in the snapshot.
-   * Returns empty if the {@code domain} is not present in the snapshot.
+   * Returns the configuration for the provided {@code domain} if it exists in the snapshot. Returns
+   * empty if the {@code domain} is not present in the snapshot.
    *
    * @return the configuration for the provided domain if it exists
    */

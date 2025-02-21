@@ -29,6 +29,7 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.*;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.DomainDoesNotExistException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.fs.Path;
@@ -58,9 +59,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   private Optional<List<String>> partitionColumns = Optional.empty();
   private Optional<SetTransaction> setTxnOpt = Optional.empty();
   private Optional<Map<String, String>> tableProperties = Optional.empty();
-  // todo rename??
-  private final Map<String, DomainMetadata> metadataDomainsSet = new HashMap<>();
-  private final Set<String> metadataDomainsRemoved = new HashSet<>();
+  private final Map<String, DomainMetadata> domainMetadatasAdded = new HashMap<>();
+  private final Set<String> domainMetadatasRemoved = new HashSet<>();
 
   /**
    * Number of retries for concurrent write exceptions to resolve conflicts and retry commit. In
@@ -120,7 +120,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         !domainName.toLowerCase(Locale.ROOT).startsWith("delta."),
         "Setting a system-controlled domain is not allowed: " + domainName);
     // we override any existing value
-    metadataDomainsSet.put(
+    domainMetadatasAdded.put(
         domainName, new DomainMetadata(domainName, config, false /* removed */));
     return this;
   }
@@ -130,7 +130,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     checkArgument(
         !domainName.toLowerCase(Locale.ROOT).startsWith("delta."),
         "Removing a system-controlled domain is not allowed: " + domainName);
-    metadataDomainsRemoved.add(domainName);
+    domainMetadatasRemoved.add(domainName);
     return this;
   }
 
@@ -189,25 +189,38 @@ public class TransactionBuilderImpl implements TransactionBuilder {
 
     /* --------------- Handle Domain Metadata ------------ */
     // Enable the feature if necessary
-    if (!protocol.getWriterFeatures().contains(DOMAIN_METADATA_W_FEATURE.featureName())) {
-      if (!metadataDomainsSet.isEmpty()) {
+    if (!TableFeatures.isDomainMetadataSupported(protocol)) {
+      if (!domainMetadatasAdded.isEmpty()) {
         // This txn is setting a domain metadata, enable the feature in the protocol
-        logger.info("Automatically enabling writer feature: {}",
-            DOMAIN_METADATA_W_FEATURE.featureName());
-        protocol = protocol.withNewWriterFeatures(
-            Collections.singleton(DOMAIN_METADATA_W_FEATURE.featureName()));
+        logger.info(
+            "Automatically enabling writer feature: {}", DOMAIN_METADATA_W_FEATURE.featureName());
+        protocol =
+            protocol.withNewWriterFeatures(
+                Collections.singleton(DOMAIN_METADATA_W_FEATURE.featureName()));
       }
-      if (!metadataDomainsRemoved.isEmpty()) {
+      if (!domainMetadatasRemoved.isEmpty()) {
         // Do nothing here, we will throw an exception when the domain does not exist in the
         // current snapshot
       }
     }
     // Generate the tombstones for the removed domain metadatas
-    for (String domainName : metadataDomainsRemoved) {
-      Optional<String> existingConfiguration = snapshot.getDomainMetadataConfiguration(domainName);
-      if (existingConfiguration.isPresent()) {
-        metadataDomainsSet.put(domainName,
-            new DomainMetadata(domainName, existingConfiguration.get(), true /* removed */));
+    Map<String, DomainMetadata> snapshotDomainMetadataMap = snapshot.getDomainMetadataMap();
+    for (String domainName : domainMetadatasRemoved) {
+      if (snapshotDomainMetadataMap.containsKey(domainName)) {
+        DomainMetadata domainToRemove = snapshotDomainMetadataMap.get(domainName);
+        // It is possible that domainToRemove is a tombstone in the snapshot (aka already removed).
+        // In this case we still add it to the metadata domains as removed so that it can be
+        // correctly resolved in the case of conflict resolution.
+        // This helps us to avoid failing in a scenario like the following...
+        // 1. V0 has domain "foo"
+        // 2. Connector reads V0, sees domain "foo", starts building txnA and calls
+        //    txnA.withDomainMetadataRemoved("foo")
+        // 3. Concurrent txn commits V1 and removes "foo" BEFORE connector calls txnA.build()
+        // 4. We would like to avoid throwing an error in this case! (when txnA.build() is called)
+        // NOTE - I think this will no longer be a possible scenario if we change to go from
+        // resolvedTable/snapshot -> transactionBuilder (but it will fail conflict resolution)
+        // TODO since this will fail conflict resolution in the future should we just also fail now?
+        domainMetadatasAdded.put(domainName, domainToRemove.removed());
       } else {
         // We must throw an error if the domain does not exist. Otherwise, there could be unexpected
         // behavior within conflict resolution. For example, consider the following
@@ -216,14 +229,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         // 3. txnB is started and adds domain "foo" and commits V1 before txnA
         // 4. txnA performs conflict resolution against the V1 commit from txnB -> behavior is
         //    undefined
-        // TODO throw real exception
-        throw new RuntimeException("Cannot remove domain that does not exist in readSnapshot");
+        throw new DomainDoesNotExistException(domainName, snapshot.getVersion());
       }
-
-      // what if you read table, not removed
-      // try to remove domain
-      // before build() another txn has already removed it
-      // ???
     }
 
     return new TransactionImpl(
@@ -240,7 +247,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         shouldUpdateProtocol,
         maxRetries,
         table.getClock(),
-        new ArrayList<>(metadataDomainsSet.values()));
+        new ArrayList<>(domainMetadatasAdded.values()));
   }
 
   /** Validate the given parameters for the transaction. */

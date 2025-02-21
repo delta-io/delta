@@ -118,7 +118,7 @@ public class DomainMetadata {
   }
 
   public DomainMetadata removed() {
-    checkArgument(!removed, "TODO message");
+    // checkArgument(!removed, "TODO message") (pending decision about tombstones)
     return new DomainMetadata(domain, configuration, true /* removed */);
   }
 

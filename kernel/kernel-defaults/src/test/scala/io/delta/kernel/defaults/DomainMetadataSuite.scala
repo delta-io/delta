@@ -58,28 +58,37 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
   private def createTxnWithDomainMetadatas(
       engine: Engine,
       tablePath: String,
-      domainMetadatas: Seq[DomainMetadata]): Transaction = {
+      domainMetadatas: Seq[DomainMetadata],
+      // document why
+      useInternalApi: Boolean = false): Transaction = {
 
     var txnBuilder = createWriteTxnBuilder(TableImpl.forPath(engine, tablePath))
 
-    domainMetadatas.foreach { dm =>
-      if (dm.isRemoved) {
-        txnBuilder = txnBuilder.withDomainMetadataRemoved(dm.getDomain())
-      } else {
-        txnBuilder = txnBuilder.withDomainMetadata(dm.getDomain(), dm.getConfiguration())
+    if (useInternalApi) {
+      val txn = txnBuilder.build(engine).asInstanceOf[TransactionImpl]
+      txn.addDomainMetadatas(domainMetadatas.asJava)
+      txn
+    } else {
+      domainMetadatas.foreach { dm =>
+        if (dm.isRemoved) {
+          txnBuilder = txnBuilder.withDomainMetadataRemoved(dm.getDomain())
+        } else {
+          txnBuilder = txnBuilder.withDomainMetadata(dm.getDomain(), dm.getConfiguration())
+        }
       }
+      txnBuilder.build(engine)
     }
-
-    txnBuilder.build(engine)
   }
 
   private def commitDomainMetadataAndVerify(
       engine: Engine,
       tablePath: String,
       domainMetadatas: Seq[DomainMetadata],
-      expectedValue: Map[String, DomainMetadata]): Unit = {
+      expectedValue: Map[String, DomainMetadata],
+      // todo document why
+      useInternalApi: Boolean = false): Unit = {
     // Create the transaction with domain metadata and commit
-    val txn = createTxnWithDomainMetadatas(engine, tablePath, domainMetadatas)
+    val txn = createTxnWithDomainMetadatas(engine, tablePath, domainMetadatas, useInternalApi)
     txn.commit(engine, emptyIterable())
 
     // Verify the final state includes the expected domain metadata
@@ -215,7 +224,12 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
       val dm2 = new DomainMetadata("domain2", "", false)
       val dm1_2 = new DomainMetadata("domain1", """{"key1":"10"}"""", false)
 
-      val txn = createTxnWithDomainMetadatas(engine, tablePath, List(dm1_1, dm2, dm1_2))
+      // use internal API because public API overrides multiple domains with the same identifier
+      val txn = createTxnWithDomainMetadatas(
+        engine,
+        tablePath,
+        List(dm1_1, dm2, dm1_2),
+        useInternalApi = true)
 
       val e = intercept[IllegalArgumentException] {
         txn.commit(engine, emptyIterable())
@@ -537,7 +551,9 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
         engine,
         tablePath,
         domainMetadatas = Seq(dmAction),
-        expectedValue = Map(rowTrackingMetadataDomain.getDomainName -> dmAction))
+        expectedValue = Map(rowTrackingMetadataDomain.getDomainName -> dmAction),
+        useInternalApi = true // cannot commit system-controlled domains through public API
+      )
 
       // Read the RowTrackingMetadataDomain from the table and verify
       val table = Table.forPath(engine, tablePath)
@@ -588,7 +604,9 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
           engine,
           tablePath,
           domainMetadatas = Seq(dmAction),
-          expectedValue = Map(dmAction.getDomain -> dmAction))
+          expectedValue = Map(dmAction.getDomain -> dmAction),
+          useInternalApi = true // cannot commit system-controlled domains through public API
+        )
 
         // Use Spark to read the table's row tracking metadata domain and verify the result
         val deltaLog = DeltaLog.forTable(spark, new Path(tablePath))
@@ -608,4 +626,6 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
   // test in kernelApi suite? i.e. TransactionBuilderSuite?
 
   // either we need to keep supporting directly setting it, or add support for removing them
+
+  // test setting the same key (make sure only 1 committed, overrides correctly etc)
 }

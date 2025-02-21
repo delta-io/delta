@@ -17,8 +17,8 @@ package io.delta.kernel;
 
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.exceptions.DomainDoesNotExistException;
 import io.delta.kernel.exceptions.ConcurrentTransactionException;
+import io.delta.kernel.exceptions.DomainDoesNotExistException;
 import io.delta.kernel.exceptions.InvalidConfigurationValueException;
 import io.delta.kernel.exceptions.UnknownConfigurationException;
 import io.delta.kernel.internal.TableConfig;
@@ -94,13 +94,13 @@ public interface TransactionBuilder {
 
   /**
    * Commit the provided domain metadata as part of this transaction. If this is called more than
-   * once with the same {@code domain} the latest provided {@code config} will be committed in
-   * the transaction. Only user-controlled domains are allowed (aka. domains with a `delta.` prefix
-   * are not allowed).
+   * once with the same {@code domain} the latest provided {@code config} will be committed in the
+   * transaction. Only user-controlled domains are allowed (aka. domains with a `delta.` prefix are
+   * not allowed).
    *
    * <p>See the Delta protocol for more information on how to use domain metadata <a
-   * href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#domain-metadata">
-   * Domain Metadata</a>.
+   * href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#domain-metadata">Domain
+   * Metadata</a>.
    *
    * @param domain the domain identifier
    * @param config configuration string for this domain
@@ -109,11 +109,12 @@ public interface TransactionBuilder {
   TransactionBuilder withDomainMetadata(String domain, String config);
 
   /**
-   * Mark the domain metadata with identifier {@domain} as removed in this transaction.
+   * Mark the domain metadata with identifier {@domain} as removed in this transaction. If this
+   * domain does not exist in the latest version of the table will throw a {@link
+   * DomainDoesNotExistException} upon calling {@link TransactionBuilder#build(Engine)}.
    *
-   * TODO what to do if it doesn't exist
-   * (I think we need to throw an exception, because what if a conflicting transaction adds that
-   * domain you would expect it to be removed)
+   * <p>TODO clarify this based on what we decide w.r.t. tombstones vs active domains
+   *
    * @param domain the domain identifier for the domain to remove
    * @return updated {@link TransactionBuilder} instance
    */
@@ -131,8 +132,6 @@ public interface TransactionBuilder {
    *     TableConfig}.
    * @throws DomainDoesNotExistException if removing a domain that does not exist in the latest
    *     version of the table
-   *
-   *
    */
   Transaction build(Engine engine);
 }
