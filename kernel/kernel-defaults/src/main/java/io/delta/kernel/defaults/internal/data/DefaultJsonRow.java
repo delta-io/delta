@@ -308,7 +308,7 @@ public class DefaultJsonRow implements Row {
       List<Object> values = new ArrayList<>(jsonValue.size());
       final Iterator<Map.Entry<String, JsonNode>> iter = jsonValue.fields();
 
-      boolean isValueOfStringType = StringType.STRING.equals(mapType.getValueType());
+      boolean isValueOfStringType = mapType.getValueType() instanceof StringType;
       while (iter.hasNext()) {
         Map.Entry<String, JsonNode> entry = iter.next();
         String keyParsed = entry.getKey();
