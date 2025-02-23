@@ -324,7 +324,7 @@ class AutoCompactSuite extends
       checkAnswer(
         spark.read.format("delta").load(dir),
         spark.range(10)
-          .union(spark.range(1000))
+          .union(spark.range(10000))
           .union(spark.range(10))
           .toDF()
       )
