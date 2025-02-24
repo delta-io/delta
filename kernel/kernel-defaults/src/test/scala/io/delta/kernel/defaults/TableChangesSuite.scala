@@ -368,6 +368,17 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
     }.getMessage.contains("Unsupported Delta protocol reader version"))
   }
 
+  withGoldenTable("commit-info-containing-arbitrary-operationParams-types") { tablePath =>
+    test("getChanges - commit info with arbitrary operationParams types") {
+      // Check all actions are correctly retrieved
+      testGetChangesVsSpark(
+        tablePath,
+        0,
+        2,
+        FULL_ACTION_SET)
+    }
+  }
+
   //////////////////////////////////////////////////////////////////////////////////
   // Helpers to compare actions returned between Kernel and Spark
   //////////////////////////////////////////////////////////////////////////////////
