@@ -209,7 +209,10 @@ public class TableFeatures {
 
     @Override
     public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
-      return TableConfig.ROW_TRACKING_ENABLED.fromMetadata(metadata);
+      if (TableConfig.ROW_TRACKING_ENABLED.fromMetadata(metadata)) {
+        throw new UnsupportedOperationException("Enabling row tracking through metadata is not yet supported.");
+      }
+      return false;
     }
 
     @Override
