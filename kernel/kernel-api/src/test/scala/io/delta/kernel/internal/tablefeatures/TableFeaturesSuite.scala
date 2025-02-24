@@ -177,7 +177,8 @@ class TableFeaturesSuite extends AnyFunSuite {
     val ex = intercept[UnsupportedOperationException] {
       tableFeature.asInstanceOf[FeatureAutoEnabledByMetadata]
         .metadataRequiresFeatureToBeEnabled(
-          testProtocol, testMetadata(tblProps = Map("delta.enableRowTracking" -> "true")))
+          testProtocol,
+          testMetadata(tblProps = Map("delta.enableRowTracking" -> "true")))
     }
     assert(ex.getMessage.contains("Enabling row tracking through metadata is not yet supported."))
   }

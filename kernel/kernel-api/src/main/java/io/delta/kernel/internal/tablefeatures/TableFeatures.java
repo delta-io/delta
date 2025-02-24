@@ -457,18 +457,20 @@ public class TableFeatures {
       throw DeltaErrors.unsupportedReaderProtocol(tablePath, protocol.getMinReaderVersion());
     }
 
-    Set<TableFeature> tableSupportedFeatures = Stream.concat(
-            // implicit supported features
-            TABLE_FEATURES.stream().filter(f ->
-                    supportsReaderFeatures(protocol.getMinReaderVersion()) &&
-                            f.minReaderVersion() <= protocol.getMinReaderVersion()),
-            // explicitly supported features
-            protocol.getReaderFeatures().stream().map(TableFeatures::getTableFeature)).collect(toSet());
+    Set<TableFeature> tableSupportedFeatures =
+        Stream.concat(
+                // implicit supported features
+                TABLE_FEATURES.stream()
+                    .filter(
+                        f ->
+                            supportsReaderFeatures(protocol.getMinReaderVersion())
+                                && f.minReaderVersion() <= protocol.getMinReaderVersion()),
+                // explicitly supported features
+                protocol.getReaderFeatures().stream().map(TableFeatures::getTableFeature))
+            .collect(toSet());
 
     Set<TableFeature> unsupportedFeatures =
-            tableSupportedFeatures.stream()
-            .filter(f -> !f.hasKernelReadSupport())
-            .collect(toSet());
+        tableSupportedFeatures.stream().filter(f -> !f.hasKernelReadSupport()).collect(toSet());
 
     if (!unsupportedFeatures.isEmpty()) {
       throw unsupportedReaderFeatures(
