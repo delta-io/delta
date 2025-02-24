@@ -444,7 +444,8 @@ public class TableFeatures {
       throw DeltaErrors.unsupportedReaderProtocol(tablePath, protocol.getMinReaderVersion());
     }
     Set<TableFeature> unsupportedFeatures =
-        protocol.getImplicitlyAndExplicitlySupportedFeatures().stream()
+        protocol.getReaderFeatures().stream()
+            .map(TableFeatures::getTableFeature)
             .filter(f -> !f.hasKernelReadSupport())
             .collect(toSet());
 
@@ -470,7 +471,8 @@ public class TableFeatures {
     }
 
     Set<TableFeature> unsupportedFeatures =
-        protocol.getImplicitlyAndExplicitlySupportedFeatures().stream()
+        protocol.getWriterFeatures().stream()
+            .map(TableFeatures::getTableFeature)
             .filter(
                 f ->
                     !f.hasKernelWriteSupport(metadata)
