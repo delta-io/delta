@@ -342,6 +342,15 @@ public class TableFeatures {
   /// END: Define the {@link TableFeature}s                                     ///
   /////////////////////////////////////////////////////////////////////////////////
 
+  /////////////////////////////////////////////////////////////////////////////////
+  /// Public static variables and methods                                       ///
+  /////////////////////////////////////////////////////////////////////////////////
+  /** Min reader version that supports reader features. */
+  public static final int TABLE_FEATURES_MIN_READER_VERSION = 3;
+
+  /** Min reader version that supports writer features. */
+  public static final int TABLE_FEATURES_MIN_WRITER_VERSION = 7;
+
   public static final List<TableFeature> TABLE_FEATURES =
       Collections.unmodifiableList(
           Arrays.asList(
@@ -384,8 +393,29 @@ public class TableFeatures {
     return tableFeature;
   }
 
+  /** Does reader version supports explicitly specifying reader feature set in protocol? */
+  public static boolean supportsReaderFeatures(int minReaderVersion) {
+    return minReaderVersion >= TABLE_FEATURES_MIN_READER_VERSION;
+  }
+
+  /** Does writer version supports explicitly specifying writer feature set in protocol? */
+  public static boolean supportsWriterFeatures(int minWriterVersion) {
+    return minWriterVersion >= TABLE_FEATURES_MIN_WRITER_VERSION;
+  }
+
+  /** Returns the minimum reader/writer versions required to support all provided features. */
+  public static Tuple2<Integer, Integer> minimumRequiredVersions(Set<TableFeature> features) {
+    int minReaderVersion =
+        features.stream().mapToInt(TableFeature::minReaderVersion).max().orElse(0);
+
+    int minWriterVersion =
+        features.stream().mapToInt(TableFeature::minWriterVersion).max().orElse(0);
+
+    return new Tuple2<>(Math.max(minReaderVersion, 1), Math.max(minWriterVersion, 1));
+  }
+
   /////////////////////////////////////////////////////////////////////////////////
-  /// Everything below will be removed once the Kernel upgrades to use the     ///
+  /// Everything below will be removed once the Kernel upgrades to use the      ///
   /// above interfaces.                                                         ///
   /////////////////////////////////////////////////////////////////////////////////
   private static final Set<String> SUPPORTED_WRITER_FEATURES =
@@ -424,9 +454,6 @@ public class TableFeatures {
 
   public static final String INVARIANTS_FEATURE_NAME = "invariants";
 
-  /** The minimum writer version required to support table features. */
-  public static final int TABLE_FEATURES_MIN_WRITER_VERSION = 7;
-
   ////////////////////
   // Helper Methods //
   ////////////////////
@@ -438,7 +465,7 @@ public class TableFeatures {
       case 2:
         break;
       case 3:
-        List<String> readerFeatures = protocol.getReaderFeatures();
+        Set<String> readerFeatures = protocol.getReaderFeatures();
         if (!SUPPORTED_READER_FEATURES.containsAll(readerFeatures)) {
           Set<String> unsupportedFeatures = new HashSet<>(readerFeatures);
           unsupportedFeatures.removeAll(SUPPORTED_READER_FEATURES);
@@ -594,6 +621,7 @@ public class TableFeatures {
    */
   private static int getMinWriterVersion(String feature) {
     switch (feature) {
+      case "domainMetadata": // fall through
       case "inCommitTimestamp":
         return 7;
       default:
@@ -620,7 +648,7 @@ public class TableFeatures {
   }
 
   private static boolean isWriterFeatureSupported(Protocol protocol, String featureName) {
-    List<String> writerFeatures = protocol.getWriterFeatures();
+    Set<String> writerFeatures = protocol.getWriterFeatures();
     if (writerFeatures == null) {
       return false;
     }
