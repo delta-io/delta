@@ -140,6 +140,26 @@ public final class DeltaErrors {
   }
 
   /* ------------------------ PROTOCOL EXCEPTIONS ----------------------------- */
+  public static KernelException unsupportedReaderProtocol(
+      String tablePath, int tableReaderVersion) {
+    String message =
+        String.format(
+            "Unsupported Delta protocol reader version: table `%s` requires reader version %s "
+                + "which is unsupported by this version of Delta Kernel.",
+            tablePath, tableReaderVersion);
+    return new KernelException(message);
+  }
+
+  public static KernelException unsupportedWriterProtocol(
+      String tablePath, int tableWriterVersion) {
+    String message =
+        String.format(
+            "Unsupported Delta protocol writer version: table `%s` requires writer version %s "
+                + "which is unsupported by this version of Delta Kernel.",
+            tablePath, tableWriterVersion);
+    return new KernelException(message);
+  }
+
   public static KernelException unsupportedTableFeature(String feature) {
     String message =
         String.format(

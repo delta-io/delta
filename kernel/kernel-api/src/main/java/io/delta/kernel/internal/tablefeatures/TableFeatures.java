@@ -437,6 +437,9 @@ public class TableFeatures {
 
   /** Utility method to check if the table with given protocol is readable by the Kernel. */
   public static void validateKernelCanReadTheTable(Protocol protocol, String tablePath) {
+    if (protocol.getMinReaderVersion() > TABLE_FEATURES_MIN_READER_VERSION) {
+      throw DeltaErrors.unsupportedReaderProtocol(tablePath, protocol.getMinReaderVersion());
+    }
     Set<TableFeature> unsupportedFeatures =
         protocol.getImplicitlyAndExplicitlySupportedFeatures().stream()
             .filter(f -> !f.hasKernelReadSupport())
@@ -454,6 +457,15 @@ public class TableFeatures {
    */
   public static void validateKernelCanWriteToTable(
       Protocol protocol, Metadata metadata, String tablePath) {
+
+    if (protocol.getMinReaderVersion() > TABLE_FEATURES_MIN_READER_VERSION) {
+      throw DeltaErrors.unsupportedReaderProtocol(tablePath, protocol.getMinReaderVersion());
+    }
+
+    if (protocol.getMinWriterVersion() > TABLE_FEATURES_MIN_WRITER_VERSION) {
+      throw unsupportedWriterProtocol(tablePath, protocol.getMinWriterVersion());
+    }
+
     Set<TableFeature> unsupportedFeatures =
         protocol.getImplicitlyAndExplicitlySupportedFeatures().stream()
             .filter(

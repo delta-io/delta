@@ -362,13 +362,32 @@ class CreateCheckpointSuite extends DeltaTableWriteSuiteBase {
 
   test("try create a checkpoint on a unsupported table feature table") {
     withTempDirAndEngine { (tablePath, tc) =>
-      copyTable("dv-with-columnmapping", tablePath)
+      spark.sql(s"CREATE TABLE delta.`$tablePath` (name STRING, age INT) USING delta " +
+        "TBLPROPERTIES ('delta.constraints.checks' = 'name IS NOT NULL')")
+
+      for (_ <- 0 to 3) {
+        spark.sql(s"INSERT INTO delta.`$tablePath` VALUES ('John Doe', 30), ('Bob Johnson', 35)")
+      }
 
       val ex2 = intercept[Exception] {
-        kernelCheckpoint(tc, tablePath, checkpointVersion = 5)
+        kernelCheckpoint(tc, tablePath, checkpointVersion = 4)
       }
-      assert(ex2.getMessage.contains("Unsupported Delta writer feature") &&
-        ex2.getMessage.contains("writer table feature \"deletionVectors\""))
+      assert(ex2.getMessage.contains("requires writer table feature \"[checkConstraints]\" " +
+        "which is unsupported by this version of Delta Kernel"))
+    }
+  }
+
+  test("create a checkpoint on a table with deletion vectors") {
+    withTempDirAndEngine { (tablePath, tc) =>
+      copyTable("dv-with-columnmapping", tablePath)
+
+      // before creating checkpoint, read and save the expected results using Spark
+      val expResults = readUsingSpark(tablePath)
+      assert(expResults.size === 35)
+
+      val checkpointVersion = 15
+      kernelCheckpoint(tc, tablePath, checkpointVersion)
+      verifyResults(tablePath, expResults, checkpointVersion)
     }
   }
 

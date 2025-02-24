@@ -84,10 +84,10 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
       val ex = intercept[KernelException] {
         txnBuilder
-          .withSchema(engine, new StructType().add("ts_ntz", TIMESTAMP_NTZ))
+          .withSchema(engine, new StructType().add("variant_type", VariantType.VARIANT))
           .build(engine)
       }
-      assert(ex.getMessage.contains("Kernel doesn't support writing data of type: timestamp_ntz"))
+      assert(ex.getMessage.contains("Kernel doesn't support writing data of type: variant"))
     }
   }
 

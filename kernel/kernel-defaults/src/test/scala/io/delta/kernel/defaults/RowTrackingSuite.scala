@@ -46,20 +46,18 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
     inMemoryIterable(toCloseableIterator(actions.asJava.iterator()))
   }
 
-  private def setWriterFeatureSupported(
-      engine: Engine,
-      tablePath: String,
-      schema: StructType,
-      writerFeatures: Seq[String]): Unit = {
-    val protocol = new Protocol(
-      3, // minReaderVersion
-      7, // minWriterVersion
-      Collections.emptySet(), // readerFeatures
-      writerFeatures.toSet.asJava // writerFeatures
-    )
-    val protocolAction = SingleAction.createProtocolSingleAction(protocol.toRow)
-    val txn = createTxn(engine, tablePath, isNewTable = false, schema, Seq.empty)
-    txn.commit(engine, prepareActionsForCommit(protocolAction))
+  private def setRowTrackingSupported(engine: Engine, tablePath: String): Unit = {
+    val tableProps = Map("delta.enableRowTracking" -> "true")
+    val txn =
+      createTxn(engine, tablePath, isNewTable = false, testSchema, tableProperties = tableProps)
+    txn.commit(engine, emptyIterable())
+  }
+
+  private def disableRowTracking(engine: Engine, tablePath: String): Unit = {
+    val tableProps = Map("delta.enableRowTracking" -> "false")
+    val txn =
+      createTxn(engine, tablePath, isNewTable = false, testSchema, tableProperties = tableProps)
+    txn.commit(engine, emptyIterable())
   }
 
   private def createTableWithRowTrackingSupported(
@@ -68,7 +66,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
       schema: StructType = testSchema): Unit = {
     createTxn(engine, tablePath, isNewTable = true, schema, Seq.empty)
       .commit(engine, emptyIterable())
-    setWriterFeatureSupported(engine, tablePath, schema, Seq("domainMetadata", "rowTracking"))
+    setRowTrackingSupported(engine, tablePath)
   }
 
   private def verifyBaseRowIDs(
@@ -229,30 +227,6 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
             + "Connectors are expected to populate the number of records statistics when "
             + "writing to a Delta table with 'rowTracking' table feature supported."))
     }
-  }
-
-  test("Fail if row tracking is supported but domain metadata is not supported") {
-    withTempDirAndEngine((tablePath, engine) => {
-      createTxn(engine, tablePath, isNewTable = true, testSchema, Seq.empty)
-        .commit(engine, emptyIterable())
-
-      // Only 'rowTracking' is supported, not 'domainMetadata'
-      setWriterFeatureSupported(engine, tablePath, testSchema, Seq("rowTracking"))
-
-      val dataBatch1 = generateData(testSchema, Seq.empty, Map.empty, 100, 1)
-      val e = intercept[KernelException] {
-        appendData(
-          engine,
-          tablePath,
-          data = prepareDataForCommit(dataBatch1)).getVersion
-      }
-
-      assert(
-        e.getMessage
-          .contains(
-            "Feature 'rowTracking' is supported and depends on feature 'domainMetadata',"
-              + " but 'domainMetadata' is unsupported"))
-    })
   }
 
   test("Integration test - Write table with Kernel then write with Spark") {
@@ -502,7 +476,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
       val txn1 = createTxn(engine, tablePath, isNewTable = false, testSchema, Seq.empty)
 
       // A concurrent txn makes row tracking supported
-      setWriterFeatureSupported(engine, tablePath, testSchema, Seq("rowTracking", "domainMetadata"))
+      setRowTrackingSupported(engine, tablePath)
 
       // Commit txn1 and expect failure
       val e = intercept[ProtocolChangedException] {
@@ -523,7 +497,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
       val txn1 = createTxn(engine, tablePath, isNewTable = false, testSchema, Seq.empty)
 
       // A concurrent txn makes row tracking unsupported
-      setWriterFeatureSupported(engine, tablePath, testSchema, Seq())
+      disableRowTracking(engine, tablePath)
 
       // Commit txn1 and expect failure
       val e = intercept[ProtocolChangedException] {
