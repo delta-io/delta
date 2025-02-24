@@ -23,7 +23,7 @@ import scala.collection.JavaConverters._
 import io.delta.kernel.data.Row
 import io.delta.kernel.internal.util.VectorUtils
 import io.delta.kernel.internal.util.VectorUtils.stringStringMapValue
-import io.delta.kernel.utils.DataFileStatistics.deserializeFromJson
+import io.delta.kernel.statistics.DataFileStatistics
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -58,7 +58,7 @@ class AddFileSuite extends AnyFunSuite {
       toJavaOptional(tags.map(_.asJava).map(stringStringMapValue)),
       toJavaOptional(baseRowId.asInstanceOf[Option[JLong]]),
       toJavaOptional(defaultRowCommitVersion.asInstanceOf[Option[JLong]]),
-      deserializeFromJson(stats.getOrElse("")))
+      DataFileStatistics.deserializeFromJson(stats.getOrElse("")))
   }
 
   test("getters can read AddFile's fields from the backing row") {
