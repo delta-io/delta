@@ -126,7 +126,8 @@ class TableFeaturesSuite extends AnyFunSuite {
       false),
     ("typeWidening", testMetadata(tblProps = Map("delta.enableTypeWidening" -> "true")), true),
     ("typeWidening", testMetadata(tblProps = Map("delta.enableTypeWidening" -> "false")), false),
-    ("rowTracking", testMetadata(tblProps = Map("delta.enableRowTracking" -> "true")), true),
+    // Disable this until we have support to enable row tracking through metadata
+    // ("rowTracking", testMetadata(tblProps = Map("delta.enableRowTracking" -> "true")), true),
     ("rowTracking", testMetadata(tblProps = Map("delta.enableRowTracking" -> "false")), false),
     (
       "deletionVectors",
@@ -169,6 +170,16 @@ class TableFeaturesSuite extends AnyFunSuite {
       val tableFeature = TableFeatures.getTableFeature(feature)
       assert(!tableFeature.isInstanceOf[FeatureAutoEnabledByMetadata])
     }
+  }
+
+  test("row tracking enable throguh metadata property is not supported") {
+    val tableFeature = TableFeatures.getTableFeature("rowTracking")
+    val ex = intercept[UnsupportedOperationException] {
+      tableFeature.asInstanceOf[FeatureAutoEnabledByMetadata]
+        .metadataRequiresFeatureToBeEnabled(
+          testProtocol, testMetadata(tblProps = Map("delta.enableRowTracking" -> "true")))
+    }
+    assert(ex.getMessage.contains("Enabling row tracking through metadata is not yet supported."))
   }
 
   test("hasKernelReadSupport expected to be true") {
