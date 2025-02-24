@@ -34,6 +34,7 @@ import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.FieldMetadata;
 import io.delta.kernel.types.StructType;
 import java.util.*;
+import java.util.stream.Stream;
 
 /** Contains utility methods related to the Delta table feature support in protocol. */
 public class TableFeatures {
@@ -418,13 +419,24 @@ public class TableFeatures {
    * Upgrade the current protocol to satisfy all auto-update capable features required by the given
    * metadata. If the current protocol already satisfies the metadata requirements, return empty.
    *
+   * @param newMetadata the new metadata to be applied to the table.
+   * @param needDomainMetadataSupport whether the table needs to explicitly support domain metadata.
+   * @param currentProtocol the current protocol of the table.
    * @return the upgraded protocol and the set of new features that were enabled in the upgrade.
    */
   public static Optional<Tuple2<Protocol, Set<TableFeature>>> autoUpgradeProtocolBasedOnMetadata(
-      Metadata newMetadata, Protocol currentProtocol) {
+      Metadata newMetadata, boolean needDomainMetadataSupport, Protocol currentProtocol) {
+
+    Set<TableFeature> autoEnabledFeatures =
+        extractAutomaticallyEnabledNewFeatures(newMetadata, currentProtocol);
+    if (needDomainMetadataSupport) {
+      autoEnabledFeatures =
+          Stream.concat(autoEnabledFeatures.stream(), Stream.of(DOMAIN_METADATA_W_FEATURE))
+              .collect(toSet());
+    }
     Protocol required =
         new Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
-            .withFeatures(extractAutomaticallyEnabledNewFeatures(newMetadata, currentProtocol))
+            .withFeatures(autoEnabledFeatures)
             .normalized();
 
     // See if all the required features are already supported in the current protocol.
