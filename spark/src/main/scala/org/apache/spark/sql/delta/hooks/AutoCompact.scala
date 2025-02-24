@@ -24,7 +24,6 @@ import org.apache.spark.sql.delta.commands.optimize._
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.stats.AutoCompactPartitionStats
 
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
@@ -146,15 +145,6 @@ trait AutoCompactBase extends PostCommitHook with DeltaLogging {
             opType,
             maxDeletedRowsRatio
           )
-        val partitionsStats = AutoCompactPartitionStats.instance(spark)
-        // Mark partitions as compacted before releasing them.
-        // Otherwise an already compacted partition might get picked up by a concurrent thread.
-        // But only marks it as compacted, if no exception was thrown by auto compaction so that the
-        // partitions stay eligible for subsequent auto compactions.
-        partitionsStats.markPartitionsAsCompacted(
-          tableId,
-          autoCompactRequest.allowedPartitions
-        )
         metrics
       } catch {
         case e: Throwable =>

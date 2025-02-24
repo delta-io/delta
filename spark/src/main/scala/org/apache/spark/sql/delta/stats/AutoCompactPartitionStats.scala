@@ -56,27 +56,23 @@ class AutoCompactPartitionStats(
 
   /**
    * This class to store the states of one table partition. These state includes:
-   * -- the number of small files,
-   * -- the thread that assigned to compact this partition, and
-   * -- whether the partition was compacted.
+   * -- the number of small files and
+   * -- the thread that assigned to compact this partition.
    *
    * Note: Since this class keeps tracking of the statistics of the table partition and the state of
    * the auto compaction thread that works on the table partition, any method that accesses any
    * attribute of this class needs to be protected by synchronized context.
    */
   class PartitionStat(
-      var numFiles: Long,
-      var wasAutoCompacted: Boolean = false) {
+      var numFiles: Long) {
 
     /**
-     * Determine whether this partition can be autocompacted based on the number of small files.
-     * @param minNumFiles The minimum number of files this table-partition should have to trigger
-     *                    Auto Compaction in case it has already been compacted once.
+     * Determine whether this partition should be autocompacted based on the number of small files.
+     * @param minNumFiles The minimum number of files this table-partition must have to trigger
+     *                    Auto Compaction.
      */
-    def hasSufficientSmallFilesAndHasNotBeenCompacted(minNumFiles: Long): Boolean =
-      hasSufficientFiles(minNumFiles)
 
-    def hasSufficientFiles(minNumFiles: Long): Boolean = numFiles >= minNumFiles
+    def hasSufficientSmallFiles(minNumFiles: Long): Boolean = numFiles >= minNumFiles
   }
 
   /**
@@ -304,19 +300,10 @@ class AutoCompactPartitionStats(
     tablePartitionStatsCache.get(tableId).map { tablePartitionStates =>
       targetPartitions.filter { partitionKey =>
         tablePartitionStates.get(partitionKey.##).exists { partitionState =>
-          partitionState.hasSufficientSmallFilesAndHasNotBeenCompacted(minNumFiles)
+          partitionState.hasSufficientSmallFiles(minNumFiles)
         }
       }
     }.getOrElse(Set.empty)
-  }
-
-  def markPartitionsAsCompacted(tableId: String, compactedPartitions: Set[PartitionKey])
-  : Unit = synchronized {
-    tablePartitionStatsCache.get(tableId).foreach { tablePartitionStats =>
-      compactedPartitions
-        .foreach(partitionKey => tablePartitionStats.get(partitionKey.##)
-          .foreach(_.wasAutoCompacted = true))
-    }
   }
 
   /**
