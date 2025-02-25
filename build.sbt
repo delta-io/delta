@@ -867,6 +867,33 @@ lazy val icebergShaded = (project in file("icebergShaded"))
         ExclusionRule("com.fasterxml.jackson.core"),
         ExclusionRule("com.fasterxml.jackson.module")
       ),
+      "org.apache.hadoop" % "hadoop-client" % "2.7.3" excludeAll (
+        ExclusionRule("org.apache.avro"),
+        ExclusionRule("org.slf4j"),
+        ExclusionRule("commons-beanutils"),
+        ExclusionRule("org.datanucleus"),
+      ),
+      "org.apache.hive" % "hive-metastore" % "2.3.8" excludeAll (
+        ExclusionRule("org.apache.avro"),
+        ExclusionRule("org.slf4j"),
+        ExclusionRule("org.pentaho"),
+        ExclusionRule("org.apache.hbase"),
+        ExclusionRule("org.apache.logging.log4j"),
+        ExclusionRule("co.cask.tephra"),
+        ExclusionRule("com.google.code.findbugs"),
+        ExclusionRule("org.eclipse.jetty.aggregate"),
+        ExclusionRule("org.eclipse.jetty.orbit"),
+        ExclusionRule("org.apache.parquet"),
+        ExclusionRule("com.tdunning"),
+        ExclusionRule("javax.transaction"),
+        ExclusionRule("com.zaxxer"),
+        ExclusionRule("org.apache.ant"),
+        ExclusionRule("javax.servlet"),
+        ExclusionRule("javax.jdo"),
+        ExclusionRule("commons-beanutils"),
+        ExclusionRule("org.datanucleus"),
+
+      ),
     ),
 
     // Generated shaded Iceberg JARs
@@ -881,6 +908,18 @@ lazy val icebergShaded = (project in file("icebergShaded"))
        case PathList("shadedForDelta", "org", "apache", "iceberg", "PartitionSpec$Builder.class") =>
          MergeStrategy.first
        case PathList("shadedForDelta", "org", "apache", "iceberg", "PartitionSpec.class") =>
+         MergeStrategy.first
+       case PathList("shadedForDelta", "org", "apache", "iceberg", "hive", "HiveCatalog.class") =>
+         MergeStrategy.first
+       case PathList("shadedForDelta", "org", "apache", "iceberg", "hive", "HiveCatalog$1.class") =>
+         MergeStrategy.first
+       case PathList("shadedForDelta", "org", "apache", "iceberg", "hive", "HiveCatalog$ViewAwareTableBuilder.class") =>
+         MergeStrategy.first
+       case PathList("shadedForDelta", "org", "apache", "iceberg", "hive", "HiveCatalog$TableAwareViewBuilder.class") =>
+         MergeStrategy.first
+       case PathList("shadedForDelta", "org", "apache", "iceberg", "hive", "HiveTableOperations.class") =>
+         MergeStrategy.first
+       case PathList("shadedForDelta", "org", "apache", "iceberg", "hive", "HiveTableOperations$1.class") =>
          MergeStrategy.first
        case x => (assemblyMergeStrategy in assembly).value(x)
     },
