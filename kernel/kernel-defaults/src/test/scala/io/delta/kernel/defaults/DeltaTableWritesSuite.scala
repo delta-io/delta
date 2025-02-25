@@ -357,21 +357,25 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
-  test("create table with all supported types") {
-    withTempDirAndEngine { (tablePath, engine) =>
-      val parquetAllTypes = goldenTablePath("parquet-all-types")
-      val schema = removeTimestampNtzTypeColumns(tableSchema(parquetAllTypes))
+  Seq(true, false).foreach { includeTimestampNtz =>
+    test(s"create table with all supported types - timestamp_ntz included=$includeTimestampNtz") {
+      withTempDirAndEngine { (tablePath, engine) =>
+        val parquetAllTypes = goldenTablePath("parquet-all-types")
+        val goldenTableSchema = tableSchema(parquetAllTypes)
+        val schema = if (includeTimestampNtz) goldenTableSchema
+        else removeTimestampNtzTypeColumns(goldenTableSchema)
 
-      val table = Table.forPath(engine, tablePath)
-      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
-      val txn = txnBuilder.withSchema(engine, schema).build(engine)
-      val txnResult = commitTransaction(txn, engine, emptyIterable())
+        val table = Table.forPath(engine, tablePath)
+        val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+        val txn = txnBuilder.withSchema(engine, schema).build(engine)
+        val txnResult = commitTransaction(txn, engine, emptyIterable())
 
-      assert(txnResult.getVersion === 0)
-      assertCheckpointReadiness(txnResult, isReadyForCheckpoint = false)
+        assert(txnResult.getVersion === 0)
+        assertCheckpointReadiness(txnResult, isReadyForCheckpoint = false)
 
-      verifyCommitInfo(tablePath, version = 0)
-      verifyWrittenContent(tablePath, schema, Seq.empty)
+        verifyCommitInfo(tablePath, version = 0)
+        verifyWrittenContent(tablePath, schema, Seq.empty)
+      }
     }
   }
 
@@ -625,32 +629,37 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
-  test("insert into table - all supported types data") {
-    withTempDirAndEngine { (tblPath, engine) =>
-      val parquetAllTypes = goldenTablePath("parquet-all-types")
-      val schema = removeTimestampNtzTypeColumns(tableSchema(parquetAllTypes))
+  Seq(true, false).foreach { includeTimestampNtz =>
+    test(s"insert into table - all supported types data - " +
+      s"timestamp_ntz included = $includeTimestampNtz") {
+      withTempDirAndEngine { (tblPath, engine) =>
+        val parquetAllTypes = goldenTablePath("parquet-all-types")
+        val goldenTableSchema = tableSchema(parquetAllTypes)
+        val schema = if (includeTimestampNtz) goldenTableSchema
+        else removeTimestampNtzTypeColumns(goldenTableSchema)
 
-      val data = readTableUsingKernel(engine, parquetAllTypes, schema).to[Seq]
-      val dataWithPartInfo = Seq(Map.empty[String, Literal] -> data)
+        val data = readTableUsingKernel(engine, parquetAllTypes, schema).to[Seq]
+        val dataWithPartInfo = Seq(Map.empty[String, Literal] -> data)
 
-      appendData(engine, tblPath, isNewTable = true, schema, Seq.empty, dataWithPartInfo)
-      var expData = dataWithPartInfo.flatMap(_._2).flatMap(_.toTestRows)
+        appendData(engine, tblPath, isNewTable = true, schema, Seq.empty, dataWithPartInfo)
+        var expData = dataWithPartInfo.flatMap(_._2).flatMap(_.toTestRows)
 
-      val checkpointInterval = 4
-      setCheckpointInterval(tblPath, checkpointInterval)
+        val checkpointInterval = 4
+        setCheckpointInterval(tblPath, checkpointInterval)
 
-      for (i <- 2 until 5) {
-        // insert until a checkpoint is required
-        val commitResult = appendData(engine, tblPath, data = dataWithPartInfo)
+        for (i <- 2 until 5) {
+          // insert until a checkpoint is required
+          val commitResult = appendData(engine, tblPath, data = dataWithPartInfo)
 
-        expData = expData ++ dataWithPartInfo.flatMap(_._2).flatMap(_.toTestRows)
-        checkpointIfReady(engine, tblPath, commitResult, expSize = i /* one file per version */ )
+          expData = expData ++ dataWithPartInfo.flatMap(_._2).flatMap(_.toTestRows)
+          checkpointIfReady(engine, tblPath, commitResult, expSize = i /* one file per version */ )
 
-        verifyCommitResult(commitResult, expVersion = i, i % checkpointInterval == 0)
-        verifyCommitInfo(tblPath, version = i, null, operation = WRITE)
-        verifyWrittenContent(tblPath, schema, expData)
+          verifyCommitResult(commitResult, expVersion = i, i % checkpointInterval == 0)
+          verifyCommitInfo(tblPath, version = i, null, operation = WRITE)
+          verifyWrittenContent(tblPath, schema, expData)
+        }
+        assertCheckpointExists(tblPath, atVersion = checkpointInterval)
       }
-      assertCheckpointExists(tblPath, atVersion = checkpointInterval)
     }
   }
 
@@ -659,10 +668,9 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       s"timestamp_ntz included = $includeTimestampNtz") {
       withTempDirAndEngine { (tblPath, engine) =>
         val parquetAllTypes = goldenTablePath("parquet-all-types")
-        val tableSchema = tableSchema(parquetAllTypes)
-        val schema = if (includeTimestampNtz) {
-          removeTimestampNtzTypeColumns(tableSchema(parquetAllTypes))
-        } else tableSchema
+        val goldenTableSchema = tableSchema(parquetAllTypes)
+        val schema = if (includeTimestampNtz) goldenTableSchema
+        else removeTimestampNtzTypeColumns(goldenTableSchema)
 
         val partCols = Seq(
           "byteType",
