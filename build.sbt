@@ -858,14 +858,16 @@ lazy val icebergShaded = (project in file("icebergShaded"))
     libraryDependencies ++= Seq(
       // Fix Iceberg's legacy java.lang.NoClassDefFoundError: scala/jdk/CollectionConverters$ error
       // due to legacy scala.
-      "org.scala-lang.modules" %% "scala-collection-compat" % "2.1.1",
+      "org.scala-lang.modules" %% "scala-collection-compat" % "2.1.1" % "provided",
       "org.apache.iceberg" % "iceberg-core" % "1.8.0" excludeAll (
         ExclusionRule("com.fasterxml.jackson.core"),
-        ExclusionRule("com.fasterxml.jackson.module")
+        ExclusionRule("com.fasterxml.jackson.module"),
+        ExclusionRule("com.github.ben-manes.caffeine"),
       ),
       "org.apache.iceberg" % "iceberg-hive-metastore" % "1.8.0" excludeAll (
         ExclusionRule("com.fasterxml.jackson.core"),
-        ExclusionRule("com.fasterxml.jackson.module")
+        ExclusionRule("com.fasterxml.jackson.module"),
+        ExclusionRule("com.github.ben-manes.caffeine"),
       ),
       "org.apache.hadoop" % "hadoop-client" % "2.7.3" excludeAll (
         ExclusionRule("org.apache.avro"),
@@ -892,7 +894,6 @@ lazy val icebergShaded = (project in file("icebergShaded"))
         ExclusionRule("javax.jdo"),
         ExclusionRule("commons-beanutils"),
         ExclusionRule("org.datanucleus"),
-
       ),
     ),
 
