@@ -59,8 +59,8 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical.UnsetTableProperties
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
-import org.apache.spark.sql.catalyst.util.{CharVarcharUtils, ResolveDefaultColumns, ResolveDefaultColumnsUtils}
-import org.apache.spark.sql.types.{MetadataBuilder, StructField, StructType}
+import org.apache.spark.sql.catalyst.util.{CharVarcharUtils, ResolveDefaultColumns}
+import org.apache.spark.sql.types.{StructField, StructType}
 import org.apache.spark.util.{Clock, Utils}
 
 object CoordinatedCommitType extends Enumeration {
@@ -685,27 +685,8 @@ trait OptimisticTransactionImpl extends DeltaTransaction
 
     if (spark.sessionState.conf
       .getConf(DeltaSQLConf.REMOVE_EXISTS_DEFAULT_FROM_SCHEMA_ON_EVERY_METADATA_CHANGE)) {
-      // 'EXISTS_DEFAULT' is not used in Delta because it is not allowed to add a column with a
-      // default value. Spark does though still add the metadata key when a column with a default
-      // value is added at table creation.
-      // We remove the metadata field here because it is not part of the Delta protocol and
-      // having it in the schema prohibits CTAS from a table with a dropped default value.
-      // @TODO: Clarify if active default values should be propagated to the target table in CTAS or
-      //        not and if not also remove 'CURRENT_DEFAULT' in CTAS.
-      val schemaWithRemovedExistsDefaults = SchemaUtils.transformSchema(newMetadataTmp.schema) {
-        case (_, StructType(fields), _)
-          if fields.exists(_.metadata.contains(
-            ResolveDefaultColumnsUtils.EXISTS_DEFAULT_COLUMN_METADATA_KEY)) =>
-          val newFields = fields.map { field =>
-            val builder = new MetadataBuilder()
-              .withMetadata(field.metadata)
-              .remove(ResolveDefaultColumnsUtils.EXISTS_DEFAULT_COLUMN_METADATA_KEY)
-
-            field.copy(metadata = builder.build())
-          }
-          StructType(newFields)
-        case (_, other, _) => other
-      }
+      val schemaWithRemovedExistsDefaults =
+        SchemaUtils.removeExistsDefaultMetadata(newMetadataTmp.schema)
       if (schemaWithRemovedExistsDefaults != newMetadataTmp.schema) {
         newMetadataTmp = newMetadataTmp.copy(schemaString = schemaWithRemovedExistsDefaults.json)
       }
