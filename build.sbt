@@ -848,8 +848,6 @@ lazy val iceberg = (project in file("iceberg"))
   )
 // scalastyle:on println
 
-lazy val generateIcebergJarsTask = TaskKey[Unit]("generateIcebergJars", "Generate Iceberg JARs")
-
 lazy val icebergShaded = (project in file("icebergShaded"))
   .dependsOn(spark % "provided")
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
@@ -857,17 +855,19 @@ lazy val icebergShaded = (project in file("icebergShaded"))
     name := "iceberg-shaded",
     commonSettings,
     skipReleaseSettings,
-
-    // Compile, patch and generated Iceberg JARs
-    generateIcebergJarsTask := {
-      import sys.process._
-      val scriptPath = baseDirectory.value / "generate_iceberg_jars.py"
-      // Download iceberg code in `iceberg_src` dir and generate the JARs in `lib` dir
-      Seq("python3", scriptPath.getPath)!
-    },
-    Compile / unmanagedJars := (Compile / unmanagedJars).dependsOn(generateIcebergJarsTask).value,
-    cleanFiles += baseDirectory.value / "iceberg_src",
-    cleanFiles += baseDirectory.value / "lib",
+    libraryDependencies ++= Seq(
+      // Fix Iceberg's legacy java.lang.NoClassDefFoundError: scala/jdk/CollectionConverters$ error
+      // due to legacy scala.
+      "org.scala-lang.modules" %% "scala-collection-compat" % "2.1.1",
+      "org.apache.iceberg" % "iceberg-core" % "1.8.0" excludeAll (
+        ExclusionRule("com.fasterxml.jackson.core"),
+        ExclusionRule("com.fasterxml.jackson.module")
+      ),
+      "org.apache.iceberg" % "iceberg-hive-metastore" % "1.8.0" excludeAll (
+        ExclusionRule("com.fasterxml.jackson.core"),
+        ExclusionRule("com.fasterxml.jackson.module")
+      ),
+    ),
 
     // Generated shaded Iceberg JARs
     Compile / packageBin := assembly.value,
@@ -877,8 +877,16 @@ lazy val icebergShaded = (project in file("icebergShaded"))
     assembly / assemblyShadeRules := Seq(
       ShadeRule.rename("org.apache.iceberg.**" -> "shadedForDelta.@0").inAll,
     ),
+    assembly / assemblyMergeStrategy := {
+       case PathList("shadedForDelta", "org", "apache", "iceberg", "PartitionSpec$Builder.class") =>
+         MergeStrategy.first
+       case PathList("shadedForDelta", "org", "apache", "iceberg", "PartitionSpec.class") =>
+         MergeStrategy.first
+       case x => (assemblyMergeStrategy in assembly).value(x)
+    },
     assemblyPackageScala / assembleArtifact := false,
     // Make the 'compile' invoke the 'assembly' task to generate the uber jar.
+    Compile / packageBin := assembly.value
   )
 
 lazy val hudi = (project in file("hudi"))
