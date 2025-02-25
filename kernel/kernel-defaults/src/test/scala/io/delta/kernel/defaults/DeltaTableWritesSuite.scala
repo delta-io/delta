@@ -360,7 +360,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
   test("create table with all supported types") {
     withTempDirAndEngine { (tablePath, engine) =>
       val parquetAllTypes = goldenTablePath("parquet-all-types")
-      val schema = removeUnsupportedTypes(tableSchema(parquetAllTypes))
+      val schema = removeTimestampNtzTypeColumns(tableSchema(parquetAllTypes))
 
       val table = Table.forPath(engine, tablePath)
       val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
@@ -628,7 +628,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
   test("insert into table - all supported types data") {
     withTempDirAndEngine { (tblPath, engine) =>
       val parquetAllTypes = goldenTablePath("parquet-all-types")
-      val schema = removeUnsupportedTypes(tableSchema(parquetAllTypes))
+      val schema = removeTimestampNtzTypeColumns(tableSchema(parquetAllTypes))
 
       val data = readTableUsingKernel(engine, parquetAllTypes, schema).to[Seq]
       val dataWithPartInfo = Seq(Map.empty[String, Literal] -> data)
@@ -656,10 +656,14 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
   Seq(true, false).foreach { includeTimestampNtz =>
     test(s"insert into partitioned table - all supported partition column types data - " +
-      s"timesatmp_ntz included = $includeTimestampNtz") {
+      s"timestamp_ntz included = $includeTimestampNtz") {
       withTempDirAndEngine { (tblPath, engine) =>
         val parquetAllTypes = goldenTablePath("parquet-all-types")
-        val schema = removeUnsupportedTypes(tableSchema(parquetAllTypes))
+        val tableSchema = tableSchema(parquetAllTypes)
+        val schema = if (includeTimestampNtz) {
+          removeTimestampNtzTypeColumns(tableSchema(parquetAllTypes))
+        } else tableSchema
+
         val partCols = Seq(
           "byteType",
           "shortType",
@@ -987,7 +991,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
-  def removeUnsupportedTypes(structType: StructType): StructType = {
+  def removeTimestampNtzTypeColumns(structType: StructType): StructType = {
     def process(dataType: DataType): Option[DataType] = dataType match {
       case a: ArrayType =>
         val newElementType = process(a.getElementType)
@@ -1000,9 +1004,9 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
             Some(new MapType(newKeyType, newValueType, m.isValueContainsNull))
           case _ => None
         }
-      // case _: TimestampNTZType => None // ignore
+      case _: TimestampNTZType => None // ignore
       case s: StructType =>
-        val newType = removeUnsupportedTypes(s);
+        val newType = removeTimestampNtzTypeColumns(s);
         if (newType.length() > 0) {
           Some(newType)
         } else {

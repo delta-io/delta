@@ -485,9 +485,7 @@ public class TableFeatures {
   public static void validateKernelCanWriteToTable(
       Protocol protocol, Metadata metadata, String tablePath) {
 
-    if (protocol.getMinReaderVersion() > TABLE_FEATURES_MIN_READER_VERSION) {
-      throw DeltaErrors.unsupportedReaderProtocol(tablePath, protocol.getMinReaderVersion());
-    }
+    validateKernelCanReadTheTable(protocol, tablePath);
 
     if (protocol.getMinWriterVersion() > TABLE_FEATURES_MIN_WRITER_VERSION) {
       throw unsupportedWriterProtocol(tablePath, protocol.getMinWriterVersion());
@@ -495,10 +493,7 @@ public class TableFeatures {
 
     Set<TableFeature> unsupportedFeatures =
         protocol.getImplicitlyAndExplicitlySupportedFeatures().stream()
-            .filter(
-                f ->
-                    !f.hasKernelWriteSupport(metadata)
-                        || (f.isReaderWriterFeature() && !f.hasKernelReadSupport()))
+            .filter(f -> !f.hasKernelWriteSupport(metadata))
             .collect(toSet());
 
     if (!unsupportedFeatures.isEmpty()) {
@@ -538,11 +533,8 @@ public class TableFeatures {
                         .metadataRequiresFeatureToBeEnabled(currentProtocol, newMetadata))
             .collect(toSet());
 
-    Set<TableFeature> combinedFeatures = new HashSet<>(protocolSupportedFeatures);
-    combinedFeatures.addAll(metadataEnabledFeatures);
-
     // Each feature may have dependencies that are not yet enabled in the protocol.
-    Set<TableFeature> newFeatures = getDependencyFeatures(combinedFeatures);
+    Set<TableFeature> newFeatures = getDependencyFeatures(metadataEnabledFeatures);
     newFeatures.removeAll(protocolSupportedFeatures);
 
     return newFeatures;

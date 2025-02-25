@@ -208,8 +208,8 @@ class TableFeaturesSuite extends AnyFunSuite {
       .filter(_.hasKernelWriteSupport(testMetadata()))
       .collect(toList()).asScala
 
-    // checkConstraints, generatedColumns, identityColumns, invariants, changeDataFeed,
-    // timestampNtz are writable because the metadata has not been set the info that
+    // checkConstraints, generatedColumns, identityColumns, invariants and changeDataFeed
+    // are writable because the metadata has not been set the info that
     // these features are enabled
     val expected = Seq(
       "columnMapping",
@@ -281,7 +281,42 @@ class TableFeaturesSuite extends AnyFunSuite {
     }
   }
 
+  // Read is supported when all table readerWriter features are supported by the Kernel,
+  // but the table has writeOnly table feature unknonw to Kernel
+  test("validateKernelCanReadTheTable: with writeOnly feature unknown to Kernel") {
+
+    // legacy reader protocol version
+    val protocol1 = new Protocol(1, 7, emptySet(), singleton("unknownFeature"))
+    validateKernelCanReadTheTable(protocol1, "/test/table")
+
+    // table feature supported reader version
+    val protocol2 = new Protocol(
+      3,
+      7,
+      Set("columnMapping", "timestampNtz").asJava,
+      Set("columnMapping", "timestampNtz", "unknownFeature").asJava)
+    validateKernelCanReadTheTable(protocol2, "/test/table")
+  }
+
+  test("validateKernelCanReadTheTable: reader version > 3") {
+    val protocol = new Protocol(4, 7, emptySet(), singleton("unknownFeature"))
+    val ex = intercept[KernelException] {
+      validateKernelCanReadTheTable(protocol, "/test/table")
+    }
+    assert(ex.getMessage.contains(
+      "requires reader version 4 which is unsupported by this version of Delta Kernel"))
+  }
+
   // Writes
+  checkWriteUnsupported(
+    "validateKernelCanWriteToTable: protocol 8", // beyond the table feature writer version
+    new Protocol(3, 8))
+
+  checkWriteUnsupported(
+    // beyond the table feature reader/writer version
+    "validateKernelCanWriteToTable: protocol 4, 8",
+    new Protocol(4, 8))
+
   checkWriteSupported(
     "validateKernelCanWriteToTable: protocol 1",
     new Protocol(1, 1),
@@ -471,7 +506,7 @@ class TableFeaturesSuite extends AnyFunSuite {
       s"validateKernelCanWriteToTable: protocol 7 with $feature, " +
         s"metadata contains $feature",
       new Protocol(3, 7, singleton(feature), singleton(feature)),
-      testMetadata(tblProps = Map("delta.enableTypeWidening" -> "true")))
+      testMetadata(includeInvariant = true))
   }
 
   checkWriteSupported(
