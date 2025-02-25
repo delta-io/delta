@@ -23,6 +23,7 @@ import scala.collection.JavaConverters._
 
 import io.delta.kernel.data.ColumnVector
 import io.delta.kernel.defaults.utils.{DefaultVectorTestUtils, TestRow, TestUtils}
+import io.delta.kernel.internal.actions.CommitInfo
 import io.delta.kernel.internal.util.InternalUtils.singletonStringColumnVector
 import io.delta.kernel.types._
 
@@ -435,5 +436,44 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
       // Try to write as file with overwrite set to true
       writeAndVerify(overwrite = true)
     }
+  }
+
+  test("parse diverse type values in a map[string, string]") {
+    val input =
+      """
+        |{
+        |   "inCommitTimestamp":1740009523401,
+        |   "timestamp":1740009523401,
+        |   "engineInfo":"myengine.com",
+        |   "operation":"WRITE",
+        |   "operationParameters":
+        |     {"mode":"Append","statsOnLoad":false,"partitionBy":"[]"},
+        |   "isBlindAppend":true,
+        |   "txnId":"cb009f42-5da1-4e7e-b4fa-09de3332f52a",
+        |   "operationMetrics": {
+        |       "numFiles":"1",
+        |       "serializedAsNumber":2,
+        |       "serializedAsBoolean":true
+        |   }
+        |}
+        |""".stripMargin
+
+    val output = jsonHandler.parseJson(
+      stringVector(Seq(input)),
+      CommitInfo.FULL_SCHEMA,
+      Optional.empty())
+    assert(output.getSize == 1)
+    val actResult = TestRow(output.getRows.next)
+    val expResult = TestRow(
+      1740009523401L,
+      1740009523401L,
+      "myengine.com",
+      "WRITE",
+      Map("mode" -> "Append", "statsOnLoad" -> "false", "partitionBy" -> "[]"),
+      true,
+      "cb009f42-5da1-4e7e-b4fa-09de3332f52a",
+      Map("numFiles" -> "1", "serializedAsNumber" -> "2", "serializedAsBoolean" -> "true"))
+
+    checkAnswer(Seq(actResult), Seq(expResult))
   }
 }
