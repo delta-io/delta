@@ -230,7 +230,7 @@ trait DeltaSourceBase extends Source
     } else {
       readSchema
     }
-    DeltaColumnMapping.dropColumnMappingMetadata(readSchemaWithCdc)
+    DeltaTableUtils.removeInternalDeltaMetadata(spark, readSchemaWithCdc)
   }
 
   // A dummy empty dataframe that can be returned at various point during streaming
