@@ -683,6 +683,15 @@ trait OptimisticTransactionImpl extends DeltaTransaction
       }
     }
 
+    if (spark.sessionState.conf
+      .getConf(DeltaSQLConf.REMOVE_EXISTS_DEFAULT_FROM_SCHEMA_ON_EVERY_METADATA_CHANGE)) {
+      val schemaWithRemovedExistsDefaults =
+        SchemaUtils.removeExistsDefaultMetadata(newMetadataTmp.schema)
+      if (schemaWithRemovedExistsDefaults != newMetadataTmp.schema) {
+        newMetadataTmp = newMetadataTmp.copy(schemaString = schemaWithRemovedExistsDefaults.json)
+      }
+    }
+
     // Table features Part 2: add manually-supported features specified in table properties, aka
     // those start with [[FEATURE_PROP_PREFIX]].
     //
