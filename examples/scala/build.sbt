@@ -20,7 +20,7 @@ organizationName := "example"
 
 val scala212 = "2.12.18"
 val scala213 = "2.13.13"
-val icebergVersion = "1.4.1"
+val icebergVersion = "1.8.0"
 val defaultDeltaVersion = {
   val versionFileContent = IO.read(file("../../version.sbt"))
   val versionRegex = """.*version\s*:=\s*"([^"]+)".*""".r
