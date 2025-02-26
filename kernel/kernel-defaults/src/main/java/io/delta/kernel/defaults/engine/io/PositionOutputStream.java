@@ -16,22 +16,13 @@
 package io.delta.kernel.defaults.engine.io;
 
 import java.io.IOException;
-import java.io.InputStream;
+import java.io.OutputStream;
 
-public abstract class SeekableInputStream extends InputStream {
+public abstract class PositionOutputStream extends OutputStream {
   /**
    * Get the current position in the stream.
    *
    * @return the current position in bytes from the start of the stream
-   * @throws IOException if the underlying stream throws an IOException
    */
   public abstract long getPos() throws IOException;
-
-  /**
-   * Seek to a new position in the stream.
-   *
-   * @param newPos the new position to seek to
-   * @throws IOException if the underlying stream throws an IOException
-   */
-  public abstract void seek(long newPos) throws IOException;
 }

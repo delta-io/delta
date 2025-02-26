@@ -16,19 +16,15 @@
 package io.delta.kernel.defaults.engine;
 
 import io.delta.kernel.defaults.engine.io.FileIO;
-import io.delta.kernel.defaults.internal.logstore.LogStoreProvider;
 import io.delta.kernel.engine.FileReadRequest;
 import io.delta.kernel.engine.FileSystemClient;
-import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import io.delta.storage.LogStore;
 import java.io.*;
 import java.util.Objects;
-
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
-import org.apache.hadoop.fs.Path;
 
 /**
  * Default implementation of {@link FileSystemClient} based on Hadoop APIs. It takes a Hadoop {@link
