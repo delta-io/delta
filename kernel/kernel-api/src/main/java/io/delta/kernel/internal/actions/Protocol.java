@@ -235,7 +235,7 @@ public class Protocol {
             TABLE_FEATURES.stream()
                 .filter(
                     f ->
-                        supportsReaderFeatures
+                        !supportsReaderFeatures
                             && f.minReaderVersion() <= this.getMinReaderVersion()),
             // explicitly supported features
             readerFeatures.stream().map(TableFeatures::getTableFeature))

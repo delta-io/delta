@@ -429,7 +429,7 @@ public class TableFeatures {
 
     Set<TableFeature> allNeededTableFeatures =
         extractAllNeededTableFeatures(newMetadata, currentProtocol);
-    if (needDomainMetadataSupport && !allNeededTableFeatures.contains(DOMAIN_METADATA_W_FEATURE)) {
+    if (needDomainMetadataSupport) {
       allNeededTableFeatures =
           Stream.concat(allNeededTableFeatures.stream(), Stream.of(DOMAIN_METADATA_W_FEATURE))
               .collect(toSet());
@@ -525,9 +525,7 @@ public class TableFeatures {
 
     // Each feature may have dependencies that are not yet enabled in the protocol.
     Set<TableFeature> newFeatures = getDependencyFeatures(metadataEnabledFeatures);
-    newFeatures.removeAll(protocolSupportedFeatures);
-
-    return newFeatures;
+    return Stream.concat(protocolSupportedFeatures.stream(), newFeatures.stream()).collect(toSet());
   }
 
   /**
