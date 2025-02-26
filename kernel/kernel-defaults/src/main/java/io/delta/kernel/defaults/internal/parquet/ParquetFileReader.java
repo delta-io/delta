@@ -18,9 +18,11 @@ package io.delta.kernel.defaults.internal.parquet;
 import static io.delta.kernel.defaults.internal.parquet.ParquetFilterUtils.toParquetFilter;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
-import static org.apache.parquet.hadoop.ParquetInputFormat.*;
 
 import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.defaults.engine.io.FileIO;
+import io.delta.kernel.defaults.engine.io.InputFile;
+import io.delta.kernel.defaults.engine.io.SeekableInputStream;
 import io.delta.kernel.exceptions.KernelEngineException;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.util.Utils;
@@ -30,24 +32,30 @@ import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
 import java.util.*;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.Path;
+import org.apache.parquet.ParquetReadOptions;
+import org.apache.parquet.filter2.compat.FilterCompat;
 import org.apache.parquet.filter2.predicate.FilterPredicate;
+import org.apache.parquet.format.converter.ParquetMetadataConverter;
 import org.apache.parquet.hadoop.ParquetRecordReaderWrapper;
 import org.apache.parquet.hadoop.api.InitContext;
 import org.apache.parquet.hadoop.api.ReadSupport;
 import org.apache.parquet.hadoop.metadata.ParquetMetadata;
+import org.apache.parquet.io.DelegatingSeekableInputStream;
 import org.apache.parquet.io.api.GroupConverter;
 import org.apache.parquet.io.api.RecordMaterializer;
 import org.apache.parquet.schema.MessageType;
 
 public class ParquetFileReader {
-  private final Configuration configuration;
+  private final FileIO fileIO;
   private final int maxBatchSize;
 
-  public ParquetFileReader(Configuration configuration) {
-    this.configuration = requireNonNull(configuration, "configuration is null");
+  public ParquetFileReader(FileIO fileIO) {
+    this.fileIO = requireNonNull(fileIO, "fileIO is null");
     this.maxBatchSize =
-        configuration.getInt("delta.kernel.default.parquet.reader.batch-size", 1024);
+        fileIO
+            .getConf("delta.kernel.default.parquet.reader.batch-size")
+            .map(Integer::valueOf)
+            .orElse(1024);
     checkArgument(maxBatchSize > 0, "invalid Parquet reader batch size: %s", maxBatchSize);
   }
 
@@ -105,38 +113,62 @@ public class ParquetFileReader {
         if (reader == null) {
           org.apache.parquet.hadoop.ParquetFileReader fileReader = null;
           try {
-            Configuration confCopy = configuration;
-            Path filePath = new Path(path);
+            InputFile inputFile = fileIO.newInputFile(path);
 
             // We need physical schema in order to construct a filter that can be
             // pushed into the `parquet-mr` reader. For that reason read the footer
             // in advance.
+            org.apache.parquet.io.InputFile parquetInputFile =
+                new org.apache.parquet.io.InputFile() {
+                  @Override
+                  public long getLength() throws IOException {
+                    return inputFile.length();
+                  }
+
+                  @Override
+                  public org.apache.parquet.io.SeekableInputStream newStream() throws IOException {
+                    // TODO: fix the closing of inputStream in case of errors
+                    SeekableInputStream inputStream = inputFile.newStream();
+                    return new DelegatingSeekableInputStream(inputStream) {
+                      @Override
+                      public long getPos() throws IOException {
+                        return inputStream.getPos();
+                      }
+
+                      @Override
+                      public void seek(long newPos) throws IOException {
+                        inputStream.seek(newPos);
+                      }
+                    };
+                  }
+                };
+
             ParquetMetadata footer =
-                org.apache.parquet.hadoop.ParquetFileReader.readFooter(confCopy, filePath);
+                org.apache.parquet.hadoop.ParquetFileReader.readFooter(
+                    parquetInputFile, ParquetMetadataConverter.NO_FILTER);
 
             MessageType parquetSchema = footer.getFileMetaData().getSchema();
             Optional<FilterPredicate> parquetPredicate =
                 predicate.flatMap(predicate -> toParquetFilter(parquetSchema, predicate));
 
-            if (parquetPredicate.isPresent()) {
-              // clone the configuration to avoid modifying the original one
-              confCopy = new Configuration(confCopy);
-
-              setFilterPredicate(confCopy, parquetPredicate.get());
-              // Disable the record level filtering as the `parquet-mr` evaluates
-              // the filter once the entire record has been materialized. Instead,
-              // we use the predicate to prune the row groups which is more efficient.
-              // In the future, we can consider using the record level filtering if a
-              // native Parquet reader is implemented in Kernel default module.
-              confCopy.set(RECORD_FILTERING_ENABLED, "false");
-              confCopy.set(DICTIONARY_FILTERING_ENABLED, "false");
-              confCopy.set(COLUMN_INDEX_FILTERING_ENABLED, "false");
-            }
+            // Disable the record level filtering as the `parquet-mr` evaluates
+            // the filter once the entire record has been materialized. Instead,
+            // we use the predicate to prune the row groups which is more efficient.
+            // In the future, we can consider using the record level filtering if a
+            // native Parquet reader is implemented in Kernel default module.
+            ParquetReadOptions readOptions =
+                ParquetReadOptions.builder()
+                    .useRecordFilter(false)
+                    .useDictionaryFilter(false)
+                    .useStatsFilter(false)
+                    .withRecordFilter(
+                        parquetPredicate.map(FilterCompat::get).orElse(FilterCompat.NOOP))
+                    .build();
 
             // Pass the already read footer to the reader to avoid reading it again.
-            fileReader = new ParquetFileReaderWithFooter(filePath, confCopy, footer);
+            fileReader = new ParquetFileReaderWithFooter(parquetInputFile, readOptions, footer);
             reader = new ParquetRecordReaderWrapper<>(readSupport);
-            reader.initialize(fileReader, confCopy);
+            reader.initialize(fileReader, readOptions);
           } catch (IOException e) {
             Utils.closeCloseablesSilently(fileReader, reader);
             throw new KernelEngineException("Error reading Parquet file: " + path, e);
@@ -243,9 +275,12 @@ public class ParquetFileReader {
       extends org.apache.parquet.hadoop.ParquetFileReader {
     private final ParquetMetadata footer;
 
-    ParquetFileReaderWithFooter(Path filePath, Configuration configuration, ParquetMetadata footer)
+    ParquetFileReaderWithFooter(
+        org.apache.parquet.io.InputFile inputFile,
+        ParquetReadOptions readOptions,
+        ParquetMetadata footer)
         throws IOException {
-      super(configuration, filePath, footer);
+      super(inputFile, readOptions);
       this.footer = requireNonNull(footer, "footer is null");
     }
 

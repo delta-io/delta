@@ -15,40 +15,35 @@
  */
 package io.delta.kernel.defaults.engine;
 
-import static io.delta.kernel.internal.util.Preconditions.checkState;
-import static java.lang.String.format;
-
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
-import io.delta.kernel.defaults.internal.logstore.LogStoreProvider;
+import io.delta.kernel.defaults.engine.io.FileIO;
+import io.delta.kernel.defaults.engine.io.PositionOutputStream;
 import io.delta.kernel.defaults.internal.parquet.ParquetFileReader;
 import io.delta.kernel.defaults.internal.parquet.ParquetFileWriter;
 import io.delta.kernel.engine.ParquetHandler;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Predicate;
-import io.delta.kernel.internal.util.InternalUtils;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.*;
 import io.delta.kernel.utils.FileStatus;
 import io.delta.storage.LogStore;
 import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.util.*;
-import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.*;
 
 /** Default implementation of {@link ParquetHandler} based on Hadoop APIs. */
 public class DefaultParquetHandler implements ParquetHandler {
-  private final Configuration hadoopConf;
+  private final FileIO fileIO;
 
   /**
    * Create an instance of default {@link ParquetHandler} implementation.
    *
-   * @param hadoopConf Hadoop configuration to use.
+   * @param fileIO File IO implementation to use for reading and writing files.
    */
-  public DefaultParquetHandler(Configuration hadoopConf) {
-    this.hadoopConf = hadoopConf;
+  public DefaultParquetHandler(FileIO fileIO) {
+    this.fileIO = Objects.requireNonNull(fileIO, "fileIO is null");
   }
 
   @Override
@@ -58,7 +53,7 @@ public class DefaultParquetHandler implements ParquetHandler {
       Optional<Predicate> predicate)
       throws IOException {
     return new CloseableIterator<ColumnarBatch>() {
-      private final ParquetFileReader batchReader = new ParquetFileReader(hadoopConf);
+      private final ParquetFileReader batchReader = new ParquetFileReader(fileIO);
       private CloseableIterator<ColumnarBatch> currentFileReader;
 
       @Override
@@ -115,50 +110,12 @@ public class DefaultParquetHandler implements ParquetHandler {
   @Override
   public void writeParquetFileAtomically(
       String filePath, CloseableIterator<FilteredColumnarBatch> data) throws IOException {
+
+    PositionOutputStream outputStream = fileIO.newOutputFile(filePath).create(true);
     try {
-      Path targetPath = new Path(filePath);
-      LogStore logStore = LogStoreProvider.getLogStore(hadoopConf, targetPath.toUri().getScheme());
-
-      boolean useRename = logStore.isPartialWriteVisible(targetPath, hadoopConf);
-
-      Path writePath = targetPath;
-      if (useRename) {
-        // In order to atomically write the file, write to a temp file and rename
-        // to target path
-        String tempFileName = format(".%s.%s.tmp", targetPath.getName(), UUID.randomUUID());
-        writePath = new Path(targetPath.getParent(), tempFileName);
-      }
       ParquetFileWriter fileWriter = new ParquetFileWriter(hadoopConf, writePath);
-
-      Optional<DataFileStatus> writtenFile;
-
-      try (CloseableIterator<DataFileStatus> statuses = fileWriter.write(data)) {
-        writtenFile = InternalUtils.getSingularElement(statuses);
-      } catch (UncheckedIOException uio) {
-        throw uio.getCause();
-      }
-
-      checkState(writtenFile.isPresent(), "expected to write one output file");
-      if (useRename) {
-        FileSystem fs = targetPath.getFileSystem(hadoopConf);
-        boolean renameDone = false;
-        try {
-          renameDone = fs.rename(writePath, targetPath);
-          if (!renameDone) {
-            if (fs.exists(targetPath)) {
-              throw new java.nio.file.FileAlreadyExistsException(
-                  "target file already exists: " + targetPath);
-            }
-            throw new IOException("Failed to rename the file");
-          }
-        } finally {
-          if (!renameDone) {
-            fs.delete(writePath, false /* recursive */);
-          }
-        }
-      }
     } finally {
-      Utils.closeCloseables(data);
+      Utils.closeCloseables(outputStream, data);
     }
   }
 }

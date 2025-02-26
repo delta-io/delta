@@ -16,22 +16,28 @@
 package io.delta.kernel.defaults.engine.io;
 
 import java.io.IOException;
-import java.io.InputStream;
 
-public abstract class SeekableInputStream extends InputStream {
+/** Interface for reading a file and getting metadata about it. */
+public interface InputFile {
   /**
-   * Get the current position in the stream.
+   * Get the size of the file.
    *
-   * @return the current position in bytes from the start of the stream
-   * @throws IOException if the underlying stream throws an IOException
+   * @return the size of the file.
    */
-  public abstract long getPos() throws IOException;
+  long length() throws IOException;
 
   /**
-   * Seek to a new position in the stream.
+   * Get the path of the file.
    *
-   * @param newPos the new position to seek to
-   * @throws IOException if the underlying stream throws an IOException
+   * @return the path of the file.
    */
-  public abstract void seek(long newPos) throws IOException;
+  String path();
+
+  /**
+   * Get the input stream to read the file.
+   *
+   * @return the input stream to read the file. It is the responsibility of the caller to close the
+   *     stream.
+   */
+  SeekableInputStream newStream() throws IOException;
 }
