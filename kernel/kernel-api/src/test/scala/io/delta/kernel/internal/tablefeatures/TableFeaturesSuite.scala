@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.internal.tablefeatures
 
+import java.util
 import java.util.{Collections, Optional}
 import java.util.Collections.{emptySet, singleton}
 import java.util.stream.Collectors.toList
@@ -24,7 +25,7 @@ import scala.collection.JavaConverters._
 import io.delta.kernel.data.{ArrayValue, ColumnVector, MapValue}
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
-import io.delta.kernel.internal.tablefeatures.TableFeatures.{validateKernelCanReadTheTable, validateKernelCanWriteToTable, TABLE_FEATURES}
+import io.delta.kernel.internal.tablefeatures.TableFeatures.{validateKernelCanReadTheTable, validateKernelCanWriteToTable, DOMAIN_METADATA_W_FEATURE, TABLE_FEATURES}
 import io.delta.kernel.internal.util.InternalUtils.singletonStringColumnVector
 import io.delta.kernel.internal.util.VectorUtils.stringVector
 import io.delta.kernel.types._
@@ -180,7 +181,7 @@ class TableFeaturesSuite extends AnyFunSuite {
           testProtocol,
           testMetadata(tblProps = Map("delta.enableRowTracking" -> "true")))
     }
-    assert(ex.getMessage.contains("Enabling row tracking through metadata is not yet supported."))
+    assert(ex.getMessage.contains("Feature `rowTracking` is not yet supported in Kernel."))
   }
 
   test("hasKernelReadSupport expected to be true") {
@@ -282,7 +283,7 @@ class TableFeaturesSuite extends AnyFunSuite {
   }
 
   // Read is supported when all table readerWriter features are supported by the Kernel,
-  // but the table has writeOnly table feature unknonw to Kernel
+  // but the table has writeOnly table feature unknown to Kernel
   test("validateKernelCanReadTheTable: with writeOnly feature unknown to Kernel") {
 
     // legacy reader protocol version
@@ -296,6 +297,15 @@ class TableFeaturesSuite extends AnyFunSuite {
       Set("columnMapping", "timestampNtz").asJava,
       Set("columnMapping", "timestampNtz", "unknownFeature").asJava)
     validateKernelCanReadTheTable(protocol2, "/test/table")
+  }
+
+  test("validateKernelCanReadTheTable: unknown readerWriter feature to Kernel") {
+    val protocol = new Protocol(3, 7, singleton("unknownFeature"), singleton("unknownFeature"))
+    val ex = intercept[KernelException] {
+      validateKernelCanReadTheTable(protocol, "/test/table")
+    }
+    assert(ex.getMessage.contains(
+      "requires feature \"unknownFeature\" which is unsupported by this version of Delta Kernel"))
   }
 
   test("validateKernelCanReadTheTable: reader version > 3") {
@@ -567,6 +577,303 @@ class TableFeaturesSuite extends AnyFunSuite {
         "delta.checkpointPolicy" -> "v2",
         "delta.enableRowTracking" -> "true")))
 
+  checkWriteUnsupported(
+    "validateKernelCanWriteToTable: protocol 7 with unknown writerOnly feature",
+    new Protocol(1, 7, emptySet(), singleton("unknownWriterOnlyFeature")),
+    testMetadata())
+
+  checkWriteUnsupported(
+    "validateKernelCanWriteToTable: protocol 7 with unknown readerWriter feature",
+    new Protocol(
+      3,
+      7,
+      singleton("unknownWriterOnlyFeature"),
+      singleton("unknownWriterOnlyFeature")),
+    testMetadata())
+
+  /////////////////////////////////////////////////////////////////////////////////////////////////
+  // Tests for autoUpgradeProtocolBasedOnMetadata                                                //
+  /////////////////////////////////////////////////////////////////////////////////////////////////
+  Seq(
+    // Test format:
+    //  new metadata,
+    //  current protocol,
+    //  expected protocol,
+    //  expected new features added
+    (
+      testMetadata(tblProps = Map("delta.appendOnly" -> "true")),
+      new Protocol(1, 1),
+      new Protocol(1, 7, emptySet(), set("appendOnly")),
+      set("appendOnly")),
+    (
+      testMetadata(includeInvariant = true),
+      new Protocol(1, 1),
+      new Protocol(1, 7, emptySet(), set("invariants")),
+      set("invariants")),
+    (
+      testMetadata(includeInvariant = true, tblProps = Map("delta.appendOnly" -> "true")),
+      new Protocol(1, 1),
+      new Protocol(1, 2), // (1, 2) covers both appendOnly and invariants
+      Set("invariants", "appendOnly").asJava),
+    (
+      testMetadata(tblProps = Map("delta.constraints.a" -> "a = b")),
+      new Protocol(1, 1),
+      new Protocol(1, 7, emptySet(), set("checkConstraints")),
+      set("checkConstraints")),
+    (
+      testMetadata(
+        includeInvariant = true,
+        tblProps = Map("delta.appendOnly" -> "true", "delta.constraints.a" -> "a = b")),
+      new Protocol(1, 1),
+      new Protocol(1, 3),
+      set("appendOnly", "checkConstraints", "invariants")),
+    (
+      testMetadata(tblProps = Map("delta.constraints.a" -> "a = b")),
+      new Protocol(1, 2),
+      new Protocol(1, 3), // (1, 3) covers all: appendOnly, invariants, checkConstraints
+      set("checkConstraints")),
+    (
+      testMetadata(tblProps = Map("delta.enableChangeDataFeed" -> "true")),
+      new Protocol(1, 1),
+      new Protocol(1, 7, emptySet(), set("changeDataFeed")),
+      set("changeDataFeed")),
+    (
+      testMetadata(includeGeneratedColumn = true),
+      new Protocol(1, 1),
+      new Protocol(1, 7, emptySet(), set("generatedColumns")),
+      set("generatedColumns")),
+    (
+      testMetadata(
+        includeGeneratedColumn = true,
+        tblProps = Map("delta.enableChangeDataFeed" -> "true")),
+      new Protocol(1, 1),
+      new Protocol(1, 7, emptySet(), set("generatedColumns", "changeDataFeed")),
+      set("generatedColumns", "changeDataFeed")),
+    (
+      testMetadata(
+        includeGeneratedColumn = true,
+        tblProps = Map("delta.enableChangeDataFeed" -> "true")),
+      new Protocol(1, 2),
+      new Protocol(
+        1,
+        7,
+        set(),
+        set("generatedColumns", "changeDataFeed", "appendOnly", "invariants")),
+      set("generatedColumns", "changeDataFeed")),
+    (
+      testMetadata(
+        includeGeneratedColumn = true,
+        tblProps = Map("delta.enableChangeDataFeed" -> "true")),
+      new Protocol(1, 3),
+      new Protocol(1, 4), // 4 - implicitly supports all features
+      set("generatedColumns", "changeDataFeed")),
+    (
+      testMetadata(tblProps = Map("delta.columnMapping.mode" -> "name")),
+      new Protocol(1, 1),
+      new Protocol(
+        2,
+        7,
+        set(),
+        set("columnMapping")),
+      set("columnMapping")),
+    (
+      testMetadata(tblProps = Map("delta.columnMapping.mode" -> "name")),
+      new Protocol(1, 2),
+      new Protocol(
+        2,
+        7,
+        set(),
+        set("columnMapping", "appendOnly", "invariants")),
+      set("columnMapping")),
+    (
+      testMetadata(tblProps = Map("delta.columnMapping.mode" -> "name")),
+      new Protocol(1, 3),
+      new Protocol(
+        2,
+        7,
+        set(),
+        set("columnMapping", "appendOnly", "invariants", "checkConstraints")),
+      set("columnMapping")),
+    (
+      testMetadata(tblProps = Map("delta.columnMapping.mode" -> "name")),
+      new Protocol(1, 4),
+      new Protocol(2, 5), // implicitly supports all features
+      set("columnMapping")),
+    (
+      testMetadata(includeIdentityColumn = true),
+      new Protocol(1, 1),
+      new Protocol(
+        1,
+        7,
+        set(),
+        set("identityColumns")),
+      set("identityColumns")),
+    (
+      testMetadata(includeIdentityColumn = true),
+      new Protocol(1, 2),
+      new Protocol(
+        1,
+        7,
+        set(),
+        set("identityColumns", "appendOnly", "invariants")),
+      set("identityColumns")),
+    (
+      testMetadata(includeIdentityColumn = true),
+      new Protocol(1, 3),
+      new Protocol(
+        1,
+        7,
+        set(),
+        set("identityColumns", "appendOnly", "invariants", "checkConstraints")),
+      set("identityColumns")),
+    (
+      testMetadata(includeIdentityColumn = true),
+      new Protocol(2, 5),
+      new Protocol(2, 6), // implicitly supports all features
+      set("identityColumns")),
+    (
+      testMetadata(includeTimestampNtzTypeCol = true),
+      new Protocol(1, 1),
+      new Protocol(
+        3,
+        7,
+        set("timestampNtz"),
+        set("timestampNtz")),
+      set("timestampNtz")),
+    (
+      testMetadata(includeTimestampNtzTypeCol = true),
+      new Protocol(1, 2),
+      new Protocol(
+        3,
+        7,
+        set("timestampNtz"),
+        set("timestampNtz", "appendOnly", "invariants")),
+      set("timestampNtz")),
+    (
+      testMetadata(tblProps = Map("delta.enableIcebergCompatV2" -> "true")),
+      new Protocol(1, 2),
+      new Protocol(
+        2,
+        7,
+        set(),
+        set("columnMapping", "appendOnly", "invariants", "icebergCompatV2")),
+      set("icebergCompatV2", "columnMapping")),
+    (
+      testMetadata(tblProps =
+        Map("delta.enableIcebergCompatV2" -> "true", "delta.enableDeletionVectors" -> "true")),
+      new Protocol(2, 5),
+      new Protocol(
+        3,
+        7,
+        set("columnMapping", "deletionVectors"),
+        set(
+          "columnMapping",
+          "appendOnly",
+          "invariants",
+          "icebergCompatV2",
+          "checkConstraints",
+          "deletionVectors",
+          "generatedColumns",
+          "changeDataFeed")),
+      set("icebergCompatV2", "deletionVectors")),
+    (
+      testMetadata(tblProps =
+        Map("delta.enableIcebergCompatV2" -> "true")),
+      new Protocol(3, 7, set("columnMapping", "deletionVectors"), set("columnMapping")),
+      new Protocol(
+        3,
+        7,
+        set("columnMapping", "deletionVectors"),
+        set("columnMapping", "icebergCompatV2", "deletionVectors")),
+      set("icebergCompatV2"))).foreach {
+    case (newMetadata, currentProtocol, expectedProtocol, expectedNewFeatures) =>
+      test(s"autoUpgradeProtocolBasedOnMetadata:" +
+        s"$currentProtocol -> $expectedProtocol, $expectedNewFeatures") {
+
+        // try with domainMetadata disabled
+        val newProtocolAndNewFeaturesEnabled =
+          TableFeatures.autoUpgradeProtocolBasedOnMetadata(
+            newMetadata,
+            /* needDomainMetadataSupport = */ false,
+            currentProtocol)
+        assert(newProtocolAndNewFeaturesEnabled.isPresent, "expected protocol upgrade")
+
+        val newProtocol = newProtocolAndNewFeaturesEnabled.get()._1
+        val newFeaturesEnabled = newProtocolAndNewFeaturesEnabled.get()._2
+
+        assert(newProtocol == expectedProtocol)
+        assert(newFeaturesEnabled.asScala.map(_.featureName()).toSet ===
+          expectedNewFeatures.asScala)
+
+        // try with domainMetadata enabled
+        val newProtocolAndNewFeaturesEnabledWithDM =
+          TableFeatures.autoUpgradeProtocolBasedOnMetadata(
+            newMetadata,
+            /* needDomainMetadataSupport = */ true,
+            currentProtocol)
+
+        assert(newProtocolAndNewFeaturesEnabledWithDM.isPresent, "expected protocol upgrade")
+
+        val newProtocolWithDM = newProtocolAndNewFeaturesEnabledWithDM.get()._1
+        val newFeaturesEnabledWithDM = newProtocolAndNewFeaturesEnabledWithDM.get()._2
+
+        // reader version should be same as expected protocol as the domain metadata
+        // is a writerOnly feature
+        assert(newProtocolWithDM.getMinReaderVersion == expectedProtocol.getMinReaderVersion)
+        // should be 7 as domainMetadata is enabled
+        assert(newProtocolWithDM.getMinWriterVersion === 7)
+        assert(newFeaturesEnabledWithDM.asScala.map(_.featureName()).toSet ===
+          expectedNewFeatures.asScala ++ Set("domainMetadata"))
+        assert(newProtocolWithDM.getImplicitlyAndExplicitlySupportedFeatures.asScala ===
+          expectedProtocol.getImplicitlyAndExplicitlySupportedFeatures.asScala
+          ++ Set(DOMAIN_METADATA_W_FEATURE))
+      }
+  }
+
+  // No-op upgrade
+  Seq(
+    // Test format: new metadata, current protocol
+    (testMetadata(), new Protocol(1, 1)),
+    (
+      // try to enable the writer that is already supported on a protocol
+      // that is of legacy protocol
+      testMetadata(tblProps = Map("delta.appendOnly" -> "true")),
+      new Protocol(1, 7, emptySet(), set("appendOnly"))),
+    (
+      // try to enable the writer that is already supported on a protocol
+      // that is of legacy protocol
+      testMetadata(tblProps = Map("delta.appendOnly" -> "true", "delta.constraints.a" -> "a = b")),
+      new Protocol(1, 3)),
+    (
+      // try to enable the reader writer feature that is already supported on a protocol
+      // that is of legacy protocol
+      testMetadata(tblProps = Map("delta.columnMapping.mode" -> "name")),
+      new Protocol(2, 5)),
+    (
+      // try to enable the feature that is already supported on a protocol
+      // that is of partial (writer only) table feature support
+      testMetadata(tblProps = Map("delta.enableIcebergCompatV2" -> "true")),
+      new Protocol(2, 7, set(), set("columnMapping", "icebergCompatV2"))),
+    (
+      // try to enable the feature that is already supported on a protocol
+      // that is of table feature support
+      testMetadata(tblProps = Map("delta.enableIcebergCompatV2" -> "true")),
+      new Protocol(
+        3,
+        7,
+        set("columnMapping", "deletionVectors"),
+        set("columnMapping", "deletionVectors", "icebergCompatV2")))).foreach {
+    case (newMetadata, currentProtocol) =>
+      test(s"autoUpgradeProtocolBasedOnMetadata: no-op upgrade: $currentProtocol") {
+        val newProtocolAndNewFeaturesEnabled =
+          TableFeatures.autoUpgradeProtocolBasedOnMetadata(
+            newMetadata,
+            /* needDomainMetadataSupport = */ false,
+            currentProtocol)
+        assert(!newProtocolAndNewFeaturesEnabled.isPresent, "expected no-op upgrade")
+      }
+  }
+
   /////////////////////////////////////////////////////////////////////////////////////////////////
   // Test utility methods.                                                                       //
   /////////////////////////////////////////////////////////////////////////////////////////////////
@@ -666,5 +973,9 @@ class TableFeaturesSuite extends AnyFunSuite {
     }
 
     structType
+  }
+
+  private def set(elements: String*): java.util.Set[String] = {
+    Set(elements: _*).asJava
   }
 }

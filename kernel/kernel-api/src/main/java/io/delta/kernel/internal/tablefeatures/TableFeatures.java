@@ -212,7 +212,7 @@ public class TableFeatures {
     public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
       if (TableConfig.ROW_TRACKING_ENABLED.fromMetadata(metadata)) {
         throw new UnsupportedOperationException(
-            "Enabling row tracking through metadata is not yet supported.");
+            "Feature `rowTracking` is not yet supported in Kernel.");
       }
       return false;
     }
@@ -427,16 +427,16 @@ public class TableFeatures {
   public static Optional<Tuple2<Protocol, Set<TableFeature>>> autoUpgradeProtocolBasedOnMetadata(
       Metadata newMetadata, boolean needDomainMetadataSupport, Protocol currentProtocol) {
 
-    Set<TableFeature> autoEnabledFeatures =
-        extractAutomaticallyEnabledNewFeatures(newMetadata, currentProtocol);
-    if (needDomainMetadataSupport) {
-      autoEnabledFeatures =
-          Stream.concat(autoEnabledFeatures.stream(), Stream.of(DOMAIN_METADATA_W_FEATURE))
+    Set<TableFeature> allNeededTableFeatures =
+        extractAllNeededTableFeatures(newMetadata, currentProtocol);
+    if (needDomainMetadataSupport && !allNeededTableFeatures.contains(DOMAIN_METADATA_W_FEATURE)) {
+      allNeededTableFeatures =
+          Stream.concat(allNeededTableFeatures.stream(), Stream.of(DOMAIN_METADATA_W_FEATURE))
               .collect(toSet());
     }
     Protocol required =
         new Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
-            .withFeatures(autoEnabledFeatures)
+            .withFeatures(allNeededTableFeatures)
             .normalized();
 
     // See if all the required features are already supported in the current protocol.
@@ -457,20 +457,10 @@ public class TableFeatures {
       throw DeltaErrors.unsupportedReaderProtocol(tablePath, protocol.getMinReaderVersion());
     }
 
-    Set<TableFeature> tableSupportedFeatures =
-        Stream.concat(
-                // implicit supported features
-                TABLE_FEATURES.stream()
-                    .filter(
-                        f ->
-                            supportsReaderFeatures(protocol.getMinReaderVersion())
-                                && f.minReaderVersion() <= protocol.getMinReaderVersion()),
-                // explicitly supported features
-                protocol.getReaderFeatures().stream().map(TableFeatures::getTableFeature))
-            .collect(toSet());
-
     Set<TableFeature> unsupportedFeatures =
-        tableSupportedFeatures.stream().filter(f -> !f.hasKernelReadSupport()).collect(toSet());
+        protocol.getImplicitlyAndExplicitlySupportedReaderWriterFeatures().stream()
+            .filter(f -> !f.hasKernelReadSupport())
+            .collect(toSet());
 
     if (!unsupportedFeatures.isEmpty()) {
       throw unsupportedReaderFeatures(
@@ -516,10 +506,10 @@ public class TableFeatures {
   /// Private methods                                                           ///
   /////////////////////////////////////////////////////////////////////////////////
   /**
-   * Extracts all new table features (and their dependency features) that are supported by the given
-   * metadata. A feature is considered new if it is not already supported by the current protocol.
+   * Extracts all table features (and their dependency features) that are enabled by the given
+   * metadata and supported in existing protocol.
    */
-  private static Set<TableFeature> extractAutomaticallyEnabledNewFeatures(
+  private static Set<TableFeature> extractAllNeededTableFeatures(
       Metadata newMetadata, Protocol currentProtocol) {
     Set<TableFeature> protocolSupportedFeatures =
         currentProtocol.getImplicitlyAndExplicitlySupportedFeatures();
@@ -566,10 +556,8 @@ public class TableFeatures {
   }
 
   private static boolean hasCheckConstraints(Metadata metadata) {
-    return metadata.getConfiguration().entrySet().stream()
-        .findAny()
-        .map(entry -> entry.getKey().startsWith("delta.constraints."))
-        .orElse(false);
+    return metadata.getConfiguration().keySet().stream()
+        .anyMatch(s -> s.startsWith("delta.constraints."));
   }
 
   /**
