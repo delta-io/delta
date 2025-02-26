@@ -231,30 +231,6 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
     }
   }
 
-  test("Fail if row tracking is supported but domain metadata is not supported") {
-    withTempDirAndEngine((tablePath, engine) => {
-      createTxn(engine, tablePath, isNewTable = true, testSchema, Seq.empty)
-        .commit(engine, emptyIterable())
-
-      // Only 'rowTracking' is supported, not 'domainMetadata'
-      setWriterFeatureSupported(engine, tablePath, testSchema, Seq("rowTracking"))
-
-      val dataBatch1 = generateData(testSchema, Seq.empty, Map.empty, 100, 1)
-      val e = intercept[KernelException] {
-        appendData(
-          engine,
-          tablePath,
-          data = prepareDataForCommit(dataBatch1)).getVersion
-      }
-
-      assert(
-        e.getMessage
-          .contains(
-            "Feature 'rowTracking' is supported and depends on feature 'domainMetadata',"
-              + " but 'domainMetadata' is unsupported"))
-    })
-  }
-
   test("Integration test - Write table with Kernel then write with Spark") {
     withTempDirAndEngine((tablePath, engine) => {
       val tbl = "tbl"

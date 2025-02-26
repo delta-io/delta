@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.internal.actions;
 
+import static io.delta.kernel.internal.tablefeatures.TableFeatures.TABLE_FEATURES;
 import static io.delta.kernel.internal.tablefeatures.TableFeatures.TABLE_FEATURES_MIN_WRITER_VERSION;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.VectorUtils.stringArrayValue;
@@ -22,6 +23,7 @@ import static java.lang.String.format;
 import static java.util.Collections.emptySet;
 import static java.util.Collections.unmodifiableSet;
 import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.toSet;
 
 import io.delta.kernel.data.*;
 import io.delta.kernel.internal.data.GenericRow;
@@ -181,7 +183,7 @@ public class Protocol {
     if (supportsReaderFeatures && supportsWriterFeatures) {
       return emptySet();
     } else {
-      return TableFeatures.TABLE_FEATURES.stream()
+      return TABLE_FEATURES.stream()
           .filter(f -> !supportsReaderFeatures && f.minReaderVersion() <= minReaderVersion)
           .filter(f -> !supportsWriterFeatures && f.minWriterVersion() <= minWriterVersion)
           .collect(Collectors.toSet());
@@ -219,6 +221,25 @@ public class Protocol {
     supportedFeatures.addAll(getImplicitlySupportedFeatures());
     supportedFeatures.addAll(getExplicitlySupportedFeatures());
     return supportedFeatures;
+  }
+
+  /**
+   * Get the set of reader writer features that are both implicitly and explicitly supported by the
+   * protocol. Usually, the protocol has either implicit or explicit features, but not both. This
+   * API provides a way to get all enabled reader writer features. It doesn't return any writer only
+   * features.
+   */
+  public Set<TableFeature> getImplicitlyAndExplicitlySupportedReaderWriterFeatures() {
+    return Stream.concat(
+            // implicit supported features
+            TABLE_FEATURES.stream()
+                .filter(
+                    f ->
+                        !supportsReaderFeatures
+                            && f.minReaderVersion() <= this.getMinReaderVersion()),
+            // explicitly supported features
+            readerFeatures.stream().map(TableFeatures::getTableFeature))
+        .collect(toSet());
   }
 
   /** Create a new {@link Protocol} object with the given {@link TableFeature} supported. */
@@ -431,23 +452,6 @@ public class Protocol {
     return mergedProtocol.denormalizedNormalized();
   }
 
-  /////////////////////////////////////////////////////////////////////////////////////////////////
-  /// Legacy method which will be removed after the table feature integration is done           ///
-  /////////////////////////////////////////////////////////////////////////////////////////////////
-  public Protocol withNewWriterFeatures(Set<String> writerFeatures) {
-    Tuple2<Integer, Integer> newProtocolVersions =
-        TableFeatures.minProtocolVersionFromAutomaticallyEnabledFeatures(writerFeatures);
-    Set<String> newWriterFeatures = new HashSet<>(writerFeatures);
-    if (this.writerFeatures != null) {
-      newWriterFeatures.addAll(this.writerFeatures);
-    }
-    return new Protocol(
-        newProtocolVersions._1,
-        newProtocolVersions._2,
-        this.readerFeatures == null ? null : new HashSet<>(this.readerFeatures),
-        newWriterFeatures);
-  }
-
   /** Validate the protocol contents represents a valid state */
   protected void validate() {
     checkArgument(minReaderVersion >= 1, "minReaderVersion should be at least 1");
@@ -496,7 +500,7 @@ public class Protocol {
       // ensure we don't get (minReaderVersion, minWriterVersion) that satisfy the readerWriter
       // feature version requirements. E.g. (1, 5) is invalid as writer version indicates
       // columnMapping supported but reader version does not support it (requires 2).
-      TableFeatures.TABLE_FEATURES.stream()
+      TABLE_FEATURES.stream()
           .filter(TableFeature::isReaderWriterFeature)
           .forEach(
               f -> {

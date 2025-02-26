@@ -432,6 +432,8 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     assertCheckpointReadiness(result, expIsReadyForCheckpoint)
   }
 
+  // TODO: Change this to use the table metadata and protocol and
+  // not rely on DESCRIBE which adds some properties based on the protocol.
   def verifyTableProperties(
       tablePath: String,
       expProperties: ListMap[String, Any],
