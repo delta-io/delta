@@ -135,14 +135,6 @@ public class CommitInfo {
     this.operationMetrics = Collections.unmodifiableMap(operationMetrics);
   }
 
-  public Optional<Long> getInCommitTimestamp() {
-    return inCommitTimestamp;
-  }
-
-  public void setInCommitTimestamp(Optional<Long> inCommitTimestamp) {
-    this.inCommitTimestamp = inCommitTimestamp;
-  }
-
   public long getTimestamp() {
     return timestamp;
   }
@@ -155,10 +147,30 @@ public class CommitInfo {
     return operation;
   }
 
+  public Map<String, String> getOperationParameters() {
+    return operationParameters;
+  }
+
+  public boolean getIsBlindAppend() {
+    return isBlindAppend;
+  }
+
+  public String getTxnId() {
+    return txnId;
+  }
+
+  public Optional<Long> getInCommitTimestamp() {
+    return inCommitTimestamp;
+  }
+
   public Map<String, String> getOperationMetrics() {
     return operationMetrics;
   }
 
+  public void setInCommitTimestamp(Optional<Long> inCommitTimestamp) {
+    this.inCommitTimestamp = inCommitTimestamp;
+  }
+  
   /**
    * Encode as a {@link Row} object with the schema {@link CommitInfo#FULL_SCHEMA}.
    *
