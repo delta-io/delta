@@ -193,6 +193,22 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       TableFeatures.validateKernelCanWriteToTable(protocol, metadata, table.getPath(engine));
     }
 
+    Optional<Metadata> newMetadata =
+        ColumnMapping.updateColumnMappingMetadata(
+            metadata, ColumnMapping.getColumnMappingMode(metadata.getConfiguration()), isNewTable);
+    if (newMetadata.isPresent()) {
+      shouldUpdateMetadata = true;
+      metadata = newMetadata.get();
+    }
+
+    newMetadata =
+        IcebergCompatV2Utils.validateAndUpdateIcebergCompatV2Metadata(
+            isNewTable, metadata, protocol);
+    if (newMetadata.isPresent()) {
+      shouldUpdateMetadata = true;
+      metadata = newMetadata.get();
+    }
+
     return new TransactionImpl(
         isNewTable,
         table.getDataPath(),

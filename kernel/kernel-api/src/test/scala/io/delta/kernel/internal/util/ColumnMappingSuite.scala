@@ -207,7 +207,7 @@ class ColumnMappingSuite extends AnyFunSuite {
       .add("b", StringType.STRING, true)
 
     val metadata: Metadata =
-      ColumnMapping.updateColumnMappingMetadata(createMetadata(schema), ID, true)
+      ColumnMapping.updateColumnMappingMetadata(createMetadata(schema), ID, true).get()
 
     assertColumnMapping(metadata.getSchema.get("a"), 1L)
     assertColumnMapping(metadata.getSchema.get("b"), 2L)
