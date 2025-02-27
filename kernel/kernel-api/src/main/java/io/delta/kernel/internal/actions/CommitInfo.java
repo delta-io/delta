@@ -18,6 +18,7 @@ package io.delta.kernel.internal.actions;
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 import static io.delta.kernel.internal.util.VectorUtils.stringStringMapValue;
+import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.toMap;
 
 import io.delta.kernel.data.ColumnVector;
@@ -125,14 +126,14 @@ public class CommitInfo {
       boolean isBlindAppend,
       String txnId,
       Map<String, String> operationMetrics) {
-    this.inCommitTimestamp = inCommitTimestamp;
+    this.inCommitTimestamp = requireNonNull(inCommitTimestamp);
     this.timestamp = timestamp;
-    this.engineInfo = engineInfo;
-    this.operation = operation;
-    this.operationParameters = Collections.unmodifiableMap(operationParameters);
+    this.engineInfo = requireNonNull(engineInfo);
+    this.operation = requireNonNull(operation);
+    this.operationParameters = Collections.unmodifiableMap(requireNonNull(operationParagmeters));
     this.isBlindAppend = isBlindAppend;
-    this.txnId = txnId;
-    this.operationMetrics = Collections.unmodifiableMap(operationMetrics);
+    this.txnId = requireNonNull(txnId);
+    this.operationMetrics = Collections.unmodifiableMap(requireNonNull(operationMetrics));
   }
 
   public long getTimestamp() {
@@ -162,7 +163,7 @@ public class CommitInfo {
   public Optional<Long> getInCommitTimestamp() {
     return inCommitTimestamp;
   }
-
+gi
   public Map<String, String> getOperationMetrics() {
     return operationMetrics;
   }
@@ -170,7 +171,7 @@ public class CommitInfo {
   public void setInCommitTimestamp(Optional<Long> inCommitTimestamp) {
     this.inCommitTimestamp = inCommitTimestamp;
   }
-  
+
   /**
    * Encode as a {@link Row} object with the schema {@link CommitInfo#FULL_SCHEMA}.
    *
