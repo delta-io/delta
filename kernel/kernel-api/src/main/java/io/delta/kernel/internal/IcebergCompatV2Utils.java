@@ -27,7 +27,7 @@ public class IcebergCompatV2Utils {
    *
    * @param dataFileStatus The {@link DataFileStatus} to validate.
    */
-  public static void validDataFileStatus(DataFileStatus dataFileStatus) {
+  public static void validateDataFileStatus(DataFileStatus dataFileStatus) {
     if (!dataFileStatus.getStatistics().isPresent()) {
       // presence of stats means always has a non-null `numRecords`
       throw DeltaErrors.missingNumRecordsStatsForIcebergCompatV2(dataFileStatus);
