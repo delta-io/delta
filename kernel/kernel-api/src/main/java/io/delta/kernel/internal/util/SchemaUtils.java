@@ -16,11 +16,15 @@
 package io.delta.kernel.internal.util;
 
 import static io.delta.kernel.internal.DeltaErrors.*;
+import static io.delta.kernel.internal.util.ColumnMapping.*;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
+import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.DeltaErrors;
+import io.delta.kernel.internal.TableConfig;
+import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.types.*;
 import java.util.*;
 import java.util.function.Function;
@@ -77,6 +81,354 @@ public class SchemaUtils {
     }
 
     validateSupportedType(schema);
+  }
+
+  /**
+   * Performs the following validations on an updated table schema using the current schema as a
+   * base for validation. ColumnMapping must be enabled to call this
+   *
+   * <p>The following checks are performed:
+   *
+   * <ul>
+   *   <li>No duplicate columns are allowed
+   *   <li>Column names contain only valid characters
+   *   <li>Data types are supported
+   *   <li>No new non-nullable fields are added or no tightening of nullable fields
+   *   <li>Physical column name consistency is preserved in the new schema
+   *   <li>Partition columns are not modified
+   *   <li>Nested IDs for array/map types are preserved in the new schema
+   *   <li>No type changes
+   * </ul>
+   */
+  public static void validateUpdatedSchema(
+      StructType currentSchema,
+      StructType newSchema,
+      Set<String> expectedPartitionColumns,
+      Metadata metadata) {
+    checkArgument(
+        isColumnMappingModeEnabled(
+            ColumnMapping.getColumnMappingMode(metadata.getConfiguration())));
+    validateSchema(newSchema, true /*columnMappingEnabled*/);
+    validatePartitionColumns(newSchema, new ArrayList<>(expectedPartitionColumns));
+    validateSchemaEvolution(
+        currentSchema,
+        newSchema,
+        ColumnMapping.getColumnMappingMode(metadata.getConfiguration()),
+        metadata);
+  }
+
+  /* Validate if a given schema evolution is safe for a given column mapping mode*/
+  private static void validateSchemaEvolution(
+      StructType currentSchema,
+      StructType newSchema,
+      ColumnMappingMode columnMappingMode,
+      Metadata metadata) {
+    switch (columnMappingMode) {
+      case ID:
+      case NAME:
+        validateSchemaEvolutionById(currentSchema, newSchema, metadata);
+        return;
+      case NONE:
+        throw new UnsupportedOperationException(
+            "Schema evolution without column mapping is not supported");
+      default:
+        throw new UnsupportedOperationException(
+            "Unknown column mapping mode: " + columnMappingMode);
+    }
+  }
+
+  /* Validates a given schema evolution by using field ID
+  as the source of truth for identifying fields */
+  private static void validateSchemaEvolutionById(
+      StructType currentSchema, StructType newSchema, Metadata metadata) {
+    Map<Long, StructField> currentFieldsById = fieldsById(columnPathToField(currentSchema));
+    Map<Long, StructField> updatedFieldsById = fieldsById(columnPathToField(newSchema));
+    SchemaChanges schemaChanges = computeSchemaDiffById(currentFieldsById, updatedFieldsById);
+
+    // Validate physical name consistency on the updated fields
+    validatePhysicalNameConsistency(schemaChanges.updatedFields());
+
+    // If IcebergCompatV2 validate nested ID existence and consistency for relevant fields
+    if (TableConfig.ICEBERG_COMPAT_V2_ENABLED.fromMetadata(metadata)) {
+      validateNestedIds(schemaChanges, currentFieldsById, updatedFieldsById);
+    }
+
+    // Validate the schema against the diff to make sure there's no type or nullability changes
+    validateUpdatedSchemaCompatibility(schemaChanges);
+  }
+
+  /* Compute the SchemaChanges using field IDs */
+  private static SchemaChanges computeSchemaDiffById(
+      Map<Long, StructField> currentFieldIdToField, Map<Long, StructField> updatedFieldIdToField) {
+    SchemaChanges.Builder schemaDiff = SchemaChanges.builder();
+    for (Map.Entry<Long, StructField> fieldInUpdatedSchema : updatedFieldIdToField.entrySet()) {
+      StructField existingField = currentFieldIdToField.get(fieldInUpdatedSchema.getKey());
+      StructField updatedField = fieldInUpdatedSchema.getValue();
+      // New field added
+      if (existingField == null) {
+        schemaDiff.withAddedField(updatedField);
+      } else if (isUpdatedField(existingField, fieldInUpdatedSchema.getValue())) {
+        // Field renamed or changed types
+        schemaDiff.withUpdatedField(existingField, fieldInUpdatedSchema.getValue());
+      }
+    }
+
+    for (Map.Entry<Long, StructField> entry : currentFieldIdToField.entrySet()) {
+      StructField fieldInUpdatedSchema = updatedFieldIdToField.get(entry.getKey());
+      if (fieldInUpdatedSchema == null) {
+        schemaDiff.withRemovedField(entry.getValue());
+      }
+    }
+
+    return schemaDiff.build();
+  }
+
+  private static void validatePhysicalNameConsistency(
+      List<Tuple2<StructField, StructField>> updatedFields) {
+    for (Tuple2<StructField, StructField> updatedField : updatedFields) {
+      StructField currentField = updatedField._1;
+      StructField newField = updatedField._2;
+      if (!getPhysicalName(currentField).equals(getPhysicalName(newField))) {
+        throw new IllegalArgumentException(
+            String.format(
+                "Existing field with id %s in current schema has "
+                    + "physical name %s which is different from %s",
+                getColumnId(currentField),
+                getPhysicalName(currentField),
+                getPhysicalName(newField)));
+      }
+    }
+  }
+
+  private static void validateNestedIds(
+      SchemaChanges schemaChanges,
+      Map<Long, StructField> currentFieldsById,
+      Map<Long, StructField> updatedFieldsById) {
+    for (Tuple2<StructField, StructField> updatedField : schemaChanges.updatedFields()) {
+      validateNestedIdsExist(updatedField._2);
+    }
+
+    for (StructField addedField : schemaChanges.addedFields()) {
+      validateNestedIdsExist(addedField);
+    }
+
+    validateNestedIdConsistency(currentFieldsById, updatedFieldsById);
+  }
+
+  /**
+   * Validate that any nested IDs that were in the current field are consistent with the ones in the
+   * updated field and that the nested IDs are not duplicate
+   */
+  private static void validateNestedIdConsistency(
+      Map<Long, StructField> currentFieldsById, Map<Long, StructField> updatedFieldsById) {
+    Map<Long, List<NestedIdEntry>> currentFieldIdToNestedIds =
+        columnIdToNestedIds(currentFieldsById);
+    Map<Long, List<NestedIdEntry>> updatedFieldIdToNestedIds =
+        columnIdToNestedIds(updatedFieldsById);
+    /* Validate that nested field IDs exist in the schema
+    and are consistent with the previous schemas */
+    for (Map.Entry<Long, List<NestedIdEntry>> entry : updatedFieldIdToNestedIds.entrySet()) {
+      Long fieldId = entry.getKey();
+      List<NestedIdEntry> updatedNestedIdEntries = entry.getValue();
+      Set<Long> seenNestedIds = new HashSet<>();
+      for (NestedIdEntry nestedIdEntry : updatedNestedIdEntries) {
+        // Duplicate nested ID with top level field
+        if (updatedFieldIdToNestedIds.containsKey(nestedIdEntry.id)) {
+          throw new IllegalArgumentException(
+              String.format("Duplicate field id %s", nestedIdEntry.id));
+        } else if (!seenNestedIds.add(nestedIdEntry.id)) {
+          throw new IllegalArgumentException(
+              String.format("Duplicate field id %s", nestedIdEntry.id));
+        }
+      }
+
+      List<NestedIdEntry> existingNestedIdEntries = currentFieldIdToNestedIds.get(fieldId);
+
+      /* If this is not a new column make sure
+      the existing nested IDs are consistent in the updated field */
+      if (existingNestedIdEntries != null) {
+        // Group new ID entries for this field by key and compare
+        Map<String, Long> updatedNestedKeyToColumnId = new HashMap<>();
+        for (NestedIdEntry updatedNestedIdEntry : updatedNestedIdEntries) {
+          updatedNestedKeyToColumnId.put(updatedNestedIdEntry.key, updatedNestedIdEntry.id);
+        }
+
+        for (NestedIdEntry existingNestedIdEntry : existingNestedIdEntries) {
+          Long updatedNestedColumnId = updatedNestedKeyToColumnId.get(existingNestedIdEntry.key);
+          if (updatedNestedColumnId == null
+              || !updatedNestedColumnId.equals(existingNestedIdEntry.id)) {
+            throw new IllegalArgumentException(
+                String.format(
+                    "Expected field with id %s to have nested key %s",
+                    fieldId, existingNestedIdEntry.key));
+          }
+        }
+      }
+    }
+  }
+
+  private static void validateNestedIdsExist(StructField field) {
+    if (!hasNestedColumnIds(field)) {
+      if (field.getDataType() instanceof MapType) {
+        throw new IllegalArgumentException(
+            String.format("Map field %s must have at least 2 nested field ids", field.getName()));
+      } else if (field.getDataType() instanceof ArrayType) {
+        throw new IllegalArgumentException(
+            String.format("Array field %s must have at least 1 nested field id", field.getName()));
+      }
+    } else {
+      if (field.getDataType() instanceof MapType && getNestedFieldIds(field).size() < 2) {
+        throw new IllegalArgumentException(
+            String.format("Map field %s must have at least 2 nested field ids", field.getName()));
+      }
+    }
+  }
+
+  /* Mapping of field ID to nested IDs for that field */
+  private static Map<Long, List<NestedIdEntry>> columnIdToNestedIds(
+      Map<Long, StructField> currentFieldIdToField) {
+    Map<Long, List<NestedIdEntry>> nestedIdEntries = new HashMap<>();
+    for (Map.Entry<Long, StructField> entry : currentFieldIdToField.entrySet()) {
+      if (hasNestedColumnIds(entry.getValue())) {
+        nestedIdEntries.put(entry.getKey(), getNestedFieldIds(entry.getValue()));
+      }
+    }
+
+    return nestedIdEntries;
+  }
+
+  private static List<NestedIdEntry> getNestedFieldIds(StructField field) {
+    return getNestedColumnIds(field).getEntries().entrySet().stream()
+        .map(
+            nestedIdEntry ->
+                new NestedIdEntry(nestedIdEntry.getKey(), (Long) nestedIdEntry.getValue()))
+        .collect(Collectors.toList());
+  }
+
+  /**
+   * Wrapper object for icebergCompatV2 nested ID entry to simplify validation e.g. a schema with
+   * col1 as map[int, array[int]] could look like <key: "col1.key", id: 1> <key: "col1.value", id:
+   * 2> <key: "col1.value.element", id: 3>
+   */
+  private static class NestedIdEntry {
+    private final String key;
+    private final long id;
+
+    NestedIdEntry(String key, long id) {
+      this.key = key;
+      this.id = id;
+    }
+  }
+
+  // Returns if the field has been renamed, if the types are different or if fields have been moved
+  private static boolean isUpdatedField(StructField existingField, StructField updatedField) {
+    return !existingField.getName().equals(updatedField.getName())
+        || !existingField.equals(updatedField);
+  }
+
+  /*Returns fields by ID, failing if either the column ID or physical name is missing*/
+  private static Map<Long, StructField> fieldsById(Map<String, StructField> columnPathToField) {
+    Map<Long, StructField> columnIdToField = new HashMap<>();
+    for (Map.Entry<String, StructField> entry : columnPathToField.entrySet()) {
+      StructField field = entry.getValue();
+      if (!hasColumnId(field)) {
+        throw new IllegalArgumentException(
+            String.format("Field %s is missing column id", field.getName()));
+      }
+
+      if (!hasPhysicalName(field)) {
+        throw new IllegalArgumentException(
+            String.format("Field %s is missing physical name", field.getName()));
+      }
+
+      Long columnId = field.getMetadata().getLong(COLUMN_MAPPING_ID_KEY);
+      if (columnIdToField.containsKey(columnId)) {
+        throw new IllegalArgumentException(
+            String.format("Field %s with id %d already exists", field.getName(), columnId));
+      }
+
+      columnIdToField.put(columnId, field);
+    }
+
+    return columnIdToField;
+  }
+
+  /* Verifies that no non-nullable fields are added, no type changes are performed and that
+  partition columns are not modified */
+  private static void validateUpdatedSchemaCompatibility(SchemaChanges diff) {
+    for (StructField addedField : diff.addedFields()) {
+      if (!addedField.isNullable()) {
+        throw new KernelException(
+            String.format("Cannot add a non-nullable field %s", addedField.getName()));
+      }
+    }
+
+    for (Tuple2<StructField, StructField> updatedFields : diff.updatedFields()) {
+      validateNoTypeChange(updatedFields._1, updatedFields._2);
+    }
+  }
+
+  /**
+   * Validate that there was no change in type from existing field from new field, excluding dropped
+   * columns for structs. Note, fields are resolved by case-sensitive name
+   */
+  private static void validateNoTypeChange(StructField existingField, StructField newField) {
+    if (existingField.isNullable() && !newField.isNullable()) {
+      throw new IllegalArgumentException(
+          String.format(
+              "Cannot tighten the nullability of existing field %s", existingField.getName()));
+    }
+
+    // Both fields are structs, ensure there's no changes in the individual fields
+    if (existingField.getDataType() instanceof StructType
+        && newField.getDataType() instanceof StructType) {
+      StructType existingStruct = (StructType) existingField.getDataType();
+      Map<String, List<StructField>> existingFieldsByName =
+          existingStruct.fields().stream().collect(Collectors.groupingBy(StructField::getName));
+      StructType newStruct = (StructType) newField.getDataType();
+      for (StructField newNestedField : newStruct.fields()) {
+        List<StructField> existingNestedField = existingFieldsByName.get(newNestedField.getName());
+        // The existing field is guaranteed to be well-defined, there should only be one field with
+        // the name
+        if (existingNestedField != null) {
+          validateNoTypeChange(existingNestedField.get(0), newNestedField);
+        }
+      }
+    } else if (existingField.getDataType() instanceof MapType
+        && newField.getDataType() instanceof MapType) {
+      MapType existingMapType = (MapType) existingField.getDataType();
+      MapType newMapType = (MapType) newField.getDataType();
+
+      validateNoTypeChange(existingMapType.getKeyField(), newMapType.getKeyField());
+      validateNoTypeChange(existingMapType.getValueField(), newMapType.getValueField());
+    } else if (existingField.getDataType() instanceof ArrayType
+        && newField.getDataType() instanceof ArrayType) {
+      ArrayType existingArrayType = (ArrayType) existingField.getDataType();
+      ArrayType newArrayType = (ArrayType) newField.getDataType();
+
+      validateNoTypeChange(existingArrayType.getElementField(), newArrayType.getElementField());
+    } else if (!existingField.getDataType().equivalent(newField.getDataType())) {
+      throw new IllegalArgumentException(
+          String.format(
+              "Cannot change the type of existing field %s from %s to %s",
+              existingField.getName(), existingField.getDataType(), newField.getDataType()));
+    }
+  }
+
+  /** Returns a map from flattened column path to the field in the schema */
+  private static Map<String, StructField> columnPathToField(StructType schema) {
+    List<Tuple2<List<String>, StructField>> columnPathToStructField =
+        filterRecursively(
+            schema,
+            true /* recurseIntoMapOrArrayElements */,
+            false /* stopOnFirstMatch */,
+            sf -> true);
+    Map<String, StructField> columnPathToStructFieldMap = new HashMap<>();
+    for (Tuple2<List<String>, StructField> path : columnPathToStructField) {
+      columnPathToStructFieldMap.put(SchemaUtils.concatWithDot(path._1), path._2);
+    }
+
+    return columnPathToStructFieldMap;
   }
 
   /**
