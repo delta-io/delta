@@ -408,11 +408,7 @@
       },
       "ICEBERG_UNDERGONE_PARTITION_EVOLUTION" : {
         "message" : [
-          "Source iceberg table has undergone partition evolution.",
-          "Iceberg tables that had partition columns removed can be converted without data loss by setting the SQL configuration",
-          "'spark.databricks.delta.convert.iceberg.partitionEvolution.enabled' to true.",
-          "Tables that had data columns converted to partition columns will not",
-          "be able to read the pre-partition column values."
+          "Source iceberg table has undergone partition evolution."
         ]
       }
     },
