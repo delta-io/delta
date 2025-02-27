@@ -132,7 +132,7 @@ public class CommitInfo {
     this.operationParameters = Collections.unmodifiableMap(operationParameters);
     this.isBlindAppend = isBlindAppend;
     this.txnId = txnId;
-    this.operationMetrics = operationMetrics;
+    this.operationMetrics = Collections.unmodifiableMap(operationMetrics);
   }
 
   public Optional<Long> getInCommitTimestamp() {
@@ -153,6 +153,10 @@ public class CommitInfo {
 
   public String getOperation() {
     return operation;
+  }
+
+  public Map<String, String> getOperationMetrics() {
+    return operationMetrics;
   }
 
   /**
