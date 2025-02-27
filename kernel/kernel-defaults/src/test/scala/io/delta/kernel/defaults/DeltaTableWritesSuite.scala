@@ -1354,19 +1354,4 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       assertColumnMapping(structType.get("c"), 5)
     }
   }
-
-  private def assertColumnMapping(
-      field: StructField,
-      expId: Long,
-      expPhyName: String = "UUID"): Unit = {
-    val meta = field.getMetadata
-    assert(meta.get(ColumnMapping.COLUMN_MAPPING_ID_KEY) == expId)
-    // For new tables the physical column name is a UUID. For existing tables, we
-    // try to keep the physical column name same as the one in the schema
-    if (expPhyName == "UUID") {
-      assert(meta.get(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY).toString.startsWith("col-"))
-    } else {
-      assert(meta.get(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY) == expPhyName)
-    }
-  }
 }

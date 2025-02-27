@@ -30,6 +30,7 @@ import static java.util.stream.Collectors.toSet;
 import io.delta.kernel.*;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.DomainDoesNotExistException;
+import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.fs.Path;
@@ -161,8 +162,6 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     }
 
     boolean isNewTable = snapshot.getVersion() < 0;
-    validate(engine, snapshot, isNewTable);
-
     boolean shouldUpdateMetadata = false;
     boolean shouldUpdateProtocol = false;
     Metadata metadata = snapshot.getMetadata();
@@ -181,6 +180,9 @@ public class TransactionBuilderImpl implements TransactionBuilder {
           oldConfiguration, metadata.getConfiguration() /* new config */, isNewTable);
     }
 
+    // Validate against the latest metadata
+    validate(engine, snapshot, isNewTable, metadata.getConfiguration());
+
     Optional<Tuple2<Protocol, Set<TableFeature>>> newProtocolAndFeatures =
         TableFeatures.autoUpgradeProtocolBasedOnMetadata(
             metadata, !domainMetadatasAdded.isEmpty(), protocol);
@@ -192,6 +194,11 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       shouldUpdateProtocol = true;
       protocol = newProtocolAndFeatures.get()._1;
       TableFeatures.validateKernelCanWriteToTable(protocol, metadata, table.getPath(engine));
+    }
+
+    if (schema.isPresent()) {
+      shouldUpdateMetadata = true;
+      metadata = metadata.withNewSchema(schema.get());
     }
 
     return new TransactionImpl(
@@ -208,34 +215,40 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         shouldUpdateProtocol,
         maxRetries,
         table.getClock(),
-        getDomainMetadatasToCommit(snapshot));
+        getDomainMetadatasToCommit(snapshot),
+        !isNewTable && schema.isPresent()); // If this a schema update field IDs must be preserved
   }
 
   /** Validate the given parameters for the transaction. */
-  private void validate(Engine engine, SnapshotImpl snapshot, boolean isNewTable) {
+  private void validate(
+      Engine engine, SnapshotImpl snapshot, boolean isNewTable, Map<String, String> configuration) {
     String tablePath = table.getPath(engine);
     // Validate the table has no features that Kernel doesn't yet support writing into it.
     TableFeatures.validateKernelCanWriteToTable(
         snapshot.getProtocol(), snapshot.getMetadata(), tablePath);
-
+    ColumnMappingMode mappingMode = ColumnMapping.getColumnMappingMode(configuration);
     if (!isNewTable) {
-      if (schema.isPresent()) {
-        throw tableAlreadyExists(
-            tablePath,
-            "Table already exists, but provided a new schema. "
-                + "Schema can only be set on a new table.");
+      boolean columnMappingEnabled = isColumnMappingModeEnabled(mappingMode);
+      if (!columnMappingEnabled && schema.isPresent()) {
+        throw new KernelException("Cannot update schema for table when column mapping is disabled");
       }
+
       if (partitionColumns.isPresent()) {
         throw tableAlreadyExists(
             tablePath,
             "Table already exists, but provided new partition columns. "
                 + "Partition columns can only be set on a new table.");
       }
-    } else {
-      // New table verify the given schema and partition columns
-      ColumnMappingMode mappingMode =
-          ColumnMapping.getColumnMappingMode(tableProperties.orElse(Collections.emptyMap()));
 
+      if (schema.isPresent()) {
+        SchemaUtils.validateUpdatedSchema(
+            snapshot.getSchema(),
+            schema.get(),
+            snapshot.getPartitionColumnNames(),
+            snapshot.getMetadata());
+      }
+
+    } else {
       SchemaUtils.validateSchema(schema.get(), isColumnMappingModeEnabled(mappingMode));
       SchemaUtils.validatePartitionColumns(
           schema.get(), partitionColumns.orElse(Collections.emptyList()));

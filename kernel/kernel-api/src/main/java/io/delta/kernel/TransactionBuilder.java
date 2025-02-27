@@ -34,7 +34,7 @@ import java.util.Map;
 @Evolving
 public interface TransactionBuilder {
   /**
-   * Set the schema of the table when creating a new table.
+   * Set the schema of the table
    *
    * @param engine {@link Engine} instance to use.
    * @param schema The new schema of the table.
