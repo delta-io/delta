@@ -130,7 +130,7 @@ public class CommitInfo {
     this.timestamp = timestamp;
     this.engineInfo = requireNonNull(engineInfo);
     this.operation = requireNonNull(operation);
-    this.operationParameters = Collections.unmodifiableMap(requireNonNull(operationParagmeters));
+    this.operationParameters = Collections.unmodifiableMap(requireNonNull(operationParameters));
     this.isBlindAppend = isBlindAppend;
     this.txnId = requireNonNull(txnId);
     this.operationMetrics = Collections.unmodifiableMap(requireNonNull(operationMetrics));
@@ -163,7 +163,7 @@ public class CommitInfo {
   public Optional<Long> getInCommitTimestamp() {
     return inCommitTimestamp;
   }
-gi
+
   public Map<String, String> getOperationMetrics() {
     return operationMetrics;
   }
