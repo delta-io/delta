@@ -3042,6 +3042,20 @@ trait DeltaErrorsBase
     )
   }
 
+  def cloneFromIcebergSourceWithPartitionEvolution(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CLONE_INCOMPATIBLE_SOURCE.ICEBERG_UNDERGONE_PARTITION_EVOLUTION",
+      messageParameters = Array()
+    )
+  }
+
+  def cloneFromIcebergSourceWithoutSpecs(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CLONE_INCOMPATIBLE_SOURCE.ICEBERG_MISSING_PARTITION_SPECS",
+      messageParameters = Array()
+    )
+  }
+
   def partitionSchemaInIcebergTables: Throwable = {
     new DeltaIllegalArgumentException(errorClass = "DELTA_PARTITION_SCHEMA_IN_ICEBERG_TABLES")
   }
