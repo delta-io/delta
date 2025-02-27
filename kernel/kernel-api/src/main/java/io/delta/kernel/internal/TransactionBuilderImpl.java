@@ -177,7 +177,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       metadata = metadata.withNewConfiguration(newProperties);
 
       ColumnMapping.verifyColumnMappingChange(
-              oldConfiguration, metadata.getConfiguration() /* new config */, isNewTable);
+          oldConfiguration, metadata.getConfiguration() /* new config */, isNewTable);
     }
 
     Optional<Tuple2<Protocol, Set<TableFeature>>> newProtocolAndFeatures =
