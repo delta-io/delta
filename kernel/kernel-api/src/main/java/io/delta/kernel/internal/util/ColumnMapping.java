@@ -129,14 +129,14 @@ public class ColumnMapping {
     return columnMappingMode == ColumnMappingMode.ID || columnMappingMode == ColumnMappingMode.NAME;
   }
 
-  public static Metadata updateColumnMappingMetadata(
+  public static Optional<Metadata> updateColumnMappingMetadata(
       Metadata metadata, ColumnMappingMode columnMappingMode, boolean isNewTable) {
     switch (columnMappingMode) {
       case NONE:
-        return metadata;
+        return Optional.empty();
       case ID: // fall through
       case NAME:
-        return assignColumnIdAndPhysicalName(metadata, isNewTable);
+        return Optional.of(assignColumnIdAndPhysicalName(metadata, isNewTable));
       default:
         throw new UnsupportedOperationException(
             "Unsupported column mapping mode: " + columnMappingMode);
