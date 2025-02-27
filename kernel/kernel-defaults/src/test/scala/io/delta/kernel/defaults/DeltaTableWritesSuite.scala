@@ -1210,6 +1210,40 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
+  test("update table properties on a column mapping enabled table") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val schema = new StructType()
+        .add("a", StringType.STRING, true)
+        .add("b", IntegerType.INTEGER, true)
+
+      createTxn(
+        engine,
+        tablePath,
+        isNewTable = true,
+        schema,
+        partCols = Seq.empty,
+        tableProperties = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "id"))
+        .commit(engine, emptyIterable())
+
+      val structType = table.getLatestSnapshot(engine).getSchema()
+      assertColumnMapping(structType.get("a"), 1)
+      assertColumnMapping(structType.get("b"), 2)
+
+      table.createTransactionBuilder(engine, testEngineInfo, Operation.WRITE)
+        .withTableProperties(
+          engine,
+          Map("spark.sql.sources.provider" -> "delta").asJava)
+        .build(engine)
+        .commit(engine, emptyIterable())
+
+      val updatedTable = Table.forPath(engine, tablePath)
+      val updatedStructType = updatedTable.getLatestSnapshot(engine).getSchema()
+      assertColumnMapping(updatedStructType.get("a"), 1)
+      assertColumnMapping(updatedStructType.get("b"), 2)
+    }
+  }
+
   test("unsupported protocol version with column mapping mode and no protocol update in metadata") {
     // TODO
   }
