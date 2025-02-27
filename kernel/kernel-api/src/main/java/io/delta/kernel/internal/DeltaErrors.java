@@ -238,12 +238,39 @@ public final class DeltaErrors {
     return new KernelException(format(msgT, tablePath, tableSchema, dataSchema));
   }
 
+  /// Start: icebergCompatV2 exceptions
   public static KernelException missingNumRecordsStatsForIcebergCompatV2(
       DataFileStatus dataFileStatus) {
     throw new KernelException(
         format(
             "Iceberg V2 compatibility requires statistics.\n DataFileStatus: %s", dataFileStatus));
   }
+
+  public static KernelException incompatibleVersionEnabledForIcebergCompatV2() {
+    throw new KernelException(
+        "Only one IcebergCompat version can be enabled, please explicitly disable all other"
+            + "IcebergCompat versions that are not needed.");
+  }
+
+  public static KernelException unsupportedTypeColumnForIcebergCompatV2(List<DataType> dataTypes) {
+    throw new KernelException(
+        format("IcebergCompatV2 does not support the data types: %s.", dataTypes));
+  }
+
+  public static KernelException unsupportedTypePartitionColumnForIcebergCompatV2(
+      DataType dataType) {
+    throw new KernelException(
+        format(
+            "IcebergCompatV2 does not support the data type '%s' for a partition column.",
+            dataType));
+  }
+
+  public static KernelException deletionVectorsUnsupportedForIcebergCompatV2() {
+    throw new KernelException(
+        "IcebergCompatV2 is not supported on a table with deletion vectors supported");
+  }
+
+  // End: icebergCompatV2 exceptions
 
   public static KernelException partitionColumnMissingInData(
       String tablePath, String partitionColumn) {
