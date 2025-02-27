@@ -16,11 +16,16 @@
 package io.delta.kernel.internal.util;
 
 import static io.delta.kernel.internal.DeltaErrors.*;
+import static io.delta.kernel.internal.util.ColumnMapping.COLUMN_MAPPING_ID_KEY;
+import static io.delta.kernel.internal.util.ColumnMapping.isColumnMappingModeEnabled;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
+import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.DeltaErrors;
+import io.delta.kernel.internal.TableConfig;
+import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.types.*;
 import java.util.*;
 import java.util.function.Function;
@@ -77,6 +82,138 @@ public class SchemaUtils {
     }
 
     validateSupportedType(schema);
+  }
+
+  /**
+   * Performs the following validations on an updated table schema using the current schema as a
+   * base for validation. ColumnMapping must be enabled to call this
+   *
+   * <p>The following checks are performed:
+   *
+   * <ul>
+   *   <li>No duplicate columns are allowed
+   *   <li>Column names contain only valid characters
+   *   <li>Data types are supported
+   *   <li>No new non-nullable fields are added or no tightening of nullable fields
+   *   <li>Physical column name consistency is preserved in the new schema
+   *   <li>Partition columns are not modified
+   *   <li>Nested IDs for array/map types are preserved in the new schema
+   *   <li>No type changes
+   * </ul>
+   */
+  public static void validateUpdatedSchema(
+      StructType currentSchema,
+      StructType newSchema,
+      Set<String> expectedPartitionColumns,
+      Metadata metadata) {
+    checkArgument(
+        isColumnMappingModeEnabled(
+            ColumnMapping.getColumnMappingMode(metadata.getConfiguration())));
+    validateSchema(newSchema, true /*columnMappingEnabled*/);
+    Map<String, StructField> currentColumnPathToField = columnPathToField(currentSchema);
+    Map<String, StructField> updatedColumnPathToField = columnPathToField(newSchema);
+    validatePartitionColumns(newSchema, new ArrayList<>(expectedPartitionColumns));
+    ColumnMapping.validateChangedColumnMapping(
+        currentColumnPathToField,
+        updatedColumnPathToField,
+        TableConfig.ICEBERG_COMPAT_V2_ENABLED.fromMetadata(metadata));
+    validateUpdatedSchemaCompatibility(
+        fieldIdToField(currentColumnPathToField), fieldIdToField(updatedColumnPathToField));
+  }
+
+  private static Map<Long, StructField> fieldIdToField(Map<String, StructField> columnPathToField) {
+    Map<Long, StructField> columnIdToField = new HashMap<>();
+    for (Map.Entry<String, StructField> entry : columnPathToField.entrySet()) {
+      columnIdToField.put(
+          entry.getValue().getMetadata().getLong(COLUMN_MAPPING_ID_KEY).longValue(),
+          entry.getValue());
+    }
+
+    return columnIdToField;
+  }
+
+  /* Verifies that no non-nullable fields are added, no type changes are performed and that
+  partition columns are not modified */
+  private static void validateUpdatedSchemaCompatibility(
+      Map<Long, StructField> currentColumnIdToField,
+      Map<Long, StructField> updatedColumnIdToField) {
+    for (Map.Entry<Long, StructField> newFieldEntry : updatedColumnIdToField.entrySet()) {
+      if (!currentColumnIdToField.containsKey(newFieldEntry.getKey())) {
+        if (!newFieldEntry.getValue().isNullable()) {
+          throw new KernelException(
+              String.format(
+                  "Cannot add a non-nullable field %s", newFieldEntry.getValue().getName()));
+        }
+      } else {
+        StructField newField = newFieldEntry.getValue();
+        StructField existingField = currentColumnIdToField.get(newFieldEntry.getKey());
+        validateNoTypeChange(existingField, newField);
+      }
+    }
+  }
+
+  /**
+   * Validate that there was no change in type from existing field from new field, excluding dropped
+   * columns for structs. Note, fields are resolved by case-sensitive name
+   */
+  private static void validateNoTypeChange(StructField existingField, StructField newField) {
+    if (existingField.isNullable() && !newField.isNullable()) {
+      throw new IllegalArgumentException(
+          String.format(
+              "Cannot tighten the nullability of existing field %s",
+              existingField.getName(), existingField.getDataType(), newField.getDataType()));
+    }
+
+    // Both fields are structs, ensure there's no changes in the individual fields
+    if (existingField.getDataType() instanceof StructType
+        && newField.getDataType() instanceof StructType) {
+      StructType existingStruct = (StructType) existingField.getDataType();
+      Map<String, List<StructField>> existingFieldsByName =
+          existingStruct.fields().stream().collect(Collectors.groupingBy(StructField::getName));
+      StructType newStruct = (StructType) newField.getDataType();
+      for (StructField newNestedField : newStruct.fields()) {
+        List<StructField> existingNestedField = existingFieldsByName.get(newNestedField.getName());
+        // The existing field is guaranteed to be well-defined, there should only be one field with
+        // the name
+        if (existingNestedField != null) {
+          validateNoTypeChange(existingNestedField.get(0), newNestedField);
+        }
+      }
+    } else if (existingField.getDataType() instanceof MapType
+        && newField.getDataType() instanceof MapType) {
+      MapType existingMapType = (MapType) existingField.getDataType();
+      MapType newMapType = (MapType) newField.getDataType();
+
+      validateNoTypeChange(existingMapType.getKeyField(), newMapType.getKeyField());
+      validateNoTypeChange(existingMapType.getValueField(), newMapType.getValueField());
+    } else if (existingField.getDataType() instanceof ArrayType
+        && newField.getDataType() instanceof ArrayType) {
+      ArrayType existingArrayType = (ArrayType) existingField.getDataType();
+      ArrayType newArrayType = (ArrayType) newField.getDataType();
+
+      validateNoTypeChange(existingArrayType.getElementField(), newArrayType.getElementField());
+    } else if (!existingField.getDataType().equivalent(newField.getDataType())) {
+      throw new IllegalArgumentException(
+          String.format(
+              "Cannot change the type of existing field %s from %s to %s",
+              existingField.getName(), existingField.getDataType(), newField.getDataType()));
+    }
+  }
+
+  /** Returns a map from flattened column path to the field in the schema */
+  private static Map<String, StructField> columnPathToField(StructType schema) {
+    List<Tuple2<List<String>, StructField>> columnPathToStructField =
+        filterRecursively(
+            schema,
+            true /* recurseIntoMapOrArrayElements */,
+            false /* stopOnFirstMatch */,
+            sf -> true);
+    Map<String, StructField> columnPathToStructFieldMap = new HashMap<>();
+    for (Tuple2<List<String>, StructField> path : columnPathToStructField) {
+      columnPathToStructFieldMap.put(SchemaUtils.concatWithDot(path._1), path._2);
+    }
+
+    return columnPathToStructFieldMap;
   }
 
   /**
