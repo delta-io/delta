@@ -95,7 +95,7 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
             "file1" -> testStats(Some(10)), // valid stats
             "file2" -> None // missing stats
           ),
-          "Iceberg V2 compatibility requires statistics" // expected error message
+          "icebergCompatV2 compatibility requires 'numRecords' statistic." // expected error message
         )).foreach { case (actionRows, expectedErrorMsg) =>
         if (icebergCompatV2Enabled) {
           val ex = intercept[KernelException] {
