@@ -64,7 +64,7 @@ abstract class UniFormE2EIcebergSuiteBase extends UniFormE2ETest {
       "to_date('2016-12-31', 'yyyy-MM-dd')",
       "'asdf'",
       true,
-      "TIMESTAMP_NTZ'2021-12-06 00:00:00'",
+      "TIMESTAMP_NTZ'2021-12-06 05:12:34'",
       "TIMESTAMP'2023-08-18 05:00:00UTC-7'"
     )
 
@@ -88,7 +88,7 @@ abstract class UniFormE2EIcebergSuiteBase extends UniFormE2ETest {
             s"where ${partitionColumnName}=${partitionColumnsAndValues._2}"
           // Verify against Delta read and Iceberg read
           checkAnswer(spark.sql(verificationQuery), Seq(Row(123)))
-          checkAnswer(createReaderSparkSession.sql(verificationQuery), Seq(Row(123)))
+          assert(read(verificationQuery).sameElements(Seq(Row(123))))
         }
     }
   }
@@ -109,7 +109,7 @@ abstract class UniFormE2EIcebergSuiteBase extends UniFormE2ETest {
         s"where id=1 and ts=TIMESTAMP'2023-08-18 05:00:00UTC-7'"
       // Verify against Delta read and Iceberg read
       checkAnswer(spark.sql(verificationQuery), Seq(Row(123)))
-      checkAnswer(createReaderSparkSession.sql(verificationQuery), Seq(Row(123)))
+      assert(read(verificationQuery).sameElements(Seq(Row(123))))
     }
   }
 
