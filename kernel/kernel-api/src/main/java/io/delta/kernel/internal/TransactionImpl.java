@@ -73,7 +73,9 @@ public class TransactionImpl implements Transaction {
   private final Optional<SetTransaction> setTxnOpt;
   private final boolean shouldUpdateProtocol;
   private final Clock clock;
-  private List<DomainMetadata> domainMetadatas;
+  private final boolean preserveFieldIds;
+
+  private List<DomainMetadata> domainMetadatas = new ArrayList<>();
   private Metadata metadata;
   private boolean shouldUpdateMetadata;
   private int maxRetries;
@@ -94,7 +96,8 @@ public class TransactionImpl implements Transaction {
       boolean shouldUpdateProtocol,
       int maxRetries,
       Clock clock,
-      List<DomainMetadata> domainMetadatas) {
+      List<DomainMetadata> domainMetadatas,
+      boolean preserveFieldIds) {
     this.isNewTable = isNewTable;
     this.dataPath = dataPath;
     this.logPath = logPath;
@@ -109,6 +112,7 @@ public class TransactionImpl implements Transaction {
     this.maxRetries = maxRetries;
     this.clock = clock;
     this.domainMetadatas = domainMetadatas;
+    this.preserveFieldIds = preserveFieldIds;
   }
 
   @Override
@@ -301,11 +305,14 @@ public class TransactionImpl implements Transaction {
     List<Row> metadataActions = new ArrayList<>();
     metadataActions.add(createCommitInfoSingleAction(attemptCommitInfo.toRow()));
     if (shouldUpdateMetadata || isNewTable) {
-      this.metadata =
-          ColumnMapping.updateColumnMappingMetadata(
-              metadata,
-              ColumnMapping.getColumnMappingMode(metadata.getConfiguration()),
-              isNewTable);
+      if (!preserveFieldIds) {
+        this.metadata =
+            ColumnMapping.updateColumnMappingMetadata(
+                metadata,
+                ColumnMapping.getColumnMappingMode(metadata.getConfiguration()),
+                isNewTable);
+      }
+
       metadataActions.add(createMetadataSingleAction(metadata.toRow()));
     }
     if (shouldUpdateProtocol || isNewTable) {

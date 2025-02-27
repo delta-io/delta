@@ -59,6 +59,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   private final Map<String, DomainMetadata> domainMetadatasAdded = new HashMap<>();
   private final Set<String> domainMetadatasRemoved = new HashSet<>();
   private Optional<StructType> schema = Optional.empty();
+  private boolean updatedSchema;
   private Optional<List<String>> partitionColumns = Optional.empty();
   private Optional<SetTransaction> setTxnOpt = Optional.empty();
   private Optional<Map<String, String>> tableProperties = Optional.empty();
@@ -79,6 +80,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   @Override
   public TransactionBuilder withSchema(Engine engine, StructType newSchema) {
     this.schema = Optional.of(newSchema); // will be verified as part of the build() call
+    this.updatedSchema = true;
     return this;
   }
 
@@ -166,15 +168,23 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     boolean shouldUpdateProtocol = false;
     Metadata metadata = snapshot.getMetadata();
     Protocol protocol = snapshot.getProtocol();
-    Map<String, String> validatedProperties =
-        TableConfig.validateDeltaProperties(tableProperties.orElse(Collections.emptyMap()));
-    Map<String, String> newProperties = metadata.filterOutUnchangedProperties(validatedProperties);
 
-    ColumnMapping.verifyColumnMappingChange(metadata.getConfiguration(), newProperties, isNewTable);
+    if (tableProperties.isPresent()) {
+      Map<String, String> validatedProperties =
+              TableConfig.validateDeltaProperties(tableProperties.orElse(Collections.emptyMap()));
+      Map<String, String> newProperties = metadata.filterOutUnchangedProperties(validatedProperties);
 
-    if (!newProperties.isEmpty()) {
+      ColumnMapping.verifyColumnMappingChange(metadata.getConfiguration(), newProperties, isNewTable);
+
+      if (!newProperties.isEmpty()) {
+        shouldUpdateMetadata = true;
+        metadata = metadata.withNewConfiguration(newProperties);
+      }
+    }
+
+    if (updatedSchema) {
       shouldUpdateMetadata = true;
-      metadata = metadata.withNewConfiguration(newProperties);
+      metadata = metadata.withNewSchema(schema.get());
     }
 
     Optional<Tuple2<Protocol, Set<TableFeature>>> newProtocolAndFeatures =
@@ -204,7 +214,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         shouldUpdateProtocol,
         maxRetries,
         table.getClock(),
-        getDomainMetadatasToCommit(snapshot));
+        getDomainMetadatasToCommit(snapshot),
+        !isNewTable && updatedSchema);
   }
 
   /** Validate the given parameters for the transaction. */
@@ -213,14 +224,26 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     // Validate the table has no features that Kernel doesn't yet support writing into it.
     TableFeatures.validateKernelCanWriteToTable(
         snapshot.getProtocol(), snapshot.getMetadata(), tablePath);
+    ColumnMappingMode mappingMode =
+        ColumnMapping.getColumnMappingMode(
+            isNewTable
+                ? tableProperties.orElse(Collections.emptyMap())
+                : snapshot.getMetadata().getConfiguration());
 
     if (!isNewTable) {
-      if (schema.isPresent()) {
-        throw tableAlreadyExists(
-            tablePath,
-            "Table already exists, but provided a new schema. "
-                + "Schema can only be set on a new table.");
+      boolean columnMappingEnabled = isColumnMappingModeEnabled(mappingMode);
+      if (!columnMappingEnabled && updatedSchema) {
+        throw new IllegalArgumentException(
+            "Cannot update schema for table when column mapping is disabled");
       }
+
+      if (updatedSchema) {
+        // If overriding a schema on the existing table, the actual column IDs on the new schema
+        // should be validated
+        SchemaUtils.validateUpdatedSchema(snapshot.getSchema(), schema.get());
+        SchemaUtils.validatePartitionColumns(schema.get(), snapshot.getPartitionColumnNames());
+      }
+
       if (partitionColumns.isPresent()) {
         throw tableAlreadyExists(
             tablePath,
@@ -229,9 +252,6 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       }
     } else {
       // New table verify the given schema and partition columns
-      ColumnMappingMode mappingMode =
-          ColumnMapping.getColumnMappingMode(tableProperties.orElse(Collections.emptyMap()));
-
       SchemaUtils.validateSchema(schema.get(), isColumnMappingModeEnabled(mappingMode));
       SchemaUtils.validatePartitionColumns(
           schema.get(), partitionColumns.orElse(Collections.emptyList()));

@@ -16,6 +16,7 @@
 package io.delta.kernel.internal.util;
 
 import static io.delta.kernel.internal.DeltaErrors.*;
+import static io.delta.kernel.internal.util.ColumnMapping.COLUMN_MAPPING_ID_KEY;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.expressions.Literal;
@@ -76,6 +77,59 @@ public class SchemaUtils {
     }
 
     validateSupportedType(schema);
+  }
+
+  public static void validateUpdatedSchema(StructType currentSchema, StructType schema) {
+    validateSchema(schema, true);
+    ColumnMapping.validateColumnIds(currentSchema, schema);
+    validateUpdatedSchemaCompatibility(currentSchema, schema);
+  }
+
+  private static void validateUpdatedSchemaCompatibility(
+      StructType currentSchema, StructType newSchema) {
+    // Identify added columns based on field IDs
+    Map<Integer, StructField> newSchemaIdToField = idToField(newSchema);
+    Map<Integer, StructField> currentSchemaIdToField = idToField(currentSchema);
+    for (Map.Entry<Integer, StructField> newFieldEntry : newSchemaIdToField.entrySet()) {
+      if (!currentSchemaIdToField.containsKey(newFieldEntry.getKey())) {
+        if (!newFieldEntry.getValue().isNullable()) {
+          throw new IllegalArgumentException(
+              String.format(
+                  "Cannot add a non-nullable field %s", newFieldEntry.getValue().getName()));
+        }
+      } else {
+        StructField currentField = currentSchemaIdToField.get(newFieldEntry.getKey());
+        StructField newField = newSchemaIdToField.get(newFieldEntry.getKey());
+        if (newField.getDataType() != currentField.getDataType()) {
+          throw new IllegalArgumentException(
+              String.format(
+                  "Cannot change existing field %s from %s to %s",
+                  currentField.getName(), currentField.getDataType(), newField.getDataType()));
+        }
+      }
+    }
+  }
+
+  private static Map<Integer, StructField> idToField(StructType schema) {
+    Map<Integer, StructField> idToField = new HashMap<>();
+    for (StructField field : schema.fields()) {
+      idToField.putAll(idToField(field));
+    }
+
+    return idToField;
+  }
+
+  private static Map<Integer, StructField> idToField(StructField field) {
+    Map<Integer, StructField> idToField = new HashMap<>();
+    idToField.put(field.getMetadata().getLong(COLUMN_MAPPING_ID_KEY).intValue(), field);
+    if (field.getDataType() instanceof StructType) {
+      StructType structType = (StructType) field.getDataType();
+      for (StructField nestedField : structType.fields()) {
+        idToField.putAll(idToField(nestedField));
+      }
+    }
+
+    return idToField;
   }
 
   /**
