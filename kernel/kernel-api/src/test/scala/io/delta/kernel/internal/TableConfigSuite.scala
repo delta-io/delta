@@ -15,10 +15,11 @@
  */
 package io.delta.kernel.internal
 
-import io.delta.kernel.exceptions.KernelException
-import org.scalatest.funsuite.AnyFunSuite
-
 import scala.collection.JavaConverters._
+
+import io.delta.kernel.exceptions.KernelException
+
+import org.scalatest.funsuite.AnyFunSuite
 
 class TableConfigSuite extends AnyFunSuite {
 

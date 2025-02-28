@@ -19,8 +19,9 @@ import scala.collection.JavaConverters._
 
 import io.delta.kernel.expressions.Column
 import io.delta.kernel.internal.skipping.DataSkippingUtils
-import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.{DataType, StructField, StructType}
+import io.delta.kernel.types.IntegerType.INTEGER
+
 import org.scalatest.funsuite.AnyFunSuite
 
 class DataSkippingUtilsSuite extends AnyFunSuite {
@@ -41,7 +42,7 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
       } else {
         fields1.zip(fields2).forall { case (field1: StructField, field2: StructField) =>
           field1.getName == field2.getName &&
-            compareDataTypeUnordered(field1.getDataType, field2.getDataType)
+          compareDataTypeUnordered(field1.getDataType, field2.getDataType)
         }
       }
     case _ =>
@@ -49,9 +50,12 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
   }
 
   def checkPruneStatsSchema(
-    inputSchema: StructType, referencedCols: Set[Column], expectedSchema: StructType): Unit = {
+      inputSchema: StructType,
+      referencedCols: Set[Column],
+      expectedSchema: StructType): Unit = {
     val prunedSchema = DataSkippingUtils.pruneStatsSchema(inputSchema, referencedCols.asJava)
-    assert(compareDataTypeUnordered(expectedSchema, prunedSchema),
+    assert(
+      compareDataTypeUnordered(expectedSchema, prunedSchema),
       s"expected=$expectedSchema\nfound=$prunedSchema")
   }
 
@@ -61,8 +65,7 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
       new StructType()
         .add("col1", INTEGER)
         .add("col2", INTEGER),
-      true
-    )
+      true)
     val testSchema = new StructType()
       .add(nestedField)
       .add("top_level_col", INTEGER)
@@ -70,34 +73,29 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
     checkPruneStatsSchema(
       testSchema,
       Set(col("top_level_col"), nestedCol("nested.col1"), nestedCol("nested.col2")),
-      testSchema
-    )
+      testSchema)
     // top level column pruned
     checkPruneStatsSchema(
       testSchema,
       Set(nestedCol("nested.col1"), nestedCol("nested.col2")),
-      new StructType().add(nestedField)
-    )
+      new StructType().add(nestedField))
     // nested column only one field pruned
     checkPruneStatsSchema(
       testSchema,
       Set(nestedCol("top_level_col"), nestedCol("nested.col1")),
       new StructType()
         .add("nested", new StructType().add("col1", INTEGER))
-        .add("top_level_col", INTEGER)
-    )
+        .add("top_level_col", INTEGER))
     // nested column completely pruned
     checkPruneStatsSchema(
       testSchema,
       Set(nestedCol("top_level_col")),
-      new StructType().add("top_level_col", INTEGER)
-    )
+      new StructType().add("top_level_col", INTEGER))
     // prune all columns
     checkPruneStatsSchema(
       testSchema,
       Set(),
-      new StructType()
-    )
+      new StructType())
   }
 
   test("pruneStatsSchema - 3 levels of nesting") {
@@ -110,7 +108,8 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
     |   |--level_2_col: int
      */
     val testSchema = new StructType()
-      .add("level1",
+      .add(
+        "level1",
         new StructType()
           .add(
             "level2",
@@ -118,10 +117,8 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
               .add(
                 "level3",
                 new StructType().add("level_4_col", INTEGER))
-              .add("level_3_col", INTEGER)
-          )
-          .add("level_2_col", INTEGER)
-      )
+              .add("level_3_col", INTEGER))
+          .add("level_2_col", INTEGER))
     // prune only 4th level col
     checkPruneStatsSchema(
       testSchema,
@@ -131,40 +128,35 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
           "level1",
           new StructType()
             .add("level2", new StructType().add("level_3_col", INTEGER))
-            .add("level_2_col", INTEGER))
-    )
+            .add("level_2_col", INTEGER)))
     // prune only 3rd level column
     checkPruneStatsSchema(
       testSchema,
       Set(nestedCol("level1.level2.level3.level_4_col"), nestedCol("level1.level_2_col")),
       new StructType()
-        .add("level1",
+        .add(
+          "level1",
           new StructType()
             .add(
               "level2",
               new StructType()
                 .add(
                   "level3",
-                  new StructType().add("level_4_col", INTEGER))
-            )
-            .add("level_2_col", INTEGER)
-        )
-    )
+                  new StructType().add("level_4_col", INTEGER)))
+            .add("level_2_col", INTEGER)))
     // prune 4th and 3rd level column
     checkPruneStatsSchema(
       testSchema,
       Set(nestedCol("level1.level_2_col")),
       new StructType()
-        .add("level1",
+        .add(
+          "level1",
           new StructType()
-            .add("level_2_col", INTEGER)
-        )
-    )
+            .add("level_2_col", INTEGER)))
     // prune all columns
     checkPruneStatsSchema(
       testSchema,
       Set(),
-      new StructType()
-    )
+      new StructType())
   }
 }

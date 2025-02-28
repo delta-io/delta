@@ -583,7 +583,7 @@ class DeltaLog private(
     }
 
     val fileIndex = TahoeLogFileIndex(
-      spark, this, dataPath, snapshotToUse, partitionFilters, isTimeTravelQuery)
+      spark, this, dataPath, snapshotToUse, catalogTableOpt, partitionFilters, isTimeTravelQuery)
     var bucketSpec: Option[BucketSpec] = None
 
     val r = buildHadoopFsRelationWithFileIndex(snapshotToUse, fileIndex, bucketSpec = bucketSpec)
@@ -689,11 +689,15 @@ class DeltaLog private(
 object DeltaLog extends DeltaLogging {
 
   /**
-   * The key type of `DeltaLog` cache. It's a pair of the canonicalized table path and the file
-   * system options (options starting with "fs." or "dfs." prefix) passed into
-   * `DataFrameReader/Writer`
+   * The key type of `DeltaLog` cache. It consists of
+   * - The canonicalized table path
+   * - File system options (options starting with "fs." or "dfs." prefix) passed into
+   *   `DataFrameReader/Writer`
    */
-  private type DeltaLogCacheKey = (Path, Map[String, String])
+  case class DeltaLogCacheKey(
+    path: Path,
+    fsOptions: Map[String, String]
+  )
 
   /** The name of the subdirectory that holds Delta metadata files */
   private[delta] val LOG_DIR_NAME = "_delta_log"
@@ -706,9 +710,8 @@ object DeltaLog extends DeltaLogging {
    * We create only a single [[DeltaLog]] for any given `DeltaLogCacheKey` to avoid wasted work
    * in reconstructing the log.
    */
-  type CacheKey = (Path, Map[String, String])
   private[delta] def getOrCreateCache(conf: SQLConf):
-      Cache[CacheKey, DeltaLog] = synchronized {
+      Cache[DeltaLogCacheKey, DeltaLog] = synchronized {
     deltaLogCache match {
       case Some(c) => c
       case None =>
@@ -722,12 +725,12 @@ object DeltaLog extends DeltaLogging {
               // Various layers will throw null pointer if the RDD is already gone.
             }
           })
-        deltaLogCache = Some(builder.build[CacheKey, DeltaLog]())
+        deltaLogCache = Some(builder.build[DeltaLogCacheKey, DeltaLog]())
         deltaLogCache.get
     }
   }
 
-  private var deltaLogCache: Option[Cache[CacheKey, DeltaLog]] = None
+  private var deltaLogCache: Option[Cache[DeltaLogCacheKey, DeltaLog]] = None
 
   /**
    * Helper to create delta log caches
@@ -942,7 +945,11 @@ object DeltaLog extends DeltaLogging {
           )
         }
     }
-    def getDeltaLogFromCache(): DeltaLog = {
+    val cacheKey = DeltaLogCacheKey(
+      path,
+      fileSystemOptions)
+
+    def getDeltaLogFromCache: DeltaLog = {
       // The following cases will still create a new ActionLog even if there is a cached
       // ActionLog using a different format path:
       // - Different `scheme`
@@ -950,7 +957,7 @@ object DeltaLog extends DeltaLogging {
       // - Different mount point.
       try {
         getOrCreateCache(spark.sessionState.conf)
-          .get(path -> fileSystemOptions, () => {
+          .get(cacheKey, () => {
             createDeltaLog()
           }
         )
@@ -960,12 +967,12 @@ object DeltaLog extends DeltaLogging {
       }
     }
 
-    val deltaLog = getDeltaLogFromCache()
+    val deltaLog = getDeltaLogFromCache
     if (Option(deltaLog.sparkContext.get).map(_.isStopped).getOrElse(true)) {
       // Invalid the cached `DeltaLog` and create a new one because the `SparkContext` of the cached
       // `DeltaLog` has been stopped.
-      getOrCreateCache(spark.sessionState.conf).invalidate(path -> fileSystemOptions)
-      getDeltaLogFromCache()
+      getOrCreateCache(spark.sessionState.conf).invalidate(cacheKey)
+      getDeltaLogFromCache
     } else {
       deltaLog
     }
@@ -991,13 +998,15 @@ object DeltaLog extends DeltaLogging {
         val iter = deltaLogCache.asMap().keySet().iterator()
         while (iter.hasNext) {
           val key = iter.next()
-          if (key._1 == path) {
+          if (key.path == path) {
             keysToBeRemoved += key
           }
         }
         deltaLogCache.invalidateAll(keysToBeRemoved.asJava)
       } else {
-        deltaLogCache.invalidate(path -> Map.empty)
+        deltaLogCache.invalidate(DeltaLogCacheKey(
+          path,
+          fsOptions = Map.empty))
       }
     } catch {
       case NonFatal(e) => logWarning(e.getMessage, e)

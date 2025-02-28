@@ -25,10 +25,10 @@ import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.checksum.CRCInfo;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.metrics.SnapshotReportImpl;
-import io.delta.kernel.internal.replay.CRCInfo;
 import io.delta.kernel.internal.replay.CreateCheckpointIterator;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
@@ -115,6 +115,13 @@ public class SnapshotImpl implements Snapshot {
   @Override
   public StructType getSchema() {
     return getMetadata().getSchema();
+  }
+
+  @Override
+  public Optional<String> getDomainMetadata(String domain) {
+    return Optional.ofNullable(getDomainMetadataMap().get(domain))
+        .filter(dm -> !dm.isRemoved()) // only consider active domain metadatas (not tombstones)
+        .map(DomainMetadata::getConfiguration);
   }
 
   @Override

@@ -35,6 +35,77 @@ public class TableConfig<T> {
   //////////////////
 
   /**
+   * Whether this Delta table is append-only. Files can't be deleted, or values can't be updated.
+   */
+  public static final TableConfig<Boolean> APPEND_ONLY_ENABLED =
+      new TableConfig<>(
+          "delta.appendOnly",
+          "false",
+          Boolean::valueOf,
+          value -> true,
+          "needs to be a boolean.",
+          true);
+
+  /**
+   * Enable change data feed output. When enabled, DELETE, UPDATE, and MERGE INTO operations will
+   * need to do additional work to output their change data in an efficiently readable format.
+   */
+  public static final TableConfig<Boolean> CHANGE_DATA_FEED_ENABLED =
+      new TableConfig<>(
+          "delta.enableChangeDataFeed",
+          "false",
+          Boolean::valueOf,
+          value -> true,
+          "needs to be a boolean.",
+          true);
+
+  public static final TableConfig<String> CHECKPOINT_POLICY =
+      new TableConfig<>(
+          "delta.checkpointPolicy",
+          "classic",
+          v -> v,
+          value -> value.equals("classic") || value.equals("v2"),
+          "needs to be a string and one of 'classic' or 'v2'.",
+          true);
+
+  /** Whether commands modifying this Delta table are allowed to create new deletion vectors. */
+  public static final TableConfig<Boolean> DELETION_VECTORS_CREATION_ENABLED =
+      new TableConfig<>(
+          "delta.enableDeletionVectors",
+          "false",
+          Boolean::valueOf,
+          value -> true,
+          "needs to be a boolean.",
+          true);
+
+  /**
+   * Whether widening the type of an existing column or field is allowed, either manually using
+   * ALTER TABLE CHANGE COLUMN or automatically if automatic schema evolution is enabled.
+   */
+  public static final TableConfig<Boolean> TYPE_WIDENING_ENABLED =
+      new TableConfig<>(
+          "delta.enableTypeWidening",
+          "false",
+          Boolean::valueOf,
+          value -> true,
+          "needs to be a boolean.",
+          true);
+
+  /**
+   * Indicates whether Row Tracking is enabled on the table. When this flag is turned on, all rows
+   * are guaranteed to have Row IDs and Row Commit Versions assigned to them, and writers are
+   * expected to preserve them by materializing them to hidden columns in the data files.
+   */
+  public static final TableConfig<Boolean> ROW_TRACKING_ENABLED =
+      new TableConfig<>(
+          "delta.enableRowTracking",
+          "false",
+          Boolean::valueOf,
+          value -> true,
+          "needs to be a boolean.",
+          true);
+
+  /**
    * The shortest duration we have to keep logically deleted data files around before deleting them
    * physically.
    *
@@ -175,6 +246,17 @@ public class TableConfig<T> {
       Collections.unmodifiableMap(
           new HashMap<String, TableConfig<?>>() {
             {
+              addConfig(this, APPEND_ONLY_ENABLED);
+              addConfig(this, CHANGE_DATA_FEED_ENABLED);
+              addConfig(this, CHECKPOINT_POLICY);
+              addConfig(this, DELETION_VECTORS_CREATION_ENABLED);
+              addConfig(this, TYPE_WIDENING_ENABLED);
+              addConfig(this, ROW_TRACKING_ENABLED);
+              addConfig(this, LOG_RETENTION);
+              addConfig(this, EXPIRED_LOG_CLEANUP_ENABLED);
+              addConfig(this, TOMBSTONE_RETENTION);
+              addConfig(this, CHECKPOINT_INTERVAL);
+              addConfig(this, IN_COMMIT_TIMESTAMPS_ENABLED);
               addConfig(this, TOMBSTONE_RETENTION);
               addConfig(this, CHECKPOINT_INTERVAL);
               addConfig(this, IN_COMMIT_TIMESTAMPS_ENABLED);

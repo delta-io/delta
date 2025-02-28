@@ -21,6 +21,7 @@ import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.LongType.LONG
 import io.delta.kernel.types.StringType.STRING
 import io.delta.kernel.types.StructType
+
 import org.scalatest.funsuite.AnyFunSuite
 
 class DefaultExpressionHandlerSuite extends AnyFunSuite with ExpressionTestUtils {

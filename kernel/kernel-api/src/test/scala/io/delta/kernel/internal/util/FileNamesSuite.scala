@@ -15,11 +15,12 @@
  */
 package io.delta.kernel.internal.util
 
+import scala.collection.JavaConverters._
+
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.FileNames._
-import org.scalatest.funsuite.AnyFunSuite
 
-import scala.collection.JavaConverters._
+import org.scalatest.funsuite.AnyFunSuite
 
 class FileNamesSuite extends AnyFunSuite {
 
@@ -74,22 +75,22 @@ class FileNamesSuite extends AnyFunSuite {
   test("checkpointFileSingular") {
     assert(
       checkpointFileSingular(new Path("/a"), 1234).toString ==
-      "/a/00000000000000001234.checkpoint.parquet")
+        "/a/00000000000000001234.checkpoint.parquet")
   }
 
   test("topLevelV2CheckpointFile") {
     assert(
       topLevelV2CheckpointFile(new Path("/a"), 1234, "7d17ac10", "json").toString ==
-      "/a/00000000000000001234.checkpoint.7d17ac10.json")
+        "/a/00000000000000001234.checkpoint.7d17ac10.json")
     assert(
       topLevelV2CheckpointFile(new Path("/a"), 1234, "7d17ac10", "parquet").toString ==
-      "/a/00000000000000001234.checkpoint.7d17ac10.parquet")
+        "/a/00000000000000001234.checkpoint.7d17ac10.parquet")
   }
 
   test("v2CheckpointSidecarFile") {
     assert(
       v2CheckpointSidecarFile(new Path("/a"), "7d17ac10").toString ==
-      "/a/_sidecars/7d17ac10.parquet")
+        "/a/_sidecars/7d17ac10.parquet")
   }
 
   test("checkpointFileWithParts") {
