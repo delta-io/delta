@@ -312,5 +312,5 @@ class DeltaSourceFastDropFeatureCDCSuite extends DeltaSourceFastDropFeatureSuite
     super.excluded ++ Seq(
       // Excluded because in CDC streaming the current behaviour is to always check the protocol at
       // the starting version.
-      "Protocol check at startingVersion is skipped when fast drop feature is disabled")
+      "Protocol check at startingVersion is skipped when config is disabled")
 }
