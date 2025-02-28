@@ -189,7 +189,7 @@ private[sharing] class DeltaSharingLogFileSystem extends FileSystem with Logging
   }
 
   private def getBlockAndReleaseLockHelper[T: ClassTag](
-                                                           f: Path, suffix: Option[String], caller: String): T = {
+      f: Path, suffix: Option[String], caller: String): T = {
     val blockId = getDeltaSharingLogBlockId(suffix.foldLeft(f.toString)(_ + _))
     val result = SparkEnv.get.blockManager.getSingle[T](blockId).getOrElse {
       throw new FileNotFoundException(s"Failed to $caller for $f.")
@@ -709,7 +709,7 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
         getDeltaSharingLogBlockId(jsonFilePath),
         versionToJsonLogBuilderMap.getOrElse(version, Seq.empty).toIterator
       )
-      val fileStatus =DeltaSharingLogFileStatus(
+      val fileStatus = DeltaSharingLogFileStatus(
         path = jsonFilePath,
         size = versionToJsonLogSize.getOrElse(version, 0),
         modificationTime = versionToTimestampMap.get(version).getOrElse(0L)
