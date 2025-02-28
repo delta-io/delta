@@ -396,6 +396,24 @@
     ],
     "sqlState" : "42613"
   },
+  "DELTA_CLONE_INCOMPATIBLE_SOURCE" : {
+    "message" : [
+      "The clone source has valid format, but has unsupported feature with Delta"
+    ],
+    "subClass" : {
+      "ICEBERG_MISSING_PARTITION_SPECS" : {
+        "message" : [
+          "Source iceberg table has no partition specs in table"
+        ]
+      },
+      "ICEBERG_UNDERGONE_PARTITION_EVOLUTION" : {
+        "message" : [
+          "Source iceberg table has undergone partition evolution."
+        ]
+      }
+    },
+    "sqlState" : "0AKDC"
+  },
   "DELTA_CLONE_UNSUPPORTED_SOURCE" : {
     "message" : [
       "Unsupported clone source '<name>', whose format is <format>.",
