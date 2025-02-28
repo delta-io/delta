@@ -148,7 +148,13 @@ lazy val commonSettings = Seq(
     "-Ddelta.log.cacheSize=3",
     "-Dspark.databricks.delta.delta.log.cacheSize=3",
     "-Dspark.sql.sources.parallelPartitionDiscovery.parallelism=5",
-    "-Xmx1024m"
+    "-Xmx1024m",
+    // For Java 17
+    "--add-opens=java.base/java.nio=ALL-UNNAMED",
+    "--add-opens=java.base/java.lang=ALL-UNNAMED",
+    "--add-opens=java.base/java.net=ALL-UNNAMED",
+    "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+    "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED"
   ),
 
   testOptions += Tests.Argument("-oF"),
@@ -860,13 +866,13 @@ lazy val icebergShaded = (project in file("icebergShaded"))
       // due to legacy scala.
       "org.scala-lang.modules" %% "scala-collection-compat" % "2.1.1" % "provided",
       "org.apache.iceberg" % "iceberg-core" % "1.8.0" excludeAll (
-        ExclusionRule("com.fasterxml.jackson.core"),
-        ExclusionRule("com.fasterxml.jackson.module"),
+        ExclusionRule("com.fasterxml.jackson"),
+        ExclusionRule(organization = "com.fasterxml.jackson.core"),
         ExclusionRule("com.github.ben-manes.caffeine"),
       ),
       "org.apache.iceberg" % "iceberg-hive-metastore" % "1.8.0" excludeAll (
-        ExclusionRule("com.fasterxml.jackson.core"),
-        ExclusionRule("com.fasterxml.jackson.module"),
+        ExclusionRule("com.fasterxml.jackson"),
+        ExclusionRule(organization = "com.fasterxml.jackson.core"),
         ExclusionRule("com.github.ben-manes.caffeine"),
       ),
       "org.apache.hadoop" % "hadoop-client" % "2.7.3" excludeAll (
@@ -905,6 +911,17 @@ lazy val icebergShaded = (project in file("icebergShaded"))
     assembly / assemblyShadeRules := Seq(
       ShadeRule.rename("org.apache.iceberg.**" -> "shadedForDelta.@0").inAll,
     ),
+    assembly / assemblyExcludedJars := {
+      val cp = (fullClasspath in assembly).value
+      cp.filter { jar =>
+        val doExclude = jar.data.getName.contains("jackson-annotations") ||
+          jar.data.getName.contains("RoaringBitmap") ||
+          jar.data.getName.contains("jackson") ||
+          jar.data.getName.contains("htrace")
+        println(s"Excluding jar: ${jar.data.getName} ? $doExclude")
+        doExclude
+      }
+    },
     assembly / assemblyMergeStrategy := {
        case PathList("shadedForDelta", "org", "apache", "iceberg", "PartitionSpec$Builder.class") =>
          MergeStrategy.first

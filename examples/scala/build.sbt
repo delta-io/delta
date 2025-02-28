@@ -126,7 +126,12 @@ lazy val extraMavenRepo = sys.env.get("EXTRA_MAVEN_REPO").toSeq.map { repo =>
 lazy val java17Settings = Seq(
   fork := true,
   javaOptions ++= Seq(
-    "--add-exports=java.base/sun.nio.ch=ALL-UNNAMED"
+    "--add-exports=java.base/sun.nio.ch=ALL-UNNAMED",
+    // For Java 17
+    "--add-opens=java.base/java.nio=ALL-UNNAMED",
+    "--add-opens=java.base/java.lang=ALL-UNNAMED",
+    "--add-opens=java.base/java.net=ALL-UNNAMED",
+    "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED"
   )
 )
 
