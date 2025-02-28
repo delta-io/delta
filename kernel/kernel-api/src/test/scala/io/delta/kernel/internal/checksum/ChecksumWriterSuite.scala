@@ -17,6 +17,7 @@ package io.delta.kernel.internal.checksum
 
 import java.util
 import java.util.{Collections, Optional}
+
 import io.delta.kernel.data.Row
 import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
 import io.delta.kernel.internal.checksum.CRCInfo.CRC_FILE_SCHEMA
@@ -27,6 +28,7 @@ import io.delta.kernel.internal.util.VectorUtils.{buildArrayValue, stringStringM
 import io.delta.kernel.test.{BaseMockJsonHandler, MockEngineUtils}
 import io.delta.kernel.types.{StringType, StructType}
 import io.delta.kernel.utils.CloseableIterator
+
 import org.scalatest.funsuite.AnyFunSuite
 
 /**

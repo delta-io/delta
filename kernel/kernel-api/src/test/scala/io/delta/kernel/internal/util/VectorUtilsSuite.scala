@@ -16,44 +16,20 @@
 
 package io.delta.kernel.internal.util
 
+import java.lang.{Boolean => BooleanJ, Byte => ByteJ, Double => DoubleJ, Float => FloatJ, Integer => IntegerJ, Long => LongJ, Short => ShortJ}
+import java.math.BigDecimal
+import java.sql.{Date, Timestamp}
+import java.util
+
+import scala.collection.JavaConverters._
+
 import io.delta.kernel.data.{ArrayValue, ColumnVector, MapValue, Row}
 import io.delta.kernel.internal.data.GenericRow
-
-import java.sql.{Date, Timestamp}
 import io.delta.kernel.test.VectorTestUtils
-import io.delta.kernel.types.{
-  ArrayType,
-  BinaryType,
-  BooleanType,
-  ByteType,
-  DateType,
-  DecimalType,
-  DoubleType,
-  FloatType,
-  IntegerType,
-  LongType,
-  MapType,
-  ShortType,
-  StringType,
-  StructType,
-  TimestampType
-}
+import io.delta.kernel.types.{ArrayType, BinaryType, BooleanType, ByteType, DateType, DecimalType, DoubleType, FloatType, IntegerType, LongType, MapType, ShortType, StringType, StructType, TimestampType}
 
-import java.lang.{
-  Boolean => BooleanJ,
-  Byte => ByteJ,
-  Double => DoubleJ,
-  Float => FloatJ,
-  Integer => IntegerJ,
-  Long => LongJ,
-  Short => ShortJ
-}
-import scala.collection.JavaConverters._
 import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.prop.Tables.Table
-
-import java.math.BigDecimal
-import java.util
 
 class VectorUtilsSuite extends AnyFunSuite with VectorTestUtils {
 
@@ -69,89 +45,79 @@ class VectorUtilsSuite extends AnyFunSuite with VectorTestUtils {
     (List[BooleanJ](true, false, false, null), BooleanType.BOOLEAN),
     (
       List[BigDecimal](new BigDecimal("1"), new BigDecimal("2"), new BigDecimal("3"), null),
-      new DecimalType(10, 2)
-    ),
+      new DecimalType(10, 2)),
     (List[String]("one", "two", "three", null), StringType.STRING),
     (
       List[IntegerJ](10, 20, 30, null),
-      DateType.DATE
-    ),
+      DateType.DATE),
     (
       List[LongJ](
         Timestamp.valueOf("2023-01-01 00:00:00").getTime,
         Timestamp.valueOf("2023-01-02 00:00:00").getTime,
         Timestamp.valueOf("2023-01-03 00:00:00").getTime,
-        null
-      ),
-      TimestampType.TIMESTAMP
-    )
-  ).foreach(
-    testCase =>
-      test(s"handle ${testCase._2} array correctly") {
-        val values = testCase._1
-        val dataType = testCase._2
-        val columnVector = VectorUtils.buildColumnVector(values.asJava, dataType)
-        assert(columnVector.getSize == 4)
+        null),
+      TimestampType.TIMESTAMP)).foreach(testCase =>
+    test(s"handle ${testCase._2} array correctly") {
+      val values = testCase._1
+      val dataType = testCase._2
+      val columnVector = VectorUtils.buildColumnVector(values.asJava, dataType)
+      assert(columnVector.getSize == 4)
 
-        dataType match {
-          case ByteType.BYTE =>
-            assert(columnVector.getByte(0) == 1.toByte)
-            assert(columnVector.getByte(1) == 2.toByte)
-            assert(columnVector.getByte(2) == 3.toByte)
-          case ShortType.SHORT =>
-            assert(columnVector.getShort(0) == 1.toShort)
-            assert(columnVector.getShort(1) == 2.toShort)
-            assert(columnVector.getShort(2) == 3.toShort)
-          case IntegerType.INTEGER =>
-            assert(columnVector.getInt(0) == 1)
-            assert(columnVector.getInt(1) == 2)
-            assert(columnVector.getInt(2) == 3)
-          case LongType.LONG =>
-            assert(columnVector.getLong(0) == 1L)
-            assert(columnVector.getLong(1) == 2L)
-            assert(columnVector.getLong(2) == 3L)
-          case FloatType.FLOAT =>
-            assert(columnVector.getFloat(0) == 1.0f)
-            assert(columnVector.getFloat(1) == 2.0f)
-            assert(columnVector.getFloat(2) == 3.0f)
-          case DoubleType.DOUBLE =>
-            assert(columnVector.getDouble(0) == 1.0)
-            assert(columnVector.getDouble(1) == 2.0)
-            assert(columnVector.getDouble(2) == 3.0)
-          case BooleanType.BOOLEAN =>
-            assert(columnVector.getBoolean(0))
-            assert(!columnVector.getBoolean(1))
-            assert(!columnVector.getBoolean(2))
-          case _: DecimalType =>
-            assert(columnVector.getDecimal(0) == new BigDecimal("1"))
-            assert(columnVector.getDecimal(1) == new BigDecimal("2"))
-            assert(columnVector.getDecimal(2) == new BigDecimal("3"))
-          case BinaryType.BINARY =>
-            assert(columnVector.getBinary(0) sameElements "one".getBytes)
-            assert(columnVector.getBinary(1) sameElements "two".getBytes)
-            assert(columnVector.getBinary(2) sameElements "three".getBytes)
-          case StringType.STRING =>
-            assert(columnVector.getString(0) == "one")
-            assert(columnVector.getString(1) == "two")
-            assert(columnVector.getString(2) == "three")
-          case DateType.DATE =>
-            assert(columnVector.getInt(0) == 10)
-            assert(columnVector.getInt(1) == 20)
-            assert(columnVector.getInt(2) == 30)
-          case TimestampType.TIMESTAMP =>
-            assert(
-              columnVector.getLong(0) == Timestamp.valueOf("2023-01-01 00:00:00").getTime
-            )
-            assert(
-              columnVector.getLong(1) == Timestamp.valueOf("2023-01-02 00:00:00").getTime
-            )
-            assert(
-              columnVector.getLong(2) == Timestamp.valueOf("2023-01-03 00:00:00").getTime
-            )
-        }
-        assert(columnVector.isNullAt(3))
+      dataType match {
+        case ByteType.BYTE =>
+          assert(columnVector.getByte(0) == 1.toByte)
+          assert(columnVector.getByte(1) == 2.toByte)
+          assert(columnVector.getByte(2) == 3.toByte)
+        case ShortType.SHORT =>
+          assert(columnVector.getShort(0) == 1.toShort)
+          assert(columnVector.getShort(1) == 2.toShort)
+          assert(columnVector.getShort(2) == 3.toShort)
+        case IntegerType.INTEGER =>
+          assert(columnVector.getInt(0) == 1)
+          assert(columnVector.getInt(1) == 2)
+          assert(columnVector.getInt(2) == 3)
+        case LongType.LONG =>
+          assert(columnVector.getLong(0) == 1L)
+          assert(columnVector.getLong(1) == 2L)
+          assert(columnVector.getLong(2) == 3L)
+        case FloatType.FLOAT =>
+          assert(columnVector.getFloat(0) == 1.0f)
+          assert(columnVector.getFloat(1) == 2.0f)
+          assert(columnVector.getFloat(2) == 3.0f)
+        case DoubleType.DOUBLE =>
+          assert(columnVector.getDouble(0) == 1.0)
+          assert(columnVector.getDouble(1) == 2.0)
+          assert(columnVector.getDouble(2) == 3.0)
+        case BooleanType.BOOLEAN =>
+          assert(columnVector.getBoolean(0))
+          assert(!columnVector.getBoolean(1))
+          assert(!columnVector.getBoolean(2))
+        case _: DecimalType =>
+          assert(columnVector.getDecimal(0) == new BigDecimal("1"))
+          assert(columnVector.getDecimal(1) == new BigDecimal("2"))
+          assert(columnVector.getDecimal(2) == new BigDecimal("3"))
+        case BinaryType.BINARY =>
+          assert(columnVector.getBinary(0) sameElements "one".getBytes)
+          assert(columnVector.getBinary(1) sameElements "two".getBytes)
+          assert(columnVector.getBinary(2) sameElements "three".getBytes)
+        case StringType.STRING =>
+          assert(columnVector.getString(0) == "one")
+          assert(columnVector.getString(1) == "two")
+          assert(columnVector.getString(2) == "three")
+        case DateType.DATE =>
+          assert(columnVector.getInt(0) == 10)
+          assert(columnVector.getInt(1) == 20)
+          assert(columnVector.getInt(2) == 30)
+        case TimestampType.TIMESTAMP =>
+          assert(
+            columnVector.getLong(0) == Timestamp.valueOf("2023-01-01 00:00:00").getTime)
+          assert(
+            columnVector.getLong(1) == Timestamp.valueOf("2023-01-02 00:00:00").getTime)
+          assert(
+            columnVector.getLong(2) == Timestamp.valueOf("2023-01-03 00:00:00").getTime)
       }
-  )
+      assert(columnVector.isNullAt(3))
+    })
 
   test(s"handle array of struct correctly") {
     val structType =
@@ -172,33 +138,26 @@ class VectorUtilsSuite extends AnyFunSuite with VectorTestUtils {
         override def getElements: ColumnVector = VectorUtils.buildColumnVector(
           List[Row](
             row("a1", 1),
-            row("a2", 2)
-          ).asJava,
-          structType
-        )
+            row("a2", 2)).asJava,
+          structType)
       },
       new ArrayValue {
         override def getSize: Int = 2
         override def getElements: ColumnVector = VectorUtils.buildColumnVector(
           List[Row](
             row("b1", 3),
-            row("b2", 4)
-          ).asJava,
-          structType
-        )
+            row("b2", 4)).asJava,
+          structType)
       },
       new ArrayValue {
         override def getSize: Int = 2
         override def getElements: ColumnVector = VectorUtils.buildColumnVector(
           List[Row](
             row("c1", 5),
-            row("c2", 6)
-          ).asJava,
-          structType
-        )
+            row("c2", 6)).asJava,
+          structType)
       },
-      null
-    )
+      null)
 
     val columnVector = VectorUtils.buildColumnVector(values.asJava, arrayType)
 
@@ -267,10 +226,8 @@ class VectorUtilsSuite extends AnyFunSuite with VectorTestUtils {
                 VectorUtils.buildColumnVector(List("a3", "a4").asJava, StringType.STRING)
               override def getValues: ColumnVector =
                 VectorUtils.buildColumnVector(List[IntegerJ](3, 4).asJava, IntegerType.INTEGER)
-            }
-          ).asJava,
-          mapType
-        )
+            }).asJava,
+          mapType)
       },
       new ArrayValue {
         override def getSize: Int = 2
@@ -289,13 +246,10 @@ class VectorUtilsSuite extends AnyFunSuite with VectorTestUtils {
                 VectorUtils.buildColumnVector(List("b3", "b4").asJava, StringType.STRING)
               override def getValues: ColumnVector =
                 VectorUtils.buildColumnVector(List[IntegerJ](7, 8).asJava, IntegerType.INTEGER)
-            }
-          ).asJava,
-          mapType
-        )
+            }).asJava,
+          mapType)
       },
-      null
-    )
+      null)
 
     val columnVector = VectorUtils.buildColumnVector(values.asJava, arrayType)
 
@@ -358,10 +312,8 @@ class VectorUtilsSuite extends AnyFunSuite with VectorTestUtils {
               override def getSize: Int = 2
               override def getElements: ColumnVector =
                 VectorUtils.buildColumnVector(List[IntegerJ](3, 4).asJava, IntegerType.INTEGER)
-            }
-          ).asJava,
-          innerArrayType
-        )
+            }).asJava,
+          innerArrayType)
       },
       new ArrayValue {
         override def getSize: Int = 2
@@ -376,13 +328,10 @@ class VectorUtilsSuite extends AnyFunSuite with VectorTestUtils {
               override def getSize: Int = 2
               override def getElements: ColumnVector =
                 VectorUtils.buildColumnVector(List[IntegerJ](7, 8).asJava, IntegerType.INTEGER)
-            }
-          ).asJava,
-          innerArrayType
-        )
+            }).asJava,
+          innerArrayType)
       },
-      null
-    )
+      null)
 
     val columnVector = VectorUtils.buildColumnVector(values.asJava, outerArrayType)
 
