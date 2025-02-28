@@ -2126,6 +2126,12 @@ trait DeltaErrorsBase
       messageParameters = Array(oldMode, newMode))
   }
 
+  def enablingColumnMappingDisallowedWhenColumnMappingMetadataAlreadyExists(): Throwable = {
+    new DeltaColumnMappingUnsupportedException(
+      errorClass =
+        "DELTA_ENABLING_COLUMN_MAPPING_DISALLOWED_WHEN_COLUMN_MAPPING_METADATA_ALREADY_EXISTS")
+  }
+
   def generateManifestWithColumnMappingNotSupported: Throwable = {
     new DeltaColumnMappingUnsupportedException(
       errorClass = "DELTA_UNSUPPORTED_MANIFEST_GENERATION_WITH_COLUMN_MAPPING")
@@ -3130,7 +3136,14 @@ trait DeltaErrorsBase
       previousSchemaChangeVersion: Long,
       currentSchemaChangeVersion: Long,
       checkpointHash: Int,
+      readerOptionsUnblock: Seq[String],
       sqlConfsUnblock: Seq[String]): Throwable = {
+    val unblockChangeOptions = readerOptionsUnblock.map { option =>
+        s"""  .option("$option", "$currentSchemaChangeVersion")"""
+      }.mkString("\n")
+    val unblockStreamOptions = readerOptionsUnblock.map { option =>
+        s"""  .option("$option", "always")"""
+      }.mkString("\n")
     val unblockChangeConfs = sqlConfsUnblock.map { conf =>
         s"""  SET $conf.ckpt_$checkpointHash = $currentSchemaChangeVersion;"""
       }.mkString("\n")
@@ -3148,6 +3161,8 @@ trait DeltaErrorsBase
         previousSchemaChangeVersion.toString,
         currentSchemaChangeVersion.toString,
         currentSchemaChangeVersion.toString,
+        unblockChangeOptions,
+        unblockStreamOptions,
         unblockChangeConfs,
         unblockStreamConfs,
         unblockAllConfs
@@ -3159,6 +3174,7 @@ trait DeltaErrorsBase
       previousSchemaChangeVersion: Long,
       currentSchemaChangeVersion: Long,
       checkpointHash: Int,
+      readerOptionsUnblock: Seq[String],
       sqlConfsUnblock: Seq[String],
       wideningTypeChanges: Seq[TypeChange]): Throwable = {
 
@@ -3167,6 +3183,12 @@ trait DeltaErrorsBase
         s"${change.toType.sql}"
       }.mkString("\n")
 
+    val unblockChangeOptions = readerOptionsUnblock.map { option =>
+        s"""  .option("$option", "$currentSchemaChangeVersion")"""
+      }.mkString("\n")
+    val unblockStreamOptions = readerOptionsUnblock.map { option =>
+        s"""  .option("$option", "always")"""
+      }.mkString("\n")
     val unblockChangeConfs = sqlConfsUnblock.map { conf =>
         s"""  SET $conf.ckpt_$checkpointHash = $currentSchemaChangeVersion;"""
       }.mkString("\n")
@@ -3184,6 +3206,8 @@ trait DeltaErrorsBase
         currentSchemaChangeVersion.toString,
         wideningTypeChangesStr,
         currentSchemaChangeVersion.toString,
+        unblockChangeOptions,
+        unblockStreamOptions,
         unblockChangeConfs,
         unblockStreamConfs,
         unblockAllConfs

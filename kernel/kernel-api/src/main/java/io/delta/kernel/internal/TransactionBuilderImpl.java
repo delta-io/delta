@@ -25,9 +25,11 @@ import static io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionC
 import static io.delta.kernel.internal.util.VectorUtils.buildArrayValue;
 import static io.delta.kernel.internal.util.VectorUtils.stringStringMapValue;
 import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.toSet;
 
 import io.delta.kernel.*;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.DomainDoesNotExistException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.fs.Path;
@@ -36,6 +38,7 @@ import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.SnapshotHint;
+import io.delta.kernel.internal.tablefeatures.TableFeature;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
@@ -54,6 +57,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   private final TableImpl table;
   private final String engineInfo;
   private final Operation operation;
+  private final Map<String, DomainMetadata> domainMetadatasAdded = new HashMap<>();
+  private final Set<String> domainMetadatasRemoved = new HashSet<>();
   private Optional<StructType> schema = Optional.empty();
   private Optional<List<String>> partitionColumns = Optional.empty();
   private Optional<SetTransaction> setTxnOpt = Optional.empty();
@@ -112,6 +117,31 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   }
 
   @Override
+  public TransactionBuilder withDomainMetadata(String domain, String config) {
+    checkArgument(
+        DomainMetadata.isUserControlledDomain(domain),
+        "Setting a system-controlled domain is not allowed: " + domain);
+    checkArgument(
+        !domainMetadatasRemoved.contains(domain),
+        "Cannot add a domain that is removed in this transaction");
+    // we override any existing value
+    domainMetadatasAdded.put(domain, new DomainMetadata(domain, config, false /* removed */));
+    return this;
+  }
+
+  @Override
+  public TransactionBuilder withDomainMetadataRemoved(String domain) {
+    checkArgument(
+        DomainMetadata.isUserControlledDomain(domain),
+        "Removing a system-controlled domain is not allowed: " + domain);
+    checkArgument(
+        !domainMetadatasAdded.containsKey(domain),
+        "Cannot remove a domain that is added in this transaction");
+    domainMetadatasRemoved.add(domain);
+    return this;
+  }
+
+  @Override
   public Transaction build(Engine engine) {
     SnapshotImpl snapshot;
     try {
@@ -137,31 +167,28 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     boolean shouldUpdateProtocol = false;
     Metadata metadata = snapshot.getMetadata();
     Protocol protocol = snapshot.getProtocol();
-    if (tableProperties.isPresent()) {
-      Map<String, String> validatedProperties =
-          TableConfig.validateDeltaProperties(tableProperties.get());
-      Map<String, String> newProperties =
-          metadata.filterOutUnchangedProperties(validatedProperties);
+    Map<String, String> validatedProperties =
+        TableConfig.validateDeltaProperties(tableProperties.orElse(Collections.emptyMap()));
+    Map<String, String> newProperties = metadata.filterOutUnchangedProperties(validatedProperties);
 
-      ColumnMapping.verifyColumnMappingChange(
-          metadata.getConfiguration(), newProperties, isNewTable);
+    ColumnMapping.verifyColumnMappingChange(metadata.getConfiguration(), newProperties, isNewTable);
 
-      if (!newProperties.isEmpty()) {
-        shouldUpdateMetadata = true;
-        metadata = metadata.withNewConfiguration(newProperties);
-      }
+    if (!newProperties.isEmpty()) {
+      shouldUpdateMetadata = true;
+      metadata = metadata.withNewConfiguration(newProperties);
+    }
 
-      Set<String> newWriterFeatures =
-          TableFeatures.extractAutomaticallyEnabledWriterFeatures(metadata, protocol);
-      if (!newWriterFeatures.isEmpty()) {
-        logger.info("Automatically enabling writer features: {}", newWriterFeatures);
-        shouldUpdateProtocol = true;
-        List<String> oldWriterFeatures = protocol.getWriterFeatures();
-        protocol = protocol.withNewWriterFeatures(newWriterFeatures);
-        List<String> curWriterFeatures = protocol.getWriterFeatures();
-        checkArgument(!Objects.equals(oldWriterFeatures, curWriterFeatures));
-        TableFeatures.validateWriteSupportedTable(protocol, metadata, table.getPath(engine));
-      }
+    Optional<Tuple2<Protocol, Set<TableFeature>>> newProtocolAndFeatures =
+        TableFeatures.autoUpgradeProtocolBasedOnMetadata(
+            metadata, !domainMetadatasAdded.isEmpty(), protocol);
+    if (newProtocolAndFeatures.isPresent()) {
+      logger.info(
+          "Automatically enabling table features: {}",
+          newProtocolAndFeatures.get()._2.stream().map(TableFeature::featureName).collect(toSet()));
+
+      shouldUpdateProtocol = true;
+      protocol = newProtocolAndFeatures.get()._1;
+      TableFeatures.validateKernelCanWriteToTable(protocol, metadata, table.getPath(engine));
     }
 
     return new TransactionImpl(
@@ -177,14 +204,15 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         shouldUpdateMetadata,
         shouldUpdateProtocol,
         maxRetries,
-        table.getClock());
+        table.getClock(),
+        getDomainMetadatasToCommit(snapshot));
   }
 
   /** Validate the given parameters for the transaction. */
   private void validate(Engine engine, SnapshotImpl snapshot, boolean isNewTable) {
     String tablePath = table.getPath(engine);
     // Validate the table has no features that Kernel doesn't yet support writing into it.
-    TableFeatures.validateWriteSupportedTable(
+    TableFeatures.validateKernelCanWriteToTable(
         snapshot.getProtocol(), snapshot.getMetadata(), tablePath);
 
     if (!isNewTable) {
@@ -288,10 +316,47 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   }
 
   private Protocol getInitialProtocol() {
-    return new Protocol(
-        DEFAULT_READ_VERSION,
-        DEFAULT_WRITE_VERSION,
-        null /* readerFeatures */,
-        null /* writerFeatures */);
+    return new Protocol(DEFAULT_READ_VERSION, DEFAULT_WRITE_VERSION);
+  }
+
+  /**
+   * Returns a list of the domain metadatas to commit. This consists of the domain metadatas added
+   * in the transaction using {@link TransactionBuilder#withDomainMetadata(String, String)} and the
+   * tombstones for the domain metadatas removed in the transaction using {@link
+   * TransactionBuilder#withDomainMetadataRemoved(String)}.
+   */
+  private List<DomainMetadata> getDomainMetadatasToCommit(SnapshotImpl snapshot) {
+    // Add all domain metadatas added in the transaction
+    List<DomainMetadata> finalDomainMetadatas = new ArrayList<>(domainMetadatasAdded.values());
+
+    // Generate the tombstones for the removed domain metadatas
+    Map<String, DomainMetadata> snapshotDomainMetadataMap = snapshot.getDomainMetadataMap();
+    for (String domainName : domainMetadatasRemoved) {
+      // Note: we know domainName is not already in finalDomainMetadatas because we do not allow
+      // removing and adding a domain with the same identifier in a single txn!
+      if (snapshotDomainMetadataMap.containsKey(domainName)) {
+        DomainMetadata domainToRemove = snapshotDomainMetadataMap.get(domainName);
+        if (domainToRemove.isRemoved()) {
+          // If the domain is already removed we throw an error to avoid any inconsistencies or
+          // ambiguity. The snapshot read by the connector is inconsistent with the snapshot
+          // loaded here as the domain to remove no longer exists.
+          throw new DomainDoesNotExistException(
+              table.getDataPath().toString(), domainName, snapshot.getVersion());
+        }
+        finalDomainMetadatas.add(domainToRemove.removed());
+      } else {
+        // We must throw an error if the domain does not exist. Otherwise, there could be unexpected
+        // behavior within conflict resolution. For example, consider the following
+        // 1. Table has no domains set in V0
+        // 2. txnA is started and wants to remove domain "foo"
+        // 3. txnB is started and adds domain "foo" and commits V1 before txnA
+        // 4. txnA needs to perform conflict resolution against the V1 commit from txnB
+        // Conflict resolution should fail but since the domain does not exist we cannot create
+        // a tombstone to mark it as removed and correctly perform conflict resolution.
+        throw new DomainDoesNotExistException(
+            table.getDataPath().toString(), domainName, snapshot.getVersion());
+      }
+    }
+    return finalDomainMetadatas;
   }
 }

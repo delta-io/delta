@@ -284,7 +284,9 @@ class TableRedirect(val config: DeltaConfig[Option[String]]) {
     val txn = deltaLog.startTransaction(catalogTableOpt)
     val deltaMetadata = txn.snapshot.metadata
     val currentConfigOpt = getRedirectConfiguration(deltaMetadata)
-    val tableIdent = catalogTableOpt.get.identifier.quotedString
+    val tableIdent = catalogTableOpt.map(_.identifier.quotedString).getOrElse {
+      s"delta.`${deltaLog.dataPath.toString}`"
+    }
     // There should be an existing table redirect configuration.
     if (currentConfigOpt.isEmpty) {
       DeltaErrors.invalidRedirectStateTransition(tableIdent, NoRedirect, state)
@@ -332,7 +334,9 @@ class TableRedirect(val config: DeltaConfig[Option[String]]) {
     val snapshot = txn.snapshot
     getRedirectConfiguration(snapshot.metadata).foreach { currentConfig =>
       DeltaErrors.invalidRedirectStateTransition(
-        catalogTableOpt.get.identifier.quotedString,
+        catalogTableOpt.map(_.identifier.quotedString).getOrElse {
+          s"delta.`${deltaLog.dataPath.toString}`"
+        },
         currentConfig.redirectState,
         EnableRedirectInProgress
       )
@@ -353,7 +357,9 @@ class TableRedirect(val config: DeltaConfig[Option[String]]) {
   def remove(deltaLog: DeltaLog, catalogTableOpt: Option[CatalogTable]): Unit = {
     val txn = deltaLog.startTransaction(catalogTableOpt)
     val currentConfigOpt = getRedirectConfiguration(txn.snapshot.metadata)
-    val tableIdent = catalogTableOpt.get.identifier.quotedString
+    val tableIdent = catalogTableOpt.map(_.identifier.quotedString).getOrElse {
+      s"delta.`${deltaLog.dataPath.toString}`"
+    }
     if (currentConfigOpt.isEmpty) {
       DeltaErrors.invalidRemoveTableRedirect(tableIdent, NoRedirect)
     }

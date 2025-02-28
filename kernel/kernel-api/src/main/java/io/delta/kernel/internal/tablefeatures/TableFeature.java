@@ -43,6 +43,9 @@ import java.util.Set;
  * protocol but its metadata requirements are not satisfied, then clients still have to understand
  * the feature (at least to the extent that they can read and preserve the existing data in the
  * table that uses the feature).
+ *
+ * <p>Important note: uses the default implementation of `equals` and `hashCode` methods. We expect
+ * that the feature instances are singletons, so we don't need to compare the fields.
  */
 public abstract class TableFeature {
 
@@ -220,7 +223,4 @@ public abstract class TableFeature {
       checkArgument(minReaderVersion() == 0, "Writer-only feature must have minReaderVersion=0");
     }
   }
-
-  // Important note: uses the default implementation of `equals` and `hashCode` methods.
-  // We expect that the feature instances are singletons, so we don't need to compare the fields.
 }

@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.stats
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta.expressions.JoinedProjection
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
 
@@ -27,6 +28,7 @@ import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate._
 import org.apache.spark.sql.catalyst.expressions.codegen.GenerateMutableProjection
 import org.apache.spark.sql.execution.datasources._
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 import org.apache.spark.util.SerializableConfiguration
 
@@ -87,14 +89,23 @@ class DeltaTaskStatisticsTracker(
 
   // This projection combines the intermediate results stored by aggBuffer with the values of the
   // currently processed row and updates aggBuffer in place.
-  private val updateStats: MutableProjection = GenerateMutableProjection.generate(
-    expressions = JoinedProjection.bind(
-      aggBufferAttrs,
-      dataCols,
-      aggregates.flatMap(_.updateExpressions)),
-    inputSchema = Nil,
-    useSubexprElimination = true
-  )
+  private val updateStats: MutableProjection = {
+    val aggs = aggregates.flatMap(_.updateExpressions)
+    val expressions = JoinedProjection.bind(aggBufferAttrs, dataCols, aggs)
+    if (SQLConf.get.getConf(
+        DeltaSQLConf.DELTA_STATS_COLLECTION_FALLBACK_TO_INTERPRETED_PROJECTION)) {
+      MutableProjection.create(
+        exprs = expressions,
+        inputSchema = Nil
+      )
+    } else {
+      GenerateMutableProjection.generate(
+        expressions = expressions,
+        inputSchema = Nil,
+        useSubexprElimination = true
+      )
+    }
+  }
 
   // This executes the whole statsColExpr in order to compute the final stats value for the file.
   // In order to evaluate it, we have to replace its aggregate functions with the corresponding

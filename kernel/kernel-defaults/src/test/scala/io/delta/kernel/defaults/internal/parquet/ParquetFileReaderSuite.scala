@@ -22,12 +22,13 @@ import io.delta.golden.GoldenTableUtils.{goldenTableFile, goldenTablePath}
 import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestRow}
 import io.delta.kernel.test.VectorTestUtils
 import io.delta.kernel.types._
+
+import org.apache.parquet.io.ParquetDecodingException
 import org.apache.spark.sql.internal.SQLConf
 import org.scalatest.funsuite.AnyFunSuite
-import org.apache.parquet.io.ParquetDecodingException
 
 class ParquetFileReaderSuite extends AnyFunSuite
-  with ParquetSuiteBase with VectorTestUtils with ExpressionTestUtils {
+    with ParquetSuiteBase with VectorTestUtils with ExpressionTestUtils {
 
   test("decimals encoded using dictionary encoding ") {
     // Below golden tables contains three decimal columns
@@ -36,7 +37,7 @@ class ParquetFileReaderSuite extends AnyFunSuite
     val decimalDictFileV2 = goldenTableFile("parquet-decimal-dictionaries-v2").getAbsolutePath
 
     val expResult = (0 until 1000000).map { i =>
-      TestRow(i, BigDecimal.valueOf(i%5), BigDecimal.valueOf(i%6), BigDecimal.valueOf(i%2))
+      TestRow(i, BigDecimal.valueOf(i % 5), BigDecimal.valueOf(i % 6), BigDecimal.valueOf(i % 2))
     }
 
     val readSchema = tableSchema(decimalDictFileV1)
@@ -61,13 +62,12 @@ class ParquetFileReaderSuite extends AnyFunSuite
         TestRow(i, n.movePointLeft(1).setScale(1), n.setScale(5), n.setScale(5))
       } else {
         val negation = if (i % 33 == 0) -1 else 1
-        val n = BigDecimal.valueOf(i*negation)
+        val n = BigDecimal.valueOf(i * negation)
         TestRow(
           i,
           n.movePointLeft(1),
           expand(n).movePointLeft(5),
-          expand(expand(expand(n))).movePointLeft(5)
-        )
+          expand(expand(expand(n))).movePointLeft(5))
       }
     }
 
@@ -79,16 +79,15 @@ class ParquetFileReaderSuite extends AnyFunSuite
   }
 
   Seq(
-      "parquet-all-types",
-      "parquet-all-types-legacy-format"
-  ).foreach { allTypesTableName =>
+    "parquet-all-types",
+    "parquet-all-types-legacy-format").foreach { allTypesTableName =>
     test(s"read all types of data - $allTypesTableName") {
       val allTypesFile = goldenTableFile(allTypesTableName).getAbsolutePath
       val readSchema = tableSchema(allTypesFile)
 
       checkAnswer(
         readParquetFilesUsingKernel(allTypesFile, readSchema), /* actual */
-        readParquetFilesUsingSpark(allTypesFile, readSchema) /* expected */)
+        readParquetFilesUsingSpark(allTypesFile, readSchema) /* expected */ )
     }
   }
 
@@ -115,27 +114,41 @@ class ParquetFileReaderSuite extends AnyFunSuite
     TestCase("ShortType", DoubleType.DOUBLE, i => if (i % 56 != 0) i.toDouble else null),
     TestCase("IntegerType", LongType.LONG, i => if (i % 23 != 0) i.toLong else null),
     TestCase("IntegerType", DoubleType.DOUBLE, i => if (i % 23 != 0) i.toDouble else null),
-
-    TestCase("FloatType", DoubleType.DOUBLE,
+    TestCase(
+      "FloatType",
+      DoubleType.DOUBLE,
       i => if (i % 28 != 0) (i * 0.234).toFloat.toDouble else null),
-    TestCase("decimal", new DecimalType(12, 2),
+    TestCase(
+      "decimal",
+      new DecimalType(12, 2),
       i => if (i % 67 != 0) java.math.BigDecimal.valueOf(i * 12352, 2) else null),
-    TestCase("decimal", new DecimalType(12, 4),
+    TestCase(
+      "decimal",
+      new DecimalType(12, 4),
       i => if (i % 67 != 0) java.math.BigDecimal.valueOf(i * 1235200, 4) else null),
-    TestCase("decimal", new DecimalType(26, 10),
-      i => if (i % 67 != 0) java.math.BigDecimal.valueOf(i * 12352, 2).setScale(10)
-      else null),
-    TestCase("IntegerType", new DecimalType(10, 0),
+    TestCase(
+      "decimal",
+      new DecimalType(26, 10),
+      i =>
+        if (i % 67 != 0) java.math.BigDecimal.valueOf(i * 12352, 2).setScale(10)
+        else null),
+    TestCase(
+      "IntegerType",
+      new DecimalType(10, 0),
       i => if (i % 23 != 0) new java.math.BigDecimal(i) else null),
-    TestCase("IntegerType", new DecimalType(16, 4),
+    TestCase(
+      "IntegerType",
+      new DecimalType(16, 4),
       i => if (i % 23 != 0) new java.math.BigDecimal(i).setScale(4) else null),
-    TestCase("LongType", new DecimalType(20, 0),
+    TestCase(
+      "LongType",
+      new DecimalType(20, 0),
       i => if (i % 25 != 0) new java.math.BigDecimal(i + 1) else null),
-    TestCase("LongType", new DecimalType(28, 6),
+    TestCase(
+      "LongType",
+      new DecimalType(28, 6),
       i => if (i % 25 != 0) new java.math.BigDecimal(i + 1).setScale(6) else null),
-
-    TestCase("BinaryType", StringType.STRING, i => if (i % 59 != 0) i.toString else null)
-  )
+    TestCase("BinaryType", StringType.STRING, i => if (i % 59 != 0) i.toString else null))
 
   // The following conversions are supported by Kernel but not by Spark with parquet-mr.
   // TODO: We should properly reject these conversions, a lot of them produce wrong results.
@@ -153,27 +166,26 @@ class ParquetFileReaderSuite extends AnyFunSuite
     TestCase("ByteType", DateType.DATE, i => if (i % 72 != 0) i.toByte.toInt else null),
     TestCase("ShortType", DateType.DATE, i => if (i % 56 != 0) i else null),
     TestCase("IntegerType", DateType.DATE, i => if (i % 23 != 0) i else null),
-    TestCase("StringType", BinaryType.BINARY, i => if (i % 57 != 0) i.toString.getBytes else null)
-  )
+    TestCase("StringType", BinaryType.BINARY, i => if (i % 57 != 0) i.toString.getBytes else null))
 
   for (testCase <- supportedConversions ++ kernelOnlyConversions)
-  test(s"parquet supported conversion - ${testCase.columnName} -> ${testCase.toType.toString}") {
-    val inputLocation = goldenTablePath("parquet-all-types")
-    val readSchema = new StructType().add(testCase.columnName, testCase.toType)
-    val result = readParquetFilesUsingKernel(inputLocation, readSchema)
-    val expected = (0 until 200)
-      .map { i => TestRow(testCase.expectedExpr(i))}
-    checkAnswer(result, expected)
+    test(s"parquet supported conversion - ${testCase.columnName} -> ${testCase.toType.toString}") {
+      val inputLocation = goldenTablePath("parquet-all-types")
+      val readSchema = new StructType().add(testCase.columnName, testCase.toType)
+      val result = readParquetFilesUsingKernel(inputLocation, readSchema)
+      val expected = (0 until 200)
+        .map { i => TestRow(testCase.expectedExpr(i)) }
+      checkAnswer(result, expected)
 
-    if (!kernelOnlyConversions.contains(testCase)) {
-      withSQLConf(SQLConf.PARQUET_VECTORIZED_READER_ENABLED.key -> "false") {
-        val sparkResult = readParquetFilesUsingSpark(inputLocation, readSchema)
-        checkAnswer(result, sparkResult)
+      if (!kernelOnlyConversions.contains(testCase)) {
+        withSQLConf(SQLConf.PARQUET_VECTORIZED_READER_ENABLED.key -> "false") {
+          val sparkResult = readParquetFilesUsingSpark(inputLocation, readSchema)
+          checkAnswer(result, sparkResult)
+        }
       }
     }
-  }
 
-  test (s"parquet supported conversion - date -> timestamp_ntz") {
+  test(s"parquet supported conversion - date -> timestamp_ntz") {
     val timezones =
       Seq("UTC", "Iceland", "PST", "America/Los_Angeles", "Etc/GMT+9", "Asia/Beirut", "JST")
     for (fromTimezone <- timezones; toTimezone <- timezones) {
@@ -196,15 +208,24 @@ class ParquetFileReaderSuite extends AnyFunSuite
     // TODO: Uniformize rejecting unsupported conversions.
     assert(
       ex.getMessage.contains("Can not read value") ||
-      ex.getMessage.contains("column with Parquet type") ||
-      ex.getMessage.contains("Unable to create Parquet converter for") ||
-      ex.getMessage.contains("Found Delta type Decimal") ||
-      ex.getMessage.contains("cannot be cast to")
-    )
+        ex.getMessage.contains("column with Parquet type") ||
+        ex.getMessage.contains("Unable to create Parquet converter for") ||
+        ex.getMessage.contains("Found Delta type Decimal") ||
+        ex.getMessage.contains("cannot be cast to"))
   }
 
-  for(column <- Seq("BooleanType", "ByteType", "ShortType", "IntegerType", "LongType",
-    "FloatType", "DoubleType", "StringType", "BinaryType")) {
+  for (
+    column <- Seq(
+      "BooleanType",
+      "ByteType",
+      "ShortType",
+      "IntegerType",
+      "LongType",
+      "FloatType",
+      "DoubleType",
+      "StringType",
+      "BinaryType")
+  ) {
     test(s"parquet unsupported conversion from $column") {
       val inputLocation = goldenTablePath("parquet-all-types")
       val supportedTypes = (supportedConversions ++ kernelOnlyConversions)
@@ -241,14 +262,16 @@ class ParquetFileReaderSuite extends AnyFunSuite
       .add("booleanType", BooleanType.BOOLEAN)
       .add("stringType", StringType.STRING)
       .add("dateType", DateType.DATE)
-      .add("nested_struct", new StructType()
-        .add("aa", StringType.STRING)
-        .add("ac", new StructType().add("aca", IntegerType.INTEGER)))
+      .add(
+        "nested_struct",
+        new StructType()
+          .add("aa", StringType.STRING)
+          .add("ac", new StructType().add("aca", IntegerType.INTEGER)))
       .add("array_of_prims", new ArrayType(IntegerType.INTEGER, true))
 
     checkAnswer(
       readParquetFilesUsingKernel(tablePath, readSchema), /* actual */
-      readParquetFilesUsingSpark(tablePath, readSchema) /* expected */)
+      readParquetFilesUsingSpark(tablePath, readSchema) /* expected */ )
   }
 
   test("read subset of columns with missing columns in file") {
@@ -259,13 +282,15 @@ class ParquetFileReaderSuite extends AnyFunSuite
       .add("missing_column_struct", new StructType().add("ab", IntegerType.INTEGER))
       .add("longType", LongType.LONG)
       .add("missing_column_primitive", DateType.DATE)
-      .add("nested_struct", new StructType()
-        .add("aa", StringType.STRING)
-        .add("ac", new StructType().add("aca", IntegerType.INTEGER)))
+      .add(
+        "nested_struct",
+        new StructType()
+          .add("aa", StringType.STRING)
+          .add("ac", new StructType().add("aca", IntegerType.INTEGER)))
 
     checkAnswer(
       readParquetFilesUsingKernel(tablePath, readSchema), /* actual */
-      readParquetFilesUsingSpark(tablePath, readSchema) /* expected */)
+      readParquetFilesUsingSpark(tablePath, readSchema) /* expected */ )
   }
 
   test("read columns with int96 timestamp_ntz") {
@@ -277,8 +302,7 @@ class ParquetFileReaderSuite extends AnyFunSuite
       .add("time", TimestampNTZType.TIMESTAMP_NTZ)
     checkAnswer(
       readParquetFilesUsingKernel(filePath, readSchema), /* actual */
-      Seq(TestRow(1, 915181200000000L) /* expected */)
-    )
+      Seq(TestRow(1, 915181200000000L) /* expected */ ))
   }
 
   test("request row indices") {
@@ -338,22 +362,23 @@ class ParquetFileReaderSuite extends AnyFunSuite
       // TODO: not working - separate PR to handle 2-level legacy lists
       // .add("stringsColumn", new ArrayType(StringType.STRING, true /* containsNull */))
       // .add("intSetColumn", new ArrayType(IntegerType.INTEGER, true /* containsNull */))
-      .add("intToStringColumn",
-        new MapType(IntegerType.INTEGER, StringType.STRING, true /* valueContainsNull */))
-      // TODO: not working - separate PR to handle 2-level legacy lists
-      // .add("complexColumn", new MapType(
-      //  IntegerType.INTEGER,
-      //  new ArrayType(
-      //    new StructType()
-      //      .add("nestedIntsColumn", new ArrayType(IntegerType.INTEGER, true /* containsNull */))
-      //      .add("nestedStringColumn", StringType.STRING)
-      //      .add("stringColumn", StringType.STRING),
-      //    true /* containsNull */),
-      //  true /* valueContainsNull */))
+      .add(
+        "intToStringColumn",
+        new MapType(IntegerType.INTEGER, StringType.STRING, true /* valueContainsNull */ ))
+    // TODO: not working - separate PR to handle 2-level legacy lists
+    // .add("complexColumn", new MapType(
+    //  IntegerType.INTEGER,
+    //  new ArrayType(
+    //    new StructType()
+    //      .add("nestedIntsColumn", new ArrayType(IntegerType.INTEGER, true /* containsNull */))
+    //      .add("nestedStringColumn", StringType.STRING)
+    //      .add("stringColumn", StringType.STRING),
+    //    true /* containsNull */),
+    //  true /* valueContainsNull */))
 
     assert(parquetFileRowCount(parquetFilePath) === 10)
     checkAnswer(
       readParquetFilesUsingKernel(parquetFilePath, readSchema), /* actual */
-      readParquetFilesUsingSpark(parquetFilePath, readSchema) /* expected */)
+      readParquetFilesUsingSpark(parquetFilePath, readSchema) /* expected */ )
   }
 }

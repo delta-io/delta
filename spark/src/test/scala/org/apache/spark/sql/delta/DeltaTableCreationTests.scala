@@ -40,6 +40,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.NoSuchTableException
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, ExternalCatalogUtils, SessionCatalog}
 import org.apache.spark.sql.catalyst.parser.ParseException
+import org.apache.spark.sql.catalyst.util.ResolveDefaultColumnsUtils
 import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Identifier, Table, TableCatalog}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
@@ -2406,6 +2407,117 @@ class DeltaTableCreationSuite
         sql(s"INSERT INTO $tbl VALUES ('21')")
         val data = sql(s"SELECT * FROM $tbl").collect()
         assert(data.length == 1)
+      }
+    }
+  }
+
+  private def schemaContainsExistsDefaultKey(testTableName: String): Boolean = {
+    val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(testTableName))
+    snapshot.metadata.schema.fields.exists(
+      _.metadata.contains(ResolveDefaultColumnsUtils.EXISTS_DEFAULT_COLUMN_METADATA_KEY))
+  }
+
+  test("Default column values: A table metadata update removes EXISTS_DEFAULT from a table") {
+    val testTableName = "test_table"
+    val metadataOperations = Seq(
+      s"ALTER TABLE $testTableName ALTER COLUMN int_col SET DEFAULT 2",
+      s"ALTER TABLE $testTableName CLUSTER BY (int_col)",
+      s"COMMENT ON TABLE $testTableName IS 'test comment'"
+    )
+
+    metadataOperations.foreach { metadataUpdatingQuery =>
+      withTable(testTableName) {
+        // Create the table and ensure that EXISTS_DEFAULT is part of the schema.
+        withSQLConf(DeltaSQLConf
+            .REMOVE_EXISTS_DEFAULT_FROM_SCHEMA_ON_EVERY_METADATA_CHANGE.key -> "false") {
+          sql(s"""CREATE TABLE $testTableName(int_col INT DEFAULT 2)
+                 |USING delta
+                 |TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'supported')""".stripMargin)
+          assert(schemaContainsExistsDefaultKey(testTableName))
+        }
+
+        // Execute the metadata operation and assert that it removed EXISTS_DEFAULT from the schema.
+        withSQLConf(DeltaSQLConf
+            .REMOVE_EXISTS_DEFAULT_FROM_SCHEMA_ON_EVERY_METADATA_CHANGE.key -> "true") {
+          sql(metadataUpdatingQuery)
+          assert(!schemaContainsExistsDefaultKey(testTableName),
+            s"Operation '$metadataUpdatingQuery' did not remove EXISTS_DEFAULT from the schema.")
+        }
+      }
+    }
+  }
+
+  test("Default column values: Writes to a table do not remove EXISTS_DEFAULT from a table") {
+    val testTableName = "test_table"
+    withTable(testTableName) {
+      // Add an EXISTS_DEFAULT entry to the schema by disabling the feature flag.
+      withSQLConf(DeltaSQLConf
+          .REMOVE_EXISTS_DEFAULT_FROM_SCHEMA_ON_EVERY_METADATA_CHANGE.key -> "false") {
+        sql(s"""CREATE TABLE $testTableName(int_col INT DEFAULT 2)
+               |USING delta
+               |TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'supported')""".stripMargin)
+        assert(schemaContainsExistsDefaultKey(testTableName))
+
+        withSQLConf(DeltaSQLConf
+            .REMOVE_EXISTS_DEFAULT_FROM_SCHEMA_ON_EVERY_METADATA_CHANGE.key -> "true") {
+          sql(s"INSERT INTO $testTableName VALUES (1)")
+          // Validate that EXISTS_DEFAULT is still part of the schema.
+          assert(schemaContainsExistsDefaultKey(testTableName))
+        }
+      }
+    }
+  }
+
+  test("Default column values: CREATE TABLE selecting from a table with dropped column defaults") {
+    for (sourceTableSchemaContainsKey <- Seq(true, false)) {
+      withTable("test_table", "test_table_2", "test_table_3") {
+          // To test with the 'EXISTS_DEFAULT' key present in the source table, we disable removal.
+          withSQLConf(DeltaSQLConf.REMOVE_EXISTS_DEFAULT_FROM_SCHEMA_ON_EVERY_METADATA_CHANGE.key
+            -> (!sourceTableSchemaContainsKey).toString) {
+            // Defaults are only possible for top level columns.
+            sql("""CREATE TABLE test_table(int_col INT DEFAULT 2)
+                  |USING delta
+                  |TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'supported')""".stripMargin)
+          }
+
+          def schemaContainsExistsKey(tableName: String): Boolean = {
+            val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(tableName))
+            snapshot.schema.fields.exists { field =>
+              field.metadata.contains(ResolveDefaultColumnsUtils.EXISTS_DEFAULT_COLUMN_METADATA_KEY)
+            }
+          }
+
+          def defaultsTableFeatureEnabled(tableName: String): Boolean = {
+            val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(tableName))
+            val isEnabled =
+              snapshot.protocol.writerFeatureNames.contains(AllowColumnDefaultsTableFeature.name)
+            val schemaContainsCurrentDefaultKey = snapshot.schema.fields.exists { field =>
+              field.metadata.contains(
+                ResolveDefaultColumnsUtils.CURRENT_DEFAULT_COLUMN_METADATA_KEY)
+            }
+            assert(schemaContainsCurrentDefaultKey === isEnabled)
+            isEnabled
+          }
+
+          assert(schemaContainsExistsKey("test_table") == sourceTableSchemaContainsKey)
+          assert(defaultsTableFeatureEnabled("test_table"))
+
+          // It is not possible to add a column with a default to a Delta table.
+          assertThrows[DeltaAnalysisException] {
+            sql("ALTER TABLE test_table ADD COLUMN new_column_with_a_default INT DEFAULT 0")
+          }
+
+          // @TODO: It is currently not possible to CTAS from a table with an active column default
+          //        without explicitly enabling the table feature.
+          assertThrows[AnalysisException] {
+            sql("CREATE TABLE test_table_2 USING DELTA AS SELECT * FROM test_table")
+          }
+
+          sql("ALTER TABLE test_table ALTER COLUMN int_col DROP DEFAULT")
+          sql("CREATE TABLE test_table_3 USING DELTA AS SELECT * FROM test_table")
+
+          assert(schemaContainsExistsKey("test_table_3") === false)
+          assert(!defaultsTableFeatureEnabled("test_table_3"))
       }
     }
   }

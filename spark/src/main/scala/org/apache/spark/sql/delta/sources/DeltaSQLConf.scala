@@ -618,6 +618,18 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val REMOVE_EXISTS_DEFAULT_FROM_SCHEMA_ON_EVERY_METADATA_CHANGE =
+    buildConf("allowColumnDefaults.removeExistsDefaultFromSchemaOnMetadataChange")
+      .internal()
+      .doc("When enabled, remove all field metadata entries using the 'EXISTS_DEFAULT' key " +
+        "from the schema whenever the table metadata is updated. 'EXISTS_DEFAULT' holds values " +
+        "that are used in Spark for existing rows when a new column with a default value is " +
+        "added to a table. Since we do not support adding columns with a default value in " +
+        "Delta, this configuration should always be removed, also when it was written by an " +
+        "older version that still put it into the schema.")
+      .booleanConf
+      .createWithDefault(true)
+
   //////////////////////////////////////////////
   // DynamoDB Commit Coordinator-specific configs
   /////////////////////////////////////////////
@@ -1953,6 +1965,18 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_COLUMN_MAPPING_DISALLOW_ENABLING_WHEN_METADATA_ALREADY_EXISTS =
+    buildConf("columnMapping.disallowEnablingWhenColumnMappingMetadataAlreadyExists")
+      .doc(
+        """
+          |If Delta table already has column mapping metadata before the feature is enabled, it is
+          |as a result of a corruption or a bug. Enabling column mapping in such a case can lead to
+          |further corruption of the table and should be disallowed.
+          |""".stripMargin)
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
+
   val DYNAMIC_PARTITION_OVERWRITE_ENABLED =
     buildConf("dynamicPartitionOverwrite.enabled")
       .doc("Whether to overwrite partitions dynamically when 'partitionOverwriteMode' is set to " +
@@ -2260,6 +2284,16 @@ trait DeltaSQLConfBase {
       .intConf
       .checkValue(v => v >= 1, "Must be at least 1.")
       .createWithDefault(100)
+
+  val DELTA_STATS_COLLECTION_FALLBACK_TO_INTERPRETED_PROJECTION =
+    buildConf("collectStats.fallbackToInterpretedProjection")
+      .internal()
+      .doc("When enabled, the updateStats expression will use the standard code path" +
+        " that falls back to an interpreted expression if codegen fails. This should" +
+        " always be true. The config only exists to force the old behavior, which was" +
+        " to always use codegen.")
+      .booleanConf
+      .createWithDefault(true)
 
   val DELTA_CONVERT_ICEBERG_STATS = buildConf("collectStats.convertIceberg")
     .internal()

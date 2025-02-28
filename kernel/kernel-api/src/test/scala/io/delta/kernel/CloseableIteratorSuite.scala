@@ -21,6 +21,7 @@ import scala.collection.JavaConverters._
 import io.delta.kernel.internal.util.Utils
 import io.delta.kernel.utils.CloseableIterator
 import io.delta.kernel.utils.CloseableIterator.BreakableFilterResult
+
 import org.scalatest.funsuite.AnyFunSuite
 
 class CloseableIteratorSuite extends AnyFunSuite {

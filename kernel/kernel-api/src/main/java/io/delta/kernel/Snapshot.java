@@ -20,6 +20,7 @@ import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.types.StructType;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Represents the snapshot of a Delta table.
@@ -60,6 +61,14 @@ public interface Snapshot {
    * @return Schema of the Delta table at this snapshot.
    */
   StructType getSchema();
+
+  /**
+   * Returns the configuration for the provided {@code domain} if it exists in the snapshot. Returns
+   * empty if the {@code domain} is not present in the snapshot.
+   *
+   * @return the configuration for the provided domain if it exists
+   */
+  Optional<String> getDomainMetadata(String domain);
 
   /**
    * Create a scan builder to construct a {@link Scan} to read data from this snapshot.

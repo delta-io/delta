@@ -28,6 +28,8 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.checkpoints.SidecarFile;
+import io.delta.kernel.internal.checksum.CRCInfo;
+import io.delta.kernel.internal.checksum.ChecksumReader;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.metrics.ScanMetrics;
@@ -286,7 +288,7 @@ public class LogReplay {
 
               if (protocol != null) {
                 // Stop since we have found the latest Protocol and Metadata.
-                TableFeatures.validateReadSupportedTable(protocol, dataPath.toString());
+                TableFeatures.validateKernelCanReadTheTable(protocol, dataPath.toString());
                 return new Tuple2<>(protocol, metadata);
               }
 
