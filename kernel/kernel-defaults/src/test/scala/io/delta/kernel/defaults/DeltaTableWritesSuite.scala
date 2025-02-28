@@ -1321,6 +1321,369 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
+  test("Test set schema on existing table") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val schema = new StructType()
+        .add("a", StringType.STRING, true)
+        .add("c", IntegerType.INTEGER, true)
+
+      createTxn(engine, tablePath, isNewTable = true, schema, partCols = Seq.empty,
+        tableProperties = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
+          TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true")).commit(engine, emptyIterable())
+
+      val currentSchema = table.getLatestSnapshot(engine).getSchema()
+      val newSchema = new StructType()
+        .add("a", StringType.STRING, true, currentSchema.get("a").getMetadata)
+        .add("b",
+          new StructType()
+            .add("d", IntegerType.INTEGER, true,
+              FieldMetadata.builder().putLong(ColumnMapping.COLUMN_MAPPING_ID_KEY, 4)
+                .putString(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, "d").build())
+            .add("e", IntegerType.INTEGER, true,
+              FieldMetadata.builder().putLong(ColumnMapping.COLUMN_MAPPING_ID_KEY, 5)
+                .putString(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, "e").build()), true,
+          FieldMetadata.builder().putLong(ColumnMapping.COLUMN_MAPPING_ID_KEY, 3)
+            .putString(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, "b").build())
+        .add("c", IntegerType.INTEGER, true, currentSchema.get("c").getMetadata)
+
+      table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
+        .withSchema(engine, newSchema)
+        .build(engine).commit(engine, emptyIterable())
+
+      val structType = table.getLatestSnapshot(engine).getSchema
+      assertColumnMapping(structType.get("a"), 1)
+
+      val innerStruct = structType.get("b").getDataType.asInstanceOf[StructType]
+      assertColumnMapping(innerStruct.get("d"), 4, "d")
+      assertColumnMapping(innerStruct.get("e"), 5, "e")
+      assertColumnMapping(structType.get("c"), 2)
+    }
+  }
+
+  test("Test cannot update schema on table when column mapping disabled") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val schema = new StructType()
+        .add("a", StringType.STRING, true)
+        .add("c", IntegerType.INTEGER, true)
+
+      createTxn(engine, tablePath, isNewTable = true, schema, partCols = Seq.empty,
+        tableProperties = Map(
+          TableConfig.COLUMN_MAPPING_MODE.getKey -> "none")).commit(engine, emptyIterable())
+
+      val currentSchema = table.getLatestSnapshot(engine).getSchema
+      val newSchema = new StructType()
+        .add("a", StringType.STRING, true, currentSchema.get("a").getMetadata)
+        .add("b",
+          new StructType()
+            .add("d", IntegerType.INTEGER, true,
+              FieldMetadata.builder().putLong(ColumnMapping.COLUMN_MAPPING_ID_KEY, 4)
+                .putString(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, "d").build()),
+          true,
+          FieldMetadata.builder().putLong(ColumnMapping.COLUMN_MAPPING_ID_KEY, 3)
+            .putString(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, "b").build())
+        .add("c", IntegerType.INTEGER, true, currentSchema.get("c").getMetadata)
+
+      val e = intercept[IllegalArgumentException] {
+        table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
+          .withSchema(engine, newSchema)
+          .build(engine).commit(engine, emptyIterable())
+      }
+
+      assert(e.getMessage.contains(
+        "Cannot update schema for table when column mapping is disabled"))
+    }
+  }
+
+  test("Test cannot update schema with duplicate field IDs") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val schema = new StructType()
+        .add("a", StringType.STRING, true)
+        .add("c", IntegerType.INTEGER, true)
+
+      createTxn(engine, tablePath, isNewTable = true, schema, partCols = Seq.empty,
+        tableProperties = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
+          TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true")).commit(engine, emptyIterable())
+
+      val currentSchema = table.getLatestSnapshot(engine).getSchema
+      val newSchema = new StructType()
+        .add("a", StringType.STRING, true, currentSchema.get("a").getMetadata)
+        .add("b",
+          new StructType()
+            .add("duplicate_field_id", IntegerType.INTEGER, true,
+              FieldMetadata.builder().putLong(ColumnMapping.COLUMN_MAPPING_ID_KEY, 1)
+                .putString(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, "d").build())
+            .add("e", IntegerType.INTEGER, true,
+              FieldMetadata.builder().putLong(ColumnMapping.COLUMN_MAPPING_ID_KEY, 5)
+                .putString(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, "e").build()), true,
+          FieldMetadata.builder().putLong(ColumnMapping.COLUMN_MAPPING_ID_KEY, 3)
+            .putString(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, "b").build())
+        .add("c", IntegerType.INTEGER, true, currentSchema.get("c").getMetadata)
+
+      val e = intercept[IllegalArgumentException] {
+        table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
+          .withSchema(engine, newSchema)
+          .build(engine).commit(engine, emptyIterable())
+      }
+      assert(e.getMessage.contains(
+        "Field duplicate_field_id with id 1 already exists"))
+    }
+  }
+
+  test("Test cannot add non-nullable field") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val schema = new StructType()
+        .add("a", StringType.STRING, true)
+        .add("c", IntegerType.INTEGER, true)
+
+      createTxn(engine, tablePath, isNewTable = true, schema, partCols = Seq.empty,
+        tableProperties = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
+          TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true")).commit(engine, emptyIterable())
+
+      val currentSchema = table.getLatestSnapshot(engine).getSchema
+      val newSchema = new StructType()
+        .add("a", StringType.STRING, true, currentSchema.get("a").getMetadata)
+        .add("b",
+          new StructType()
+            .add("non_nullable_field", IntegerType.INTEGER, false,
+              FieldMetadata.builder().putLong(ColumnMapping.COLUMN_MAPPING_ID_KEY, 4)
+                .putString(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, "d").build())
+            .add("e", IntegerType.INTEGER, true,
+              FieldMetadata.builder().putLong(ColumnMapping.COLUMN_MAPPING_ID_KEY, 5)
+                .putString(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, "e").build()), true,
+          FieldMetadata.builder().putLong(ColumnMapping.COLUMN_MAPPING_ID_KEY, 3)
+            .putString(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, "b").build())
+        .add("c", IntegerType.INTEGER, true, currentSchema.get("c").getMetadata)
+
+      val e = intercept[IllegalArgumentException] {
+        table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
+          .withSchema(engine, newSchema)
+          .build(engine).commit(engine, emptyIterable())
+      }
+      assert(e.getMessage.contains(
+        "Cannot add a non-nullable field non_nullable_field"))
+    }
+  }
+
+  test("Test cannot drop a partition column") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val schema = new StructType()
+        .add("a", StringType.STRING, true)
+        .add("c", IntegerType.INTEGER, true)
+
+      createTxn(engine, tablePath, isNewTable = true, schema, partCols = Seq("c"),
+        tableProperties = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
+          TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true")).commit(engine, emptyIterable())
+
+      val currentSchema = table.getLatestSnapshot(engine).getSchema
+      val newSchema = new StructType()
+        .add("a", StringType.STRING, true, currentSchema.get("a").getMetadata)
+        .add("b",
+          new StructType()
+            .add("d", IntegerType.INTEGER, true,
+              FieldMetadata.builder().putLong(ColumnMapping.COLUMN_MAPPING_ID_KEY, 4)
+                .putString(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, "d").build())
+            .add("e", IntegerType.INTEGER, true,
+              FieldMetadata.builder().putLong(ColumnMapping.COLUMN_MAPPING_ID_KEY, 5)
+                .putString(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, "e").build()), true,
+          FieldMetadata.builder().putLong(ColumnMapping.COLUMN_MAPPING_ID_KEY, 3)
+            .putString(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, "b").build())
+
+      val e = intercept[IllegalArgumentException] {
+        table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
+          .withSchema(engine, newSchema)
+          .build(engine).commit(engine, emptyIterable())
+      }
+      assert(e.getMessage.contains(
+        "Partition column c not found in the schema"))
+    }
+  }
+
+  test("Test cannot promote types via withSchema") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val schema = new StructType()
+        .add("a", StringType.STRING, true)
+        .add("c", IntegerType.INTEGER, true)
+
+      createTxn(engine, tablePath, isNewTable = true, schema, partCols = Seq.empty,
+        tableProperties = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
+          TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true")).commit(engine, emptyIterable())
+
+      val currentSchema = table.getLatestSnapshot(engine).getSchema
+      val newSchema = new StructType()
+        .add("a", StringType.STRING, true, currentSchema.get("a").getMetadata)
+        .add("c", LongType.LONG, true, currentSchema.get("c").getMetadata)
+
+      val e = intercept[IllegalArgumentException] {
+        table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
+          .withSchema(engine, newSchema)
+          .build(engine).commit(engine, emptyIterable())
+      }
+      assert(e.getMessage.contains(
+        "Cannot change existing field c from integer to long"))
+    }
+  }
+
+  test("Test fail updating schema if physical columns are not preserved") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val schema = new StructType()
+        .add("a", StringType.STRING, true)
+        .add("c", IntegerType.INTEGER, true)
+
+      createTxn(engine, tablePath, isNewTable = true, schema, partCols = Seq.empty,
+        tableProperties = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
+          TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true")).commit(engine, emptyIterable())
+
+      val currentSchema = table.getLatestSnapshot(engine).getSchema
+      val newSchema = new StructType()
+        .add("a", StringType.STRING, true,
+          FieldMetadata.builder().putLong(ColumnMapping.COLUMN_MAPPING_ID_KEY, 1)
+          .putString(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
+            "not_preserving_physical_column").build())
+        .add("c", LongType.LONG, true, currentSchema.get("c").getMetadata)
+
+      val e = intercept[IllegalArgumentException] {
+        table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
+          .withSchema(engine, newSchema)
+          .build(engine).commit(engine, emptyIterable())
+      }
+      assert(e.getMessage.contains(
+        "Existing field with id 1 in current schema has physical name"))
+    }
+  }
+
+  test("Test fail updating schema if map columns are missing nested ids for key") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val schema = new StructType()
+        .add("a", IntegerType.INTEGER, true)
+
+      createTxn(engine, tablePath, isNewTable = true, schema, partCols = Seq.empty,
+        tableProperties = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
+          TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true")).commit(engine, emptyIterable())
+
+      val currentSchema = table.getLatestSnapshot(engine).getSchema
+      val newSchema = new StructType()
+        .add("a", StringType.STRING, true, currentSchema.get("a").getMetadata)
+        .add("c", new MapType(
+          StringType.STRING, StringType.STRING, false), true,
+          FieldMetadata.builder().putLong(ColumnMapping.COLUMN_MAPPING_ID_KEY, 2)
+          .putString(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, "c").build())
+
+      val e = intercept[IllegalArgumentException] {
+        table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
+          .withSchema(engine, newSchema)
+          .build(engine).commit(engine, emptyIterable())
+      }
+
+      assert(e.getMessage.contains(
+        "Map field c must have exactly 2 nested IDs"))
+    }
+  }
+
+  test("Test fail updating schema if map columns are missing nested ids") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val schema = new StructType()
+        .add("a", IntegerType.INTEGER, true)
+
+      createTxn(engine, tablePath, isNewTable = true, schema, partCols = Seq.empty,
+        tableProperties = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
+          TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true")).commit(engine, emptyIterable())
+
+      val currentSchema = table.getLatestSnapshot(engine).getSchema
+      val newSchema = new StructType()
+        .add("a", StringType.STRING, true, currentSchema.get("a").getMetadata)
+        .add("c", new MapType(
+          StringType.STRING, StringType.STRING, false), true,
+          FieldMetadata.builder().putLong(ColumnMapping.COLUMN_MAPPING_ID_KEY, 2)
+            .putString(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, "c").build())
+
+      val e = intercept[IllegalArgumentException] {
+        table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
+          .withSchema(engine, newSchema)
+          .build(engine).commit(engine, emptyIterable())
+      }
+
+      assert(e.getMessage.contains(
+        "Map field c must have exactly 2 nested IDs"))
+    }
+  }
+
+  test("Test fail updating schema if array columns is missing nested id") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val schema = new StructType()
+        .add("a", IntegerType.INTEGER, true)
+
+      createTxn(engine, tablePath, isNewTable = true, schema, partCols = Seq.empty,
+        tableProperties = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
+          TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true")).commit(engine, emptyIterable())
+
+      val currentSchema = table.getLatestSnapshot(engine).getSchema
+      val newSchema = new StructType()
+        .add("a", StringType.STRING, true, currentSchema.get("a").getMetadata)
+        .add("c", new ArrayType(StringType.STRING, false), true,
+          FieldMetadata.builder().putLong(ColumnMapping.COLUMN_MAPPING_ID_KEY, 2)
+            .putString(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, "c").build())
+
+      val e = intercept[IllegalArgumentException] {
+        table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
+          .withSchema(engine, newSchema)
+          .build(engine).commit(engine, emptyIterable())
+      }
+
+      assert(e.getMessage.contains(
+        "Array field c must have exactly 1 nested ID"))
+    }
+  }
+
+  test("Test updating schema with adding an array and map type") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val schema = new StructType()
+        .add("a", IntegerType.INTEGER, true)
+
+      createTxn(engine, tablePath, isNewTable = true, schema, partCols = Seq.empty,
+        tableProperties = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
+          TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true")).commit(engine, emptyIterable())
+
+      val currentSchema = table.getLatestSnapshot(engine).getSchema
+      val newSchema = new StructType()
+        .add("a", IntegerType.INTEGER, true, currentSchema.get("a").getMetadata)
+        .add("arr", new ArrayType(StringType.STRING, false), true,
+          FieldMetadata.builder().putLong(ColumnMapping.COLUMN_MAPPING_ID_KEY, 2)
+            .putString(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, "arr")
+            .putFieldMetadata(ColumnMapping.COLUMN_MAPPING_NESTED_IDS_KEY,
+              FieldMetadata.builder().putLong("arr.element", 3).build()).build())
+        .add("map", new MapType(StringType.STRING, StringType.STRING, false), true,
+          FieldMetadata.builder().putLong(ColumnMapping.COLUMN_MAPPING_ID_KEY, 4)
+            .putString(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, "map")
+            .putFieldMetadata(ColumnMapping.COLUMN_MAPPING_NESTED_IDS_KEY,
+              FieldMetadata.builder().putLong("map.key", 5)
+                .putLong("map.value", 6).build()).build())
+
+        table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
+          .withSchema(engine, newSchema)
+          .build(engine).commit(engine, emptyIterable())
+
+      val structType = table.getLatestSnapshot(engine).getSchema
+      assertColumnMapping(structType.get("a"), 1)
+      assertColumnMapping(structType.get("arr"), 2, "arr")
+      assertColumnMapping(structType.get("map"), 4, "map")
+      assert(structType.get("arr").getMetadata.get(ColumnMapping.COLUMN_MAPPING_NESTED_IDS_KEY)
+        == FieldMetadata.builder().putLong("arr.element", 3).build())
+      assert(structType.get("map").getMetadata.get(ColumnMapping.COLUMN_MAPPING_NESTED_IDS_KEY)
+        == FieldMetadata.builder().putLong("map.key", 5).putLong("map.value", 6).build())
+    }
+  }
+
   private def assertColumnMapping(
       field: StructField,
       expId: Long,

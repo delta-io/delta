@@ -156,6 +156,111 @@ public class ColumnMapping {
     return maxColumnId;
   }
 
+  static void validateColumnIds(StructType currentSchema, StructType updatedSchema) {
+    Map<Long, String> currentFieldIdToPhysicalName = new HashMap<>();
+    for (StructField field : currentSchema.fields()) {
+      validateColumnIds(field, currentFieldIdToPhysicalName);
+    }
+
+    Map<Long, String> updatedFieldIdToPhysicalName = new HashMap<>();
+    for (StructField field : updatedSchema.fields()) {
+      validateColumnIds(field, updatedFieldIdToPhysicalName);
+    }
+
+    Set<String> dedupedPhysicalNames = new HashSet<>(updatedFieldIdToPhysicalName.values());
+    if (dedupedPhysicalNames.size() != updatedFieldIdToPhysicalName.size()) {
+      throw new IllegalArgumentException("Assigned physical names must be unique");
+    }
+
+    for (Map.Entry<Long, String> field : updatedFieldIdToPhysicalName.entrySet()) {
+      String existingPhysicalName = currentFieldIdToPhysicalName.get(field.getKey());
+      // Found an existing field, verify the physical name is preserved
+      if (existingPhysicalName != null && !existingPhysicalName.equals(field.getValue())) {
+        throw new IllegalArgumentException(
+            String.format(
+                "Existing field with id %s in current schema has physical name %s which is different from %s",
+                field.getKey(), existingPhysicalName, field.getValue()));
+      }
+    }
+  }
+
+  private static void validateColumnIds(
+      StructField field, Map<Long, String> fieldIdToPhysicalName) {
+    if (!hasPhysicalName(field)) {
+      throw new IllegalArgumentException(
+          String.format(
+              "Column mapping mode is name and field %s is missing physical name",
+              field.getName()));
+    }
+
+    if (!hasColumnId(field)) {
+      throw new IllegalArgumentException(
+          String.format(
+              "Column mapping mode is name and field %s is missing column id", field.getName()));
+    }
+
+    long columnId = getColumnId(field);
+
+    if (fieldIdToPhysicalName.containsKey(columnId)) {
+      throw new IllegalArgumentException(
+          String.format("Field %s with id %d already exists", field.getName(), columnId));
+    }
+
+    String physicalName = getPhysicalName(field);
+    fieldIdToPhysicalName.put(columnId, physicalName);
+
+    if (field.getDataType() instanceof MapType) {
+      if (!hasNestedColumnIds(field)) {
+        throw new IllegalArgumentException(
+            String.format("Map field %s must have exactly 2 nested IDs", field.getName()));
+      }
+
+      List<Long> nestedFieldIds = getNestedFieldIds(field);
+
+      if (nestedFieldIds.size() != 2) {
+        throw new IllegalArgumentException(
+            String.format("Map field %s must have exactly 2 nested IDs", field.getName()));
+      }
+
+      Set<Long> dedupedNestedFieldIds = new HashSet<>(nestedFieldIds);
+      if (nestedFieldIds.size() != dedupedNestedFieldIds.size()) {
+        throw new IllegalArgumentException(
+            String.format("Map field %s cannot contain duplicate nested IDs", field.getName()));
+      }
+
+      for (Long id : dedupedNestedFieldIds) {
+        if (fieldIdToPhysicalName.containsKey(id)) {
+          throw new IllegalArgumentException(
+              String.format("Nested field with id %s already exists", id));
+        }
+      }
+
+    } else if (field.getDataType() instanceof ArrayType) {
+      if (!hasNestedColumnIds(field)) {
+        throw new IllegalArgumentException(
+            String.format("Array field %s must have exactly 1 nested ID", field.getName()));
+      }
+
+      List<Long> nestedFieldIds = getNestedFieldIds(field);
+      if (nestedFieldIds.size() != 1) {
+        throw new IllegalArgumentException(
+            String.format("Array field %s must have exactly 1 nested ID", field.getName()));
+      }
+    } else if (field.getDataType() instanceof StructType) {
+      StructType structType = (StructType) field.getDataType();
+      for (StructField nestedField : structType.fields()) {
+        validateColumnIds(nestedField, fieldIdToPhysicalName);
+      }
+    }
+  }
+
+  private static List<Long> getNestedFieldIds(StructField field) {
+    return getNestedColumnIds(field).getEntries().values().stream()
+        .filter(Long.class::isInstance)
+        .map(Long.class::cast)
+        .collect(Collectors.toList());
+  }
+
   private static int findMaxColumnId(StructField field, int maxColumnId) {
     if (hasColumnId(field)) {
       maxColumnId = Math.max(maxColumnId, getColumnId(field));
