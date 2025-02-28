@@ -480,6 +480,15 @@ trait DeltaSQLConfBase {
       .checkValue(_ >= 0, "DVTombstoneCountThreshold must not be negative.")
       .createWithDefault(10000)
 
+  val FAST_DROP_FEATURE_STREAMING_ALWAYS_VALIDATE_PROTOCOL =
+    buildConf("tableFeatures.dev.fastDropFeature.alwaysValidateProtocolInStreaming.enabled")
+      .internal()
+      .doc(
+        """Whether to validate the protocol when starting a stream from arbitrary
+          |versions.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_MAX_SNAPSHOT_LINEAGE_LENGTH =
     buildConf("maxSnapshotLineageLength")
       .internal()
