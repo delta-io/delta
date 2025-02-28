@@ -223,10 +223,10 @@ class ColumnMappingSuite extends AnyFunSuite {
 
     val metadata = ColumnMapping.updateColumnMappingMetadata(createMetadata(schema), ID, false)
 
-    assertColumnMapping(metadata.getSchema.get("a"), 1L, "a")
-    assertColumnMapping(metadata.getSchema.get("b"), 2L, "b")
+    assertColumnMapping(metadata.get().getSchema.get("a"), 1L, "a")
+    assertColumnMapping(metadata.get().getSchema.get("b"), 2L, "b")
 
-    assertThat(metadata.getConfiguration)
+    assertThat(metadata.get().getConfiguration)
       .containsEntry(ColumnMapping.COLUMN_MAPPING_MAX_COLUMN_ID_KEY, "2")
   }
 
@@ -235,7 +235,7 @@ class ColumnMappingSuite extends AnyFunSuite {
 
     val metadata =
       ColumnMapping.updateColumnMappingMetadata(createMetadata(schema), NONE, true)
-    assertThat(metadata.getSchema).isEqualTo(schema)
+    assertThat(metadata.get().getSchema).isEqualTo(schema)
   }
 
   test("assigning id and physical name preserves field metadata") {
@@ -246,7 +246,7 @@ class ColumnMappingSuite extends AnyFunSuite {
         FieldMetadata.builder.putString("key1", "val1").putString("key2", "val2").build)
 
     val metadata = ColumnMapping.updateColumnMappingMetadata(createMetadata(schema), ID, true)
-    val fieldMetadata = metadata.getSchema.get("a").getMetadata.getEntries
+    val fieldMetadata = metadata.get().getSchema.get("a").getMetadata.getEntries
 
     assertThat(fieldMetadata)
       .containsEntry("key1", "val1")
@@ -301,7 +301,7 @@ class ColumnMappingSuite extends AnyFunSuite {
         ID,
         true
         /** isNewTable */
-      )
+      ).get()
 
     assertColumnMapping(metadata.getSchema.get("a"), 1L)
     assertColumnMapping(metadata.getSchema.get("b"), 2L)
@@ -335,7 +335,7 @@ class ColumnMappingSuite extends AnyFunSuite {
         ID,
         false
         /** isNewTable */
-      )
+      ).get()
 
     assertColumnMapping(metadata.getSchema.get("a"), 1L, "a")
     assertColumnMapping(metadata.getSchema.get("b"), 2L, "b")
@@ -364,7 +364,7 @@ class ColumnMappingSuite extends AnyFunSuite {
         ID,
         true
         /** isNewTable */
-      )
+      ).get()
 
     assertColumnMapping(metadata.getSchema.get("a"), 1L)
     assertColumnMapping(metadata.getSchema.get("b"), 2L)
@@ -403,7 +403,7 @@ class ColumnMappingSuite extends AnyFunSuite {
         ID,
         false
         /** isNewTable */
-      )
+      ).get()
 
     assertColumnMapping(metadata.getSchema.get("a"), 1L, "a")
     assertColumnMapping(metadata.getSchema.get("b"), 2L, "b")
@@ -449,7 +449,7 @@ class ColumnMappingSuite extends AnyFunSuite {
         ID,
         true
         /** isNewTable */
-      )
+      ).get()
 
     assertColumnMapping(metadata.getSchema.get("a"), 1L)
     assertColumnMapping(metadata.getSchema.get("b"), 2L)
