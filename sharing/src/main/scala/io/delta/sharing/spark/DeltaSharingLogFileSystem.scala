@@ -60,7 +60,7 @@ private[sharing] class DeltaSharingLogFileSystem extends FileSystem with Logging
       val iterator =
         SparkEnv.get.blockManager.get[String](getDeltaSharingLogBlockId(f.toString)) match {
           case Some(block) => block.data.asInstanceOf[Iterator[String]]
-          case _ => throw new FileNotFoundException(s"Cannot find block for delta log file: $f.")
+          case _ => throw new FileNotFoundException(s"Failed to open delta log file: $f.")
         }
       // Explicitly call hasNext to allow the reader lock on the block to be released.
       val arrayBuilder = Array.newBuilder[Byte]
@@ -72,7 +72,7 @@ private[sharing] class DeltaSharingLogFileSystem extends FileSystem with Logging
       // This still exposes the risk of OOM.
       new FSDataInputStream(new SeekableByteArrayInputStream(arrayBuilder.result()))
     } else {
-      val content = getBlockAndReleaseLockHelper[String](f, None)
+      val content = getBlockAndReleaseLockHelper[String](f, None, "open")
       new FSDataInputStream(new SeekableByteArrayInputStream(
         content.getBytes(StandardCharsets.UTF_8)
       ))
@@ -102,7 +102,9 @@ private[sharing] class DeltaSharingLogFileSystem extends FileSystem with Logging
         modificationTime = 0L
       )
     } else {
-      getBlockAndReleaseLockHelper[DeltaSharingLogFileStatus](f, Some("_status"))
+      getBlockAndReleaseLockHelper[DeltaSharingLogFileStatus](
+        f, Some(DELTA_LOG_FILE_STATUS_SUFFIX), "getFileStatus"
+      )
     }
 
     new FileStatus(
@@ -128,7 +130,7 @@ private[sharing] class DeltaSharingLogFileSystem extends FileSystem with Logging
       SparkEnv.get.blockManager
         .get[DeltaSharingLogFileStatus](getDeltaSharingLogBlockId(f.toString)) match {
         case Some(block) => block.data.asInstanceOf[Iterator[DeltaSharingLogFileStatus]]
-        case _ => throw new FileNotFoundException(s"Failed to list files for path: $f.")
+        case _ => throw new FileNotFoundException(s"Failed to listStatus for path: $f.")
       }
 
     // Explicitly call hasNext to allow the reader lock on the block to be released.
@@ -186,10 +188,11 @@ private[sharing] class DeltaSharingLogFileSystem extends FileSystem with Logging
     super.close()
   }
 
-  private def getBlockAndReleaseLockHelper[T: ClassTag](f: Path, suffix: Option[String]): T = {
+  private def getBlockAndReleaseLockHelper[T: ClassTag](
+                                                           f: Path, suffix: Option[String], caller: String): T = {
     val blockId = getDeltaSharingLogBlockId(suffix.foldLeft(f.toString)(_ + _))
     val result = SparkEnv.get.blockManager.getSingle[T](blockId).getOrElse {
-      throw new FileNotFoundException(f.toString)
+      throw new FileNotFoundException(s"Failed to $caller for $f.")
     }
     releaseLockHelper(blockId)
 
@@ -234,6 +237,10 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
 
   // The constant added as prefix to all delta sharing block ids.
   private val BLOCK_ID_TEST_PREFIX = "test_"
+
+  // The constant added as a suffix to the block id of a delta log file name to set and get
+  // the delta log file status.
+  private val DELTA_LOG_FILE_STATUS_SUFFIX = "_status"
 
   // It starts with test_ to match the prefix of TestBlockId.
   // In the meantime, we'll investigate in an option to add a general purposed BlockId subclass
@@ -702,11 +709,16 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
         getDeltaSharingLogBlockId(jsonFilePath),
         versionToJsonLogBuilderMap.getOrElse(version, Seq.empty).toIterator
       )
-      fileSizeTsSeq += DeltaSharingLogFileStatus(
+      val fileStatus =DeltaSharingLogFileStatus(
         path = jsonFilePath,
         size = versionToJsonLogSize.getOrElse(version, 0),
         modificationTime = versionToTimestampMap.get(version).getOrElse(0L)
       )
+      DeltaSharingUtils.overrideSingleBlock[DeltaSharingLogFileStatus](
+        blockId = getDeltaSharingLogBlockId(jsonFilePath + DELTA_LOG_FILE_STATUS_SUFFIX),
+        value = fileStatus
+      )
+      fileSizeTsSeq += fileStatus
     }
 
     DeltaSharingUtils.overrideIteratorBlock[DeltaSharingLogFileStatus](
@@ -830,8 +842,13 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
       jsonLogSeq.result().toIterator
     )
 
-    val fileStatusSeq = Seq(
-      DeltaSharingLogFileStatus(path = jsonFilePath, size = jsonLogSize, modificationTime = 0L)
+    val fileStatus = DeltaSharingLogFileStatus(
+      path = jsonFilePath, size = jsonLogSize, modificationTime = 0L
+    )
+    val fileStatusSeq = Seq(fileStatus)
+    DeltaSharingUtils.overrideSingleBlock[DeltaSharingLogFileStatus](
+      blockId = getDeltaSharingLogBlockId(jsonFilePath + DELTA_LOG_FILE_STATUS_SUFFIX),
+      value = fileStatus
     )
     DeltaSharingUtils.overrideIteratorBlock[DeltaSharingLogFileStatus](
       getDeltaSharingLogBlockId(deltaLogPath),
@@ -839,7 +856,7 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
     )
     logInfo(
       s"It takes ${(System.currentTimeMillis() - startTime) / 1000.0}s to construct delta" +
-      s" log for $customTablePath with ${idToUrl.toMap.size} urls."
+      s" log for $customTablePath with ${jsonLogSize} bytes for ${idToUrl.toMap.size} urls."
     )
     ConstructedDeltaLogMetadata(
       idToUrl = idToUrl.toMap,
