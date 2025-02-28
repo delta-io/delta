@@ -17,18 +17,16 @@ package io.delta.kernel.internal.checksum
 
 import java.util
 import java.util.{Collections, Optional}
-
 import io.delta.kernel.data.Row
 import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
 import io.delta.kernel.internal.checksum.CRCInfo.CRC_FILE_SCHEMA
 import io.delta.kernel.internal.data.GenericRow
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.VectorUtils
-import io.delta.kernel.internal.util.VectorUtils.{stringArrayValue, stringStringMapValue}
+import io.delta.kernel.internal.util.VectorUtils.{buildArrayValue, stringStringMapValue}
 import io.delta.kernel.test.{BaseMockJsonHandler, MockEngineUtils}
-import io.delta.kernel.types.StructType
+import io.delta.kernel.types.{StringType, StructType}
 import io.delta.kernel.utils.CloseableIterator
-
 import org.scalatest.funsuite.AnyFunSuite
 
 /**
@@ -162,7 +160,7 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
       new Format("parquet", Collections.emptyMap()),
       "schemaString",
       new StructType(),
-      stringArrayValue(util.Arrays.asList("c3")),
+      buildArrayValue(util.Arrays.asList("c3"), StringType.STRING),
       Optional.of(123),
       stringStringMapValue(new util.HashMap[String, String]() {
         put("delta.appendOnly", "true")
