@@ -22,7 +22,9 @@ import io.delta.connect.proto
 import io.delta.connect.spark.{proto => spark_proto}
 
 import org.apache.spark.annotation.Evolving
-import org.apache.spark.sql.{functions, Column, DataFrame, Dataset, Row, SparkSession}
+import org.apache.spark.sql.connect.{ColumnNodeToProtoConverter, DataFrame, Dataset, SparkSession}
+import org.apache.spark.sql.{functions, Column, Row}
+
 import org.apache.spark.sql.catalyst.encoders.AgnosticEncoders.PrimitiveBooleanEncoder
 import org.apache.spark.sql.connect.delta.ImplicitProtoConversions._
 
@@ -64,6 +66,56 @@ class DeltaTable private[tables](
    * @since 4.0.0
    */
   def toDF: Dataset[Row] = df
+
+  /**
+   * Helper method for the vacuum APIs.
+   *
+   * @param retentionHours The retention threshold in hours. Files required by the table for
+   *                       reading versions earlier than this will be preserved and the
+   *                       rest of them will be deleted.
+   * @since 4.0.0
+   */
+  private def executeVacuum(retentionHours: Option[Double]): DataFrame = {
+    val vacuum = proto.VacuumTable
+      .newBuilder()
+      .setTable(table)
+    retentionHours.foreach(vacuum.setRetentionHours)
+    val command = proto.DeltaCommand
+      .newBuilder()
+      .setVacuumTable(vacuum)
+      .build()
+    val extension = com.google.protobuf.Any.pack(command)
+    val sparkCommand = spark_proto.Command.newBuilder().setExtension(extension).build()
+    sparkSession.execute(sparkCommand)
+    sparkSession.emptyDataFrame
+  }
+
+  /**
+   * Recursively delete files and directories in the table that are not needed by the table for
+   * maintaining older versions up to the given retention threshold. This method will return an
+   * empty DataFrame on successful completion.
+   *
+   * @param retentionHours The retention threshold in hours. Files required by the table for
+   *                       reading versions earlier than this will be preserved and the
+   *                       rest of them will be deleted.
+   * @since 4.0.0
+   */
+  def vacuum(retentionHours: Double): DataFrame = {
+    executeVacuum(Some(retentionHours))
+  }
+
+  /**
+   * Recursively delete files and directories in the table that are not needed by the table for
+   * maintaining older versions up to the given retention threshold. This method will return an
+   * empty DataFrame on successful completion.
+   *
+   * note: This will use the default retention period of 7 days.
+   *
+   * @since 4.0.0
+   */
+  def vacuum(): DataFrame = {
+    executeVacuum(None)
+  }
 
   /**
    * Helper method for the history APIs.
@@ -126,6 +178,28 @@ class DeltaTable private[tables](
     sparkSession.newDataFrame(_.mergeFrom(sparkRelation))
   }
 
+
+  /**
+   * Generate a manifest for the given Delta Table
+   *
+   * @param mode Specifies the mode for the generation of the manifest.
+   *             The valid modes are as follows (not case sensitive):
+   *              - "symlink_format_manifest" : This will generate manifests in symlink format
+   *                                            for Presto and Athena read support.
+   *             See the online documentation for more information.
+   * @since 4.0.0
+   */
+  def generate(mode: String): Unit = {
+    val generate = proto.Generate
+      .newBuilder()
+      .setTable(table)
+      .setMode(mode)
+    val command = proto.DeltaCommand.newBuilder().setGenerate(generate).build()
+    val extension = com.google.protobuf.Any.pack(command)
+    val sparkCommand = spark_proto.Command.newBuilder().setExtension(extension).build()
+    sparkSession.execute(sparkCommand)
+  }
+
   /**
    * Helper method for the delete APIs.
    *
@@ -137,7 +211,7 @@ class DeltaTable private[tables](
     val delete = proto.DeleteFromTable
       .newBuilder()
       .setTarget(df.plan.getRoot)
-    condition.foreach(c => delete.setCondition(c.expr))
+    condition.foreach(c => delete.setCondition(ColumnNodeToProtoConverter.toExpr(c)))
     val relation = proto.DeltaRelation.newBuilder().setDeleteFromTable(delete).build()
     val extension = com.google.protobuf.Any.pack(relation)
     val sparkRelation = spark_proto.Relation.newBuilder().setExtension(extension).build()
@@ -188,15 +262,15 @@ class DeltaTable private[tables](
     val assignments = set.toSeq.map { case (field, value) =>
       proto.Assignment
         .newBuilder()
-        .setField(functions.expr(field).expr)
-        .setValue(value.expr)
+        .setField(ColumnNodeToProtoConverter.toExpr(functions.expr(field)))
+        .setValue(ColumnNodeToProtoConverter.toExpr(value))
         .build()
     }
     val update = proto.UpdateTable
       .newBuilder()
       .setTarget(df.plan.getRoot)
       .addAllAssignments(assignments.asJava)
-    condition.foreach(c => update.setCondition(c.expr))
+    condition.foreach(c => update.setCondition(ColumnNodeToProtoConverter.toExpr(c)))
     val relation = proto.DeltaRelation.newBuilder().setUpdateTable(update).build()
     val extension = com.google.protobuf.Any.pack(relation)
     val sparkRelation = spark_proto.Relation.newBuilder().setExtension(extension).build()
@@ -294,6 +368,18 @@ class DeltaTable private[tables](
    */
   def update(condition: Column, set: java.util.Map[String, Column]): Unit = {
     executeUpdate(Some(condition), set.asScala.toMap)
+  }
+
+
+  /**
+   * Converts a map of strings to expressions as SQL formatted string
+   * into a map of strings to Column objects.
+   *
+   * @param map A map where the value is an expression as SQL formatted string.
+   * @return A map where the value is a Column object created from the expression.
+   */
+  private def toStrColumnMap(map: Map[String, String]): Map[String, Column] = {
+    map.toSeq.map { case (k, v) => k -> functions.expr(v) }.toMap
   }
 
   /**
@@ -426,17 +512,6 @@ class DeltaTable private[tables](
    */
   def restoreToTimestamp(timestamp: String): DataFrame = {
     executeRestore(version = None, timestamp = Some(timestamp))
-  }
-
-  /**
-   * Converts a map of strings to expressions as SQL formatted string
-   * into a map of strings to Column objects.
-   *
-   * @param map A map where the value is an expression as SQL formatted string.
-   * @return A map where the value is a Column object created from the expression.
-   */
-  private def toStrColumnMap(map: Map[String, String]): Map[String, Column] = {
-    map.toSeq.map { case (k, v) => k -> functions.expr(v) }.toMap
   }
 }
 

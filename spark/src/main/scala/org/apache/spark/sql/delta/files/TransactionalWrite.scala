@@ -313,7 +313,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
   protected def getStatsColExpr(
       statsDataSchema: Seq[Attribute],
       statsCollection: StatisticsCollection): (Expression, Seq[Attribute]) = {
-    val resolvedPlan = Dataset.ofRows(spark, LocalRelation(statsDataSchema))
+    val resolvedPlan = DataFrameUtils.ofRows(spark, LocalRelation(statsDataSchema))
       .select(to_json(statsCollection.statsCollector))
       .queryExecution.analyzed
 
