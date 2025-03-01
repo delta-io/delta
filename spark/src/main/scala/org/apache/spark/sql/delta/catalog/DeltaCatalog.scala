@@ -34,6 +34,7 @@ import org.apache.spark.sql.delta.commands._
 import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.redirect.RedirectFeature
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.stats.StatisticsCollection
@@ -651,6 +652,17 @@ class DeltaCatalog extends DelegatingCatalogExtension
       case s: SetProperty if s.property() == "location" => classOf[SetLocation]
       case c => c.getClass
     }
+    // Determines whether this DDL SET or UNSET the table redirect property. If it is, the table
+    // redirect feature should be disabled to ensure the DDL can be applied onto the source or
+    // destination table properly.
+    val isUpdateTableRedirectDDL = grouped.map {
+      case (t, s: Seq[RemoveProperty]) if t == classOf[RemoveProperty] =>
+        s.map { prop => prop.property() }.exists(RedirectFeature.isRedirectProperty)
+      case (t, s: Seq[SetProperty]) if t == classOf[SetProperty] =>
+        RedirectFeature.hasRedirectConfig(s.map(prop => prop.property() -> prop.value()).toMap)
+      case (_, _) => false
+    }.toSeq.exists(a => a)
+    RedirectFeature.withUpdateTableRedirectDDL(isUpdateTableRedirectDDL) {
     val table = loadTable(ident) match {
       case deltaTable: DeltaTableV2 => deltaTable
       case _ if changes.exists(_.isInstanceOf[ClusterBy]) =>
@@ -883,6 +895,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
     }
 
     loadTable(ident)
+  }
   }
 
   // We want our catalog to handle Delta, therefore for other data sources that want to be
