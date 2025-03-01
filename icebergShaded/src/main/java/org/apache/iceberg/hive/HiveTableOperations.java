@@ -36,8 +36,10 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hive.common.StatsSetupConst;
 import org.apache.hadoop.hive.metastore.IMetaStoreClient;
 import org.apache.hadoop.hive.metastore.TableType;
+import org.apache.hadoop.hive.metastore.api.FieldSchema;
 import org.apache.hadoop.hive.metastore.api.InvalidObjectException;
 import org.apache.hadoop.hive.metastore.api.NoSuchObjectException;
+import org.apache.hadoop.hive.metastore.api.StorageDescriptor;
 import org.apache.hadoop.hive.metastore.api.Table;
 import org.apache.hadoop.hive.metastore.api.hive_metastoreConstants;
 import org.apache.iceberg.BaseMetastoreOperations;
@@ -55,6 +57,7 @@ import org.apache.iceberg.TableProperties;
 import org.apache.iceberg.exceptions.AlreadyExistsException;
 import org.apache.iceberg.exceptions.CommitFailedException;
 import org.apache.iceberg.exceptions.CommitStateUnknownException;
+import org.apache.iceberg.exceptions.NoSuchIcebergTableException;
 import org.apache.iceberg.exceptions.NoSuchTableException;
 import org.apache.iceberg.exceptions.ValidationException;
 import org.apache.iceberg.hadoop.ConfigProperties;
@@ -174,7 +177,13 @@ public class HiveTableOperations extends BaseMetastoreTableOperations
       if (currentMetadataLocation() != null) {
         throw new NoSuchTableException("No such table: %s.%s", database, tableName);
       }
-
+    } catch (NoSuchIcebergTableException e) {
+      // NoSuchIcebergTableException is throw when table exists in catalog but not with
+      // table_type=iceberg; in that case we want to swallow so createTable
+      // txn can proceed with creating the iceberg table/metadata and set table_type=iceberg
+      if (currentMetadataLocation() != null) {
+        throw new NoSuchTableException("No such table: %s.%s", database, tableName);
+      }
     } catch (TException e) {
       String errMsg =
           String.format("Failed to get table info from metastore %s.%s", database, tableName);
@@ -257,11 +266,15 @@ public class HiveTableOperations extends BaseMetastoreTableOperations
         LOG.debug("Committing new table: {}", fullName);
       }
 
-      tbl.setSd(
-          HiveOperationsBase.storageDescriptor(
+      StorageDescriptor newsd = HiveOperationsBase.storageDescriptor(
               adjustedMetadata.schema(),
               adjustedMetadata.location(),
-              hiveEngineEnabled)); // set to pickup any schema changes
+              hiveEngineEnabled);
+      // use storage descriptor from Delta
+      newsd.getSerdeInfo().setParameters(tbl.getSd().getSerdeInfo().getParameters());
+      tbl.setSd(newsd);
+      // set schema to be empty to match Delta behavior
+      tbl.getSd().setCols(Collections.singletonList(new FieldSchema("col", "array<string>", "")));
 
       String metadataLocation = tbl.getParameters().get(METADATA_LOCATION_PROP);
       String baseMetadataLocation = base != null ? base.metadataFileLocation() : null;

@@ -434,7 +434,8 @@ lazy val spark = (project in file("spark"))
     sparkMimaSettings,
     releaseSettings,
     crossSparkSettings(),
-    libraryDependencies ++= Seq(
+    dependencyOverrides += "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.18.2",
+      libraryDependencies ++= Seq(
       // Adding test classifier seems to break transitive resolution of the core dependencies
       "org.apache.spark" %% "spark-hive" % sparkVersion.value % "provided",
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
@@ -869,17 +870,20 @@ lazy val icebergShaded = (project in file("icebergShaded"))
         ExclusionRule("com.fasterxml.jackson"),
         ExclusionRule(organization = "com.fasterxml.jackson.core"),
         ExclusionRule("com.github.ben-manes.caffeine"),
+        ExclusionRule("io.netty"),
       ),
       "org.apache.iceberg" % "iceberg-hive-metastore" % "1.8.0" excludeAll (
         ExclusionRule("com.fasterxml.jackson"),
         ExclusionRule(organization = "com.fasterxml.jackson.core"),
         ExclusionRule("com.github.ben-manes.caffeine"),
+        ExclusionRule("io.netty"),
       ),
       "org.apache.hadoop" % "hadoop-client" % "2.7.3" excludeAll (
         ExclusionRule("org.apache.avro"),
         ExclusionRule("org.slf4j"),
         ExclusionRule("commons-beanutils"),
         ExclusionRule("org.datanucleus"),
+        ExclusionRule("io.netty"),
       ),
       "org.apache.hive" % "hive-metastore" % "2.3.8" excludeAll (
         ExclusionRule("org.apache.avro"),

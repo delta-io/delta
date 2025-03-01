@@ -327,11 +327,6 @@ class IcebergConverter(spark: SparkSession)
       case (None, None) => CREATE_TABLE
     }
 
-    UniversalFormat.enforceSupportInCatalog(cleanedCatalogTable, snapshotToConvert.metadata) match {
-      case Some(updatedTable) => spark.sessionState.catalog.alterTable(updatedTable)
-      case _ =>
-    }
-
     val icebergTxn = new IcebergConversionTransaction(
       spark, cleanedCatalogTable, log.newDeltaHadoopConf(), snapshotToConvert, tableOp,
       lastConvertedIcebergSnapshotId, lastDeltaVersionConverted)

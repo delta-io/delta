@@ -175,5 +175,6 @@ lazy val root = (project in file("."))
       "-deprecation",
       "-feature"
     ),
+    dependencyOverrides += "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.18.2",
     java17Settings
   )
