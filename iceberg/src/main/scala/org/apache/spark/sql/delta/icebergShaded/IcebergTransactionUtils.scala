@@ -35,12 +35,9 @@ import shadedForDelta.org.apache.iceberg.{DataFile, DataFiles, FileFormat, Parti
 import shadedForDelta.org.apache.iceberg.Metrics
 import shadedForDelta.org.apache.iceberg.StructLike
 import shadedForDelta.org.apache.iceberg.TableProperties
-import shadedForDelta.org.apache.iceberg.util.DateTimeUtil
-
-// scalastyle:off import.ordering.noEmptyLine
 import shadedForDelta.org.apache.iceberg.catalog.{Namespace, TableIdentifier => IcebergTableIdentifier}
-// scalastyle:on import.ordering.noEmptyLine
 import shadedForDelta.org.apache.iceberg.hive.HiveCatalog
+import shadedForDelta.org.apache.iceberg.util.DateTimeUtil
 
 import org.apache.spark.sql.catalyst.{InternalRow, TableIdentifier => SparkTableIdentifier}
 import org.apache.spark.sql.types.{BinaryType, BooleanType, ByteType, DataType, DateType, DecimalType, DoubleType, FloatType, IntegerType, LongType, ShortType, StringType, StructType, TimestampNTZType, TimestampType}
