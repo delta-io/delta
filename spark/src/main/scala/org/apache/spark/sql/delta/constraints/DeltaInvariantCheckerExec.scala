@@ -88,7 +88,7 @@ case class DeltaInvariantCheckerExec(
     // We resolve currentTime for all invariants together to make sure we use the same timestamp.
     val invariantsFakePlan = AnalysisHelper.FakeLogicalPlan(constraints, Nil)
     val newInvariantsPlan = optimizer.ComputeCurrentTime(invariantsFakePlan)
-    val constraintsWithFixedTime = newInvariantsPlan.expressions
+    val constraintsWithFixedTime = newInvariantsPlan.expressions.toArray
 
     child.execute().mapPartitionsInternal { rows =>
       val assertions = UnsafeProjection.create(constraintsWithFixedTime, child.output)
