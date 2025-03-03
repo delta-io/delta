@@ -66,26 +66,49 @@ trait RemoteSparkSession extends BeforeAndAfterAll { self: Suite =>
   var spark: SparkSession = _
 
   private val buildLocation = System.getProperty("delta.test.home")
-  // TODO: Instead of hard-coding the path, use the findJar function from
-  // Apache Spark's IntegrationTestUtils.scala.
-  private val deltaConnectJar = s"$buildLocation/" +
-    "spark-connect/server/target/scala-2.13/delta-connect-server-assembly-3.4.0-SNAPSHOT.jar"
+  private val javaHome = System.getProperty("java.home")
+
   private val resources = s"$buildLocation/spark-connect/client/target/scala-2.13/resource_managed/test"
-  private val sparkSubmit = s"$resources/spark/spark-4.0.0-preview1-bin-hadoop3/sbin/start-connect-server.sh" // HUH
 
   private lazy val server = {
+    // We start SparkSubmit directly. This saves us from downloading an entire Spark distribution
+    // for a single test. The parameters used here are the ones that would have been used to start
+    // spark-submit.
     val command = Seq.newBuilder[String]
-    command += sparkSubmit
-    command += "--driver-class-path" += deltaConnectJar
+    command += s"$javaHome/bin/java"
+    command += "-cp" += resources + "/jars/*"
+    command += "-Xmx1g"
+    command += "-XX:+IgnoreUnrecognizedVMOptions"
+    command += "--add-modules=jdk.incubator.vector"
+    command += "--add-opens=java.base/java.lang=ALL-UNNAMED"
+    command += "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED"
+    command += "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED"
+    command += "--add-opens=java.base/java.io=ALL-UNNAMED"
+    command += "--add-opens=java.base/java.net=ALL-UNNAMED"
+    command += "--add-opens=java.base/java.nio=ALL-UNNAMED"
+    command += "--add-opens=java.base/java.util=ALL-UNNAMED"
+    command += "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED"
+    command += "--add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED"
+    command += "--add-opens=java.base/jdk.internal.ref=ALL-UNNAMED"
+    command += "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED"
+    command += "--add-opens=java.base/sun.nio.cs=ALL-UNNAMED"
+    command += "--add-opens=java.base/sun.security.action=ALL-UNNAMED"
+    command += "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED"
+    command += "--add-opens=java.security.jgss/sun.security.krb5=ALL-UNNAMED"
+    command += "-Djdk.reflect.useDirectMethodHandle=false"
+    command += "-Dio.netty.tryReflectionSetAccessible=true"
+    command += "-Dderby.connection.requireAuthentication=false"
+    command += "org.apache.spark.deploy.SparkSubmit"
     command += "--class" += "io.delta.tables.SimpleDeltaConnectService"
     command += "--conf" += s"spark.connect.grpc.binding.port=$serverPort"
     command += "--conf" += "spark.connect.extensions.relation.classes=" +
       "org.apache.spark.sql.connect.delta.DeltaRelationPlugin"
     command += "--conf" += "spark.connect.extensions.command.classes=" +
       "org.apache.spark.sql.connect.delta.DeltaCommandPlugin"
-    command += deltaConnectJar
+    command += s"$resources/jars/unused-1.0.0.jar"
 
     val builder = new ProcessBuilder(command.result(): _*)
+    builder.environment().put("SPARK_HOME", resources)
     builder.redirectError(ProcessBuilder.Redirect.INHERIT)
     builder.redirectOutput(ProcessBuilder.Redirect.INHERIT)
     builder.start()

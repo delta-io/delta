@@ -155,6 +155,8 @@ lazy val commonSettings = Seq(
 
   // Unidoc settings: by default dont document any source file
   unidocSourceFilePatterns := Nil,
+
+  exportJars := true,
 )
 
 ////////////////////////////
@@ -313,53 +315,34 @@ lazy val connectClient = (project in file("spark-connect/client"))
     crossSparkSettings(),
     libraryDependencies ++= Seq(
       "com.google.protobuf" % "protobuf-java" % protoVersion % "protobuf",
-
       "org.apache.spark" %% "spark-connect-client-jvm" % sparkVersion.value % "provided",
-      "org.apache.spark" %% "spark-sql-api" % sparkVersion.value % "provided", // Should not be needed
 
       // Test deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
-      "org.apache.spark" %% "spark-common-utils" % sparkVersion.value % "test",
-      "org.apache.spark" %% "spark-connect-client-jvm" % sparkVersion.value % "test" classifier "tests",
-      "org.apache.spark" %% "spark-sql-api" % sparkVersion.value % "test" classifier "tests",
+      // TODO understand why this is needed.
+      "org.apache.spark" %% "spark-connect-client-jvm" % sparkVersion.value % "test" classifier "tests"
     ),
+    // TODO this does not seem to work.
+    Test / excludeDependencies += ExclusionRule("org.apache.spark", "spark-connect-common_2.13"),
     (Test / javaOptions) += s"-Ddelta.test.home=" + file(".").getAbsoluteFile.getParentFile,
     (Test / resourceGenerators) += Def.task {
-      val location = url("https://dist.apache.org/repos/dist/dev/spark/v4.0.0-rc2-bin/spark-4.0.0-bin-hadoop3.tgz")
-      val destDir = (Test / resourceManaged).value / "spark"
+      val fcp = (connectServer / Compile / fullClasspath).value
+      val destDir = (Test / resourceManaged).value / "jars"
       if (!destDir.exists()) {
         IO.createDirectory(destDir)
         val files = mutable.Buffer.empty[File]
-        Using(new BufferedInputStream(location.openStream())) { bi =>
-          Using(new GzipCompressorInputStream(bi)) { gi =>
-            Using(new TarArchiveInputStream(gi)) { ti =>
-              var entry = ti.getNextEntry
-              while (entry != null) {
-                val dest = destDir / entry.getName
-                if (entry.isDirectory) {
-                  dest.mkdirs()
-                } else {
-                  files += dest
-                  Using(Files.newOutputStream(dest.toPath)) { os =>
-                    IOUtils.copy(ti, os)
-                  }
-
-                  val perms = new util.HashSet[PosixFilePermission]()
-                  perms.add(PosixFilePermission.OWNER_EXECUTE)
-                  perms.add(PosixFilePermission.OWNER_READ)
-                  perms.add(PosixFilePermission.OWNER_WRITE)
-                  Files.setPosixFilePermissions(dest.toPath, perms)
-                }
-                entry = ti.getNextEntry
-              }
-            }
-          }
+        // Create symlinks for all dependencies.
+        fcp.distinct.foreach { entry =>
+          val source = entry.data.toPath
+          val target = destDir / entry.data.getName
+          Files.createSymbolicLink(target.toPath, source)
+          files += target
         }
         files
       } else {
         destDir.get()
       }
-    }.taskValue
+    }
   )
 
 lazy val connectServer = (project in file("spark-connect/server"))
@@ -403,6 +386,14 @@ lazy val connectServer = (project in file("spark-connect/server"))
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
       "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
       "org.apache.spark" %% "spark-connect" % sparkVersion.value % "test" classifier "tests",
+    ),
+    excludeDependencies ++= Seq(
+      // Exclude connect common because a properly shaded version of it is included in the
+      // spark-connect jar. Including it causes classpath problems.
+      ExclusionRule("org.apache.spark", "spark-connect-common_2.13"),
+      // Exclude connect shims because we have spark-core on the classpath. The shims are only
+      // needed for the client. Including it causes classpath problems.
+      ExclusionRule("org.apache.spark", "spark-connect-shims_2.13")
     ),
   )
 
