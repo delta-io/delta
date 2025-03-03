@@ -214,8 +214,9 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
     // implementation. The fast drop feature implementation adds a new writer feature when dropping
     // a feature and also does not require any waiting time. The fast drop feature implementation
     // is tested extensively in the DeltaFastDropFeatureSuite.
-    super.sparkConf.set(DeltaSQLConf.FAST_DROP_FEATURE_ENABLED.key, "false")
-    super.sparkConf.set("spark.delta.logStore.fake.impl", classOf[LocalLogStore].getName)
+    super.sparkConf
+      .set(DeltaSQLConf.FAST_DROP_FEATURE_ENABLED.key, "false")
+      .set("spark.delta.logStore.fake.impl", classOf[LocalLogStore].getName)
   }
 
   /**
