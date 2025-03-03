@@ -210,12 +210,12 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
   import testImplicits._
 
   protected override def sparkConf = {
+    super.sparkConf.set("spark.delta.logStore.fake.impl", classOf[LocalLogStore].getName)
     // The drop feature test below is targeting the drop feature with history truncation
     // implementation. The fast drop feature implementation adds a new writer feature when dropping
     // a feature and also does not require any waiting time. The fast drop feature implementation
     // is tested extensively in the DeltaFastDropFeatureSuite.
     super.sparkConf.set(DeltaSQLConf.FAST_DROP_FEATURE_ENABLED.key, "false")
-    super.sparkConf.set("spark.delta.logStore.fake.impl", classOf[LocalLogStore].getName)
   }
 
   /**
