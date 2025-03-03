@@ -195,4 +195,11 @@ object IcebergPartitionUtil {
   def hasBucketPartition(partSpec: PartitionSpec): Boolean = {
     partSpec.fields.asScala.toSeq.exists(spec => spec.transform().isInstanceOf[Bucket[_]])
   }
+
+  // return true if the partition spec has a partition that is not a bucket partition
+  def hasNonBucketPartition(partSpec: PartitionSpec): Boolean = {
+    partSpec.isPartitioned && partSpec.fields().asScala.exists { field =>
+      !field.transform().isInstanceOf[Bucket[_]]
+    }
+  }
 }

@@ -43,13 +43,24 @@ import org.apache.spark.sql.types.StructType
  */
 case class DeltaInvariantChecker(
     child: LogicalPlan,
-    deltaConstraints: Seq[Constraint]) extends UnaryNode {
+    deltaConstraints: Seq[CheckDeltaInvariant]) extends UnaryNode {
   assert(deltaConstraints.nonEmpty)
 
   override def output: Seq[Attribute] = child.output
 
   override protected def withNewChildInternal(newChild: LogicalPlan): DeltaInvariantChecker =
     copy(child = newChild)
+}
+
+object DeltaInvariantChecker {
+  def apply(
+      spark: SparkSession,
+      child: LogicalPlan,
+      constraints: Seq[Constraint]): DeltaInvariantChecker = {
+    val invariantChecks =
+      DeltaInvariantCheckerExec.buildInvariantChecks(child.output, constraints, spark)
+    DeltaInvariantChecker(child, invariantChecks)
+  }
 }
 
 object DeltaInvariantCheckerStrategy extends SparkStrategy {
@@ -66,26 +77,21 @@ object DeltaInvariantCheckerStrategy extends SparkStrategy {
  */
 case class DeltaInvariantCheckerExec(
     child: SparkPlan,
-    constraints: Seq[Constraint]) extends UnaryExecNode {
+    constraints: Seq[CheckDeltaInvariant]) extends UnaryExecNode {
 
   override def output: Seq[Attribute] = child.output
 
   override protected def doExecute(): RDD[InternalRow] = {
     if (constraints.isEmpty) return child.execute()
-    val invariantChecks =
-      DeltaInvariantCheckerExec.buildInvariantChecks(child.output, constraints, session)
 
     // Resolve current_date()/current_time() expressions.
     // We resolve currentTime for all invariants together to make sure we use the same timestamp.
-    val invariantsFakePlan = AnalysisHelper.FakeLogicalPlan(invariantChecks, Nil)
+    val invariantsFakePlan = AnalysisHelper.FakeLogicalPlan(constraints, Nil)
     val newInvariantsPlan = optimizer.ComputeCurrentTime(invariantsFakePlan)
-    val localOutput = child.output
+    val constraintsWithFixedTime = newInvariantsPlan.expressions.toArray
 
     child.execute().mapPartitionsInternal { rows =>
-      val boundRefs = newInvariantsPlan.expressions
-        .asInstanceOf[Seq[CheckDeltaInvariant]]
-        .map(_.withBoundReferences(localOutput))
-      val assertions = UnsafeProjection.create(boundRefs)
+      val assertions = UnsafeProjection.create(constraintsWithFixedTime, child.output)
       rows.map { row =>
         assertions(row)
         row
@@ -102,6 +108,14 @@ case class DeltaInvariantCheckerExec(
 }
 
 object DeltaInvariantCheckerExec extends DeltaLogging {
+  def apply(
+      spark: SparkSession,
+      child: SparkPlan,
+      constraints: Seq[Constraint]): DeltaInvariantCheckerExec = {
+    val invariantChecks =
+      DeltaInvariantCheckerExec.buildInvariantChecks(child.output, constraints, spark)
+    DeltaInvariantCheckerExec(child, invariantChecks)
+  }
 
   // Specialized optimizer to run necessary rules so that the check expressions can be evaluated.
   object DeltaInvariantCheckerOptimizer
@@ -201,7 +215,7 @@ object DeltaInvariantCheckerExec extends DeltaLogging {
           resolvedExpr
       }
 
-      CheckDeltaInvariant(executableExpr, columnExtractors.toMap, constraint)
+      CheckDeltaInvariant(executableExpr, columnExtractors.toSeq, constraint)
     }
   }
 }

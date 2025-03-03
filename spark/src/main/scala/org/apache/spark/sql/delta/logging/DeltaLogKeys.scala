@@ -64,6 +64,7 @@ trait DeltaLogKeysBase {
   case object END_OFFSET extends LogKeyShims
   case object END_VERSION extends LogKeyShims
   case object ERROR extends LogKeyShims
+  case object EXCEPTION extends LogKeyShims
   case object EXECUTOR_ID extends LogKeyShims
   case object EXPR extends LogKeyShims
   case object FILE_INDEX extends LogKeyShims

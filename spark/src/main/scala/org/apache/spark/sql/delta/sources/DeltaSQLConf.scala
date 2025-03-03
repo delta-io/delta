@@ -440,6 +440,25 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val ALLOW_METADATA_CLEANUP_WHEN_ALL_PROTOCOLS_SUPPORTED =
+    buildConf("tableFeatures.allowMetadataCleanupWhenAllProtocolsSupported")
+      .internal()
+      .doc(
+        """Whether to perform protocol validation when the client is unable to clean
+          |up to 'delta.requireCheckpointProtectionBeforeVersion'.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val ALLOW_METADATA_CLEANUP_CHECKPOINT_EXISTENCE_CHECK_DISABLED =
+    buildConf("tableFeatures.dev.allowMetadataCleanupCheckpointExistenceCheck.disabled")
+      .internal()
+      .doc(
+        """Whether to disable the checkpoint check at the cleanup boundary when performing
+          |the CheckpointProtectionTableFeature validations.
+          |This is only used for testing purposes.'.""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   val FAST_DROP_FEATURE_ENABLED =
     buildConf("tableFeatures.dev.fastDropFeature.enabled")
       .internal()
@@ -479,6 +498,15 @@ trait DeltaSQLConfBase {
       .intConf
       .checkValue(_ >= 0, "DVTombstoneCountThreshold must not be negative.")
       .createWithDefault(10000)
+
+  val FAST_DROP_FEATURE_STREAMING_ALWAYS_VALIDATE_PROTOCOL =
+    buildConf("tableFeatures.dev.fastDropFeature.alwaysValidateProtocolInStreaming.enabled")
+      .internal()
+      .doc(
+        """Whether to validate the protocol when starting a stream from arbitrary
+          |versions.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
 
   val DELTA_MAX_SNAPSHOT_LINEAGE_LENGTH =
     buildConf("maxSnapshotLineageLength")
@@ -2323,6 +2351,13 @@ trait DeltaSQLConfBase {
   val SKIP_REDIRECT_FEATURE =
     buildConf("skipRedirectFeature")
       .doc("True if skipping the redirect feature.")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
+  val ENABLE_TABLE_REDIRECT_FEATURE =
+    buildConf("enableTableRedirectFeature")
+      .doc("True if enabling the table redirect feature.")
       .internal()
       .booleanConf
       .createWithDefault(false)

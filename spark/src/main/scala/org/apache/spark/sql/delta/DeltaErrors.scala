@@ -32,6 +32,7 @@ import org.apache.spark.sql.delta.hooks.AutoCompactType
 import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.redirect.NoRedirectRule
+import org.apache.spark.sql.delta.redirect.RedirectSpec
 import org.apache.spark.sql.delta.redirect.RedirectState
 import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, InvariantViolationException, SchemaUtils, UnsupportedDataTypeInfo}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -357,18 +358,49 @@ trait DeltaErrorsBase
     )
   }
 
-  def invalidRedirectStateTransition(
-      table: String,
-      oldState: RedirectState,
-      newState: RedirectState): Unit = {
+  def deltaRelationPathMismatch(
+      relationPath: Seq[String],
+      targetType: String,
+      targetPath: Seq[String]
+  ): Throwable = {
     new DeltaIllegalStateException(
-      errorClass = "DELTA_TABLE_INVALID_REDIRECT_STATE_TRANSITION",
+      errorClass = "DELTA_RELATION_PATH_MISMATCH",
       messageParameters = Array(
-        table, table, oldState.name, newState.name)
+        relationPath.mkString("."),
+        targetType,
+        targetPath.mkString(".")
+      )
     )
   }
 
-  def invalidRemoveTableRedirect(table: String, currentState: RedirectState): Unit = {
+  def unrecognizedRedirectSpec(spec: RedirectSpec): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_TABLE_UNRECOGNIZED_REDIRECT_SPEC",
+      messageParameters = Array(spec.toString)
+    )
+  }
+
+  def invalidSetUnSetRedirectCommand(
+      table: String,
+      newProperty: String,
+      existingProperty: String): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_TABLE_INVALID_SET_UNSET_REDIRECT",
+      messageParameters = Array(table, existingProperty, newProperty)
+    )
+  }
+
+  def invalidRedirectStateTransition(
+      table: String,
+      oldState: RedirectState,
+      newState: RedirectState): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_TABLE_INVALID_REDIRECT_STATE_TRANSITION",
+      messageParameters = Array(table, oldState.name, newState.name)
+    )
+  }
+
+  def invalidRemoveTableRedirect(table: String, currentState: RedirectState): Throwable = {
     new DeltaIllegalStateException(
       errorClass = "DELTA_TABLE_INVALID_REMOVE_TABLE_REDIRECT",
       messageParameters = Array(table, table, currentState.name)
@@ -376,7 +408,7 @@ trait DeltaErrorsBase
   }
 
   def invalidCommitIntermediateRedirectState(state: RedirectState): Throwable = {
-    throw new DeltaIllegalStateException (
+    new DeltaIllegalStateException (
       errorClass = "DELTA_COMMIT_INTERMEDIATE_REDIRECT_STATE",
       messageParameters = Array(state.name)
     )
@@ -385,7 +417,7 @@ trait DeltaErrorsBase
   def noRedirectRulesViolated(
       op: DeltaOperations.Operation,
       noRedirectRules: Set[NoRedirectRule]): Throwable = {
-    throw new DeltaIllegalStateException (
+    new DeltaIllegalStateException (
       errorClass = "DELTA_NO_REDIRECT_RULES_VIOLATED",
       messageParameters =
         Array(op.name, noRedirectRules.map("\"" + _ + "\"").mkString("[", ",\n", "]"))
@@ -3039,6 +3071,20 @@ trait DeltaErrorsBase
   def cloneReplaceNonEmptyTable: Throwable = {
     new DeltaIllegalStateException(
       errorClass = "DELTA_UNSUPPORTED_NON_EMPTY_CLONE"
+    )
+  }
+
+  def cloneFromIcebergSourceWithPartitionEvolution(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CLONE_INCOMPATIBLE_SOURCE.ICEBERG_UNDERGONE_PARTITION_EVOLUTION",
+      messageParameters = Array()
+    )
+  }
+
+  def cloneFromIcebergSourceWithoutSpecs(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CLONE_INCOMPATIBLE_SOURCE.ICEBERG_MISSING_PARTITION_SPECS",
+      messageParameters = Array()
     )
   }
 

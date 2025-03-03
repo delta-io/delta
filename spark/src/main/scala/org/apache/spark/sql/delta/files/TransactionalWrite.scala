@@ -433,7 +433,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
 
       val empty2NullPlan = convertEmptyToNullIfNeeded(queryExecution.executedPlan,
         partitioningColumns, constraints)
-      val checkInvariants = DeltaInvariantCheckerExec(empty2NullPlan, constraints)
+      val checkInvariants = DeltaInvariantCheckerExec(spark, empty2NullPlan, constraints)
       // No need to plan optimized write if the write command is OPTIMIZE, which aims to produce
       // evenly-balanced data files already.
       val physicalPlan = if (!isOptimize &&

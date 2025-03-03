@@ -171,11 +171,14 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         TableConfig.validateDeltaProperties(tableProperties.orElse(Collections.emptyMap()));
     Map<String, String> newProperties = metadata.filterOutUnchangedProperties(validatedProperties);
 
-    ColumnMapping.verifyColumnMappingChange(metadata.getConfiguration(), newProperties, isNewTable);
-
     if (!newProperties.isEmpty()) {
       shouldUpdateMetadata = true;
+      Map<String, String> oldConfiguration = metadata.getConfiguration();
+
       metadata = metadata.withNewConfiguration(newProperties);
+
+      ColumnMapping.verifyColumnMappingChange(
+          oldConfiguration, metadata.getConfiguration() /* new config */, isNewTable);
     }
 
     Optional<Tuple2<Protocol, Set<TableFeature>>> newProtocolAndFeatures =

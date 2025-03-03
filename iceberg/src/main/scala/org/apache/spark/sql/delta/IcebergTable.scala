@@ -21,9 +21,10 @@ import java.util.Locale
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaColumnMappingMode, DeltaConfigs, IdMapping, SerializableFileStatus, Snapshot}
+import org.apache.spark.sql.delta.DeltaErrors.{cloneFromIcebergSourceWithoutSpecs, cloneFromIcebergSourceWithPartitionEvolution}
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.iceberg.{Table, TableProperties}
+import org.apache.iceberg.{PartitionSpec, Table, TableProperties}
 import org.apache.iceberg.hadoop.HadoopTables
 import org.apache.iceberg.transforms.{Bucket, IcebergPartitionUtil}
 import org.apache.iceberg.util.PropertyUtil
@@ -76,7 +77,7 @@ class IcebergTable(
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_CAST_TIME_TYPE) ||
       deltaSnapshot.exists(s => DeltaConfigs.CAST_ICEBERG_TIME_TYPE.fromMetaData(s.metadata))
 
-  protected val fieldPathToPhysicalName =
+  protected val fieldPathToPhysicalName: Map[Seq[String], String] =
     existingSchema.map {
       SchemaMergingUtils.explode(_).collect {
         case (path, field) if DeltaColumnMapping.hasPhysicalName(field) =>
@@ -115,11 +116,33 @@ class IcebergTable(
       bucketPartitionToNonPartition
   }
 
+  val tablePartitionSpec: PartitionSpec = {
+    // Validate && Get Partition Spec from Iceberg table
+    // We don't support conversion from iceberg tables with partition evolution
+    // So normally we only allow table having one partition spec
+    //
+    // However, we allow one special case where
+    //  all data files have either no-partition or bucket-partition
+    //  in this case we will convert them into non-partition, so
+    //  we will use an arbitrary non-bucket-partition spec as table's spec
+    if (icebergTable.specs().size() == 1 || partitionEvolutionEnabled || !bucketPartitionEnabled) {
+      icebergTable.spec()
+    } else if (icebergTable.specs().isEmpty) {
+      throw cloneFromIcebergSourceWithoutSpecs()
+    } else {
+      icebergTable.specs().asScala.values.find(
+        !IcebergPartitionUtil.hasNonBucketPartition(_)
+      ).getOrElse {
+        throw cloneFromIcebergSourceWithPartitionEvolution()
+      }
+    }
+  }
+
   override val partitionSchema: StructType = {
     // Reuse physical names of existing columns.
     val mergedPartitionSchema = DeltaColumnMapping.setPhysicalNames(
       StructType(
-        IcebergPartitionUtil.getPartitionFields(icebergTable.spec(), icebergTable.schema())),
+        IcebergPartitionUtil.getPartitionFields(tablePartitionSpec, icebergTable.schema())),
       fieldPathToPhysicalName)
 
     // Assign physical names to new partition columns.
@@ -148,20 +171,6 @@ class IcebergTable(
   override val format: String = "iceberg"
 
   def checkConvertible(): Unit = {
-    /**
-     * Having multiple partition specs implies that the Iceberg table has experienced
-     * partition evolution. (https://iceberg.apache.org/evolution/#partition-evolution)
-     * We don't support the conversion of such tables right now.
-     *
-     * Note that this simple check won't consider the underlying data, so there might be cases
-     * s.t. the data itself is partitioned using a single spec despite multiple specs created
-     * in the past. we do not account for that atm due to the complexity of data introspection
-     */
-
-    if (!partitionEvolutionEnabled && icebergTable.specs().size() > 1) {
-      throw new UnsupportedOperationException(IcebergTable.ERR_MULTIPLE_PARTITION_SPECS)
-    }
-
     /**
      * If the sql conf bucketPartitionEnabled is true, then convert iceberg table with
      * bucket partition to unpartitioned delta table; if bucketPartitionEnabled is false,
@@ -201,11 +210,7 @@ class IcebergTable(
 object IcebergTable {
   /** Error message constants */
   val ERR_MULTIPLE_PARTITION_SPECS =
-    s"""This Iceberg table has undergone partition evolution. Iceberg tables that had partition
-      | columns removed can be converted without data loss by setting the SQL configuration
-      | '${DeltaSQLConf.DELTA_CONVERT_ICEBERG_PARTITION_EVOLUTION_ENABLED.key}' to true. Tables that
-      | had data columns converted to partition columns will not be able to read the pre-partition
-      | column values.""".stripMargin
+    s"Source iceberg table has undergone partition evolution"
   val ERR_CUSTOM_NAME_MAPPING = "Cannot convert Iceberg tables with column name mapping"
 
   val ERR_BUCKET_PARTITION = "Cannot convert Iceberg tables with bucket partition"
