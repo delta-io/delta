@@ -93,7 +93,7 @@ val targetJvm = settingKey[String]("Target JVM version")
 Global / targetJvm := "8"
 
 lazy val javaVersion = sys.props.getOrElse("java.version", "Unknown")
-
+lazy val javaVersionInt = javaVersion.split("\\.")(0).toInt
 /**
  * Returns the current spark version, which is the same value as `sparkVersion.value`.
  *
@@ -149,7 +149,19 @@ lazy val commonSettings = Seq(
     "-Dspark.databricks.delta.delta.log.cacheSize=3",
     "-Dspark.sql.sources.parallelPartitionDiscovery.parallelism=5",
     "-Xmx1024m"
-  ),
+  ) ++ {
+    if (javaVersionInt >= 17) {
+      Seq(  // For Java 17 +
+        "--add-opens=java.base/java.nio=ALL-UNNAMED",
+        "--add-opens=java.base/java.lang=ALL-UNNAMED",
+        "--add-opens=java.base/java.net=ALL-UNNAMED",
+        "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+        "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED"
+      )
+    } else {
+      Seq.empty
+    }
+  },
 
   testOptions += Tests.Argument("-oF"),
 
