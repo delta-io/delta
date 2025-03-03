@@ -77,6 +77,11 @@ case class TestUnsupportedReaderWriterFeaturePreDowngradeCommand(table: DeltaTab
   override def removeFeatureTracesIfNeeded(spark: SparkSession): Boolean = true
 }
 
+case class TestUnsupportedWriterFeaturePreDowngradeCommand(table: DeltaTableV2)
+  extends PreDowngradeTableFeatureCommand {
+  override def removeFeatureTracesIfNeeded(spark: SparkSession): Boolean = true
+}
+
 case class TestWriterWithHistoryValidationFeaturePreDowngradeCommand(table: DeltaTableV2)
     extends PreDowngradeTableFeatureCommand
     with DeltaLogging {

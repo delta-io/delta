@@ -91,6 +91,7 @@ object DeltaLogFileIndex {
   lazy val COMMIT_FILE_FORMAT = new JsonFileFormat
   lazy val CHECKPOINT_FILE_FORMAT_PARQUET = new ParquetFileFormat
   lazy val CHECKPOINT_FILE_FORMAT_JSON = new JsonFileFormat
+  lazy val CHECKSUM_FILE_FORMAT = new JsonFileFormat
 
   def apply(format: FileFormat, fs: FileSystem, paths: Seq[Path]): DeltaLogFileIndex = {
     DeltaLogFileIndex(format, paths.map(fs.getFileStatus).toArray)

@@ -379,9 +379,11 @@ object TableFeature {
         TestLegacyWriterFeature,
         TestLegacyReaderWriterFeature,
         TestWriterFeature,
+        TestUnsupportedWriterFeature,
         TestWriterMetadataNoAutoUpdateFeature,
         TestReaderWriterFeature,
         TestUnsupportedReaderWriterFeature,
+        TestUnsupportedNoHistoryProtectionReaderWriterFeature,
         TestReaderWriterMetadataAutoUpdateFeature,
         TestReaderWriterMetadataNoAutoUpdateFeature,
         TestRemovableWriterFeature,
@@ -400,8 +402,12 @@ object TableFeature {
   }
 
   /** Test only features that appear unsupported in order to test protocol validations. */
-  def testUnsupportedFeatures: Set[TableFeature] =
-    if (isTesting) Set(TestUnsupportedReaderWriterFeature) else Set.empty
+  def testUnsupportedFeatures: Set[TableFeature] = {
+    if (!isTesting) return Set.empty
+    Set(TestUnsupportedReaderWriterFeature,
+      TestUnsupportedNoHistoryProtectionReaderWriterFeature,
+      TestUnsupportedWriterFeature)
+  }
 
   private val allDependentFeaturesMap: Map[TableFeature, Set[TableFeature]] = {
     val dependentFeatureTuples =
@@ -1154,6 +1160,37 @@ object TestUnsupportedReaderWriterFeature
 
   override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
     TestUnsupportedReaderWriterFeaturePreDowngradeCommand(table)
+
+  override def actionUsesFeature(action: Action): Boolean = false
+}
+
+/**
+ * Test feature that appears unsupported and can be dropped without checkpoint protection.
+ * it is used only for testing purposes.
+ */
+object TestUnsupportedNoHistoryProtectionReaderWriterFeature
+    extends ReaderWriterFeature(name = "testUnsupportedNoHistoryProtectionReaderWriter")
+    with RemovableFeature {
+
+  override def validateRemoval(snapshot: Snapshot): Boolean = true
+
+  override def requiresHistoryProtection: Boolean = false
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    TestUnsupportedReaderWriterFeaturePreDowngradeCommand(table)
+
+  override def actionUsesFeature(action: Action): Boolean = false
+}
+
+object TestUnsupportedWriterFeature
+  extends WriterFeature(name = "testUnsupportedWriter")
+  with RemovableFeature {
+
+  /** Make sure the property is not enabled on the table. */
+  override def validateRemoval(snapshot: Snapshot): Boolean = true
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    TestUnsupportedWriterFeaturePreDowngradeCommand(table)
 
   override def actionUsesFeature(action: Action): Boolean = false
 }
