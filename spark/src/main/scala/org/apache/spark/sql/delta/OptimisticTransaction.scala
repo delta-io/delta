@@ -28,7 +28,7 @@ import scala.util.control.NonFatal
 
 import com.databricks.spark.util.TagDefinitions.TAG_LOG_STORE_CLASS
 import org.apache.spark.sql.delta.ClassicColumnConversions._
-import org.apache.spark.sql.delta.DeltaOperations.{ChangeColumn, CreateTable, Operation, ReplaceColumns, ReplaceTable, UpdateSchema}
+import org.apache.spark.sql.delta.DeltaOperations.{ChangeColumn, ChangeColumns, CreateTable, Operation, ReplaceColumns, ReplaceTable, UpdateSchema}
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
@@ -2765,6 +2765,9 @@ trait OptimisticTransactionImpl extends DeltaTransaction
 
     op match {
       case change: ChangeColumn if usesDefaults(change.newColumn) =>
+        throwError("WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
+          Array("ALTER TABLE"))
+      case changes: ChangeColumns if changes.columns.exists(c => usesDefaults(c.newColumn)) =>
         throwError("WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
           Array("ALTER TABLE"))
       case create: CreateTable if create.metadata.schema.fields.exists(usesDefaults) =>
