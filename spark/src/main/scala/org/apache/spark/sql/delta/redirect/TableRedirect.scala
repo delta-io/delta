@@ -255,7 +255,6 @@ case class TableRedirectConfiguration(
   private def isNoRedirectApp(spark: SparkSession): Boolean = {
     noRedirectRules.exists { rule =>
       // If rule.appName is empty, then it applied to "spark.app.name"
-      // Todo(LC-6953): The operation name should also be taken into consideration.
       rule.appName.forall(_.equalsIgnoreCase(spark.conf.get("spark.app.name")))
     }
   }
