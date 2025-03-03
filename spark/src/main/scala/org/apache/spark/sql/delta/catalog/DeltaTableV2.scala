@@ -30,6 +30,7 @@ import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSourceUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.sources.DeltaSQLConf.ENABLE_TABLE_REDIRECT_FEATURE
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{DataFrame, Dataset, SaveMode, SparkSession}
@@ -37,7 +38,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{ResolvedTable, UnresolvedTable}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedTableImplicits._
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, CatalogUtils}
-import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, SubqueryAlias}
+import org.apache.spark.sql.catalyst.plans.logical.{AnalysisHelper, LogicalPlan, SubqueryAlias}
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.connector.catalog.{SupportsWrite, Table, TableCapability, TableCatalog, V2TableWithV1Fallback}
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
@@ -58,26 +59,40 @@ import org.apache.spark.util.{Clock, SystemClock}
  * @param path The path to the table
  * @param tableIdentifier The table identifier for this table
  */
-case class DeltaTableV2(
-    spark: SparkSession,
-    path: Path,
-    catalogTable: Option[CatalogTable] = None,
-    tableIdentifier: Option[String] = None,
-    timeTravelOpt: Option[DeltaTimeTravelSpec] = None,
-    options: Map[String, String] = Map.empty)
+class DeltaTableV2 private[delta](
+    val spark: SparkSession,
+    val path: Path,
+    val catalogTable: Option[CatalogTable],
+    val tableIdentifier: Option[String],
+    val timeTravelOpt: Option[DeltaTimeTravelSpec],
+    val options: Map[String, String])
   extends Table
   with SupportsWrite
   with V2TableWithV1Fallback
   with DeltaLogging {
 
-  private lazy val (rootPath, partitionFilters, timeTravelByPath) = {
+  case class PathInfo(
+      rootPath: Path,
+      private[delta] var partitionFilters: Seq[(String, String)],
+      private[delta] var timeTravelByPath: Option[DeltaTimeTravelSpec]
+  )
+
+  private lazy val pathInfo: PathInfo = {
     if (catalogTable.isDefined) {
       // Fast path for reducing path munging overhead
-      (new Path(catalogTable.get.location), Nil, None)
+      PathInfo(new Path(catalogTable.get.location), Seq.empty, None)
     } else {
-      DeltaDataSource.parsePathIdentifier(spark, path.toString, options)
+      val (rootPath, filters, timeTravel) =
+        DeltaDataSource.parsePathIdentifier(spark, path.toString, options)
+      PathInfo(rootPath, filters, timeTravel)
     }
   }
+
+  private def rootPath = pathInfo.rootPath
+
+  private def partitionFilters = pathInfo.partitionFilters
+
+  private def timeTravelByPath = pathInfo.timeTravelByPath
 
 
   def hasPartitionFilters: Boolean = partitionFilters.nonEmpty
@@ -363,9 +378,86 @@ case class DeltaTableV2(
       None
     }
   }
+
+  def copy(
+    spark: SparkSession = this.spark,
+    path: Path = this.path,
+    catalogTable: Option[CatalogTable] = this.catalogTable,
+    tableIdentifier: Option[String] = this.tableIdentifier,
+    timeTravelOpt: Option[DeltaTimeTravelSpec] = this.timeTravelOpt,
+    options: Map[String, String] = this.options
+  ): DeltaTableV2 = {
+    val deltaTableV2 =
+      new DeltaTableV2(spark, path, catalogTable, tableIdentifier, timeTravelOpt, options)
+    deltaTableV2.pathInfo.timeTravelByPath = timeTravelByPath
+    deltaTableV2.pathInfo.partitionFilters = partitionFilters
+    deltaTableV2
+  }
+
+  override def toString: String =
+    s"DeltaTableV2($spark,$path,$catalogTable,$tableIdentifier,$timeTravelOpt,$options)"
 }
 
 object DeltaTableV2 {
+  def unapply(deltaTable: DeltaTableV2): Option[(
+      SparkSession,
+      Path,
+      Option[CatalogTable],
+      Option[String],
+      Option[DeltaTimeTravelSpec],
+      Map[String, String])
+  ] = {
+    Some((
+      deltaTable.spark,
+      deltaTable.path,
+      deltaTable.catalogTable,
+      deltaTable.tableIdentifier,
+      deltaTable.timeTravelOpt,
+      deltaTable.options)
+    )
+  }
+
+  def apply(
+      spark: SparkSession,
+      path: Path,
+      catalogTable: Option[CatalogTable] = None,
+      tableIdentifier: Option[String] = None,
+      options: Map[String, String] = Map.empty[String, String],
+      timeTravelOpt: Option[DeltaTimeTravelSpec] = None
+  ): DeltaTableV2 = {
+    val deltaTable = new DeltaTableV2(
+      spark,
+      path,
+      catalogTable = catalogTable,
+      tableIdentifier = tableIdentifier,
+      timeTravelOpt = timeTravelOpt,
+      options = options
+    )
+    if (spark == null || spark.sessionState == null ||
+        !spark.sessionState.conf.getConf(ENABLE_TABLE_REDIRECT_FEATURE)) {
+      return deltaTable
+    }
+    // This following code ensure passing the path and catalogTable of the redirected table object.
+    // Note: the DeltaTableV2 can only be created using this method.
+    AnalysisHelper.allowInvokingTransformsInAnalyzer {
+      val deltaLog = deltaTable.deltaLog
+      val rootDeltaLogPath = DeltaLog.logPathFor(deltaTable.rootPath.toString)
+      val finalDeltaLogPath = DeltaLog.formalizeDeltaPath(spark, options, rootDeltaLogPath)
+      val catalogTableOpt = if (finalDeltaLogPath == deltaLog.logPath) {
+        // If there is no redirection, use existing catalogTable.
+        catalogTable
+      } else {
+        // If there is redirection, use the catalogTable of deltaLog.
+        deltaLog.getInitialCatalogTable
+      }
+      val tableIdentifier = catalogTableOpt.map(_.identifier.identifier)
+      val newPath = new Path(deltaLog.dataPath.toUri.getPath)
+      deltaTable.copy(
+        path = newPath, catalogTable = catalogTableOpt, tableIdentifier = tableIdentifier
+      )
+    }
+  }
+
   /** Resolves a path into a DeltaTableV2, leveraging standard v2 table resolution. */
   def apply(spark: SparkSession, tablePath: Path, options: Map[String, String], cmd: String)
       : DeltaTableV2 = {
