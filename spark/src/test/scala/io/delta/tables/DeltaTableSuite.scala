@@ -24,6 +24,7 @@ import scala.language.postfixOps
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.{AppendOnlyTableFeature, DeltaIllegalArgumentException, DeltaLog, DeltaTableFeatureException, FakeFileSystem, InvariantsTableFeature, TestReaderWriterFeature, TestRemovableReaderWriterFeature, TestRemovableWriterFeature, TestWriterFeature}
 import org.apache.spark.sql.delta.actions.{ Metadata, Protocol }
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LocalLogStore
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -208,8 +209,14 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
 
   import testImplicits._
 
-  protected override def sparkConf =
+  protected override def sparkConf = {
     super.sparkConf.set("spark.delta.logStore.fake.impl", classOf[LocalLogStore].getName)
+    // The drop feature test below is targeting the drop feature with history truncation
+    // implementation. The fast drop feature implementation adds a new writer feature when dropping
+    // a feature and also does not require any waiting time. The fast drop feature implementation
+    // is tested extensively in the DeltaFastDropFeatureSuite.
+    super.sparkConf.set(DeltaSQLConf.FAST_DROP_FEATURE_ENABLED.key, "false")
+  }
 
   /**
    * Create Hadoop file system options for `FakeFileSystem`. If Delta doesn't pick up them,

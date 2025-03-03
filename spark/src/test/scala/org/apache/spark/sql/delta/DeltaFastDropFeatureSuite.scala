@@ -312,7 +312,9 @@ class DeltaFastDropFeatureSuite
     }
   }
 
-  test("Drop CheckpointProtectionTableFeature") {
+  for (withFastDropFeatureEnabled <- BOOLEAN_DOMAIN)
+  test("Drop CheckpointProtectionTableFeature " +
+      s"withFastDropFeatureEnabled: $withFastDropFeatureEnabled") {
     withTempDir { dir =>
       val clock = new ManualClock(System.currentTimeMillis())
       val deltaLog = DeltaLog.forTable(spark, new Path(dir.getAbsolutePath), clock)
@@ -334,17 +336,20 @@ class DeltaFastDropFeatureSuite
       val checkpointProtectionVersion =
         CheckpointProtectionTableFeature.getCheckpointProtectionVersion(deltaLog.update())
 
-      val e = intercept[DeltaTableFeatureException] {
+      withSQLConf(
+          DeltaSQLConf.FAST_DROP_FEATURE_ENABLED.key -> withFastDropFeatureEnabled.toString) {
+        val e = intercept[DeltaTableFeatureException] {
+          dropTableFeature(deltaLog, CheckpointProtectionTableFeature, truncateHistory = true)
+        }
+        checkError(
+          e,
+          "DELTA_FEATURE_DROP_CHECKPOINT_PROTECTION_WAIT_FOR_RETENTION_PERIOD",
+          parameters = Map("truncateHistoryLogRetentionPeriod" -> "24 hours"))
+
+        clock.advance(TimeUnit.HOURS.toMillis(48))
+
         dropTableFeature(deltaLog, CheckpointProtectionTableFeature, truncateHistory = true)
       }
-      checkError(
-        e,
-        "DELTA_FEATURE_DROP_CHECKPOINT_PROTECTION_WAIT_FOR_RETENTION_PERIOD",
-        parameters = Map("truncateHistoryLogRetentionPeriod" -> "24 hours"))
-
-      clock.advance(TimeUnit.HOURS.toMillis(48))
-
-      dropTableFeature(deltaLog, CheckpointProtectionTableFeature, truncateHistory = true)
 
       val snapshot = deltaLog.update()
       val protocol = snapshot.protocol
