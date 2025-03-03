@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor
+import org.apache.spark.sql.delta.actions.{DeletionVectorDescriptor, Protocol}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeletedRecordCountsHistogram
 
@@ -62,6 +62,9 @@ object DeltaUDF {
   def booleanFromString(s: String => Boolean): UserDefinedFunction =
     createUdfFromTemplateUnsafe(booleanFromStringTemplate, s, udf(s))
 
+  def booleanFromProtocol(f: Protocol => Boolean): UserDefinedFunction =
+    createUdfFromTemplateUnsafe(booleanFromProtocol, f, udf(f))
+
   def booleanFromMap(f: Map[String, String] => Boolean): UserDefinedFunction =
     createUdfFromTemplateUnsafe(booleanFromMapTemplate, f, udf(f))
 
@@ -94,6 +97,9 @@ object DeltaUDF {
 
   private lazy val booleanFromStringTemplate =
     udf((_: String) => false).asInstanceOf[SparkUserDefinedFunction]
+
+  private lazy val booleanFromProtocol =
+    udf((_: Protocol) => true).asInstanceOf[SparkUserDefinedFunction]
 
   private lazy val booleanFromMapTemplate =
     udf((_: Map[String, String]) => true).asInstanceOf[SparkUserDefinedFunction]
