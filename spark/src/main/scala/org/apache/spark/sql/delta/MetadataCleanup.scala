@@ -230,8 +230,18 @@ trait MetadataCleanup extends DeltaLogging {
   }
 
   /**
-   * Returns false if there is a non-supported or null protocol in the provided checksums.
-   * Returns true otherwise.
+   * Validates whether the client supports read for all the protocols in the provided checksums
+   * as well as write for `versionThatRequiresWriteSupport`.
+   *
+   * @param deltaLog The log of the delta table.
+   * @param checksumsToValidate An iterator with the checksum files we need to validate. The client
+   *                            needs read support for all the encountered protocols.
+   * @param versionThatRequiresWriteSupport The version the client needs write support. This
+   *                                        is the version we are creating a new checkpoint.
+   * @param expectedChecksumFileCount The expected number of checksum files. If the iterator
+   *                                  contains less files, the function returns false.
+   * @return Returns false if there is a non-supported or null protocol in the provided checksums.
+   *         Returns true otherwise.
    */
   protected[delta] def allProtocolsSupported(
       deltaLog: DeltaLog,
