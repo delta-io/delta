@@ -148,7 +148,13 @@ lazy val commonSettings = Seq(
     "-Ddelta.log.cacheSize=3",
     "-Dspark.databricks.delta.delta.log.cacheSize=3",
     "-Dspark.sql.sources.parallelPartitionDiscovery.parallelism=5",
-    "-Xmx1024m"
+    "-Xmx1024m",
+    // For Java 17
+    "--add-opens=java.base/java.nio=ALL-UNNAMED",
+    "--add-opens=java.base/java.lang=ALL-UNNAMED",
+    "--add-opens=java.base/java.net=ALL-UNNAMED",
+    "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+    "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED"
   ),
 
   testOptions += Tests.Argument("-oF"),
@@ -428,7 +434,8 @@ lazy val spark = (project in file("spark"))
     sparkMimaSettings,
     releaseSettings,
     crossSparkSettings(),
-    libraryDependencies ++= Seq(
+    dependencyOverrides += "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.18.2",
+      libraryDependencies ++= Seq(
       // Adding test classifier seems to break transitive resolution of the core dependencies
       "org.apache.spark" %% "spark-hive" % sparkVersion.value % "provided",
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
@@ -848,8 +855,6 @@ lazy val iceberg = (project in file("iceberg"))
   )
 // scalastyle:on println
 
-lazy val generateIcebergJarsTask = TaskKey[Unit]("generateIcebergJars", "Generate Iceberg JARs")
-
 lazy val icebergShaded = (project in file("icebergShaded"))
   .dependsOn(spark % "provided")
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
@@ -857,17 +862,50 @@ lazy val icebergShaded = (project in file("icebergShaded"))
     name := "iceberg-shaded",
     commonSettings,
     skipReleaseSettings,
-
-    // Compile, patch and generated Iceberg JARs
-    generateIcebergJarsTask := {
-      import sys.process._
-      val scriptPath = baseDirectory.value / "generate_iceberg_jars.py"
-      // Download iceberg code in `iceberg_src` dir and generate the JARs in `lib` dir
-      Seq("python3", scriptPath.getPath)!
-    },
-    Compile / unmanagedJars := (Compile / unmanagedJars).dependsOn(generateIcebergJarsTask).value,
-    cleanFiles += baseDirectory.value / "iceberg_src",
-    cleanFiles += baseDirectory.value / "lib",
+    libraryDependencies ++= Seq(
+      // Fix Iceberg's legacy java.lang.NoClassDefFoundError: scala/jdk/CollectionConverters$ error
+      // due to legacy scala.
+      "org.scala-lang.modules" %% "scala-collection-compat" % "2.1.1" % "provided",
+      "org.apache.iceberg" % "iceberg-core" % "1.8.0" excludeAll (
+        ExclusionRule("com.fasterxml.jackson"),
+        ExclusionRule(organization = "com.fasterxml.jackson.core"),
+        ExclusionRule("com.github.ben-manes.caffeine"),
+        ExclusionRule("io.netty"),
+      ),
+      "org.apache.iceberg" % "iceberg-hive-metastore" % "1.8.0" excludeAll (
+        ExclusionRule("com.fasterxml.jackson"),
+        ExclusionRule(organization = "com.fasterxml.jackson.core"),
+        ExclusionRule("com.github.ben-manes.caffeine"),
+        ExclusionRule("io.netty"),
+      ),
+      "org.apache.hadoop" % "hadoop-client" % "2.7.3" excludeAll (
+        ExclusionRule("org.apache.avro"),
+        ExclusionRule("org.slf4j"),
+        ExclusionRule("commons-beanutils"),
+        ExclusionRule("org.datanucleus"),
+        ExclusionRule("io.netty"),
+      ),
+      "org.apache.hive" % "hive-metastore" % "2.3.8" excludeAll (
+        ExclusionRule("org.apache.avro"),
+        ExclusionRule("org.slf4j"),
+        ExclusionRule("org.pentaho"),
+        ExclusionRule("org.apache.hbase"),
+        ExclusionRule("org.apache.logging.log4j"),
+        ExclusionRule("co.cask.tephra"),
+        ExclusionRule("com.google.code.findbugs"),
+        ExclusionRule("org.eclipse.jetty.aggregate"),
+        ExclusionRule("org.eclipse.jetty.orbit"),
+        ExclusionRule("org.apache.parquet"),
+        ExclusionRule("com.tdunning"),
+        ExclusionRule("javax.transaction"),
+        ExclusionRule("com.zaxxer"),
+        ExclusionRule("org.apache.ant"),
+        ExclusionRule("javax.servlet"),
+        ExclusionRule("javax.jdo"),
+        ExclusionRule("commons-beanutils"),
+        ExclusionRule("org.datanucleus"),
+      ),
+    ),
 
     // Generated shaded Iceberg JARs
     Compile / packageBin := assembly.value,
@@ -877,8 +915,39 @@ lazy val icebergShaded = (project in file("icebergShaded"))
     assembly / assemblyShadeRules := Seq(
       ShadeRule.rename("org.apache.iceberg.**" -> "shadedForDelta.@0").inAll,
     ),
+    assembly / assemblyExcludedJars := {
+      val cp = (fullClasspath in assembly).value
+      cp.filter { jar =>
+        val doExclude = jar.data.getName.contains("jackson-annotations") ||
+          jar.data.getName.contains("RoaringBitmap") ||
+          jar.data.getName.contains("jackson") ||
+          jar.data.getName.contains("htrace")
+        println(s"Excluding jar: ${jar.data.getName} ? $doExclude")
+        doExclude
+      }
+    },
+    assembly / assemblyMergeStrategy := {
+       case PathList("shadedForDelta", "org", "apache", "iceberg", "PartitionSpec$Builder.class") =>
+         MergeStrategy.first
+       case PathList("shadedForDelta", "org", "apache", "iceberg", "PartitionSpec.class") =>
+         MergeStrategy.first
+       case PathList("shadedForDelta", "org", "apache", "iceberg", "hive", "HiveCatalog.class") =>
+         MergeStrategy.first
+       case PathList("shadedForDelta", "org", "apache", "iceberg", "hive", "HiveCatalog$1.class") =>
+         MergeStrategy.first
+       case PathList("shadedForDelta", "org", "apache", "iceberg", "hive", "HiveCatalog$ViewAwareTableBuilder.class") =>
+         MergeStrategy.first
+       case PathList("shadedForDelta", "org", "apache", "iceberg", "hive", "HiveCatalog$TableAwareViewBuilder.class") =>
+         MergeStrategy.first
+       case PathList("shadedForDelta", "org", "apache", "iceberg", "hive", "HiveTableOperations.class") =>
+         MergeStrategy.first
+       case PathList("shadedForDelta", "org", "apache", "iceberg", "hive", "HiveTableOperations$1.class") =>
+         MergeStrategy.first
+       case x => (assemblyMergeStrategy in assembly).value(x)
+    },
     assemblyPackageScala / assembleArtifact := false,
     // Make the 'compile' invoke the 'assembly' task to generate the uber jar.
+    Compile / packageBin := assembly.value
   )
 
 lazy val hudi = (project in file("hudi"))

@@ -20,7 +20,7 @@ organizationName := "example"
 
 val scala212 = "2.12.18"
 val scala213 = "2.13.13"
-val icebergVersion = "1.4.1"
+val icebergVersion = "1.8.0"
 val defaultDeltaVersion = {
   val versionFileContent = IO.read(file("../../version.sbt"))
   val versionRegex = """.*version\s*:=\s*"([^"]+)".*""".r
@@ -126,7 +126,12 @@ lazy val extraMavenRepo = sys.env.get("EXTRA_MAVEN_REPO").toSeq.map { repo =>
 lazy val java17Settings = Seq(
   fork := true,
   javaOptions ++= Seq(
-    "--add-exports=java.base/sun.nio.ch=ALL-UNNAMED"
+    "--add-exports=java.base/sun.nio.ch=ALL-UNNAMED",
+    // For Java 17
+    "--add-opens=java.base/java.nio=ALL-UNNAMED",
+    "--add-opens=java.base/java.lang=ALL-UNNAMED",
+    "--add-opens=java.base/java.net=ALL-UNNAMED",
+    "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED"
   )
 )
 
@@ -170,5 +175,6 @@ lazy val root = (project in file("."))
       "-deprecation",
       "-feature"
     ),
+    dependencyOverrides += "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.18.2",
     java17Settings
   )

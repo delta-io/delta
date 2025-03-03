@@ -34,6 +34,8 @@ import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.conf.Configuration
 import shadedForDelta.org.apache.iceberg.{AppendFiles, DeleteFiles, OverwriteFiles, PartitionSpec, PendingUpdate, RewriteFiles, Transaction => IcebergTransaction}
 import shadedForDelta.org.apache.iceberg.ExpireSnapshots
+import shadedForDelta.org.apache.iceberg.MetadataUpdate
+import shadedForDelta.org.apache.iceberg.MetadataUpdate.{AddPartitionSpec, AddSchema}
 import shadedForDelta.org.apache.iceberg.mapping.MappingUtil
 import shadedForDelta.org.apache.iceberg.mapping.NameMappingParser
 
@@ -64,8 +66,10 @@ class IcebergConversionTransaction(
     protected val postCommitSnapshot: Snapshot,
     protected val tableOp: IcebergTableOp = WRITE_TABLE,
     protected val lastConvertedIcebergSnapshotId: Option[Long] = None,
-    protected val lastConvertedDeltaVersion: Option[Long] = None
-    ) extends DeltaLogging {
+    protected val lastConvertedDeltaVersion: Option[Long] = None,
+    protected val metadataUpdates: java.util.ArrayList[MetadataUpdate] =
+      new java.util.ArrayList[MetadataUpdate]()
+  ) extends DeltaLogging {
 
   ///////////////////////////
   // Nested Helper Classes //
@@ -307,7 +311,8 @@ class IcebergConversionTransaction(
           log" Setting new Iceberg schema:\n ${MDC(DeltaLogKeys.SCHEMA, icebergSchema)}")
       }
 
-      txn.setSchema(icebergSchema).commit()
+      metadataUpdates.add(
+        new AddSchema(icebergSchema, postCommitSnapshot.metadata.columnMappingMaxId.toInt))
 
       recordDeltaEvent(
         postCommitSnapshot.deltaLog,
@@ -351,12 +356,7 @@ class IcebergConversionTransaction(
     assert(fileUpdates.forall(_.hasCommitted), "Cannot commit. You have uncommitted changes.")
 
     val nameMapping = NameMappingParser.toJson(MappingUtil.create(icebergSchema))
-
-    // hard code dummy delta version as -1 for CREATE_TABLE, which will be later
-    // set to correct version in setSchemaTxn. -1 is chosen because it is less than the smallest
-    // possible legitimate Delta version which is 0.
-    val deltaVersion = if (tableOp == CREATE_TABLE) -1 else postCommitSnapshot.version
-
+    val deltaVersion = postCommitSnapshot.version
     var updateTxn = txn.updateProperties()
     updateTxn = updateTxn.set(IcebergConverter.DELTA_VERSION_PROPERTY, deltaVersion.toString)
       .set(IcebergConverter.DELTA_TIMESTAMP_PROPERTY, postCommitSnapshot.timestamp.toString)
@@ -392,19 +392,21 @@ class IcebergConversionTransaction(
       )
     }
     try {
-      txn.commitTransaction()
       if (tableOp == CREATE_TABLE) {
         // Iceberg CREATE_TABLE reassigns the field id in schema, which
         // is overwritten by setting Delta schema with Delta generated field id to ensure
         // consistency between field id in Iceberg schema after conversion and field id in
         // parquet files written by Delta.
-        val setSchemaTxn = createIcebergTxn(Some(WRITE_TABLE))
-        setSchemaTxn.setSchema(icebergSchema).commit()
-        setSchemaTxn.updateProperties()
-          .set(IcebergConverter.DELTA_VERSION_PROPERTY, postCommitSnapshot.version.toString)
-          .commit()
-        setSchemaTxn.commitTransaction()
+        metadataUpdates.add(
+          new AddSchema(icebergSchema, postCommitSnapshot.metadata.columnMappingMaxId.toInt)
+        )
+        if (postCommitSnapshot.metadata.partitionColumns.nonEmpty) {
+          metadataUpdates.add(
+            new AddPartitionSpec(partitionSpec)
+          )
+        }
       }
+      txn.commitTransaction()
       recordIcebergCommit()
     } catch {
       case NonFatal(e) =>
