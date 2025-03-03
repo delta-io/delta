@@ -84,8 +84,14 @@ case class DeltaInvariantCheckerExec(
   override protected def doExecute(): RDD[InternalRow] = {
     if (constraints.isEmpty) return child.execute()
 
+    // Resolve current_date()/current_time() expressions.
+    // We resolve currentTime for all invariants together to make sure we use the same timestamp.
+    val invariantsFakePlan = AnalysisHelper.FakeLogicalPlan(constraints, Nil)
+    val newInvariantsPlan = optimizer.ComputeCurrentTime(invariantsFakePlan)
+    val constraintsWithFixedTime = newInvariantsPlan.expressions
+
     child.execute().mapPartitionsInternal { rows =>
-      val assertions = UnsafeProjection.create(constraints, child.output)
+      val assertions = UnsafeProjection.create(constraintsWithFixedTime, child.output)
       rows.map { row =>
         assertions(row)
         row
