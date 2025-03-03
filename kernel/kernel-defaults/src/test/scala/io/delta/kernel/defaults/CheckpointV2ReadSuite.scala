@@ -22,20 +22,21 @@ import scala.collection.JavaConverters._
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestRow, TestUtils}
 import io.delta.kernel.expressions.Literal
-import io.delta.kernel.internal.checkpoints.CheckpointInstance
 import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl}
+import io.delta.kernel.internal.checkpoints.CheckpointInstance
 import io.delta.tables.DeltaTable
-import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.Path
-import org.scalatest.funsuite.AnyFunSuite
 
-import org.apache.spark.sql.Row
 import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaTestImplicits.OptimisticTxnTestHelper
 import org.apache.spark.sql.delta.util.FileNames
+
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.Path
+import org.apache.spark.sql.Row
 import org.apache.spark.sql.types.{BooleanType, IntegerType, LongType, MapType, StringType, StructType}
+import org.scalatest.funsuite.AnyFunSuite
 
 class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils {
   private final val supportedFileFormats = Seq("json", "parquet")
@@ -88,13 +89,12 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils with ExpressionTe
     // interval of 2, this will be the most recent even version.
     val expectedV2CkptToRead =
       ckptVersionExpected.getOrElse(snapshotFromSpark.version - (snapshotFromSpark.version % 2))
-    assert(snapshotImpl.getLogSegment.getCheckpoints.asScala.map(
-      f => FileNames.checkpointVersion(new Path(f.getPath)))
+    assert(snapshotImpl.getLogSegment.getCheckpoints.asScala.map(f =>
+      FileNames.checkpointVersion(new Path(f.getPath)))
       .contains(expectedV2CkptToRead))
-    assert(snapshotImpl.getLogSegment.getCheckpoints.asScala.map(
-      f => new CheckpointInstance(f.getPath).format == CheckpointInstance.CheckpointFormat.V2)
+    assert(snapshotImpl.getLogSegment.getCheckpoints.asScala.map(f =>
+      new CheckpointInstance(f.getPath).format == CheckpointInstance.CheckpointFormat.V2)
       .contains(expectV2CheckpointFormat))
-
 
     // Validate AddFiles from sidecars found against Spark connector.
     val scan = snapshot.getScanBuilder().build()
@@ -115,7 +115,8 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils with ExpressionTe
         val tbl = "tbl"
         withTable(tbl) {
           // Create table.
-          withSQLConf(DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> format,
+          withSQLConf(
+            DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> format,
             "spark.databricks.delta.clusteredTable.enableClusteringTablePreview" -> "true") {
             createSourceTable(tbl, path.toString, "CLUSTER")
 
@@ -153,7 +154,8 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils with ExpressionTe
         val tbl = "tbl"
         withTable(tbl) {
           // Create table.
-          withSQLConf(DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> format,
+          withSQLConf(
+            DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> format,
             DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key -> "1", // Ensure 1 action per checkpoint.
             "spark.databricks.delta.clusteredTable.enableClusteringTablePreview" -> "true") {
             createSourceTable(tbl, path.toString, "CLUSTER")
@@ -163,8 +165,7 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils with ExpressionTe
           validateSnapshot(path.toString, DeltaLog.forTable(spark, path.toString).update())
           checkTable(
             path = path.toString,
-            expectedAnswer = (1 to 6).map(i => TestRow(i, (i - 1 + 'a').toChar.toString))
-          )
+            expectedAnswer = (1 to 6).map(i => TestRow(i, (i - 1 + 'a').toChar.toString)))
 
           // Remove some files from the table, then add a new one.
           spark.sql(s"DELETE FROM $tbl WHERE a=1 OR a=2")
@@ -174,8 +175,7 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils with ExpressionTe
           validateSnapshot(path.toString, DeltaLog.forTable(spark, path.toString).update())
           checkTable(
             path = path.toString,
-            expectedAnswer = (3 to 8).map(i => TestRow(i, (i - 1 + 'a').toChar.toString))
-          )
+            expectedAnswer = (3 to 8).map(i => TestRow(i, (i - 1 + 'a').toChar.toString)))
         }
       }
     }
@@ -187,7 +187,8 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils with ExpressionTe
         val tbl = "tbl"
         withTable(tbl) {
           // Create table.
-          withSQLConf(DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> format,
+          withSQLConf(
+            DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> format,
             DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key -> "1", // Ensure 1 action per checkpoint.
             "spark.databricks.delta.clusteredTable.enableClusteringTablePreview" -> "true") {
             createSourceTable(tbl, path.toString, "CLUSTER")
@@ -205,15 +206,20 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils with ExpressionTe
             .filter(f => !f.getName.endsWith(".crc")).head.toURI).toUri
           // Create new empty sidecar file, then move it to the sidecar filepath. Delete the sidecar
           // checksum file to prevent corruption check.
-          spark.createDataFrame(spark.sparkContext.parallelize(Seq.empty[Row]),
-              new StructType()
-                .add("add", new StructType()
+          spark.createDataFrame(
+            spark.sparkContext.parallelize(Seq.empty[Row]),
+            new StructType()
+              .add(
+                "add",
+                new StructType()
                   .add("path", StringType)
                   .add("partitionValues", MapType(StringType, StringType))
                   .add("size", LongType)
                   .add("modificationTime", LongType)
                   .add("dataChange", BooleanType))
-                .add("remove", new StructType()
+              .add(
+                "remove",
+                new StructType()
                   .add("path", StringType)))
             .coalesce(1)
             .write.mode("append").parquet(tmpPath.toString)
@@ -240,12 +246,13 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils with ExpressionTe
       val log = DeltaLog.forTable(spark, new Path(path.toString))
       new File(log.logPath.toUri).mkdirs()
 
-      val metadata = Metadata("testId", schemaString = "{\"type\":\"struct\",\"fields\":[" +
-        "{\"name\":\"a\",\"type\":\"integer\",\"nullable\":true,\"metadata\":{}}]}")
+      val metadata = Metadata(
+        "testId",
+        schemaString = "{\"type\":\"struct\",\"fields\":[" +
+          "{\"name\":\"a\",\"type\":\"integer\",\"nullable\":true,\"metadata\":{}}]}")
       val supportedFeatures = Set("v2Checkpoint", "appendOnly", "invariants")
       val protocol = Protocol(3, 7, Some(Set("v2Checkpoint")), Some(supportedFeatures))
-      val add = AddFile(new Path("addfile").toUri.toString, Map.empty, 100L,
-        10L, dataChange = true)
+      val add = AddFile(new Path("addfile").toUri.toString, Map.empty, 100L, 10L, dataChange = true)
 
       log.startTransaction().commitManually(Seq(metadata, add): _*)
       log.upgradeProtocol(None, log.update(), protocol)
@@ -262,8 +269,10 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils with ExpressionTe
       // Rename to UUID.
       val ckptPath = new Path(new File(log.logPath.toUri).listFiles().filter(f =>
         FileNames.isCheckpointFile(new Path(f.getPath))).head.toURI)
-      new File(ckptPath.toUri).renameTo(new File(new Path(ckptPath.getParent, ckptPath.getName
-        .replace("checkpoint.parquet", "checkpoint.abc-def.parquet")).toUri))
+      new File(ckptPath.toUri).renameTo(new File(new Path(
+        ckptPath.getParent,
+        ckptPath.getName
+          .replace("checkpoint.parquet", "checkpoint.abc-def.parquet")).toUri))
 
       // Validate snapshot.
       validateSnapshot(path.toString, snapshotFromSpark, ckptVersionExpected = Some(1))
@@ -275,7 +284,8 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils with ExpressionTe
       val tbl = "tbl"
       withTable(tbl) {
         // Create checkpoint with sidecars.
-        withSQLConf(DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> "parquet",
+        withSQLConf(
+          DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> "parquet",
           "spark.databricks.delta.clusteredTable.enableClusteringTablePreview" -> "true") {
           spark.conf.set(DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key, "parquet")
           createSourceTable(tbl, path.toString, "CLUSTER")
@@ -296,8 +306,7 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils with ExpressionTe
         validateSnapshot(path.toString, snapshotFromSpark, expectV2CheckpointFormat = false)
         checkTable(
           path = path.toString,
-          expectedAnswer = (1 to 6).map(i => TestRow(i, (i - 1 + 'a').toChar.toString))
-        )
+          expectedAnswer = (1 to 6).map(i => TestRow(i, (i - 1 + 'a').toChar.toString)))
       }
     }
   }

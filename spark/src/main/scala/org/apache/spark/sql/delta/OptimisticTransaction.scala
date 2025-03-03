@@ -683,6 +683,15 @@ trait OptimisticTransactionImpl extends DeltaTransaction
       }
     }
 
+    if (spark.sessionState.conf
+      .getConf(DeltaSQLConf.REMOVE_EXISTS_DEFAULT_FROM_SCHEMA_ON_EVERY_METADATA_CHANGE)) {
+      val schemaWithRemovedExistsDefaults =
+        SchemaUtils.removeExistsDefaultMetadata(newMetadataTmp.schema)
+      if (schemaWithRemovedExistsDefaults != newMetadataTmp.schema) {
+        newMetadataTmp = newMetadataTmp.copy(schemaString = schemaWithRemovedExistsDefaults.json)
+      }
+    }
+
     // Table features Part 2: add manually-supported features specified in table properties, aka
     // those start with [[FEATURE_PROP_PREFIX]].
     //
@@ -1267,6 +1276,13 @@ trait OptimisticTransactionImpl extends DeltaTransaction
       op: DeltaOperations.Operation,
       redirectConfig: TableRedirectConfiguration
   ): Unit = {
+    // If this transaction commits to the redirect destination location, then there is no
+    // need to validate the subsequent no-redirect rules.
+    val configuration = deltaLog.newDeltaHadoopConf()
+    val dataPath = snapshot.deltaLog.dataPath.toUri.getPath
+    val catalog = spark.sessionState.catalog
+    val isRedirectDest = redirectConfig.spec.isRedirectDest(catalog, configuration, dataPath)
+    if (isRedirectDest) return
     // Find all rules that match with the current application name.
     // If appName is not present, its no-redirect-rule are included.
     // If appName is present, includes its no-redirect-rule only when appName

@@ -43,11 +43,6 @@ class DeltaVariantSuite
 
   import testImplicits._
 
-  private def getProtocolForTable(table: String): Protocol = {
-    val deltaLog = DeltaLog.forTable(spark, TableIdentifier(table))
-    deltaLog.unsafeVolatileSnapshot.protocol
-  }
-
   private def assertVariantTypeTableFeatures(
       tableName: String,
       expectPreviewFeature: Boolean,

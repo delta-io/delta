@@ -379,9 +379,11 @@ object TableFeature {
         TestLegacyWriterFeature,
         TestLegacyReaderWriterFeature,
         TestWriterFeature,
+        TestUnsupportedWriterFeature,
         TestWriterMetadataNoAutoUpdateFeature,
         TestReaderWriterFeature,
         TestUnsupportedReaderWriterFeature,
+        TestUnsupportedNoHistoryProtectionReaderWriterFeature,
         TestReaderWriterMetadataAutoUpdateFeature,
         TestReaderWriterMetadataNoAutoUpdateFeature,
         TestRemovableWriterFeature,
@@ -400,8 +402,12 @@ object TableFeature {
   }
 
   /** Test only features that appear unsupported in order to test protocol validations. */
-  def testUnsupportedFeatures: Set[TableFeature] =
-    if (isTesting) Set(TestUnsupportedReaderWriterFeature) else Set.empty
+  def testUnsupportedFeatures: Set[TableFeature] = {
+    if (!isTesting) return Set.empty
+    Set(TestUnsupportedReaderWriterFeature,
+      TestUnsupportedNoHistoryProtectionReaderWriterFeature,
+      TestUnsupportedWriterFeature)
+  }
 
   private val allDependentFeaturesMap: Map[TableFeature, Set[TableFeature]] = {
     val dependentFeatureTuples =
@@ -885,10 +891,20 @@ abstract class TypeWideningTableFeatureBase(name: String) extends ReaderWriterFe
 
 /**
  * Feature used for the preview phase of type widening. Tables that enabled this feature during the
- * preview will keep being supported after the preview.
+ * preview are still supported after the preview.
+ *
+ * Note: Users can manually add both the preview and stable features to a table using ADD FEATURE,
+ * although that's undocumented for type widening. This is allowed: the two feature specifications
+ * are compatible and supported.
  */
 object TypeWideningPreviewTableFeature
   extends TypeWideningTableFeatureBase(name = "typeWidening-preview")
+
+/**
+ * Stable feature for type widening.
+ */
+object TypeWideningTableFeature
+  extends TypeWideningTableFeatureBase(name = "typeWidening")
   with FeatureAutomaticallyEnabledByMetadata {
   override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
 
@@ -896,22 +912,10 @@ object TypeWideningPreviewTableFeature
       protocol: Protocol,
       metadata: Metadata,
       spark: SparkSession): Boolean = isTypeWideningSupportNeededByMetadata(metadata) &&
-    // Don't automatically enable the preview feature if the stable feature is already supported.
-    !protocol.isFeatureSupported(TypeWideningTableFeature)
+    // Don't automatically enable the stable feature if the preview feature is already supported, to
+    // avoid possibly breaking old clients that only support the preview feature.
+    !protocol.isFeatureSupported(TypeWideningPreviewTableFeature)
 }
-
-/**
- * Stable feature for type widening. The stable feature isn't enabled automatically yet
- * when setting the type widening table property as the feature is still in preview in this version.
- * The feature spec is finalized though and by supporting the stable feature here we guarantee that
- * this version can already read any table created in the future.
- *
- * Note: Users can manually add both the preview and stable features to a table using ADD FEATURE,
- * although that's undocumented for type widening. This is allowed: the two feature specifications
- * are compatible and supported.
- */
-object TypeWideningTableFeature
-  extends TypeWideningTableFeatureBase(name = "typeWidening")
 
 /**
  * inCommitTimestamp table feature is a writer feature that makes
@@ -1156,6 +1160,37 @@ object TestUnsupportedReaderWriterFeature
 
   override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
     TestUnsupportedReaderWriterFeaturePreDowngradeCommand(table)
+
+  override def actionUsesFeature(action: Action): Boolean = false
+}
+
+/**
+ * Test feature that appears unsupported and can be dropped without checkpoint protection.
+ * it is used only for testing purposes.
+ */
+object TestUnsupportedNoHistoryProtectionReaderWriterFeature
+    extends ReaderWriterFeature(name = "testUnsupportedNoHistoryProtectionReaderWriter")
+    with RemovableFeature {
+
+  override def validateRemoval(snapshot: Snapshot): Boolean = true
+
+  override def requiresHistoryProtection: Boolean = false
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    TestUnsupportedReaderWriterFeaturePreDowngradeCommand(table)
+
+  override def actionUsesFeature(action: Action): Boolean = false
+}
+
+object TestUnsupportedWriterFeature
+  extends WriterFeature(name = "testUnsupportedWriter")
+  with RemovableFeature {
+
+  /** Make sure the property is not enabled on the table. */
+  override def validateRemoval(snapshot: Snapshot): Boolean = true
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    TestUnsupportedWriterFeaturePreDowngradeCommand(table)
 
   override def actionUsesFeature(action: Action): Boolean = false
 }

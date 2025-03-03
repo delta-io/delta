@@ -16,14 +16,14 @@
 
 package org.apache.spark.sql.delta.uniform
 
-import org.apache.spark.sql.delta.DeltaLog
-import org.apache.spark.sql.delta.DeltaTestUtils.withTimeZone
-import org.apache.spark.sql.delta.sources.DeltaSQLConf.UTC_TIMESTAMP_PARTITION_VALUES
-
 import org.apache.spark.sql.Row
-import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.types._
 
+/**
+ * This test suite base aims at testing the end-to-end behavior of UniForm.
+ * It writes Delta tables, and reads the generated Iceberg tables to
+ * perform verification.
+ */
 abstract class UniFormE2EIcebergSuiteBase extends UniFormE2ETest {
 
   val testTableName = "delta_table"
@@ -39,109 +39,6 @@ abstract class UniFormE2EIcebergSuiteBase extends UniFormE2ETest {
            |)""".stripMargin)
       write(s"INSERT INTO $testTableName VALUES (123)")
       readAndVerify(testTableName, "col1", "col1", Seq(Row(123)))
-    }
-  }
-
-  test("Insert Partitioned Table") {
-    val partitionColumns = Array(
-      "str STRING",
-      "i INTEGER",
-      "l LONG",
-      "s SHORT",
-      "b BYTE",
-      "dt DATE",
-      "bin BINARY",
-      "bool BOOLEAN",
-      "ts_ntz TIMESTAMP_NTZ",
-      "ts TIMESTAMP")
-
-    val partitionValues: Array[Any] = Array(
-      "'some_value'",
-      1,
-      1234567L,
-      1000,
-      119,
-      "to_date('2016-12-31', 'yyyy-MM-dd')",
-      "'asdf'",
-      true,
-      "TIMESTAMP_NTZ'2021-12-06 00:00:00'",
-      "TIMESTAMP'2023-08-18 05:00:00UTC-7'"
-    )
-
-    partitionColumns zip partitionValues map {
-      partitionColumnsAndValues =>
-        val partitionColumnName =
-          partitionColumnsAndValues._1.split(" ")(0)
-        val tableName = testTableName + "_" + partitionColumnName
-        withTable(tableName) {
-          write(
-            s"""CREATE TABLE $tableName (${partitionColumnsAndValues._1}, col1 INT)
-               | USING DELTA
-               | PARTITIONED BY ($partitionColumnName)
-               | TBLPROPERTIES (
-               |  'delta.columnMapping.mode' = 'name',
-               |  'delta.enableIcebergCompatV2' = 'true',
-               |  'delta.universalFormat.enabledFormats' = 'iceberg'
-               |)""".stripMargin)
-          write(s"INSERT INTO $tableName VALUES (${partitionColumnsAndValues._2}, 123)")
-          val verificationQuery = s"SELECT col1 FROM $tableName " +
-            s"where ${partitionColumnName}=${partitionColumnsAndValues._2}"
-          // Verify against Delta read and Iceberg read
-          checkAnswer(spark.sql(verificationQuery), Seq(Row(123)))
-          checkAnswer(createReaderSparkSession.sql(verificationQuery), Seq(Row(123)))
-        }
-    }
-  }
-
-  test("Insert Partitioned Table - Multiple Partitions") {
-    withTable(testTableName) {
-      write(
-        s"""CREATE TABLE $testTableName (id int, ts timestamp, col1 INT)
-           | USING DELTA
-           | PARTITIONED BY (id, ts)
-           | TBLPROPERTIES (
-           |  'delta.columnMapping.mode' = 'name',
-           |  'delta.enableIcebergCompatV2' = 'true',
-           |  'delta.universalFormat.enabledFormats' = 'iceberg'
-           |)""".stripMargin)
-      write(s"INSERT INTO $testTableName VALUES (1, TIMESTAMP'2023-08-18 05:00:00UTC-7', 123)")
-      val verificationQuery = s"SELECT col1 FROM $testTableName " +
-        s"where id=1 and ts=TIMESTAMP'2023-08-18 05:00:00UTC-7'"
-      // Verify against Delta read and Iceberg read
-      checkAnswer(spark.sql(verificationQuery), Seq(Row(123)))
-      checkAnswer(createReaderSparkSession.sql(verificationQuery), Seq(Row(123)))
-    }
-  }
-
-  test("Insert Partitioned Table - UTC Adjustment for Non-ISO Timestamp Partition values") {
-    withTable(testTableName) {
-      withTimeZone("GMT-8") {
-        withSQLConf(UTC_TIMESTAMP_PARTITION_VALUES.key -> "false") {
-          write(
-            s"""CREATE TABLE $testTableName (id int, ts timestamp)
-               | USING DELTA
-               | PARTITIONED BY (ts)
-               | TBLPROPERTIES (
-               |  'delta.columnMapping.mode' = 'name',
-               |  'delta.enableIcebergCompatV2' = 'true',
-               |  'delta.universalFormat.enabledFormats' = 'iceberg'
-               |)""".stripMargin)
-          write(s"INSERT INTO $testTableName" +
-            s" VALUES (1, timestamp'2021-06-30 00:00:00.123456')")
-
-          // Verify partition values in Delta Log
-          val deltaLog = DeltaLog.forTable(spark, TableIdentifier(testTableName))
-          val partitionColName = deltaLog.unsafeVolatileMetadata.physicalPartitionColumns.head
-          val partitionValues = deltaLog.update().allFiles.head.partitionValues
-          assert(partitionValues === Map(partitionColName -> "2021-06-30 00:00:00.123456"))
-
-          // Verify against Delta read and Iceberg read
-          val verificationQuery = s"SELECT id FROM $testTableName " +
-            s"where ts=TIMESTAMP'2021-06-30 08:00:00.123456UTC'"
-          checkAnswer(spark.sql(verificationQuery), Seq(Row(1)))
-          checkAnswer(createReaderSparkSession.sql(verificationQuery), Seq(Row(1)))
-        }
-      }
     }
   }
 
@@ -200,9 +97,7 @@ abstract class UniFormE2EIcebergSuiteBase extends UniFormE2ETest {
         .write.format("delta").mode("append")
         .saveAsTable(testTableName)
 
-      val result = read(s"SELECT * FROM $tableFullName")
-
-      assert(result.head === data.head)
+      readAndVerify(tableFullName, "col1, col2", "col1", data)
     }
   }
 
@@ -228,4 +123,111 @@ abstract class UniFormE2EIcebergSuiteBase extends UniFormE2ETest {
       readAndVerify(testTableName, "col1", "col1", Seq(Row(1), Row(2)))
     }
   }
+
+  // TODO createReaderSparkSession is no longer supported.
+  // Please use readAndVerify and re-enable the cases
+  /*
+  test("Insert Partitioned Table") {
+    val partitionColumns = Array(
+      "str STRING",
+      "i INTEGER",
+      "l LONG",
+      "s SHORT",
+      "b BYTE",
+      "dt DATE",
+      "bin BINARY",
+      "bool BOOLEAN",
+      "ts_ntz TIMESTAMP_NTZ",
+      "ts TIMESTAMP")
+
+    val partitionValues: Array[Any] = Array(
+      "'some_value'",
+      1,
+      1234567L,
+      1000,
+      119,
+      "to_date('2016-12-31', 'yyyy-MM-dd')",
+      "'asdf'",
+      true,
+      "TIMESTAMP_NTZ'2021-12-06 05:12:34'",
+      "TIMESTAMP'2023-08-18 05:00:00UTC-7'"
+    )
+
+    partitionColumns zip partitionValues map {
+      partitionColumnsAndValues =>
+        val partitionColumnName =
+          partitionColumnsAndValues._1.split(" ")(0)
+        val tableName = testTableName + "_" + partitionColumnName
+        withTable(tableName) {
+          write(
+            s"""CREATE TABLE $tableName (${partitionColumnsAndValues._1}, col1 INT)
+               | USING DELTA
+               | PARTITIONED BY ($partitionColumnName)
+               | TBLPROPERTIES (
+               |  'delta.columnMapping.mode' = 'name',
+               |  'delta.enableIcebergCompatV2' = 'true',
+               |  'delta.universalFormat.enabledFormats' = 'iceberg'
+               |)""".stripMargin)
+          write(s"INSERT INTO $tableName VALUES (${partitionColumnsAndValues._2}, 123)")
+          val verificationQuery = s"SELECT col1 FROM $tableName " +
+            s"where ${partitionColumnName}=${partitionColumnsAndValues._2}"
+          // Verify against Delta read and Iceberg read
+          checkAnswer(spark.sql(verificationQuery), Seq(Row(123)))
+          assert(read(verificationQuery).sameElements(Seq(Row(123))))
+        }
+    }
+  }
+
+  test("Insert Partitioned Table - Multiple Partitions") {
+    withTable(testTableName) {
+      write(
+        s"""CREATE TABLE $testTableName (id int, ts timestamp, col1 INT)
+           | USING DELTA
+           | PARTITIONED BY (id, ts)
+           | TBLPROPERTIES (
+           |  'delta.columnMapping.mode' = 'name',
+           |  'delta.enableIcebergCompatV2' = 'true',
+           |  'delta.universalFormat.enabledFormats' = 'iceberg'
+           |)""".stripMargin)
+      write(s"INSERT INTO $testTableName VALUES (1, TIMESTAMP'2023-08-18 05:00:00UTC-7', 123)")
+      val verificationQuery = s"SELECT col1 FROM $testTableName " +
+        s"where id=1 and ts=TIMESTAMP'2023-08-18 05:00:00UTC-7'"
+      // Verify against Delta read and Iceberg read
+      checkAnswer(spark.sql(verificationQuery), Seq(Row(123)))
+      assert(read(verificationQuery).sameElements(Seq(Row(123))))
+    }
+  }
+
+  test("Insert Partitioned Table - UTC Adjustment for Non-ISO Timestamp Partition values") {
+    withTable(testTableName) {
+      withTimeZone("GMT-8") {
+        withSQLConf(UTC_TIMESTAMP_PARTITION_VALUES.key -> "false") {
+          write(
+            s"""CREATE TABLE $testTableName (id int, ts timestamp)
+               | USING DELTA
+               | PARTITIONED BY (ts)
+               | TBLPROPERTIES (
+               |  'delta.columnMapping.mode' = 'name',
+               |  'delta.enableIcebergCompatV2' = 'true',
+               |  'delta.universalFormat.enabledFormats' = 'iceberg'
+               |)""".stripMargin)
+          write(s"INSERT INTO $testTableName" +
+            s" VALUES (1, timestamp'2021-06-30 00:00:00.123456')")
+
+          // Verify partition values in Delta Log
+          val deltaLog = DeltaLog.forTable(spark, TableIdentifier(testTableName))
+          val partitionColName = deltaLog.unsafeVolatileMetadata.physicalPartitionColumns.head
+          val partitionValues = deltaLog.update().allFiles.head.partitionValues
+          assert(partitionValues === Map(partitionColName -> "2021-06-30 00:00:00.123456"))
+
+          // Verify against Delta read and Iceberg read
+          val verificationQuery = s"SELECT id FROM $testTableName " +
+            s"where ts=TIMESTAMP'2021-06-30 08:00:00.123456UTC'"
+          checkAnswer(spark.sql(verificationQuery), Seq(Row(1)))
+          checkAnswer(createReaderSparkSession.sql(verificationQuery), Seq(Row(1)))
+        }
+      }
+    }
+  }
+*/
 }

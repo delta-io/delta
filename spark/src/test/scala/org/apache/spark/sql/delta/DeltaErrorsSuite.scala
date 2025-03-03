@@ -2732,6 +2732,7 @@ trait DeltaErrorsSuiteBase
           nonAdditiveSchemaChangeOpType = "RENAME AND TYPE WIDENING",
           previousSchemaChangeVersion = 0,
           currentSchemaChangeVersion = 1,
+          readerOptionsUnblock = Seq("allowSourceColumnRename", "allowSourceColumnTypeChange"),
           sqlConfsUnblock = Seq(
             "spark.databricks.delta.streaming.allowSourceColumnRename",
             "spark.databricks.delta.streaming.allowSourceColumnTypeChange"),
@@ -2743,6 +2744,12 @@ trait DeltaErrorsSuiteBase
           "opType" -> "RENAME AND TYPE WIDENING",
           "previousSchemaChangeVersion" -> "0",
           "currentSchemaChangeVersion" -> "1",
+          "unblockChangeOptions" ->
+            s"""  .option("allowSourceColumnRename", "1")
+               |  .option("allowSourceColumnTypeChange", "1")""".stripMargin,
+          "unblockStreamOptions" ->
+            s"""  .option("allowSourceColumnRename", "always")
+               |  .option("allowSourceColumnTypeChange", "always")""".stripMargin,
           "unblockChangeConfs" ->
             s"""  SET spark.databricks.delta.streaming.allowSourceColumnRename.ckpt_15 = 1;
                |  SET spark.databricks.delta.streaming.allowSourceColumnTypeChange.ckpt_15 = 1;""".stripMargin,
@@ -2760,6 +2767,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.cannotContinueStreamingTypeWidening(
           previousSchemaChangeVersion = 0,
           currentSchemaChangeVersion = 1,
+          readerOptionsUnblock = Seq("allowSourceColumnTypeChange"),
           sqlConfsUnblock = Seq("spark.databricks.delta.streaming.allowSourceColumnTypeChange"),
           checkpointHash = 15,
           wideningTypeChanges = Seq(TypeChange(None, IntegerType, LongType, Seq("a"))))
@@ -2770,6 +2778,8 @@ trait DeltaErrorsSuiteBase
           "previousSchemaChangeVersion" -> "0",
           "currentSchemaChangeVersion" -> "1",
           "wideningTypeChanges" -> "  a: INT -> BIGINT",
+          "unblockChangeOptions" -> "  .option(\"allowSourceColumnTypeChange\", \"1\")",
+          "unblockStreamOptions" -> "  .option(\"allowSourceColumnTypeChange\", \"always\")",
           "unblockChangeConfs" ->
             "  SET spark.databricks.delta.streaming.allowSourceColumnTypeChange.ckpt_15 = 1;",
           "unblockStreamConfs" ->

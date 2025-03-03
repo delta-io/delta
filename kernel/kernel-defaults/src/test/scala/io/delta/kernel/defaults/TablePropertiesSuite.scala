@@ -15,12 +15,12 @@
  */
 package io.delta.kernel.defaults
 
+import scala.collection.immutable.Seq
+
 import io.delta.kernel.Table
 import io.delta.kernel.exceptions.UnknownConfigurationException
 import io.delta.kernel.internal.SnapshotImpl
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
-
-import scala.collection.immutable.Seq
 
 /**
  * Suite to set or get table properties.
@@ -35,8 +35,7 @@ class TablePropertiesSuite extends DeltaTableWriteSuiteBase {
       createUpdateTableWithProps(
         tablePath,
         createTable = true,
-        props = Map("my key" -> "10", "my key2" -> "20")
-      )
+        props = Map("my key" -> "10", "my key2" -> "20"))
       assertHasProp(tablePath, expProps = Map("my key" -> "10", "my key2" -> "20"))
 
       // update table by modifying the arbitrary properties and check if they are updated
@@ -75,7 +74,8 @@ class TablePropertiesSuite extends DeltaTableWriteSuiteBase {
   test("create/update table - delta configs are stored with same case as defined in TableConfig") {
     withTempDir { tempFile =>
       val tablePath = tempFile.getAbsolutePath
-      createUpdateTableWithProps(tablePath,
+      createUpdateTableWithProps(
+        tablePath,
         createTable = true,
         Map("delta.CHECKPOINTINTERVAL" -> "20"))
       assertHasProp(tablePath, expProps = Map("delta.checkpointInterval" -> "20"))

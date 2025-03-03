@@ -174,6 +174,18 @@ trait DeltaColumnMappingBase extends DeltaLogging {
       }
     }
 
+    // If column mapping was disabled, but there was already column mapping in the schema, it is
+    // a result of a bug in the previous version of Delta. This should no longer happen with the
+    // stripping done above. For existing tables with this issue, we should not allow enabling
+    // column mapping, to prevent further corruption.
+    if (spark.conf.get(DeltaSQLConf.
+        DELTA_COLUMN_MAPPING_DISALLOW_ENABLING_WHEN_METADATA_ALREADY_EXISTS)) {
+      if (oldMappingMode == NoMapping && newMappingMode != NoMapping &&
+          schemaHasColumnMappingMetadata(oldMetadata.schema)) {
+        throw DeltaErrors.enablingColumnMappingDisallowedWhenColumnMappingMetadataAlreadyExists()
+      }
+    }
+
     updatedMetadata = updateColumnMappingMetadata(
       oldMetadata, updatedMetadata, isChangingModeOnExistingTable, isOverwriteSchema)
 

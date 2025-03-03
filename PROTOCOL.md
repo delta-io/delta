@@ -62,6 +62,11 @@
   - [Reader Requirements for Vacuum Protocol Check](#reader-requirements-for-vacuum-protocol-check)
 - [Clustered Table](#clustered-table)
   - [Writer Requirements for Clustered Table](#writer-requirements-for-clustered-table)
+- [Variant Data Type](#variant-data-type)
+  - [Variant data in Parquet](#variant-data-in-parquet)
+  - [Writer Requirements for Variant Type](#writer-requirements-for-variant-type)
+  - [Reader Requirements for Variant Data Type](#reader-requirements-for-variant-data-type)
+  - [Compatibility with other Delta Features](#compatibility-with-other-delta-features)
 - [Requirements for Writers](#requirements-for-writers)
   - [Creation of New Log Entries](#creation-of-new-log-entries)
   - [Consistency Between Table Metadata and Data Files](#consistency-between-table-metadata-and-data-files)
@@ -100,6 +105,7 @@
     - [Struct Field](#struct-field)
     - [Array Type](#array-type)
     - [Map Type](#map-type)
+    - [Variant Type](#variant-type)
     - [Column Metadata](#column-metadata)
     - [Example](#example)
   - [Checkpoint Schema](#checkpoint-schema)
@@ -1353,6 +1359,86 @@ The example above converts `configuration` field into JSON format, including esc
 }
 ```
 
+
+# Variant Data Type
+
+This feature enables support for the `variant` data type, which stores semi-structured data.
+The schema serialization method is described in [Schema Serialization Format](#schema-serialization-format).
+
+To support this feature:
+- The table must be on Reader Version 3 and Writer Version 7
+- The feature `variantType` must exist in the table `protocol`'s `readerFeatures` and `writerFeatures`.
+
+## Example JSON-Encoded Delta Table Schema with Variant types
+
+```
+{
+  "type" : "struct",
+  "fields" : [ {
+    "name" : "raw_data",
+    "type" : "variant",
+    "nullable" : true,
+    "metadata" : { }
+  }, {
+    "name" : "variant_array",
+    "type" : {
+      "type" : "array",
+      "elementType" : {
+        "type" : "variant"
+      },
+      "containsNull" : false
+    },
+    "nullable" : false,
+    "metadata" : { }
+  } ]
+}
+```
+
+## Variant data in Parquet
+
+The Variant data type is represented as two binary encoded values, according to the [Spark Variant binary encoding specification](https://github.com/apache/spark/blob/master/common/variant/README.md).
+The two binary values are named `value` and `metadata`.
+
+When writing Variant data to parquet files, the Variant data is written as a single Parquet struct, with the following fields:
+
+Struct field name | Parquet primitive type | Description
+-|-|-
+value | binary | The binary-encoded Variant value, as described in [Variant binary encoding](https://github.com/apache/spark/blob/master/common/variant/README.md)
+metadata | binary | The binary-encoded Variant metadata, as described in [Variant binary encoding](https://github.com/apache/spark/blob/master/common/variant/README.md)
+
+The parquet struct must include the two struct fields `value` and `metadata`.
+Supported writers must write the two binary fields, and supported readers must read the two binary fields.
+
+[Variant shredding](https://github.com/apache/parquet-format/blob/master/VariantShredding.md) will be introduced in a separate `variantShredding` table feature. will be introduced later, as a separate `variantShredding` table feature.
+
+## Writer Requirements for Variant Data Type
+
+When Variant type is supported (`writerFeatures` field of a table's `protocol` action contains `variantType`), writers:
+- must write a column of type `variant` to parquet as a struct containing the fields `value` and `metadata` and storing values that conform to the [Variant binary encoding specification](https://github.com/apache/spark/blob/master/common/variant/README.md)
+- must not write a parquet struct field named `typed_value` to avoid confusion with the field required by [Variant shredding](https://github.com/apache/parquet-format/blob/master/VariantShredding.md) with the same name.
+
+## Reader Requirements for Variant Data Type
+
+When Variant type is supported (`readerFeatures` field of a table's `protocol` action contains `variantType`), readers:
+- must recognize and tolerate a `variant` data type in a Delta schema
+- must use the correct physical schema (struct-of-binary, with fields `value` and `metadata`) when reading a Variant data type from file
+- must make the column available to the engine:
+    - [Recommended] Expose and interpret the struct-of-binary as a single Variant field in accordance with the [Spark Variant binary encoding specification](https://github.com/apache/spark/blob/master/common/variant/README.md).
+    - [Alternate] Expose the raw physical struct-of-binary, e.g. if the engine does not support Variant.
+    - [Alternate] Convert the struct-of-binary to a string, and expose the string representation, e.g. if the engine does not support Variant.
+
+## Compatibility with other Delta Features
+
+Feature | Support for Variant Data Type
+-|-
+Partition Columns | **Supported:** A Variant column is allowed to be a non-partitioned column of a partitioned table. <br/> **Unsupported:** Variant is not a comparable data type, so it cannot be included in a partition column.
+Clustered Tables | **Supported:** A Variant column is allowed to be a non-clustering column of a clustered table. <br/> **Unsupported:** Variant is not a comparable data type, so it cannot be included in a clustering column.
+Delta Column Statistics | **Supported:** A Variant column supports the `nullCount` statistic. <br/> **Unsupported:** Variant is not a comparable data type, so a Variant column does not support the `minValues` and `maxValues` statistics.
+Generated Columns | **Supported:** A Variant column is allowed to be used as a source in a generated column expression, as long as the Variant type is not the result type of the generated column expression. <br/> **Unsupported:** The Variant data type is not allowed to be the result type of a generated column expression.
+Delta CHECK Constraints | **Supported:** A Variant column is allowed to be used for a CHECK constraint expression.
+Default Column Values | **Supported:** A Variant column is allowed to have a default column value.
+Change Data Feed | **Supported:** A table using the Variant data type is allowed to enable the Delta Change Data Feed.
+
 # In-Commit Timestamps
 
 The In-Commit Timestamps writer feature strongly associates a monotonically increasing timestamp with each commit by storing it in the commit's metadata.
@@ -1964,6 +2050,14 @@ Field Name | Description
 type| Always the string "map".
 keyType| The type of element used for the key of this map, represented as a string containing the name of a primitive type, a struct definition, an array definition or a map definition
 valueType| The type of element used for the key of this map, represented as a string containing the name of a primitive type, a struct definition, an array definition or a map definition
+
+### Variant Type
+
+Variant data uses the Delta type name `variant` for Delta schema serialization.
+
+Field Name | Description
+-|-
+type | Always the string "variant"
 
 ### Column Metadata
 A column metadata stores various information about the column.

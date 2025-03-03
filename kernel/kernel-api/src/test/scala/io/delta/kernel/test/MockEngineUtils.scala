@@ -15,15 +15,15 @@
  */
 package io.delta.kernel.test
 
-import io.delta.kernel.engine._
-import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch, Row}
-import io.delta.kernel.expressions.{Column, Expression, ExpressionEvaluator, Predicate, PredicateEvaluator}
-import io.delta.kernel.types.{DataType, StructType}
-import io.delta.kernel.utils.{CloseableIterator, DataFileStatus, FileStatus}
-
 import java.io.ByteArrayInputStream
 import java.util
 import java.util.Optional
+
+import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch, Row}
+import io.delta.kernel.engine._
+import io.delta.kernel.expressions.{Column, Expression, ExpressionEvaluator, Predicate, PredicateEvaluator}
+import io.delta.kernel.types.{DataType, StructType}
+import io.delta.kernel.utils.{CloseableIterator, DataFileStatus, FileStatus}
 
 /**
  * Contains broiler plate code for mocking [[Engine]] and its sub-interfaces.
@@ -44,15 +44,16 @@ import java.util.Optional
  * }}}
  */
 trait MockEngineUtils {
+
   /**
    * Create a mock Engine with the given components. If a component is not provided, it will
    * throw an exception when accessed.
    */
   def mockEngine(
-    fileSystemClient: FileSystemClient = null,
-    jsonHandler: JsonHandler = null,
-    parquetHandler: ParquetHandler = null,
-    expressionHandler: ExpressionHandler = null): Engine = {
+      fileSystemClient: FileSystemClient = null,
+      jsonHandler: JsonHandler = null,
+      parquetHandler: ParquetHandler = null,
+      expressionHandler: ExpressionHandler = null): Engine = {
     new Engine() {
       override def getExpressionHandler: ExpressionHandler =
         Option(expressionHandler).getOrElse(

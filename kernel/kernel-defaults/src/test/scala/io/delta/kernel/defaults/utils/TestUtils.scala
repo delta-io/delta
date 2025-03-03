@@ -19,11 +19,13 @@ import java.io.{File, FileNotFoundException}
 import java.math.{BigDecimal => BigDecimalJ}
 import java.nio.file.Files
 import java.util.{Optional, TimeZone, UUID}
+
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
+
 import io.delta.golden.GoldenTableUtils
 import io.delta.kernel.{Scan, Snapshot, Table}
-import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch, MapValue, Row}
+import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch, MapValue, Row}
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.defaults.internal.data.vector.DefaultGenericVector
 import io.delta.kernel.engine.Engine
@@ -34,13 +36,15 @@ import io.delta.kernel.internal.util.{ColumnMapping, Utils}
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.types._
 import io.delta.kernel.utils.CloseableIterator
+
+import org.apache.spark.sql.delta.util.FileNames
+
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
-import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.{types => sparktypes}
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.plans.SQLHelper
-import org.apache.spark.sql.delta.util.FileNames
 import org.scalatest.Assertions
 
 trait TestUtils extends Assertions with SQLHelper {
@@ -128,7 +132,8 @@ trait TestUtils extends Assertions with SQLHelper {
   }
 
   def withTempDirAndEngine(
-    f: (String, Engine) => Unit, hadoopConf: Map[String, String] = Map.empty): Unit = {
+      f: (String, Engine) => Unit,
+      hadoopConf: Map[String, String] = Map.empty): Unit = {
     val engine = DefaultEngine.create(new Configuration() {
       {
         for ((key, value) <- hadoopConf) {
@@ -174,8 +179,9 @@ trait TestUtils extends Assertions with SQLHelper {
         leafLevelPrimitiveColumns(
           basePath :+ field.getName,
           field.getDataType.asInstanceOf[StructType])
-      case field if !field.getDataType.isInstanceOf[ArrayType] &&
-        !field.getDataType.isInstanceOf[MapType] =>
+      case field
+          if !field.getDataType.isInstanceOf[ArrayType] &&
+            !field.getDataType.isInstanceOf[MapType] =>
         // for all primitive types
         Seq(new Column((basePath :+ field.getName).asJava.toArray(new Array[String](0))));
       case _ => Seq.empty
@@ -188,11 +194,11 @@ trait TestUtils extends Assertions with SQLHelper {
   }
 
   def readSnapshot(
-    snapshot: Snapshot,
-    readSchema: StructType = null,
-    filter: Predicate = null,
-    expectedRemainingFilter: Predicate = null,
-    engine: Engine = defaultEngine): Seq[Row] = {
+      snapshot: Snapshot,
+      readSchema: StructType = null,
+      filter: Predicate = null,
+      expectedRemainingFilter: Predicate = null,
+      engine: Engine = defaultEngine): Seq[Row] = {
 
     val result = ArrayBuffer[Row]()
 
@@ -261,9 +267,9 @@ trait TestUtils extends Assertions with SQLHelper {
   }
 
   def readTableUsingKernel(
-    engine: Engine,
-    tablePath: String,
-    readSchema: StructType): Seq[FilteredColumnarBatch] = {
+      engine: Engine,
+      tablePath: String,
+      readSchema: StructType): Seq[FilteredColumnarBatch] = {
     val scan = Table.forPath(engine, tablePath)
       .getLatestSnapshot(engine)
       .getScanBuilder()
@@ -322,15 +328,13 @@ trait TestUtils extends Assertions with SQLHelper {
     TimestampNTZType.TIMESTAMP_NTZ,
     StringType.STRING,
     BinaryType.BINARY,
-    new DecimalType(10, 5)
-  )
+    new DecimalType(10, 5))
 
   /** All types. Used in parameterized tests where type is one of the test dimensions. */
   val ALL_TYPES = SIMPLE_TYPES ++ Seq(
     new ArrayType(BooleanType.BOOLEAN, true),
     new MapType(IntegerType.INTEGER, LongType.LONG, true),
-    new StructType().add("s1", BooleanType.BOOLEAN).add("s2", IntegerType.INTEGER)
-  )
+    new StructType().add("s1", BooleanType.BOOLEAN).add("s2", IntegerType.INTEGER))
 
   /**
    * Compares the rows in the tables latest snapshot with the expected answer and fails if they
@@ -348,17 +352,16 @@ trait TestUtils extends Assertions with SQLHelper {
    * @param expectedVersion expected version of the latest snapshot for the table
    */
   def checkTable(
-    path: String,
-    expectedAnswer: Seq[TestRow],
-    readCols: Seq[String] = null,
-    engine: Engine = defaultEngine,
-    expectedSchema: StructType = null,
-    filter: Predicate = null,
-    version: Option[Long] = None,
-    timestamp: Option[Long] = None,
-    expectedRemainingFilter: Predicate = null,
-    expectedVersion: Option[Long] = None
-  ): Unit = {
+      path: String,
+      expectedAnswer: Seq[TestRow],
+      readCols: Seq[String] = null,
+      engine: Engine = defaultEngine,
+      expectedSchema: StructType = null,
+      filter: Predicate = null,
+      version: Option[Long] = None,
+      timestamp: Option[Long] = None,
+      expectedRemainingFilter: Predicate = null,
+      expectedVersion: Option[Long] = None): Unit = {
     assert(version.isEmpty || timestamp.isEmpty, "Cannot provide both a version and timestamp")
 
     val snapshot = if (version.isDefined) {
@@ -385,12 +388,12 @@ trait TestUtils extends Assertions with SQLHelper {
            |Expected schema does not match actual schema:
            |Expected schema: $expectedSchema
            |Actual schema: ${snapshot.getSchema()}
-           |""".stripMargin
-      )
+           |""".stripMargin)
     }
 
     expectedVersion.foreach { version =>
-      assert(version == snapshot.getVersion(),
+      assert(
+        version == snapshot.getVersion(),
         s"Expected version $version does not match actual version ${snapshot.getVersion()}")
     }
 
@@ -425,14 +428,14 @@ trait TestUtils extends Assertions with SQLHelper {
       case bd: java.math.BigDecimal => BigDecimal(bd)
       // Equality of WrappedArray differs for AnyVal and AnyRef in Scala 2.12.2+
       case seq: Seq[_] => seq.map {
-        case b: java.lang.Byte => b.byteValue
-        case s: java.lang.Short => s.shortValue
-        case i: java.lang.Integer => i.intValue
-        case l: java.lang.Long => l.longValue
-        case f: java.lang.Float => f.floatValue
-        case d: java.lang.Double => d.doubleValue
-        case x => x
-      }
+          case b: java.lang.Byte => b.byteValue
+          case s: java.lang.Short => s.shortValue
+          case i: java.lang.Integer => i.intValue
+          case l: java.lang.Long => l.longValue
+          case f: java.lang.Float => f.floatValue
+          case d: java.lang.Double => d.doubleValue
+          case x => x
+        }
       // Convert array to Seq for easy equality check.
       case b: Array[_] => b.toSeq
       case r: TestRow => prepareRow(r)
@@ -441,33 +444,33 @@ trait TestUtils extends Assertions with SQLHelper {
   }
 
   private def compare(obj1: Any, obj2: Any): Boolean = (obj1, obj2) match {
-      case (null, null) => true
-      case (null, _) => false
-      case (_, null) => false
-      case (a: Array[_], b: Array[_]) =>
-        a.length == b.length && a.zip(b).forall { case (l, r) => compare(l, r) }
-      case (a: Map[_, _], b: Map[_, _]) =>
-        a.size == b.size && a.keys.forall { aKey =>
-          b.keys.find(bKey => compare(aKey, bKey)).exists(bKey => compare(a(aKey), b(bKey)))
-        }
-      case (a: Iterable[_], b: Iterable[_]) =>
-        a.size == b.size && a.zip(b).forall { case (l, r) => compare(l, r) }
-      case (a: Product, b: Product) =>
-        compare(a.productIterator.toSeq, b.productIterator.toSeq)
-      case (a: TestRow, b: TestRow) =>
-        compare(a.toSeq, b.toSeq)
-      // 0.0 == -0.0, turn float/double to bits before comparison, to distinguish 0.0 and -0.0.
-      case (a: Double, b: Double) =>
-        java.lang.Double.doubleToRawLongBits(a) == java.lang.Double.doubleToRawLongBits(b)
-      case (a: Float, b: Float) =>
-        java.lang.Float.floatToRawIntBits(a) == java.lang.Float.floatToRawIntBits(b)
-      case (a, b) =>
-        if (!a.equals(b)) {
-          val sds = 200;
-        }
-        a.equals(b)
-      // In scala == does not call equals for boxed numeric classes?
-    }
+    case (null, null) => true
+    case (null, _) => false
+    case (_, null) => false
+    case (a: Array[_], b: Array[_]) =>
+      a.length == b.length && a.zip(b).forall { case (l, r) => compare(l, r) }
+    case (a: Map[_, _], b: Map[_, _]) =>
+      a.size == b.size && a.keys.forall { aKey =>
+        b.keys.find(bKey => compare(aKey, bKey)).exists(bKey => compare(a(aKey), b(bKey)))
+      }
+    case (a: Iterable[_], b: Iterable[_]) =>
+      a.size == b.size && a.zip(b).forall { case (l, r) => compare(l, r) }
+    case (a: Product, b: Product) =>
+      compare(a.productIterator.toSeq, b.productIterator.toSeq)
+    case (a: TestRow, b: TestRow) =>
+      compare(a.toSeq, b.toSeq)
+    // 0.0 == -0.0, turn float/double to bits before comparison, to distinguish 0.0 and -0.0.
+    case (a: Double, b: Double) =>
+      java.lang.Double.doubleToRawLongBits(a) == java.lang.Double.doubleToRawLongBits(b)
+    case (a: Float, b: Float) =>
+      java.lang.Float.floatToRawIntBits(a) == java.lang.Float.floatToRawIntBits(b)
+    case (a, b) =>
+      if (!a.equals(b)) {
+        val sds = 200;
+      }
+      a.equals(b)
+    // In scala == does not call equals for boxed numeric classes?
+  }
 
   private def genErrorMessage(expectedAnswer: Seq[TestRow], result: Seq[TestRow]): String = {
     // TODO: improve to include schema or Java type information to help debugging
@@ -489,7 +492,8 @@ trait TestUtils extends Assertions with SQLHelper {
    */
   protected def withTempDir(f: File => Unit): Unit = {
     val tempDir = Files.createTempDirectory(UUID.randomUUID().toString).toFile
-    try f(tempDir) finally {
+    try f(tempDir)
+    finally {
       FileUtils.deleteDirectory(tempDir)
     }
   }
@@ -498,7 +502,8 @@ trait TestUtils extends Assertions with SQLHelper {
    * Drops table `tableName` after calling `f`.
    */
   protected def withTable(tableNames: String*)(f: => Unit): Unit = {
-    try f finally {
+    try f
+    finally {
       tableNames.foreach { name =>
         spark.sql(s"DROP TABLE IF EXISTS $name")
       }
@@ -703,8 +708,7 @@ trait TestUtils extends Assertions with SQLHelper {
           sparktypes.StructField(
             field.getName,
             toSparkType(field.getDataType),
-            field.isNullable
-          )
+            field.isNullable)
         })
     }
   }
@@ -721,8 +725,7 @@ trait TestUtils extends Assertions with SQLHelper {
   }
 
   def deleteChecksumFileForTable(tablePath: String, versions: Seq[Int]): Unit =
-    versions.foreach(
-      v => Files.deleteIfExists(
-        new File(FileNames.checksumFile(new Path(s"$tablePath/_delta_log"), v).toString).toPath)
-    )
+    versions.foreach(v =>
+      Files.deleteIfExists(
+        new File(FileNames.checksumFile(new Path(s"$tablePath/_delta_log"), v).toString).toPath))
 }

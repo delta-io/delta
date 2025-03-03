@@ -15,23 +15,24 @@
  */
 package io.delta.kernel.defaults.internal.expressions
 
-import io.delta.kernel.data.{ColumnVector, ColumnarBatch}
-import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
-import io.delta.kernel.defaults.internal.data.vector.{DefaultIntVector, DefaultStructVector}
-import io.delta.kernel.defaults.utils.DefaultKernelTestUtils.getValueAsObject
-import io.delta.kernel.expressions.AlwaysFalse.ALWAYS_FALSE
-import io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE
-import io.delta.kernel.expressions.Literal._
-import io.delta.kernel.expressions._
-import io.delta.kernel.internal.util.InternalUtils
-import io.delta.kernel.types._
-import org.scalatest.funsuite.AnyFunSuite
-
 import java.lang.{Boolean => BooleanJ}
 import java.math.{BigDecimal => BigDecimalJ}
 import java.sql.{Date, Timestamp}
 import java.util
 import java.util.Optional
+
+import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
+import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
+import io.delta.kernel.defaults.internal.data.vector.{DefaultIntVector, DefaultStructVector}
+import io.delta.kernel.defaults.utils.DefaultKernelTestUtils.getValueAsObject
+import io.delta.kernel.expressions._
+import io.delta.kernel.expressions.AlwaysFalse.ALWAYS_FALSE
+import io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE
+import io.delta.kernel.expressions.Literal._
+import io.delta.kernel.internal.util.InternalUtils
+import io.delta.kernel.types._
+
+import org.scalatest.funsuite.AnyFunSuite
 
 class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBase {
   test("evaluate expression: literal") {
@@ -85,8 +86,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
           } else {
             assert(
               literal.getValue === getValueAsObject(outputVector, rowId),
-              s"invalid value at $rowId for $literal expression"
-            )
+              s"invalid value at $rowId for $literal expression")
           }
         }
       }
@@ -143,7 +143,9 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     val batch = new DefaultColumnarBatch(numRows, batchSchema, Array(col1Vector))
 
     def assertTypeAndNullability(
-      actVector: ColumnVector, expType: DataType, expNullability: Array[Boolean]): Unit = {
+        actVector: ColumnVector,
+        expType: DataType,
+        expNullability: Array[Boolean]): Unit = {
       assert(actVector.getDataType === expType)
       assert(actVector.getSize === numRows)
       Seq.range(0, numRows).foreach { rowId =>
@@ -224,8 +226,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
 
     val notExpression = new Predicate(
       "NOT",
-      comparator("=", new Column("child"), Literal.ofBoolean(true))
-    )
+      comparator("=", new Column("child"), Literal.ofBoolean(true)))
     val expOutputVector = booleanVector(Seq[BooleanJ](false, true, null))
     val actOutputVector = evaluator(schema, notExpression, BooleanType.BOOLEAN).eval(batch)
     checkBooleanVectors(actOutputVector, expOutputVector)
@@ -277,33 +278,43 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     val coalesceEpxr3 = new ScalarExpression(
       "COALESCE",
       util.Arrays.asList(
-        new Column("col1"), new Column("col2"), new Column("col3")))
+        new Column("col1"),
+        new Column("col2"),
+        new Column("col3")))
     val expOutputVector3 = booleanVector(Seq[BooleanJ](true, false, true, null))
     val actOutputVector3 = evaluator(schema, coalesceEpxr3, BooleanType.BOOLEAN).eval(batch)
     checkBooleanVectors(actOutputVector3, expOutputVector3)
 
     def checkUnsupportedTypes(
-          col1Type: DataType, col2Type: DataType, messageContains: String): Unit = {
+        col1Type: DataType,
+        col2Type: DataType,
+        messageContains: String): Unit = {
       val schema = new StructType()
         .add("col1", col1Type)
         .add("col2", col2Type)
-      val batch = new DefaultColumnarBatch(5, schema,
+      val batch = new DefaultColumnarBatch(
+        5,
+        schema,
         Array(testColumnVector(5, col1Type), testColumnVector(5, col2Type)))
       val e = intercept[UnsupportedOperationException] {
         evaluator(
           schema,
-          new ScalarExpression("COALESCE",
+          new ScalarExpression(
+            "COALESCE",
             util.Arrays.asList(new Column("col1"), new Column("col2"))),
-          col1Type
-        ).eval(batch)
+          col1Type).eval(batch)
       }
       assert(e.getMessage.contains(messageContains))
     }
     // TODO support least-common-type resolution
-    checkUnsupportedTypes(LongType.LONG, IntegerType.INTEGER,
+    checkUnsupportedTypes(
+      LongType.LONG,
+      IntegerType.INTEGER,
       "Coalesce is only supported for arguments of the same type")
     // TODO support other types besides boolean
-    checkUnsupportedTypes(IntegerType.INTEGER, IntegerType.INTEGER,
+    checkUnsupportedTypes(
+      IntegerType.INTEGER,
+      IntegerType.INTEGER,
       "Coalesce is only supported for boolean type expressions")
   }
 
@@ -311,32 +322,32 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     val timestampColumn = timestampVector(Seq[Long](
       1577836800000000L, // 2020-01-01 00:00:00.000
       1577836800123456L, // 2020-01-01 00:00:00.123456
-      -1               // Representing null
+      -1 // Representing null
     ))
 
     val durationColumn = longVector(Seq[Long](
-      1000,   // 1 second in milliseconds
-      100,    // 0.1 second in milliseconds
-      -1
-    ): _*)
+      1000, // 1 second in milliseconds
+      100, // 0.1 second in milliseconds
+      -1): _*)
 
     val schema = new StructType()
       .add("timestamp", TimestampType.TIMESTAMP)
       .add("duration", LongType.LONG)
 
     val batch = new DefaultColumnarBatch(
-      timestampColumn.getSize, schema, Array(timestampColumn, durationColumn))
+      timestampColumn.getSize,
+      schema,
+      Array(timestampColumn, durationColumn))
 
     // TimeAdd expression adds milliseconds to timestamps
     val timeAddExpr = new ScalarExpression(
       "TIMEADD",
-      util.Arrays.asList(new Column("timestamp"), new Column("duration"))
-    )
+      util.Arrays.asList(new Column("timestamp"), new Column("duration")))
 
     val expectedTimestamps = Seq[Long](
       1577836801000000L, // 2020-01-01 00:00:01.000
       1577836800123456L + 100000, // 2020-01-01 00:00:00.123556
-      -1                  // Null should propagate
+      -1 // Null should propagate
     )
 
     val expOutputVector = timestampVector(expectedTimestamps)
@@ -346,17 +357,19 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
   }
 
   def checkUnsupportedTimeAddTypes(
-    col1Type: DataType, col2Type: DataType): Unit = {
+      col1Type: DataType,
+      col2Type: DataType): Unit = {
     val schema = new StructType()
       .add("timestamp", col1Type)
       .add("duration", col2Type)
-    val batch = new DefaultColumnarBatch(5, schema,
+    val batch = new DefaultColumnarBatch(
+      5,
+      schema,
       Array(testColumnVector(5, col1Type), testColumnVector(5, col2Type)))
 
     val timeAddExpr = new ScalarExpression(
       "TIMEADD",
-      util.Arrays.asList(new Column("timestamp"), new Column("duration"))
-    )
+      util.Arrays.asList(new Column("timestamp"), new Column("duration")))
 
     val e = intercept[IllegalArgumentException] {
       val evaluator = new DefaultExpressionEvaluator(schema, timeAddExpr, col1Type)
@@ -370,34 +383,55 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
   test("TIMEADD with unsupported types") {
     // Check invalid timestamp column type
     checkUnsupportedTimeAddTypes(
-      IntegerType.INTEGER, IntegerType.INTEGER)
+      IntegerType.INTEGER,
+      IntegerType.INTEGER)
 
     // Check invalid duration column type
     checkUnsupportedTimeAddTypes(
-      TimestampType.TIMESTAMP, StringType.STRING)
+      TimestampType.TIMESTAMP,
+      StringType.STRING)
 
     // Check valid type but with unsupported operations
     checkUnsupportedTimeAddTypes(
-      TimestampType.TIMESTAMP, FloatType.FLOAT)
+      TimestampType.TIMESTAMP,
+      FloatType.FLOAT)
   }
 
   test("evaluate expression: like") {
     val col1 = stringVector(Seq[String](
-      null, "one", "two", "three", "four", null, null, "seven", "eight"))
+      null,
+      "one",
+      "two",
+      "three",
+      "four",
+      null,
+      null,
+      "seven",
+      "eight"))
     val col2 = stringVector(Seq[String](
-      null, "one", "Two", "thr%", "four%", "f", null, null, "%ght"))
+      null,
+      "one",
+      "Two",
+      "thr%",
+      "four%",
+      "f",
+      null,
+      null,
+      "%ght"))
     val schema = new StructType()
       .add("col1", StringType.STRING)
       .add("col2", StringType.STRING)
     val input = new DefaultColumnarBatch(col1.getSize, schema, Array(col1, col2))
 
     def checkLike(
-          input: DefaultColumnarBatch,
-          likeExpression: Predicate,
-          expOutputSeq: Seq[BooleanJ]): Unit = {
+        input: DefaultColumnarBatch,
+        likeExpression: Predicate,
+        expOutputSeq: Seq[BooleanJ]): Unit = {
       val actOutputVector =
         new DefaultExpressionEvaluator(
-          schema, likeExpression, BooleanType.BOOLEAN).eval(input)
+          schema,
+          likeExpression,
+          BooleanType.BOOLEAN).eval(input)
       val expOutputVector = booleanVector(expOutputSeq);
       checkBooleanVectors(actOutputVector, expOutputVector)
     }
@@ -426,12 +460,16 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       like(new Column("col1"), Literal.ofString("%t%")),
       Seq[BooleanJ](null, false, true, true, false, null, null, false, true))
 
-    val dummyInput = new DefaultColumnarBatch(1,
-        new StructType().add("dummy", StringType.STRING),
-        Array(stringVector(Seq[String](""))))
+    val dummyInput = new DefaultColumnarBatch(
+      1,
+      new StructType().add("dummy", StringType.STRING),
+      Array(stringVector(Seq[String](""))))
 
-    def checkLikeLiteral(left: String, right: String,
-        escape: Character = null, expOutput: BooleanJ): Unit = {
+    def checkLikeLiteral(
+        left: String,
+        right: String,
+        escape: Character = null,
+        expOutput: BooleanJ): Unit = {
       val expression = like(Literal.ofString(left), Literal.ofString(right), Option(escape))
       checkLike(dummyInput, expression, Seq[BooleanJ](expOutput))
     }
@@ -445,54 +483,57 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     checkLikeLiteral("", "a", null, false)
 
     Seq('!', '@', '#').foreach {
-      escape => {
-        // simple patterns
-        checkLikeLiteral("abc", "abc", escape, true)
-        checkLikeLiteral("a_%b", s"a${escape}__b", escape, true)
-        checkLikeLiteral("abbc", "a_%c", escape, true)
-        checkLikeLiteral("abbc", s"a${escape}__c", escape, false)
-        checkLikeLiteral("abbc", s"a%${escape}%c", escape, false)
-        checkLikeLiteral("a_%b", s"a%${escape}%b", escape, true)
-        checkLikeLiteral("abbc", "a%", escape, true)
-        checkLikeLiteral("abbc", "**", escape, false)
-        checkLikeLiteral("abc", "a%", escape, true)
-        checkLikeLiteral("abc", "b%", escape, false)
-        checkLikeLiteral("abc", "bc%", escape, false)
-        checkLikeLiteral("a\nb", "a_b", escape, true)
-        checkLikeLiteral("ab", "a%b", escape, true)
-        checkLikeLiteral("a\nb", "a%b", escape, true)
-        checkLikeLiteral("a\nb", "ab", escape, false)
-        checkLikeLiteral("a\nb", "a\nb", escape, true)
-        checkLikeLiteral("a\n\nb", "a\nb", escape, false)
-        checkLikeLiteral("a\n\nb", "a\n_b", escape, true)
+      escape =>
+        {
+          // simple patterns
+          checkLikeLiteral("abc", "abc", escape, true)
+          checkLikeLiteral("a_%b", s"a${escape}__b", escape, true)
+          checkLikeLiteral("abbc", "a_%c", escape, true)
+          checkLikeLiteral("abbc", s"a${escape}__c", escape, false)
+          checkLikeLiteral("abbc", s"a%${escape}%c", escape, false)
+          checkLikeLiteral("a_%b", s"a%${escape}%b", escape, true)
+          checkLikeLiteral("abbc", "a%", escape, true)
+          checkLikeLiteral("abbc", "**", escape, false)
+          checkLikeLiteral("abc", "a%", escape, true)
+          checkLikeLiteral("abc", "b%", escape, false)
+          checkLikeLiteral("abc", "bc%", escape, false)
+          checkLikeLiteral("a\nb", "a_b", escape, true)
+          checkLikeLiteral("ab", "a%b", escape, true)
+          checkLikeLiteral("a\nb", "a%b", escape, true)
+          checkLikeLiteral("a\nb", "ab", escape, false)
+          checkLikeLiteral("a\nb", "a\nb", escape, true)
+          checkLikeLiteral("a\n\nb", "a\nb", escape, false)
+          checkLikeLiteral("a\n\nb", "a\n_b", escape, true)
 
-        // case
-        checkLikeLiteral("A", "a%", escape, false)
-        checkLikeLiteral("a", "a%", escape, true)
-        checkLikeLiteral("a", "A%", escape, false)
-        checkLikeLiteral(s"aAa", s"aA_", escape, true)
+          // case
+          checkLikeLiteral("A", "a%", escape, false)
+          checkLikeLiteral("a", "a%", escape, true)
+          checkLikeLiteral("a", "A%", escape, false)
+          checkLikeLiteral(s"aAa", s"aA_", escape, true)
 
-        // regex
-        checkLikeLiteral("a([a-b]{2,4})a", "_([a-b]{2,4})%", null, true)
-        checkLikeLiteral("a([a-b]{2,4})a", "_([a-c]{2,6})_", null, false)
+          // regex
+          checkLikeLiteral("a([a-b]{2,4})a", "_([a-b]{2,4})%", null, true)
+          checkLikeLiteral("a([a-b]{2,4})a", "_([a-c]{2,6})_", null, false)
 
-        // %/_
-        checkLikeLiteral("a%a", s"%${escape}%%", escape, true)
-        checkLikeLiteral("a%", s"%${escape}%%", escape, true)
-        checkLikeLiteral("a%a", s"_${escape}%_", escape, true)
-        checkLikeLiteral("a_a", s"%${escape}_%", escape, true)
-        checkLikeLiteral("a_", s"%${escape}_%", escape, true)
-        checkLikeLiteral("a_a", s"_${escape}__", escape, true)
+          // %/_
+          checkLikeLiteral("a%a", s"%${escape}%%", escape, true)
+          checkLikeLiteral("a%", s"%${escape}%%", escape, true)
+          checkLikeLiteral("a%a", s"_${escape}%_", escape, true)
+          checkLikeLiteral("a_a", s"%${escape}_%", escape, true)
+          checkLikeLiteral("a_", s"%${escape}_%", escape, true)
+          checkLikeLiteral("a_a", s"_${escape}__", escape, true)
 
-        // double-escaping
-        checkLikeLiteral(
-          s"$escape$escape$escape$escape", s"%${escape}${escape}%", escape, true)
-        checkLikeLiteral("%%", "%%", escape, true)
-        checkLikeLiteral(s"${escape}__", s"${escape}${escape}${escape}__", escape, true)
-        checkLikeLiteral(s"${escape}__", s"%${escape}${escape}%${escape}%", escape, false)
-        checkLikeLiteral(s"_${escape}${escape}${escape}%",
-          s"%${escape}${escape}", escape, false)
-      }
+          // double-escaping
+          checkLikeLiteral(
+            s"$escape$escape$escape$escape",
+            s"%${escape}${escape}%",
+            escape,
+            true)
+          checkLikeLiteral("%%", "%%", escape, true)
+          checkLikeLiteral(s"${escape}__", s"${escape}${escape}${escape}__", escape, true)
+          checkLikeLiteral(s"${escape}__", s"%${escape}${escape}%${escape}%", escape, false)
+          checkLikeLiteral(s"_${escape}${escape}${escape}%", s"%${escape}${escape}", escape, false)
+        }
     }
 
     // check '_' for escape char
@@ -513,17 +554,22 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     checkLikeLiteral("abbc", s"a%_%_c", '%', false)
 
     def checkUnsupportedTypes(
-         col1Type: DataType, col2Type: DataType): Unit = {
+        col1Type: DataType,
+        col2Type: DataType): Unit = {
       val schema = new StructType()
         .add("col1", col1Type)
         .add("col2", col2Type)
       val expr = like(new Column("col1"), new Column("col2"), Option(null))
-      val input = new DefaultColumnarBatch(5, schema,
+      val input = new DefaultColumnarBatch(
+        5,
+        schema,
         Array(testColumnVector(5, col1Type), testColumnVector(5, col2Type)))
 
       val e = intercept[UnsupportedOperationException] {
         new DefaultExpressionEvaluator(
-          schema, expr, BooleanType.BOOLEAN).eval(input)
+          schema,
+          expr,
+          BooleanType.BOOLEAN).eval(input)
       }
       assert(e.getMessage.contains("LIKE is only supported for string type expressions"))
     }
@@ -545,8 +591,11 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     assert(inputCountError1.getMessage.contains(inputCountCheckUserMessage))
 
     val inputCountError2 = intercept[UnsupportedOperationException] {
-      val expression = like(List(Literal.ofString("a"), Literal.ofString("b"),
-        Literal.ofString("c"), Literal.ofString("d")))
+      val expression = like(List(
+        Literal.ofString("a"),
+        Literal.ofString("b"),
+        Literal.ofString("c"),
+        Literal.ofString("d")))
       checkLike(dummyInput, expression, Seq[BooleanJ](null))
     }
     assert(inputCountError2.getMessage.contains(inputCountCheckUserMessage))
@@ -568,11 +617,14 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       "LIKE expects escape token expression to be a literal of String type"))
 
     // empty input checks
-    val emptyInput = new DefaultColumnarBatch(0,
-          new StructType().add("dummy", StringType.STRING),
-          Array(stringVector(Seq[String](""))))
-    checkLike(emptyInput,
-      like(Literal.ofString("abc"), Literal.ofString("abc"), Some('_')), Seq[BooleanJ]())
+    val emptyInput = new DefaultColumnarBatch(
+      0,
+      new StructType().add("dummy", StringType.STRING),
+      Array(stringVector(Seq[String](""))))
+    checkLike(
+      emptyInput,
+      like(Literal.ofString("abc"), Literal.ofString("abc"), Some('_')),
+      Seq[BooleanJ]())
 
     // invalid pattern check
     val invalidPatternError = intercept[IllegalArgumentException] {
@@ -592,69 +644,93 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
 
     val startsWithExpressionLiteral = startsWith(new Column("col1"), Literal.ofString("t%"))
     val expOutputVectorLiteral =
-    booleanVector(Seq[BooleanJ](false, false, true, false, null, null, false))
-    checkBooleanVectors(new DefaultExpressionEvaluator(
-      schema, startsWithExpressionLiteral, BooleanType.BOOLEAN).eval(input), expOutputVectorLiteral)
+      booleanVector(Seq[BooleanJ](false, false, true, false, null, null, false))
+    checkBooleanVectors(
+      new DefaultExpressionEvaluator(
+        schema,
+        startsWithExpressionLiteral,
+        BooleanType.BOOLEAN).eval(input),
+      expOutputVectorLiteral)
 
     val startsWithExpressionNullLiteral = startsWith(new Column("col1"), Literal.ofString(null))
     val allNullVector =
       booleanVector(Seq[BooleanJ](null, null, null, null, null, null, null))
-    checkBooleanVectors(new DefaultExpressionEvaluator(
-      schema, startsWithExpressionNullLiteral, BooleanType.BOOLEAN).eval(input), allNullVector)
+    checkBooleanVectors(
+      new DefaultExpressionEvaluator(
+        schema,
+        startsWithExpressionNullLiteral,
+        BooleanType.BOOLEAN).eval(input),
+      allNullVector)
 
     // Two literal expressions on both sides
     val startsWithExpressionAlwaysTrue = startsWith(Literal.ofString("ABC"), Literal.ofString("A"))
     val allTrueVector = booleanVector(Seq[BooleanJ](true, true, true, true, true, true, true))
-    checkBooleanVectors(new DefaultExpressionEvaluator(
-      schema, startsWithExpressionAlwaysTrue, BooleanType.BOOLEAN).eval(input), allTrueVector)
+    checkBooleanVectors(
+      new DefaultExpressionEvaluator(
+        schema,
+        startsWithExpressionAlwaysTrue,
+        BooleanType.BOOLEAN).eval(input),
+      allTrueVector)
 
     val startsWithExpressionAlwaysFalse =
       startsWith(Literal.ofString("ABC"), Literal.ofString("_B%"))
     val allFalseVector =
       booleanVector(Seq[BooleanJ](false, false, false, false, false, false, false))
-    checkBooleanVectors(new DefaultExpressionEvaluator(
-      schema, startsWithExpressionAlwaysFalse, BooleanType.BOOLEAN).eval(input), allFalseVector)
+    checkBooleanVectors(
+      new DefaultExpressionEvaluator(
+        schema,
+        startsWithExpressionAlwaysFalse,
+        BooleanType.BOOLEAN).eval(input),
+      allFalseVector)
 
     // scalastyle:off nonascii
     val colUnicode = stringVector(Seq[String]("中文", "中", "文"))
     val schemaUnicode = new StructType().add("col", StringType.STRING)
-    val inputUnicode = new DefaultColumnarBatch(colUnicode.getSize,
-      schemaUnicode, Array(colUnicode))
+    val inputUnicode =
+      new DefaultColumnarBatch(colUnicode.getSize, schemaUnicode, Array(colUnicode))
     val startsWithExpressionUnicode = startsWith(new Column("col"), Literal.ofString("中"))
     val expOutputVectorLiteralUnicode = booleanVector(Seq[BooleanJ](true, true, false))
-    checkBooleanVectors(new DefaultExpressionEvaluator(schemaUnicode,
-      startsWithExpressionUnicode,
-      BooleanType.BOOLEAN).eval(inputUnicode), expOutputVectorLiteralUnicode)
+    checkBooleanVectors(
+      new DefaultExpressionEvaluator(
+        schemaUnicode,
+        startsWithExpressionUnicode,
+        BooleanType.BOOLEAN).eval(inputUnicode),
+      expOutputVectorLiteralUnicode)
 
     // scalastyle:off nonascii
     val colSurrogatePair = stringVector(Seq[String]("💕😉💕", "😉💕", "💕"))
     val schemaSurrogatePair = new StructType().add("col", StringType.STRING)
-    val inputSurrogatePair = new DefaultColumnarBatch(colSurrogatePair.getSize,
-      schemaUnicode, Array(colSurrogatePair))
+    val inputSurrogatePair =
+      new DefaultColumnarBatch(colSurrogatePair.getSize, schemaUnicode, Array(colSurrogatePair))
     val startsWithExpressionSurrogatePair = startsWith(new Column("col"), Literal.ofString("💕"))
     val expOutputVectorLiteralSurrogatePair = booleanVector(Seq[BooleanJ](true, false, true))
-    checkBooleanVectors(new DefaultExpressionEvaluator(schemaSurrogatePair,
-      startsWithExpressionSurrogatePair,
-      BooleanType.BOOLEAN).eval(inputSurrogatePair), expOutputVectorLiteralSurrogatePair)
+    checkBooleanVectors(
+      new DefaultExpressionEvaluator(
+        schemaSurrogatePair,
+        startsWithExpressionSurrogatePair,
+        BooleanType.BOOLEAN).eval(inputSurrogatePair),
+      expOutputVectorLiteralSurrogatePair)
 
     val startsWithExpressionExpression = startsWith(new Column("col1"), new Column("col2"))
     val e = intercept[UnsupportedOperationException] {
       new DefaultExpressionEvaluator(
-        schema, startsWithExpressionExpression, BooleanType.BOOLEAN).eval(input)
+        schema,
+        startsWithExpressionExpression,
+        BooleanType.BOOLEAN).eval(input)
     }
     assert(e.getMessage.contains("'STARTS_WITH' expects literal as the second input"))
-
 
     def checkUnsupportedTypes(colType: DataType, literalType: DataType): Unit = {
       val schema = new StructType()
         .add("col", colType)
       val expr = startsWith(new Column("col"), Literal.ofNull(literalType))
-      val input = new DefaultColumnarBatch(5, schema,
-        Array(testColumnVector(5, colType)))
+      val input = new DefaultColumnarBatch(5, schema, Array(testColumnVector(5, colType)))
 
       val e = intercept[UnsupportedOperationException] {
         new DefaultExpressionEvaluator(
-          schema, expr, BooleanType.BOOLEAN).eval(input)
+          schema,
+          expr,
+          BooleanType.BOOLEAN).eval(input)
       }
       assert(e.getMessage.contains("'STARTS_WITH' expects STRING type inputs"))
     }
@@ -678,21 +754,19 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       (ofShort(1.toShort), ofShort(2.toShort), ofShort(1.toShort), ofNull(ShortType.SHORT)),
       (ofInt(1), ofInt(2), ofInt(1), ofNull(IntegerType.INTEGER)),
       (ofLong(1L), ofLong(2L), ofLong(1L), ofNull(LongType.LONG)),
-      (ofFloat(1.0F), ofFloat(2.0F), ofFloat(1.0F), ofNull(FloatType.FLOAT)),
+      (ofFloat(1.0f), ofFloat(2.0f), ofFloat(1.0f), ofNull(FloatType.FLOAT)),
       (ofDouble(1.0), ofDouble(2.0), ofDouble(1.0), ofNull(DoubleType.DOUBLE)),
       (ofBoolean(false), ofBoolean(true), ofBoolean(false), ofNull(BooleanType.BOOLEAN)),
       (
         ofTimestamp(343L),
         ofTimestamp(123212312L),
         ofTimestamp(343L),
-        ofNull(TimestampType.TIMESTAMP)
-      ),
+        ofNull(TimestampType.TIMESTAMP)),
       (
         ofTimestampNtz(323423L),
         ofTimestampNtz(1232123423312L),
         ofTimestampNtz(323423L),
-        ofNull(TimestampNTZType.TIMESTAMP_NTZ)
-      ),
+        ofNull(TimestampNTZType.TIMESTAMP_NTZ)),
       (ofDate(-12123), ofDate(123123), ofDate(-12123), ofNull(DateType.DATE)),
       (ofString("apples"), ofString("oranges"), ofString("apples"), ofNull(StringType.STRING)),
       (ofString(""), ofString("a"), ofString(""), ofNull(StringType.STRING)),
@@ -703,14 +777,12 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
         ofString("Abcabcabc"),
         ofString("aBcabcabc"),
         ofString("Abcabcabc"),
-        ofNull(StringType.STRING)
-      ),
+        ofNull(StringType.STRING)),
       (
         ofString("abcabcabC"),
         ofString("abcabcabc"),
         ofString("abcabcabC"),
-        ofNull(StringType.STRING)
-      ),
+        ofNull(StringType.STRING)),
       // scalastyle:off nonascii
       (ofString("abc"), ofString("世界"), ofString("abc"), ofNull(StringType.STRING)),
       (ofString("世界"), ofString("你好"), ofString("世界"), ofNull(StringType.STRING)),
@@ -722,100 +794,83 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
         ofString("abcdef🚀"),
         ofString(s"abcdef$UTF8_MAX_CHARACTER"),
         ofString("abcdef🚀"),
-        ofNull(StringType.STRING)
-      ),
+        ofNull(StringType.STRING)),
       (
         ofString("abcde�abcdef�abcdef�abcdef"),
         ofString(s"abcde�$ASCII_MAX_CHARACTER"),
         ofString("abcde�abcdef�abcdef�abcdef"),
-        ofNull(StringType.STRING)
-      ),
+        ofNull(StringType.STRING)),
       (
         ofString("abcde�abcdef�abcdef�abcdef"),
         ofString(s"abcde�$ASCII_MAX_CHARACTER"),
         ofString("abcde�abcdef�abcdef�abcdef"),
-        ofNull(StringType.STRING)
-      ),
+        ofNull(StringType.STRING)),
       (
         ofString("����"),
         ofString(s"��$UTF8_MAX_CHARACTER"),
         ofString("����"),
-        ofNull(StringType.STRING)
-      ),
+        ofNull(StringType.STRING)),
       (
         ofString(s"a${UTF8_MAX_CHARACTER}d"),
         ofString(s"a$UTF8_MAX_CHARACTER$ASCII_MAX_CHARACTER"),
         ofString(s"a${UTF8_MAX_CHARACTER}d"),
-        ofNull(StringType.STRING)
-      ),
+        ofNull(StringType.STRING)),
       (
         ofString("abcdefghijklm💞😉💕\n🥀🌹💐🌺🌷🌼🌻🌷🥀"),
         ofString(s"abcdefghijklm💞😉💕\n🥀🌹💐🌺🌷🌼$UTF8_MAX_CHARACTER"),
         ofString("abcdefghijklm💞😉💕\n🥀🌹💐🌺🌷🌼🌻🌷🥀"),
-        ofNull(StringType.STRING)
-      ),
+        ofNull(StringType.STRING)),
       // scalastyle:on nonascii
       (
         ofBinary("apples".getBytes()),
         ofBinary("oranges".getBytes()),
         ofBinary("apples".getBytes()),
-        ofNull(BinaryType.BINARY)
-      ),
+        ofNull(BinaryType.BINARY)),
       (
         ofBinary(Array[Byte]()),
         ofBinary(Array[Byte](5.toByte)),
         ofBinary(Array[Byte]()),
-        ofNull(BinaryType.BINARY)
-      ),
+        ofNull(BinaryType.BINARY)),
       (
-        ofBinary(Array[Byte](0.toByte)),   // 00000000
-        ofBinary(Array[Byte](-1.toByte)),  // 11111111
+        ofBinary(Array[Byte](0.toByte)), // 00000000
+        ofBinary(Array[Byte](-1.toByte)), // 11111111
         ofBinary(Array[Byte](0.toByte)),
-        ofNull(BinaryType.BINARY)
-      ),
+        ofNull(BinaryType.BINARY)),
       (
         ofBinary(Array[Byte](127.toByte)), // 01111111
-        ofBinary(Array[Byte](-1.toByte)),  // 11111111
+        ofBinary(Array[Byte](-1.toByte)), // 11111111
         ofBinary(Array[Byte](127.toByte)),
-        ofNull(BinaryType.BINARY)
-      ),
+        ofNull(BinaryType.BINARY)),
       (
         ofBinary(Array[Byte](5.toByte, 10.toByte)),
         ofBinary(Array[Byte](6.toByte)),
         ofBinary(Array[Byte](5.toByte, 10.toByte)),
-        ofNull(BinaryType.BINARY)
-      ),
+        ofNull(BinaryType.BINARY)),
       (
         ofBinary(Array[Byte](5.toByte, 10.toByte)),
         ofBinary(Array[Byte](5.toByte, 100.toByte)),
         ofBinary(Array[Byte](5.toByte, 10.toByte)),
-        ofNull(BinaryType.BINARY)
-      ),
+        ofNull(BinaryType.BINARY)),
       (
         ofBinary(Array[Byte](5.toByte, 10.toByte, 5.toByte)), // 00000101 00001010 00000101
-        ofBinary(Array[Byte](5.toByte, -3.toByte)),           // 00000101 11111101
+        ofBinary(Array[Byte](5.toByte, -3.toByte)), // 00000101 11111101
         ofBinary(Array[Byte](5.toByte, 10.toByte, 5.toByte)),
-        ofNull(BinaryType.BINARY)
-      ),
+        ofNull(BinaryType.BINARY)),
       (
         ofBinary(Array[Byte](5.toByte, -25.toByte, 5.toByte)), // 00000101 11100111 00000101
-        ofBinary(Array[Byte](5.toByte, -9.toByte)),            // 00000101 11110111
+        ofBinary(Array[Byte](5.toByte, -9.toByte)), // 00000101 11110111
         ofBinary(Array[Byte](5.toByte, -25.toByte, 5.toByte)),
-        ofNull(BinaryType.BINARY)
-      ),
+        ofNull(BinaryType.BINARY)),
       (
         ofBinary(Array[Byte](5.toByte, 10.toByte)),
         ofBinary(Array[Byte](5.toByte, 10.toByte, 0.toByte)),
         ofBinary(Array[Byte](5.toByte, 10.toByte)),
-        ofNull(BinaryType.BINARY)
-      ),
+        ofNull(BinaryType.BINARY)),
       (
         ofDecimal(BigDecimalJ.valueOf(1.12), 7, 3),
         ofDecimal(BigDecimalJ.valueOf(5233.232), 7, 3),
         ofDecimal(BigDecimalJ.valueOf(1.12), 7, 3),
-        ofNull(new DecimalType(7, 3))
-      )
-    )
+        ofNull(new DecimalType(7, 3))))
 
     // Mapping of comparator to expected results for:
     // comparator(small, big)
@@ -830,8 +885,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       ">" -> Seq(false, true, false, null, null, null),
       ">=" -> Seq(false, true, true, null, null, null),
       "=" -> Seq(false, false, true, null, null, null),
-      "IS NOT DISTINCT FROM" -> Seq(false, false, true, false, false, true)
-    )
+      "IS NOT DISTINCT FROM" -> Seq(false, false, true, false, false, true))
 
     literals.foreach {
       case (small1, big, small2, nullLit) =>
@@ -855,25 +909,36 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     ofInt(-234),
     ofLong(223L),
     ofFloat(-2423423.9f),
-    ofNull(DoubleType.DOUBLE)
-  )
+    ofNull(DoubleType.DOUBLE))
 
   test("evaluate expression: substring") {
     // scalastyle:off nonascii
     val data = Seq[String](
-      null, "one", "two", "three", "four", null, null, "seven", "eight", "😉", "ë")
+      null,
+      "one",
+      "two",
+      "three",
+      "four",
+      null,
+      null,
+      "seven",
+      "eight",
+      "😉",
+      "ë")
     val col = stringVector(data)
     val col_name = "str_col"
     val schema = new StructType().add(col_name, StringType.STRING)
     val input = new DefaultColumnarBatch(col.getSize, schema, Array(col))
 
     def checkSubString(
-                   input: DefaultColumnarBatch,
-                   substringExpression: ScalarExpression,
-                   expOutputSeq: Seq[String]): Unit = {
+        input: DefaultColumnarBatch,
+        substringExpression: ScalarExpression,
+        expOutputSeq: Seq[String]): Unit = {
       val actOutputVector =
         new DefaultExpressionEvaluator(
-          schema, substringExpression, StringType.STRING).eval(input)
+          schema,
+          substringExpression,
+          StringType.STRING).eval(input)
       val expOutputVector = stringVector(expOutputSeq);
       checkStringVectors(actOutputVector, expOutputVector)
     }
@@ -1004,15 +1069,18 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
 
     val outputVectorForEmptyInput = evaluator(
       schema,
-      new ScalarExpression("SUBSTRING",
+      new ScalarExpression(
+        "SUBSTRING",
         util.Arrays.asList(
-          new Column(col_name), Literal.ofInt(1), Literal.ofInt(1))),
-      StringType.STRING
-    ).eval( new DefaultColumnarBatch(/* size= */0,
+          new Column(col_name),
+          Literal.ofInt(1),
+          Literal.ofInt(1))),
+      StringType.STRING).eval(new DefaultColumnarBatch(
+      /* size= */ 0,
       schema,
       Array(
-        testColumnVector(/* size= */0, StringType.STRING),
-        testColumnVector(/* size= */0, BinaryType.BINARY))))
+        testColumnVector( /* size= */ 0, StringType.STRING),
+        testColumnVector( /* size= */ 0, BinaryType.BINARY))))
     checkStringVectors(outputVectorForEmptyInput, stringVector(Seq[String]()))
 
     def checkUnsupportedColumnTypes(colType: DataType): Unit = {
@@ -1022,10 +1090,10 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       val e = intercept[UnsupportedOperationException] {
         evaluator(
           schema,
-          new ScalarExpression("SUBSTRING",
+          new ScalarExpression(
+            "SUBSTRING",
             util.Arrays.asList(new Column(col_name), Literal.ofInt(1))),
-          StringType.STRING
-        ).eval(batch)
+          StringType.STRING).eval(batch)
       }
       assert(
         e.getMessage.contains("Invalid type of first input of SUBSTRING: expects STRING"))
@@ -1039,13 +1107,17 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     val badLiteralSize = intercept[UnsupportedOperationException] {
       evaluator(
         schema,
-        new ScalarExpression("SUBSTRING",
+        new ScalarExpression(
+          "SUBSTRING",
           util.Arrays.asList(
-            new Column(col_name), Literal.ofInt(1), Literal.ofInt(1), Literal.ofInt(1))),
-        StringType.STRING
-      ).eval( new DefaultColumnarBatch(/* size= */5,
+            new Column(col_name),
+            Literal.ofInt(1),
+            Literal.ofInt(1),
+            Literal.ofInt(1))),
+        StringType.STRING).eval(new DefaultColumnarBatch(
+        /* size= */ 5,
         schema,
-        Array(testColumnVector(/* size= */5, StringType.STRING))))
+        Array(testColumnVector( /* size= */ 5, StringType.STRING))))
     }
     assert(
       badLiteralSize.getMessage.contains(
@@ -1054,26 +1126,31 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     val badPosType = intercept[UnsupportedOperationException] {
       evaluator(
         schema,
-        new ScalarExpression("SUBSTRING",
+        new ScalarExpression(
+          "SUBSTRING",
           util.Arrays.asList(
-            new Column("str_col"), Literal.ofBoolean(true))),
-        StringType.STRING
-      ).eval( new DefaultColumnarBatch(/* size= */5,
+            new Column("str_col"),
+            Literal.ofBoolean(true))),
+        StringType.STRING).eval(new DefaultColumnarBatch(
+        /* size= */ 5,
         schema,
-        Array(testColumnVector(/* size= */5, StringType.STRING))))
+        Array(testColumnVector( /* size= */ 5, StringType.STRING))))
     }
     assert(badPosType.getMessage.contains("Invalid `pos` argument type for SUBSTRING"))
 
     val badLenType = intercept[UnsupportedOperationException] {
       evaluator(
         schema,
-        new ScalarExpression("SUBSTRING",
+        new ScalarExpression(
+          "SUBSTRING",
           util.Arrays.asList(
-            new Column(col_name), Literal.ofInt(1), Literal.ofBoolean(true))),
-        StringType.STRING
-      ).eval( new DefaultColumnarBatch(/* size= */5,
+            new Column(col_name),
+            Literal.ofInt(1),
+            Literal.ofBoolean(true))),
+        StringType.STRING).eval(new DefaultColumnarBatch(
+        /* size= */ 5,
         schema,
-        Array(testColumnVector(/* size= */5, StringType.STRING))))
+        Array(testColumnVector( /* size= */ 5, StringType.STRING))))
     }
     assert(badLenType.getMessage.contains("Invalid `len` argument type for SUBSTRING"))
   }
@@ -1086,8 +1163,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       "<=" -> Seq(true, false, true, false, null),
       ">" -> Seq(false, true, false, true, null),
       ">=" -> Seq(false, true, false, true, null),
-      "=" -> Seq(false, false, false, false, null)
-    )
+      "=" -> Seq(false, false, false, false, null))
 
     // Left operand is first literal in [[literal]] which a byte type
     // Right operands are the remaining literals to the left side of it in [[literal]]
@@ -1108,8 +1184,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       "<=" -> Seq(false, true, false, null),
       ">" -> Seq(true, false, true, null),
       ">=" -> Seq(true, true, true, null),
-      "=" -> Seq(false, true, false, null)
-    )
+      "=" -> Seq(false, true, false, null))
 
     // Left operand is first literal in [[literal]] which a short type
     // Right operands are the remaining literals to the left side of it in [[literal]]
@@ -1129,8 +1204,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       "<=" -> Seq(true, false, null),
       ">" -> Seq(false, true, null),
       ">=" -> Seq(false, true, null),
-      "=" -> Seq(false, false, null)
-    )
+      "=" -> Seq(false, false, null))
 
     // Left operand is first literal in [[literal]] which a int type
     // Right operands are the remaining literals to the left side of it in [[literal]]
@@ -1150,8 +1224,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       "<=" -> Seq(false, null),
       ">" -> Seq(true, null),
       ">=" -> Seq(true, null),
-      "=" -> Seq(false, null)
-    )
+      "=" -> Seq(false, null))
 
     // Left operand is fourth literal in [[literal]] which a long type
     // Right operands are the remaining literals to the left side of it in [[literal]]
@@ -1190,8 +1263,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       Map("k0" -> "v00", "k1" -> "v01", "k3" -> nullStr, nullStr -> "v04"),
       Map("k0" -> "v10", "k1" -> nullStr, "k3" -> "v13", nullStr -> "v14"),
       Map("k0" -> nullStr, "k1" -> "v21", "k3" -> "v23", nullStr -> "v24"),
-      null
-    )
+      null)
     val testMapVector = buildMapVector(
       testMapValues,
       new MapType(StringType.STRING, StringType.STRING, true))
@@ -1199,8 +1271,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     val inputBatch = new DefaultColumnarBatch(
       testMapVector.getSize,
       new StructType().add("partitionValues", testMapVector.getDataType),
-      Seq(testMapVector).toArray
-    )
+      Seq(testMapVector).toArray)
     Seq("k0", "k1", "k2", null).foreach { lookupKey =>
       val expOutput = testMapValues.map(map => {
         if (map == null) null
@@ -1284,12 +1355,15 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       ("null", BinaryType.BINARY, null),
       ("2021-11-18", DateType.DATE, InternalUtils.daysSinceEpoch(Date.valueOf("2021-11-18"))),
       ("null", DateType.DATE, null),
-      ("2020-02-18 22:00:10", TimestampType.TIMESTAMP,
+      (
+        "2020-02-18 22:00:10",
+        TimestampType.TIMESTAMP,
         InternalUtils.microsSinceEpoch(Timestamp.valueOf("2020-02-18 22:00:10"))),
-      ("2020-02-18 00:00:10.023", TimestampType.TIMESTAMP,
+      (
+        "2020-02-18 00:00:10.023",
+        TimestampType.TIMESTAMP,
         InternalUtils.microsSinceEpoch(Timestamp.valueOf("2020-02-18 00:00:10.023"))),
-      ("null", TimestampType.TIMESTAMP, null)
-    )
+      ("null", TimestampType.TIMESTAMP, null))
 
     val inputBatch = zeroColumnBatch(rowCount = 1)
     testCases.foreach { testCase =>
@@ -1322,12 +1396,15 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
   }
 
   private def evaluator(inputSchema: StructType, expression: Expression, outputType: DataType)
-  : DefaultExpressionEvaluator = {
+      : DefaultExpressionEvaluator = {
     new DefaultExpressionEvaluator(inputSchema, expression, outputType)
   }
 
   private def testComparator(
-    comparator: String, left: Expression, right: Expression, expResult: BooleanJ): Unit = {
+      comparator: String,
+      left: Expression,
+      right: Expression,
+      expResult: BooleanJ): Unit = {
     val expression = new Predicate(comparator, left, right)
     val batch = zeroColumnBatch(rowCount = 1)
     val outputVector = evaluator(batch.getSchema, expression, BooleanType.BOOLEAN).eval(batch)

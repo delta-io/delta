@@ -20,22 +20,23 @@ import java.io.File
 import scala.collection.JavaConverters._
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
-import io.delta.kernel.data.Row
-import io.delta.kernel.data.ColumnarBatch
-import io.delta.kernel.defaults.utils.TestUtils
-import io.delta.kernel.utils.CloseableIterator
-import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction
-import io.delta.kernel.internal.actions.{AddCDCFile, AddFile, CommitInfo, Metadata, Protocol, RemoveFile}
-import io.delta.kernel.internal.util.{FileNames, VectorUtils}
 import io.delta.kernel.Table
+import io.delta.kernel.data.ColumnarBatch
+import io.delta.kernel.data.Row
+import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.exceptions.{KernelException, TableNotFoundException}
+import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction
 import io.delta.kernel.internal.TableImpl
+import io.delta.kernel.internal.actions.{AddCDCFile, AddFile, CommitInfo, Metadata, Protocol, RemoveFile}
 import io.delta.kernel.internal.fs.Path
+import io.delta.kernel.internal.util.{FileNames, VectorUtils}
+import io.delta.kernel.utils.CloseableIterator
 
-import org.apache.spark.sql.delta.actions.{Action => SparkAction, AddCDCFile => SparkAddCDCFile, AddFile => SparkAddFile, CommitInfo => SparkCommitInfo, Metadata => SparkMetadata, Protocol => SparkProtocol, RemoveFile => SparkRemoveFile}
 import org.apache.spark.sql.delta.DeltaLog
-import org.scalatest.funsuite.AnyFunSuite
+import org.apache.spark.sql.delta.actions.{Action => SparkAction, AddCDCFile => SparkAddCDCFile, AddFile => SparkAddFile, CommitInfo => SparkCommitInfo, Metadata => SparkMetadata, Protocol => SparkProtocol, RemoveFile => SparkRemoveFile}
+
 import org.apache.spark.sql.functions.col
+import org.scalatest.funsuite.AnyFunSuite
 
 class TableChangesSuite extends AnyFunSuite with TestUtils {
 
@@ -51,10 +52,10 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
    * TableImpl.getChangesByVersion and compare results with Spark
    */
   def testGetChangesVsSpark(
-    tablePath: String,
-    startVersion: Long,
-    endVersion: Long,
-    actionSet: Set[DeltaAction]): Unit = {
+      tablePath: String,
+      startVersion: Long,
+      endVersion: Long,
+      actionSet: Set[DeltaAction]): Unit = {
 
     val sparkChanges = DeltaLog.forTable(spark, tablePath)
       .getChanges(startVersion)
@@ -82,48 +83,41 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
         tablePath,
         0,
         2,
-        Set(DeltaAction.REMOVE)
-      )
+        Set(DeltaAction.REMOVE))
       testGetChangesVsSpark(
         tablePath,
         0,
         2,
-        Set(DeltaAction.ADD)
-      )
+        Set(DeltaAction.ADD))
       testGetChangesVsSpark(
         tablePath,
         0,
         2,
-        Set(DeltaAction.ADD, DeltaAction.REMOVE, DeltaAction.METADATA, DeltaAction.PROTOCOL)
-      )
+        Set(DeltaAction.ADD, DeltaAction.REMOVE, DeltaAction.METADATA, DeltaAction.PROTOCOL))
       // request full actions, various versions
       testGetChangesVsSpark(
         tablePath,
         0,
         2,
-        FULL_ACTION_SET
-      )
+        FULL_ACTION_SET)
       testGetChangesVsSpark(
         tablePath,
         1,
         2,
-        FULL_ACTION_SET
-      )
+        FULL_ACTION_SET)
       testGetChangesVsSpark(
         tablePath,
         0,
         0,
-        FULL_ACTION_SET
-      )
+        FULL_ACTION_SET)
     }
   }
 
   test("getChanges - returns correct timestamps") {
     withTempDir { tempDir =>
-
       def generateCommits(path: String, commits: Long*): Unit = {
         commits.zipWithIndex.foreach { case (ts, i) =>
-          spark.range(i*10, i*10 + 10).write.format("delta").mode("append").save(path)
+          spark.range(i * 10, i * 10 + 10).write.format("delta").mode("append").save(path)
           val file = new File(FileNames.deltaFile(new Path(path, "_delta_log"), i))
           file.setLastModified(ts)
         }
@@ -131,13 +125,15 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
 
       val start = 1540415658000L
       val minuteInMilliseconds = 60000L
-      generateCommits(tempDir.getCanonicalPath, start, start + 20 * minuteInMilliseconds,
+      generateCommits(
+        tempDir.getCanonicalPath,
+        start,
+        start + 20 * minuteInMilliseconds,
         start + 40 * minuteInMilliseconds)
       val versionToTimestamp: Map[Long, Long] = Map(
         0L -> start,
         1L -> (start + 20 * minuteInMilliseconds),
-        2L -> (start + 40 * minuteInMilliseconds)
-      )
+        2L -> (start + 40 * minuteInMilliseconds))
 
       // Check the timestamps are returned correctly
       Table.forPath(defaultEngine, tempDir.getCanonicalPath)
@@ -148,7 +144,8 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
         .foreach { row =>
           val version = row.getLong(0)
           val timestamp = row.getLong(1)
-          assert(timestamp == versionToTimestamp(version),
+          assert(
+            timestamp == versionToTimestamp(version),
             f"Expected timestamp ${versionToTimestamp(version)} for version $version but" +
               f"Kernel returned timestamp $timestamp")
         }
@@ -158,8 +155,7 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
         tempDir.getCanonicalPath,
         0,
         2,
-        FULL_ACTION_SET
-      )
+        FULL_ACTION_SET)
     }
   }
 
@@ -206,29 +202,30 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
   test("getChanges - golden table deltalog-getChanges invalid queries") {
     withGoldenTable("deltalog-getChanges") { tablePath =>
       def getChangesByVersion(
-        startVersion: Long, endVersion: Long): CloseableIterator[ColumnarBatch] = {
+          startVersion: Long,
+          endVersion: Long): CloseableIterator[ColumnarBatch] = {
         Table.forPath(defaultEngine, tablePath)
           .asInstanceOf[TableImpl]
           .getChanges(defaultEngine, startVersion, endVersion, FULL_ACTION_SET.asJava)
       }
 
       // startVersion after latest available version
-      assert(intercept[KernelException]{
+      assert(intercept[KernelException] {
         getChangesByVersion(3, 8)
       }.getMessage.contains("no log files found in the requested version range"))
 
       // endVersion larger than latest available version
-      assert(intercept[KernelException]{
+      assert(intercept[KernelException] {
         getChangesByVersion(0, 8)
       }.getMessage.contains("no log file found for version 8"))
 
       // invalid start version
-      assert(intercept[KernelException]{
+      assert(intercept[KernelException] {
         getChangesByVersion(-1, 2)
       }.getMessage.contains("Invalid version range"))
 
       // invalid end version
-      assert(intercept[KernelException]{
+      assert(intercept[KernelException] {
         getChangesByVersion(2, 1)
       }.getMessage.contains("Invalid version range"))
     }
@@ -240,13 +237,14 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
       val tablePath = tempDir.getCanonicalPath
       // Write versions [0, 10] (inclusive) including a checkpoint
       (0 to 10).foreach { i =>
-        spark.range(i*10, i*10 + 10).write
+        spark.range(i * 10, i * 10 + 10).write
           .format("delta")
           .mode("append")
           .save(tablePath)
       }
       val log = org.apache.spark.sql.delta.DeltaLog.forTable(
-        spark, new org.apache.hadoop.fs.Path(tablePath))
+        spark,
+        new org.apache.hadoop.fs.Path(tablePath))
       val deltaCommitFileProvider = org.apache.spark.sql.delta.util.DeltaCommitFileProvider(
         log.unsafeVolatileSnapshot)
       // Delete the log files for versions 0-9, truncating the table history to version 10
@@ -285,14 +283,12 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
         tablePath,
         10,
         12,
-        FULL_ACTION_SET
-      )
+        FULL_ACTION_SET)
       testGetChangesVsSpark(
         tablePath,
         11,
         12,
-        FULL_ACTION_SET
-      )
+        FULL_ACTION_SET)
     }
   }
 
@@ -338,15 +334,13 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
         tempDir.getCanonicalPath,
         0,
         6,
-        FULL_ACTION_SET
-      )
+        FULL_ACTION_SET)
       // Check some subset of actions
       testGetChangesVsSpark(
         tempDir.getCanonicalPath,
         0,
         6,
-        Set(DeltaAction.ADD)
-      )
+        Set(DeltaAction.ADD))
     }
   }
 
@@ -368,6 +362,17 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
     }.getMessage.contains("Unsupported Delta protocol reader version"))
   }
 
+  withGoldenTable("commit-info-containing-arbitrary-operationParams-types") { tablePath =>
+    test("getChanges - commit info with arbitrary operationParams types") {
+      // Check all actions are correctly retrieved
+      testGetChangesVsSpark(
+        tablePath,
+        0,
+        2,
+        FULL_ACTION_SET)
+    }
+  }
+
   //////////////////////////////////////////////////////////////////////////////////
   // Helpers to compare actions returned between Kernel and Spark
   //////////////////////////////////////////////////////////////////////////////////
@@ -376,43 +381,42 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
   trait StandardAction
 
   case class StandardRemove(
-    path: String,
-    dataChange: Boolean,
-    partitionValues: Map[String, String]) extends StandardAction
+      path: String,
+      dataChange: Boolean,
+      partitionValues: Map[String, String]) extends StandardAction
 
   case class StandardAdd(
-    path: String,
-    partitionValues: Map[String, String],
-    size: Long,
-    modificationTime: Long,
-    dataChange: Boolean) extends StandardAction
+      path: String,
+      partitionValues: Map[String, String],
+      size: Long,
+      modificationTime: Long,
+      dataChange: Boolean) extends StandardAction
 
   case class StandardMetadata(
-    id: String,
-    schemaString: String,
-    partitionColumns: Seq[String],
-    configuration: Map[String, String]) extends StandardAction
+      id: String,
+      schemaString: String,
+      partitionColumns: Seq[String],
+      configuration: Map[String, String]) extends StandardAction
 
   case class StandardProtocol(
-    minReaderVersion: Int,
-    minWriterVersion: Int,
-    readerFeatures: Set[String],
-    writerFeatures: Set[String]) extends StandardAction
+      minReaderVersion: Int,
+      minWriterVersion: Int,
+      readerFeatures: Set[String],
+      writerFeatures: Set[String]) extends StandardAction
 
   case class StandardCommitInfo(
-    operation: String,
-    operationMetrics: Map[String, String]) extends StandardAction
+      operation: String,
+      operationMetrics: Map[String, String]) extends StandardAction
 
   case class StandardCdc(
-    path: String,
-    partitionValues: Map[String, String],
-    size: Long,
-    tags: Map[String, String]) extends StandardAction
+      path: String,
+      partitionValues: Map[String, String],
+      size: Long,
+      tags: Map[String, String]) extends StandardAction
 
   def standardizeKernelAction(row: Row): Option[StandardAction] = {
     val actionIdx = (2 until row.getSchema.length()).find(!row.isNullAt(_)).getOrElse(
-      return None
-    )
+      return None)
 
     row.getSchema.at(actionIdx).getName match {
       case DeltaAction.REMOVE.colName =>
@@ -428,8 +432,7 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
         Some(StandardRemove(
           removeRow.getString(RemoveFile.FULL_SCHEMA.indexOf("path")),
           removeRow.getBoolean(RemoveFile.FULL_SCHEMA.indexOf("dataChange")),
-          partitionValues
-        ))
+          partitionValues))
 
       case DeltaAction.ADD.colName =>
         val addRow = row.getStruct(actionIdx)
@@ -439,8 +442,7 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
             addRow.getMap(AddFile.FULL_SCHEMA.indexOf("partitionValues"))).asScala.toMap,
           addRow.getLong(AddFile.FULL_SCHEMA.indexOf("size")),
           addRow.getLong(AddFile.FULL_SCHEMA.indexOf("modificationTime")),
-          addRow.getBoolean(AddFile.FULL_SCHEMA.indexOf("dataChange"))
-        ))
+          addRow.getBoolean(AddFile.FULL_SCHEMA.indexOf("dataChange"))))
 
       case DeltaAction.METADATA.colName =>
         val metadataRow = row.getStruct(actionIdx)
@@ -450,8 +452,7 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
           VectorUtils.toJavaList(
             metadataRow.getArray(Metadata.FULL_SCHEMA.indexOf("partitionColumns"))).asScala,
           VectorUtils.toJavaMap[String, String](
-            metadataRow.getMap(Metadata.FULL_SCHEMA.indexOf("configuration"))).asScala.toMap
-        ))
+            metadataRow.getMap(Metadata.FULL_SCHEMA.indexOf("configuration"))).asScala.toMap))
 
       case DeltaAction.PROTOCOL.colName =>
         val protocolRow = row.getStruct(actionIdx)
@@ -474,8 +475,7 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
           protocolRow.getInt(Protocol.FULL_SCHEMA.indexOf("minReaderVersion")),
           protocolRow.getInt(Protocol.FULL_SCHEMA.indexOf("minWriterVersion")),
           readerFeatures.toSet,
-          writerFeatures.toSet
-        ))
+          writerFeatures.toSet))
 
       case DeltaAction.COMMITINFO.colName =>
         val commitInfoRow = row.getStruct(actionIdx)
@@ -489,8 +489,7 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
           } else {
             VectorUtils.toJavaMap[String, String](
               commitInfoRow.getMap(operationMetricsIdx)).asScala.toMap
-          }
-        ))
+          }))
 
       case DeltaAction.CDC.colName =>
         val cdcRow = row.getStruct(actionIdx)
@@ -507,8 +506,7 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
           VectorUtils.toJavaMap[String, String](
             cdcRow.getMap(AddCDCFile.FULL_SCHEMA.indexOf("partitionValues"))).asScala.toMap,
           cdcRow.getLong(AddCDCFile.FULL_SCHEMA.indexOf("size")),
-          tags
-        ))
+          tags))
 
       case _ =>
         throw new RuntimeException("Encountered an action that hasn't been added as an option yet")
@@ -520,22 +518,27 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
       Some(StandardRemove(remove.path, remove.dataChange, remove.partitionValues))
     case add: SparkAddFile =>
       Some(StandardAdd(
-        add.path, add.partitionValues, add.size, add.modificationTime, add.dataChange))
+        add.path,
+        add.partitionValues,
+        add.size,
+        add.modificationTime,
+        add.dataChange))
     case metadata: SparkMetadata =>
       Some(StandardMetadata(
-        metadata.id, metadata.schemaString, metadata.partitionColumns, metadata.configuration))
+        metadata.id,
+        metadata.schemaString,
+        metadata.partitionColumns,
+        metadata.configuration))
     case protocol: SparkProtocol =>
       Some(StandardProtocol(
         protocol.minReaderVersion,
         protocol.minWriterVersion,
         protocol.readerFeatures.getOrElse(Set.empty),
-        protocol.writerFeatures.getOrElse(Set.empty)
-      ))
+        protocol.writerFeatures.getOrElse(Set.empty)))
     case commitInfo: SparkCommitInfo =>
       Some(StandardCommitInfo(
         commitInfo.operation,
-        commitInfo.operationMetrics.getOrElse(Map.empty)
-      ))
+        commitInfo.operationMetrics.getOrElse(Map.empty)))
     case cdc: SparkAddCDCFile =>
       Some(StandardCdc(cdc.path, cdc.partitionValues, cdc.size, cdc.tags))
     case _ => None
@@ -547,10 +550,11 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
    * match `actionSet`.
    */
   def pruneSparkActionsByActionSet(
-    sparkActions: Iterator[(Long, Seq[SparkAction])],
-    actionSet: Set[DeltaAction]): Iterator[(Long, Seq[SparkAction])] = {
+      sparkActions: Iterator[(Long, Seq[SparkAction])],
+      actionSet: Set[DeltaAction]): Iterator[(Long, Seq[SparkAction])] = {
     sparkActions.map { case (version, actions) =>
-      (version,
+      (
+        version,
         actions.filter {
           case _: SparkRemoveFile => actionSet.contains(DeltaAction.REMOVE)
           case _: SparkAddFile => actionSet.contains(DeltaAction.ADD)
@@ -559,14 +563,13 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
           case _: SparkCommitInfo => actionSet.contains(DeltaAction.COMMITINFO)
           case _: SparkAddCDCFile => actionSet.contains(DeltaAction.CDC)
           case _ => false
-        }
-      )
+        })
     }
   }
 
   def compareActions(
-    kernelActions: Seq[ColumnarBatch],
-    sparkActions: Iterator[(Long, Seq[SparkAction])]): Unit = {
+      kernelActions: Seq[ColumnarBatch],
+      sparkActions: Iterator[(Long, Seq[SparkAction])]): Unit = {
 
     val standardKernelActions: Seq[(Long, StandardAction)] = {
       kernelActions.flatMap(_.getRows.toSeq)
@@ -580,10 +583,10 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
         actions.map(standardizeSparkAction(_)).flatten.map((version, _))
       }.toSeq
 
-    assert(standardKernelActions sameElements standardSparkActions,
+    assert(
+      standardKernelActions sameElements standardSparkActions,
       f"Kernel actions did not match Spark actions.\n" +
         f"Kernel actions: $standardKernelActions\n" +
-        f"Spark actions: $standardSparkActions"
-    )
+        f"Spark actions: $standardSparkActions")
   }
 }

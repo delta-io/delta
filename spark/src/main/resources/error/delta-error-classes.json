@@ -396,6 +396,24 @@
     ],
     "sqlState" : "42613"
   },
+  "DELTA_CLONE_INCOMPATIBLE_SOURCE" : {
+    "message" : [
+      "The clone source has valid format, but has unsupported feature with Delta"
+    ],
+    "subClass" : {
+      "ICEBERG_MISSING_PARTITION_SPECS" : {
+        "message" : [
+          "Source iceberg table has no partition specs in table"
+        ]
+      },
+      "ICEBERG_UNDERGONE_PARTITION_EVOLUTION" : {
+        "message" : [
+          "Source iceberg table has undergone partition evolution."
+        ]
+      }
+    },
+    "sqlState" : "0AKDC"
+  },
   "DELTA_CLONE_UNSUPPORTED_SOURCE" : {
     "message" : [
       "Unsupported clone source '<name>', whose format is <format>.",
@@ -868,6 +886,13 @@
       "No file found in the directory: <directory>."
     ],
     "sqlState" : "42K03"
+  },
+  "DELTA_ENABLING_COLUMN_MAPPING_DISALLOWED_WHEN_COLUMN_MAPPING_METADATA_ALREADY_EXISTS" : {
+    "message" : [
+      "Enabling column mapping when column mapping metadata is already present in schema is not supported.",
+      "To use column mapping, create a new table and reload the data into it."
+    ],
+    "sqlState" : "XXKDS"
   },
   "DELTA_EXCEED_CHAR_VARCHAR_LIMIT" : {
     "message" : [
@@ -2120,6 +2145,12 @@
     ],
     "sqlState" : "2201B"
   },
+  "DELTA_RELATION_PATH_MISMATCH" : {
+    "message" : [
+      "Relation path '<relation>' mismatches with <targetType>'s path '<targetPath>'."
+    ],
+    "sqlState" : "2201B"
+  },
   "DELTA_REMOVE_FILE_CDC_MISSING_EXTENDED_METADATA" : {
     "message" : [
       "RemoveFile created without extended metadata is ineligible for CDC:",
@@ -2312,6 +2343,13 @@
       "Please check if you want to manually propagate the schema change(s) to the sink table before we proceed with stream processing using the finalized schema at version <currentSchemaChangeVersion>.",
       "Once you have fixed the schema of the sink table or have decided there is no need to fix, you can set the following configuration(s) to unblock the non-additive schema change(s) and continue stream processing.",
       "",
+      "Using dataframe reader option(s):",
+      "To unblock for this particular stream just for this series of schema change(s):",
+      "<unblockChangeOptions>",
+      "To unblock for this particular stream:",
+      "<unblockStreamOptions>",
+      "",
+      "Using SQL configuration(s):",
       "To unblock for this particular stream just for this series of schema change(s):",
       "<unblockChangeConfs>",
       "To unblock for this particular stream:",
@@ -2331,6 +2369,13 @@
       "Please check if you want to update your streaming query before we proceed with stream processing using the finalized schema at version <currentSchemaChangeVersion>.",
       "Once you have updated your streaming query or have decided there is no need to update it, you can set the following configuration to unblock the type change(s) and continue stream processing.",
       "",
+      "Using dataframe reader option:",
+      "To unblock for this particular stream just for this series of schema change(s):",
+      "<unblockChangeOptions>",
+      "To unblock for this particular stream:",
+      "<unblockStreamOptions>",
+      "",
+      "Using SQL configuration:",
       "To unblock for this particular stream just for this series of schema change(s):",
       "<unblockChangeConfs>",
       "To unblock for this particular stream:",
@@ -2459,13 +2504,19 @@
       "Unable to update table redirection state: Invalid state transition attempted.",
       "The Delta table '<table>' cannot change from '<oldState>' to '<newState>'."
     ],
-    "sqlState" : "KD007"
+    "sqlState" : "22023"
   },
   "DELTA_TABLE_INVALID_REMOVE_TABLE_REDIRECT" : {
     "message" : [
       "Unable to remove table redirection for <table> due to its invalid state: <currentState>."
     ],
     "sqlState" : "KD007"
+  },
+  "DELTA_TABLE_INVALID_SET_UNSET_REDIRECT" : {
+    "message" : [
+      "Unable to SET or UNSET redirect property on <table>: current property '<currentProperty>' mismatches with new property '<newProperty>'."
+    ],
+    "sqlState" : "22023"
   },
   "DELTA_TABLE_LOCATION_MISMATCH" : {
     "message" : [
@@ -2490,6 +2541,12 @@
       "<tableName> is not a Delta table. <operation> is only supported for Delta tables."
     ],
     "sqlState" : "0AKDD"
+  },
+  "DELTA_TABLE_UNRECOGNIZED_REDIRECT_SPEC" : {
+    "message" : [
+      "The Delta log contains unrecognized table redirect spec '<spec>'."
+    ],
+    "sqlState" : "42704"
   },
   "DELTA_TARGET_TABLE_FINAL_SCHEMA_EMPTY" : {
     "message" : [
