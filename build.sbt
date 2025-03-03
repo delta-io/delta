@@ -867,14 +867,10 @@ lazy val icebergShaded = (project in file("icebergShaded"))
       // due to legacy scala.
       "org.scala-lang.modules" %% "scala-collection-compat" % "2.1.1" % "provided",
       "org.apache.iceberg" % "iceberg-core" % "1.8.0" excludeAll (
-        ExclusionRule("com.fasterxml.jackson"),
-        ExclusionRule(organization = "com.fasterxml.jackson.core"),
         ExclusionRule("com.github.ben-manes.caffeine"),
         ExclusionRule("io.netty"),
       ),
       "org.apache.iceberg" % "iceberg-hive-metastore" % "1.8.0" excludeAll (
-        ExclusionRule("com.fasterxml.jackson"),
-        ExclusionRule(organization = "com.fasterxml.jackson.core"),
         ExclusionRule("com.github.ben-manes.caffeine"),
         ExclusionRule("io.netty"),
       ),
@@ -919,10 +915,7 @@ lazy val icebergShaded = (project in file("icebergShaded"))
       val cp = (fullClasspath in assembly).value
       cp.filter { jar =>
         val doExclude = jar.data.getName.contains("jackson-annotations") ||
-          jar.data.getName.contains("RoaringBitmap") ||
-          jar.data.getName.contains("jackson") ||
-          jar.data.getName.contains("htrace")
-        println(s"Excluding jar: ${jar.data.getName} ? $doExclude")
+          jar.data.getName.contains("RoaringBitmap")
         doExclude
       }
     },
