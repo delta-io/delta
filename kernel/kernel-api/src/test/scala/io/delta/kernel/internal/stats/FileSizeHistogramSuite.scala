@@ -42,7 +42,7 @@ class FileSizeHistogramSuite extends AnyFunSuite {
       128L * 1024 * 1024 // 128MB
     )
 
-    // Test single insertions
+    // Test single insertions with different bins
     testSizes.foreach { size =>
       histogram.insert(size)
       val index = getBinIndexForTesting(histogram.getBoundaries, size)
@@ -57,9 +57,11 @@ class FileSizeHistogramSuite extends AnyFunSuite {
     val initialCount = histogram.getCounts(index)
     val initialBytes = histogram.getBytes(index)
 
-    (1 to numFiles).foreach(_ => histogram.insert(sizeForMultiple))
-    assert(histogram.getCounts(index) == initialCount + numFiles)
-    assert(histogram.getBytes(index) == initialBytes + sizeForMultiple * numFiles)
+    (1 to numFiles).foreach(i => {
+      histogram.insert(sizeForMultiple)
+      assert(histogram.getCounts(index) == i + initialCount)
+      assert(histogram.getBytes(index) == i * sizeForMultiple + initialBytes)
+    })
 
     intercept[IllegalArgumentException] {
       histogram.insert(-1)
@@ -70,15 +72,6 @@ class FileSizeHistogramSuite extends AnyFunSuite {
     val histogram = FileSizeHistogram.init()
     val fileSize = 1024L * 1024 // 1MB
     val index = getBinIndexForTesting(histogram.getBoundaries, fileSize)
-
-    // Test single insert and remove
-    histogram.insert(fileSize)
-    assert(histogram.getCounts(index) == 1L)
-    assert(histogram.getBytes(index) == fileSize)
-
-    histogram.remove(fileSize)
-    assert(histogram.getCounts(index) == 0L)
-    assert(histogram.getBytes(index) == 0L)
 
     // Test multiple inserts and removes
     val numFiles = 3
