@@ -15,9 +15,14 @@
  */
 package io.delta.kernel.internal.actions
 
+import java.util
+
 import scala.collection.JavaConverters._
 
+import io.delta.kernel.internal.data.GenericRow
 import io.delta.kernel.internal.tablefeatures.TableFeatures
+import io.delta.kernel.internal.util.VectorUtils
+import io.delta.kernel.types.{ArrayType, IntegerType, StringType, StructType}
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -369,4 +374,24 @@ class ProtocolSuite extends AnyFunSuite {
         assert(merged.getWriterFeatures.asScala === expWriterFeatures)
       }
   })
+
+  test("extract protocol from the row representation") {
+    val values: util.Map[Integer, Object] = {
+      val map = new util.HashMap[Integer, Object]()
+      map.put(0, Integer.valueOf(42))
+      map.put(1, Integer.valueOf(43))
+      map.put(2, VectorUtils.stringArrayValue(List("foo").asJava).asInstanceOf[Object])
+      map.put(3, VectorUtils.stringArrayValue(List("bar").asJava).asInstanceOf[Object])
+      map
+    }
+    val row = new GenericRow(
+      new StructType().add("minReaderVersion", IntegerType.INTEGER)
+        .add("minWriterVersion", IntegerType.INTEGER)
+        .add("readerFeatures", new ArrayType(StringType.STRING, true))
+        .add("writerFeatures", new ArrayType(StringType.STRING, true)),
+      values)
+
+    val expected = new Protocol(42, 43, Set("foo").asJava, Set("bar").asJava)
+    assert(Protocol.fromRow(row) === expected)
+  }
 }
