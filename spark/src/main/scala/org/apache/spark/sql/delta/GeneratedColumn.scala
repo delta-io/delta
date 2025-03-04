@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import java.util.Locale
 
+import org.apache.spark.sql.delta.DataFrameUtils
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
@@ -231,7 +232,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
     }
     val dfWithExprs = try {
       val plan = Project(selectExprs.map(_.expr.asInstanceOf[NamedExpression]), relation)
-      Dataset.ofRows(spark, plan)
+      DataFrameUtils.ofRows(spark, plan)
     } catch {
       case e: AnalysisException if e.getMessage != null =>
         val regexCandidates = Seq(
@@ -286,7 +287,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
       return Set.empty
     }
 
-    val df = Dataset.ofRows(SparkSession.active, new LocalRelation(toAttributes(schema)))
+    val df = DataFrameUtils.ofRows(SparkSession.active, new LocalRelation(toAttributes(schema)))
     val generatedColumnsAndColumnsUsedByGeneratedColumns =
       df.select(generationExprs: _*).queryExecution.analyzed match {
         case Project(exprs, _) =>
@@ -356,7 +357,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
       }
     }
 
-    val df = Dataset.ofRows(SparkSession.active, new LocalRelation(toAttributes(schema)))
+    val df = DataFrameUtils.ofRows(SparkSession.active, new LocalRelation(toAttributes(schema)))
     val extractedPartitionExprs =
       df.select(partitionGenerationExprs: _*).queryExecution.analyzed match {
         case Project(exprs, _) =>
