@@ -27,7 +27,7 @@ import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
 import io.delta.kernel.internal.tablefeatures.TableFeatures.{validateKernelCanReadTheTable, validateKernelCanWriteToTable, DOMAIN_METADATA_W_FEATURE, TABLE_FEATURES}
 import io.delta.kernel.internal.util.InternalUtils.singletonStringColumnVector
-import io.delta.kernel.internal.util.VectorUtils.stringVector
+import io.delta.kernel.internal.util.VectorUtils.buildColumnVector
 import io.delta.kernel.types._
 
 import org.scalatest.funsuite.AnyFunSuite
@@ -925,8 +925,10 @@ class TableFeaturesSuite extends AnyFunSuite {
       Optional.empty(),
       new MapValue() { // conf
         override def getSize = tblProps.size
-        override def getKeys: ColumnVector = stringVector(tblProps.toSeq.map(_._1).asJava)
-        override def getValues: ColumnVector = stringVector(tblProps.toSeq.map(_._2).asJava)
+        override def getKeys: ColumnVector =
+          buildColumnVector(tblProps.toSeq.map(_._1).asJava, StringType.STRING)
+        override def getValues: ColumnVector =
+          buildColumnVector(tblProps.toSeq.map(_._2).asJava, StringType.STRING)
       })
   }
 

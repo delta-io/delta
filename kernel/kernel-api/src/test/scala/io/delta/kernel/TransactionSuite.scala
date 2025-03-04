@@ -198,7 +198,7 @@ object TransactionSuite extends VectorTestUtils with MockEngineUtils {
       new Format(),
       DataTypeJsonSerDe.serializeDataType(schema),
       schema,
-      VectorUtils.stringArrayValue(partitionCols.asJava), // partitionColumns
+      VectorUtils.buildArrayValue(partitionCols.asJava, StringType.STRING), // partitionColumns
       Optional.empty(), // createdTime
       stringStringMapValue(configurationMap.asJava) // configurationMap
     )

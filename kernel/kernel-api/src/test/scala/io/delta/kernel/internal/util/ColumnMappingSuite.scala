@@ -508,7 +508,7 @@ class ColumnMappingSuite extends AnyFunSuite {
     new Format,
     schema.toJson,
     schema,
-    VectorUtils.stringArrayValue(Collections.emptyList()),
+    VectorUtils.buildArrayValue(Collections.emptyList(), StringType.STRING),
     Optional.empty(),
     VectorUtils.stringStringMapValue(Collections.emptyMap()))
 

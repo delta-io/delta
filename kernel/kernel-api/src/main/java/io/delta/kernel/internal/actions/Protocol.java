@@ -18,7 +18,7 @@ package io.delta.kernel.internal.actions;
 import static io.delta.kernel.internal.tablefeatures.TableFeatures.TABLE_FEATURES;
 import static io.delta.kernel.internal.tablefeatures.TableFeatures.TABLE_FEATURES_MIN_WRITER_VERSION;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
-import static io.delta.kernel.internal.util.VectorUtils.stringArrayValue;
+import static io.delta.kernel.internal.util.VectorUtils.buildArrayValue;
 import static java.lang.String.format;
 import static java.util.Collections.emptySet;
 import static java.util.Collections.unmodifiableSet;
@@ -151,10 +151,10 @@ public class Protocol {
     protocolMap.put(0, minReaderVersion);
     protocolMap.put(1, minWriterVersion);
     if (supportsReaderFeatures) {
-      protocolMap.put(2, stringArrayValue(new ArrayList<>(readerFeatures)));
+      protocolMap.put(2, buildArrayValue(new ArrayList<>(readerFeatures), StringType.STRING));
     }
     if (supportsWriterFeatures) {
-      protocolMap.put(3, stringArrayValue(new ArrayList<>(writerFeatures)));
+      protocolMap.put(3, buildArrayValue(new ArrayList<>(writerFeatures), StringType.STRING));
     }
 
     return new GenericRow(Protocol.FULL_SCHEMA, protocolMap);
