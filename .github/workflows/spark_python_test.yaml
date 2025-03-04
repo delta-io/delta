@@ -48,7 +48,7 @@ jobs:
           rm buf-Linux-x86_64.tar.gz
           sudo apt install python3-pip --fix-missing
           sudo pip3 install pipenv==2021.5.29
-          sudo pip3 install urllib3==1.26.17
+          sudo pip3 install --user urllib3==1.26.17
           curl https://pyenv.run | bash
           export PATH="~/.pyenv/bin:$PATH"
           eval "$(pyenv init -)"
