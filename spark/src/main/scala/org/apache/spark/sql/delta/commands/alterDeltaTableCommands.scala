@@ -446,6 +446,10 @@ case class AlterTableDropFeatureDeltaCommand(
       val op = DeltaOperations.DropTableFeature(featureName, truncateHistory)
       txn.updateProtocol(txn.protocol.removeFeature(removableFeature))
       txn.commit(Nil, op)
+      recordDeltaEvent(
+        deltaLog = deltaLog,
+        opType = "dropFeatureCompleted.withHistoryTruncation",
+        data = Map("droppedFeature" -> removableFeature.name))
       Nil
     }
   }
@@ -537,6 +541,10 @@ case class AlterTableDropFeatureDeltaCommand(
 
       // This is a protected checkpoint.
       if (historyBarrierIsRequired) createCheckpointWithRetries(table, System.nanoTime())
+      recordDeltaEvent(
+        deltaLog = deltaLog,
+        opType = "dropFeatureCompleted.withCheckpointProtection",
+        data = Map("droppedFeature" -> removableFeature.name))
       Nil
     }
   }
