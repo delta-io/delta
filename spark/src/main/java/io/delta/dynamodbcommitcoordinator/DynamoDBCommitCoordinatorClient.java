@@ -16,8 +16,7 @@
 
 package io.delta.dynamodbcommitcoordinator;
 
-import com.amazonaws.services.dynamodbv2.AmazonDynamoDB;
-import com.amazonaws.services.dynamodbv2.model.*;
+import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import io.delta.storage.CloseableIterator;
 import io.delta.storage.LogStore;
 import io.delta.storage.commit.*;
@@ -30,6 +29,26 @@ import org.apache.hadoop.fs.Path;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import software.amazon.awssdk.services.dynamodb.model.AttributeAction;
+import software.amazon.awssdk.services.dynamodb.model.AttributeDefinition;
+import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
+import software.amazon.awssdk.services.dynamodb.model.AttributeValueUpdate;
+import software.amazon.awssdk.services.dynamodb.model.ConditionalCheckFailedException;
+import software.amazon.awssdk.services.dynamodb.model.CreateTableRequest;
+import software.amazon.awssdk.services.dynamodb.model.DescribeTableRequest;
+import software.amazon.awssdk.services.dynamodb.model.DescribeTableResponse;
+import software.amazon.awssdk.services.dynamodb.model.ExpectedAttributeValue;
+import software.amazon.awssdk.services.dynamodb.model.GetItemRequest;
+import software.amazon.awssdk.services.dynamodb.model.GetItemResponse;
+import software.amazon.awssdk.services.dynamodb.model.KeySchemaElement;
+import software.amazon.awssdk.services.dynamodb.model.KeyType;
+import software.amazon.awssdk.services.dynamodb.model.ProvisionedThroughput;
+import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
+import software.amazon.awssdk.services.dynamodb.model.ResourceInUseException;
+import software.amazon.awssdk.services.dynamodb.model.ResourceNotFoundException;
+import software.amazon.awssdk.services.dynamodb.model.ScalarAttributeType;
+import software.amazon.awssdk.services.dynamodb.model.TableDescription;
+import software.amazon.awssdk.services.dynamodb.model.UpdateItemRequest;
 
 import java.io.*;
 import java.util.*;
@@ -63,7 +82,7 @@ public class DynamoDBCommitCoordinatorClient implements CommitCoordinatorClient 
     /**
      * The DynamoDB client used to interact with the DynamoDB table.
      */
-    final AmazonDynamoDB client;
+    final DynamoDbClient client;
 
     /**
      * The endpoint of the DynamoDB table.
@@ -121,7 +140,7 @@ public class DynamoDBCommitCoordinatorClient implements CommitCoordinatorClient 
     public DynamoDBCommitCoordinatorClient(
             String coordinatedCommitsTableName,
             String endpoint,
-            AmazonDynamoDB client,
+            DynamoDbClient client,
             long backfillBatchSize) throws IOException {
         this(
             coordinatedCommitsTableName,
@@ -136,7 +155,7 @@ public class DynamoDBCommitCoordinatorClient implements CommitCoordinatorClient 
     public DynamoDBCommitCoordinatorClient(
             String coordinatedCommitsTableName,
             String endpoint,
-            AmazonDynamoDB client,
+            DynamoDbClient client,
             long backfillBatchSize,
             long readCapacityUnits,
             long writeCapacityUnits,
@@ -162,14 +181,17 @@ public class DynamoDBCommitCoordinatorClient implements CommitCoordinatorClient 
      * Fetches the entry from the commit coordinator for the given table. Only the attributes defined
      * in attributesToGet will be fetched.
      */
-    private GetItemResult getEntryFromCommitCoordinator(
+    private GetItemResponse getEntryFromCommitCoordinator(
             Map<String, String> coordinatedCommitsTableConf, String... attributesToGet) {
-        GetItemRequest request = new GetItemRequest()
-                .withTableName(coordinatedCommitsTableName)
-                .addKeyEntry(
+        GetItemRequest request = GetItemRequest.builder()
+                .tableName(coordinatedCommitsTableName)
+                .key(Collections.singletonMap(
                         DynamoDBTableEntryConstants.TABLE_ID,
-                        new AttributeValue().withS(getTableId(coordinatedCommitsTableConf)))
-                .withAttributesToGet(attributesToGet);
+                        AttributeValue.builder()
+                                .s(getTableId(coordinatedCommitsTableConf))
+                                .build()))
+                .attributesToGet(attributesToGet)
+                .build();
         return client.getItem(request);
     }
 
@@ -208,91 +230,112 @@ public class DynamoDBCommitCoordinatorClient implements CommitCoordinatorClient 
         java.util.Map<String, ExpectedAttributeValue> expectedValuesBeforeUpdate = new HashMap<>();
         expectedValuesBeforeUpdate.put(
                 DynamoDBTableEntryConstants.TABLE_LATEST_VERSION,
-                new ExpectedAttributeValue()
-                        .withValue(new AttributeValue().withN(Long.toString(attemptVersion - 1)))
+                ExpectedAttributeValue.builder()
+                        .value(AttributeValue.builder().n(Long.toString(attemptVersion - 1)).build())
+                        .build()
         );
         expectedValuesBeforeUpdate.put(
                 DynamoDBTableEntryConstants.ACCEPTING_COMMITS,
-                new ExpectedAttributeValue()
-                    .withValue(new AttributeValue().withBOOL(true)));
+                ExpectedAttributeValue.builder()
+                    .value(AttributeValue.builder().bool(true).build())
+                    .build()
+        );
         if (!skipPathCheck) {
             expectedValuesBeforeUpdate.put(
                     DynamoDBTableEntryConstants.TABLE_PATH,
-                    new ExpectedAttributeValue()
-                        .withValue(new AttributeValue().withS(logPath.getParent().toString())));
+                    ExpectedAttributeValue.builder()
+                        .value(AttributeValue.builder().s(logPath.getParent().toString()).build())
+                        .build()
+            );
         }
         expectedValuesBeforeUpdate.put(
                 DynamoDBTableEntryConstants.SCHEMA_VERSION,
-                new ExpectedAttributeValue()
-                    .withValue(new AttributeValue().withN(Integer.toString(CLIENT_VERSION))));
+                ExpectedAttributeValue.builder()
+                    .value(AttributeValue.builder().n(Integer.toString(CLIENT_VERSION)).build())
+                    .build()
+        );
 
         java.util.Map<String, AttributeValue> newCommit = new HashMap<>();
         newCommit.put(
                 DynamoDBTableEntryConstants.COMMIT_VERSION,
-                new AttributeValue().withN(Long.toString(attemptVersion)));
+                AttributeValue.builder().n(Long.toString(attemptVersion)).build());
         newCommit.put(
                 DynamoDBTableEntryConstants.COMMIT_TIMESTAMP,
-                new AttributeValue().withN(Long.toString(inCommitTimestamp)));
+                AttributeValue.builder().n(Long.toString(inCommitTimestamp)).build());
         newCommit.put(
                 DynamoDBTableEntryConstants.COMMIT_FILE_NAME,
-                new AttributeValue().withS(commitFile.getPath().getName()));
+                AttributeValue.builder().s(commitFile.getPath().getName()).build());
         newCommit.put(
                 DynamoDBTableEntryConstants.COMMIT_FILE_LENGTH,
-                new AttributeValue().withN(Long.toString(commitFile.getLen())));
+                AttributeValue.builder().n(Long.toString(commitFile.getLen())).build());
         newCommit.put(
                 DynamoDBTableEntryConstants.COMMIT_FILE_MODIFICATION_TIMESTAMP,
-                new AttributeValue().withN(Long.toString(commitFile.getModificationTime())));
+                AttributeValue.builder().n(Long.toString(commitFile.getModificationTime())).build());
 
-        UpdateItemRequest request = new UpdateItemRequest()
-                .withTableName(coordinatedCommitsTableName)
-                .addKeyEntry(
+        UpdateItemRequest.Builder requestBuilder = UpdateItemRequest.builder()
+                .tableName(coordinatedCommitsTableName)
+                .key(Collections.singletonMap(
                         DynamoDBTableEntryConstants.TABLE_ID,
-                        new AttributeValue().withS(getTableId(coordinatedCommitsTableConf)))
-                .addAttributeUpdatesEntry(
-                        DynamoDBTableEntryConstants.TABLE_LATEST_VERSION, new AttributeValueUpdate()
-                            .withValue(new AttributeValue().withN(Long.toString(attemptVersion)))
-                            .withAction(AttributeAction.PUT))
-                // We need to set this to true to indicate that commits have been accepted after
-                // `registerTable`.
-                .addAttributeUpdatesEntry(
-                        DynamoDBTableEntryConstants.HAS_ACCEPTED_COMMITS, new AttributeValueUpdate()
-                            .withValue(new AttributeValue().withBOOL(true))
-                            .withAction(AttributeAction.PUT)
-                )
-                .addAttributeUpdatesEntry(
-                        DynamoDBTableEntryConstants.TABLE_LATEST_TIMESTAMP, new AttributeValueUpdate()
-                            .withValue(new AttributeValue().withN(Long.toString(inCommitTimestamp)))
-                            .withAction(AttributeAction.PUT))
-                .addAttributeUpdatesEntry(
-                        DynamoDBTableEntryConstants.COMMITS,
-                        new AttributeValueUpdate()
-                            .withAction(AttributeAction.ADD)
-                            .withValue(new AttributeValue().withL(
-                                    new AttributeValue().withM(newCommit)
-                                )
-                            )
-                )
-                .withExpected(expectedValuesBeforeUpdate);
+                        AttributeValue.builder()
+                                .s(getTableId(coordinatedCommitsTableConf))
+                                .build()))
+                .attributeUpdates(new HashMap<String, AttributeValueUpdate>() {{
+                    put(DynamoDBTableEntryConstants.TABLE_LATEST_VERSION,
+                            AttributeValueUpdate.builder()
+                                    .value(AttributeValue.builder()
+                                            .n(Long.toString(attemptVersion))
+                                            .build())
+                                    .action(AttributeAction.PUT)
+                                    .build());
+                    // We need to set this to true to indicate that commits have been accepted after
+                    // `registerTable`.
+                    put(DynamoDBTableEntryConstants.HAS_ACCEPTED_COMMITS,
+                            AttributeValueUpdate.builder()
+                                    .value(AttributeValue.builder()
+                                            .bool(true)
+                                            .build())
+                                    .action(AttributeAction.PUT)
+                                    .build());
+                    put(DynamoDBTableEntryConstants.TABLE_LATEST_TIMESTAMP,
+                            AttributeValueUpdate.builder()
+                                    .value(AttributeValue.builder()
+                                            .n(Long.toString(inCommitTimestamp))
+                                            .build())
+                                    .action(AttributeAction.PUT)
+                                    .build());
+                    put(DynamoDBTableEntryConstants.COMMITS,
+                            AttributeValueUpdate.builder()
+                                    .action(AttributeAction.ADD)
+                                    .value(AttributeValue.builder()
+                                            .l(AttributeValue.builder()
+                                                    .m(newCommit)
+                                                    .build())
+                                            .build())
+                                    .build());
+                }})
+                .expected(expectedValuesBeforeUpdate);
 
         if (isCCtoFSConversion) {
             // If this table is being converted from coordinated commits to file system commits, we need
             // to set acceptingCommits to false.
-            request = request
-                    .addAttributeUpdatesEntry(
-                            DynamoDBTableEntryConstants.ACCEPTING_COMMITS,
-                            new AttributeValueUpdate()
-                                    .withValue(new AttributeValue().withBOOL(false))
-                                    .withAction(AttributeAction.PUT)
-                    );
+            Map<String, AttributeValueUpdate> updates = new HashMap<>(requestBuilder.build().attributeUpdates());
+            updates.put(DynamoDBTableEntryConstants.ACCEPTING_COMMITS,
+                    AttributeValueUpdate.builder()
+                            .value(AttributeValue.builder()
+                                    .bool(false)
+                                    .build())
+                            .action(AttributeAction.PUT)
+                            .build());
+            requestBuilder.attributeUpdates(updates);
         }
 
         try {
-            client.updateItem(request);
+            client.updateItem(requestBuilder.build());
         } catch (ConditionalCheckFailedException e) {
             // Conditional check failed. The exception will not indicate which condition failed.
             // We need to check the conditions ourselves by fetching the item and checking the
             // values.
-            GetItemResult latestEntry = getEntryFromCommitCoordinator(
+            GetItemResponse latestEntry = getEntryFromCommitCoordinator(
                     coordinatedCommitsTableConf,
                     DynamoDBTableEntryConstants.TABLE_LATEST_VERSION,
                     DynamoDBTableEntryConstants.ACCEPTING_COMMITS,
@@ -300,7 +343,7 @@ public class DynamoDBCommitCoordinatorClient implements CommitCoordinatorClient 
                     DynamoDBTableEntryConstants.SCHEMA_VERSION);
 
             int schemaVersion = Integer.parseInt(
-                    latestEntry.getItem().get(DynamoDBTableEntryConstants.SCHEMA_VERSION).getN());
+                    latestEntry.item().get(DynamoDBTableEntryConstants.SCHEMA_VERSION).n());
             if (schemaVersion != CLIENT_VERSION) {
                 throw new CommitFailedException(
                         false /* retryable */,
@@ -312,17 +355,17 @@ public class DynamoDBCommitCoordinatorClient implements CommitCoordinatorClient 
                                 "used to access this table." );
             }
             long latestTableVersion = Long.parseLong(
-                    latestEntry.getItem().get(DynamoDBTableEntryConstants.TABLE_LATEST_VERSION).getN());
+                    latestEntry.item().get(DynamoDBTableEntryConstants.TABLE_LATEST_VERSION).n());
             if (!skipPathCheck &&
-                    !latestEntry.getItem().get("path").getS().equals(logPath.getParent().toString())) {
+                    !latestEntry.item().get("path").s().equals(logPath.getParent().toString())) {
                 throw new CommitFailedException(
                         false /* retryable */,
                         false /* conflict */,
                         "This commit was attempted from path " + logPath.getParent() +
                                 " while the table is registered at " +
-                                latestEntry.getItem().get("path").getS() + ".");
+                                latestEntry.item().get("path").s() + ".");
             }
-            if (!latestEntry.getItem().get(DynamoDBTableEntryConstants.ACCEPTING_COMMITS).getBOOL()) {
+            if (!latestEntry.item().get(DynamoDBTableEntryConstants.ACCEPTING_COMMITS).bool()) {
                 throw new CommitFailedException(
                         false /* retryable */,
                         false /* conflict */,
@@ -407,32 +450,32 @@ public class DynamoDBCommitCoordinatorClient implements CommitCoordinatorClient 
             Map<String, String> tableConf,
             Long startVersion,
             Long endVersion) throws IOException {
-        GetItemResult latestEntry = getEntryFromCommitCoordinator(
+        GetItemResponse latestEntry = getEntryFromCommitCoordinator(
                 tableConf,
                 DynamoDBTableEntryConstants.COMMITS,
                 DynamoDBTableEntryConstants.TABLE_LATEST_VERSION,
                 DynamoDBTableEntryConstants.HAS_ACCEPTED_COMMITS);
 
-        java.util.Map<String, AttributeValue> item = latestEntry.getItem();
+        java.util.Map<String, AttributeValue> item = latestEntry.item();
         long currentVersion =
-                Long.parseLong(item.get(DynamoDBTableEntryConstants.TABLE_LATEST_VERSION).getN());
+                Long.parseLong(item.get(DynamoDBTableEntryConstants.TABLE_LATEST_VERSION).n());
         AttributeValue allStoredCommits = item.get(DynamoDBTableEntryConstants.COMMITS);
         ArrayList<Commit> commits = new ArrayList<>();
         Path unbackfilledCommitsPath = CoordinatedCommitsUtils.commitDirPath(logPath);
-        for(AttributeValue attr: allStoredCommits.getL()) {
-            java.util.Map<String, AttributeValue> commitMap = attr.getM();
+        for(AttributeValue attr: allStoredCommits.l()) {
+            java.util.Map<String, AttributeValue> commitMap = attr.m();
             long commitVersion =
-                    Long.parseLong(commitMap.get(DynamoDBTableEntryConstants.COMMIT_VERSION).getN());
+                    Long.parseLong(commitMap.get(DynamoDBTableEntryConstants.COMMIT_VERSION).n());
             boolean commitInRange = (startVersion == null || commitVersion >= startVersion) &&
                     (endVersion == null || endVersion >= commitVersion);
             if (commitInRange) {
                 Path filePath = new Path(
                         unbackfilledCommitsPath,
-                        commitMap.get(DynamoDBTableEntryConstants.COMMIT_FILE_NAME).getS());
+                        commitMap.get(DynamoDBTableEntryConstants.COMMIT_FILE_NAME).s());
                 long length =
-                        Long.parseLong(commitMap.get(DynamoDBTableEntryConstants.COMMIT_FILE_LENGTH).getN());
+                        Long.parseLong(commitMap.get(DynamoDBTableEntryConstants.COMMIT_FILE_LENGTH).n());
                 long modificationTime = Long.parseLong(
-                        commitMap.get(DynamoDBTableEntryConstants.COMMIT_FILE_MODIFICATION_TIMESTAMP).getN());
+                        commitMap.get(DynamoDBTableEntryConstants.COMMIT_FILE_MODIFICATION_TIMESTAMP).n());
                 FileStatus fileStatus = new FileStatus(
                         length,
                         false /* isDir */,
@@ -441,7 +484,7 @@ public class DynamoDBCommitCoordinatorClient implements CommitCoordinatorClient 
                         modificationTime,
                         filePath);
                 long inCommitTimestamp =
-                        Long.parseLong(commitMap.get(DynamoDBTableEntryConstants.COMMIT_TIMESTAMP).getN());
+                        Long.parseLong(commitMap.get(DynamoDBTableEntryConstants.COMMIT_TIMESTAMP).n());
                 commits.add(new Commit(commitVersion, fileStatus, inCommitTimestamp));
             }
         }
@@ -449,7 +492,7 @@ public class DynamoDBCommitCoordinatorClient implements CommitCoordinatorClient 
                 new ArrayList(commits), currentVersion);
         return new GetCommitsResultInternal(
                 response,
-                item.get(DynamoDBTableEntryConstants.HAS_ACCEPTED_COMMITS).getBOOL());
+                item.get(DynamoDBTableEntryConstants.HAS_ACCEPTED_COMMITS).bool());
     }
 
     @Override
@@ -575,36 +618,44 @@ public class DynamoDBCommitCoordinatorClient implements CommitCoordinatorClient 
                 actions.close();
             }
         }
-        UpdateItemRequest request = new UpdateItemRequest()
-                .withTableName(coordinatedCommitsTableName)
-                .addKeyEntry(
-                        DynamoDBTableEntryConstants.TABLE_ID,
-                        new AttributeValue().withS(getTableId(tableDesc.getTableConf())))
-                .addAttributeUpdatesEntry(
-                        DynamoDBTableEntryConstants.COMMITS,
-                        new AttributeValueUpdate()
-                            .withAction(AttributeAction.PUT)
-                            .withValue(new AttributeValue().withL())
-                )
-                .withExpected(new HashMap<String, ExpectedAttributeValue>(){
+
+        Map<String, AttributeValue> requestKey = new HashMap<>();
+        requestKey.put(DynamoDBTableEntryConstants.TABLE_ID,
+                        AttributeValue.builder().s(getTableId(tableDesc.getTableConf())).build());
+
+
+        Map<String, AttributeValueUpdate> attributeUpdates = new HashMap<>();
+        attributeUpdates.put(DynamoDBTableEntryConstants.COMMITS,
+                AttributeValueUpdate.builder()
+                        .action(AttributeAction.PUT)
+                        .value(AttributeValue.builder().l(new ArrayList<>()).build())
+                        .build());
+        UpdateItemRequest request = UpdateItemRequest.builder()
+                .tableName(coordinatedCommitsTableName)
+                .key(requestKey)
+                .attributeUpdates(attributeUpdates)
+                .expected(new HashMap<String, ExpectedAttributeValue>(){
                     {
-                        put(DynamoDBTableEntryConstants.TABLE_LATEST_VERSION, new ExpectedAttributeValue()
-                                .withValue(
-                                        new AttributeValue()
-                                                .withN(Long.toString(resp.getLatestTableVersion())))
+                        put(DynamoDBTableEntryConstants.TABLE_LATEST_VERSION, ExpectedAttributeValue.builder()
+                                .value(
+                                        AttributeValue.builder()
+                                                .n(Long.toString(resp.getLatestTableVersion())).build())
+                                .build()
                         );
-                        put(DynamoDBTableEntryConstants.TABLE_PATH, new ExpectedAttributeValue()
-                                .withValue(
-                                        new AttributeValue()
-                                                .withS(logPath.getParent().toString()))
+                        put(DynamoDBTableEntryConstants.TABLE_PATH, ExpectedAttributeValue.builder()
+                                .value(
+                                        AttributeValue.builder()
+                                                .s(logPath.getParent().toString()).build())
+                                .build()
                         );
-                        put(DynamoDBTableEntryConstants.SCHEMA_VERSION, new ExpectedAttributeValue()
-                                .withValue(
-                                        new AttributeValue()
-                                                .withN(Integer.toString(CLIENT_VERSION)))
+                        put(DynamoDBTableEntryConstants.SCHEMA_VERSION, ExpectedAttributeValue.builder()
+                                .value(
+                                        AttributeValue.builder()
+                                                .n(Integer.toString(CLIENT_VERSION)).build())
+                                .build()
                         );
                     }
-                });
+                }).build();
         try {
             client.updateItem(request);
         } catch (ConditionalCheckFailedException e) {
@@ -628,7 +679,7 @@ public class DynamoDBCommitCoordinatorClient implements CommitCoordinatorClient 
         java.util.Map<String, AttributeValue> item = new HashMap<>();
 
         String tableId = java.util.UUID.randomUUID().toString();
-        item.put(DynamoDBTableEntryConstants.TABLE_ID, new AttributeValue().withS(tableId));
+        item.put(DynamoDBTableEntryConstants.TABLE_ID, AttributeValue.builder().s(tableId).build());
 
         // We maintain the invariant that a commit will only succeed if the latestVersion stored
         // in the table is equal to attemptVersion - 1. To maintain this, even though the
@@ -641,28 +692,29 @@ public class DynamoDBCommitCoordinatorClient implements CommitCoordinatorClient 
         long attemptVersion = currentVersion + 1;
         item.put(
                 DynamoDBTableEntryConstants.TABLE_LATEST_VERSION,
-                new AttributeValue().withN(Long.toString(attemptVersion)));
+                AttributeValue.builder().n(Long.toString(attemptVersion)).build());
         // Used to indicate that no real commits have gone through the commit coordinator yet.
         item.put(
                 DynamoDBTableEntryConstants.HAS_ACCEPTED_COMMITS,
-                new AttributeValue().withBOOL(false));
+                AttributeValue.builder().bool(false).build());
 
         item.put(
                 DynamoDBTableEntryConstants.TABLE_PATH,
-                new AttributeValue().withS(logPath.getParent().toString()));
-        item.put(DynamoDBTableEntryConstants.COMMITS, new AttributeValue().withL());
+                AttributeValue.builder().s(logPath.getParent().toString()).build());
+        item.put(DynamoDBTableEntryConstants.COMMITS, AttributeValue.builder().l(new ArrayList<>()).build());
         item.put(
-                DynamoDBTableEntryConstants.ACCEPTING_COMMITS, new AttributeValue().withBOOL(true));
+                DynamoDBTableEntryConstants.ACCEPTING_COMMITS, AttributeValue.builder().bool(true).build());
         item.put(
                 DynamoDBTableEntryConstants.SCHEMA_VERSION,
-                new AttributeValue().withN(Integer.toString(CLIENT_VERSION)));
+                AttributeValue.builder().n(Integer.toString(CLIENT_VERSION)).build());
 
-        PutItemRequest request = new PutItemRequest()
-                .withTableName(coordinatedCommitsTableName)
-                .withItem(item)
-                .withConditionExpression(
+        PutItemRequest request = PutItemRequest.builder()
+                .tableName(coordinatedCommitsTableName)
+                .item(item)
+                .conditionExpression(
                         String.format(
-                                "attribute_not_exists(%s)", DynamoDBTableEntryConstants.TABLE_ID));
+                                "attribute_not_exists(%s)", DynamoDBTableEntryConstants.TABLE_ID))
+                .build();
         client.putItem(request);
 
         Map<String, String> tableConf = new HashMap();
@@ -684,31 +736,34 @@ public class DynamoDBCommitCoordinatorClient implements CommitCoordinatorClient 
         while(retries < 20) {
             String status = "CREATING";
             try {
-                DescribeTableResult result = client.describeTable(coordinatedCommitsTableName);
-                TableDescription descr = result.getTable();
-                status = descr.getTableStatus();
+                DescribeTableResponse result = client.describeTable(
+                        DescribeTableRequest.builder()
+                                .tableName(coordinatedCommitsTableName)
+                                .build());
+                TableDescription descr = result.table();
+                status = descr.tableStatusAsString();
             } catch (ResourceNotFoundException e) {
                 LOG.info(
                         "DynamoDB table `{}` for endpoint `{}` does not exist. " +
                         "Creating it now with provisioned throughput of {} RCUs and {} WCUs.",
                         coordinatedCommitsTableName, endpoint, readCapacityUnits, writeCapacityUnits);
                 try {
-                    client.createTable(
-                            // attributeDefinitions
-                            java.util.Collections.singletonList(
-                                    new AttributeDefinition(
-                                            DynamoDBTableEntryConstants.TABLE_ID,
-                                            ScalarAttributeType.S)
-                            ),
-                            coordinatedCommitsTableName,
-                            // keySchema
-                            java.util.Collections.singletonList(
-                                    new KeySchemaElement(
-                                            DynamoDBTableEntryConstants.TABLE_ID,
-                                            KeyType.HASH)
-                            ),
-                            new ProvisionedThroughput(this.readCapacityUnits, this.writeCapacityUnits)
-                    );
+                    CreateTableRequest request = CreateTableRequest.builder()
+                            .attributeDefinitions(AttributeDefinition.builder()
+                                    .attributeName(DynamoDBTableEntryConstants.TABLE_ID)
+                                    .attributeType(ScalarAttributeType.S)
+                                    .build())
+                            .tableName(coordinatedCommitsTableName)
+                            .keySchema(KeySchemaElement.builder()
+                                    .attributeName(DynamoDBTableEntryConstants.TABLE_ID)
+                                    .keyType(KeyType.HASH)
+                                    .build())
+                            .provisionedThroughput(ProvisionedThroughput.builder()
+                                    .readCapacityUnits(this.readCapacityUnits)
+                                    .writeCapacityUnits(this.writeCapacityUnits)
+                                    .build())
+                            .build();
+                    client.createTable(request);
                     created = true;
                 } catch (ResourceInUseException e3) {
                     // race condition - table just created by concurrent process

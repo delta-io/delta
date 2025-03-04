@@ -16,9 +16,10 @@
 
 package io.delta.storage.utils;
 
-import com.amazonaws.auth.AWSCredentialsProvider;
 import org.apache.hadoop.conf.Configuration;
+import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
 
+import java.lang.reflect.Method;
 import java.util.Arrays;
 
 public class ReflectionUtils {
@@ -30,30 +31,42 @@ public class ReflectionUtils {
     }
 
     /**
-     * Create AWS credentials provider from given provider classname and {@link Configuration}.
+     * Creates a AWS credentials provider from the given provider classname and {@link Configuration}.
      *
-     * It first check if AWS Credentials Provider class has constructor Hadoop configuration as parameter.
+     * It first checks if AWS Credentials Provider class has a constructor with Hadoop configuration
+     * as parameter.
      *   If yes - create instance of class using this constructor.
      *   If no - create instance with empty parameters constructor.
      *
      * @param credentialsProviderClassName Fully qualified name of the desired credentials provider class.
      * @param hadoopConf Hadoop configuration, used to create instance of AWS credentials
      *                                      provider, if supported.
-     * @return {@link AWSCredentialsProvider} object, instantiated from the class @see {credentialsProviderClassName}
-     * @throws ReflectiveOperationException When AWS credentials provider constrictor do not matched.
-     *                                      Means class has neither an constructor with no args as input
-     *                                      nor constructor with only Hadoop configuration as argument.
+     * @return {@link AwsCredentialsProvider} object, instantiated from the class @see {credentialsProviderClassName}
+     * @throws ReflectiveOperationException When AWS credentials provider constructor do not match.
+     *                                      Indicates that the class has neither a constructor with no args
+     *                                      nor a constructor with only Hadoop configuration as argument.
      */
-    public static AWSCredentialsProvider createAwsCredentialsProvider(
+    public static AwsCredentialsProvider createAwsCredentialsProvider(
             String credentialsProviderClassName,
             Configuration hadoopConf) throws ReflectiveOperationException {
         Class<?> awsCredentialsProviderClass = Class.forName(credentialsProviderClassName);
-        if (readsCredsFromHadoopConf(awsCredentialsProviderClass))
-            return (AWSCredentialsProvider) awsCredentialsProviderClass
+        if (readsCredsFromHadoopConf(awsCredentialsProviderClass)) {
+            return (AwsCredentialsProvider) awsCredentialsProviderClass
                     .getConstructor(Configuration.class)
                     .newInstance(hadoopConf);
-        else
-            return (AWSCredentialsProvider) awsCredentialsProviderClass.getConstructor().newInstance();
+        } else {
+            try {
+                // First try using builder method in credential provider
+                Method builderMethod = awsCredentialsProviderClass.getMethod("builder");
+                Object builder = builderMethod.invoke(null);
+                Method buildMethod = builder.getClass().getMethod("build");
+                return (AwsCredentialsProvider) buildMethod.invoke(builder);
+            } catch (NoSuchMethodException e) {
+                // Fall back to use create method if builder is not available
+                Method createMethod = awsCredentialsProviderClass.getMethod("create");
+                return (AwsCredentialsProvider) createMethod.invoke(null);
+            }
+        }
     }
 
 }

@@ -18,12 +18,8 @@ package org.apache.spark.sql.delta.coordinatedcommits
 
 import java.util.Optional
 import java.util.concurrent.locks.ReentrantReadWriteLock
-
 import scala.collection.JavaConverters._
 import scala.collection.mutable
-
-import com.amazonaws.services.dynamodbv2.{AbstractAmazonDynamoDB, AmazonDynamoDB, AmazonDynamoDBClient}
-import com.amazonaws.services.dynamodbv2.model.{AttributeValue, ConditionalCheckFailedException, CreateTableRequest, CreateTableResult, DescribeTableResult, GetItemRequest, GetItemResult, PutItemRequest, PutItemResult, ResourceInUseException, ResourceNotFoundException, TableDescription, UpdateItemRequest, UpdateItemResult}
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog}
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -33,14 +29,15 @@ import io.delta.dynamodbcommitcoordinator.{DynamoDBCommitCoordinatorClient, Dyna
 import io.delta.storage.commit.{CommitCoordinatorClient, CommitFailedException => JCommitFailedException, GetCommitsResponse => JGetCommitsResponse}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
-
 import org.apache.spark.sql.SparkSession
+import software.amazon.awssdk.services.dynamodb.DynamoDbClient
+import software.amazon.awssdk.services.dynamodb.model.{AttributeValue, ConditionalCheckFailedException, CreateTableRequest, CreateTableResponse, DescribeTableRequest, DescribeTableResponse, GetItemRequest, GetItemResponse, PutItemRequest, PutItemResponse, ResourceInUseException, ResourceNotFoundException, TableDescription, UpdateItemRequest, UpdateItemResponse}
 
 /**
  * An in-memory implementation of DynamoDB client for testing. Only the methods used by
  * `DynamoDBCommitCoordinatorClient` are implemented.
  */
-class InMemoryDynamoDBClient extends AbstractAmazonDynamoDB {
+class InMemoryDynamoDBClient extends DynamoDbClient {
   /**
    * The db has multiple tables (outer map). Each table has multiple entries (inner map).
    */
@@ -50,96 +47,127 @@ class InMemoryDynamoDBClient extends AbstractAmazonDynamoDB {
       data: mutable.Map[String, AttributeValue])
 
   private def getTableData(tableName: String): mutable.Map[String, PerEntryData] = {
-    db.getOrElse(tableName, throw new ResourceNotFoundException("table does not exist"))
+    db.getOrElse(tableName, throw ResourceNotFoundException.builder()
+      .message("table does not exist")
+      .build())
   }
 
-  override def createTable(createTableRequest: CreateTableRequest): CreateTableResult = {
-    val tableName = createTableRequest.getTableName
+  override def createTable(request: CreateTableRequest): CreateTableResponse = {
+    val tableName = request.tableName()
     if (db.contains(tableName)) {
-      throw new ResourceInUseException("Table already exists")
+      throw ResourceInUseException.builder()
+        .message("Table already exists")
+        .build()
     }
     db.getOrElseUpdate(tableName, mutable.Map.empty)
-    new CreateTableResult().withTableDescription(
-      new TableDescription().withTableName(tableName));
+    CreateTableResponse.builder()
+      .tableDescription(
+        TableDescription.builder().tableName(tableName).build())
+      .build()
   }
 
-  override def describeTable(tableName: String): DescribeTableResult = {
+  override def describeTable(request: DescribeTableRequest): DescribeTableResponse = {
+    val tableName = request.tableName()
     if (!db.contains(tableName)) {
-      throw new ResourceNotFoundException("table does not exist")
+      throw ResourceNotFoundException.builder()
+        .message("table does not exist")
+        .build()
     }
     val tableDesc =
-      new TableDescription().withTableName(tableName).withTableStatus("ACTIVE")
-    new DescribeTableResult().withTable(tableDesc)
+      TableDescription.builder().tableName(tableName).tableStatus("ACTIVE").build()
+    DescribeTableResponse.builder().table(tableDesc).build()
   }
 
-  override def getItem(getItemRequest: GetItemRequest): GetItemResult = {
-    val table = getTableData(getItemRequest.getTableName)
-    val tableId = getItemRequest.getKey.values().iterator().next();
-    val entry = table.getOrElse(tableId.getS,
-      throw new ResourceNotFoundException("table does not exist"))
+  override def getItem(request: GetItemRequest): GetItemResponse = {
+    val table = getTableData(request.tableName())
+    val tableId = request.key().values().iterator().next();
+    val entry = table.getOrElse(tableId.s(),
+      throw ResourceNotFoundException.builder()
+        .message("table does not exist")
+        .build())
     val lock = entry.lock.readLock()
     try {
       lock.lock()
-      val result = new GetItemResult()
-      getItemRequest.getAttributesToGet.forEach(attr => {
-        entry.data.get(attr).foreach(result.addItemEntry(attr, _))
+      val itemBuilder = mutable.Map[String, AttributeValue]()
+      request.attributesToGet.forEach(attr => {
+        entry.data.get(attr).foreach(itemBuilder.put(attr, _))
       })
-      result
+      GetItemResponse.builder()
+        .item(itemBuilder.asJava)
+        .build()
     } finally {
       lock.unlock()
     }
   }
 
-  override def putItem(putItemRequest: PutItemRequest): PutItemResult = {
-    val table = getTableData(putItemRequest.getTableName)
-    val item = putItemRequest.getItem
-    val tableId = item.get("tableId").getS
+  override def putItem(putItemRequest: PutItemRequest): PutItemResponse = {
+    val table = getTableData(putItemRequest.tableName())
+    val item = putItemRequest.item()
+    val tableId = item.get("tableId").s()
     if (table.contains(tableId)) {
-      throw new ResourceInUseException("table already exists")
+      throw ResourceInUseException.builder()
+        .message("table already exists")
+        .build()
     }
-    val entry = PerEntryData(new ReentrantReadWriteLock(), item.asScala)
+    val entry = PerEntryData(
+      new ReentrantReadWriteLock(),
+      mutable.HashMap[String, AttributeValue]() ++ item.asScala  // item is unmodifiable map
+    )
     // This is not really safe, but tableId is a UUID, so it should be fine.
     table.put(tableId, entry)
-    new PutItemResult()
+    PutItemResponse.builder().build()
   }
 
-  override def updateItem(request: UpdateItemRequest): UpdateItemResult = {
-    val table = getTableData(request.getTableName)
-    val tableId = request.getKey.values().iterator().next();
-    val entry = table.getOrElse(tableId.getS,
-      throw new ResourceNotFoundException("table does not exist"))
+  override def updateItem(request: UpdateItemRequest): UpdateItemResponse = {
+    val table = getTableData(request.tableName())
+    val tableId = request.key().values().iterator().next();
+    val entry = table.getOrElse(tableId.s(),
+      throw ResourceNotFoundException.builder()
+        .message("table does not exist")
+        .build())
     val lock = entry.lock.writeLock()
     try {
       lock.lock()
-      request.getExpected.forEach((attr, expectedVal) => {
+      request.expected().forEach((attr, expectedVal) => {
         val actualVal = entry.data.getOrElse(attr,
-          throw new ConditionalCheckFailedException("Expected attr not found"))
-        if (actualVal != expectedVal.getValue) {
-          throw new ConditionalCheckFailedException("Value does not match")
+          throw ConditionalCheckFailedException.builder()
+            .message("Expected attr not found")
+            .build())
+        if (actualVal != expectedVal.value()) {
+          throw ConditionalCheckFailedException.builder()
+            .message("Value does not match")
+            .build()
         }
       })
-      request.getAttributeUpdates.forEach((attr, update) => {
+      request.attributeUpdates().forEach((attr, update) => {
         if (attr != "commits") {
-          entry.data.put(attr, update.getValue)
+          entry.data.put(attr, update.value())
         } else {
-          val commits = update.getValue.getL.asScala
-          if (update.getAction == "ADD") {
+          val commits = update.value().l().asScala
+          if (update.actionAsString() == "ADD") {
             val existingCommits =
-              entry.data.get("commits").map(_.getL.asScala).getOrElse(List())
+              entry.data.get("commits").map(_.l().asScala).getOrElse(List())
             entry.data.put(
-              "commits", new AttributeValue().withL((existingCommits ++ commits).asJava))
-          } else if (update.getAction == "PUT") {
-            entry.data.put("commits", update.getValue)
+              "commits",
+              AttributeValue.builder()
+                .l((existingCommits ++ commits).asJava)
+                .build())
+          } else if (update.actionAsString() == "PUT") {
+            entry.data.put("commits", update.value())
           } else {
             throw new IllegalArgumentException("Unsupported action")
           }
         }
       })
-      new UpdateItemResult()
+      UpdateItemResponse.builder().build()
     } finally {
       lock.unlock()
     }
   }
+
+  override def serviceName(): String = "InMemoryDynamoDB"
+
+  override def close(): Unit = {}
 }
 
 case class TestDynamoDBCommitCoordinatorBuilder(batchSize: Long) extends CommitCoordinatorBuilder {
@@ -247,7 +275,7 @@ abstract class DynamoDBCommitCoordinatorClientSuite(batchSize: Long)
       override def createAmazonDDBClient(
           endpoint: String,
           credentialProviderName: String,
-          hadoopConf: Configuration): AmazonDynamoDB = {
+          hadoopConf: Configuration): DynamoDbClient = {
         assert(endpoint == "endpoint-1224")
         assert(credentialProviderName == "creds-1225")
         new InMemoryDynamoDBClient()
@@ -256,7 +284,7 @@ abstract class DynamoDBCommitCoordinatorClientSuite(batchSize: Long)
       override def getDynamoDBCommitCoordinatorClient(
           coordinatedCommitsTableName: String,
           dynamoDBEndpoint: String,
-          ddbClient: AmazonDynamoDB,
+          ddbClient: DynamoDbClient,
           backfillBatchSize: Long,
           readCapacityUnits: Int,
           writeCapacityUnits: Int,
