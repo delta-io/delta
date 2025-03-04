@@ -672,9 +672,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
       case _ => return super.alterTable(ident, changes: _*)
     }
 
-    // Whether this is an ALTER TABLE ALTER COLUMN SYNC IDENTITY command.
-    var syncIdentity = false
-    val columnUpdates = new mutable.HashMap[Seq[String], (StructField, Option[ColumnPosition])]()
+    val columnUpdates = new mutable.HashMap[Seq[String], DeltaChangeColumnSpec]()
     val isReplaceColumnsCommand = grouped.get(classOf[DeleteColumn]) match {
       case Some(deletes) if grouped.contains(classOf[AddColumn]) =>
         // Convert to Seq so that contains method works
@@ -757,7 +755,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
         } else {
           snapshotSchema
         }
-        def getColumn(fieldNames: Seq[String]): (StructField, Option[ColumnPosition]) = {
+        def getColumn(fieldNames: Seq[String])
+            : DeltaChangeColumnSpec = {
           columnUpdates.getOrElseUpdate(fieldNames, {
             val colName = UnresolvedAttribute(fieldNames).name
             val fieldOpt = schema.findNestedField(fieldNames, includeCollections = true,
@@ -766,7 +765,12 @@ class DeltaCatalog extends DelegatingCatalogExtension
             val field = fieldOpt.getOrElse {
               throw DeltaErrors.nonExistentColumnInSchema(colName, schema.treeString)
             }
-            field -> None
+            DeltaChangeColumnSpec(
+              fieldNames.init,
+              fieldNames.last,
+              field,
+              colPosition = None,
+              syncIdentity = false)
           })
         }
 
@@ -780,8 +784,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
         disallowedColumnChangesOnIdentityColumns.foreach {
           case change: ColumnChange =>
             val field = change.fieldNames()
-            val (existingField, _) = getColumn(field)
-            if (ColumnWithDefaultExprUtils.isIdentityColumn(existingField)) {
+            val spec = getColumn(field)
+            if (ColumnWithDefaultExprUtils.isIdentityColumn(spec.newColumn)) {
               throw DeltaErrors.identityColumnAlterColumnNotSupported()
             }
         }
@@ -789,50 +793,59 @@ class DeltaCatalog extends DelegatingCatalogExtension
         columnChanges.foreach {
           case comment: UpdateColumnComment =>
             val field = comment.fieldNames()
-            val (oldField, pos) = getColumn(field)
-            columnUpdates(field) = oldField.withComment(comment.newComment()) -> pos
+            val spec = getColumn(field)
+            columnUpdates(field) = spec.copy(
+              newColumn = spec.newColumn.withComment(comment.newComment()))
 
           case dataType: UpdateColumnType =>
             val field = dataType.fieldNames()
-            val (oldField, pos) = getColumn(field)
-            columnUpdates(field) = oldField.copy(dataType = dataType.newDataType()) -> pos
+            val spec = getColumn(field)
+            columnUpdates(field) = spec.copy(
+              newColumn = spec.newColumn.copy(dataType = dataType.newDataType()))
 
           case position: UpdateColumnPosition =>
             val field = position.fieldNames()
-            val (oldField, pos) = getColumn(field)
-            columnUpdates(field) = oldField -> Option(position.position())
+            val spec = getColumn(field)
+            columnUpdates(field) = spec.copy(colPosition = Option(position.position()))
 
           case nullability: UpdateColumnNullability =>
             val field = nullability.fieldNames()
-            val (oldField, pos) = getColumn(field)
-            columnUpdates(field) = oldField.copy(nullable = nullability.nullable()) -> pos
+            val spec = getColumn(field)
+            columnUpdates(field) = spec.copy(
+              newColumn = spec.newColumn.copy(nullable = nullability.nullable()))
 
           case rename: RenameColumn =>
             val field = rename.fieldNames()
-            val (oldField, pos) = getColumn(field)
-            columnUpdates(field) = oldField.copy(name = rename.newName()) -> pos
+            val spec = getColumn(field)
+            columnUpdates(field) = spec.copy(
+              newColumn = spec.newColumn.copy(name = rename.newName()))
 
           case sync: SyncIdentity =>
-            syncIdentity = true
             val field = sync.fieldNames
-            val (oldField, pos) = getColumn(field)
-            if (!ColumnWithDefaultExprUtils.isIdentityColumn(oldField)) {
+            val spec = getColumn(field).copy(syncIdentity = true)
+            columnUpdates(field) = spec
+            if (!ColumnWithDefaultExprUtils.isIdentityColumn(spec.newColumn)) {
               throw DeltaErrors.identityColumnAlterNonIdentityColumnError()
             }
             // If the IDENTITY column does not allow explicit insert, high water mark should
-            // always be sync'ed and this is an no-op.
-            if (IdentityColumn.allowExplicitInsert(oldField)) {
-              columnUpdates(field) = oldField.copy() -> pos
+            // always be sync'ed and this is a no-op.
+            // TODO: This is redundant at the moment because columnUpdates is always set above.
+            // The original intention was to avoid running sync identity when the column does not
+            // allow explicit insert, so columnUpdates should only be set here, but doing so would
+            // fail a test related to DELTA_IDENTITY_ALLOW_SYNC_IDENTITY_TO_LOWER_HIGH_WATER_MARK.
+            // This should be fixed in the future.
+            if (IdentityColumn.allowExplicitInsert(spec.newColumn)) {
+              columnUpdates(field) = spec
             }
 
           case updateDefault: UpdateColumnDefaultValue =>
             val field = updateDefault.fieldNames()
-            val (oldField, pos) = getColumn(field)
+            val spec = getColumn(field)
             val updatedField = updateDefault.newDefaultValue() match {
-              case "" => oldField.clearCurrentDefaultValue()
-              case newDefault => oldField.withCurrentDefaultValue(newDefault)
+              case "" => spec.newColumn.clearCurrentDefaultValue()
+              case newDefault => spec.newColumn.withCurrentDefaultValue(newDefault)
             }
-            columnUpdates(field) = updatedField -> pos
+            columnUpdates(field) = spec.copy(newColumn = updatedField)
 
           case other =>
             throw DeltaErrors.unrecognizedColumnChange(s"${other.getClass}")
@@ -884,14 +897,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
         }
     }
 
-    columnUpdates.foreach { case (fieldNames, (newField, newPositionOpt)) =>
-      AlterTableChangeColumnDeltaCommand(
-        table,
-        fieldNames.dropRight(1),
-        fieldNames.last,
-        newField,
-        newPositionOpt,
-        syncIdentity = syncIdentity).run(spark)
+    if (columnUpdates.nonEmpty) {
+      AlterTableChangeColumnDeltaCommand(table, columnUpdates.values.toSeq).run(spark)
     }
 
     loadTable(ident)
