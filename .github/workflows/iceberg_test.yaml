@@ -49,17 +49,13 @@ jobs:
           rm buf-Linux-x86_64.tar.gz
           sudo apt install python3-pip --fix-missing
           sudo pip3 install pipenv==2024.4.1
-          sudo pip3 install --user urllib3==1.26.17
           curl https://pyenv.run | bash
           export PATH="~/.pyenv/bin:$PATH"
           eval "$(pyenv init -)"
           eval "$(pyenv virtualenv-init -)"
           pyenv install 3.8.18
-          print('installed python')
           pyenv global system 3.8.18
-          print('installed python 2')
           pipenv --python 3.8.18 install
-          print('installed python 3')
         if: steps.git-diff.outputs.diff
       - name: Run Scala/Java and Python tests
         # when changing TEST_PARALLELISM_COUNT make sure to also change it in spark_master_test.yaml
