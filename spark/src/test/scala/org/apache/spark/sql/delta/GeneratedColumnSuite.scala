@@ -1342,24 +1342,27 @@ trait GeneratedColumnSuiteBase
   }
 
   test("MERGE UPDATE set star add column") {
-    withSQLConf(("spark.databricks.delta.schema.autoMerge.enabled", "true")) {
-      withTableName("source") { src =>
-        withTableName("target") { tgt =>
-          createTable(src, None, "c1 INT, c2 INT, c4 INT", Map.empty, Seq.empty)
-          sql(s"INSERT INTO ${src} values (1, 20, 40);")
-          createTable(tgt, None, "c1 INT, c2 INT, c3 INT", Map("c3" -> "c2 + 1"), Seq.empty)
-          sql(s"INSERT INTO ${tgt} values (1, 2, 3);")
-          sql(
-            s"""
-               |MERGE INTO ${tgt}
-               |USING ${src}
-               |on ${tgt}.c1 = ${src}.c1
-               |WHEN MATCHED THEN UPDATE SET *
-               |""".stripMargin)
-          checkAnswer(
-            sql(s"SELECT * FROM ${tgt}"),
-            Seq(Row(1, 20, 21, 40))
-          )
+    for (confKey <- List("spark.delta.schema.autoMerge.enabled",
+                         "spark.databricks.delta.schema.autoMerge.enabled")) {
+      withSQLConf((confKey, "true")) {
+        withTableName("source") { src =>
+          withTableName("target") { tgt =>
+            createTable(src, None, "c1 INT, c2 INT, c4 INT", Map.empty, Seq.empty)
+            sql(s"INSERT INTO ${src} values (1, 20, 40);")
+            createTable(tgt, None, "c1 INT, c2 INT, c3 INT", Map("c3" -> "c2 + 1"), Seq.empty)
+            sql(s"INSERT INTO ${tgt} values (1, 2, 3);")
+            sql(
+              s"""
+                 |MERGE INTO ${tgt}
+                 |USING ${src}
+                 |on ${tgt}.c1 = ${src}.c1
+                 |WHEN MATCHED THEN UPDATE SET *
+                 |""".stripMargin)
+            checkAnswer(
+              sql(s"SELECT * FROM ${tgt}"),
+              Seq(Row(1, 20, 21, 40))
+            )
+          }
         }
       }
     }
