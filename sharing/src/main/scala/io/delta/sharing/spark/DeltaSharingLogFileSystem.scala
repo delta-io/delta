@@ -102,9 +102,7 @@ private[sharing] class DeltaSharingLogFileSystem extends FileSystem with Logging
         modificationTime = 0L
       )
     } else {
-      getBlockAndReleaseLockHelper[DeltaSharingLogFileStatus](
-        f, Some(DELTA_LOG_FILE_STATUS_SUFFIX), "getFileStatus"
-      )
+      getBlockAndReleaseLockHelper[DeltaSharingLogFileStatus](f, Some("_status"), "getFileStatus")
     }
 
     new FileStatus(
@@ -237,10 +235,6 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
 
   // The constant added as prefix to all delta sharing block ids.
   private val BLOCK_ID_TEST_PREFIX = "test_"
-
-  // The constant added as a suffix to the block id of a delta log file name to set and get
-  // the delta log file status.
-  private val DELTA_LOG_FILE_STATUS_SUFFIX = "_status"
 
   // It starts with test_ to match the prefix of TestBlockId.
   // In the meantime, we'll investigate in an option to add a general purposed BlockId subclass
@@ -709,16 +703,11 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
         getDeltaSharingLogBlockId(jsonFilePath),
         versionToJsonLogBuilderMap.getOrElse(version, Seq.empty).toIterator
       )
-      val fileStatus = DeltaSharingLogFileStatus(
+      fileSizeTsSeq += DeltaSharingLogFileStatus(
         path = jsonFilePath,
         size = versionToJsonLogSize.getOrElse(version, 0),
         modificationTime = versionToTimestampMap.get(version).getOrElse(0L)
       )
-      DeltaSharingUtils.overrideSingleBlock[DeltaSharingLogFileStatus](
-        blockId = getDeltaSharingLogBlockId(jsonFilePath + DELTA_LOG_FILE_STATUS_SUFFIX),
-        value = fileStatus
-      )
-      fileSizeTsSeq += fileStatus
     }
 
     DeltaSharingUtils.overrideIteratorBlock[DeltaSharingLogFileStatus](
@@ -842,13 +831,8 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
       jsonLogSeq.result().toIterator
     )
 
-    val fileStatus = DeltaSharingLogFileStatus(
-      path = jsonFilePath, size = jsonLogSize, modificationTime = 0L
-    )
-    val fileStatusSeq = Seq(fileStatus)
-    DeltaSharingUtils.overrideSingleBlock[DeltaSharingLogFileStatus](
-      blockId = getDeltaSharingLogBlockId(jsonFilePath + DELTA_LOG_FILE_STATUS_SUFFIX),
-      value = fileStatus
+    val fileStatusSeq = Seq(
+      DeltaSharingLogFileStatus(path = jsonFilePath, size = jsonLogSize, modificationTime = 0L)
     )
     DeltaSharingUtils.overrideIteratorBlock[DeltaSharingLogFileStatus](
       getDeltaSharingLogBlockId(deltaLogPath),
