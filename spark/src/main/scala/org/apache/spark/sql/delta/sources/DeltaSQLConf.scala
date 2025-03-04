@@ -460,14 +460,13 @@ trait DeltaSQLConfBase {
       .createWithDefault(false)
 
   val FAST_DROP_FEATURE_ENABLED =
-    buildConf("tableFeatures.dev.fastDropFeature.enabled")
+    buildConf("tableFeatures.fastDropFeature.enabled")
       .internal()
       .doc(
-        """Whether to enable the fast drop feature feature functionality.
-          |This feature is currently in development and this config is only intended to be enabled
-          |for testing purposes.""".stripMargin)
+        """Whether to allow dropping features with the fast drop feature feature
+          |functionality.""".stripMargin)
       .booleanConf
-      .createWithDefault(false)
+      .createWithDefault(true)
 
   val FAST_DROP_FEATURE_DV_DISCOVERY_IN_VACUUM_DISABLED =
     buildConf("tableFeatures.dev.fastDropFeature.DVDiscoveryInVacuum.disabled")
@@ -479,7 +478,7 @@ trait DeltaSQLConfBase {
       .createWithDefault(false)
 
   val FAST_DROP_FEATURE_GENERATE_DV_TOMBSTONES =
-    buildConf("tableFeatures.dev.fastDropFeature.generateDVTombstones.enabled")
+    buildConf("tableFeatures.fastDropFeature.generateDVTombstones.enabled")
       .internal()
       .doc(
         """Whether to generate DV tombstones when dropping deletion vectors.
@@ -489,7 +488,7 @@ trait DeltaSQLConfBase {
       .createWithDefaultFunction(() => SQLConf.get.getConf(DeltaSQLConf.FAST_DROP_FEATURE_ENABLED))
 
   val FAST_DROP_FEATURE_DV_TOMBSTONE_COUNT_THRESHOLD =
-    buildConf("tableFeatures.dev.fastDropFeature.dvTombstoneCountThreshold")
+    buildConf("tableFeatures.fastDropFeature.dvTombstoneCountThreshold")
       .doc(
         """The maximum number of DV tombstones we are allowed store to memory when dropping
           |deletion vectors. When the resulting number of DV tombstones is higher, we use
@@ -500,7 +499,7 @@ trait DeltaSQLConfBase {
       .createWithDefault(10000)
 
   val FAST_DROP_FEATURE_STREAMING_ALWAYS_VALIDATE_PROTOCOL =
-    buildConf("tableFeatures.dev.fastDropFeature.alwaysValidateProtocolInStreaming.enabled")
+    buildConf("tableFeatures.fastDropFeature.alwaysValidateProtocolInStreaming.enabled")
       .internal()
       .doc(
         """Whether to validate the protocol when starting a stream from arbitrary

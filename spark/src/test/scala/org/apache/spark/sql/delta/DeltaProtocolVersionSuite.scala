@@ -61,6 +61,12 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
   // `.schema` generates NOT NULL columns which requires writer protocol 2. We convert all to
   // NULLable to avoid silent writer protocol version bump.
   private lazy val testTableSchema = spark.range(1).schema.asNullable
+  override protected def sparkConf: SparkConf = {
+    // All the drop feature tests below are targeting the drop feature with history truncation
+    // implementation. The fast drop feature implementation is tested extensively in
+    // DeltaFastDropFeatureSuite.
+    super.sparkConf.set(DeltaSQLConf.FAST_DROP_FEATURE_ENABLED.key, "false")
+  }
 
   // This is solely a test hook. Users cannot create new Delta tables with protocol lower than
   // that of their current version.
