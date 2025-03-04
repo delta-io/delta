@@ -25,6 +25,6 @@ object DeltaTableTestUtils {
 
   /** A utility method to access the private constructor of [[DeltaTable]] in tests. */
   def createTable(df: DataFrame, deltaLog: DeltaLog): DeltaTable = {
-    new DeltaTable(df, DeltaTableV2(df.sparkSession, deltaLog.dataPath))
+    new DeltaTable(DeltaTableV2(df.sparkSession, deltaLog.dataPath))
   }
 }
