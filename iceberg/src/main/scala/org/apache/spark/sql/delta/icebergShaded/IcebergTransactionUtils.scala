@@ -37,7 +37,6 @@ import shadedForDelta.org.apache.iceberg.StructLike
 import shadedForDelta.org.apache.iceberg.TableProperties
 import shadedForDelta.org.apache.iceberg.catalog.{Namespace, TableIdentifier => IcebergTableIdentifier}
 import shadedForDelta.org.apache.iceberg.hive.HiveCatalog
-import shadedForDelta.org.apache.iceberg.util.DateTimeUtil
 
 import org.apache.spark.sql.catalyst.{InternalRow, TableIdentifier => SparkTableIdentifier}
 import org.apache.spark.sql.types.{BinaryType, BooleanType, ByteType, DataType, DateType, DecimalType, DoubleType, FloatType, IntegerType, LongType, ShortType, StringType, StructType, TimestampNTZType, TimestampType}
@@ -237,8 +236,7 @@ object IcebergTransactionUtils
       case _: DecimalType => new java.math.BigDecimal(partitionVal)
       case _: BinaryType => ByteBuffer.wrap(partitionVal.getBytes("UTF-8"))
       case _: TimestampNTZType =>
-        DateTimeUtil.isoTimestampToMicros(
-          partitionVal.replace(" ", "T"))
+        java.sql.Timestamp.valueOf(partitionVal).getNanos/1000.asInstanceOf[Long]
       case _: TimestampType =>
         try {
           getMicrosSinceEpoch(partitionVal)
@@ -256,8 +254,7 @@ object IcebergTransactionUtils
   }
 
   private def getMicrosSinceEpoch(instant: String): Long = {
-    DateTimeUtil.microsFromInstant(
-      Instant.parse(instant))
+    Instant.parse(instant).getNano/1000.asInstanceOf[Long]
   }
 
   private def getMetricsForIcebergDataFile(
