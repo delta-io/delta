@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 // scalastyle:off typedlit
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.PrintWriter
+import java.sql.{Date, Timestamp}
 
 import scala.collection.JavaConverters._
 
@@ -39,7 +40,6 @@ import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.util.DateTimeUtils.{getZoneId, stringToDate, stringToTimestamp, toJavaDate, toJavaTimestamp}
 import org.apache.spark.sql.catalyst.util.quietly
 import org.apache.spark.sql.execution.streaming.MemoryStream
-
 import org.apache.spark.sql.functions.{current_timestamp, lit, struct, typedLit}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.{StreamingQueryException, Trigger}
@@ -2029,6 +2029,53 @@ trait GeneratedColumnSuiteBase
           }
         }
       }
+    }
+  }
+
+  test("generated column metadata is not exposed in schema") {
+    val tableName = "table"
+    withTable(tableName) {
+      createDefaultTestTable(tableName)
+      Seq((1L, "foo", Timestamp.valueOf("2020-10-11 12:30:30"), 100, Date.valueOf("2020-11-12")))
+        .toDF("c1", "c3_p", "c5", "c6", "c8")
+        .write.format("delta").mode("append").saveAsTable(tableName)
+
+      val expectedSchema = new StructType()
+        .add("c1", LongType)
+        .add("c2_g", LongType)
+        .add("c3_p", StringType)
+        .add("c4_g_p", DateType)
+        .add("c5", TimestampType)
+        .add("c6", IntegerType)
+        .add("c7_g_p", IntegerType)
+        .add("c8", DateType)
+
+      assert(spark.read.table(tableName).schema === expectedSchema)
+
+      val ttDf = spark.read.option(DeltaOptions.VERSION_AS_OF, 0).table(tableName)
+      assert(ttDf.schema === expectedSchema)
+
+      val cdcDf = spark.read
+        .option(DeltaOptions.CDC_READ_OPTION, true)
+        .option(DeltaOptions.STARTING_VERSION_OPTION, 0)
+        .table(tableName)
+      assert(cdcDf.schema === expectedSchema
+        .add("_change_type", StringType)
+        .add("_commit_version", LongType)
+        .add("_commit_timestamp", TimestampType)
+      )
+
+      assert(spark.readStream.table(tableName).schema === expectedSchema)
+
+      val cdcStreamDf = spark.readStream
+        .option(DeltaOptions.CDC_READ_OPTION, true)
+        .option(DeltaOptions.STARTING_VERSION_OPTION, 0)
+        .table(tableName)
+      assert(cdcStreamDf.schema === expectedSchema
+        .add("_change_type", StringType)
+        .add("_commit_version", LongType)
+        .add("_commit_timestamp", TimestampType)
+      )
     }
   }
 }
