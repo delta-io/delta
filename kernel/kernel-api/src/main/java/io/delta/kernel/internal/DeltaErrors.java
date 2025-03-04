@@ -238,12 +238,15 @@ public final class DeltaErrors {
     return new KernelException(format(msgT, tablePath, tableSchema, dataSchema));
   }
 
+  /// Start: icebergCompatV2 exceptions
   public static KernelException missingNumRecordsStatsForIcebergCompatV2(
       DataFileStatus dataFileStatus) {
     throw new KernelException(
         format(
             "Iceberg V2 compatibility requires statistics.\n DataFileStatus: %s", dataFileStatus));
   }
+
+  // End: icebergCompatV2 exceptions
 
   public static KernelException partitionColumnMissingInData(
       String tablePath, String partitionColumn) {
