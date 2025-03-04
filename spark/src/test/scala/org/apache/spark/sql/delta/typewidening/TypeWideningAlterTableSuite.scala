@@ -135,15 +135,7 @@ trait TypeWideningAlterTableTests
     append(Seq(1, 2).toDF("value").select($"value".cast(ShortType)))
     assert(readDeltaTable(tempPath).schema === new StructType().add("value", ShortType))
     sql(s"ALTER TABLE delta.`$tempPath` REPLACE COLUMNS (value INT)")
-    assert(readDeltaTable(tempPath).schema ===
-      new StructType()
-        .add("value", IntegerType, nullable = true, metadata = new MetadataBuilder()
-          .putMetadataArray("delta.typeChanges", Array(
-            new MetadataBuilder()
-              .putString("toType", "integer")
-              .putString("fromType", "short")
-              .build()
-          )).build()))
+    assert(readDeltaTable(tempPath).schema === new StructType().add("value", IntegerType))
     checkAnswer(readDeltaTable(tempPath), Seq(Row(1), Row(2)))
     append(Seq(3, 4).toDF("value"))
     checkAnswer(readDeltaTable(tempPath), Seq(Row(1), Row(2), Row(3), Row(4)))

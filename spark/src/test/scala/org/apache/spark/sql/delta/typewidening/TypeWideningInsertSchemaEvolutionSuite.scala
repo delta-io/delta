@@ -185,8 +185,7 @@ trait TypeWideningInsertSchemaEvolutionTests
     insertData = TestData("a int, b int", Seq("""{ "a": 1, "b": 4 }""")),
     expectedResult = ExpectedResult.Success(new StructType()
       .add("a", IntegerType)
-      .add("b", IntegerType, nullable = true,
-        metadata = typeWideningMetadata(from = ShortType, to = IntegerType)))
+      .add("b", IntegerType))
   )
 
   testInserts("top-level type evolution with column upcast")(
@@ -196,8 +195,7 @@ trait TypeWideningInsertSchemaEvolutionTests
     insertData = TestData("a int, b int, c short", Seq("""{ "a": 1, "b": 5, "c": 6 }""")),
     expectedResult = ExpectedResult.Success(new StructType()
       .add("a", IntegerType)
-      .add("b", IntegerType, nullable = true,
-        metadata = typeWideningMetadata(from = ShortType, to = IntegerType))
+      .add("b", IntegerType)
       .add("c", IntegerType))
   )
 
@@ -208,8 +206,7 @@ trait TypeWideningInsertSchemaEvolutionTests
     insertData = TestData("a int, b int, c int", Seq("""{ "a": 1, "b": 4, "c": 5 }""")),
     expectedResult = ExpectedResult.Success(new StructType()
       .add("a", IntegerType)
-      .add("b", IntegerType, nullable = true,
-        metadata = typeWideningMetadata(from = ShortType, to = IntegerType))
+      .add("b", IntegerType)
       .add("c", IntegerType)),
     // SQL INSERT by name doesn't support schema evolution.
     excludeInserts = insertsSQL.intersect(insertsByName)
@@ -229,18 +226,9 @@ trait TypeWideningInsertSchemaEvolutionTests
       .add("key", IntegerType)
       .add("s", new StructType()
         .add("x", ShortType)
-        .add("y", IntegerType, nullable = true,
-          metadata = typeWideningMetadata(from = ShortType, to = IntegerType)))
-      .add("m", MapType(StringType, IntegerType), nullable = true,
-        metadata = typeWideningMetadata(
-          from = ShortType,
-          to = IntegerType,
-          path = Seq("value")))
-      .add("a", ArrayType(IntegerType), nullable = true,
-        metadata = typeWideningMetadata(
-          from = ShortType,
-          to = IntegerType,
-          path = Seq("element"))))
+        .add("y", IntegerType))
+      .add("m", MapType(StringType, IntegerType))
+      .add("a", ArrayType(IntegerType)))
   )
 
 
@@ -257,19 +245,10 @@ trait TypeWideningInsertSchemaEvolutionTests
       .add("key", IntegerType)
       .add("s", new StructType()
         .add("x", ShortType)
-        .add("y", IntegerType, nullable = true,
-          metadata = typeWideningMetadata(from = ShortType, to = IntegerType))
+        .add("y", IntegerType)
         .add("z", IntegerType))
-      .add("m", MapType(StringType, IntegerType), nullable = true,
-        metadata = typeWideningMetadata(
-          from = ShortType,
-          to = IntegerType,
-          path = Seq("value")))
-      .add("a", ArrayType(IntegerType), nullable = true,
-        metadata = typeWideningMetadata(
-          from = ShortType,
-          to = IntegerType,
-          path = Seq("element"))))
+      .add("m", MapType(StringType, IntegerType))
+      .add("a", ArrayType(IntegerType)))
   )
 
 
@@ -286,8 +265,7 @@ trait TypeWideningInsertSchemaEvolutionTests
       .add("key", IntegerType)
       .add("s", new StructType()
         .add("x", IntegerType)
-        .add("y", IntegerType, nullable = true,
-          metadata = typeWideningMetadata(from = ShortType, to = IntegerType))))
+        .add("y", IntegerType)))
   )
 
   // Interestingly, we introduced a special case to handle schema evolution / casting for structs
@@ -306,8 +284,7 @@ trait TypeWideningInsertSchemaEvolutionTests
       .add("key", IntegerType)
       .add("a", ArrayType(new StructType()
         .add("x", IntegerType)
-        .add("y", IntegerType, nullable = true,
-          metadata = typeWideningMetadata(from = ShortType, to = IntegerType)))))
+        .add("y", IntegerType))))
   )
 
   // maps now allow type evolution for INSERT by position and name in SQL and dataframe.
@@ -325,7 +302,6 @@ trait TypeWideningInsertSchemaEvolutionTests
       // Type evolution was applied in the map.
       .add("m", MapType(StringType, new StructType()
         .add("x", IntegerType)
-        .add("y", IntegerType, nullable = true,
-          metadata = typeWideningMetadata(from = ShortType, to = IntegerType)))))
+        .add("y", IntegerType))))
   )
 }

@@ -130,8 +130,7 @@ trait TypeWideningCompatibilityTests {
     append(Seq((2.toShort, "ghi", "jkl")).toDF("a", "c", "v"))
     assert(readDeltaTable(tempPath).schema ===
       new StructType()
-        .add("a", ShortType, nullable = true,
-          metadata = typeWideningMetadata(ByteType, ShortType))
+        .add("a", ShortType)
         .add("c", StringType, nullable = true,
           metadata = new MetadataBuilder()
             .putString("__CHAR_VARCHAR_TYPE_STRING", "char(3)")
@@ -148,8 +147,7 @@ trait TypeWideningCompatibilityTests {
     append(Seq((3.toShort, "longer string 1", "longer string 2")).toDF("a", "c", "v"))
     assert(readDeltaTable(tempPath).schema ===
       new StructType()
-        .add("a", ShortType, nullable = true,
-          metadata = typeWideningMetadata(ByteType, ShortType))
+        .add("a", ShortType)
         .add("c", StringType)
         .add("v", StringType))
     checkAnswer(readDeltaTable(tempPath),
