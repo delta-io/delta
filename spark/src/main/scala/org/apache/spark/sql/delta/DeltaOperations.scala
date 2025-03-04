@@ -565,6 +565,23 @@ object DeltaOperations {
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
   }
+
+  /** Recorded when columns are changed in bulk. */
+  case class ChangeColumns(columns: Seq[ChangeColumn]) extends Operation("CHANGE COLUMNS") {
+
+    override val parameters: Map[String, Any] = Map(
+      "columns" -> JsonUtils.toJson(
+        columns.map(col =>
+          structFieldToMap(col.columnPath, col.newColumn) ++ col.colPosition.map("position" -> _))
+      )
+    )
+
+    // This operation shouldn't be introducing AddFile actions at all. This check should be trivial.
+    override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
+
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
+  }
+
   /** Recorded when columns are replaced. */
   case class ReplaceColumns(
       columns: Seq[StructField]) extends Operation("REPLACE COLUMNS") {
