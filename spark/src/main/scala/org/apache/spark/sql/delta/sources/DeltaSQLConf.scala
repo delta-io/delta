@@ -440,6 +440,25 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val ALLOW_METADATA_CLEANUP_WHEN_ALL_PROTOCOLS_SUPPORTED =
+    buildConf("tableFeatures.allowMetadataCleanupWhenAllProtocolsSupported")
+      .internal()
+      .doc(
+        """Whether to perform protocol validation when the client is unable to clean
+          |up to 'delta.requireCheckpointProtectionBeforeVersion'.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val ALLOW_METADATA_CLEANUP_CHECKPOINT_EXISTENCE_CHECK_DISABLED =
+    buildConf("tableFeatures.dev.allowMetadataCleanupCheckpointExistenceCheck.disabled")
+      .internal()
+      .doc(
+        """Whether to disable the checkpoint check at the cleanup boundary when performing
+          |the CheckpointProtectionTableFeature validations.
+          |This is only used for testing purposes.'.""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   val FAST_DROP_FEATURE_ENABLED =
     buildConf("tableFeatures.dev.fastDropFeature.enabled")
       .internal()

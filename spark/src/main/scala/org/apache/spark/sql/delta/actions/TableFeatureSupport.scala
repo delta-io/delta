@@ -407,6 +407,29 @@ trait TableFeatureSupport { this: Protocol =>
       // new protocol
       readerAndWriterFeatureNames.contains(feature.name)
   }
+
+  /** Returns whether this client supports writing in a table with this protocol. */
+  def supportedForWrite(): Boolean = {
+    val supportedWriterVersions = Action.supportedWriterVersionNumbers
+    val supportedWriterFeatures = Action.supportedProtocolVersion().writerFeatureNames
+    val testUnsupportedFeatures: Set[String] = TableFeature.testUnsupportedFeatures
+      .filterNot(_.isReaderWriterFeature)
+      .map(_.name)
+
+    supportedWriterVersions.contains(this.minWriterVersion) &&
+      this.writerFeatureNames.subsetOf(supportedWriterFeatures -- testUnsupportedFeatures)
+  }
+
+  /** Returns whether this client supports reading a table with this protocol. */
+  def supportedForRead(): Boolean = {
+    val supportedReaderVersions = Action.supportedReaderVersionNumbers
+    val supportedReaderFeatures = Action.supportedProtocolVersion().readerFeatureNames
+    val testUnsupportedFeatures: Set[String] = TableFeature.testUnsupportedFeatures
+      .filter(_.isReaderWriterFeature).map(_.name)
+
+    supportedReaderVersions.contains(this.minReaderVersion) &&
+      this.readerFeatureNames.subsetOf(supportedReaderFeatures -- testUnsupportedFeatures)
+  }
 }
 
 object TableFeatureProtocolUtils {
