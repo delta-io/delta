@@ -340,6 +340,7 @@ public class ParquetFileWriter {
     return new ParquetRowDataBuilder(filePath, writeSupport)
         .withCompressionCodec(
             CompressionCodecName.fromConf(
+                    fileIO.getConf()
                 configuration.get(
                     ParquetOutputFormat.COMPRESSION, CompressionCodecName.SNAPPY.name())))
         .withRowGroupSize(getLongBlockSize(configuration))
