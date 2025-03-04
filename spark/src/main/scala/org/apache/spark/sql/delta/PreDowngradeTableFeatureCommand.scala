@@ -655,3 +655,45 @@ case class CheckpointProtectionPreDowngradeCommand(table: DeltaTableV2)
     false
   }
 }
+
+case class RedirectWriterOnlyPreDowngradeCommand(table: DeltaTableV2)
+  extends PreDowngradeTableFeatureCommand
+    with DeltaLogging {
+  /**
+   * We disable the feature by removing [[DeltaConfigs.REDIRECT_WRITER_ONLY]].
+   *
+   * @return True if the property is removed. False otherwise.
+   */
+  override def removeFeatureTracesIfNeeded(spark: SparkSession): Boolean = {
+    // Make sure feature data/metadata exist before proceeding.
+    if (RedirectWriterOnlyFeature.validateRemoval(table.initialSnapshot)) {
+      return false
+    }
+
+    val properties = Seq(DeltaConfigs.REDIRECT_WRITER_ONLY.key)
+    AlterTableUnsetPropertiesDeltaCommand(
+      table, properties, ifExists = false, fromDropFeatureCommand = true).run(spark)
+    true
+  }
+}
+
+case class RedirectReaderWriterPreDowngradeCommand(table: DeltaTableV2)
+  extends PreDowngradeTableFeatureCommand
+    with DeltaLogging {
+  /**
+   * We disable the feature by removing [[DeltaConfigs.REDIRECT_READER_WRITER]].
+   *
+   * @return True if the property is removed. False otherwise.
+   */
+  override def removeFeatureTracesIfNeeded(spark: SparkSession): Boolean = {
+    // Make sure feature data/metadata exist before proceeding.
+    if (RedirectReaderWriterFeature.validateRemoval(table.initialSnapshot)) {
+      return false
+    }
+
+    val properties = Seq(DeltaConfigs.REDIRECT_READER_WRITER.key)
+    AlterTableUnsetPropertiesDeltaCommand(
+      table, properties, ifExists = false, fromDropFeatureCommand = true).run(spark)
+    true
+  }
+}
