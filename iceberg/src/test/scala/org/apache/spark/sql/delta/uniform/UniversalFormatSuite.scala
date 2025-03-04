@@ -118,18 +118,16 @@ trait UniversalFormatSuiteTestBase extends UniversalFormatSuiteUtilsBase {
               assert(icebergTable1.get.schema().asStruct().fields().toArray.length == 2)
             }
 
-            val result1: Array[Row] = read(s"SELECT * FROM $to_id1 ORDER BY PID")
             val expected1: Array[Row] = (1 to 7).map { i => Row(i, i + 1) }.toArray
-            assert(result1.sameElements(expected1))
+            readAndVerify(to_id1, "PID, PCODE", "PID", expected1)
 
             val icebergTable2 = loadIcebergTable(spark, new TableIdentifier(to_id2))
             if (icebergTable2.isDefined) {
               assert(icebergTable2.get.schema().asStruct().fields().toArray.length == 2)
             }
 
-            val result2: Array[Row] = read(s"SELECT * FROM $to_id2 ORDER BY PID")
             val expected2: Array[Row] = (1 to 7).map { i => Row(i, i + 1) }.toArray
-            assert(result2.sameElements(expected2))
+            readAndVerify(to_id2, "PID, PCODE", "PID", expected2)
           }
         }
       }
@@ -164,20 +162,8 @@ class UniversalFormatSuite
 
 class UniFormWithIcebergCompatV1Suite
     extends UniversalFormatSuiteTestBase
-    with UniFormWithIcebergCompatV1SuiteBase {
-  override protected def getCompatVersionOtherThan(version: Int): Int =
-    super.getCompatVersionOtherThan(version)
-
-  override protected def getCompatVersionsOtherThan(version: Int): Seq[Int] =
-    super.getCompatVersionsOtherThan(version)
-}
+    with UniFormWithIcebergCompatV1SuiteBase
 
 class UniFormWithIcebergCompatV2Suite
     extends UniversalFormatSuiteTestBase
-    with UniFormWithIcebergCompatV2SuiteBase {
-  override protected def getCompatVersionOtherThan(version: Int): Int =
-    super.getCompatVersionOtherThan(version)
-
-  override protected def getCompatVersionsOtherThan(version: Int): Seq[Int] =
-    super.getCompatVersionsOtherThan(version)
-}
+    with UniFormWithIcebergCompatV2SuiteBase

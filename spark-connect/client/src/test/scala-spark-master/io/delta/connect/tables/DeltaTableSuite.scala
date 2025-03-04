@@ -23,6 +23,9 @@ import org.apache.spark.sql.Row
 import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.test.DeltaQueryTest
 
+// TODO(hvanhovell) All tests here are temporary disabled. While the code compiles, we need to a
+//  Spark PR to land (https://github.com/apache/spark/pull/49971), and make a couple of changes to
+//  make tests work. This will be done in a follow-up PR.
 class DeltaTableSuite extends DeltaQueryTest with RemoteSparkSession {
   private lazy val testData = spark.range(100).toDF("value")
 

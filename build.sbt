@@ -53,7 +53,7 @@ val default_scala_version = settingKey[String]("Default Scala version")
 Global / default_scala_version := scala212
 
 val LATEST_RELEASED_SPARK_VERSION = "3.5.3"
-val SPARK_MASTER_VERSION = "4.0.0-SNAPSHOT"
+val SPARK_MASTER_VERSION = "4.0.1-SNAPSHOT"
 val sparkVersion = settingKey[String]("Spark version")
 spark / sparkVersion := getSparkVersion()
 connectCommon / sparkVersion := getSparkVersion()
@@ -93,7 +93,7 @@ val targetJvm = settingKey[String]("Target JVM version")
 Global / targetJvm := "8"
 
 lazy val javaVersion = sys.props.getOrElse("java.version", "Unknown")
-
+lazy val javaVersionInt = javaVersion.split("\\.")(0).toInt
 /**
  * Returns the current spark version, which is the same value as `sparkVersion.value`.
  *
@@ -149,7 +149,19 @@ lazy val commonSettings = Seq(
     "-Dspark.databricks.delta.delta.log.cacheSize=3",
     "-Dspark.sql.sources.parallelPartitionDiscovery.parallelism=5",
     "-Xmx1024m"
-  ),
+  ) ++ {
+    if (javaVersionInt >= 17) {
+      Seq(  // For Java 17 +
+        "--add-opens=java.base/java.nio=ALL-UNNAMED",
+        "--add-opens=java.base/java.lang=ALL-UNNAMED",
+        "--add-opens=java.base/java.net=ALL-UNNAMED",
+        "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+        "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED"
+      )
+    } else {
+      Seq.empty
+    }
+  },
 
   testOptions += Tests.Argument("-oF"),
 
@@ -319,6 +331,7 @@ lazy val connectClient = (project in file("spark-connect/client"))
 
       // Test deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
+
       // TODO understand why this is needed.
       "org.apache.spark" %% "spark-connect-client-jvm" % sparkVersion.value % "test" classifier "tests"
     ),
