@@ -94,4 +94,9 @@ public class Format {
     Format format = (Format) o;
     return provider.equals(format.provider) && options.equals(format.options);
   }
+
+  @Override
+  public int hashCode() {
+    return Objects.hash(provider, options);
+  }
 }
