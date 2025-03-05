@@ -61,14 +61,15 @@ spark = SparkSession \
 
 expected_error_tag = "UNITY_CATALOG_EXTERNAL_COORDINATED_COMMITS_REQUEST_DENIED"
 
-def create():
+
+def create() -> None:
     try:
         spark.sql(f"CREATE TABLE {SCHEMA}.{TABLE_NAME} (a INT)")
     except Exception:
         print("[UNSUPPORTED] Creating managed table using UC commit coordinator isn't allowed")
 
 
-def insert():
+def insert() -> None:
     try:
         spark.sql(f"INSERT INTO {SCHEMA}.{TABLE_NAME} VALUES (1), (2)")
     except Exception as error:
@@ -76,7 +77,7 @@ def insert():
         print("[UNSUPPORTED] Writing to managed table using UC commit coordinator isn't allowed")
 
 
-def update():
+def update() -> None:
     try:
         spark.sql(f"UPDATE {SCHEMA}.{TABLE_NAME} SET a=4")
     except Exception as error:
@@ -84,7 +85,7 @@ def update():
         print("[UNSUPPORTED] Updating managed table using UC commit coordinator isn't allowed")
 
 
-def delete():
+def delete() -> None:
     try:
         spark.sql(f"DELETE FROM {SCHEMA}.{TABLE_NAME} where a=1")
     except Exception as error:
@@ -92,7 +93,7 @@ def delete():
         print("[UNSUPPORTED] Deleting from managed table using UC commit coordinator isn't allowed")
 
 
-def read():
+def read() -> None:
     try:
         res = spark.sql(f"SELECT * FROM {SCHEMA}.{TABLE_NAME}")
     except Exception as error:
