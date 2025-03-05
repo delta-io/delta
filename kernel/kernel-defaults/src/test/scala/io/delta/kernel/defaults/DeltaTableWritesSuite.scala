@@ -916,6 +916,9 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
   test("insert into table - write stats and validate they can be read by Spark ") {
     withTempDirAndEngine { (tblPath, engine) =>
+      // TODO: re-enable when CRC_FULL post commit hook is added, txn2 requires CRC_FULL
+      assume(this.suiteName != ("DeltaTableWriteWithCrcSuite"))
+
       // Configure the table property for stats collection via TableConfig.
       val numIndexedCols = 5
       val tableProperties = Map(TableConfig.

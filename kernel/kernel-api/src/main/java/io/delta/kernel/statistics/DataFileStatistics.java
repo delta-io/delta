@@ -52,8 +52,8 @@ public class DataFileStatistics {
       DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSX");
 
   /**
-   * Create a new instance of {@link DataFileStatistics}.
-   * The minValues, maxValues, and nullCounts are all required fields.
+   * Create a new instance of {@link DataFileStatistics}. The minValues, maxValues, and nullCounts
+   * are all required fields.
    *
    * @param numRecords Number of records in the data file.
    * @param minValues Map of column to minimum value of it in the data file. If the data file has
