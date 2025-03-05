@@ -622,13 +622,13 @@ class DeltaLog private(
     }
     HadoopFsRelation(
       fileIndex,
-      partitionSchema = DeltaColumnMapping.dropColumnMappingMetadata(
-        snapshot.metadata.partitionSchema),
+      partitionSchema = DeltaTableUtils.removeInternalDeltaMetadata(
+        spark, snapshot.metadata.partitionSchema),
       // We pass all table columns as `dataSchema` so that Spark will preserve the partition
       // column locations. Otherwise, for any partition columns not in `dataSchema`, Spark would
       // just append them to the end of `dataSchema`.
-      dataSchema = DeltaColumnMapping.dropColumnMappingMetadata(
-        DeltaTableUtils.removeInternalWriterMetadata(spark, dataSchema)
+      dataSchema = DeltaTableUtils.removeInternalDeltaMetadata(
+        spark, DeltaTableUtils.removeInternalWriterMetadata(spark, dataSchema)
       ),
       bucketSpec = bucketSpec,
       fileFormat(snapshot.protocol, snapshot.metadata),

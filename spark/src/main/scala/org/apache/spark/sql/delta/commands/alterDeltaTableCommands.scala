@@ -1203,7 +1203,7 @@ case class AlterTableSetLocationDeltaCommand(
     val bypassSchemaCheck = sparkSession.sessionState.conf.getConf(
       DeltaSQLConf.DELTA_ALTER_LOCATION_BYPASS_SCHEMA_CHECK)
 
-    if (!bypassSchemaCheck && !schemasEqual(oldMetadata, newMetadata)) {
+    if (!bypassSchemaCheck && !schemasEqual(sparkSession, oldMetadata, newMetadata)) {
       throw DeltaErrors.alterTableSetLocationSchemaMismatchException(
         oldMetadata.schema, newMetadata.schema)
     }
@@ -1213,12 +1213,12 @@ case class AlterTableSetLocationDeltaCommand(
   }
 
   private def schemasEqual(
+      sparkSession: SparkSession,
       oldMetadata: actions.Metadata, newMetadata: actions.Metadata): Boolean = {
-    import DeltaColumnMapping._
-    dropColumnMappingMetadata(oldMetadata.schema) ==
-      dropColumnMappingMetadata(newMetadata.schema) &&
-      dropColumnMappingMetadata(oldMetadata.partitionSchema) ==
-        dropColumnMappingMetadata(newMetadata.partitionSchema)
+    DeltaTableUtils.removeInternalDeltaMetadata(sparkSession, oldMetadata.schema) ==
+      DeltaTableUtils.removeInternalDeltaMetadata(sparkSession, newMetadata.schema) &&
+      DeltaTableUtils.removeInternalDeltaMetadata(sparkSession, oldMetadata.partitionSchema) ==
+        DeltaTableUtils.removeInternalDeltaMetadata(sparkSession, newMetadata.partitionSchema)
   }
 }
 
