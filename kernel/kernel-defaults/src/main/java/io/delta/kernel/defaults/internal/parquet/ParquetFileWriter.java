@@ -28,6 +28,7 @@ import io.delta.kernel.defaults.engine.fileio.FileIO;
 import io.delta.kernel.defaults.engine.fileio.OutputFile;
 import io.delta.kernel.defaults.internal.parquet.ParquetColumnWriters.ColumnWriter;
 import io.delta.kernel.expressions.Column;
+import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.*;
@@ -115,6 +116,7 @@ public class ParquetFileWriter {
     this.statsColumns = requireNonNull(statsColumns, "statsColumns is null");
     this.targetMaxFileSize =
         fileIO.getConf(TARGET_FILE_SIZE_CONF).map(Long::valueOf).orElse(DEFAULT_TARGET_FILE_SIZE);
+    checkArgument(targetMaxFileSize > 0, "Invalid target Parquet file size: %s", targetMaxFileSize);
   }
 
   /**
@@ -354,7 +356,8 @@ public class ParquetFileWriter {
       return fileIO.newOutputFile(location);
     }
     String fileName = String.format("%s-%03d.parquet", UUID.randomUUID(), currentFileNumber++);
-    return fileIO.newOutputFile(fileName);
+    String filePath = new Path(location, fileName).toString();
+    return fileIO.newOutputFile(filePath);
   }
 
   /**
@@ -440,6 +443,7 @@ public class ParquetFileWriter {
     try {
       // Get the FileStatus to figure out the file size and modification time
       FileStatus fileStatus = fileIO.getFileStatus(path);
+      String resolvedPath = fileIO.resolvePath(path);
 
       DataFileStatistics stats;
       if (statsColumns.isEmpty()) {
@@ -450,11 +454,14 @@ public class ParquetFileWriter {
                 emptyMap() /* maxValues */,
                 emptyMap() /* nullCounts */);
       } else {
-        stats = readDataFileStatistics(fileIO, path, dataSchema, statsColumns);
+        stats = readDataFileStatistics(fileIO, resolvedPath, dataSchema, statsColumns);
       }
 
       return new DataFileStatus(
-          path, fileStatus.getSize(), fileStatus.getModificationTime(), Optional.ofNullable(stats));
+          resolvedPath,
+          fileStatus.getSize(),
+          fileStatus.getModificationTime(),
+          Optional.ofNullable(stats));
     } catch (IOException ioe) {
       throw new UncheckedIOException("Failed to read the stats for: " + path, ioe);
     }
