@@ -73,7 +73,6 @@ trait OptimizeMetadataOnlyDeltaQuery extends LoggingShims {
 
     def convertValueIfRequired(attrRef: AttributeReference, value: Any): Any = {
       if (attrRef.dataType != DateType || value == null) return value
-
       value match {
         case date: LocalDate => 
           DateTimeUtils.anyToDays(date)
