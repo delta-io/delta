@@ -27,6 +27,8 @@ import scala.collection.mutable.ArrayBuffer
 import io.delta.kernel.Table
 import io.delta.kernel.data.ColumnarBatch
 import io.delta.kernel.defaults.engine.{DefaultEngine, DefaultJsonHandler, DefaultParquetHandler}
+import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO
+import io.delta.kernel.defaults.engine.io.FileIO
 import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.engine.{Engine, ExpressionHandler, FileSystemClient}
 import io.delta.kernel.expressions.Predicate
@@ -68,13 +70,16 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
   /////////////////////////
 
   private def withTempDirAndMetricsEngine(f: (String, MetricsEngine) => Unit): Unit = {
-    val engine = new MetricsEngine(new Configuration() {
+    val hadoopFileIO = new HadoopFileIO(new Configuration() {
       {
         // Set the batch sizes to small so that we get to test the multiple batch scenarios.
         set("delta.kernel.default.parquet.reader.batch-size", "2");
         set("delta.kernel.default.json.reader.batch-size", "2");
       }
     })
+
+    val engine = new MetricsEngine(hadoopFileIO)
+
     withTempDir { dir => f(dir.getAbsolutePath, engine) }
   }
 
@@ -660,10 +665,10 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
 ////////////////////
 
 /** An engine that records the Delta commit (.json) and checkpoint (.parquet) files read */
-class MetricsEngine(config: Configuration) extends Engine {
-  private val impl = DefaultEngine.create(config)
-  private val jsonHandler = new MetricsJsonHandler(config)
-  private val parquetHandler = new MetricsParquetHandler(config)
+class MetricsEngine(fileIO: FileIO) extends Engine {
+  private val impl = DefaultEngine.create(fileIO)
+  private val jsonHandler = new MetricsJsonHandler(fileIO)
+  private val parquetHandler = new MetricsParquetHandler(fileIO)
 
   def resetMetrics(): Unit = {
     jsonHandler.resetMetrics()
@@ -730,8 +735,8 @@ trait FileReadMetrics { self: Object =>
 }
 
 /** A JsonHandler that collects metrics on the Delta commit (.json) files read */
-class MetricsJsonHandler(config: Configuration)
-    extends DefaultJsonHandler(config)
+class MetricsJsonHandler(fileIO: FileIO)
+    extends DefaultJsonHandler(fileIO)
     with FileReadMetrics {
 
   override def readJsonFiles(
@@ -743,8 +748,8 @@ class MetricsJsonHandler(config: Configuration)
 }
 
 /** A ParquetHandler that collects metrics on the Delta checkpoint (.parquet) files read */
-class MetricsParquetHandler(config: Configuration)
-    extends DefaultParquetHandler(config)
+class MetricsParquetHandler(fileIO: FileIO)
+    extends DefaultParquetHandler(fileIO)
     with FileReadMetrics {
 
   override def readParquetFiles(
