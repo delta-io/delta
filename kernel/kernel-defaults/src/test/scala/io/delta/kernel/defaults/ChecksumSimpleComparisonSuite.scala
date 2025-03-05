@@ -18,6 +18,7 @@ package io.delta.kernel.defaults
 import java.io.File
 import java.nio.file.Files
 import java.util
+import java.util.Optional
 
 import scala.collection.immutable.Seq
 import scala.jdk.CollectionConverters.setAsJavaSetConverter
@@ -100,6 +101,18 @@ class ChecksumSimpleComparisonSuite extends DeltaTableWriteSuiteBase with TestUt
     }
   }
 
+  implicit class CrcInfoOpt(private val crcInfo: CRCInfo) {
+    def copyWithoutTxnId(): CRCInfo = {
+      new CRCInfo(
+        crcInfo.getVersion,
+        crcInfo.getMetadata,
+        crcInfo.getProtocol,
+        crcInfo.getTableSizeBytes,
+        crcInfo.getNumFiles,
+        Optional.empty())
+    }
+  }
+
   private def assertChecksumEquals(
       engine: Engine,
       sparkTablePath: String,
@@ -114,8 +127,8 @@ class ChecksumSimpleComparisonSuite extends DeltaTableWriteSuiteBase with TestUt
 
     val sparkCrc = readCrcInfo(engine, sparkTablePath, version)
     val kernelCrc = readCrcInfo(engine, kernelTablePath, version)
-
-    assertCrcInfoEquals(sparkCrc, kernelCrc)
+    // Remove the randomly generated TxnId
+    assert(sparkCrc.copyWithoutTxnId() === kernelCrc.copyWithoutTxnId())
   }
 
   private def readCrcInfo(engine: Engine, path: String, version: Long): CRCInfo = {
@@ -126,15 +139,6 @@ class ChecksumSimpleComparisonSuite extends DeltaTableWriteSuiteBase with TestUt
 
   private def buildCrcPath(basePath: String, version: Long): java.nio.file.Path = {
     new File(FileNames.checksumFile(new Path(f"$basePath/_delta_log"), version).toString).toPath
-  }
-
-  // TODO: Add equals/hashCode to metadata, protocol then CRCInfo.
-  private def assertCrcInfoEquals(crc1: CRCInfo, crc2: CRCInfo): Unit = {
-    assert(crc1.getVersion === crc2.getVersion)
-    assert(crc1.getNumFiles === crc2.getNumFiles)
-    assert(crc1.getTableSizeBytes === crc2.getTableSizeBytes)
-    assert(crc1.getMetadata.getSchema === crc2.getMetadata.getSchema)
-    assert(crc1.getMetadata.getPartitionColNames === crc2.getMetadata.getPartitionColNames)
   }
 
   // TODO docs
