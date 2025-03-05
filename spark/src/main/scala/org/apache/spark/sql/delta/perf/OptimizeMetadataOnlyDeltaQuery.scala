@@ -32,6 +32,7 @@ import org.apache.spark.sql.types._
 
 import java.sql.Date
 import java.util.Locale
+import java.time.LocalDate
 
 /** Optimize COUNT, MIN and MAX expressions on Delta tables.
  * This optimization is only applied when the following conditions are met:
@@ -71,10 +72,14 @@ trait OptimizeMetadataOnlyDeltaQuery extends LoggingShims {
     }
 
     def convertValueIfRequired(attrRef: AttributeReference, value: Any): Any = {
-      if (attrRef.dataType == DateType && value != null) {
-        DateTimeUtils.fromJavaDate(value.asInstanceOf[Date])
-      } else {
-        value
+      if (attrRef.dataType != DateType || value == null) return value
+
+      value match {
+        case date: LocalDate => 
+          DateTimeUtils.anyToDays(date)
+        case date: Date => 
+          DateTimeUtils.fromJavaDate(date)
+        case _ => value
       }
     }
 
