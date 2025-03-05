@@ -124,8 +124,8 @@ public class DataFileStatistics {
    * <pre>
    * Input:
    *   minValues = {
-   *     new Column(new String[]{"a", "b", "c"}) -> Literal.ofInt(10),
-   *     new Column("d") -> Literal.ofString("value")
+   *     new Column(new String[]{"a", "b", "c"}) mapped to Literal.ofInt(10),
+   *     new Column("d") mapped to Literal.ofString("value")
    *   }
    *
    * Output JSON:
