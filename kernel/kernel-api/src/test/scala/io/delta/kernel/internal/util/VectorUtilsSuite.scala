@@ -26,7 +26,7 @@ import scala.collection.JavaConverters._
 import io.delta.kernel.data.{ArrayValue, ColumnVector, MapValue, Row}
 import io.delta.kernel.internal.data.GenericRow
 import io.delta.kernel.test.VectorTestUtils
-import io.delta.kernel.types.{ArrayType, BinaryType, BooleanType, ByteType, DateType, DecimalType, DoubleType, FloatType, IntegerType, LongType, MapType, ShortType, StringType, StructType, TimestampType}
+import io.delta.kernel.types.{ArrayType, BinaryType, BooleanType, ByteType, DateType, DecimalType, DoubleType, FloatType, IntegerType, LongType, MapType, ShortType, StringType, StructType, TimestampNTZType, TimestampType}
 
 import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.prop.Tables.Table
@@ -56,7 +56,14 @@ class VectorUtilsSuite extends AnyFunSuite with VectorTestUtils {
         Timestamp.valueOf("2023-01-02 00:00:00").getTime,
         Timestamp.valueOf("2023-01-03 00:00:00").getTime,
         null),
-      TimestampType.TIMESTAMP)).foreach(testCase =>
+      TimestampType.TIMESTAMP),
+    (
+      List[LongJ](
+        Timestamp.valueOf("2023-01-01 00:00:00").getTime,
+        Timestamp.valueOf("2023-01-02 00:00:00").getTime,
+        Timestamp.valueOf("2023-01-03 00:00:00").getTime,
+        null),
+      TimestampNTZType.TIMESTAMP_NTZ)).foreach(testCase =>
     test(s"handle ${testCase._2} array correctly") {
       val values = testCase._1
       val dataType = testCase._2
@@ -109,6 +116,13 @@ class VectorUtilsSuite extends AnyFunSuite with VectorTestUtils {
           assert(columnVector.getInt(1) == 20)
           assert(columnVector.getInt(2) == 30)
         case TimestampType.TIMESTAMP =>
+          assert(
+            columnVector.getLong(0) == Timestamp.valueOf("2023-01-01 00:00:00").getTime)
+          assert(
+            columnVector.getLong(1) == Timestamp.valueOf("2023-01-02 00:00:00").getTime)
+          assert(
+            columnVector.getLong(2) == Timestamp.valueOf("2023-01-03 00:00:00").getTime)
+        case TimestampNTZType.TIMESTAMP_NTZ =>
           assert(
             columnVector.getLong(0) == Timestamp.valueOf("2023-01-01 00:00:00").getTime)
           assert(
