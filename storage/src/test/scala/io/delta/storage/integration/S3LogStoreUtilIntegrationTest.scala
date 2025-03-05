@@ -45,7 +45,7 @@ class S3LogStoreUtilIntegrationTest extends AnyFunSuite {
   private val configuration = new Configuration()
   configuration.set( // for local testing only
     "fs.s3a.aws.credentials.provider",
-    "com.amazonaws.auth.profile.ProfileCredentialsProvider",
+    "software.amazon.awssdk.auth.credentials.ProfileCredentialsProvider",
   )
   configuration.set("fs.s3a.paging.maximum", maxKeys.toString)
 

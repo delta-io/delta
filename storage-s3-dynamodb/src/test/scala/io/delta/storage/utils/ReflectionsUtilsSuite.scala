@@ -16,10 +16,10 @@
 
 package io.delta.storage.utils
 
-import com.amazonaws.auth.EnvironmentVariableCredentialsProvider
 import io.delta.storage.utils.ReflectionsUtilsSuiteHelper.TestOnlyAWSCredentialsProviderWithHadoopConf
 import org.apache.hadoop.conf.Configuration
 import org.scalatest.funsuite.AnyFunSuite
+import software.amazon.awssdk.auth.credentials.EnvironmentVariableCredentialsProvider
 
 class ReflectionsUtilsSuite extends AnyFunSuite {
   private val emptyHadoopConf = new Configuration()
