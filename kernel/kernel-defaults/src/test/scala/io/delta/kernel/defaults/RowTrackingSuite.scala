@@ -205,6 +205,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
       createTableWithRowTrackingSupported(engine, tablePath)
 
       val addFileRow = AddFile.createAddFileRow(
+        null,
         "fakePath",
         VectorUtils.stringStringMapValue(new util.HashMap[String, String]()),
         0L,

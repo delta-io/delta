@@ -15,18 +15,18 @@
  */
 package io.delta.kernel.statistics;
 
+import static io.delta.kernel.internal.DeltaErrors.unsupportedStatsDataType;
 import static java.time.ZoneOffset.UTC;
 import static java.time.format.DateTimeFormatter.ISO_LOCAL_DATE;
 import static java.time.temporal.ChronoUnit.MILLIS;
 
 import com.fasterxml.jackson.core.JsonGenerator;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
+import io.delta.kernel.internal.DeltaErrors;
+import io.delta.kernel.internal.util.JsonUtils;
 import io.delta.kernel.types.*;
-import io.delta.kernel.utils.JsonUtil;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -36,11 +36,10 @@ import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Collections;
 import java.util.Map;
-import java.util.Optional;
+import java.util.Objects;
 
 /** Statistics about data file in a Delta Lake table. */
 public class DataFileStatistics {
-  private StructType dataSchema;
   private final long numRecords;
   private final Map<Column, Literal> minValues;
   private final Map<Column, Literal> maxValues;
@@ -54,8 +53,8 @@ public class DataFileStatistics {
 
   /**
    * Create a new instance of {@link DataFileStatistics}.
+   * The minValues, maxValues, and nullCounts are all required fields.
    *
-   * @param dataSchema Schema of the data file.
    * @param numRecords Number of records in the data file.
    * @param minValues Map of column to minimum value of it in the data file. If the data file has
    *     all nulls for the column, the value will be null or not present in the map.
@@ -64,12 +63,14 @@ public class DataFileStatistics {
    * @param nullCounts Map of column to number of nulls in the data file.
    */
   public DataFileStatistics(
-      StructType dataSchema,
       long numRecords,
       Map<Column, Literal> minValues,
       Map<Column, Literal> maxValues,
       Map<Column, Long> nullCounts) {
-    this.dataSchema = dataSchema;
+    Objects.requireNonNull(minValues, "minValues must not be null to serialize stats.");
+    Objects.requireNonNull(maxValues, "maxValues must not be null to serialize stats.");
+    Objects.requireNonNull(nullCounts, "nullCounts must not be null to serialize stats.");
+
     this.numRecords = numRecords;
     this.minValues = Collections.unmodifiableMap(minValues);
     this.maxValues = Collections.unmodifiableMap(maxValues);
@@ -115,15 +116,47 @@ public class DataFileStatistics {
     return nullCounts;
   }
 
-  public String serializeAsJson() {
-    return JsonUtil.generate(
+  /**
+   * Serializes the statistics as a JSON string.
+   *
+   * <p>Example: For nested column structures:
+   *
+   * <pre>
+   * Input:
+   *   minValues = {
+   *     new Column(new String[]{"a", "b", "c"}) -> Literal.ofInt(10),
+   *     new Column("d") -> Literal.ofString("value")
+   *   }
+   *
+   * Output JSON:
+   *   {
+   *     "minValues": {
+   *       "a": {
+   *         "b": {
+   *           "c": 10
+   *         }
+   *       },
+   *       "d": "value"
+   *     }
+   *   }
+   * </pre>
+   *
+   * @param dataSchema the optional data schema (optional). If provided, all min/max values and null
+   *     counts will be included and validated. If null, only numRecords will be serialized without
+   *     validation.
+   * @return a JSON representation of the statistics.
+   * @throws KernelException if dataSchema is provided and there's a type mismatch between the
+   *     Literal values and the expected types in the schema, or if an unsupported data type is
+   *     found.
+   */
+  public String serializeAsJson(StructType dataSchema) {
+    return JsonUtils.generate(
         gen -> {
           gen.writeStartObject();
           gen.writeNumberField("numRecords", numRecords);
 
           if (dataSchema != null) {
             gen.writeObjectFieldStart("minValues");
-
             writeJsonValues(
                 gen,
                 dataSchema,
@@ -151,18 +184,46 @@ public class DataFileStatistics {
         });
   }
 
+  @Override
+  public boolean equals(Object o) {
+    if (this == o) {
+      return true;
+    }
+    if (!(o instanceof DataFileStatistics)) {
+      return false;
+    }
+    DataFileStatistics that = (DataFileStatistics) o;
+    return numRecords == that.numRecords
+        && Objects.equals(minValues, that.minValues)
+        && Objects.equals(maxValues, that.maxValues)
+        && Objects.equals(nullCounts, that.nullCounts);
+  }
+
+  @Override
+  public int hashCode() {
+    int result = Long.hashCode(numRecords);
+    result = 31 * result + Objects.hash(minValues.keySet());
+    result = 31 * result + Objects.hash(maxValues.keySet());
+    result = 31 * result + Objects.hash(nullCounts.keySet());
+    return result;
+  }
+
+  /////////////////////////////////////////////////////////////////////////////////
+  /// Private methods                                                           ///
+  /////////////////////////////////////////////////////////////////////////////////
+
   private <T> void writeJsonValues(
       JsonGenerator generator,
       StructType schema,
       Map<Column, T> values,
-      Column parentColPath,
-      JsonUtil.JsonValueWriter<T> writer)
+      Column parentCol,
+      JsonUtils.JsonValueWriter<T> writer)
       throws IOException {
     if (schema == null) {
       return;
     }
     for (StructField field : schema.fields()) {
-      Column colPath = parentColPath.append(field.getName());
+      Column colPath = parentCol.appendNestedField(field.getName());
       if (field.getDataType() instanceof StructType) {
         generator.writeObjectFieldStart(field.getName());
         writeJsonValues(generator, (StructType) field.getDataType(), values, colPath, writer);
@@ -170,6 +231,9 @@ public class DataFileStatistics {
       } else {
         T value = values.get(colPath);
         if (value != null) {
+          if (value instanceof Literal) {
+            validateLiteralType(field, (Literal) value);
+          }
           generator.writeFieldName(field.getName());
           writer.write(generator, value);
         }
@@ -177,8 +241,23 @@ public class DataFileStatistics {
     }
   }
 
+  /**
+   * Validates that the literal's data type matches the expected field type.
+   *
+   * @param field The schema field with the expected data type
+   * @param literal The literal to validate
+   * @throws KernelException if the data types don't match
+   */
+  private void validateLiteralType(StructField field, Literal literal) {
+    if (literal.getDataType() == null || !literal.getDataType().equals(field.getDataType())) {
+      throw DeltaErrors.statsTypeMismatch(
+          field.getName(), field.getDataType(), literal.getDataType());
+    }
+  }
+
   private void writeJsonValue(JsonGenerator generator, Literal literal) throws IOException {
     if (literal == null || literal.getValue() == null) {
+      generator.writeNull();
       return;
     }
     DataType type = literal.getDataType();
@@ -194,9 +273,19 @@ public class DataFileStatistics {
     } else if (type instanceof LongType) {
       generator.writeNumber(((Number) value).longValue());
     } else if (type instanceof FloatType) {
-      generator.writeNumber(((Number) value).floatValue());
+      float f = ((Number) value).floatValue();
+      if (Float.isNaN(f) || Float.isInfinite(f)) {
+        generator.writeString(String.valueOf(f));
+      } else {
+        generator.writeNumber(f);
+      }
     } else if (type instanceof DoubleType) {
-      generator.writeNumber(((Number) value).doubleValue());
+      double d = ((Number) value).doubleValue();
+      if (Double.isNaN(d) || Double.isInfinite(d)) {
+        generator.writeString(String.valueOf(d));
+      } else {
+        generator.writeNumber(d);
+      }
     } else if (type instanceof StringType) {
       generator.writeString((String) value);
     } else if (type instanceof BinaryType) {
@@ -218,44 +307,7 @@ public class DataFileStatistics {
       generator.writeString(
           TIMESTAMP_FORMATTER.format(ZonedDateTime.ofInstant(instant.truncatedTo(MILLIS), UTC)));
     } else {
-      throw new IllegalArgumentException("Unsupported stats data type: " + type);
+      throw unsupportedStatsDataType(type);
     }
-  }
-
-  @Override
-  public String toString() {
-    return serializeAsJson();
-  }
-
-  /**
-   * Utility method to deserialize statistics from a JSON string. NOTE: Currently, this method only
-   * deserializes the numRecords field and ignores other statistics (minValues, maxValues,
-   * nullCounts). Full deserialization support for all statistics will be added in a future update.
-   *
-   * @param json Data statistics JSON string to deserialize.
-   * @return An {@link Optional} containing the deserialized {@link DataFileStatistics} if present.
-   * @throws KernelException if JSON parsing fails
-   */
-  public static Optional<DataFileStatistics> deserializeFromJson(String json) {
-    JsonNode root;
-    try {
-      root = new ObjectMapper().readTree(json);
-    } catch (IOException e) {
-      throw new KernelException(String.format("Failed to parse JSON string: %s", json), e);
-    }
-
-    JsonNode numRecordsNode = root.get("numRecords");
-    if (numRecordsNode == null || !numRecordsNode.isNumber()) {
-      return Optional.empty();
-    }
-
-    long numRecords = numRecordsNode.asLong();
-    return Optional.of(
-        new DataFileStatistics(
-            null,
-            numRecords,
-            Collections.emptyMap(),
-            Collections.emptyMap(),
-            Collections.emptyMap()));
   }
 }

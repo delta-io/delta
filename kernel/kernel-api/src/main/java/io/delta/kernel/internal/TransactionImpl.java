@@ -43,7 +43,6 @@ import io.delta.kernel.internal.metrics.TransactionReportImpl;
 import io.delta.kernel.internal.replay.ConflictChecker;
 import io.delta.kernel.internal.replay.ConflictChecker.TransactionRebaseState;
 import io.delta.kernel.internal.rowtracking.RowTracking;
-import io.delta.kernel.internal.skipping.DataSkippingUtils;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.*;
 import io.delta.kernel.internal.util.Clock;
@@ -491,29 +490,38 @@ public class TransactionImpl implements Transaction {
   /**
    * Get the part of the schema of the table that needs the statistics to be collected per file.
    *
-   * @param engine {@link Engine} instance to use.
-   * @param transactionState State of the transaction
+   * @param transactionState State of the transaction.
    * @return
    */
-  public static List<Column> getStatisticsColumns(Engine engine, Row transactionState) {
-    // TODO: implement this once we start supporting collecting stats
+  public static List<Column> getStatisticsColumns(Row transactionState) {
     int numIndexedCols =
-        Integer.parseInt(
-            TransactionStateRow.getConfiguration(transactionState)
-                .getOrDefault(
-                    DataSkippingUtils.DATA_SKIPPING_NUM_INDEXED_COLS,
-                    String.valueOf(DataSkippingUtils.DEFAULT_DATA_SKIPPING_NUM_INDEXED_COLS)));
+        TableConfig.DATA_SKIPPING_NUM_INDEXED_COLS.fromMetadata(
+            TransactionStateRow.getConfiguration(transactionState));
 
     // Get the list of partition columns to exclude
     Set<String> partitionColumns =
         TransactionStateRow.getPartitionColumnsList(transactionState).stream()
             .collect(Collectors.toSet());
 
-    // For now, only support the first numIndexedCols columns
-    return TransactionStateRow.getLogicalSchema(engine, transactionState).fields().stream()
-        .filter(p -> !partitionColumns.contains(p.getName()))
-        .limit(numIndexedCols)
-        .map(field -> new Column(field.getName()))
-        .collect(Collectors.toList());
+    // Collect the leaf-level columns for statistics calculation.
+    // This call selects only the first 'numIndexedCols' leaf columns from the logical schema,
+    // excluding any column whose top-level name appears in 'partitionColumns'.
+    // NOTE: Nested columns (i.e. each leaf within a StructType) count individually toward the
+    // numIndexedCols limit (not Map/ArrayTypes - they're not stats compatible types).
+    //
+    // For example, given the following schema:
+    //   root
+    //     ├─ col1 (int)
+    //     ├─ col2 (string)
+    //     └─ col3 (struct)
+    //           ├─ a (int)
+    //           └─ b (double)
+    //
+    // And if 'numIndexedCols' is set to 2 with no partition columns to exclude, then the returned
+    // stats columns
+    // would be: [col1, col2]. If 'col1' were a partition column, the returned list would be:
+    // [col2, col3.a] (assuming col3.a is encountered before col3.b).
+    return SchemaUtils.collectLeafColumns(
+        TransactionStateRow.getLogicalSchema(transactionState), partitionColumns, numIndexedCols);
   }
 }

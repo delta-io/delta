@@ -68,7 +68,7 @@ public final class Column implements Expression {
    * @param name the column name to append
    * @return the new column
    */
-  public Column append(String name) {
+  public Column appendNestedField(String name) {
     String[] newNames = new String[names.length + 1];
     System.arraycopy(names, 0, newNames, 0, names.length);
     newNames[names.length] = name;

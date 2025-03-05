@@ -111,7 +111,6 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
       new Column(Array("NestedStruct", "ac", "aca")) -> 1L)
 
     val stats = new DataFileStatistics(
-      schema,
       100,
       minValues,
       maxValues,
@@ -182,8 +181,112 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
         |}
         |}""".stripMargin
 
-    val json = stats.serializeAsJson()
+    val json = stats.serializeAsJson(schema)
 
+    assert(areJsonNodesEqual(json, expectedJson))
+  }
+
+  test("serializeAsJson handles NaN and Infinity correctly") {
+    val schema = new StructType()
+      .add("FloatType", FloatType.FLOAT)
+      .add("DoubleType", DoubleType.DOUBLE)
+
+    val minValues = Map(
+      new Column("FloatType") -> Literal.ofFloat(Float.NaN),
+      new Column("DoubleType") -> Literal.ofDouble(Double.NegativeInfinity)).asJava
+
+    val maxValues = Map(
+      new Column("FloatType") -> Literal.ofFloat(Float.PositiveInfinity),
+      new Column("DoubleType") -> Literal.ofDouble(Double.NaN)).asJava
+
+    val stats = new DataFileStatistics(
+      1L,
+      minValues,
+      maxValues,
+      Collections.emptyMap[Column, java.lang.Long]())
+
+    val json = stats.serializeAsJson(schema)
+    val expectedJson =
+      """{
+        |  "numRecords": 1,
+        |  "minValues": {
+        |    "FloatType": "NaN",
+        |    "DoubleType": "-Infinity"
+        |  },
+        |  "maxValues": {
+        |    "FloatType": "Infinity",
+        |    "DoubleType": "NaN"
+        |  },
+        |  "nullCounts": {}
+        |}""".stripMargin
+
+    assert(areJsonNodesEqual(json, expectedJson))
+  }
+
+  test("serializeAsJson handles null values and null literals correctly") {
+    val schema = new StructType()
+      .add("col1", IntegerType.INTEGER)
+      .add("col2", StringType.STRING)
+      .add("col3", DoubleType.DOUBLE)
+      .add(
+        "nested",
+        new StructType()
+          .add("nestedCol1", IntegerType.INTEGER)
+          .add("nestedCol2", StringType.STRING))
+
+    val minValues = Map[Column, Literal](
+      new Column("col1") -> Literal.ofInt(1),
+      new Column("col2") -> null,
+      new Column("col3") -> Literal.ofNull(DoubleType.DOUBLE),
+      new Column(Array("nested", "nestedCol1")) -> Literal.ofInt(5),
+      new Column(Array("nested", "nestedCol2")) -> Literal.ofNull(StringType.STRING)).asJava
+
+    val maxValues = Map[Column, Literal](
+      new Column("col2") -> Literal.ofString("z"),
+      new Column("col3") -> null,
+      new Column(Array("nested", "nestedCol1")) -> null,
+      new Column(Array("nested", "nestedCol2")) -> Literal.ofString("zzz")).asJava
+
+    val nullCounts = Map(
+      new Column("col1") -> 5L,
+      new Column("col2") -> 0L,
+      new Column(Array("nested", "nestedCol1")) -> 2L).map { case (k, v) =>
+      (k, java.lang.Long.valueOf(v))
+    }.asJava
+
+    val stats = new DataFileStatistics(
+      100,
+      minValues,
+      maxValues,
+      nullCounts)
+
+    val expectedJson =
+      """{
+        |  "numRecords": 100,
+        |  "minValues": {
+        |    "col1": 1,
+        |    "col3": null,
+        |    "nested": {
+        |      "nestedCol1": 5,
+        |      "nestedCol2": null
+        |    }
+        |  },
+        |  "maxValues": {
+        |    "col2": "z",
+        |    "nested": {
+        |      "nestedCol2": "zzz"
+        |    }
+        |  },
+        |  "nullCounts": {
+        |    "col1": 5,
+        |    "col2": 0,
+        |    "nested": {
+        |      "nestedCol1": 2
+        |    }
+        |  }
+        |}""".stripMargin
+
+    val json = stats.serializeAsJson(schema)
     assert(areJsonNodesEqual(json, expectedJson))
   }
 
@@ -193,7 +296,6 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
       .add("field2", StringType.STRING)
     val schema = new StructType().add("nested", nestedSchema)
     val stats = new DataFileStatistics(
-      schema,
       50L,
       Collections.emptyMap(),
       Collections.emptyMap(),
@@ -205,7 +307,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
         |  "maxValues": {"nested": {}},
         |  "nullCounts": {"nested": {}}
         |}""".stripMargin
-    val json = stats.serializeAsJson()
+    val json = stats.serializeAsJson(schema)
     assert(areJsonNodesEqual(json, expectedJson))
   }
 
@@ -217,7 +319,6 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
     val minValues = Map(
       new Column(Array("nested", "field1")) -> Literal.ofInt(10)).asJava
     val stats = new DataFileStatistics(
-      schema,
       75L,
       minValues,
       Collections.emptyMap(),
@@ -233,7 +334,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
         |  "maxValues": {"nested":{}},
         |  "nullCounts": {"nested":{}}
         |}""".stripMargin
-    val json = stats.serializeAsJson()
+    val json = stats.serializeAsJson(schema)
     assert(areJsonNodesEqual(json, expectedJson))
   }
 
@@ -244,22 +345,115 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
         |}""".stripMargin
 
     val exception = intercept[KernelException] {
-      DataFileStatistics.deserializeFromJson(malformedJson)
+      StatsUtils.deserializeFromJson(malformedJson)
     }
     assert(exception.getMessage.contains("Failed to parse JSON string"))
   }
 
   test("serialization and deserialization of stats") {
     val numRecords = 123L
-    // Currently we only support deserialization of numRecords.
+    val dataSchema = new StructType().add("a", IntegerType.INTEGER)
     val stats = new DataFileStatistics(
-      null,
       numRecords,
       Collections.emptyMap(),
       Collections.emptyMap(),
       Collections.emptyMap())
-    val json = stats.serializeAsJson()
-    val deserialized = DataFileStatistics.deserializeFromJson(json)
-    assert(deserialized.get().getNumRecords.equals(stats.getNumRecords))
+
+    val json = stats.serializeAsJson(dataSchema)
+    val deserialized = StatsUtils.deserializeFromJson(json)
+
+    assert(deserialized.get().getNumRecords == stats.getNumRecords)
+  }
+
+  test("test equals and hashCode work correctly for DataFileStatistics") {
+    // Setup common test data
+    val col1 = new Column("col1")
+    val nestedField = new Column(Array("nested", "field"))
+
+    // Create two identical stats objects
+    val commonMaps = () => {
+      val min = Map(col1 -> Literal.ofInt(10), nestedField -> Literal.ofString("value")).asJava
+      val max = Map(col1 -> Literal.ofInt(100), nestedField -> Literal.ofString("zzzz")).asJava
+      val nulls =
+        Map(col1 -> java.lang.Long.valueOf(5L), nestedField -> java.lang.Long.valueOf(2L)).asJava
+      (min, max, nulls)
+    }
+
+    val (min1, max1, nulls1) = commonMaps()
+    val (min2, max2, nulls2) = commonMaps()
+
+    val stats1 = new DataFileStatistics(100L, min1, max1, nulls1)
+    val stats2 = new DataFileStatistics(100L, min2, max2, nulls2)
+
+    // Stats with different value
+    val differentMin =
+      Map(col1 -> Literal.ofInt(20), nestedField -> Literal.ofString("value")).asJava
+    val stats3 = new DataFileStatistics(100L, differentMin, max1, nulls1)
+
+    // Stats with different structure
+    val differentCol = new Column("col2")
+    val structureMaps =
+      Map(col1 -> Literal.ofInt(10), differentCol -> Literal.ofString("new")).asJava
+    val stats4 = new DataFileStatistics(100L, structureMaps, structureMaps, nulls1)
+
+    // Empty stats
+    val emptyStats1 = new DataFileStatistics(
+      50L,
+      Collections.emptyMap(),
+      Collections.emptyMap(),
+      Collections.emptyMap())
+    val emptyStats2 = new DataFileStatistics(
+      50L,
+      Collections.emptyMap(),
+      Collections.emptyMap(),
+      Collections.emptyMap())
+    val emptyStats3 = new DataFileStatistics(
+      60L,
+      Collections.emptyMap(),
+      Collections.emptyMap(),
+      Collections.emptyMap())
+
+    // Equality tests
+    assert(
+      stats1 == stats2 && stats1.hashCode() == stats2.hashCode(),
+      "Identical stats should be equal with same hash")
+    assert(stats1 != stats3, "Stats with different values should not be equal")
+    assert(stats1 != stats4, "Stats with different structure should not be equal")
+    assert(stats1 != null && stats1 != "string", "Stats should not equal null or different types")
+
+    // Empty stats tests
+    assert(
+      emptyStats1 == emptyStats2 && emptyStats1.hashCode() == emptyStats2.hashCode(),
+      "Empty stats with same records should be equal with same hash")
+    assert(emptyStats1 != emptyStats3, "Empty stats with different records should not be equal")
+  }
+
+  test("serializeAsJson throws exception when literal type doesn't match schema data type") {
+    val schema = new StructType()
+      .add("intCol", IntegerType.INTEGER)
+      .add("doubleCol", DoubleType.DOUBLE)
+      .add(
+        "nested",
+        new StructType()
+          .add("stringCol", StringType.STRING))
+
+    val minValues = Map[Column, Literal](
+      new Column("intCol") -> Literal.ofString("not an int"),
+      new Column("doubleCol") -> Literal.ofDouble(1.23),
+      new Column(Array("nested", "stringCol")) -> Literal.ofInt(42)).asJava
+
+    val stats = new DataFileStatistics(
+      100,
+      minValues,
+      Collections.emptyMap[Column, Literal](),
+      Collections.emptyMap[Column, java.lang.Long]())
+
+    val exception = intercept[KernelException] {
+      stats.serializeAsJson(schema)
+    }
+
+    val expectedMessage = "Type mismatch for field 'intCol' when writing statistics" +
+      ": expected integer, but found string"
+    assert(exception.getMessage === expectedMessage)
   }
 }

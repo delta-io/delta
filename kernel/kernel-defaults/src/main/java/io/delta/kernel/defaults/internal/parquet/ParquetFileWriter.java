@@ -390,7 +390,6 @@ public class ParquetFileWriter {
       if (statsColumns.isEmpty()) {
         stats =
             new DataFileStatistics(
-                dataSchema,
                 numRows,
                 emptyMap() /* minValues */,
                 emptyMap() /* maxValues */,

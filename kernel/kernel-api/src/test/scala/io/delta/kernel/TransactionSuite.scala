@@ -211,7 +211,6 @@ object TransactionSuite extends VectorTestUtils with MockEngineUtils {
   def testStats(numRowsOpt: Option[Long]): Option[DataFileStatistics] = {
     numRowsOpt.map(numRows => {
       new DataFileStatistics(
-        testSchema,
         numRows,
         Map.empty[Column, Literal].asJava, // minValues - empty value as this is just for tests.
         Map.empty[Column, Literal].asJava, // maxValues - empty value as this is just for tests.
