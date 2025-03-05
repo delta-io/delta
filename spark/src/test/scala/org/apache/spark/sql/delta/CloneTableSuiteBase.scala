@@ -168,7 +168,7 @@ trait CloneTableSuiteBase extends QueryTest
         } else {
           None
         }
-      val deltaTable = DeltaTableV2(spark, sourceLog.dataPath, None, None, timeTravelSpec)
+      val deltaTable = DeltaTableV2(spark, sourceLog.dataPath, timeTravelOpt = timeTravelSpec)
       val sourceData = Dataset.ofRows(
         spark,
         LogicalRelation(sourceLog.createRelation(
