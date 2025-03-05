@@ -32,25 +32,16 @@ public interface OutputFile {
    *
    * <ul>
    *   <li>If the file already exists, (either at the time of creating the {@link
-   *       PositionOutputStream} or at the time of closing it)
-   *       <ul>
-   *         <li>If {@code putIfAbsent} is true, then the file will not be created and an {@link
-   *             java.nio.file.FileAlreadyExistsException} will be thrown.
-   *         <li>If {@code putIfAbsent} is false, then the existing file will be overwritten
-   *       </ul>
-   *   <li>If the file does not exist, then a new file will be created with the complete contents
+   *       PositionOutputStream} or at the time of closing it), it will be overwritten.
+   *   <li>if {@code atomicWrite} is set, then the entire content is written or none, but won't
+   *       create a file with the partial contents.
    * </ul>
-   *
-   * If the file already exists , , and {@code putIfAbsent} is true, then the file will not be
-   * created and an {@link java.nio.file.FileAlreadyExistsException} will be thrown.
    *
    * @return the output stream to write to the file. It is the responsibility of the caller to close
    *     the stream.
-   * @throws java.nio.file.FileAlreadyExistsException if the file already exists and {@code
-   *     putIfAbsent} is true.
    * @throws IOException if an I/O error occurs.
    */
-  PositionOutputStream create(boolean putIfAbsent) throws IOException;
+  PositionOutputStream create(boolean atomicWrite) throws IOException;
 
   /**
    * Atomically write (either write is completely or don't write all - i.e. don't leave file with

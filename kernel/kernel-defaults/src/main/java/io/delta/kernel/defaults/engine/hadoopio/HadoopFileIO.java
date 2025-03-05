@@ -56,6 +56,17 @@ public class HadoopFileIO implements FileIO {
   }
 
   @Override
+  public FileStatus getFileStatus(String path) throws IOException {
+    Path pathObject = new Path(path);
+    FileSystem fs = pathObject.getFileSystem(hadoopConf);
+    org.apache.hadoop.fs.FileStatus hadoopFileStatus = fs.getFileStatus(pathObject);
+    return FileStatus.of(
+        hadoopFileStatus.getPath().toString(),
+        hadoopFileStatus.getLen(),
+        hadoopFileStatus.getModificationTime());
+  }
+
+  @Override
   public String resolvePath(String path) throws IOException {
     Path pathObject = new Path(path);
     FileSystem fs = pathObject.getFileSystem(hadoopConf);
@@ -82,7 +93,7 @@ public class HadoopFileIO implements FileIO {
   }
 
   @Override
-  public OutputFile newOutputFile(String path) throws IOException {
+  public OutputFile newOutputFile(String path) {
     return new HadoopOutputFile(hadoopConf, path);
   }
 
@@ -98,6 +109,7 @@ public class HadoopFileIO implements FileIO {
     return Optional.ofNullable(hadoopConf.get(confKey));
   }
 
+  // TODO: see if this can be avoided and instead newInputFile can be used.
   private ByteArrayInputStream getStream(String filePath, int offset, int size) {
     Path path = new Path(filePath);
     try {

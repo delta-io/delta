@@ -37,6 +37,15 @@ public interface FileIO {
   CloseableIterator<FileStatus> listFrom(String filePath) throws IOException;
 
   /**
+   * Get the metadata of the file at the given path.
+   *
+   * @param path Fully qualified path to the file.
+   * @return Metadata of the file.
+   * @throws IOException for any IO error.
+   */
+  FileStatus getFileStatus(String path) throws IOException;
+
+  /**
    * Resolve the given path to a fully qualified path.
    *
    * @param path Input path
@@ -85,7 +94,7 @@ public interface FileIO {
    * @return {@link OutputFile} instance which can be used to write to the file.
    * @throws IOException for any IO error.
    */
-  OutputFile newOutputFile(String path) throws IOException;
+  OutputFile newOutputFile(String path);
 
   /**
    * Delete the file at given path.

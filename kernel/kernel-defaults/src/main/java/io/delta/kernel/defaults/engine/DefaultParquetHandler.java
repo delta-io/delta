@@ -94,7 +94,8 @@ public class DefaultParquetHandler implements ParquetHandler {
       CloseableIterator<FilteredColumnarBatch> dataIter,
       List<Column> statsColumns)
       throws IOException {
-    ParquetFileWriter batchWriter = new ParquetFileWriter(fileIO, directoryPath, statsColumns);
+    ParquetFileWriter batchWriter =
+        ParquetFileWriter.multiFileWriter(fileIO, directoryPath, statsColumns);
     return batchWriter.write(dataIter);
   }
 
@@ -112,7 +113,12 @@ public class DefaultParquetHandler implements ParquetHandler {
 
     PositionOutputStream outputStream = fileIO.newOutputFile(filePath).create(true);
     try {
-      ParquetFileWriter fileWriter = new ParquetFileWriter(outputStream, filePath);
+      ParquetFileWriter fileWriter =
+          ParquetFileWriter.singleFileWriter(
+              fileIO,
+              filePath,
+              /* atomicWrite= */ true,
+              /* statsColumns= */ Collections.emptyList());
       fileWriter.write(data).next(); // TODO: fix this
     } finally {
       Utils.closeCloseables(outputStream, data);

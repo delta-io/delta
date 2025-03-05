@@ -22,7 +22,6 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.defaults.engine.io.FileIO;
 import io.delta.kernel.defaults.engine.io.InputFile;
-import io.delta.kernel.defaults.engine.io.SeekableInputStream;
 import io.delta.kernel.exceptions.KernelEngineException;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.util.Utils;
@@ -40,7 +39,6 @@ import org.apache.parquet.hadoop.ParquetRecordReaderWrapper;
 import org.apache.parquet.hadoop.api.InitContext;
 import org.apache.parquet.hadoop.api.ReadSupport;
 import org.apache.parquet.hadoop.metadata.ParquetMetadata;
-import org.apache.parquet.io.DelegatingSeekableInputStream;
 import org.apache.parquet.io.api.GroupConverter;
 import org.apache.parquet.io.api.RecordMaterializer;
 import org.apache.parquet.schema.MessageType;
@@ -119,29 +117,7 @@ public class ParquetFileReader {
             // pushed into the `parquet-mr` reader. For that reason read the footer
             // in advance.
             org.apache.parquet.io.InputFile parquetInputFile =
-                new org.apache.parquet.io.InputFile() {
-                  @Override
-                  public long getLength() throws IOException {
-                    return inputFile.length();
-                  }
-
-                  @Override
-                  public org.apache.parquet.io.SeekableInputStream newStream() throws IOException {
-                    // TODO: fix the closing of inputStream in case of errors
-                    SeekableInputStream inputStream = inputFile.newStream();
-                    return new DelegatingSeekableInputStream(inputStream) {
-                      @Override
-                      public long getPos() throws IOException {
-                        return inputStream.getPos();
-                      }
-
-                      @Override
-                      public void seek(long newPos) throws IOException {
-                        inputStream.seek(newPos);
-                      }
-                    };
-                  }
-                };
+                ParquetIOUtils.createParquetInputFile(inputFile);
 
             ParquetMetadata footer =
                 org.apache.parquet.hadoop.ParquetFileReader.readFooter(
