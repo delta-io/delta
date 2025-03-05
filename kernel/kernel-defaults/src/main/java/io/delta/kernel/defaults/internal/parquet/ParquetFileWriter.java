@@ -24,8 +24,8 @@ import static org.apache.parquet.hadoop.ParquetOutputFormat.*;
 
 import io.delta.kernel.Meta;
 import io.delta.kernel.data.*;
-import io.delta.kernel.defaults.engine.io.FileIO;
-import io.delta.kernel.defaults.engine.io.OutputFile;
+import io.delta.kernel.defaults.engine.fileio.FileIO;
+import io.delta.kernel.defaults.engine.fileio.OutputFile;
 import io.delta.kernel.defaults.internal.parquet.ParquetColumnWriters.ColumnWriter;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.util.Utils;

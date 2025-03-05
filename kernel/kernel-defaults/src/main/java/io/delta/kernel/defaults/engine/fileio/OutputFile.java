@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.defaults.engine.io;
+package io.delta.kernel.defaults.engine.fileio;
 
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;

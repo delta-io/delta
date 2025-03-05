@@ -27,8 +27,8 @@ import scala.collection.mutable.ArrayBuffer
 import io.delta.kernel.Table
 import io.delta.kernel.data.ColumnarBatch
 import io.delta.kernel.defaults.engine.{DefaultEngine, DefaultJsonHandler, DefaultParquetHandler}
+import io.delta.kernel.defaults.engine.fileio.FileIO
 import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO
-import io.delta.kernel.defaults.engine.io.FileIO
 import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.engine.{Engine, ExpressionHandler, FileSystemClient}
 import io.delta.kernel.expressions.Predicate

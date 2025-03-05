@@ -15,8 +15,8 @@
  */
 package io.delta.kernel.defaults.engine;
 
+import io.delta.kernel.defaults.engine.fileio.FileIO;
 import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO;
-import io.delta.kernel.defaults.engine.io.FileIO;
 import io.delta.kernel.engine.*;
 import java.util.Collections;
 import java.util.List;

@@ -17,8 +17,7 @@ package io.delta.kernel.defaults.engine;
 
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
-import io.delta.kernel.defaults.engine.io.FileIO;
-import io.delta.kernel.defaults.engine.io.PositionOutputStream;
+import io.delta.kernel.defaults.engine.fileio.FileIO;
 import io.delta.kernel.defaults.internal.parquet.ParquetFileReader;
 import io.delta.kernel.defaults.internal.parquet.ParquetFileWriter;
 import io.delta.kernel.engine.ParquetHandler;
@@ -31,7 +30,6 @@ import io.delta.kernel.utils.FileStatus;
 import io.delta.storage.LogStore;
 import java.io.IOException;
 import java.util.*;
-import org.apache.hadoop.fs.*;
 
 /** Default implementation of {@link ParquetHandler} based on Hadoop APIs. */
 public class DefaultParquetHandler implements ParquetHandler {
@@ -111,7 +109,6 @@ public class DefaultParquetHandler implements ParquetHandler {
   public void writeParquetFileAtomically(
       String filePath, CloseableIterator<FilteredColumnarBatch> data) throws IOException {
 
-    PositionOutputStream outputStream = fileIO.newOutputFile(filePath).create(true);
     try {
       ParquetFileWriter fileWriter =
           ParquetFileWriter.singleFileWriter(
@@ -121,7 +118,7 @@ public class DefaultParquetHandler implements ParquetHandler {
               /* statsColumns= */ Collections.emptyList());
       fileWriter.write(data).next(); // TODO: fix this
     } finally {
-      Utils.closeCloseables(outputStream, data);
+      Utils.closeCloseables(data);
     }
   }
 }

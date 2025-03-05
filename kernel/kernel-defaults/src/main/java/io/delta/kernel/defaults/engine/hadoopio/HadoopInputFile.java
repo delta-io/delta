@@ -15,8 +15,8 @@
  */
 package io.delta.kernel.defaults.engine.hadoopio;
 
-import io.delta.kernel.defaults.engine.io.InputFile;
-import io.delta.kernel.defaults.engine.io.SeekableInputStream;
+import io.delta.kernel.defaults.engine.fileio.InputFile;
+import io.delta.kernel.defaults.engine.fileio.SeekableInputStream;
 import java.io.IOException;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;

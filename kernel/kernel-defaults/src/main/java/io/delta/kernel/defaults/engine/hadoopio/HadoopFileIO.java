@@ -15,9 +15,9 @@
  */
 package io.delta.kernel.defaults.engine.hadoopio;
 
-import io.delta.kernel.defaults.engine.io.FileIO;
-import io.delta.kernel.defaults.engine.io.InputFile;
-import io.delta.kernel.defaults.engine.io.OutputFile;
+import io.delta.kernel.defaults.engine.fileio.FileIO;
+import io.delta.kernel.defaults.engine.fileio.InputFile;
+import io.delta.kernel.defaults.engine.fileio.OutputFile;
 import io.delta.kernel.defaults.internal.logstore.LogStoreProvider;
 import io.delta.kernel.engine.FileReadRequest;
 import io.delta.kernel.internal.util.Utils;

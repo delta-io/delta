@@ -20,8 +20,8 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.defaults.engine.io.FileIO;
-import io.delta.kernel.defaults.engine.io.InputFile;
+import io.delta.kernel.defaults.engine.fileio.FileIO;
+import io.delta.kernel.defaults.engine.fileio.InputFile;
 import io.delta.kernel.exceptions.KernelEngineException;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.util.Utils;

@@ -17,8 +17,8 @@ package io.delta.kernel.defaults.engine.hadoopio;
 
 import static java.lang.String.format;
 
-import io.delta.kernel.defaults.engine.io.OutputFile;
-import io.delta.kernel.defaults.engine.io.PositionOutputStream;
+import io.delta.kernel.defaults.engine.fileio.OutputFile;
+import io.delta.kernel.defaults.engine.fileio.PositionOutputStream;
 import io.delta.kernel.defaults.internal.logstore.LogStoreProvider;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.utils.CloseableIterator;

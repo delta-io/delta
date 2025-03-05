@@ -15,17 +15,17 @@
  */
 package io.delta.kernel.defaults.internal.parquet;
 
-import io.delta.kernel.defaults.engine.io.InputFile;
-import io.delta.kernel.defaults.engine.io.OutputFile;
-import io.delta.kernel.defaults.engine.io.PositionOutputStream;
-import io.delta.kernel.defaults.engine.io.SeekableInputStream;
+import io.delta.kernel.defaults.engine.fileio.InputFile;
+import io.delta.kernel.defaults.engine.fileio.OutputFile;
+import io.delta.kernel.defaults.engine.fileio.PositionOutputStream;
+import io.delta.kernel.defaults.engine.fileio.SeekableInputStream;
 import java.io.IOException;
 import org.apache.parquet.io.DelegatingPositionOutputStream;
 import org.apache.parquet.io.DelegatingSeekableInputStream;
 
 /**
  * Utilities related to Parquet I/O. These utilities bridge the gap between Kernel's {@link
- * io.delta.kernel.defaults.engine.io.FileIO} and the Parquet I/O classes.
+ * io.delta.kernel.defaults.engine.fileio.FileIO} and the Parquet I/O classes.
  */
 public class ParquetIOUtils {
   private ParquetIOUtils() {}

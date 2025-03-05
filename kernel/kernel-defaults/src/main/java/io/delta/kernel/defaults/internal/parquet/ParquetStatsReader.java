@@ -21,7 +21,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.function.UnaryOperator.identity;
 import static org.apache.hadoop.shaded.com.google.common.collect.ImmutableMap.toImmutableMap;
 
-import io.delta.kernel.defaults.engine.io.FileIO;
+import io.delta.kernel.defaults.engine.fileio.FileIO;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.types.*;

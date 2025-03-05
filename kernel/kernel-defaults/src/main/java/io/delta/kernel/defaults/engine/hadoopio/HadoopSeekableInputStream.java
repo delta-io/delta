@@ -15,7 +15,7 @@
  */
 package io.delta.kernel.defaults.engine.hadoopio;
 
-import io.delta.kernel.defaults.engine.io.SeekableInputStream;
+import io.delta.kernel.defaults.engine.fileio.SeekableInputStream;
 import java.util.Objects;
 import org.apache.hadoop.fs.FSDataInputStream;
 

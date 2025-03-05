@@ -22,6 +22,7 @@ import java.util.Optional
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.data.ColumnVector
+import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO
 import io.delta.kernel.defaults.utils.{DefaultVectorTestUtils, TestRow, TestUtils}
 import io.delta.kernel.internal.actions.CommitInfo
 import io.delta.kernel.internal.util.InternalUtils.singletonStringColumnVector
@@ -32,9 +33,11 @@ import org.scalatest.funsuite.AnyFunSuite
 
 class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVectorTestUtils {
 
-  val jsonHandler = new DefaultJsonHandler(new Configuration {
-    set("delta.kernel.default.json.reader.batch-size", "1")
-  })
+  val jsonHandler = new DefaultJsonHandler(
+    new HadoopFileIO(
+      new Configuration {
+        set("delta.kernel.default.json.reader.batch-size", "1")
+      }))
   val fsClient = defaultEngine.getFileSystemClient
 
   /////////////////////////////////////////////////////////////////////////////////////////////////
