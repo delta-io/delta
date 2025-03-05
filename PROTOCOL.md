@@ -1022,6 +1022,7 @@ When supported and active, writers must:
 - Block replacing partitioned tables with a differently-named partition spec
   - e.g. replacing a table partitioned by `part_a INT` with partition spec `part_b INT` must be blocked
   - e.g. replacing a table partitioned by `part_a INT` with partition spec `part_a LONG` is allowed
+- When the [Type Widening](#type-widening) table feature is supported, require that no type changes not supported by [Iceberg V2](https://iceberg.apache.org/spec/#schema-evolution) were applied on the table, based on the [Type Change Metadata](#type-change-metadata) recorded in the table schema.
 
 # Iceberg Compatibility V2
 
@@ -1048,6 +1049,7 @@ When this feature is supported and enabled, writers must:
 - Block replacing partitioned tables with a differently-named partition spec
   - e.g. replacing a table partitioned by `part_a INT` with partition spec `part_b INT` must be blocked
   - e.g. replacing a table partitioned by `part_a INT` with partition spec `part_a LONG` is allowed
+- When the [Type Widening](#type-widening) table feature is supported, require that no type changes not supported by [Iceberg V2](https://iceberg.apache.org/spec/#schema-evolution) were applied on the table, based on the [Type Change Metadata](#type-change-metadata) recorded in the table schema.
 
 ### Example of storing identifiers for nested fields in ArrayType and MapType
 The following is an example of storing the identifiers for nested fields in `ArrayType` and `MapType`, of a table with the following schema,
@@ -1500,12 +1502,22 @@ The following is an example for the definition of a column after changing the ty
 
 When Type Widening is supported (when the `writerFeatures` field of a table's `protocol` action contains `typeWidening`), then:
 - Writers must reject applying any unsupported type change.
+- Writers must reject applying type changes not supported by [Iceberg V2](https://iceberg.apache.org/spec/#schema-evolution)
+  when either the [Iceberg Compatibility V1](#iceberg-compatibility-v1) or [Iceberg Compatibility V2](#iceberg-compatibility-v2) table feature is supported:
+  - `Byte`, `Short` or `Int` -> `Double`
+  - `Date`  -> `Timestamp without timezone`
+  - Decimal scale increase
+  - `Byte`, `Short`, `Int` or `Long` -> `Decimal`
 - Writers must record type change information in the `metadata` of the nearest ancestor [StructField](#struct-field). See [Type Change Metadata](#type-change-metadata).
 - Writers must preserve the `delta.typeChanges` field in the metadata fields in the schema when the table schema is updated.
-- Writers may remove the `delta.typeChanges` metadata in the table schema if all data files use the same column and field types as the table schema. 
+- Writers may remove the `delta.typeChanges` metadata in the table schema if all data files use the same field types as the table schema.
 
 When Type Widening is enabled (when the table property `delta.enableTypeWidening` is set to `true`), then:
 - Writers should allow updating the table schema to apply a supported type change to a column, struct field, map key/value or array element.
+
+When removing the Type Widening table feature from the table, in the version that removes `typeWidening` from the `writerFeatures` and `readerFeatures` fields of the table's `protocol` action:
+- Writers must ensure no `delta.typeChanges` metadata key is present in the table schema. This may require rewriting existing data files to ensure that all data files use the same field types as the table schema in order to fulfill the requirement to remove type widening metadata.
+- Writers must ensure that the table property `delta.enableTypeWidening` is not set.
 
 ## Reader Requirements for Type Widening
 When Type Widening is supported (when the `readerFeatures` field of a table's `protocol` action contains `typeWidening`), then:
