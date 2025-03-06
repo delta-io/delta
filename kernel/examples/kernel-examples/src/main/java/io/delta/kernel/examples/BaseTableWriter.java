@@ -169,7 +169,7 @@ public class BaseTableWriter {
 
             @Override
             public boolean isNullAt(int rowId) {
-                return false;
+                return data.get(rowId) == null;
             }
 
             @Override
