@@ -18,6 +18,7 @@ package io.delta.kernel.defaults.engine.hadoopio;
 import io.delta.kernel.defaults.engine.fileio.FileIO;
 import io.delta.kernel.defaults.engine.fileio.InputFile;
 import io.delta.kernel.defaults.engine.fileio.OutputFile;
+import io.delta.kernel.defaults.engine.fileio.SeekableInputStream;
 import io.delta.kernel.defaults.internal.logstore.LogStoreProvider;
 import io.delta.kernel.engine.FileReadRequest;
 import io.delta.kernel.internal.util.Utils;
@@ -25,8 +26,8 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import io.delta.storage.LogStore;
 import java.io.ByteArrayInputStream;
-import java.io.DataInputStream;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.Objects;
 import java.util.Optional;
 import org.apache.hadoop.conf.Configuration;
@@ -88,8 +89,8 @@ public class HadoopFileIO implements FileIO {
   }
 
   @Override
-  public InputFile newInputFile(String path) throws IOException {
-    return new HadoopInputFile(FileSystem.get(hadoopConf), new Path(path));
+  public InputFile newInputFile(String path) {
+    return new HadoopInputFile(getFs(path), new Path(path));
   }
 
   @Override
@@ -99,9 +100,8 @@ public class HadoopFileIO implements FileIO {
 
   @Override
   public boolean delete(String path) throws IOException {
-    Path pathObject = new Path(path);
-    FileSystem fs = pathObject.getFileSystem(hadoopConf);
-    return fs.delete(pathObject, false);
+    FileSystem fs = getFs(path);
+    return fs.delete(new Path(path), false);
   }
 
   @Override
@@ -109,25 +109,33 @@ public class HadoopFileIO implements FileIO {
     return Optional.ofNullable(hadoopConf.get(confKey));
   }
 
-  // TODO: see if this can be avoided and instead newInputFile can be used.
   private ByteArrayInputStream getStream(String filePath, int offset, int size) {
     Path path = new Path(filePath);
     try {
-      FileSystem fs = path.getFileSystem(hadoopConf);
-      try (DataInputStream stream = fs.open(path)) {
-        stream.skipBytes(offset);
+      InputFile inputFile = new HadoopInputFile(path.getFileSystem(hadoopConf), path);
+      try (SeekableInputStream stream = inputFile.newStream()) {
+        stream.seek(offset);
         byte[] buff = new byte[size];
-        stream.readFully(buff);
+        stream.readFully(buff, 0, size);
         return new ByteArrayInputStream(buff);
       } catch (IOException ex) {
-        throw new RuntimeException(
+        throw new UncheckedIOException(
             String.format(
                 "IOException reading from file %s at offset %s size %s", filePath, offset, size),
             ex);
       }
     } catch (IOException ex) {
-      throw new RuntimeException(
+      throw new UncheckedIOException(
           String.format("Could not resolve the FileSystem for path %s", filePath), ex);
+    }
+  }
+
+  private FileSystem getFs(String path) {
+    try {
+      Path pathObject = new Path(path);
+      return pathObject.getFileSystem(hadoopConf);
+    } catch (IOException e) {
+      throw new UncheckedIOException("Could not resolve the FileSystem", e);
     }
   }
 }

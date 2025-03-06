@@ -18,6 +18,10 @@ package io.delta.kernel.defaults.engine.fileio;
 import java.io.IOException;
 import java.io.OutputStream;
 
+/**
+ * Extends {@link OutputStream} to provide the current position in the stream. This stream is used
+ * to write data into the file.
+ */
 public abstract class PositionOutputStream extends OutputStream {
   /**
    * Get the current position in the stream.

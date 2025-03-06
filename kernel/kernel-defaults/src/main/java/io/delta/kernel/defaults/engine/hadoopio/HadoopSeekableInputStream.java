@@ -16,6 +16,7 @@
 package io.delta.kernel.defaults.engine.hadoopio;
 
 import io.delta.kernel.defaults.engine.fileio.SeekableInputStream;
+import java.io.IOException;
 import java.util.Objects;
 import org.apache.hadoop.fs.FSDataInputStream;
 
@@ -64,5 +65,10 @@ public class HadoopSeekableInputStream extends SeekableInputStream {
   @Override
   public long getPos() throws java.io.IOException {
     return delegateStream.getPos();
+  }
+
+  @Override
+  public void readFully(byte[] b, int off, int len) throws IOException {
+    delegateStream.readFully(b, off, len);
   }
 }

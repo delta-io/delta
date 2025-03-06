@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.defaults.engine.fileio;
 
+import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.FileReadRequest;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
@@ -23,6 +24,12 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.Optional;
 
+/**
+ * Interface for file IO operations. Connectors can implement their own version of the {@link
+ * FileIO} depending upon their environment. The {@link DefaultEngine} takes {@link FileIO} instance
+ * as input and all I/O operations from the default engine are done using the passed in {@link
+ * FileIO} instance.
+ */
 public interface FileIO {
   /**
    * List the paths in the same directory that are lexicographically greater or equal to (UTF-8
@@ -83,16 +90,14 @@ public interface FileIO {
    *
    * @param path Fully qualified path to the file.
    * @return {@link InputFile} instance.
-   * @throws IOException for any IO error.
    */
-  InputFile newInputFile(String path) throws IOException;
+  InputFile newInputFile(String path);
 
   /**
    * Create a {@link OutputFile} to write new file at the given path.
    *
    * @param path Fully qualified path to the file.
    * @return {@link OutputFile} instance which can be used to write to the file.
-   * @throws IOException for any IO error.
    */
   OutputFile newOutputFile(String path);
 
