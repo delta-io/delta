@@ -18,6 +18,7 @@ package io.delta.kernel.internal.util;
 import static io.delta.kernel.internal.DeltaErrors.*;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
+import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.types.*;
@@ -200,6 +201,17 @@ public class SchemaUtils {
         schema, new ArrayList<>(), recurseIntoMapOrArrayElements, stopOnFirstMatch, f);
   }
 
+  /**
+   * Collects all leaf columns from the given schema (including flattened columns only for
+   * StructTypes), up to maxColumns.
+   */
+  public static List<Column> collectLeafColumns(
+      StructType schema, Set<String> excludedColumns, int maxColumns) {
+    List<Column> result = new ArrayList<>();
+    collectLeafColumnsInternal(schema, null, excludedColumns, result, maxColumns);
+    return result;
+  }
+
   /////////////////////////////////////////////////////////////////////////////////////////////////
   /// Private methods                                                                           ///
   /////////////////////////////////////////////////////////////////////////////////////////////////
@@ -301,6 +313,37 @@ public class SchemaUtils {
 
   private static String escapeDots(String name) {
     return name.contains(".") ? "`" + name + "`" : name;
+  }
+
+  private static void collectLeafColumnsInternal(
+      StructType schema,
+      Column parentColumn,
+      Set<String> excludedColumns,
+      List<Column> result,
+      int maxColumns) {
+    for (StructField field : schema.fields()) {
+      if (result.size() >= maxColumns) {
+        return;
+      }
+
+      Column currentColumn = null;
+      if (parentColumn == null) {
+        // Skip excluded top-level columns
+        if (excludedColumns.contains(field.getName())) {
+          continue;
+        }
+        currentColumn = new Column(field.getName());
+      } else {
+        currentColumn = parentColumn.appendNestedField(field.getName());
+      }
+
+      if (field.getDataType() instanceof StructType) {
+        collectLeafColumnsInternal(
+            (StructType) field.getDataType(), currentColumn, excludedColumns, result, maxColumns);
+      } else {
+        result.add(currentColumn);
+      }
+    }
   }
 
   protected static void validParquetColumnNames(List<String> columnNames) {

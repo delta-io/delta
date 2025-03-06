@@ -241,6 +241,16 @@ public class TableConfig<T> {
           "needs to be a boolean.",
           true);
 
+  /** This table property is the number of indexed columns for data skipping. */
+  public static final TableConfig<Integer> DATA_SKIPPING_NUM_INDEXED_COLS =
+      new TableConfig<>(
+          "delta.dataSkippingNumIndexedCols",
+          "32",
+          Integer::valueOf,
+          value -> value > 0,
+          "needs to be a positive integer.",
+          true);
+
   /** All the valid properties that can be set on the table. */
   private static final Map<String, TableConfig<?>> VALID_PROPERTIES =
       Collections.unmodifiableMap(
@@ -265,6 +275,7 @@ public class TableConfig<T> {
               addConfig(this, COLUMN_MAPPING_MODE);
               addConfig(this, ICEBERG_COMPAT_V2_ENABLED);
               addConfig(this, COLUMN_MAPPING_MAX_COLUMN_ID);
+              addConfig(this, DATA_SKIPPING_NUM_INDEXED_COLS);
             }
           });
 

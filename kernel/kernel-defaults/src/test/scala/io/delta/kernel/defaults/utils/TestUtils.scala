@@ -27,12 +27,12 @@ import io.delta.golden.GoldenTableUtils
 import io.delta.kernel.{Scan, Snapshot, Table}
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch, MapValue, Row}
 import io.delta.kernel.defaults.engine.DefaultEngine
-import io.delta.kernel.defaults.internal.data.vector.DefaultGenericVector
+import io.delta.kernel.defaults.internal.data.vector.{DefaultGenericVector, DefaultStructVector}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.{Column, Predicate}
 import io.delta.kernel.internal.InternalScanFileUtils
 import io.delta.kernel.internal.data.ScanStateRow
-import io.delta.kernel.internal.util.{ColumnMapping, Utils}
+import io.delta.kernel.internal.util.Utils
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.types._
 import io.delta.kernel.utils.CloseableIterator
@@ -551,41 +551,60 @@ trait TestUtils extends Assertions with SQLHelper {
    * The row values are determined by [[testColumnValue(dataType, rowId)]].
    */
   def testColumnVector(size: Int, dataType: DataType): ColumnVector = {
-    new ColumnVector {
-      override def getDataType: DataType = dataType
+    dataType match {
+      // Build a DefaultStructVector and recursively
+      // build child vectors for each field.
+      case structType: StructType =>
+        val memberVectors: Array[ColumnVector] =
+          structType.fields().asScala.map { field =>
+            testColumnVector(size, field.getDataType)
+          }.toArray
 
-      override def getSize: Int = size
+        new DefaultStructVector(
+          size,
+          structType,
+          Optional.empty(),
+          memberVectors)
 
-      override def close(): Unit = {}
+      case _ =>
+        new ColumnVector {
+          override def getDataType: DataType = dataType
 
-      override def isNullAt(rowId: Int): Boolean = testIsNullValue(dataType, rowId)
+          override def getSize: Int = size
 
-      override def getBoolean(rowId: Int): Boolean =
-        testColumnValue(dataType, rowId).asInstanceOf[Boolean]
+          override def close(): Unit = {}
 
-      override def getByte(rowId: Int): Byte = testColumnValue(dataType, rowId).asInstanceOf[Byte]
+          override def isNullAt(rowId: Int): Boolean = testIsNullValue(dataType, rowId)
 
-      override def getShort(rowId: Int): Short =
-        testColumnValue(dataType, rowId).asInstanceOf[Short]
+          override def getBoolean(rowId: Int): Boolean =
+            testColumnValue(dataType, rowId).asInstanceOf[Boolean]
 
-      override def getInt(rowId: Int): Int = testColumnValue(dataType, rowId).asInstanceOf[Int]
+          override def getByte(rowId: Int): Byte =
+            testColumnValue(dataType, rowId).asInstanceOf[Byte]
 
-      override def getLong(rowId: Int): Long = testColumnValue(dataType, rowId).asInstanceOf[Long]
+          override def getShort(rowId: Int): Short =
+            testColumnValue(dataType, rowId).asInstanceOf[Short]
 
-      override def getFloat(rowId: Int): Float =
-        testColumnValue(dataType, rowId).asInstanceOf[Float]
+          override def getInt(rowId: Int): Int = testColumnValue(dataType, rowId).asInstanceOf[Int]
 
-      override def getDouble(rowId: Int): Double =
-        testColumnValue(dataType, rowId).asInstanceOf[Double]
+          override def getLong(rowId: Int): Long =
+            testColumnValue(dataType, rowId).asInstanceOf[Long]
 
-      override def getBinary(rowId: Int): Array[Byte] =
-        testColumnValue(dataType, rowId).asInstanceOf[Array[Byte]]
+          override def getFloat(rowId: Int): Float =
+            testColumnValue(dataType, rowId).asInstanceOf[Float]
 
-      override def getString(rowId: Int): String =
-        testColumnValue(dataType, rowId).asInstanceOf[String]
+          override def getDouble(rowId: Int): Double =
+            testColumnValue(dataType, rowId).asInstanceOf[Double]
 
-      override def getDecimal(rowId: Int): BigDecimalJ =
-        testColumnValue(dataType, rowId).asInstanceOf[BigDecimalJ]
+          override def getBinary(rowId: Int): Array[Byte] =
+            testColumnValue(dataType, rowId).asInstanceOf[Array[Byte]]
+
+          override def getString(rowId: Int): String =
+            testColumnValue(dataType, rowId).asInstanceOf[String]
+
+          override def getDecimal(rowId: Int): BigDecimalJ =
+            testColumnValue(dataType, rowId).asInstanceOf[BigDecimalJ]
+        }
     }
   }
 

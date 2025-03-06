@@ -24,6 +24,7 @@ import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel._
 import io.delta.kernel.Operation.{CREATE_TABLE, WRITE}
 import io.delta.kernel.data.{ColumnarBatch, FilteredColumnarBatch, Row}
+import io.delta.kernel.defaults.internal.json.JsonUtils
 import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
 import io.delta.kernel.defaults.utils.TestRow
 import io.delta.kernel.engine.Engine
@@ -31,7 +32,7 @@ import io.delta.kernel.exceptions._
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
-import io.delta.kernel.internal.{SnapshotImpl, TableConfig}
+import io.delta.kernel.internal.{ScanImpl, SnapshotImpl, TableConfig}
 import io.delta.kernel.internal.checkpoints.CheckpointerSuite.selectSingleElement
 import io.delta.kernel.internal.util.ColumnMapping
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
@@ -44,6 +45,8 @@ import io.delta.kernel.types.TimestampNTZType.TIMESTAMP_NTZ
 import io.delta.kernel.types.TimestampType.TIMESTAMP
 import io.delta.kernel.utils.CloseableIterable
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
+
+import com.fasterxml.jackson.databind.ObjectMapper
 
 /** Transaction commit in this suite IS REQUIRED TO use commitTransaction than .commit */
 class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
@@ -908,6 +911,108 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       addDataWithTxnId(newTbl = false, "txnAppId1", txnVer = 10, expTblVer = 5)
       // Now try to commit the previous transaction (txnAppId2, 3) - should pass
       commitAndVerify(newTbl = false, txn2, combinedActions2, expTblVer = 6)
+    }
+  }
+
+  test("insert into table - write stats and validate they can be read by Spark ") {
+    withTempDirAndEngine { (tblPath, engine) =>
+      // TODO: re-enable when CRC_FULL post commit hook is added, txn2 requires CRC_FULL
+      assume(this.suiteName != ("DeltaTableWriteWithCrcSuite"))
+
+      // Configure the table property for stats collection via TableConfig.
+      val numIndexedCols = 5
+      val tableProperties = Map(TableConfig.
+      DATA_SKIPPING_NUM_INDEXED_COLS.getKey -> numIndexedCols.toString)
+
+      // Schema of the table with some nested types
+      val schema = new StructType()
+        .add("id", INTEGER)
+        .add("name", STRING)
+        .add("height", DOUBLE)
+        .add("timestamp", TIMESTAMP)
+        .add(
+          "metrics",
+          new StructType()
+            .add("temperature", DoubleType.DOUBLE)
+            .add("humidity", FloatType.FLOAT))
+
+      // Create the table with the given schema and table properties.
+      val txn = createTxn(
+        engine,
+        tblPath,
+        isNewTable = true,
+        schema,
+        partCols = Seq.empty,
+        tableProperties = tableProperties)
+      txn.commit(engine, emptyIterable())
+
+      val dataBatches1 = generateData(schema, Seq.empty, Map.empty, batchSize = 10, numBatches = 1)
+      val dataBatches2 = generateData(schema, Seq.empty, Map.empty, batchSize = 20, numBatches = 1)
+
+      // Write initial data via Kernel.
+      val commitResult0 = appendData(
+        engine,
+        tblPath,
+        data = Seq(Map.empty[String, Literal] -> dataBatches1))
+      verifyCommitResult(commitResult0, expVersion = 1, expIsReadyForCheckpoint = false)
+      verifyWrittenContent(tblPath, schema, dataBatches1.flatMap(_.getRows().toSeq).map(TestRow(_)))
+
+      // Append additional data.
+      val commitResult1 = appendData(
+        engine,
+        tblPath,
+        data = Seq(Map.empty[String, Literal] -> dataBatches2))
+      val expectedRows = dataBatches1.flatMap(_.getRows().toSeq) ++
+        dataBatches2.flatMap(_.getRows().toSeq)
+      verifyCommitResult(commitResult1, expVersion = 2, expIsReadyForCheckpoint = false)
+      verifyWrittenContent(tblPath, schema, expectedRows.map(TestRow(_)))
+    }
+  }
+
+  test("insert - validate DATA_SKIPPING_NUM_INDEXED_COLS is respected when collecting stats") {
+    withTempDirAndEngine { (tblPath, engine) =>
+      val numIndexedCols = 2
+      val tableProps = Map(TableConfig.DATA_SKIPPING_NUM_INDEXED_COLS
+        .getKey -> numIndexedCols.toString)
+      val schema = new StructType()
+        .add("id", INTEGER)
+        .add(
+          "name",
+          new StructType()
+            .add("height", DoubleType.DOUBLE)
+            .add("timestamp", TimestampType.TIMESTAMP))
+
+      // Create table with stats collection enabled.
+      val txn = createTxn(engine, tblPath, isNewTable = true, schema, Seq.empty, tableProps)
+      txn.commit(engine, emptyIterable())
+
+      // Write one batch of data.
+      val dataBatches = generateData(schema, Seq.empty, Map.empty, batchSize = 10, numBatches = 1)
+      val commitResult =
+        appendData(engine, tblPath, data = Seq(Map.empty[String, Literal] -> dataBatches))
+      verifyCommitResult(commitResult, expVersion = 1, expIsReadyForCheckpoint = false)
+
+      // Retrieve the stats JSON from the file.
+      val snapshot = Table.forPath(engine, tblPath).getLatestSnapshot(engine)
+      val scan = snapshot.getScanBuilder().build()
+      val scanFiles = scan.asInstanceOf[ScanImpl].getScanFiles(engine, true)
+        .toSeq.flatMap(_.getRows.toSeq)
+      val statsJson = scanFiles.headOption.flatMap { row =>
+        val addFile = row.getStruct(row.getSchema.indexOf("add"))
+        val statsIdx = addFile.getSchema.indexOf("stats")
+        if (statsIdx >= 0 && !addFile.isNullAt(statsIdx)) {
+          Some(addFile.getString(statsIdx))
+        } else {
+          None
+        }
+      }.getOrElse(fail("Stats JSON not found"))
+
+      // With numIndexedCols = 2, we expect stats for id and name.height, but not for name.timestamp
+      assert(statsJson.contains("\"id\""), "Stats should contain 'id' field")
+      assert(statsJson.contains("\"height\""), "Stats should contain 'height' field")
+      assert(
+        !statsJson.contains("\"timestamp\""),
+        "Stats should not contain 'timestamp' field, as it exceeds numIndexedCols")
     }
   }
 
