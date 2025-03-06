@@ -125,7 +125,9 @@ trait SnapshotManagement { self: DeltaLog =>
       includeMinorCompactions: Boolean
   ): (Option[Array[(FileStatus, FileType.Value, Long)]], Option[FileStatus]) = {
     var latestAvailableChecksumFileStatus = Option.empty[FileStatus]
-    val files = listFromOrNone(startVersion).map {
+    val filesIter = listFromOrNone(startVersion)
+    val files =
+      filesIter.map {
       _.flatMap {
         case DeltaFile(f, fileVersion) =>
           Some((f, FileType.DELTA, fileVersion))
