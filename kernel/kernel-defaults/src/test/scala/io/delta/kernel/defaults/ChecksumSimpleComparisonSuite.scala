@@ -29,7 +29,7 @@ import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction
 import io.delta.kernel.internal.TableImpl
-import io.delta.kernel.internal.actions.{AddFile, SingleAction}
+import io.delta.kernel.internal.actions.{AddFile, Metadata, SingleAction}
 import io.delta.kernel.internal.checksum.{ChecksumReader, CRCInfo}
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.FileNames
@@ -101,11 +101,26 @@ class ChecksumSimpleComparisonSuite extends DeltaTableWriteSuiteBase with TestUt
     }
   }
 
+  implicit class MetadataOpt(private val metadata: Metadata) {
+    def withDeterministicIdAndCreateTime: Metadata = {
+      new Metadata(
+        "id",
+        metadata.getName,
+        metadata.getDescription,
+        metadata.getFormat,
+        metadata.getSchemaString,
+        metadata.getSchema,
+        metadata.getPartitionColumns,
+        Optional.empty(),
+        metadata.getConfigurationMapValue)
+    }
+  }
+
   implicit class CrcInfoOpt(private val crcInfo: CRCInfo) {
-    def copyWithoutTxnId(): CRCInfo = {
+    def withoutTransactionId: CRCInfo = {
       new CRCInfo(
         crcInfo.getVersion,
-        crcInfo.getMetadata,
+        crcInfo.getMetadata.withDeterministicIdAndCreateTime,
         crcInfo.getProtocol,
         crcInfo.getTableSizeBytes,
         crcInfo.getNumFiles,
@@ -128,7 +143,7 @@ class ChecksumSimpleComparisonSuite extends DeltaTableWriteSuiteBase with TestUt
     val sparkCrc = readCrcInfo(engine, sparkTablePath, version)
     val kernelCrc = readCrcInfo(engine, kernelTablePath, version)
     // Remove the randomly generated TxnId
-    assert(sparkCrc.copyWithoutTxnId() === kernelCrc.copyWithoutTxnId())
+    assert(sparkCrc.withoutTransactionId === kernelCrc.withoutTransactionId)
   }
 
   private def readCrcInfo(engine: Engine, path: String, version: Long): CRCInfo = {
