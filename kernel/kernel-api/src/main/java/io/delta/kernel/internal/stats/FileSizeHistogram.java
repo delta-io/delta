@@ -28,10 +28,9 @@ public class FileSizeHistogram {
 
   private static final List<Long> DEFAULT_BIN_BOUNDARIES = createDefaultBinBoundaries();
 
-  // TODO: Add final after ToRow() implemented.
-  final List<Long> sortedBinBoundaries;
-  final Long[] fileCounts;
-  final Long[] totalBytes;
+  private final List<Long> sortedBinBoundaries;
+  private final Long[] fileCounts;
+  private final Long[] totalBytes;
 
   // A sorted array of bin boundaries where each element represents the start of a bin (inclusive)
   // and the next element represents the end of the bin (exclusive). The first element must be 0.
