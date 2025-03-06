@@ -85,4 +85,18 @@ public class Format {
   public String toString() {
     return "Format{" + "provider='" + provider + '\'' + ", options=" + options + '}';
   }
+
+  @Override
+  public boolean equals(Object o) {
+    if (o == null || getClass() != o.getClass()) {
+      return false;
+    }
+    Format format = (Format) o;
+    return provider.equals(format.provider) && options.equals(format.options);
+  }
+
+  @Override
+  public int hashCode() {
+    return Objects.hash(provider, options);
+  }
 }
