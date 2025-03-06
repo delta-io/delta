@@ -142,7 +142,11 @@ public class ParquetFileReader {
                     .build();
 
             // Pass the already read footer to the reader to avoid reading it again.
-            fileReader = new ParquetFileReaderWithFooter(parquetInputFile, readOptions, footer);
+            // TODO: We can avoid reading the footer again if we can pass the footer, but there is
+            // no
+            // API to do that in the current version of parquet-mr which takes InputFile as input.
+            fileReader =
+                org.apache.parquet.hadoop.ParquetFileReader.open(parquetInputFile, readOptions);
             reader = new ParquetRecordReaderWrapper<>(readSupport);
             reader.initialize(fileReader, readOptions);
           } catch (IOException e) {
@@ -239,30 +243,6 @@ public class ParquetFileReader {
      */
     public void finalizeCurrentRow(long fileRowIndex) {
       rowRecordGroupConverter.finalizeCurrentRow(fileRowIndex);
-    }
-  }
-
-  /**
-   * Wrapper around {@link org.apache.parquet.hadoop.ParquetFileReader} to allow using the provided
-   * footer instead of reading it again. We read the footer in advance to construct a predicate for
-   * filtering rows.
-   */
-  private static class ParquetFileReaderWithFooter
-      extends org.apache.parquet.hadoop.ParquetFileReader {
-    private final ParquetMetadata footer;
-
-    ParquetFileReaderWithFooter(
-        org.apache.parquet.io.InputFile inputFile,
-        ParquetReadOptions readOptions,
-        ParquetMetadata footer)
-        throws IOException {
-      super(inputFile, readOptions);
-      this.footer = requireNonNull(footer, "footer is null");
-    }
-
-    @Override
-    public ParquetMetadata getFooter() {
-      return footer; // return the footer passed in the constructor
     }
   }
 }

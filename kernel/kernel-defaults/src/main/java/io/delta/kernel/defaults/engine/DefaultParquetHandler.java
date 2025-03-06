@@ -29,6 +29,7 @@ import io.delta.kernel.utils.*;
 import io.delta.kernel.utils.FileStatus;
 import io.delta.storage.LogStore;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.*;
 
 /** Default implementation of {@link ParquetHandler} based on Hadoop APIs. */
@@ -117,6 +118,8 @@ public class DefaultParquetHandler implements ParquetHandler {
               /* atomicWrite= */ true,
               /* statsColumns= */ Collections.emptyList());
       fileWriter.write(data).next(); // TODO: fix this
+    } catch (UncheckedIOException e) {
+      throw e.getCause();
     } finally {
       Utils.closeCloseables(data);
     }
