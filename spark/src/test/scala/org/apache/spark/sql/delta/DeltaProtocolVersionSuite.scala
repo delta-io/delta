@@ -4174,7 +4174,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           spark.sql(s"CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta")
           val deltaLog = DeltaLog.forTable(spark, dir)
 
-          val redirectSpec = new PathBasedRedirectSpec("targetPath")
+          val redirectSpec = new PathBasedRedirectSpec("sourcePath", "targetPath")
           tableRedirect.add(
             deltaLog,
             catalogTableOpt = None,
