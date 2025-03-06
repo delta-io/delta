@@ -36,6 +36,7 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.{ThreadUtils, Utils}
 
@@ -156,7 +157,8 @@ trait CommitCoordinatorClientImplSuiteBase extends QueryTest
   protected def commit(
       version: Long,
       timestamp: Long,
-      tableCommitCoordinatorClient: TableCommitCoordinatorClient): JCommit = {
+      tableCommitCoordinatorClient: TableCommitCoordinatorClient,
+      tableIdentifier: Option[TableIdentifier] = None): JCommit = {
     val commitInfo = CommitInfo.empty(version = Some(version)).withTimestamp(timestamp)
       .copy(inCommitTimestamp = Some(timestamp))
     val updatedActions = if (version == 0) {
@@ -167,7 +169,8 @@ trait CommitCoordinatorClientImplSuiteBase extends QueryTest
     tableCommitCoordinatorClient.commit(
       version,
       Iterator(commitInfo.json),
-      updatedActions).getCommit
+      updatedActions,
+      tableIdentifier).getCommit
   }
 
   protected def assertBackfilled(

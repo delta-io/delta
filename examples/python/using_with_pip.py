@@ -25,7 +25,11 @@ builder = SparkSession.builder \
     .appName("with-pip") \
     .master("local[*]") \
     .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
-    .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+    .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
+    .config("spark.jars.repositories", \
+        ("https://maven-central.storage-download.googleapis.com/maven2/,"
+            "https://repo1.maven.org/maven2/")\
+    )
 
 # This is only for testing staged release artifacts. Ignore this completely.
 if os.getenv('EXTRA_MAVEN_REPO'):
