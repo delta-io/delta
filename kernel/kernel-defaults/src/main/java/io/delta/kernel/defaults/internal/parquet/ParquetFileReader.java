@@ -135,16 +135,18 @@ public class ParquetFileReader {
             ParquetReadOptions readOptions =
                 ParquetReadOptions.builder()
                     .useRecordFilter(false)
+                    .useStatsFilter(true) // only enable the row group level filtering
+                    .useBloomFilter(false)
                     .useDictionaryFilter(false)
-                    .useStatsFilter(false)
+                    .useColumnIndexFilter(false)
                     .withRecordFilter(
                         parquetPredicate.map(FilterCompat::get).orElse(FilterCompat.NOOP))
                     .build();
 
             // Pass the already read footer to the reader to avoid reading it again.
             // TODO: We can avoid reading the footer again if we can pass the footer, but there is
-            // no
-            // API to do that in the current version of parquet-mr which takes InputFile as input.
+            // no API to do that in the current version of parquet-mr which takes InputFile
+            // as input.
             fileReader =
                 org.apache.parquet.hadoop.ParquetFileReader.open(parquetInputFile, readOptions);
             reader = new ParquetRecordReaderWrapper<>(readSupport);
