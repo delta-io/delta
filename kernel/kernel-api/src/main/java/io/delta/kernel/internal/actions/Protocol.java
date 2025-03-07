@@ -45,6 +45,25 @@ public class Protocol {
   /// Public static variables and methods                                                       ///
   /////////////////////////////////////////////////////////////////////////////////////////////////
 
+  /**
+   * Helper method to get the Protocol from the row representation.
+   *
+   * @param row Row representation of the Protocol.
+   * @return the Protocol object
+   */
+  public static Protocol fromRow(Row row) {
+    requireNonNull(row);
+    Set<String> readerFeatures =
+        row.isNullAt(2)
+            ? Collections.emptySet()
+            : Collections.unmodifiableSet(new HashSet<>(VectorUtils.toJavaList(row.getArray(2))));
+    Set<String> writerFeatures =
+        row.isNullAt(3)
+            ? Collections.emptySet()
+            : Collections.unmodifiableSet(new HashSet<>(VectorUtils.toJavaList(row.getArray(3))));
+    return new Protocol(row.getInt(0), row.getInt(1), readerFeatures, writerFeatures);
+  }
+
   public static Protocol fromColumnVector(ColumnVector vector, int rowId) {
     if (vector.isNullAt(rowId)) {
       return null;
