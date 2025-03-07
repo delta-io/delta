@@ -39,132 +39,125 @@ public class FileSizeHistogram {
   private static final long MB = KB * 1024;
   private static final long GB = MB * 1024;
 
-  private static final List<Long> DEFAULT_BIN_BOUNDARIES = createDefaultBinBoundaries();
-
   public static final StructType FULL_SCHEMA =
       new StructType()
           .add("sortedBinBoundaries", new ArrayType(LongType.LONG, false))
           .add("fileCounts", new ArrayType(LongType.LONG, false))
           .add("totalBytes", new ArrayType(LongType.LONG, false));
 
-  /**
-   * Creates default bin boundaries as specified by the Delta Lake specification. The boundaries
-   * are: - 0 and powers of 2 till 4 MB - 4 MB jumps till 40 MB - 8 MB jumps till 120 MB - 4 MB
-   * jumps till 144 MB - 16 MB jumps till 576 MB - 64 MB jumps till 1408 MB - 128 MB jumps till 2 GB
-   * - 256 MB jumps till 4 GB - power of 2 till 256 GB
-   */
-  private static List<Long> createDefaultBinBoundaries() {
-    List<Long> sizes = new ArrayList<>();
+  public static FileSizeHistogram createDefaultHistogram() {
+    long[] defaultBoundaries = createDefaultBinBoundaries();
+    long[] zeroCounts = new long[defaultBoundaries.length];
+    long[] zeroBytes = new long[defaultBoundaries.length];
+    return new FileSizeHistogram(defaultBoundaries, zeroCounts, zeroBytes);
+  }
+
+  private static long[] createDefaultBinBoundaries() {
+    // Pre-calculate the size to avoid resizing
+    int totalSize = 95; // Known size from all the boundaries
+    long[] boundaries = new long[totalSize];
+    int idx = 0;
 
     // 0 and powers of 2 till 4 MB
-    sizes.add(0L);
+    boundaries[idx++] = 0L;
     for (long size = 8 * KB; size <= 4 * MB; size *= 2) {
-      sizes.add(size);
+      boundaries[idx++] = size;
     }
 
     // 4 MB jumps till 40 MB
     for (long size = 8 * MB; size <= 40 * MB; size += 4 * MB) {
-      sizes.add(size);
+      boundaries[idx++] = size;
     }
 
     // 8 MB jumps till 120 MB
     for (long size = 48 * MB; size <= 120 * MB; size += 8 * MB) {
-      sizes.add(size);
+      boundaries[idx++] = size;
     }
 
     // 4 MB jumps till 144 MB
     for (long size = 124 * MB; size <= 144 * MB; size += 4 * MB) {
-      sizes.add(size);
+      boundaries[idx++] = size;
     }
 
     // 16 MB jumps till 576 MB
     for (long size = 160 * MB; size <= 576 * MB; size += 16 * MB) {
-      sizes.add(size);
+      boundaries[idx++] = size;
     }
 
     // 64 MB jumps till 1408 MB
     for (long size = 640 * MB; size <= 1408 * MB; size += 64 * MB) {
-      sizes.add(size);
+      boundaries[idx++] = size;
     }
 
     // 128 MB jumps till 2 GB
     for (long size = 1536 * MB; size <= 2048 * MB; size += 128 * MB) {
-      sizes.add(size);
+      boundaries[idx++] = size;
     }
 
     // 256 MB jumps till 4 GB
     for (long size = 2304 * MB; size <= 4096 * MB; size += 256 * MB) {
-      sizes.add(size);
+      boundaries[idx++] = size;
     }
 
     // Power of 2 till 256 GB
     for (long size = 8 * GB; size <= 256 * GB; size *= 2) {
-      sizes.add(size);
+      boundaries[idx++] = size;
     }
 
-    return sizes;
-  }
-
-  public static FileSizeHistogram createDefaultHistogram() {
-    return new FileSizeHistogram(
-        DEFAULT_BIN_BOUNDARIES,
-        initializeZeroArray(DEFAULT_BIN_BOUNDARIES.size()),
-        initializeZeroArray(DEFAULT_BIN_BOUNDARIES.size()));
+    checkArgument(
+        idx == totalSize, "Incorrect pre-calculated size. Expected %s but got %s", totalSize, idx);
+    return boundaries;
   }
 
   public static Optional<FileSizeHistogram> fromColumnVector(ColumnVector vector, int rowId) {
     if (vector.isNullAt(rowId)) {
       return Optional.empty();
     }
-    List<Long> sortedBinBoundaries =
-        VectorUtils.toJavaList(
-            vector.getChild(FULL_SCHEMA.indexOf("sortedBinBoundaries")).getArray(rowId));
-    Long[] totalBytes =
-        VectorUtils.toJavaList(vector.getChild(FULL_SCHEMA.indexOf("totalBytes")).getArray(rowId))
-            .toArray(new Long[sortedBinBoundaries.size()]);
-    Long[] fileCounts =
-        VectorUtils.toJavaList(vector.getChild(FULL_SCHEMA.indexOf("fileCounts")).getArray(rowId))
-            .toArray(new Long[sortedBinBoundaries.size()]);
-    return Optional.of(new FileSizeHistogram(sortedBinBoundaries, fileCounts, totalBytes));
-  }
 
-  private static Long[] initializeZeroArray(int size) {
-    Long[] array = new Long[size];
-    Arrays.fill(array, 0L);
-    return array;
+    int boundariesIdx = FULL_SCHEMA.indexOf("sortedBinBoundaries");
+    int totalBytesIdx = FULL_SCHEMA.indexOf("totalBytes");
+    int fileCountsIdx = FULL_SCHEMA.indexOf("fileCounts");
+
+    List<Long> boundariesList =
+        VectorUtils.toJavaList(vector.getChild(boundariesIdx).getArray(rowId));
+    List<Long> totalBytesList =
+        VectorUtils.toJavaList(vector.getChild(totalBytesIdx).getArray(rowId));
+    List<Long> fileCountsList =
+        VectorUtils.toJavaList(vector.getChild(fileCountsIdx).getArray(rowId));
+
+    long[] boundaries = boundariesList.stream().mapToLong(Long::longValue).toArray();
+    long[] totalBytesArray = totalBytesList.stream().mapToLong(Long::longValue).toArray();
+    long[] fileCountsArray = fileCountsList.stream().mapToLong(Long::longValue).toArray();
+
+    return Optional.of(new FileSizeHistogram(boundaries, fileCountsArray, totalBytesArray));
   }
 
   ////////////////////////////////////
   // Member variables and methods  //
   ////////////////////////////////////
 
-  private final List<Long> sortedBinBoundaries;
-  private final Long[] fileCounts;
-  private final Long[] totalBytes;
+  private final long[] sortedBinBoundaries;
+  private final long[] fileCounts;
+  private final long[] totalBytes;
 
-  /**
-   * Creates a histogram with custom boundaries and initial counts.
-   *
-   * @param sortedBinBoundaries List of boundary values in ascending order
-   * @param fileCounts Array of file counts for each bin
-   * @param totalBytes Array of total bytes for each bin
-   * @throws IllegalArgumentException if arrays have different lengths
-   */
-  private FileSizeHistogram(List<Long> sortedBinBoundaries, Long[] fileCounts, Long[] totalBytes) {
-    this.sortedBinBoundaries =
-        new ArrayList<>(requireNonNull(sortedBinBoundaries, "sortedBinBoundaries cannot be null"));
-    this.fileCounts =
-        Arrays.copyOf(requireNonNull(fileCounts, "fileCounts cannot be null"), fileCounts.length);
-    this.totalBytes =
-        Arrays.copyOf(requireNonNull(totalBytes, "totalBytes cannot be null"), totalBytes.length);
+  private FileSizeHistogram(long[] sortedBinBoundaries, long[] fileCounts, long[] totalBytes) {
+    requireNonNull(sortedBinBoundaries, "sortedBinBoundaries cannot be null");
+    requireNonNull(fileCounts, "fileCounts cannot be null");
+    requireNonNull(totalBytes, "totalBytes cannot be null");
 
-    checkArgument(sortedBinBoundaries.size() >= 2,
-            "sortedBinBoundaries must have at least 2 elements to define a range");
-    checkArgument(sortedBinBoundaries.get(0) == 0,
-            "First boundary must be 0, got %s", sortedBinBoundaries.get(0));
-    checkArgument(sortedBinBoundaries.size() == fileCounts.length
-                    && sortedBinBoundaries.size() == totalBytes.length,
-            "All arrays must have the same length");
+    checkArgument(
+        sortedBinBoundaries.length >= 2,
+        "sortedBinBoundaries must have at least 2 elements to define a range");
+    checkArgument(
+        sortedBinBoundaries[0] == 0, "First boundary must be 0, got %s", sortedBinBoundaries[0]);
+    checkArgument(
+        sortedBinBoundaries.length == fileCounts.length
+            && sortedBinBoundaries.length == totalBytes.length,
+        "All arrays must have the same length");
+
+    this.sortedBinBoundaries = sortedBinBoundaries;
+    this.fileCounts = fileCounts;
+    this.totalBytes = totalBytes;
   }
 
   /**
@@ -176,8 +169,10 @@ public class FileSizeHistogram {
   public void insert(long fileSize) {
     checkArgument(fileSize >= 0, "File size must be non-negative, got %s", fileSize);
     int index = getBinIndex(fileSize);
-    checkArgument(index >= 0,
-            "getBinIndex must return non-negative index for non-negative fileSize, got %s", index);
+    checkArgument(
+        index >= 0,
+        "getBinIndex must return non-negative index for non-negative fileSize, got %s",
+        index);
     fileCounts[index]++;
     totalBytes[index] += fileSize;
   }
@@ -192,16 +187,23 @@ public class FileSizeHistogram {
   public void remove(long fileSize) {
     checkArgument(fileSize >= 0, "File size must be non-negative, got %s", fileSize);
     int index = getBinIndex(fileSize);
-    checkArgument(index >= 0,
-            "getBinIndex must return non-negative index for non-negative fileSize, got %s", index);
     checkArgument(
-            totalBytes[index] >= fileSize,
-            "Cannot remove %s bytes from bin %d which only has %s bytes",
-            fileSize,
-            index,
-            totalBytes[index]);
+        index >= 0,
+        "getBinIndex must return non-negative index for non-negative fileSize, got %s",
+        index);
+    checkArgument(
+        totalBytes[index] >= fileSize,
+        "Cannot remove %s bytes from bin %d which only has %s bytes",
+        fileSize,
+        index,
+        totalBytes[index]);
     fileCounts[index]--;
     totalBytes[index] -= fileSize;
+  }
+
+  private int getBinIndex(long fileSize) {
+    int index = Arrays.binarySearch(sortedBinBoundaries, fileSize);
+    return index >= 0 ? index : -(index + 1) - 1;
   }
 
   /**
@@ -213,24 +215,27 @@ public class FileSizeHistogram {
     Map<Integer, Object> value = new HashMap<>();
     value.put(
         FULL_SCHEMA.indexOf("sortedBinBoundaries"),
-        VectorUtils.buildArrayValue(sortedBinBoundaries, LongType.LONG));
+        VectorUtils.buildArrayValue(
+            Arrays.stream(sortedBinBoundaries).boxed().collect(Collectors.toList()),
+            LongType.LONG));
     value.put(
         FULL_SCHEMA.indexOf("fileCounts"),
         VectorUtils.buildArrayValue(
-            Arrays.stream(fileCounts).collect(Collectors.toList()), LongType.LONG));
+            Arrays.stream(fileCounts).boxed().collect(Collectors.toList()), LongType.LONG));
     value.put(
         FULL_SCHEMA.indexOf("totalBytes"),
         VectorUtils.buildArrayValue(
-            Arrays.stream(totalBytes).collect(Collectors.toList()), LongType.LONG));
+            Arrays.stream(totalBytes).boxed().collect(Collectors.toList()), LongType.LONG));
     return new GenericRow(FULL_SCHEMA, value);
   }
 
   @Override
   public boolean equals(Object o) {
+    if (this == o) return true;
     if (o == null || getClass() != o.getClass()) return false;
 
     FileSizeHistogram that = (FileSizeHistogram) o;
-    return sortedBinBoundaries.equals(that.sortedBinBoundaries)
+    return Arrays.equals(sortedBinBoundaries, that.sortedBinBoundaries)
         && Arrays.equals(fileCounts, that.fileCounts)
         && Arrays.equals(totalBytes, that.totalBytes);
   }
@@ -238,11 +243,8 @@ public class FileSizeHistogram {
   @Override
   public int hashCode() {
     return Objects.hash(
-        sortedBinBoundaries, Arrays.hashCode(fileCounts), Arrays.hashCode(totalBytes));
-  }
-
-  private int getBinIndex(long fileSize) {
-    int searchResult = Collections.binarySearch(sortedBinBoundaries, fileSize);
-    return searchResult >= 0 ? searchResult : -(searchResult + 1) - 1;
+        Arrays.hashCode(sortedBinBoundaries),
+        Arrays.hashCode(fileCounts),
+        Arrays.hashCode(totalBytes));
   }
 }
