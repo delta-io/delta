@@ -14,9 +14,11 @@ import java.util.stream.Stream;
  * <br><br>
  * Examples:
  * <ol>
- *     <li><code>expr1 = expr2 using "SPARK.UTF8_LCASE"</code></li>
+ *     <li><code>expr1 = expr2 collate "SPARK.UTF8_LCASE"</code></li>
  *     <br>
- *     <li><code>expr1 <= expr2 using "sr_Cyrl_SRB.75.1"</code></li>
+ *     <li><code>expr1 <= expr2 collate "sr_Cyrl_SRB.75.1"</code></li>
+ *     <br>
+ *     <li><code>expr1 STARTS_WITH expr2 collate "ICU.en_US"</code></li>
  * </ol>
  */
 @Evolving
