@@ -36,13 +36,12 @@ import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
 import io.delta.kernel.internal.{SnapshotImpl, TableConfig, TableImpl}
 import io.delta.kernel.internal.actions.{Metadata, Protocol, SingleAction}
 import io.delta.kernel.internal.fs.{Path => DeltaPath}
-import io.delta.kernel.internal.util.Clock
-import io.delta.kernel.internal.util.FileNames
+import io.delta.kernel.internal.util.{Clock, ColumnMapping, FileNames}
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
+import io.delta.kernel.types.{StructField, StructType}
 import io.delta.kernel.types.IntegerType.INTEGER
-import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.{CloseableIterable, CloseableIterator, FileStatus}
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 
@@ -474,5 +473,20 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       engine: Engine,
       dataActions: CloseableIterable[Row]): TransactionCommitResult = {
     txn.commit(engine, dataActions)
+  }
+
+  protected def assertColumnMapping(
+      field: StructField,
+      expId: Long,
+      expPhyName: String = "UUID"): Unit = {
+    val meta = field.getMetadata
+    assert(meta.get(ColumnMapping.COLUMN_MAPPING_ID_KEY) == expId)
+    // For new tables the physical column name is a UUID. For existing tables, we
+    // try to keep the physical column name same as the one in the schema
+    if (expPhyName == "UUID") {
+      assert(meta.get(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY).toString.startsWith("col-"))
+    } else {
+      assert(meta.get(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY) == expPhyName)
+    }
   }
 }
