@@ -149,7 +149,7 @@ When supported and active, writers must:
 - Require that Deletion Vectors are not supported (and, consequently, not active, either). i.e., the `deletionVectors` table feature is not present in the table `protocol`.
 - Require that partition column values are materialized into any Parquet data file that is present in the table, placed *after* the data columns in the parquet schema
 - Require that all `AddFile`s committed to the table have the `numRecords` statistic populated in their `stats` field
-- <ins>When the [Type Widening](#type-widening) table feature is supported, require that no type changes not supported by [Iceberg V2](https://iceberg.apache.org/spec/#schema-evolution) were applied on the table, based on the [Type Change Metadata](#type-change-metadata) recorded in the table schema.<ins>
+- <ins>When the [Type Widening](#type-widening) table feature is supported, require that all type changes applied on the table are supported by [Iceberg V2](https://iceberg.apache.org/spec/#schema-evolution), based on the [Type Change Metadata](#type-change-metadata) recorded in the table schema.<ins>
 
 ## Writer Requirements for IcebergCompatV2
 > ***Change to existing section (underlined)***
@@ -163,7 +163,7 @@ When this feature is supported and enabled, writers must:
 - Require that all new `AddFile`s committed to the table have the `numRecords` statistic populated in their `stats` field
 - Require writing timestamp columns as int64
 - Require that the table schema contains only data types in the following allow-list: [`byte`, `short`, `integer`, `long`, `float`, `double`, `decimal`, `string`, `binary`, `boolean`, `timestamp`, `timestampNTZ`, `date`, `array`, `map`, `struct`].
-- <ins>When the [Type Widening](#type-widening) table feature is supported, require that no type changes not supported by [Iceberg V2](https://iceberg.apache.org/spec/#schema-evolution) were applied on the table, based on the [Type Change Metadata](#type-change-metadata) recorded in the table schema.<ins>
+- <ins>When the [Type Widening](#type-widening) table feature is supported, require that all type changes applied on the table are supported by [Iceberg V2](https://iceberg.apache.org/spec/#schema-evolution), based on the [Type Change Metadata](#type-change-metadata) recorded in the table schema.<ins>
 
 ### Column Metadata
 > ***Change to existing section (underlined)***

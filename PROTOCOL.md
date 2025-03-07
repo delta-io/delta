@@ -1022,7 +1022,7 @@ When supported and active, writers must:
 - Block replacing partitioned tables with a differently-named partition spec
   - e.g. replacing a table partitioned by `part_a INT` with partition spec `part_b INT` must be blocked
   - e.g. replacing a table partitioned by `part_a INT` with partition spec `part_a LONG` is allowed
-- When the [Type Widening](#type-widening) table feature is supported, require that no type changes not supported by [Iceberg V2](https://iceberg.apache.org/spec/#schema-evolution) were applied on the table, based on the [Type Change Metadata](#type-change-metadata) recorded in the table schema.
+- When the [Type Widening](#type-widening) table feature is supported, require that all type changes applied on the table are supported by [Iceberg V2](https://iceberg.apache.org/spec/#schema-evolution), based on the [Type Change Metadata](#type-change-metadata) recorded in the table schema.
 
 # Iceberg Compatibility V2
 
@@ -1049,7 +1049,7 @@ When this feature is supported and enabled, writers must:
 - Block replacing partitioned tables with a differently-named partition spec
   - e.g. replacing a table partitioned by `part_a INT` with partition spec `part_b INT` must be blocked
   - e.g. replacing a table partitioned by `part_a INT` with partition spec `part_a LONG` is allowed
-- When the [Type Widening](#type-widening) table feature is supported, require that no type changes not supported by [Iceberg V2](https://iceberg.apache.org/spec/#schema-evolution) were applied on the table, based on the [Type Change Metadata](#type-change-metadata) recorded in the table schema.
+- When the [Type Widening](#type-widening) table feature is supported, require that all type changes applied on the table are supported by [Iceberg V2](https://iceberg.apache.org/spec/#schema-evolution), based on the [Type Change Metadata](#type-change-metadata) recorded in the table schema.
 
 ### Example of storing identifiers for nested fields in ArrayType and MapType
 The following is an example of storing the identifiers for nested fields in `ArrayType` and `MapType`, of a table with the following schema,
