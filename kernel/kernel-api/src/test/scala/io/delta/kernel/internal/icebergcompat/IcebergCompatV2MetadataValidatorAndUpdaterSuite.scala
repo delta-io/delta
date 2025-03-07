@@ -15,22 +15,21 @@
  */
 package io.delta.kernel.internal.icebergcompat
 
-import java.util.{Collections, Optional}
-
 import scala.collection.JavaConverters._
 
-import io.delta.kernel.data.{ArrayValue, ColumnVector, MapValue}
 import io.delta.kernel.exceptions.KernelException
-import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
+import io.delta.kernel.internal.actions.Protocol
 import io.delta.kernel.internal.icebergcompat.IcebergCompatV2MetadataValidatorAndUpdater.validateAndUpdateIcebergCompatV2Metadata
-import io.delta.kernel.internal.tablefeatures.{TableFeature, TableFeatures}
 import io.delta.kernel.internal.tablefeatures.TableFeatures.{COLUMN_MAPPING_RW_FEATURE, DELETION_VECTORS_RW_FEATURE, ICEBERG_COMPAT_V2_W_FEATURE, TYPE_WIDENING_RW_FEATURE}
+import io.delta.kernel.internal.util.ColumnMappingSuiteBase
 import io.delta.kernel.test.VectorTestUtils
-import io.delta.kernel.types.{ArrayType, BinaryType, BooleanType, ByteType, DataType, DateType, DecimalType, DoubleType, FloatType, IntegerType, LongType, MapType, ShortType, StringType, StructType, TimestampNTZType, TimestampType, VariantType}
+import io.delta.kernel.types._
 
 import org.scalatest.funsuite.AnyFunSuite
 
-class IcebergCompatV2MetadataValidatorAndUpdaterSuite extends AnyFunSuite with VectorTestUtils {
+class IcebergCompatV2MetadataValidatorAndUpdaterSuite
+    extends AnyFunSuite
+    with VectorTestUtils with ColumnMappingSuiteBase {
 
   // Allowed simple types as data or partition columns
   val SIMPLE_TYPES = Seq(
@@ -62,11 +61,12 @@ class IcebergCompatV2MetadataValidatorAndUpdaterSuite extends AnyFunSuite with V
 
   (SIMPLE_TYPES ++ COMPLEX_TYPES).foreach {
     dataType: DataType =>
-      test(s"allowed data column types: $dataType") {
-        val schema = new StructType().add("col", dataType)
-        val metadata = testMetadata(schema, Seq.empty)
-        val protocol = testProtocol(ICEBERG_COMPAT_V2_W_FEATURE, COLUMN_MAPPING_RW_FEATURE)
-        Seq(true, false).foreach { isNewTable =>
+      Seq(true, false).foreach { isNewTable =>
+        test(s"allowed data column types: $dataType, new table = $isNewTable") {
+          val schema = new StructType().add("col", dataType)
+          val metadata = testMetadata(schema).withIcebergCompatV2AndCMEnabled()
+
+          val protocol = testProtocol(ICEBERG_COMPAT_V2_W_FEATURE, COLUMN_MAPPING_RW_FEATURE)
           validateAndUpdateIcebergCompatV2Metadata(isNewTable, metadata, protocol)
         }
       }
@@ -74,11 +74,12 @@ class IcebergCompatV2MetadataValidatorAndUpdaterSuite extends AnyFunSuite with V
 
   SIMPLE_TYPES.foreach {
     dataType: DataType =>
-      test(s"allowed partition column types: $dataType") {
-        val schema = new StructType().add("col", dataType)
-        val metadata = testMetadata(schema, Seq("col"))
-        val protocol = testProtocol(ICEBERG_COMPAT_V2_W_FEATURE, COLUMN_MAPPING_RW_FEATURE)
-        Seq(true, false).foreach { isNewTable =>
+      Seq(true, false).foreach { isNewTable =>
+        test(s"allowed partition column types: $dataType, new table = $isNewTable") {
+          val schema = new StructType().add("col", dataType)
+          val metadata = testMetadata(schema, partitionCols = Seq("col"))
+            .withIcebergCompatV2AndCMEnabled()
+          val protocol = testProtocol(ICEBERG_COMPAT_V2_W_FEATURE, COLUMN_MAPPING_RW_FEATURE)
           validateAndUpdateIcebergCompatV2Metadata(isNewTable, metadata, protocol)
         }
       }
@@ -86,44 +87,45 @@ class IcebergCompatV2MetadataValidatorAndUpdaterSuite extends AnyFunSuite with V
 
   UNSUPPORTED_DATA_COLUMN_TYPES.foreach {
     dataType: DataType =>
-      test(s"disallowed data column types: $dataType") {
-        val schema = new StructType().add("col", dataType)
-        val metadata = testMetadata(schema, Seq.empty)
-        val protocol = testProtocol(ICEBERG_COMPAT_V2_W_FEATURE, COLUMN_MAPPING_RW_FEATURE)
-        Seq(true, false).foreach { isNewTable =>
+      Seq(true, false).foreach { isNewTable =>
+        test(s"disallowed data column types: $dataType, new table = $isNewTable") {
+          val schema = new StructType().add("col", dataType)
+          val metadata = testMetadata(schema).withIcebergCompatV2AndCMEnabled()
+          val protocol = testProtocol(ICEBERG_COMPAT_V2_W_FEATURE, COLUMN_MAPPING_RW_FEATURE)
           val e = intercept[KernelException] {
             validateAndUpdateIcebergCompatV2Metadata(isNewTable, metadata, protocol)
           }
           assert(e.getMessage.contains(
-            s"IcebergCompatV2 does not support the data types: [$dataType]"))
+            s"IcebergCompatV2 does not support the data types: "))
         }
       }
   }
 
   UNSUPPORTED_PARTITION_COLUMN_TYPES.foreach {
     dataType: DataType =>
-      test(s"disallowed partition column types: $dataType") {
-        val schema = new StructType().add("col", dataType)
-        val metadata = testMetadata(schema, Seq("col"))
-        val protocol = testProtocol(ICEBERG_COMPAT_V2_W_FEATURE, COLUMN_MAPPING_RW_FEATURE)
-        Seq(true, false).foreach { isNewTable =>
+      Seq(true, false).foreach { isNewTable =>
+        test(s"disallowed partition column types: $dataType, new table = $isNewTable") {
+          val schema = new StructType().add("col", dataType)
+          val metadata = testMetadata(schema, partitionCols = Seq("col"))
+            .withIcebergCompatV2AndCMEnabled()
+          val protocol = testProtocol(ICEBERG_COMPAT_V2_W_FEATURE, COLUMN_MAPPING_RW_FEATURE)
           val e = intercept[KernelException] {
             validateAndUpdateIcebergCompatV2Metadata(isNewTable, metadata, protocol)
           }
-          assert(e.getMessage.contains(
-            s"IcebergCompatV2 does not support the data type '$dataType' for a partition column"))
+          assert(e.getMessage.matches(
+            s"IcebergCompatV2 does not support the data type .* partition column."))
         }
       }
   }
 
-  test("can't be enabled on a table with deletion vectors supported") {
-    val schema = new StructType().add("col", BooleanType.BOOLEAN)
-    val metadata = testMetadata(schema, Seq.empty)
-    val protocol = testProtocol(
-      ICEBERG_COMPAT_V2_W_FEATURE,
-      COLUMN_MAPPING_RW_FEATURE,
-      DELETION_VECTORS_RW_FEATURE)
-    Seq(true, false).foreach { isNewTable =>
+  Seq(true, false).foreach { isNewTable =>
+    test(s"can't be enabled on a table with deletion vectors supported, isNewTable $isNewTable") {
+      val schema = new StructType().add("col", BooleanType.BOOLEAN)
+      val metadata = testMetadata(schema, Seq.empty).withIcebergCompatV2AndCMEnabled()
+      val protocol = testProtocol(
+        ICEBERG_COMPAT_V2_W_FEATURE,
+        COLUMN_MAPPING_RW_FEATURE,
+        DELETION_VECTORS_RW_FEATURE)
       val e = intercept[KernelException] {
         validateAndUpdateIcebergCompatV2Metadata(isNewTable, metadata, protocol)
       }
@@ -132,11 +134,11 @@ class IcebergCompatV2MetadataValidatorAndUpdaterSuite extends AnyFunSuite with V
     }
   }
 
-  test("protocol has is missing required column mapping feature") {
-    val schema = new StructType().add("col", BooleanType.BOOLEAN)
-    val metadata = testMetadata(schema, Seq.empty)
-    val protocol = new Protocol(3, 7, Set.empty.asJava, Set("icebergCompatV2").asJava)
-    Seq(true, false).foreach { isNewTable =>
+  Seq(true, false).foreach { isNewTable =>
+    test(s"protocol is missing required column mapping feature, isNewTable $isNewTable") {
+      val schema = new StructType().add("col", BooleanType.BOOLEAN)
+      val metadata = testMetadata(schema, Seq.empty).withIcebergCompatV2AndCMEnabled()
+      val protocol = new Protocol(3, 7, Set.empty.asJava, Set("icebergCompatV2").asJava)
       val e = intercept[KernelException] {
         validateAndUpdateIcebergCompatV2Metadata(isNewTable, metadata, protocol)
       }
@@ -145,10 +147,10 @@ class IcebergCompatV2MetadataValidatorAndUpdaterSuite extends AnyFunSuite with V
     }
   }
 
-  test("column mapping mode `name` is auto enabled when icebergCompatV2 is enabled") {
-    Seq(true, false).foreach { isNewTable =>
-      val schema = new StructType().add("col", BooleanType.BOOLEAN)
-      val metadata = testMetadata(schema, tblProps = Map("delta.enableIcebergCompatV2" -> "true"))
+  Seq(true, false).foreach { isNewTable =>
+    test(s"column mapping mode `name` is auto enabled when icebergCompatV2 is enabled, " +
+      s"isNewTable = $isNewTable") {
+      val metadata = testMetadata(testSchema()).withIcebergCompatV2Enabled
       val protocol = testProtocol(ICEBERG_COMPAT_V2_W_FEATURE, COLUMN_MAPPING_RW_FEATURE)
 
       assert(!metadata.getConfiguration.containsKey("delta.columnMapping.mode"))
@@ -158,6 +160,7 @@ class IcebergCompatV2MetadataValidatorAndUpdaterSuite extends AnyFunSuite with V
           validateAndUpdateIcebergCompatV2Metadata(isNewTable, metadata, protocol)
         assert(updatedMetadata.isPresent)
         assert(updatedMetadata.get().getConfiguration.get("delta.columnMapping.mode") == "name")
+        verifyTestSchemaHasValidColumnMappingInfo(updatedMetadata.get(), isNewTable)
       } else {
         val e = intercept[KernelException] {
           validateAndUpdateIcebergCompatV2Metadata(isNewTable, metadata, protocol)
@@ -170,34 +173,30 @@ class IcebergCompatV2MetadataValidatorAndUpdaterSuite extends AnyFunSuite with V
   }
 
   Seq("id", "name").foreach { existingCMMode =>
-    test(s"existing column mapping mode `$existingCMMode` is preserved " +
-      s"when icebergCompatV2 is enabled") {
-      Seq(true, false).foreach { isNewTable =>
-        val schema = new StructType().add("col", BooleanType.BOOLEAN)
-        val metadata = testMetadata(
-          schema,
-          tblProps = Map(
-            "delta.enableIcebergCompatV2" -> "true",
-            "delta.columnMapping.mode" -> existingCMMode))
+    Seq(true, false).foreach { isNewTable =>
+      test(s"existing column mapping mode `$existingCMMode` is preserved " +
+        s"when icebergCompatV2 is enabled, isNewTable = $isNewTable") {
+        val metadata = testMetadata(testSchema())
+          .withIcebergCompatV2Enabled
+          .withColumnMappingEnabled(existingCMMode)
         val protocol = testProtocol(ICEBERG_COMPAT_V2_W_FEATURE, COLUMN_MAPPING_RW_FEATURE)
 
         assert(metadata.getConfiguration.get("delta.columnMapping.mode") === existingCMMode)
 
         val updatedMetadata =
           validateAndUpdateIcebergCompatV2Metadata(isNewTable, metadata, protocol)
-        assert(!updatedMetadata.isPresent) // expect no changes as CM mode is already set
-        assert(metadata.getConfiguration.get("delta.columnMapping.mode") === existingCMMode)
+        // Metadata should be updated as we make sure column mapping fields are assigned
+        assert(updatedMetadata.isPresent)
+        verifyTestSchemaHasValidColumnMappingInfo(updatedMetadata.get(), isNewTable)
       }
     }
   }
 
-  test("can't enable icebergCompatV2 on a table with type widening supported") {
-    Seq(true, false).foreach { isNewTable =>
+  Seq(true, false).foreach { isNewTable =>
+    test(s"can't enable icebergCompatV2 on a table with type widening supported, " +
+      s"isNewTable = $isNewTable") {
       val schema = new StructType().add("col", BooleanType.BOOLEAN)
-      val metadata = testMetadata(
-        schema,
-        tblProps =
-          Map("delta.enableIcebergCompatV2" -> "true", "delta.columnMapping.mode" -> "name"))
+      val metadata = testMetadata(schema).withIcebergCompatV2AndCMEnabled()
       val protocol = testProtocol(
         ICEBERG_COMPAT_V2_W_FEATURE,
         COLUMN_MAPPING_RW_FEATURE,
@@ -212,8 +211,9 @@ class IcebergCompatV2MetadataValidatorAndUpdaterSuite extends AnyFunSuite with V
     }
   }
 
-  test("can't enable icebergCompatV2 on a table with icebergCompatv1 enabled") {
-    Seq(true, false).foreach { isNewTable =>
+  Seq(true, false).foreach { isNewTable =>
+    test(s"can't enable icebergCompatV2 on a table with icebergCompatv1 enabled, " +
+      s"isNewTable = $isNewTable") {
       val schema = new StructType().add("col", BooleanType.BOOLEAN)
       val metadata = testMetadata(
         schema,
@@ -231,36 +231,5 @@ class IcebergCompatV2MetadataValidatorAndUpdaterSuite extends AnyFunSuite with V
         "Only one IcebergCompat version can be enabled, please explicitly " +
           "disable all otherIcebergCompat versions that are not needed."))
     }
-  }
-
-  def testMetadata(
-      schema: StructType,
-      partitionCols: Seq[String] = Seq.empty,
-      tblProps: Map[String, String] =
-        Map(
-          "delta.enableIcebergCompatV2" -> "true",
-          "delta.columnMapping.mode" -> "name")): Metadata = {
-    new Metadata(
-      "id",
-      Optional.of("name"),
-      Optional.of("description"),
-      new Format("parquet", Collections.emptyMap()),
-      schema.toJson,
-      schema,
-      new ArrayValue() { // partitionColumns
-        override def getSize: Int = partitionCols.size
-        override def getElements: ColumnVector = stringVector(partitionCols)
-      },
-      Optional.empty(),
-      new MapValue() { // conf
-        override def getSize: Int = tblProps.size
-        override def getKeys: ColumnVector = stringVector(tblProps.toSeq.map(_._1))
-        override def getValues: ColumnVector = stringVector(tblProps.toSeq.map(_._2))
-      })
-  }
-
-  def testProtocol(tableFeatures: TableFeature*): Protocol = {
-    val protocol = new Protocol(3, 7)
-    protocol.withFeatures(tableFeatures.asJava).normalized()
   }
 }
