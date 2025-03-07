@@ -14,11 +14,11 @@ import java.util.stream.Stream;
  * <br><br>
  * Examples:
  * <ol>
- *     <li><code>expr1 = expr2 collate "SPARK.UTF8_LCASE"</code></li>
+ *     <li><code>expr1 = expr2 COLLATE "SPARK.UTF8_LCASE"</code></li>
  *     <br>
- *     <li><code>expr1 <= expr2 collate "sr_Cyrl_SRB.75.1"</code></li>
+ *     <li><code>expr1 <= expr2 COLLATE "ICU.sr_Cyrl_SRB.75.1"</code></li>
  *     <br>
- *     <li><code>expr1 STARTS_WITH expr2 collate "ICU.en_US"</code></li>
+ *     <li><code>expr1 STARTS_WITH expr2 COLLATE "ICU.en_US"</code></li>
  * </ol>
  */
 @Evolving
@@ -33,12 +33,12 @@ public class CollatedPredicate extends Predicate {
 
     @Override
     public String toString() {
-        if (BINARY_OPERATORS.contains(name)) {
-            return String.format("(%s %s %s [%s])", children.get(0), name, children.get(1), collationIdentifier);
+        if (COLLATION_SUPPORTED_OPERATORS.contains(name)) {
+            return String.format("(%s %s %s COLLATE %s)", children.get(0), name, children.get(1), collationIdentifier);
         }
         return super.toString();
     }
 
-    private static final Set<String> BINARY_OPERATORS =
-        Stream.of("<", "<=", ">", ">=", "=", "AND", "OR").collect(Collectors.toSet());
+    private static final Set<String> COLLATION_SUPPORTED_OPERATORS =
+        Stream.of("<", "<=", ">", ">=", "=", "STARTS_WITH").collect(Collectors.toSet());
 }
