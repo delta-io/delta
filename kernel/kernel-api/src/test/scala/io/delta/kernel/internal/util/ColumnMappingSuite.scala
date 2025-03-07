@@ -235,7 +235,7 @@ class ColumnMappingSuite extends AnyFunSuite {
 
     val metadata =
       ColumnMapping.updateColumnMappingMetadata(createMetadata(schema), NONE, true)
-    assertThat(metadata.get().getSchema).isEqualTo(schema)
+    assertThat(metadata).isEmpty
   }
 
   test("assigning id and physical name preserves field metadata") {

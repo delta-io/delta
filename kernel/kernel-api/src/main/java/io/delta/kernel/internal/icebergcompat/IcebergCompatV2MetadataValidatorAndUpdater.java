@@ -29,6 +29,7 @@ import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.icebergcompat.IcebergCompatMetadataValidatorAndUpdater.IcebergCompatCheck;
 import io.delta.kernel.internal.icebergcompat.IcebergCompatMetadataValidatorAndUpdater.IcebergCompatInputContext;
 import io.delta.kernel.internal.icebergcompat.IcebergCompatMetadataValidatorAndUpdater.IcebergCompatRequiredTablePropertyEnforcer;
+import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
 import io.delta.kernel.internal.util.SchemaUtils;
 import io.delta.kernel.internal.util.Tuple2;
@@ -78,10 +79,11 @@ public class IcebergCompatV2MetadataValidatorAndUpdater {
           TableConfig.COLUMN_MAPPING_MODE,
           (value) -> ColumnMappingMode.NAME == value || ColumnMappingMode.ID == value,
           ColumnMappingMode.NAME.value,
-          (inputContext) -> {
-            // TODO: assign column mapping field ids
-            return Optional.empty();
-          });
+          (inputContext) ->
+              ColumnMapping.updateColumnMappingMetadata(
+                  inputContext.newMetadata,
+                  ColumnMapping.getColumnMappingMode(inputContext.newMetadata.getConfiguration()),
+                  inputContext.isCreatingNewTable));
 
   private static final IcebergCompatCheck ICEBERG_COMPAT_V2_CHECK_NO_COMPAT_V1_ENABLED =
       (inputContext) -> {
