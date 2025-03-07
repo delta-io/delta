@@ -15,16 +15,18 @@
  */
 package io.delta.kernel.defaults.utils
 
+import java.sql.Timestamp
+import java.time.{Instant, LocalDate, LocalDateTime, ZoneOffset}
+import java.time.ZoneOffset.UTC
+import java.time.temporal.ChronoUnit
+
 import scala.collection.JavaConverters._
-import org.apache.spark.sql.{types => sparktypes}
-import org.apache.spark.sql.{Row => SparkRow}
+
 import io.delta.kernel.data.{ArrayValue, ColumnVector, MapValue, Row}
 import io.delta.kernel.types._
 
-import java.sql.Timestamp
-import java.time.ZoneOffset.UTC
-import java.time.temporal.ChronoUnit
-import java.time.{Instant, LocalDate, LocalDateTime, ZoneOffset}
+import org.apache.spark.sql.{Row => SparkRow}
+import org.apache.spark.sql.{types => sparktypes}
 
 /**
  * Corresponding Scala class for each Kernel data type:
@@ -136,9 +138,9 @@ object TestRow {
           obj.asInstanceOf[Seq[Any]]
             .map(decodeCellValue(arrayType.elementType, _))
         case mapType: sparktypes.MapType => obj.asInstanceOf[Map[Any, Any]].map {
-          case (k, v) =>
-            decodeCellValue(mapType.keyType, k) -> decodeCellValue(mapType.valueType, v)
-        }
+            case (k, v) =>
+              decodeCellValue(mapType.keyType, k) -> decodeCellValue(mapType.valueType, v)
+          }
         case _: sparktypes.StructType => TestRow(obj.asInstanceOf[SparkRow])
         case _ => throw new UnsupportedOperationException("unrecognized data type")
       }

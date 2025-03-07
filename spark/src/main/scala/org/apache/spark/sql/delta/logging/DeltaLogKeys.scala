@@ -48,6 +48,7 @@ trait DeltaLogKeysBase {
   case object APP_ID extends LogKeyShims
   case object BATCH_ID extends LogKeyShims
   case object BATCH_SIZE extends LogKeyShims
+  case object CATALOG extends LogKeyShims
   case object CLONE_SOURCE_DESC extends LogKeyShims
   case object CONFIG extends LogKeyShims
   case object CONFIG_KEY extends LogKeyShims
@@ -64,6 +65,7 @@ trait DeltaLogKeysBase {
   case object END_OFFSET extends LogKeyShims
   case object END_VERSION extends LogKeyShims
   case object ERROR extends LogKeyShims
+  case object EXCEPTION extends LogKeyShims
   case object EXECUTOR_ID extends LogKeyShims
   case object EXPR extends LogKeyShims
   case object FILE_INDEX extends LogKeyShims

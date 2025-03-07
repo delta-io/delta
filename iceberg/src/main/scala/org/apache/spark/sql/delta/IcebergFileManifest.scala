@@ -17,13 +17,18 @@
 package org.apache.spark.sql.delta.commands.convert
 
 import scala.collection.JavaConverters._
+import scala.collection.mutable
 
 import org.apache.spark.sql.delta.{DeltaColumnMapping, SerializableFileStatus}
+import org.apache.spark.sql.delta.DeltaErrors.cloneFromIcebergSourceWithPartitionEvolution
+import org.apache.spark.sql.delta.commands.convert.IcebergTable.ERR_MULTIPLE_PARTITION_SPECS
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
 import org.apache.iceberg.{BaseTable, DataFile, DataFiles, FileContent, FileFormat, ManifestContent, ManifestFile, ManifestFiles, PartitionData, PartitionSpec, RowLevelOperationMode, Schema, StructLike, Table, TableProperties}
+import org.apache.iceberg.transforms.IcebergPartitionUtil
 
+import org.apache.spark.SparkThrowable
 import org.apache.spark.internal.{LoggingShims, MDC}
 import org.apache.spark.sql.{Dataset, SparkSession}
 import org.apache.spark.sql.types.StructType
@@ -43,6 +48,14 @@ class IcebergFileManifest(
   private var _numFiles: Option[Long] = None
 
   private var _sizeInBytes: Option[Long] = None
+
+  private val specIdsToIfSpecHasNonBucketPartition =
+    table.specs().asScala.map { case (specId, spec) =>
+      specId.toInt -> IcebergPartitionUtil.hasNonBucketPartition(spec)
+  }
+
+  private val partitionEvolutionEnabled =
+    spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_PARTITION_EVOLUTION_ENABLED)
 
   val basePath = table.location()
 
@@ -93,6 +106,10 @@ class IcebergFileManifest(
     }
 
     // Localize variables so we don't need to serialize the File Manifest class
+    // Some contexts: Spark needs all variables in closure to be serializable
+    // while class members carry the entire class, so they require serialization of the class
+    // As IcebergFileManifest is not serializable,
+    // we localize member variables to avoid serialization of the class
     val localTable = table
     // We use the latest snapshot timestamp for all generated Delta AddFiles due to the fact that
     // retrieving timestamp for each DataFile is non-trivial time-consuming. This can be improved
@@ -102,12 +119,16 @@ class IcebergFileManifest(
     val shouldConvertPartition = spark.sessionState.conf
       .getConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_USE_NATIVE_PARTITION_VALUES)
     val convertPartition = if (shouldConvertPartition) {
-      new IcebergPartitionConverter(localTable, partitionSchema)
+      new IcebergPartitionConverter(localTable, partitionSchema, partitionEvolutionEnabled)
     } else {
       null
     }
 
     val shouldConvertStats = convertStats
+
+    val shouldCheckPartitionEvolution = !partitionEvolutionEnabled
+    val specIdsToIfSpecHasNonBucketPartitionMap = specIdsToIfSpecHasNonBucketPartition
+    val tableSpecsSize = table.specs().size()
 
     val manifestFiles = localTable
       .currentSnapshot()
@@ -115,10 +136,18 @@ class IcebergFileManifest(
       .asScala
       .map(new ManifestFileWrapper(_))
       .toSeq
+
     spark
       .createDataset(manifestFiles)
       .flatMap(ManifestFiles.read(_, localTable.io()).asScala.map(new DataFileWrapper(_)))
       .map { dataFile: DataFileWrapper =>
+        if (shouldCheckPartitionEvolution) {
+          IcebergFileManifest.validateLimitedPartitionEvolution(
+            dataFile.specId,
+            tableSpecsSize,
+            specIdsToIfSpecHasNonBucketPartitionMap
+          )
+        }
         ConvertTargetFile(
           SerializableFileStatus(
             path = dataFile.path,
@@ -141,5 +170,36 @@ class IcebergFileManifest(
   override def close(): Unit = {
     fileSparkResults.map(_.unpersist())
     fileSparkResults = None
+  }
+}
+
+object IcebergFileManifest {
+  // scalastyle:off
+  /**
+   * Validates on partition evolution for proposed partitionSpecId
+   * We don't support the conversion of tables with partition evolution
+   *
+   * However, we allow one special case where
+   *  all data files have either no-partition or bucket-partition
+   *  regardless of multiple partition spec present in the table
+   */
+  // scalastyle:on
+  private def validateLimitedPartitionEvolution(
+      partitionSpecId: Int,
+      tableSpecsSize: Int,
+      specIdsToIfSpecHasNonBucketPartition: mutable.Map[Int, Boolean]): Unit = {
+    if (hasPartitionEvolved(
+      partitionSpecId, tableSpecsSize, specIdsToIfSpecHasNonBucketPartition)
+    ) {
+      throw cloneFromIcebergSourceWithPartitionEvolution()
+    }
+  }
+
+  private def hasPartitionEvolved(
+      partitionSpecID: Int,
+      tableSpecsSize: Int,
+      specIdsToIfSpecHasNonBucketPartition: mutable.Map[Int, Boolean]): Boolean = {
+    val isSpecPartitioned = specIdsToIfSpecHasNonBucketPartition(partitionSpecID)
+    isSpecPartitioned && tableSpecsSize > 1
   }
 }

@@ -1221,6 +1221,10 @@ class DeltaTableTestsMixin:
                          ["appendOnly", "deletionVectors", "invariants"])
 
     def test_dropFeatureSupport(self) -> None:
+        # The expected results below are based on drop feature with history truncation.
+        # Fast drop feature, adds a writer feature when dropped. The relevant behavior is tested
+        # in the DeltaFastDropFeatureSuite.
+        self.spark.conf.set('spark.databricks.delta.tableFeatures.fastDropFeature.enabled', 'false')
         dt = self.__create_df_for_feature_tests()
 
         dt.addFeatureSupport("testRemovableWriter")

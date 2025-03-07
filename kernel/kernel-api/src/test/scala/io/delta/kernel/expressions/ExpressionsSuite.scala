@@ -16,6 +16,7 @@
 package io.delta.kernel.expressions
 
 import io.delta.kernel.types._
+
 import org.scalatest.funsuite.AnyFunSuite
 
 class ExpressionsSuite extends AnyFunSuite {

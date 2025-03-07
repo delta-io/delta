@@ -174,6 +174,18 @@ trait DeltaColumnMappingBase extends DeltaLogging {
       }
     }
 
+    // If column mapping was disabled, but there was already column mapping in the schema, it is
+    // a result of a bug in the previous version of Delta. This should no longer happen with the
+    // stripping done above. For existing tables with this issue, we should not allow enabling
+    // column mapping, to prevent further corruption.
+    if (spark.conf.get(DeltaSQLConf.
+        DELTA_COLUMN_MAPPING_DISALLOW_ENABLING_WHEN_METADATA_ALREADY_EXISTS)) {
+      if (oldMappingMode == NoMapping && newMappingMode != NoMapping &&
+          schemaHasColumnMappingMetadata(oldMetadata.schema)) {
+        throw DeltaErrors.enablingColumnMappingDisallowedWhenColumnMappingMetadataAlreadyExists()
+      }
+    }
+
     updatedMetadata = updateColumnMappingMetadata(
       oldMetadata, updatedMetadata, isChangingModeOnExistingTable, isOverwriteSchema)
 
@@ -871,8 +883,12 @@ case object NameMapping extends DeltaColumnMappingMode {
 }
 
 object DeltaColumnMappingMode {
-  def apply(name: String): DeltaColumnMappingMode = {
-    name.toLowerCase(Locale.ROOT) match {
+  def apply(columnMappingModeString: String): DeltaColumnMappingMode = {
+    val columnMappingModeLowerCaseString =
+      Option(columnMappingModeString)
+        .map(_.toLowerCase(Locale.ROOT))
+        .getOrElse(throw DeltaErrors.unsupportedColumnMappingModeException(columnMappingModeString))
+    columnMappingModeLowerCaseString match {
       case NoMapping.name => NoMapping
       case IdMapping.name => IdMapping
       case NameMapping.name => NameMapping

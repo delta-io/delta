@@ -22,11 +22,11 @@ import scala.collection.JavaConverters._
 import scala.reflect.ClassTag
 
 import io.delta.kernel.exceptions.{InvalidTableException, KernelException, TableNotFoundException}
-import io.delta.kernel.internal.util.FileNames
-import io.delta.kernel.utils.FileStatus
-import io.delta.kernel.internal.DeltaLogActionUtils.{getCommitFilesForVersionRange, listDeltaLogFiles, verifyDeltaVersions}
+import io.delta.kernel.internal.DeltaLogActionUtils.{getCommitFilesForVersionRange, listDeltaLogFilesAsIter, verifyDeltaVersions}
 import io.delta.kernel.internal.fs.Path
+import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.test.MockFileSystemClientUtils
+import io.delta.kernel.utils.FileStatus
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -48,23 +48,20 @@ class DeltaLogActionUtilsSuite extends AnyFunSuite with MockFileSystemClientUtil
       getCommitFiles(Seq(1, 2, 3)),
       1,
       3,
-      dataPath
-    )
+      dataPath)
     // Only one version provided
     verifyDeltaVersions(
       getCommitFiles(Seq(1)),
       1,
       1,
-      dataPath
-    )
+      dataPath)
     // Non-contiguous versions
     intercept[InvalidTableException] {
       verifyDeltaVersions(
         getCommitFiles(Seq(1, 3, 4)),
         1,
         4,
-        dataPath
-      )
+        dataPath)
     }
     // End-version or start-version not right
     intercept[KernelException] {
@@ -72,16 +69,14 @@ class DeltaLogActionUtilsSuite extends AnyFunSuite with MockFileSystemClientUtil
         getCommitFiles(Seq(1, 2, 3)),
         0,
         3,
-        dataPath
-      )
+        dataPath)
     }
     intercept[KernelException] {
       verifyDeltaVersions(
         getCommitFiles(Seq(1, 2, 3)),
         1,
         4,
-        dataPath
-      )
+        dataPath)
     }
     // Empty versions
     intercept[KernelException] {
@@ -89,8 +84,7 @@ class DeltaLogActionUtilsSuite extends AnyFunSuite with MockFileSystemClientUtil
         getCommitFiles(Seq()),
         1,
         4,
-        dataPath
-      )
+        dataPath)
     }
     // Unsorted or duplicates (shouldn't be possible)
     intercept[InvalidTableException] {
@@ -98,16 +92,14 @@ class DeltaLogActionUtilsSuite extends AnyFunSuite with MockFileSystemClientUtil
         getCommitFiles(Seq(1, 1, 2)),
         1,
         4,
-        dataPath
-      )
+        dataPath)
     }
     intercept[InvalidTableException] {
       verifyDeltaVersions(
         getCommitFiles(Seq(1, 4, 3, 2)),
         1,
         2,
-        dataPath
-      )
+        dataPath)
     }
   }
 
@@ -121,26 +113,23 @@ class DeltaLogActionUtilsSuite extends AnyFunSuite with MockFileSystemClientUtil
         createMockFSListFromEngine(_ => throw new FileNotFoundException()),
         dataPath,
         0,
-        1
-      )
+        1)
     }
   }
 
   def testGetCommitFilesExpectedError[T <: Throwable](
-    testName: String,
-    files: Seq[FileStatus],
-    startVersion: Long = 1,
-    endVersion: Long = 3,
-    expectedErrorMessageContains: String
-  )(implicit classTag: ClassTag[T]): Unit = {
+      testName: String,
+      files: Seq[FileStatus],
+      startVersion: Long = 1,
+      endVersion: Long = 3,
+      expectedErrorMessageContains: String)(implicit classTag: ClassTag[T]): Unit = {
     test("getCommitFilesForVersionRange: " + testName) {
       val e = intercept[T] {
         getCommitFilesForVersionRange(
           createMockFSListFromEngine(files),
           dataPath,
           startVersion,
-          endVersion
-        )
+          endVersion)
       }
       assert(e.getMessage.contains(expectedErrorMessageContains))
     }
@@ -149,100 +138,85 @@ class DeltaLogActionUtilsSuite extends AnyFunSuite with MockFileSystemClientUtil
   testGetCommitFilesExpectedError[KernelException](
     testName = "empty directory",
     files = Seq(),
-    expectedErrorMessageContains = "no log files found in the requested version range"
-  )
+    expectedErrorMessageContains = "no log files found in the requested version range")
 
   testGetCommitFilesExpectedError[KernelException](
     testName = "all versions less than startVersion",
     files = deltaFileStatuses(Seq(0)),
-    expectedErrorMessageContains = "no log files found in the requested version range"
-  )
+    expectedErrorMessageContains = "no log files found in the requested version range")
 
   testGetCommitFilesExpectedError[KernelException](
     testName = "all versions greater than endVersion",
     files = deltaFileStatuses(Seq(4, 5, 6)),
-    expectedErrorMessageContains = "no log files found in the requested version range"
-  )
+    expectedErrorMessageContains = "no log files found in the requested version range")
 
   testGetCommitFilesExpectedError[InvalidTableException](
     testName = "missing log files",
     files = deltaFileStatuses(Seq(1, 3)),
-    expectedErrorMessageContains = "versions are not contiguous"
-  )
+    expectedErrorMessageContains = "versions are not contiguous")
 
   testGetCommitFilesExpectedError[KernelException](
     testName = "start version not available",
     files = deltaFileStatuses(Seq(2, 3, 4, 5)),
-    expectedErrorMessageContains = "no log file found for version 1"
-  )
+    expectedErrorMessageContains = "no log file found for version 1")
 
   testGetCommitFilesExpectedError[KernelException](
     testName = "end version not available",
     files = deltaFileStatuses(Seq(0, 1, 2)),
-    expectedErrorMessageContains = "no log file found for version 3"
-  )
+    expectedErrorMessageContains = "no log file found for version 3")
 
   testGetCommitFilesExpectedError[KernelException](
     testName = "invalid start version",
     files = deltaFileStatuses(Seq(0, 1, 2)),
     startVersion = -1,
-    expectedErrorMessageContains = "Invalid version range"
-  )
+    expectedErrorMessageContains = "Invalid version range")
 
   testGetCommitFilesExpectedError[KernelException](
     testName = "invalid end version",
     files = deltaFileStatuses(Seq(0, 1, 2)),
     startVersion = 3,
     endVersion = 2,
-    expectedErrorMessageContains = "Invalid version range"
-  )
+    expectedErrorMessageContains = "Invalid version range")
 
   def testGetCommitFiles(
-    testName: String,
-    files: Seq[FileStatus],
-    startVersion: Long = 1,
-    endVersion: Long = 3,
-    expectedCommitFiles: Seq[FileStatus]
-  ): Unit = {
+      testName: String,
+      files: Seq[FileStatus],
+      startVersion: Long = 1,
+      endVersion: Long = 3,
+      expectedCommitFiles: Seq[FileStatus]): Unit = {
     test("getCommitFilesForVersionRange: " + testName) {
       assert(
         getCommitFilesForVersionRange(
           createMockFSListFromEngine(files),
           dataPath,
           startVersion,
-          endVersion
-        ).asScala sameElements expectedCommitFiles
-      )
+          endVersion).asScala sameElements expectedCommitFiles)
     }
   }
 
   testGetCommitFiles(
     testName = "basic case",
     files = deltaFileStatuses(Seq(0, 1, 2, 3, 4, 5)),
-    expectedCommitFiles = deltaFileStatuses(Seq(1, 2, 3))
-  )
+    expectedCommitFiles = deltaFileStatuses(Seq(1, 2, 3)))
 
   testGetCommitFiles(
     testName = "basic case with checkpoint file",
     files = deltaFileStatuses(Seq(0, 1, 2, 3, 4, 5)) ++ singularCheckpointFileStatuses(Seq(2)),
-    expectedCommitFiles = deltaFileStatuses(Seq(1, 2, 3))
-  )
+    expectedCommitFiles = deltaFileStatuses(Seq(1, 2, 3)))
 
   testGetCommitFiles(
     testName = "basic case with non-log files",
     files = deltaFileStatuses(Seq(0, 1, 2, 3, 4, 5)) ++
       deltaFileStatuses(Seq(2))
         .map(fs => FileStatus.of(fs.getPath + ".crc", fs.getSize, fs.getModificationTime)),
-    expectedCommitFiles = deltaFileStatuses(Seq(1, 2, 3))
-  )
+    expectedCommitFiles = deltaFileStatuses(Seq(1, 2, 3)))
 
   testGetCommitFiles(
     testName = "version range size 1",
     files = deltaFileStatuses(Seq(0, 1, 2, 3, 4, 5)),
     startVersion = 0,
     endVersion = 0,
-    expectedCommitFiles = deltaFileStatuses(Seq(0))
-  )
+    expectedCommitFiles = deltaFileStatuses(Seq(0)))
 
   /////////////////////////////
   // listDeltaLogFiles tests //
@@ -261,38 +235,38 @@ class DeltaLogActionUtilsSuite extends AnyFunSuite with MockFileSystemClientUtil
 
   test("listDeltaLogFiles: no fileTypes provided") {
     intercept[IllegalArgumentException] {
-      listDeltaLogFiles(
+      listDeltaLogFilesAsIter(
         createMockFSListFromEngine(deltaFileStatuses(Seq(1, 2, 3))),
         Collections.emptySet(), // No fileTypes provided!
         dataPath,
         1,
         Optional.empty(),
         false /* mustBeRecreatable */
-      )
+      ).toInMemoryList
     }
   }
 
   test("listDeltaLogFiles: returns requested file type only") {
-    val commitFiles = listDeltaLogFiles(
+    val commitFiles = listDeltaLogFilesAsIter(
       createMockFSListFromEngine(checkpointsAndDeltas),
       Set(FileNames.DeltaLogFileType.COMMIT).asJava,
       dataPath,
       10,
       Optional.empty(),
       false /* mustBeRecreatable */
-    ).asScala
+    ).toInMemoryList.asScala
 
     assert(commitFiles.forall(fs => FileNames.isCommitFile(fs.getPath)))
     assert(extractVersions(commitFiles) == Seq(10, 11, 12, 13, 14, 15, 16, 17))
 
-    val checkpointFiles = listDeltaLogFiles(
+    val checkpointFiles = listDeltaLogFilesAsIter(
       createMockFSListFromEngine(checkpointsAndDeltas),
       Set(FileNames.DeltaLogFileType.CHECKPOINT).asJava,
       dataPath,
       10,
       Optional.empty(),
       false /* mustBeRecreatable */
-    ).asScala
+    ).toInMemoryList.asScala
 
     assert(checkpointFiles.forall(fs => FileNames.isCheckpointFile(fs.getPath)))
     assert(extractVersions(checkpointFiles) == Seq(10, 14, 14, 17))
@@ -300,14 +274,14 @@ class DeltaLogActionUtilsSuite extends AnyFunSuite with MockFileSystemClientUtil
 
   test("listDeltaLogFiles: mustBeRecreatable") {
     val exMsg = intercept[KernelException] {
-      listDeltaLogFiles(
+      listDeltaLogFilesAsIter(
         createMockFSListFromEngine(checkpointsAndDeltas),
         Set(FileNames.DeltaLogFileType.COMMIT, FileNames.DeltaLogFileType.CHECKPOINT).asJava,
         dataPath,
         0,
         Optional.of(4),
         true /* mustBeRecreatable */
-      )
+      ).toInMemoryList
     }.getMessage
     assert(exMsg.contains("Cannot load table version 4 as the transaction log has been " +
       "truncated due to manual deletion or the log/checkpoint retention policy. The earliest " +

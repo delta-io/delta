@@ -26,12 +26,13 @@ import scala.collection.JavaConverters._
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterBySpec}
 import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
-import org.apache.spark.sql.delta.commands.AlterTableDropFeatureDeltaCommand
+import org.apache.spark.sql.delta.commands.{AlterTableDropFeatureDeltaCommand, DeltaGenerateCommand}
 import org.apache.spark.sql.delta.constraints.Constraints
 import org.apache.spark.sql.delta.hooks.AutoCompactType
 import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.redirect.NoRedirectRule
+import org.apache.spark.sql.delta.redirect.RedirectSpec
 import org.apache.spark.sql.delta.redirect.RedirectState
 import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, InvariantViolationException, SchemaUtils, UnsupportedDataTypeInfo}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -128,7 +129,7 @@ trait DocsPath {
     "tableFeatureReadRequiresWriteException",
     "tableFeatureRequiresHigherReaderProtocolVersion",
     "tableFeatureRequiresHigherWriterProtocolVersion",
-    "blockStreamingReadsWithIncompatibleColumnMappingSchemaChanges"
+    "blockStreamingReadsWithIncompatibleNonAdditiveSchemaChanges"
   )
 }
 
@@ -357,18 +358,49 @@ trait DeltaErrorsBase
     )
   }
 
-  def invalidRedirectStateTransition(
-      table: String,
-      oldState: RedirectState,
-      newState: RedirectState): Unit = {
+  def deltaRelationPathMismatch(
+      relationPath: Seq[String],
+      targetType: String,
+      targetPath: Seq[String]
+  ): Throwable = {
     new DeltaIllegalStateException(
-      errorClass = "DELTA_TABLE_INVALID_REDIRECT_STATE_TRANSITION",
+      errorClass = "DELTA_RELATION_PATH_MISMATCH",
       messageParameters = Array(
-        table, table, oldState.name, newState.name)
+        relationPath.mkString("."),
+        targetType,
+        targetPath.mkString(".")
+      )
     )
   }
 
-  def invalidRemoveTableRedirect(table: String, currentState: RedirectState): Unit = {
+  def unrecognizedRedirectSpec(spec: RedirectSpec): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_TABLE_UNRECOGNIZED_REDIRECT_SPEC",
+      messageParameters = Array(spec.toString)
+    )
+  }
+
+  def invalidSetUnSetRedirectCommand(
+      table: String,
+      newProperty: String,
+      existingProperty: String): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_TABLE_INVALID_SET_UNSET_REDIRECT",
+      messageParameters = Array(table, existingProperty, newProperty)
+    )
+  }
+
+  def invalidRedirectStateTransition(
+      table: String,
+      oldState: RedirectState,
+      newState: RedirectState): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_TABLE_INVALID_REDIRECT_STATE_TRANSITION",
+      messageParameters = Array(table, oldState.name, newState.name)
+    )
+  }
+
+  def invalidRemoveTableRedirect(table: String, currentState: RedirectState): Throwable = {
     new DeltaIllegalStateException(
       errorClass = "DELTA_TABLE_INVALID_REMOVE_TABLE_REDIRECT",
       messageParameters = Array(table, table, currentState.name)
@@ -376,7 +408,7 @@ trait DeltaErrorsBase
   }
 
   def invalidCommitIntermediateRedirectState(state: RedirectState): Throwable = {
-    throw new DeltaIllegalStateException (
+    new DeltaIllegalStateException (
       errorClass = "DELTA_COMMIT_INTERMEDIATE_REDIRECT_STATE",
       messageParameters = Array(state.name)
     )
@@ -385,7 +417,7 @@ trait DeltaErrorsBase
   def noRedirectRulesViolated(
       op: DeltaOperations.Operation,
       noRedirectRules: Set[NoRedirectRule]): Throwable = {
-    throw new DeltaIllegalStateException (
+    new DeltaIllegalStateException (
       errorClass = "DELTA_NO_REDIRECT_RULES_VIOLATED",
       messageParameters =
         Array(op.name, noRedirectRules.map("\"" + _ + "\"").mkString("[", ",\n", "]"))
@@ -1699,12 +1731,22 @@ trait DeltaErrorsBase
     ex
   }
 
-  def unsupportedGenerateModeException(modeName: String): Throwable = {
-    import org.apache.spark.sql.delta.commands.DeltaGenerateCommand
-    val supportedModes = DeltaGenerateCommand.modeNameToGenerationFunc.keys.toSeq.mkString(", ")
+  private def unsupportedModeException(modeName: String, supportedModes: String): Throwable = {
     new DeltaIllegalArgumentException(
       errorClass = "DELTA_MODE_NOT_SUPPORTED",
       messageParameters = Array(modeName, supportedModes))
+  }
+
+  def unsupportedColumnMappingModeException(modeName: String): Throwable = {
+    val supportedColumnMappingModes =
+      DeltaColumnMapping.supportedModes.map(_.name).toSeq.mkString(", ")
+    unsupportedModeException(modeName, supportedColumnMappingModes)
+  }
+
+  def unsupportedGenerateModeException(modeName: String): Throwable = {
+    val supportedGenerateCommandModes =
+      DeltaGenerateCommand.modeNameToGenerationFunc.keys.toSeq.mkString(", ")
+    unsupportedModeException(modeName, supportedGenerateCommandModes)
   }
 
   def illegalUsageException(option: String, operation: String): Throwable = {
@@ -2114,6 +2156,12 @@ trait DeltaErrorsBase
     new DeltaColumnMappingUnsupportedException(
       errorClass = "DELTA_UNSUPPORTED_COLUMN_MAPPING_MODE_CHANGE",
       messageParameters = Array(oldMode, newMode))
+  }
+
+  def enablingColumnMappingDisallowedWhenColumnMappingMetadataAlreadyExists(): Throwable = {
+    new DeltaColumnMappingUnsupportedException(
+      errorClass =
+        "DELTA_ENABLING_COLUMN_MAPPING_DISALLOWED_WHEN_COLUMN_MAPPING_METADATA_ALREADY_EXISTS")
   }
 
   def generateManifestWithColumnMappingNotSupported: Throwable = {
@@ -2958,7 +3006,7 @@ trait DeltaErrorsBase
     )
   }
 
-  def blockStreamingReadsWithIncompatibleColumnMappingSchemaChanges(
+  def blockStreamingReadsWithIncompatibleNonAdditiveSchemaChanges(
       spark: SparkSession,
       readSchema: StructType,
       incompatibleSchema: StructType,
@@ -2966,7 +3014,7 @@ trait DeltaErrorsBase
     val docLink = "/versioning.html#column-mapping"
     val enableNonAdditiveSchemaEvolution = spark.sessionState.conf.getConf(
       DeltaSQLConf.DELTA_STREAMING_ENABLE_SCHEMA_TRACKING)
-    new DeltaStreamingColumnMappingSchemaIncompatibleException(
+    new DeltaStreamingNonAdditiveSchemaIncompatibleException(
       readSchema,
       incompatibleSchema,
       generateDocsLinkOption(spark, docLink).getOrElse("-"),
@@ -3023,6 +3071,20 @@ trait DeltaErrorsBase
   def cloneReplaceNonEmptyTable: Throwable = {
     new DeltaIllegalStateException(
       errorClass = "DELTA_UNSUPPORTED_NON_EMPTY_CLONE"
+    )
+  }
+
+  def cloneFromIcebergSourceWithPartitionEvolution(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CLONE_INCOMPATIBLE_SOURCE.ICEBERG_UNDERGONE_PARTITION_EVOLUTION",
+      messageParameters = Array()
+    )
+  }
+
+  def cloneFromIcebergSourceWithoutSpecs(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CLONE_INCOMPATIBLE_SOURCE.ICEBERG_MISSING_PARTITION_SPECS",
+      messageParameters = Array()
     )
   }
 
@@ -3120,9 +3182,24 @@ trait DeltaErrorsBase
       previousSchemaChangeVersion: Long,
       currentSchemaChangeVersion: Long,
       checkpointHash: Int,
-      allowAllMode: String,
-      opTypeSpecificAllowMode: String): Throwable = {
-    val allowAllSqlConfKey = s"${DeltaSQLConf.SQL_CONF_PREFIX}.streaming.$allowAllMode"
+      readerOptionsUnblock: Seq[String],
+      sqlConfsUnblock: Seq[String]): Throwable = {
+    val unblockChangeOptions = readerOptionsUnblock.map { option =>
+        s"""  .option("$option", "$currentSchemaChangeVersion")"""
+      }.mkString("\n")
+    val unblockStreamOptions = readerOptionsUnblock.map { option =>
+        s"""  .option("$option", "always")"""
+      }.mkString("\n")
+    val unblockChangeConfs = sqlConfsUnblock.map { conf =>
+        s"""  SET $conf.ckpt_$checkpointHash = $currentSchemaChangeVersion;"""
+      }.mkString("\n")
+    val unblockStreamConfs = sqlConfsUnblock.map { conf =>
+        s"""  SET $conf.ckpt_$checkpointHash = "always";"""
+      }.mkString("\n")
+    val unblockAllConfs = sqlConfsUnblock.map { conf =>
+        s"""  SET $conf = "always";"""
+      }.mkString("\n")
+
     new DeltaRuntimeException(
       errorClass = "DELTA_STREAMING_CANNOT_CONTINUE_PROCESSING_POST_SCHEMA_EVOLUTION",
       messageParameters = Array(
@@ -3130,17 +3207,56 @@ trait DeltaErrorsBase
         previousSchemaChangeVersion.toString,
         currentSchemaChangeVersion.toString,
         currentSchemaChangeVersion.toString,
-        // Allow this stream to pass for this particular version
-        s"$allowAllSqlConfKey.ckpt_$checkpointHash",
+        unblockChangeOptions,
+        unblockStreamOptions,
+        unblockChangeConfs,
+        unblockStreamConfs,
+        unblockAllConfs
+      )
+    )
+  }
+
+  def cannotContinueStreamingTypeWidening(
+      previousSchemaChangeVersion: Long,
+      currentSchemaChangeVersion: Long,
+      checkpointHash: Int,
+      readerOptionsUnblock: Seq[String],
+      sqlConfsUnblock: Seq[String],
+      wideningTypeChanges: Seq[TypeChange]): Throwable = {
+
+    val wideningTypeChangesStr = wideningTypeChanges.map { change =>
+        s"  ${SchemaUtils.prettyFieldName(change.fieldPath)}: ${change.fromType.sql} -> " +
+        s"${change.toType.sql}"
+      }.mkString("\n")
+
+    val unblockChangeOptions = readerOptionsUnblock.map { option =>
+        s"""  .option("$option", "$currentSchemaChangeVersion")"""
+      }.mkString("\n")
+    val unblockStreamOptions = readerOptionsUnblock.map { option =>
+        s"""  .option("$option", "always")"""
+      }.mkString("\n")
+    val unblockChangeConfs = sqlConfsUnblock.map { conf =>
+        s"""  SET $conf.ckpt_$checkpointHash = $currentSchemaChangeVersion;"""
+      }.mkString("\n")
+    val unblockStreamConfs = sqlConfsUnblock.map { conf =>
+        s"""  SET $conf.ckpt_$checkpointHash = "always";"""
+      }.mkString("\n")
+    val unblockAllConfs = sqlConfsUnblock.map { conf =>
+        s"""  SET $conf = "always";"""
+      }.mkString("\n")
+
+    new DeltaRuntimeException(
+      errorClass = "DELTA_STREAMING_CANNOT_CONTINUE_PROCESSING_TYPE_WIDENING",
+      messageParameters = Array(
+        previousSchemaChangeVersion.toString,
         currentSchemaChangeVersion.toString,
-        // Allow this stream to pass
-        s"$allowAllSqlConfKey.ckpt_$checkpointHash",
-        "always",
-        // Allow all streams to pass
-        allowAllSqlConfKey,
-        "always",
-        allowAllMode,
-        opTypeSpecificAllowMode
+        wideningTypeChangesStr,
+        currentSchemaChangeVersion.toString,
+        unblockChangeOptions,
+        unblockStreamOptions,
+        unblockChangeConfs,
+        unblockStreamConfs,
+        unblockAllConfs
       )
     )
   }
@@ -4002,13 +4118,13 @@ class DeltaChecksumException(
 }
 
 /**
- * Errors thrown when an operation is not supported with column mapping schema changes
- * (rename / drop column).
+ * Errors thrown when an operation is not supported with non-additive schema changes
+ * (rename / drop column, type change).
  *
  * To make compatible with existing behavior for those who accidentally has already used this
  * operation, user should always be able to use `escapeConfigName` to fall back at own risk.
  */
-class DeltaStreamingColumnMappingSchemaIncompatibleException(
+class DeltaStreamingNonAdditiveSchemaIncompatibleException(
     val readSchema: StructType,
     val incompatibleSchema: StructType,
     val docLink: String,

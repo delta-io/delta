@@ -28,7 +28,7 @@ import scala.util.control.NonFatal
 
 import com.databricks.spark.util.TagDefinitions.TAG_LOG_STORE_CLASS
 import org.apache.spark.sql.delta.ClassicColumnConversions._
-import org.apache.spark.sql.delta.DeltaOperations.{ChangeColumn, CreateTable, Operation, ReplaceColumns, ReplaceTable, UpdateSchema}
+import org.apache.spark.sql.delta.DeltaOperations.{ChangeColumn, ChangeColumns, CreateTable, Operation, ReplaceColumns, ReplaceTable, UpdateSchema}
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
@@ -251,7 +251,8 @@ object OptimisticTransaction {
  *
  * This trait is not thread-safe.
  */
-trait OptimisticTransactionImpl extends TransactionalWrite
+trait OptimisticTransactionImpl extends DeltaTransaction
+  with TransactionalWrite
   with SQLMetricsReporting
   with DeltaScanGenerator
   with RecordChecksum
@@ -264,9 +265,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   protected val incrementalCommitEnabled = deltaLog.incrementalCommitEnabled
   protected val shouldVerifyIncrementalCommit = deltaLog.shouldVerifyIncrementalCommit
 
-  val deltaLog: DeltaLog
-  val catalogTable: Option[CatalogTable]
-  val snapshot: Snapshot
   def clock: Clock = deltaLog.clock
 
   // This would be a quick operation if we already validated the checksum
@@ -316,7 +314,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   protected var newProtocol: Option[Protocol] = None
 
   /** The transaction start time. */
-  protected val txnStartNano = System.nanoTime()
+  private val txnStartNano = System.nanoTime()
 
   override val snapshotToScan: Snapshot = snapshot
 
@@ -333,9 +331,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   protected var commitEndNano = -1L;
 
   protected var commitInfo: CommitInfo = _
-
-  /** Whether the txn should trigger a checkpoint after the commit */
-  private[delta] var needsCheckpoint = false
 
   // Whether this transaction is creating a new table.
   private var isCreatingNewTable: Boolean = false
@@ -396,7 +391,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   def txnStartTimeNs: Long = txnStartNano
 
   /** Unique identifier for the transaction */
-  val txnId = UUID.randomUUID().toString
+  val txnId: String = UUID.randomUUID().toString
 
   /** Whether to check unsupported data type when updating the table schema */
   protected var checkUnsupportedDataType: Boolean =
@@ -464,12 +459,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       updateMetadataAfterWrite(updatedMetadata)
     }
   }
-
-  /** The set of distinct partitions that contain added files by current transaction. */
-  protected[delta] var partitionsAddedToOpt: Option[mutable.HashSet[Map[String, String]]] = None
-
-  /** True if this transaction is a blind append. This is only valid after commit. */
-  protected[delta] var isBlindAppend: Boolean = false
 
   /**
    * The logSegment of the snapshot prior to the commit.
@@ -691,6 +680,15 @@ trait OptimisticTransactionImpl extends TransactionalWrite
         } else {
           newMetadataTmp
         }
+      }
+    }
+
+    if (spark.sessionState.conf
+      .getConf(DeltaSQLConf.REMOVE_EXISTS_DEFAULT_FROM_SCHEMA_ON_EVERY_METADATA_CHANGE)) {
+      val schemaWithRemovedExistsDefaults =
+        SchemaUtils.removeExistsDefaultMetadata(newMetadataTmp.schema)
+      if (schemaWithRemovedExistsDefaults != newMetadataTmp.schema) {
+        newMetadataTmp = newMetadataTmp.copy(schemaString = schemaWithRemovedExistsDefaults.json)
       }
     }
 
@@ -1278,6 +1276,13 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       op: DeltaOperations.Operation,
       redirectConfig: TableRedirectConfiguration
   ): Unit = {
+    // If this transaction commits to the redirect destination location, then there is no
+    // need to validate the subsequent no-redirect rules.
+    val configuration = deltaLog.newDeltaHadoopConf()
+    val dataPath = snapshot.deltaLog.dataPath.toUri.getPath
+    val catalog = spark.sessionState.catalog
+    val isRedirectDest = redirectConfig.spec.isRedirectDest(catalog, configuration, dataPath)
+    if (isRedirectDest) return
     // Find all rules that match with the current application name.
     // If appName is not present, its no-redirect-rule are included.
     // If appName is present, includes its no-redirect-rule only when appName
@@ -2760,6 +2765,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
     op match {
       case change: ChangeColumn if usesDefaults(change.newColumn) =>
+        throwError("WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
+          Array("ALTER TABLE"))
+      case changes: ChangeColumns if changes.columns.exists(c => usesDefaults(c.newColumn)) =>
         throwError("WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
           Array("ALTER TABLE"))
       case create: CreateTable if create.metadata.schema.fields.exists(usesDefaults) =>

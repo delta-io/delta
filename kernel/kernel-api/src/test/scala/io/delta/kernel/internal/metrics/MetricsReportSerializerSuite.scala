@@ -15,9 +15,12 @@
  */
 package io.delta.kernel.internal.metrics
 
-import java.util.Optional
+import java.util.{Optional, UUID}
 
-import io.delta.kernel.metrics.{SnapshotReport, TransactionReport}
+import io.delta.kernel.expressions.{Column, Literal, Predicate}
+import io.delta.kernel.metrics.{ScanReport, SnapshotReport, TransactionReport}
+import io.delta.kernel.types.{IntegerType, StructType}
+
 import org.scalatest.funsuite.AnyFunSuite
 
 class MetricsReportSerializerSuite extends AnyFunSuite {
@@ -66,8 +69,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
 
     val snapshotReport1 = SnapshotReportImpl.forError(
       snapshotContext1,
-      exception
-    )
+      exception)
 
     // Manually check expected JSON
     val expectedJson =
@@ -145,8 +147,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
       Optional.of(2), /* committedVersion */
       transactionMetrics1,
       snapshotReport1,
-      Optional.of(exception)
-    )
+      Optional.of(exception))
 
     // Manually check expected JSON
     val expectedJson =
@@ -188,5 +189,115 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
       Optional.empty() /* exception */
     )
     testTransactionReport(transactionReport2)
+  }
+
+  private def testScanReport(scanReport: ScanReport): Unit = {
+    val exception: Optional[String] = scanReport.getException().map(_.toString)
+    val filter: Optional[String] = scanReport.getFilter.map(_.toString)
+    val partitionPredicate: Optional[String] = scanReport.getPartitionPredicate().map(_.toString)
+    val dataSkippingFilter: Optional[String] = scanReport.getDataSkippingFilter().map(_.toString)
+    val scanMetrics = scanReport.getScanMetrics
+
+    val expectedJson =
+      s"""
+         |{"tablePath":"${scanReport.getTablePath()}",
+         |"operationType":"Scan",
+         |"reportUUID":"${scanReport.getReportUUID()}",
+         |"exception":${optionToString(exception)},
+         |"tableVersion":${scanReport.getTableVersion()},
+         |"tableSchema":"${scanReport.getTableSchema()}",
+         |"snapshotReportUUID":"${scanReport.getSnapshotReportUUID}",
+         |"filter":${optionToString(filter)},
+         |"readSchema":"${scanReport.getReadSchema}",
+         |"partitionPredicate":${optionToString(partitionPredicate)},
+         |"dataSkippingFilter":${optionToString(dataSkippingFilter)},
+         |"isFullyConsumed":${scanReport.getIsFullyConsumed},
+         |"scanMetrics":{
+         |"totalPlanningDurationNs":${scanMetrics.getTotalPlanningDurationNs},
+         |"numAddFilesSeen":${scanMetrics.getNumAddFilesSeen},
+         |"numAddFilesSeenFromDeltaFiles":${scanMetrics.getNumAddFilesSeenFromDeltaFiles},
+         |"numActiveAddFiles":${scanMetrics.getNumActiveAddFiles},
+         |"numDuplicateAddFiles":${scanMetrics.getNumDuplicateAddFiles},
+         |"numRemoveFilesSeenFromDeltaFiles":${scanMetrics.getNumRemoveFilesSeenFromDeltaFiles}
+         |}
+         |}
+         |""".stripMargin.replaceAll("\n", "")
+    assert(expectedJson == MetricsReportSerializers.serializeScanReport(scanReport))
+  }
+
+  test("ScanReport serializer") {
+    val snapshotReportUUID = UUID.randomUUID()
+    val tableSchema = new StructType()
+      .add("part", IntegerType.INTEGER)
+      .add("id", IntegerType.INTEGER)
+    val partitionPredicate = new Predicate(">", new Column("part"), Literal.ofInt(1))
+    val exception = new RuntimeException("something something failed")
+
+    // Initialize transaction metrics and record some values
+    val scanMetrics = new ScanMetrics()
+    scanMetrics.totalPlanningTimer.record(200)
+    scanMetrics.addFilesCounter.increment(100)
+    scanMetrics.addFilesFromDeltaFilesCounter.increment(90)
+    scanMetrics.activeAddFilesCounter.increment(10)
+    scanMetrics.removeFilesFromDeltaFilesCounter.increment(10)
+
+    val scanReport1 = new ScanReportImpl(
+      "/table/path",
+      1,
+      tableSchema,
+      snapshotReportUUID,
+      Optional.of(partitionPredicate),
+      new StructType().add("id", IntegerType.INTEGER),
+      Optional.of(partitionPredicate),
+      Optional.empty(),
+      true,
+      scanMetrics,
+      Optional.of(exception))
+
+    // Manually check expected JSON
+    val expectedJson =
+      s"""
+         |{"tablePath":"/table/path",
+         |"operationType":"Scan",
+         |"reportUUID":"${scanReport1.getReportUUID}",
+         |"exception":"$exception",
+         |"tableVersion":1,
+         |"tableSchema":"struct(StructField(name=part,type=integer,nullable=true,metadata={}),
+         | StructField(name=id,type=integer,nullable=true,metadata={}))",
+         |"snapshotReportUUID":"$snapshotReportUUID",
+         |"filter":"(column(`part`) > 1)",
+         |"readSchema":"struct(StructField(name=id,type=integer,nullable=true,metadata={}))",
+         |"partitionPredicate":"(column(`part`) > 1)",
+         |"dataSkippingFilter":null,
+         |"isFullyConsumed":true,
+         |"scanMetrics":{
+         |"totalPlanningDurationNs":200,
+         |"numAddFilesSeen":100,
+         |"numAddFilesSeenFromDeltaFiles":90,
+         |"numActiveAddFiles":10,
+         |"numDuplicateAddFiles":0,
+         |"numRemoveFilesSeenFromDeltaFiles":10
+         |}
+         |}
+         |""".stripMargin.replaceAll("\n", "")
+    assert(expectedJson == MetricsReportSerializers.serializeScanReport(scanReport1))
+
+    // Check with test function
+    testScanReport(scanReport1)
+
+    // Empty options for all possible fields (version, providedTimestamp and exception)
+    val scanReport2 = new ScanReportImpl(
+      "/table/path",
+      1,
+      tableSchema,
+      snapshotReportUUID,
+      Optional.empty(),
+      tableSchema,
+      Optional.empty(),
+      Optional.empty(),
+      false, // isFullyConsumed
+      new ScanMetrics(),
+      Optional.empty())
+    testScanReport(scanReport2)
   }
 }

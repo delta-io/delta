@@ -296,7 +296,7 @@ class DeltaAnalysis(session: SparkSession)
           resolveCloneCommand(
             cloneStatement.target,
             CloneIcebergSource(
-              table.tableIdentifier, sparkTable = None, tableSchema = None, session),
+              table.tableIdentifier, sparkTable = None, deltaSnapshot = None, session),
             cloneStatement)
 
         case DataSourceV2Relation(table, _, _, _, _)
@@ -313,7 +313,7 @@ class DeltaAnalysis(session: SparkSession)
           }
           resolveCloneCommand(
             cloneStatement.target,
-            CloneIcebergSource(tableIdent, Some(table), tableSchema = None, session),
+            CloneIcebergSource(tableIdent, Some(table), deltaSnapshot = None, session),
             cloneStatement)
 
         case u: UnresolvedRelation =>
@@ -925,7 +925,7 @@ class DeltaAnalysis(session: SparkSession)
         if s != t && sNull == tNull =>
         addCastsToArrayStructs(tblName, attr, s, t, sNull, typeWideningMode)
       case (s: AtomicType, t: AtomicType)
-        if typeWideningMode.shouldWidenType(fromType = t, toType = s) =>
+        if typeWideningMode.shouldWidenTo(fromType = t, toType = s) =>
         // Keep the type from the query, the target schema will be updated to widen the existing
         // type to match it.
         attr
@@ -1097,7 +1097,7 @@ class DeltaAnalysis(session: SparkSession)
 
       case (StructField(name, sourceType: AtomicType, _, _),
             i @ TargetIndex(StructField(targetName, targetType: AtomicType, _, targetMetadata)))
-          if typeWideningMode.shouldWidenType(fromType = targetType, toType = sourceType) =>
+          if typeWideningMode.shouldWidenTo(fromType = targetType, toType = sourceType) =>
         Alias(
           GetStructField(parent, i, Option(name)),
           targetName)(explicitMetadata = Option(targetMetadata))

@@ -27,15 +27,22 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.ConcurrentWriteException;
 import io.delta.kernel.expressions.Column;
+import io.delta.kernel.hook.PostCommitHook;
 import io.delta.kernel.internal.actions.*;
+import io.delta.kernel.internal.annotation.VisibleForTesting;
+import io.delta.kernel.internal.checksum.CRCInfo;
 import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.hook.CheckpointHook;
+import io.delta.kernel.internal.hook.ChecksumSimpleHook;
 import io.delta.kernel.internal.metrics.TransactionMetrics;
 import io.delta.kernel.internal.metrics.TransactionReportImpl;
 import io.delta.kernel.internal.replay.ConflictChecker;
 import io.delta.kernel.internal.replay.ConflictChecker.TransactionRebaseState;
 import io.delta.kernel.internal.rowtracking.RowTracking;
+import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.*;
+import io.delta.kernel.metrics.TransactionMetricsResult;
 import io.delta.kernel.metrics.TransactionReport;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterable;
@@ -66,7 +73,7 @@ public class TransactionImpl implements Transaction {
   private final Optional<SetTransaction> setTxnOpt;
   private final boolean shouldUpdateProtocol;
   private final Clock clock;
-  private List<DomainMetadata> domainMetadatas = new ArrayList<>();
+  private List<DomainMetadata> domainMetadatas;
   private Metadata metadata;
   private boolean shouldUpdateMetadata;
   private int maxRetries;
@@ -86,7 +93,8 @@ public class TransactionImpl implements Transaction {
       boolean shouldUpdateMetadata,
       boolean shouldUpdateProtocol,
       int maxRetries,
-      Clock clock) {
+      Clock clock,
+      List<DomainMetadata> domainMetadatas) {
     this.isNewTable = isNewTable;
     this.dataPath = dataPath;
     this.logPath = logPath;
@@ -100,6 +108,7 @@ public class TransactionImpl implements Transaction {
     this.shouldUpdateProtocol = shouldUpdateProtocol;
     this.maxRetries = maxRetries;
     this.clock = clock;
+    this.domainMetadatas = domainMetadatas;
   }
 
   @Override
@@ -114,7 +123,7 @@ public class TransactionImpl implements Transaction {
 
   @Override
   public StructType getSchema(Engine engine) {
-    return readSnapshot.getSchema(engine);
+    return readSnapshot.getSchema();
   }
 
   public Optional<SetTransaction> getSetTxnOpt() {
@@ -126,6 +135,7 @@ public class TransactionImpl implements Transaction {
    *
    * @param domainMetadatas List of domain metadata to be added to the transaction.
    */
+  @VisibleForTesting
   public void addDomainMetadatas(List<DomainMetadata> domainMetadatas) {
     this.domainMetadatas.addAll(domainMetadatas);
   }
@@ -166,11 +176,11 @@ public class TransactionImpl implements Transaction {
   private TransactionCommitResult commitWithRetry(
       Engine engine, CloseableIterable<Row> dataActions, TransactionMetrics transactionMetrics) {
     try {
-      long commitAsVersion = readSnapshot.getVersion(engine) + 1;
+      long commitAsVersion = readSnapshot.getVersion() + 1;
       // Generate the commit action with the inCommitTimestamp if ICT is enabled.
       CommitInfo attemptCommitInfo = generateCommitAction(engine);
       updateMetadataWithICTIfRequired(
-          engine, attemptCommitInfo.getInCommitTimestamp(), readSnapshot.getVersion(engine));
+          engine, attemptCommitInfo.getInCommitTimestamp(), readSnapshot.getVersion());
 
       // If row tracking is supported, assign base row IDs and default row commit versions to any
       // AddFile actions that do not yet have them. If the row ID high watermark changes, emit a
@@ -339,6 +349,7 @@ public class TransactionImpl implements Transaction {
                     dataAndMetadataActions.map(
                         action -> {
                           transactionMetrics.totalActionsCounter.increment();
+                          // TODO: handle RemoveFiles.
                           if (!action.isNullAt(ADD_FILE_ORDINAL)) {
                             transactionMetrics.addFilesCounter.increment();
                             transactionMetrics.addFilesSizeInBytesCounter.increment(
@@ -354,7 +365,16 @@ public class TransactionImpl implements Transaction {
           "Write file actions to JSON log file `%s`",
           FileNames.deltaFile(logPath, commitAsVersion));
 
-      return new TransactionCommitResult(commitAsVersion, isReadyForCheckpoint(commitAsVersion));
+      List<PostCommitHook> postCommitHooks = new ArrayList<>();
+      if (isReadyForCheckpoint(commitAsVersion)) {
+        postCommitHooks.add(new CheckpointHook(dataPath, commitAsVersion));
+      }
+
+      buildPostCommitCrcInfoIfCurrentCrcAvailable(
+              commitAsVersion, transactionMetrics.captureTransactionMetricsResult())
+          .ifPresent(crcInfo -> postCommitHooks.add(new ChecksumSimpleHook(crcInfo, logPath)));
+
+      return new TransactionCommitResult(commitAsVersion, postCommitHooks);
     } catch (FileAlreadyExistsException e) {
       throw e;
     } catch (IOException ioe) {
@@ -427,6 +447,36 @@ public class TransactionImpl implements Transaction {
             readSnapshot.getSnapshotReport(),
             exception);
     engine.getMetricsReporters().forEach(reporter -> reporter.report(transactionReport));
+  }
+
+  private Optional<CRCInfo> buildPostCommitCrcInfoIfCurrentCrcAvailable(
+      long commitAtVersion, TransactionMetricsResult metricsResult) {
+    if (isNewTable) {
+      return Optional.of(
+          new CRCInfo(
+              commitAtVersion,
+              metadata,
+              protocol,
+              metricsResult.getTotalAddFilesSizeInBytes(),
+              metricsResult.getNumAddFiles(),
+              Optional.of(txnId.toString())));
+    }
+
+    return readSnapshot
+        .getCurrentCrcInfo()
+        // in the case of a conflicting txn and successful retry the readSnapshot may not be
+        // commitVersion - 1
+        .filter(lastCrcInfo -> commitAtVersion == lastCrcInfo.getVersion() + 1)
+        .map(
+            lastCrcInfo ->
+                new CRCInfo(
+                    commitAtVersion,
+                    metadata,
+                    protocol,
+                    // TODO: handle RemoveFiles for calculating table size and num of files.
+                    lastCrcInfo.getTableSizeBytes() + metricsResult.getTotalAddFilesSizeInBytes(),
+                    lastCrcInfo.getNumFiles() + metricsResult.getNumAddFiles(),
+                    Optional.of(txnId.toString())));
   }
 
   /**

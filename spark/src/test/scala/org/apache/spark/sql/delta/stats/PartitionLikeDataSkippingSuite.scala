@@ -375,6 +375,57 @@ trait PartitionLikeDataSkippingSuiteBase
         minNumFilesToApply = 1)
     }
   }
+
+  test("partition-like skipping can reference non-clustering columns via config") {
+    withSQLConf(
+        DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_CLUSTERING_COLUMNS_ONLY.key ->
+          "false") {
+      validateExpectedScanMetrics(
+        tableName = testTableName,
+        query = s"SELECT * FROM $testTableName WHERE CAST(e AS STRING) = '1'",
+        expectedNumFiles = 12,
+        expectedNumPartitionLikeDataFilters = 1,
+        allPredicatesUsed = true,
+        minNumFilesToApply = 1L)
+    }
+  }
+
+  test("partition-like skipping whitelist can be expanded via config") {
+    // Single additional supported expression.
+    withSQLConf(
+      DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_ADDITIONAL_SUPPORTED_EXPRESSIONS.key ->
+        "org.apache.spark.sql.catalyst.expressions.RegExpExtract") {
+      val query = s"SELECT * FROM $testTableName " +
+        "WHERE REGEXP_EXTRACT(s.b, '([0-9][0-9][0-9][0-9]).*') = '1971'"
+      validateExpectedScanMetrics(
+        tableName = testTableName,
+        query = query,
+        expectedNumFiles = 12,
+        expectedNumPartitionLikeDataFilters = 1,
+        allPredicatesUsed = true,
+        minNumFilesToApply = 1L)
+    }
+
+    // Multiple additional supported expressions.
+    DeltaLog.clearCache() // Clear cache to avoid stale config reads.
+    withSQLConf(
+      DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_ADDITIONAL_SUPPORTED_EXPRESSIONS.key ->
+        ("org.apache.spark.sql.catalyst.expressions.RegExpExtract," +
+        "org.apache.spark.sql.catalyst.expressions.JsonToStructs")) {
+      val query = s"""
+        |SELECT * FROM $testTableName
+        |WHERE (REGEXP_EXTRACT(s.b, '([0-9][0-9][0-9][0-9]).*') = '1971' OR
+        |FROM_JSON(CONCAT('{"date":"', STRING(c), '"}'), 'date STRING')['date'] = '1972-03-02')
+        |""".stripMargin
+      validateExpectedScanMetrics(
+        tableName = testTableName,
+        query = query,
+        expectedNumFiles = 13,
+        expectedNumPartitionLikeDataFilters = 1,
+        allPredicatesUsed = true,
+        minNumFilesToApply = 1L)
+    }
+  }
 }
 
 class PartitionLikeDataSkippingSuite extends PartitionLikeDataSkippingSuiteBase

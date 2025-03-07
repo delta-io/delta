@@ -75,9 +75,6 @@ class DeltaDataSource
       schema: Option[StructType],
       providerName: String,
       parameters: Map[String, String]): (String, StructType) = {
-    if (schema.nonEmpty && schema.get.nonEmpty) {
-      throw DeltaErrors.specifySchemaAtReadTimeException
-    }
     val path = parameters.getOrElse("path", {
       throw DeltaErrors.pathNotSpecifiedException
     })
@@ -108,7 +105,13 @@ class DeltaDataSource
         .getOrElse(snapshot.schema)
     }
 
-    val schemaToUse = DeltaColumnMapping.dropColumnMappingMetadata(
+    if (schema.nonEmpty && schema.get.nonEmpty &&
+      !DataType.equalsIgnoreCompatibleNullability(readSchema, schema.get)) {
+      throw DeltaErrors.specifySchemaAtReadTimeException
+    }
+
+    val schemaToUse = DeltaTableUtils.removeInternalDeltaMetadata(
+      sqlContext.sparkSession,
       DeltaTableUtils.removeInternalWriterMetadata(sqlContext.sparkSession, readSchema)
     )
     if (schemaToUse.isEmpty) {
@@ -437,7 +440,6 @@ object DeltaDataSource extends DatabricksLogging {
       parameters: Map[String, String],
       sourceMetadataPathOpt: Option[String] = None,
       mergeConsecutiveSchemaChanges: Boolean = false): Option[DeltaSourceMetadataTrackingLog] = {
-    val options = new CaseInsensitiveStringMap(parameters.asJava)
 
     DeltaDataSource.extractSchemaTrackingLocationConfig(spark, parameters)
       .map { schemaTrackingLocation =>
@@ -449,7 +451,7 @@ object DeltaDataSource extends DatabricksLogging {
 
         DeltaSourceMetadataTrackingLog.create(
           spark, schemaTrackingLocation, sourceSnapshot,
-          Option(options.get(DeltaOptions.STREAMING_SOURCE_TRACKING_ID)),
+          parameters,
           sourceMetadataPathOpt,
           mergeConsecutiveSchemaChanges
         )

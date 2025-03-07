@@ -15,26 +15,29 @@
  */
 package io.delta.kernel.defaults
 
-import io.delta.golden.GoldenTableUtils.goldenTablePath
-import io.delta.kernel.exceptions.{InvalidTableException, KernelException, TableNotFoundException}
-import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
-import io.delta.kernel.internal.TableImpl
-import io.delta.kernel.internal.fs.Path
-import io.delta.kernel.internal.util.InternalUtils.daysSinceEpoch
-import io.delta.kernel.internal.util.{DateTimeConstants, FileNames}
-import io.delta.kernel.types.{LongType, StructType}
-import io.delta.kernel.Table
-import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
-import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations}
-import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
-import org.apache.spark.sql.functions.col
-import org.scalatest.funsuite.AnyFunSuite
-
 import java.io.File
 import java.math.BigDecimal
 import java.sql.Date
 import java.time.Instant
+
 import scala.collection.JavaConverters._
+
+import io.delta.golden.GoldenTableUtils.goldenTablePath
+import io.delta.kernel.Table
+import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
+import io.delta.kernel.exceptions.{InvalidTableException, KernelException, TableNotFoundException}
+import io.delta.kernel.internal.TableImpl
+import io.delta.kernel.internal.fs.Path
+import io.delta.kernel.internal.util.{DateTimeConstants, FileNames}
+import io.delta.kernel.internal.util.InternalUtils.daysSinceEpoch
+import io.delta.kernel.types.{LongType, StructType}
+
+import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations}
+import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
+
+import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
+import org.apache.spark.sql.functions.col
+import org.scalatest.funsuite.AnyFunSuite
 
 class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
 
@@ -52,7 +55,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
   2        | 2021-10-01 08:09:20               | 2000-01-01 09:00:00
   3        | 1969-01-01 00:00:00               | 1969-01-01 00:00:00
   4        | null                              | null
-  */
+   */
 
   def row0: TestRow = TestRow(
     0,
@@ -81,20 +84,18 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
   def row4: TestRow = TestRow(
     4,
     null,
-    null
-  )
+    null)
 
   def utcTableExpectedResult: Seq[TestRow] = Seq(row0, row1, row2, row3, row4)
 
   def testTimestampTable(
-    goldenTableName: String,
-    timeZone: String,
-    expectedResult: Seq[TestRow]): Unit = {
+      goldenTableName: String,
+      timeZone: String,
+      expectedResult: Seq[TestRow]): Unit = {
     withTimeZone(timeZone) {
       checkTable(
         path = goldenTablePath(goldenTableName),
-        expectedAnswer = expectedResult
-      )
+        expectedAnswer = expectedResult)
     }
   }
 
@@ -120,8 +121,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
         null
       } else {
         values(2).asInstanceOf[Long] + DateTimeConstants.MICROS_PER_HOUR * 8
-      }
-    )
+      })
   }
 
   for (timeZone <- Seq("UTC", "Iceland", "PST", "America/Los_Angeles")) {
@@ -154,8 +154,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
     TestRow(5, null, 1373043660123456L),
     TestRow(6, 1637202600123456L, null),
     TestRow(7, 1373043660123456L, null),
-    TestRow(8, null, null)
-  )
+    TestRow(8, null, null))
 
   Seq("", "-name-mode", "-id-mode").foreach { cmMode =>
     test(s"end-to-end: read table with timestamp_ntz columns (including partition): $cmMode") {
@@ -175,16 +174,17 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
         ("234.00000", "1.00", "2.00000", "3.0000000000"),
         ("2342222.23454", "111.11", "22222.22222", "3333333333.3333333333"),
         ("0.00004", "0.00", "0.00000", "0E-10"),
-        ("-2342342.23423", "-999.99", "-99999.99999", "-9999999999.9999999999")
-      ).map { tup =>
-        (new BigDecimal(tup._1), new BigDecimal(tup._2), new BigDecimal(tup._3),
+        ("-2342342.23423", "-999.99", "-99999.99999", "-9999999999.9999999999")).map { tup =>
+        (
+          new BigDecimal(tup._1),
+          new BigDecimal(tup._2),
+          new BigDecimal(tup._3),
           new BigDecimal(tup._4))
       }
 
       checkTable(
         path = goldenTablePath(tablePath),
-        expectedAnswer = expectedResult.map(TestRow.fromTuple(_))
-      )
+        expectedAnswer = expectedResult.map(TestRow.fromTuple(_)))
     }
   }
 
@@ -196,8 +196,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
 
     checkTable(
       path = goldenTablePath("decimal-various-scale-precision"),
-      expectedAnswer = expResults
-    )
+      expectedAnswer = expResults)
   }
 
   //////////////////////////////////////////////////////////////////////////////////
@@ -273,8 +272,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
   test("end to end: multi-part checkpoint") {
     checkTable(
       path = goldenTablePath("multi-part-checkpoint"),
-      expectedAnswer = (Seq(0L) ++ (0L until 30L)).map(TestRow(_))
-    )
+      expectedAnswer = (Seq(0L) ++ (0L until 30L)).map(TestRow(_)))
   }
 
   test("read partitioned table") {
@@ -282,7 +280,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
 
     // for now we don't support timestamp type partition columns so remove from read columns
     val readCols = Table.forPath(defaultEngine, path).getLatestSnapshot(defaultEngine)
-      .getSchema(defaultEngine)
+      .getSchema()
       .withoutField("as_timestamp")
       .fields()
       .asScala
@@ -303,8 +301,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
         new BigDecimal(i),
         Seq(TestRow(i), TestRow(i), TestRow(i)),
         TestRow(i.toString, i.toString, TestRow(i, i.toLong)),
-        i.toString
-      )
+        i.toString)
     } ++ (TestRow(
       null,
       null,
@@ -319,14 +316,12 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       null,
       Seq(TestRow(2), TestRow(2), TestRow(2)),
       TestRow("2", "2", TestRow(2, 2L)),
-      "2"
-    ) :: Nil)
+      "2") :: Nil)
 
     checkTable(
       path = path,
       expectedAnswer = expectedAnswer,
-      readCols = readCols
-    )
+      readCols = readCols)
   }
 
   test("table with complex array types") {
@@ -338,20 +333,16 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
         Seq(Seq(Seq(i, i, i), Seq(i, i, i)), Seq(Seq(i, i, i), Seq(i, i, i))),
         Seq(
           Seq(Seq(Seq(i, i, i), Seq(i, i, i)), Seq(Seq(i, i, i), Seq(i, i, i))),
-          Seq(Seq(Seq(i, i, i), Seq(i, i, i)), Seq(Seq(i, i, i), Seq(i, i, i)))
-        ),
+          Seq(Seq(Seq(i, i, i), Seq(i, i, i)), Seq(Seq(i, i, i), Seq(i, i, i)))),
         Seq(
           Map[String, Long](i.toString -> i.toLong),
-          Map[String, Long](i.toString -> i.toLong)
-        ),
-        Seq(TestRow(i), TestRow(i), TestRow(i))
-      )
+          Map[String, Long](i.toString -> i.toLong)),
+        Seq(TestRow(i), TestRow(i), TestRow(i)))
     }
 
     checkTable(
       path = path,
-      expectedAnswer = expectedAnswer
-    )
+      expectedAnswer = expectedAnswer)
   }
 
   Seq("name", "id").foreach { columnMappingMode =>
@@ -379,8 +370,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
           Seq(TestRow(i), TestRow(i)), // array_of_structs
           TestRow( // struct_of_arrays_maps_of_structs
             Seq(i, i + 1),
-            Map(Seq(i, i + 1) -> TestRow(i + 2))
-          ),
+            Map(Seq(i, i + 1) -> TestRow(i + 2))),
           Map(
             i -> (i + 1).longValue(),
             (i + 2) -> (i + 3).longValue()
@@ -396,15 +386,12 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
           },
           Map( // map_of_maps
             i.toLong -> Map(i -> i),
-            (i + 1).toLong -> Map(i + 2 -> i)
-          )
-        )
+            (i + 1).toLong -> Map(i + 2 -> i)))
       } ++ Seq(TestRow(Seq.fill(22)(null): _*)) // all nulls row, 22 columns
 
       checkTable(
         path = path,
-        expectedAnswer = expectedAnswer
-      )
+        expectedAnswer = expectedAnswer)
     }
   }
 
@@ -434,8 +421,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       checkTable(
         path = path,
         expectedAnswer = expectedAnswer,
-        readCols = Seq("ByteType", "decimal", "nested_struct", "array_of_prims", "map_of_prims")
-      )
+        readCols = Seq("ByteType", "decimal", "nested_struct", "array_of_prims", "map_of_prims"))
     }
   }
 
@@ -449,13 +435,21 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
 
     val expectedAnswer = Seq(
       TestRow(
-        1L, 2L, 3.4.toFloat.toDouble, 5.0, 6.0, 7.0, timestampToMicros("2024-09-09T00:00:00Z")
-      ),
+        1L,
+        2L,
+        3.4.toFloat.toDouble,
+        5.0,
+        6.0,
+        7.0,
+        timestampToMicros("2024-09-09T00:00:00Z")),
       TestRow(
-        Long.MaxValue, Long.MaxValue, 1.234567890123, 1.234567890123, 1.234567890123,
-        1.234567890123, timestampToMicros("2024-09-09T12:34:56.123456Z")
-      )
-    )
+        Long.MaxValue,
+        Long.MaxValue,
+        1.234567890123,
+        1.234567890123,
+        1.234567890123,
+        1.234567890123,
+        timestampToMicros("2024-09-09T12:34:56.123456Z")))
     checkTable(
       path = path,
       expectedAnswer = expectedAnswer,
@@ -466,8 +460,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
         "byte_double",
         "short_double",
         "int_double",
-        "date_timestamp_ntz")
-    )
+        "date_timestamp_ntz"))
   }
 
   test("table with type widening to decimal types") {
@@ -479,17 +472,14 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
         BigDecimal.valueOf(10L, 1),
         BigDecimal.valueOf(20L, 1),
         BigDecimal.valueOf(30L, 1),
-        BigDecimal.valueOf(40L, 1)
-      ),
+        BigDecimal.valueOf(40L, 1)),
       TestRow(
         BigDecimal.valueOf(1234567890123456L, 2),
         BigDecimal.valueOf(1234567890123456L, 5),
         BigDecimal.valueOf(1234L, 1),
         BigDecimal.valueOf(123456L, 1),
         BigDecimal.valueOf(12345678901L, 1),
-        BigDecimal.valueOf(1234567890123456789L, 1)
-      )
-    )
+        BigDecimal.valueOf(1234567890123456789L, 1)))
     checkTable(
       path = path,
       expectedAnswer = expectedAnswer,
@@ -499,9 +489,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
         "byte_decimal",
         "short_decimal",
         "int_decimal",
-        "long_decimal"
-      )
-    )
+        "long_decimal"))
   }
 
   test("table with type widening to nested types") {
@@ -509,14 +497,13 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
     val expectedAnswer = Seq(
       TestRow(TestRow(1L), Map(2L -> 3L), Seq(4L, 5L)),
       TestRow(
-        TestRow(Long.MaxValue), Map(Long.MaxValue -> Long.MaxValue),
-        Seq(Long.MaxValue, Long.MinValue))
-    )
+        TestRow(Long.MaxValue),
+        Map(Long.MaxValue -> Long.MaxValue),
+        Seq(Long.MaxValue, Long.MinValue)))
     checkTable(
       path = path,
       expectedAnswer = expectedAnswer,
-      readCols = Seq("struct", "map", "array")
-    )
+      readCols = Seq("struct", "map", "array"))
   }
 
   test("table with complex map types") {
@@ -530,58 +517,58 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
         Map(i.toShort -> (i % 2 == 0)),
         Map(i.toFloat -> i.toDouble),
         Map(i.toString -> new BigDecimal(i)),
-        Map(i -> Seq(TestRow(i), TestRow(i), TestRow(i)))
-      )
+        Map(i -> Seq(TestRow(i), TestRow(i), TestRow(i))))
     }
 
     checkTable(
       path = path,
-      expectedAnswer = expectedAnswer
-    )
+      expectedAnswer = expectedAnswer)
   }
 
   test("table with array of primitives") {
     val expectedAnswer = (0 until 10).map { i =>
       TestRow(
-        Seq(i), Seq(i.toLong), Seq(i.toByte), Seq(i.toShort),
-        Seq(i % 2 == 0), Seq(i.toFloat), Seq(i.toDouble), Seq(i.toString),
-        Seq(Array(i.toByte, i.toByte)), Seq(new BigDecimal(i))
-      )
+        Seq(i),
+        Seq(i.toLong),
+        Seq(i.toByte),
+        Seq(i.toShort),
+        Seq(i % 2 == 0),
+        Seq(i.toFloat),
+        Seq(i.toDouble),
+        Seq(i.toString),
+        Seq(Array(i.toByte, i.toByte)),
+        Seq(new BigDecimal(i)))
     }
     checkTable(
       path = goldenTablePath("data-reader-array-primitives"),
-      expectedAnswer = expectedAnswer
-    )
+      expectedAnswer = expectedAnswer)
   }
 
   test("table primitives") {
     val expectedAnswer = (0 to 10).map {
       case 10 => TestRow(null, null, null, null, null, null, null, null, null, null)
       case i => TestRow(
-        i,
-        i.toLong,
-        i.toByte,
-        i.toShort,
-        i % 2 == 0,
-        i.toFloat,
-        i.toDouble,
-        i.toString,
-        Array[Byte](i.toByte, i.toByte),
-        new BigDecimal(i)
-      )
+          i,
+          i.toLong,
+          i.toByte,
+          i.toShort,
+          i % 2 == 0,
+          i.toFloat,
+          i.toDouble,
+          i.toString,
+          Array[Byte](i.toByte, i.toByte),
+          new BigDecimal(i))
     }
 
     checkTable(
       path = goldenTablePath("data-reader-primitives"),
-      expectedAnswer = expectedAnswer
-    )
+      expectedAnswer = expectedAnswer)
   }
 
   test("table with checkpoint") {
     checkTable(
       path = getTestResourceFilePath("basic-with-checkpoint"),
-      expectedAnswer = (0 until 150).map(i => TestRow(i.toLong))
-    )
+      expectedAnswer = (0 until 150).map(i => TestRow(i.toLong)))
   }
 
   test(s"table with spaces in the table path") {
@@ -591,8 +578,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
         s"SELECT * FROM delta.`${getTestResourceFilePath("basic-with-checkpoint")}`")
       checkTable(
         path = target,
-        expectedAnswer = (0 until 150).map(i => TestRow(i.toLong))
-      )
+        expectedAnswer = (0 until 150).map(i => TestRow(i.toLong)))
     }
   }
 
@@ -600,23 +586,21 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
     val expectedAnswer = (0 to 10).map {
       case 10 => TestRow(null, null, null, null, null, null, null, null, null, null)
       case i => TestRow(
-        i,
-        i.toLong,
-        i.toByte,
-        i.toShort,
-        i % 2 == 0,
-        i.toFloat,
-        i.toDouble,
-        i.toString,
-        Array[Byte](i.toByte, i.toByte),
-        new BigDecimal(i)
-      )
+          i,
+          i.toLong,
+          i.toByte,
+          i.toShort,
+          i % 2 == 0,
+          i.toFloat,
+          i.toDouble,
+          i.toString,
+          Array[Byte](i.toByte, i.toByte),
+          new BigDecimal(i))
     }
 
     checkTable(
       path = getTestResourceFilePath("data-reader-primitives-column-mapping-name"),
-      expectedAnswer = expectedAnswer
-    )
+      expectedAnswer = expectedAnswer)
   }
 
   test("partitioned table with column mapping") {
@@ -629,14 +613,12 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       "as_int",
       "as_double",
       // data fields
-      "value"
-    )
+      "value")
 
     checkTable(
       path = getTestResourceFilePath("data-reader-partition-values-column-mapping-name"),
       readCols = readCols,
-      expectedAnswer = expectedAnswer
-    )
+      expectedAnswer = expectedAnswer)
   }
 
   test("simple end to end with vacuum protocol check feature") {
@@ -652,22 +634,19 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
     }
     checkTable(
       path = goldenTablePath("data-reader-nested-struct"),
-      expectedAnswer = expectedAnswer
-    )
+      expectedAnswer = expectedAnswer)
   }
 
   test("table with empty parquet files") {
     checkTable(
       path = goldenTablePath("125-iterator-bug"),
-      expectedAnswer = (1 to 5).map(TestRow(_))
-    )
+      expectedAnswer = (1 to 5).map(TestRow(_)))
   }
 
   test("handle corrupted '_last_checkpoint' file") {
     checkTable(
       path = goldenTablePath("corrupted-last-checkpoint-kernel"),
-      expectedAnswer = (0L until 100L).map(TestRow(_))
-    )
+      expectedAnswer = (0L until 100L).map(TestRow(_)))
   }
 
   test("error - version not contiguous") {
@@ -680,7 +659,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
   test("table protocol version greater than reader protocol version") {
     val e = intercept[Exception] {
       latestSnapshot(goldenTablePath("deltalog-invalid-protocol-version"))
-        .getScanBuilder(defaultEngine)
+        .getScanBuilder()
         .build()
     }
     assert(e.getMessage.contains("Unsupported Delta protocol reader version"))
@@ -720,7 +699,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
     withTempDir { tempDir =>
       val path = tempDir.getCanonicalPath
       (0 to 10).foreach { i =>
-        spark.range(i*10, i*10 + 10).write
+        spark.range(i * 10, i * 10 + 10).write
           .format("delta")
           .mode("append")
           .save(path)
@@ -730,22 +709,19 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
         path = path,
         expectedAnswer = (0L to 99L).map(TestRow(_)),
         version = Some(9),
-        expectedVersion = Some(9)
-      )
+        expectedVersion = Some(9))
       // Read a JSON version
       checkTable(
         path = path,
         expectedAnswer = (0L to 89L).map(TestRow(_)),
         version = Some(8),
-        expectedVersion = Some(8)
-      )
+        expectedVersion = Some(8))
       // Read the current version
       checkTable(
         path = path,
         expectedAnswer = (0L to 109L).map(TestRow(_)),
         version = Some(10),
-        expectedVersion = Some(10)
-      )
+        expectedVersion = Some(10))
       // Cannot read a version that does not exist
       val e = intercept[RuntimeException] {
         Table.forPath(defaultEngine, path)
@@ -761,13 +737,14 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       val tablePath = tempDir.getCanonicalPath
       // Write versions [0, 10] (inclusive) including a checkpoint
       (0 to 10).foreach { i =>
-        spark.range(i*10, i*10 + 10).write
+        spark.range(i * 10, i * 10 + 10).write
           .format("delta")
           .mode("append")
           .save(tablePath)
       }
       val log = org.apache.spark.sql.delta.DeltaLog.forTable(
-        spark, new org.apache.hadoop.fs.Path(tablePath))
+        spark,
+        new org.apache.hadoop.fs.Path(tablePath))
       val deltaCommitFileProvider = org.apache.spark.sql.delta.util.DeltaCommitFileProvider(
         log.unsafeVolatileSnapshot)
       // Delete the log files for versions 0-9, truncating the table history to version 10
@@ -792,15 +769,13 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
         path = tablePath,
         expectedAnswer = (0L to 109L).map(TestRow(_)),
         version = Some(10),
-        expectedVersion = Some(10)
-      )
+        expectedVersion = Some(10))
       // Can read version 11
       checkTable(
         path = tablePath,
         expectedAnswer = (0L until 50L).map(TestRow(_)),
         version = Some(11),
-        expectedVersion = Some(11)
-      )
+        expectedVersion = Some(11))
     }
   }
 
@@ -815,8 +790,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
         expectedAnswer = (0L until 10L).map(TestRow(_)),
         expectedSchema = new StructType().add("id", LongType.LONG),
         version = Some(0),
-        expectedVersion = Some(0)
-      )
+        expectedVersion = Some(0))
     }
   }
 
@@ -839,8 +813,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
           .add("id", LongType.LONG)
           .add("part5", LongType.LONG),
         version = Some(0),
-        expectedVersion = Some(0)
-      )
+        expectedVersion = Some(0))
     }
   }
 
@@ -850,7 +823,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
 
   private def generateCommits(path: String, commits: Long*): Unit = {
     commits.zipWithIndex.foreach { case (ts, i) =>
-      spark.range(i*10, i*10 + 10).write.format("delta").mode("append").save(path)
+      spark.range(i * 10, i * 10 + 10).write.format("delta").mode("append").save(path)
       val file = new File(FileNames.deltaFile(new Path(path, "_delta_log"), i))
       file.setLastModified(ts)
     }
@@ -860,43 +833,41 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
     withTempDir { tempDir =>
       val start = 1540415658000L
       val minuteInMilliseconds = 60000L
-      generateCommits(tempDir.getCanonicalPath, start, start + 20 * minuteInMilliseconds,
+      generateCommits(
+        tempDir.getCanonicalPath,
+        start,
+        start + 20 * minuteInMilliseconds,
         start + 40 * minuteInMilliseconds)
       // Exact timestamp for version 0
       checkTable(
         path = tempDir.getCanonicalPath,
         expectedAnswer = (0L until 10L).map(TestRow(_)),
         timestamp = Some(start),
-        expectedVersion = Some(0)
-      )
+        expectedVersion = Some(0))
       // Timestamp between version 0 and 1 should load version 0
       checkTable(
         path = tempDir.getCanonicalPath,
         expectedAnswer = (0L until 10L).map(TestRow(_)),
         timestamp = Some(start + 10 * minuteInMilliseconds),
-        expectedVersion = Some(0)
-      )
+        expectedVersion = Some(0))
       // Exact timestamp for version 1
       checkTable(
         path = tempDir.getCanonicalPath,
         expectedAnswer = (0L until 20L).map(TestRow(_)),
         timestamp = Some(start + 20 * minuteInMilliseconds),
-        expectedVersion = Some(1)
-      )
+        expectedVersion = Some(1))
       // Exact timestamp for the last version
       checkTable(
         path = tempDir.getCanonicalPath,
         expectedAnswer = (0L until 30L).map(TestRow(_)),
         timestamp = Some(start + 40 * minuteInMilliseconds),
-        expectedVersion = Some(2)
-      )
+        expectedVersion = Some(2))
       // Timestamp after last commit fails
       val e1 = intercept[RuntimeException] {
         checkTable(
           path = tempDir.getCanonicalPath,
           expectedAnswer = Seq(),
-          timestamp = Some(start + 50 * minuteInMilliseconds)
-        )
+          timestamp = Some(start + 50 * minuteInMilliseconds))
       }
       assert(e1.getMessage.contains(
         s"The provided timestamp ${start + 50 * minuteInMilliseconds} ms " +
@@ -906,8 +877,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
         checkTable(
           path = tempDir.getCanonicalPath,
           expectedAnswer = Seq(),
-          timestamp = Some(start - 1L)
-        )
+          timestamp = Some(start - 1L))
       }
       assert(e2.getMessage.contains(
         s"The provided timestamp ${start - 1L} ms (2018-10-24T21:14:17.999Z) is before " +
@@ -970,7 +940,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       (0 to 2).foreach { i =>
         val files = AddFile(i.toString, Map.empty, 1, 1, true) :: Nil
         val metadata = if (i == 0) Metadata() :: Nil else Nil
-        log.startTransaction().commit( metadata ++ files, DeltaOperations.ManualUpdate)
+        log.startTransaction().commit(metadata ++ files, DeltaOperations.ManualUpdate)
       }
 
       // Setup part 2 of 2: edit lastModified times
@@ -1069,7 +1039,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
         assert(tableImpl.getVersionAtOrAfterTimestamp(defaultEngine, nowEpochMs + i * 1000) == i)
 
         assert(
-          tableImpl.getVersionBeforeOrAtTimestamp(defaultEngine, nowEpochMs + i * 1000 + 1)== i)
+          tableImpl.getVersionBeforeOrAtTimestamp(defaultEngine, nowEpochMs + i * 1000 + 1) == i)
 
         if (i == 35) {
           tableImpl.getVersionAtOrAfterTimestamp(defaultEngine, nowEpochMs + i * 1000 + 1)

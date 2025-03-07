@@ -15,15 +15,16 @@
  */
 package io.delta.kernel.test
 
-import java.util.UUID
+import java.util.{Optional, UUID}
+
+import scala.collection.JavaConverters._
 
 import io.delta.kernel.engine._
+import io.delta.kernel.internal.MockReadLastCheckpointFileJsonHandler
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
-
-import scala.collection.JavaConverters._
 
 /**
  * This is an extension to [[BaseMockFileSystemClient]] containing specific mock implementations
@@ -39,25 +40,24 @@ trait MockFileSystemClientUtils extends MockEngineUtils {
   /** Delta file statuses where the timestamp = 10*version */
   def deltaFileStatuses(deltaVersions: Seq[Long]): Seq[FileStatus] = {
     assert(deltaVersions.size == deltaVersions.toSet.size)
-    deltaVersions.map(v => FileStatus.of(FileNames.deltaFile(logPath, v), v, v*10))
+    deltaVersions.map(v => FileStatus.of(FileNames.deltaFile(logPath, v), v, v * 10))
   }
 
   /** Checkpoint file statuses where the timestamp = 10*version */
   def singularCheckpointFileStatuses(checkpointVersions: Seq[Long]): Seq[FileStatus] = {
     assert(checkpointVersions.size == checkpointVersions.toSet.size)
     checkpointVersions.map(v =>
-      FileStatus.of(FileNames.checkpointFileSingular(logPath, v).toString, v, v*10)
-    )
+      FileStatus.of(FileNames.checkpointFileSingular(logPath, v).toString, v, v * 10))
   }
 
   /** Checkpoint file statuses where the timestamp = 10*version */
   def multiCheckpointFileStatuses(
-    checkpointVersions: Seq[Long], numParts: Int): Seq[FileStatus] = {
+      checkpointVersions: Seq[Long],
+      numParts: Int): Seq[FileStatus] = {
     assert(checkpointVersions.size == checkpointVersions.toSet.size)
     checkpointVersions.flatMap(v =>
       FileNames.checkpointFileWithParts(logPath, v, numParts).asScala
-        .map(p => FileStatus.of(p.toString, v, v*10))
-    )
+        .map(p => FileStatus.of(p.toString, v, v * 10)))
   }
 
   /**
@@ -72,15 +72,22 @@ trait MockFileSystemClientUtils extends MockEngineUtils {
       fileType: String): Seq[(FileStatus, Seq[FileStatus])] = {
     checkpointVersions.map { case (v, useUUID, numSidecars) =>
       val topLevelFile = if (useUUID) {
-        FileStatus.of(FileNames.topLevelV2CheckpointFile(
-          logPath, v, UUID.randomUUID().toString, fileType).toString, v, v * 10)
+        FileStatus.of(
+          FileNames.topLevelV2CheckpointFile(
+            logPath,
+            v,
+            UUID.randomUUID().toString,
+            fileType).toString,
+          v,
+          v * 10)
       } else {
         FileStatus.of(FileNames.checkpointFileSingular(logPath, v).toString, v, v * 10)
       }
       val sidecars = (0 until numSidecars).map { _ =>
         FileStatus.of(
           FileNames.v2CheckpointSidecarFile(logPath, UUID.randomUUID().toString).toString,
-          v, v * 10)
+          v,
+          v * 10)
       }
       (topLevelFile, sidecars)
     }
@@ -101,10 +108,25 @@ trait MockFileSystemClientUtils extends MockEngineUtils {
       contents: Seq[FileStatus],
       parquetHandler: ParquetHandler,
       jsonHandler: JsonHandler): Engine = {
-    mockEngine(fileSystemClient =
-      new MockListFromFileSystemClient(listFromProvider(contents)),
+    mockEngine(
+      fileSystemClient =
+        new MockListFromFileSystemClient(listFromProvider(contents)),
       parquetHandler = parquetHandler,
       jsonHandler = jsonHandler)
+  }
+
+  def createMockFSAndJsonEngineForLastCheckpoint(
+      contents: Seq[FileStatus],
+      lastCheckpointVersion: Optional[java.lang.Long]): Engine = {
+    mockEngine(
+      fileSystemClient = new MockListFromFileSystemClient(listFromProvider(contents)),
+      jsonHandler = if (lastCheckpointVersion.isPresent) {
+        new MockReadLastCheckpointFileJsonHandler(
+          s"$logPath/_last_checkpoint",
+          lastCheckpointVersion.get())
+      } else {
+        null
+      })
   }
 
   /**
@@ -149,7 +171,7 @@ class MockListFromFileSystemClient(listFromProvider: String => Seq[FileStatus])
  * It also maintains metrics on number of times `listFrom` is called and arguments for each call.
  */
 class MockListFromResolvePathFileSystemClient(listFromProvider: String => Seq[FileStatus])
-  extends BaseMockFileSystemClient {
+    extends BaseMockFileSystemClient {
   private var listFromCalls: Seq[String] = Seq.empty
 
   override def listFrom(filePath: String): CloseableIterator[FileStatus] = {

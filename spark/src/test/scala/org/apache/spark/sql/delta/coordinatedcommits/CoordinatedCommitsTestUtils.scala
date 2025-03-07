@@ -23,9 +23,8 @@ import scala.collection.mutable
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaTestUtilsBase}
-import org.apache.spark.sql.delta.DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo, Metadata, Protocol}
-import org.apache.spark.sql.delta.util.JsonUtils
+import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, JsonUtils}
 import io.delta.storage.LogStore
 import io.delta.storage.commit.{CommitCoordinatorClient, CommitResponse, GetCommitsResponse => JGetCommitsResponse, TableDescriptor, TableIdentifier, UpdatedActions}
 import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
@@ -34,6 +33,7 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.{SparkConf, SparkFunSuite}
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.test.SharedSparkSession
 
 trait CoordinatedCommitsTestUtils
@@ -175,6 +175,7 @@ trait CoordinatedCommitsTestUtils
       updatedActions.getOldProtocol
     )
   }
+
 }
 
 case class TrackingInMemoryCommitCoordinatorBuilder(
@@ -334,11 +335,6 @@ trait CoordinatedCommitsBaseSuite
   // clean the table data in the commit coordinator. Note that we should call this before
   // the table actually gets DROP.
   def deleteTableFromCommitCoordinator(tableName: String): Unit = {
-    val cc = CommitCoordinatorProvider.getCommitCoordinatorClient(
-      defaultCommitsCoordinatorName, defaultCommitsCoordinatorConf, spark)
-    assert(
-      cc.isInstanceOf[TrackingCommitCoordinatorClient],
-      s"Please implement delete/drop method for coordinator: ${cc.getClass.getName}")
     val location = try {
       spark.sql(s"describe detail $tableName")
         .select("location")
@@ -349,7 +345,17 @@ trait CoordinatedCommitsBaseSuite
         // Ignore if the table does not exist/broken.
         return
     }
-    val locKey = location.stripPrefix("file:")
+    deleteTableFromCommitCoordinator(new Path(location))
+  }
+
+  def deleteTableFromCommitCoordinator(path: Path): Unit = {
+    val cc = CommitCoordinatorProvider.getCommitCoordinatorClient(
+      defaultCommitsCoordinatorName, defaultCommitsCoordinatorConf, spark)
+    assert(
+      cc.isInstanceOf[TrackingCommitCoordinatorClient],
+      s"Please implement delete/drop method for coordinator: ${cc.getClass.getName}")
+
+    val locKey = path.toString.stripPrefix("file:")
     if (locRefCount.contains(locKey)) {
       locRefCount(locKey) -= 1
     }
@@ -357,11 +363,11 @@ trait CoordinatedCommitsBaseSuite
     // names could be pointing to the same location. We should only clean up the table data in the
     // commit coordinator when the last table name pointing to the location is dropped.
     if (locRefCount.getOrElse(locKey, 0) == 0) {
-      val logPath = location + "/_delta_log"
+      val logPath = new Path(path, "_delta_log")
       cc.asInstanceOf[TrackingCommitCoordinatorClient]
         .delegatingCommitCoordinatorClient
         .asInstanceOf[InMemoryCommitCoordinator]
-        .dropTable(new Path(logPath))
+        .dropTable(logPath)
     }
     DeltaLog.clearCache()
   }

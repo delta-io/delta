@@ -15,6 +15,12 @@
  */
 package io.delta.kernel
 
+import java.lang.{Long => JLong}
+import java.util
+import java.util.Optional
+
+import scala.collection.JavaConverters._
+
 import io.delta.kernel.Transaction.{generateAppendActions, transformLogicalData}
 import io.delta.kernel.data._
 import io.delta.kernel.exceptions.KernelException
@@ -30,12 +36,8 @@ import io.delta.kernel.internal.util.VectorUtils.stringStringMapValue
 import io.delta.kernel.test.{MockEngineUtils, VectorTestUtils}
 import io.delta.kernel.types.{LongType, StringType, StructType}
 import io.delta.kernel.utils.{CloseableIterator, DataFileStatistics, DataFileStatus}
-import org.scalatest.funsuite.AnyFunSuite
 
-import java.lang.{Long => JLong}
-import java.util
-import java.util.Optional
-import scala.collection.JavaConverters._
+import org.scalatest.funsuite.AnyFunSuite
 
 class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineUtils {
 
@@ -48,7 +50,7 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
         mockEngine(),
         testTxnState(testSchema, enableIcebergCompatV2 = icebergCompatV2Enabled),
         testData(includePartitionCols = false),
-        Map.empty[String, Literal].asJava /* partition values */)
+        Map.empty[String, Literal].asJava /* partition values */ )
       transformedDateIter.map(_.getData).forEachRemaining(batch => {
         assert(batch.getSchema === testSchema)
       })
@@ -93,8 +95,7 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
             "file2" -> None // missing stats
           ),
           "Iceberg V2 compatibility requires statistics" // expected error message
-        )
-      ).foreach { case (actionRows, expectedErrorMsg) =>
+        )).foreach { case (actionRows, expectedErrorMsg) =>
         if (icebergCompatV2Enabled) {
           val ex = intercept[KernelException] {
             generateAppendActions(engine, txnState, actionRows, testDataWriteContext())
@@ -111,8 +112,7 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
       // valid stats
       val dataFileStatuses = testDataFileStatuses(
         "file1" -> testStats(Some(10)),
-        "file2" -> testStats(Some(20))
-      )
+        "file2" -> testStats(Some(20)))
       var actStats: Seq[String] = Seq.empty
       generateAppendActions(engine, txnState, dataFileStatuses, testDataWriteContext())
         .forEachRemaining { addActionRow =>
@@ -130,8 +130,8 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
 object TransactionSuite extends VectorTestUtils with MockEngineUtils {
   def testData(includePartitionCols: Boolean): CloseableIterator[FilteredColumnarBatch] = {
     toCloseableIterator(
-      Seq.range(0, 5).map(_ => testBatch(includePartitionCols)).asJava.iterator()
-    ).map(batch => new FilteredColumnarBatch(batch, Optional.empty()))
+      Seq.range(0, 5).map(_ => testBatch(includePartitionCols)).asJava.iterator()).map(batch =>
+      new FilteredColumnarBatch(batch, Optional.empty()))
   }
 
   def testBatch(includePartitionCols: Boolean): ColumnarBatch = {
@@ -187,9 +187,9 @@ object TransactionSuite extends VectorTestUtils with MockEngineUtils {
   }
 
   def testTxnState(
-    schema: StructType,
-    partitionCols: Seq[String] = Seq.empty,
-    enableIcebergCompatV2: Boolean = false): Row = {
+      schema: StructType,
+      partitionCols: Seq[String] = Seq.empty,
+      enableIcebergCompatV2: Boolean = false): Row = {
     val configurationMap = Map(ICEBERG_COMPAT_V2_ENABLED.getKey -> enableIcebergCompatV2.toString)
     val metadata = new Metadata(
       "id",
@@ -198,7 +198,7 @@ object TransactionSuite extends VectorTestUtils with MockEngineUtils {
       new Format(),
       DataTypeJsonSerDe.serializeDataType(schema),
       schema,
-      VectorUtils.stringArrayValue(partitionCols.asJava), // partitionColumns
+      VectorUtils.buildArrayValue(partitionCols.asJava, StringType.STRING), // partitionColumns
       Optional.empty(), // createdTime
       stringStringMapValue(configurationMap.asJava) // configurationMap
     )
@@ -217,7 +217,7 @@ object TransactionSuite extends VectorTestUtils with MockEngineUtils {
   }
 
   def testDataFileStatuses(fileNameStatsPairs: (String, Option[DataFileStatistics])*)
-  : CloseableIterator[DataFileStatus] = {
+      : CloseableIterator[DataFileStatus] = {
 
     toCloseableIterator(
       fileNameStatsPairs.map { case (fileName, statsOpt) =>
@@ -225,8 +225,7 @@ object TransactionSuite extends VectorTestUtils with MockEngineUtils {
           fileName,
           23L, // size - arbitrary value as this is just for tests.
           23L, // modificationTime - arbitrary value as this is just for tests.
-          Optional.ofNullable(statsOpt.orNull)
-        )
+          Optional.ofNullable(statsOpt.orNull))
       }.asJava.iterator())
   }
 

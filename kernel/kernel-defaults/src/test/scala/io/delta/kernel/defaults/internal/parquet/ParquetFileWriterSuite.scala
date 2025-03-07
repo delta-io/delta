@@ -16,6 +16,7 @@
 package io.delta.kernel.defaults.internal.parquet
 
 import java.lang.{Double => DoubleJ, Float => FloatJ}
+
 import io.delta.golden.GoldenTableUtils.{goldenTableFile, goldenTablePath}
 import io.delta.kernel.data.{ColumnarBatch, FilteredColumnarBatch}
 import io.delta.kernel.defaults.internal.DefaultKernelUtils
@@ -23,9 +24,10 @@ import io.delta.kernel.defaults.utils.{DefaultVectorTestUtils, ExpressionTestUti
 import io.delta.kernel.expressions.{Column, Literal, Predicate}
 import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.util.ColumnMapping
-import io.delta.kernel.internal.util.ColumnMapping.{ColumnMappingMode, convertToPhysicalSchema}
+import io.delta.kernel.internal.util.ColumnMapping.{convertToPhysicalSchema, ColumnMappingMode}
 import io.delta.kernel.types._
 import io.delta.kernel.utils.DataFileStatus
+
 import org.apache.spark.sql.{functions => sparkfn}
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -54,7 +56,7 @@ import org.scalatest.funsuite.AnyFunSuite
  * 4.3) verify the stats returned in (3) are correct using the Spark Parquet reader
  */
 class ParquetFileWriterSuite extends AnyFunSuite
-  with ParquetSuiteBase with DefaultVectorTestUtils with ExpressionTestUtils {
+    with ParquetSuiteBase with DefaultVectorTestUtils with ExpressionTestUtils {
 
   Seq(
     // Test cases reading and writing all types of data with or without stats collection
@@ -84,7 +86,8 @@ class ParquetFileWriterSuite extends AnyFunSuite
           99998, /* expected number of rows written to Parquet files */
           Option.empty[Predicate], // predicate for filtering what rows to write to parquet files
           leafLevelPrimitiveColumns(
-            Seq.empty, tableSchema(goldenTablePath("parquet-decimal-type"))),
+            Seq.empty,
+            tableSchema(goldenTablePath("parquet-decimal-type"))),
           4 // how many columns have the stats collected from given list above
         )
     },
@@ -165,7 +168,8 @@ class ParquetFileWriterSuite extends AnyFunSuite
           3, /* expected number of rows written to Parquet files */
           Option.empty[Predicate], // predicate for filtering what rows to write to parquet files
           leafLevelPrimitiveColumns(
-            Seq.empty, tableSchema(goldenTablePath("decimal-various-scale-precision"))),
+            Seq.empty,
+            tableSchema(goldenTablePath("decimal-various-scale-precision"))),
           29 // how many columns have the stats collected from given list above
         )
     },
@@ -182,8 +186,7 @@ class ParquetFileWriterSuite extends AnyFunSuite
           Seq.empty, // list of columns to collect statistics on
           0 // how many columns have the stats collected from given list above
         )
-    }
-  ).flatten.foreach {
+    }).flatten.foreach {
     case (name, input, fileSize, expFileCount, expRowCount, predicate, statsCols, expStatsColCnt) =>
       test(s"$name: targetFileSize=$fileSize, predicate=$predicate") {
         withTempDir { tempPath =>
@@ -260,45 +263,73 @@ class ParquetFileWriterSuite extends AnyFunSuite
     // (float values, double values, exp rowCount in files, exp stats (min, max, nullCount)
     Seq(
       ( // no stats collection as NaN is present
-        Seq(Float.NegativeInfinity, Float.MinValue, -1.0f,
-          -0.0f, 0.0f, 1.0f, null, Float.MaxValue, Float.PositiveInfinity, Float.NaN),
-        Seq(Double.NegativeInfinity, Double.MinValue, -1.0d,
-          -0.0d, 0.0d, 1.0d, null, Double.MaxValue, Double.PositiveInfinity, Double.NaN),
+        Seq(
+          Float.NegativeInfinity,
+          Float.MinValue,
+          -1.0f,
+          -0.0f,
+          0.0f,
+          1.0f,
+          null,
+          Float.MaxValue,
+          Float.PositiveInfinity,
+          Float.NaN),
+        Seq(
+          Double.NegativeInfinity,
+          Double.MinValue,
+          -1.0d,
+          -0.0d,
+          0.0d,
+          1.0d,
+          null,
+          Double.MaxValue,
+          Double.PositiveInfinity,
+          Double.NaN),
         10,
         (null, null, null),
-        (null, null, null)
-      ),
+        (null, null, null)),
       ( // Min and max are infinities
-        Seq(Float.NegativeInfinity, Float.MinValue, -1.0f,
-          -0.0f, 0.0f, 1.0f, null, Float.MaxValue, Float.PositiveInfinity),
-        Seq(Double.NegativeInfinity, Double.MinValue, -1.0d,
-          -0.0d, 0.0d, 1.0d, null, Double.MaxValue, Double.PositiveInfinity),
+        Seq(
+          Float.NegativeInfinity,
+          Float.MinValue,
+          -1.0f,
+          -0.0f,
+          0.0f,
+          1.0f,
+          null,
+          Float.MaxValue,
+          Float.PositiveInfinity),
+        Seq(
+          Double.NegativeInfinity,
+          Double.MinValue,
+          -1.0d,
+          -0.0d,
+          0.0d,
+          1.0d,
+          null,
+          Double.MaxValue,
+          Double.PositiveInfinity),
         9,
         (Float.NegativeInfinity, Float.PositiveInfinity, 1L),
-        (Double.NegativeInfinity, Double.PositiveInfinity, 1L)
-      ),
+        (Double.NegativeInfinity, Double.PositiveInfinity, 1L)),
       ( // no infinities or NaN - expect stats collected
         Seq(Float.MinValue, -1.0f, -0.0f, 0.0f, 1.0f, null, Float.MaxValue),
         Seq(Double.MinValue, -1.0d, -0.0d, 0.0d, 1.0d, null, Double.MaxValue),
         7,
         (Float.MinValue, Float.MaxValue, 1L),
-        (Double.MinValue, Double.MaxValue, 1L)
-      ),
+        (Double.MinValue, Double.MaxValue, 1L)),
       ( // Only negative numbers. Max is 0.0 instead of -0.0 to avoid PARQUET-1222
         Seq(Float.NegativeInfinity, Float.MinValue, -1.0f, -0.0f, null),
         Seq(Double.NegativeInfinity, Double.MinValue, -1.0d, -0.0d, null),
         5,
         (Float.NegativeInfinity, 0.0f, 1L),
-        (Double.NegativeInfinity, 0.0d, 1L)
-      ),
+        (Double.NegativeInfinity, 0.0d, 1L)),
       ( // Only positive numbers. Min is  -0.0 instead of 0.0 to avoid PARQUET-1222
         Seq(0.0f, 1.0f, null, Float.MaxValue, Float.PositiveInfinity),
         Seq(0.0d, 1.0d, null, Double.MaxValue, Double.PositiveInfinity),
         5,
         (-0.0f, Float.PositiveInfinity, 1L),
-        (-0.0d, Double.PositiveInfinity, 1L)
-      )
-    ).foreach {
+        (-0.0d, Double.PositiveInfinity, 1L))).foreach {
       case (floats: Seq[FloatJ], doubles: Seq[DoubleJ], expRowCount, expFltStats, expDblStats) =>
         withTempDir { tempPath =>
           val targetDir = tempPath.getAbsolutePath
@@ -320,8 +351,7 @@ class ParquetFileWriterSuite extends AnyFunSuite
             (
               Option(stats.getMinValues.get(col(column))).map(_.getValue).orNull,
               Option(stats.getMaxValues.get(col(column))).map(_.getValue).orNull,
-              Option(stats.getNullCounts.get(col(column))).orNull
-            )
+              Option(stats.getNullCounts.get(col(column))).orNull)
 
           assert(getStats("col_0") === expFltStats)
           assert(getStats("col_1") === expDblStats)
@@ -349,11 +379,11 @@ class ParquetFileWriterSuite extends AnyFunSuite
   }
 
   def verifyStatsUsingSpark(
-    actualFileDir: String,
-    actualFileStatuses: Seq[DataFileStatus],
-    fileDataSchema: StructType,
-    statsColumns: Seq[Column],
-    expStatsColCount: Int): Unit = {
+      actualFileDir: String,
+      actualFileStatuses: Seq[DataFileStatus],
+      fileDataSchema: StructType,
+      statsColumns: Seq[Column],
+      expStatsColCount: Int): Unit = {
 
     val actualStatsOutput = actualFileStatuses
       .map { fileStatus =>
@@ -379,8 +409,7 @@ class ParquetFileWriterSuite extends AnyFunSuite
         sparkfn.col("_metadata.file_size").as("size"), // select file size
         // select mod time and convert to millis
         sparkfn.unix_timestamp(
-          sparkfn.col("_metadata.file_modification_time")).as("modificationTime")
-      )
+          sparkfn.col("_metadata.file_modification_time")).as("modificationTime"))
       .groupBy("path", "size", "modificationTime")
 
     val nullStats = Seq(sparkfn.lit(null), sparkfn.lit(null), sparkfn.lit(null))
@@ -401,7 +430,8 @@ class ParquetFileWriterSuite extends AnyFunSuite
                 sparkfn.min(colName).as("min_" + colName),
                 sparkfn.max(colName).as("max_" + colName),
                 sparkfn.sum(sparkfn.when(
-                  sparkfn.col(colName).isNull, 1).otherwise(0)).as("nullCount_" + colName))
+                  sparkfn.col(colName).isNull,
+                  1).otherwise(0)).as("nullCount_" + colName))
           }
         }
 

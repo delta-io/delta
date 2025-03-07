@@ -15,15 +15,16 @@
  */
 package io.delta.kernel.internal
 
-import io.delta.kernel.exceptions.KernelException
-import org.scalatest.funsuite.AnyFunSuite
-
 import scala.collection.JavaConverters._
+
+import io.delta.kernel.exceptions.KernelException
+
+import org.scalatest.funsuite.AnyFunSuite
 
 class TableConfigSuite extends AnyFunSuite {
 
   test("check TableConfig.editable is true") {
-    TableConfig.validateProperties(
+    TableConfig.validateDeltaProperties(
       Map(
         TableConfig.TOMBSTONE_RETENTION.getKey -> "interval 2 week",
         TableConfig.CHECKPOINT_INTERVAL.getKey -> "20",
@@ -36,7 +37,7 @@ class TableConfigSuite extends AnyFunSuite {
 
   test("check TableConfig.MAX_COLUMN_ID.editable is false") {
     val e = intercept[KernelException] {
-      TableConfig.validateProperties(
+      TableConfig.validateDeltaProperties(
         Map(
           TableConfig.TOMBSTONE_RETENTION.getKey -> "interval 2 week",
           TableConfig.CHECKPOINT_INTERVAL.getKey -> "20",

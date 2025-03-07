@@ -23,7 +23,7 @@ import scala.collection.JavaConverters._
 
 import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.exceptions.TableNotFoundException
-import io.delta.kernel.internal.DeltaLogActionUtils.listDeltaLogFiles
+import io.delta.kernel.internal.DeltaLogActionUtils.listDeltaLogFilesAsIter
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.FileNames
 
@@ -34,14 +34,14 @@ class DeltaLogActionUtilsE2ESuite extends AnyFunSuite with TestUtils {
   test("listDeltaLogFiles: throws TableNotFoundException if _delta_log does not exist") {
     withTempDir { tableDir =>
       intercept[TableNotFoundException] {
-        listDeltaLogFiles(
+        listDeltaLogFilesAsIter(
           defaultEngine,
           Set(FileNames.DeltaLogFileType.COMMIT, FileNames.DeltaLogFileType.CHECKPOINT).asJava,
           new Path(tableDir.getAbsolutePath),
           0,
           Optional.empty(),
           true /* mustBeRecreatable */
-        )
+        ).toInMemoryList
       }
     }
   }
@@ -51,14 +51,14 @@ class DeltaLogActionUtilsE2ESuite extends AnyFunSuite with TestUtils {
       val logDir = new File(tableDir, "_delta_log")
       assert(logDir.mkdirs() && logDir.isDirectory && logDir.listFiles().isEmpty)
 
-      val result = listDeltaLogFiles(
+      val result = listDeltaLogFilesAsIter(
         defaultEngine,
         Set(FileNames.DeltaLogFileType.COMMIT, FileNames.DeltaLogFileType.CHECKPOINT).asJava,
         new Path(tableDir.getAbsolutePath),
         0,
         Optional.empty(),
         true /* mustBeRecreatable */
-      )
+      ).toInMemoryList
 
       assert(result.isEmpty)
     }

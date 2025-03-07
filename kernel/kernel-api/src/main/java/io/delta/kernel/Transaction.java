@@ -117,7 +117,7 @@ public interface Transaction {
     // Note: `partitionValues` are not used as of now in this API, but taking the partition
     // values as input forces the connector to not pass data from multiple partitions this
     // API in a single call.
-    StructType tableSchema = getLogicalSchema(engine, transactionState);
+    StructType tableSchema = getLogicalSchema(transactionState);
     List<String> partitionColNames = getPartitionColumnsList(transactionState);
     validateAndSanitizePartitionValues(tableSchema, partitionColNames, partitionValues);
 
@@ -167,7 +167,7 @@ public interface Transaction {
    */
   static DataWriteContext getWriteContext(
       Engine engine, Row transactionState, Map<String, Literal> partitionValues) {
-    StructType tableSchema = getLogicalSchema(engine, transactionState);
+    StructType tableSchema = getLogicalSchema(transactionState);
     List<String> partitionColNames = getPartitionColumnsList(transactionState);
 
     partitionValues =
@@ -209,7 +209,7 @@ public interface Transaction {
     return fileStatusIter.map(
         dataFileStatus -> {
           if (isIcebergCompatV2Enabled) {
-            IcebergCompatV2Utils.validDataFileStatus(dataFileStatus);
+            IcebergCompatV2Utils.validateDataFileStatus(dataFileStatus);
           }
           AddFile addFileRow =
               AddFile.convertDataFileStatus(
