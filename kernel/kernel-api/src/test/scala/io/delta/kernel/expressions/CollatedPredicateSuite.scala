@@ -21,6 +21,11 @@ class CollatedPredicateSuite extends AnyFunSuite {
         new CollatedPredicate("stARtS_wiTh", new Column("c1"), Literal.ofString("a"),
           CollationIdentifier.fromString("ICU.en_US")),
         "(column(`c1`) STARTS_WITH a COLLATE ICU.EN_US)",
+      ),
+      (
+        new CollatedPredicate("AND", new Column("c1"), Literal.ofString("a"),
+          CollationIdentifier.fromString("ICU.en_US")),
+        "(column(`c1`) AND a)",
       )
     ).foreach {
       case (collatedPredicate, expectedToString) =>
