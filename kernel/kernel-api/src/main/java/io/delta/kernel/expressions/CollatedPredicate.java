@@ -39,6 +39,7 @@ public class CollatedPredicate extends Predicate {
         return super.toString();
     }
 
+    /** Supported operators for collation-based comparisons. */
     private static final Set<String> COLLATION_SUPPORTED_OPERATORS =
         Stream.of("<", "<=", ">", ">=", "=", "STARTS_WITH").collect(Collectors.toSet());
 }
