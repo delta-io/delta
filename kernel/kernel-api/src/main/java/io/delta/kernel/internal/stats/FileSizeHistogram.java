@@ -176,10 +176,10 @@ public class FileSizeHistogram {
   public void insert(long fileSize) {
     checkArgument(fileSize >= 0, "File size must be non-negative, got %s", fileSize);
     int index = getBinIndex(fileSize);
-    if (index >= 0) {
-      fileCounts[index]++;
-      totalBytes[index] += fileSize;
-    }
+    checkArgument(index >= 0,
+            "getBinIndex must return non-negative index for non-negative fileSize, got %s", index);
+    fileCounts[index]++;
+    totalBytes[index] += fileSize;
   }
 
   /**
@@ -192,16 +192,16 @@ public class FileSizeHistogram {
   public void remove(long fileSize) {
     checkArgument(fileSize >= 0, "File size must be non-negative, got %s", fileSize);
     int index = getBinIndex(fileSize);
-    if (index >= 0) {
-      checkArgument(
-          totalBytes[index] >= fileSize,
-          "Cannot remove %s bytes from bin %d which only has %s bytes",
-          fileSize,
-          index,
-          totalBytes[index]);
-      fileCounts[index]--;
-      totalBytes[index] -= fileSize;
-    }
+    checkArgument(index >= 0,
+            "getBinIndex must return non-negative index for non-negative fileSize, got %s", index);
+    checkArgument(
+            totalBytes[index] >= fileSize,
+            "Cannot remove %s bytes from bin %d which only has %s bytes",
+            fileSize,
+            index,
+            totalBytes[index]);
+    fileCounts[index]--;
+    totalBytes[index] -= fileSize;
   }
 
   /**
