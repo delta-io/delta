@@ -21,15 +21,18 @@ import java.util.UUID
 
 import scala.collection.mutable
 import scala.math.Ordering.Implicits._
+import scala.util.Try
 import scala.util.control.NonFatal
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.{Action, CheckpointMetadata, Metadata, SidecarFile, SingleAction}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.{DeltaFileOperations, DeltaLogGroupingIterator, FileNames}
+import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.FileNames._
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.conf.Configuration
@@ -42,6 +45,7 @@ import org.apache.spark.internal.MDC
 import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{Cast, ElementAt, Literal}
 import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.datasources.FileFormat
@@ -276,8 +280,8 @@ trait Checkpoints extends DeltaLogging {
           opType,
           data = Map("exception" -> e.getMessage(), "stackTrace" -> e.getStackTrace())
         )
-        logWarning("Error when writing checkpoint-related files", e)
-        val throwError = Utils.isTesting ||
+        logWarning(log"Error when writing checkpoint-related files", e)
+        val throwError = DeltaUtils.isTesting ||
           spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CHECKPOINT_THROW_EXCEPTION_WHEN_FAILED)
         if (throwError) throw e
     }
@@ -297,13 +301,15 @@ trait Checkpoints extends DeltaLogging {
    * Note that this function captures and logs all exceptions, since the checkpoint shouldn't fail
    * the overall commit operation.
    */
-  def checkpoint(snapshotToCheckpoint: Snapshot): Unit = recordDeltaOperation(
-      this, "delta.checkpoint") {
+  def checkpoint(
+      snapshotToCheckpoint: Snapshot,
+      catalogTableOpt: Option[CatalogTable] = None): Unit =
+    recordDeltaOperation(this, "delta.checkpoint") {
     withCheckpointExceptionHandling(snapshotToCheckpoint.deltaLog, "delta.checkpoint.sync.error") {
       if (snapshotToCheckpoint.version < 0) {
         throw DeltaErrors.checkpointNonExistTable(dataPath)
       }
-      checkpointAndCleanUpDeltaLog(snapshotToCheckpoint)
+      checkpointAndCleanUpDeltaLog(snapshotToCheckpoint, catalogTableOpt)
     }
   }
 
@@ -323,8 +329,9 @@ trait Checkpoints extends DeltaLogging {
     }
 
   def checkpointAndCleanUpDeltaLog(
-      snapshotToCheckpoint: Snapshot): Unit = {
-    val lastCheckpointInfo = writeCheckpointFiles(snapshotToCheckpoint)
+      snapshotToCheckpoint: Snapshot,
+      catalogTableOpt: Option[CatalogTable] = None): Unit = {
+    val lastCheckpointInfo = writeCheckpointFiles(snapshotToCheckpoint, catalogTableOpt)
     writeLastCheckpointFile(
       snapshotToCheckpoint.deltaLog, lastCheckpointInfo, LastCheckpointInfo.checksumEnabled(spark))
     doLogCleanup(snapshotToCheckpoint)
@@ -346,7 +353,9 @@ trait Checkpoints extends DeltaLogging {
     }
   }
 
-  protected def writeCheckpointFiles(snapshotToCheckpoint: Snapshot): LastCheckpointInfo = {
+  protected def writeCheckpointFiles(
+      snapshotToCheckpoint: Snapshot,
+      catalogTableOpt: Option[CatalogTable] = None): LastCheckpointInfo = {
     // With Coordinated-Commits, commit files are not guaranteed to be backfilled immediately in the
     // _delta_log dir. While it is possible to compute a checkpoint file without backfilling,
     // writing the checkpoint file in the log directory before backfilling the relevant commits
@@ -361,7 +370,7 @@ trait Checkpoints extends DeltaLogging {
     //   00015.json
     //   00016.json
     //   00018.checkpoint.parquet
-    snapshotToCheckpoint.ensureCommitFilesBackfilled()
+    snapshotToCheckpoint.ensureCommitFilesBackfilled(catalogTableOpt)
     Checkpoints.writeCheckpoint(spark, this, snapshotToCheckpoint)
   }
 
@@ -370,13 +379,22 @@ trait Checkpoints extends DeltaLogging {
     loadMetadataFromFile(0)
   }
 
+  /**
+   * Reads the checkpoint metadata from the `_last_checkpoint` file. This method doesn't handle any
+   * exceptions that can be thrown, for example IOExceptions thrown when reading the data such as
+   * FileNotFoundExceptions which is expected for a new Delta table or JSON deserialization errors.
+   */
+  protected def unsafeLoadMetadataFromFile(): LastCheckpointInfo = {
+    val lastCheckpointInfoJson = store.read(LAST_CHECKPOINT, newDeltaHadoopConf())
+    val validate = LastCheckpointInfo.checksumEnabled(spark)
+    LastCheckpointInfo.deserializeFromJson(lastCheckpointInfoJson.head, validate)
+  }
+
   /** Loads the checkpoint metadata from the _last_checkpoint file. */
-  private def loadMetadataFromFile(tries: Int): Option[LastCheckpointInfo] =
+  protected def loadMetadataFromFile(tries: Int): Option[LastCheckpointInfo] =
     recordDeltaOperation(self, "delta.deltaLog.loadMetadataFromFile") {
       try {
-        val lastCheckpointInfoJson = store.read(LAST_CHECKPOINT, newDeltaHadoopConf())
-        val validate = LastCheckpointInfo.checksumEnabled(spark)
-        Some(LastCheckpointInfo.deserializeFromJson(lastCheckpointInfoJson.head, validate))
+        Some(unsafeLoadMetadataFromFile())
       } catch {
         case _: FileNotFoundException =>
           None
@@ -464,7 +482,7 @@ trait Checkpoints extends DeltaLogging {
         // available checkpoint.
         .filterNot(cv => cv.version < 0 || cv.version == CheckpointInstance.MaxValue.version)
         .getOrElse {
-          logInfo("Try to find Delta last complete checkpoint")
+          logInfo(log"Try to find Delta last complete checkpoint")
           eventData("listingFromZero") = true.toString
           return findLastCompleteCheckpoint()
         }
@@ -600,6 +618,21 @@ object Checkpoints
       deltaLog: DeltaLog,
       snapshot: Snapshot): LastCheckpointInfo = recordFrameProfile(
       "Delta", "Checkpoints.writeCheckpoint") {
+    if (spark.conf.get(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED)) {
+      snapshot.validateChecksum(Map("context" -> "writeCheckpoint"))
+    }
+    // Verify allFiles in checksum during checkpoint if we are not doing so already on every
+    // commit.
+    val allFilesInCRCEnabled = Snapshot.allFilesInCrcWritePathEnabled(spark, snapshot)
+    val shouldVerifyAllFilesInCRCEveryCommit =
+      Snapshot.allFilesInCrcVerificationEnabled(spark, snapshot)
+    if (allFilesInCRCEnabled && !shouldVerifyAllFilesInCRCEveryCommit) {
+      snapshot.checksumOpt.foreach { checksum =>
+        snapshot.validateFileListAgainstCRC(
+          checksum, contextOpt = Some("triggeredFromCheckpoint"))
+      }
+    }
+
     val hadoopConf = deltaLog.newDeltaHadoopConf()
 
     // The writing of checkpoints doesn't go through log store, so we need to check with the
@@ -1049,7 +1082,7 @@ object Checkpoints
       // overrides the final path even if it already exists. So we use exists here to handle that
       // case.
       // TODO: Remove isTesting and fs.exists check after fixing LocalFS
-      if (Utils.isTesting && fs.exists(finalPath)) {
+      if (DeltaUtils.isTesting && fs.exists(finalPath)) {
         false
       } else {
         fs.rename(tempPath, finalPath)
@@ -1140,7 +1173,7 @@ object Checkpoints
     val partitionValues = partitionSchema.map { field =>
       val physicalName = DeltaColumnMapping.getPhysicalName(field)
       val attribute = UnresolvedAttribute.quotedString(partitionValuesColName)
-      new Column(Cast(
+      Column(Cast(
         ElementAt(
           attribute,
           Literal(physicalName),

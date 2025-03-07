@@ -15,17 +15,18 @@
  */
 package io.delta.kernel.internal.util
 
+import java.util
+import java.util.{Collections, Optional, UUID}
+
 import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.actions.{Format, Metadata}
-import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode._
 import io.delta.kernel.internal.util.ColumnMapping._
+import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode._
 import io.delta.kernel.types.{ArrayType, FieldMetadata, IntegerType, MapType, StringType, StructField, StructType}
+
 import org.assertj.core.api.Assertions.{assertThat, assertThatNoException, assertThatThrownBy}
 import org.assertj.core.util.Maps
 import org.scalatest.funsuite.AnyFunSuite
-
-import java.util
-import java.util.{Collections, Optional, UUID}
 
 class ColumnMappingSuite extends AnyFunSuite {
   test("column mapping is only enabled on known mapping modes") {
@@ -38,7 +39,9 @@ class ColumnMappingSuite extends AnyFunSuite {
   test("column mapping change with empty config") {
     assertThatNoException.isThrownBy(() =>
       ColumnMapping.verifyColumnMappingChange(
-        new util.HashMap(), new util.HashMap(), true /* isNewTable */))
+        new util.HashMap(),
+        new util.HashMap(),
+        true /* isNewTable */ ))
   }
 
   test("column mapping mode change is allowed") {
@@ -73,21 +76,24 @@ class ColumnMappingSuite extends AnyFunSuite {
     assertThatThrownBy(() =>
       ColumnMapping.verifyColumnMappingChange(
         Maps.newHashMap(COLUMN_MAPPING_MODE_KEY, NAME.toString),
-        Maps.newHashMap(COLUMN_MAPPING_MODE_KEY, ID.toString), isNewTable))
+        Maps.newHashMap(COLUMN_MAPPING_MODE_KEY, ID.toString),
+        isNewTable))
       .isInstanceOf(classOf[IllegalArgumentException])
       .hasMessage("Changing column mapping mode from 'name' to 'id' is not supported")
 
     assertThatThrownBy(() =>
       ColumnMapping.verifyColumnMappingChange(
         Maps.newHashMap(COLUMN_MAPPING_MODE_KEY, ID.toString),
-        Maps.newHashMap(COLUMN_MAPPING_MODE_KEY, NAME.toString), isNewTable))
+        Maps.newHashMap(COLUMN_MAPPING_MODE_KEY, NAME.toString),
+        isNewTable))
       .isInstanceOf(classOf[IllegalArgumentException])
       .hasMessage("Changing column mapping mode from 'id' to 'name' is not supported")
 
     assertThatThrownBy(() =>
       ColumnMapping.verifyColumnMappingChange(
         new util.HashMap(),
-        Maps.newHashMap(COLUMN_MAPPING_MODE_KEY, ID.toString), isNewTable))
+        Maps.newHashMap(COLUMN_MAPPING_MODE_KEY, ID.toString),
+        isNewTable))
       .isInstanceOf(classOf[IllegalArgumentException])
       .hasMessage("Changing column mapping mode from 'none' to 'id' is not supported")
   }
@@ -111,10 +117,12 @@ class ColumnMappingSuite extends AnyFunSuite {
     // nested columns are currently not supported
     assertThat(ColumnMapping.findMaxColumnId(
       new StructType().add("a", StringType.STRING, createMetadataWithFieldId(14))
-        .add("b",
+        .add(
+          "b",
           new StructType()
             .add("d", IntegerType.INTEGER, true)
-            .add("e", IntegerType.INTEGER, true), createMetadataWithFieldId(15))
+            .add("e", IntegerType.INTEGER, true),
+          createMetadataWithFieldId(15))
         .add("c", IntegerType.INTEGER, createMetadataWithFieldId(7))))
       .isEqualTo(15)
   }
@@ -152,7 +160,8 @@ class ColumnMappingSuite extends AnyFunSuite {
 
     val nestedMeta = FieldMetadata.builder()
       .putLong(COLUMN_MAPPING_ID_KEY, 2)
-      .putFieldMetadata(COLUMN_MAPPING_NESTED_IDS_KEY,
+      .putFieldMetadata(
+        COLUMN_MAPPING_NESTED_IDS_KEY,
         FieldMetadata.builder().putLong("b.element", 6).build())
       .build()
 
@@ -171,7 +180,8 @@ class ColumnMappingSuite extends AnyFunSuite {
 
     val nestedMeta = FieldMetadata.builder()
       .putLong(COLUMN_MAPPING_ID_KEY, 2)
-      .putFieldMetadata(COLUMN_MAPPING_NESTED_IDS_KEY,
+      .putFieldMetadata(
+        COLUMN_MAPPING_NESTED_IDS_KEY,
         FieldMetadata.builder()
           .putLong("b.key", 11)
           .putLong("b.value", 12).build())
@@ -179,8 +189,13 @@ class ColumnMappingSuite extends AnyFunSuite {
 
     val schema = new StructType()
       .add("a", StringType.STRING, createMetadataWithFieldId(1))
-      .add("b", new MapType(IntegerType.INTEGER,
-        new StructField("d", nestedStruct, false).getDataType, false), nestedMeta)
+      .add(
+        "b",
+        new MapType(
+          IntegerType.INTEGER,
+          new StructField("d", nestedStruct, false).getDataType,
+          false),
+        nestedMeta)
       .add("c", IntegerType.INTEGER, createMetadataWithFieldId(3))
 
     assertThat(ColumnMapping.findMaxColumnId(schema)).isEqualTo(12)
@@ -225,7 +240,9 @@ class ColumnMappingSuite extends AnyFunSuite {
 
   test("assigning id and physical name preserves field metadata") {
     val schema = new StructType()
-      .add("a", StringType.STRING,
+      .add(
+        "a",
+        StringType.STRING,
         FieldMetadata.builder.putString("key1", "val1").putString("key2", "val2").build)
 
     val metadata = ColumnMapping.updateColumnMappingMetadata(createMetadata(schema), ID, true)
@@ -235,7 +252,8 @@ class ColumnMappingSuite extends AnyFunSuite {
       .containsEntry("key1", "val1")
       .containsEntry("key2", "val2")
       .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, (1L).asInstanceOf[AnyRef])
-      .hasEntrySatisfying(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
+      .hasEntrySatisfying(
+        ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
         (k: AnyRef) => assertThat(k).asString.startsWith("col-"))
   }
 
@@ -244,7 +262,8 @@ class ColumnMappingSuite extends AnyFunSuite {
     val schema: StructType =
       new StructType()
         .add("a", StringType.STRING)
-        .add("b",
+        .add(
+          "b",
           new StructType()
             .add("d", IntegerType.INTEGER)
             .add("e", IntegerType.INTEGER))
@@ -254,7 +273,9 @@ class ColumnMappingSuite extends AnyFunSuite {
       ColumnMapping.updateColumnMappingMetadata(
         withIcebergCompatV2Enabled(createMetadata(schema)),
         ID,
-        true /** isNewTable */)
+        true
+        /** isNewTable */
+      )
 
     assertColumnMapping(metadata.getSchema.get("a"), 1L)
     assertColumnMapping(metadata.getSchema.get("b"), 2L)
@@ -278,7 +299,9 @@ class ColumnMappingSuite extends AnyFunSuite {
       ColumnMapping.updateColumnMappingMetadata(
         withIcebergCompatV2Enabled(createMetadata(schema)),
         ID,
-        true /** isNewTable */)
+        true
+        /** isNewTable */
+      )
 
     assertColumnMapping(metadata.getSchema.get("a"), 1L)
     assertColumnMapping(metadata.getSchema.get("b"), 2L)
@@ -310,7 +333,9 @@ class ColumnMappingSuite extends AnyFunSuite {
       ColumnMapping.updateColumnMappingMetadata(
         withIcebergCompatV2Enabled(createMetadata(schema)),
         ID,
-        false /** isNewTable */)
+        false
+        /** isNewTable */
+      )
 
     assertColumnMapping(metadata.getSchema.get("a"), 1L, "a")
     assertColumnMapping(metadata.getSchema.get("b"), 2L, "b")
@@ -337,7 +362,9 @@ class ColumnMappingSuite extends AnyFunSuite {
       ColumnMapping.updateColumnMappingMetadata(
         withIcebergCompatV2Enabled(createMetadata(schema)),
         ID,
-        true /** isNewTable */)
+        true
+        /** isNewTable */
+      )
 
     assertColumnMapping(metadata.getSchema.get("a"), 1L)
     assertColumnMapping(metadata.getSchema.get("b"), 2L)
@@ -374,7 +401,9 @@ class ColumnMappingSuite extends AnyFunSuite {
       ColumnMapping.updateColumnMappingMetadata(
         withIcebergCompatV2Enabled(createMetadata(schema)),
         ID,
-        false /** isNewTable */)
+        false
+        /** isNewTable */
+      )
 
     assertColumnMapping(metadata.getSchema.get("a"), 1L, "a")
     assertColumnMapping(metadata.getSchema.get("b"), 2L, "b")
@@ -396,25 +425,31 @@ class ColumnMappingSuite extends AnyFunSuite {
     val schema: StructType =
       new StructType()
         .add("a", StringType.STRING)
-        .add("b", new MapType(
-          IntegerType.INTEGER,
-          new StructType()
-            .add("d", IntegerType.INTEGER)
-            .add("e", IntegerType.INTEGER)
-            .add("f", new ArrayType(
-              new StructType()
-                .add("g", IntegerType.INTEGER)
-                .add("h", IntegerType.INTEGER),
+        .add(
+          "b",
+          new MapType(
+            IntegerType.INTEGER,
+            new StructType()
+              .add("d", IntegerType.INTEGER)
+              .add("e", IntegerType.INTEGER)
+              .add(
+                "f",
+                new ArrayType(
+                  new StructType()
+                    .add("g", IntegerType.INTEGER)
+                    .add("h", IntegerType.INTEGER),
+                  false),
                 false),
-              false),
-          false))
+            false))
         .add("c", IntegerType.INTEGER)
 
     val metadata: Metadata =
       ColumnMapping.updateColumnMappingMetadata(
         withIcebergCompatV2Enabled(createMetadata(schema)),
         ID,
-        true /** isNewTable */)
+        true
+        /** isNewTable */
+      )
 
     assertColumnMapping(metadata.getSchema.get("a"), 1L)
     assertColumnMapping(metadata.getSchema.get("b"), 2L)
@@ -473,14 +508,14 @@ class ColumnMappingSuite extends AnyFunSuite {
     new Format,
     schema.toJson,
     schema,
-    VectorUtils.stringArrayValue(Collections.emptyList()),
+    VectorUtils.buildArrayValue(Collections.emptyList(), StringType.STRING),
     Optional.empty(),
     VectorUtils.stringStringMapValue(Collections.emptyMap()))
 
   private def assertColumnMapping(
-    field: StructField,
-    expId: Long,
-    expPhysicalName: String = "UUID"): Unit = {
+      field: StructField,
+      expId: Long,
+      expPhysicalName: String = "UUID"): Unit = {
     assertThat(field.getMetadata.getEntries)
       .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, expId.asInstanceOf[AnyRef])
       .hasEntrySatisfying(

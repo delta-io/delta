@@ -1,8 +1,9 @@
-name: "Delta Kernel Tests"
+name: "Delta Kernel"
 on: [push, pull_request]
 jobs:
   test:
-    runs-on: ubuntu-20.04
+    name: "DK"
+    runs-on: ubuntu-24.04
     env:
       SCALA_VERSION: 2.12.18
     steps:

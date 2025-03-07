@@ -15,56 +15,51 @@
  */
 package io.delta.kernel.defaults.engine;
 
-import java.util.Map;
-
+import io.delta.kernel.engine.*;
+import java.util.Collections;
+import java.util.List;
 import org.apache.hadoop.conf.Configuration;
 
-import io.delta.kernel.engine.*;
+/** Default implementation of {@link Engine} based on Hadoop APIs. */
+public class DefaultEngine implements Engine {
+  private final Configuration hadoopConf;
 
-/**
- * Default implementation of {@link Engine} based on Hadoop APIs.
- */
-public class DefaultEngine
-    implements Engine {
-    private final Configuration hadoopConf;
+  protected DefaultEngine(Configuration hadoopConf) {
+    this.hadoopConf = hadoopConf;
+  }
 
-    protected DefaultEngine(Configuration hadoopConf) {
-        this.hadoopConf = hadoopConf;
-    }
+  @Override
+  public ExpressionHandler getExpressionHandler() {
+    return new DefaultExpressionHandler();
+  }
 
-    @Override
-    public ExpressionHandler getExpressionHandler() {
-        return new DefaultExpressionHandler();
-    }
+  @Override
+  public JsonHandler getJsonHandler() {
+    return new DefaultJsonHandler(hadoopConf);
+  }
 
-    @Override
-    public JsonHandler getJsonHandler() {
-        return new DefaultJsonHandler(hadoopConf);
-    }
+  @Override
+  public FileSystemClient getFileSystemClient() {
+    return new DefaultFileSystemClient(hadoopConf);
+  }
 
-    @Override
-    public FileSystemClient getFileSystemClient() {
-        return new DefaultFileSystemClient(hadoopConf);
-    }
+  @Override
+  public ParquetHandler getParquetHandler() {
+    return new DefaultParquetHandler(hadoopConf);
+  }
 
-    @Override
-    public ParquetHandler getParquetHandler() {
-        return new DefaultParquetHandler(hadoopConf);
-    }
+  @Override
+  public List<MetricsReporter> getMetricsReporters() {
+    return Collections.singletonList(new LoggingMetricsReporter());
+  };
 
-    @Override
-    public CommitCoordinatorClientHandler getCommitCoordinatorClientHandler(
-            String name, Map<String, String> conf) {
-        return new DefaultCommitCoordinatorClientHandler(hadoopConf, name, conf);
-    }
-
-    /**
-     * Create an instance of {@link DefaultEngine}.
-     *
-     * @param hadoopConf Hadoop configuration to use.
-     * @return an instance of {@link DefaultEngine}.
-     */
-    public static DefaultEngine create(Configuration hadoopConf) {
-        return new DefaultEngine(hadoopConf);
-    }
+  /**
+   * Create an instance of {@link DefaultEngine}.
+   *
+   * @param hadoopConf Hadoop configuration to use.
+   * @return an instance of {@link DefaultEngine}.
+   */
+  public static DefaultEngine create(Configuration hadoopConf) {
+    return new DefaultEngine(hadoopConf);
+  }
 }

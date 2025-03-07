@@ -61,12 +61,24 @@ CREATE TABLE T(c1 INT) USING DELTA TBLPROPERTIES(
   'delta.universalFormat.enabledFormats' = 'iceberg');
 ```
 
-You can enable UniForm Iceberg on an existing table using the following syntax:
+In Delta 3.3 and above, you can enable or upgrade UniForm Iceberg on an existing table using the following syntax:
 
+```sql
+ALTER TABLE table_name SET TBLPROPERTIES(
+  'delta.enableIcebergCompatV2' = 'true',
+  'delta.universalFormat.enabledFormats' = 'iceberg');
+```
+
+You can also use REORG to enable UniForm Iceberg and rewrite underlying data files, as in the following example:
 
 ```sql
 REORG TABLE table_name APPLY (UPGRADE UNIFORM(ICEBERG_COMPAT_VERSION=2));
 ```
+
+Use REORG if any of following are true:
+* Your table has deletion vectors enabled.
+* You previously enabled the IcebergCompatV1 version of UniForm Iceberg.
+* You need to read from Iceberg engines that don't support Hive-style Parquet files, such as Athena or Redshift.
 
 You can enable UniForm Hudi on an existing table using the following syntax:
 
@@ -155,4 +167,5 @@ The following <Delta> features work for Delta clients when UniForm is enabled, b
 - Change Data Feed
 - Delta Sharing
 
-.. include:: /shared/replacements.md
+.. <Delta> replace:: Delta Lake
+.. <AS> replace:: Apache Spark

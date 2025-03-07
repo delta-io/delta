@@ -23,3 +23,13 @@ class DeltaSourceLargeLogSuite extends DeltaSourceSuite {
     super.sparkConf.set(DeltaSQLConf.LOG_SIZE_IN_MEMORY_THRESHOLD.key, "0")
   }
 }
+
+class DeltaSourceLargeLogWithCoordinatedCommitsBatch1Suite
+    extends DeltaSourceLargeLogSuite {
+  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(1)
+}
+
+class DeltaSourceLargeLogWithCoordinatedCommitsBatch100Suite
+    extends DeltaSourceLargeLogSuite {
+  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(100)
+}

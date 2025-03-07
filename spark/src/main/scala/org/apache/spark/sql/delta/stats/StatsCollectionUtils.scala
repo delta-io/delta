@@ -23,8 +23,9 @@ import scala.language.existentials
 import scala.util.control.NonFatal
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaColumnMappingMode, DeltaErrors, IdMapping, NameMapping, NoMapping}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaColumnMappingMode, DeltaErrors, DeltaLog, IdMapping, NameMapping, NoMapping, Snapshot}
 import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeltaStatistics._
 import org.apache.spark.sql.delta.util.{DeltaFileOperations, JsonUtils}
@@ -38,7 +39,7 @@ import org.apache.parquet.io.api.Binary
 import org.apache.parquet.schema.LogicalTypeAnnotation._
 import org.apache.parquet.schema.PrimitiveType
 
-import org.apache.spark.internal.Logging
+import org.apache.spark.internal.{LoggingShims, MDC}
 import org.apache.spark.sql.{Dataset, SparkSession}
 import org.apache.spark.sql.catalyst.util.DateTimeUtils
 import org.apache.spark.sql.execution.datasources.DataSourceUtils
@@ -48,19 +49,19 @@ import org.apache.spark.util.SerializableConfiguration
 
 
 object StatsCollectionUtils
-  extends Logging
+  extends LoggingShims
 {
 
-  /** A helper function to compute stats of addFiles using StatsCollector.
+  /**
+   * A helper function to compute stats of addFiles using StatsCollector.
    *
    * @param spark The SparkSession used to process data.
    * @param conf The Hadoop configuration used to access file system.
-   * @param dataPath The data path of table, to which these AddFile(s) belong.
+   * @param deltaLog The delta log of table, to which these AddFile(s) belong.
+   * @param snapshot The snapshot of the table used to derive table schema information. We do not
+   *                 derive it from deltaLog because a snapshot may not exist yet.
    * @param addFiles The list of target AddFile(s) to be processed.
    * @param numFilesOpt The number of AddFile(s) to process if known. Speeds up the query.
-   * @param columnMappingMode The column mapping mode of table.
-   * @param dataSchema The data schema of table.
-   * @param statsSchema The stats schema to be collected.
    * @param ignoreMissingStats Whether to ignore missing stats during computation.
    * @param setBoundsToWide Whether to set bounds to wide independently of whether or not
    *                        the files have DVs.
@@ -71,12 +72,10 @@ object StatsCollectionUtils
   def computeStats(
       spark: SparkSession,
       conf: Configuration,
-      dataPath: Path,
+      deltaLog: DeltaLog,
+      snapshot: Snapshot,
       addFiles: Dataset[AddFile],
       numFilesOpt: Option[Long],
-      columnMappingMode: DeltaColumnMappingMode,
-      dataSchema: StructType,
-      statsSchema: StructType,
       ignoreMissingStats: Boolean = true,
       setBoundsToWide: Boolean = false): Dataset[AddFile] = {
 
@@ -94,13 +93,18 @@ object StatsCollectionUtils
     val stringTruncateLength =
       spark.sessionState.conf.getConf(DeltaSQLConf.DATA_SKIPPING_STRING_PREFIX_LENGTH)
 
-    val statsCollector = StatsCollector(columnMappingMode, dataSchema, statsSchema,
-      parquetRebaseMode, ignoreMissingStats, Some(stringTruncateLength))
+    val statsCollector = StatsCollector(
+      snapshot.columnMappingMode,
+      snapshot.dataSchema,
+      snapshot.statsSchema,
+      parquetRebaseMode,
+      ignoreMissingStats,
+      Some(stringTruncateLength))
 
     val serializableConf = new SerializableConfiguration(conf)
     val broadcastConf = spark.sparkContext.broadcast(serializableConf)
 
-    val dataRootDir = dataPath.toString
+    val dataRootDir = deltaLog.dataPath.toString
 
     import org.apache.spark.sql.delta.implicits._
     preparedAddFiles.mapPartitions { addFileIter =>
@@ -177,7 +181,8 @@ object StatsCollectionUtils
 
     if (metric.totalMissingFields > 0 || metric.numMissingTypes > 0) {
       logWarning(
-        s"StatsCollection of file `$path` misses fields/types: ${JsonUtils.toJson(metric)}")
+        log"StatsCollection of file `${MDC(DeltaLogKeys.PATH, path)}` " +
+        log"misses fields/types: ${MDC(DeltaLogKeys.METRICS, JsonUtils.toJson(metric))}")
     }
 
     val statsWithTightBoundsCol = {

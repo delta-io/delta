@@ -19,7 +19,6 @@ package io.delta.sharing.spark
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.{
-  DeltaColumnMapping,
   DeltaErrors,
   DeltaTableUtils => TahoeDeltaTableUtils
 }
@@ -151,7 +150,7 @@ private[sharing] class DeltaSharingDataSource
           .getOrElse(snapshotDescriptor.schema)
       }
 
-      val schemaToUse = TahoeDeltaTableUtils.removeInternalMetadata(
+      val schemaToUse = TahoeDeltaTableUtils.removeInternalWriterMetadata(
         sqlContext.sparkSession,
         readSchema
       )
@@ -409,14 +408,16 @@ private[sharing] class DeltaSharingDataSource
     HadoopFsRelation(
       location = fileIndex,
       // This is copied from DeltaLog.buildHadoopFsRelationWithFileIndex.
-      // Dropping column mapping metadata because it is not relevant for partition schema.
-      partitionSchema = DeltaColumnMapping.dropColumnMappingMetadata(fileIndex.partitionSchema),
+      // Dropping delta metadata because it is not relevant for partition schema.
+      partitionSchema =
+        TahoeDeltaTableUtils.removeInternalDeltaMetadata(spark, fileIndex.partitionSchema),
       // This is copied from DeltaLog.buildHadoopFsRelationWithFileIndex, original comment:
       // We pass all table columns as `dataSchema` so that Spark will preserve the partition
       // column locations. Otherwise, for any partition columns not in `dataSchema`, Spark would
       // just append them to the end of `dataSchema`.
-      dataSchema = DeltaColumnMapping.dropColumnMappingMetadata(
-        TahoeDeltaTableUtils.removeInternalMetadata(
+      dataSchema = TahoeDeltaTableUtils.removeInternalDeltaMetadata(
+        spark,
+        TahoeDeltaTableUtils.removeInternalWriterMetadata(
           spark,
           SchemaUtils.dropNullTypeColumns(deltaSharingTableMetadata.metadata.schema)
         )

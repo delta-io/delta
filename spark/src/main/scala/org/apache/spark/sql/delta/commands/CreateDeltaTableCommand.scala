@@ -21,10 +21,11 @@ import java.util.concurrent.TimeUnit
 
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.DeltaColumnMapping.{dropColumnMappingMetadata, filterColumnMappingProperties}
-import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
+import org.apache.spark.sql.delta.DeltaColumnMapping.filterColumnMappingProperties
+import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.actions.DomainMetadata
 import org.apache.spark.sql.delta.commands.DMLUtils.TaggedCommitData
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsUtils
 import org.apache.spark.sql.delta.hooks.{HudiConverterHook, IcebergConverterHook, UpdateCatalog, UpdateCatalogFactory}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -58,6 +59,8 @@ import org.apache.spark.sql.types.StructType
  *                - CTAS
  *                - saveAsTable
  * @param protocol This is used to create a table with specific protocol version
+ * @param createTableFunc If specified, call this function to create the table, instead of
+ *                        Spark `SessionCatalog#createTable` which is backed by Hive Metastore.
  */
 case class CreateDeltaTableCommand(
     table: CatalogTable,
@@ -67,7 +70,8 @@ case class CreateDeltaTableCommand(
     operation: TableCreationModes.CreationMode = TableCreationModes.Create,
     tableByPath: Boolean = false,
     override val output: Seq[Attribute] = Nil,
-    protocol: Option[Protocol] = None)
+    protocol: Option[Protocol] = None,
+    createTableFunc: Option[CatalogTable => Unit] = None)
   extends LeafRunnableCommand
   with DeltaCommand
   with DeltaLogging {
@@ -130,7 +134,14 @@ case class CreateDeltaTableCommand(
     }
 
     val tableLocation = getDeltaTablePath(tableWithLocation)
-    val deltaLog = DeltaLog.forTable(sparkSession, tableLocation)
+    // To be safe, here we only extract file system options from table storage properties, to create
+    // the DeltaLog.
+    val fileSystemOptions = table.storage.properties.filter { case (k, _) =>
+      DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
+    }
+    val deltaLog = DeltaLog.forTable(sparkSession, tableLocation, fileSystemOptions)
+    CoordinatedCommitsUtils.validateConfigurationsForCreateDeltaTableCommand(
+      sparkSession, deltaLog.tableExists, query, tableWithLocation.properties)
 
     recordDeltaOperation(deltaLog, "delta.ddl.createTable") {
       val result = handleCommit(sparkSession, deltaLog, tableWithLocation)
@@ -224,16 +235,20 @@ case class CreateDeltaTableCommand(
     logInfo(log"Table is path-based table: ${MDC(DeltaLogKeys.IS_PATH_TABLE, tableByPath)}. " +
       log"Update catalog with mode: ${MDC(DeltaLogKeys.OPERATION, operation)}")
     val opStartTs = TimeUnit.NANOSECONDS.toMillis(txnUsedForCommit.txnStartTimeNs)
-    val postCommitSnapshot = deltaLog.update(checkIfUpdatedSinceTs = Some(opStartTs))
+    val postCommitSnapshot = deltaLog.update(
+      checkIfUpdatedSinceTs = Some(opStartTs),
+      catalogTableOpt = Some(tableWithLocation))
     val didNotChangeMetadata = txnUsedForCommit.metadata == txnUsedForCommit.snapshot.metadata
     updateCatalog(sparkSession, tableWithLocation, postCommitSnapshot, didNotChangeMetadata)
 
 
-    if (UniversalFormat.icebergEnabled(postCommitSnapshot.metadata)) {
+    if (UniversalFormat.icebergEnabled(postCommitSnapshot.metadata) &&
+        !txnUsedForCommit.containsPostCommitHook(IcebergConverterHook)) {
       deltaLog.icebergConverter.convertSnapshot(postCommitSnapshot, tableWithLocation)
     }
 
-    if (UniversalFormat.hudiEnabled(postCommitSnapshot.metadata)) {
+    if (UniversalFormat.hudiEnabled(postCommitSnapshot.metadata) &&
+        !txnUsedForCommit.containsPostCommitHook(HudiConverterHook)) {
       deltaLog.hudiConverter.convertSnapshot(postCommitSnapshot, tableWithLocation)
     }
   }
@@ -269,6 +284,7 @@ case class CreateDeltaTableCommand(
           txn,
           tableWithLocation,
           options,
+          sparkSession,
           schema)
       }
       var taggedCommitData = deltaWriter.writeAndReturnCommitData(
@@ -304,8 +320,11 @@ case class CreateDeltaTableCommand(
       )
       (taggedCommitData, op)
     }
-    val updatedConfiguration = UniversalFormat
-      .enforceDependenciesInConfiguration(deltaWriter.configuration, txn.snapshot)
+    val updatedConfiguration = UniversalFormat.enforceDependenciesInConfiguration(
+      sparkSession,
+      deltaWriter.configuration,
+      txn.snapshot
+    )
     val updatedWriter = deltaWriter.withNewWriterConfiguration(updatedConfiguration)
     // We are either appending/overwriting with saveAsTable or creating a new table with CTAS
     if (!hasBeenExecuted(txn, sparkSession, Some(options))) {
@@ -367,7 +386,10 @@ case class CreateDeltaTableCommand(
           getProvidedMetadata(tableWithLocation, table.schema.json)
         newMetadata = newMetadata.copy(configuration =
           UniversalFormat.enforceDependenciesInConfiguration(
-            newMetadata.configuration, txn.snapshot))
+            sparkSession,
+            newMetadata.configuration,
+            txn.snapshot
+          ))
 
         txn.updateMetadataForNewTable(newMetadata)
         protocol.foreach { protocol =>
@@ -376,7 +398,7 @@ case class CreateDeltaTableCommand(
         ClusteredTableUtils.getDomainMetadataFromTransaction(
           ClusteredTableUtils.getClusterBySpecOptional(table), txn).toSeq
       } else {
-        verifyTableMetadata(txn, tableWithLocation)
+        verifyTableMetadata(sparkSession, txn, tableWithLocation)
         Nil
       }
     }
@@ -410,6 +432,7 @@ case class CreateDeltaTableCommand(
           txn,
           tableWithLocation,
           options,
+          sparkSession,
           tableWithLocation.schema)
         // Truncate the table
         val operationTimestamp = System.currentTimeMillis()
@@ -485,11 +508,38 @@ case class CreateDeltaTableCommand(
     }
   }
 
+
+  /**
+   * When creating an external table in a location where some table already existed, we make sure
+   * that the specified table properties match the existing table properties. Since Coordinated
+   * Commits is not designed to be overridden, we should not error out if the command omits these
+   * properties. If the existing table has Coordinated Commits enabled, we also do not error out if
+   * the command omits the ICT properties, which are the dependencies for Coordinated Commits.
+   */
+  private def filterCoordinatedCommitsProperties(
+      existingProperties: Map[String, String],
+      tableProperties: Map[String, String]): Map[String, String] = {
+    var filteredExistingProperties = existingProperties
+    val overridingCCConfs = CoordinatedCommitsUtils.getExplicitCCConfigurations(tableProperties)
+    val existingCCConfs = CoordinatedCommitsUtils.getExplicitCCConfigurations(existingProperties)
+    if (existingCCConfs.nonEmpty && overridingCCConfs.isEmpty) {
+      filteredExistingProperties --= CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS
+      val overridingICTConfs = CoordinatedCommitsUtils.getExplicitICTConfigurations(tableProperties)
+      val existingICTConfs = CoordinatedCommitsUtils.getExplicitICTConfigurations(
+        existingProperties)
+      if (existingICTConfs.nonEmpty && overridingICTConfs.isEmpty) {
+        filteredExistingProperties --= CoordinatedCommitsUtils.ICT_TABLE_PROPERTY_KEYS
+      }
+    }
+    filteredExistingProperties
+  }
+
   /**
    * Verify against our transaction metadata that the user specified the right metadata for the
    * table.
    */
   private def verifyTableMetadata(
+      sparkSession: SparkSession,
       txn: OptimisticTransaction,
       tableDesc: CatalogTable): Unit = {
     val existingMetadata = txn.metadata
@@ -505,7 +555,7 @@ case class CreateDeltaTableCommand(
         // However, if in column mapping mode, we can safely ignore the related metadata fields in
         // existing metadata because new table desc will not have related metadata assigned yet
         val differences = SchemaUtils.reportDifferences(
-          dropColumnMappingMetadata(existingMetadata.schema),
+          DeltaTableUtils.removeInternalDeltaMetadata(sparkSession, existingMetadata.schema),
           tableDesc.schema)
         if (differences.nonEmpty) {
           throw DeltaErrors.createTableWithDifferentSchemaException(
@@ -535,6 +585,10 @@ case class CreateDeltaTableCommand(
         // internal column mapping properties for the sake of comparison.
         var filteredTableProperties = filterColumnMappingProperties(
           tableDesc.properties)
+        // We also need to remove any protocol-related properties as we're filtering these
+        // from the metadata so they won't be present in the table properties.
+        filteredTableProperties =
+          Protocol.filterProtocolPropsFromTableProps(filteredTableProperties)
         var filteredExistingProperties = filterColumnMappingProperties(
           existingMetadata.configuration)
         // Clustered table has internal table properties in Metadata configurations and they are
@@ -550,6 +604,8 @@ case class CreateDeltaTableCommand(
           filteredTableProperties =
             ClusteredTableUtils.removeInternalTableProperties(filteredTableProperties)
         }
+        filteredExistingProperties =
+          filterCoordinatedCommitsProperties(filteredExistingProperties, filteredTableProperties)
         if (filteredTableProperties != filteredExistingProperties) {
           throw DeltaErrors.createTableWithDifferentPropertiesException(
             path, filteredTableProperties, filteredExistingProperties)
@@ -631,10 +687,14 @@ case class CreateDeltaTableCommand(
     operation match {
       case _ if tableByPath => // do nothing with the metastore if this is by path
       case TableCreationModes.Create =>
-        spark.sessionState.catalog.createTable(
-          cleaned,
-          ignoreIfExists = existingTableOpt.isDefined || mode == SaveMode.Ignore,
-          validateLocation = false)
+        if (createTableFunc.isDefined) {
+          createTableFunc.get.apply(cleaned)
+        } else {
+          spark.sessionState.catalog.createTable(
+            cleaned,
+            ignoreIfExists = existingTableOpt.isDefined || mode == SaveMode.Ignore,
+            validateLocation = false)
+        }
       case TableCreationModes.Replace | TableCreationModes.CreateOrReplace
           if existingTableOpt.isDefined =>
         UpdateCatalogFactory.getUpdateCatalogHook(table, spark).updateSchema(spark, snapshot)
@@ -702,6 +762,7 @@ case class CreateDeltaTableCommand(
       txn: OptimisticTransaction,
       tableDesc: CatalogTable,
       options: DeltaOptions,
+      sparkSession: SparkSession,
       schema: StructType): Unit = {
     // If a user explicitly specifies not to overwrite the schema, during a replace, we should
     // tell them that it's not supported
@@ -713,8 +774,13 @@ case class CreateDeltaTableCommand(
     if (txn.readVersion > -1L && isReplace && !dontOverwriteSchema) {
       // When a table already exists, and we're using the DataFrameWriterV2 API to replace
       // or createOrReplace a table, we blindly overwrite the metadata.
-      val newMetadata = getProvidedMetadata(table, schema.json)
-      txn.updateMetadataForNewTable(newMetadata)
+      var newMetadata = getProvidedMetadata(table, schema.json)
+      val updatedConfig = UniversalFormat.enforceDependenciesInConfiguration(
+        sparkSession,
+        newMetadata.configuration,
+        txn.snapshot)
+      newMetadata = newMetadata.copy(configuration = updatedConfig)
+      txn.updateMetadataForNewTableInReplace(newMetadata)
     }
   }
 
@@ -746,11 +812,12 @@ case class CreateDeltaTableCommand(
     val txn = deltaLog.startTransaction(None, snapshotOpt)
     validatePrerequisitesForClusteredTable(txn.snapshot.protocol, txn.deltaLog)
 
-    // During CREATE/REPLACE, we synchronously run conversion (if Uniform is enabled) so
-    // we always remove the post commit hook here.
-    txn.unregisterPostCommitHooksWhere(hook => hook.name == IcebergConverterHook.name)
-    txn.unregisterPostCommitHooksWhere(hook => hook.name == HudiConverterHook.name)
-
+    // During CREATE (not REPLACE/overwrites), we synchronously run conversion
+    //  (if Uniform is enabled) so we always remove the post commit hook here.
+    if (!isReplace) {
+      txn.unregisterPostCommitHooksWhere(hook => hook.name == IcebergConverterHook.name)
+      txn.unregisterPostCommitHooksWhere(hook => hook.name == HudiConverterHook.name)
+    }
     txn
   }
 

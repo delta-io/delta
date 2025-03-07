@@ -49,6 +49,17 @@ trait DeltaColumnMappingBase extends DeltaLogging {
   val PARQUET_MAP_VALUE_FIELD_NAME = "value"
 
   /**
+   * The list of column mapping metadata for each column in the schema.
+   */
+  val COLUMN_MAPPING_METADATA_KEYS: Set[String] = Set(
+    COLUMN_MAPPING_METADATA_ID_KEY,
+    COLUMN_MAPPING_PHYSICAL_NAME_KEY,
+    COLUMN_MAPPING_METADATA_NESTED_IDS_KEY,
+    PARQUET_FIELD_ID_METADATA_KEY,
+    PARQUET_FIELD_NESTED_IDS_METADATA_KEY
+  )
+
+  /**
    * This list of internal columns (and only this list) is allowed to have missing
    * column mapping metadata such as field id and physical name because
    * they might not be present in user's table schema.
@@ -116,6 +127,7 @@ trait DeltaColumnMappingBase extends DeltaLogging {
    *     - upgrading to the column mapping Protocol through configurations
    */
   def verifyAndUpdateMetadataChange(
+      spark: SparkSession,
       deltaLog: DeltaLog,
       oldProtocol: Protocol,
       oldMetadata: Metadata,
@@ -136,8 +148,46 @@ trait DeltaColumnMappingBase extends DeltaLogging {
         oldMappingMode.name, newMappingMode.name)
     }
 
-    val updatedMetadata = updateColumnMappingMetadata(
-      oldMetadata, newMetadata, isChangingModeOnExistingTable, isOverwriteSchema)
+    var updatedMetadata = newMetadata
+
+    // If column mapping is disabled, we need to strip any column mapping metadata from the schema,
+    // because Delta code will use them even when column mapping is not enabled. However, we cannot
+    // strip column mapping metadata that already exist in the schema, because this would break
+    // the table.
+    if (newMappingMode == NoMapping &&
+        schemaHasColumnMappingMetadata(newMetadata.schema)) {
+      val addsColumnMappingMetadata = !schemaHasColumnMappingMetadata(oldMetadata.schema)
+      if (addsColumnMappingMetadata &&
+          spark.conf.get(DeltaSQLConf.DELTA_COLUMN_MAPPING_STRIP_METADATA)) {
+        recordDeltaEvent(deltaLog, opType = "delta.columnMapping.stripMetadata")
+        val strippedSchema = dropColumnMappingMetadata(newMetadata.schema)
+        updatedMetadata = newMetadata.copy(schemaString = strippedSchema.json)
+      } else {
+        recordDeltaEvent(
+          deltaLog,
+          opType = "delta.columnMapping.updateSchema.metadataPresentButFeatureDisabled",
+          data = Map(
+            "addsColumnMappingMetadata" -> addsColumnMappingMetadata.toString,
+            "isCreatingNewTable" -> isCreatingNewTable.toString,
+            "isOverwriteSchema" -> isOverwriteSchema.toString)
+        )
+      }
+    }
+
+    // If column mapping was disabled, but there was already column mapping in the schema, it is
+    // a result of a bug in the previous version of Delta. This should no longer happen with the
+    // stripping done above. For existing tables with this issue, we should not allow enabling
+    // column mapping, to prevent further corruption.
+    if (spark.conf.get(DeltaSQLConf.
+        DELTA_COLUMN_MAPPING_DISALLOW_ENABLING_WHEN_METADATA_ALREADY_EXISTS)) {
+      if (oldMappingMode == NoMapping && newMappingMode != NoMapping &&
+          schemaHasColumnMappingMetadata(oldMetadata.schema)) {
+        throw DeltaErrors.enablingColumnMappingDisallowedWhenColumnMappingMetadataAlreadyExists()
+      }
+    }
+
+    updatedMetadata = updateColumnMappingMetadata(
+      oldMetadata, updatedMetadata, isChangingModeOnExistingTable, isOverwriteSchema)
 
     // record column mapping table creation/upgrade
     if (newMappingMode != NoMapping) {
@@ -233,9 +283,12 @@ trait DeltaColumnMappingBase extends DeltaLogging {
       .build())
   }
 
-  def assignPhysicalNames(schema: StructType): StructType = {
+  def assignPhysicalNames(schema: StructType, reuseLogicalName: Boolean = false): StructType = {
     SchemaMergingUtils.transformColumns(schema) { (_, field, _) =>
-      if (hasPhysicalName(field)) field else assignPhysicalName(field, generatePhysicalName)
+      if (hasPhysicalName(field)) field else {
+        if (reuseLogicalName) assignPhysicalName(field, field.name)
+        else assignPhysicalName(field, generatePhysicalName)
+      }
     }
   }
 
@@ -452,16 +505,12 @@ trait DeltaColumnMappingBase extends DeltaLogging {
 
   def dropColumnMappingMetadata(schema: StructType): StructType = {
     SchemaMergingUtils.transformColumns(schema) { (_, field, _) =>
-      field.copy(
-        metadata = new MetadataBuilder()
-          .withMetadata(field.metadata)
-          .remove(COLUMN_MAPPING_METADATA_ID_KEY)
-          .remove(COLUMN_MAPPING_METADATA_NESTED_IDS_KEY)
-          .remove(COLUMN_MAPPING_PHYSICAL_NAME_KEY)
-          .remove(PARQUET_FIELD_ID_METADATA_KEY)
-          .remove(PARQUET_FIELD_NESTED_IDS_METADATA_KEY)
-          .build()
-      )
+      var strippedMetadataBuilder = new MetadataBuilder().withMetadata(field.metadata)
+      for (key <- COLUMN_MAPPING_METADATA_KEYS) {
+        strippedMetadataBuilder = strippedMetadataBuilder.remove(key)
+      }
+      val strippedMetadata = strippedMetadataBuilder.build()
+      field.copy(metadata = strippedMetadata)
     }
   }
 
@@ -781,6 +830,15 @@ trait DeltaColumnMappingBase extends DeltaLogging {
 
     (transform(schema, new MetadataBuilder(), Seq.empty), currFieldId)
   }
+
+  /**
+   * Returns whether the schema contains any metadata reserved for column mapping.
+   */
+  def schemaHasColumnMappingMetadata(schema: StructType): Boolean = {
+    SchemaMergingUtils.explode(schema).exists { case (_, col) =>
+      COLUMN_MAPPING_METADATA_KEYS.exists(k => col.metadata.contains(k))
+    }
+  }
 }
 
 object DeltaColumnMapping extends DeltaColumnMappingBase
@@ -825,8 +883,12 @@ case object NameMapping extends DeltaColumnMappingMode {
 }
 
 object DeltaColumnMappingMode {
-  def apply(name: String): DeltaColumnMappingMode = {
-    name.toLowerCase(Locale.ROOT) match {
+  def apply(columnMappingModeString: String): DeltaColumnMappingMode = {
+    val columnMappingModeLowerCaseString =
+      Option(columnMappingModeString)
+        .map(_.toLowerCase(Locale.ROOT))
+        .getOrElse(throw DeltaErrors.unsupportedColumnMappingModeException(columnMappingModeString))
+    columnMappingModeLowerCaseString match {
       case NoMapping.name => NoMapping
       case IdMapping.name => IdMapping
       case NameMapping.name => NameMapping

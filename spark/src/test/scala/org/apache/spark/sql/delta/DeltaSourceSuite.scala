@@ -16,14 +16,16 @@
 
 package org.apache.spark.sql.delta
 
-import java.io.{File, FileInputStream, OutputStream}
+import java.io.{File, FileInputStream, OutputStream, PrintWriter, StringWriter}
 import java.net.URI
+import java.sql.Timestamp
 import java.util.UUID
 import java.util.concurrent.TimeoutException
 
 import scala.concurrent.duration._
 import scala.language.implicitConversions
 
+import org.apache.spark.sql.delta.DeltaTestUtils.modifyCommitTimestamp
 import org.apache.spark.sql.delta.actions.{AddFile, Protocol}
 import org.apache.spark.sql.delta.sources.{DeltaSourceOffset, DeltaSQLConf}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -144,7 +146,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
 
   test("disallow user specified schema") {
     withTempDir { inputDir =>
-      new File(inputDir, "_delta_log").mkdir()
+      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+      withMetadata(deltaLog, StructType.fromDDL("value STRING"))
+
       val e = intercept[AnalysisException] {
         spark.readStream
           .schema(StructType.fromDDL("a INT, b STRING"))
@@ -154,6 +158,32 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       for (msg <- Seq("Delta does not support specifying the schema at read time")) {
         assert(e.getMessage.contains(msg))
       }
+
+      val e2 = intercept[Exception] {
+        spark.readStream
+          .schema(StructType.fromDDL("value STRING"))
+          .format("delta")
+          .load(inputDir.getCanonicalPath)
+      }
+      assert(e2.getMessage.contains("does not support user-specified schema"))
+    }
+  }
+
+  test("allow user specified schema if consistent: v1 source") {
+    withTempDir { inputDir =>
+      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+      withMetadata(deltaLog, StructType.fromDDL("value STRING"))
+
+      import org.apache.spark.sql.execution.datasources.DataSource
+      // User-specified schema is allowed if it's consistent with the actual Delta table schema.
+      // Here we use Spark internal APIs to trigger v1 source code path. That being said, we
+      // are not fixing end-user behavior, but advanced Spark plugins.
+      val v1DataSource = DataSource(
+        spark,
+        userSpecifiedSchema = Some(StructType.fromDDL("value STRING")),
+        className = "delta",
+        options = Map("path" -> inputDir.getCanonicalPath))
+      Dataset.ofRows(spark, StreamingRelation(v1DataSource))
     }
   }
 
@@ -537,7 +567,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
 
   test("Trigger.AvailableNow with an empty table") {
     withTempDirs { (inputDir, outputDir, checkpointDir) =>
-      sql(s"CREATE TABLE delta.`${inputDir.toURI}` (value STRING) USING delta")
+      sql(s"CREATE TABLE delta.`${inputDir.getCanonicalPath}` (value STRING) USING delta")
 
       val stream = spark.readStream
         .format("delta")
@@ -1034,7 +1064,8 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
 
   testQuietly("recreate the reservoir should fail the query") {
     withTempDir { inputDir =>
-      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+      val tablePath = new Path(inputDir.toURI)
+      val deltaLog = DeltaLog.forTable(spark, tablePath)
       withMetadata(deltaLog, StructType.fromDDL("value STRING"))
 
       val df = spark.readStream
@@ -1049,7 +1080,10 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         StopStream,
         AssertOnQuery { _ =>
           Utils.deleteRecursively(inputDir)
-          val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+          if (coordinatedCommitsEnabledInTests) {
+            deleteTableFromCommitCoordinator(tablePath)
+          }
+          val deltaLog = DeltaLog.forTable(spark, tablePath)
           // All Delta tables in tests use the same tableId by default. Here we pass a new tableId
           // to simulate a new table creation in production
           withMetadata(deltaLog, StructType.fromDDL("value STRING"), tableId = Some("tableId-1234"))
@@ -1447,7 +1481,16 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         val e = intercept[StreamingQueryException] {
           stream.processAllAvailable()
         }
-        assert(e.getCause.isInstanceOf[InvalidProtocolVersionException])
+        val cause = e.getCause
+        val sw = new StringWriter()
+        cause.printStackTrace(new PrintWriter(sw))
+        assert(
+          cause.isInstanceOf[InvalidProtocolVersionException] ||
+          // When coordinated commits are enabled, the following assertion error coming from
+          // CoordinatedCommitsUtils.getCommitCoordinatorClient may get hit
+          (cause.isInstanceOf[AssertionError] &&
+           e.getCause.getMessage.contains("coordinated commits table feature is not supported")),
+          s"Caused by: ${sw.toString}")
       } finally {
         stream.stop()
       }
@@ -1462,8 +1505,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       val rangeStart = startVersion * 10
       val rangeEnd = rangeStart + 10
       spark.range(rangeStart, rangeEnd).write.format("delta").mode("append").save(location)
-      val file = new File(FileNames.unsafeDeltaFile(deltaLog.logPath, startVersion).toUri)
-      file.setLastModified(ts)
+      modifyCommitTimestamp(deltaLog, startVersion, ts)
       startVersion += 1
     }
   }
@@ -2598,4 +2640,16 @@ class MonotonicallyIncreasingTimestampFS extends RawLocalFileSystem {
 
 object MonotonicallyIncreasingTimestampFS {
   val scheme = s"MonotonicallyIncreasingTimestampFS"
+}
+
+class DeltaSourceWithCoordinatedCommitsBatch1Suite extends DeltaSourceSuite {
+  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(1)
+}
+
+class DeltaSourceWithCoordinatedCommitsBatch10Suite extends DeltaSourceSuite {
+  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(10)
+}
+
+class DeltaSourceWithCoordinatedCommitsBatch100Suite extends DeltaSourceSuite {
+  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(100)
 }

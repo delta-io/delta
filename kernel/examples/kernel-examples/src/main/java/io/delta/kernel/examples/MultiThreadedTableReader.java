@@ -83,13 +83,12 @@ public class MultiThreadedTableReader
         throws TableNotFoundException {
         Table table = Table.forPath(engine, tablePath);
         Snapshot snapshot = table.getLatestSnapshot(engine);
-        StructType readSchema = pruneSchema(snapshot.getSchema(engine), columnsOpt);
+        StructType readSchema = pruneSchema(snapshot.getSchema(), columnsOpt);
 
-        ScanBuilder scanBuilder = snapshot.getScanBuilder(engine)
-            .withReadSchema(engine, readSchema);
+        ScanBuilder scanBuilder = snapshot.getScanBuilder().withReadSchema(readSchema);
 
         if (predicate.isPresent()) {
-            scanBuilder = scanBuilder.withFilter(engine, predicate.get());
+            scanBuilder = scanBuilder.withFilter(predicate.get());
         }
 
         return new Reader(limit)
@@ -144,14 +143,14 @@ public class MultiThreadedTableReader
          * Get the deserialized scan state as {@link Row} object
          */
         Row getScanRow(Engine engine) {
-            return RowSerDe.deserializeRowFromJson(engine, stateJson);
+            return RowSerDe.deserializeRowFromJson(stateJson);
         }
 
         /**
          * Get the deserialized scan file as {@link Row} object
          */
         Row getScanFileRow(Engine engine) {
-            return RowSerDe.deserializeRowFromJson(engine, fileJson);
+            return RowSerDe.deserializeRowFromJson(fileJson);
         }
     }
 

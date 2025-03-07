@@ -52,13 +52,14 @@ val all_scala_versions = Seq(scala212, scala213)
 val default_scala_version = settingKey[String]("Default Scala version")
 Global / default_scala_version := scala212
 
-val LATEST_RELEASED_SPARK_VERSION = "3.5.0"
+val LATEST_RELEASED_SPARK_VERSION = "3.5.3"
 val SPARK_MASTER_VERSION = "4.0.0-SNAPSHOT"
 val sparkVersion = settingKey[String]("Spark version")
 spark / sparkVersion := getSparkVersion()
 connectCommon / sparkVersion := getSparkVersion()
 connectClient / sparkVersion := getSparkVersion()
 connectServer / sparkVersion := getSparkVersion()
+sharing / sparkVersion := getSparkVersion()
 
 // Dependent library versions
 val defaultSparkVersion = LATEST_RELEASED_SPARK_VERSION
@@ -92,7 +93,7 @@ val targetJvm = settingKey[String]("Target JVM version")
 Global / targetJvm := "8"
 
 lazy val javaVersion = sys.props.getOrElse("java.version", "Unknown")
-
+lazy val javaVersionInt = javaVersion.split("\\.")(0).toInt
 /**
  * Returns the current spark version, which is the same value as `sparkVersion.value`.
  *
@@ -148,13 +149,45 @@ lazy val commonSettings = Seq(
     "-Dspark.databricks.delta.delta.log.cacheSize=3",
     "-Dspark.sql.sources.parallelPartitionDiscovery.parallelism=5",
     "-Xmx1024m"
-  ),
+  ) ++ {
+    if (javaVersionInt >= 17) {
+      Seq(  // For Java 17 +
+        "--add-opens=java.base/java.nio=ALL-UNNAMED",
+        "--add-opens=java.base/java.lang=ALL-UNNAMED",
+        "--add-opens=java.base/java.net=ALL-UNNAMED",
+        "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+        "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED"
+      )
+    } else {
+      Seq.empty
+    }
+  },
 
   testOptions += Tests.Argument("-oF"),
 
   // Unidoc settings: by default dont document any source file
   unidocSourceFilePatterns := Nil,
 )
+
+////////////////////////////
+// START: Code Formatting //
+////////////////////////////
+
+/** Enforce java code style on compile. */
+def javafmtCheckSettings(): Seq[Def.Setting[Task[CompileAnalysis]]] = Seq(
+  (Compile / compile) := ((Compile / compile) dependsOn (Compile / javafmtCheckAll)).value
+)
+
+/** Enforce scala code style on compile. */
+def scalafmtCheckSettings(): Seq[Def.Setting[Task[CompileAnalysis]]] = Seq(
+  (Compile / compile) := ((Compile / compile) dependsOn (Compile / scalafmtCheckAll)).value,
+)
+
+// TODO: define fmtAll and fmtCheckAll tasks that run both scala and java fmts/checks
+
+//////////////////////////
+// END: Code Formatting //
+//////////////////////////
 
 /**
  * Note: we cannot access sparkVersion.value here, since that can only be used within a task or
@@ -170,11 +203,8 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
     Compile / unmanagedSourceDirectories += (Compile / baseDirectory).value / "src" / "main" / "scala-spark-3.5",
     Test / unmanagedSourceDirectories += (Test / baseDirectory).value / "src" / "test" / "scala-spark-3.5",
     Antlr4 / antlr4Version := "4.9.3",
+    Test / javaOptions ++= Seq("-Dlog4j.configurationFile=log4j2.properties"),
 
-    // Java-/Scala-/Uni-Doc Settings
-    scalacOptions ++= Seq(
-      "-P:genjavadoc:strictVisibility=true" // hide package private types and methods in javadoc
-    ),
     unidocSourceFilePatterns := Seq(SourceFilePattern("io/delta/tables/", "io/delta/exceptions/"))
   )
 
@@ -198,8 +228,9 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
       "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
       "--add-opens=java.base/sun.nio.cs=ALL-UNNAMED",
       "--add-opens=java.base/sun.security.action=ALL-UNNAMED",
-      "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED"
-    )
+      "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED",
+      "-Dlog4j.configurationFile=log4j2_spark_master.properties"
+    ),
 
     // Java-/Scala-/Uni-Doc Settings
     // This isn't working yet against Spark Master.
@@ -229,7 +260,7 @@ def runTaskOnlyOnSparkMaster[T](
 }
 
 lazy val connectCommon = (project in file("spark-connect/common"))
-  .disablePlugins(JavaFormatterPlugin)
+  .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings(
     name := "delta-connect-common",
     commonSettings,
@@ -268,7 +299,7 @@ lazy val connectCommon = (project in file("spark-connect/common"))
   )
 
 lazy val connectClient = (project in file("spark-connect/client"))
-  .disablePlugins(JavaFormatterPlugin)
+  .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .dependsOn(connectCommon % "compile->compile;test->test;provided->provided")
   .settings(
     name := "delta-connect-client",
@@ -357,7 +388,7 @@ lazy val connectClient = (project in file("spark-connect/client"))
 lazy val connectServer = (project in file("spark-connect/server"))
   .dependsOn(connectCommon % "compile->compile;test->test;provided->provided")
   .dependsOn(spark % "compile->compile;test->test;provided->provided")
-  .disablePlugins(JavaFormatterPlugin)
+  .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings(
     name := "delta-connect-server",
     commonSettings,
@@ -401,7 +432,7 @@ lazy val connectServer = (project in file("spark-connect/server"))
 lazy val spark = (project in file("spark"))
   .dependsOn(storage)
   .enablePlugins(Antlr4Plugin)
-  .disablePlugins(JavaFormatterPlugin)
+  .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings (
     name := "delta-spark",
     commonSettings,
@@ -427,6 +458,7 @@ lazy val spark = (project in file("spark"))
       "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
       "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
+      "org.mockito" % "mockito-inline" % "4.11.0" % "test",
     ),
     Compile / packageBin / mappings := (Compile / packageBin / mappings).value ++
         listPythonFiles(baseDirectory.value.getParentFile / "python"),
@@ -489,7 +521,7 @@ lazy val spark = (project in file("spark"))
 
 lazy val contribs = (project in file("contribs"))
   .dependsOn(spark % "compile->compile;test->test;provided->provided")
-  .disablePlugins(JavaFormatterPlugin)
+  .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings (
     name := "delta-contribs",
     commonSettings,
@@ -528,48 +560,81 @@ lazy val contribs = (project in file("contribs"))
 
 lazy val sharing = (project in file("sharing"))
   .dependsOn(spark % "compile->compile;test->test;provided->provided")
-  .disablePlugins(JavaFormatterPlugin)
+  .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings(
     name := "delta-sharing-spark",
     commonSettings,
     scalaStyleSettings,
     releaseSettings,
+    crossSparkSettings(),
     Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
-      "org.apache.spark" %% "spark-sql" % defaultSparkVersion % "provided",
+      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
 
-      "io.delta" %% "delta-sharing-client" % "1.1.1",
+      "io.delta" %% "delta-sharing-client" % "1.2.2",
 
       // Test deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "org.scalatestplus" %% "scalacheck-1-15" % "3.2.9.0" % "test",
       "junit" % "junit" % "4.13.2" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
-      "org.apache.spark" %% "spark-catalyst" % defaultSparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-core" % defaultSparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-sql" % defaultSparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-hive" % defaultSparkVersion % "test" classifier "tests",
+      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
     )
   ).configureUnidoc()
 
 lazy val kernelApi = (project in file("kernel/kernel-api"))
+  .enablePlugins(ScalafmtPlugin)
   .settings(
     name := "delta-kernel-api",
     commonSettings,
     scalaStyleSettings,
     javaOnlyReleaseSettings,
+    javafmtCheckSettings,
+    scalafmtCheckSettings,
     Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
       "org.roaringbitmap" % "RoaringBitmap" % "0.9.25",
       "org.slf4j" % "slf4j-api" % "1.7.36",
 
-      "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5" % "test",
+      "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5",
+      "com.fasterxml.jackson.core" % "jackson-core" % "2.13.5",
+      "com.fasterxml.jackson.core" % "jackson-annotations" % "2.13.5",
+      "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % "2.13.5",
+
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "junit" % "junit" % "4.13.2" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
       "org.slf4j" % "slf4j-log4j12" % "1.7.36" % "test",
       "org.assertj" % "assertj-core" % "3.26.3" % "test"
     ),
+    // Shade jackson libraries so that connector developers don't have to worry
+    // about jackson version conflicts.
+    Compile / packageBin := assembly.value,
+    assembly / assemblyJarName := s"${name.value}-${version.value}.jar",
+    assembly / logLevel := Level.Info,
+    assembly / test := {},
+    assembly / assemblyExcludedJars := {
+      val cp = (assembly / fullClasspath).value
+      val allowedPrefixes = Set("META_INF", "io", "jackson")
+      cp.filter { f =>
+        !allowedPrefixes.exists(prefix => f.data.getName.startsWith(prefix))
+      }
+    },
+     assembly / assemblyShadeRules := Seq(
+      ShadeRule.rename("com.fasterxml.jackson.**" -> "io.delta.kernel.shaded.com.fasterxml.jackson.@1").inAll
+    ),
+    assembly / assemblyMergeStrategy := {
+      // Discard `module-info.class` to fix the `different file contents found` error.
+      // TODO Upgrade SBT to 1.5 which will do this automatically
+      case "module-info.class" => MergeStrategy.discard
+      case PathList("META-INF", "services", xs @ _*) => MergeStrategy.discard
+      case x =>
+        val oldStrategy = (assembly / assemblyMergeStrategy).value
+        oldStrategy(x)
+    },
     // Generate the package object to provide the version information in runtime.
     Compile / sourceGenerators += Def.task {
       val file = (Compile / sourceManaged).value / "io" / "delta" / "kernel" / "Meta.java"
@@ -603,6 +668,7 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
   ).configureUnidoc(docTitle = "Delta Kernel")
 
 lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
+  .enablePlugins(ScalafmtPlugin)
   .dependsOn(kernelApi)
   .dependsOn(kernelApi % "test->test")
   .dependsOn(storage)
@@ -614,10 +680,13 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
     commonSettings,
     scalaStyleSettings,
     javaOnlyReleaseSettings,
+    javafmtCheckSettings,
+    scalafmtCheckSettings,
     Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
       "org.apache.hadoop" % "hadoop-client-runtime" % hadoopVersion,
       "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5",
+      "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % "2.13.5",
       "org.apache.parquet" % "parquet-hadoop" % "1.12.3",
 
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
@@ -645,7 +714,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
 // TODO unidoc
 // TODO(scott): figure out a better way to include tests in this project
 lazy val storage = (project in file("storage"))
-  .disablePlugins(JavaFormatterPlugin)
+  .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings (
     name := "delta-storage",
     commonSettings,
@@ -670,7 +739,7 @@ lazy val storage = (project in file("storage"))
 lazy val storageS3DynamoDB = (project in file("storage-s3-dynamodb"))
   .dependsOn(storage % "compile->compile;test->test;provided->provided")
   .dependsOn(spark % "test->test")
-  .disablePlugins(JavaFormatterPlugin)
+  .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings (
     name := "delta-storage-s3-dynamodb",
     commonSettings,
@@ -696,7 +765,7 @@ val icebergSparkRuntimeArtifactName = {
 lazy val testDeltaIcebergJar = (project in file("testDeltaIcebergJar"))
   // delta-iceberg depends on delta-spark! So, we need to include it during our test.
   .dependsOn(spark % "test")
-  .disablePlugins(JavaFormatterPlugin)
+  .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings(
     name := "test-delta-iceberg-jar",
     commonSettings,
@@ -726,7 +795,7 @@ val deltaIcebergSparkIncludePrefixes = Seq(
 // scalastyle:off println
 lazy val iceberg = (project in file("iceberg"))
   .dependsOn(spark % "compile->compile;test->test;provided->provided")
-  .disablePlugins(JavaFormatterPlugin)
+  .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings (
     name := "delta-iceberg",
     commonSettings,
@@ -775,22 +844,17 @@ lazy val iceberg = (project in file("iceberg"))
         // - delta-storage will bring in classes: io/delta/storage
         // - delta-spark will bring in classes: io/delta/exceptions/, io/delta/implicits,
         //   io/delta/package, io/delta/sql, io/delta/tables,
-        println(s"Discarding class: io/delta/${xs.mkString("/")}")
         MergeStrategy.discard
       case PathList("com", "databricks", xs @ _*) =>
         // delta-spark will bring in com/databricks/spark/util
-        println(s"Discarding class: com/databricks/${xs.mkString("/")}")
         MergeStrategy.discard
       case PathList("org", "apache", "spark", xs @ _*)
         if !deltaIcebergSparkIncludePrefixes.exists { prefix =>
           s"org/apache/spark/${xs.mkString("/")}".startsWith(prefix) } =>
-        println(s"Discarding class: org/apache/spark/${xs.mkString("/")}")
         MergeStrategy.discard
       case PathList("scoverage", xs @ _*) =>
-        println(s"Discarding class: scoverage/${xs.mkString("/")}")
         MergeStrategy.discard
       case x =>
-        println(s"Including class: $x")
         (assembly / assemblyMergeStrategy).value(x)
     },
     assemblyPackageScala / assembleArtifact := false
@@ -801,7 +865,7 @@ lazy val generateIcebergJarsTask = TaskKey[Unit]("generateIcebergJars", "Generat
 
 lazy val icebergShaded = (project in file("icebergShaded"))
   .dependsOn(spark % "provided")
-  .disablePlugins(JavaFormatterPlugin)
+  .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings (
     name := "iceberg-shaded",
     commonSettings,
@@ -832,7 +896,7 @@ lazy val icebergShaded = (project in file("icebergShaded"))
 
 lazy val hudi = (project in file("hudi"))
   .dependsOn(spark % "compile->compile;test->test;provided->provided")
-  .disablePlugins(JavaFormatterPlugin)
+  .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings (
     name := "delta-hudi",
     commonSettings,
@@ -884,7 +948,7 @@ lazy val hudi = (project in file("hudi"))
 
 lazy val hive = (project in file("connectors/hive"))
   .dependsOn(standaloneCosmetic)
-  .disablePlugins(JavaFormatterPlugin)
+  .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings (
     name := "delta-hive",
     commonSettings,
@@ -901,7 +965,7 @@ lazy val hive = (project in file("connectors/hive"))
 
 lazy val hiveAssembly = (project in file("connectors/hive-assembly"))
   .dependsOn(hive)
-  .disablePlugins(JavaFormatterPlugin)
+  .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings(
     name := "delta-hive-assembly",
     Compile / unmanagedJars += (hive / Compile / packageBin / packageBin).value,
@@ -928,7 +992,7 @@ lazy val hiveAssembly = (project in file("connectors/hive-assembly"))
 
 lazy val hiveTest = (project in file("connectors/hive-test"))
   .dependsOn(goldenTables % "test")
-  .disablePlugins(JavaFormatterPlugin)
+  .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings (
     name := "hive-test",
     // Make the project use the assembly jar to ensure we are testing the assembly jar that users
@@ -961,7 +1025,7 @@ lazy val hiveTest = (project in file("connectors/hive-test"))
 
 lazy val hiveMR = (project in file("connectors/hive-mr"))
   .dependsOn(hiveTest % "test->test")
-  .disablePlugins(JavaFormatterPlugin)
+  .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings (
     name := "hive-mr",
     commonSettings,
@@ -988,7 +1052,7 @@ lazy val hiveMR = (project in file("connectors/hive-mr"))
 
 lazy val hiveTez = (project in file("connectors/hive-tez"))
   .dependsOn(hiveTest % "test->test")
-  .disablePlugins(JavaFormatterPlugin)
+  .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings (
     name := "hive-tez",
     commonSettings,
@@ -1032,7 +1096,7 @@ lazy val hiveTez = (project in file("connectors/hive-tez"))
 
 lazy val hive2MR = (project in file("connectors/hive2-mr"))
   .dependsOn(goldenTables % "test")
-  .disablePlugins(JavaFormatterPlugin)
+  .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings (
     name := "hive2-mr",
     commonSettings,
@@ -1063,7 +1127,7 @@ lazy val hive2MR = (project in file("connectors/hive2-mr"))
 
 lazy val hive2Tez = (project in file("connectors/hive2-tez"))
   .dependsOn(goldenTables % "test")
-  .disablePlugins(JavaFormatterPlugin)
+  .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings (
     name := "hive2-tez",
     commonSettings,
@@ -1130,7 +1194,7 @@ lazy val hive2Tez = (project in file("connectors/hive2-tez"))
  */
 lazy val standaloneCosmetic = project
   .dependsOn(storage) // this doesn't impact the output artifact (jar), only the pom.xml dependencies
-  .disablePlugins(JavaFormatterPlugin)
+  .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings(
     name := "delta-standalone",
     commonSettings,
@@ -1150,7 +1214,7 @@ lazy val standaloneCosmetic = project
 lazy val testStandaloneCosmetic = (project in file("connectors/testStandaloneCosmetic"))
   .dependsOn(standaloneCosmetic)
   .dependsOn(goldenTables % "test")
-  .disablePlugins(JavaFormatterPlugin)
+  .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings(
     name := "test-standalone-cosmetic",
     commonSettings,
@@ -1167,7 +1231,7 @@ lazy val testStandaloneCosmetic = (project in file("connectors/testStandaloneCos
  * except `ParquetSchemaConverter` are working without `parquet-hadoop` in testStandaloneCosmetic`.
  */
 lazy val testParquetUtilsWithStandaloneCosmetic = project.dependsOn(standaloneCosmetic)
-  .disablePlugins(JavaFormatterPlugin)
+  .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings(
     name := "test-parquet-utils-with-standalone-cosmetic",
     commonSettings,
@@ -1191,7 +1255,7 @@ def scalaCollectionPar(version: String) = version match {
  * create a separate project to skip the shading.
  */
 lazy val standaloneParquet = (project in file("connectors/standalone-parquet"))
-  .disablePlugins(JavaFormatterPlugin)
+  .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .dependsOn(standaloneWithoutParquetUtils)
   .settings(
     name := "delta-standalone-parquet",
@@ -1206,7 +1270,7 @@ lazy val standaloneParquet = (project in file("connectors/standalone-parquet"))
 
 /** A dummy project to allow `standaloneParquet` depending on the shaded standalone jar. */
 lazy val standaloneWithoutParquetUtils = project
-  .disablePlugins(JavaFormatterPlugin)
+  .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings(
     name := "delta-standalone-without-parquet-utils",
     commonSettings,
@@ -1219,7 +1283,7 @@ lazy val standaloneWithoutParquetUtils = project
 lazy val standalone = (project in file("connectors/standalone"))
   .dependsOn(storage % "compile->compile;provided->provided")
   .dependsOn(goldenTables % "test")
-  .disablePlugins(JavaFormatterPlugin)
+  .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings(
     name := "delta-standalone-original",
     commonSettings,
@@ -1344,7 +1408,7 @@ lazy val compatibility = (project in file("connectors/oss-compatibility-tests"))
 
 lazy val goldenTables = (project in file("connectors/golden-tables"))
   .dependsOn(spark % "test") // depends on delta-spark
-  .disablePlugins(JavaFormatterPlugin)
+  .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings(
     name := "golden-tables",
     commonSettings,
@@ -1371,7 +1435,7 @@ def sqlDeltaImportScalaVersion(scalaBinaryVersion: String): String = {
 
 lazy val sqlDeltaImport = (project in file("connectors/sql-delta-import"))
   .dependsOn(spark)
-  .disablePlugins(JavaFormatterPlugin)
+  .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings (
     name := "sql-delta-import",
     commonSettings,
@@ -1403,7 +1467,7 @@ lazy val flink = (project in file("connectors/flink"))
   .dependsOn(standaloneCosmetic % "provided")
   .dependsOn(kernelApi)
   .dependsOn(kernelDefaults)
-  .disablePlugins(JavaFormatterPlugin)
+  .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings (
     name := "delta-flink",
     commonSettings,
@@ -1534,7 +1598,16 @@ val createTargetClassesDir = taskKey[Unit]("create target classes dir")
 
 // Don't use these groups for any other projects
 lazy val sparkGroup = project
-  .aggregate(spark, contribs, storage, storageS3DynamoDB, iceberg, testDeltaIcebergJar, sharing, hudi)
+  .aggregate(spark, contribs, storage, storageS3DynamoDB, sharing, hudi)
+  .settings(
+    // crossScalaVersions must be set to Nil on the aggregating project
+    crossScalaVersions := Nil,
+    publishArtifact := false,
+    publish / skip := false,
+  )
+
+lazy val icebergGroup = project
+  .aggregate(iceberg, testDeltaIcebergJar)
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,

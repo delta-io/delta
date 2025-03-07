@@ -28,6 +28,7 @@ The following <Delta> features break forward compatibility. Features are enabled
    Clustering, [Delta Lake 3.1.0](https://github.com/delta-io/delta/releases/tag/v3.1.0),[_](/delta-clustering.md)
    Row Tracking, [Delta Lake 3.2.0](https://github.com/delta-io/delta/releases/tag/v3.2.0),[_](/delta-row-tracking.md)
    Type widening (Preview),[Delta Lake 3.2.0](https://github.com/delta-io/delta/releases/tag/v3.2.0),[_](/delta-type-widening.md)
+   Identity columns, [Delta Lake 3.3.0](https://github.com/delta-io/delta/releases/tag/v3.3.0),[_](/delta-batch.md#use-identity-columns)
 
 <a id="table-protocol"></a>
 
@@ -102,6 +103,7 @@ The following table shows minimum protocol versions required for <Delta> feature
    Change data feed,4,1,[_](/delta-change-data-feed.md)
    Generated columns,4,1,[_](/delta-batch.md#use-generated-columns)
    Column mapping,5,2,[_](/delta-column-mapping.md)
+   Identity columns,6,1,[_](/delta-batch.md#use-identity-columns)
    Table features read,7,1,[_](#table-features)
    Table features write,7,3,[_](#table-features)
    Deletion vectors,7,3,[_](/delta-deletion-vectors.md)
@@ -143,4 +145,5 @@ To upgrade a table to a newer protocol version, use the `DeltaTable.upgradeTable
   delta.upgradeTableProtocol(1, 3) // Upgrades to readerVersion=1, writerVersion=3.
   ```
 
-.. include:: /shared/replacements.md
+.. <Delta> replace:: Delta Lake
+.. <AS> replace:: Apache Spark

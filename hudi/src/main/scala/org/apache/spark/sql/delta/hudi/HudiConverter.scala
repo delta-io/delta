@@ -67,9 +67,9 @@ class HudiConverter(spark: SparkSession)
   // Save an atomic reference of the snapshot being converted, and the txn that triggered
   // resulted in the specified snapshot
   protected val currentConversion =
-    new AtomicReference[(Snapshot, OptimisticTransactionImpl)]()
+    new AtomicReference[(Snapshot, DeltaTransaction)]()
   protected val standbyConversion =
-    new AtomicReference[(Snapshot, OptimisticTransactionImpl)]()
+    new AtomicReference[(Snapshot, DeltaTransaction)]()
 
   // Whether our async converter thread is active. We may already have an alive thread that is
   // about to shutdown, but in such cases this value should return false.
@@ -88,7 +88,7 @@ class HudiConverter(spark: SparkSession)
    */
   override def enqueueSnapshotForConversion(
       snapshotToConvert: Snapshot,
-      txn: OptimisticTransactionImpl): Unit = {
+      txn: DeltaTransaction): Unit = {
     if (!UniversalFormat.hudiEnabled(snapshotToConvert.metadata)) {
       return
     }
@@ -116,7 +116,7 @@ class HudiConverter(spark: SparkSession)
                       convertSnapshot(snapshotVal, prevTxn)
                     } catch {
                       case NonFatal(e) =>
-                        logWarning("Error when writing Hudi metadata asynchronously", e)
+                        logWarning(log"Error when writing Hudi metadata asynchronously", e)
                         recordDeltaEvent(
                           log,
                           "delta.hudi.conversion.async.error",
@@ -138,7 +138,7 @@ class HudiConverter(spark: SparkSession)
               }
 
           // Get a snapshot to convert from the hudiQueue. Sets the queue to null after.
-          private def getNextSnapshot: (Snapshot, OptimisticTransactionImpl) =
+          private def getNextSnapshot: (Snapshot, DeltaTransaction) =
             asyncThreadLock.synchronized {
               val potentialSnapshotAndTxn = standbyConversion.get()
               currentConversion.set(potentialSnapshotAndTxn)
@@ -177,7 +177,7 @@ class HudiConverter(spark: SparkSession)
     if (!UniversalFormat.hudiEnabled(snapshotToConvert.metadata)) {
       return None
     }
-    convertSnapshot(snapshotToConvert, None, Option.apply(catalogTable.identifier.table))
+    convertSnapshot(snapshotToConvert, None, Some(catalogTable))
   }
 
   /**
@@ -189,11 +189,11 @@ class HudiConverter(spark: SparkSession)
    * @return Converted Delta version and commit timestamp
    */
   override def convertSnapshot(
-      snapshotToConvert: Snapshot, txn: OptimisticTransactionImpl): Option[(Long, Long)] = {
+      snapshotToConvert: Snapshot, txn: DeltaTransaction): Option[(Long, Long)] = {
     if (!UniversalFormat.hudiEnabled(snapshotToConvert.metadata)) {
       return None
     }
-    convertSnapshot(snapshotToConvert, Some(txn), txn.catalogTable.map(_.identifier.table))
+    convertSnapshot(snapshotToConvert, Some(txn), txn.catalogTable)
   }
 
   /**
@@ -207,12 +207,14 @@ class HudiConverter(spark: SparkSession)
    */
   private def convertSnapshot(
       snapshotToConvert: Snapshot,
-      txnOpt: Option[OptimisticTransactionImpl],
-      tableName: Option[String]): Option[(Long, Long)] =
+      txnOpt: Option[DeltaTransaction],
+      catalogTable: Option[CatalogTable]): Option[(Long, Long)] =
       recordFrameProfile("Delta", "HudiConverter.convertSnapshot") {
     val log = snapshotToConvert.deltaLog
-    val metaClient = loadTableMetaClient(snapshotToConvert.deltaLog.dataPath.toString,
-      tableName, snapshotToConvert.metadata.partitionColumns,
+    val metaClient = loadTableMetaClient(
+      snapshotToConvert.deltaLog.dataPath.toString,
+      catalogTable.flatMap(ct => Option(ct.identifier.table)),
+      snapshotToConvert.metadata.partitionColumns,
       new HadoopStorageConfiguration(log.newDeltaHadoopConf()))
     val lastDeltaVersionConverted: Option[Long] = loadLastDeltaVersionConverted(metaClient)
     val maxCommitsToConvert =
@@ -233,7 +235,7 @@ class HudiConverter(spark: SparkSession)
         try {
           // TODO: We can optimize this by providing a checkpointHint to getSnapshotAt. Check if
           //  txn.snapshot.version < version. If true, use txn.snapshot's checkpoint as a hint.
-          Some(log.getSnapshotAt(version))
+          Some(log.getSnapshotAt(version, catalogTableOpt = catalogTable))
         } catch {
           // If we can't load the file since the last time Hudi was converted, it's likely that
           // the commit file expired. Treat this like a new Hudi table conversion.

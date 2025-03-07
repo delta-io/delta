@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.OptimizablePartitionExpression._
 
 import org.apache.spark.sql.Column
@@ -78,7 +79,7 @@ object OptimizablePartitionExpression {
   /** Provide a convenient method to convert a string to a column expression */
   implicit class ColumnExpression(val colName: String) extends AnyVal {
     // This will always be a top level column so quote it if necessary
-    def toPartCol: Expression = new Column(quoteIfNeeded(colName)).expr
+    def toPartCol: Expression = Column(quoteIfNeeded(colName)).expr
   }
 }
 

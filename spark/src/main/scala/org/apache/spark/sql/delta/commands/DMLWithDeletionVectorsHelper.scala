@@ -22,6 +22,7 @@ import scala.collection.generic.Sizing
 
 import org.apache.spark.sql.catalyst.expressions.aggregation.BitmapAggregator
 import org.apache.spark.sql.delta.{DeltaLog, DeltaParquetFileFormat, OptimisticTransaction, Snapshot}
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.DeltaParquetFileFormat._
 import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, FileAction}
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat, StoredBitmap}
@@ -39,7 +40,7 @@ import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Expression}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Project}
-import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
+import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelationWithTable}
 import org.apache.spark.sql.execution.datasources.FileFormat.{FILE_PATH, METADATA_NAME}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.functions.{col, lit}
@@ -92,8 +93,8 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
     var fileMetadataCol: AttributeReference = null
 
     val newTarget = target.transformUp {
-      case l @ LogicalRelation(
-        hfsr @ HadoopFsRelation(_, _, _, _, format: DeltaParquetFileFormat, _), _, _, _) =>
+      case l @ LogicalRelationWithTable(
+        hfsr @ HadoopFsRelation(_, _, _, _, format: DeltaParquetFileFormat, _), _) =>
         fileMetadataCol = format.createFileMetadataCol()
         // Take the existing schema and add additional metadata columns
         if (useMetadataRowIndex) {
@@ -272,12 +273,10 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
       if (filesWithNoStats.nonEmpty) {
         StatsCollectionUtils.computeStats(spark,
           conf = snapshot.deltaLog.newDeltaHadoopConf(),
-          dataPath = snapshot.deltaLog.dataPath,
+          deltaLog = snapshot.deltaLog,
+          snapshot = snapshot,
           addFiles = filesWithNoStats.toDS(spark),
           numFilesOpt = Some(filesWithNoStats.size),
-          columnMappingMode = snapshot.metadata.columnMappingMode,
-          dataSchema = snapshot.dataSchema,
-          statsSchema = snapshot.statsSchema,
           setBoundsToWide = true)
           .collect()
           .toSeq
@@ -338,7 +337,7 @@ object DeletionVectorBitmapGenerator {
     /** Create a bitmap set aggregator over the given column */
     private def createBitmapSetAggregator(indexColumn: Column): Column = {
       val func = new BitmapAggregator(indexColumn.expr, RoaringBitmapArrayFormat.Portable)
-      new Column(func.toAggregateExpression(isDistinct = false))
+      Column(func.toAggregateExpression(isDistinct = false))
     }
 
     protected def outputColumns: Seq[Column] =
@@ -667,13 +666,19 @@ object DeletionVectorWriter extends DeltaLogging {
         // Load the existing bit map
         val existingBitmap =
           StoredBitmap.create(existingDvDescriptor, ctx.tablePath).load(ctx.dvStore)
-        val newBitmap = RoaringBitmapArray.readFrom(row.deletedRowIndexSet)
-
+        val newBitmap =
+          DeletionVectorUtils.deserialize(row.deletedRowIndexSet, Some(ctx.tablePath))
         // Merge both the existing and new bitmaps into one, and finally persist on disk
         existingBitmap.merge(newBitmap)
+
+        val serializedBitmap = DeletionVectorUtils.serialize(
+          existingBitmap,
+          RoaringBitmapArrayFormat.Portable,
+          Some(ctx.tablePath),
+          debugInfo = Map("existingDvDescriptor" -> existingDvDescriptor))
         storeSerializedBitmap(
           ctx,
-          existingBitmap.serializeAsByteArray(RoaringBitmapArrayFormat.Portable),
+          serializedBitmap,
           existingBitmap.cardinality)
       case Some(existingDvDescriptor) =>
         existingDvDescriptor // This is already stored.

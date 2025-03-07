@@ -40,7 +40,7 @@ import org.apache.spark.sql.catalyst.plans.logical.{Filter, LeafNode, LogicalPla
 import org.apache.spark.sql.catalyst.util.CharVarcharCodegenUtils
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform}
-import org.apache.spark.sql.execution.datasources.{FileFormat, FileIndex, HadoopFsRelation, LogicalRelation}
+import org.apache.spark.sql.execution.datasources.{FileFormat, FileIndex, HadoopFsRelation, LogicalRelation, LogicalRelationWithTable}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
@@ -50,7 +50,7 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap
  */
 object RelationFileIndex {
   def unapply(a: LogicalRelation): Option[FileIndex] = a match {
-    case LogicalRelation(hrel: HadoopFsRelation, _, _, _) => Some(hrel.location)
+    case LogicalRelationWithTable(hrel: HadoopFsRelation, _) => Some(hrel.location)
     case _ => None
   }
 }
@@ -287,12 +287,15 @@ object DeltaTableUtils extends PredicateHelper
   private val logThrottler = new LogThrottler()
 
   /** Whether a path should be hidden for delta-related file operations, such as Vacuum and Fsck. */
-  def isHiddenDirectory(partitionColumnNames: Seq[String], pathName: String): Boolean = {
+  def isHiddenDirectory(
+      partitionColumnNames: Seq[String],
+      pathName: String,
+      shouldIcebergMetadataDirBeHidden: Boolean = true): Boolean = {
     // Names of the form partitionCol=[value] are partition directories, and should be
     // GCed even if they'd normally be hidden. The _db_index directory contains (bloom filter)
     // indexes and these must be GCed when the data they are tied to is GCed.
     // metadata name is reserved for converted iceberg metadata with delta universal format
-    pathName.equals("metadata") ||
+    (shouldIcebergMetadataDirBeHidden && pathName.equals("metadata")) ||
     (pathName.startsWith(".") || pathName.startsWith("_")) &&
       !pathName.startsWith("_delta_index") && !pathName.startsWith("_change_data") &&
       !partitionColumnNames.exists(c => pathName.startsWith(c ++ "="))
@@ -413,7 +416,7 @@ object DeltaTableUtils extends PredicateHelper
       target: LogicalPlan,
       fileIndex: FileIndex): LogicalPlan = {
     target transform {
-      case l @ LogicalRelation(hfsr: HadoopFsRelation, _, _, _) =>
+      case l @ LogicalRelationWithTable(hfsr: HadoopFsRelation, _) =>
         l.copy(relation = hfsr.copy(location = fileIndex)(hfsr.sparkSession))
     }
   }
@@ -451,7 +454,7 @@ object DeltaTableUtils extends PredicateHelper
     }
 
     target transformUp {
-      case l@LogicalRelation(hfsr: HadoopFsRelation, _, _, _) =>
+      case l@LogicalRelationWithTable(hfsr: HadoopFsRelation, _) =>
         // Prune columns from the scan.
         val prunedOutput = l.output.filterNot { col =>
           columnsToDrop.exists(resolver(_, col.name))
@@ -485,7 +488,7 @@ object DeltaTableUtils extends PredicateHelper
       target: LogicalPlan,
       updatedFileFormat: FileFormat): LogicalPlan = {
     target transform {
-      case l @ LogicalRelation(hfsr: HadoopFsRelation, _, _, _) =>
+      case l @ LogicalRelationWithTable(hfsr: HadoopFsRelation, _) =>
         l.copy(
           relation = hfsr.copy(fileFormat = updatedFileFormat)(hfsr.sparkSession))
     }
@@ -608,8 +611,7 @@ object DeltaTableUtils extends PredicateHelper
    * intentionally. This method removes all possible metadata keys to avoid Spark interpreting
    * table columns incorrectly.
    */
-  def removeInternalMetadata(spark: SparkSession, persistedSchema: StructType): StructType = {
-    val schema = ColumnWithDefaultExprUtils.removeDefaultExpressions(persistedSchema)
+  def removeSparkInternalMetadata(spark: SparkSession, schema: StructType): StructType = {
     if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SCHEMA_REMOVE_SPARK_INTERNAL_METADATA)) {
       var updated = false
       val updatedSchema = schema.map { field =>
@@ -631,6 +633,35 @@ object DeltaTableUtils extends PredicateHelper
       schema
     }
   }
+
+  /**
+   * Removes from the given schema all the metadata keys that are not used when reading a Delta
+   * table. This includes typically all metadata used by writer-only table features.
+   * Note that this also removes all leaked Spark internal metadata.
+   */
+  def removeInternalWriterMetadata(spark: SparkSession, schema: StructType): StructType = {
+    ColumnWithDefaultExprUtils.removeDefaultExpressions(
+      removeSparkInternalMetadata(spark, schema)
+    )
+  }
+
+  /**
+   * Removes internal Delta metadata from the given schema. This includes tyically metadata used by
+   * reader-writer table features that shouldn't leak outside of the table. Use
+   * [[removeInternalWriterMetadata]] in addition / instead to remove metadata for writer-only table
+   * features.
+   */
+  def removeInternalDeltaMetadata(spark: SparkSession, schema: StructType): StructType = {
+    val cleanedSchema = DeltaColumnMapping.dropColumnMappingMetadata(schema)
+
+    val conf = spark.sessionState.conf
+    if (conf.getConf(DeltaSQLConf.DELTA_TYPE_WIDENING_REMOVE_SCHEMA_METADATA)) {
+      TypeWideningMetadata.removeTypeWideningMetadata(cleanedSchema)._1
+    } else {
+      cleanedSchema
+    }
+  }
+
 }
 
 sealed abstract class UnresolvedPathBasedDeltaTableBase(path: String) extends UnresolvedLeafNode {
@@ -686,14 +717,21 @@ object UnresolvedDeltaPathOrIdentifier {
   def apply(
       path: Option[String],
       tableIdentifier: Option[TableIdentifier],
+      options: Map[String, String],
       cmd: String): LogicalPlan = {
     (path, tableIdentifier) match {
-      case (Some(p), None) => UnresolvedPathBasedDeltaTable(p, Map.empty, cmd)
+      case (Some(p), None) => UnresolvedPathBasedDeltaTable(p, options, cmd)
       case (None, Some(t)) => UnresolvedTable(t.nameParts, cmd)
       case _ => throw new IllegalArgumentException(
         s"Exactly one of path or tableIdentifier must be provided to $cmd")
     }
   }
+
+  def apply(
+      path: Option[String],
+      tableIdentifier: Option[TableIdentifier],
+      cmd: String): LogicalPlan =
+    this(path, tableIdentifier, Map.empty, cmd)
 }
 
 /**
@@ -708,10 +746,11 @@ object UnresolvedPathOrIdentifier {
   def apply(
       path: Option[String],
       tableIdentifier: Option[TableIdentifier],
+      options: Map[String, String],
       cmd: String): LogicalPlan = {
     (path, tableIdentifier) match {
       case (_, Some(t)) => UnresolvedTable(t.nameParts, cmd)
-      case (Some(p), None) => UnresolvedPathBasedTable(p, Map.empty, cmd)
+      case (Some(p), None) => UnresolvedPathBasedTable(p, options, cmd)
       case _ => throw new IllegalArgumentException(
         s"At least one of path or tableIdentifier must be provided to $cmd")
     }

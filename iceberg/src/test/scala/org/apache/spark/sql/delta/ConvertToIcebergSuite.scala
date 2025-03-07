@@ -25,11 +25,9 @@ import org.scalatest.time.SpanSugar._
 import org.apache.spark.SparkContext
 import org.apache.spark.sql.{QueryTest, Row, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
+import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, CatalogStorageFormat}
 import org.apache.spark.sql.delta.actions.Metadata
-import org.apache.spark.sql.delta.icebergShaded.IcebergTransactionUtils
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.types.{IntegerType, StringType, StructField, StructType}
+import org.apache.spark.sql.types.{IntegerType, StringType, StructType, StructField}
 import org.apache.spark.util.Utils
 
 /**
@@ -111,8 +109,8 @@ class ConvertToIcebergSuite extends QueryTest with Eventually {
       runDeltaSql(
         s"""CREATE TABLE `${testTableName}` (col1 INT) USING DELTA
            |TBLPROPERTIES (
-           |  'delta.enableIcebergCompatV2' = 'true',
            |  'delta.columnMapping.mode' = 'name',
+           |  'delta.enableIcebergCompatV2' = 'true',
            |  'delta.universalFormat.enabledFormats' = 'iceberg'
            |)""".stripMargin)
       runDeltaSql(s"INSERT INTO `$testTableName` VALUES (123)")
@@ -126,7 +124,6 @@ class ConvertToIcebergSuite extends QueryTest with Eventually {
         withDefaultTablePropsInSQLConf {
           deltaSpark.range(10).write.format("delta")
             .option("path", testTablePath)
-            .option("delta.enableIcebergCompatV2", "true")
             .saveAsTable(testTableName)
         }
       }
@@ -134,77 +131,14 @@ class ConvertToIcebergSuite extends QueryTest with Eventually {
         deltaSpark.range(10, 20, 1)
           .write.format("delta").mode("append")
           .option("path", testTablePath)
-          .option("delta.enableIcebergCompatV2", "true")
           .saveAsTable(testTableName)
       }
       verifyReadWithIceberg(testTableName, 0 to 19 map (Row(_)))
     }
   }
 
-  test("Expire Snapshots") {
-    if (hmsReady(PORT)) {
-      runDeltaSql(
-        s"""CREATE TABLE `${testTableName}` (col1 INT) USING DELTA
-           |TBLPROPERTIES (
-           |  'delta.enableIcebergCompatV2' = 'true',
-           |  'delta.columnMapping.mode' = 'name',
-           |  'delta.universalFormat.enabledFormats' = 'iceberg'
-           |)""".stripMargin)
-
-      val icebergTable = loadIcebergTable()
-      icebergTable.updateProperties().set("history.expire.max-snapshot-age-ms", "1").commit()
-
-      for (i <- 0 to 7) {
-        runDeltaSql(s"INSERT INTO ${testTableName} VALUES (${i})",
-          DeltaSQLConf.DELTA_UNIFORM_ICEBERG_SYNC_CONVERT_ENABLED.key -> "true")
-      }
-
-      // Sleep past snapshot retention duration
-      Thread.sleep(5)
-      withIcebergSparkSession { icebergSpark => {
-        icebergSpark.sql(s"REFRESH TABLE $testTableName")
-        val manifestListsBeforeExpiration = icebergSpark
-          .sql(s"SELECT * FROM default.${testTableName}.snapshots")
-          .select("manifest_list")
-          .collect()
-
-        assert(manifestListsBeforeExpiration.length == 8)
-
-        // Trigger snapshot expiration
-        runDeltaSql(s"OPTIMIZE ${testTableName}")
-        icebergSpark.sql(s"REFRESH TABLE $testTableName")
-
-        val manifestListsAfterExpiration = icebergSpark
-          .sql(s"SELECT * FROM default.${testTableName}.snapshots")
-          .select("manifest_list")
-          .collect()
-
-        assert(manifestListsAfterExpiration.length == 1)
-        // Manifests from earlier snapshots should not be removed
-        manifestListsBeforeExpiration.toStream.foreach(
-          manifestList => assert(
-            icebergTable.io().newInputFile(manifestList.get(0).asInstanceOf[String]).exists()))
-      }}
-    }
-  }
-
-  private def loadIcebergTable(): shadedForDelta.org.apache.iceberg.Table = {
-    withDeltaSparkSession { deltaSpark => {
-      val log = DeltaLog.forTable(deltaSpark, testTablePath)
-      val hiveCatalog = IcebergTransactionUtils.createHiveCatalog(
-        log.newDeltaHadoopConf()
-      )
-      val table = hiveCatalog.loadTable(
-        shadedForDelta.org.apache.iceberg.catalog.TableIdentifier
-          .of("default", testTableName)
-      )
-      table
-    }}
-  }
-
-  def runDeltaSql(sqlStr: String, conf: (String, String)*): Unit = {
+  def runDeltaSql(sqlStr: String): Unit = {
     withDeltaSparkSession { deltaSpark =>
-      conf.foreach(c => deltaSpark.conf.set(c._1, c._2))
       deltaSpark.sql(sqlStr)
     }
   }
@@ -223,6 +157,7 @@ class ConvertToIcebergSuite extends QueryTest with Eventually {
   def withDefaultTablePropsInSQLConf(f: => Unit): Unit = {
     withSQLConf(
       DeltaConfigs.COLUMN_MAPPING_MODE.defaultTablePropertyKey -> "name",
+      DeltaConfigs.ICEBERG_COMPAT_V1_ENABLED.defaultTablePropertyKey -> "true",
       DeltaConfigs.UNIVERSAL_FORMAT_ENABLED_FORMATS.defaultTablePropertyKey -> "iceberg"
     ) { f }
   }

@@ -23,6 +23,7 @@ import scala.collection.JavaConverters._
 import org.apache.spark.sql.delta.{DeltaColumnMappingMode, NoMapping, SerializableFileStatus}
 
 import org.apache.spark.sql.Dataset
+import org.apache.spark.sql.functions.sum
 import org.apache.spark.sql.types.StructType
 
 /**
@@ -43,6 +44,9 @@ trait ConvertTargetTable {
 
   /** The number of files from the target table */
   def numFiles: Long
+
+  /** The number of bytes from the target table */
+  def sizeInBytes: Long
 
   /** Whether this table requires column mapping to be converted */
   def requiredColumnMappingMode: DeltaColumnMappingMode = NoMapping
@@ -66,6 +70,11 @@ trait ConvertTargetFileManifest extends Closeable {
   /** Return the number of files for the table */
   def numFiles: Long = allFiles.count()
 
+  /** Return the number of bytes for the table */
+  def sizeInBytes: Long = {
+    allFiles.select("fileStatus.*").select(sum("length")).collect().head.getLong(0)
+  }
+
   /** Return the parquet schema for the table.
    *  Defined only when the schema cannot be inferred from CatalogTable.
    */
@@ -80,8 +89,10 @@ trait ConvertTargetFileManifest extends Closeable {
  *                        table format. If none, the converter will infer partition values from the
  *                        file path, assuming the Hive directory format.
  * @param parquetSchemaDDL the Parquet schema DDL associated with the file.
+ * @param stats           Stats information extracted from the source file.
  */
 case class ConvertTargetFile(
   fileStatus: SerializableFileStatus,
   partitionValues: Option[Map[String, String]] = None,
-  parquetSchemaDDL: Option[String] = None) extends Serializable
+  parquetSchemaDDL: Option[String] = None,
+  stats: Option[String] = None) extends Serializable

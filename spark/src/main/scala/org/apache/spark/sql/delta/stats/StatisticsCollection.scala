@@ -24,10 +24,12 @@ import scala.collection.mutable.ArrayBuffer
 import scala.language.existentials
 
 import org.apache.spark.sql.delta.{Checkpoints, DeletionVectorsTableFeature, DeltaColumnMapping, DeltaColumnMappingMode, DeltaConfigs, DeltaErrors, DeltaIllegalArgumentException, DeltaLog, DeltaUDF, NoMapping}
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.DeltaColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY
 import org.apache.spark.sql.delta.DeltaOperations.ComputeStats
 import org.apache.spark.sql.delta.OptimisticTransaction
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, Protocol}
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.DeltaCommand
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -359,7 +361,7 @@ trait StatisticsCollection extends DeltaLogging {
       schema.flatMap {
         case f @ StructField(name, s: StructType, _, _) =>
           val column = parent.map(_.getItem(name))
-            .getOrElse(new Column(UnresolvedAttribute.quoted(name)))
+            .getOrElse(Column(UnresolvedAttribute.quoted(name)))
           val stats = collectStats(s, Some(column), parentFields :+ name, function)
           if (stats.nonEmpty) {
             Some(struct(stats: _*) as DeltaColumnMapping.getPhysicalName(f))
@@ -369,7 +371,7 @@ trait StatisticsCollection extends DeltaLogging {
         case f @ StructField(name, _, _, _) =>
           val fieldPath = UnresolvedAttribute(parentFields :+ name).name
           val column = parent.map(_.getItem(name))
-            .getOrElse(new Column(UnresolvedAttribute.quoted(name)))
+            .getOrElse(Column(UnresolvedAttribute.quoted(name)))
           // alias the column with its physical name
           // Note: explodedDataSchemaNames comes from dataSchema. In the read path, dataSchema comes
           // from the table's metadata.dataSchema, which is the same as tableSchema. In the
@@ -453,21 +455,34 @@ object StatisticsCollection extends DeltaCommand {
   }
 
   /**
-   * This method validates that the data type of data skipping column supports data skipping
-   * based on file statistics.
+   * This method validates that the data type of a data skipping column provided in
+   * [[DeltaConfigs.DATA_SKIPPING_STATS_COLUMNS]] supports data skipping based on file statistics.
+   * If a struct column is specified, all its children are considered valid. This helps users
+   * who have complex nested types and wish to collect stats on all supported nested columns
+   * without specifying each field individually. At stats collection time, unsupported types will
+   * simply be skipped, so it is safe to allow those through.
    * @param name The name of the data skipping column for validating data type.
    * @param dataType The data type of the data skipping column.
    * @param columnPaths The column paths of all valid fields.
+   * @param insideStruct Tracks if the field is inside a user-specified struct. Don't throw an
+   *                     error on ineligible skipping types inside structs as the user didn't
+   *                     specify them directly. Simply log a warning to let the user know
+   *                     statistics won't be collected on that nested field.
    */
   private def validateDataSkippingType(
       name: String,
       dataType: DataType,
-      columnPaths: ArrayBuffer[String]): Unit = dataType match {
+      columnPaths: ArrayBuffer[String],
+      insideStruct: Boolean = false): Unit = dataType match {
     case s: StructType =>
       s.foreach { field =>
-        validateDataSkippingType(name + "." + field.name, field.dataType, columnPaths)
+        validateDataSkippingType(name + "." + field.name, field.dataType, columnPaths,
+          insideStruct = true)
       }
     case SkippingEligibleDataType(_) => columnPaths.append(name)
+    case _ if insideStruct =>
+      logWarning(s"Data skipping is not supported for column $name of type $dataType")
+      columnPaths.append(name)
     case _ =>
       throw new DeltaIllegalArgumentException(
         errorClass = "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_TYPE",

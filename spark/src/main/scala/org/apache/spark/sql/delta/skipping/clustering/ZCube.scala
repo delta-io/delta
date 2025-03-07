@@ -20,10 +20,9 @@ import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.commands.optimize.AddFileWithNumRecords
+import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.delta.zorder.ZCubeInfo
 import org.apache.spark.sql.delta.zorder.ZCubeInfo.{getForFile => getZCubeInfo}
-
-import org.apache.spark.util.Utils
 
 /**
  * Collection of files that were produced by the same job in a run of the clustering command.
@@ -31,7 +30,7 @@ import org.apache.spark.util.Utils
 case class ZCube(files: Seq[AddFile]) {
   require(files.nonEmpty)
 
-  if (Utils.isTesting) {
+  if (DeltaUtils.isTesting) {
     assert(files.forall(getZCubeInfo(_) == Some(zCubeInfo)))
   }
 

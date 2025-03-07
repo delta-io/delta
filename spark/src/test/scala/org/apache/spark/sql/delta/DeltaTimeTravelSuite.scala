@@ -140,7 +140,7 @@ class DeltaTimeTravelSuite extends QueryTest
       start - 2.seconds, // adjusts to start + 4 ms
       start + 10.seconds)
 
-    val commits = DeltaHistoryManager.getCommits(
+    val commits = DeltaHistoryManager.getCommitsWithNonIctTimestamps(
       deltaLog.store,
       deltaLog.logPath,
       0,

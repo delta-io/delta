@@ -51,6 +51,7 @@ import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.SparkConf
+import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.test.SharedSparkSession
 
@@ -84,7 +85,8 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
         val dvPath = deletionVector.absolutePath(new Path("not-used"))
         (
           deletionVector.copy(
-            pathOrInlineDv = TestDeltaSharingFileSystem.encode(sharedTable, dvPath.getName),
+            pathOrInlineDv = TestDeltaSharingFileSystem.encode(sharedTable,
+              SparkPath.fromPathString(dvPath.getName).urlEncoded),
             storageType = DeletionVectorDescriptor.PATH_DV_MARKER
           ),
           Hashing.sha256().hashString(deletionVector.uniqueId, UTF_8).toString
@@ -250,7 +252,8 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
   private[spark] def prepareMockedClientAndFileSystemResultForParquet(
       deltaTable: String,
       sharedTable: String,
-      versionAsOf: Option[Long] = None): Unit = {
+      versionAsOf: Option[Long] = None,
+      limitHint: Option[Long] = None): Unit = {
     val lines = Seq.newBuilder[String]
     var totalSize = 0L
     val clientAddFilesArrayBuffer = ArrayBuffer[ClientAddFile]()
@@ -279,10 +282,11 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
       FileUtils.listFiles(new File(snapshotToUse.deltaLog.dataPath.toUri()), null, true).asScala
     files.foreach { f =>
       val filePath = f.getCanonicalPath
+      val fileName = SparkPath.fromPathString(f.getName).urlEncoded
       if (isDataFile(filePath)) {
         // Put the parquet file in blockManager for DeltaSharingFileSystem to load bytes out of it.
         DeltaSharingUtils.overrideIteratorBlock[Byte](
-          blockId = TestDeltaSharingFileSystem.getBlockId(sharedTable, f.getName),
+          blockId = TestDeltaSharingFileSystem.getBlockId(sharedTable, fileName),
           values = FileUtils.readFileToByteArray(f).toIterator
         )
       }
@@ -325,7 +329,8 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
       blockId = TestClientForDeltaFormatSharing.getBlockId(
         sharedTableName = sharedTable,
         queryType = "getFiles",
-        versionAsOf = versionAsOf
+        versionAsOf = versionAsOf,
+        limit = limitHint
       ),
       values = lines.result().toIterator
     )
@@ -343,7 +348,8 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
       timestampAsOf: Option[String] = None,
       inlineDvFormat: Option[RoaringBitmapArrayFormat.Value] = None,
       assertMultipleDvsInOneFile: Boolean = false,
-      reverseFileOrder: Boolean = false): Unit = {
+      reverseFileOrder: Boolean = false,
+      limitHint: Option[Long] = None): Unit = {
     val lines = Seq.newBuilder[String]
     var totalSize = 0L
 
@@ -351,6 +357,7 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
     val snapshotToUse = getSnapshotToUse(deltaTable, versionAsOf)
     val fileActionsArrayBuffer = ArrayBuffer[model.DeltaSharingFileAction]()
     val dvPathToCount = scala.collection.mutable.Map[String, Int]()
+    var numRecords = 0L
     snapshotToUse.allFiles.collect().foreach { addFile =>
       if (assertMultipleDvsInOneFile) {
         updateDvPathToCount(addFile, dvPathToCount)
@@ -363,14 +370,17 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
         addFile
       }
 
-      val dsAddFile = getDeltaSharingFileActionForAddFile(
-        updatedAdd,
-        sharedTable,
-        snapshotToUse.version,
-        snapshotToUse.timestamp
-      )
-      totalSize = totalSize + addFile.size
-      fileActionsArrayBuffer += dsAddFile
+      if (limitHint.isEmpty || limitHint.map(_ > numRecords).getOrElse(true)) {
+        val dsAddFile = getDeltaSharingFileActionForAddFile(
+          updatedAdd,
+          sharedTable,
+          snapshotToUse.version,
+          snapshotToUse.timestamp
+        )
+        numRecords += addFile.numLogicalRecords.getOrElse(0L)
+        totalSize = totalSize + addFile.size
+        fileActionsArrayBuffer += dsAddFile
+      }
     }
     val fileActionSeq = if (reverseFileOrder) {
       fileActionsArrayBuffer.toSeq.sortWith(deltaSharingFileActionDecreaseOrderFunc)
@@ -402,10 +412,11 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
       FileUtils.listFiles(new File(snapshotToUse.deltaLog.dataPath.toUri()), null, true).asScala
     files.foreach { f =>
       val filePath = f.getCanonicalPath
+      val fileName = SparkPath.fromPathString(f.getName).urlEncoded
       if (isDataFile(filePath)) {
         // Put the parquet file in blockManager for DeltaSharingFileSystem to load bytes out of it.
         DeltaSharingUtils.overrideIteratorBlock[Byte](
-          blockId = TestDeltaSharingFileSystem.getBlockId(sharedTable, f.getName),
+          blockId = TestDeltaSharingFileSystem.getBlockId(sharedTable, fileName),
           values = FileUtils.readFileToByteArray(f).toIterator
         )
       }
@@ -437,7 +448,8 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
         sharedTableName = sharedTable,
         queryType = "getFiles",
         versionAsOf = versionAsOf,
-        timestampAsOf = timestampAsOf
+        timestampAsOf = timestampAsOf,
+        limit = limitHint
       ),
       values = lines.result().toIterator
     )
@@ -510,9 +522,10 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
     val dataFiles =
       FileUtils.listFiles(new File(deltaLog.dataPath.toUri()), null, true).asScala
     dataFiles.foreach { f =>
+      val fileName = SparkPath.fromPathString(f.getName).urlEncoded
       if (isDataFile(f.getCanonicalPath)) {
         DeltaSharingUtils.overrideIteratorBlock[Byte](
-          blockId = TestDeltaSharingFileSystem.getBlockId(sharedTable, f.getName),
+          blockId = TestDeltaSharingFileSystem.getBlockId(sharedTable, fileName),
           values = FileUtils.readFileToByteArray(f).toIterator
         )
       }
@@ -621,9 +634,10 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
       FileUtils.listFiles(new File(deltaLog.dataPath.toUri()), null, true).asScala
     dataFiles.foreach { f =>
       val filePath = f.getCanonicalPath
+      val fileName = SparkPath.fromPathString(f.getName).urlEncoded
       if (isDataFile(filePath)) {
         DeltaSharingUtils.overrideIteratorBlock[Byte](
-          blockId = TestDeltaSharingFileSystem.getBlockId(sharedTable, f.getName),
+          blockId = TestDeltaSharingFileSystem.getBlockId(sharedTable, fileName),
           values = FileUtils.readFileToByteArray(f).toIterator
         )
       }

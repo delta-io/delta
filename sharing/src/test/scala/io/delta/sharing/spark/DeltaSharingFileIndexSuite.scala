@@ -93,9 +93,13 @@ class TestDeltaSharingClientForFileIndex(
     readerFeatures: String = "",
     queryTablePaginationEnabled: Boolean = false,
     maxFilesPerReq: Int = 100000,
+    endStreamActionEnabled: Boolean = false,
     enableAsyncQuery: Boolean = false,
     asyncQueryPollIntervalMillis: Long = 10000L,
-    asyncQueryMaxDuration: Long = 600000L)
+    asyncQueryMaxDuration: Long = 600000L,
+    tokenExchangeMaxRetries: Int = 5,
+    tokenExchangeMaxRetryDurationInSeconds: Int = 60,
+    tokenRenewalThresholdInSeconds: Int = 600)
     extends DeltaSharingClient {
 
   import TestUtils._
@@ -409,7 +413,10 @@ class DeltaSharingFileIndexSuite
              |  {"op":"column","name":"id","valueType":"int"},
              |  {"op":"literal","value":"23","valueType":"int"}]
              |}""".stripMargin.replaceAll("\n", "").replaceAll(" ", "")
-
+        spark.sessionState.conf.setConfString(
+          "spark.delta.sharing.jsonPredicateV2Hints.enabled",
+          "false"
+        )
         fileIndex.listFiles(Seq(partitionSqlEq), Seq.empty)
         assert(testClient.savedJsonPredicateHints.size === 1)
         assert(expectedJson == testClient.savedJsonPredicateHints(0))
@@ -450,6 +457,10 @@ class DeltaSharingFileIndexSuite
         // With json predicates disabled, we should not get anything.
         spark.sessionState.conf
           .setConfString("spark.delta.sharing.jsonPredicateHints.enabled", "false")
+        spark.sessionState.conf.setConfString(
+          "spark.delta.sharing.jsonPredicateV2Hints.enabled",
+          "false"
+        )
         fileIndex.listFiles(Seq(partitionSqlEq), Seq.empty)
         assert(testClient.savedJsonPredicateHints.size === 0)
       }

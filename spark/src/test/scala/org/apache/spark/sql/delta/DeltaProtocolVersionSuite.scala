@@ -30,7 +30,9 @@ import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.{AlterTableDropFeatureDeltaCommand, AlterTableSetPropertiesDeltaCommand, AlterTableUnsetPropertiesDeltaCommand}
+import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.coordinatedcommits._
+import org.apache.spark.sql.delta.redirect.{PathBasedRedirectSpec, RedirectReaderWriter, RedirectWriterOnly, TableRedirect}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -38,6 +40,7 @@ import org.apache.spark.sql.delta.util.FileNames
 import org.apache.spark.sql.delta.util.FileNames.{unsafeDeltaFile, DeltaFile}
 import org.apache.spark.sql.delta.util.JsonUtils
 import io.delta.storage.LogStore
+import io.delta.storage.commit.TableDescriptor
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
@@ -53,11 +56,18 @@ import org.apache.spark.util.ManualClock
 
 trait DeltaProtocolVersionSuiteBase extends QueryTest
   with SharedSparkSession
-  with DeltaSQLCommandTest {
+  with DeltaSQLCommandTest
+  with DeletionVectorsTestUtils {
 
   // `.schema` generates NOT NULL columns which requires writer protocol 2. We convert all to
   // NULLable to avoid silent writer protocol version bump.
   private lazy val testTableSchema = spark.range(1).schema.asNullable
+  override protected def sparkConf: SparkConf = {
+    // All the drop feature tests below are targeting the drop feature with history truncation
+    // implementation. The fast drop feature implementation is tested extensively in
+    // DeltaFastDropFeatureSuite.
+    super.sparkConf.set(DeltaSQLConf.FAST_DROP_FEATURE_ENABLED.key, "false")
+  }
 
   // This is solely a test hook. Users cannot create new Delta tables with protocol lower than
   // that of their current version.
@@ -102,7 +112,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       readerVersion = 1,
       writerVersion = 1,
       sqlConfs = Seq((DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "true")),
-      expectedProtocol = Protocol(1, 1).merge(ChangeDataFeedTableFeature.minProtocolVersion))
+      expectedProtocol = Protocol(1, 7).withFeature(ChangeDataFeedTableFeature))
     testEmptyFolder(
       readerVersion = 1,
       writerVersion = 1,
@@ -1052,7 +1062,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     "creating a new table with default protocol - requiring more recent protocol version") {
     val tableName = "delta_test"
     def testTableCreation(fn: String => Unit, tableInitialized: Boolean = false): Unit =
-      testCreation(tableName, 2, tableInitialized)(fn)
+      testCreation(tableName, 7, tableInitialized)(fn)
 
     testTableCreation { dir =>
       spark.range(10).writeTo(tableName).using("delta")
@@ -1114,7 +1124,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           sql(s"CREATE TABLE $tbl (id bigint) USING delta LOCATION '${dir.getCanonicalPath}'")
         }
         val deltaLog = DeltaLog.forTable(spark, dir)
-        assert(deltaLog.snapshot.protocol.minWriterVersion === 1,
+        assert(deltaLog.update().protocol.minWriterVersion === 1,
           "Should've picked up the protocol from the configuration")
 
         // Replace the table and make sure the config is picked up
@@ -1122,13 +1132,13 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           spark.range(10).writeTo(tbl).using("delta")
             .tableProperty("location", dir.getCanonicalPath).replace()
         }
-        assert(deltaLog.snapshot.protocol.minWriterVersion === 2,
+        assert(deltaLog.update().protocol.minWriterVersion === 2,
           "Should've picked up the protocol from the configuration")
 
         // Will not downgrade without special flag.
         withSQLConf(DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "1") {
           sql(s"REPLACE TABLE $tbl (id bigint) USING delta LOCATION '${dir.getCanonicalPath}'")
-          assert(deltaLog.snapshot.protocol.minWriterVersion === 2,
+          assert(deltaLog.update().protocol.minWriterVersion === 2,
             "Should not pick up the protocol from the configuration")
         }
 
@@ -1137,23 +1147,23 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
             DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_WRITER_VERSION.key -> "1",
             DeltaSQLConf.REPLACE_TABLE_PROTOCOL_DOWNGRADE_ALLOWED.key -> "true") {
           sql(s"REPLACE TABLE $tbl (id bigint) USING delta LOCATION '${dir.getCanonicalPath}'")
-          assert(deltaLog.snapshot.protocol.minWriterVersion === 1,
+          assert(deltaLog.update().protocol.minWriterVersion === 1,
             "Should've created a new protocol")
 
           sql(s"CREATE OR REPLACE TABLE $tbl (id bigint NOT NULL) USING delta " +
             s"LOCATION '${dir.getCanonicalPath}'")
-          assert(deltaLog.snapshot.protocol.minWriterVersion === 2,
+          assert(deltaLog.update().protocol === Protocol(1, 7).withFeature(InvariantsTableFeature),
             "Invariant should require the higher protocol")
 
           // Go back to version 1
           sql(s"REPLACE TABLE $tbl (id bigint) USING delta LOCATION '${dir.getCanonicalPath}'")
-          assert(deltaLog.snapshot.protocol.minWriterVersion === 1,
+          assert(deltaLog.update().protocol.minWriterVersion === 1,
             "Should've created a new protocol")
 
           // Check table properties with different syntax
           spark.range(10).writeTo(tbl).tableProperty("location", dir.getCanonicalPath)
             .tableProperty("delta.appendOnly", "true").using("delta").createOrReplace()
-          assert(deltaLog.snapshot.protocol.minWriterVersion === 2,
+          assert(deltaLog.update().protocol  === Protocol(1, 7).withFeature(AppendOnlyTableFeature),
             "appendOnly should require the higher protocol")
         }
       }
@@ -1367,8 +1377,10 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           "  delta.minWriterVersion='2'," +
           "  delta.enableChangeDataFeed='true'" +
           ")")
-      assert(deltaLog.snapshot.protocol.minReaderVersion === 1)
-      assert(deltaLog.snapshot.protocol.minWriterVersion === 4)
+      assert(deltaLog.update().protocol === Protocol(1, 7).withFeatures(Seq(
+        AppendOnlyTableFeature,
+        InvariantsTableFeature,
+        ChangeDataFeedTableFeature)))
     }
   }
 
@@ -1700,12 +1712,15 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       DeltaConfigs.MIN_READER_VERSION.key -> "1",
       DeltaConfigs.MIN_WRITER_VERSION.key -> "1",
       DeltaConfigs.CHANGE_DATA_FEED.key -> "true"),
-    expectedFinalProtocol = Some(Protocol(1, 4)))
+    expectedFinalProtocol = Some(Protocol(1, 7).withFeatures(Seq(
+      AppendOnlyTableFeature,
+      InvariantsTableFeature,
+      ChangeDataFeedTableFeature))))
 
   testAlterTable(
     "legacy protocol, legacy feature, metadata",
     Map("delta.appendOnly" -> "true"),
-    expectedFinalProtocol = Some(Protocol(1, 2)))
+    expectedFinalProtocol = Some(Protocol(1, 7).withFeature(AppendOnlyTableFeature)))
 
   testAlterTable(
     "legacy protocol, legacy feature, feature property",
@@ -1924,7 +1939,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           .tableProperty("delta.appendOnly", "true")
           .using("delta")
           .create()
-        val protocolOfNewTable = Protocol(1, 2)
+        val protocolOfNewTable = Protocol(1, 7).withFeature(AppendOnlyTableFeature)
         assert(deltaLog.update().protocol === protocolOfNewTable)
 
         val e = intercept[DeltaTableFeatureException] {
@@ -1975,8 +1990,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         sql(s"CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta " +
           "TBLPROPERTIES (delta.minWriterVersion=1, delta.appendOnly=true)")
 
-        assert(deltaLog.snapshot.protocol.minWriterVersion === 2)
-        assertPropertiesAndShowTblProperties(deltaLog)
+        assert(deltaLog.update().protocol === Protocol(1, 7).withFeature(AppendOnlyTableFeature))
+        assertPropertiesAndShowTblProperties(deltaLog, tableHasFeatures = true)
       }
     }
   }
@@ -1991,8 +2006,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           .using("delta")
           .create()
 
-        assert(deltaLog.snapshot.protocol.minWriterVersion === 2)
-        assertPropertiesAndShowTblProperties(deltaLog)
+        assert(deltaLog.update().protocol === Protocol(1, 7).withFeature(AppendOnlyTableFeature))
+        assertPropertiesAndShowTblProperties(deltaLog, tableHasFeatures = true)
       }
     }
   }
@@ -2074,7 +2089,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
                    |ALTER TABLE delta.`${log.dataPath.toString}`
                    |SET TBLPROPERTIES ('delta.appendOnly' = 'true')
                  """.stripMargin)
-      assert(log.snapshot.protocol.minWriterVersion === 2)
+      assert(log.update().protocol === Protocol(1, 7).withFeature(AppendOnlyTableFeature))
     }
   }
 
@@ -2100,7 +2115,10 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
                    |  'delta.minWriterVersion' = '2',
                    |  'delta.enableChangeDataFeed' = 'true'
                    |)""".stripMargin)
-      assert(log.snapshot.protocol.minWriterVersion === 4)
+      assert(log.update().protocol === Protocol(1, 7).withFeatures(Seq(
+        AppendOnlyTableFeature,
+        InvariantsTableFeature,
+        ChangeDataFeedTableFeature)))
     }
   }
 
@@ -2493,8 +2511,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           feature.name).run(spark)
       }
       checkError(
-        exception = e1,
-        errorClass = "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
+        e1,
+        "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
         parameters = Map(
           "feature" -> feature.name,
           "logRetentionPeriodKey" -> "delta.logRetentionDuration",
@@ -2512,8 +2530,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           feature.name).run(spark)
       }
       checkError(
-        exception = e2,
-        errorClass = "DELTA_FEATURE_DROP_HISTORICAL_VERSIONS_EXIST",
+        e2,
+        "DELTA_FEATURE_DROP_HISTORICAL_VERSIONS_EXIST",
         parameters = Map(
           "feature" -> feature.name,
           "logRetentionPeriodKey" -> "delta.logRetentionDuration",
@@ -2526,11 +2544,11 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       // Pretend retention period has passed.
       if (advanceClockPastRetentionPeriod) {
         val clockAdvanceMillis = if (truncateHistory) {
-          DeltaConfigs.getMilliSeconds(truncateHistoryRetention)
+          DeltaConfigs.getMilliSeconds(truncateHistoryRetention) + TimeUnit.HOURS.toMillis(24)
         } else {
-          deltaLog.deltaRetentionMillis(deltaLog.update().metadata)
+          deltaLog.deltaRetentionMillis(deltaLog.update().metadata) + TimeUnit.DAYS.toMillis(3)
         }
-        clock.advance(clockAdvanceMillis + TimeUnit.MINUTES.toMillis(5))
+        clock.advance(clockAdvanceMillis)
       }
 
       val dropCommand = AlterTableDropFeatureDeltaCommand(
@@ -2554,8 +2572,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           dropCommand.run(spark)
         }
         checkError(
-          exception = e3,
-          errorClass = "DELTA_FEATURE_DROP_HISTORICAL_VERSIONS_EXIST",
+          e3,
+          "DELTA_FEATURE_DROP_HISTORICAL_VERSIONS_EXIST",
           parameters = Map(
             "feature" -> feature.name,
             "logRetentionPeriodKey" -> "delta.logRetentionDuration",
@@ -2669,8 +2687,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         command.run(spark)
       }
       checkError(
-        exception = e,
-        errorClass = "DELTA_FEATURE_DROP_NONREMOVABLE_FEATURE",
+        e,
+        "DELTA_FEATURE_DROP_NONREMOVABLE_FEATURE",
         parameters = Map("feature" -> TestWriterMetadataNoAutoUpdateFeature.name))
     }
   }
@@ -2692,8 +2710,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         command.run(spark)
       }
       checkError(
-        exception = e,
-        errorClass = "DELTA_FEATURE_DROP_NONREMOVABLE_FEATURE",
+        e,
+        "DELTA_FEATURE_DROP_NONREMOVABLE_FEATURE",
         parameters = Map("feature" -> AppendOnlyTableFeature.name))
     }
   }
@@ -2718,8 +2736,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         command.run(spark)
       }
       checkError(
-        exception = e,
-        errorClass = "DELTA_FEATURE_DROP_UNSUPPORTED_CLIENT_FEATURE",
+        e,
+        "DELTA_FEATURE_DROP_UNSUPPORTED_CLIENT_FEATURE",
         parameters = Map("feature" -> "NonSupportedFeature"))
     }
   }
@@ -2744,8 +2762,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         command.run(spark)
       }
       checkError(
-        exception = e,
-        errorClass = "DELTA_FEATURE_DROP_FEATURE_NOT_PRESENT",
+        e,
+        "DELTA_FEATURE_DROP_FEATURE_NOT_PRESENT",
         parameters = Map("feature" -> TestRemovableWriterFeature.name))
     }
   }
@@ -2825,8 +2843,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           TestRemovableWriterFeature.name).run(spark)
       }
       checkError(
-        exception = e1,
-        errorClass = "DELTA_FEATURE_DROP_DEPENDENT_FEATURE",
+        e1,
+        "DELTA_FEATURE_DROP_DEPENDENT_FEATURE",
         parameters = Map(
           "feature" -> TestRemovableWriterFeature.name,
           "dependentFeatures" -> TestRemovableWriterFeatureWithDependency.name))
@@ -2866,8 +2884,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
                |TRUNCATE HISTORY""".stripMargin)
       }
       checkError(
-        exception = e,
-        errorClass = "DELTA_FEATURE_DROP_HISTORY_TRUNCATION_NOT_ALLOWED",
+        e,
+        "DELTA_FEATURE_DROP_HISTORY_TRUNCATION_NOT_ALLOWED",
         parameters = Map.empty)
     }
   }
@@ -2894,8 +2912,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           TestRemovableReaderWriterFeature.name).run(spark)
       }
       checkError(
-        exception = e1,
-        errorClass = "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
+        e1,
+        "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
         parameters = Map(
           "feature" -> TestRemovableReaderWriterFeature.name,
           "logRetentionPeriodKey" -> "delta.logRetentionDuration",
@@ -2903,7 +2921,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           "truncateHistoryLogRetentionPeriod" -> truncateHistoryDefaultLogRetention.toString))
 
       // Advance clock.
-      clock.advance(TimeUnit.DAYS.toMillis(1) + TimeUnit.MINUTES.toMillis(5))
+      clock.advance(TimeUnit.DAYS.toMillis(1) + TimeUnit.HOURS.toMillis(24))
 
       // Generate commit.
       spark.range(120, 140).write.format("delta").mode("append").save(dir.getCanonicalPath)
@@ -2925,8 +2943,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         }
 
       checkError(
-        exception = e2,
-        errorClass = "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
+        e2,
+        "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
         parameters = Map(
           "feature" -> TestRemovableReaderWriterFeature.name,
           "logRetentionPeriodKey" -> "delta.logRetentionDuration",
@@ -2953,8 +2971,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           TestRemovableReaderWriterFeature.name).run(spark)
       }
       checkError(
-        exception = e1,
-        errorClass = "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
+        e1,
+        "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
         parameters = Map(
           "feature" -> TestRemovableReaderWriterFeature.name,
           "logRetentionPeriodKey" -> "delta.logRetentionDuration",
@@ -2973,8 +2991,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           TestRemovableReaderWriterFeature.name).run(spark)
       }
       checkError(
-        exception = e2,
-        errorClass = "DELTA_FEATURE_DROP_HISTORICAL_VERSIONS_EXIST",
+        e2,
+        "DELTA_FEATURE_DROP_HISTORICAL_VERSIONS_EXIST",
         parameters = Map(
           "feature" -> TestRemovableReaderWriterFeature.name,
           "logRetentionPeriodKey" -> "delta.logRetentionDuration",
@@ -2985,8 +3003,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 
       // Pretend retention period has passed.
       clock.advance(
-        deltaLog.deltaRetentionMillis(deltaLog.update().metadata) +
-        TimeUnit.MINUTES.toMillis(5))
+        deltaLog.deltaRetentionMillis(deltaLog.update().metadata) + TimeUnit.DAYS.toMillis(3))
 
       // History is now clean. We should be able to remove the feature.
       AlterTableDropFeatureDeltaCommand(
@@ -3025,8 +3042,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           TestRemovableReaderWriterFeature.name).run(spark)
       }
       checkError(
-        exception = e1,
-        errorClass = "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
+        e1,
+        "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
         parameters = Map(
           "feature" -> TestRemovableReaderWriterFeature.name,
           "logRetentionPeriodKey" -> "delta.logRetentionDuration",
@@ -3048,8 +3065,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           TestRemovableReaderWriterFeature.name).run(spark)
       }
       checkError(
-        exception = e2,
-        errorClass = "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
+        e2,
+        "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
         parameters = Map(
           "feature" -> TestRemovableReaderWriterFeature.name,
           "logRetentionPeriodKey" -> "delta.logRetentionDuration",
@@ -3076,8 +3093,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           TestRemovableReaderWriterFeature.name).run(spark)
       }
       checkError(
-        exception = e1,
-        errorClass = "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
+        e1,
+        "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
         parameters = Map(
           "feature" -> TestRemovableReaderWriterFeature.name,
           "logRetentionPeriodKey" -> "delta.logRetentionDuration",
@@ -3089,8 +3106,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       spark.range(100, 120).write.format("delta").mode("append").save(dir.getCanonicalPath)
 
       // Pretend retention period has passed.
-      clock.advance(deltaLog.deltaRetentionMillis(deltaLog.update().metadata) +
-        TimeUnit.MINUTES.toMillis(5))
+      clock.advance(
+        deltaLog.deltaRetentionMillis(deltaLog.update().metadata) + TimeUnit.DAYS.toMillis(3))
 
       // Perform an unrelated metadata change.
       sql(s"ALTER TABLE delta.`${deltaLog.dataPath}` ADD COLUMN (value INT)")
@@ -3216,7 +3233,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
         }
 
         // Move past retention period.
-        clock.advance(TimeUnit.HOURS.toMillis(1))
+        clock.advance(TimeUnit.HOURS.toMillis(48))
 
         sql(s"ALTER TABLE $table DROP FEATURE $featureName TRUNCATE HISTORY")
         assert(deltaLog.update().protocol === Protocol(1, 2))
@@ -3400,6 +3417,96 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       expectedDowngradedProtocol = protocolWithReaderFeature(TestRemovableReaderWriterFeature))
   }
 
+  for {
+    truncateHistory <- BOOLEAN_DOMAIN
+    enableCDF <- if (truncateHistory) Seq(false) else BOOLEAN_DOMAIN
+  } test(s"Remove Deletion Vectors feature " +
+      s"truncateHistory: $truncateHistory, enableCDF: $enableCDF") {
+    val targetDF = spark.range(start = 0, end = 100, step = 1, numPartitions = 2)
+    withSQLConf(
+        DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey -> "true",
+        DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> enableCDF.toString) {
+      withTempPath { dir =>
+        val clock = new ManualClock(System.currentTimeMillis())
+        val targetLog = DeltaLog.forTable(spark, dir, clock)
+        val defaultRetentionPeriod =
+          DeltaConfigs.LOG_RETENTION.fromMetaData(targetLog.update().metadata).toString
+
+        targetDF.write.format("delta").save(dir.toString)
+
+        val targetTable = io.delta.tables.DeltaTable.forPath(dir.toString)
+
+        // Add some DVs.
+        targetTable.delete("id >= 90")
+
+        // Assert that DVs exist.
+        val preDowngradeSnapshot = targetLog.update()
+        assert(DeletionVectorUtils.deletionVectorsWritable(preDowngradeSnapshot))
+        assert(preDowngradeSnapshot.numDeletionVectorsOpt === Some(1L))
+
+        // Attempting to drop Deletion Vectors feature will prohibit adding new DVs and remove
+        // all DVs from the latest snapshot, but ultimately fail, because history will still
+        // contain traces of the feature. For this reason, we have to wait for the retention period
+        // to be over before we can downgrade the protocol.
+        val e1 = intercept[DeltaTableFeatureException] {
+          dropDVTableFeature(spark, targetLog, truncateHistory = false)
+        }
+        checkError(
+          e1,
+          "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
+          parameters = Map(
+            "feature" -> DeletionVectorsTableFeature.name,
+            "logRetentionPeriodKey" -> "delta.logRetentionDuration",
+            "logRetentionPeriod" -> defaultRetentionPeriod,
+            "truncateHistoryLogRetentionPeriod" -> truncateHistoryDefaultLogRetention.toString))
+
+        val postCleanupSnapshot = targetLog.update()
+        assert(!DeletionVectorUtils.deletionVectorsWritable(postCleanupSnapshot))
+        assert(postCleanupSnapshot.numDeletionVectorsOpt.getOrElse(0L) === 0)
+        assert(postCleanupSnapshot.numDeletedRecordsOpt.getOrElse(0L) === 0)
+
+        spark.range(100, 120).write.format("delta").mode("append").save(dir.getCanonicalPath)
+        spark.range(120, 140).write.format("delta").mode("append").save(dir.getCanonicalPath)
+
+        // Table still contains historical data with DVs. Attempt should fail.
+        val e2 = intercept[DeltaTableFeatureException] {
+          dropDVTableFeature(spark, targetLog, truncateHistory = false)
+        }
+        checkError(
+          e2,
+          "DELTA_FEATURE_DROP_HISTORICAL_VERSIONS_EXIST",
+          parameters = Map(
+            "feature" -> DeletionVectorsTableFeature.name,
+            "logRetentionPeriodKey" -> "delta.logRetentionDuration",
+            "logRetentionPeriod" -> defaultRetentionPeriod,
+            "truncateHistoryLogRetentionPeriod" -> truncateHistoryDefaultLogRetention.toString))
+
+        // Pretend retention period has passed.
+        val clockAdvanceMillis = if (truncateHistory) {
+          DeltaConfigs.getMilliSeconds(truncateHistoryDefaultLogRetention) +
+            TimeUnit.HOURS.toMillis(24)
+        } else {
+          targetLog.deltaRetentionMillis(targetLog.update().metadata) + TimeUnit.DAYS.toMillis(3)
+        }
+        clock.advance(clockAdvanceMillis)
+
+        // Cleanup logs.
+        targetLog.cleanUpExpiredLogs(targetLog.update())
+
+        // History is now clean. We should be able to remove the feature.
+        dropDVTableFeature(spark, targetLog, truncateHistory)
+
+        val postDowngradeSnapshot = targetLog.update()
+        val protocol = postDowngradeSnapshot.protocol
+        assert(!DeletionVectorUtils.deletionVectorsWritable(postDowngradeSnapshot))
+        assert(postDowngradeSnapshot.numDeletionVectorsOpt.getOrElse(0L) === 0)
+        assert(postDowngradeSnapshot.numDeletedRecordsOpt.getOrElse(0L) === 0)
+        assert(!protocol.readerFeatureNames.contains(DeletionVectorsTableFeature.name))
+      }
+    }
+  }
+
+
   test("Can drop reader+writer feature when there is nothing to clean") {
     withTempPath { dir =>
       val clock = new ManualClock(System.currentTimeMillis())
@@ -3417,7 +3524,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 
       // Pretend retention period has passed.
       val clockAdvanceMillis = DeltaConfigs.getMilliSeconds(truncateHistoryDefaultLogRetention)
-      clock.advance(clockAdvanceMillis + TimeUnit.MINUTES.toMillis(5))
+      clock.advance(clockAdvanceMillis + TimeUnit.HOURS.toMillis(24))
 
       // History is now clean. We should be able to remove the feature.
       AlterTableDropFeatureDeltaCommand(
@@ -3493,8 +3600,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           TestRemovableWriterWithHistoryTruncationFeature.name).run(spark)
       }
       checkError(
-        exception = e1,
-        errorClass = "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
+        e1,
+        "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
         parameters = Map(
           "feature" -> TestRemovableWriterWithHistoryTruncationFeature.name,
           "logRetentionPeriodKey" -> "delta.logRetentionDuration",
@@ -3503,11 +3610,12 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 
       // Pretend retention period has passed.
       val clockAdvanceMillis = if (truncateHistory) {
-        DeltaConfigs.getMilliSeconds(truncateHistoryDefaultLogRetention)
+        DeltaConfigs.getMilliSeconds(truncateHistoryDefaultLogRetention) +
+          TimeUnit.HOURS.toMillis(24)
       } else {
-        deltaLog.deltaRetentionMillis(deltaLog.update().metadata)
+        deltaLog.deltaRetentionMillis(deltaLog.update().metadata) + TimeUnit.DAYS.toMillis(3)
       }
-      clock.advance(clockAdvanceMillis + TimeUnit.MINUTES.toMillis(5))
+      clock.advance(clockAdvanceMillis)
 
       AlterTableDropFeatureDeltaCommand(
         table = DeltaTableV2(spark, deltaLog.dataPath),
@@ -3573,8 +3681,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           dropV2CheckpointsTableFeature(spark, targetLog)
         }
         checkError(
-          exception = e1,
-          errorClass = "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
+          e1,
+          "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
           parameters = Map(
             "feature" -> V2CheckpointTableFeature.name,
             "logRetentionPeriodKey" -> "delta.logRetentionDuration",
@@ -3607,8 +3715,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           dropV2CheckpointsTableFeature(spark, targetLog)
         }
         checkError(
-          exception = e2,
-          errorClass = "DELTA_FEATURE_DROP_HISTORICAL_VERSIONS_EXIST",
+          e2,
+          "DELTA_FEATURE_DROP_HISTORICAL_VERSIONS_EXIST",
           parameters = Map(
             "feature" -> V2CheckpointTableFeature.name,
             "logRetentionPeriodKey" -> "delta.logRetentionDuration",
@@ -3617,8 +3725,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
 
         // Pretend retention period has passed.
         clock.advance(
-          targetLog.deltaRetentionMillis(targetLog.update().metadata) +
-            TimeUnit.MINUTES.toMillis(5))
+          targetLog.deltaRetentionMillis(targetLog.update().metadata) + TimeUnit.DAYS.toMillis(3))
 
         // History is now clean. We should be able to remove the feature.
         dropV2CheckpointsTableFeature(spark, targetLog)
@@ -3985,12 +4092,11 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       val alternatingFailureBackfillClient =
         new TrackingCommitCoordinatorClient(new InMemoryCommitCoordinator(1000) {
           override def backfillToVersion(
-            logStore: LogStore,
-            hadoopConf: Configuration,
-            logPath: Path,
-            coordinatedCommitsTableConf: java.util.Map[String, String],
-            startVersion: Long,
-            endVersionOpt: java.lang.Long): Unit = {
+              logStore: LogStore,
+              hadoopConf: Configuration,
+              tableDesc: TableDescriptor,
+              startVersion: Long,
+              endVersionOpt: java.lang.Long): Unit = {
             // Backfill fails on every other attempt.
             if (shouldFailBackfill) {
               shouldFailBackfill = !shouldFailBackfill
@@ -3999,8 +4105,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
               super.backfillToVersion(
                 logStore,
                 hadoopConf,
-                logPath,
-                coordinatedCommitsTableConf,
+                tableDesc,
                 startVersion,
                 endVersionOpt)
             }
@@ -4033,7 +4138,7 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       assert(!backfilledCommitExists(3))
       // The commit coordinator still tracks the commit that disables it.
       val commitsFromCommitCoordinator =
-        log.snapshot.tableCommitCoordinatorClientOpt.get.getCommits(Some(3))
+        log.snapshot.tableCommitCoordinatorClientOpt.get.getCommits(Some(3L))
       assert(commitsFromCommitCoordinator.getCommits.asScala.exists(_.getVersion == 3))
       // The next drop attempt will also trigger an explicit backfill.
       val usageLogs2 = Log4jUsageLogger.track {
@@ -4056,6 +4161,67 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     }
   }
   // ---- End Coordinated Commits Drop Feature Tests ----
+
+  private def testRedirectFeature(
+      redirectFeature: TableFeature,
+      tableRedirect: TableRedirect,
+      enableFastDrop: Boolean,
+      unsetTableProperty: Boolean): Unit = {
+    withSQLConf(DeltaSQLConf.FAST_DROP_FEATURE_ENABLED.key -> enableFastDrop.toString) {
+      test(s"drop ${redirectFeature.name} with fast drop - " +
+        s"enableFastDrop=$enableFastDrop, unsetTableProperty=$unsetTableProperty") {
+        withTempDir { dir =>
+          spark.sql(s"CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta")
+          val deltaLog = DeltaLog.forTable(spark, dir)
+
+          val redirectSpec = new PathBasedRedirectSpec("sourcePath", "targetPath")
+          tableRedirect.add(
+            deltaLog,
+            catalogTableOpt = None,
+            PathBasedRedirectSpec.REDIRECT_TYPE,
+            redirectSpec)
+
+          if (unsetTableProperty) {
+            sql(s"ALTER TABLE delta.`${dir.getCanonicalPath}` UNSET TBLPROPERTIES " +
+              s"('${tableRedirect.config.key}')")
+          }
+
+          val featureName = redirectFeature.name
+          // Both RedirectReaderWriterFeature and RedirectWriterOnlyFeature can be immediately
+          // dropped as they don't require history truncation. This is because there is no
+          // associated action with the features.
+          AlterTableDropFeatureDeltaCommand(DeltaTableV2(spark, deltaLog.dataPath), featureName)
+            .run(spark)
+
+          val snapshot = deltaLog.update()
+          // Writer feature is removed from the writer features set.
+          assert(!snapshot.protocol.writerFeatureNames.contains(featureName))
+          // Reader feature is removed from the reader features set.
+          assert(!snapshot.protocol.readerFeatureNames.contains(featureName))
+          assert(tableRedirect.config.fromMetaData(snapshot.metadata).isEmpty)
+
+          assertPropertiesAndShowTblProperties(deltaLog)
+
+          // Running the command again should throw an exception.
+          val e = intercept[DeltaTableFeatureException] {
+            AlterTableDropFeatureDeltaCommand(DeltaTableV2(spark, deltaLog.dataPath), featureName)
+              .run(spark)
+          }
+          assert(e.getErrorClass == "DELTA_FEATURE_DROP_FEATURE_NOT_PRESENT")
+        }
+      }
+    }
+  }
+
+  BOOLEAN_DOMAIN.foreach { unsetTableProperty =>
+    BOOLEAN_DOMAIN.foreach { enableFastDrop =>
+      // Test both writer-only and reader writer redirect feature.
+      testRedirectFeature(
+        RedirectWriterOnlyFeature, RedirectWriterOnly, enableFastDrop, unsetTableProperty)
+      testRedirectFeature(
+        RedirectReaderWriterFeature, RedirectReaderWriter, enableFastDrop, unsetTableProperty)
+    }
+  }
 
   // Create a table for testing that has an unsupported feature.
   private def withTestTableWithUnsupportedWriterFeature(

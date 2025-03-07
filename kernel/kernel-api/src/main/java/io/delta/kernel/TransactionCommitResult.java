@@ -17,42 +17,49 @@ package io.delta.kernel;
 
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.hook.PostCommitHook;
 import io.delta.kernel.utils.CloseableIterable;
+import java.util.List;
 
 /**
- * Contains the result of a successful transaction commit. Returned by
- * {@link Transaction#commit(Engine, CloseableIterable)}.
+ * Contains the result of a successful transaction commit. Returned by {@link
+ * Transaction#commit(Engine, CloseableIterable)}.
  *
  * @since 3.2.0
  */
 @Evolving
 public class TransactionCommitResult {
-    private final long version;
-    private final boolean isReadyForCheckpoint;
+  private final long version;
+  private final List<PostCommitHook> postCommitHooks;
 
-    public TransactionCommitResult(long version, boolean isReadyForCheckpoint) {
-        this.version = version;
-        this.isReadyForCheckpoint = isReadyForCheckpoint;
-    }
+  public TransactionCommitResult(long version, List<PostCommitHook> postCommitHooks) {
+    this.version = version;
+    this.postCommitHooks = postCommitHooks;
+  }
 
-    /**
-     * Contains the version of the transaction committed as.
-     *
-     * @return version the transaction is committed as.
-     */
-    public long getVersion() {
-        return version;
-    }
+  /**
+   * Contains the version of the transaction committed as.
+   *
+   * @return version the transaction is committed as.
+   */
+  public long getVersion() {
+    return version;
+  }
 
-    /**
-     * Is the table ready for checkpoint (i.e. there are enough commits since the last checkpoint)?
-     * If yes the connector can choose to checkpoint as the version the transaction is committed as
-     * using {@link Table#checkpoint(Engine, long)}
-     *
-     * @return Is the table ready for checkpointing?
-     */
-    public boolean isReadyForCheckpoint() {
-        return isReadyForCheckpoint;
-    }
+  /**
+   * Operations for connector to trigger post-commit.
+   *
+   * <p>Usage:
+   *
+   * <ul>
+   *   <li>Async: Call {@link PostCommitHook#threadSafeInvoke(Engine)} in separate thread.
+   *   <li>Sync: Direct call {@link PostCommitHook#threadSafeInvoke(Engine)} and block until
+   *       operation ends.
+   * </ul>
+   *
+   * @return list of post-commit operations
+   */
+  public List<PostCommitHook> getPostCommitHooks() {
+    return postCommitHooks;
+  }
 }
-

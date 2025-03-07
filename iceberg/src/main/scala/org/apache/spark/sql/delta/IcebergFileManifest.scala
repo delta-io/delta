@@ -17,79 +17,67 @@
 package org.apache.spark.sql.delta.commands.convert
 
 import scala.collection.JavaConverters._
+import scala.collection.mutable
 
 import org.apache.spark.sql.delta.{DeltaColumnMapping, SerializableFileStatus}
+import org.apache.spark.sql.delta.DeltaErrors.cloneFromIcebergSourceWithPartitionEvolution
+import org.apache.spark.sql.delta.commands.convert.IcebergTable.ERR_MULTIPLE_PARTITION_SPECS
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.util.{DateFormatter, TimestampFormatter}
 import org.apache.hadoop.fs.Path
-import org.apache.iceberg.{PartitionData, RowLevelOperationMode, StructLike, Table, TableProperties}
+import org.apache.iceberg.{BaseTable, DataFile, DataFiles, FileContent, FileFormat, ManifestContent, ManifestFile, ManifestFiles, PartitionData, PartitionSpec, RowLevelOperationMode, Schema, StructLike, Table, TableProperties}
 import org.apache.iceberg.transforms.IcebergPartitionUtil
 
+import org.apache.spark.SparkThrowable
 import org.apache.spark.internal.{LoggingShims, MDC}
 import org.apache.spark.sql.{Dataset, SparkSession}
-import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.types.StructType
-import org.apache.spark.util.SerializableConfiguration
 
 class IcebergFileManifest(
     spark: SparkSession,
     table: Table,
-    partitionSchema: StructType) extends ConvertTargetFileManifest with LoggingShims {
+    partitionSchema: StructType,
+    convertStats: Boolean = true) extends ConvertTargetFileManifest with LoggingShims {
 
   // scalastyle:off sparkimplicits
   import spark.implicits._
   // scalastyle:on sparkimplicits
 
-  final val VOID_TRANSFORM = "void"
-
   private var fileSparkResults: Option[Dataset[ConvertTargetFile]] = None
 
   private var _numFiles: Option[Long] = None
 
+  private var _sizeInBytes: Option[Long] = None
+
+  private val specIdsToIfSpecHasNonBucketPartition =
+    table.specs().asScala.map { case (specId, spec) =>
+      specId.toInt -> IcebergPartitionUtil.hasNonBucketPartition(spec)
+  }
+
+  private val partitionEvolutionEnabled =
+    spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_PARTITION_EVOLUTION_ENABLED)
+
   val basePath = table.location()
 
-  val icebergSchema = table.schema()
-
-  // we must use field id to look up the partition value; consider scenario with iceberg
-  // behavior chance since 1.4.0:
-  // 1) create table with partition schema (a[col_name]: 1[field_id]), add file1;
-  //    The partition data for file1 is (a:1:some_part_value)
-  // 2) add new partition col b and the partition schema becomes (a: 1, b: 2), add file2;
-  //    the partition data for file2 is (a:1:some_part_value, b:2:some_part_value)
-  // 3) remove partition col a, then add file3;
-  //    for iceberg < 1.4.0: the partFields is (a:1(void), b:2); the partition data for
-  //                         file3 is (a:1(void):null, b:2:some_part_value);
-  //    for iceberg 1.4.0:   the partFields is (b:2); When it reads file1 (a:1:some_part_value),
-  //                         it must use the field_id instead of index to look up the partition
-  //                         value, as the partField and partitionData from file1 have different
-  //                         ordering and thus same index indicates different column.
-  val physicalNameToField = table.spec().fields().asScala.collect {
-      case field if field.transform().toString != VOID_TRANSFORM =>
-        DeltaColumnMapping.getPhysicalName(partitionSchema(field.name)) -> field
-    }.toMap
-
-  val dateFormatter = DateFormatter()
-
-  val timestampFormatter =
-    TimestampFormatter(ConvertUtils.timestampPartitionPattern, java.util.TimeZone.getDefault)
-
   override def numFiles: Long = {
-    if (_numFiles.isEmpty) getFileSparkResults()
+    if (_numFiles.isEmpty) _numFiles = Some(allFiles.count())
     _numFiles.get
   }
 
+  override def sizeInBytes: Long = {
+    if (_sizeInBytes.isEmpty) {
+      _sizeInBytes =
+        Some(if (allFiles.isEmpty) 0L else allFiles.map(_.fileStatus.length).reduce(_ + _))
+    }
+    _sizeInBytes.get
+  }
+
   def allFiles: Dataset[ConvertTargetFile] = {
-    if (fileSparkResults.isEmpty) getFileSparkResults()
+    if (fileSparkResults.isEmpty) fileSparkResults = Some(getFileSparkResults())
     fileSparkResults.get
   }
 
-  private def getFileSparkResults(): Unit = {
-    // scalastyle:off deltahadoopconfiguration
-    val hadoopConf = spark.sessionState.newHadoopConf()
-    // scalastyle:on deltahadoopconfiguration
-    val serializableConfiguration = new SerializableConfiguration(hadoopConf)
-    val conf = spark.sparkContext.broadcast(serializableConfiguration)
+  private def getFileSparkResults(): Dataset[ConvertTargetFile] = {
     val format = table
       .properties()
       .getOrDefault(
@@ -100,85 +88,118 @@ class IcebergFileManifest(
         s"Cannot convert Iceberg tables with file format $format. Only parquet is supported.")
     }
 
-    val schemaBatchSize =
-      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_IMPORT_BATCH_SIZE_SCHEMA_INFERENCE)
+    if (table.currentSnapshot() == null) {
+      return spark.emptyDataset[ConvertTargetFile]
+    }
 
-    // This flag is strongly not recommended to turn on, but we still provide a flag for regression
-    // purpose.
+    // We do not support Iceberg Merge-On-Read using delete files and will by default
+    // throw errors when encountering them. This flag will bypass the check and ignore the delete
+    // files, and in other words, generating a CORRUPTED table. We keep this flag only for
+    // backward compatibility. No new use cases of this flag should be allowed.
     val unsafeConvertMorTable =
-    spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_UNSAFE_MOR_TABLE_ENABLE)
+      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_UNSAFE_MOR_TABLE_ENABLE)
+    val hasMergeOnReadDeletionFiles = table.currentSnapshot().deleteManifests(table.io()).size() > 0
+    if (hasMergeOnReadDeletionFiles && !unsafeConvertMorTable) {
+      throw new UnsupportedOperationException(
+        s"Cannot support convert Iceberg table with row-level deletes." +
+          s"Please trigger an Iceberg compaction and retry the command.")
+    }
 
-    var numFiles = 0L
-    val res = table.newScan().planFiles().iterator().asScala.grouped(schemaBatchSize).map { batch =>
-      logInfo(log"Getting file statuses for a batch of " +
-        log"${MDC(DeltaLogKeys.BATCH_SIZE, batch.size)} of files; " +
-        log"finished ${MDC(DeltaLogKeys.NUM_FILES, numFiles)} files so far")
-      numFiles += batch.length
-      val filePathWithPartValues = batch.map { fileScanTask =>
-        val filePath = fileScanTask.file().path().toString
-        // If an Iceberg table has deletion file associated with the data file (Supported in
-        // Iceberg V2, either position deletes or equality deletes), we could not convert directly.
-        val hasMergeOnReadDeletionFiles = fileScanTask.deletes().size() > 0
-        if (hasMergeOnReadDeletionFiles && !unsafeConvertMorTable) {
-          throw new UnsupportedOperationException(
-            s"Cannot support convert Iceberg table with row-level deletes." +
-              s"Please trigger an Iceberg compaction and retry the command.")
+    // Localize variables so we don't need to serialize the File Manifest class
+    // Some contexts: Spark needs all variables in closure to be serializable
+    // while class members carry the entire class, so they require serialization of the class
+    // As IcebergFileManifest is not serializable,
+    // we localize member variables to avoid serialization of the class
+    val localTable = table
+    // We use the latest snapshot timestamp for all generated Delta AddFiles due to the fact that
+    // retrieving timestamp for each DataFile is non-trivial time-consuming. This can be improved
+    // in the future.
+    val snapshotTs = table.currentSnapshot().timestampMillis
+
+    val shouldConvertPartition = spark.sessionState.conf
+      .getConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_USE_NATIVE_PARTITION_VALUES)
+    val convertPartition = if (shouldConvertPartition) {
+      new IcebergPartitionConverter(localTable, partitionSchema, partitionEvolutionEnabled)
+    } else {
+      null
+    }
+
+    val shouldConvertStats = convertStats
+
+    val shouldCheckPartitionEvolution = !partitionEvolutionEnabled
+    val specIdsToIfSpecHasNonBucketPartitionMap = specIdsToIfSpecHasNonBucketPartition
+    val tableSpecsSize = table.specs().size()
+
+    val manifestFiles = localTable
+      .currentSnapshot()
+      .dataManifests(localTable.io())
+      .asScala
+      .map(new ManifestFileWrapper(_))
+      .toSeq
+
+    spark
+      .createDataset(manifestFiles)
+      .flatMap(ManifestFiles.read(_, localTable.io()).asScala.map(new DataFileWrapper(_)))
+      .map { dataFile: DataFileWrapper =>
+        if (shouldCheckPartitionEvolution) {
+          IcebergFileManifest.validateLimitedPartitionEvolution(
+            dataFile.specId,
+            tableSpecsSize,
+            specIdsToIfSpecHasNonBucketPartitionMap
+          )
         }
-        val partitionValues = if (spark.sessionState.conf.getConf(
-            DeltaSQLConf.DELTA_CONVERT_ICEBERG_USE_NATIVE_PARTITION_VALUES)) {
-          Some(convertIcebergPartitionToPartitionValues(
-            fileScanTask.file().partition()))
-        } else None
-        (filePath, partitionValues)
+        ConvertTargetFile(
+          SerializableFileStatus(
+            path = dataFile.path,
+            length = dataFile.fileSizeInBytes,
+            isDir = false,
+            modificationTime = snapshotTs
+          ),
+          partitionValues = if (shouldConvertPartition) {
+            Some(convertPartition.toDelta(dataFile.partition()))
+          } else None,
+          stats = if (shouldConvertStats) {
+            IcebergStatsUtils.icebergStatsToDelta(localTable.schema, dataFile)
+          } else None
+        )
       }
-      val numParallelism = Math.min(Math.max(filePathWithPartValues.size, 1),
-        spark.sparkContext.defaultParallelism)
-
-      val rdd = spark.sparkContext.parallelize(filePathWithPartValues, numParallelism)
-        .mapPartitions { iterator =>
-          iterator.map { case (filePath, partValues) =>
-            val path = new Path(filePath)
-            val fs = path.getFileSystem(conf.value.value)
-            val fileStatus = fs.getFileStatus(path)
-            ConvertTargetFile(SerializableFileStatus.fromStatus(fileStatus), partValues)
-          }
-        }
-      spark.createDataset(rdd)
-    }.reduceOption(_.union(_)).getOrElse(spark.emptyDataset[ConvertTargetFile])
-
-    fileSparkResults = Some(res.cache())
-    _numFiles = Some(numFiles)
+      .cache()
   }
 
-  override def close(): Unit = fileSparkResults.map(_.unpersist())
 
-  def convertIcebergPartitionToPartitionValues(partition: StructLike):
-      Map[String, String] = {
-    val icebergPartitionData = partition.asInstanceOf[PartitionData]
-    val fieldIdToIdx = icebergPartitionData.getPartitionType
-      .fields()
-      .asScala
-      .zipWithIndex
-      .map(kv => kv._1.fieldId() -> kv._2)
-      .toMap
-    val physicalNameToPartValueMap = physicalNameToField
-      .map {
-        case (physicalName, field) =>
-          val fieldIndex = fieldIdToIdx.get(field.fieldId())
-          val partValueAsString = fieldIndex
-            .map { idx =>
-              val partValue = icebergPartitionData.get(idx)
-              IcebergPartitionUtil.partitionValueToString(
-                field,
-                partValue,
-                icebergSchema,
-                dateFormatter,
-                timestampFormatter
-              )
-            }
-            .getOrElse(null)
-          physicalName -> partValueAsString
-      }
-    physicalNameToPartValueMap
+  override def close(): Unit = {
+    fileSparkResults.map(_.unpersist())
+    fileSparkResults = None
+  }
+}
+
+object IcebergFileManifest {
+  // scalastyle:off
+  /**
+   * Validates on partition evolution for proposed partitionSpecId
+   * We don't support the conversion of tables with partition evolution
+   *
+   * However, we allow one special case where
+   *  all data files have either no-partition or bucket-partition
+   *  regardless of multiple partition spec present in the table
+   */
+  // scalastyle:on
+  private def validateLimitedPartitionEvolution(
+      partitionSpecId: Int,
+      tableSpecsSize: Int,
+      specIdsToIfSpecHasNonBucketPartition: mutable.Map[Int, Boolean]): Unit = {
+    if (hasPartitionEvolved(
+      partitionSpecId, tableSpecsSize, specIdsToIfSpecHasNonBucketPartition)
+    ) {
+      throw cloneFromIcebergSourceWithPartitionEvolution()
+    }
+  }
+
+  private def hasPartitionEvolved(
+      partitionSpecID: Int,
+      tableSpecsSize: Int,
+      specIdsToIfSpecHasNonBucketPartition: mutable.Map[Int, Boolean]): Boolean = {
+    val isSpecPartitioned = specIdsToIfSpecHasNonBucketPartition(partitionSpecID)
+    isSpecPartitioned && tableSpecsSize > 1
   }
 }

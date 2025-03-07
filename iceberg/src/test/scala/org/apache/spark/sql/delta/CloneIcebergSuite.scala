@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
 import java.sql.Date
+import java.time.LocalTime
 
 import scala.collection.JavaConverters._
 import scala.util.Try
@@ -26,8 +27,12 @@ import org.apache.spark.sql.delta.commands.convert.ConvertUtils
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.StatisticsCollection
+import org.apache.iceberg.Schema
 import org.apache.iceberg.hadoop.HadoopTables
+import org.apache.iceberg.types.Types
+import org.apache.iceberg.types.Types.NestedField
 
+import org.apache.spark.SparkConf
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.util.DateTimeUtils.{stringToDate, toJavaDate}
@@ -394,6 +399,46 @@ trait CloneIcebergSuiteBase extends QueryTest
       assert(protocol.isFeatureSupported(ColumnMappingTableFeature))
     }
   }
+
+  testClone("Iceberg bucket partition should be converted to unpartitioned delta table") { mode =>
+    withTable(table, cloneTable) {
+      spark.sql(
+        s"""CREATE TABLE $table (date date, id bigint, category string, price double)
+           | USING iceberg PARTITIONED BY (bucket(2, id))""".stripMargin)
+
+      // scalastyle:off deltahadoopconfiguration
+      val hadoopTables = new HadoopTables(spark.sessionState.newHadoopConf())
+      // scalastyle:on deltahadoopconfiguration
+      val icebergTable = hadoopTables.load(tablePath)
+      val icebergTableSchema =
+        org.apache.iceberg.spark.SparkSchemaUtil.convert(icebergTable.schema())
+
+      val df1 = spark.createDataFrame(
+        Seq(
+          Row(toDate("2022-01-01"), 1L, "toy", 2.5D),
+          Row(toDate("2022-01-01"), 2L, "food", 0.6D),
+          Row(toDate("2022-02-05"), 3L, "food", 1.4D),
+          Row(toDate("2022-02-05"), 4L, "toy", 10.2D)).asJava,
+        icebergTableSchema)
+
+      df1.writeTo(table).append()
+
+      runCreateOrReplace(mode, sourceIdentifier)
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(cloneTable))
+      assert(deltaLog.snapshot.metadata.partitionColumns.isEmpty)
+      checkAnswer(spark.table(cloneTable), df1)
+      checkAnswer(spark.sql(s"select * from $cloneTable where id = 1"), df1.where("id = 1"))
+
+      // clone should fail with flag off
+      withSQLConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_BUCKET_PARTITION_ENABLED.key -> "false") {
+        df1.writeTo(table).append()
+        val ae = intercept[UnsupportedOperationException] {
+          runCreateOrReplace(mode, sourceIdentifier)
+        }
+        assert(ae.getMessage.contains("bucket partition"))
+      }
+    }
+  }
 }
 
 class CloneIcebergByPathSuite extends CloneIcebergSuiteBase
@@ -406,6 +451,58 @@ class CloneIcebergByPathSuite extends CloneIcebergSuiteBase
         sql(s"SELECT * FROM $sourceIdentifier")
       }
       assert(ae.getMessage.contains("does not support batch scan"))
+    }
+  }
+}
+
+/**
+ * This suite test features in Iceberg that is not directly supported by Spark.
+ * See also [[NonSparkIcebergTestUtils]].
+ * We do not put these tests in or extend from [[CloneIcebergSuiteBase]] because they
+ * use non-Spark way to create test data.
+ */
+class CloneNonSparkIcebergByPathSuite extends QueryTest
+  with ConvertIcebergToDeltaUtils {
+
+  protected val cloneTable = "clone"
+
+  private def sourceIdentifier: String = s"iceberg.`$tablePath`"
+
+  private def runCreateOrReplace(mode: String, source: String): DataFrame = {
+    Try(spark.sql(s"DELETE FROM $cloneTable"))
+    spark.sql(s"CREATE OR REPLACE TABLE $cloneTable $mode CLONE $source")
+  }
+
+  private val mode = "SHALLOW"
+
+  test("cast Iceberg TIME to Spark long") {
+    withTable(table, cloneTable) {
+      val schema = new Schema(
+        Seq[NestedField](
+          NestedField.required(1, "id", Types.IntegerType.get),
+          NestedField.required(2, "event_time", Types.TimeType.get)
+        ).asJava
+      )
+      val rows = Seq(
+        Map(
+          "id" -> 1,
+          "event_time" -> LocalTime.of(14, 30, 11)
+        )
+      )
+      NonSparkIcebergTestUtils.createIcebergTable(spark, tablePath, schema, rows)
+      intercept[UnsupportedOperationException] {
+        runCreateOrReplace(mode, sourceIdentifier)
+      }
+      withSQLConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_CAST_TIME_TYPE.key -> "true") {
+        runCreateOrReplace(mode, sourceIdentifier)
+        val expectedMicrosec = (14 * 3600 + 30 * 60 + 11) * 1000000L
+        checkAnswer(spark.table(cloneTable), Row(1, expectedMicrosec) :: Nil)
+        val clonedDeltaTable = DeltaLog.forTable(
+          spark,
+          spark.sessionState.catalog.getTableMetadata(TableIdentifier(cloneTable))
+        )
+        assert(DeltaConfigs.CAST_ICEBERG_TIME_TYPE.fromMetaData(clonedDeltaTable.update().metadata))
+      }
     }
   }
 }
@@ -445,4 +542,17 @@ class CloneIcebergByNameSuite extends CloneIcebergSuiteBase
     }
   }
 }
+
+trait DisablingConvertIcebergStats extends CloneIcebergSuiteBase {
+  override def sparkConf: SparkConf =
+    super.sparkConf.set(DeltaSQLConf.DELTA_CONVERT_ICEBERG_STATS.key, "false")
+}
+
+class CloneIcebergByPathNoConvertStatsSuite
+  extends CloneIcebergByPathSuite
+    with DisablingConvertIcebergStats
+
+class CloneIcebergByNameNoConvertStatsSuite
+  extends CloneIcebergByNameSuite
+    with DisablingConvertIcebergStats
 

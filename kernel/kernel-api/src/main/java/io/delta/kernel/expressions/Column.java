@@ -15,13 +15,13 @@
  */
 package io.delta.kernel.expressions;
 
+import static java.lang.String.format;
+
+import io.delta.kernel.annotation.Evolving;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.stream.Collectors;
-import static java.lang.String.format;
-
-import io.delta.kernel.annotation.Evolving;
 
 /**
  * An expression type that refers to a column (case-sensitive) in the input. The column name is
@@ -31,60 +31,56 @@ import io.delta.kernel.annotation.Evolving;
  */
 @Evolving
 public final class Column implements Expression {
-    private final String[] names;
+  private final String[] names;
 
-    /**
-     * Create a column expression for referring to a column.
-     */
-    public Column(String name) {
-        this.names = new String[] {name};
+  /** Create a column expression for referring to a column. */
+  public Column(String name) {
+    this.names = new String[] {name};
+  }
+
+  /** Create a column expression to refer to a nested column. */
+  public Column(String[] names) {
+    this.names = names;
+  }
+
+  /**
+   * @return the column names. Each part in the name correspond to one level of nested reference.
+   */
+  public String[] getNames() {
+    return names;
+  }
+
+  @Override
+  public List<Expression> getChildren() {
+    return Collections.emptyList();
+  }
+
+  @Override
+  public String toString() {
+
+    return "column(" + quoteColumnPath(names) + ")";
+  }
+
+  private static String quoteColumnPath(String[] names) {
+    return Arrays.stream(names)
+        .map(s -> format("`%s`", s.replace("`", "``")))
+        .collect(Collectors.joining("."));
+  }
+
+  @Override
+  public boolean equals(Object o) {
+    if (this == o) {
+      return true;
     }
-
-    /**
-     * Create a column expression to refer to a nested column.
-     */
-    public Column(String[] names) {
-        this.names = names;
+    if (o == null || getClass() != o.getClass()) {
+      return false;
     }
+    Column other = (Column) o;
+    return Arrays.equals(names, other.getNames());
+  }
 
-    /**
-     * @return the column names. Each part in the name correspond to one level of nested reference.
-     */
-    public String[] getNames() {
-        return names;
-    }
-
-    @Override
-    public List<Expression> getChildren() {
-        return Collections.emptyList();
-    }
-
-    @Override
-    public String toString() {
-
-        return "column(" + quoteColumnPath(names)  + ")";
-    }
-
-    private static String quoteColumnPath(String[] names) {
-        return Arrays.stream(names)
-            .map(s -> format("`%s`", s.replace("`", "``")))
-            .collect(Collectors.joining("."));
-    }
-
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) {
-            return true;
-        }
-        if (o == null || getClass() != o.getClass()) {
-            return false;
-        }
-        Column other = (Column) o;
-        return Arrays.equals(names, other.getNames());
-    }
-
-    @Override
-    public int hashCode() {
-        return Arrays.hashCode(names);
-    }
+  @Override
+  public int hashCode() {
+    return Arrays.hashCode(names);
+  }
 }

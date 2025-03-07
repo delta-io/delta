@@ -16,12 +16,14 @@
 
 package org.apache.spark.sql.delta.typewidening
 
+import java.io.File
+
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.propertyKey
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.JsonUtils
 
-import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.types._
 
@@ -33,6 +35,7 @@ class TypeWideningMetadataSuite
     with TypeWideningTestMixin
     with TypeWideningMetadataTests
     with TypeWideningMetadataEndToEndTests
+    with TypeWideningLeakingMetadataTests
 
 /**
  * Tests covering the [[TypeWideningMetadata]] and [[TypeChange]] classes used to handle the
@@ -292,33 +295,26 @@ trait TypeWideningMetadataTests extends QueryTest with DeltaSQLCommandTest {
 
   test("addTypeWideningMetadata/removeTypeWideningMetadata on top-level fields") {
     val schemaWithoutMetadata =
-      StructType.fromDDL("i long, d decimal(15, 4), a array<double>, m map<short, int>")
+      StructType.fromDDL("i int, a array<int>, m map<short, int>")
     val firstOldSchema =
-      StructType.fromDDL("i short, d decimal(6, 2), a array<byte>, m map<byte, int>")
+      StructType.fromDDL("i byte, a array<byte>, m map<byte, int>")
     val secondOldSchema =
-      StructType.fromDDL("i int, d decimal(10, 4), a array<int>, m map<short, byte>")
+      StructType.fromDDL("i short, a array<short>, m map<short, byte>")
 
     var schema =
       TypeWideningMetadata.addTypeWideningMetadata(txn, schemaWithoutMetadata, firstOldSchema)
 
-    assert(schema("i") === StructField("i", LongType,
+    assert(schema("i") === StructField("i", IntegerType,
       metadata = new MetadataBuilder()
         .putMetadataArray("delta.typeChanges", Array(
-          typeChangeMetadata("short", "long")
+          typeChangeMetadata("byte", "integer")
         )).build()
     ))
 
-    assert(schema("d") === StructField("d", DecimalType(15, 4),
+    assert(schema("a") === StructField("a", ArrayType(IntegerType),
       metadata = new MetadataBuilder()
         .putMetadataArray("delta.typeChanges", Array(
-          typeChangeMetadata("decimal(6,2)", "decimal(15,4)")
-        )).build()
-    ))
-
-    assert(schema("a") === StructField("a", ArrayType(DoubleType),
-      metadata = new MetadataBuilder()
-        .putMetadataArray("delta.typeChanges", Array(
-          typeChangeMetadata("byte", "double", "element")
+          typeChangeMetadata("byte", "integer", "element")
         )).build()
     ))
 
@@ -332,34 +328,25 @@ trait TypeWideningMetadataTests extends QueryTest with DeltaSQLCommandTest {
     assert(TypeWideningMetadata.removeTypeWideningMetadata(schema) ===
       schemaWithoutMetadata -> Seq(
         Seq.empty -> schema("i"),
-        Seq.empty -> schema("d"),
         Seq.empty -> schema("a"),
         Seq.empty -> schema("m")
       ))
     // Second type change on all fields.
     schema = TypeWideningMetadata.addTypeWideningMetadata(txn, schema, secondOldSchema)
 
-    assert(schema("i") === StructField("i", LongType,
+    assert(schema("i") === StructField("i", IntegerType,
       metadata = new MetadataBuilder()
         .putMetadataArray("delta.typeChanges", Array(
-          typeChangeMetadata("short", "long"),
-          typeChangeMetadata("integer", "long")
+          typeChangeMetadata("byte", "integer"),
+          typeChangeMetadata("short", "integer")
         )).build()
     ))
 
-    assert(schema("d") === StructField("d", DecimalType(15, 4),
+    assert(schema("a") === StructField("a", ArrayType(IntegerType),
       metadata = new MetadataBuilder()
         .putMetadataArray("delta.typeChanges", Array(
-          typeChangeMetadata("decimal(6,2)", "decimal(15,4)"),
-          typeChangeMetadata("decimal(10,4)", "decimal(15,4)")
-        )).build()
-    ))
-
-    assert(schema("a") === StructField("a", ArrayType(DoubleType),
-      metadata = new MetadataBuilder()
-        .putMetadataArray("delta.typeChanges", Array(
-          typeChangeMetadata("byte", "double", "element"),
-          typeChangeMetadata("integer", "double", "element")
+          typeChangeMetadata("byte", "integer", "element"),
+          typeChangeMetadata("short", "integer", "element")
         )).build()
     ))
 
@@ -374,7 +361,6 @@ trait TypeWideningMetadataTests extends QueryTest with DeltaSQLCommandTest {
     assert(TypeWideningMetadata.removeTypeWideningMetadata(schema) ===
       schemaWithoutMetadata -> Seq(
         Seq.empty -> schema("i"),
-        Seq.empty -> schema("d"),
         Seq.empty -> schema("a"),
         Seq.empty -> schema("m")
       ))
@@ -382,25 +368,25 @@ trait TypeWideningMetadataTests extends QueryTest with DeltaSQLCommandTest {
 
   test("addTypeWideningMetadata/removeTypeWideningMetadata on nested fields") {
     val schemaWithoutMetadata = StructType.fromDDL(
-      "s struct<i: long, a: array<map<int, long>>, m: map<map<long, int>, array<long>>>")
+      "s struct<i: int, a: array<map<int, int>>, m: map<map<int, int>, array<int>>>")
     val firstOldSchema = StructType.fromDDL(
-      "s struct<i: short, a: array<map<byte, long>>, m: map<map<int, int>, array<long>>>")
+      "s struct<i: byte, a: array<map<byte, int>>, m: map<map<short, int>, array<int>>>")
     val secondOldSchema = StructType.fromDDL(
-      "s struct<i: int, a: array<map<int, int>>, m: map<map<long, int>, array<int>>>")
+      "s struct<i: short, a: array<map<int, short>>, m: map<map<int, int>, array<short>>>")
 
     // First type change on all struct fields.
     var schema =
       TypeWideningMetadata.addTypeWideningMetadata(txn, schemaWithoutMetadata, firstOldSchema)
     var struct = schema("s").dataType.asInstanceOf[StructType]
 
-    assert(struct("i") === StructField("i", LongType,
+    assert(struct("i") === StructField("i", IntegerType,
       metadata = new MetadataBuilder()
         .putMetadataArray("delta.typeChanges", Array(
-          typeChangeMetadata("short", "long")
+          typeChangeMetadata("byte", "integer")
         )).build()
     ))
 
-    assert(struct("a") === StructField("a", ArrayType(MapType(IntegerType, LongType)),
+    assert(struct("a") === StructField("a", ArrayType(MapType(IntegerType, IntegerType)),
       metadata = new MetadataBuilder()
         .putMetadataArray("delta.typeChanges", Array(
           typeChangeMetadata("byte", "integer", "element.key")
@@ -408,10 +394,10 @@ trait TypeWideningMetadataTests extends QueryTest with DeltaSQLCommandTest {
     ))
 
     assert(struct("m") === StructField("m",
-      MapType(MapType(LongType, IntegerType), ArrayType(LongType)),
+      MapType(MapType(IntegerType, IntegerType), ArrayType(IntegerType)),
       metadata = new MetadataBuilder()
         .putMetadataArray("delta.typeChanges", Array(
-          typeChangeMetadata("integer", "long", "key.key")
+          typeChangeMetadata("short", "integer", "key.key")
         )).build()
     ))
 
@@ -426,28 +412,28 @@ trait TypeWideningMetadataTests extends QueryTest with DeltaSQLCommandTest {
     schema = TypeWideningMetadata.addTypeWideningMetadata(txn, schema, secondOldSchema)
     struct = schema("s").dataType.asInstanceOf[StructType]
 
-    assert(struct("i") === StructField("i", LongType,
+    assert(struct("i") === StructField("i", IntegerType,
       metadata = new MetadataBuilder()
         .putMetadataArray("delta.typeChanges", Array(
-          typeChangeMetadata("short", "long"),
-          typeChangeMetadata("integer", "long")
+          typeChangeMetadata("byte", "integer"),
+          typeChangeMetadata("short", "integer")
         )).build()
     ))
 
-    assert(struct("a") === StructField("a", ArrayType(MapType(IntegerType, LongType)),
+    assert(struct("a") === StructField("a", ArrayType(MapType(IntegerType, IntegerType)),
       metadata = new MetadataBuilder()
         .putMetadataArray("delta.typeChanges", Array(
           typeChangeMetadata("byte", "integer", "element.key"),
-          typeChangeMetadata("integer", "long", "element.value")
+          typeChangeMetadata("short", "integer", "element.value")
         )).build()
     ))
 
     assert(struct("m") === StructField("m",
-      MapType(MapType(LongType, IntegerType), ArrayType(LongType)),
+      MapType(MapType(IntegerType, IntegerType), ArrayType(IntegerType)),
       metadata = new MetadataBuilder()
         .putMetadataArray("delta.typeChanges", Array(
-          typeChangeMetadata("integer", "long", "key.key"),
-          typeChangeMetadata("integer", "long", "value.element")
+          typeChangeMetadata("short", "integer", "key.key"),
+          typeChangeMetadata("short", "integer", "value.element")
         )).build()
     ))
     assert(TypeWideningMetadata.removeTypeWideningMetadata(schema) ===
@@ -459,18 +445,18 @@ trait TypeWideningMetadataTests extends QueryTest with DeltaSQLCommandTest {
   }
 
   test("addTypeWideningMetadata/removeTypeWideningMetadata with added and removed fields") {
-    val newSchema = StructType.fromDDL("a int, b long, d int")
-    val oldSchema = StructType.fromDDL("a int, b int, c int")
+    val newSchema = StructType.fromDDL("a int, b int, d int")
+    val oldSchema = StructType.fromDDL("a int, b short, c int")
 
     val schema = TypeWideningMetadata.addTypeWideningMetadata(txn, newSchema, oldSchema)
     assert(schema("a") === StructField("a", IntegerType))
     assert(schema("d") === StructField("d", IntegerType))
     assert(!schema.contains("c"))
 
-    assert(schema("b") === StructField("b", LongType,
+    assert(schema("b") === StructField("b", IntegerType,
       metadata = new MetadataBuilder()
         .putMetadataArray("delta.typeChanges", Array(
-          typeChangeMetadata("integer", "long")
+          typeChangeMetadata("short", "integer")
         )).build()
     ))
     assert(TypeWideningMetadata.removeTypeWideningMetadata(schema) ===
@@ -643,13 +629,7 @@ trait TypeWideningMetadataEndToEndTests {
         "name": "a",
         "type": "integer",
         "nullable": true,
-        "metadata": {
-          "delta.typeChanges": [{
-            "toType": "integer",
-            "fromType": "short",
-            "tableVersion": 1
-          }]
-        }
+        "metadata": {}
       }]}""".stripMargin)
 
   testTypeWideningMetadata("change top-level column type twice byte->short->int")(
@@ -662,17 +642,7 @@ trait TypeWideningMetadataEndToEndTests {
         "name": "a",
         "type": "integer",
         "nullable": true,
-        "metadata": {
-          "delta.typeChanges": [{
-            "toType": "short",
-            "fromType": "byte",
-            "tableVersion": 1
-          },{
-            "toType": "integer",
-            "fromType": "short",
-            "tableVersion": 2
-          }]
-        }
+        "metadata": {}
       }]}""".stripMargin)
 
   testTypeWideningMetadata("change type in map key and in struct in map value")(
@@ -692,26 +662,13 @@ trait TypeWideningMetadataEndToEndTests {
               "name": "b",
               "type": "short",
               "nullable": true,
-              "metadata": {
-                "delta.typeChanges": [{
-                  "toType": "short",
-                  "fromType": "byte",
-                  "tableVersion": 2
-                }]
-              }
+              "metadata": {}
             }]
           },
           "valueContainsNull": true
         },
         "nullable": true,
-        "metadata": {
-          "delta.typeChanges": [{
-            "toType": "integer",
-            "fromType": "byte",
-            "tableVersion": 1,
-            "fieldPath": "key"
-          }]
-        }
+        "metadata": {}
       }
     ]}""".stripMargin)
 
@@ -730,14 +687,7 @@ trait TypeWideningMetadataEndToEndTests {
           "containsNull": true
         },
         "nullable": true,
-        "metadata": {
-          "delta.typeChanges": [{
-            "toType": "short",
-            "fromType": "byte",
-            "tableVersion": 1,
-            "fieldPath": "element"
-          }]
-        }
+        "metadata": {}
       },
       {
         "name": "b",
@@ -749,13 +699,7 @@ trait TypeWideningMetadataEndToEndTests {
               "name": "c",
               "type": "integer",
               "nullable": true,
-              "metadata": {
-                "delta.typeChanges": [{
-                  "toType": "integer",
-                  "fromType": "short",
-                  "tableVersion": 2
-                }]
-              }
+              "metadata": {}
             }]
           },
           "containsNull": true
@@ -764,4 +708,42 @@ trait TypeWideningMetadataEndToEndTests {
         "metadata": { }
       }
     ]}""".stripMargin)
+}
+
+
+trait TypeWideningLeakingMetadataTests {
+    self: QueryTest with TypeWideningTestMixin =>
+
+  test("stream read from type widening does not leak metadata") {
+    val (t1, t2) = ("type_widening_table_1", "type_widening_table_2")
+    withTable(t1, t2) {
+      withTempDir { dir =>
+        sql(s"CREATE TABLE $t1 (part BYTE, value SHORT) USING DELTA PARTITIONED BY (part)")
+        sql(s"INSERT INTO $t1 VALUES (1, 1), (2, 2)")
+        // Change type of both partition and non-partition columns.
+        sql(s"ALTER TABLE $t1 CHANGE COLUMN part TYPE INT")
+        sql(s"ALTER TABLE $t1 CHANGE COLUMN value TYPE INT")
+        // Stream read from source table
+        val streamDf = spark.readStream.format("delta").table(t1)
+        // Should not contain type widening metadata
+        assert(streamDf.schema.forall(_.metadata.json == "{}"))
+
+        // Create and write to another table
+        val q = streamDf.writeStream
+          .partitionBy("part")
+          .trigger(org.apache.spark.sql.streaming.Trigger.AvailableNow())
+          .format("delta")
+          .option("checkpointLocation", new File(dir, "_checkpoint1").getCanonicalPath)
+          .toTable(t2)
+        q.awaitTermination()
+
+        // Check target table Delta log
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(t2))
+        assert(deltaLog.update().metadata.schema.forall(_.metadata.json == "{}"))
+
+        // Check target table data
+        checkAnswer(spark.table(t2), Seq(Row(1, 1), Row(2, 2)))
+      }
+    }
+  }
 }

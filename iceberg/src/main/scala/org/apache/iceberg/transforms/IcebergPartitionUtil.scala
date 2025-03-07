@@ -119,7 +119,8 @@ object IcebergPartitionUtil {
   def getPartitionFields(partSpec: PartitionSpec, schema: Schema): Seq[StructField] = {
     // Skip removed partition fields due to partition evolution.
     partSpec.fields.asScala.toSeq.collect {
-      case partField if !partField.transform().isInstanceOf[VoidTransform[_]] =>
+      case partField if !partField.transform().isInstanceOf[VoidTransform[_]] &&
+          !partField.transform().isInstanceOf[Bucket[_]] =>
         val sourceColumnName = schema.findColumnName(partField.sourceId())
         val sourceField = schema.findField(partField.sourceId())
         val sourceType = sourceField.`type`()
@@ -190,4 +191,15 @@ object IcebergPartitionUtil {
    */
   private def icebergNumericTruncateExpression(colName: String, width: Long): String =
     s"$colName - (($colName % $width) + $width) % $width"
+
+  def hasBucketPartition(partSpec: PartitionSpec): Boolean = {
+    partSpec.fields.asScala.toSeq.exists(spec => spec.transform().isInstanceOf[Bucket[_]])
+  }
+
+  // return true if the partition spec has a partition that is not a bucket partition
+  def hasNonBucketPartition(partSpec: PartitionSpec): Boolean = {
+    partSpec.isPartitioned && partSpec.fields().asScala.exists { field =>
+      !field.transform().isInstanceOf[Bucket[_]]
+    }
+  }
 }

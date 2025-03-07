@@ -17,6 +17,8 @@
 package org.apache.spark.sql.delta.coordinatedcommits
 
 import java.io.File
+import java.lang.{Long => JLong}
+import java.util.{Iterator => JIterator, Optional}
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
@@ -24,22 +26,24 @@ import scala.collection.mutable.ArrayBuffer
 import com.databricks.spark.util.Log4jUsageLogger
 import com.databricks.spark.util.UsageRecord
 import org.apache.spark.sql.delta.{CommitStats, CoordinatedCommitsStats, CoordinatedCommitsTableFeature, DeltaOperations, DeltaUnsupportedOperationException, V2CheckpointTableFeature}
-import org.apache.spark.sql.delta.CommitCoordinatorGetCommitsFailedException
+import org.apache.spark.sql.delta.{CommitCoordinatorGetCommitsFailedException, DeltaIllegalArgumentException}
 import org.apache.spark.sql.delta.CoordinatedCommitType._
-import org.apache.spark.sql.delta.DeltaConfigs.{CHECKPOINT_INTERVAL, COORDINATED_COMMITS_COORDINATOR_CONF, COORDINATED_COMMITS_COORDINATOR_NAME, COORDINATED_COMMITS_TABLE_CONF}
+import org.apache.spark.sql.delta.DeltaConfigs.{CHECKPOINT_INTERVAL, COORDINATED_COMMITS_COORDINATOR_CONF, COORDINATED_COMMITS_COORDINATOR_NAME, COORDINATED_COMMITS_TABLE_CONF, IN_COMMIT_TIMESTAMPS_ENABLED}
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
-import org.apache.spark.sql.delta.InitialSnapshot
+import org.apache.spark.sql.delta.DummySnapshot
+import org.apache.spark.sql.delta.LogSegment
 import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaExceptionTestUtils
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
-import org.apache.spark.sql.delta.util.FileNames.{CompactedDeltaFile, DeltaFile}
+import org.apache.spark.sql.delta.util.FileNames.{CompactedDeltaFile, DeltaFile, UnbackfilledDeltaFile}
 import io.delta.storage.LogStore
-import io.delta.storage.commit.{CommitCoordinatorClient, CommitResponse, GetCommitsResponse => JGetCommitsResponse, UpdatedActions}
+import io.delta.storage.commit.{CommitCoordinatorClient, CommitResponse, CoordinatedCommitsUtils => JCoordinatedCommitsUtils, GetCommitsResponse => JGetCommitsResponse, TableDescriptor, TableIdentifier, UpdatedActions}
 import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
@@ -54,7 +58,8 @@ class CoordinatedCommitsSuite
     with DeltaSQLTestUtils
     with SharedSparkSession
     with DeltaSQLCommandTest
-    with CoordinatedCommitsTestUtils {
+    with CoordinatedCommitsTestUtils
+    with DeltaExceptionTestUtils {
 
   import testImplicits._
 
@@ -74,27 +79,23 @@ class CoordinatedCommitsSuite
     val m1 = Metadata(
       configuration = Map(COORDINATED_COMMITS_COORDINATOR_NAME.key -> "string_value")
     )
-    assert(CoordinatedCommitsUtils.fromAbstractMetadataAndDeltaConfig(
-      m1, COORDINATED_COMMITS_COORDINATOR_NAME) === Some("string_value"))
+    assert(JCoordinatedCommitsUtils.getCoordinatorName(m1) === Optional.of("string_value"))
 
     val m2 = Metadata(
       configuration = Map(COORDINATED_COMMITS_COORDINATOR_NAME.key -> "")
     )
-    assert(CoordinatedCommitsUtils.fromAbstractMetadataAndDeltaConfig(
-      m2, COORDINATED_COMMITS_COORDINATOR_NAME) === Some(""))
+    assert(JCoordinatedCommitsUtils.getCoordinatorName(m2)=== Optional.of(""))
 
     val m3 = Metadata(
       configuration = Map(
         COORDINATED_COMMITS_COORDINATOR_CONF.key ->
           """{"key1": "string_value", "key2Int": 2, "key3ComplexStr": "\"hello\""}""")
     )
-    assert(CoordinatedCommitsUtils.fromAbstractMetadataAndDeltaConfig(
-      m3, COORDINATED_COMMITS_COORDINATOR_CONF) ===
-      Map("key1" -> "string_value", "key2Int" -> "2", "key3ComplexStr" -> "\"hello\""))
+    assert(JCoordinatedCommitsUtils.getCoordinatorConf(m3) ===
+      Map("key1" -> "string_value", "key2Int" -> "2", "key3ComplexStr" -> "\"hello\"").asJava)
 
     val m4 = Metadata()
-    assert(CoordinatedCommitsUtils.fromAbstractMetadataAndDeltaConfig(
-      m4, COORDINATED_COMMITS_TABLE_CONF) === Map.empty)
+    assert(JCoordinatedCommitsUtils.getCoordinatorConf(m4) === Map.empty.asJava)
   }
 
 
@@ -109,10 +110,9 @@ class CoordinatedCommitsSuite
           override def commit(
               logStore: LogStore,
               hadoopConf: Configuration,
-              logPath: Path,
-              coordinatedCommitsTableConf: java.util.Map[String, String],
+              tableDesc: TableDescriptor,
               commitVersion: Long,
-              actions: java.util.Iterator[String],
+              actions: JIterator[String],
               updatedActions: UpdatedActions): CommitResponse = {
             throw new IllegalStateException("Fail commit request")
           }
@@ -238,12 +238,12 @@ class CoordinatedCommitsSuite
       val tablePath = tempDir.getAbsolutePath
       val clock = new ManualClock(System.currentTimeMillis())
       val log = DeltaLog.forTable(spark, new Path(tablePath), clock)
-      assert(log.unsafeVolatileSnapshot.isInstanceOf[InitialSnapshot])
+      assert(log.unsafeVolatileSnapshot.isInstanceOf[DummySnapshot])
       assert(log.unsafeVolatileSnapshot.tableCommitCoordinatorClientOpt.isEmpty)
       assert(log.getCapturedSnapshot().updateTimestamp == clock.getTimeMillis())
       clock.advance(500)
       log.update()
-      assert(log.unsafeVolatileSnapshot.isInstanceOf[InitialSnapshot])
+      assert(log.unsafeVolatileSnapshot.isInstanceOf[DummySnapshot])
       assert(log.getCapturedSnapshot().updateTimestamp == clock.getTimeMillis())
     }
   }
@@ -400,15 +400,14 @@ class CoordinatedCommitsSuite
       var failAttempts = Set[Int]()
 
       override def getCommits(
-        logPath: Path,
-        coordinatedCommitsTableConf: java.util.Map[String, String],
-        startVersion: java.lang.Long,
-        endVersion: java.lang.Long): JGetCommitsResponse = {
+          tableDesc: TableDescriptor,
+          startVersion: java.lang.Long,
+          endVersion: java.lang.Long): JGetCommitsResponse = {
         if (failAttempts.contains(numGetCommitsCalled.get + 1)) {
           numGetCommitsCalled.incrementAndGet()
           throw new IllegalStateException("Injected failure")
         }
-        super.getCommits(logPath, coordinatedCommitsTableConf, startVersion, endVersion)
+        super.getCommits(tableDesc, startVersion, endVersion)
       }
     }
     case class TrackingInMemoryCommitCoordinatorClientBuilder(
@@ -522,39 +521,95 @@ class CoordinatedCommitsSuite
       Seq(1).toDF.write.format("delta").mode("overwrite").save(tablePath)
       val log = DeltaLog.forTable(spark, tablePath)
       assert(getDeltasInPostCommitSnapshot(log) === Seq("0.json"))
-      log.update()
+      assert(log.unsafeVolatileSnapshot.getLastKnownBackfilledVersion == 0)
+      var snapshot = log.update()
       assert(getDeltasInPostCommitSnapshot(log) === Seq("0.json"))
+      assert(snapshot.getLastKnownBackfilledVersion == 0)
 
       // Commit 1
       Seq(2).toDF.write.format("delta").mode("append").save(tablePath) // version 1
+      // Note: The assert for backfillInterval = 1 only works because with a batch
+      // size of 1, the AbstractBatchBackfillingCommitCoordinator synchronously
+      // backfills a commit and then directly returns the backfilled commit information
+      // from the commit() call so the post commit snapshot creation directly appends
+      // the backfilled commit to the LogSegment.
+      //
+      // The expected behavior before update() is:
+      // Backfill interval 1 : post commit snapshot contains 0.json, 1.json, lkbv = 1
+      // Backfill interval 2 : post commit snapshot contains 0.json, 1.uuid.json, lkbv = 0
+      // Backfill interval 10: post commit snapshot contains 0.json, 1.uuid.json, lkbv = 0
       val commit1 = if (backfillInterval < 2) "1.json" else "1.uuid-1.json"
+      var backfillVersion = if (backfillInterval < 2) 1 else 0
       assert(getDeltasInPostCommitSnapshot(log) === Seq("0.json", commit1))
-      log.update()
+      assert(log.unsafeVolatileSnapshot.getLastKnownBackfilledVersion == backfillVersion)
+      snapshot = log.update()
+      // The expected behavior after update() is:
+      // Backfill interval 1 : post commit snapshot contains 0.json, 1.json, lkbv = 1
+      // Backfill interval 2 : post commit snapshot contains 0.json, 1.uuid.json, lkbv = 0
+      // Backfill interval 10: post commit snapshot contains 0.json, 1.uuid.json, lkbv = 0
       assert(getDeltasInPostCommitSnapshot(log) === Seq("0.json", commit1))
+      assert(snapshot.getLastKnownBackfilledVersion == backfillVersion)
 
       // Commit 2
       Seq(3).toDF.write.format("delta").mode("append").save(tablePath) // version 2
+      // The expected behavior before update() is:
+      // Backfill interval 1 : post commit snapshot contains
+      //   0.json, 1.json, 2.json lkbv = 2
+      // Backfill interval 2 : post commit snapshot contains
+      //   0.json, 1.uuid.json, 2.uuid.json lkbv = 0
+      // Backfill interval 10: post commit snapshot contains
+      //   0.json, 1.uuid.json, 2.uuid.json, lkbv = 0
       val commit2 = if (backfillInterval < 2) "2.json" else "2.uuid-2.json"
+      backfillVersion = if (backfillInterval < 2) 2 else 0
       assert(getDeltasInPostCommitSnapshot(log) === Seq("0.json", commit1, commit2))
-      log.update()
-      if (backfillInterval <= 2) {
-        // backfill would have happened at commit 2. Next deltaLog.update will pickup the backfilled
-        // files.
-        assert(getDeltasInPostCommitSnapshot(log) === Seq("0.json", "1.json", "2.json"))
-      } else {
-        assert(getDeltasInPostCommitSnapshot(log) ===
-          Seq("0.json", "1.uuid-1.json", "2.uuid-2.json"))
-      }
+      assert(log.unsafeVolatileSnapshot.getLastKnownBackfilledVersion == backfillVersion)
+      snapshot = log.update()
+      // backfill would have happened at commit 2 for batchSize = 2 but we do not swap
+      // the snapshot that contains the unbackfilled commits with the updated snapshot
+      // (which contains the backfilled commits) during update because they are identical
+      // and swapping would lead to losing the cached state. However, we update the
+      // effective last known backfilled version on the snapshot.
+      //
+      // The expected behavior after update is
+      // Backfill interval 1 : post commit snapshot contains
+      //   0.json, 1.json, 2.json lkbv = 2
+      // Backfill interval 2 : post commit snapshot contains
+      //   0.json, 1.uuid.json, 2.uuid.json lkbv = 0 lkbv = 2
+      // Backfill interval 10: post commit snapshot contains
+      //   0.json, 1.uuid.json, 2.uuid.json lkbv = 0
+      backfillVersion = if (backfillInterval <= 2) 2 else 0
+      assert(getDeltasInPostCommitSnapshot(log) === Seq("0.json", commit1, commit2))
+      assert(snapshot.getLastKnownBackfilledVersion == backfillVersion)
 
       // Commit 3
       Seq(4).toDF.write.format("delta").mode("append").save(tablePath)
       val commit3 = if (backfillInterval < 2) "3.json" else "3.uuid-3.json"
-      if (backfillInterval <= 2) {
-        assert(getDeltasInPostCommitSnapshot(log) === Seq("0.json", "1.json", "2.json", commit3))
-      } else {
-        assert(getDeltasInPostCommitSnapshot(log) ===
-          Seq("0.json", "1.uuid-1.json", "2.uuid-2.json", commit3))
-      }
+      // The post commit snapshot is a new snapshot and so its lastKnownBackfilledVersion
+      // member is calculated from the LogSegment. Given that the LogSegment for
+      // batchInterval > 1 only contains 0 as the only backfilled commit, we need
+      // to set the expected backfillVersion to 0 here for backfillIntervals > 1.
+      //
+      // The expected behavior before update() is:
+      // Backfill interval 1 : post commit snapshot contains
+      //   0.json, 1.json, 2.json, 3.json lkbv = 3
+      // Backfill interval 2 : post commit snapshot contains
+      //   0.json, 1.uuid.json, 2.uuid.json, 3.uuid.json lkbv = 0
+      // Backfill interval 10: post commit snapshot contains
+      //   0.json, 1.uuid.json, 2.uuid.json, 3.uuid.json lkbv = 0
+      backfillVersion = if (backfillInterval < 2) 3 else 0
+      assert(getDeltasInPostCommitSnapshot(log) === Seq("0.json", commit1, commit2, commit3))
+      assert(log.unsafeVolatileSnapshot.getLastKnownBackfilledVersion == backfillVersion)
+      snapshot = log.update()
+      // The expected behavior after update() is:
+      // Backfill interval 1 : post commit snapshot contains
+      //   0.json, 1.json, 2.json, 3.json lkbv = 3
+      // Backfill interval 2 : post commit snapshot contains
+      //   0.json, 1.uuid.json, 2.uuid.json, 3.uuid.json lkbv = 2
+      // Backfill interval 10: post commit snapshot contains
+      //   0.json, 1.uuid.json, 2.uuid.json, 3.uuid.json lkbv = 0
+      backfillVersion = if (backfillInterval < 2) 3 else if (backfillInterval == 2) 2 else 0
+      assert(getDeltasInPostCommitSnapshot(log) === Seq("0.json", commit1, commit2, commit3))
+      assert(snapshot.getLastKnownBackfilledVersion == backfillVersion)
 
       checkAnswer(sql(s"SELECT * FROM delta.`$tablePath`"), Seq(Row(1), Row(2), Row(3), Row(4)))
     }
@@ -696,48 +751,45 @@ class CoordinatedCommitsSuite
         new InMemoryCommitCoordinator(batchSize = 10) {
           override def registerTable(
               logPath: Path,
+              tableIdentifier: Optional[TableIdentifier],
               currentVersion: Long,
               currentMetadata: AbstractMetadata,
               currentProtocol: AbstractProtocol): java.util.Map[String, String] = {
-            super.registerTable(logPath, currentVersion, currentMetadata, currentProtocol)
+            super.registerTable(
+              logPath, tableIdentifier, currentVersion, currentMetadata, currentProtocol)
             tableConf
           }
 
           override def getCommits(
-              logPath: Path,
-              coordinatedCommitsTableConf: java.util.Map[String, String],
+              tableDesc: TableDescriptor,
               startVersion: java.lang.Long,
               endVersion: java.lang.Long): JGetCommitsResponse = {
-            assert(coordinatedCommitsTableConf === tableConf)
-            super.getCommits(logPath, coordinatedCommitsTableConf, startVersion, endVersion)
+            assert(tableDesc.getTableConf === tableConf)
+            super.getCommits(tableDesc, startVersion, endVersion)
           }
 
           override def commit(
               logStore: LogStore,
               hadoopConf: Configuration,
-              logPath: Path,
-              coordinatedCommitsTableConf: java.util.Map[String, String],
+              tableDesc: TableDescriptor,
               commitVersion: Long,
               actions: java.util.Iterator[String],
               updatedActions: UpdatedActions): CommitResponse = {
-            assert(coordinatedCommitsTableConf === tableConf)
-            super.commit(logStore, hadoopConf, logPath, coordinatedCommitsTableConf,
-              commitVersion, actions, updatedActions)
+            assert(tableDesc.getTableConf === tableConf)
+            super.commit(logStore, hadoopConf, tableDesc, commitVersion, actions, updatedActions)
           }
 
           override def backfillToVersion(
               logStore: LogStore,
               hadoopConf: Configuration,
-              logPath: Path,
-              coordinatedCommitsTableConf: java.util.Map[String, String],
+              tableDesc: TableDescriptor,
               version: Long,
               lastKnownBackfilledVersionOpt: java.lang.Long): Unit = {
-            assert(coordinatedCommitsTableConf === tableConf)
+            assert(tableDesc.getTableConf === tableConf)
             super.backfillToVersion(
               logStore,
               hadoopConf,
-              logPath,
-              coordinatedCommitsTableConf,
+              tableDesc,
               version,
               lastKnownBackfilledVersionOpt)
           }
@@ -1069,12 +1121,11 @@ class CoordinatedCommitsSuite
     val neverBackfillingCommitCoordinator =
       new TrackingCommitCoordinatorClient(new InMemoryCommitCoordinator(batchSize) {
         override def backfillToVersion(
-            logStore: LogStore,
-            hadoopConf: Configuration,
-            logPath: Path,
-            coordinatedCommitsTableConf: java.util.Map[String, String],
-            version: Long,
-            lastKnownBackfilledVersionOpt: java.lang.Long): Unit = { }
+          logStore: LogStore,
+          hadoopConf: Configuration,
+          tableDesc: TableDescriptor,
+          version: Long,
+          lastKnownBackfilledVersionOpt: JLong): Unit = { }
       })
     CommitCoordinatorProvider.clearNonDefaultBuilders()
     val builder =
@@ -1114,6 +1165,97 @@ class CoordinatedCommitsSuite
       assert(usageObj("numUnbackfilledFiles").asInstanceOf[Int] === 3)
       assert(usageObj("numAlreadyBackfilledFiles").asInstanceOf[Int] === 0)
     }
+  }
+
+  test("LogSegment comparison does not swap snapshots that only differ in " +
+    "backfilled/unbackfilled commits") {
+    // Use a batch size of two so we don't immediately backfill in
+    // the AbstractBatchBackfillingCommitCoordinatorClient and so the
+    // CommitResponse contains the UUID-based commit.
+    CommitCoordinatorProvider.registerBuilder(
+      TrackingInMemoryCommitCoordinatorBuilder(batchSize = 2))
+
+    withTempDir { tempDir =>
+      val tablePath = tempDir.getAbsolutePath
+      val log = DeltaLog.forTable(spark, tablePath)
+
+      // Version 0 -- backfilled by default
+      makeCommitAndAssertSnapshotState(
+        data = Seq(0),
+        expectedLastKnownBackfilledVersion = 0,
+        expectedNumUnbackfilledCommits = 0,
+        expectedLastKnownBackfilledFile = FileNames.unsafeDeltaFile(log.logPath, 0),
+        log, tablePath)
+      // Version 1 -- not backfilled immediately because of batchSize = 2
+      makeCommitAndAssertSnapshotState(
+        data = Seq(1),
+        expectedLastKnownBackfilledVersion = 0,
+        expectedNumUnbackfilledCommits = 1,
+        expectedLastKnownBackfilledFile = FileNames.unsafeDeltaFile(log.logPath, 0),
+        log, tablePath)
+      // Version 2 -- backfills versions 1 and 2
+      makeCommitAndAssertSnapshotState(
+        data = Seq(2),
+        expectedLastKnownBackfilledVersion = 2,
+        expectedNumUnbackfilledCommits = 2,
+        expectedLastKnownBackfilledFile = FileNames.unsafeDeltaFile(log.logPath, 0),
+        log, tablePath)
+      // Version 3 -- not backfilled immediately because of batchSize = 2
+      makeCommitAndAssertSnapshotState(
+        data = Seq(3),
+        expectedLastKnownBackfilledVersion = 2,
+        expectedNumUnbackfilledCommits = 3,
+        expectedLastKnownBackfilledFile = FileNames.unsafeDeltaFile(log.logPath, 0),
+        log, tablePath)
+      // Version 4 -- backfills versions 3 and 4
+      makeCommitAndAssertSnapshotState(
+        data = Seq(4),
+        expectedLastKnownBackfilledVersion = 4,
+        expectedNumUnbackfilledCommits = 4,
+        expectedLastKnownBackfilledFile = FileNames.unsafeDeltaFile(log.logPath, 0),
+        log, tablePath)
+      // Trigger a checkpoint
+      log.checkpoint(log.update())
+      // Version 5 -- not backfilled immediately because of batchSize 2
+      makeCommitAndAssertSnapshotState(
+        data = Seq(5),
+        expectedLastKnownBackfilledVersion = 4,
+        expectedNumUnbackfilledCommits = 1,
+        expectedLastKnownBackfilledFile = FileNames.checkpointFileSingular(log.logPath, 4),
+        log, tablePath)
+      // Version 6 -- backfills versions 5 and 6
+      makeCommitAndAssertSnapshotState(
+        data = Seq(6),
+        expectedLastKnownBackfilledVersion = 6,
+        expectedNumUnbackfilledCommits = 2,
+        expectedLastKnownBackfilledFile = FileNames.checkpointFileSingular(log.logPath, 4),
+        log, tablePath)
+    }
+  }
+
+  private def makeCommitAndAssertSnapshotState(
+      data: Seq[Long],
+      expectedLastKnownBackfilledVersion: Long,
+      expectedNumUnbackfilledCommits: Long,
+      expectedLastKnownBackfilledFile: Path,
+      log: DeltaLog,
+      tablePath: String): Unit = {
+    data.toDF().write.format("delta").mode("overwrite").save(tablePath)
+    val snapshot = log.update()
+    val segment = snapshot.logSegment
+    var numUnbackfilledCommits = 0
+    segment.deltas.foreach {
+      case UnbackfilledDeltaFile(_, _, _) => numUnbackfilledCommits += 1
+      case _ => // do nothing
+    }
+    assert(snapshot.getLastKnownBackfilledVersion == expectedLastKnownBackfilledVersion)
+    assert(numUnbackfilledCommits == expectedNumUnbackfilledCommits)
+    val lastKnownBackfilledFile = CoordinatedCommitsUtils
+      .getLastBackfilledFile(segment.deltas).getOrElse(
+        segment.checkpointProvider.topLevelFiles.head
+      )
+    assert(lastKnownBackfilledFile.getPath == expectedLastKnownBackfilledFile,
+      s"$lastKnownBackfilledFile did not equal $expectedLastKnownBackfilledFile")
   }
 
   for (ignoreMissingCCImpl <- BOOLEAN_DOMAIN)
@@ -1176,7 +1318,7 @@ class CoordinatedCommitsSuite
                 tableMutationFn()
               }
               checkError(e,
-                errorClass = "DELTA_UNSUPPORTED_WRITES_WITHOUT_COORDINATOR",
+                "DELTA_UNSUPPORTED_WRITES_WITHOUT_COORDINATOR",
                 sqlState = "0AKDC",
                 parameters = Map("coordinatorName" -> "tracking-in-memory")
               )
@@ -1196,7 +1338,7 @@ class CoordinatedCommitsSuite
   }
 
   /////////////////////////////////////////////////////////////////////////////////////////////
-  //           Test coordinated-commits with DeltaLog.getChangeLogFile API starts                //
+  //            Test coordinated-commits with DeltaLog.getChangeLogFile API starts           //
   /////////////////////////////////////////////////////////////////////////////////////////////
 
   /**
@@ -1422,6 +1564,188 @@ class CoordinatedCommitsSuite
   }
 
   /////////////////////////////////////////////////////////////////////////////////////////////
-  //           Test coordinated-commits with DeltaLog.getChangeLogFile API ENDS                  //
+  //            Test coordinated-commits with DeltaLog.getChangeLogFile API ENDS             //
   /////////////////////////////////////////////////////////////////////////////////////////////
+
+  test("During ALTER, overriding Coordinated Commits configurations throws an exception.") {
+    CommitCoordinatorProvider.registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(1))
+    CommitCoordinatorProvider.registerBuilder(InMemoryCommitCoordinatorBuilder(1))
+
+    withTempDir { tempDir =>
+      sql(s"CREATE TABLE delta.`${tempDir.getAbsolutePath}` (id LONG) USING delta TBLPROPERTIES " +
+        s"('${COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'tracking-in-memory', " +
+        s"'${COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '${JsonUtils.toJson(Map())}')")
+      val e = interceptWithUnwrapping[DeltaIllegalArgumentException] {
+        sql(s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` SET TBLPROPERTIES " +
+          s"('${COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'in-memory', " +
+          s"'${COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '${JsonUtils.toJson(Map())}')")
+      }
+      checkError(
+        e,
+        "DELTA_CANNOT_OVERRIDE_COORDINATED_COMMITS_CONFS",
+        sqlState = "42616",
+        parameters = Map("Command" -> "ALTER"))
+    }
+  }
+
+  test("During ALTER, unsetting Coordinated Commits configurations throws an exception.") {
+    CommitCoordinatorProvider.registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(1))
+
+    withTempDir { tempDir =>
+      sql(s"CREATE TABLE delta.`${tempDir.getAbsolutePath}` (id LONG) USING delta TBLPROPERTIES " +
+        s"('${COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'tracking-in-memory', " +
+        s"'${COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '${JsonUtils.toJson(Map())}')")
+      val e = interceptWithUnwrapping[DeltaIllegalArgumentException] {
+        sql(s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` UNSET TBLPROPERTIES " +
+          s"('${COORDINATED_COMMITS_COORDINATOR_NAME.key}', " +
+          s"'${COORDINATED_COMMITS_COORDINATOR_CONF.key}')")
+      }
+      checkError(
+        e,
+        "DELTA_CANNOT_UNSET_COORDINATED_COMMITS_CONFS",
+        sqlState = "42616",
+        parameters = Map[String, String]())
+    }
+  }
+
+  test("During ALTER, overriding ICT configurations on (potential) Coordinated Commits tables " +
+      "throws an exception.") {
+    CommitCoordinatorProvider.registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(1))
+
+    // For a table that had Coordinated Commits enabled before the ALTER command.
+    withTempDir { tempDir =>
+      sql(s"CREATE TABLE delta.`${tempDir.getAbsolutePath}` (id LONG) USING delta TBLPROPERTIES " +
+        s"('${COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'tracking-in-memory', " +
+        s"'${COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '${JsonUtils.toJson(Map())}')")
+      val e = interceptWithUnwrapping[DeltaIllegalArgumentException] {
+        sql(s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` SET TBLPROPERTIES " +
+          s"('${IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'false')")
+      }
+      checkError(
+        e,
+        "DELTA_CANNOT_MODIFY_COORDINATED_COMMITS_DEPENDENCIES",
+        sqlState = "42616",
+        parameters = Map("Command" -> "ALTER"))
+    }
+
+    // For a table that is about to enable Coordinated Commits during the same ALTER command.
+    withoutCoordinatedCommitsDefaultTableProperties {
+      withTempDir { tempDir =>
+        sql(s"CREATE TABLE delta.`${tempDir.getAbsolutePath}` (id LONG) USING delta")
+        val e = interceptWithUnwrapping[DeltaIllegalArgumentException] {
+          sql(s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` SET TBLPROPERTIES " +
+            s"('${COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'tracking-in-memory', " +
+            s"'${COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '${JsonUtils.toJson(Map())}', " +
+            s"'${IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'false')")
+        }
+        checkError(
+          e,
+          "DELTA_CANNOT_SET_COORDINATED_COMMITS_DEPENDENCIES",
+          sqlState = "42616",
+          parameters = Map("Command" -> "ALTER"))
+      }
+    }
+  }
+
+  test("During ALTER, unsetting ICT configurations on Coordinated Commits tables throws an " +
+      "exception.") {
+    CommitCoordinatorProvider.registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(1))
+
+    withTempDir { tempDir =>
+      sql(s"CREATE TABLE delta.`${tempDir.getAbsolutePath}` (id LONG) USING delta TBLPROPERTIES " +
+        s"('${COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'tracking-in-memory', " +
+        s"'${COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '${JsonUtils.toJson(Map())}')")
+      val e = interceptWithUnwrapping[DeltaIllegalArgumentException] {
+        sql(s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` UNSET TBLPROPERTIES " +
+          s"('${IN_COMMIT_TIMESTAMPS_ENABLED.key}')")
+      }
+      checkError(
+        e,
+        "DELTA_CANNOT_MODIFY_COORDINATED_COMMITS_DEPENDENCIES",
+        sqlState = "42616",
+        parameters = Map("Command" -> "ALTER"))
+    }
+  }
+
+  test("During REPLACE, for non-CC tables, default CC configurations are ignored, but default " +
+      "ICT confs are retained, and existing ICT confs are discarded") {
+    // Non-CC table, REPLACE with default CC and ICT confs => Non-CC, but with ICT confs.
+    withTempDir { tempDir =>
+      withoutCoordinatedCommitsDefaultTableProperties {
+        sql(s"CREATE TABLE delta.`${tempDir.getAbsolutePath}` (id LONG) USING delta")
+      }
+      withSQLConf(IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> "true") {
+        sql(s"REPLACE TABLE delta.`${tempDir.getAbsolutePath}` (id STRING) USING delta")
+      }
+      assert(DeltaLog.forTable(spark, tempDir).snapshot.tableCommitCoordinatorClientOpt.isEmpty)
+      assert(DeltaLog.forTable(spark, tempDir).snapshot.metadata.configuration.contains(
+        IN_COMMIT_TIMESTAMPS_ENABLED.key))
+    }
+
+    // Non-CC table with ICT confs, REPLACE with only default CC confs => Non-CC, also no ICT confs.
+    withTempDir { tempDir =>
+      withoutCoordinatedCommitsDefaultTableProperties {
+        withSQLConf(IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> "true") {
+          sql(s"CREATE TABLE delta.`${tempDir.getAbsolutePath}` (id LONG) USING delta")
+        }
+      }
+      sql(s"REPLACE TABLE delta.`${tempDir.getAbsolutePath}` (id STRING) USING delta")
+      assert(DeltaLog.forTable(spark, tempDir).snapshot.tableCommitCoordinatorClientOpt.isEmpty)
+      assert(!DeltaLog.forTable(spark, tempDir).snapshot.metadata.configuration.contains(
+        IN_COMMIT_TIMESTAMPS_ENABLED.key))
+    }
+  }
+
+  test("During REPLACE, for CC tables, existing CC and ICT configurations are both retained.") {
+    CommitCoordinatorProvider.registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(1))
+
+    withTempDir { tempDir =>
+      withoutCoordinatedCommitsDefaultTableProperties {
+        sql(s"CREATE TABLE delta.`${tempDir.getAbsolutePath}` (id LONG) USING delta")
+        sql(s"INSERT INTO delta.`${tempDir.getAbsolutePath}` VALUES (0)")
+        sql(s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` SET TBLPROPERTIES " +
+          s"('${COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'tracking-in-memory', " +
+          s"'${COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '${JsonUtils.toJson(Map())}')")
+        // All three ICT configurations should be set because Coordinated Commits is enabled later.
+        // REPLACE with default CC confs => CC, and all ICT confs.
+        sql(s"REPLACE TABLE delta.`${tempDir.getAbsolutePath}` (id STRING) USING delta")
+        assert(DeltaLog.forTable(spark, tempDir).snapshot.tableCommitCoordinatorClientOpt.nonEmpty)
+        CoordinatedCommitsUtils.ICT_TABLE_PROPERTY_KEYS.foreach { key =>
+          assert(DeltaLog.forTable(spark, tempDir).snapshot.metadata.configuration.contains(key))
+        }
+      }
+    }
+  }
+
+  test("CREATE LIKE does not copy Coordinated Commits configurations from the source table.") {
+    CommitCoordinatorProvider.registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(1))
+
+    val source = "sourcetable"
+    val target = "targettable"
+    sql(s"CREATE TABLE $source (id LONG) USING delta TBLPROPERTIES" +
+      s"('${COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'tracking-in-memory', " +
+      s"'${COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '${JsonUtils.toJson(Map())}')")
+    sql(s"CREATE TABLE $target LIKE $source")
+    assert(DeltaLog.forTable(spark, target).snapshot.tableCommitCoordinatorClientOpt.isEmpty)
+  }
+
+  test("CREATE an external table in a location with an existing table works correctly.") {
+    CommitCoordinatorProvider.registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(1))
+
+    // When the existing table has a commit coordinator, omitting CC configurations in the command
+    // should not throw an exception, and the commit coordinator should be retained, so should ICT.
+    withTempDir { dir =>
+      val tableName = "testtable"
+      val tablePath = dir.getAbsolutePath
+      sql(s"CREATE TABLE delta.`${dir.getAbsolutePath}` (id LONG) USING delta TBLPROPERTIES " +
+        s"('foo' = 'bar', " +
+        s"'${COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'tracking-in-memory', " +
+        s"'${COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '${JsonUtils.toJson(Map())}')")
+      sql(s"CREATE TABLE $tableName (id LONG) USING delta TBLPROPERTIES " +
+        s"('foo' = 'bar') LOCATION '${dir.getAbsolutePath}'")
+      assert(DeltaLog.forTable(spark, tablePath).snapshot.tableCommitCoordinatorClientOpt.nonEmpty)
+      assert(DeltaLog.forTable(spark, tablePath).snapshot.metadata.configuration.contains(
+        IN_COMMIT_TIMESTAMPS_ENABLED.key))
+    }
+  }
 }

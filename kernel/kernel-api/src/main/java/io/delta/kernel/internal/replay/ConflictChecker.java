@@ -15,296 +15,393 @@
  */
 package io.delta.kernel.internal.replay;
 
-import java.io.*;
-import java.util.*;
-import java.util.concurrent.atomic.AtomicReference;
+import static io.delta.kernel.internal.DeltaErrors.concurrentDomainMetadataAction;
+import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
+import static io.delta.kernel.internal.TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED;
+import static io.delta.kernel.internal.actions.SingleAction.*;
+import static io.delta.kernel.internal.util.FileNames.deltaFile;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import static io.delta.kernel.internal.util.Preconditions.checkState;
 import static java.lang.String.format;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.ConcurrentWriteException;
-import io.delta.kernel.utils.CloseableIterator;
-import io.delta.kernel.utils.FileStatus;
-
 import io.delta.kernel.internal.*;
 import io.delta.kernel.internal.actions.CommitInfo;
+import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.actions.SetTransaction;
+import io.delta.kernel.internal.rowtracking.RowTracking;
+import io.delta.kernel.internal.rowtracking.RowTrackingMetadataDomain;
+import io.delta.kernel.internal.tablefeatures.TableFeatures;
+import io.delta.kernel.internal.util.DomainMetadataUtils;
 import io.delta.kernel.internal.util.FileNames;
-import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
-import static io.delta.kernel.internal.TableConfig.isICTEnabled;
-import static io.delta.kernel.internal.actions.SingleAction.CONFLICT_RESOLUTION_SCHEMA;
-import static io.delta.kernel.internal.util.FileNames.deltaFile;
-import static io.delta.kernel.internal.util.Preconditions.checkArgument;
-import static io.delta.kernel.internal.util.Preconditions.checkState;
+import io.delta.kernel.utils.CloseableIterable;
+import io.delta.kernel.utils.CloseableIterator;
+import io.delta.kernel.utils.FileStatus;
+import java.io.*;
+import java.util.*;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Class containing the conflict resolution logic when writing to a Delta table.
- * <p>
- * Currently, the support is to allow blind appends. Later on this can be extended to add support
+ *
+ * <p>Currently, the support is to allow blind appends. Later on this can be extended to add support
  * for read-after-write scenarios.
  */
 public class ConflictChecker {
-    private static final int PROTOCOL_ORDINAL = CONFLICT_RESOLUTION_SCHEMA.indexOf("protocol");
-    private static final int METADATA_ORDINAL = CONFLICT_RESOLUTION_SCHEMA.indexOf("metaData");
-    private static final int TXN_ORDINAL = CONFLICT_RESOLUTION_SCHEMA.indexOf("txn");
-    private static final int COMMITINFO_ORDINAL = CONFLICT_RESOLUTION_SCHEMA.indexOf("commitInfo");
+  private static final int PROTOCOL_ORDINAL = CONFLICT_RESOLUTION_SCHEMA.indexOf("protocol");
+  private static final int METADATA_ORDINAL = CONFLICT_RESOLUTION_SCHEMA.indexOf("metaData");
+  private static final int TXN_ORDINAL = CONFLICT_RESOLUTION_SCHEMA.indexOf("txn");
+  private static final int COMMITINFO_ORDINAL = CONFLICT_RESOLUTION_SCHEMA.indexOf("commitInfo");
+  private static final int DOMAIN_METADATA_ORDINAL =
+      CONFLICT_RESOLUTION_SCHEMA.indexOf("domainMetadata");
 
-    // Snapshot of the table read by the transaction that encountered the conflict
-    // (a.k.a the losing transaction)
-    private final SnapshotImpl snapshot;
+  // Snapshot of the table read by the transaction that encountered the conflict
+  // (a.k.a the losing transaction)
+  private final SnapshotImpl snapshot;
 
-    // Losing transaction
-    private final TransactionImpl transaction;
-    private final long attemptVersion;
+  // Losing transaction
+  private final TransactionImpl transaction;
+  private final long attemptVersion;
+  private final CloseableIterable<Row> attemptDataActions;
 
-    private ConflictChecker(
-            SnapshotImpl snapshot,
-            TransactionImpl transaction,
-            long attemptVersion) {
-        this.snapshot = snapshot;
-        this.transaction = transaction;
-        this.attemptVersion = attemptVersion;
-    }
+  // Helper states during conflict resolution
+  private Optional<Long> lastWinningRowIdHighWatermark = Optional.empty();
 
-    /**
-     * Resolve conflicts between the losing transaction and the winning transactions and return a
-     * rebase state that the losing transaction needs to rebase against before attempting the
-     * commit.
-     *
-     * @param engine      {@link Engine} instance to use
-     * @param snapshot    {@link SnapshotImpl} of the table when the losing transaction has started
-     * @param transaction {@link TransactionImpl} that encountered the conflict (a.k.a the losing
-     *                    transaction)
-     * @return {@link TransactionRebaseState} that the losing transaction needs to rebase against
-     * @throws ConcurrentWriteException if there are logical conflicts between the losing
-     *                                  transaction and the winning transactions that cannot be
-     *                                  resolved.
-     */
-    public static TransactionRebaseState resolveConflicts(
-            Engine engine,
-            SnapshotImpl snapshot,
-            long attemptVersion,
-            TransactionImpl transaction) throws ConcurrentWriteException {
-        checkArgument(transaction.isBlindAppend(), "Current support is for blind appends only.");
-        return new ConflictChecker(snapshot, transaction, attemptVersion)
-                .resolveConflicts(engine);
-    }
+  private ConflictChecker(
+      SnapshotImpl snapshot,
+      TransactionImpl transaction,
+      long attemptVersion,
+      CloseableIterable<Row> dataActions) {
+    this.snapshot = snapshot;
+    this.transaction = transaction;
+    this.attemptVersion = attemptVersion;
+    this.attemptDataActions = dataActions;
+  }
 
-    public TransactionRebaseState resolveConflicts(Engine engine) throws ConcurrentWriteException {
-        List<FileStatus> winningCommits = getWinningCommitFiles(engine);
-        AtomicReference<Optional<CommitInfo>> winningCommitInfoOpt =
-                new AtomicReference<>(Optional.empty());
+  /**
+   * Resolve conflicts between the losing transaction and the winning transactions and return a
+   * rebase state that the losing transaction needs to rebase against before attempting the commit.
+   *
+   * @param engine {@link Engine} instance to use
+   * @param snapshot {@link SnapshotImpl} of the table when the losing transaction has started
+   * @param transaction {@link TransactionImpl} that encountered the conflict (a.k.a the losing
+   *     transaction)
+   * @param dataActions {@link CloseableIterable} of data actions that the losing transaction is
+   *     trying to commit
+   * @return {@link TransactionRebaseState} that the losing transaction needs to rebase against
+   * @throws ConcurrentWriteException if there are logical conflicts between the losing transaction
+   *     and the winning transactions that cannot be resolved.
+   */
+  public static TransactionRebaseState resolveConflicts(
+      Engine engine,
+      SnapshotImpl snapshot,
+      long attemptVersion,
+      TransactionImpl transaction,
+      CloseableIterable<Row> dataActions)
+      throws ConcurrentWriteException {
+    checkArgument(transaction.isBlindAppend(), "Current support is for blind appends only.");
+    return new ConflictChecker(snapshot, transaction, attemptVersion, dataActions)
+        .resolveConflicts(engine);
+  }
 
-        // no winning commits. why did we get the transaction conflict?
-        checkState(!winningCommits.isEmpty(), "No winning commits found.");
+  public TransactionRebaseState resolveConflicts(Engine engine) throws ConcurrentWriteException {
+    List<FileStatus> winningCommits = getWinningCommitFiles(engine);
+    AtomicReference<Optional<CommitInfo>> winningCommitInfoOpt =
+        new AtomicReference<>(Optional.empty());
 
-        FileStatus lastWinningTxn = winningCommits.get(winningCommits.size() - 1);
-        long lastWinningVersion = FileNames.deltaVersion(lastWinningTxn.getPath());
-        // Read the actions from the winning commits
-        try (ActionsIterator actionsIterator = new ActionsIterator(
-                engine,
-                winningCommits,
-                CONFLICT_RESOLUTION_SCHEMA,
-                Optional.empty())) {
+    // no winning commits. why did we get the transaction conflict?
+    checkState(!winningCommits.isEmpty(), "No winning commits found.");
 
-            actionsIterator.forEachRemaining(actionBatch -> {
-                checkArgument(!actionBatch.isFromCheckpoint());  // no checkpoints should be read
-                ColumnarBatch batch = actionBatch.getColumnarBatch();
-                if (actionBatch.getVersion() == lastWinningVersion) {
-                    Optional<CommitInfo> commitInfo =
-                            getCommitInfo(batch.getColumnVector(COMMITINFO_ORDINAL));
-                    winningCommitInfoOpt.set(commitInfo);
-                }
+    FileStatus lastWinningTxn = winningCommits.get(winningCommits.size() - 1);
+    long lastWinningVersion = FileNames.deltaVersion(lastWinningTxn.getPath());
+    // Read the actions from the winning commits
+    try (ActionsIterator actionsIterator =
+        new ActionsIterator(engine, winningCommits, CONFLICT_RESOLUTION_SCHEMA, Optional.empty())) {
 
-                handleProtocol(batch.getColumnVector(PROTOCOL_ORDINAL));
-                handleMetadata(batch.getColumnVector(METADATA_ORDINAL));
-                handleTxn(batch.getColumnVector(TXN_ORDINAL));
-            });
-        } catch (IOException ioe) {
-            throw new UncheckedIOException("Error reading actions from winning commits.", ioe);
-        }
-
-        // if we get here, we have successfully rebased (i.e no logical conflicts)
-        // against the winning transactions
-        return new TransactionRebaseState(
-                lastWinningVersion,
-                getLastCommitTimestamp(
-                        engine, lastWinningVersion, lastWinningTxn, winningCommitInfoOpt.get()));
-    }
-
-    /**
-     * Class containing the rebase state from winning transactions that the current transaction
-     * needs to rebase against before attempting the commit.
-     * <p>
-     * Currently, the rebase state is just the latest winning version of the table. In future once
-     * we start supporting read-after-write, domain metadata, row tracking, etc., we will have more
-     * state to add. For example read-after-write will need to know the files deleted in the winning
-     * transactions to make sure the same files are not deleted by the current (losing)
-     * transaction.
-     */
-    public static class TransactionRebaseState {
-        private final long latestVersion;
-        private final long latestCommitTimestamp;
-
-        public TransactionRebaseState(long latestVersion, long latestCommitTimestamp) {
-            this.latestVersion = latestVersion;
-            this.latestCommitTimestamp = latestCommitTimestamp;
-        }
-
-        /**
-         * Return the latest winning version of the table.
-         *
-         * @return latest winning version of the table.
-         */
-        public long getLatestVersion() {
-            return latestVersion;
-        }
-
-        /**
-         * Return the latest commit timestamp of the table. For ICT enabled tables, this is the
-         * ICT of the latest winning transaction commit file. For non-ICT enabled tables, this
-         * is the modification time of the latest winning transaction commit file.
-         *
-         * @return latest commit timestamp of the table.
-         */
-        public long getLatestCommitTimestamp() {
-            return latestCommitTimestamp;
-        }
-    }
-
-    /**
-     * Any protocol changes between the losing transaction and the winning transactions are not
-     * allowed. In future once we start supporting more table features on the write side, this can
-     * be changed to handle safe protocol changes. For now the write support in Kernel is supported
-     * at a very first version of the protocol.
-     *
-     * @param protocolVector protocol rows from the winning transactions
-     */
-    private void handleProtocol(ColumnVector protocolVector) {
-        for (int rowId = 0; rowId < protocolVector.getSize(); rowId++) {
-            if (!protocolVector.isNullAt(rowId)) {
-                throw DeltaErrors.protocolChangedException(attemptVersion);
+      actionsIterator.forEachRemaining(
+          actionBatch -> {
+            checkArgument(!actionBatch.isFromCheckpoint()); // no checkpoints should be read
+            ColumnarBatch batch = actionBatch.getColumnarBatch();
+            if (actionBatch.getVersion() == lastWinningVersion) {
+              Optional<CommitInfo> commitInfo =
+                  getCommitInfo(batch.getColumnVector(COMMITINFO_ORDINAL));
+              winningCommitInfoOpt.set(commitInfo);
             }
-        }
+
+            handleProtocol(batch.getColumnVector(PROTOCOL_ORDINAL));
+            handleMetadata(batch.getColumnVector(METADATA_ORDINAL));
+            handleTxn(batch.getColumnVector(TXN_ORDINAL));
+            handleDomainMetadata(batch.getColumnVector(DOMAIN_METADATA_ORDINAL));
+          });
+    } catch (IOException ioe) {
+      throw new UncheckedIOException("Error reading actions from winning commits.", ioe);
+    }
+
+    // Initialize updated actions for the next commit attempt with the current attempt's actions
+    CloseableIterable<Row> updatedDataActions = attemptDataActions;
+    List<DomainMetadata> updatedDomainMetadatas = transaction.getDomainMetadatas();
+
+    if (TableFeatures.isRowTrackingSupported(transaction.getProtocol())) {
+      updatedDomainMetadatas =
+          RowTracking.updateRowIdHighWatermarkIfNeeded(
+              snapshot,
+              transaction.getProtocol(),
+              lastWinningRowIdHighWatermark,
+              attemptDataActions,
+              transaction.getDomainMetadatas());
+      updatedDataActions =
+          RowTracking.assignBaseRowIdAndDefaultRowCommitVersion(
+              snapshot,
+              transaction.getProtocol(),
+              lastWinningRowIdHighWatermark,
+              Optional.of(attemptVersion),
+              lastWinningVersion + 1,
+              attemptDataActions);
+    }
+
+    // if we get here, we have successfully rebased (i.e no logical conflicts)
+    // against the winning transactions
+    return new TransactionRebaseState(
+        lastWinningVersion,
+        getLastCommitTimestamp(lastWinningVersion, lastWinningTxn, winningCommitInfoOpt.get()),
+        updatedDataActions,
+        updatedDomainMetadatas);
+  }
+
+  /**
+   * Class containing the rebase state from winning transactions that the current transaction needs
+   * to rebase against before attempting the commit.
+   *
+   * <p>Currently, the rebase state is just the latest winning version of the table plus the updated
+   * data actions and domainMetadata actions to commit. In future once we start supporting
+   * read-after-write, row tracking, etc., we will have more state to add. For example
+   * read-after-write will need to know the files deleted in the winning transactions to make sure
+   * the same files are not deleted by the current (losing) transaction.
+   */
+  public static class TransactionRebaseState {
+    private final long latestVersion;
+    private final long latestCommitTimestamp;
+    private final CloseableIterable<Row> updatedDataActions;
+    private final List<DomainMetadata> updatedDomainMetadatas;
+
+    public TransactionRebaseState(
+        long latestVersion,
+        long latestCommitTimestamp,
+        CloseableIterable<Row> updatedDataActions,
+        List<DomainMetadata> updatedDomainMetadatas) {
+      this.latestVersion = latestVersion;
+      this.latestCommitTimestamp = latestCommitTimestamp;
+      this.updatedDataActions = updatedDataActions;
+      this.updatedDomainMetadatas = updatedDomainMetadatas;
     }
 
     /**
-     * Any metadata changes between the losing transaction and the winning transactions are not
-     * allowed.
+     * Return the latest winning version of the table.
      *
-     * @param metadataVector metadata rows from the winning transactions
+     * @return latest winning version of the table.
      */
-    private void handleMetadata(ColumnVector metadataVector) {
-        for (int rowId = 0; rowId < metadataVector.getSize(); rowId++) {
-            if (!metadataVector.isNullAt(rowId)) {
-                throw DeltaErrors.metadataChangedException();
-            }
-        }
+    public long getLatestVersion() {
+      return latestVersion;
     }
 
     /**
-     * Get the commit info from the winning transactions.
+     * Return the latest commit timestamp of the table. For ICT enabled tables, this is the ICT of
+     * the latest winning transaction commit file. For non-ICT enabled tables, this is the
+     * modification time of the latest winning transaction commit file.
      *
-     * @param commitInfoVector commit info rows from the winning transactions
-     * @return the commit info
+     * @return latest commit timestamp of the table.
      */
-    private Optional<CommitInfo> getCommitInfo(ColumnVector commitInfoVector) {
-        for (int rowId = 0; rowId < commitInfoVector.getSize(); rowId++) {
-            if (!commitInfoVector.isNullAt(rowId)) {
-                return Optional.of(CommitInfo.fromColumnVector(commitInfoVector, rowId));
-            }
-        }
-        return Optional.empty();
+    public long getLatestCommitTimestamp() {
+      return latestCommitTimestamp;
     }
 
-    private void handleTxn(ColumnVector txnVector) {
-        // Check if the losing transaction has any txn identifier. If it does, go through the
-        // winning transactions and make sure that the losing transaction is valid from a
-        // idempotent perspective.
-        Optional<SetTransaction> losingTxnIdOpt = transaction.getSetTxnOpt();
-        losingTxnIdOpt.ifPresent(losingTxnId -> {
-            for (int rowId = 0; rowId < txnVector.getSize(); rowId++) {
-                SetTransaction winningTxn = SetTransaction.fromColumnVector(txnVector, rowId);
-                if (winningTxn != null &&
-                        winningTxn.getAppId().equals(losingTxnId.getAppId()) &&
-                        winningTxn.getVersion() >= losingTxnId.getVersion()) {
-                    throw DeltaErrors.concurrentTransaction(
-                            losingTxnId.getAppId(),
-                            losingTxnId.getVersion(),
-                            winningTxn.getVersion());
-                }
+    public CloseableIterable<Row> getUpdatedDataActions() {
+      return updatedDataActions;
+    }
+
+    public List<DomainMetadata> getUpdatedDomainMetadatas() {
+      return updatedDomainMetadatas;
+    }
+  }
+
+  /**
+   * Any protocol changes between the losing transaction and the winning transactions are not
+   * allowed. In future once we start supporting more table features on the write side, this can be
+   * changed to handle safe protocol changes. For now the write support in Kernel is supported at a
+   * very first version of the protocol.
+   *
+   * @param protocolVector protocol rows from the winning transactions
+   */
+  private void handleProtocol(ColumnVector protocolVector) {
+    for (int rowId = 0; rowId < protocolVector.getSize(); rowId++) {
+      if (!protocolVector.isNullAt(rowId)) {
+        throw DeltaErrors.protocolChangedException(attemptVersion);
+      }
+    }
+  }
+
+  /**
+   * Any metadata changes between the losing transaction and the winning transactions are not
+   * allowed.
+   *
+   * @param metadataVector metadata rows from the winning transactions
+   */
+  private void handleMetadata(ColumnVector metadataVector) {
+    for (int rowId = 0; rowId < metadataVector.getSize(); rowId++) {
+      if (!metadataVector.isNullAt(rowId)) {
+        throw DeltaErrors.metadataChangedException();
+      }
+    }
+  }
+
+  /**
+   * Checks whether each of the current transaction's {@link DomainMetadata} conflicts with the
+   * winning transaction at any domain.
+   *
+   * <ol>
+   *   <li>Accept the current transaction if its set of metadata domains does not overlap with the
+   *       winning transaction's set of metadata domains.
+   *   <li>Otherwise, fail the current transaction unless each conflicting domain is associated with
+   *       a domain-specific way of resolving the conflict.
+   * </ol>
+   *
+   * @param domainMetadataVector domainMetadata rows from the winning transactions
+   * @return a map of domain name to {@link DomainMetadata} from the winning transaction
+   */
+  private Map<String, DomainMetadata> handleDomainMetadata(ColumnVector domainMetadataVector) {
+    // Build a domain metadata map from the winning transaction.
+    Map<String, DomainMetadata> winningTxnDomainMetadataMap = new HashMap<>();
+    DomainMetadataUtils.populateDomainMetadataMap(
+        domainMetadataVector, winningTxnDomainMetadataMap);
+
+    for (DomainMetadata currentTxnDM : this.transaction.getDomainMetadatas()) {
+      // For each domain metadata action in the current transaction, check if it has a conflict with
+      // the winning transaction.
+      String domainName = currentTxnDM.getDomain();
+      DomainMetadata winningTxnDM = winningTxnDomainMetadataMap.get(domainName);
+      if (winningTxnDM != null) {
+        // Conflict - check if the conflict can be resolved.
+        // Domain-specific ways of resolving the conflict can be added here.
+        switch (domainName) {
+          case RowTrackingMetadataDomain.DOMAIN_NAME:
+            // We keep updating the new row ID high watermark we have seen from all winning txns.
+            // The latest one will be used to reassign row IDs later
+            final long winningRowIdHighWatermark =
+                RowTrackingMetadataDomain.fromJsonConfiguration(winningTxnDM.getConfiguration())
+                    .getRowIdHighWaterMark();
+            checkState(
+                !lastWinningRowIdHighWatermark.isPresent()
+                    || lastWinningRowIdHighWatermark.get() <= winningRowIdHighWatermark,
+                "row ID high watermark should be monotonically increasing");
+            this.lastWinningRowIdHighWatermark = Optional.of(winningRowIdHighWatermark);
+            break;
+          default:
+            throw concurrentDomainMetadataAction(currentTxnDM, winningTxnDM);
+        }
+      }
+    }
+
+    return winningTxnDomainMetadataMap;
+  }
+
+  /**
+   * Get the commit info from the winning transactions.
+   *
+   * @param commitInfoVector commit info rows from the winning transactions
+   * @return the commit info
+   */
+  private Optional<CommitInfo> getCommitInfo(ColumnVector commitInfoVector) {
+    for (int rowId = 0; rowId < commitInfoVector.getSize(); rowId++) {
+      if (!commitInfoVector.isNullAt(rowId)) {
+        return Optional.of(CommitInfo.fromColumnVector(commitInfoVector, rowId));
+      }
+    }
+    return Optional.empty();
+  }
+
+  private void handleTxn(ColumnVector txnVector) {
+    // Check if the losing transaction has any txn identifier. If it does, go through the
+    // winning transactions and make sure that the losing transaction is valid from a
+    // idempotent perspective.
+    Optional<SetTransaction> losingTxnIdOpt = transaction.getSetTxnOpt();
+    losingTxnIdOpt.ifPresent(
+        losingTxnId -> {
+          for (int rowId = 0; rowId < txnVector.getSize(); rowId++) {
+            SetTransaction winningTxn = SetTransaction.fromColumnVector(txnVector, rowId);
+            if (winningTxn != null
+                && winningTxn.getAppId().equals(losingTxnId.getAppId())
+                && winningTxn.getVersion() >= losingTxnId.getVersion()) {
+              throw DeltaErrors.concurrentTransaction(
+                  losingTxnId.getAppId(), losingTxnId.getVersion(), winningTxn.getVersion());
             }
+          }
         });
-    }
+  }
 
-    private List<FileStatus> getWinningCommitFiles(Engine engine) {
-        String firstWinningCommitFile =
-                deltaFile(snapshot.getLogPath(), snapshot.getVersion(engine) + 1);
+  private List<FileStatus> getWinningCommitFiles(Engine engine) {
+    String firstWinningCommitFile = deltaFile(snapshot.getLogPath(), snapshot.getVersion() + 1);
 
-        try (CloseableIterator<FileStatus> files = wrapEngineExceptionThrowsIO(
-            () -> engine.getFileSystemClient()
-                .listFrom(firstWinningCommitFile),
+    try (CloseableIterator<FileStatus> files =
+        wrapEngineExceptionThrowsIO(
+            () -> engine.getFileSystemClient().listFrom(firstWinningCommitFile),
             "Listing from %s",
-            firstWinningCommitFile)
-        ) {
-            // Select all winning transaction commit files.
-            List<FileStatus> winningCommitFiles = new ArrayList<>();
-            while (files.hasNext()) {
-                FileStatus file = files.next();
-                if (FileNames.isCommitFile(file.getPath())) {
-                    winningCommitFiles.add(file);
-                }
-            }
-
-            return ensureNoGapsInWinningCommits(winningCommitFiles);
-        } catch (FileNotFoundException nfe) {
-            // no winning commits. why did we get here?
-            throw new IllegalStateException("No winning commits found.", nfe);
-        } catch (IOException ioe) {
-            throw new UncheckedIOException(
-                    "Error listing files from " + firstWinningCommitFile, ioe);
+            firstWinningCommitFile)) {
+      // Select all winning transaction commit files.
+      List<FileStatus> winningCommitFiles = new ArrayList<>();
+      while (files.hasNext()) {
+        FileStatus file = files.next();
+        if (FileNames.isCommitFile(file.getPath())) {
+          winningCommitFiles.add(file);
         }
-    }
+      }
 
-    /**
-     * Get the last commit timestamp of the table. For ICT enabled tables, this is the ICT of the
-     * latest winning transaction commit file. For non-ICT enabled tables, this is the modification
-     * time of the latest winning transaction commit file.
-     *
-     * @param engine                {@link Engine} instance to use
-     * @param lastWinningVersion    last winning version of the table
-     * @param lastWinningTxn        the last winning transaction commit file
-     * @param winningCommitInfoOpt  winning commit info
-     * @return last commit timestamp of the table
-     */
-    private long getLastCommitTimestamp(
-            Engine engine,
-            long lastWinningVersion,
-            FileStatus lastWinningTxn,
-            Optional<CommitInfo> winningCommitInfoOpt) {
-        long winningCommitTimestamp = -1L;
-        if (snapshot.getVersion(engine) == -1 ||
-                !isICTEnabled(engine, snapshot.getMetadata())) {
-            winningCommitTimestamp = lastWinningTxn.getModificationTime();
-        } else {
-            winningCommitTimestamp = CommitInfo.getRequiredInCommitTimestamp(
-                    winningCommitInfoOpt,
-                    String.valueOf(lastWinningVersion),
-                    snapshot.getDataPath());
-        }
-        return winningCommitTimestamp;
+      return ensureNoGapsInWinningCommits(winningCommitFiles);
+    } catch (FileNotFoundException nfe) {
+      // no winning commits. why did we get here?
+      throw new IllegalStateException("No winning commits found.", nfe);
+    } catch (IOException ioe) {
+      throw new UncheckedIOException("Error listing files from " + firstWinningCommitFile, ioe);
     }
+  }
 
-    private static List<FileStatus> ensureNoGapsInWinningCommits(List<FileStatus> winningCommits) {
-        long lastVersion = -1;
-        for (FileStatus commit : winningCommits) {
-            long version = FileNames.deltaVersion(commit.getPath());
-            checkState(lastVersion == -1 || version == lastVersion + 1,
-                    format("Gaps in Delta log commit files. Expected version %d but got %d",
-                            (lastVersion + 1), version));
-            lastVersion = version;
-        }
-        return winningCommits;
+  /**
+   * Get the last commit timestamp of the table. For ICT enabled tables, this is the ICT of the
+   * latest winning transaction commit file. For non-ICT enabled tables, this is the modification
+   * time of the latest winning transaction commit file.
+   *
+   * @param lastWinningVersion last winning version of the table
+   * @param lastWinningTxn the last winning transaction commit file
+   * @param winningCommitInfoOpt winning commit info
+   * @return last commit timestamp of the table
+   */
+  private long getLastCommitTimestamp(
+      long lastWinningVersion,
+      FileStatus lastWinningTxn,
+      Optional<CommitInfo> winningCommitInfoOpt) {
+    if (snapshot.getVersion() == -1
+        || !IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(snapshot.getMetadata())) {
+      return lastWinningTxn.getModificationTime();
+    } else {
+      return CommitInfo.getRequiredInCommitTimestamp(
+          winningCommitInfoOpt, String.valueOf(lastWinningVersion), snapshot.getDataPath());
     }
+  }
+
+  private static List<FileStatus> ensureNoGapsInWinningCommits(List<FileStatus> winningCommits) {
+    long lastVersion = -1;
+    for (FileStatus commit : winningCommits) {
+      long version = FileNames.deltaVersion(commit.getPath());
+      checkState(
+          lastVersion == -1 || version == lastVersion + 1,
+          format(
+              "Gaps in Delta log commit files. Expected version %d but got %d",
+              (lastVersion + 1), version));
+      lastVersion = version;
+    }
+    return winningCommits;
+  }
 }

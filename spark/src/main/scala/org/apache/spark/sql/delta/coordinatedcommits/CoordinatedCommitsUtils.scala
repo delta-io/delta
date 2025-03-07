@@ -16,23 +16,29 @@
 
 package org.apache.spark.sql.delta.coordinatedcommits
 
+import java.util.Optional
+
 import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{CoordinatedCommitsTableFeature, DeltaConfig, DeltaConfigs, DeltaLog, Snapshot, SnapshotDescriptor}
+import org.apache.spark.sql.delta.{CoordinatedCommitsTableFeature, DeltaConfig, DeltaConfigs, DeltaIllegalArgumentException, DeltaLog, Snapshot, SnapshotDescriptor}
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
+import org.apache.spark.sql.delta.commands.CloneTableCommand
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
-import org.apache.spark.sql.delta.util.FileNames.{DeltaFile, UnbackfilledDeltaFile}
+import org.apache.spark.sql.delta.util.FileNames.{BackfilledDeltaFile, CompactedDeltaFile, DeltaFile, UnbackfilledDeltaFile}
 import io.delta.storage.LogStore
-import io.delta.storage.commit.{CommitCoordinatorClient, GetCommitsResponse => JGetCommitsResponse}
+import io.delta.storage.commit.{CommitCoordinatorClient, GetCommitsResponse => JGetCommitsResponse, TableIdentifier}
 import io.delta.storage.commit.actions.AbstractMetadata
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.{TableIdentifier => CatalystTableIdentifier}
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.util.Utils
 
 object CoordinatedCommitsUtils extends DeltaLogging {
@@ -44,6 +50,7 @@ object CoordinatedCommitsUtils extends DeltaLogging {
   def getCommitsFromCommitCoordinatorWithUsageLogs(
       deltaLog: DeltaLog,
       tableCommitCoordinatorClient: TableCommitCoordinatorClient,
+      catalogTableOpt: Option[CatalogTable],
       startVersion: Long,
       versionToLoad: Option[Long],
       isAsyncRequest: Boolean): JGetCommitsResponse = {
@@ -64,7 +71,11 @@ object CoordinatedCommitsUtils extends DeltaLogging {
 
       try {
         val response =
-          tableCommitCoordinatorClient.getCommits(Some(startVersion), endVersion = versionToLoad)
+          tableCommitCoordinatorClient.getCommits(
+            catalogTableOpt.map(_.identifier),
+            Some(startVersion),
+            endVersion = versionToLoad
+          )
         val additionalEventData = Map(
           "responseCommitsSize" -> response.getCommits.size,
           "responseLatestTableVersion" -> response.getLatestTableVersion)
@@ -72,7 +83,12 @@ object CoordinatedCommitsUtils extends DeltaLogging {
         response
       } catch {
         case NonFatal(e) =>
-          recordEvent(Map("exception" -> Utils.exceptionString(e)))
+          recordEvent(
+            Map(
+              "exceptionClass" -> e.getClass.getName,
+              "exceptionString" -> Utils.exceptionString(e)
+            )
+          )
           throw e
       }
     }
@@ -142,27 +158,6 @@ object CoordinatedCommitsUtils extends DeltaLogging {
     }
   }
 
-  /**
-   * Write a UUID-based commit file for the specified version to the
-   * table at [[logPath]].
-   */
-  def writeCommitFile(
-      logStore: LogStore,
-      hadoopConf: Configuration,
-      logPath: Path,
-      commitVersion: Long,
-      actions: Iterator[String],
-      uuid: String): FileStatus = {
-    val commitPath = FileNames.unbackfilledDeltaFile(logPath, commitVersion, Some(uuid))
-    logStore.write(commitPath, actions.asJava, true, hadoopConf)
-    commitPath.getFileSystem(hadoopConf).getFileStatus(commitPath)
-  }
-
-  /**
-   * Get the table path from the provided log path.
-   */
-  def getTablePath(logPath: Path): Path = logPath.getParent
-
   def getCommitCoordinatorClient(
       spark: SparkSession,
       deltaLog: DeltaLog, // Used for logging
@@ -170,7 +165,8 @@ object CoordinatedCommitsUtils extends DeltaLogging {
       protocol: Protocol,
       failIfImplUnavailable: Boolean): Option[CommitCoordinatorClient] = {
     metadata.coordinatedCommitsCoordinatorName.flatMap { commitCoordinatorStr =>
-      assert(protocol.isFeatureSupported(CoordinatedCommitsTableFeature))
+      assert(protocol.isFeatureSupported(CoordinatedCommitsTableFeature),
+        "coordinated commits table feature is not supported")
       val coordinatorConf = metadata.coordinatedCommitsCoordinatorConf
       val coordinatorOpt = CommitCoordinatorProvider.getCommitCoordinatorClientOpt(
         commitCoordinatorStr, coordinatorConf, spark)
@@ -182,7 +178,7 @@ object CoordinatedCommitsUtils extends DeltaLogging {
             "commitCoordinatorName" -> commitCoordinatorStr,
             "registeredCommitCoordinators" ->
               CommitCoordinatorProvider.getRegisteredCoordinatorNames.mkString(", "),
-            "commitCoordinatorConf" -> JsonUtils.toJson(coordinatorConf),
+            "commitCoordinatorConf" -> coordinatorConf,
             "failIfImplUnavailable" -> failIfImplUnavailable.toString
           )
         )
@@ -229,53 +225,25 @@ object CoordinatedCommitsUtils extends DeltaLogging {
     }
   }
 
-  /**
-   * Helper method to recover the saved value of `deltaConfig` from `abstractMetadata`.
-   * If undefined, fall back to alternate keys, returning defaultValue if none match.
-   */
-  private[delta] def fromAbstractMetadataAndDeltaConfig[T](
-      abstractMetadata: AbstractMetadata,
-      deltaConfig: DeltaConfig[T]): T = {
-    val conf = abstractMetadata.getConfiguration
-    for (key <- deltaConfig.key +: deltaConfig.alternateKeys) {
-      Option(conf.get(key)).map { value => return deltaConfig.fromString(value) }
-    }
-    deltaConfig.fromString(deltaConfig.defaultValue)
-  }
-
-  /**
-   * Get the commit coordinator name from the provided abstract metadata.
-   */
-  def getCommitCoordinatorName(abstractMetadata: AbstractMetadata): Option[String] = {
-    fromAbstractMetadataAndDeltaConfig(
-      abstractMetadata, DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME)
-  }
-
-  /**
-   * Get the commit coordinator configuration from the provided abstract metadata.
-   */
-  def getCommitCoordinatorConf(abstractMetadata: AbstractMetadata): Map[String, String] = {
-    fromAbstractMetadataAndDeltaConfig(
-      abstractMetadata, DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF)
-  }
-
-  /**
-   * Get the coordinated commits table configuration from the provided abstract metadata.
-   */
-  def getCoordinatedCommitsTableConf(abstractMetadata: AbstractMetadata): Map[String, String] = {
-    fromAbstractMetadataAndDeltaConfig(
-      abstractMetadata, DeltaConfigs.COORDINATED_COMMITS_TABLE_CONF)
-  }
-
   val TABLE_PROPERTY_CONFS = Seq(
     DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME,
     DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF,
     DeltaConfigs.COORDINATED_COMMITS_TABLE_CONF)
 
+  val ICT_TABLE_PROPERTY_CONFS = Seq(
+    DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED,
+    DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION,
+    DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP)
+
   /**
    * The main table properties used to instantiate a TableCommitCoordinatorClient.
    */
   val TABLE_PROPERTY_KEYS: Seq[String] = TABLE_PROPERTY_CONFS.map(_.key)
+
+  /**
+   * The main ICT table properties used as dependencies for Coordinated Commits.
+   */
+  val ICT_TABLE_PROPERTY_KEYS: Seq[String] = ICT_TABLE_PROPERTY_CONFS.map(_.key)
 
   /**
    * Returns true if any CoordinatedCommits-related table properties is present in the metadata.
@@ -291,7 +259,7 @@ object CoordinatedCommitsUtils extends DeltaLogging {
     snapshot.logSegment.deltas.exists {
       case FileNames.UnbackfilledDeltaFile(_, _, _) => true
       case _ => false
-    }
+    } && !snapshot.allCommitsBackfilled
   }
 
   /**
@@ -345,5 +313,244 @@ object CoordinatedCommitsUtils extends DeltaLogging {
         "numAlreadyBackfilledFiles" -> numAlreadyBackfilledFiles
       )
     )
+  }
+
+  /**
+   * Returns the last backfilled file in the given list of `deltas` if it exists. This could be
+   * 1. A backfilled delta
+   * 2. A minor compaction
+   */
+  def getLastBackfilledFile(deltas: Seq[FileStatus]): Option[FileStatus] = {
+    var maxFile: Option[FileStatus] = None
+    deltas.foreach {
+      case BackfilledDeltaFile(f, _) => maxFile = Some(f)
+      case CompactedDeltaFile(f, _, _) => maxFile = Some(f)
+      case _ => // do nothing
+    }
+    maxFile
+  }
+
+  /**
+   * Extracts the Coordinated Commits configurations from the provided properties.
+   */
+  def getExplicitCCConfigurations(
+      properties: Map[String, String]): Map[String, String] = {
+    properties.filter { case (k, _) => TABLE_PROPERTY_KEYS.contains(k) }
+  }
+
+  /**
+   * Extracts the ICT configurations from the provided properties.
+   */
+  def getExplicitICTConfigurations(properties: Map[String, String]): Map[String, String] = {
+    properties.filter { case (k, _) => ICT_TABLE_PROPERTY_KEYS.contains(k) }
+  }
+
+  /**
+   * Fetches the SparkSession default configurations for Coordinated Commits. The `withDefaultKey`
+   * flag controls whether the keys in the returned map should have the default prefix or not.
+   * For example, if property 'coordinatedCommits.commitCoordinator-preview' is set to 'dynamodb'
+   * in SparkSession default, then
+   *
+   *   - fetchDefaultCoordinatedCommitsConfigurations(spark) =>
+   *       Map("delta.coordinatedCommits.commitCoordinator-preview" -> "dynamodb")
+   *
+   *   - fetchDefaultCoordinatedCommitsConfigurations(spark, withDefaultKey = true) =>
+   *       Map("spark.databricks.delta.properties.defaults
+   *            .coordinatedCommits.commitCoordinator-preview" -> "dynamodb")
+   */
+  def getDefaultCCConfigurations(
+      spark: SparkSession, withDefaultKey: Boolean = false): Map[String, String] = {
+    TABLE_PROPERTY_CONFS.flatMap { conf =>
+      spark.conf.getOption(conf.defaultTablePropertyKey).map { value =>
+        val finalKey = if (withDefaultKey) conf.defaultTablePropertyKey else conf.key
+        finalKey -> value
+      }
+    }.toMap
+  }
+
+  /**
+   * Verifies that the properties contain exactly the Coordinator Name and Coordinator Conf.
+   * If `fromDefault` is true, then the properties have keys with the default prefix.
+   */
+  private def verifyContainsOnlyCoordinatorNameAndConf(
+      properties: Map[String, String],
+      command: String,
+      fromDefault: Boolean): Unit = {
+    Seq(DeltaConfigs.COORDINATED_COMMITS_TABLE_CONF).foreach { conf =>
+      if (fromDefault) {
+        if (properties.contains(conf.defaultTablePropertyKey)) {
+          throw new DeltaIllegalArgumentException(
+            errorClass = "DELTA_CONF_OVERRIDE_NOT_SUPPORTED_IN_SESSION",
+            messageParameters = Array(
+              command, conf.defaultTablePropertyKey, conf.defaultTablePropertyKey))
+        }
+      } else {
+        if (properties.contains(conf.key)) {
+          throw new DeltaIllegalArgumentException(
+            errorClass = "DELTA_CONF_OVERRIDE_NOT_SUPPORTED_IN_COMMAND",
+            messageParameters = Array(command, conf.key))
+        }
+      }
+    }
+    Seq(
+      DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME,
+      DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF).foreach { conf =>
+      if (fromDefault) {
+        if (!properties.contains(conf.defaultTablePropertyKey)) {
+          throw new DeltaIllegalArgumentException(
+            errorClass = "DELTA_MUST_SET_ALL_COORDINATED_COMMITS_CONFS_IN_SESSION",
+            messageParameters = Array(command, conf.defaultTablePropertyKey))
+        }
+      } else {
+        if (!properties.contains(conf.key)) {
+          throw new DeltaIllegalArgumentException(
+            errorClass = "DELTA_MUST_SET_ALL_COORDINATED_COMMITS_CONFS_IN_COMMAND",
+            messageParameters = Array(command, conf.key))
+        }
+      }
+    }
+  }
+
+  /**
+   * Verifies that the property keys do not contain any ICT dependencies for Coordinated Commits.
+   */
+  private def verifyNotContainsICTConfigurations(
+      propKeys: Seq[String], command: String, errorClass: String): Unit = {
+    ICT_TABLE_PROPERTY_KEYS.foreach { key =>
+      if (propKeys.contains(key)) {
+        throw new DeltaIllegalArgumentException(
+          errorClass,
+          messageParameters = Array(command))
+      }
+    }
+  }
+
+  /**
+   * Validates the Coordinated Commits configurations in explicit command overrides for
+   * `AlterTableSetPropertiesDeltaCommand`.
+   *
+   * If the table already has Coordinated Commits configurations present, then we do not allow
+   * users to override them via `ALTER TABLE t SET TBLPROPERTIES ...`. Users must downgrade the
+   * table and then upgrade it with the new Coordinated Commits configurations.
+   * If the table is a Coordinated Commits table or will be one via this ALTER command, then we
+   * do not allow users to disable any ICT properties that Coordinated Commits depends on.
+   */
+  def validateConfigurationsForAlterTableSetPropertiesDeltaCommand(
+      existingConfs: Map[String, String],
+      propertyOverrides: Map[String, String]): Unit = {
+    val existingCoordinatedCommitsConfs = getExplicitCCConfigurations(existingConfs)
+    val coordinatedCommitsOverrides = getExplicitCCConfigurations(propertyOverrides)
+    if (coordinatedCommitsOverrides.nonEmpty) {
+      if (existingCoordinatedCommitsConfs.nonEmpty) {
+        throw new DeltaIllegalArgumentException(
+          "DELTA_CANNOT_OVERRIDE_COORDINATED_COMMITS_CONFS",
+          Array("ALTER"))
+      }
+      verifyNotContainsICTConfigurations(propertyOverrides.keys.toSeq, command = "ALTER",
+        errorClass = "DELTA_CANNOT_SET_COORDINATED_COMMITS_DEPENDENCIES")
+      verifyContainsOnlyCoordinatorNameAndConf(
+        coordinatedCommitsOverrides, command = "ALTER", fromDefault = false)
+    }
+    if (existingCoordinatedCommitsConfs.nonEmpty) {
+      verifyNotContainsICTConfigurations(propertyOverrides.keys.toSeq, command = "ALTER",
+        errorClass = "DELTA_CANNOT_MODIFY_COORDINATED_COMMITS_DEPENDENCIES")
+    }
+  }
+
+  /**
+   * Validates the configurations to unset for `AlterTableUnsetPropertiesDeltaCommand`.
+   *
+   * If the table already has Coordinated Commits configurations present, then we do not allow users
+   * to unset them via `ALTER TABLE t UNSET TBLPROPERTIES ...`. Users could only downgrade the table
+   * via `ALTER TABLE t DROP FEATURE ...`. We also do not allow users to unset any ICT properties
+   * that Coordinated Commits depends on.
+   */
+  def validateConfigurationsForAlterTableUnsetPropertiesDeltaCommand(
+      existingConfs: Map[String, String],
+      propKeysToUnset: Seq[String]): Unit = {
+    // If the table does not have any Coordinated Commits configurations, then we do not check the
+    // properties to unset. This is because unsetting non-existent entries would either be caught
+    // earlier (without `IF EXISTS`) or simply be a no-op (with `IF EXISTS`). Thus, we ignore them
+    // instead of throwing an exception.
+    if (getExplicitCCConfigurations(existingConfs).nonEmpty) {
+      if (propKeysToUnset.exists(TABLE_PROPERTY_KEYS.contains)) {
+        throw new DeltaIllegalArgumentException(
+          "DELTA_CANNOT_UNSET_COORDINATED_COMMITS_CONFS",
+          Array.empty)
+      }
+      verifyNotContainsICTConfigurations(propKeysToUnset, command = "ALTER",
+        errorClass = "DELTA_CANNOT_MODIFY_COORDINATED_COMMITS_DEPENDENCIES")
+    }
+  }
+
+  /**
+   * Validates the Coordinated Commits configurations in explicit command overrides and default
+   * SparkSession properties for `CreateDeltaTableCommand`.
+   * See `validateConfigurationsForCreateDeltaTableCommandImpl` for details.
+   */
+  def validateConfigurationsForCreateDeltaTableCommand(
+      spark: SparkSession,
+      tableExists: Boolean,
+      query: Option[LogicalPlan],
+      catalogTableProperties: Map[String, String]): Unit = {
+    val (command, propertyOverrides) = query match {
+      // For CLONE, we cannot use the properties from the catalog table, because they are already
+      // the result of merging the source table properties with the overrides, but we do not
+      // consider the source table properties for Coordinated Commits.
+      case Some(cmd: CloneTableCommand) =>
+        (if (tableExists) "REPLACE with CLONE" else "CREATE with CLONE",
+          cmd.tablePropertyOverrides)
+      case _ => (if (tableExists) "REPLACE" else "CREATE", catalogTableProperties)
+    }
+    validateConfigurationsForCreateDeltaTableCommandImpl(
+      spark, propertyOverrides, tableExists, command)
+  }
+
+  /**
+   * Validates the Coordinated Commits configurations for the table.
+   *   - If the table already exists, the explicit command property overrides must not contain any
+   *     Coordinated Commits configurations.
+   *   - If the table does not exist, the explicit command property overrides must contain exactly
+   *     the Coordinator Name and Coordinator Conf, and no Table Conf. Default configurations are
+   *     checked similarly if non of the three properties is present in explicit overrides.
+   */
+  private[delta] def validateConfigurationsForCreateDeltaTableCommandImpl(
+      spark: SparkSession,
+      propertyOverrides: Map[String, String],
+      tableExists: Boolean,
+      command: String): Unit = {
+    val coordinatedCommitsConfs = getExplicitCCConfigurations(propertyOverrides)
+    if (tableExists) {
+      if (coordinatedCommitsConfs.nonEmpty) {
+        throw new DeltaIllegalArgumentException(
+          "DELTA_CANNOT_OVERRIDE_COORDINATED_COMMITS_CONFS",
+          Array(command))
+      }
+    } else {
+      if (coordinatedCommitsConfs.nonEmpty) {
+        verifyContainsOnlyCoordinatorNameAndConf(
+          coordinatedCommitsConfs, command, fromDefault = false)
+      } else {
+        val defaultCoordinatedCommitsConfs = getDefaultCCConfigurations(
+          spark, withDefaultKey = true)
+        if (defaultCoordinatedCommitsConfs.nonEmpty) {
+          verifyContainsOnlyCoordinatorNameAndConf(
+            defaultCoordinatedCommitsConfs, command, fromDefault = true)
+        }
+      }
+    }
+  }
+
+  /**
+   * Converts a given Spark [[CatalystTableIdentifier]] to Coordinated Commits [[TableIdentifier]]
+   */
+  def toCCTableIdentifier(
+      catalystTableIdentifierOpt: Option[CatalystTableIdentifier]): Optional[TableIdentifier] = {
+    catalystTableIdentifierOpt.map { catalystTableIdentifier =>
+      val namespace =
+        catalystTableIdentifier.catalog.toSeq ++
+          catalystTableIdentifier.database.toSeq
+      new TableIdentifier(namespace.toArray, catalystTableIdentifier.table)
+    }.map(Optional.of[TableIdentifier]).getOrElse(Optional.empty[TableIdentifier])
   }
 }

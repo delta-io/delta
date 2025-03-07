@@ -32,10 +32,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.*;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.Map;
+import java.util.*;
 
 /**
  * A commit coordinator client that uses DynamoDB as the commit coordinator. The table schema is as follows:
@@ -350,11 +347,11 @@ public class DynamoDBCommitCoordinatorClient implements CommitCoordinatorClient 
     public CommitResponse commit(
             LogStore logStore,
             Configuration hadoopConf,
-            Path logPath,
-            Map<String, String> coordinatedCommitsTableConf,
+            TableDescriptor tableDesc,
             long commitVersion,
             Iterator<String> actions,
             UpdatedActions updatedActions) throws CommitFailedException {
+        Path logPath = tableDesc.getLogPath();
         if (commitVersion == 0) {
             throw new CommitFailedException(
                     false /* retryable */,
@@ -362,20 +359,22 @@ public class DynamoDBCommitCoordinatorClient implements CommitCoordinatorClient 
                     "Commit version 0 must go via filesystem.");
         }
         try {
-            FileSystem fs = logPath.getFileSystem(hadoopConf);
-            Path commitPath =
-                    CoordinatedCommitsUtils.generateUnbackfilledDeltaFilePath(logPath, commitVersion);
-            logStore.write(commitPath, actions, true /* overwrite */, hadoopConf);
-            FileStatus commitFileStatus = fs.getFileStatus(commitPath);
+            FileStatus commitFileStatus = CoordinatedCommitsUtils.writeUnbackfilledCommitFile(
+                    logStore,
+                    hadoopConf,
+                    logPath.toString(),
+                    commitVersion,
+                    actions,
+                    UUID.randomUUID().toString());
             long inCommitTimestamp = updatedActions.getCommitInfo().getCommitTimestamp();
             boolean isCCtoFSConversion =
                     CoordinatedCommitsUtils.isCoordinatedCommitsToFSConversion(commitVersion, updatedActions);
 
             LOG.info("Committing version {} with UUID delta file {} to DynamoDB.",
-                    commitVersion, commitPath);
+                    commitVersion, commitFileStatus.getPath());
             CommitResponse res = commitToCoordinator(
                     logPath,
-                    coordinatedCommitsTableConf,
+                    tableDesc.getTableConf(),
                     commitVersion,
                     commitFileStatus,
                     inCommitTimestamp,
@@ -393,14 +392,13 @@ public class DynamoDBCommitCoordinatorClient implements CommitCoordinatorClient 
                 backfillToVersion(
                     logStore,
                     hadoopConf,
-                    logPath,
-                    coordinatedCommitsTableConf,
+                    tableDesc,
                     commitVersion,
                     null /* lastKnownBackfilledVersion */);
             }
             return res;
         } catch (IOException e) {
-            throw new CommitFailedException(false /* retryable */, false /* conflict */, e.getMessage());
+            throw new CommitFailedException(false /* retryable */, false /* conflict */, e.getMessage(), e);
         }
     }
 
@@ -420,7 +418,7 @@ public class DynamoDBCommitCoordinatorClient implements CommitCoordinatorClient 
                 Long.parseLong(item.get(DynamoDBTableEntryConstants.TABLE_LATEST_VERSION).getN());
         AttributeValue allStoredCommits = item.get(DynamoDBTableEntryConstants.COMMITS);
         ArrayList<Commit> commits = new ArrayList<>();
-        Path unbackfilledCommitsPath = new Path(logPath, CoordinatedCommitsUtils.COMMIT_SUBDIR);
+        Path unbackfilledCommitsPath = CoordinatedCommitsUtils.commitDirPath(logPath);
         for(AttributeValue attr: allStoredCommits.getL()) {
             java.util.Map<String, AttributeValue> commitMap = attr.getM();
             long commitVersion =
@@ -456,13 +454,12 @@ public class DynamoDBCommitCoordinatorClient implements CommitCoordinatorClient 
 
     @Override
     public GetCommitsResponse getCommits(
-            Path logPath,
-            Map<String, String> coordinatedCommitsTableConf,
+            TableDescriptor tableDesc,
             Long startVersion,
             Long endVersion) {
         try {
             GetCommitsResultInternal res =
-                    getCommitsImpl(logPath, coordinatedCommitsTableConf, startVersion, endVersion);
+                    getCommitsImpl(tableDesc.getLogPath(), tableDesc.getTableConf(), startVersion, endVersion);
             long latestTableVersionToReturn = res.response.getLatestTableVersion();
             if (!res.hasAcceptedCommits) {
                 /*
@@ -533,16 +530,16 @@ public class DynamoDBCommitCoordinatorClient implements CommitCoordinatorClient 
     public void backfillToVersion(
             LogStore logStore,
             Configuration hadoopConf,
-            Path logPath,
-            Map<String, String> coordinatedCommitsTableConf,
+            TableDescriptor tableDesc,
             long version,
             Long lastKnownBackfilledVersion) throws IOException {
         LOG.info("Backfilling all unbackfilled commits.");
+        Path logPath = tableDesc.getLogPath();
         GetCommitsResponse resp;
         try {
             resp = getCommitsImpl(
                     logPath,
-                    coordinatedCommitsTableConf,
+                    tableDesc.getTableConf(),
                     lastKnownBackfilledVersion,
                     null).response;
         } catch (IOException e) {
@@ -582,7 +579,7 @@ public class DynamoDBCommitCoordinatorClient implements CommitCoordinatorClient 
                 .withTableName(coordinatedCommitsTableName)
                 .addKeyEntry(
                         DynamoDBTableEntryConstants.TABLE_ID,
-                        new AttributeValue().withS(getTableId(coordinatedCommitsTableConf)))
+                        new AttributeValue().withS(getTableId(tableDesc.getTableConf())))
                 .addAttributeUpdatesEntry(
                         DynamoDBTableEntryConstants.COMMITS,
                         new AttributeValueUpdate()
@@ -624,6 +621,7 @@ public class DynamoDBCommitCoordinatorClient implements CommitCoordinatorClient 
     @Override
     public Map<String, String> registerTable(
             Path logPath,
+            Optional<TableIdentifier> tableIdentifier,
             long currentVersion,
             AbstractMetadata currentMetadata,
             AbstractProtocol currentProtocol) {

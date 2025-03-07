@@ -20,6 +20,7 @@ import java.util.concurrent.TimeUnit
 
 import org.apache.spark.sql.delta.metric.IncrementMetric
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, FileAction}
 import org.apache.spark.sql.delta.commands.DeleteCommand.{rewritingFilesMsg, FINDING_TOUCHED_FILES_MSG}
 import org.apache.spark.sql.delta.commands.MergeIntoCommandBase.totalBytesAndDistinctPartitionValues
@@ -306,9 +307,9 @@ case class DeleteCommand(
                 if (candidateFiles.isEmpty) {
                   Array.empty[String]
                 } else {
-                  data.filter(new Column(cond))
+                  data.filter(Column(cond))
                     .select(input_file_name())
-                    .filter(new Column(incrDeletedCountExpr))
+                    .filter(Column(incrDeletedCountExpr))
                     .distinct()
                     .as[String]
                     .collect()
@@ -451,15 +452,15 @@ case class DeleteCommand(
         // as table data, while all rows which don't match are removed from the rewritten table data
         // but do get included in the output as CDC events.
         baseData
-          .filter(new Column(incrTouchedCountExpr))
+          .filter(Column(incrTouchedCountExpr))
           .withColumn(
             CDC_TYPE_COLUMN_NAME,
-            new Column(If(filterCondition, CDC_TYPE_NOT_CDC, CDC_TYPE_DELETE))
+            Column(If(filterCondition, CDC_TYPE_NOT_CDC, CDC_TYPE_DELETE))
           )
       } else {
         baseData
-          .filter(new Column(incrTouchedCountExpr))
-          .filter(new Column(filterCondition))
+          .filter(Column(incrTouchedCountExpr))
+          .filter(Column(filterCondition))
       }
 
       txn.writeFiles(dfToWrite)

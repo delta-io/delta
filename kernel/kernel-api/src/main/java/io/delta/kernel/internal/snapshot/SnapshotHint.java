@@ -18,30 +18,34 @@ package io.delta.kernel.internal.snapshot;
 
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.checksum.CRCInfo;
 
-/**
- * Contains summary information of a {@link io.delta.kernel.Snapshot}.
- */
+/** Contains summary information of a {@link io.delta.kernel.Snapshot}. */
 public class SnapshotHint {
-    private final long version;
-    private final Protocol protocol;
-    private final Metadata metadata;
+  private final long version;
+  private final Protocol protocol;
+  private final Metadata metadata;
 
-    public SnapshotHint(long version, Protocol protocol, Metadata metadata) {
-        this.version = version;
-        this.protocol = protocol;
-        this.metadata = metadata;
-    }
+  /** Constructs a new SnapshotHint based on a CRCInfo */
+  public static SnapshotHint fromCrcInfo(CRCInfo crcInfo) {
+    return new SnapshotHint(crcInfo.getVersion(), crcInfo.getProtocol(), crcInfo.getMetadata());
+  }
 
-    public long getVersion() {
-        return version;
-    }
+  public SnapshotHint(long version, Protocol protocol, Metadata metadata) {
+    this.version = version;
+    this.protocol = protocol;
+    this.metadata = metadata;
+  }
 
-    public Protocol getProtocol() {
-        return protocol;
-    }
+  public long getVersion() {
+    return version;
+  }
 
-    public Metadata getMetadata() {
-        return metadata;
-    }
+  public Protocol getProtocol() {
+    return protocol;
+  }
+
+  public Metadata getMetadata() {
+    return metadata;
+  }
 }

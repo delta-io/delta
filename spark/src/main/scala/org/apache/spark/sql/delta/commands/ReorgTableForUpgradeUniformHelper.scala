@@ -114,7 +114,7 @@ trait ReorgTableForUpgradeUniformHelper extends DeltaLogging {
       log"at version ${MDC(DeltaLogKeys.VERSION, snapshot.version)}, there are " +
       log"${MDC(DeltaLogKeys.NUM_FILES, numOfAddFiles)} addFiles, and " +
       log"${MDC(DeltaLogKeys.NUM_FILES2, numOfAddFilesWithTag)} addFiles with " +
-      log"ICEBERG_COMPAT_VERSION=${MDC(DeltaLogKeys.TAG, icebergCompatVersion)} tag.")
+      log"ICEBERG_COMPAT_VERSION=${MDC(DeltaLogKeys.VERSION2, icebergCompatVersion.toLong)} tag.")
     (numOfAddFiles, numOfAddFilesWithTag)
   }
 
@@ -144,7 +144,7 @@ trait ReorgTableForUpgradeUniformHelper extends DeltaLogging {
       sparkSession: SparkSession,
       targetIcebergCompatVersion: Int): Seq[Row] = {
 
-    val snapshot = target.deltaLog.update()
+    val snapshot = target.update()
     val currIcebergCompatVersionOpt = getEnabledVersion(snapshot.metadata)
     val targetVersionDeltaConfig = getIcebergCompatVersionConfigForValidVersion(
       targetIcebergCompatVersion)

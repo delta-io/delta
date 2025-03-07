@@ -16,49 +16,30 @@
 
 package org.apache.spark.sql.delta.uniform
 
-import org.apache.spark.SparkSessionSwitch
-import org.apache.spark.sql.{QueryTest, Row, SparkSession}
+import org.apache.spark.sql.{DataFrame, QueryTest, Row}
 import org.apache.spark.sql.test.SharedSparkSession
 
 /**
  * Base classes for all UniForm end-to-end test cases. Provides support to
- * write data with one SparkSession and read data from another for verification.
+ * write data with Delta SparkSession and read data for verification.
  *
  * People who need to write a new test suite should extend this class and
- * implement their test cases with [[write]] and [[read]]/[[readAndVerify]], which execute
- * with the writer session and reader session respectively.
+ * implement their test cases with [[write]] and [[readAndVerify]], which execute
+ * with the writer and reader respectively.
  *
  * Implementing classes need to correctly set up the reader and writer environments.
  * See [[UniFormE2EIcebergSuiteBase]] for existing examples.
  */
 trait UniFormE2ETest
   extends QueryTest
-  with SharedSparkSession
-  with SparkSessionSwitch {
-
-  private var _readerSparkSession: Option[SparkSession] = None
+  with SharedSparkSession {
 
   /**
    * Execute write operations through the writer SparkSession
    *
    * @param sqlText write query to the UniForm table
    */
-  protected def write(sqlText: String): Unit = spark.sql(sqlText)
-
-  /**
-   * Execute a sql with reader SparkSession and return the result.
-   * NOTE.
-   * 1. The caller should use the correct table name. See [[tableNameForRead]]
-   * 2. We eagerly collect the results because we will switch back to the
-   *    writer session after read.
-   * @param sqlText the read query against the UniForm table
-   * @return the read result
-   */
-  protected def read(sqlText: String): Array[Row] = {
-    withSession(readerSparkSession) { session =>
-      session.sql(sqlText).collect()
-    }
-  }
+  protected def write(sqlText: String): DataFrame = sql(sqlText)
 
   /**
    * Verify the result by reading from the reader session and compare the result to the expected.
@@ -69,28 +50,8 @@ trait UniFormE2ETest
    * @param expect expected result
    */
   protected def readAndVerify(
-      table: String, fields: String, orderBy: String, expect: Seq[Row]): Unit = {
-    val translated = tableNameForRead(table)
-    withSession(readerSparkSession) { session =>
-      checkAnswer(session.sql(s"SELECT $fields FROM $translated ORDER BY $orderBy"), expect)
-    }
-  }
-
-  protected def readerSparkSession: SparkSession = {
-    if (_readerSparkSession.isEmpty) {
-      // call to newSession makes sure
-      // [[SparkSession.getOrCreate]] gives a new session
-      // and [[SparkContext.getOrCreate]] uses a new context
-      _readerSparkSession = Some(newSession(createReaderSparkSession))
-    }
-    _readerSparkSession.get
-  }
-
-  /**
-   * Child classes should extend this to create reader SparkSession.
-   * @return sparkSession for reading data and verify result.
-   */
-  protected def createReaderSparkSession: SparkSession
+      table: String, fields: String, orderBy: String, expect: Seq[Row]): Unit =
+    throw new UnsupportedOperationException
 
   /**
    * Subclasses should override this method when the table name for reading

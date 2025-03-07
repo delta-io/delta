@@ -34,7 +34,7 @@ import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, JsonUtils}
 import io.delta.storage.LogStore
-import io.delta.storage.commit.{Commit, CommitCoordinatorClient, GetCommitsResponse}
+import io.delta.storage.commit.{Commit, CommitCoordinatorClient, GetCommitsResponse, TableDescriptor}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.FileStatus
 import org.apache.hadoop.fs.Path
@@ -49,6 +49,12 @@ import org.apache.spark.storage.StorageLevel
 class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with SharedSparkSession
   with DeltaSQLCommandTest with CoordinatedCommitsBaseSuite {
 
+  protected override def sparkConf = {
+    // Disable loading protocol and metadata from checksum file. Otherwise, creating a Snapshot
+    // won't touch the checkpoint file and we won't be able to retry.
+    super.sparkConf
+      .set(DeltaSQLConf.USE_PROTOCOL_AND_METADATA_FROM_CHECKSUM_ENABLED.key, "false")
+  }
 
   /**
    * Truncate an existing checkpoint file to create a corrupt file.
@@ -469,6 +475,7 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
       val newLogSegment = log.snapshot.logSegment
       assert(log.getLogSegmentAfterCommit(
         log.snapshot.tableCommitCoordinatorClientOpt,
+        catalogTableOpt = None,
         oldLogSegment.checkpointProvider) === newLogSegment)
       spark.range(10).write.format("delta").mode("append").save(path)
       val fs = log.logPath.getFileSystem(log.newDeltaHadoopConf())
@@ -477,17 +484,20 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
         val commitFile = fs.getFileStatus(commitFileProvider.deltaFile(1))
         val commit = new Commit(1, commitFile, 0)
         // Version exists, but not contiguous with old logSegment
-        log.getLogSegmentAfterCommit(1, None, oldLogSegment, commit, None, EmptyCheckpointProvider)
+        log.getLogSegmentAfterCommit(
+          1, None, oldLogSegment, commit, None, None, EmptyCheckpointProvider)
       }
       intercept[IllegalArgumentException] {
         val commitFile = fs.getFileStatus(commitFileProvider.deltaFile(0))
         val commit = new Commit(0, commitFile, 0)
 
         // Version exists, but newLogSegment already contains it
-        log.getLogSegmentAfterCommit(0, None, newLogSegment, commit, None, EmptyCheckpointProvider)
+        log.getLogSegmentAfterCommit(
+          0, None, newLogSegment, commit, None, None, EmptyCheckpointProvider)
       }
       assert(log.getLogSegmentAfterCommit(
         log.snapshot.tableCommitCoordinatorClientOpt,
+        catalogTableOpt = None,
         oldLogSegment.checkpointProvider) === log.snapshot.logSegment)
     }
   }
@@ -546,8 +556,7 @@ case class ConcurrentBackfillCommitCoordinatorClient(
 ) extends InMemoryCommitCoordinator(batchSize) {
   private val deferredBackfills: mutable.Map[Long, () => Unit] = mutable.Map.empty
   override def getCommits(
-      logPath: Path,
-      coordinatedCommitsTableConf: java.util.Map[String, String],
+      tableDesc: TableDescriptor,
       startVersion: java.lang.Long,
       endVersion: java.lang.Long): GetCommitsResponse = {
     if (ConcurrentBackfillCommitCoordinatorClient.beginConcurrentBackfills) {
@@ -556,7 +565,7 @@ case class ConcurrentBackfillCommitCoordinatorClient(
       deferredBackfills.keys.toSeq.sorted.foreach((version: Long) => deferredBackfills(version)())
       deferredBackfills.clear()
     }
-    super.getCommits(logPath, coordinatedCommitsTableConf, startVersion, endVersion)
+    super.getCommits(tableDesc, startVersion, endVersion)
   }
   override def backfill(
       logStore: LogStore,

@@ -41,6 +41,7 @@ object DeltaSourceUtils {
   val IDENTITY_INFO_START = "delta.identity.start"
   val IDENTITY_INFO_STEP = "delta.identity.step"
   val IDENTITY_INFO_HIGHWATERMARK = "delta.identity.highWaterMark"
+  val IDENTITY_COMMITINFO_TAG = "delta.identity.schemaUpdate"
 
   def isDeltaDataSourceName(name: String): Boolean = {
     name.toLowerCase(Locale.ROOT) == NAME || name.toLowerCase(Locale.ROOT) == ALT_NAME

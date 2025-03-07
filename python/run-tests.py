@@ -37,6 +37,9 @@ def test(root_dir, package):
         try:
             cmd = ["spark-submit",
                    "--driver-class-path=%s" % extra_class_path,
+                   "--repositories",
+                   ("https://maven-central.storage-download.googleapis.com/maven2/,"
+                       "https://repo1.maven.org/maven2/"),
                    "--packages", package, test_file]
             print("Running tests in %s\n=============" % test_file)
             print("Command: %s" % str(cmd))
@@ -59,7 +62,7 @@ def prepare(root_dir):
     sbt_path = path.join(root_dir, path.join("build", "sbt"))
     delete_if_exists(os.path.expanduser("~/.ivy2/cache/io.delta"))
     delete_if_exists(os.path.expanduser("~/.m2/repository/io/delta/"))
-    run_cmd([sbt_path, "clean", "publishM2"], stream_output=True)
+    run_cmd([sbt_path, "clean", "sparkGroup/publishM2"], stream_output=True)
 
     # Get current release which is required to be loaded
     version = '0.0.0'

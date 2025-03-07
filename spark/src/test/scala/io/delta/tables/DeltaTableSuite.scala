@@ -22,8 +22,9 @@ import java.util.Locale
 import scala.language.postfixOps
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.{AppendOnlyTableFeature, DeltaIllegalArgumentException, DeltaLog, DeltaTableFeatureException, FakeFileSystem, InvariantsTableFeature, TestReaderWriterFeature, TestWriterFeature}
+import org.apache.spark.sql.delta.{AppendOnlyTableFeature, DeltaIllegalArgumentException, DeltaLog, DeltaTableFeatureException, FakeFileSystem, InvariantsTableFeature, TestReaderWriterFeature, TestRemovableReaderWriterFeature, TestRemovableWriterFeature, TestWriterFeature}
 import org.apache.spark.sql.delta.actions.{ Metadata, Protocol }
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LocalLogStore
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -208,8 +209,15 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
 
   import testImplicits._
 
-  protected override def sparkConf =
-    super.sparkConf.set("spark.delta.logStore.fake.impl", classOf[LocalLogStore].getName)
+  protected override def sparkConf = {
+    // The drop feature test below is targeting the drop feature with history truncation
+    // implementation. The fast drop feature implementation adds a new writer feature when dropping
+    // a feature and also does not require any waiting time. The fast drop feature implementation
+    // is tested extensively in the DeltaFastDropFeatureSuite.
+    super.sparkConf
+      .set(DeltaSQLConf.FAST_DROP_FEATURE_ENABLED.key, "false")
+      .set("spark.delta.logStore.fake.impl", classOf[LocalLogStore].getName)
+  }
 
   /**
    * Create Hadoop file system options for `FakeFileSystem`. If Delta doesn't pick up them,
@@ -242,8 +250,12 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
     "addFeatureSupport",
     "as",
     "alias",
+    "clone",
+    "cloneAtTimestamp",
+    "cloneAtVersion",
     "delete",
     "detail",
+    "dropFeatureSupport",
     "generate",
     "history",
     "merge",
@@ -422,6 +434,80 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
     }
   }
 
+  test("clone - with filesystem options") {
+    withTempDir { dir =>
+      val baseDir = fakeFileSystemPath(dir)
+
+      val srcDir = new File(baseDir, "source").getCanonicalPath
+      val dstDir = new File(baseDir, "destination").getCanonicalPath
+
+      spark.range(10).write.options(fakeFileSystemOptions).format("delta").save(srcDir)
+
+      val srcTable =
+        io.delta.tables.DeltaTable.forPath(spark, srcDir, fakeFileSystemOptions)
+      srcTable.clone(dstDir, isShallow = true)
+
+      val srcLog = DeltaLog.forTable(spark, new Path(srcDir), fakeFileSystemOptions)
+      val dstLog = DeltaLog.forTable(spark, new Path(dstDir), fakeFileSystemOptions)
+
+      checkAnswer(
+        spark.baseRelationToDataFrame(srcLog.createRelation()),
+        spark.baseRelationToDataFrame(dstLog.createRelation())
+      )
+    }
+  }
+
+  test("cloneAtVersion/timestamp - with filesystem options") {
+    Seq(true, false).foreach { cloneWithVersion =>
+      withTempDir { dir =>
+        val baseDir = fakeFileSystemPath(dir)
+        val fsOptions = fakeFileSystemOptions
+
+        val srcDir = new File(baseDir, "source").getCanonicalPath
+        val dstDir = new File(baseDir, "destination").getCanonicalPath
+
+        val df1 = Seq(1, 2, 3).toDF("id")
+        val df2 = Seq(4, 5).toDF("id")
+        val df3 = Seq(6, 7).toDF("id")
+
+        // version 0.
+        df1.write.format("delta").options(fsOptions).save(srcDir)
+
+        // version 1.
+        df2.write.format("delta").options(fsOptions).mode("append").save(srcDir)
+
+        // version 2.
+        df3.write.format("delta").options(fsOptions).mode("append").save(srcDir)
+
+        val srcTable =
+          io.delta.tables.DeltaTable.forPath(spark, srcDir, fakeFileSystemOptions)
+
+        if (cloneWithVersion) {
+          srcTable.cloneAtVersion(0, dstDir, isShallow = true)
+        } else {
+          // clone with timestamp.
+          //
+          // set the time to first file with a early time and verify the delta table can be
+          // restored to it.
+          val desiredTime = "1983-01-01"
+          val format = new java.text.SimpleDateFormat("yyyy-MM-dd")
+          val time = format.parse(desiredTime).getTime
+
+          val logPath = new Path(srcDir, "_delta_log")
+          val file = new File(FileNames.unsafeDeltaFile(logPath, 0).toString)
+          assert(file.setLastModified(time))
+          srcTable.cloneAtTimestamp(desiredTime, dstDir, isShallow = true)
+        }
+
+        val dstLog = DeltaLog.forTable(spark, new Path(dstDir), fakeFileSystemOptions)
+
+        checkAnswer(
+          df1,
+          spark.baseRelationToDataFrame(dstLog.createRelation())
+        )
+      }
+    }
+  }
 
   test("optimize - with filesystem options") {
     withTempDir { dir =>
@@ -554,8 +640,7 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
     }
   }
 
-  test(
-    "addFeatureSupport - with filesystem options.") {
+  test("addFeatureSupport - with filesystem options.") {
     withTempDir { dir =>
       val path = fakeFileSystemPath(dir)
       val fsOptions = fakeFileSystemOptions
@@ -590,6 +675,70 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
       assert(intercept[DeltaTableFeatureException] {
         table.addFeatureSupport("__invalid_feature__")
       }.getErrorClass === "DELTA_UNSUPPORTED_FEATURES_IN_CONFIG")
+    }
+  }
+
+  test("dropFeatureSupport - with filesystem options.") {
+    withTempDir { dir =>
+      val path = fakeFileSystemPath(dir)
+      val fsOptions = fakeFileSystemOptions
+
+      // create a table with a default Protocol.
+      val testSchema = spark.range(1).schema
+      val log = DeltaLog.forTable(spark, new Path(path), fsOptions)
+      log.createLogDirectoriesIfNotExists()
+      log.store.write(
+        FileNames.unsafeDeltaFile(log.logPath, 0),
+        Iterator(Metadata(schemaString = testSchema.json).json, Protocol(1, 2).json),
+        overwrite = false,
+        log.newDeltaHadoopConf())
+      log.update()
+
+      // update the protocol to support a writer feature.
+      val table = DeltaTable.forPath(spark, path, fsOptions)
+      table.addFeatureSupport(TestRemovableWriterFeature.name)
+      assert(log.update().protocol === Protocol(1, 7).withFeatures(Seq(
+        AppendOnlyTableFeature,
+        InvariantsTableFeature,
+        TestRemovableWriterFeature)))
+
+      // Attempt truncating the history when dropping a feature that is not required.
+      // This verifies the truncateHistory option was correctly passed.
+      assert(intercept[DeltaTableFeatureException] {
+        table.dropFeatureSupport("testRemovableWriter", truncateHistory = true)
+      }.getErrorClass === "DELTA_FEATURE_DROP_HISTORY_TRUNCATION_NOT_ALLOWED")
+
+      // Drop feature.
+      table.dropFeatureSupport(TestRemovableWriterFeature.name)
+      // After dropping the feature we should return back to the original protocol.
+      assert(log.update().protocol === Protocol(1, 2))
+
+      table.addFeatureSupport(TestRemovableReaderWriterFeature.name)
+      assert(
+        log.update().protocol === Protocol(3, 7).withFeatures(Seq(
+          AppendOnlyTableFeature,
+          InvariantsTableFeature,
+          TestRemovableReaderWriterFeature)))
+
+      // Drop feature.
+      table.dropFeatureSupport(TestRemovableReaderWriterFeature.name)
+      // After dropping the feature we should return back to the original protocol.
+      assert(log.update().protocol === Protocol(1, 2))
+
+      // Try to drop an unsupported feature.
+      assert(intercept[DeltaTableFeatureException] {
+        table.dropFeatureSupport("__invalid_feature__")
+      }.getErrorClass === "DELTA_FEATURE_DROP_UNSUPPORTED_CLIENT_FEATURE")
+
+      // Try to drop a feature that is not present in the protocol.
+      assert(intercept[DeltaTableFeatureException] {
+        table.dropFeatureSupport(TestRemovableReaderWriterFeature.name)
+      }.getErrorClass === "DELTA_FEATURE_DROP_FEATURE_NOT_PRESENT")
+
+      // Try to drop a non-removable feature.
+      assert(intercept[DeltaTableFeatureException] {
+        table.dropFeatureSupport(TestReaderWriterFeature.name)
+      }.getErrorClass === "DELTA_FEATURE_DROP_NONREMOVABLE_FEATURE")
     }
   }
 

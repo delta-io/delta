@@ -18,6 +18,8 @@ package org.apache.spark.sql.delta
 
 import java.util.{HashMap, Locale}
 
+import scala.collection.JavaConverters._
+
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.hooks.AutoCompactType
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -217,7 +219,6 @@ trait DeltaConfigsBase extends DeltaLogging {
       sqlConfs: SQLConf,
       tableConf: Map[String, String],
       ignoreProtocolConfsOpt: Option[Boolean] = None): Map[String, String] = {
-    import scala.collection.JavaConverters._
 
     val ignoreProtocolConfs =
       ignoreProtocolConfsOpt.getOrElse(ignoreProtocolDefaultsIsSet(sqlConfs, tableConf))
@@ -317,6 +318,13 @@ trait DeltaConfigsBase extends DeltaLogging {
   }
 
   /**
+   * Return all Delta configurations, including both set and unset ones.
+   */
+  def getAllConfigs: Map[String, DeltaConfig[_]] = {
+    entries.asScala.toMap
+  }
+
+  /**
    * The protocol reader version modelled as a table property. This property is *not* stored as
    * a table property in the `Metadata` action. It is stored as its own action. Having it modelled
    * as a table property makes it easier to upgrade, and view the version.
@@ -397,6 +405,37 @@ trait DeltaConfigsBase extends DeltaLogging {
     _.toInt,
     _ > 0,
     "needs to be a positive integer.")
+
+  /**
+   * This is the property that describes the table redirection detail. It is a JSON string format
+   * of the `TableRedirectConfiguration` class, which includes following attributes:
+   * - type(String): The type of redirection.
+   * - state(String): The current state of the redirection:
+   *                  ENABLE-REDIRECT-IN-PROGRESS, REDIRECT-READY, DROP-REDIRECT-IN-PROGRESS.
+   * - spec(JSON String): The specification of accessing redirect destination table. This is free
+   *                      form json object. Each delta service provider can customize its own
+   *                      implementation.
+   */
+  val REDIRECT_READER_WRITER: DeltaConfig[Option[String]] =
+    buildConfig[Option[String]](
+      "redirectReaderWriter-preview",
+      null,
+      v => Option(v),
+      _ => true,
+      "A JSON representation of the TableRedirectConfiguration class, which contains all " +
+        "information of redirect reader writer feature.")
+
+  /**
+   * This table feature is same as REDIRECT_READER_WRITER except it is a writer only table feature.
+   */
+  val REDIRECT_WRITER_ONLY: DeltaConfig[Option[String]] =
+    buildConfig[Option[String]](
+      "redirectWriterOnly-preview",
+      null,
+      v => Option(v),
+      _ => true,
+      "A JSON representation of the TableRedirectConfiguration class, which contains all " +
+        "information of redirect writer only feature.")
 
   /**
    * Enable auto compaction for a Delta table. When enabled, we will check if files already
@@ -716,6 +755,22 @@ trait DeltaConfigsBase extends DeltaLogging {
     helpMessage = "needs to be a boolean."
   )
 
+  val CAST_ICEBERG_TIME_TYPE = buildConfig[Boolean](
+    key = "castIcebergTimeType",
+    defaultValue = "false",
+    fromString = _.toBoolean,
+    validationFunction = _ => true,
+    helpMessage = "Casting Iceberg TIME type to Spark Long type enabled"
+  )
+
+  val IGNORE_ICEBERG_BUCKET_PARTITION = buildConfig[Boolean](
+    key = "ignoreIcebergBucketPartition",
+    defaultValue = "false",
+    fromString = _.toBoolean,
+    validationFunction = _ => true,
+    helpMessage = "Ignore Iceberg bucket partition, which means " +
+      "converting source iceberg table to a non-partition delta table"
+  )
   /**
    * Enable optimized writes into a Delta table. Optimized writes adds an adaptive shuffle before
    * the write to write compacted files into a Delta table during a write.
@@ -766,7 +821,7 @@ trait DeltaConfigsBase extends DeltaLogging {
       " commit-coordinator.")
 
   val IN_COMMIT_TIMESTAMPS_ENABLED = buildConfig[Boolean](
-    "enableInCommitTimestamps-preview",
+    "enableInCommitTimestamps",
     false.toString,
     _.toBoolean,
     validationFunction = _ => true,
@@ -778,7 +833,7 @@ trait DeltaConfigsBase extends DeltaLogging {
    * inCommitTimestamps were enabled.
    */
   val IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION = buildConfig[Option[Long]](
-    "inCommitTimestampEnablementVersion-preview",
+    "inCommitTimestampEnablementVersion",
     null,
     v => Option(v).map(_.toLong),
     validationFunction = _ => true,
@@ -791,11 +846,29 @@ trait DeltaConfigsBase extends DeltaLogging {
    * the version specified in [[IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION]].
    */
   val IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP = buildConfig[Option[Long]](
-    "inCommitTimestampEnablementTimestamp-preview",
+    "inCommitTimestampEnablementTimestamp",
     null,
     v => Option(v).map(_.toLong),
     validationFunction = _ => true,
     "needs to be a long.")
+
+  /**
+   * This property is used by CheckpointProtectionTableFeature and denotes the
+   * version up to which the checkpoints are required to be cleaned up only together with the
+   * corresponding commits. If this is not possible, and metadata cleanup creates a new checkpoint
+   * prior to requireCheckpointProtectionBeforeVersion, it should validate write support against
+   * all protocols included in the commits that are being removed, or else abort. This is needed
+   * to make sure that the writer understands how to correctly create a checkpoint for the
+   * historic commit.
+   *
+   * Note, this is an internal config and should never be manually altered.
+   */
+  val REQUIRE_CHECKPOINT_PROTECTION_BEFORE_VERSION = buildConfig[Long](
+    "requireCheckpointProtectionBeforeVersion",
+    "0",
+    _.toLong,
+    _ >= 0,
+    "needs to be greater or equal to zero.")
 }
 
 object DeltaConfigs extends DeltaConfigsBase

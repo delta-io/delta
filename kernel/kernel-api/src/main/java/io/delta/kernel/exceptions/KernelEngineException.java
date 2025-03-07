@@ -17,14 +17,12 @@ package io.delta.kernel.exceptions;
 
 import io.delta.kernel.engine.Engine;
 
-/**
- * Throws when the {@link Engine} encountered an error while executing an operation.
- */
+/** Throws when the {@link Engine} encountered an error while executing an operation. */
 public class KernelEngineException extends RuntimeException {
-    private static final String msgTemplate = "Encountered an error from the underlying engine " +
-            "implementation while trying to %s: %s";
+  private static final String msgTemplate =
+      "Encountered an error from the underlying engine " + "implementation while trying to %s: %s";
 
-    public KernelEngineException(String attemptedOperation, Throwable cause) {
-        super(String.format(msgTemplate, attemptedOperation, cause.getMessage()), cause);
-    }
+  public KernelEngineException(String attemptedOperation, Throwable cause) {
+    super(String.format(msgTemplate, attemptedOperation, cause.getMessage()), cause);
+  }
 }

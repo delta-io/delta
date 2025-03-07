@@ -372,7 +372,7 @@ trait OptimizeCompactionSuiteBase extends QueryTest
 
       // we have only 1 partition here
       val filesInEachPartitionBefore = groupInputFilesByPartition(
-        fileListBefore.map(_.path).toArray, deltaLogBefore)
+        fileListBefore.map(_.toPath.toString).toArray, deltaLogBefore)
 
       // There exist at least one file in each partition
       assert(filesInEachPartitionBefore.forall(_._2.length > 1))

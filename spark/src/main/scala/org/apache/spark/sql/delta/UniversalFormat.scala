@@ -109,6 +109,7 @@ object UniversalFormat extends DeltaLogging {
    *         updates need to be applied, will return None.
    */
   def enforceInvariantsAndDependencies(
+      spark: SparkSession,
       snapshot: Snapshot,
       newestProtocol: Protocol,
       newestMetadata: Metadata,
@@ -116,7 +117,7 @@ object UniversalFormat extends DeltaLogging {
       actions: Seq[Action]): (Option[Protocol], Option[Metadata]) = {
     enforceHudiDependencies(newestMetadata, snapshot)
     enforceIcebergInvariantsAndDependencies(
-      snapshot, newestProtocol, newestMetadata, operation, actions)
+      spark, snapshot, newestProtocol, newestMetadata, operation, actions)
   }
 
   /**
@@ -151,6 +152,7 @@ object UniversalFormat extends DeltaLogging {
    *         updates need to be applied, will return None.
    */
   def enforceIcebergInvariantsAndDependencies(
+      spark: SparkSession,
       snapshot: Snapshot,
       newestProtocol: Protocol,
       newestMetadata: Metadata,
@@ -198,31 +200,30 @@ object UniversalFormat extends DeltaLogging {
     var protocolToCheck = uniformProtocol.getOrElse(newestProtocol)
     var metadataToCheck = uniformMetadata.getOrElse(newestMetadata)
     changed = uniformProtocol.nonEmpty || uniformMetadata.nonEmpty
+    var protocolUpdate: Option[Protocol] = None
+    var metadataUpdate: Option[Metadata] = None
 
-    val (v1protocolUpdate, v1metadataUpdate) = IcebergCompatV1.enforceInvariantsAndDependencies(
-      snapshot,
-      newestProtocol = protocolToCheck,
-      newestMetadata = metadataToCheck,
-      operation,
-      actions
+    val compatChecks: Seq[
+      (SparkSession, Snapshot, Protocol, Metadata, Option[DeltaOperations.Operation],
+        Seq[Action]) => (Option[Protocol], Option[Metadata])] = Seq(
+      IcebergCompatV1.enforceInvariantsAndDependencies,
+      IcebergCompatV2.enforceInvariantsAndDependencies
     )
-    protocolToCheck = v1protocolUpdate.getOrElse(protocolToCheck)
-    metadataToCheck = v1metadataUpdate.getOrElse(metadataToCheck)
-    changed ||= v1protocolUpdate.nonEmpty || v1metadataUpdate.nonEmpty
-
-    val (v2protocolUpdate, v2metadataUpdate) = IcebergCompatV2.enforceInvariantsAndDependencies(
-      snapshot,
-      newestProtocol = protocolToCheck,
-      newestMetadata = metadataToCheck,
-      operation,
-      actions
-    )
-    changed ||= v2protocolUpdate.nonEmpty || v2metadataUpdate.nonEmpty
+    compatChecks.foreach { compatCheck =>
+      val updates = compatCheck(
+        spark, snapshot, protocolToCheck, metadataToCheck, operation, actions
+      )
+      protocolUpdate = updates._1
+      metadataUpdate = updates._2
+      protocolToCheck = protocolUpdate.getOrElse(protocolToCheck)
+      metadataToCheck = metadataUpdate.getOrElse(metadataToCheck)
+      changed ||= protocolUpdate.nonEmpty || metadataUpdate.nonEmpty
+    }
 
     if (changed) {
       (
-        v2protocolUpdate.orElse(Some(protocolToCheck)),
-        v2metadataUpdate.orElse(Some(metadataToCheck))
+        protocolUpdate.orElse(Some(protocolToCheck)),
+        metadataUpdate.orElse(Some(metadataToCheck))
       )
     } else {
       (None, None)
@@ -238,12 +239,14 @@ object UniversalFormat extends DeltaLogging {
    *         otherwise the original configuration.
    */
   def enforceDependenciesInConfiguration(
+      spark: SparkSession,
       configuration: Map[String, String],
       snapshot: Snapshot): Map[String, String] = {
     var metadata = snapshot.metadata.copy(configuration = configuration)
 
     // Check UniversalFormat related property dependencies
     val (_, universalMetadata) = UniversalFormat.enforceInvariantsAndDependencies(
+      spark,
       snapshot,
       newestProtocol = snapshot.protocol,
       newestMetadata = metadata,
@@ -298,7 +301,7 @@ abstract class UniversalFormatConverter(spark: SparkSession) {
    */
   def enqueueSnapshotForConversion(
     snapshotToConvert: Snapshot,
-    txn: OptimisticTransactionImpl): Unit
+    txn: DeltaTransaction): Unit
 
   /**
    * Perform a blocking conversion when performing an OptimisticTransaction
@@ -311,7 +314,7 @@ abstract class UniversalFormatConverter(spark: SparkSession) {
    * @return Converted Delta version and commit timestamp
    */
   def convertSnapshot(
-    snapshotToConvert: Snapshot, txn: OptimisticTransactionImpl): Option[(Long, Long)]
+    snapshotToConvert: Snapshot, txn: DeltaTransaction): Option[(Long, Long)]
 
   /**
    * Perform a blocking conversion for the given catalogTable
@@ -330,4 +333,14 @@ abstract class UniversalFormatConverter(spark: SparkSession) {
    * @return None if no previous conversion found
    */
   def loadLastDeltaVersionConverted(snapshot: Snapshot, table: CatalogTable): Option[Long]
+}
+
+object IcebergConstants {
+  val ICEBERG_TBLPROP_METADATA_LOCATION = "metadata_location"
+  val ICEBERG_PROVIDER = "iceberg"
+  val ICEBERG_NAME_MAPPING_PROPERTY = "schema.name-mapping.default"
+}
+
+object HudiConstants {
+  val HUDI_PROVIDER = "hudi"
 }

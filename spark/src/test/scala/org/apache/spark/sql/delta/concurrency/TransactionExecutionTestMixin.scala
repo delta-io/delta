@@ -118,12 +118,90 @@ trait TransactionExecutionTestMixin {
     observer.phases.preparePhase.entryBarrier.unblock()
   }
 
+  /**
+   * Unblocks the `commitPhase` and `backfillPhase` for [[TransactionObserver]].
+   */
+  def unblockCommit(observer: TransactionObserver): Unit = {
+    observer.phases.commitPhase.entryBarrier.unblock()
+    observer.phases.backfillPhase.entryBarrier.unblock()
+    observer.phases.postCommitPhase.entryBarrier.unblock()
+  }
+
   /** Unblocks all phases for [[TransactionObserver]] so that corresponding query can finish. */
   def unblockAllPhases(observer: TransactionObserver): Unit = {
     observer.phases.initialPhase.entryBarrier.unblock()
     observer.phases.preparePhase.entryBarrier.unblock()
     observer.phases.commitPhase.entryBarrier.unblock()
     observer.phases.backfillPhase.entryBarrier.unblock()
+    observer.phases.postCommitPhase.entryBarrier.unblock()
+  }
+
+  def waitForPrecommit(observer: TransactionObserver): Unit =
+    busyWaitFor(observer.phases.preparePhase.hasEntered, timeout)
+
+  def waitForCommit(observer: TransactionObserver): Unit = {
+    busyWaitFor(observer.phases.commitPhase.hasLeft, timeout)
+    busyWaitFor(observer.phases.backfillPhase.hasLeft, timeout)
+    busyWaitFor(observer.phases.postCommitPhase.hasLeft, timeout)
+  }
+
+  /**
+   * Prepare and commit the transaction managed by the given observer.
+   * If nextObserver is set, we need to manually call backfillPhase.leave() to advance to the
+   * nextObserver. Details in [[TransactionObserver.waitForCommitPhaseAndAdvanceToNextObserver]].
+   */
+  private def prepareAndCommitBase(
+      observer: TransactionObserver, hasNextObserver: Boolean): Unit = {
+    unblockUntilPreCommit(observer)
+    waitForPrecommit(observer)
+    unblockCommit(observer)
+    if (hasNextObserver) {
+      observer.phases.postCommitPhase.leave()
+    }
+    waitForCommit(observer)
+  }
+
+  /**
+   * Prepare and commit the transaction managed by the given observer.
+   */
+  def prepareAndCommit(observer: TransactionObserver): Unit = {
+    prepareAndCommitBase(observer, hasNextObserver = false)
+  }
+
+  /**
+   * Prepare and commit the transaction managed by the given observer which has nextObserver set.
+   */
+  def prepareAndCommitWithNextObserverSet(observer: TransactionObserver): Unit = {
+    prepareAndCommitBase(observer, hasNextObserver = true)
+  }
+
+  /**
+   * Run 2 transactions A, B with following order:
+   *
+   * t1 -------------------------------------- TxnA starts
+   * t2 --------- TxnB starts and commits (no transaction observer)
+   * t6 -------------------------------------- TxnA commits
+   *
+   * This function returns futures for each of the query runs.
+   */
+  def runTxnsWithOrder__A_Start__B__A_end_without_observer_on_B(
+      txnA: () => Array[Row],
+      txnB: () => Array[Row]): Future[Array[Row]] = {
+    val Seq(futureA) =
+      runFunctionsWithOrderingFromObserver(Seq(txnA)) {
+        case (observerA :: Nil) =>
+          // A starts
+          unblockUntilPreCommit(observerA)
+          busyWaitFor(observerA.phases.preparePhase.hasEntered, timeout)
+
+          // B starts and finishes
+          txnB()
+
+          // A commits
+          unblockCommit(observerA)
+          waitForCommit(observerA)
+      }
+    futureA
   }
 
   /**
@@ -147,13 +225,15 @@ trait TransactionExecutionTestMixin {
 
           // B starts and commits
           unblockAllPhases(observerB)
-          busyWaitFor(observerB.phases.backfillPhase.hasLeft, timeout)
+          busyWaitFor(observerB.phases.postCommitPhase.hasLeft, timeout)
 
           // A commits
           observerA.phases.commitPhase.entryBarrier.unblock()
           busyWaitFor(observerA.phases.commitPhase.hasLeft, timeout)
           observerA.phases.backfillPhase.entryBarrier.unblock()
           busyWaitFor(observerA.phases.backfillPhase.hasLeft, timeout)
+          observerA.phases.postCommitPhase.entryBarrier.unblock()
+          busyWaitFor(observerA.phases.postCommitPhase.hasLeft, timeout)
       }
     (futureA, futureB)
   }
@@ -185,17 +265,19 @@ trait TransactionExecutionTestMixin {
 
           // B starts and commits
           unblockAllPhases(observerB)
-          busyWaitFor(observerB.phases.backfillPhase.hasLeft, timeout)
+          busyWaitFor(observerB.phases.postCommitPhase.hasLeft, timeout)
 
           // C starts and commits
           unblockAllPhases(observerC)
-          busyWaitFor(observerC.phases.backfillPhase.hasLeft, timeout)
+          busyWaitFor(observerC.phases.postCommitPhase.hasLeft, timeout)
 
           // A commits
           observerA.phases.commitPhase.entryBarrier.unblock()
           busyWaitFor(observerA.phases.commitPhase.hasLeft, timeout)
           observerA.phases.backfillPhase.entryBarrier.unblock()
           busyWaitFor(observerA.phases.backfillPhase.hasLeft, timeout)
+          observerA.phases.postCommitPhase.entryBarrier.unblock()
+          busyWaitFor(observerA.phases.postCommitPhase.hasLeft, timeout)
       }
     (futureA, futureB, futureC)
   }

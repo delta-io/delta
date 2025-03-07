@@ -15,25 +15,22 @@
  */
 package io.delta.kernel.internal.util;
 
-/**
- * A clock whose time can be manually set and modified.
- */
+/** A clock whose time can be manually set and modified. */
 public class ManualClock implements Clock {
-    private long timeMillis;
-    public ManualClock(long timeMillis) {
-        this.timeMillis = timeMillis;
-    }
+  private long timeMillis;
 
-    /**
-     * @param timeToSet new time (in milliseconds) that the clock should represent
-     */
-    public synchronized void setTime(long timeToSet) {
-        this.timeMillis = timeToSet;
-        this.notifyAll();
-    }
+  public ManualClock(long timeMillis) {
+    this.timeMillis = timeMillis;
+  }
 
-    @Override
-    public long getTimeMillis() {
-        return timeMillis;
-    }
+  /** @param timeToSet new time (in milliseconds) that the clock should represent */
+  public synchronized void setTime(long timeToSet) {
+    this.timeMillis = timeToSet;
+    this.notifyAll();
+  }
+
+  @Override
+  public long getTimeMillis() {
+    return timeMillis;
+  }
 }

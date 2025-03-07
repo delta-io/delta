@@ -16,9 +16,8 @@
 
 package io.delta.kernel.types;
 
-import java.util.Objects;
-
 import io.delta.kernel.annotation.Evolving;
+import java.util.Objects;
 
 /**
  * Represent {@code array} data type
@@ -27,62 +26,53 @@ import io.delta.kernel.annotation.Evolving;
  */
 @Evolving
 public class ArrayType extends DataType {
-    private final StructField elementField;
+  private final StructField elementField;
 
-    public ArrayType(DataType elementType, boolean containsNull) {
-        this.elementField = new StructField("element", elementType, containsNull);
-    }
+  public ArrayType(DataType elementType, boolean containsNull) {
+    this.elementField = new StructField("element", elementType, containsNull);
+  }
 
-    public ArrayType(StructField elementField) {
-        this.elementField = elementField;
-    }
+  public ArrayType(StructField elementField) {
+    this.elementField = elementField;
+  }
 
-    public StructField getElementField() {
-        return elementField;
-    }
+  public StructField getElementField() {
+    return elementField;
+  }
 
-    public DataType getElementType() {
-        return elementField.getDataType();
-    }
+  public DataType getElementType() {
+    return elementField.getDataType();
+  }
 
-    public boolean containsNull() {
-        return elementField.isNullable();
-    }
+  public boolean containsNull() {
+    return elementField.isNullable();
+  }
 
-    @Override
-    public boolean equivalent(DataType dataType) {
-        return dataType instanceof ArrayType &&
-            ((ArrayType) dataType).getElementType().equivalent(getElementType());
-    }
+  @Override
+  public boolean equivalent(DataType dataType) {
+    return dataType instanceof ArrayType
+        && ((ArrayType) dataType).getElementType().equivalent(getElementType());
+  }
 
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) {
-            return true;
-        }
-        if (o == null || getClass() != o.getClass()) {
-            return false;
-        }
-        ArrayType arrayType = (ArrayType) o;
-        return Objects.equals(elementField, arrayType.elementField);
+  @Override
+  public boolean equals(Object o) {
+    if (this == o) {
+      return true;
     }
+    if (o == null || getClass() != o.getClass()) {
+      return false;
+    }
+    ArrayType arrayType = (ArrayType) o;
+    return Objects.equals(elementField, arrayType.elementField);
+  }
 
-    @Override
-    public int hashCode() {
-        return Objects.hash(elementField);
-    }
+  @Override
+  public int hashCode() {
+    return Objects.hash(elementField);
+  }
 
-    @Override
-    public String toJson() {
-        return String.format("{" +
-            "\"type\": \"array\"," +
-            "\"elementType\": %s," +
-            "\"containsNull\": %s" +
-            "}", getElementType().toJson(), containsNull());
-    }
-
-    @Override
-    public String toString() {
-        return "array[" + getElementType() + "]";
-    }
+  @Override
+  public String toString() {
+    return "array[" + getElementType() + "]";
+  }
 }

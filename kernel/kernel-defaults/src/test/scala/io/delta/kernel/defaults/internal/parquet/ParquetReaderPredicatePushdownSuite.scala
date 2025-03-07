@@ -15,20 +15,21 @@
  */
 package io.delta.kernel.defaults.internal.parquet
 
-import io.delta.golden.GoldenTableUtils.goldenTablePath
-import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestRow}
-import io.delta.kernel.expressions.Literal.{ofBinary, ofBoolean, ofDate, ofDouble, ofFloat, ofInt, ofLong, ofNull, ofString}
-import org.scalatest.BeforeAndAfterAll
-import org.scalatest.funsuite.AnyFunSuite
-import io.delta.kernel.expressions._
-import io.delta.kernel.internal.util.InternalUtils.daysSinceEpoch
-import io.delta.kernel.types.{IntegerType, StructType}
-import org.apache.spark.sql.{Row, types => sparktypes}
-
 import java.nio.file.Files
 import java.sql.Date
 import java.util.Optional
+
+import io.delta.golden.GoldenTableUtils.goldenTablePath
+import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestRow}
+import io.delta.kernel.expressions._
+import io.delta.kernel.expressions.Literal.{ofBinary, ofBoolean, ofDate, ofDouble, ofFloat, ofInt, ofLong, ofNull, ofString}
+import io.delta.kernel.internal.util.InternalUtils.daysSinceEpoch
 import io.delta.kernel.test.VectorTestUtils
+import io.delta.kernel.types.{IntegerType, StructType}
+
+import org.apache.spark.sql.{types => sparktypes, Row}
+import org.scalatest.BeforeAndAfterAll
+import org.scalatest.funsuite.AnyFunSuite
 
 class ParquetReaderPredicatePushdownSuite extends AnyFunSuite
     with BeforeAndAfterAll with ParquetSuiteBase with VectorTestUtils with ExpressionTestUtils {
@@ -78,8 +79,7 @@ class ParquetReaderPredicatePushdownSuite extends AnyFunSuite
         sparktypes.StructField("binaryCol", sparktypes.BinaryType),
         sparktypes.StructField("truncatedBinaryCol", sparktypes.BinaryType),
         sparktypes.StructField("booleanCol", sparktypes.BooleanType),
-        sparktypes.StructField("dateCol", sparktypes.DateType)
-      ).toArray
+        sparktypes.StructField("dateCol", sparktypes.DateType)).toArray
     }
 
     // supported data type columns as top level columns
@@ -155,8 +155,7 @@ class ParquetReaderPredicatePushdownSuite extends AnyFunSuite
         // dateCol
         if (rowGroupIdx == 11) null
         else if (rowGroupIdx == 0) new Date(rowId * 86400000L)
-        else (if (rowId % 61 != 0) new Date(rowId * 86400000L) else null)
-      )
+        else (if (rowId % 61 != 0) new Date(rowId * 86400000L) else null))
     }
 
     Seq.range(rowGroupIdx * 100, (rowGroupIdx + 1) * 100).map { rowId =>
@@ -165,8 +164,7 @@ class ParquetReaderPredicatePushdownSuite extends AnyFunSuite
           Seq(
             Row.fromSeq(values(rowId)), // nested column values
             rowId // row id to help with the test results verification
-          )
-      )
+          ))
     }
   }
 
@@ -226,14 +224,17 @@ class ParquetReaderPredicatePushdownSuite extends AnyFunSuite
       eq(col("nested", "booleanCol"), ofBoolean(true)),
       // expected row groups
       // 1 has mix of true/false (included), 10 has all nulls (not included)
-      Seq(0, 1, 2, 4, 6, 8, 12, 14, 16, 18)
-    ),
+      Seq(0, 1, 2, 4, 6, 8, 12, 14, 16, 18)),
     // filter on date type column
     (
-      lte(col("dateCol"), ofDate(
-        daysSinceEpoch(new Date(500 * 86400000L /* millis in a day */)))),
-      lte(col("nested", "dateCol"), ofDate(
-        daysSinceEpoch(new Date(500 * 86400000L /* millis in a day */)))),
+      lte(
+        col("dateCol"),
+        ofDate(
+          daysSinceEpoch(new Date(500 * 86400000L /* millis in a day */ )))),
+      lte(
+        col("nested", "dateCol"),
+        ofDate(
+          daysSinceEpoch(new Date(500 * 86400000L /* millis in a day */ )))),
       Seq(0, 1, 2, 3, 4, 5) // expected row groups
     ),
     // filter on string type column
@@ -260,8 +261,7 @@ class ParquetReaderPredicatePushdownSuite extends AnyFunSuite
       lte(col("truncatedBinaryCol"), ofBinary("%060d".format(600).getBytes)),
       lte(col("nested", "truncatedBinaryCol"), ofBinary("%060d".format(600).getBytes)),
       Seq(0, 1, 2, 3, 4, 5, 6) // expected row groups
-    )
-  ).foreach {
+    )).foreach {
     // boolean, int32, data, int64, float, double, binary, string
     // Test table has 20 row groups, each with 100 rows.
     case (predicateTopLevelCol, predicateNestedCol, expRowGroups) =>
@@ -370,8 +370,7 @@ class ParquetReaderPredicatePushdownSuite extends AnyFunSuite
   test("OR support") {
     val predicate = or(
       eq(col("intCol"), ofInt(20)),
-      eq(col("longCol"), ofLong(1600))
-    )
+      eq(col("longCol"), ofLong(1600)))
     val actData = readUsingKernel(testParquetTable, predicate)
     checkAnswer(actData, generateExpData(Seq(0, 15)))
   }
@@ -379,8 +378,7 @@ class ParquetReaderPredicatePushdownSuite extends AnyFunSuite
   test("one end of the OR is not convertible") {
     val predicate = or(
       eq(col("intCol"), ofInt(1599)),
-      eq(col("nonExistentCol"), ofInt(1600))
-    )
+      eq(col("nonExistentCol"), ofInt(1600)))
     assertConvertedFilterIsEmpty(predicate, testParquetTable)
 
     val actData = readUsingKernel(testParquetTable, predicate)
@@ -391,8 +389,7 @@ class ParquetReaderPredicatePushdownSuite extends AnyFunSuite
   test("AND support") {
     val predicate = and(
       eq(col("intCol"), ofInt(1599)),
-      eq(col("longCol"), ofLong(1600))
-    )
+      eq(col("longCol"), ofLong(1600)))
     val actData = readUsingKernel(testParquetTable, predicate)
     checkAnswer(actData, generateExpData(Seq(15)))
   }
@@ -400,8 +397,7 @@ class ParquetReaderPredicatePushdownSuite extends AnyFunSuite
   test("one end of the AND is not convertible") {
     val predicate = and(
       eq(col("intCol"), ofInt(1599)),
-      eq(col("nonExistentCol"), ofInt(1600))
-    )
+      eq(col("nonExistentCol"), ofInt(1600)))
     val actData = readUsingKernel(testParquetTable, predicate)
     checkAnswer(actData, generateExpData(Seq(15)))
   }

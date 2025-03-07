@@ -28,7 +28,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import io.delta.storage.LogStore
-import io.delta.storage.commit.{CommitCoordinatorClient, CommitFailedException, CommitResponse, UpdatedActions}
+import io.delta.storage.commit.{CommitCoordinatorClient, CommitFailedException, CommitResponse, TableDescriptor, UpdatedActions}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
@@ -501,15 +501,19 @@ class OptimisticTransactionSuite
           override def commit(
               logStore: LogStore,
               hadoopConf: Configuration,
-              tablePath: Path,
-              tableConf: java.util.Map[String, String],
+              tableDesc: TableDescriptor,
               commitVersion: Long,
               actions: java.util.Iterator[String],
               updatedActions: UpdatedActions): CommitResponse = {
             // Fail all commits except first one
             if (commitVersion == 0) {
               return super.commit(
-                logStore, hadoopConf, tablePath, tableConf, commitVersion, actions, updatedActions)
+                logStore,
+                hadoopConf,
+                tableDesc,
+                commitVersion,
+                actions,
+                updatedActions)
             }
             commitAttempts += 1
             throw new CommitFailedException(
@@ -557,15 +561,19 @@ class OptimisticTransactionSuite
           override def commit(
               logStore: LogStore,
               hadoopConf: Configuration,
-              tablePath: Path,
-              tableConf: java.util.Map[String, String],
+              tableDesc: TableDescriptor,
               commitVersion: Long,
               actions: java.util.Iterator[String],
               updatedActions: UpdatedActions): CommitResponse = {
             // Fail all commits except first one
             if (commitVersion == 0) {
               return super.commit(
-                logStore, hadoopConf, tablePath, tableConf, commitVersion, actions, updatedActions)
+                logStore,
+                hadoopConf,
+                tableDesc,
+                commitVersion,
+                actions,
+                updatedActions)
             }
             commitAttempts += 1
             throw new FileAlreadyExistsException("Commit-File Already Exists")
@@ -868,8 +876,7 @@ class OptimisticTransactionSuite
           override def commit(
               logStore: LogStore,
               hadoopConf: Configuration,
-              tablePath: Path,
-              tableConf: java.util.Map[String, String],
+              tableDesc: TableDescriptor,
               commitVersion: Long,
               actions: java.util.Iterator[String],
               updatedActions: UpdatedActions): CommitResponse = {
@@ -878,8 +885,7 @@ class OptimisticTransactionSuite
               deltaLog.startTransaction().commit(addB :: Nil, ManualUpdate)
               throw new CommitFailedException(true, conflict, "")
             }
-            super.commit(
-              logStore, hadoopConf, tablePath, tableConf, commitVersion, actions, updatedActions)
+            super.commit(logStore, hadoopConf, tableDesc, commitVersion, actions, updatedActions)
           }
         }
         object RetryableConflictCommitCoordinatorBuilder$ extends CommitCoordinatorBuilder {
@@ -927,19 +933,29 @@ class OptimisticTransactionSuite
   }
 
   test("Append does not trigger snapshot state computation") {
-    withTempDir { tableDir =>
-      val df = Seq((1, 0), (2, 1)).toDF("key", "value")
-      df.write.format("delta").mode("append").save(tableDir.getCanonicalPath)
+    withSQLConf(
+      DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "false",
+      DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> "true",
+      DeltaSQLConf.INCREMENTAL_COMMIT_FORCE_VERIFY_IN_TESTS.key -> "false",
+      DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_VERIFICATION_MODE_ENABLED.key -> "false",
+      DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_FORCE_VERIFICATION_MODE_FOR_NON_UTC_ENABLED.key ->
+        "false",
+      DeltaSQLConf.INCREMENTAL_COMMIT_FORCE_VERIFY_IN_TESTS.key -> "false"
+    ) {
+      withTempDir { tableDir =>
+        val df = Seq((1, 0), (2, 1)).toDF("key", "value")
+        df.write.format("delta").mode("append").save(tableDir.getCanonicalPath)
 
-      val deltaLog = DeltaLog.forTable(spark, tableDir)
-      val preCommitSnapshot = deltaLog.update()
-      assert(!preCommitSnapshot.stateReconstructionTriggered)
+        val deltaLog = DeltaLog.forTable(spark, tableDir)
+        val preCommitSnapshot = deltaLog.update()
+        assert(!preCommitSnapshot.stateReconstructionTriggered)
 
-      df.write.format("delta").mode("append").save(tableDir.getCanonicalPath)
+        df.write.format("delta").mode("append").save(tableDir.getCanonicalPath)
 
-      val postCommitSnapshot = deltaLog.update()
-      assert(!preCommitSnapshot.stateReconstructionTriggered)
-      assert(!postCommitSnapshot.stateReconstructionTriggered)
+        val postCommitSnapshot = deltaLog.update()
+        assert(!preCommitSnapshot.stateReconstructionTriggered)
+        assert(!postCommitSnapshot.stateReconstructionTriggered)
+      }
     }
   }
 

@@ -18,6 +18,7 @@
 
 package io.delta.flink.sink.internal;
 
+import java.time.LocalDate;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import javax.annotation.Nullable;
@@ -27,6 +28,7 @@ import org.apache.flink.streaming.api.functions.sink.filesystem.BucketAssigner;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.data.util.DataFormatConverters;
 import org.apache.flink.table.types.logical.BigIntType;
+import org.apache.flink.table.types.logical.DateType;
 import org.apache.flink.table.types.logical.DoubleType;
 import org.apache.flink.table.types.logical.IntType;
 import org.apache.flink.table.types.logical.RowType;
@@ -97,22 +99,23 @@ public class TestDeltaBucketAssigner {
             new RowType.RowField("partition_col3", new BigIntType()),
             new RowType.RowField("partition_col4", new SmallIntType()),
             new RowType.RowField("partition_col5", new TinyIntType()),
-            new RowType.RowField("col5", new VarCharType()),
-            new RowType.RowField("col6", new IntType())
+            new RowType.RowField("partition_col6", new DateType()),
+            new RowType.RowField("col7", new VarCharType()),
+            new RowType.RowField("col8", new IntType())
         ));
         DataFormatConverters.DataFormatConverter<RowData, Row> converter =
             DataFormatConverters.getConverterForDataType(
                 TypeConversions.fromLogicalToDataType(testRowType)
             );
         String[] partitionCols = {"partition_col1", "partition_col2", "partition_col3",
-            "partition_col4", "partition_col5"};
+            "partition_col4", "partition_col5", "partition_col6"};
 
         DeltaPartitionComputer<RowData> partitionComputer =
             new DeltaPartitionComputer.DeltaRowDataPartitionComputer(testRowType, partitionCols);
 
         RowData record = converter.toInternal(
             Row.of("1", Integer.MAX_VALUE, Long.MAX_VALUE, Short.MAX_VALUE, Byte.MAX_VALUE,
-                "some_val", 2));
+                LocalDate.of(9999,12,31), "some_val", 2));
 
         // WHEN
         LinkedHashMap<String, String> partitionValues =
@@ -125,6 +128,7 @@ public class TestDeltaBucketAssigner {
                 put("partition_col3", String.valueOf(Long.MAX_VALUE));
                 put("partition_col4", String.valueOf(Short.MAX_VALUE));
                 put("partition_col5", String.valueOf(Byte.MAX_VALUE));
+                put("partition_col6", "9999-12-31");
             }};
 
         assertEquals(expected, partitionValues);
