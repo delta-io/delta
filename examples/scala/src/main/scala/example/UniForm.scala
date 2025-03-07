@@ -60,17 +60,37 @@ object UniForm {
       .config("spark.sql.catalogImplementation", "hive")
       .getOrCreate()
 
+    val schema =
+      """
+        |col0 INT,
+        |col1 STRUCT<
+        |  col2: MAP<INT, INT>,
+        |  col3: ARRAY<INT>,
+        |  col4: STRUCT<col5: STRING>
+        |>,
+        |col6 INT,
+        |col7 INT
+        |""".stripMargin
+
+    def getRowToInsertStr(id: Int): String = {
+      s"""
+         |$id,
+         |struct(map($id, $id), array($id), struct($id)),
+         |$id,
+         |$id
+         |""".stripMargin
+    }
 
     deltaSpark.sql(s"DROP TABLE IF EXISTS ${testTableName}")
     deltaSpark.sql(
-      s"""CREATE TABLE `${testTableName}` (col1 INT) using DELTA
+      s"""CREATE TABLE `${testTableName}` ($schema) using DELTA
+         |PARTITIONED BY (col0, col6, col7)
          |TBLPROPERTIES (
          |  'delta.columnMapping.mode' = 'name',
-         |  'delta.enableIcebergCompatV1' = 'true',
+         |  'delta.enableIcebergCompatV2' = 'true',
          |  'delta.universalFormat.enabledFormats' = 'iceberg'
          |)""".stripMargin)
-    deltaSpark.sql(s"INSERT INTO `$testTableName` VALUES (123)")
-
+    deltaSpark.sql(s"INSERT INTO $testTableName VALUES (${getRowToInsertStr(1)})")
     // Wait for the conversion to be done
     Thread.sleep(10000)
 
