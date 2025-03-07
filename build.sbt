@@ -35,6 +35,7 @@ import sbtprotoc.ProtocPlugin.autoImport._
 import xsbti.compile.CompileAnalysis
 
 import Checkstyle._
+import IcebergBuild._
 import Mima._
 import Unidoc._
 
@@ -440,6 +441,8 @@ lazy val spark = (project in file("spark"))
     sparkMimaSettings,
     releaseSettings,
     crossSparkSettings(),
+    // iceberg-core 1.8.0 brings jackson 2.18.2 thus force upgrade
+    dependencyOverrides += "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.18.2",
     libraryDependencies ++= Seq(
       // Adding test classifier seems to break transitive resolution of the core dependencies
       "org.apache.spark" %% "spark-hive" % sparkVersion.value % "provided",
@@ -861,8 +864,6 @@ lazy val iceberg = (project in file("iceberg"))
   )
 // scalastyle:on println
 
-lazy val generateIcebergJarsTask = TaskKey[Unit]("generateIcebergJars", "Generate Iceberg JARs")
-
 lazy val icebergShaded = (project in file("icebergShaded"))
   .dependsOn(spark % "provided")
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
@@ -870,17 +871,24 @@ lazy val icebergShaded = (project in file("icebergShaded"))
     name := "iceberg-shaded",
     commonSettings,
     skipReleaseSettings,
-
-    // Compile, patch and generated Iceberg JARs
-    generateIcebergJarsTask := {
-      import sys.process._
-      val scriptPath = baseDirectory.value / "generate_iceberg_jars.py"
-      // Download iceberg code in `iceberg_src` dir and generate the JARs in `lib` dir
-      Seq("python3", scriptPath.getPath)!
-    },
-    Compile / unmanagedJars := (Compile / unmanagedJars).dependsOn(generateIcebergJarsTask).value,
-    cleanFiles += baseDirectory.value / "iceberg_src",
-    cleanFiles += baseDirectory.value / "lib",
+    // must exclude all dependencies from Iceberg that delta-spark includes
+    libraryDependencies ++= Seq(
+      // Fix Iceberg's legacy java.lang.NoClassDefFoundError: scala/jdk/CollectionConverters$ error
+      // due to legacy scala.
+      "org.scala-lang.modules" %% "scala-collection-compat" % "2.1.1" % "provided",
+      "org.apache.iceberg" % "iceberg-core" % "1.8.0" excludeAll (
+        icebergExclusionRules: _*
+      ),
+      "org.apache.iceberg" % "iceberg-hive-metastore" % "1.8.0" excludeAll (
+        icebergExclusionRules: _*
+      ),
+      "org.apache.hadoop" % "hadoop-client" % "2.7.3" excludeAll (
+        hadoopClientExclusionRules: _*
+      ),
+      "org.apache.hive" % "hive-metastore" % "2.3.8" excludeAll (
+        hiveMetastoreExclusionRules: _*
+      )
+    ),
 
     // Generated shaded Iceberg JARs
     Compile / packageBin := assembly.value,
@@ -888,10 +896,40 @@ lazy val icebergShaded = (project in file("icebergShaded"))
     assembly / logLevel := Level.Info,
     assembly / test := {},
     assembly / assemblyShadeRules := Seq(
-      ShadeRule.rename("org.apache.iceberg.**" -> "shadedForDelta.@0").inAll,
+      ShadeRule.rename("org.apache.iceberg.**" -> "shadedForDelta.@0").inAll
     ),
+    assembly / assemblyExcludedJars := {
+      val cp = (fullClasspath in assembly).value
+      cp.filter { jar =>
+        val doExclude = jar.data.getName.contains("jackson-annotations") ||
+          jar.data.getName.contains("RoaringBitmap")
+        doExclude
+      }
+    },
+    // all following clases have Delta customized implementation under icebergShaded/src and thus
+    // require them to be 'first' to replace the class from iceberg jar
+    assembly / assemblyMergeStrategy := {
+       case PathList("shadedForDelta", "org", "apache", "iceberg", "PartitionSpec$Builder.class") =>
+         MergeStrategy.first
+       case PathList("shadedForDelta", "org", "apache", "iceberg", "PartitionSpec.class") =>
+         MergeStrategy.first
+       case PathList("shadedForDelta", "org", "apache", "iceberg", "hive", "HiveCatalog.class") =>
+         MergeStrategy.first
+       case PathList("shadedForDelta", "org", "apache", "iceberg", "hive", "HiveCatalog$1.class") =>
+         MergeStrategy.first
+       case PathList("shadedForDelta", "org", "apache", "iceberg", "hive", "HiveCatalog$ViewAwareTableBuilder.class") =>
+         MergeStrategy.first
+       case PathList("shadedForDelta", "org", "apache", "iceberg", "hive", "HiveCatalog$TableAwareViewBuilder.class") =>
+         MergeStrategy.first
+       case PathList("shadedForDelta", "org", "apache", "iceberg", "hive", "HiveTableOperations.class") =>
+         MergeStrategy.first
+       case PathList("shadedForDelta", "org", "apache", "iceberg", "hive", "HiveTableOperations$1.class") =>
+         MergeStrategy.first
+       case x => (assemblyMergeStrategy in assembly).value(x)
+    },
     assemblyPackageScala / assembleArtifact := false,
     // Make the 'compile' invoke the 'assembly' task to generate the uber jar.
+    Compile / packageBin := assembly.value
   )
 
 lazy val hudi = (project in file("hudi"))
