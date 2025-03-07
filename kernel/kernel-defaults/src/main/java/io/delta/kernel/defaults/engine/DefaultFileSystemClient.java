@@ -15,17 +15,16 @@
  */
 package io.delta.kernel.defaults.engine;
 
-import io.delta.kernel.defaults.internal.logstore.LogStoreProvider;
+import io.delta.kernel.defaults.engine.fileio.FileIO;
 import io.delta.kernel.engine.FileReadRequest;
 import io.delta.kernel.engine.FileSystemClient;
-import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import io.delta.storage.LogStore;
 import java.io.*;
+import java.util.Objects;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
-import org.apache.hadoop.fs.Path;
 
 /**
  * Default implementation of {@link FileSystemClient} based on Hadoop APIs. It takes a Hadoop {@link
@@ -52,78 +51,40 @@ import org.apache.hadoop.fs.Path;
  * specific implementation of {@link FileSystem}.
  */
 public class DefaultFileSystemClient implements FileSystemClient {
-  private final Configuration hadoopConf;
+  private final FileIO fileIO;
 
   /**
    * Create an instance of the default {@link FileSystemClient} implementation.
    *
-   * @param hadoopConf Configuration to use. List of options to customize the behavior of the client
-   *     can be found in the class documentation.
+   * @param fileIO The {@link FileIO} implementation to use for file operations.
    */
-  public DefaultFileSystemClient(Configuration hadoopConf) {
-    this.hadoopConf = hadoopConf;
+  public DefaultFileSystemClient(FileIO fileIO) {
+    this.fileIO = Objects.requireNonNull(fileIO, "fileIO is null");
   }
 
   @Override
   public CloseableIterator<FileStatus> listFrom(String filePath) throws IOException {
-    Path path = new Path(filePath);
-    LogStore logStore = LogStoreProvider.getLogStore(hadoopConf, path.toUri().getScheme());
-
-    return Utils.toCloseableIterator(logStore.listFrom(path, hadoopConf))
-        .map(
-            hadoopFileStatus ->
-                FileStatus.of(
-                    hadoopFileStatus.getPath().toString(),
-                    hadoopFileStatus.getLen(),
-                    hadoopFileStatus.getModificationTime()));
+    return fileIO.listFrom(filePath);
   }
 
   @Override
   public String resolvePath(String path) throws IOException {
-    Path pathObject = new Path(path);
-    FileSystem fs = pathObject.getFileSystem(hadoopConf);
-    return fs.makeQualified(pathObject).toString();
+    return fileIO.resolvePath(path);
   }
 
   @Override
   public CloseableIterator<ByteArrayInputStream> readFiles(
-      CloseableIterator<FileReadRequest> readRequests) {
-    return readRequests.map(
-        elem -> getStream(elem.getPath(), elem.getStartOffset(), elem.getReadLength()));
+      CloseableIterator<FileReadRequest> readRequests) throws IOException {
+    return fileIO.readFiles(readRequests);
   }
 
   @Override
   public boolean mkdirs(String path) throws IOException {
-    Path pathObject = new Path(path);
-    FileSystem fs = pathObject.getFileSystem(hadoopConf);
-    return fs.mkdirs(pathObject);
+    return fileIO.mkdirs(path);
   }
 
   @Override
   public boolean delete(String path) throws IOException {
-    Path pathObject = new Path(path);
-    FileSystem fs = pathObject.getFileSystem(hadoopConf);
-    return fs.delete(pathObject, false);
-  }
-
-  private ByteArrayInputStream getStream(String filePath, int offset, int size) {
-    Path path = new Path(filePath);
-    try {
-      FileSystem fs = path.getFileSystem(hadoopConf);
-      try (DataInputStream stream = fs.open(path)) {
-        stream.skipBytes(offset);
-        byte[] buff = new byte[size];
-        stream.readFully(buff);
-        return new ByteArrayInputStream(buff);
-      } catch (IOException ex) {
-        throw new RuntimeException(
-            String.format(
-                "IOException reading from file %s at offset %s size %s", filePath, offset, size),
-            ex);
-      }
-    } catch (IOException ex) {
-      throw new RuntimeException(
-          String.format("Could not resolve the FileSystem for path %s", filePath), ex);
-    }
+    return fileIO.delete(path);
   }
 }

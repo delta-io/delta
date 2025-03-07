@@ -27,6 +27,7 @@ import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.{Scan, Snapshot, Table}
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch, Row}
 import io.delta.kernel.defaults.engine.{DefaultEngine, DefaultJsonHandler, DefaultParquetHandler}
+import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO
 import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestUtils}
 import io.delta.kernel.engine.{Engine, JsonHandler, ParquetHandler}
 import io.delta.kernel.expressions._
@@ -1562,11 +1563,11 @@ object ScanSuite {
    * for parquet or json handlers.
    */
   def engineDisallowedStatsReads: Engine = {
-    val hadoopConf = new Configuration()
-    new DefaultEngine(hadoopConf) {
+    val fileIO = new HadoopFileIO(new Configuration())
+    new DefaultEngine(fileIO) {
 
       override def getParquetHandler: ParquetHandler = {
-        new DefaultParquetHandler(hadoopConf) {
+        new DefaultParquetHandler(fileIO) {
           override def readParquetFiles(
               fileIter: CloseableIterator[FileStatus],
               physicalSchema: StructType,
@@ -1578,7 +1579,7 @@ object ScanSuite {
       }
 
       override def getJsonHandler: JsonHandler = {
-        new DefaultJsonHandler(hadoopConf) {
+        new DefaultJsonHandler(fileIO) {
           override def readJsonFiles(
               fileIter: CloseableIterator[FileStatus],
               physicalSchema: StructType,
@@ -1592,10 +1593,10 @@ object ScanSuite {
   }
 
   def engineVerifyJsonParseSchema(verifyFx: StructType => Unit): Engine = {
-    val hadoopConf = new Configuration()
-    new DefaultEngine(hadoopConf) {
+    val fileIO = new HadoopFileIO(new Configuration())
+    new DefaultEngine(fileIO) {
       override def getJsonHandler: JsonHandler = {
-        new DefaultJsonHandler(hadoopConf) {
+        new DefaultJsonHandler(fileIO) {
           override def parseJson(
               stringVector: ColumnVector,
               schema: StructType,
