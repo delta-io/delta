@@ -142,8 +142,45 @@ public class TransactionImpl implements Transaction {
     }
   }
 
-  public List<DomainMetadata> getDomainMetadatas() {
-    return getDomainMetadatasToCommit(readSnapshot);
+  /**
+   * Returns a list of the domain metadatas to commit. This consists of the domain metadatas added
+   * in the transaction using {@link Transaction#withDomainMetadata(String, String)} and the
+   * tombstones for the domain metadatas removed in the transaction using {@link
+   * Transaction#withDomainMetadataRemoved(String)}.
+   */
+  private List<DomainMetadata> getDomainMetadatasToCommit() {
+    // Add all domain metadatas added in the transaction
+    List<DomainMetadata> finalDomainMetadatas = new ArrayList<>(domainMetadatasAdded.values());
+
+    // Generate the tombstones for the removed domain metadatas
+    Map<String, DomainMetadata> snapshotDomainMetadataMap = snapshot.getDomainMetadataMap();
+    for (String domainName : domainMetadatasRemoved) {
+      // Note: we know domainName is not already in finalDomainMetadatas because we do not allow
+      // removing and adding a domain with the same identifier in a single txn!
+      if (snapshotDomainMetadataMap.containsKey(domainName)) {
+        DomainMetadata domainToRemove = snapshotDomainMetadataMap.get(domainName);
+        if (domainToRemove.isRemoved()) {
+          // If the domain is already removed we throw an error to avoid any inconsistencies or
+          // ambiguity. The snapshot read by the connector is inconsistent with the snapshot
+          // loaded here as the domain to remove no longer exists.
+          throw new DomainDoesNotExistException(
+              this.dataPath.toString(), domainName, snapshot.getVersion());
+        }
+        finalDomainMetadatas.add(domainToRemove.removed());
+      } else {
+        // We must throw an error if the domain does not exist. Otherwise, there could be unexpected
+        // behavior within conflict resolution. For example, consider the following
+        // 1. Table has no domains set in V0
+        // 2. txnA is started and wants to remove domain "foo"
+        // 3. txnB is started and adds domain "foo" and commits V1 before txnA
+        // 4. txnA needs to perform conflict resolution against the V1 commit from txnB
+        // Conflict resolution should fail but since the domain does not exist we cannot create
+        // a tombstone to mark it as removed and correctly perform conflict resolution.
+        throw new DomainDoesNotExistException(
+            this.dataPath.toString(), domainName, snapshot.getVersion());
+      }
+    }
+    return finalDomainMetadatas;
   }
 
   public Protocol getProtocol() {
@@ -183,7 +220,7 @@ public class TransactionImpl implements Transaction {
       CommitInfo attemptCommitInfo = generateCommitAction(engine);
       updateMetadataWithICTIfRequired(
           engine, attemptCommitInfo.getInCommitTimestamp(), readSnapshot.getVersion());
-      List<DomainMetadata> domainMetadatas = getDomainMetadatas();
+      List<DomainMetadata> domainMetadatas = getDomainMetadatasToCommit();
 
       // If row tracking is supported, assign base row IDs and default row commit versions to any
       // AddFile actions that do not yet have them. If the row ID high watermark changes, emit a
@@ -317,7 +354,7 @@ public class TransactionImpl implements Transaction {
     }
     setTxnOpt.ifPresent(setTxn -> metadataActions.add(createTxnSingleAction(setTxn.toRow())));
 
-    List<DomainMetadata> domainMetadatas = getDomainMetadatas();
+    List<DomainMetadata> domainMetadatas = getDomainMetadatasToCommit();
     // Check for duplicate domain metadata and if the protocol supports
     DomainMetadataUtils.validateDomainMetadatas(domainMetadatas, protocol);
 
@@ -413,47 +450,6 @@ public class TransactionImpl implements Transaction {
         !domainMetadatasAdded.containsKey(domain),
         "Cannot remove a domain that is added in this transaction");
     domainMetadatasRemoved.add(domain);
-  }
-
-  /**
-   * Returns a list of the domain metadatas to commit. This consists of the domain metadatas added
-   * in the transaction using {@link Transaction#withDomainMetadata(String, String)} and the
-   * tombstones for the domain metadatas removed in the transaction using {@link
-   * Transaction#withDomainMetadataRemoved(String)}.
-   */
-  private List<DomainMetadata> getDomainMetadatasToCommit(SnapshotImpl snapshot) {
-    // Add all domain metadatas added in the transaction
-    List<DomainMetadata> finalDomainMetadatas = new ArrayList<>(domainMetadatasAdded.values());
-
-    // Generate the tombstones for the removed domain metadatas
-    Map<String, DomainMetadata> snapshotDomainMetadataMap = snapshot.getDomainMetadataMap();
-    for (String domainName : domainMetadatasRemoved) {
-      // Note: we know domainName is not already in finalDomainMetadatas because we do not allow
-      // removing and adding a domain with the same identifier in a single txn!
-      if (snapshotDomainMetadataMap.containsKey(domainName)) {
-        DomainMetadata domainToRemove = snapshotDomainMetadataMap.get(domainName);
-        if (domainToRemove.isRemoved()) {
-          // If the domain is already removed we throw an error to avoid any inconsistencies or
-          // ambiguity. The snapshot read by the connector is inconsistent with the snapshot
-          // loaded here as the domain to remove no longer exists.
-          throw new DomainDoesNotExistException(
-              this.dataPath.toString(), domainName, snapshot.getVersion());
-        }
-        finalDomainMetadatas.add(domainToRemove.removed());
-      } else {
-        // We must throw an error if the domain does not exist. Otherwise, there could be unexpected
-        // behavior within conflict resolution. For example, consider the following
-        // 1. Table has no domains set in V0
-        // 2. txnA is started and wants to remove domain "foo"
-        // 3. txnB is started and adds domain "foo" and commits V1 before txnA
-        // 4. txnA needs to perform conflict resolution against the V1 commit from txnB
-        // Conflict resolution should fail but since the domain does not exist we cannot create
-        // a tombstone to mark it as removed and correctly perform conflict resolution.
-        throw new DomainDoesNotExistException(
-            this.dataPath.toString(), domainName, snapshot.getVersion());
-      }
-    }
-    return finalDomainMetadatas;
   }
 
   /**
