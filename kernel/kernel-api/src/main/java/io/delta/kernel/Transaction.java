@@ -66,7 +66,7 @@ public interface Transaction {
    *
    * @return The version of the table as of the beginning of this Transaction
    */
-  long getVersion();
+  long getCommitBaseVersion();
 
   /**
    * Get the state of the transaction. The state helps Kernel do the transformations to logical data

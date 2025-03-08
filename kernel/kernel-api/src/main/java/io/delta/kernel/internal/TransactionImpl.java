@@ -142,8 +142,8 @@ public class TransactionImpl implements Transaction {
   }
 
   @Override
-  public long getVersion() {
-    return readSnapshot.getVersion() + 1;
+  public long getCommitBaseVersion() {
+    return readSnapshot.getVersion();
   }
 
   public Optional<SetTransaction> getSetTxnOpt() {
