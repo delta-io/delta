@@ -18,6 +18,7 @@ package io.delta.kernel.defaults.internal.expressions;
 import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.*;
 
 import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.expressions.CollatedPredicate;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.util.Utils;
@@ -46,6 +47,11 @@ public class StartsWithExpressionEvaluator {
         childrenExpressions.get(1),
         startsWith,
         "'STARTS_WITH' expects literal as the second input");
+
+    if (startsWith instanceof CollatedPredicate) {
+      return new CollatedPredicate(startsWith.getName(),
+              childrenExpressions.get(0), childrenExpressions.get(1), ((CollatedPredicate) startsWith).getCollationIdentifier());
+    }
     return new Predicate(startsWith.getName(), childrenExpressions);
   }
 
