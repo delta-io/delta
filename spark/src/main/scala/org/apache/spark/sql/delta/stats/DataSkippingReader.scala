@@ -170,6 +170,26 @@ object SkippingEligibleDataType {
   def unapply(f: StructField): Option[DataType] = unapply(f.dataType)
 }
 
+/**
+ * An extractor that matches expressions that are eligible for data skipping predicates.
+ *
+ * @return A tuple of 1) column name referenced in the expression, 2) date type for the
+ *         expression, 3) [[DataSkippingPredicateBuilder]] that builds the data skipping
+ *         predicate for the expression, if the given expression is eligible.
+ *         Otherwise, return None.
+ */
+abstract class GenericSkippingEligibleExpression(
+  dataSkippingType: DeltaDataSkippingType, conf: SQLConf) {
+
+  def unapply(arg: Expression): Option[(Seq[String], DataType, DataSkippingPredicateBuilder)] = {
+    arg match {
+      case SkippingEligibleColumn(c, dt) =>
+        Some((c, dt, DataSkippingPredicateBuilder.ColumnBuilder))
+      case _ => None
+    }
+  }
+}
+
 private[delta] object DataSkippingReader {
 
   /** Default number of cols for which we should collect stats */
@@ -273,6 +293,9 @@ trait DataSkippingReaderBase
       protected val dataSkippingType: DeltaDataSkippingType)
   {
     protected val statsProvider: StatsProvider = new StatsProvider(getStatsColumnOpt)
+
+    object SkippingEligibleExpression extends GenericSkippingEligibleExpression(
+      dataSkippingType, spark.sessionState.conf)
 
     // Main function for building data filters.
     def apply(dataFilter: Expression): Option[DataSkippingPredicate] =
@@ -870,23 +893,6 @@ trait DataSkippingReaderBase
       case _: Literal => true
       case _ if e.children.nonEmpty => e.children.forall(areAllLeavesLiteral)
       case _ => false
-    }
-
-    /**
-     * An extractor that matches expressions that are eligible for data skipping predicates.
-     *
-     * @return A tuple of 1) column name referenced in the expression, 2) date type for the
-     *         expression, 3) [[DataSkippingPredicateBuilder]] that builds the data skipping
-     *         predicate for the expression, if the given expression is eligible.
-     *         Otherwise, return None.
-     */
-    object SkippingEligibleExpression {
-      def unapply(arg: Expression)
-          : Option[(Seq[String], DataType, DataSkippingPredicateBuilder)] = arg match {
-        case SkippingEligibleColumn(c, dt) =>
-          Some((c, dt, DataSkippingPredicateBuilder.ColumnBuilder))
-        case _ => None
-      }
     }
   }
 
