@@ -415,10 +415,6 @@ public class TransactionImpl implements Transaction {
     domainMetadatasRemoved.add(domain);
   }
 
-  @Override
-  public long getVersion() {
-    return readSnapshot.getVersion();
-  }
   /**
    * Returns a list of the domain metadatas to commit. This consists of the domain metadatas added
    * in the transaction using {@link Transaction#withDomainMetadata(String, String)} and the

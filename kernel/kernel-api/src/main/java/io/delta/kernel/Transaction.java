@@ -121,13 +121,6 @@ public interface Transaction {
   void withDomainMetadataRemoved(String domain);
 
   /**
-   * Gets the latest version used as the base of this transaction.
-   *
-   * @return The version of the table as of the beginning of this Transaction
-   */
-  long getVersion();
-
-  /**
    * Given the logical data that needs to be written to the table, convert it into the required
    * physical data depending upon the table Delta protocol and features enabled on the table. Kernel
    * takes care of adding any additional column or removing existing columns that doesn't need to be
