@@ -2946,21 +2946,29 @@ abstract class MergeIntoSuiteBase
   /* end unlimited number of merge clauses tests */
 
   test("SC-70829 - prevent re-resolution with star and schema evolution") {
-    val source = "source"
-    val target = "target"
-    withTable(source, target) {
+    val keys = List(
+      "spark.delta.schema.autoMerge.enabled",
+      "spark.databricks.delta.schema.autoMerge.enabled"
+    )
 
-      sql(s"""CREATE TABLE $source (id string, new string, old string, date DATE) USING delta""")
-      sql(s"""CREATE TABLE $target (id string, old string, date DATE) USING delta""")
+    for (i <- 0 until keys.size) {
+      val source = s"source_$i"
+      val target = s"target_$i"
 
-      withSQLConf("spark.databricks.delta.schema.autoMerge.enabled" -> "true") {
-        executeMerge(
-          tgt = s"$target t",
-          src = s"$source s",
-          // functions like date_sub requires additional work to resolve
-          cond = "s.id = t.id AND t.date >= date_sub(current_date(), 3)",
-          update(set = "*"),
-          insert(values = "*"))
+      withTable(source, target) {
+
+        sql(s"""CREATE TABLE $source (id string, new string, old string, date DATE) USING delta""")
+        sql(s"""CREATE TABLE $target (id string, old string, date DATE) USING delta""")
+
+        withSQLConf(keys(i) -> "true") {
+          executeMerge(
+            tgt = s"$target t",
+            src = s"$source s",
+            // functions like date_sub requires additional work to resolve
+            cond = "s.id = t.id AND t.date >= date_sub(current_date(), 3)",
+            update(set = "*"),
+            insert(values = "*"))
+        }
       }
     }
   }
