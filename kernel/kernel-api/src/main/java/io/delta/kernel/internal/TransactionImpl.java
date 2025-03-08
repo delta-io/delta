@@ -143,7 +143,7 @@ public class TransactionImpl implements Transaction {
 
   @Override
   public long getVersion() {
-    return readSnapshot.getVersion()
+    return readSnapshot.getVersion() + 1;
   }
 
   public Optional<SetTransaction> getSetTxnOpt() {
