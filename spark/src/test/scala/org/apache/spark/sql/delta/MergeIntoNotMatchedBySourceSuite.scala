@@ -22,6 +22,7 @@ import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.Row
+import org.apache.spark.sql.functions.{col, lit}
 
 trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBase {
   import testImplicits._
@@ -516,5 +517,43 @@ trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBase {
       cond = "t.id = s.id",
       clauses = updateNotMatched(set = "id = t.id * 10"))
     checkAnswer(readDeltaTable(target), Seq(0, 10, 2, 30, 4, 50, 6, 70, 8, 90).toDF("id"))
+  }
+
+  test("files touched - not matched by source") {
+    val source = s"$tempDir/source"
+    val target = s"$tempDir/target"
+    spark.range(10)
+      .withColumn("part", col("id") % 4)
+      .coalesce(1)
+      .write
+      .format("delta")
+      .partitionBy("part")
+      .save(target)
+    spark.range(0).withColumn("part", lit(0)).write.format("delta").save(source)
+
+    // part=4 doesn't exist so no merge operation should happen
+    executeMerge(
+      tgt = s"delta.`$target` t",
+      src = s"delta.`$source` s",
+      cond = "t.id = s.id AND t.part = 4",
+      clauses = deleteNotMatched("part = 4"))
+
+    var df = spark.sql(s"DESCRIBE HISTORY delta.`$target` LIMIT 1")
+    assert(df.select("operation").collect().head.getString(0) == "WRITE")
+
+    // Only the single file in part=3 partition should be deleted and no others touched
+    executeMerge(
+      tgt = s"delta.`$target` t",
+      src = s"delta.`$source` s",
+      cond = "t.id = s.id AND t.part = 3",
+      clauses = deleteNotMatched("part = 3"))
+
+    df = spark.sql(s"DESCRIBE HISTORY delta.`$target` LIMIT 1")
+    checkAnswer(
+      df.select(
+        "operation",
+        "operationMetrics.numTargetFilesRemoved",
+        "operationMetrics.numTargetFilesAdded"),
+      Seq(("MERGE", "1", "0")).toDF())
   }
 }
