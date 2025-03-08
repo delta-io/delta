@@ -31,6 +31,10 @@ public class CollatedPredicate extends Predicate {
         this.collationIdentifier = collationIdentifier;
     }
 
+    public CollationIdentifier getCollationIdentifier() {
+        return collationIdentifier;
+    }
+
     @Override
     public String toString() {
         if (COLLATION_SUPPORTED_OPERATORS.contains(name)) {

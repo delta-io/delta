@@ -102,6 +102,9 @@ abstract class ExpressionVisitor<R> {
       case ">":
       case ">=":
       case "IS NOT DISTINCT FROM":
+        if (expression instanceof CollatedPredicate) {
+          return visitComparator(new CollatedPredicate(name, children.get(0), children.get(1), ((CollatedPredicate) expression).getCollationIdentifier()));
+        }
         return visitComparator(new Predicate(name, children));
       case "ELEMENT_AT":
         return visitElementAt(expression);
@@ -120,6 +123,9 @@ abstract class ExpressionVisitor<R> {
       case "LIKE":
         return visitLike(new Predicate(name, children));
       case "STARTS_WITH":
+        if (expression instanceof CollatedPredicate) {
+          return visitStartsWith(new CollatedPredicate(name, children.get(0), children.get(1), ((CollatedPredicate) expression).getCollationIdentifier()));
+        }
         return visitStartsWith(new Predicate(name, children));
       default:
         throw new UnsupportedOperationException(
