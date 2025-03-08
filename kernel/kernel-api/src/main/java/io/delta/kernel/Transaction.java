@@ -88,7 +88,6 @@ public interface Transaction {
   TransactionCommitResult commit(Engine engine, CloseableIterable<Row> dataActions)
       throws ConcurrentWriteException;
 
-
   /**
    * Commit the provided domain metadata as part of this transaction. If this is called more than
    * once with the same {@code domain} the latest provided {@code config} will be committed in the
@@ -121,10 +120,11 @@ public interface Transaction {
    */
   void withDomainMetadataRemoved(String domain);
 
-    /**
-     * Gets the latest version used as the base of this transaction.
-     * @return The version of the table as of the beginning of this Transaction
-     */
+  /**
+   * Gets the latest version used as the base of this transaction.
+   *
+   * @return The version of the table as of the beginning of this Transaction
+   */
   long getVersion();
 
   /**

@@ -395,11 +395,11 @@ public class TransactionImpl implements Transaction {
   @Override
   public void withDomainMetadata(String domain, String config) {
     checkArgument(
-            DomainMetadata.isUserControlledDomain(domain),
-            "Setting a system-controlled domain is not allowed: " + domain);
+        DomainMetadata.isUserControlledDomain(domain),
+        "Setting a system-controlled domain is not allowed: " + domain);
     checkArgument(
-            !domainMetadatasRemoved.contains(domain),
-            "Cannot add a domain that is removed in this transaction");
+        !domainMetadatasRemoved.contains(domain),
+        "Cannot add a domain that is removed in this transaction");
     // we override any existing value
     domainMetadatasAdded.put(domain, new DomainMetadata(domain, config, false /* removed */));
   }
@@ -407,11 +407,11 @@ public class TransactionImpl implements Transaction {
   @Override
   public void withDomainMetadataRemoved(String domain) {
     checkArgument(
-            DomainMetadata.isUserControlledDomain(domain),
-            "Removing a system-controlled domain is not allowed: " + domain);
+        DomainMetadata.isUserControlledDomain(domain),
+        "Removing a system-controlled domain is not allowed: " + domain);
     checkArgument(
-            !domainMetadatasAdded.containsKey(domain),
-            "Cannot remove a domain that is added in this transaction");
+        !domainMetadatasAdded.containsKey(domain),
+        "Cannot remove a domain that is added in this transaction");
     domainMetadatasRemoved.add(domain);
   }
 
@@ -441,7 +441,7 @@ public class TransactionImpl implements Transaction {
           // ambiguity. The snapshot read by the connector is inconsistent with the snapshot
           // loaded here as the domain to remove no longer exists.
           throw new DomainDoesNotExistException(
-                  this.dataPath.toString(), domainName, snapshot.getVersion());
+              this.dataPath.toString(), domainName, snapshot.getVersion());
         }
         finalDomainMetadatas.add(domainToRemove.removed());
       } else {
@@ -454,7 +454,7 @@ public class TransactionImpl implements Transaction {
         // Conflict resolution should fail but since the domain does not exist we cannot create
         // a tombstone to mark it as removed and correctly perform conflict resolution.
         throw new DomainDoesNotExistException(
-                this.dataPath.toString(), domainName, snapshot.getVersion());
+            this.dataPath.toString(), domainName, snapshot.getVersion());
       }
     }
     return finalDomainMetadatas;

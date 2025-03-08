@@ -93,8 +93,8 @@ public interface TransactionBuilder {
   TransactionBuilder withMaxRetries(int maxRetries);
 
   /**
-   * Specifies that this Transaction may have domainMetadata. If domainMetadata is not enabled, and one is provided,
-   * that will produce an error.
+   * Specifies that this Transaction may have domainMetadata. If domainMetadata is not enabled, and
+   * one is provided, that will produce an error.
    */
   TransactionBuilder withDomainMetadata();
 
