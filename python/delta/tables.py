@@ -1080,7 +1080,8 @@ class DeltaMergeBuilder(object):
 
         See :py:class:`~delta.tables.DeltaMergeBuilder` for complete usage details.
 
-        :param with_metrics: If True, returns a DataFrame containing operation metrics; otherwise, returns None.
+        :param with_metrics: If True, returns a DataFrame containing operation metrics;
+                             otherwise, returns None.
         :type with_metrics: bool
         :return: A DataFrame with metrics if `with_metrics` is True; otherwise, None.
         """
