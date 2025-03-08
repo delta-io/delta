@@ -50,7 +50,7 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
         mockEngine(),
         testTxnState(testSchema, enableIcebergCompatV2 = icebergCompatV2Enabled),
         testData(includePartitionCols = false),
-        Map.empty[String, Literal].asJava /* partition values */ )
+        Map.empty[String, Literal].asJava /* partition values */)
       transformedDateIter.map(_.getData).forEachRemaining(batch => {
         assert(batch.getSchema === testSchema)
       })
@@ -187,9 +187,9 @@ object TransactionSuite extends VectorTestUtils with MockEngineUtils {
   }
 
   def testTxnState(
-      schema: StructType,
-      partitionCols: Seq[String] = Seq.empty,
-      enableIcebergCompatV2: Boolean = false): Row = {
+                    schema: StructType,
+                    partitionCols: Seq[String] = Seq.empty,
+                    enableIcebergCompatV2: Boolean = false): Row = {
     val configurationMap = Map(ICEBERG_COMPAT_V2_ENABLED.getKey -> enableIcebergCompatV2.toString)
     val metadata = new Metadata(
       "id",
@@ -217,7 +217,7 @@ object TransactionSuite extends VectorTestUtils with MockEngineUtils {
   }
 
   def testDataFileStatuses(fileNameStatsPairs: (String, Option[DataFileStatistics])*)
-      : CloseableIterator[DataFileStatus] = {
+  : CloseableIterator[DataFileStatus] = {
 
     toCloseableIterator(
       fileNameStatsPairs.map { case (fileName, statsOpt) =>
