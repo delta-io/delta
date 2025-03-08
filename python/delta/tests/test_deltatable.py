@@ -161,6 +161,26 @@ class DeltaTableTestsMixin:
         self.__checkAnswer(dt.toDF(),
                            ([('a', -1), ('b', 0), ('c', 3), ('d', 4), ('e', -5), ('f', -6)]))
 
+        # With the metrics in the response
+        reset_table()
+        metrics_df = dt.merge(source, "key = k") \
+            .whenMatchedUpdate(set={"value": "v + 0"}) \
+            .whenNotMatchedInsert(values={"key": "k", "value": "v + 0"}) \
+            .execute(with_metrics=True)
+
+        self.__checkAnswer(dt.toDF(),
+                           ([('a', -1), ('b', 0), ('c', 3), ('d', 4), ('e', -5), ('f', -6)]))
+
+        expected_stats_schema = StructType([
+            StructField("num_affected_rows", LongType(), True),
+            StructField("num_updated_rows", LongType(), True),
+            StructField("num_deleted_rows", LongType(), True),
+            StructField("num_inserted_rows", LongType(), True)
+        ])
+        self.__checkAnswer(metrics_df,
+                           ([(4, 2, 0, 2)]),
+                           schema=expected_stats_schema)
+
         # Column expressions in merge condition and dicts
         reset_table()
         dt.merge(source, expr("key = k")) \

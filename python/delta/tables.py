@@ -1074,13 +1074,13 @@ class DeltaMergeBuilder(object):
         return DeltaMergeBuilder(self._spark, new_jbuilder)
 
     @since(0.4)  # type: ignore[arg-type]
-    def execute(self) -> None:
+    def execute(self, with_metrics: bool = False) -> Union[None, DataFrame]:
         """
         Execute the merge operation based on the built matched and not matched actions.
 
         See :py:class:`~delta.tables.DeltaMergeBuilder` for complete usage details.
         """
-        self._jbuilder.execute()
+        return self._jbuilder.execute(with_metrics)
 
     def __getMatchedBuilder(
         self, condition: OptionalExpressionOrColumn = None

@@ -291,6 +291,20 @@ class DeltaMergeBuilder private(
    * @since 0.3.0
    */
   def execute(): Unit = improveUnsupportedOpError {
+    executeInternal()
+  }
+
+    /**
+   * Execute the merge operation based on the built matched and not matched actions.
+   *
+   * @param withMetrics boolean flag to return metrics for operation
+   */
+  def execute(withMetrics: Boolean): DataFrame = improveUnsupportedOpError {
+    executeInternal(withMetrics)
+  }
+
+  private def executeInternal(withMetrics: Boolean = false): DataFrame =
+    improveUnsupportedOpError {
     val sparkSession = targetTable.toDF.sparkSession
     withActiveSession(sparkSession) {
       // Note: We are explicitly resolving DeltaMergeInto plan rather than going to through the
@@ -323,7 +337,14 @@ class DeltaMergeBuilder private(
       // Resolve UpCast expressions that `PreprocessTableMerge` may have introduced.
       mergeIntoCommand = PostHocResolveUpCast(sparkSession).apply(mergeIntoCommand)
       sparkSession.sessionState.analyzer.checkAnalysis(mergeIntoCommand)
-      toDataset(sparkSession, mergeIntoCommand)
+      val df = toDataset(sparkSession, mergeIntoCommand)
+
+      if (!withMetrics) {
+        df.foreach(_ => ()) // Force execution without returning
+        sparkSession.emptyDataFrame
+      } else {
+        df
+      }
     }
   }
 

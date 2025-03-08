@@ -406,6 +406,25 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
     }
   }
 
+  test("mergeWithMetrics - with filesystem options and enabled metrics") {
+    withTempDir { dir =>
+      val path = fakeFileSystemPath(dir)
+      val target = Seq((1, 10), (2, 20)).toDF("key1", "value1")
+      target.write.options(fakeFileSystemOptions).format("delta").save(path)
+      val source = Seq((1, 100), (3, 30)).toDF("key2", "value2")
+
+      val table = io.delta.tables.DeltaTable.forPath(spark, path, fakeFileSystemOptions)
+
+      val metrics_df = table.merge(source, "key1 = key2")
+        .whenMatched().updateExpr(Map("key1" -> "key2", "value1" -> "value2"))
+        .whenNotMatched().insertExpr(Map("key1" -> "key2", "value1" -> "value2"))
+        .execute(true)
+
+      checkAnswer(readDeltaTableByPath(path), Row(1, 100) :: Row(2, 20) :: Row(3, 30) :: Nil)
+      assert(metrics_df.collect().toSeq == Seq(Row(2, 1, 0, 1)))
+    }
+  }
+
   test("vacuum - with filesystem options") {
     // Note: verify that [DeltaTableUtils.findDeltaTableRoot] works when either
     // DELTA_FORMAT_CHECK_CACHE_ENABLED is on or off.
