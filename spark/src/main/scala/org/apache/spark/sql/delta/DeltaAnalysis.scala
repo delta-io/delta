@@ -536,7 +536,8 @@ class DeltaAnalysis(session: SparkSession)
           withSchemaEvolution = false
         )
 
-        ResolveDeltaMergeInto.resolveReferencesAndSchema(deltaMerge, conf)(
+        ResolveDeltaMergeInto.resolveReferencesAndSchema(
+          tryResolveMergeChildren(session, deltaMerge), conf)(
           tryResolveReferencesForExpressions(session))
       } else {
         merge
@@ -578,7 +579,8 @@ class DeltaAnalysis(session: SparkSession)
 
     case deltaMerge: DeltaMergeInto =>
       val d = if (deltaMerge.childrenResolved && !deltaMerge.resolved) {
-        ResolveDeltaMergeInto.resolveReferencesAndSchema(deltaMerge, conf)(
+        ResolveDeltaMergeInto.resolveReferencesAndSchema(
+          tryResolveMergeChildren(session, deltaMerge), conf)(
           tryResolveReferencesForExpressions(session))
       } else deltaMerge
       d.copy(target = stripTempViewForMergeWrapper(d.target))
