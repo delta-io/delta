@@ -112,6 +112,10 @@ trait AnalysisHelper {
     }
   }
 
+  protected def improveUnsupportedOpError(f: => Unit): Unit = {
+    improveUnsupportedOpError[Unit](f)
+  }
+
 }
 
 object AnalysisHelper {

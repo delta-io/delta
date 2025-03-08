@@ -303,8 +303,7 @@ class DeltaMergeBuilder private(
     executeInternal(withMetrics)
   }
 
-  private def executeInternal(withMetrics: Boolean = false): DataFrame =
-    improveUnsupportedOpError {
+  private def executeInternal(withMetrics: Boolean = false): DataFrame = {
     val sparkSession = targetTable.toDF.sparkSession
     withActiveSession(sparkSession) {
       // Note: We are explicitly resolving DeltaMergeInto plan rather than going to through the
