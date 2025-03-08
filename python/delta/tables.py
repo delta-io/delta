@@ -1080,7 +1080,13 @@ class DeltaMergeBuilder(object):
 
         See :py:class:`~delta.tables.DeltaMergeBuilder` for complete usage details.
         """
-        return self._jbuilder.execute(with_metrics)
+        if with_metrics:
+            return DataFrame(
+                self._jbuilder.execute(with_metrics),
+                getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
+            )
+
+        return self._jbuilder.execute()
 
     def __getMatchedBuilder(
         self, condition: OptionalExpressionOrColumn = None
