@@ -339,6 +339,19 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
       ExpressionTransformResult rightResult = visit(getRight(predicate));
       Expression left = leftResult.expression;
       Expression right = rightResult.expression;
+      // We have a separate check for CollatedPredicate because it can compare StringTypes with different
+      // collation identifiers. In that case, it means that the types are not equivalent, so we would need to cast one to another.
+      // That is not needed because we fetch those Strings as regular Java Strings in the end and just compare them with the collation specified in CollatedPredicate.
+      if (predicate instanceof CollatedPredicate) {
+        if (leftResult.outputType instanceof StringType && rightResult.outputType instanceof StringType) {
+          return predicate;
+        } else {
+          String msg =
+                  format("CollatedPredicate should be used to compare strings, but got left type=%s, right type=%s",
+                          leftResult.outputType, rightResult.outputType);
+            throw unsupportedExpressionException(predicate, msg);
+        }
+      }
       if (!leftResult.outputType.equivalent(rightResult.outputType)) {
         if (canCastTo(leftResult.outputType, rightResult.outputType)) {
           left = new ImplicitCastExpression(left, rightResult.outputType);
