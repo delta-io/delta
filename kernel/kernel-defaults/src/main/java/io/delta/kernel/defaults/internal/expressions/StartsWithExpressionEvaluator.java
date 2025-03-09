@@ -49,8 +49,11 @@ public class StartsWithExpressionEvaluator {
         "'STARTS_WITH' expects literal as the second input");
 
     if (startsWith instanceof CollatedPredicate) {
-      return new CollatedPredicate(startsWith.getName(),
-              childrenExpressions.get(0), childrenExpressions.get(1), ((CollatedPredicate) startsWith).getCollationIdentifier());
+      return new CollatedPredicate(
+          startsWith.getName(),
+          childrenExpressions.get(0),
+          childrenExpressions.get(1),
+          ((CollatedPredicate) startsWith).getCollationIdentifier());
     }
     return new Predicate(startsWith.getName(), childrenExpressions);
   }
