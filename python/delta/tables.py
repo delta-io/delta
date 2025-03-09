@@ -1073,6 +1073,14 @@ class DeltaMergeBuilder(object):
         new_jbuilder = self._jbuilder.withSchemaEvolution()
         return DeltaMergeBuilder(self._spark, new_jbuilder)
 
+    @overload
+    def execute(self, with_metrics: bool) -> Union[None, DataFrame]:
+        ...
+
+    @overload
+    def execute(self) -> None:
+        ...
+
     @since(0.4)  # type: ignore[arg-type]
     def execute(self, with_metrics: bool = False) -> Union[None, DataFrame]:
         """
@@ -1084,6 +1092,7 @@ class DeltaMergeBuilder(object):
                              otherwise, returns None.
         :type with_metrics: bool
         :return: A DataFrame with metrics if `with_metrics` is True; otherwise, None.
+        :rtype: Union[None, DataFrame]
         """
         if with_metrics:
             return DataFrame(

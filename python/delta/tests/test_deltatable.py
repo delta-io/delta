@@ -181,6 +181,18 @@ class DeltaTableTestsMixin:
                            ([(4, 2, 0, 2)]),
                            schema=expected_stats_schema)
 
+        # With set with_metrics flag to False
+        reset_table()
+        stats = dt.merge(source, "key = k") \
+            .whenMatchedUpdate(set={"value": "v + 0"}) \
+            .whenNotMatchedInsert(values={"key": "k", "value": "v + 0"}) \
+            .whenNotMatchedBySourceUpdate(set={"value": "value + 0"}) \
+            .execute(with_metrics=False)
+        self.__checkAnswer(dt.toDF(),
+                           ([('a', -1), ('b', 0), ('c', 3), ('d', 4), ('e', -5), ('f', -6)]))
+
+        assert stats is None
+
         # Column expressions in merge condition and dicts
         reset_table()
         dt.merge(source, expr("key = k")) \
