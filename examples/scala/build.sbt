@@ -126,7 +126,12 @@ lazy val extraMavenRepo = sys.env.get("EXTRA_MAVEN_REPO").toSeq.map { repo =>
 lazy val java17Settings = Seq(
   fork := true,
   javaOptions ++= Seq(
-    "--add-exports=java.base/sun.nio.ch=ALL-UNNAMED"
+    "--add-exports=java.base/sun.nio.ch=ALL-UNNAMED",
+    "--add-opens=java.base/java.nio=ALL-UNNAMED",
+    "--add-opens=java.base/java.lang=ALL-UNNAMED",
+    "--add-opens=java.base/java.net=ALL-UNNAMED",
+    "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+    "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED"
   )
 )
 
@@ -164,6 +169,8 @@ lazy val root = (project in file("."))
       getDeltaVersion.value,
       getDeltaArtifactName.value,
       getIcebergSparkRuntimeArtifactName.value),
+    // iceberg-core 1.8.0 brings jackson 2.18.2 thus force upgrade
+    dependencyOverrides += "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.18.2",
     extraMavenRepo,
     resolvers += Resolver.mavenLocal,
     scalacOptions ++= Seq(
