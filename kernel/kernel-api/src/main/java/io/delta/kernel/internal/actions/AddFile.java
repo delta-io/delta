@@ -25,9 +25,10 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.util.StatsUtils;
 import io.delta.kernel.internal.util.VectorUtils;
+import io.delta.kernel.statistics.DataFileStatistics;
 import io.delta.kernel.types.*;
-import io.delta.kernel.utils.DataFileStatistics;
 import io.delta.kernel.utils.DataFileStatus;
 import java.net.URI;
 import java.util.HashMap;
@@ -77,12 +78,14 @@ public class AddFile extends RowBackedAction {
    * partition values.
    */
   public static AddFile convertDataFileStatus(
+      StructType physicalSchema,
       URI tableRoot,
       DataFileStatus dataFileStatus,
       Map<String, Literal> partitionValues,
       boolean dataChange) {
     Row row =
         createAddFileRow(
+            physicalSchema,
             relativizePath(new Path(dataFileStatus.getPath()), tableRoot).toUri().toString(),
             serializePartitionMap(partitionValues),
             dataFileStatus.getSize(),
@@ -99,6 +102,7 @@ public class AddFile extends RowBackedAction {
 
   /** Utility to generate an 'AddFile' row from the given fields. */
   public static Row createAddFileRow(
+      StructType physicalSchema,
       String path,
       MapValue partitionValues,
       long size,
@@ -125,7 +129,8 @@ public class AddFile extends RowBackedAction {
     baseRowId.ifPresent(id -> fieldMap.put(FULL_SCHEMA.indexOf("baseRowId"), id));
     defaultRowCommitVersion.ifPresent(
         version -> fieldMap.put(FULL_SCHEMA.indexOf("defaultRowCommitVersion"), version));
-    stats.ifPresent(stat -> fieldMap.put(FULL_SCHEMA.indexOf("stats"), stat.serializeAsJson()));
+    stats.ifPresent(
+        stat -> fieldMap.put(FULL_SCHEMA.indexOf("stats"), stat.serializeAsJson(physicalSchema)));
 
     return new GenericRow(FULL_SCHEMA, fieldMap);
   }
@@ -186,7 +191,7 @@ public class AddFile extends RowBackedAction {
             index ->
                 row.isNullAt(index)
                     ? Optional.empty()
-                    : DataFileStatistics.deserializeFromJson(row.getString(index)));
+                    : StatsUtils.deserializeFromJson(row.getString(index)));
   }
 
   public Optional<Long> getNumRecords() {
@@ -218,7 +223,7 @@ public class AddFile extends RowBackedAction {
     sb.append(", tags=").append(getTags().map(VectorUtils::toJavaMap));
     sb.append(", baseRowId=").append(getBaseRowId());
     sb.append(", defaultRowCommitVersion=").append(getDefaultRowCommitVersion());
-    sb.append(", stats=").append(getStats());
+    sb.append(", stats=").append(getStats().map(d -> d.serializeAsJson(null)).orElse(""));
     sb.append('}');
     return sb.toString();
   }
@@ -241,9 +246,7 @@ public class AddFile extends RowBackedAction {
             getTags().map(VectorUtils::toJavaMap), other.getTags().map(VectorUtils::toJavaMap))
         && Objects.equals(getBaseRowId(), other.getBaseRowId())
         && Objects.equals(getDefaultRowCommitVersion(), other.getDefaultRowCommitVersion())
-        && Objects.equals(
-            getStats().map(DataFileStatistics::toString),
-            other.getStats().map(DataFileStatistics::toString));
+        && Objects.equals(getStats(), other.getStats());
   }
 
   @Override
@@ -260,6 +263,6 @@ public class AddFile extends RowBackedAction {
         getTags().map(VectorUtils::toJavaMap),
         getBaseRowId(),
         getDefaultRowCommitVersion(),
-        getStats().map(DataFileStatistics::toString));
+        getStats());
   }
 }

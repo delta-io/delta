@@ -200,6 +200,10 @@ public final class DeltaErrors {
     return new KernelException("Kernel doesn't support writing data of type: " + dataType);
   }
 
+  public static KernelException unsupportedStatsDataType(DataType dataType) {
+    return new KernelException("Kernel doesn't support writing stats data of type: " + dataType);
+  }
+
   public static KernelException unsupportedPartitionDataType(String colName, DataType dataType) {
     String msgT = "Kernel doesn't support writing data with partition column (%s) of type: %s";
     return new KernelException(format(msgT, colName, dataType));
@@ -236,6 +240,13 @@ public final class DeltaErrors {
         "The schema of the data to be written to the table doesn't match "
             + "the table schema. \nTable: %s\nTable schema: %s, \nData schema: %s";
     return new KernelException(format(msgT, tablePath, tableSchema, dataSchema));
+  }
+
+  public static KernelException statsTypeMismatch(
+      String fieldName, DataType expected, DataType actual) {
+    String msgFormat =
+        "Type mismatch for field '%s' when writing statistics: expected %s, but found %s";
+    return new KernelException(format(msgFormat, fieldName, expected, actual));
   }
 
   public static KernelException missingNumRecordsStatsForIcebergCompatV2(
