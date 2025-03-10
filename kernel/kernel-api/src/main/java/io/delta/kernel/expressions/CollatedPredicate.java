@@ -2,6 +2,8 @@ package io.delta.kernel.expressions;
 
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.types.CollationIdentifier;
+
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -26,6 +28,7 @@ public class CollatedPredicate extends Predicate {
   public CollatedPredicate(
       String name, Expression left, Expression right, CollationIdentifier collationIdentifier) {
     super(name, left, right);
+    Objects.requireNonNull(collationIdentifier, "Collation identifier cannot be null");
     this.collationIdentifier = collationIdentifier;
   }
 
