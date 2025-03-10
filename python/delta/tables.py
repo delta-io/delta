@@ -1073,14 +1073,34 @@ class DeltaMergeBuilder(object):
         new_jbuilder = self._jbuilder.withSchemaEvolution()
         return DeltaMergeBuilder(self._spark, new_jbuilder)
 
-    @since(0.4)  # type: ignore[arg-type]
+    @overload
+    def execute(self, with_metrics: bool) -> Union[None, DataFrame]:
+        ...
+
+    @overload
     def execute(self) -> None:
+        ...
+
+    @since(0.4)  # type: ignore[arg-type]
+    def execute(self, with_metrics: bool = False) -> Union[None, DataFrame]:
         """
         Execute the merge operation based on the built matched and not matched actions.
 
         See :py:class:`~delta.tables.DeltaMergeBuilder` for complete usage details.
+
+        :param with_metrics: If True, returns a DataFrame containing operation metrics;
+                             otherwise, returns None.
+        :type with_metrics: bool
+        :return: A DataFrame with metrics if `with_metrics` is True; otherwise, None.
+        :rtype: Union[None, DataFrame]
         """
-        self._jbuilder.execute()
+        if with_metrics:
+            return DataFrame(
+                self._jbuilder.execute(with_metrics),
+                getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
+            )
+
+        return self._jbuilder.execute()
 
     def __getMatchedBuilder(
         self, condition: OptionalExpressionOrColumn = None
