@@ -20,6 +20,7 @@ import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUti
 import static io.delta.kernel.defaults.internal.expressions.ImplicitCastExpression.canCastTo;
 import static io.delta.kernel.internal.util.ExpressionUtils.*;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import static io.delta.kernel.types.StringType.STRING;
 import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.toList;
@@ -295,7 +296,7 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
               substring,
               children.stream().map(e -> e.expression).collect(toList()),
               children.stream().map(e -> e.outputType).collect(toList()));
-      return new ExpressionTransformResult(transformedExpression, StringType.STRING);
+      return new ExpressionTransformResult(transformedExpression, STRING);
     }
 
     @Override
@@ -356,7 +357,7 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
                           "CollatedPredicate should be used to compare strings, but got left type=%s, right type=%s",
                           leftResult.outputType, rightResult.outputType);
           throw unsupportedExpressionException(predicate, msg);
-        } else if (!collatedPredicate.getCollationIdentifier().equals(CollationIdentifier.fromString("SPARK.UTF8_BINARY"))) {
+        } else if (!collatedPredicate.getCollationIdentifier().equals(STRING.getCollationIdentifier())) {
           String msg =
                   format("Unsupported collation identifier: %s. Default Engine supports just \"SPARK.UTF8_BINARY\" collation.", collatedPredicate.getCollationIdentifier());
           throw unsupportedExpressionException(predicate, msg);
