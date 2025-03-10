@@ -33,6 +33,7 @@ import io.delta.kernel.exceptions.DomainDoesNotExistException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.icebergcompat.IcebergCompatV2MetadataValidatorAndUpdater;
 import io.delta.kernel.internal.metrics.SnapshotMetrics;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.replay.LogReplay;
@@ -192,6 +193,22 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       shouldUpdateProtocol = true;
       protocol = newProtocolAndFeatures.get()._1;
       TableFeatures.validateKernelCanWriteToTable(protocol, metadata, table.getPath(engine));
+    }
+
+    Optional<Metadata> newMetadata =
+        ColumnMapping.updateColumnMappingMetadata(
+            metadata, ColumnMapping.getColumnMappingMode(metadata.getConfiguration()), isNewTable);
+    if (newMetadata.isPresent()) {
+      shouldUpdateMetadata = true;
+      metadata = newMetadata.get();
+    }
+
+    newMetadata =
+        IcebergCompatV2MetadataValidatorAndUpdater.validateAndUpdateIcebergCompatV2Metadata(
+            isNewTable, metadata, protocol);
+    if (newMetadata.isPresent()) {
+      shouldUpdateMetadata = true;
+      metadata = newMetadata.get();
     }
 
     return new TransactionImpl(

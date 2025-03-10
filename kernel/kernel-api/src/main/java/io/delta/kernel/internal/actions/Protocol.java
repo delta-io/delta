@@ -471,6 +471,11 @@ public class Protocol {
     return mergedProtocol.denormalizedNormalized();
   }
 
+  /** Check if the protocol supports the given table feature */
+  public boolean supportsFeature(TableFeature feature) {
+    return getImplicitlyAndExplicitlySupportedFeatures().contains(feature);
+  }
+
   /** Validate the protocol contents represents a valid state */
   protected void validate() {
     checkArgument(minReaderVersion >= 1, "minReaderVersion should be at least 1");
