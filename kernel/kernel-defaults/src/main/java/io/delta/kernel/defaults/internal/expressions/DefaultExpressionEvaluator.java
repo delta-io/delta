@@ -350,18 +350,16 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
       // So we just return the predicate as is.
       // If the collation is not "SPARK.UTF8_BINARY" we throw an exception.
       if (predicate instanceof CollatedPredicate) {
+        String msg =
+            format(
+                "CollatedPredicate should be used to compare strings, but got left type=%s, right type=%s",
+                leftResult.outputType, rightResult.outputType);
+        checkIsStringType(leftResult.outputType, predicate, msg);
+        checkIsStringType(rightResult.outputType, predicate, msg);
+
         CollatedPredicate collatedPredicate = (CollatedPredicate) predicate;
-        if (!(leftResult.outputType instanceof StringType)
-            || !(rightResult.outputType instanceof StringType)) {
-          String msg =
-              format(
-                  "CollatedPredicate should be used to compare strings, but got left type=%s, right type=%s",
-                  leftResult.outputType, rightResult.outputType);
-          throw unsupportedExpressionException(predicate, msg);
-        } else if (!collatedPredicate
-            .getCollationIdentifier()
-            .equals(STRING.getCollationIdentifier())) {
-          String msg =
+        if (!collatedPredicate.getCollationIdentifier().equals(STRING.getCollationIdentifier())) {
+          msg =
               format(
                   "Unsupported collation: \"%s\". Default Engine supports just \"SPARK.UTF8_BINARY\" collation.",
                   collatedPredicate.getCollationIdentifier());

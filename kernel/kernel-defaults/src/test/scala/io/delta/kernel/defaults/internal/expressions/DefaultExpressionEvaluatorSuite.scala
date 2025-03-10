@@ -635,6 +635,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
 
   test("evaluate expression: starts with") {
     Seq(
+      // collation
       None,
       Some(StringType.STRING.getCollationIdentifier)
     ).foreach {
@@ -1090,6 +1091,85 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
             }
         }
     )
+  }
+
+  test("evaluate expression: collated comparators (=, <, <=, >, >=) with invalid types") {
+    Seq(
+      // comparator
+      "=",
+      "<",
+      "<=",
+      ">",
+      ">=",
+    ).foreach {
+      comparator =>
+        Seq(
+          // (expr1, expr2, dataType1, dataType2, schema)
+          (
+            Literal.ofString("apple"),
+            Literal.ofInt(1),
+            StringType.STRING,
+            IntegerType.INTEGER,
+            new StructType()
+          ),
+          (
+            Literal.ofString("apple"),
+            Literal.ofLong(1L),
+            new StringType(CollationIdentifier.fromString("SPARK.UTF8_LCASE")),
+            LongType.LONG,
+            new StructType()
+          ),
+          (
+            Literal.ofFloat(2.3f),
+            Literal.ofString("apple"),
+            FloatType.FLOAT,
+            StringType.STRING,
+            new StructType()
+          ),
+          (
+            Literal.ofDouble(2.3),
+            Literal.ofBoolean(false),
+            DoubleType.DOUBLE,
+            BooleanType.BOOLEAN,
+            new StructType()
+          ),
+          (
+            new Column(Array("col1", "col11")),
+            Literal.ofString("apple"),
+            IntegerType.INTEGER,
+            new StringType(CollationIdentifier.fromString("ICU.sr_Cyrl_SRB.75.1")),
+            new StructType()
+              .add("col1", new StructType()
+                .add("col11", IntegerType.INTEGER))
+          ),
+          (
+            new Column(Array("col1", "col11")),
+            new Column(Array("col1", "col12")),
+            DoubleType.DOUBLE,
+            FloatType.FLOAT,
+            new StructType()
+              .add("col1", new StructType()
+                .add("col11", DoubleType.DOUBLE)
+                .add("col12", FloatType.FLOAT))
+          )
+        ).foreach {
+          case (expr1, expr2, dataType1, dataType2, schema) =>
+            val expr = new CollatedPredicate(
+              comparator, expr1, expr2, StringType.STRING.getCollationIdentifier)
+            val input = zeroColumnBatch(rowCount = 1)
+
+            val e = intercept[UnsupportedOperationException] {
+              new DefaultExpressionEvaluator(
+                schema,
+                expr,
+                BooleanType.BOOLEAN).eval(input)
+            }
+            assert(e.getMessage.contains(
+              s"""CollatedPredicate should be used to compare strings,
+                 | but got left type=$dataType1, right type=$dataType2"""
+                .stripMargin.replace("\n", "")))
+        }
+    }
   }
 
   // Literals for each data type from the data type value range, used as inputs to comparator
