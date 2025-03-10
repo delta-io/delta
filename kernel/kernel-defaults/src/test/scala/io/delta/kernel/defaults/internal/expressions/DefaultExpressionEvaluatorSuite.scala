@@ -1093,17 +1093,18 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     )
   }
 
-  test("evaluate expression: collated comparators (=, <, <=, >, >=) with invalid types") {
+  test("check CollatedPredicate with invalid types") {
     Seq(
-      // comparator
+      // predicateName
       "=",
       "<",
       "<=",
       ">",
       ">=",
-      "IS NOT DISTINCT FROM"
+      "IS NOT DISTINCT FROM",
+      "STARTS_WITH"
     ).foreach {
-      comparator =>
+      predicateName =>
         Seq(
           // (expr1, expr2, dataType1, dataType2, schema)
           (
@@ -1156,7 +1157,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
         ).foreach {
           case (expr1, expr2, dataType1, dataType2, schema) =>
             val expr = new CollatedPredicate(
-              comparator, expr1, expr2, StringType.STRING.getCollationIdentifier)
+              predicateName, expr1, expr2, StringType.STRING.getCollationIdentifier)
             val input = zeroColumnBatch(rowCount = 1)
 
             val e = intercept[UnsupportedOperationException] {
@@ -1165,10 +1166,15 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
                 expr,
                 BooleanType.BOOLEAN).eval(input)
             }
-            assert(e.getMessage.contains(
-              s"""CollatedPredicate should be used to compare strings,
-                 | but got left type=$dataType1, right type=$dataType2"""
-                .stripMargin.replace("\n", "")))
+
+            if (!predicateName.equals("STARTS_WITH")) {
+              assert(e.getMessage.contains(
+                s"""CollatedPredicate should be used to compare strings,
+                   | but got left type=$dataType1, right type=$dataType2"""
+                  .stripMargin.replace("\n", "")))
+            } else {
+              assert(e.getMessage.contains("'STARTS_WITH' expects STRING type inputs"))
+            }
         }
     }
   }
