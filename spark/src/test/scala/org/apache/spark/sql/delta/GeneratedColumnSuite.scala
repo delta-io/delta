@@ -1278,6 +1278,23 @@ trait GeneratedColumnSuiteBase
     }
   }
 
+  test("generated column metadata not exposed for partition column in time-travel query") {
+    val table = "generated_partition_column"
+    withTable(table) {
+      createTable(table,
+        path = None,
+        schemaString = "c1_p INT, c2 INT",
+        generatedColumns = Map("c1_p" -> "c2 % 2"),
+        partitionColumns = Seq("c1_p"))
+      val schema = spark.read.format("delta").option("versionAsOf", "0").table(table).schema
+      // Check that the schema doesn't contain metadata.
+      assert(schema === new StructType()
+        .add("c1_p", IntegerType)
+        .add("c2", IntegerType)
+      )
+    }
+  }
+
   test("MERGE UPDATE basic") {
     withTableName("source") { src =>
       withTableName("target") { tgt =>
