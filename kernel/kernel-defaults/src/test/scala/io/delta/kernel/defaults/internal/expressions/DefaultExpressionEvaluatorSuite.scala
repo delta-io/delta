@@ -831,7 +831,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     }
   }
 
-  test("evaluate expression: comparators (=, <, <=, >, >=)") {
+  test("evaluate expression: comparators (=, <, <=, >, >=, 'IS NOT DISTINCT FROM')") {
     val ASCII_MAX_CHARACTER = '\u007F'
     val UTF8_MAX_CHARACTER = new String(Character.toChars(Character.MAX_CODE_POINT))
 
@@ -989,7 +989,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     }
   }
 
-  test("evaluate expression: collated comparators (=, <, <=, >, >=)") {
+  test("evaluate expression: collated comparators (=, <, <=, >, >=, 'IS NOT DISTINCT FROM')") {
     val ASCII_MAX_CHARACTER = '\u007F'
     val UTF8_MAX_CHARACTER = new String(Character.toChars(Character.MAX_CODE_POINT))
 
@@ -1101,6 +1101,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       "<=",
       ">",
       ">=",
+      "IS NOT DISTINCT FROM"
     ).foreach {
       comparator =>
         Seq(
