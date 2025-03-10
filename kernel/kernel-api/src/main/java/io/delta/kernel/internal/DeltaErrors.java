@@ -238,39 +238,46 @@ public final class DeltaErrors {
     return new KernelException(format(msgT, tablePath, tableSchema, dataSchema));
   }
 
-  /// Start: icebergCompatV2 exceptions
-  public static KernelException missingNumRecordsStatsForIcebergCompatV2(
-      DataFileStatus dataFileStatus) {
+  /// Start: icebergCompat exceptions
+  public static KernelException icebergCompatMissingNumRecordsStats(
+      String compatVersion, DataFileStatus dataFileStatus) {
     throw new KernelException(
         format(
-            "Iceberg V2 compatibility requires statistics.\n DataFileStatus: %s", dataFileStatus));
+            "%s compatibility requires statistics.\n DataFileStatus: %s",
+            compatVersion, dataFileStatus));
   }
 
-  public static KernelException incompatibleVersionEnabledForIcebergCompatV2() {
+  public static KernelException icebergCompatIncompatibleVersionEnabled() {
     throw new KernelException(
         "Only one IcebergCompat version can be enabled, please explicitly disable all other"
             + "IcebergCompat versions that are not needed.");
   }
 
-  public static KernelException unsupportedTypeColumnForIcebergCompatV2(List<DataType> dataTypes) {
+  public static KernelException icebergCompatUnsupportedTypeColumns(
+      String compatVersion, List<DataType> dataTypes) {
     throw new KernelException(
-        format("IcebergCompatV2 does not support the data types: %s.", dataTypes));
+        format("%s does not support the data types: %s.", compatVersion, dataTypes));
   }
 
-  public static KernelException unsupportedTypePartitionColumnForIcebergCompatV2(
-      DataType dataType) {
+  public static KernelException icebergCompatUnsupportedTypePartitionColumn(
+      String compatVersion, DataType dataType) {
     throw new KernelException(
         format(
-            "IcebergCompatV2 does not support the data type '%s' for a partition column.",
-            dataType));
+            "%s does not support the data type '%s' for a partition column.",
+            compatVersion, dataType));
   }
 
-  public static KernelException deletionVectorsUnsupportedForIcebergCompatV2() {
+  public static KernelException icebergCompatDeletionVectorsUnsupported(String compatVersion) {
     throw new KernelException(
-        "IcebergCompatV2 is not supported on a table with deletion vectors supported");
+        format("%s is not supported on a table with deletion vectors supported", compatVersion));
   }
 
-  // End: icebergCompatV2 exceptions
+  public static KernelException icebergCompatRequiredFeatureMissing(
+      String compatVersion, String feature) {
+    throw new KernelException(
+        format("%s: requires the feature '%s' to be enabled.", compatVersion, feature));
+  }
+  // End: icebergCompat exceptions
 
   public static KernelException partitionColumnMissingInData(
       String tablePath, String partitionColumn) {

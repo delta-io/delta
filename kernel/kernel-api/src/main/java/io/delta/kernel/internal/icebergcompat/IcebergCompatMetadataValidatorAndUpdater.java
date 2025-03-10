@@ -18,6 +18,7 @@ package io.delta.kernel.internal.icebergcompat;
 import static java.util.Collections.singletonMap;
 
 import io.delta.kernel.exceptions.KernelException;
+import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
@@ -46,7 +47,7 @@ import java.util.function.Predicate;
  *       supported in the Iceberg).
  * </ul>
  */
-public class IcebergCompatMetadataValidatorAndUpdater {
+public abstract class IcebergCompatMetadataValidatorAndUpdater {
   /////////////////////////////////////////////////////////////////////////////////
   /// Interfaces for defining checks for the compat validation and updating     ///
   /////////////////////////////////////////////////////////////////////////////////
@@ -144,22 +145,6 @@ public class IcebergCompatMetadataValidatorAndUpdater {
   /// Implementation of {@link IcebergCompatMetadataValidatorAndUpdater}        ///
   /////////////////////////////////////////////////////////////////////////////////
 
-  private final TableConfig<Boolean> requiredDeltaTableProperty;
-  private final List<TableFeature> requiredDependencyTableFeatures;
-  private final List<IcebergCompatRequiredTablePropertyEnforcer> requiredDeltaTableProperties;
-  private final List<IcebergCompatCheck> icebergCompatChecks;
-
-  IcebergCompatMetadataValidatorAndUpdater(
-      TableConfig<Boolean> requiredDeltaTableProperty,
-      List<TableFeature> requiredDependencyTableFeatures,
-      List<IcebergCompatRequiredTablePropertyEnforcer> requiredDeltaTableProperties,
-      List<IcebergCompatCheck> icebergCompatChecks) {
-    this.requiredDeltaTableProperty = requiredDeltaTableProperty;
-    this.requiredDependencyTableFeatures = requiredDependencyTableFeatures;
-    this.requiredDeltaTableProperties = requiredDeltaTableProperties;
-    this.icebergCompatChecks = icebergCompatChecks;
-  }
-
   /**
    * If the iceberg compat is enabled, validate and update the metadata for Iceberg compatibility.
    *
@@ -168,7 +153,7 @@ public class IcebergCompatMetadataValidatorAndUpdater {
    * @throws {@link io.delta.kernel.exceptions.KernelException} for any validation errors
    */
   Optional<Metadata> validateAndUpdateMetadata(IcebergCompatInputContext inputContext) {
-    if (!requiredDeltaTableProperty.fromMetadata(inputContext.newMetadata)) {
+    if (!requiredDeltaTableProperty().fromMetadata(inputContext.newMetadata)) {
       return Optional.empty();
     }
 
@@ -176,7 +161,7 @@ public class IcebergCompatMetadataValidatorAndUpdater {
 
     // table property checks and metadata updates
     for (IcebergCompatRequiredTablePropertyEnforcer requiredDeltaTableProperty :
-        requiredDeltaTableProperties) {
+        requiredDeltaTableProperties()) {
       Optional<Metadata> updated = requiredDeltaTableProperty.validateAndUpdate(inputContext);
 
       if (updated.isPresent()) {
@@ -187,7 +172,7 @@ public class IcebergCompatMetadataValidatorAndUpdater {
 
     // post-process metadata after the table property checks are done and updated
     for (IcebergCompatRequiredTablePropertyEnforcer requiredDeltaTableProperty :
-        requiredDeltaTableProperties) {
+        requiredDeltaTableProperties()) {
       Optional<Metadata> updated =
           requiredDeltaTableProperty.postMetadataProcessor.postProcess(inputContext);
       if (updated.isPresent()) {
@@ -197,21 +182,28 @@ public class IcebergCompatMetadataValidatorAndUpdater {
     }
 
     // check for required dependency table features
-    for (TableFeature requiredDependencyTableFeature : requiredDependencyTableFeatures) {
+    for (TableFeature requiredDependencyTableFeature : requiredDependencyTableFeatures()) {
       if (!inputContext.newProtocol.supportsFeature(requiredDependencyTableFeature)) {
-        // TODO: make this a Kernel exception
-        throw new KernelException(
-            String.format(
-                "The table feature '%s' is required for Iceberg compatibility",
-                requiredDependencyTableFeature.featureName()));
+        throw DeltaErrors.icebergCompatRequiredFeatureMissing(
+            compatVersion(), requiredDependencyTableFeature.featureName());
       }
     }
 
     // check for IcebergV2 compatibility checks
-    for (IcebergCompatCheck icebergCompatCheck : icebergCompatChecks) {
+    for (IcebergCompatCheck icebergCompatCheck : icebergCompatChecks()) {
       icebergCompatCheck.check(inputContext);
     }
 
     return metadataUpdated ? Optional.of(inputContext.newMetadata) : Optional.empty();
   }
+
+  abstract String compatVersion();
+
+  abstract TableConfig<Boolean> requiredDeltaTableProperty();
+
+  abstract List<IcebergCompatRequiredTablePropertyEnforcer> requiredDeltaTableProperties();
+
+  abstract List<TableFeature> requiredDependencyTableFeatures();
+
+  abstract List<IcebergCompatCheck> icebergCompatChecks();
 }

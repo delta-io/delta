@@ -96,7 +96,7 @@ class IcebergCompatV2MetadataValidatorAndUpdaterSuite
             validateAndUpdateIcebergCompatV2Metadata(isNewTable, metadata, protocol)
           }
           assert(e.getMessage.contains(
-            s"IcebergCompatV2 does not support the data types: "))
+            s"icebergCompatV2 does not support the data types: "))
         }
       }
   }
@@ -113,7 +113,7 @@ class IcebergCompatV2MetadataValidatorAndUpdaterSuite
             validateAndUpdateIcebergCompatV2Metadata(isNewTable, metadata, protocol)
           }
           assert(e.getMessage.matches(
-            s"IcebergCompatV2 does not support the data type .* partition column."))
+            s"icebergCompatV2 does not support the data type .* for a partition column."))
         }
       }
   }
@@ -130,7 +130,7 @@ class IcebergCompatV2MetadataValidatorAndUpdaterSuite
         validateAndUpdateIcebergCompatV2Metadata(isNewTable, metadata, protocol)
       }
       assert(e.getMessage.contains(
-        "IcebergCompatV2 is not supported on a table with deletion vectors supported"))
+        "icebergCompatV2 is not supported on a table with deletion vectors supported"))
     }
   }
 
@@ -143,7 +143,7 @@ class IcebergCompatV2MetadataValidatorAndUpdaterSuite
         validateAndUpdateIcebergCompatV2Metadata(isNewTable, metadata, protocol)
       }
       assert(e.getMessage.contains(
-        "The table feature 'columnMapping' is required for Iceberg compatibility"))
+        "icebergCompatV2: requires the feature 'columnMapping' to be enabled."))
     }
   }
 

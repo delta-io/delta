@@ -26,9 +26,7 @@ import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
-import io.delta.kernel.internal.icebergcompat.IcebergCompatMetadataValidatorAndUpdater.IcebergCompatCheck;
-import io.delta.kernel.internal.icebergcompat.IcebergCompatMetadataValidatorAndUpdater.IcebergCompatInputContext;
-import io.delta.kernel.internal.icebergcompat.IcebergCompatMetadataValidatorAndUpdater.IcebergCompatRequiredTablePropertyEnforcer;
+import io.delta.kernel.internal.tablefeatures.TableFeature;
 import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
 import io.delta.kernel.internal.util.SchemaUtils;
@@ -40,9 +38,8 @@ import java.util.Optional;
 import java.util.stream.Stream;
 
 /** Utility methods for validation and compatibility checks for Iceberg V2. */
-public class IcebergCompatV2MetadataValidatorAndUpdater {
-  private IcebergCompatV2MetadataValidatorAndUpdater() {}
-
+public class IcebergCompatV2MetadataValidatorAndUpdater
+    extends IcebergCompatMetadataValidatorAndUpdater {
   /**
    * Validate and update the given Iceberg V2 metadata.
    *
@@ -54,7 +51,7 @@ public class IcebergCompatV2MetadataValidatorAndUpdater {
    */
   public static Optional<Metadata> validateAndUpdateIcebergCompatV2Metadata(
       boolean isCreatingNewTable, Metadata newMetadata, Protocol newProtocol) {
-    return ICEBERG_COMPAT_V2_VALIDATOR_AND_UPDATER.validateAndUpdateMetadata(
+    return INSTANCE.validateAndUpdateMetadata(
         new IcebergCompatInputContext(isCreatingNewTable, newMetadata, newProtocol));
   }
 
@@ -67,13 +64,18 @@ public class IcebergCompatV2MetadataValidatorAndUpdater {
   public static void validateDataFileStatus(DataFileStatus dataFileStatus) {
     if (!dataFileStatus.getStatistics().isPresent()) {
       // presence of stats means always has a non-null `numRecords`
-      throw DeltaErrors.missingNumRecordsStatsForIcebergCompatV2(dataFileStatus);
+      throw DeltaErrors.icebergCompatMissingNumRecordsStats(
+          INSTANCE.compatVersion(), dataFileStatus);
     }
   }
 
-  /////////////////////////////////////////////////////////////////////////////////
-  /// Define the compatibility and update checks for icebergCompatV2            ///
-  /////////////////////////////////////////////////////////////////////////////////
+  /// //////////////////////////////////////////////////////////////////////////////
+  /// Define the compatibility and update checks for icebergCompatV2             ///
+  /// //////////////////////////////////////////////////////////////////////////////
+
+  private static final IcebergCompatV2MetadataValidatorAndUpdater INSTANCE =
+      new IcebergCompatV2MetadataValidatorAndUpdater();
+
   private static final IcebergCompatRequiredTablePropertyEnforcer ICEBERG_COMPAT_V2_CM_REQUIREMENT =
       new IcebergCompatRequiredTablePropertyEnforcer<>(
           TableConfig.COLUMN_MAPPING_MODE,
@@ -92,7 +94,7 @@ public class IcebergCompatV2MetadataValidatorAndUpdater {
                 .newMetadata
                 .getConfiguration()
                 .getOrDefault("delta.enableIcebergCompatV1", "false"))) {
-          throw DeltaErrors.incompatibleVersionEnabledForIcebergCompatV2();
+          throw DeltaErrors.icebergCompatIncompatibleVersionEnabled();
         }
       };
 
@@ -124,7 +126,8 @@ public class IcebergCompatV2MetadataValidatorAndUpdater {
                 });
 
         if (!matches.isEmpty()) {
-          throw DeltaErrors.unsupportedTypeColumnForIcebergCompatV2(
+          throw DeltaErrors.icebergCompatUnsupportedTypeColumns(
+              INSTANCE.compatVersion(),
               matches.stream().map(tuple -> tuple._2.getDataType()).collect(toList()));
         }
       };
@@ -153,7 +156,8 @@ public class IcebergCompatV2MetadataValidatorAndUpdater {
                             || dataType instanceof TimestampType
                             || dataType instanceof TimestampNTZType;
                     if (!validType) {
-                      throw DeltaErrors.unsupportedTypePartitionColumnForIcebergCompatV2(dataType);
+                      throw DeltaErrors.icebergCompatUnsupportedTypePartitionColumn(
+                          INSTANCE.compatVersion(), dataType);
                     }
                   });
 
@@ -166,7 +170,7 @@ public class IcebergCompatV2MetadataValidatorAndUpdater {
   private static final IcebergCompatCheck ICEBERG_COMPAT_V2_CHECK_HAS_NO_DELETION_VECTORS =
       (inputContext) -> {
         if (inputContext.newProtocol.supportsFeature(DELETION_VECTORS_RW_FEATURE)) {
-          throw DeltaErrors.deletionVectorsUnsupportedForIcebergCompatV2();
+          throw DeltaErrors.icebergCompatDeletionVectorsUnsupported(INSTANCE.compatVersion());
         }
       };
 
@@ -179,19 +183,35 @@ public class IcebergCompatV2MetadataValidatorAndUpdater {
         }
       };
 
-  /** Validator and updater for Iceberg V2 compatibility. */
-  private static final IcebergCompatMetadataValidatorAndUpdater
-      ICEBERG_COMPAT_V2_VALIDATOR_AND_UPDATER =
-          new IcebergCompatMetadataValidatorAndUpdater(
-              TableConfig.ICEBERG_COMPAT_V2_ENABLED,
-              Stream.of(ICEBERG_COMPAT_V2_W_FEATURE, COLUMN_MAPPING_RW_FEATURE).collect(toList()),
-              singletonList(ICEBERG_COMPAT_V2_CM_REQUIREMENT),
-              Stream.of(
-                      ICEBERG_COMPAT_V2_CHECK_NO_COMPAT_V1_ENABLED,
-                      ICEBERG_COMPAT_V2_CHECK_HAS_SUPPORTED_TYPES,
-                      ICEBERG_COMPAT_V2_CHECK_HAS_ALLOWED_PARTITION_TYPES,
-                      ICEBERG_COMPAT_V2_CHECK_HAS_NO_PARTITION_EVOLUTION,
-                      ICEBERG_COMPAT_V2_CHECK_HAS_NO_DELETION_VECTORS,
-                      ICEBERG_COMPAT_V2_CHECK_HAS_SUPPORTED_TYPE_WIDENING)
-                  .collect(toList()));
+  @Override
+  String compatVersion() {
+    return "icebergCompatV2";
+  }
+
+  @Override
+  TableConfig<Boolean> requiredDeltaTableProperty() {
+    return TableConfig.ICEBERG_COMPAT_V2_ENABLED;
+  }
+
+  @Override
+  List<IcebergCompatRequiredTablePropertyEnforcer> requiredDeltaTableProperties() {
+    return singletonList(ICEBERG_COMPAT_V2_CM_REQUIREMENT);
+  }
+
+  @Override
+  List<TableFeature> requiredDependencyTableFeatures() {
+    return Stream.of(ICEBERG_COMPAT_V2_W_FEATURE, COLUMN_MAPPING_RW_FEATURE).collect(toList());
+  }
+
+  @Override
+  List<IcebergCompatCheck> icebergCompatChecks() {
+    return Stream.of(
+            ICEBERG_COMPAT_V2_CHECK_NO_COMPAT_V1_ENABLED,
+            ICEBERG_COMPAT_V2_CHECK_HAS_SUPPORTED_TYPES,
+            ICEBERG_COMPAT_V2_CHECK_HAS_ALLOWED_PARTITION_TYPES,
+            ICEBERG_COMPAT_V2_CHECK_HAS_NO_PARTITION_EVOLUTION,
+            ICEBERG_COMPAT_V2_CHECK_HAS_NO_DELETION_VECTORS,
+            ICEBERG_COMPAT_V2_CHECK_HAS_SUPPORTED_TYPE_WIDENING)
+        .collect(toList());
+  }
 }
