@@ -150,7 +150,16 @@ object CDCReader extends CDCReaderImpl
         snapshotWithSchemaMode.snapshot
     }
 
-    override val schema: StructType = cdcReadSchema(snapshotForBatchSchema.metadata.schema)
+    override val schema: StructType = {
+      cdcReadSchema(
+        DeltaTableUtils.removeInternalDeltaMetadata(
+          sqlContext.sparkSession,
+          DeltaTableUtils.removeInternalWriterMetadata(
+            sqlContext.sparkSession, snapshotForBatchSchema.metadata.schema
+          )
+        )
+      )
+    }
 
     override def unhandledFilters(filters: Array[Filter]): Array[Filter] = Array.empty
 
