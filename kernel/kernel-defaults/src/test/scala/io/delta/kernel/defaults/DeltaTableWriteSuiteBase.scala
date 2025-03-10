@@ -33,7 +33,7 @@ import io.delta.kernel.expressions.Literal
 import io.delta.kernel.expressions.Literal.ofInt
 import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
 import io.delta.kernel.internal.{SnapshotImpl, TableConfig, TableImpl}
-import io.delta.kernel.internal.actions.SingleAction
+import io.delta.kernel.internal.actions.{Metadata, Protocol, SingleAction}
 import io.delta.kernel.internal.fs.{Path => DeltaPath}
 import io.delta.kernel.internal.util.{Clock, FileNames, VectorUtils}
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
