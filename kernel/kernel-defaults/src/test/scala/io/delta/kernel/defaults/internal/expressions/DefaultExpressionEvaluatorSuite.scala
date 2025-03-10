@@ -20,8 +20,7 @@ import java.math.{BigDecimal => BigDecimalJ}
 import java.sql.{Date, Timestamp}
 import java.util
 import java.util.Optional
-
-import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
+import io.delta.kernel.data.{ColumnVector, ColumnarBatch}
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
 import io.delta.kernel.defaults.internal.data.vector.{DefaultIntVector, DefaultStructVector}
 import io.delta.kernel.defaults.utils.DefaultKernelTestUtils.getValueAsObject
@@ -31,8 +30,8 @@ import io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE
 import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.internal.util.InternalUtils
 import io.delta.kernel.types._
-
 import org.scalatest.funsuite.AnyFunSuite
+import org.sparkproject.jetty.server.Response.OutputType
 
 class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBase {
   test("evaluate expression: literal") {
@@ -635,6 +634,11 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
   }
 
   test("evaluate expression: starts with") {
+    Seq(
+      None,
+      Some(StringType.STRING.getCollationIdentifier)
+    ).foreach {
+      collationIdentifier =>
     val col1 = stringVector(Seq[String]("one", "two", "t%hree", "four", null, null, "%"))
     val col2 = stringVector(Seq[String]("o", "t", "T", "4", "f", null, null))
     val schema = new StructType()
@@ -642,7 +646,8 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       .add("col2", StringType.STRING)
     val input = new DefaultColumnarBatch(col1.getSize, schema, Array(col1, col2))
 
-    val startsWithExpressionLiteral = startsWith(new Column("col1"), Literal.ofString("t%"))
+    val startsWithExpressionLiteral = startsWith(new Column("col1"), Literal.ofString("t%"),
+      collationIdentifier)
     val expOutputVectorLiteral =
       booleanVector(Seq[BooleanJ](false, false, true, false, null, null, false))
     checkBooleanVectors(
@@ -652,7 +657,8 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
         BooleanType.BOOLEAN).eval(input),
       expOutputVectorLiteral)
 
-    val startsWithExpressionNullLiteral = startsWith(new Column("col1"), Literal.ofString(null))
+    val startsWithExpressionNullLiteral = startsWith(new Column("col1"), Literal.ofString(null),
+      collationIdentifier)
     val allNullVector =
       booleanVector(Seq[BooleanJ](null, null, null, null, null, null, null))
     checkBooleanVectors(
@@ -663,7 +669,8 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       allNullVector)
 
     // Two literal expressions on both sides
-    val startsWithExpressionAlwaysTrue = startsWith(Literal.ofString("ABC"), Literal.ofString("A"))
+    val startsWithExpressionAlwaysTrue = startsWith(Literal.ofString("ABC"), Literal.ofString("A"),
+      collationIdentifier)
     val allTrueVector = booleanVector(Seq[BooleanJ](true, true, true, true, true, true, true))
     checkBooleanVectors(
       new DefaultExpressionEvaluator(
@@ -673,7 +680,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       allTrueVector)
 
     val startsWithExpressionAlwaysFalse =
-      startsWith(Literal.ofString("ABC"), Literal.ofString("_B%"))
+      startsWith(Literal.ofString("ABC"), Literal.ofString("_B%"), collationIdentifier)
     val allFalseVector =
       booleanVector(Seq[BooleanJ](false, false, false, false, false, false, false))
     checkBooleanVectors(
@@ -688,7 +695,8 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     val schemaUnicode = new StructType().add("col", StringType.STRING)
     val inputUnicode =
       new DefaultColumnarBatch(colUnicode.getSize, schemaUnicode, Array(colUnicode))
-    val startsWithExpressionUnicode = startsWith(new Column("col"), Literal.ofString("中"))
+    val startsWithExpressionUnicode = startsWith(new Column("col"), Literal.ofString("中"),
+      collationIdentifier)
     val expOutputVectorLiteralUnicode = booleanVector(Seq[BooleanJ](true, true, false))
     checkBooleanVectors(
       new DefaultExpressionEvaluator(
@@ -702,7 +710,8 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     val schemaSurrogatePair = new StructType().add("col", StringType.STRING)
     val inputSurrogatePair =
       new DefaultColumnarBatch(colSurrogatePair.getSize, schemaUnicode, Array(colSurrogatePair))
-    val startsWithExpressionSurrogatePair = startsWith(new Column("col"), Literal.ofString("💕"))
+    val startsWithExpressionSurrogatePair = startsWith(new Column("col"), Literal.ofString("💕"),
+      collationIdentifier)
     val expOutputVectorLiteralSurrogatePair = booleanVector(Seq[BooleanJ](true, false, true))
     checkBooleanVectors(
       new DefaultExpressionEvaluator(
@@ -711,7 +720,8 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
         BooleanType.BOOLEAN).eval(inputSurrogatePair),
       expOutputVectorLiteralSurrogatePair)
 
-    val startsWithExpressionExpression = startsWith(new Column("col1"), new Column("col2"))
+    val startsWithExpressionExpression = startsWith(new Column("col1"), new Column("col2"),
+      collationIdentifier)
     val e = intercept[UnsupportedOperationException] {
       new DefaultExpressionEvaluator(
         schema,
@@ -723,7 +733,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     def checkUnsupportedTypes(colType: DataType, literalType: DataType): Unit = {
       val schema = new StructType()
         .add("col", colType)
-      val expr = startsWith(new Column("col"), Literal.ofNull(literalType))
+      val expr = startsWith(new Column("col"), Literal.ofNull(literalType), collationIdentifier)
       val input = new DefaultColumnarBatch(5, schema, Array(testColumnVector(5, colType)))
 
       val e = intercept[UnsupportedOperationException] {
@@ -741,6 +751,105 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     checkUnsupportedTypes(StringType.STRING, BooleanType.BOOLEAN)
     checkUnsupportedTypes(StringType.STRING, IntegerType.INTEGER)
     checkUnsupportedTypes(StringType.STRING, LongType.LONG)
+    }
+  }
+
+  test("evaluate expression: starts with (unsupported collations)") {
+    Seq(
+      Some(CollationIdentifier.fromString("SPARK.UTF8_LCASE")),
+      Some(CollationIdentifier.fromString("ICU.sr_Cyrl_SRB")),
+      Some(CollationIdentifier.fromString("ICU.sr_Cyrl_SRB.75.1")),
+    ).foreach {
+      collationIdentifier =>
+        val col1 = stringVector(Seq[String]("one", "two", "t%hree", "four", null, null, "%"))
+        val col2 = stringVector(Seq[String]("o", "t", "T", "4", "f", null, null))
+        val schema = new StructType()
+          .add("col1", StringType.STRING)
+          .add("col2", StringType.STRING)
+        val input = new DefaultColumnarBatch(col1.getSize, schema, Array(col1, col2))
+
+        val startsWithExpressionLiteral = startsWith(new Column("col1"), Literal.ofString("t%"),
+          collationIdentifier)
+        checkUnsupportedCollation(
+          schema,
+          startsWithExpressionLiteral,
+          BooleanType.BOOLEAN,
+          input,
+          collationIdentifier.get)
+
+        val startsWithExpressionNullLiteral = startsWith(new Column("col1"), Literal.ofString(null),
+          collationIdentifier)
+        checkUnsupportedCollation(
+          schema,
+          startsWithExpressionNullLiteral,
+          BooleanType.BOOLEAN,
+          input,
+          collationIdentifier.get)
+
+        // Two literal expressions on both sides
+        val startsWithExpressionAlwaysTrue = startsWith(Literal.ofString("ABC"),
+          Literal.ofString("A"), collationIdentifier)
+        checkUnsupportedCollation(
+          schema,
+          startsWithExpressionAlwaysTrue,
+          BooleanType.BOOLEAN,
+          input,
+          collationIdentifier.get)
+
+        val startsWithExpressionAlwaysFalse =
+          startsWith(Literal.ofString("ABC"), Literal.ofString("_B%"), collationIdentifier)
+        checkUnsupportedCollation(
+          schema,
+          startsWithExpressionAlwaysFalse,
+          BooleanType.BOOLEAN,
+          input,
+          collationIdentifier.get)
+
+        // scalastyle:off nonascii
+        val colUnicode = stringVector(Seq[String]("中文", "中", "文"))
+        val schemaUnicode = new StructType().add("col", StringType.STRING)
+        val inputUnicode =
+          new DefaultColumnarBatch(colUnicode.getSize, schemaUnicode, Array(colUnicode))
+        val startsWithExpressionUnicode = startsWith(new Column("col"), Literal.ofString("中"),
+          collationIdentifier)
+        checkUnsupportedCollation(
+          schemaUnicode,
+          startsWithExpressionUnicode,
+          BooleanType.BOOLEAN,
+          inputUnicode,
+          collationIdentifier.get)
+
+        // scalastyle:off nonascii
+        val colSurrogatePair = stringVector(Seq[String]("💕😉💕", "😉💕", "💕"))
+        val schemaSurrogatePair = new StructType().add("col", StringType.STRING)
+        val inputSurrogatePair =
+          new DefaultColumnarBatch(colSurrogatePair.getSize,
+            schemaSurrogatePair, Array(colSurrogatePair))
+        val startsWithExpressionSurrogatePair = startsWith(new Column("col"),
+          Literal.ofString("💕"), collationIdentifier)
+        checkUnsupportedCollation(
+          schemaSurrogatePair,
+          startsWithExpressionSurrogatePair,
+          BooleanType.BOOLEAN,
+          inputSurrogatePair,
+          collationIdentifier.get)
+    }
+
+    def checkUnsupportedCollation(schema: StructType, expression: Expression,
+                                  outputType: DataType, input: ColumnarBatch,
+                                  collationIdentifier: CollationIdentifier): Unit = {
+      val e = intercept[UnsupportedOperationException] {
+        new DefaultExpressionEvaluator(
+          schema,
+          expression,
+          outputType).eval(input)
+      }
+      assert(e.getMessage.contains(
+        s"""Unsupported collation: "$collationIdentifier".
+           | Default Engine supports just "${StringType.STRING.getCollationIdentifier}"
+           | collation.""".stripMargin.replace("\n", "")))
+
+    }
   }
 
   test("evaluate expression: comparators (=, <, <=, >, >=)") {

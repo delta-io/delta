@@ -60,8 +60,13 @@ trait ExpressionSuiteBase extends TestUtils with DefaultVectorTestUtils {
     new Predicate("like", children.asJava)
   }
 
-  protected def startsWith(left: Expression, right: Expression): Predicate = {
-    new Predicate("starts_with", left, right)
+  protected def startsWith(left: Expression, right: Expression,
+                           collationIdentifier: Option[CollationIdentifier] = None): Predicate = {
+    if (collationIdentifier.isDefined && collationIdentifier.get != null) {
+      new CollatedPredicate("starts_with", left, right, collationIdentifier.get)
+    } else {
+      new Predicate("starts_with", left, right)
+    }
   }
 
   protected def comparator(symbol: String, left: Expression, right: Expression): Predicate = {

@@ -359,7 +359,7 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
           throw unsupportedExpressionException(predicate, msg);
         } else if (!collatedPredicate.getCollationIdentifier().equals(STRING.getCollationIdentifier())) {
           String msg =
-                  format("Unsupported collation identifier: %s. Default Engine supports just \"SPARK.UTF8_BINARY\" collation.", collatedPredicate.getCollationIdentifier());
+                  format("Unsupported collation: \"%s\". Default Engine supports just \"SPARK.UTF8_BINARY\" collation.", collatedPredicate.getCollationIdentifier());
           throw unsupportedExpressionException(predicate, msg);
         } else {
           return predicate;
