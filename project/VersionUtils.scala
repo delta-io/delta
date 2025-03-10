@@ -10,27 +10,25 @@ object VersionUtils {
   val JAVA_VERSION_FOR_SPARK_MASTER = 17
   val JAVA_VERSION_FOR_LATEST_RELEASED_SPARK = DEFAULT_JAVA_VERSION
 
-  lazy val buildJavaVersion = {
-    var version = sys.props.getOrElse("java.version", "Unknown")
-    if (version.startsWith("1.")) version = version.substring(2, 3)
-    else {
-      val dot = version.indexOf(".")
-      if (dot != -1) version = version.substring(0, dot)
+  lazy val buildJavaVersion: Int = {
+    val versionStr = sys.props.getOrElse("java.version", "Unknown")
+    if (versionStr.startsWith("1.")) {
+      // Java 8 or lower: 1.6.0_23, 1.7.0, 1.7.0_80, 1.8.0_211
+      versionStr.substring(2, 3).toInt
+    } else {
+      // Java 9 or higher: 9.0.1, 11.0.4, 12, 12.0.1
+      val dot = versionStr.indexOf(".")
+      if (dot != -1) versionStr.substring(0, dot).toInt
+      else throw new IllegalArgumentException(s"Cannot parse Java version: $versionStr")
     }
-    version.toInt
   }
 
   /** Ensure that the build is running on a minimum Java version. */
-  def validateMinimumBuildJavaVersion(): Unit = {
-    val minExpectedBuildJavaVersion = getSparkVersion() match {
-      case SPARK_MASTER_VERSION => JAVA_VERSION_FOR_SPARK_MASTER  // this is the Spark master build
-      case LATEST_RELEASED_SPARK_VERSION => 11
-      case _ =>
-        throw new IllegalArgumentException(s"Invalid sparkVersion: ${getSparkVersion()}")
-    }
-    assert(buildJavaVersion >= minExpectedBuildJavaVersion,
-      s"Java version $buildJavaVersion is not supported. " +
-        s"Please use Java $minExpectedBuildJavaVersion or higher.")
+  def getJavacOptionForTargetJavaVersion(targetJavaVersion: Int): Seq[String] = {
+    assert(buildJavaVersion >= targetJavaVersion,
+      s"Java version $buildJavaVersion is not supported for building this project. " +
+        s"Please use Java $targetJavaVersion or higher.")
+    Seq("--release", targetJavaVersion.toString)
   }
 
   /////////////////////////

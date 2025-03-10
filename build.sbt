@@ -88,11 +88,8 @@ crossScalaVersions := Nil
 
 // For Java 11 use the following on command line
 // sbt 'set targetJvm := "11"' [commands]
-val targetJvm = settingKey[String]("Target JVM version")
-Global / targetJvm := DEFAULT_JAVA_VERSION.toString
-
-lazy val javaVersion = sys.props.getOrElse("java.version", "Unknown")
-lazy val javaVersionInt = javaVersion.split("\\.")(0).toInt
+val targetJava = settingKey[String]("Target Java version")
+Global / targetJava := DEFAULT_JAVA_VERSION.toString  // default Java version of all modules
 
 lazy val commonSettings = Seq(
   organization := "io.delta",
@@ -104,7 +101,7 @@ lazy val commonSettings = Seq(
     val _ = initialize.value
     validateMinimumBuildJavaVersion()
   },
-  javacOptions ++= Seq("--release", targetJvm.value),
+  javacOptions ++= getJavacOptionForTargetJavaVersion(targetJava.value),
 
   // Make sure any tests in any project that uses Spark is configured for running well locally
   Test / javaOptions ++= Seq(
@@ -164,7 +161,7 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
   case LATEST_RELEASED_SPARK_VERSION => Seq(
     scalaVersion := default_scala_version.value,
     crossScalaVersions := all_scala_versions,
-    targetJvm := JAVA_VERSION_FOR_LATEST_RELEASED_SPARK.toString,
+    targetJava := JAVA_VERSION_FOR_LATEST_RELEASED_SPARK.toString,
     // For adding staged Spark RC versions, e.g.:
     // resolvers += "Apache Spark 3.5.0 (RC1) Staging" at "https://repository.apache.org/content/repositories/orgapachespark-1444/",
     Compile / unmanagedSourceDirectories += (Compile / baseDirectory).value / "src" / "main" / "scala-spark-3.5",
@@ -178,7 +175,7 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
   case SPARK_MASTER_VERSION => Seq(
     scalaVersion := scala213,
     crossScalaVersions := Seq(scala213),
-    targetJvm := JAVA_VERSION_FOR_SPARK_MASTER.toString,
+    targetJava := JAVA_VERSION_FOR_SPARK_MASTER.toString,
     resolvers += "Spark master staging" at "https://repository.apache.org/content/groups/snapshots/",
     Compile / unmanagedSourceDirectories += (Compile / baseDirectory).value / "src" / "main" / "scala-spark-master",
     Test / unmanagedSourceDirectories += (Test / baseDirectory).value / "src" / "test" / "scala-spark-master",
