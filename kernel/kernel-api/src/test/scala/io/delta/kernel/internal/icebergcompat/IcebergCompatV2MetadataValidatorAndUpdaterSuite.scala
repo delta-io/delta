@@ -31,33 +31,7 @@ class IcebergCompatV2MetadataValidatorAndUpdaterSuite
     extends AnyFunSuite
     with VectorTestUtils with ColumnMappingSuiteBase {
 
-  // Allowed simple types as data or partition columns
-  val SIMPLE_TYPES = Seq(
-    BooleanType.BOOLEAN,
-    ByteType.BYTE,
-    ShortType.SHORT,
-    IntegerType.INTEGER,
-    LongType.LONG,
-    FloatType.FLOAT,
-    DoubleType.DOUBLE,
-    DateType.DATE,
-    TimestampType.TIMESTAMP,
-    TimestampNTZType.TIMESTAMP_NTZ,
-    StringType.STRING,
-    BinaryType.BINARY,
-    new DecimalType(10, 5))
-
-  // Allowed complex types as data columns
-  val COMPLEX_TYPES = Seq(
-    new ArrayType(BooleanType.BOOLEAN, true),
-    new MapType(IntegerType.INTEGER, LongType.LONG, true),
-    new StructType().add("s1", BooleanType.BOOLEAN).add("s2", IntegerType.INTEGER))
-
-  // Unsupported data type columns
-  val UNSUPPORTED_DATA_COLUMN_TYPES = Seq(VariantType.VARIANT)
-
-  // Unsupported partition column types
-  val UNSUPPORTED_PARTITION_COLUMN_TYPES = COMPLEX_TYPES
+  import IcebergCompatV2MetadataValidatorAndUpdaterSuite._
 
   (SIMPLE_TYPES ++ COMPLEX_TYPES).foreach {
     dataType: DataType =>
@@ -232,4 +206,34 @@ class IcebergCompatV2MetadataValidatorAndUpdaterSuite
           "disable all otherIcebergCompat versions that are not needed."))
     }
   }
+}
+
+object IcebergCompatV2MetadataValidatorAndUpdaterSuite {
+  // Allowed simple types as data or partition columns
+  val SIMPLE_TYPES: Seq[DataType] = Seq(
+    BooleanType.BOOLEAN,
+    ByteType.BYTE,
+    ShortType.SHORT,
+    IntegerType.INTEGER,
+    LongType.LONG,
+    FloatType.FLOAT,
+    DoubleType.DOUBLE,
+    DateType.DATE,
+    TimestampType.TIMESTAMP,
+    TimestampNTZType.TIMESTAMP_NTZ,
+    StringType.STRING,
+    BinaryType.BINARY,
+    new DecimalType(10, 5))
+
+  // Allowed complex types as data columns
+  val COMPLEX_TYPES: Seq[DataType] = Seq(
+    new ArrayType(BooleanType.BOOLEAN, true),
+    new MapType(IntegerType.INTEGER, LongType.LONG, true),
+    new StructType().add("s1", BooleanType.BOOLEAN).add("s2", IntegerType.INTEGER))
+
+  // Unsupported data type columns
+  val UNSUPPORTED_DATA_COLUMN_TYPES: Seq[VariantType] = Seq(VariantType.VARIANT)
+
+  // Unsupported partition column types
+  val UNSUPPORTED_PARTITION_COLUMN_TYPES: Seq[DataType] = COMPLEX_TYPES
 }
