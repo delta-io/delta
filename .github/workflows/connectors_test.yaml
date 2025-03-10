@@ -1,3 +1,4 @@
+
 name: "Delta Connectors"
 on: [push, pull_request]
 jobs:
@@ -14,7 +15,7 @@ jobs:
         uses: actions/setup-java@v2
         with:
           distribution: 'zulu'
-          java-version: '8'
+          java-version: '11'
       - name: Cache Scala, SBT
         uses: actions/cache@v4
         with:

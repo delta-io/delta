@@ -31,7 +31,7 @@ jobs:
         uses: actions/setup-java@v3
         with:
           distribution: "zulu"
-          java-version: "8"
+          java-version: "11"
       - name: Generate docs
         run: |
           build/sbt kernelGroup/unidoc
