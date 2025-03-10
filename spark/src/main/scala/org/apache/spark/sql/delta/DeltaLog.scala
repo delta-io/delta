@@ -622,7 +622,7 @@ class DeltaLog private(
     }
     HadoopFsRelation(
       fileIndex,
-      partitionSchema = DeltaColumnMapping.dropColumnMappingMetadata(
+      partitionSchema = DeltaTableUtils.removeInternalDeltaMetadata(
         spark,
         DeltaTableUtils.removeInternalWriterMetadata(spark, snapshot.metadata.partitionSchema)
       ),
