@@ -1,4 +1,3 @@
-
 name: "Delta Connectors"
 on: [push, pull_request]
 jobs:
