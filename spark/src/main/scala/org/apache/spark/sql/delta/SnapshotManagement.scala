@@ -32,10 +32,10 @@ import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.coordinatedcommits.{CoordinatedCommitsUsageLogs, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.FileNames._
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.spark.sql.delta.util.threads.DeltaThreadPool
-import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import com.fasterxml.jackson.annotation.JsonIgnore
 import io.delta.storage.commit.{Commit, GetCommitsResponse}
 import org.apache.hadoop.fs.{BlockLocation, FileStatus, LocatedFileStatus, Path}
@@ -125,7 +125,9 @@ trait SnapshotManagement { self: DeltaLog =>
       includeMinorCompactions: Boolean
   ): (Option[Array[(FileStatus, FileType.Value, Long)]], Option[FileStatus]) = {
     var latestAvailableChecksumFileStatus = Option.empty[FileStatus]
-    val files = listFromOrNone(startVersion).map {
+    val filesIter = listFromOrNone(startVersion)
+    val files =
+      filesIter.map {
       _.flatMap {
         case DeltaFile(f, fileVersion) =>
           Some((f, FileType.DELTA, fileVersion))

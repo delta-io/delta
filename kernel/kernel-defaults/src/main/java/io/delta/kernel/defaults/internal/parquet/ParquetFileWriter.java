@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.defaults.internal.parquet;
 
+import static io.delta.kernel.defaults.internal.parquet.ParquetIOUtils.createParquetOutputFile;
 import static io.delta.kernel.defaults.internal.parquet.ParquetStatsReader.readDataFileStatistics;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Collections.emptyMap;
@@ -23,8 +24,11 @@ import static org.apache.parquet.hadoop.ParquetOutputFormat.*;
 
 import io.delta.kernel.Meta;
 import io.delta.kernel.data.*;
+import io.delta.kernel.defaults.engine.fileio.FileIO;
+import io.delta.kernel.defaults.engine.fileio.OutputFile;
 import io.delta.kernel.defaults.internal.parquet.ParquetColumnWriters.ColumnWriter;
 import io.delta.kernel.expressions.Column;
+import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.*;
@@ -32,8 +36,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.*;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.FileStatus;
-import org.apache.hadoop.fs.Path;
+import org.apache.parquet.column.ParquetProperties.WriterVersion;
 import org.apache.parquet.hadoop.ParquetOutputFormat;
 import org.apache.parquet.hadoop.ParquetWriter;
 import org.apache.parquet.hadoop.api.WriteSupport;
@@ -56,9 +59,10 @@ public class ParquetFileWriter {
       "delta.kernel.default.parquet.writer.targetMaxFileSize";
   public static final long DEFAULT_TARGET_FILE_SIZE = 128 * 1024 * 1024; // 128MB
 
-  private final Configuration configuration;
+  private final FileIO fileIO;
   private final boolean writeAsSingleFile;
-  private final Path location;
+  private final String location;
+  private final boolean atomicWrite;
   private final long targetMaxFileSize;
   private final List<Column> statsColumns;
 
@@ -67,24 +71,52 @@ public class ParquetFileWriter {
   /**
    * Create writer to write data into one or more files depending upon the {@code
    * delta.kernel.default.parquet.writer.targetMaxFileSize} value and the given data.
+   *
+   * @param fileIO File IO implementation to use for reading and writing files.
+   * @param location Location to write the data. Should be a directory.
+   * @param statsColumns List of columns to collect statistics for. The statistics collection is
+   *     optional.
    */
-  public ParquetFileWriter(Configuration configuration, Path location, List<Column> statsColumns) {
-    this.configuration = requireNonNull(configuration, "configuration is null");
-    this.location = requireNonNull(location, "directory is null");
-    // Default target file size is 128 MB.
-    this.targetMaxFileSize = configuration.getLong(TARGET_FILE_SIZE_CONF, DEFAULT_TARGET_FILE_SIZE);
-    checkArgument(targetMaxFileSize > 0, "Invalid target Parquet file size: %s", targetMaxFileSize);
-    this.statsColumns = requireNonNull(statsColumns, "statsColumns is null");
-    this.writeAsSingleFile = false;
+  public static ParquetFileWriter multiFileWriter(
+      FileIO fileIO, String location, List<Column> statsColumns) {
+    return new ParquetFileWriter(
+        fileIO, location, /* writeAsSingleFile = */ false, /* atomicWrite = */ false, statsColumns);
   }
 
-  /** Create writer to write the data exactly into one file. */
-  public ParquetFileWriter(Configuration configuration, Path destPath) {
-    this.configuration = requireNonNull(configuration, "configuration is null");
-    this.writeAsSingleFile = true;
-    this.location = requireNonNull(destPath, "destPath is null");
-    this.targetMaxFileSize = Long.MAX_VALUE;
-    this.statsColumns = Collections.emptyList();
+  /**
+   * Create writer to write the data exactly into one file.
+   *
+   * @param fileIO File IO implementation to use for reading and writing files.
+   * @param location Location to write the data. Shouldn't be a directory.
+   * @param atomicWrite If true, write the file is written atomically (i.e. either the entire
+   *     content is written or none, but won't create a file with the partial contents).
+   * @param statsColumns List of columns to collect statistics for. The statistics collection is
+   *     optional.
+   */
+  public static ParquetFileWriter singleFileWriter(
+      FileIO fileIO, String location, boolean atomicWrite, List<Column> statsColumns) {
+    return new ParquetFileWriter(
+        fileIO, location, /* writeAsSingleFile = */ true, atomicWrite, statsColumns);
+  }
+
+  /**
+   * Private constructor to create the writer. Use {@link #multiFileWriter} or {@link
+   * #singleFileWriter} to create the writer.
+   */
+  private ParquetFileWriter(
+      FileIO fileIO,
+      String location,
+      boolean writeAsSingleFile,
+      boolean atomicWrite,
+      List<Column> statsColumns) {
+    this.fileIO = requireNonNull(fileIO, "fileIO is null");
+    this.writeAsSingleFile = writeAsSingleFile;
+    this.location = requireNonNull(location, "location is null");
+    this.atomicWrite = atomicWrite;
+    this.statsColumns = requireNonNull(statsColumns, "statsColumns is null");
+    this.targetMaxFileSize =
+        fileIO.getConf(TARGET_FILE_SIZE_CONF).map(Long::valueOf).orElse(DEFAULT_TARGET_FILE_SIZE);
+    checkArgument(targetMaxFileSize > 0, "Invalid target Parquet file size: %s", targetMaxFileSize);
   }
 
   /**
@@ -143,10 +175,11 @@ public class ParquetFileWriter {
           return Optional.empty();
         }
 
-        Path filePath = generateNextFilePath();
+        org.apache.parquet.io.OutputFile parquetOutputFile =
+            createParquetOutputFile(generateNextOutputFile(), atomicWrite);
         assert batchWriteSupport != null : "batchWriteSupport is not initialized";
         long currentFileRowCount = 0; // tracks the number of rows written to the current file
-        try (ParquetWriter<Integer> writer = createWriter(filePath, batchWriteSupport)) {
+        try (ParquetWriter<Integer> writer = createWriter(parquetOutputFile, batchWriteSupport)) {
           boolean maxFileSizeReached;
           do {
             if (consumeNextRow(writer)) {
@@ -160,11 +193,12 @@ public class ParquetFileWriter {
             // Keep writing until max file is reached or no more data to write
           } while (!maxFileSizeReached && hasNextRow());
         } catch (IOException e) {
-          throw new UncheckedIOException("Failed to write the Parquet file: " + filePath, e);
+          throw new UncheckedIOException(
+              "Failed to write the Parquet file: " + parquetOutputFile.getPath(), e);
         }
 
         return Optional.of(
-            constructDataFileStatus(filePath.toString(), dataSchema, currentFileRowCount));
+            constructDataFileStatus(parquetOutputFile.getPath(), dataSchema, currentFileRowCount));
       }
 
       /**
@@ -253,13 +287,17 @@ public class ParquetFileWriter {
   /**
    * Implementation of {@link WriteSupport} to write the {@link ColumnarBatch} to Parquet files.
    * {@link ParquetWriter} makes use of this interface to consume the data row by row and write to
-   * the Parquet file. Call backs from the {@link ParquetWriter} includes: - {@link
-   * #init(Configuration)}: Called once to init and get {@link WriteContext} which includes the
-   * schema and extra properties. - {@link #prepareForWrite(RecordConsumer)}: Called once to prepare
-   * for writing the data. {@link RecordConsumer} is a way for this batch support to write data for
-   * each column in the current row. - {@link #write(Integer)}: Called for each row to write the
-   * data. In this method, column values are passed to the {@link RecordConsumer} through series of
-   * calls.
+   * the Parquet file. Call backs from the {@link ParquetWriter} includes:
+   *
+   * <ul>
+   *   <li>{@link #init(Configuration)}: Called once to init and get {@link WriteContext} which
+   *       includes the schema and extra properties.
+   *   <li>{@link #prepareForWrite(RecordConsumer)}: Called once to prepare for writing the data.
+   *       {@link RecordConsumer} is a way for this batch support to write data for each column in
+   *       the current row.
+   *   <li>{@link #write(Integer)}: Called for each row to write the data. In this method, column
+   *       values are passed to the {@link RecordConsumer} through series of calls.
+   * </ul>
    */
   private static class BatchWriteSupport extends WriteSupport<Integer> {
     final StructType inputSchema;
@@ -312,13 +350,14 @@ public class ParquetFileWriter {
   }
 
   /** Generate the next file path to write the data. */
-  private Path generateNextFilePath() {
+  private OutputFile generateNextOutputFile() {
     if (writeAsSingleFile) {
       checkArgument(currentFileNumber++ == 0, "expected to write just one file");
-      return location;
+      return fileIO.newOutputFile(location);
     }
     String fileName = String.format("%s-%03d.parquet", UUID.randomUUID(), currentFileNumber++);
-    return new Path(location, fileName);
+    String filePath = new Path(location, fileName).toString();
+    return fileIO.newOutputFile(filePath);
   }
 
   /**
@@ -326,31 +365,53 @@ public class ParquetFileWriter {
    * use of configuration options in `configuration` to configure the writer. Different available
    * configuration options are defined in {@link ParquetOutputFormat}.
    */
-  private ParquetWriter<Integer> createWriter(Path filePath, WriteSupport<Integer> writeSupport)
+  private ParquetWriter<Integer> createWriter(
+      org.apache.parquet.io.OutputFile outputFile, WriteSupport<Integer> writeSupport)
       throws IOException {
-    return new ParquetRowDataBuilder(filePath, writeSupport)
-        .withCompressionCodec(
-            CompressionCodecName.fromConf(
-                configuration.get(
-                    ParquetOutputFormat.COMPRESSION, CompressionCodecName.SNAPPY.name())))
-        .withRowGroupSize(getLongBlockSize(configuration))
-        .withPageSize(getPageSize(configuration))
-        .withDictionaryPageSize(getDictionaryPageSize(configuration))
-        .withMaxPaddingSize(
-            configuration.getInt(MAX_PADDING_BYTES, ParquetWriter.MAX_PADDING_SIZE_DEFAULT))
-        .withDictionaryEncoding(getEnableDictionary(configuration))
-        .withValidation(getValidation(configuration))
-        .withWriterVersion(getWriterVersion(configuration))
-        .withConf(configuration)
-        .build();
+    ParquetRowDataBuilder rowDataBuilder = new ParquetRowDataBuilder(outputFile, writeSupport);
+
+    fileIO
+        .getConf(COMPRESSION)
+        .ifPresent(
+            compression ->
+                rowDataBuilder.withCompressionCodec(CompressionCodecName.fromConf(compression)));
+
+    fileIO.getConf(BLOCK_SIZE).map(Long::parseLong).ifPresent(rowDataBuilder::withRowGroupSize);
+
+    fileIO.getConf(PAGE_SIZE).map(Integer::parseInt).ifPresent(rowDataBuilder::withPageSize);
+
+    fileIO
+        .getConf(DICTIONARY_PAGE_SIZE)
+        .map(Integer::parseInt)
+        .ifPresent(rowDataBuilder::withDictionaryPageSize);
+
+    fileIO
+        .getConf(MAX_PADDING_BYTES)
+        .map(Integer::parseInt)
+        .ifPresent(rowDataBuilder::withMaxPaddingSize);
+
+    fileIO
+        .getConf(ENABLE_DICTIONARY)
+        .map(Boolean::parseBoolean)
+        .ifPresent(rowDataBuilder::withDictionaryEncoding);
+
+    fileIO.getConf(VALIDATION).map(Boolean::parseBoolean).ifPresent(rowDataBuilder::withValidation);
+
+    fileIO
+        .getConf(WRITER_VERSION)
+        .map(WriterVersion::fromString)
+        .ifPresent(rowDataBuilder::withWriterVersion);
+
+    return rowDataBuilder.build();
   }
 
   private static class ParquetRowDataBuilder
       extends ParquetWriter.Builder<Integer, ParquetRowDataBuilder> {
     private final WriteSupport<Integer> writeSupport;
 
-    protected ParquetRowDataBuilder(Path path, WriteSupport<Integer> writeSupport) {
-      super(path);
+    protected ParquetRowDataBuilder(
+        org.apache.parquet.io.OutputFile outputFile, WriteSupport<Integer> writeSupport) {
+      super(outputFile);
       this.writeSupport = requireNonNull(writeSupport, "writeSupport is null");
     }
 
@@ -381,9 +442,8 @@ public class ParquetFileWriter {
   private DataFileStatus constructDataFileStatus(String path, StructType dataSchema, long numRows) {
     try {
       // Get the FileStatus to figure out the file size and modification time
-      Path hadoopPath = new Path(path);
-      FileStatus fileStatus = hadoopPath.getFileSystem(configuration).getFileStatus(hadoopPath);
-      Path resolvedPath = fileStatus.getPath();
+      FileStatus fileStatus = fileIO.getFileStatus(path);
+      String resolvedPath = fileIO.resolvePath(path);
 
       DataFileStatistics stats;
       if (statsColumns.isEmpty()) {
@@ -394,12 +454,12 @@ public class ParquetFileWriter {
                 emptyMap() /* maxValues */,
                 emptyMap() /* nullCounts */);
       } else {
-        stats = readDataFileStatistics(resolvedPath, configuration, dataSchema, statsColumns);
+        stats = readDataFileStatistics(fileIO, resolvedPath, dataSchema, statsColumns);
       }
 
       return new DataFileStatus(
-          resolvedPath.toString(),
-          fileStatus.getLen(),
+          resolvedPath,
+          fileStatus.getSize(),
           fileStatus.getModificationTime(),
           Optional.ofNullable(stats));
     } catch (IOException ioe) {

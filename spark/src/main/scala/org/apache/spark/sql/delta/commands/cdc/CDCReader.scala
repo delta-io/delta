@@ -152,7 +152,8 @@ object CDCReader extends CDCReaderImpl
 
     override val schema: StructType = {
       cdcReadSchema(
-        DeltaColumnMapping.dropColumnMappingMetadata(
+        DeltaTableUtils.removeInternalDeltaMetadata(
+          sqlContext.sparkSession,
           DeltaTableUtils.removeInternalWriterMetadata(
             sqlContext.sparkSession, snapshotForBatchSchema.metadata.schema
           )

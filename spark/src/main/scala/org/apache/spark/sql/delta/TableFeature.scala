@@ -379,9 +379,11 @@ object TableFeature {
         TestLegacyWriterFeature,
         TestLegacyReaderWriterFeature,
         TestWriterFeature,
+        TestUnsupportedWriterFeature,
         TestWriterMetadataNoAutoUpdateFeature,
         TestReaderWriterFeature,
         TestUnsupportedReaderWriterFeature,
+        TestUnsupportedNoHistoryProtectionReaderWriterFeature,
         TestReaderWriterMetadataAutoUpdateFeature,
         TestReaderWriterMetadataNoAutoUpdateFeature,
         TestRemovableWriterFeature,
@@ -400,8 +402,12 @@ object TableFeature {
   }
 
   /** Test only features that appear unsupported in order to test protocol validations. */
-  def testUnsupportedFeatures: Set[TableFeature] =
-    if (isTesting) Set(TestUnsupportedReaderWriterFeature) else Set.empty
+  def testUnsupportedFeatures: Set[TableFeature] = {
+    if (!isTesting) return Set.empty
+    Set(TestUnsupportedReaderWriterFeature,
+      TestUnsupportedNoHistoryProtectionReaderWriterFeature,
+      TestUnsupportedWriterFeature)
+  }
 
   private val allDependentFeaturesMap: Map[TableFeature, Set[TableFeature]] = {
     val dependentFeatureTuples =
@@ -603,7 +609,7 @@ object TimestampNTZTableFeature extends ReaderWriterFeature(name = "timestampNtz
 
 object RedirectReaderWriterFeature
   extends ReaderWriterFeature(name = "redirectReaderWriter-preview")
-  with FeatureAutomaticallyEnabledByMetadata {
+  with FeatureAutomaticallyEnabledByMetadata with RemovableFeature {
   override def metadataRequiresFeatureToBeEnabled(
     protocol: Protocol,
     metadata: Metadata,
@@ -611,10 +617,29 @@ object RedirectReaderWriterFeature
   ): Boolean = RedirectReaderWriter.isFeatureSet(metadata)
 
   override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    RedirectReaderWriterPreDowngradeCommand(table)
+
+  /**
+   * [[RedirectReaderWriterPreDowngradeCommand]] will try to remove
+   * [[DeltaConfigs.REDIRECT_READER_WRITER]],
+   * we check that here to make sure there is no concurrent txn that re-enables redirection.
+   */
+  override def validateRemoval(snapshot: Snapshot): Boolean =
+    !RedirectReaderWriter.isFeatureSet(snapshot.metadata)
+
+  // There is no action that is associated with this feature.
+  override def actionUsesFeature(action: Action): Boolean = false
+
+  // There is no action associated with this feature, so we don't need to truncate history to remove
+  // the traces of it. Note that the table properties for this feature will be left in the history
+  // but legacy clients who don't understand this feature will simply ignore them.
+  override def requiresHistoryProtection: Boolean = false
 }
 
 object RedirectWriterOnlyFeature extends WriterFeature(name = "redirectWriterOnly-preview")
-  with FeatureAutomaticallyEnabledByMetadata {
+  with FeatureAutomaticallyEnabledByMetadata with RemovableFeature {
   override def metadataRequiresFeatureToBeEnabled(
     protocol: Protocol,
     metadata: Metadata,
@@ -622,6 +647,20 @@ object RedirectWriterOnlyFeature extends WriterFeature(name = "redirectWriterOnl
   ): Boolean = RedirectWriterOnly.isFeatureSet(metadata)
 
   override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    RedirectWriterOnlyPreDowngradeCommand(table)
+
+  /**
+   * [[RedirectWriterOnlyPreDowngradeCommand]] will try to remove
+   * [[DeltaConfigs.REDIRECT_WRITER_ONLY]],
+   * we check that here to make sure there is no concurrent txn that re-enables redirection.
+   */
+  override def validateRemoval(snapshot: Snapshot): Boolean =
+    !RedirectWriterOnly.isFeatureSet(snapshot.metadata)
+
+  // Writer features should directly return false, as it is only used for reader+writer features.
+  override def actionUsesFeature(action: Action): Boolean = false
 }
 
 trait BinaryVariantTableFeature {
@@ -1154,6 +1193,37 @@ object TestUnsupportedReaderWriterFeature
 
   override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
     TestUnsupportedReaderWriterFeaturePreDowngradeCommand(table)
+
+  override def actionUsesFeature(action: Action): Boolean = false
+}
+
+/**
+ * Test feature that appears unsupported and can be dropped without checkpoint protection.
+ * it is used only for testing purposes.
+ */
+object TestUnsupportedNoHistoryProtectionReaderWriterFeature
+    extends ReaderWriterFeature(name = "testUnsupportedNoHistoryProtectionReaderWriter")
+    with RemovableFeature {
+
+  override def validateRemoval(snapshot: Snapshot): Boolean = true
+
+  override def requiresHistoryProtection: Boolean = false
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    TestUnsupportedReaderWriterFeaturePreDowngradeCommand(table)
+
+  override def actionUsesFeature(action: Action): Boolean = false
+}
+
+object TestUnsupportedWriterFeature
+  extends WriterFeature(name = "testUnsupportedWriter")
+  with RemovableFeature {
+
+  /** Make sure the property is not enabled on the table. */
+  override def validateRemoval(snapshot: Snapshot): Boolean = true
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    TestUnsupportedWriterFeaturePreDowngradeCommand(table)
 
   override def actionUsesFeature(action: Action): Boolean = false
 }

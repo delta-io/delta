@@ -32,6 +32,7 @@ import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.{AlterTableDropFeatureDeltaCommand, AlterTableSetPropertiesDeltaCommand, AlterTableUnsetPropertiesDeltaCommand}
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.coordinatedcommits._
+import org.apache.spark.sql.delta.redirect.{PathBasedRedirectSpec, RedirectReaderWriter, RedirectWriterOnly, TableRedirect}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -61,6 +62,12 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
   // `.schema` generates NOT NULL columns which requires writer protocol 2. We convert all to
   // NULLable to avoid silent writer protocol version bump.
   private lazy val testTableSchema = spark.range(1).schema.asNullable
+  override protected def sparkConf: SparkConf = {
+    // All the drop feature tests below are targeting the drop feature with history truncation
+    // implementation. The fast drop feature implementation is tested extensively in
+    // DeltaFastDropFeatureSuite.
+    super.sparkConf.set(DeltaSQLConf.FAST_DROP_FEATURE_ENABLED.key, "false")
+  }
 
   // This is solely a test hook. Users cannot create new Delta tables with protocol lower than
   // that of their current version.
@@ -4154,6 +4161,67 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     }
   }
   // ---- End Coordinated Commits Drop Feature Tests ----
+
+  private def testRedirectFeature(
+      redirectFeature: TableFeature,
+      tableRedirect: TableRedirect,
+      enableFastDrop: Boolean,
+      unsetTableProperty: Boolean): Unit = {
+    withSQLConf(DeltaSQLConf.FAST_DROP_FEATURE_ENABLED.key -> enableFastDrop.toString) {
+      test(s"drop ${redirectFeature.name} with fast drop - " +
+        s"enableFastDrop=$enableFastDrop, unsetTableProperty=$unsetTableProperty") {
+        withTempDir { dir =>
+          spark.sql(s"CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta")
+          val deltaLog = DeltaLog.forTable(spark, dir)
+
+          val redirectSpec = new PathBasedRedirectSpec("sourcePath", "targetPath")
+          tableRedirect.add(
+            deltaLog,
+            catalogTableOpt = None,
+            PathBasedRedirectSpec.REDIRECT_TYPE,
+            redirectSpec)
+
+          if (unsetTableProperty) {
+            sql(s"ALTER TABLE delta.`${dir.getCanonicalPath}` UNSET TBLPROPERTIES " +
+              s"('${tableRedirect.config.key}')")
+          }
+
+          val featureName = redirectFeature.name
+          // Both RedirectReaderWriterFeature and RedirectWriterOnlyFeature can be immediately
+          // dropped as they don't require history truncation. This is because there is no
+          // associated action with the features.
+          AlterTableDropFeatureDeltaCommand(DeltaTableV2(spark, deltaLog.dataPath), featureName)
+            .run(spark)
+
+          val snapshot = deltaLog.update()
+          // Writer feature is removed from the writer features set.
+          assert(!snapshot.protocol.writerFeatureNames.contains(featureName))
+          // Reader feature is removed from the reader features set.
+          assert(!snapshot.protocol.readerFeatureNames.contains(featureName))
+          assert(tableRedirect.config.fromMetaData(snapshot.metadata).isEmpty)
+
+          assertPropertiesAndShowTblProperties(deltaLog)
+
+          // Running the command again should throw an exception.
+          val e = intercept[DeltaTableFeatureException] {
+            AlterTableDropFeatureDeltaCommand(DeltaTableV2(spark, deltaLog.dataPath), featureName)
+              .run(spark)
+          }
+          assert(e.getErrorClass == "DELTA_FEATURE_DROP_FEATURE_NOT_PRESENT")
+        }
+      }
+    }
+  }
+
+  BOOLEAN_DOMAIN.foreach { unsetTableProperty =>
+    BOOLEAN_DOMAIN.foreach { enableFastDrop =>
+      // Test both writer-only and reader writer redirect feature.
+      testRedirectFeature(
+        RedirectWriterOnlyFeature, RedirectWriterOnly, enableFastDrop, unsetTableProperty)
+      testRedirectFeature(
+        RedirectReaderWriterFeature, RedirectReaderWriter, enableFastDrop, unsetTableProperty)
+    }
+  }
 
   // Create a table for testing that has an unsupported feature.
   private def withTestTableWithUnsupportedWriterFeature(

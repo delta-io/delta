@@ -18,7 +18,7 @@ package io.delta.kernel.internal.actions;
 import static io.delta.kernel.internal.tablefeatures.TableFeatures.TABLE_FEATURES;
 import static io.delta.kernel.internal.tablefeatures.TableFeatures.TABLE_FEATURES_MIN_WRITER_VERSION;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
-import static io.delta.kernel.internal.util.VectorUtils.stringArrayValue;
+import static io.delta.kernel.internal.util.VectorUtils.buildArrayValue;
 import static java.lang.String.format;
 import static java.util.Collections.emptySet;
 import static java.util.Collections.unmodifiableSet;
@@ -44,6 +44,25 @@ public class Protocol {
   /////////////////////////////////////////////////////////////////////////////////////////////////
   /// Public static variables and methods                                                       ///
   /////////////////////////////////////////////////////////////////////////////////////////////////
+
+  /**
+   * Helper method to get the Protocol from the row representation.
+   *
+   * @param row Row representation of the Protocol.
+   * @return the Protocol object
+   */
+  public static Protocol fromRow(Row row) {
+    requireNonNull(row);
+    Set<String> readerFeatures =
+        row.isNullAt(2)
+            ? Collections.emptySet()
+            : Collections.unmodifiableSet(new HashSet<>(VectorUtils.toJavaList(row.getArray(2))));
+    Set<String> writerFeatures =
+        row.isNullAt(3)
+            ? Collections.emptySet()
+            : Collections.unmodifiableSet(new HashSet<>(VectorUtils.toJavaList(row.getArray(3))));
+    return new Protocol(row.getInt(0), row.getInt(1), readerFeatures, writerFeatures);
+  }
 
   public static Protocol fromColumnVector(ColumnVector vector, int rowId) {
     if (vector.isNullAt(rowId)) {
@@ -151,10 +170,10 @@ public class Protocol {
     protocolMap.put(0, minReaderVersion);
     protocolMap.put(1, minWriterVersion);
     if (supportsReaderFeatures) {
-      protocolMap.put(2, stringArrayValue(new ArrayList<>(readerFeatures)));
+      protocolMap.put(2, buildArrayValue(new ArrayList<>(readerFeatures), StringType.STRING));
     }
     if (supportsWriterFeatures) {
-      protocolMap.put(3, stringArrayValue(new ArrayList<>(writerFeatures)));
+      protocolMap.put(3, buildArrayValue(new ArrayList<>(writerFeatures), StringType.STRING));
     }
 
     return new GenericRow(Protocol.FULL_SCHEMA, protocolMap);

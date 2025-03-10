@@ -826,7 +826,7 @@ trait TypeWideningTableFeatureTests
     addSingleFile(Seq(1), ByteType)
     sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE short")
 
-    assert(readDeltaTable(tempPath).schema === new StructType()
+    assert(deltaLog.update().metadata.schema === new StructType()
       .add("a", ShortType, nullable = true, metadata = new MetadataBuilder()
         .putMetadataArray("delta.typeChanges", Array(
           new MetadataBuilder()
@@ -840,7 +840,7 @@ trait TypeWideningTableFeatureTests
     // specs are compatible. In that case, we still populate the `tableVersion` field.
     addTableFeature(tempPath, TypeWideningTableFeature)
     sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE int")
-    assert(readDeltaTable(tempPath).schema === new StructType()
+    assert(deltaLog.update().metadata.schema === new StructType()
       .add("a", IntegerType, nullable = true, metadata = new MetadataBuilder()
         .putMetadataArray("delta.typeChanges", Array(
           new MetadataBuilder()
@@ -864,7 +864,7 @@ trait TypeWideningTableFeatureTests
     enableTypeWidening(tempPath)
     addSingleFile(Seq(1), ByteType)
     sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE short")
-    assert(readDeltaTable(tempPath).schema === new StructType()
+    assert(deltaLog.update().metadata.schema === new StructType()
       .add("a", ShortType, nullable = true, metadata = new MetadataBuilder()
         .putMetadataArray("delta.typeChanges", Array(
           new MetadataBuilder()

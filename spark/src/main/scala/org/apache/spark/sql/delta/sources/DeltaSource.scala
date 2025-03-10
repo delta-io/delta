@@ -230,8 +230,8 @@ trait DeltaSourceBase extends Source
     } else {
       readSchemaAtSourceInit
     }
-    DeltaColumnMapping.dropColumnMappingMetadata(
-      DeltaTableUtils.removeInternalWriterMetadata(spark, readSchemaWithCdc))
+    DeltaTableUtils.removeInternalDeltaMetadata(
+      spark, DeltaTableUtils.removeInternalWriterMetadata(spark, readSchemaWithCdc))
   }
 
   // A dummy empty dataframe that can be returned at various point during streaming
@@ -1412,9 +1412,18 @@ object DeltaSource extends DeltaLogging {
       deltaLog.getSnapshotAt(version)
       return true
     } catch {
-      case e: DeltaUnsupportedTableFeatureException => throw e
+      case e: DeltaUnsupportedTableFeatureException =>
+        recordDeltaEvent(
+          deltaLog = deltaLog,
+          opType = "dropFeature.validateProtocolAt.unsupportedFeatureFound",
+          data = Map("message" -> e.getMessage))
+        throw e
       case NonFatal(e) => // Suppress rest errors.
         logWarning(log"Protocol validation failed with '${MDC(DeltaLogKeys.EXCEPTION, e)}'.")
+        recordDeltaEvent(
+          deltaLog = deltaLog,
+          opType = "dropFeature.validateProtocolAt.error",
+          data = Map("message" -> e.getMessage))
     }
     false
   }

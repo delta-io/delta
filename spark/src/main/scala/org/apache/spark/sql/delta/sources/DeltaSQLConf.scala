@@ -22,9 +22,9 @@ import java.util.concurrent.TimeUnit
 import org.apache.spark.internal.config.ConfigBuilder
 import org.apache.spark.network.util.ByteUnit
 import org.apache.spark.sql.catalyst.FileSourceOptions
+import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.storage.StorageLevel
-import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 
 /**
  * [[SQLConf]] entries for Delta features.
@@ -440,15 +440,33 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
-  val FAST_DROP_FEATURE_ENABLED =
-    buildConf("tableFeatures.dev.fastDropFeature.enabled")
+  val ALLOW_METADATA_CLEANUP_WHEN_ALL_PROTOCOLS_SUPPORTED =
+    buildConf("tableFeatures.allowMetadataCleanupWhenAllProtocolsSupported")
       .internal()
       .doc(
-        """Whether to enable the fast drop feature feature functionality.
-          |This feature is currently in development and this config is only intended to be enabled
-          |for testing purposes.""".stripMargin)
+        """Whether to perform protocol validation when the client is unable to clean
+          |up to 'delta.requireCheckpointProtectionBeforeVersion'.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val ALLOW_METADATA_CLEANUP_CHECKPOINT_EXISTENCE_CHECK_DISABLED =
+    buildConf("tableFeatures.dev.allowMetadataCleanupCheckpointExistenceCheck.disabled")
+      .internal()
+      .doc(
+        """Whether to disable the checkpoint check at the cleanup boundary when performing
+          |the CheckpointProtectionTableFeature validations.
+          |This is only used for testing purposes.'.""".stripMargin)
       .booleanConf
       .createWithDefault(false)
+
+  val FAST_DROP_FEATURE_ENABLED =
+    buildConf("tableFeatures.fastDropFeature.enabled")
+      .internal()
+      .doc(
+        """Whether to allow dropping features with the fast drop feature feature
+          |functionality.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
 
   val FAST_DROP_FEATURE_DV_DISCOVERY_IN_VACUUM_DISABLED =
     buildConf("tableFeatures.dev.fastDropFeature.DVDiscoveryInVacuum.disabled")
@@ -460,7 +478,7 @@ trait DeltaSQLConfBase {
       .createWithDefault(false)
 
   val FAST_DROP_FEATURE_GENERATE_DV_TOMBSTONES =
-    buildConf("tableFeatures.dev.fastDropFeature.generateDVTombstones.enabled")
+    buildConf("tableFeatures.fastDropFeature.generateDVTombstones.enabled")
       .internal()
       .doc(
         """Whether to generate DV tombstones when dropping deletion vectors.
@@ -470,7 +488,7 @@ trait DeltaSQLConfBase {
       .createWithDefaultFunction(() => SQLConf.get.getConf(DeltaSQLConf.FAST_DROP_FEATURE_ENABLED))
 
   val FAST_DROP_FEATURE_DV_TOMBSTONE_COUNT_THRESHOLD =
-    buildConf("tableFeatures.dev.fastDropFeature.dvTombstoneCountThreshold")
+    buildConf("tableFeatures.fastDropFeature.dvTombstoneCountThreshold")
       .doc(
         """The maximum number of DV tombstones we are allowed store to memory when dropping
           |deletion vectors. When the resulting number of DV tombstones is higher, we use
@@ -481,7 +499,7 @@ trait DeltaSQLConfBase {
       .createWithDefault(10000)
 
   val FAST_DROP_FEATURE_STREAMING_ALWAYS_VALIDATE_PROTOCOL =
-    buildConf("tableFeatures.dev.fastDropFeature.alwaysValidateProtocolInStreaming.enabled")
+    buildConf("tableFeatures.fastDropFeature.alwaysValidateProtocolInStreaming.enabled")
       .internal()
       .doc(
         """Whether to validate the protocol when starting a stream from arbitrary
@@ -1315,6 +1333,14 @@ trait DeltaSQLConfBase {
           |""".stripMargin)
       .booleanConf
       .createWithDefault(false)
+
+    val DELTA_TYPE_WIDENING_REMOVE_SCHEMA_METADATA =
+    buildConf("typeWidening.removeSchemaMetadata")
+      .doc("When true, type widening metadata is removed from schemas that are surfaced outside " +
+        "of Delta or used for schema comparisons")
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
 
   val DELTA_IS_DELTA_TABLE_THROW_ON_ERROR =
     buildConf("isDeltaTable.throwOnError")
