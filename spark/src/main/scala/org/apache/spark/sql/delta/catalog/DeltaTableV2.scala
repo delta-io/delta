@@ -203,7 +203,7 @@ class DeltaTableV2 private[delta](
 
   private lazy val tableSchema: StructType = {
     val baseSchema = cdcRelation.map(_.schema).getOrElse(initialSnapshot.schema)
-    DeltaTableUtils.removeInternalWriterMetadata(
+    DeltaTableUtils.removeInternalDeltaMetadata(
       spark, DeltaTableUtils.removeInternalWriterMetadata(spark, baseSchema)
     )
   }
