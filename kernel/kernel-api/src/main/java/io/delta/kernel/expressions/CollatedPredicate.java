@@ -2,7 +2,6 @@ package io.delta.kernel.expressions;
 
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.types.CollationIdentifier;
-
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
