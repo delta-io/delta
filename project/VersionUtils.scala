@@ -10,6 +10,7 @@ object VersionUtils {
   val JAVA_VERSION_FOR_SPARK_MASTER = 17
   val JAVA_VERSION_FOR_LATEST_RELEASED_SPARK = DEFAULT_JAVA_VERSION
 
+  /** Java version of the current build. */
   lazy val buildJavaVersion: Int = {
     val versionStr = sys.props.getOrElse("java.version", "Unknown")
     if (versionStr.startsWith("1.")) {
@@ -23,12 +24,19 @@ object VersionUtils {
     }
   }
 
-  /** Ensure that the build is running on a minimum Java version. */
+  /**
+   * Get the Java compiler options that based on the target Java version, while
+   * also validating that the buld Java version is compatible with the target.
+   */
   def getJavacOptionForTargetJavaVersion(targetJavaVersion: Int): Seq[String] = {
     assert(buildJavaVersion >= targetJavaVersion,
       s"Java version $buildJavaVersion is not supported for building this project. " +
         s"Please use Java $targetJavaVersion or higher.")
-    Seq("--release", targetJavaVersion.toString)
+    if (buildJavaVersion <= 8) {
+      Seq.empty // `--release` is supported since JDK 9 and the minimum supported JDK is 8
+    } else {
+      Seq("--release", targetJavaVersion.toString)
+    }
   }
 
   /////////////////////////
