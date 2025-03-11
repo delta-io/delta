@@ -40,7 +40,8 @@ jobs:
           # the above directories when we use the key for the first time. After that, each run will
           # just use the cache. The cache is immutable so we need to use a new key when trying to
           # cache new stuff.
-          key: delta-sbt-cache-spark3.2-scala${{ matrix.scala }}
+          # TODO: we need a way for this key to auto-generated based on dependencies
+          key: delta-sbt-cache-scala${{ matrix.scala }}
       - name: Install Job dependencies
         run: |
           sudo apt-get update
