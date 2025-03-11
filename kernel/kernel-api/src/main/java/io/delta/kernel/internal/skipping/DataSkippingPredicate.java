@@ -15,26 +15,38 @@
  */
 package io.delta.kernel.internal.skipping;
 
+import io.delta.kernel.expressions.CollatedPredicate;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.Predicate;
+import io.delta.kernel.types.CollationIdentifier;
+
 import java.util.*;
 
 /** A {@link Predicate} with a set of columns referenced by the expression. */
-public class DataSkippingPredicate extends Predicate {
+public class DataSkippingPredicate extends Predicate implements IDataSkippingPredicate {
 
-  /** Set of {@link Column}s referenced by the predicate or any of its child expressions */
+  /**
+   * Set of {@link Column}s referenced by the predicate or any of its child expressions.
+   * {@link Column}s that are referenced just with {@link CollatedPredicate} are not included in this set.
+   */
   private final Set<Column> referencedCols;
+
+  /** Map that maps collation to set of {@link Column}s referenced by the {@link CollatedPredicate} or any of its child expressions */
+  private final Map<CollationIdentifier, Set<Column>> referencedCollatedCols;
 
   /**
    * @param name the predicate name
    * @param children list of expressions that are input to this predicate.
-   * @param referencedCols set of columns referenced by this predicate or any of its child
-   *     expressions
+   * @param referencedCols set of {@link Column}s referenced by the predicate or any of its child expressions.
+   * {@link Column}s that are referenced just with {@link CollatedPredicate} are not included in this set.
+   * @param referencedCollatedCols map that maps collation to set of {@link Column}s referenced by the {@link CollatedPredicate} or any of its child expressions
    */
-  DataSkippingPredicate(String name, List<Expression> children, Set<Column> referencedCols) {
+  DataSkippingPredicate(String name, List<Expression> children, Set<Column> referencedCols,
+                        Map<CollationIdentifier, Set<Column>> referencedCollatedCols) {
     super(name, children);
     this.referencedCols = Collections.unmodifiableSet(referencedCols);
+    this.referencedCollatedCols = Collections.unmodifiableMap(referencedCollatedCols);
   }
 
   /**
@@ -54,10 +66,40 @@ public class DataSkippingPredicate extends Predicate {
             addAll(left.getReferencedCols());
             addAll(right.getReferencedCols());
           }
+        },
+        new HashMap<CollationIdentifier, Set<Column>>() {
+          {
+            for (Map.Entry<CollationIdentifier, Set<Column>> entry :
+                    left.getReferencedCollatedCols().entrySet()) {
+              if (!containsKey(entry.getKey())) {
+                put(entry.getKey(), entry.getValue());
+              } else {
+                get(entry.getKey()).addAll(entry.getValue());
+              }
+            }
+            for (Map.Entry<CollationIdentifier, Set<Column>> entry :
+                    right.getReferencedCollatedCols().entrySet()) {
+              if (!containsKey(entry.getKey())) {
+                put(entry.getKey(), entry.getValue());
+              } else {
+                get(entry.getKey()).addAll(entry.getValue());
+              }
+            }
+          }
         });
   }
 
   public Set<Column> getReferencedCols() {
     return referencedCols;
+  }
+
+  @Override
+  public Map<CollationIdentifier, Set<Column>> getReferencedCollatedCols() {
+    return referencedCollatedCols;
+  }
+
+  @Override
+  public Predicate asPredicate() {
+    return this;
   }
 }
