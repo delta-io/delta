@@ -179,8 +179,7 @@ object SkippingEligibleDataType {
  *         predicate for the expression, if the given expression is eligible.
  *         Otherwise, return None.
  */
-abstract class GenericSkippingEligibleExpression(
-  dataSkippingType: DeltaDataSkippingType, conf: SQLConf) {
+abstract class GenericSkippingEligibleExpression() {
 
   def unapply(arg: Expression): Option[(Seq[String], DataType, DataSkippingPredicateBuilder)] = {
     arg match {
@@ -295,8 +294,7 @@ trait DataSkippingReaderBase
   {
     protected val statsProvider: StatsProvider = new StatsProvider(getStatsColumnOpt)
 
-    object SkippingEligibleExpression extends GenericSkippingEligibleExpression(
-      dataSkippingType, spark.sessionState.conf)
+    object SkippingEligibleExpression extends GenericSkippingEligibleExpression()
 
     // Main function for building data filters.
     def apply(dataFilter: Expression): Option[DataSkippingPredicate] =
