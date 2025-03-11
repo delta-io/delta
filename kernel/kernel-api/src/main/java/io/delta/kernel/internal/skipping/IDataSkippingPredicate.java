@@ -15,7 +15,7 @@ import java.util.Set;
  * <br>
  * <ol>
  *     <li>TODO</li>
- *     <li>{@link DataSkippingPredicate} - TODO </li>
+ *     <li>{@link IDataSkippingPredicate} - TODO </li>
  * </ol>
  */
 @Evolving
@@ -30,6 +30,6 @@ public interface IDataSkippingPredicate {
     /** @return Map that maps collation to set of {@link Column}s referenced by the {@link CollatedPredicate} or any of its child expressions */
     Map<CollationIdentifier, Set<Column>> getReferencedCollatedCols();
 
-    /** @return {@link DataSkippingPredicate} as {@link Predicate} */
+    /** @return {@link IDataSkippingPredicate} as {@link Predicate} */
     Predicate asPredicate();
 }

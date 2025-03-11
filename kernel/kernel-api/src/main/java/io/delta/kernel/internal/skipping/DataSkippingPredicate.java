@@ -43,7 +43,7 @@ public class DataSkippingPredicate extends Predicate implements IDataSkippingPre
    * @param referencedCollatedCols map that maps collation to set of {@link Column}s referenced by the {@link CollatedPredicate} or any of its child expressions
    */
   DataSkippingPredicate(String name, List<Expression> children, Set<Column> referencedCols,
-                        Map<CollationIdentifier, Set<Column>> referencedCollatedCols) {
+                         Map<CollationIdentifier, Set<Column>> referencedCollatedCols) {
     super(name, children);
     this.referencedCols = Collections.unmodifiableSet(referencedCols);
     this.referencedCollatedCols = Collections.unmodifiableMap(referencedCollatedCols);
@@ -57,10 +57,10 @@ public class DataSkippingPredicate extends Predicate implements IDataSkippingPre
    * @param left left input to this predicate
    * @param right right input to this predicate
    */
-  DataSkippingPredicate(String name, DataSkippingPredicate left, DataSkippingPredicate right) {
+  DataSkippingPredicate(String name, IDataSkippingPredicate left, IDataSkippingPredicate right) {
     this(
         name,
-        Arrays.asList(left, right),
+        Arrays.asList(left.asPredicate(), right.asPredicate()),
         new HashSet<Column>() {
           {
             addAll(left.getReferencedCols());

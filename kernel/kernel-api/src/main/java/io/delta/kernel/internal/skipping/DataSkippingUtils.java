@@ -69,9 +69,9 @@ public class DataSkippingUtils {
    *
    * @param dataFilters query filters on the data columns
    * @param dataSchema the data schema of the table
-   * @return data skipping filter to prune files if it exists as a {@link DataSkippingPredicate}
+   * @return data skipping filter to prune files if it exists as a {@link IDataSkippingPredicate}
    */
-  public static Optional<DataSkippingPredicate> constructDataSkippingFilter(
+  public static Optional<IDataSkippingPredicate> constructDataSkippingFilter(
       Predicate dataFilters, StructType dataSchema) {
     StatsSchemaHelper schemaHelper = new StatsSchemaHelper(dataSchema);
     return constructDataSkippingFilter(dataFilters, schemaHelper);
@@ -153,7 +153,7 @@ public class DataSkippingUtils {
    * support -- IS [NOT] NULL -- is specifically NULL aware. The predicate evaluates to NULL if any
    * required statistics are missing.
    */
-  private static Optional<DataSkippingPredicate> constructDataSkippingFilter(
+  private static Optional<IDataSkippingPredicate> constructDataSkippingFilter(
       Predicate dataFilters, StatsSchemaHelper schemaHelper) {
 
     switch (dataFilters.getName().toUpperCase(Locale.ROOT)) {
@@ -176,9 +176,9 @@ public class DataSkippingUtils {
         // NOTE: AND is special -- we can safely skip the file if one leg does not evaluate to
         // TRUE, even if we cannot construct a skipping filter for the other leg.
       case "AND":
-        Optional<DataSkippingPredicate> e1AndFilter =
+        Optional<IDataSkippingPredicate> e1AndFilter =
             constructDataSkippingFilter(asPredicate(getLeft(dataFilters)), schemaHelper);
-        Optional<DataSkippingPredicate> e2AndFilter =
+        Optional<IDataSkippingPredicate> e2AndFilter =
             constructDataSkippingFilter(asPredicate(getRight(dataFilters)), schemaHelper);
         if (e1AndFilter.isPresent() && e2AndFilter.isPresent()) {
           return Optional.of(
@@ -202,9 +202,9 @@ public class DataSkippingUtils {
         // Unlike AND, a single leg of an OR expression provides no filtering power -- we can
         // only reject a file if both legs evaluate to false.
       case "OR":
-        Optional<DataSkippingPredicate> e1OrFilter =
+        Optional<IDataSkippingPredicate> e1OrFilter =
             constructDataSkippingFilter(asPredicate(getLeft(dataFilters)), schemaHelper);
-        Optional<DataSkippingPredicate> e2OrFilter =
+        Optional<IDataSkippingPredicate> e2OrFilter =
             constructDataSkippingFilter(asPredicate(getRight(dataFilters)), schemaHelper);
         if (e1OrFilter.isPresent() && e2OrFilter.isPresent()) {
           return Optional.of(new DataSkippingPredicate("OR", e1OrFilter.get(), e2OrFilter.get()));
@@ -284,7 +284,7 @@ public class DataSkippingUtils {
   }
 
   /** Construct the skipping predicate for a given comparator */
-  private static Optional<DataSkippingPredicate> constructComparatorDataSkippingFilters(
+  private static Optional<IDataSkippingPredicate> constructComparatorDataSkippingFilters(
       String comparator, Column leftCol, Literal rightLit, StatsSchemaHelper schemaHelper) {
 
     switch (comparator.toUpperCase(Locale.ROOT)) {
@@ -332,11 +332,11 @@ public class DataSkippingUtils {
   }
 
   /**
-   * Constructs a {@link DataSkippingPredicate} for a binary predicate expression with a left
+   * Constructs a {@link IDataSkippingPredicate} for a binary predicate expression with a left
    * column, an optional column adjustment expression and a right expression of type {@link
    * Literal}.
    */
-  private static DataSkippingPredicate constructBinaryDataSkippingPredicate(
+  private static IDataSkippingPredicate constructBinaryDataSkippingPredicate(
       String exprName, Tuple2<Column, Optional<Expression>> colExpr, Literal lit) {
     Column column = colExpr._1;
     Expression adjColExpr = colExpr._2.isPresent() ? colExpr._2.get() : column;
@@ -364,7 +364,7 @@ public class DataSkippingUtils {
   }
 
   /** Construct the skipping predicate for a NOT expression child if possible */
-  private static Optional<DataSkippingPredicate> constructNotDataSkippingFilters(
+  private static Optional<IDataSkippingPredicate> constructNotDataSkippingFilters(
       Predicate childPredicate, StatsSchemaHelper schemaHelper) {
     switch (childPredicate.getName().toUpperCase(Locale.ROOT)) {
         // Use deMorgan's law to push the NOT past the AND. This is safe even with SQL
@@ -535,10 +535,10 @@ public class DataSkippingUtils {
   }
 
   /** Helper method for building DataSkippingPredicate for NOT =/IS NOT DISTINCT FROM */
-  private static Optional<DataSkippingPredicate> constructDataSkippingFiltersForNotEqual(
+  private static Optional<IDataSkippingPredicate> constructDataSkippingFiltersForNotEqual(
       Predicate equalPredicate,
       StatsSchemaHelper schemaHelper,
-      BiFunction<Column, Literal, Optional<DataSkippingPredicate>> buildDataSkippingPredicateFunc) {
+      BiFunction<Column, Literal, Optional<IDataSkippingPredicate>> buildDataSkippingPredicateFunc) {
     checkArgument(
         "=".equals(equalPredicate.getName())
             || "IS NOT DISTINCT FROM".equals(equalPredicate.getName()),
