@@ -229,7 +229,8 @@ public class DataSkippingUtils {
                         add(nullCountCol);
                         add(numRecordsCol);
                       }
-                    }));
+                    },
+                    Collections.emptyMap()));
           }
         }
         break;
@@ -246,7 +247,7 @@ public class DataSkippingUtils {
             Literal zero = Literal.ofLong(0);
             return Optional.of(
                 new DataSkippingPredicate(
-                    ">", Arrays.asList(nullCountCol, zero), Collections.singleton(nullCountCol)));
+                    ">", Arrays.asList(nullCountCol, zero), Collections.singleton(nullCountCol), Collections.emptyMap()));
           }
         }
         break;
@@ -340,7 +341,7 @@ public class DataSkippingUtils {
     Column column = colExpr._1;
     Expression adjColExpr = colExpr._2.isPresent() ? colExpr._2.get() : column;
     return new DataSkippingPredicate(
-        exprName, Arrays.asList(adjColExpr, lit), Collections.singleton(column));
+        exprName, Arrays.asList(adjColExpr, lit), Collections.singleton(column), Collections.emptyMap());
   }
 
   private static final Map<String, String> REVERSE_COMPARATORS =
