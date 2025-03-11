@@ -34,7 +34,7 @@ import io.delta.kernel.internal.metrics.ScanMetrics;
 import io.delta.kernel.internal.metrics.ScanReportImpl;
 import io.delta.kernel.internal.metrics.Timer;
 import io.delta.kernel.internal.replay.LogReplay;
-import io.delta.kernel.internal.skipping.DataSkippingPredicate;
+import io.delta.kernel.internal.skipping.IDataSkippingPredicate;
 import io.delta.kernel.internal.skipping.DataSkippingUtils;
 import io.delta.kernel.internal.util.*;
 import io.delta.kernel.metrics.ScanReport;
@@ -125,7 +125,7 @@ public class ScanImpl implements Scan {
     accessedScanFiles = true;
 
     // Generate data skipping filter and decide if we should read the stats column
-    Optional<DataSkippingPredicate> dataSkippingFilter = getDataSkippingFilter();
+    Optional<IDataSkippingPredicate> dataSkippingFilter = getDataSkippingFilter();
     boolean hasDataSkippingFilter = dataSkippingFilter.isPresent();
     boolean shouldReadStats = hasDataSkippingFilter || includeStats;
 
@@ -145,7 +145,7 @@ public class ScanImpl implements Scan {
                   filter,
                   readSchema,
                   getPartitionsFilters() /* partitionPredicate */,
-                  dataSkippingFilter.map(p -> p),
+                  dataSkippingFilter.map(IDataSkippingPredicate::asPredicate),
                   isFullyConsumed,
                   scanMetrics,
                   exceptionOpt);
@@ -293,7 +293,7 @@ public class ScanImpl implements Scan {
     };
   }
 
-  private Optional<DataSkippingPredicate> getDataSkippingFilter() {
+  private Optional<IDataSkippingPredicate> getDataSkippingFilter() {
     return getDataFilters()
         .flatMap(
             dataFilters ->
@@ -304,7 +304,7 @@ public class ScanImpl implements Scan {
   private CloseableIterator<FilteredColumnarBatch> applyDataSkipping(
       Engine engine,
       CloseableIterator<FilteredColumnarBatch> scanFileIter,
-      DataSkippingPredicate dataSkippingFilter) {
+      IDataSkippingPredicate dataSkippingFilter) {
     // Get the stats schema
     // It's possible to instead provide the referenced columns when building the schema but
     // pruning it after is much simpler
@@ -321,7 +321,7 @@ public class ScanImpl implements Scan {
         new Predicate(
             "=",
             new ScalarExpression(
-                "COALESCE", Arrays.asList(dataSkippingFilter, Literal.ofBoolean(true))),
+                "COALESCE", Arrays.asList(dataSkippingFilter.asPredicate(), Literal.ofBoolean(true))),
             AlwaysTrue.ALWAYS_TRUE);
 
     PredicateEvaluator predicateEvaluator =
