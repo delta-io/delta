@@ -61,7 +61,7 @@ class BinPackingIteratorSuite extends QueryTest
       // 3rd bin
       TestArbitrarySizing(Int.MaxValue / 2),
       // 4th bin
-      TestArbitrarySizing(Int.MaxValue / 2),
+      TestArbitrarySizing(Int.MaxValue / 2)
     )
     val binPackingIterator = new BinPackingIterator(testInput.iterator, targetSize)
     assert(binPackingIterator.hasNext)
