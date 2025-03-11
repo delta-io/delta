@@ -56,8 +56,8 @@ public class StartsWithExpressionEvaluator {
       if (!collatedPredicate.getCollationIdentifier().equals(STRING.getCollationIdentifier())) {
         String msg =
             format(
-                "Unsupported collation: \"%s\". Default Engine supports just" +
-                        " \"SPARK.UTF8_BINARY\" collation.",
+                "Unsupported collation: \"%s\". Default Engine supports just"
+                    + " \"SPARK.UTF8_BINARY\" collation.",
                 collatedPredicate.getCollationIdentifier());
         throw unsupportedExpressionException(startsWith, msg);
       }

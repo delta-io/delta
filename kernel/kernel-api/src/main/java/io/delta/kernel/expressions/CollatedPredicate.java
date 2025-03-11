@@ -59,10 +59,11 @@ public class CollatedPredicate extends Predicate {
   @Override
   public String toString() {
     return String.format(
-            "(%s %s %s COLLATE %s)", children.get(0), name, children.get(1), collationIdentifier);
+        "(%s %s %s COLLATE %s)", children.get(0), name, children.get(1), collationIdentifier);
   }
 
   /** Supported operators for collation-based comparisons. */
   private static final Set<String> COLLATION_SUPPORTED_OPERATORS =
-      Stream.of("<", "<=", ">", ">=", "=", "IS NOT DISTINCT FROM", "STARTS_WITH").collect(Collectors.toSet());
+      Stream.of("<", "<=", ">", ">=", "=", "IS NOT DISTINCT FROM", "STARTS_WITH")
+          .collect(Collectors.toSet());
 }
