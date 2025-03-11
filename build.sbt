@@ -54,7 +54,7 @@ val default_scala_version = settingKey[String]("Default Scala version")
 Global / default_scala_version := scala212
 
 val sparkVersion = settingKey[String]("Spark version")
-Global / sparkVersion := getSparkVersion() // Set globally even if some module are going to use it
+Global / sparkVersion := getSparkVersion() // Set globally even if only some module are going to use it
 
 // Dependent library versions
 val defaultSparkVersion = LATEST_RELEASED_SPARK_VERSION
