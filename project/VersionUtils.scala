@@ -28,13 +28,22 @@ object VersionUtils {
    * Get the Java compiler options that based on the target Java version, while
    * also validating that the buld Java version is compatible with the target.
    */
-  def getJavacOptionForTargetJavaVersion(targetJavaVersion: Int): Seq[String] = {
+  def getJavacOptionForTargetJavaVersion(
+      moduleName: String,
+      targetJavaVersion: Int): Seq[String] = {
+    assert(buildJavaVersion >= 8,
+      s"Building on Java version $targetJavaVersion is not supported. Please use Java 8 or higher.")
+    assert(targetJavaVersion >= 8,
+      s"Targeting Java version $targetJavaVersion is not supported. Please use Java 8 or higher.")
     assert(buildJavaVersion >= targetJavaVersion,
       s"Java version $buildJavaVersion is not supported for building this project. " +
         s"Please use Java $targetJavaVersion or higher.")
-    if (buildJavaVersion <= 8) {
+    if (buildJavaVersion == 8) {
       Seq.empty // `--release` is supported since JDK 9 and the minimum supported JDK is 8
     } else {
+      // scalastyle:off println
+      println(s"Building $moduleName with Java $buildJavaVersion targeting Java $targetJavaVersion")
+      // scalastyle:on println
       Seq("--release", targetJavaVersion.toString)
     }
   }

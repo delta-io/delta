@@ -93,7 +93,9 @@ lazy val commonSettings = Seq(
   crossScalaVersions := all_scala_versions,
   fork := true,
   scalacOptions ++= Seq("-Ywarn-unused:imports"),
-  javacOptions ++= getJavacOptionForTargetJavaVersion(targetJavaVersion.value),
+  javacOptions ++= getJavacOptionForTargetJavaVersion(
+    name.value,
+    targetJavaVersion.value),
 
   // Make sure any tests in any project that uses Spark is configured for running well locally
   Test / javaOptions ++= Seq(
