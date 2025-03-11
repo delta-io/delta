@@ -55,22 +55,23 @@ object VersionUtils {
   val LATEST_RELEASED_SPARK_VERSION = "3.5.3"
   val SPARK_MASTER_VERSION = "4.0.0-SNAPSHOT"
 
-  val latestReleasedSparkVersionShort = getMajorMinorPatch(LATEST_RELEASED_SPARK_VERSION) match {
-    case (maj, min, _) => s"$maj.$min"
-  }
-
-  val allValidSparkVersionInputs = Seq(
-    "master",
-    "latest",
-    SPARK_MASTER_VERSION,
-    LATEST_RELEASED_SPARK_VERSION,
-    latestReleasedSparkVersionShort
-  )
-
   /** Returns the current spark version, which is the same value as `sparkVersion.value`. */
   def getSparkVersion(): String = {
     // e.g. build/sbt -DsparkVersion=master, build/sbt -DsparkVersion=4.0.0-SNAPSHOT
     val input = sys.props.getOrElse("sparkVersion", LATEST_RELEASED_SPARK_VERSION)
+
+    val latestReleasedSparkVersionShort = getMajorMinorPatch(LATEST_RELEASED_SPARK_VERSION) match {
+      case (maj, min, _) => s"$maj.$min"
+    }
+
+    val allValidSparkVersionInputs = Seq(
+      "master",
+      "latest",
+      SPARK_MASTER_VERSION,
+      LATEST_RELEASED_SPARK_VERSION,
+      latestReleasedSparkVersionShort
+    )
+
     input match {
       case LATEST_RELEASED_SPARK_VERSION | "latest" | `latestReleasedSparkVersionShort` =>
         LATEST_RELEASED_SPARK_VERSION
