@@ -31,7 +31,6 @@ import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.internal.util.InternalUtils
 import io.delta.kernel.types._
 import org.scalatest.funsuite.AnyFunSuite
-import org.sparkproject.jetty.server.Response.OutputType
 
 class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBase {
   test("evaluate expression: literal") {

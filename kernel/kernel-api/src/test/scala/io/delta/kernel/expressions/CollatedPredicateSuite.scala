@@ -19,7 +19,6 @@ import io.delta.kernel.types.CollationIdentifier
 import org.scalatest.funsuite.AnyFunSuite
 
 class CollatedPredicateSuite extends AnyFunSuite {
-
   test("check toString") {
     Seq(
       (
