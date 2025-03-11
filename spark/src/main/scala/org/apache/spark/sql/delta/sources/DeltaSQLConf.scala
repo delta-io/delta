@@ -2196,6 +2196,15 @@ trait DeltaSQLConfBase {
       .doc("Controls the target file deletion vector file size when packing multiple" +
         "deletion vectors in a single file.")
       .bytesConf(ByteUnit.BYTE)
+      /**
+       * A [[DeletionVectorDescriptor]] stores an offset as a 32-bit integer into the file where the
+       * deletion vector is stored. There is a hard limit of ~2.1GB for this file before the offset
+       * integer overflows. Since we do bin packing with estimates, we set a lower internal
+       * limit to be safe.
+       */
+      .checkValue(_ >= 0, "deletionVectors.packing.targetSize must be non-negative")
+      .checkValue(_ < 3L * 1024L * 1024L * 1024L / 2L,
+         "deletionVectors.packing.targetSize must be less than 1.5GB")
       .createWithDefault(2L * 1024L * 1024L)
 
   val TIGHT_BOUND_COLUMN_ON_FILE_INIT_DISABLED =
