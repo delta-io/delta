@@ -759,7 +759,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     Seq(
       Some(CollationIdentifier.fromString("SPARK.UTF8_LCASE")),
       Some(CollationIdentifier.fromString("ICU.sr_Cyrl_SRB")),
-      Some(CollationIdentifier.fromString("ICU.sr_Cyrl_SRB.75.1")),
+      Some(CollationIdentifier.fromString("ICU.sr_Cyrl_SRB.75.1"))
     ).foreach {
       collationIdentifier =>
         val col1 = stringVector(Seq[String]("one", "two", "t%hree", "four", null, null, "%"))
