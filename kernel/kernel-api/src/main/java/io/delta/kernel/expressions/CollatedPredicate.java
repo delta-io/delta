@@ -17,6 +17,8 @@ package io.delta.kernel.expressions;
 
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.types.CollationIdentifier;
+
+import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -37,6 +39,12 @@ import java.util.stream.Stream;
 @Evolving
 public class CollatedPredicate extends Predicate {
   private final CollationIdentifier collationIdentifier;
+
+  public CollatedPredicate(String name, List<Expression> children, CollationIdentifier collationIdentifier) {
+    super(name, children);
+    Objects.requireNonNull(collationIdentifier, "Collation identifier cannot be null");
+    this.collationIdentifier = collationIdentifier;
+  }
 
   /** Constructor for a CollatedPredicate expression */
   public CollatedPredicate(

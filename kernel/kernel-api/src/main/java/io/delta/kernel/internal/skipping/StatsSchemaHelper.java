@@ -24,6 +24,8 @@ import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.expressions.ScalarExpression;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.*;
+
+import javax.swing.text.html.Option;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -120,29 +122,38 @@ public class StatsSchemaHelper {
    * @param column the logical column name.
    * @return a tuple of the MIN column and an optional adjustment expression.
    */
-  public Tuple2<Column, Optional<Expression>> getMinColumn(Column column) {
+  public Tuple2<Column, Optional<Expression>> getMinColumn(Column column, Optional<CollationIdentifier> collationIdentifier) {
+    if (collationIdentifier.isPresent()) {
+      checkArgument(
+              isSkippingEligibleMinMaxCollatedColumn(column),
+              "%s is not a valid collated min column for data schema %s",
+              column,
+              dataSchema);
+      return new Tuple2<>(getChildColumn(getChildColumn(getStatsColumn(column, MIN), collationIdentifier.toString()), STATS_WITH_COLLATION), Optional.empty());
+    }
     checkArgument(
-        isSkippingEligibleMinMaxColumn(column),
-        "%s is not a valid min column for data schema %s",
-        column,
-        dataSchema);
+            isSkippingEligibleMinMaxColumn(column),
+            "%s is not a valid min column for data schema %s",
+            column,
+            dataSchema);
     return new Tuple2<>(getStatsColumn(column, MIN), Optional.empty());
   }
 
-  /**
-   * Given a logical column in the data schema provided when creating {@code this}, return the
-   * corresponding MAX column and an optional column adjustment expression from the statistic schema
-   * that stores the MAX values for the provided logical column.
-   *
-   * @param column the logical column name.
-   * @return a tuple of the MAX column and an optional adjustment expression.
-   */
-  public Tuple2<Column, Optional<Expression>> getMaxColumn(Column column) {
+  public Tuple2<Column, Optional<Expression>> getMaxColumn(Column column, Optional<CollationIdentifier> collationIdentifier) {
+    if (collationIdentifier.isPresent()) {
+        checkArgument(
+                isSkippingEligibleMinMaxCollatedColumn(column),
+                "%s is not a valid collated max column for data schema %s",
+                column,
+                dataSchema);
+        return new Tuple2<>(getChildColumn(getChildColumn(getStatsColumn(column, MAX), collationIdentifier.toString()), STATS_WITH_COLLATION), Optional.empty());
+    }
+
     checkArgument(
-        isSkippingEligibleMinMaxColumn(column),
-        "%s is not a valid min column for data schema %s",
-        column,
-        dataSchema);
+            isSkippingEligibleMinMaxColumn(column),
+            "%s is not a valid max column for data schema %s",
+            column,
+            dataSchema);
     DataType dataType = logicalToDataType.get(column);
     Column maxColumn = getStatsColumn(column, MAX);
 
@@ -153,9 +164,9 @@ public class StatsSchemaHelper {
     // to contain the range from 01:02:03.456 to 01:02:03.457.
     if (dataType instanceof TimestampType || dataType instanceof TimestampNTZType) {
       return new Tuple2<>(
-          maxColumn,
-          Optional.of(
-              new ScalarExpression("TIMEADD", Arrays.asList(maxColumn, Literal.ofLong(1)))));
+              maxColumn,
+              Optional.of(
+                      new ScalarExpression("TIMEADD", Arrays.asList(maxColumn, Literal.ofLong(1)))));
     }
     return new Tuple2<>(maxColumn, Optional.empty());
   }
@@ -196,6 +207,10 @@ public class StatsSchemaHelper {
     return logicalToPhysicalColumn.containsKey(column);
   }
 
+  public boolean isSkippingEligibleMinMaxCollatedColumn(Column column) {
+    return logicalToDataType.containsKey(column) && logicalToDataType.get(column) instanceof StringType;
+  }
+
   //////////////////////////////////////////////////////////////////////////////////
   // Private static fields and methods
   //////////////////////////////////////////////////////////////////////////////////
@@ -205,6 +220,7 @@ public class StatsSchemaHelper {
   private static final String MIN = "minValues";
   private static final String MAX = "maxValues";
   private static final String NULL_COUNT = "nullCount";
+  private static final String STATS_WITH_COLLATION = "statsWithCollation";
 
   private static final Set<String> SKIPPING_ELIGIBLE_TYPE_NAMES =
       new HashSet<String>() {
