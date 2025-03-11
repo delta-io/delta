@@ -22,7 +22,7 @@ import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, RemoveFile}
 import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
+import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.Path
 
@@ -32,7 +32,8 @@ import org.apache.spark.sql.test.SharedSparkSession
 
 class DeletionVectorFileSizeSuite extends QueryTest
     with SharedSparkSession
-    with DeltaSQLTestUtils {
+    with DeltaSQLTestUtils
+    with DeltaSQLCommandTest {
   private def getAddAndRemoveFilesFromCommitVersion(
       deltaLog: DeltaLog,
       commitVersion: Long): (Seq[AddFile], Seq[RemoveFile]) = {
