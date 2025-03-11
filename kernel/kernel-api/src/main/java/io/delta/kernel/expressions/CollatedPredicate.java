@@ -42,6 +42,12 @@ public class CollatedPredicate extends Predicate {
   public CollatedPredicate(
       String name, Expression left, Expression right, CollationIdentifier collationIdentifier) {
     super(name, left, right);
+    if (!COLLATION_SUPPORTED_OPERATORS.contains(this.name)) {
+      throw new IllegalArgumentException(
+          String.format(
+              "Collation is not supported for operator %s. Supported operators are %s",
+              this.name, COLLATION_SUPPORTED_OPERATORS));
+    }
     Objects.requireNonNull(collationIdentifier, "Collation identifier cannot be null");
     this.collationIdentifier = collationIdentifier;
   }
@@ -52,14 +58,11 @@ public class CollatedPredicate extends Predicate {
 
   @Override
   public String toString() {
-    if (COLLATION_SUPPORTED_OPERATORS.contains(name)) {
-      return String.format(
-          "(%s %s %s COLLATE %s)", children.get(0), name, children.get(1), collationIdentifier);
-    }
-    return super.toString();
+    return String.format(
+            "(%s %s %s COLLATE %s)", children.get(0), name, children.get(1), collationIdentifier);
   }
 
   /** Supported operators for collation-based comparisons. */
   private static final Set<String> COLLATION_SUPPORTED_OPERATORS =
-      Stream.of("<", "<=", ">", ">=", "=", "STARTS_WITH").collect(Collectors.toSet());
+      Stream.of("<", "<=", ">", ">=", "=", "IS NOT DISTINCT FROM", "STARTS_WITH").collect(Collectors.toSet());
 }

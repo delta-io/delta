@@ -18,7 +18,26 @@ package io.delta.kernel.expressions
 import io.delta.kernel.types.CollationIdentifier
 import org.scalatest.funsuite.AnyFunSuite
 
+import java.util.Locale
+
 class CollatedPredicateSuite extends AnyFunSuite {
+  test("check invalid operation") {
+    Seq(
+      "anD",
+      "oR",
+      "ELEMENT_AT",
+      "SUBstring"
+    ).foreach {
+      operationName =>
+        val e = intercept[IllegalArgumentException] {
+          new CollatedPredicate(operationName, new Column("c1"), new Column("c2"),
+            CollationIdentifier.fromString("SPARK.UTF8_LCASE"))
+        }
+        assert(e.getMessage.contains(s"Collation is not supported for operator" +
+          s" ${operationName.toUpperCase(Locale.ENGLISH)}."))
+    }
+  }
+
   test("check toString") {
     Seq(
       (
@@ -35,11 +54,6 @@ class CollatedPredicateSuite extends AnyFunSuite {
         new CollatedPredicate("stARtS_wiTh", new Column("c1"), Literal.ofString("a"),
           CollationIdentifier.fromString("ICU.en_US")),
         "(column(`c1`) STARTS_WITH a COLLATE ICU.EN_US)"
-      ),
-      (
-        new CollatedPredicate("AND", new Column("c1"), Literal.ofString("a"),
-          CollationIdentifier.fromString("ICU.en_US")),
-        "(column(`c1`) AND a)"
       )
     ).foreach {
       case (collatedPredicate, expectedToString) =>
