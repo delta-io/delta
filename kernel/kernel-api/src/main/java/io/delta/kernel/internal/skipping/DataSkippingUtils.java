@@ -263,6 +263,7 @@ public class DataSkippingUtils {
         Expression left = getLeft(dataFilters);
         Expression right = getRight(dataFilters);
 
+        // For file pruning, a Column must be compared with a Literal
         if (!(left instanceof Column && right instanceof Literal)
         && !(left instanceof Literal && right instanceof Column)) {
           break;
