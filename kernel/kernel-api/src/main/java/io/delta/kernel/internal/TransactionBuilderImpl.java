@@ -194,6 +194,14 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       TableFeatures.validateKernelCanWriteToTable(protocol, metadata, table.getPath(engine));
     }
 
+    Optional<Metadata> metadataWithCMInfo =
+        ColumnMapping.updateColumnMappingMetadataIfNeeded(
+            metadata, ColumnMapping.getColumnMappingMode(metadata.getConfiguration()), isNewTable);
+    if (metadataWithCMInfo.isPresent()) {
+      shouldUpdateMetadata = true;
+      metadata = metadataWithCMInfo.get();
+    }
+
     return new TransactionImpl(
         isNewTable,
         table.getDataPath(),
