@@ -207,7 +207,7 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
 
       val metadata: Metadata = updateColumnMappingMetadataIfNeeded(
         testMetadata(schema).withColumnMappingEnabled("id"),
-        isNewTable).orElseGet(fail("Metadata should not be empty"))
+        isNewTable).orElseGet(() => fail("Metadata should not be empty"))
 
       assertColumnMapping(metadata.getSchema.get("a"), 1L, if (isNewTable) "UUID" else "a")
       assertColumnMapping(metadata.getSchema.get("b"), 2L, if (isNewTable) "UUID" else "b")
@@ -238,7 +238,7 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
 
     val metadata = updateColumnMappingMetadataIfNeeded(
       testMetadata(schema).withColumnMappingEnabled(),
-      true).orElseGet(fail("Metadata should not be empty"))
+      true).orElseGet(() => fail("Metadata should not be empty"))
     val fieldMetadata = metadata.getSchema.get("a").getMetadata.getEntries
 
     assertThat(fieldMetadata)
@@ -268,7 +268,7 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
         inputMetadata = inputMetadata.withIcebergCompatV2Enabled
       }
       val metadata = updateColumnMappingMetadataIfNeeded(inputMetadata, isNewTable)
-        .orElseGet(fail("Metadata should not be empty"))
+        .orElseGet(() => fail("Metadata should not be empty"))
 
       assertColumnMapping(metadata.getSchema.get("a"), 1L, if (isNewTable) "UUID" else "a")
       assertColumnMapping(metadata.getSchema.get("b"), 2L, if (isNewTable) "UUID" else "b")
@@ -302,7 +302,7 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
         inputMetadata = inputMetadata.withIcebergCompatV2Enabled
       }
       val metadata = updateColumnMappingMetadataIfNeeded(inputMetadata, isNewTable)
-        .orElseGet(fail("Metadata should not be empty"))
+        .orElseGet(() => fail("Metadata should not be empty"))
 
       assertColumnMapping(metadata.getSchema.get("a"), 1L, if (isNewTable) "UUID" else "a")
       assertColumnMapping(metadata.getSchema.get("b"), 2L, if (isNewTable) "UUID" else "b")
@@ -351,7 +351,7 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
         inputMetadata = inputMetadata.withIcebergCompatV2Enabled
       }
       val metadata = updateColumnMappingMetadataIfNeeded(inputMetadata, isNewTable)
-        .orElseGet(fail("Metadata should not be empty"))
+        .orElseGet(() => fail("Metadata should not be empty"))
 
       assertColumnMapping(metadata.getSchema.get("a"), 1L, if (isNewTable) "UUID" else "a")
       assertColumnMapping(metadata.getSchema.get("b"), 2L, if (isNewTable) "UUID" else "b")
@@ -399,7 +399,7 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
         inputMetadata = inputMetadata.withIcebergCompatV2Enabled
       }
       val metadata = updateColumnMappingMetadataIfNeeded(inputMetadata, isNewTable)
-        .orElseGet(fail("Metadata should not be empty"))
+        .orElseGet(() => fail("Metadata should not be empty"))
 
       verifyCMTestSchemaHasValidColumnMappingInfo(metadata, isNewTable, enableIcebergCompatV2)
 
@@ -420,7 +420,7 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
       val inputMetadata = testMetadata(schema).withColumnMappingEnabled("id")
       val updatedMetadata = updateColumnMappingMetadataIfNeeded(
         if (icebergCompatV2Enabled) inputMetadata.withIcebergCompatV2Enabled else inputMetadata,
-        true).orElseGet(fail("Metadata should not be empty"))
+        true).orElseGet(() => fail("Metadata should not be empty"))
 
       assertColumnMapping(updatedMetadata.getSchema.get("a"), 1L)
 
@@ -434,7 +434,7 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
       val inputMetadata2 = testMetadata(updateSchema).withColumnMappingEnabled("id")
       val updatedMetadata2 = updateColumnMappingMetadataIfNeeded(
         if (icebergCompatV2Enabled) inputMetadata2.withIcebergCompatV2Enabled else inputMetadata2,
-        false).orElseGet(fail("Metadata should not be empty"))
+        false).orElseGet(() => fail("Metadata should not be empty"))
 
       var fieldId = 0L
 
