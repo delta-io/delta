@@ -14,8 +14,8 @@ import java.util.Set;
  * There are two implementations of this interface:
  * <br>
  * <ol>
- *     <li>TODO</li>
- *     <li>{@link IDataSkippingPredicate} - TODO </li>
+ *     <li>{@link CollatedDataSkippingPredicate} - for file pruning with collated statistics </li>
+ *     <li>{@link DataSkippingPredicate} - for file pruning with regular statistics </li>
  * </ol>
  */
 @Evolving
