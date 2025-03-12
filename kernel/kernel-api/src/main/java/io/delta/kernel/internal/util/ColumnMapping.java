@@ -139,12 +139,12 @@ public class ColumnMapping {
    * the metadata if the metadata has not changed.
    *
    * @param metadata Current metadata.
-   * @param columnMappingMode New column mapping mode.
    * @param isNewTable Whether this is part of a commit that sets the mapping mode on a new table.
    * @return Optional of the updated metadata if it has changed, Optional.empty() otherwise.
    */
   public static Optional<Metadata> updateColumnMappingMetadataIfNeeded(
-      Metadata metadata, ColumnMappingMode columnMappingMode, boolean isNewTable) {
+      Metadata metadata, boolean isNewTable) {
+    ColumnMappingMode columnMappingMode = getColumnMappingMode(metadata.getConfiguration());
     switch (columnMappingMode) {
       case NONE:
         return Optional.empty();

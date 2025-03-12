@@ -205,8 +205,9 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
         .add("a", StringType.STRING, true)
         .add("b", StringType.STRING, true)
 
-      val metadata: Metadata =
-        updateColumnMappingMetadataIfNeeded(testMetadata(schema), ID, isNewTable).get()
+      val metadata: Metadata = updateColumnMappingMetadataIfNeeded(
+        testMetadata(schema).withColumnMappingEnabled("id"),
+        isNewTable).orElseGet(fail("Metadata should not be empty"))
 
       assertColumnMapping(metadata.getSchema.get("a"), 1L, if (isNewTable) "UUID" else "a")
       assertColumnMapping(metadata.getSchema.get("b"), 2L, if (isNewTable) "UUID" else "b")
@@ -218,7 +219,6 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
       // as the schema already has the necessary column mapping info
       assertNoOpOnUpdateColumnMappingMetadataRequest(
         metadata.getSchema,
-        ID,
         enableIcebergCompatV2 = false,
         isNewTable)
     }
@@ -226,10 +226,7 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
 
   test("none mapping mode returns original schema") {
     val schema = new StructType().add("a", StringType.STRING, true)
-
-    val metadata =
-      updateColumnMappingMetadataIfNeeded(testMetadata(schema), NONE, true)
-    assertThat(metadata).isEmpty
+    assertThat(updateColumnMappingMetadataIfNeeded(testMetadata(schema), true)).isEmpty
   }
 
   test("assigning id and physical name preserves field metadata") {
@@ -239,8 +236,10 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
         StringType.STRING,
         FieldMetadata.builder.putString("key1", "val1").putString("key2", "val2").build)
 
-    val metadata = updateColumnMappingMetadataIfNeeded(testMetadata(schema), ID, true)
-    val fieldMetadata = metadata.get().getSchema.get("a").getMetadata.getEntries
+    val metadata = updateColumnMappingMetadataIfNeeded(
+      testMetadata(schema).withColumnMappingEnabled(),
+      true).orElseGet(fail("Metadata should not be empty"))
+    val fieldMetadata = metadata.getSchema.get("a").getMetadata.getEntries
 
     assertThat(fieldMetadata)
       .containsEntry("key1", "val1")
@@ -264,11 +263,12 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
               .add("e", IntegerType.INTEGER))
           .add("c", IntegerType.INTEGER)
 
-      var inputMetadata = testMetadata(schema)
+      var inputMetadata = testMetadata(schema).withColumnMappingEnabled("id")
       if (enableIcebergCompatV2) {
         inputMetadata = inputMetadata.withIcebergCompatV2Enabled
       }
-      val metadata = updateColumnMappingMetadataIfNeeded(inputMetadata, ID, isNewTable).get()
+      val metadata = updateColumnMappingMetadataIfNeeded(inputMetadata, isNewTable)
+        .orElseGet(fail("Metadata should not be empty"))
 
       assertColumnMapping(metadata.getSchema.get("a"), 1L, if (isNewTable) "UUID" else "a")
       assertColumnMapping(metadata.getSchema.get("b"), 2L, if (isNewTable) "UUID" else "b")
@@ -284,7 +284,6 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
       // as the schema already has the necessary column mapping info
       assertNoOpOnUpdateColumnMappingMetadataRequest(
         metadata.getSchema,
-        ID,
         enableIcebergCompatV2,
         isNewTable)
   }
@@ -298,11 +297,12 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
           .add("b", new ArrayType(IntegerType.INTEGER, false))
           .add("c", IntegerType.INTEGER)
 
-      var inputMetadata = testMetadata(schema)
+      var inputMetadata = testMetadata(schema).withColumnMappingEnabled("id")
       if (enableIcebergCompatV2) {
         inputMetadata = inputMetadata.withIcebergCompatV2Enabled
       }
-      val metadata = updateColumnMappingMetadataIfNeeded(inputMetadata, ID, isNewTable).get()
+      val metadata = updateColumnMappingMetadataIfNeeded(inputMetadata, isNewTable)
+        .orElseGet(fail("Metadata should not be empty"))
 
       assertColumnMapping(metadata.getSchema.get("a"), 1L, if (isNewTable) "UUID" else "a")
       assertColumnMapping(metadata.getSchema.get("b"), 2L, if (isNewTable) "UUID" else "b")
@@ -333,7 +333,6 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
       // as the schema already has the necessary column mapping info
       assertNoOpOnUpdateColumnMappingMetadataRequest(
         metadata.getSchema,
-        ID,
         enableIcebergCompatV2,
         isNewTable)
   }
@@ -347,11 +346,12 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
           .add("b", new MapType(IntegerType.INTEGER, StringType.STRING, false))
           .add("c", IntegerType.INTEGER)
 
-      var inputMetadata = testMetadata(schema)
+      var inputMetadata = testMetadata(schema).withColumnMappingEnabled("id")
       if (enableIcebergCompatV2) {
         inputMetadata = inputMetadata.withIcebergCompatV2Enabled
       }
-      val metadata = updateColumnMappingMetadataIfNeeded(inputMetadata, ID, isNewTable).get()
+      val metadata = updateColumnMappingMetadataIfNeeded(inputMetadata, isNewTable)
+        .orElseGet(fail("Metadata should not be empty"))
 
       assertColumnMapping(metadata.getSchema.get("a"), 1L, if (isNewTable) "UUID" else "a")
       assertColumnMapping(metadata.getSchema.get("b"), 2L, if (isNewTable) "UUID" else "b")
@@ -385,7 +385,6 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
       // as the schema already has the necessary column mapping info
       assertNoOpOnUpdateColumnMappingMetadataRequest(
         metadata.getSchema,
-        ID,
         enableIcebergCompatV2,
         isNewTable)
   }
@@ -395,11 +394,12 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
     (isNewTable, enableIcebergCompatV2) =>
       val schema: StructType = cmTestSchema()
 
-      var inputMetadata = testMetadata(schema)
+      var inputMetadata = testMetadata(schema).withColumnMappingEnabled("id")
       if (enableIcebergCompatV2) {
         inputMetadata = inputMetadata.withIcebergCompatV2Enabled
       }
-      val metadata = updateColumnMappingMetadataIfNeeded(inputMetadata, ID, isNewTable).get()
+      val metadata = updateColumnMappingMetadataIfNeeded(inputMetadata, isNewTable)
+        .orElseGet(fail("Metadata should not be empty"))
 
       verifyCMTestSchemaHasValidColumnMappingInfo(metadata, isNewTable, enableIcebergCompatV2)
 
@@ -407,7 +407,6 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
       // as the schema already has the necessary column mapping info
       assertNoOpOnUpdateColumnMappingMetadataRequest(
         metadata.getSchema,
-        ID,
         enableIcebergCompatV2,
         isNewTable)
   }
@@ -418,11 +417,10 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
       val schema: StructType =
         new StructType().add("a", StringType.STRING)
 
-      val inputMetadata = testMetadata(schema)
+      val inputMetadata = testMetadata(schema).withColumnMappingEnabled("id")
       val updatedMetadata = updateColumnMappingMetadataIfNeeded(
         if (icebergCompatV2Enabled) inputMetadata.withIcebergCompatV2Enabled else inputMetadata,
-        ID,
-        true).get()
+        true).orElseGet(fail("Metadata should not be empty"))
 
       assertColumnMapping(updatedMetadata.getSchema.get("a"), 1L)
 
@@ -433,11 +431,10 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
         .add("d", new MapType(IntegerType.INTEGER, StringType.STRING, false))
         .add("e", new StructType().add("h", IntegerType.INTEGER))
 
-      val inputMetadata2 = testMetadata(updateSchema)
+      val inputMetadata2 = testMetadata(updateSchema).withColumnMappingEnabled("id")
       val updatedMetadata2 = updateColumnMappingMetadataIfNeeded(
         if (icebergCompatV2Enabled) inputMetadata2.withIcebergCompatV2Enabled else inputMetadata2,
-        ID,
-        false).get()
+        false).orElseGet(fail("Metadata should not be empty"))
 
       var fieldId = 0L
 
@@ -491,7 +488,6 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
 
       assertNoOpOnUpdateColumnMappingMetadataRequest(
         updatedMetadata2.getSchema,
-        ID,
         icebergCompatV2Enabled,
         isNewTable = false)
     }
@@ -503,16 +499,15 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
    */
   def assertNoOpOnUpdateColumnMappingMetadataRequest(
       schemaWithCMInfo: StructType,
-      cmMode: ColumnMappingMode,
       enableIcebergCompatV2: Boolean,
       isNewTable: Boolean): Unit = {
 
-    var metadata = testMetadata(schemaWithCMInfo).withColumnMappingEnabled(cmMode.toString)
+    var metadata = testMetadata(schemaWithCMInfo).withColumnMappingEnabled("id")
     if (enableIcebergCompatV2) {
       metadata = metadata.withIcebergCompatV2Enabled
     }
 
-    assertThat(updateColumnMappingMetadataIfNeeded(metadata, cmMode, isNewTable)).isEmpty
+    assertThat(updateColumnMappingMetadataIfNeeded(metadata, isNewTable)).isEmpty
   }
 
   def runWithIcebergCompatV2ComboForNewAndExistingTables(testName: String)(f: (

@@ -338,7 +338,7 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
   }
 
   /** Utility to create table, with no data */
-  def createTable(
+  def createEmptyTable(
       engine: Engine = defaultEngine,
       tablePath: String,
       schema: StructType,
@@ -358,7 +358,7 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
   }
 
   /** Update an existing table - metadata only changes (no data changes) */
-  def updateTable(
+  def updateTableMetadata(
       engine: Engine = defaultEngine,
       tablePath: String,
       schema: StructType = null, // non-null schema means schema change

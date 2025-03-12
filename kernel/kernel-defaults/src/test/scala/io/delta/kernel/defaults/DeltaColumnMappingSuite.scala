@@ -18,6 +18,7 @@ package io.delta.kernel.defaults
 import scala.collection.JavaConverters._
 import scala.collection.immutable.Seq
 
+import io.delta.kernel.Table
 import io.delta.kernel.exceptions.InvalidConfigurationValueException
 import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.util.ColumnMappingSuiteBase
@@ -33,7 +34,7 @@ class DeltaColumnMappingSuite extends DeltaTableWriteSuiteBase with ColumnMappin
     withTempDirAndEngine { (tablePath, engine) =>
       val ex = intercept[InvalidConfigurationValueException] {
         val props = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "invalid")
-        createTable(engine, tablePath, simpleTestSchema, tableProperties = props)
+        createEmptyTable(engine, tablePath, simpleTestSchema, tableProperties = props)
       }
       assert(ex.getMessage.contains("Invalid value for table property " +
         "'delta.columnMapping.mode': 'invalid'. Needs to be one of: [none, id, name]."))
@@ -43,7 +44,7 @@ class DeltaColumnMappingSuite extends DeltaTableWriteSuiteBase with ColumnMappin
   test("create table with column mapping mode = none") {
     withTempDirAndEngine { (tablePath, engine) =>
       val props = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "none")
-      createTable(engine, tablePath, simpleTestSchema, tableProperties = props)
+      createEmptyTable(engine, tablePath, simpleTestSchema, tableProperties = props)
 
       assert(getMetadata(engine, tablePath).getSchema.equals(simpleTestSchema))
     }
@@ -51,11 +52,11 @@ class DeltaColumnMappingSuite extends DeltaTableWriteSuiteBase with ColumnMappin
 
   test("cannot update table with unsupported column mapping mode") {
     withTempDirAndEngine { (tablePath, engine) =>
-      createTable(engine, tablePath, simpleTestSchema)
+      createEmptyTable(engine, tablePath, simpleTestSchema)
 
       val ex = intercept[InvalidConfigurationValueException] {
         val props = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "invalid")
-        updateTable(engine, tablePath, tableProperties = props)
+        updateTableMetadata(engine, tablePath, tableProperties = props)
       }
       assert(ex.getMessage.contains("Invalid value for table property " +
         "'delta.columnMapping.mode': 'invalid'. Needs to be one of: [none, id, name]."))
@@ -65,7 +66,7 @@ class DeltaColumnMappingSuite extends DeltaTableWriteSuiteBase with ColumnMappin
   test("new table with column mapping mode = name") {
     withTempDirAndEngine { (tablePath, engine) =>
       val props = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "name")
-      createTable(engine, tablePath, simpleTestSchema, tableProperties = props)
+      createEmptyTable(engine, tablePath, simpleTestSchema, tableProperties = props)
 
       val structType = getMetadata(engine, tablePath).getSchema
       assertColumnMapping(structType.get("a"), 1)
@@ -79,7 +80,7 @@ class DeltaColumnMappingSuite extends DeltaTableWriteSuiteBase with ColumnMappin
   test("new table with column mapping mode = id") {
     withTempDirAndEngine { (tablePath, engine) =>
       val props = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "id")
-      createTable(engine, tablePath, simpleTestSchema, tableProperties = props)
+      createEmptyTable(engine, tablePath, simpleTestSchema, tableProperties = props)
 
       val structType = getMetadata(engine, tablePath).getSchema
       assertColumnMapping(structType.get("a"), 1)
@@ -92,12 +93,12 @@ class DeltaColumnMappingSuite extends DeltaTableWriteSuiteBase with ColumnMappin
 
   test("can update existing table to column mapping mode = name") {
     withTempDirAndEngine { (tablePath, engine) =>
-      createTable(engine, tablePath, simpleTestSchema)
+      createEmptyTable(engine, tablePath, simpleTestSchema)
       val structType = getMetadata(engine, tablePath).getSchema
       assert(structType.equals(simpleTestSchema))
 
       val props = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "name")
-      updateTable(engine, tablePath, tableProperties = props)
+      updateTableMetadata(engine, tablePath, tableProperties = props)
 
       val updatedSchema = getMetadata(engine, tablePath).getSchema
       assertColumnMapping(updatedSchema.get("a"), 1, "a")
@@ -109,7 +110,7 @@ class DeltaColumnMappingSuite extends DeltaTableWriteSuiteBase with ColumnMappin
     test(s"cannot update table with unsupported column mapping mode change: $startingCMMode") {
       withTempDirAndEngine { (tablePath, engine) =>
         val props = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> startingCMMode)
-        createTable(engine, tablePath, simpleTestSchema, tableProperties = props)
+        createEmptyTable(engine, tablePath, simpleTestSchema, tableProperties = props)
 
         val structType = getMetadata(engine, tablePath).getSchema
         assertColumnMapping(structType.get("a"), 1)
@@ -117,7 +118,7 @@ class DeltaColumnMappingSuite extends DeltaTableWriteSuiteBase with ColumnMappin
 
         val ex = intercept[IllegalArgumentException] {
           val props = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "none")
-          updateTable(engine, tablePath, tableProperties = props)
+          updateTableMetadata(engine, tablePath, tableProperties = props)
         }
         assert(ex.getMessage.contains(s"Changing column mapping mode " +
           s"from '$startingCMMode' to 'none' is not supported"))
@@ -128,7 +129,7 @@ class DeltaColumnMappingSuite extends DeltaTableWriteSuiteBase with ColumnMappin
   test("cannot update column mapping mode from name to id on existing table") {
     withTempDirAndEngine { (tablePath, engine) =>
       val props = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "name")
-      createTable(engine, tablePath, simpleTestSchema, tableProperties = props)
+      createEmptyTable(engine, tablePath, simpleTestSchema, tableProperties = props)
 
       val structType = getMetadata(engine, tablePath).getSchema
       assertColumnMapping(structType.get("a"), 1)
@@ -136,7 +137,7 @@ class DeltaColumnMappingSuite extends DeltaTableWriteSuiteBase with ColumnMappin
 
       val ex = intercept[IllegalArgumentException] {
         val props = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "id")
-        updateTable(engine, tablePath, tableProperties = props)
+        updateTableMetadata(engine, tablePath, tableProperties = props)
       }
       assert(ex.getMessage.contains("Changing column mapping mode " +
         "from 'name' to 'id' is not supported"))
@@ -145,14 +146,14 @@ class DeltaColumnMappingSuite extends DeltaTableWriteSuiteBase with ColumnMappin
 
   test("cannot update column mapping mode from none to id on existing table") {
     withTempDirAndEngine { (tablePath, engine) =>
-      createTable(engine, tablePath, simpleTestSchema)
+      createEmptyTable(engine, tablePath, simpleTestSchema)
 
       val structType = getMetadata(engine, tablePath).getSchema
       assert(structType.equals(simpleTestSchema))
 
       val ex = intercept[IllegalArgumentException] {
         val props = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "id")
-        updateTable(engine, tablePath, tableProperties = props)
+        updateTableMetadata(engine, tablePath, tableProperties = props)
       }
       assert(ex.getMessage.contains("Changing column mapping mode " +
         "from 'none' to 'id' is not supported"))
@@ -162,14 +163,14 @@ class DeltaColumnMappingSuite extends DeltaTableWriteSuiteBase with ColumnMappin
   test("update table properties on a column mapping enabled table") {
     withTempDirAndEngine { (tablePath, engine) =>
       val props = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "name")
-      createTable(engine, tablePath, simpleTestSchema, tableProperties = props)
+      createEmptyTable(engine, tablePath, simpleTestSchema, tableProperties = props)
 
       val metadata = getMetadata(engine, tablePath)
       assertColumnMapping(metadata.getSchema.get("a"), 1)
       assertColumnMapping(metadata.getSchema.get("b"), 2)
 
       val newProps = Map("key" -> "value")
-      updateTable(engine, tablePath, tableProperties = newProps)
+      updateTableMetadata(engine, tablePath, tableProperties = newProps)
 
       assert(getMetadata(engine, tablePath).getConfiguration.get("key") == "value")
     }
@@ -183,13 +184,31 @@ class DeltaColumnMappingSuite extends DeltaTableWriteSuiteBase with ColumnMappin
           TableConfig.COLUMN_MAPPING_MODE.getKey -> "name",
           TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> withIcebergCompatV2.toString)
 
-        createTable(engine, tablePath, cmTestSchema(), tableProperties = props)
+        createEmptyTable(engine, tablePath, cmTestSchema(), tableProperties = props)
 
         verifyCMTestSchemaHasValidColumnMappingInfo(
           getMetadata(engine, tablePath),
           isNewTable = true,
           enableIcebergComaptV2 = withIcebergCompatV2)
       }
+    }
+  }
+
+  test("subsequent updates don't update the metadata again when there is no change") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val props = Map(
+        TableConfig.COLUMN_MAPPING_MODE.getKey -> "name",
+        TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true")
+
+      createEmptyTable(engine, tablePath, testSchema, tableProperties = props)
+
+      appendData(engine, tablePath, data = Seq.empty) // version 1
+      appendData(engine, tablePath, data = Seq.empty) // version 2
+
+      val table = Table.forPath(engine, tablePath)
+      assert(getProtocolActionFromCommit(engine, table, version = 0).isDefined)
+      assert(getProtocolActionFromCommit(engine, table, version = 1).isEmpty)
+      assert(getProtocolActionFromCommit(engine, table, version = 1).isEmpty)
     }
   }
 }

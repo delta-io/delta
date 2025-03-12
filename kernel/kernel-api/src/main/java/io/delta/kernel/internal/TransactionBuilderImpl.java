@@ -195,8 +195,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     }
 
     Optional<Metadata> metadataWithCMInfo =
-        ColumnMapping.updateColumnMappingMetadataIfNeeded(
-            metadata, ColumnMapping.getColumnMappingMode(metadata.getConfiguration()), isNewTable);
+        ColumnMapping.updateColumnMappingMetadataIfNeeded(metadata, isNewTable);
     if (metadataWithCMInfo.isPresent()) {
       shouldUpdateMetadata = true;
       metadata = metadataWithCMInfo.get();
