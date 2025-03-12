@@ -199,16 +199,16 @@ public class StatsSchemaHelper {
         && isSkippingEligibleDataType(logicalToDataType.get(column));
   }
 
+  public boolean isSkippingEligibleMinMaxCollatedColumn(Column column) {
+    return logicalToDataType.containsKey(column) && logicalToDataType.get(column) instanceof StringType;
+  }
+
   /**
    * Returns true if the given column is skipping-eligible using null count statistics. This means
    * the column exists and is a leaf column as we only collect stats for leaf columns.
    */
   public boolean isSkippingEligibleNullCountColumn(Column column) {
     return logicalToPhysicalColumn.containsKey(column);
-  }
-
-  public boolean isSkippingEligibleMinMaxCollatedColumn(Column column) {
-    return logicalToDataType.containsKey(column) && logicalToDataType.get(column) instanceof StringType;
   }
 
   //////////////////////////////////////////////////////////////////////////////////
