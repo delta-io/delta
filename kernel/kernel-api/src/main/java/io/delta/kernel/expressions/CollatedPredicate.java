@@ -46,9 +46,9 @@ public class CollatedPredicate extends Predicate {
     super(name, left, right);
     checkArgument(
         COLLATION_SUPPORTED_OPERATORS.contains(this.name),
-        String.format(
-            "Collation is not supported for operator %s. Supported operators are %s",
-            this.name, COLLATION_SUPPORTED_OPERATORS));
+        "Collation is not supported for operator %s. Supported operators are %s",
+        this.name,
+        COLLATION_SUPPORTED_OPERATORS);
     Objects.requireNonNull(collationIdentifier, "Collation identifier cannot be null");
     this.collationIdentifier = collationIdentifier;
   }
