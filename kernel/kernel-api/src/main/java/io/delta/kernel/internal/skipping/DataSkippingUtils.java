@@ -398,6 +398,13 @@ public class DataSkippingUtils {
   /** Construct the skipping predicate for a NOT expression child if possible */
   private static Optional<IDataSkippingPredicate> constructNotDataSkippingFilters(
       Predicate childPredicate, StatsSchemaHelper schemaHelper) {
+    Optional<CollationIdentifier> collationIdentifier;
+    if (childPredicate instanceof CollatedPredicate) {
+      collationIdentifier = Optional.of(((CollatedPredicate) childPredicate).getCollationIdentifier());
+    } else {
+      collationIdentifier = Optional.empty();
+    }
+
     switch (childPredicate.getName().toUpperCase(Locale.ROOT)) {
         // Use deMorgan's law to push the NOT past the AND. This is safe even with SQL
         // tri-valued logic (see below), and is desirable because we cannot generally push
@@ -445,12 +452,7 @@ public class DataSkippingUtils {
             new Predicate("IS_NOT_NULL", getUnaryChild(childPredicate)), schemaHelper);
 
       case "=":
-        Optional<CollationIdentifier> collationIdentifier = Optional.empty();
-        if (childPredicate instanceof CollatedPredicate) {
-          collationIdentifier = Optional.of(((CollatedPredicate) childPredicate).getCollationIdentifier());
-        }
-
-        return constructDataSkippingFiltersForNotEqual(
+          return constructDataSkippingFiltersForNotEqual(
             childPredicate,
             schemaHelper,
             (leftColumn, rightLiteral) -> {
@@ -461,9 +463,9 @@ public class DataSkippingUtils {
                   new DataSkippingPredicate(
                       "OR",
                       constructBinaryDataSkippingPredicate(
-                          "<", schemaHelper.getMinColumn(leftColumn, collationIdentifier), rightLiteral),
+                          "<", schemaHelper.getMinColumn(leftColumn, collationIdentifier), rightLiteral, collationIdentifier),
                       constructBinaryDataSkippingPredicate(
-                          ">", schemaHelper.getMaxColumn(leftColumn, collationIdentifier), rightLiteral)));
+                          ">", schemaHelper.getMaxColumn(leftColumn, collationIdentifier), rightLiteral, collationIdentifier)));
             });
       case "<":
         return constructDataSkippingFilter(
