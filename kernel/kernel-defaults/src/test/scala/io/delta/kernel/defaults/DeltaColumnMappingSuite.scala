@@ -206,9 +206,9 @@ class DeltaColumnMappingSuite extends DeltaTableWriteSuiteBase with ColumnMappin
       appendData(engine, tablePath, data = Seq.empty) // version 2
 
       val table = Table.forPath(engine, tablePath)
-      assert(getProtocolActionFromCommit(engine, table, version = 0).isDefined)
-      assert(getProtocolActionFromCommit(engine, table, version = 1).isEmpty)
-      assert(getProtocolActionFromCommit(engine, table, version = 1).isEmpty)
+      assert(getMetadataActionFromCommit(engine, table, version = 0).isDefined)
+      assert(getMetadataActionFromCommit(engine, table, version = 1).isEmpty)
+      assert(getMetadataActionFromCommit(engine, table, version = 2).isEmpty)
     }
   }
 }
