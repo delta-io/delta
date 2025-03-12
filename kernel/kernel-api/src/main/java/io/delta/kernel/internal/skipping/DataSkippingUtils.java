@@ -279,17 +279,15 @@ public class DataSkippingUtils {
         }
         if (dataFilters instanceof CollatedPredicate) {
           // Literal used in a CollatedPredicate must be a StringType
-          if (!(rightLit.getDataType() instanceof StringType)) {
-            break;
+          if (rightLit.getDataType() instanceof StringType) {
+            return constructComparatorDataSkippingFilters(
+                    dataFilters.getName(), leftCol, rightLit, schemaHelper, Optional.of(((CollatedPredicate) dataFilters).getCollationIdentifier()));
           }
-          return constructComparatorDataSkippingFilters(
-                  dataFilters.getName(), leftCol, rightLit, schemaHelper, Optional.of(((CollatedPredicate) dataFilters).getCollationIdentifier()));
         } else if (schemaHelper.isSkippingEligibleLiteral(rightLit)) {
-          break;
+          return constructComparatorDataSkippingFilters(
+                  dataFilters.getName(), leftCol, rightLit, schemaHelper, Optional.empty());
         }
-
-        return constructComparatorDataSkippingFilters(
-                dataFilters.getName(), leftCol, rightLit, schemaHelper, Optional.empty());
+        break;
 
         case "NOT":
         return constructNotDataSkippingFilters(
