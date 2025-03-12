@@ -15,6 +15,8 @@
  */
 package io.delta.kernel.expressions;
 
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.types.CollationIdentifier;
 import java.util.Objects;
@@ -42,12 +44,11 @@ public class CollatedPredicate extends Predicate {
   public CollatedPredicate(
       String name, Expression left, Expression right, CollationIdentifier collationIdentifier) {
     super(name, left, right);
-    if (!COLLATION_SUPPORTED_OPERATORS.contains(this.name)) {
-      throw new IllegalArgumentException(
-          String.format(
-              "Collation is not supported for operator %s. Supported operators are %s",
-              this.name, COLLATION_SUPPORTED_OPERATORS));
-    }
+    checkArgument(
+        COLLATION_SUPPORTED_OPERATORS.contains(this.name),
+        String.format(
+            "Collation is not supported for operator %s. Supported operators are %s",
+            this.name, COLLATION_SUPPORTED_OPERATORS));
     Objects.requireNonNull(collationIdentifier, "Collation identifier cannot be null");
     this.collationIdentifier = collationIdentifier;
   }
