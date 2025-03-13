@@ -39,8 +39,8 @@ import org.apache.spark.sql.delta.redirect.RedirectFeature
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources._
 import org.apache.spark.sql.delta.storage.LogStoreProvider
-import org.apache.spark.sql.delta.util.FileNames
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
+import org.apache.spark.sql.delta.util.FileNames
 import com.google.common.cache.{Cache, CacheBuilder, RemovalNotification}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
@@ -623,13 +623,15 @@ class DeltaLog private(
     }
     HadoopFsRelation(
       fileIndex,
-      partitionSchema = DeltaColumnMapping.dropColumnMappingMetadata(
-        snapshot.metadata.partitionSchema),
+      partitionSchema = DeltaTableUtils.removeInternalDeltaMetadata(
+        spark,
+        DeltaTableUtils.removeInternalWriterMetadata(spark, snapshot.metadata.partitionSchema)
+      ),
       // We pass all table columns as `dataSchema` so that Spark will preserve the partition
       // column locations. Otherwise, for any partition columns not in `dataSchema`, Spark would
       // just append them to the end of `dataSchema`.
-      dataSchema = DeltaColumnMapping.dropColumnMappingMetadata(
-        DeltaTableUtils.removeInternalWriterMetadata(spark, dataSchema)
+      dataSchema = DeltaTableUtils.removeInternalDeltaMetadata(
+        spark, DeltaTableUtils.removeInternalWriterMetadata(spark, dataSchema)
       ),
       bucketSpec = bucketSpec,
       fileFormat(snapshot.protocol, snapshot.metadata),

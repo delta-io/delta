@@ -22,7 +22,7 @@ import java.util.concurrent.TimeUnit
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.Relocated
-import org.apache.spark.sql.delta.DeltaColumnMapping.{dropColumnMappingMetadata, filterColumnMappingProperties}
+import org.apache.spark.sql.delta.DeltaColumnMapping.filterColumnMappingProperties
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.actions.DomainMetadata
 import org.apache.spark.sql.delta.commands.DMLUtils.TaggedCommitData
@@ -399,7 +399,7 @@ case class CreateDeltaTableCommand(
         ClusteredTableUtils.getDomainMetadataFromTransaction(
           ClusteredTableUtils.getClusterBySpecOptional(table), txn).toSeq
       } else {
-        verifyTableMetadata(txn, tableWithLocation)
+        verifyTableMetadata(sparkSession, txn, tableWithLocation)
         Nil
       }
     }
@@ -540,6 +540,7 @@ case class CreateDeltaTableCommand(
    * table.
    */
   private def verifyTableMetadata(
+      sparkSession: SparkSession,
       txn: OptimisticTransaction,
       tableDesc: CatalogTable): Unit = {
     val existingMetadata = txn.metadata
@@ -555,7 +556,7 @@ case class CreateDeltaTableCommand(
         // However, if in column mapping mode, we can safely ignore the related metadata fields in
         // existing metadata because new table desc will not have related metadata assigned yet
         val differences = SchemaUtils.reportDifferences(
-          dropColumnMappingMetadata(existingMetadata.schema),
+          DeltaTableUtils.removeInternalDeltaMetadata(sparkSession, existingMetadata.schema),
           tableDesc.schema)
         if (differences.nonEmpty) {
           throw DeltaErrors.createTableWithDifferentSchemaException(

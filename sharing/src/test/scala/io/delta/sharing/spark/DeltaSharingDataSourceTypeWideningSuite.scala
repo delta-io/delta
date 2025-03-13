@@ -98,24 +98,12 @@ class DeltaSharingDataSourceTypeWideningSuite
     }
   }
 
-  /** Short-hand for the type widening metadata for column `value` for the test table above. */
-  private val typeWideningMetadata: Metadata =
-    new MetadataBuilder()
-      .putMetadataArray(
-        "delta.typeChanges", Array(
-          new MetadataBuilder()
-            .putString("fromType", "short")
-            .putString("toType", "integer")
-            .build()))
-      .build()
-
   test(s"Delta sharing with type widening") {
     withTestTable { tableName =>
       testReadingDeltaShare(
         tableName,
         versionAsOf = None,
-        expectedSchema = new StructType()
-          .add("value", IntegerType, nullable = true, metadata = typeWideningMetadata),
+        expectedSchema = new StructType().add("value", IntegerType),
         expectedResult = Seq(1, 2, 3, Int.MaxValue, 4, 5).toDF("value"))
     }
   }
@@ -125,15 +113,13 @@ class DeltaSharingDataSourceTypeWideningSuite
       testReadingDeltaShare(
         tableName,
         versionAsOf = Some(3),
-        expectedSchema = new StructType()
-          .add("value", IntegerType, nullable = true, metadata = typeWideningMetadata),
+        expectedSchema = new StructType().add("value", IntegerType),
         expectedResult = Seq(1, 2, 3, Int.MaxValue).toDF("value"))
 
       testReadingDeltaShare(
         tableName,
         versionAsOf = Some(2),
-        expectedSchema = new StructType()
-          .add("value", IntegerType, nullable = true, metadata = typeWideningMetadata),
+        expectedSchema = new StructType().add("value", IntegerType),
         expectedResult = Seq(1, 2).toDF("value"))
 
       testReadingDeltaShare(
@@ -151,8 +137,7 @@ class DeltaSharingDataSourceTypeWideningSuite
         tableName,
         versionAsOf = None,
         filter = Some(col("value") === Int.MaxValue),
-        expectedSchema = new StructType()
-          .add("value", IntegerType, nullable = true, metadata = typeWideningMetadata),
+        expectedSchema = new StructType().add("value", IntegerType),
         expectedResult = Seq(Int.MaxValue).toDF("value"),
         expectedJsonPredicate = Seq(
           """
@@ -187,7 +172,7 @@ class DeltaSharingDataSourceTypeWideningSuite
         versionAsOf = None,
         filter = Some(col("part") === Int.MaxValue),
         expectedSchema = new StructType()
-          .add("part", IntegerType, nullable = true, metadata = typeWideningMetadata)
+          .add("part", IntegerType)
           .add("value", ShortType),
         expectedResult = Seq((Int.MaxValue, 4)).toDF("part", "value"),
         expectedJsonPredicate = Seq(

@@ -457,8 +457,29 @@ case class DeletionVectorData(
     deletedRowIndexSet: Array[Byte],
     deletedRowIndexCount: Long) extends Sizing {
 
+  @transient
+  lazy val deletionVectorDescriptor: Option[DeletionVectorDescriptor] = deletionVectorId.map { id =>
+    DeletionVectorDescriptor.deserializeFromBase64(id)
+  }
+
   /** The size of the bitmaps to use in [[BinPackingIterator]]. */
-  override def size: Int = deletedRowIndexSet.length
+  override def size: Int = {
+    val sizeWithoutExistingDV: Int = deletedRowIndexSet.length
+    // Add the size of the existing DV that we will eventually merge with, so that
+    // [[BinPackingIterator]] can get a better estimate. It's an estimate since the
+    // row indices are not merged and serialized. We add the size of the checksum
+    // and the size of the data size, which are fixed sizes added for every DV.
+    val sizeWithDV = sizeWithoutExistingDV +
+      deletionVectorDescriptor.map(_.sizeInBytes).getOrElse(0) +
+      DeletionVectorStore.CHECKSUM_LEN + DeletionVectorStore.DATA_SIZE_LEN
+    // If we have an int overflow, we can end up with a negative size. In that case,
+    // let's return the maximum value of Int and fail later when writing the DV writer.
+    if (sizeWithDV < 0) {
+      Int.MaxValue
+    } else {
+      sizeWithDV
+    }
+  }
 }
 
 object DeletionVectorData {
@@ -660,7 +681,7 @@ object DeletionVectorWriter extends DeltaLogging {
          |It is likely that _metadata.file_path is not encoded by Spark as expected.
          |""".stripMargin)
 
-    val fileDvDescriptor = row.deletionVectorId.map(DeletionVectorDescriptor.deserializeFromBase64)
+    val fileDvDescriptor = row.deletionVectorDescriptor
     val finalDvDescriptor = fileDvDescriptor match {
       case Some(existingDvDescriptor) if row.deletedRowIndexCount > 0 =>
         // Load the existing bit map

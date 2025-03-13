@@ -645,6 +645,23 @@ object DeltaTableUtils extends PredicateHelper
     )
   }
 
+  /**
+   * Removes internal Delta metadata from the given schema. This includes tyically metadata used by
+   * reader-writer table features that shouldn't leak outside of the table. Use
+   * [[removeInternalWriterMetadata]] in addition / instead to remove metadata for writer-only table
+   * features.
+   */
+  def removeInternalDeltaMetadata(spark: SparkSession, schema: StructType): StructType = {
+    val cleanedSchema = DeltaColumnMapping.dropColumnMappingMetadata(schema)
+
+    val conf = spark.sessionState.conf
+    if (conf.getConf(DeltaSQLConf.DELTA_TYPE_WIDENING_REMOVE_SCHEMA_METADATA)) {
+      TypeWideningMetadata.removeTypeWideningMetadata(cleanedSchema)._1
+    } else {
+      cleanedSchema
+    }
+  }
+
 }
 
 sealed abstract class UnresolvedPathBasedDeltaTableBase(path: String) extends UnresolvedLeafNode {

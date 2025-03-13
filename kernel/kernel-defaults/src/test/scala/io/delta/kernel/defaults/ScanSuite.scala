@@ -27,16 +27,20 @@ import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.{Scan, Snapshot, Table}
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch, Row}
 import io.delta.kernel.defaults.engine.{DefaultEngine, DefaultJsonHandler, DefaultParquetHandler}
+import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO
+import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
+import io.delta.kernel.defaults.internal.data.vector.{DefaultGenericVector, DefaultStructVector}
 import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestUtils}
 import io.delta.kernel.engine.{Engine, JsonHandler, ParquetHandler}
 import io.delta.kernel.expressions._
 import io.delta.kernel.expressions.Literal._
-import io.delta.kernel.internal.{InternalScanFileUtils, ScanImpl}
+import io.delta.kernel.internal.{InternalScanFileUtils, ScanImpl, TableConfig}
 import io.delta.kernel.internal.util.InternalUtils
 import io.delta.kernel.types._
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.StringType.STRING
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
+import io.delta.kernel.utils.CloseableIterable.emptyIterable
 
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog}
 
@@ -46,7 +50,8 @@ import org.apache.spark.sql.catalyst.plans.SQLHelper
 import org.apache.spark.sql.types.{IntegerType => SparkIntegerType, StructField => SparkStructField, StructType => SparkStructType}
 import org.scalatest.funsuite.AnyFunSuite
 
-class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with SQLHelper {
+class ScanSuite extends AnyFunSuite with TestUtils
+    with ExpressionTestUtils with SQLHelper with DeltaTableWriteSuiteBase {
 
   import io.delta.kernel.defaults.ScanSuite._
 
@@ -1464,6 +1469,91 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
     }
   }
 
+  test("data skipping - validate stats written by kernel can be read and used") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val schema = new StructType()
+        .add(
+          "nested",
+          new StructType()
+            .add("byteCol", ByteType.BYTE)
+            .add("intCol", IntegerType.INTEGER)
+            .add("floatCol", FloatType.FLOAT)
+            .add("normalDouble", DoubleType.DOUBLE) // used for filtering
+            .add("weirdDouble", DoubleType.DOUBLE) // may contain NaN/Infinity
+            .add("decimalCol", new DecimalType(10, 2)))
+
+      val tableProps = Map(TableConfig.DATA_SKIPPING_NUM_INDEXED_COLS.getKey -> "10")
+      val txn = createTxn(engine, tablePath, isNewTable = true, schema, List.empty, tableProps)
+      txn.commit(engine, emptyIterable())
+
+      // Build some rows with corner-case values
+      val testRows = Seq(
+        (
+          -128.toByte,
+          Int.MinValue,
+          Float.NaN,
+          1500.0,
+          Double.PositiveInfinity,
+          new java.math.BigDecimal("98765.43")),
+        (0.toByte, 0, 1.23f, 10.0, -42.99, new java.math.BigDecimal("0.00")),
+        (
+          127.toByte,
+          Int.MaxValue,
+          Float.NegativeInfinity,
+          200.0,
+          Double.NaN,
+          new java.math.BigDecimal("9999999.99")))
+
+      testRows.zipWithIndex.foreach { case ((b, i, f, normalD, weirdD, dec), idx) =>
+        val singleRowBatch =
+          buildSingleStructColumnRowBatch(schema, Array[Any](b, i, f, normalD, weirdD, dec))
+        val commitResult = appendData(
+          engine,
+          tablePath,
+          data = List(Map.empty[String, Literal] -> List(singleRowBatch)))
+        verifyCommitResult(commitResult, expVersion = idx + 1, expIsReadyForCheckpoint = false)
+      }
+
+      // Filter: select rows where nested.normalDouble > 50.0.
+      // Expected: Row 0 (1500.0) and Row 2 (200.0) pass, Row 1 (10.0) is pruned.
+      val skipFilter = greaterThan(nestedCol("nested.normalDouble"), ofDouble(50.0))
+      val snapshot = Table.forPath(engine, tablePath).getLatestSnapshot(engine)
+      val scan = snapshot.getScanBuilder().withFilter(skipFilter).build()
+      val scanFiles = collectScanFileRows(scan, engine)
+
+      // Assert that exactly 2 files (rows) match the filter.
+      assert(
+        scanFiles.size == 2,
+        s"Expected exactly 2 matching files (rows with normalDouble > 50.0: row 0 & 2)." +
+          s" Found ${scanFiles.size}.")
+    }
+  }
+
+  /**
+   * Creates a single-row FilteredColumnarBatch assuming the schema has one top-level StructType
+   * and `rowValues` align with its subfields.
+   */
+  def buildSingleStructColumnRowBatch(
+      schema: StructType,
+      rowValues: Array[Any]): FilteredColumnarBatch = {
+    require(schema.length() == 1, s"Expected 1 field, found ${schema.length()}")
+    val nestedType = schema.get("nested").getDataType.asInstanceOf[StructType]
+    require(
+      nestedType.length() == rowValues.length,
+      s"${nestedType.length()} vs ${rowValues.length}")
+
+    // We zip each field with an index so we can pick rowValues(i)
+    val childVectors: Array[ColumnVector] =
+      nestedType.fields().asScala.zipWithIndex.map { case (field: StructField, i: Int) =>
+        DefaultGenericVector.fromArray(field.getDataType, Array(rowValues(i).asInstanceOf[AnyRef]))
+      }.toArray
+
+    val structVector =
+      new DefaultStructVector(1, nestedType, java.util.Optional.empty(), childVectors)
+    val batch = new DefaultColumnarBatch(1, schema, Array(structVector))
+    new FilteredColumnarBatch(batch, java.util.Optional.empty())
+  }
+
   //////////////////////////////////////////////////////////////////////////////////////////
   // Check the includeStats parameter on ScanImpl.getScanFiles(engine, includeStats)
   //////////////////////////////////////////////////////////////////////////////////////////
@@ -1562,11 +1652,11 @@ object ScanSuite {
    * for parquet or json handlers.
    */
   def engineDisallowedStatsReads: Engine = {
-    val hadoopConf = new Configuration()
-    new DefaultEngine(hadoopConf) {
+    val fileIO = new HadoopFileIO(new Configuration())
+    new DefaultEngine(fileIO) {
 
       override def getParquetHandler: ParquetHandler = {
-        new DefaultParquetHandler(hadoopConf) {
+        new DefaultParquetHandler(fileIO) {
           override def readParquetFiles(
               fileIter: CloseableIterator[FileStatus],
               physicalSchema: StructType,
@@ -1578,7 +1668,7 @@ object ScanSuite {
       }
 
       override def getJsonHandler: JsonHandler = {
-        new DefaultJsonHandler(hadoopConf) {
+        new DefaultJsonHandler(fileIO) {
           override def readJsonFiles(
               fileIter: CloseableIterator[FileStatus],
               physicalSchema: StructType,
@@ -1592,10 +1682,10 @@ object ScanSuite {
   }
 
   def engineVerifyJsonParseSchema(verifyFx: StructType => Unit): Engine = {
-    val hadoopConf = new Configuration()
-    new DefaultEngine(hadoopConf) {
+    val fileIO = new HadoopFileIO(new Configuration())
+    new DefaultEngine(fileIO) {
       override def getJsonHandler: JsonHandler = {
-        new DefaultJsonHandler(hadoopConf) {
+        new DefaultJsonHandler(fileIO) {
           override def parseJson(
               stringVector: ColumnVector,
               schema: StructType,

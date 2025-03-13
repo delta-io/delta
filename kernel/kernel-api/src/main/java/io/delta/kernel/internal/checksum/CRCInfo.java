@@ -30,6 +30,7 @@ import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -156,6 +157,25 @@ public class CRCInfo {
     // Add optional fields
     txnId.ifPresent(txn -> values.put(getSchemaIndex(TXN_ID), txn));
     return new GenericRow(CRC_FILE_SCHEMA, values);
+  }
+
+  @Override
+  public int hashCode() {
+    return Objects.hash(version, metadata, protocol, tableSizeBytes, numFiles, txnId);
+  }
+
+  @Override
+  public boolean equals(Object o) {
+    if (!(o instanceof CRCInfo)) {
+      return false;
+    }
+    CRCInfo other = (CRCInfo) o;
+    return version == other.version
+        && tableSizeBytes == other.tableSizeBytes
+        && numFiles == other.numFiles
+        && metadata.equals(other.metadata)
+        && protocol.equals(other.protocol)
+        && txnId.equals(other.txnId);
   }
 
   private static int getSchemaIndex(String fieldName) {
