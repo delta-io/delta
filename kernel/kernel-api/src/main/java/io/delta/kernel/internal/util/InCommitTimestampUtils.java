@@ -49,7 +49,7 @@ public class InCommitTimestampUtils {
           TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.getKey(),
           Long.toString(inCommitTimestamp));
 
-      Metadata newMetadata = metadata.withNewConfiguration(enablementTrackingProperties);
+      Metadata newMetadata = metadata.withMergedConfiguration(enablementTrackingProperties);
       return Optional.of(newMetadata);
     } else {
       return Optional.empty();

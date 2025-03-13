@@ -23,11 +23,11 @@ import io.delta.kernel.data.Row
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.tablefeatures.TableFeatures
-import io.delta.kernel.internal.util.VectorUtils
+import io.delta.kernel.internal.util.{ColumnMappingSuiteBase, VectorUtils}
 import io.delta.kernel.types.{DataType, StructType}
 
 /** This suite tests reading or writing into Delta table that have `icebergCompatV2` enabled. */
-class DeltaIcebergCompatV2Suite extends DeltaTableWriteSuiteBase {
+class DeltaIcebergCompatV2Suite extends DeltaTableWriteSuiteBase with ColumnMappingSuiteBase {
   import io.delta.kernel.internal.icebergcompat.IcebergCompatV2MetadataValidatorAndUpdaterSuite._
 
   (SIMPLE_TYPES ++ COMPLEX_TYPES).foreach {
@@ -62,7 +62,7 @@ class DeltaIcebergCompatV2Suite extends DeltaTableWriteSuiteBase {
   test("enable icebergCompatV2 on a new table") {
     withTempDirAndEngine { (tablePath, engine) =>
       val tblProps = Map(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true")
-      createEmptyTable(engine, tablePath, testSchema, tableProperties = tblProps)
+      createEmptyTable(engine, tablePath, cmTestSchema(), tableProperties = tblProps)
 
       val protocol = getProtocol(engine, tablePath)
       assert(protocol.supportsFeature(TableFeatures.COLUMN_MAPPING_RW_FEATURE))
@@ -71,6 +71,7 @@ class DeltaIcebergCompatV2Suite extends DeltaTableWriteSuiteBase {
       val metadata = getMetadata(engine, tablePath)
       val actualCMMode = metadata.getConfiguration.get(TableConfig.COLUMN_MAPPING_MODE.getKey)
       assert(actualCMMode === "name")
+      verifyCMTestSchemaHasValidColumnMappingInfo(metadata)
     }
   }
 
@@ -80,7 +81,7 @@ class DeltaIcebergCompatV2Suite extends DeltaTableWriteSuiteBase {
       s"preserved after icebergCompatV2 is enabled") {
       withTempDirAndEngine { (tablePath, engine) =>
         val tblProps = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> existingCMMode)
-        createEmptyTable(engine, tablePath, testSchema, tableProperties = tblProps)
+        createEmptyTable(engine, tablePath, cmTestSchema(), tableProperties = tblProps)
 
         val newTblProps = Map(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true")
         updateTableMetadata(engine, tablePath, tableProperties = newTblProps)
@@ -90,6 +91,26 @@ class DeltaIcebergCompatV2Suite extends DeltaTableWriteSuiteBase {
         val metadata = getMetadata(engine, tablePath)
         val actualCMMode = metadata.getConfiguration.get(TableConfig.COLUMN_MAPPING_MODE.getKey)
         assert(actualCMMode === existingCMMode)
+        verifyCMTestSchemaHasValidColumnMappingInfo(metadata)
+      }
+    }
+  }
+
+  Seq("id", "name").foreach { existingCMMode =>
+    test(s"existing column mapping mode `$existingCMMode` is " +
+      s"preserved after icebergCompatV2 is enabled for new table") {
+      withTempDirAndEngine { (tablePath, engine) =>
+        val tblProps = Map(
+          TableConfig.COLUMN_MAPPING_MODE.getKey -> existingCMMode,
+          TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true")
+        createEmptyTable(engine, tablePath, cmTestSchema(), tableProperties = tblProps)
+
+        val protocol = getProtocol(engine, tablePath)
+        assert(protocol.supportsFeature(TableFeatures.COLUMN_MAPPING_RW_FEATURE))
+        val metadata = getMetadata(engine, tablePath)
+        val actualCMMode = metadata.getConfiguration.get(TableConfig.COLUMN_MAPPING_MODE.getKey)
+        assert(actualCMMode === existingCMMode)
+        verifyCMTestSchemaHasValidColumnMappingInfo(metadata)
       }
     }
   }

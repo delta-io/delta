@@ -328,7 +328,7 @@ public class ColumnMapping {
     return Optional.of(
         metadata
             .withNewSchema(newSchema)
-            .withNewConfiguration(singletonMap(COLUMN_MAPPING_MAX_COLUMN_ID_KEY, maxFieldId)));
+            .withMergedConfiguration(singletonMap(COLUMN_MAPPING_MAX_COLUMN_ID_KEY, maxFieldId)));
   }
 
   /**
