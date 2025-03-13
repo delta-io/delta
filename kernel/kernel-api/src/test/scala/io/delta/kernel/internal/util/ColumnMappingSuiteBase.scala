@@ -56,12 +56,12 @@ trait ColumnMappingSuiteBase extends VectorTestUtils {
 
   implicit class MetadataImplicits(metadata: Metadata) {
     def withIcebergCompatV2Enabled: Metadata = {
-      metadata.withNewConfiguration(
+      metadata.withMergedConfiguration(
         Maps.newHashMap(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey, "true"))
     }
 
     def withColumnMappingEnabled(mode: String = "name"): Metadata = {
-      metadata.withNewConfiguration(
+      metadata.withMergedConfiguration(
         Maps.newHashMap(TableConfig.COLUMN_MAPPING_MODE.getKey, mode))
     }
 
