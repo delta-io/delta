@@ -99,7 +99,7 @@ class DeltaTable private[tables](
    * @since 0.3.0
    */
   def vacuum(retentionHours: Double): DataFrame = {
-    executeVacuum(table, Some(retentionHours))
+    executeVacuum(table, Some(retentionHours), None)
   }
 
   /**
@@ -107,12 +107,45 @@ class DeltaTable private[tables](
    * maintaining older versions up to the given retention threshold. This method will return an
    * empty DataFrame on successful completion.
    *
-   * note: This will use the default retention period of 7 days.
+   * @param vacuumType Specifies type of VACUUM - FULL or LITE.
+   *                   Defaults to None which is equal to FULL.
+   *                   VACUUM LITE finds only files that are dereferenced in Delta transaction log.
+   *                   VACUUM FULL lists all files in underlying FS and compares against log.
+   * @since 0.3.0
+   */
+  def vacuum(vacuumType: String): DataFrame = {
+    executeVacuum(table, None, Some(vacuumType))
+  }
+
+  /**
+   * Recursively delete files and directories in the table that are not needed by the table for
+   * maintaining older versions up to the given retention threshold. This method will return an
+   * empty DataFrame on successful completion.
+   *
+   * @param retentionHours The retention threshold in hours. Files required by the table for
+   *                       reading versions earlier than this will be preserved and the
+   *                       rest of them will be deleted.
+   * @param vacuumType Specifies type of VACUUM - FULL or LITE.
+   *                   Defaults to None which is equal to FULL.
+   *                   VACUUM LITE finds only files that are dereferenced in Delta transaction log.
+   *                   VACUUM FULL lists all files in underlying FS and compares against log.
+   * @since 0.3.0
+   */
+  def vacuum(retentionHours: Double, vacuumType: String): DataFrame = {
+    executeVacuum(table, Some(retentionHours), Some(vacuumType))
+  }
+
+  /**
+   * Recursively delete files and directories in the table that are not needed by the table for
+   * maintaining older versions up to the given retention threshold. This method will return an
+   * empty DataFrame on successful completion.
+   *
+   * note: This will use VACUUM FULL operation with the default retention period of 7 days.
    *
    * @since 0.3.0
    */
   def vacuum(): DataFrame = {
-    executeVacuum(table, retentionHours = None)
+    executeVacuum(table, None, None)
   }
 
   /**
