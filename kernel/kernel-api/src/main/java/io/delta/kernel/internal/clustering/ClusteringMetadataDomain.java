@@ -1,24 +1,35 @@
+/*
+ * Copyright (2025) The Delta Lake Project Authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package io.delta.kernel.internal.clustering;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.metadatadomain.JsonMetadataDomain;
 import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
-
 import java.util.*;
 
-/**
- * Represents the metadata domain for clustering.
- */
+/** Represents the metadata domain for clustering. */
 public final class ClusteringMetadataDomain extends JsonMetadataDomain {
 
   public static final String DOMAIN_NAME = "delta.clustering";
 
-  @JsonProperty("clusteringColumns")
+  /** The physical column names used for clustering */
   private final List<List<String>> clusteringColumns;
 
   @Override
@@ -26,12 +37,28 @@ public final class ClusteringMetadataDomain extends JsonMetadataDomain {
     return DOMAIN_NAME;
   }
 
+  public List<List<String>> getClusteringColumns() {
+    return clusteringColumns;
+  }
+
   /**
-   * Constructs a ClusteringMetadataDomain with the specified clustering columns.
+   * Constructs a ClusteringMetadataDomain with the specified physical clustering columns.
    *
-   * @param clusteringColumns the columns used for clustering
+   * @param physicalClusteringColumns the physical columns used for clustering
    */
   @JsonCreator
+  public ClusteringMetadataDomain(
+      @JsonProperty("clusteringColumns") List<List<String>> physicalClusteringColumns) {
+    this.clusteringColumns = physicalClusteringColumns;
+  }
+
+  /**
+   * Constructs a ClusteringMetadataDomain with the specified logical clustering columns and schema.
+   *
+   * @param logicalClusteringColumns the logical columns used for clustering (e.g. "a.b.c" for a
+   *     nested column "a.b.c")
+   * @param schema the schema of the table
+   */
   public ClusteringMetadataDomain(List<String> logicalClusteringColumns, StructType schema) {
     List<List<String>> physicalClusteringColumns = new ArrayList<>();
     for (String logicalName : logicalClusteringColumns) {
@@ -40,6 +67,7 @@ public final class ClusteringMetadataDomain extends JsonMetadataDomain {
     this.clusteringColumns = physicalClusteringColumns;
   }
 
+  /** Returns the physical column names for logical columns. */
   private List<String> getPhysicalColumnNames(StructType schema, String logicalName) {
     String[] logicalNameParts = logicalName.split("\\.");
     List<String> physicalNameParts = new ArrayList<>();
@@ -51,8 +79,14 @@ public final class ClusteringMetadataDomain extends JsonMetadataDomain {
       }
 
       StructType structType = (StructType) currentType;
-      Optional<StructField> fieldOpt = structType.fields().stream()
-              .filter(field -> field.getName().toLowerCase(Locale.ROOT).equals(namePart.toLowerCase(Locale.ROOT)))
+      Optional<StructField> fieldOpt =
+          structType.fields().stream()
+              .filter(
+                  field ->
+                      field
+                          .getName()
+                          .toLowerCase(Locale.ROOT)
+                          .equals(namePart.toLowerCase(Locale.ROOT)))
               .findFirst();
 
       if (!fieldOpt.isPresent()) {
@@ -60,15 +94,11 @@ public final class ClusteringMetadataDomain extends JsonMetadataDomain {
       }
 
       StructField field = fieldOpt.get();
-      currentType = field.getDataType();  // Move deeper into the nested structure
+      currentType = field.getDataType(); // Move deeper into the nested structure
 
       // Convert logical name to physical name using Delta Kernel's column mapping
       physicalNameParts.add(ColumnMapping.getPhysicalName(field));
     }
     return physicalNameParts;
-  }
-
-  public List<List<String>> getClusteringColumns() {
-    return clusteringColumns;
   }
 }

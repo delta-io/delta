@@ -795,6 +795,7 @@ class TableFeaturesSuite extends AnyFunSuite {
           TableFeatures.autoUpgradeProtocolBasedOnMetadata(
             newMetadata,
             /* needDomainMetadataSupport = */ false,
+            /* needClusteringSupport = */ false,
             currentProtocol)
         assert(newProtocolAndNewFeaturesEnabled.isPresent, "expected protocol upgrade")
 
@@ -810,6 +811,7 @@ class TableFeaturesSuite extends AnyFunSuite {
           TableFeatures.autoUpgradeProtocolBasedOnMetadata(
             newMetadata,
             /* needDomainMetadataSupport = */ true,
+            /* needClusteringSupport = */ false,
             currentProtocol)
 
         assert(newProtocolAndNewFeaturesEnabledWithDM.isPresent, "expected protocol upgrade")
@@ -869,6 +871,7 @@ class TableFeaturesSuite extends AnyFunSuite {
           TableFeatures.autoUpgradeProtocolBasedOnMetadata(
             newMetadata,
             /* needDomainMetadataSupport = */ false,
+            /* needClusteringSupport = */ false,
             currentProtocol)
         assert(!newProtocolAndNewFeaturesEnabled.isPresent, "expected no-op upgrade")
       }

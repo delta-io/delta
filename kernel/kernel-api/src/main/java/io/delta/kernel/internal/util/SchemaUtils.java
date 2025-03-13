@@ -163,20 +163,17 @@ public class SchemaUtils {
                 Map.Entry::getValue));
   }
 
-  /**
-   * Validate the clustering columns exists in the table schema
-   */
+  /** Validate the clustering columns exists in the table schema */
   public static void validateClusteringColumns(StructType schema, List<String> clusteringCols) {
     List<String> flattenColNames = flattenNestedFieldNames(schema);
 
     clusteringCols.forEach(
-      clusteringCol -> {
-        checkArgument(
-          flattenColNames.contains(clusteringCol.toLowerCase(Locale.ROOT)),
-          "Clustering column %s not found in the schema",
-          clusteringCol);
-       }
-    );
+        clusteringCol -> {
+          checkArgument(
+              flattenColNames.contains(clusteringCol.toLowerCase(Locale.ROOT)),
+              "Clustering column %s not found in the schema",
+              clusteringCol);
+        });
   }
 
   /**

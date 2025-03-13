@@ -19,6 +19,7 @@ import static io.delta.kernel.internal.DeltaErrors.requiresSchemaForNewTable;
 import static io.delta.kernel.internal.DeltaErrors.tableAlreadyExists;
 import static io.delta.kernel.internal.TransactionImpl.DEFAULT_READ_VERSION;
 import static io.delta.kernel.internal.TransactionImpl.DEFAULT_WRITE_VERSION;
+import static io.delta.kernel.internal.clustering.ClusteringUtils.getClusteringDomainMetadata;
 import static io.delta.kernel.internal.util.ColumnMapping.isColumnMappingModeEnabled;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames;
@@ -190,7 +191,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     if (!newProperties.isEmpty()) {
       newMetadata = Optional.of(snapshotMetadata.withMergedConfiguration(newProperties));
     }
-
+    addSystemDomainMetadata();
     // TODO In the future update metadata with new schema if provided
 
     /* ----- 2: Update the PROTOCOL based on the table properties or schema ----- */
@@ -200,6 +201,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         TableFeatures.autoUpgradeProtocolBasedOnMetadata(
             newMetadata.orElse(snapshotMetadata),
             !domainMetadatasAdded.isEmpty(),
+            clusteringColumns.isPresent(),
             snapshotProtocol);
     if (newProtocolAndFeatures.isPresent()) {
       logger.info(
@@ -299,6 +301,9 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       ColumnMappingMode mappingMode =
           ColumnMapping.getColumnMappingMode(tableProperties.orElse(Collections.emptyMap()));
 
+      checkArgument(
+          !(partitionColumns.isPresent() && clusteringColumns.isPresent()),
+          "Partition Columns and Clustering Columns cannot be set at the same time");
       SchemaUtils.validateSchema(schema.get(), isColumnMappingModeEnabled(mappingMode));
       SchemaUtils.validatePartitionColumns(
           schema.get(), partitionColumns.orElse(Collections.emptyList()));
@@ -402,6 +407,15 @@ public class TransactionBuilderImpl implements TransactionBuilder {
 
   private Protocol getInitialProtocol() {
     return new Protocol(DEFAULT_READ_VERSION, DEFAULT_WRITE_VERSION);
+  }
+
+  private void addSystemDomainMetadata() {
+    if (clusteringColumns.isPresent()) {
+      DomainMetadata clusteringDomainMetadata =
+          getClusteringDomainMetadata(
+              clusteringColumns.orElse(Collections.emptyList()), schema.get());
+      domainMetadatasAdded.put(clusteringDomainMetadata.getDomain(), clusteringDomainMetadata);
+    }
   }
 
   /**
