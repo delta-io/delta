@@ -335,6 +335,30 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
       return (Predicate) result.expression;
     }
 
+    private CollatedPredicate checkCollatedPredicateArgs(
+        CollatedPredicate predicate,
+        ExpressionTransformResult leftResult,
+        ExpressionTransformResult rightResult) {
+      String msg =
+          format(
+              "CollatedPredicate should be used to compare strings,"
+                  + " but got left type=%s, right type=%s",
+              leftResult.outputType, rightResult.outputType);
+      checkIsStringType(leftResult.outputType, predicate, msg);
+      checkIsStringType(rightResult.outputType, predicate, msg);
+
+      if (!predicate.getCollationIdentifier().equals(STRING.getCollationIdentifier())) {
+        msg =
+            format(
+                "Unsupported collation: \"%s\". Default Engine supports"
+                    + " just \"SPARK.UTF8_BINARY\" collation.",
+                predicate.getCollationIdentifier());
+        throw unsupportedExpressionException(predicate, msg);
+      } else {
+        return predicate;
+      }
+    }
+
     private Expression transformBinaryComparator(Predicate predicate) {
       ExpressionTransformResult leftResult = visit(getLeft(predicate));
       ExpressionTransformResult rightResult = visit(getRight(predicate));
@@ -350,25 +374,7 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
       // So we just return the predicate as is.
       // If the collation is not "SPARK.UTF8_BINARY" we throw an exception.
       if (predicate instanceof CollatedPredicate) {
-        String msg =
-            format(
-                "CollatedPredicate should be used to compare strings,"
-                    + " but got left type=%s, right type=%s",
-                leftResult.outputType, rightResult.outputType);
-        checkIsStringType(leftResult.outputType, predicate, msg);
-        checkIsStringType(rightResult.outputType, predicate, msg);
-
-        CollatedPredicate collatedPredicate = (CollatedPredicate) predicate;
-        if (!collatedPredicate.getCollationIdentifier().equals(STRING.getCollationIdentifier())) {
-          msg =
-              format(
-                  "Unsupported collation: \"%s\". Default Engine supports"
-                      + " just \"SPARK.UTF8_BINARY\" collation.",
-                  collatedPredicate.getCollationIdentifier());
-          throw unsupportedExpressionException(predicate, msg);
-        } else {
-          return predicate;
-        }
+        return checkCollatedPredicateArgs((CollatedPredicate) predicate, leftResult, rightResult);
       }
 
       if (!leftResult.outputType.equivalent(rightResult.outputType)) {
