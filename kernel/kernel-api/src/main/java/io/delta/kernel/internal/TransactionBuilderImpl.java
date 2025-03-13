@@ -210,15 +210,21 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     // tables if needed (e.g. enables column mapping)
     // Ex: We enable column mapping mode in the configuration such that our properties now include
     // Map(delta.enableIcebergCompatV2 -> true, delta.columnMapping.mode -> name)
-    newMetadata =
+    Optional<Metadata> icebergCompatV2Metadata =
         IcebergCompatV2MetadataValidatorAndUpdater.validateAndUpdateIcebergCompatV2Metadata(
             isNewTable, newMetadata.orElse(snapshotMetadata), newProtocol.orElse(snapshotProtocol));
+    if (icebergCompatV2Metadata.isPresent()) {
+      newMetadata = icebergCompatV2Metadata;
+    }
 
     /* ----- 4: Update the METADATA with column mapping info if applicable ----- */
     // We update the column mapping info here after all configuration changes are finished
-    newMetadata =
+    Optional<Metadata> columnMappingMetadata =
         ColumnMapping.updateColumnMappingMetadataIfNeeded(
             newMetadata.orElse(snapshotMetadata), isNewTable);
+    if (columnMappingMetadata.isPresent()) {
+      newMetadata = columnMappingMetadata;
+    }
 
     /* ----- 5: Validate the metadata change ----- */
     // Now that all the config and schema changes have been made validate the old vs new metadata
