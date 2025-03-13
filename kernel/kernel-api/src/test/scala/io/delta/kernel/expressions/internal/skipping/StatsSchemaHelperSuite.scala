@@ -23,18 +23,6 @@ class StatsSchemaHelperSuite extends AnyFunSuite {
           .add("a1", new StructType()
             .add("b1", StringType.STRING))
           .add("a2", UTF8_LCASE_STRING),
-        new StructType()
-          .add("a1", new StructType()
-            .add("b1", StringType.STRING))
-          .add("a2", UTF8_LCASE_STRING)
-          .add(MIN, new StructType()
-            .add("a1", new StructType()
-              .add("b1", StringType.STRING))
-            .add("a2", UTF8_LCASE_STRING))
-          .add(MAX, new StructType()
-            .add("a1", new StructType()
-              .add("b1", StringType.STRING))
-            .add("a2", UTF8_LCASE_STRING)),
         new util.HashMap[CollationIdentifier, util.Set[Column]](),
         new StructType()
           .add("a1", new StructType()
@@ -58,30 +46,6 @@ class StatsSchemaHelperSuite extends AnyFunSuite {
               .add("c2", UTF8_LCASE_STRING)))
           .add("a2", UTF8_LCASE_STRING)
           .add("a3", FloatType.FLOAT),
-        new StructType()
-          .add("a1", new StructType()
-            .add("b1", StringType.STRING)
-            .add("b2", new StructType()
-              .add("c1", IntegerType.INTEGER)
-              .add("c2", UTF8_LCASE_STRING)))
-          .add("a2", UTF8_LCASE_STRING)
-          .add("a3", FloatType.FLOAT)
-          .add(MIN, new StructType()
-            .add("a1", new StructType()
-              .add("b1", StringType.STRING)
-              .add("b2", new StructType()
-                .add("c1", IntegerType.INTEGER)
-                .add("c2", UTF8_LCASE_STRING)))
-            .add("a2", UTF8_LCASE_STRING)
-            .add("a3", FloatType.FLOAT))
-          .add(MAX, new StructType()
-            .add("a1", new StructType()
-              .add("b1", StringType.STRING)
-              .add("b2", new StructType()
-                .add("c1", IntegerType.INTEGER)
-                .add("c2", UTF8_LCASE_STRING)))
-            .add("a2", UTF8_LCASE_STRING)
-            .add("a3", FloatType.FLOAT)),
         new util.HashMap[CollationIdentifier, util.Set[Column]]() {
           put(UTF8_LCASE, Set(new Column(Array("a1", "b1")),
             new Column(Array("a1", "b2", "c2"))).asJava)
@@ -134,7 +98,8 @@ class StatsSchemaHelperSuite extends AnyFunSuite {
                 .add("a2", UTF8_LCASE_STRING))))
       )
     ).foreach {
-      case (schema, schemaWithStats, collationMap, expectedSchema) =>
+      case (schema, collationMap, expectedSchema) =>
+        val schemaWithStats = schema.add(MIN, schema).add(MAX, schema)
         val fullStatsSchema = appendCollatedStatsSchema(schema, schemaWithStats, collationMap)
         // We compare StructTypes field by field to avoid the order of fields
         for (field <- fullStatsSchema.fields().asScala) {
