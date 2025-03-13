@@ -62,6 +62,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   private final Set<String> domainMetadatasRemoved = new HashSet<>();
   private Optional<StructType> schema = Optional.empty();
   private Optional<List<String>> partitionColumns = Optional.empty();
+  private Optional<List<String>> clusteringColumns = Optional.empty();
   private Optional<SetTransaction> setTxnOpt = Optional.empty();
   private Optional<Map<String, String>> tableProperties = Optional.empty();
 
@@ -88,6 +89,14 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   public TransactionBuilder withPartitionColumns(Engine engine, List<String> partitionColumns) {
     if (!partitionColumns.isEmpty()) {
       this.partitionColumns = Optional.of(partitionColumns);
+    }
+    return this;
+  }
+
+  @Override
+  public TransactionBuilder withClusteringColumns(Engine engine, List<String> clusteringColumns) {
+    if (!clusteringColumns.isEmpty()) {
+      this.clusteringColumns = Optional.of(clusteringColumns);
     }
     return this;
   }
@@ -279,6 +288,12 @@ public class TransactionBuilderImpl implements TransactionBuilder {
             "Table already exists, but provided new partition columns. "
                 + "Partition columns can only be set on a new table.");
       }
+      if (clusteringColumns.isPresent()) {
+        throw tableAlreadyExists(
+            tablePath,
+            "Table already exists, but provided new clustering columns. "
+                + "Clustering columns can only be set on a new table for now.");
+      }
     } else {
       // New table verify the given schema and partition columns
       ColumnMappingMode mappingMode =
@@ -287,6 +302,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       SchemaUtils.validateSchema(schema.get(), isColumnMappingModeEnabled(mappingMode));
       SchemaUtils.validatePartitionColumns(
           schema.get(), partitionColumns.orElse(Collections.emptyList()));
+      SchemaUtils.validateClusteringColumns(
+          schema.get(), clusteringColumns.orElse(Collections.emptyList()));
     }
 
     setTxnOpt.ifPresent(

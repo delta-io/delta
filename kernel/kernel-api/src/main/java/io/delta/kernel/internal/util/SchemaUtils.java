@@ -164,6 +164,22 @@ public class SchemaUtils {
   }
 
   /**
+   * Validate the clustering columns exists in the table schema
+   */
+  public static void validateClusteringColumns(StructType schema, List<String> clusteringCols) {
+    List<String> flattenColNames = flattenNestedFieldNames(schema);
+
+    clusteringCols.forEach(
+      clusteringCol -> {
+        checkArgument(
+          flattenColNames.contains(clusteringCol.toLowerCase(Locale.ROOT)),
+          "Clustering column %s not found in the schema",
+          clusteringCol);
+       }
+    );
+  }
+
+  /**
    * Search (case-insensitive) for the given {@code colName} in the {@code schema} and return its
    * position in the {@code schema}.
    *
