@@ -204,7 +204,10 @@ public class TransactionBuilderImpl implements TransactionBuilder {
           table.getPath(engine));
     }
 
-    /* ----- 3: Update the METADATA with new table properties based on set properties ----- */
+    /* 3: Validate the METADATA and PROTOCOL and possibly update the METADATA for IcebergCompat */
+    // IcebergCompat validates that the current metadata and protocol is compatible (e.g. all the
+    // required TF are present, no incompatible types, etc). It also updates the metadata for new
+    // tables if needed (e.g. enables column mapping)
     // Ex: We enable column mapping mode in the configuration such that our properties now include
     // Map(delta.enableIcebergCompatV2 -> true, delta.columnMapping.mode -> name)
     newMetadata =
@@ -243,7 +246,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
    * Validates the transaction as built given the parameters input by the user. This includes
    *
    * <ul>
-   *   <li>We can write to the current version of the table
+   *   <li>Ensures that the table, as defined by the protocol and metadata of its latest version, is
+   *       writable by Kernel
    *   <li>Partition columns are not specified for an existing table
    *   <li>The provided schema is valid (e.g. no duplicate columns, valid names)
    *   <li>Partition columns provided are valid (e.g. they exist, valid data types)
