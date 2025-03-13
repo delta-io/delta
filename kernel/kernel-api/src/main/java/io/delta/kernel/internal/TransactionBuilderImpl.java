@@ -106,8 +106,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
 
   @Override
   public TransactionBuilder withTableProperties(Engine engine, Map<String, String> properties) {
-    Map<String, String> validatedProperties = TableConfig.validateDeltaProperties(properties);
-    this.tableProperties = Optional.of(Collections.unmodifiableMap(validatedProperties));
+    this.tableProperties =
+        Optional.of(Collections.unmodifiableMap(TableConfig.validateDeltaProperties(properties)));
     return this;
   }
 
@@ -245,7 +245,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
    * <ul>
    *   <li>We can write to the current version of the table
    *   <li>Partition columns are not specified for an existing table
-   *   <li>The schema provides is valid (e.g. no duplicate columns, valid names)
+   *   <li>The provided schema is valid (e.g. no duplicate columns, valid names)
    *   <li>Partition columns provided are valid (e.g. they exist, valid data types)
    *   <li>Concurrent txn has not already committed to the table with same txnId
    * </ul>
@@ -300,7 +300,6 @@ public class TransactionBuilderImpl implements TransactionBuilder {
    */
   private void validateMetadataChange(
       Metadata oldMetadata, Metadata newMetadata, boolean isNewTable) {
-    // Validate configuration changes
     ColumnMapping.verifyColumnMappingChange(
         oldMetadata.getConfiguration(), newMetadata.getConfiguration(), isNewTable);
     // TODO In the future block enabling IcebergWriterCompatV1 for existing tables

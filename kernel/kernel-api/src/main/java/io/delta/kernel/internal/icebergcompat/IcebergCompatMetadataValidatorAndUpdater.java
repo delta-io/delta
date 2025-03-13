@@ -115,10 +115,7 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
      */
     IcebergCompatRequiredTablePropertyEnforcer(
         TableConfig<T> property, Predicate<T> validator, String autoSetValue) {
-      this.property = property;
-      this.validator = validator;
-      this.autoSetValue = autoSetValue;
-      this.postMetadataProcessor = (c) -> Optional.empty();
+      this(property, validator, autoSetValue, (c) -> Optional.empty());
     }
 
     Optional<Metadata> validateAndUpdate(IcebergCompatInputContext inputContext) {
