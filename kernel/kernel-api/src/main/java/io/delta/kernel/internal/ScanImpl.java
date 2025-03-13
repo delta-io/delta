@@ -312,7 +312,7 @@ public class ScanImpl implements Scan {
     StructType prunedStatsSchema =
         DataSkippingUtils.pruneStatsSchema(
             getStatsSchema(metadata.getDataSchema()), dataSkippingFilter.getReferencedCols());
-    appendCollatedStatsSchema(prunedStatsSchema, dataSkippingFilter.getReferencedCollatedCols());
+    StructType fullStatsSchema = appendCollatedStatsSchema(prunedStatsSchema, dataSkippingFilter.getReferencedCollatedCols());
 
     // Skipping happens in two steps:
     // 1. The predicate produces false for any file whose stats prove we can safely skip it. A
@@ -343,7 +343,7 @@ public class ScanImpl implements Scan {
                   () ->
                       predicateEvaluator.eval(
                           DataSkippingUtils.parseJsonStats(
-                              engine, filteredScanFileBatch, prunedStatsSchema),
+                              engine, filteredScanFileBatch, fullStatsSchema),
                           filteredScanFileBatch.getSelectionVector()),
                   "Evaluating the data skipping filter %s",
                   filterToEval);

@@ -86,23 +86,24 @@ public class StatsSchemaHelper {
     return statsSchema;
   }
 
-  public static void appendCollatedStatsSchema(
-          StructType dataSchema, Map<CollationIdentifier, Set<Column>> collatedReferencedCols) {
+  public static StructType appendCollatedStatsSchema(
+          StructType statsSchema, Map<CollationIdentifier, Set<Column>> collatedReferencedCols) {
     StructType collatedStatsSchema = new StructType();
     for (Map.Entry<CollationIdentifier, Set<Column>> entry : collatedReferencedCols.entrySet()) {
-      StructType statsSchema =
-              DataSkippingUtils.pruneStatsSchema(getMinMaxStatsSchema(dataSchema), entry.getValue());
-      if (statsSchema.length() > 0) {
+      StructType minMaxSchema =
+              DataSkippingUtils.pruneStatsSchema(getMinMaxStatsSchema(statsSchema), entry.getValue());
+      if (minMaxSchema.length() > 0) {
         collatedStatsSchema =
                 collatedStatsSchema.add(
                         entry.getKey().toString(),
-                        new StructType().add(MIN, statsSchema, true).add(MAX, statsSchema, true),
+                        new StructType().add(MIN, minMaxSchema, true).add(MAX, minMaxSchema, true),
                         true);
       }
     }
     if (collatedStatsSchema.length() > 0) {
-      dataSchema.add(STATS_WITH_COLLATION, collatedStatsSchema, true);
+      return statsSchema.add(STATS_WITH_COLLATION, collatedStatsSchema, true);
     }
+    return statsSchema;
   }
 
   //////////////////////////////////////////////////////////////////////////////////
