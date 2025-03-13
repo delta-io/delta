@@ -267,6 +267,28 @@ public class Metadata {
     return new GenericRow(Metadata.FULL_SCHEMA, metadataMap);
   }
 
+  @Override
+  public int hashCode() {
+    return Objects.hash(
+        id, name, description, format, schema, partitionColNames, createdTime, configuration);
+  }
+
+  @Override
+  public boolean equals(Object o) {
+    if (!(o instanceof Metadata)) {
+      return false;
+    }
+    Metadata other = (Metadata) o;
+    return id.equals(other.id)
+        && name.equals(other.name)
+        && description.equals(other.description)
+        && format.equals(other.format)
+        && schema.equals(other.schema)
+        && partitionColNames.get().equals(other.partitionColNames.get())
+        && createdTime.equals(other.createdTime)
+        && configuration.get().equals(other.configuration.get());
+  }
+
   /** Helper method to load the partition column names. */
   private Set<String> loadPartitionColNames() {
     ColumnVector partitionColNameVector = partitionColumns.getElements();

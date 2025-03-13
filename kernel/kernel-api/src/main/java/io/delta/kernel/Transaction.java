@@ -30,10 +30,12 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.ConcurrentWriteException;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.DataWriteContextImpl;
-import io.delta.kernel.internal.IcebergCompatV2Utils;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.SingleAction;
+import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.icebergcompat.IcebergCompatV2MetadataValidatorAndUpdater;
+import io.delta.kernel.statistics.DataFileStatistics;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.*;
 import java.net.URI;
@@ -177,7 +179,7 @@ public interface Transaction {
         getTargetDirectory(getTablePath(transactionState), partitionColNames, partitionValues);
 
     return new DataWriteContextImpl(
-        targetDirectory, partitionValues, getStatisticsColumns(engine, transactionState));
+        targetDirectory, partitionValues, getStatisticsColumns(transactionState));
   }
 
   /**
@@ -209,10 +211,11 @@ public interface Transaction {
     return fileStatusIter.map(
         dataFileStatus -> {
           if (isIcebergCompatV2Enabled) {
-            IcebergCompatV2Utils.validateDataFileStatus(dataFileStatus);
+            IcebergCompatV2MetadataValidatorAndUpdater.validateDataFileStatus(dataFileStatus);
           }
           AddFile addFileRow =
               AddFile.convertDataFileStatus(
+                  TransactionStateRow.getPhysicalSchema(transactionState),
                   tableRoot,
                   dataFileStatus,
                   ((DataWriteContextImpl) dataWriteContext).getPartitionValues(),

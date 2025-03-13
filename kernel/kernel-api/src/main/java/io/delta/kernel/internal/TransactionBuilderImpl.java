@@ -22,7 +22,7 @@ import static io.delta.kernel.internal.TransactionImpl.DEFAULT_WRITE_VERSION;
 import static io.delta.kernel.internal.util.ColumnMapping.isColumnMappingModeEnabled;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames;
-import static io.delta.kernel.internal.util.VectorUtils.stringArrayValue;
+import static io.delta.kernel.internal.util.VectorUtils.buildArrayValue;
 import static io.delta.kernel.internal.util.VectorUtils.stringStringMapValue;
 import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.toSet;
@@ -33,6 +33,7 @@ import io.delta.kernel.exceptions.DomainDoesNotExistException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.icebergcompat.IcebergCompatV2MetadataValidatorAndUpdater;
 import io.delta.kernel.internal.metrics.SnapshotMetrics;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.replay.LogReplay;
@@ -44,6 +45,7 @@ import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
 import io.delta.kernel.internal.util.SchemaUtils;
 import io.delta.kernel.internal.util.Tuple2;
+import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import java.util.*;
 import org.slf4j.Logger;
@@ -193,6 +195,21 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       TableFeatures.validateKernelCanWriteToTable(protocol, metadata, table.getPath(engine));
     }
 
+    Optional<Metadata> metadataWithCMInfo =
+        ColumnMapping.updateColumnMappingMetadataIfNeeded(metadata, isNewTable);
+    if (metadataWithCMInfo.isPresent()) {
+      shouldUpdateMetadata = true;
+      metadata = metadataWithCMInfo.get();
+    }
+
+    Optional<Metadata> metadataWithIcebergCompatInfo =
+        IcebergCompatV2MetadataValidatorAndUpdater.validateAndUpdateIcebergCompatV2Metadata(
+            isNewTable, metadata, protocol);
+    if (metadataWithIcebergCompatInfo.isPresent()) {
+      shouldUpdateMetadata = true;
+      metadata = metadataWithIcebergCompatInfo.get();
+    }
+
     return new TransactionImpl(
         isNewTable,
         table.getDataPath(),
@@ -312,7 +329,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         new Format(), /* format */
         schema.get().toJson(), /* schemaString */
         schema.get(), /* schema */
-        stringArrayValue(partitionColumnsCasePreserving), /* partitionColumns */
+        buildArrayValue(partitionColumnsCasePreserving, StringType.STRING), /* partitionColumns */
         Optional.of(currentTimeMillis), /* createdTime */
         stringStringMapValue(Collections.emptyMap()) /* configuration */);
   }

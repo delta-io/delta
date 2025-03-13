@@ -204,10 +204,10 @@ class DeltaTableV2 private[delta](
   }
 
   private lazy val tableSchema: StructType = {
-    val baseSchema = cdcRelation.map(_.schema).getOrElse {
-      DeltaTableUtils.removeInternalWriterMetadata(spark, initialSnapshot.schema)
-    }
-    DeltaColumnMapping.dropColumnMappingMetadata(baseSchema)
+    val baseSchema = cdcRelation.map(_.schema).getOrElse(initialSnapshot.schema)
+    DeltaTableUtils.removeInternalDeltaMetadata(
+      spark, DeltaTableUtils.removeInternalWriterMetadata(spark, baseSchema)
+    )
   }
 
   override def schema(): StructType = tableSchema
@@ -453,7 +453,7 @@ object DeltaTableV2 {
         deltaLog.getInitialCatalogTable
       }
       val tableIdentifier = catalogTableOpt.map(_.identifier.identifier)
-      val newPath = new Path(deltaLog.dataPath.toUri.getPath)
+      val newPath = new Path(deltaLog.dataPath.toUri)
       deltaTable.copy(
         path = newPath, catalogTable = catalogTableOpt, tableIdentifier = tableIdentifier
       )
