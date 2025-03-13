@@ -133,7 +133,7 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
           // Covers the case CREATE that did not explicitly specify the required table property.
           // In these cases, we set the property automatically.
           newMetadata =
-              newMetadata.withNewConfiguration(singletonMap(property.getKey(), autoSetValue));
+              newMetadata.withMergedConfiguration(singletonMap(property.getKey(), autoSetValue));
           return Optional.of(newMetadata);
         } else {
           // In all other cases, if the property value is not compatible

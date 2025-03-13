@@ -163,14 +163,17 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     }
 
     boolean isNewTable = snapshot.getVersion() < 0;
-    validate(engine, snapshot, isNewTable);
+    validateTransactionInputs(engine, snapshot, isNewTable);
 
     Metadata snapshotMetadata = snapshot.getMetadata();
     Protocol snapshotProtocol = snapshot.getProtocol();
     Optional<Metadata> newMetadata = Optional.empty();
     Optional<Protocol> newProtocol = Optional.empty();
 
-    /* ------- Update the METADATA with new table properties or schema set in the builder ------- */
+    // The metadata + protocol transformations get complex with the addition of IcebergCompat which
+    // can mutate the configuration. We walk through an example of this for clarity.
+    /* ----- 1: Update the METADATA with new table properties or schema set in the builder ----- */
+    // Ex: User has set table properties = Map(delta.enableIcebergCompatV2 -> true)
     Map<String, String> newProperties =
         snapshotMetadata.filterOutUnchangedProperties(
             tableProperties.orElse(Collections.emptyMap()));
@@ -181,8 +184,9 @@ public class TransactionBuilderImpl implements TransactionBuilder {
 
     // TODO In the future update metadata with new schema if provided
 
-    /* ---------- Update the PROTOCOL based on the table properties or schema ------------ */
+    /* ----- 2: Update the PROTOCOL based on the table properties or schema ----- */
     // This is the only place we update the protocol action; takes care of any dependent features
+    // Ex: We enable feature `icebergCompatV2` plus dependent features `columnMapping`
     Optional<Tuple2<Protocol, Set<TableFeature>>> newProtocolAndFeatures =
         TableFeatures.autoUpgradeProtocolBasedOnMetadata(
             newMetadata.orElse(snapshotMetadata),
@@ -200,17 +204,20 @@ public class TransactionBuilderImpl implements TransactionBuilder {
           table.getPath(engine));
     }
 
-    /* -------- Update the METADATA with new table properties based on set properties --------- */
+    /* ----- 3: Update the METADATA with new table properties based on set properties ----- */
+    // Ex: We enable column mapping mode in the configuration such that our properties now include
+    // Map(delta.enableIcebergCompatV2 -> true, delta.columnMapping.mode -> name)
     newMetadata =
         IcebergCompatV2MetadataValidatorAndUpdater.validateAndUpdateIcebergCompatV2Metadata(
             isNewTable, newMetadata.orElse(snapshotMetadata), newProtocol.orElse(snapshotProtocol));
 
-    /* ---------- Update the METADATA with column mapping info if applicable ------------ */
+    /* ----- 4: Update the METADATA with column mapping info if applicable ----- */
+    // We update the column mapping info here after all configuration changes are finished
     newMetadata =
         ColumnMapping.updateColumnMappingMetadataIfNeeded(
             newMetadata.orElse(snapshotMetadata), isNewTable);
 
-    /* ----------------- Validate the metadata change --------------------- */
+    /* ----- 5: Validate the metadata change ----- */
     // Now that all the config and schema changes have been made validate the old vs new metadata
     newMetadata.ifPresent(
         metadata -> validateMetadataChange(snapshotMetadata, metadata, isNewTable));
@@ -232,8 +239,18 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         getDomainMetadatasToCommit(snapshot));
   }
 
-  /** Validate the given parameters for the transaction. */
-  private void validate(Engine engine, SnapshotImpl snapshot, boolean isNewTable) {
+  /**
+   * Validates the transaction as built given the parameters input by the user. This includes
+   *
+   * <ul>
+   *   <li>We can write to the current version of the table
+   *   <li>Partition columns are not specified for an existing table
+   *   <li>The schema provides is valid (e.g. no duplicate columns, valid names)
+   *   <li>Partition columns provided are valid (e.g. they exist, valid data types)
+   *   <li>Concurrent txn has not already committed to the table with same txnId
+   * </ul>
+   */
+  private void validateTransactionInputs(Engine engine, SnapshotImpl snapshot, boolean isNewTable) {
     String tablePath = table.getPath(engine);
     // Validate the table has no features that Kernel doesn't yet support writing into it.
     TableFeatures.validateKernelCanWriteToTable(
@@ -273,7 +290,14 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         });
   }
 
-  /** Validate that the change from oldMetadata to newMetadata is a valid change. */
+  /**
+   * Validate that the change from oldMetadata to newMetadata is a valid change. For example, this
+   * checks the following
+   *
+   * <ul>
+   *   <li>Column mapping mode can only go from none->name for existing table
+   * </ul>
+   */
   private void validateMetadataChange(
       Metadata oldMetadata, Metadata newMetadata, boolean isNewTable) {
     // Validate configuration changes
