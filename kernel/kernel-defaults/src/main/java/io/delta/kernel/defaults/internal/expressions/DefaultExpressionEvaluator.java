@@ -351,8 +351,8 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
         msg =
             format(
                 "Unsupported collation: \"%s\". Default Engine supports"
-                    + " just \"SPARK.UTF8_BINARY\" collation.",
-                predicate.getCollationIdentifier());
+                    + " just \"%s\" collation.",
+                predicate.getCollationIdentifier(), STRING.getCollationIdentifier());
         throw unsupportedExpressionException(predicate, msg);
       } else {
         return predicate;

@@ -27,6 +27,8 @@ import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.types.BooleanType;
 import io.delta.kernel.types.DataType;
+import io.delta.kernel.types.StringType;
+
 import java.util.List;
 
 public class StartsWithExpressionEvaluator {
@@ -57,8 +59,8 @@ public class StartsWithExpressionEvaluator {
         String msg =
             format(
                 "Unsupported collation: \"%s\". Default Engine supports just"
-                    + " \"SPARK.UTF8_BINARY\" collation.",
-                collatedPredicate.getCollationIdentifier());
+                    + " \"%s\" collation.",
+                collatedPredicate.getCollationIdentifier(), STRING.getCollationIdentifier());
         throw unsupportedExpressionException(startsWith, msg);
       }
 
