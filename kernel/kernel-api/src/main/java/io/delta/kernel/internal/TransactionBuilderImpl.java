@@ -171,8 +171,9 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     Optional<Protocol> newProtocol = Optional.empty();
 
     /* ------- Update the METADATA with new table properties or schema set in the builder ------- */
-    Map<String, String> newProperties = snapshotMetadata.filterOutUnchangedProperties(
-        tableProperties.orElse(Collections.emptyMap()));
+    Map<String, String> newProperties =
+        snapshotMetadata.filterOutUnchangedProperties(
+            tableProperties.orElse(Collections.emptyMap()));
 
     if (!newProperties.isEmpty()) {
       newMetadata = Optional.of(snapshotMetadata.withMergedConfiguration(newProperties));
@@ -184,7 +185,9 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     // This is the only place we update the protocol action; takes care of any dependent features
     Optional<Tuple2<Protocol, Set<TableFeature>>> newProtocolAndFeatures =
         TableFeatures.autoUpgradeProtocolBasedOnMetadata(
-            newMetadata.orElse(snapshotMetadata), !domainMetadatasAdded.isEmpty(), snapshotProtocol);
+            newMetadata.orElse(snapshotMetadata),
+            !domainMetadatasAdded.isEmpty(),
+            snapshotProtocol);
     if (newProtocolAndFeatures.isPresent()) {
       logger.info(
           "Automatically enabling table features: {}",
@@ -194,23 +197,23 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       TableFeatures.validateKernelCanWriteToTable(
           newProtocol.orElse(snapshotProtocol),
           newMetadata.orElse(snapshotMetadata),
-          table.getPath(engine)
-      );
+          table.getPath(engine));
     }
 
     /* -------- Update the METADATA with new table properties based on set properties --------- */
-    newMetadata = IcebergCompatV2MetadataValidatorAndUpdater
-        .validateAndUpdateIcebergCompatV2Metadata(isNewTable, newMetadata.orElse(snapshotMetadata),
-            newProtocol.orElse(snapshotProtocol));
+    newMetadata =
+        IcebergCompatV2MetadataValidatorAndUpdater.validateAndUpdateIcebergCompatV2Metadata(
+            isNewTable, newMetadata.orElse(snapshotMetadata), newProtocol.orElse(snapshotProtocol));
 
     /* ---------- Update the METADATA with column mapping info if applicable ------------ */
-    newMetadata = ColumnMapping.updateColumnMappingMetadataIfNeeded(
-        newMetadata.orElse(snapshotMetadata), isNewTable);
+    newMetadata =
+        ColumnMapping.updateColumnMappingMetadataIfNeeded(
+            newMetadata.orElse(snapshotMetadata), isNewTable);
 
     /* ----------------- Validate the metadata change --------------------- */
     // Now that all the config and schema changes have been made validate the old vs new metadata
-    newMetadata.ifPresent(metadata -> validateMetadataChange(snapshotMetadata, metadata,
-        isNewTable));
+    newMetadata.ifPresent(
+        metadata -> validateMetadataChange(snapshotMetadata, metadata, isNewTable));
 
     return new TransactionImpl(
         isNewTable,
@@ -270,9 +273,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         });
   }
 
-  /**
-   * Validate that the change from oldMetadata to newMetadata is a valid change.
-   */
+  /** Validate that the change from oldMetadata to newMetadata is a valid change. */
   private void validateMetadataChange(
       Metadata oldMetadata, Metadata newMetadata, boolean isNewTable) {
     // Validate configuration changes
