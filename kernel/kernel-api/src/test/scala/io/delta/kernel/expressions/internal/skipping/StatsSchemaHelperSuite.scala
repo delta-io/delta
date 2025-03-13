@@ -19,6 +19,7 @@ class StatsSchemaHelperSuite extends AnyFunSuite {
 
     Seq(
       (
+        // (schema, collationMap, expectedSchema)
         new StructType()
           .add("a1", new StructType()
             .add("b1", StringType.STRING))
