@@ -80,10 +80,7 @@ public class IcebergCompatV2MetadataValidatorAndUpdater
       new IcebergCompatRequiredTablePropertyEnforcer<>(
           TableConfig.COLUMN_MAPPING_MODE,
           (value) -> ColumnMappingMode.NAME == value || ColumnMappingMode.ID == value,
-          ColumnMappingMode.NAME.value,
-          (inputContext) ->
-              ColumnMapping.updateColumnMappingMetadataIfNeeded(
-                  inputContext.newMetadata, inputContext.isCreatingNewTable));
+          ColumnMappingMode.NAME.value);
 
   private static final IcebergCompatCheck ICEBERG_COMPAT_V2_CHECK_NO_COMPAT_V1_ENABLED =
       (inputContext) -> {

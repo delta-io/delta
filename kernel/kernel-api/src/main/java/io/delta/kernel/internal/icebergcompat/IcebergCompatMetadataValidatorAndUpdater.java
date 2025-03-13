@@ -105,6 +105,24 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
       this.postMetadataProcessor = postMetadataProcessor;
     }
 
+    /**
+     * Constructor for RequiredDeltaTableProperty
+     *
+     * @param property DeltaConfig we are checking
+     * @param validator A generic method to validate the given value
+     * @param autoSetValue The value to set if we can auto-set this value (e.g. during table
+     *     creation)
+     */
+    IcebergCompatRequiredTablePropertyEnforcer(
+        TableConfig<T> property,
+        Predicate<T> validator,
+        String autoSetValue) {
+      this.property = property;
+      this.validator = validator;
+      this.autoSetValue = autoSetValue;
+      this.postMetadataProcessor = (c) -> Optional.empty();
+    }
+
     Optional<Metadata> validateAndUpdate(IcebergCompatInputContext inputContext) {
       Metadata newMetadata = inputContext.newMetadata;
       T newestValue = property.fromMetadata(newMetadata);

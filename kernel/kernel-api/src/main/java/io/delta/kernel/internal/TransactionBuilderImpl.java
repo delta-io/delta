@@ -106,7 +106,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
 
   @Override
   public TransactionBuilder withTableProperties(Engine engine, Map<String, String> properties) {
-    this.tableProperties = Optional.of(new HashMap<>(properties));
+    Map<String, String> validatedProperties = TableConfig.validateDeltaProperties(properties);
+    this.tableProperties = Optional.of(Collections.unmodifiableMap(validatedProperties));
     return this;
   }
 
@@ -164,51 +165,52 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     boolean isNewTable = snapshot.getVersion() < 0;
     validate(engine, snapshot, isNewTable);
 
-    boolean shouldUpdateMetadata = false;
-    boolean shouldUpdateProtocol = false;
-    Metadata metadata = snapshot.getMetadata();
-    Protocol protocol = snapshot.getProtocol();
-    Map<String, String> validatedProperties =
-        TableConfig.validateDeltaProperties(tableProperties.orElse(Collections.emptyMap()));
-    Map<String, String> newProperties = metadata.filterOutUnchangedProperties(validatedProperties);
+    Metadata snapshotMetadata = snapshot.getMetadata();
+    Protocol snapshotProtocol = snapshot.getProtocol();
+    Optional<Metadata> newMetadata = Optional.empty();
+    Optional<Protocol> newProtocol = Optional.empty();
+
+    /* ------- Update the METADATA with new table properties or schema set in the builder ------- */
+    Map<String, String> newProperties = snapshotMetadata.filterOutUnchangedProperties(
+        tableProperties.orElse(Collections.emptyMap()));
 
     if (!newProperties.isEmpty()) {
-      shouldUpdateMetadata = true;
-      Map<String, String> oldConfiguration = metadata.getConfiguration();
-
-      metadata = metadata.withNewConfiguration(newProperties);
-
-      ColumnMapping.verifyColumnMappingChange(
-          oldConfiguration, metadata.getConfiguration() /* new config */, isNewTable);
+      newMetadata = Optional.of(snapshotMetadata.withMergedConfiguration(newProperties));
     }
 
+    // TODO In the future update metadata with new schema if provided
+
+    /* ---------- Update the PROTOCOL based on the table properties or schema ------------ */
+    // This is the only place we update the protocol action; takes care of any dependent features
     Optional<Tuple2<Protocol, Set<TableFeature>>> newProtocolAndFeatures =
         TableFeatures.autoUpgradeProtocolBasedOnMetadata(
-            metadata, !domainMetadatasAdded.isEmpty(), protocol);
+            newMetadata.orElse(snapshotMetadata), !domainMetadatasAdded.isEmpty(), snapshotProtocol);
     if (newProtocolAndFeatures.isPresent()) {
       logger.info(
           "Automatically enabling table features: {}",
           newProtocolAndFeatures.get()._2.stream().map(TableFeature::featureName).collect(toSet()));
 
-      shouldUpdateProtocol = true;
-      protocol = newProtocolAndFeatures.get()._1;
-      TableFeatures.validateKernelCanWriteToTable(protocol, metadata, table.getPath(engine));
+      newProtocol = Optional.of(newProtocolAndFeatures.get()._1);
+      TableFeatures.validateKernelCanWriteToTable(
+          newProtocol.orElse(snapshotProtocol),
+          newMetadata.orElse(snapshotMetadata),
+          table.getPath(engine)
+      );
     }
 
-    Optional<Metadata> metadataWithCMInfo =
-        ColumnMapping.updateColumnMappingMetadataIfNeeded(metadata, isNewTable);
-    if (metadataWithCMInfo.isPresent()) {
-      shouldUpdateMetadata = true;
-      metadata = metadataWithCMInfo.get();
-    }
+    /* -------- Update the METADATA with new table properties based on set properties --------- */
+    newMetadata = IcebergCompatV2MetadataValidatorAndUpdater
+        .validateAndUpdateIcebergCompatV2Metadata(isNewTable, newMetadata.orElse(snapshotMetadata),
+            newProtocol.orElse(snapshotProtocol));
 
-    Optional<Metadata> metadataWithIcebergCompatInfo =
-        IcebergCompatV2MetadataValidatorAndUpdater.validateAndUpdateIcebergCompatV2Metadata(
-            isNewTable, metadata, protocol);
-    if (metadataWithIcebergCompatInfo.isPresent()) {
-      shouldUpdateMetadata = true;
-      metadata = metadataWithIcebergCompatInfo.get();
-    }
+    /* ---------- Update the METADATA with column mapping info if applicable ------------ */
+    newMetadata = ColumnMapping.updateColumnMappingMetadataIfNeeded(
+        newMetadata.orElse(snapshotMetadata), isNewTable);
+
+    /* ----------------- Validate the metadata change --------------------- */
+    // Now that all the config and schema changes have been made validate the old vs new metadata
+    newMetadata.ifPresent(metadata -> validateMetadataChange(snapshotMetadata, metadata,
+        isNewTable));
 
     return new TransactionImpl(
         isNewTable,
@@ -217,11 +219,11 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         snapshot,
         engineInfo,
         operation,
-        protocol,
-        metadata,
+        newProtocol.orElse(snapshotProtocol),
+        newMetadata.orElse(snapshotMetadata),
         setTxnOpt,
-        shouldUpdateMetadata,
-        shouldUpdateProtocol,
+        newMetadata.isPresent() /* shouldUpdateMetadata */,
+        newProtocol.isPresent() /* shouldUpdateProtocol */,
         maxRetries,
         table.getClock(),
         getDomainMetadatasToCommit(snapshot));
@@ -266,6 +268,19 @@ public class TransactionBuilderImpl implements TransactionBuilder {
                 txnId.getAppId(), txnId.getVersion(), lastTxnVersion.get());
           }
         });
+  }
+
+  /**
+   * Validate that the change from oldMetadata to newMetadata is a valid change.
+   */
+  private void validateMetadataChange(
+      Metadata oldMetadata, Metadata newMetadata, boolean isNewTable) {
+    // Validate configuration changes
+    ColumnMapping.verifyColumnMappingChange(
+        oldMetadata.getConfiguration(), newMetadata.getConfiguration(), isNewTable);
+    // TODO In the future block enabling IcebergWriterCompatV1 for existing tables
+
+    // TODO In the future validate any schema change
   }
 
   private class InitialSnapshot extends SnapshotImpl {
