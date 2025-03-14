@@ -62,7 +62,8 @@ public interface Transaction {
   List<String> getPartitionColumns(Engine engine);
 
   /**
-   * Gets the latest version of the table used as the base of this transaction.
+   * Gets the latest version of the table used as the base of this transaction. This returns -1 when
+   * the table is being created in this transaction.
    *
    * @return The version of the table as of the beginning of this Transaction
    */
