@@ -740,19 +740,19 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
       //    domain metadata
 
       {
+        val txn = createWriteTxnBuilder(Table.forPath(defaultEngine, tablePath))
+          .build(defaultEngine)
+        txn.addDomainMetadata("foo", "fake config")
         val e = intercept[IllegalArgumentException] {
-          val txn = createWriteTxnBuilder(Table.forPath(defaultEngine, tablePath))
-            .build(defaultEngine)
-          txn.addDomainMetadata("foo", "fake config")
           txn.removeDomainMetadata("foo")
         }
         assert(e.getMessage.contains("Cannot remove a domain that is added in this transaction"))
       }
       {
+        val txn = createWriteTxnBuilder(Table.forPath(defaultEngine, tablePath))
+          .build(defaultEngine)
+        txn.removeDomainMetadata("foo")
         val e = intercept[IllegalArgumentException] {
-          val txn = createWriteTxnBuilder(Table.forPath(defaultEngine, tablePath))
-            .build(defaultEngine)
-          txn.removeDomainMetadata("foo")
           txn.addDomainMetadata("foo", "fake config")
         }
         assert(e.getMessage.contains("Cannot add a domain that is removed in this transaction"))

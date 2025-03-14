@@ -33,6 +33,7 @@ import io.delta.kernel.exceptions.DomainDoesNotExistException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.hook.PostCommitHook;
 import io.delta.kernel.internal.actions.*;
+import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.checksum.CRCInfo;
 import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.internal.fs.Path;
@@ -150,6 +151,7 @@ public class TransactionImpl implements Transaction {
     return setTxnOpt;
   }
 
+  @VisibleForTesting
   public void addDomainMetadataInternal(String domain, String config) {
     checkArgument(
         !domainMetadatasRemoved.contains(domain),
@@ -161,15 +163,16 @@ public class TransactionImpl implements Transaction {
 
   @Override
   public void addDomainMetadata(String domain, String config) {
-    checkArgument(
-        DomainMetadata.isUserControlledDomain(domain),
-        "Setting a system-controlled domain is not allowed: " + domain);
     checkState(
         TableFeatures.isDomainMetadataSupported(protocol),
         "Unable to add domain metadata when the domain metadata table feature is disabled");
+    checkArgument(
+        DomainMetadata.isUserControlledDomain(domain),
+        "Setting a system-controlled domain is not allowed: " + domain);
     addDomainMetadataInternal(domain, config);
   }
 
+  @VisibleForTesting
   public void removeDomainMetadataInternal(String domain) {
     checkArgument(
         !domainMetadatasAdded.containsKey(domain),
@@ -180,12 +183,12 @@ public class TransactionImpl implements Transaction {
 
   @Override
   public void removeDomainMetadata(String domain) {
-    checkArgument(
-        DomainMetadata.isUserControlledDomain(domain),
-        "Removing a system-controlled domain is not allowed: " + domain);
     checkState(
         TableFeatures.isDomainMetadataSupported(protocol),
         "Unable to add domain metadata when the domain metadata table feature is disabled");
+    checkArgument(
+        DomainMetadata.isUserControlledDomain(domain),
+        "Removing a system-controlled domain is not allowed: " + domain);
     removeDomainMetadataInternal(domain);
   }
 
