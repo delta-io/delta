@@ -465,7 +465,7 @@ trait CloneIcebergSuiteBase extends QueryTest
         IcebergSparkSchemaUtil.convert(icebergTable.schema())
       val df = spark.createDataFrame(
         Seq(
-          Row(1, toDate("2015-01-25")),
+          Row(1, toDate("2015-01-25"))
         ).asJava,
         icebergTableSchema)
       df.writeTo(table).append()
