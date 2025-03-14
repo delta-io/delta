@@ -91,7 +91,7 @@ trait InsertOnlyMergeExecutor extends MergeOutputGeneration {
           deltaTxn,
           dataSkippedFiles.get,
           columnsToDrop = Nil)
-        val targetDF = Dataset.ofRows(spark, targetPlan)
+        val targetDF = DataFrameUtils.ofRows(spark, targetPlan)
         sourceDF.join(targetDF, Column(condition), "leftanti")
       } else {
         sourceDF

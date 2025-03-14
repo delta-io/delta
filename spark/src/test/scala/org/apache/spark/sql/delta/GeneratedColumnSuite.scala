@@ -631,7 +631,7 @@ trait GeneratedColumnSuiteBase
           df1.schema.fields.head.dataType.sql
         }
         checkErrorMatchPVals(e,
-          errorClass = "DELTA_GENERATED_COLUMNS_EXPR_TYPE_MISMATCH",
+          "DELTA_GENERATED_COLUMNS_EXPR_TYPE_MISMATCH",
           parameters = Map(
             "columnName" -> "genCol",
             "expressionType" -> s".*${expressionTypeString}.*",
@@ -740,7 +740,7 @@ trait GeneratedColumnSuiteBase
           .write.format("delta").mode("append").saveAsTable(tbl)
       }
       checkError(e,
-        errorClass = "DELTA_NOT_NULL_CONSTRAINT_VIOLATED",
+        "DELTA_NOT_NULL_CONSTRAINT_VIOLATED",
         parameters = Map("columnName" -> "gen"))
 
       // Ensure the result is correct.

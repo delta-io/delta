@@ -34,7 +34,8 @@ import org.apache.spark.sql.connect.config.Connect
 import org.apache.spark.sql.connect.delta.ImplicitProtoConversions._
 import org.apache.spark.sql.connect.planner.{SparkConnectPlanner, SparkConnectPlanTest}
 import org.apache.spark.sql.connect.service.{SessionHolder, SparkConnectService}
-import org.apache.spark.sql.delta.{DeltaHistory, DeltaLog}
+import org.apache.spark.sql.delta.{DataFrameUtils, DeltaHistory, DeltaLog}
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.commands.{DescribeDeltaDetailCommand, DescribeDeltaHistory}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -126,7 +127,7 @@ class DeltaConnectPlannerSuite
           )
       )
       val plan = transform(input)
-      val result = Dataset.ofRows(spark, plan).collect()
+      val result = DataFrameUtils.ofRows(spark, plan).collect()
 
       assert(result.length === 1)
       val deltaTable = DeltaTable.forName(spark, result.head.getString(0))
@@ -155,7 +156,7 @@ class DeltaConnectPlannerSuite
           )
       )
       val plan = transform(input)
-      val result = Dataset.ofRows(spark, plan).collect()
+      val result = DataFrameUtils.ofRows(spark, plan).collect()
 
       assert(result.length === 1)
       val deltaTable = DeltaTable.forName(spark, result.head.getString(0))
@@ -202,7 +203,7 @@ class DeltaConnectPlannerSuite
           )
       )
       val plan = transform(input)
-      val result = Dataset.ofRows(spark, plan).collect()
+      val result = DataFrameUtils.ofRows(spark, plan).collect()
 
       assert(result.length === 1)
       val deltaTable = DeltaTable.forName(spark, result.head.getString(0))
@@ -284,7 +285,7 @@ class DeltaConnectPlannerSuite
 
       val plan = transform(input)
       assert(plan.columns.toSeq == expectedRestoreOutputColumns)
-      val result = Dataset.ofRows(spark, plan).collect()
+      val result = DataFrameUtils.ofRows(spark, plan).collect()
       assert(result.length === 1)
       assert(result.head.getLong(2) === 2) // Two files should have been removed.
       assert(spark.read.table("table").count() === 1000)
@@ -315,7 +316,7 @@ class DeltaConnectPlannerSuite
 
       val plan = transform(input)
       assert(plan.columns.toSeq === expectedRestoreOutputColumns)
-      val result = Dataset.ofRows(spark, plan).collect()
+      val result = DataFrameUtils.ofRows(spark, plan).collect()
       assert(result.length === 1)
       assert(result.head.getLong(2) === 2) // Two files should have been removed.
       assert(spark.read.format("delta").load(dir.getAbsolutePath).count() === 1000)
@@ -334,7 +335,7 @@ class DeltaConnectPlannerSuite
 
       val plan = transform(input)
       assert(plan.schema.length === 1)
-      val result = Dataset.ofRows(spark, plan).collect()
+      val result = DataFrameUtils.ofRows(spark, plan).collect()
       assert(result.length === 1)
       assert(result.head.getBoolean(0))
     }
@@ -352,7 +353,7 @@ class DeltaConnectPlannerSuite
 
       val plan = transform(input)
       assert(plan.schema.length === 1)
-      val result = Dataset.ofRows(spark, plan).collect()
+      val result = DataFrameUtils.ofRows(spark, plan).collect()
       assert(result.length === 1)
       assert(!result.head.getBoolean(0))
     }
@@ -372,7 +373,7 @@ class DeltaConnectPlannerSuite
       )
 
       val plan = transform(input)
-      val result = Dataset.ofRows(spark, plan).collect()
+      val result = DataFrameUtils.ofRows(spark, plan).collect()
       assert(result.length === 1)
       assert(result.head.getLong(0) === 1000)
       assert(spark.read.table(tableName).isEmpty)
@@ -394,7 +395,7 @@ class DeltaConnectPlannerSuite
       )
 
       val plan = transform(input)
-      val result = Dataset.ofRows(spark, plan).collect()
+      val result = DataFrameUtils.ofRows(spark, plan).collect()
       assert(result.length === 1)
       assert(result.head.getLong(0) === 500)
       assert(spark.read.table(tableName).count() === 500)
@@ -417,7 +418,7 @@ class DeltaConnectPlannerSuite
       )
 
       val plan = transform(input)
-      val result = Dataset.ofRows(spark, plan).collect()
+      val result = DataFrameUtils.ofRows(spark, plan).collect()
       assert(result.length === 1)
       assert(result.head.getLong(0) === 1000)
       checkAnswer(
@@ -444,7 +445,7 @@ class DeltaConnectPlannerSuite
       )
 
       val plan = transform(input)
-      val result = Dataset.ofRows(spark, plan).collect()
+      val result = DataFrameUtils.ofRows(spark, plan).collect()
       assert(result.length === 1)
       assert(result.head.getLong(0) === 500)
       checkAnswer(

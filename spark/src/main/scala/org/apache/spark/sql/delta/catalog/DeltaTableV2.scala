@@ -22,6 +22,8 @@ import java.{util => ju}
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 
+import org.apache.spark.sql.delta.ClassicColumnConversions._
+import org.apache.spark.sql.delta.DataFrameUtils
 import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumnInfo}
 import org.apache.spark.sql.delta.skipping.clustering.temp.ClusterBySpec
 import org.apache.spark.sql.delta._
@@ -312,7 +314,7 @@ class DeltaTableV2 private[delta](
       // Catalog based tables need a SubqueryAlias that carries their fully-qualified name
       SubqueryAlias(ct.identifier.nameParts, child)
     }
-    Dataset.ofRows(sparkSession, plan)
+    DataFrameUtils.ofRows(sparkSession, plan)
   }
 
   /** Creates a [[DataFrame]] that reads from this table */

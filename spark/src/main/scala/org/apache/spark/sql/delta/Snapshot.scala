@@ -368,7 +368,8 @@ class Snapshot(
 
   /** All unexpired tombstones. */
   def tombstones: Dataset[RemoveFile] = {
-    stateDS.where("remove IS NOT NULL").select(col("remove").as[RemoveFile])
+    // Temporary workarround for SPARK-51356.
+    stateDS.where("remove IS NOT NULL").map(_.remove)
   }
 
   def deltaFileSizeInBytes(): Long = deltaFileIndexOpt.map(_.sizeInBytes).getOrElse(0L)

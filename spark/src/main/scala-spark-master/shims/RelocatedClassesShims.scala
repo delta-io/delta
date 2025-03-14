@@ -16,17 +16,10 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.SparkThrowable
+import org.apache.spark.sql.classic.{SparkSession => SparkSessionImpl, DataFrameWriter => DataFrameWriterImpl}
 
-/**
- * The trait for all exceptions of Delta code path.
- */
-trait DeltaThrowable extends SparkThrowable with DeltaThrowableConditionShim {
-  // Portable error identifier across SQL engines
-  // If null, error class or SQLSTATE is not set
-  override def getSqlState: String =
-    DeltaThrowableHelper.getSqlState(this.getErrorClass.split('.').head)
-
-  // True if this error is an internal error.
-  override def isInternalError: Boolean = DeltaThrowableHelper.isInternalError(this.getErrorClass)
+object Relocated {
+  type SparkSession = SparkSessionImpl
+  def setActiveSession(session: SparkSession): Unit = SparkSessionImpl.setActiveSession(session)
+  val dataFrameWriterClassName = classOf[DataFrameWriterImpl[_]].getCanonicalName
 }

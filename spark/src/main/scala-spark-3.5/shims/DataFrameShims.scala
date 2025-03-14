@@ -13,20 +13,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.spark.sql.delta
 
-import org.apache.spark.SparkThrowable
+import org.apache.spark.sql.{Column, DataFrame, Dataset, Encoders, SparkSession}
+import org.apache.spark.sql.execution.QueryExecution
+import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 
-/**
- * The trait for all exceptions of Delta code path.
- */
-trait DeltaThrowable extends SparkThrowable with DeltaThrowableConditionShim {
-  // Portable error identifier across SQL engines
-  // If null, error class or SQLSTATE is not set
-  override def getSqlState: String =
-    DeltaThrowableHelper.getSqlState(this.getErrorClass.split('.').head)
-
-  // True if this error is an internal error.
-  override def isInternalError: Boolean = DeltaThrowableHelper.isInternalError(this.getErrorClass)
+object DataFrameUtils {
+  def ofRows(spark: SparkSession, plan: LogicalPlan): DataFrame = Dataset.ofRows(spark, plan)
+  def ofRows(queryExecution: QueryExecution): DataFrame = {
+    val ds = new Dataset(queryExecution, Encoders.row(queryExecution.analyzed.schema))
+    ds.asInstanceOf[DataFrame]
+  }
 }
