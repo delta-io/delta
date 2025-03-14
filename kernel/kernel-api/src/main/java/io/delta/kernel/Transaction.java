@@ -62,11 +62,11 @@ public interface Transaction {
   List<String> getPartitionColumns(Engine engine);
 
   /**
-   * Gets the latest version used as the base of this transaction.
+   * Gets the latest version of the table used as the base of this transaction.
    *
    * @return The version of the table as of the beginning of this Transaction
    */
-  long getCommitBaseVersion();
+  long getReadTableVersion();
 
   /**
    * Get the state of the transaction. The state helps Kernel do the transformations to logical data

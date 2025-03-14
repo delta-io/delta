@@ -142,7 +142,7 @@ public class TransactionImpl implements Transaction {
   }
 
   @Override
-  public long getCommitBaseVersion() {
+  public long getReadTableVersion() {
     return readSnapshot.getVersion();
   }
 
