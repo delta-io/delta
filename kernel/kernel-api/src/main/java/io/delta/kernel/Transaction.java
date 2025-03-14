@@ -108,7 +108,7 @@ public interface Transaction {
    * @param domain the domain identifier
    * @param config configuration string for this domain
    */
-  void withDomainMetadata(String domain, String config);
+  void addDomainMetadata(String domain, String config);
 
   /**
    * Mark the domain metadata with identifier {@code domain} as removed in this transaction. If this
@@ -118,7 +118,7 @@ public interface Transaction {
    *
    * @param domain the domain identifier for the domain to remove
    */
-  void withDomainMetadataRemoved(String domain);
+  void removeDomainMetadata(String domain);
 
   /**
    * Given the logical data that needs to be written to the table, convert it into the required
