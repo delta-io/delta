@@ -451,94 +451,99 @@ trait CloneIcebergSuiteBase extends QueryTest
   }
 
   testClone("Convert Iceberg date stats from int to date string") { mode =>
-    withTable(table, cloneTable) {
-      // Create Iceberg table with date type
-      spark.sql(
-        s"""CREATE TABLE $table (col1 int, col2 date)
-           | USING iceberg""".stripMargin)
-      // Write into Iceberg table
-      // scalastyle:off deltahadoopconfiguration
-      val hadoopTables = new HadoopTables(spark.sessionState.newHadoopConf())
-      // scalastyle:on deltahadoopconfiguration
-      val icebergTable = hadoopTables.load(tablePath)
-      val icebergTableSchema =
-        IcebergSparkSchemaUtil.convert(icebergTable.schema())
-      val df = spark.createDataFrame(
-        Seq(
-          Row(1, toDate("2015-01-25"))
-        ).asJava,
-        icebergTableSchema)
-      df.writeTo(table).append()
+    withSQLConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_STATS.key-> "true") {
+      withTable(table, cloneTable) {
+        // Create Iceberg table with date type
+        spark.sql(
+          s"""CREATE TABLE $table (col1 int, col2 date)
+             | USING iceberg""".stripMargin)
+        // Write into Iceberg table
+        // scalastyle:off deltahadoopconfiguration
+        val hadoopTables = new HadoopTables(spark.sessionState.newHadoopConf())
+        // scalastyle:on deltahadoopconfiguration
+        val icebergTable = hadoopTables.load(tablePath)
+        val icebergTableSchema =
+          IcebergSparkSchemaUtil.convert(icebergTable.schema())
+        val df = spark.createDataFrame(
+          Seq(
+            Row(1, toDate("2015-01-25"))
+          ).asJava,
+          icebergTableSchema)
+        df.writeTo(table).append()
 
-      // Create cloned table
-      runCreateOrReplace(mode, sourceIdentifier)
-      checkAnswer(spark.table(cloneTable), df)
-      // Check stats of cloned table
-      val deltaLog = DeltaLog.forTable(
-        spark,
-        spark.sessionState.catalog.getTableMetadata(TableIdentifier(cloneTable))
-      )
-      val snapshot = deltaLog.unsafeVolatileSnapshot
-      snapshot.allFiles.collectAsList().iterator().asScala.foreach { f =>
-        val parsedStats = JsonUtils.fromJson[DeltaStatsClass](
-          f.stats
+        // Create cloned table
+        runCreateOrReplace(mode, sourceIdentifier)
+        checkAnswer(spark.table(cloneTable), df)
+        // Check stats of cloned table
+        val deltaLog = DeltaLog.forTable(
+          spark,
+          spark.sessionState.catalog.getTableMetadata(TableIdentifier(cloneTable))
         )
-        assert(parsedStats.numRecords == 1)
-        assert(parsedStats.minValues("col2") == "2015-01-25")
-        assert(parsedStats.maxValues("col2") == "2015-01-25")
+        val snapshot = deltaLog.unsafeVolatileSnapshot
+        snapshot.allFiles.collectAsList().iterator().asScala.foreach { f =>
+          val parsedStats = JsonUtils.fromJson[DeltaStatsClass](
+            f.stats
+          )
+          assert(parsedStats.numRecords == 1)
+          assert(parsedStats.minValues("col2") == "2015-01-25")
+          assert(parsedStats.maxValues("col2") == "2015-01-25")
+        }
+        // Check state-reconstruction stats
+        val analyzedDf = deltaLog.update().withStatsDeduplicated.queryExecution.analyzed.toString
+        val statsCol = if (analyzedDf.contains("stats_parsed")) "stats_parsed" else "stats"
+        val stats = snapshot.withStats.select(statsCol)
+        assert(stats.select(s"$statsCol.minValues.col2").collect().head
+          .getDate(0).toString == "2015-01-25")
+        assert(stats.select(s"$statsCol.maxValues.col2").collect().head
+          .getDate(0).toString == "2015-01-25")
       }
-      // Check state-reconstruction stats
-      val statsCol = "stats_parsed"
-      val stats = snapshot.withStats.select(statsCol)
-      assert(stats.select(s"$statsCol.minValues.col2").collect().head
-        .getDate(0).toString == "2015-01-25")
-      assert(stats.select(s"$statsCol.maxValues.col2").collect().head
-        .getDate(0).toString == "2015-01-25")
     }
   }
 
   testClone("DataSkipping on date type") { mode =>
-    withTable(table, cloneTable) {
-      // Create Iceberg table with date type
-      spark.sql(
-        s"""CREATE TABLE $table (col1 int, col2 date)
-           | USING iceberg PARTITIONED BY (col2)""".stripMargin)
-      // Write into Iceberg table
-      // scalastyle:off deltahadoopconfiguration
-      val hadoopTables = new HadoopTables(spark.sessionState.newHadoopConf())
-      // scalastyle:on deltahadoopconfiguration
-      val icebergTable = hadoopTables.load(tablePath)
-      val icebergTableSchema =
-        IcebergSparkSchemaUtil.convert(icebergTable.schema())
+    withSQLConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_STATS.key-> "true") {
+      withTable(table, cloneTable) {
+        // Create Iceberg table with date type
+        spark.sql(
+          s"""CREATE TABLE $table (col1 int, col2 date)
+             | USING iceberg PARTITIONED BY (col2)""".stripMargin)
+        // Write into Iceberg table
+        // scalastyle:off deltahadoopconfiguration
+        val hadoopTables = new HadoopTables(spark.sessionState.newHadoopConf())
+        // scalastyle:on deltahadoopconfiguration
+        val icebergTable = hadoopTables.load(tablePath)
+        val icebergTableSchema =
+          IcebergSparkSchemaUtil.convert(icebergTable.schema())
 
-      val df = spark.createDataFrame(
-        Seq(
-          Row(1, toDate("2015-01-25")),
-          Row(2, toDate("1917-02-10")),
-          Row(3, toDate("2050-06-23"))
-        ).asJava,
-        icebergTableSchema)
-      df.writeTo(table).append()
-      runCreateOrReplace(mode, sourceIdentifier)
-      // Check read results
-      checkAnswer(spark.table(cloneTable), df)
-      // Check data skipping - 1
-      val deltaLog = DeltaLog.forTable(
-        spark,
-        spark.sessionState.catalog.getTableMetadata(TableIdentifier(cloneTable))
-      )
-      val predicate1 = "col2 > '2030-01-25'"
-      val filesRead1 =
-        getFilesRead(spark, deltaLog, predicate1, checkEmptyUnusedFilters = false)
-      assert(filesRead1.size == 1)
-      assert(filesRead1.head.partitionValues.head._2 == "2050-06-23")
-      checkAnswer(spark.sql(s"select * from $cloneTable where $predicate1"), df.where(predicate1))
-      // Check data skipping - 2
-      val predicate2 = "col2 < '1917-02-11'"
-      val filesRead2 =
-        getFilesRead(spark, deltaLog, predicate2, checkEmptyUnusedFilters = false)
-      assert(filesRead2.head.partitionValues.head._2 == "1917-02-10")
-      checkAnswer(spark.sql(s"select * from $cloneTable where $predicate2"), df.where(predicate2))
+        val df = spark.createDataFrame(
+          Seq(
+            Row(1, toDate("2015-01-25")),
+            Row(2, toDate("1917-02-10")),
+            Row(3, toDate("2050-06-23"))
+          ).asJava,
+          icebergTableSchema)
+        df.writeTo(table).append()
+        runCreateOrReplace(mode, sourceIdentifier)
+        // Check read results
+        checkAnswer(spark.table(cloneTable), df)
+        // Check data skipping - 1
+        val deltaLog = DeltaLog.forTable(
+          spark,
+          spark.sessionState.catalog.getTableMetadata(TableIdentifier(cloneTable))
+        )
+        val predicate1 = "col2 > '2030-01-25'"
+        val filesRead1 =
+          getFilesRead(spark, deltaLog, predicate1, checkEmptyUnusedFilters = false)
+        assert(filesRead1.size == 1)
+        assert(filesRead1.head.partitionValues.head._2 == "2050-06-23")
+        checkAnswer(spark.sql(s"select * from $cloneTable where $predicate1"), df.where(predicate1))
+        // Check data skipping - 2
+        val predicate2 = "col2 < '1917-02-11'"
+        val filesRead2 =
+          getFilesRead(spark, deltaLog, predicate2, checkEmptyUnusedFilters = false)
+        assert(filesRead2.head.partitionValues.head._2 == "1917-02-10")
+        checkAnswer(spark.sql(s"select * from $cloneTable where $predicate2"), df.where(predicate2))
+      }
     }
   }
 }
