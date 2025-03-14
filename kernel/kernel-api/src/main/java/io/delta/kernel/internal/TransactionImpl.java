@@ -149,6 +149,7 @@ public class TransactionImpl implements Transaction {
     checkArgument(
         !domainMetadatasRemoved.contains(domain),
         "Cannot add a domain that is removed in this transaction");
+    checkState(!closed, "Cannot add a domain metadata after the transaction has completed");
     // we override any existing value
     domainMetadatasAdded.put(domain, new DomainMetadata(domain, config, false /* removed */));
   }
@@ -168,6 +169,7 @@ public class TransactionImpl implements Transaction {
     checkArgument(
         !domainMetadatasAdded.containsKey(domain),
         "Cannot remove a domain that is added in this transaction");
+    checkState(!closed, "Cannot remove a domain after the transaction has completed");
     domainMetadatasRemoved.add(domain);
   }
 

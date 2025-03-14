@@ -610,8 +610,8 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
     }
   }
 
-  test("basic txnBuilder.withDomainMetadata API tests") {
-    // withDomainMetadata is tested thoroughly elsewhere in this suite, here we just test API
+  test("basic txn.addDomainMetadata API tests") {
+    // addDomainMetadata is tested thoroughly elsewhere in this suite, here we just test API
     // specific behaviors
 
     withTempDirAndEngine { (tablePath, engine) =>
@@ -639,8 +639,22 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
     }
   }
 
-  test("basic txnBuilder.withDomainMetadataRemoved API tests") {
-    // withDomainMetadataRemoved is tested thoroughly elsewhere in this suite, here we just test API
+  test("updating domain metadata fails after transaction committed") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val txn = createTxn(engine, tablePath, isNewTable = true, testSchema, Seq.empty)
+      txn.commit(engine, emptyIterable())
+
+      intercept[IllegalStateException] {
+        txn.addDomainMetadata("domain", "config")
+      }
+      intercept[IllegalStateException] {
+        txn.removeDomainMetadata("domain")
+      }
+    }
+  }
+
+  test("basic txn.removeDomainMetadata API tests") {
+    // removeDomainMetadata is tested thoroughly elsewhere in this suite, here we just test API
     // specific behaviors
 
     withTempDirAndEngine { (tablePath, engine) =>
@@ -675,7 +689,7 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
     }
   }
 
-  test("txnBuilder.withDomainMetadataRemoved removing a non-existent domain") {
+  test("txn.removeDomainMetadata removing a non-existent domain") {
     // Remove domain that does not exist and has never existed
     withTempDirAndEngine { (tablePath, engine) =>
       createTableWithDomainMetadataSupported(engine, tablePath)
@@ -783,18 +797,6 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
         val txn = createWriteTxnBuilder(Table.forPath(engine, tablePath))
           .build(engine)
         txn.removeDomainMetadata("foo")
-      }
-    }
-  }
-
-  test("removing a domain on a table that doesn't have that domain") {
-    withTempDirAndEngine { (tablePath, engine) =>
-      createTableWithDomainMetadataSupported(engine, tablePath)
-      val txn = createWriteTxnBuilder(Table.forPath(engine, tablePath))
-        .build(engine)
-      txn.removeDomainMetadata("foo")
-      intercept[DomainDoesNotExistException] {
-        txn.commit(engine, emptyIterable())
       }
     }
   }
