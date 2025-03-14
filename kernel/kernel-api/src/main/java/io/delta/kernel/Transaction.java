@@ -95,16 +95,6 @@ public interface Transaction {
    * not allowed). Adding and removing a domain with the same identifier in the same txn is not
    * allowed.
    *
-   * <p>See the Delta protocol for more information on how to use domain metadata <a
-   * href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#domain-metadata">Domain
-   * Metadata</a>.
-   *
-   * <p>Please note using this API will automatically upgrade the protocol of the table to support
-   * Domain Metadata if it is not already supported. See <a
-   * href="https://docs.delta.io/latest/versioning.html#how-does-delta-lake-manage-feature-compatibility">
-   * How does Delta Lake manage feature compatibility?</a> for more details. This may break existing
-   * writers that do not support the Domain Metadata feature; readers will be unaffected.
-   *
    * @param domain the domain identifier
    * @param config configuration string for this domain
    */

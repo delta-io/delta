@@ -93,8 +93,16 @@ public interface TransactionBuilder {
   TransactionBuilder withMaxRetries(int maxRetries);
 
   /**
-   * Specifies that this Transaction may have domainMetadata. If domainMetadata is not enabled, and
-   * one is provided, that will produce an error.
+   * Enables support for Domain Metadata on this table if it is not supported already. The table
+   * feature _must_ be supported on the table to add or remove domain metadata. See <a
+   * href="https://docs.delta.io/latest/versioning.html#how-does-delta-lake-manage-feature-compatibility">
+   * How does Delta Lake manage feature compatibility?</a> for more details on table feature
+   * support.
+   *
+   * <p>See the Delta protocol for more information on how to use domain metadata <a
+   * href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#domain-metadata">Domain
+   * Metadata</a>. This may break existing writers that do not support the Domain Metadata feature;
+   * readers will be unaffected.
    */
   TransactionBuilder withDomainMetadata();
 

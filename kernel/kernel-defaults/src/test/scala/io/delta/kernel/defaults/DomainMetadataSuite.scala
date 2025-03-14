@@ -774,17 +774,6 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
     }
   }
 
-  /* --------------- Automatic upgrade table feature tests -------------- */
-
-  private def verifyDomainMetadataFeatureSupport(
-      engine: Engine,
-      tablePath: String,
-      isSupported: Boolean = true): Unit = {
-    val snapshotImpl = Table.forPath(engine, tablePath).getLatestSnapshot(engine)
-      .asInstanceOf[SnapshotImpl]
-    assert(TableFeatures.isDomainMetadataSupported(snapshotImpl.getProtocol) == isSupported)
-  }
-
   test("removing a domain on a table without DomainMetadata support") {
     withTempDirAndEngine { (tablePath, engine) =>
       // Create table with legacy protocol
@@ -794,6 +783,18 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
         val txn = createWriteTxnBuilder(Table.forPath(engine, tablePath))
           .build(engine)
         txn.removeDomainMetadata("foo")
+      }
+    }
+  }
+
+  test("removing a domain on a table that doesn't have that domain") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createTableWithDomainMetadataSupported(engine, tablePath)
+      intercept[DomainDoesNotExistException] {
+        val txn = createWriteTxnBuilder(Table.forPath(engine, tablePath))
+          .build(engine)
+        txn.removeDomainMetadata("foo")
+        txn.commit(engine, emptyIterable())
       }
     }
   }
