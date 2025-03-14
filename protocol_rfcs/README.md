@@ -23,6 +23,7 @@ Here is the history of all the RFCs propose/accepted/rejected since Feb 6, 2024,
 | 2023-02-26    | [column-mapping-usage.tracking.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/column-mapping-usage-tracking.md) | https://github.com/delta-io/delta/issues/2682 | Column Mapping Usage Tracking          |
 | 2023-04-24    | [variant-type.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/variant-type.md)                                   | https://github.com/delta-io/delta/issues/2864 | Variant Data Type                      |
 | 2024-04-30    | [collated-string-type.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/collated-string-type.md)                   | https://github.com/delta-io/delta/issues/2894 | Collated String Type                   |
+| 2025-01-30    | [table-redirect.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/table-redirect.md)                   | https://github.com/delta-io/delta/issues/3705 | Table Redirect
 
 ### Accepted RFCs
 
@@ -50,6 +51,7 @@ Create a Github issue of type [Protocol Change Request].
 After creating the issue and discussing with the community, if a basic consensus is reached that this feature should be implemented, then create a PR to add the protocol RFC before merging code in master.
 - Clone the RFC template `template.md` and create a new RFC markdown doc.
 - Cross-link with the issue with "see #xxx". DONT USE "closes #xxx" or "fixes #xxx" or "resolves #xxx" because we don't want the issue to be closed when this RFC PR is merged.
+- Update the [Proposed RFCs](#proposed-rfcs) table.
 
 Note:
 - For table features, it is strongly recommended that any experimental support for the feature uses a temporary feature name with a suffix like `-dev`. This will communicate to the users that are about to use experimental feature with no future compatibility guarantee.

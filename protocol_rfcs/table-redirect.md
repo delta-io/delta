@@ -6,12 +6,13 @@ This RFC proposes a new kind of features called "redirection" for Delta tables. 
 ## Terminology:
 * Modern Delta clients: These are Delta clients that are compatible with the latest Delta protocol and support the redirection feature.
 * Legacy Delta clients: These refer to Delta clients that do not support the redirection feature, as they are not up-to-date with the latest Delta protocol.
-* Redirect Source Table: The source Delta table that is redirected to a new storage location.
+* Redirect Source Table: The source Delta table that is redirected to a new storage location. The redirect table feature is added to this source table.
 * Redirect Destination Table: The Delta table that is created as a redirected table of an existing source table. Any access to the redirect source table would be dispatched to this redirect destination table.
 ## Overview
 The proposal includes two distinct table features:
 * **RedirectReaderWriter**: This feature enables both read and write operations to be redirected from the source to the destination for Modern Delta clients. It blocks all read and write operations from Legacy Delta clients.
 * **RedirectWriterOnly**: This feature allows Modern Delta clients to redirect both read and write operations from the source to the destination. However, for Legacy Delta clients, it only blocks write operations while permitting read operations from the source tables.
+Both of these two features updates the table redirect property to both source and destination tables. Both source and destination table should be upgraded to support this table feature.
 
 --------
 ## Redirection Feature Description
@@ -25,8 +26,8 @@ The Redirection feature provides a redirect type for the Modern Delta clients to
 * **State**: This value indicates the status of the redirect table. It has three possible values: **ENABLE-REDIRECT-IN-PROGRESS**, **READY** and **DROP-REDIRECT-IN-PROGRESS**.
 	* **ENABLE-REDIRECT-IN-PROGRESS**: This state indicates that the redirect process is still going on. The modern delta client can still read the table on the redirect source table but can't write data to the table. This state also accepts the transaction that updates the value of "delta.redirectReaderWriter" and "delta.redirectWriterOnly".
 	* **READY**: This state indicates that the redirect process is completed and the modern delta client can read and write the table. Both table-based and path-based read and write statements are redirected to the destination table.
-	* **DROP-REDIRECT-IN-PROGRESS**: The table redirection is under withdrawal and the redirection property is going to be removed from the delta table. In this state, the modern delta client stops redirecting new queries to redirect destination tables, and only accepts read-only queries to access the redirect source table. The on-going redirected write or metadata transactions, which are visiting redirect destinations, can not commit. This state accepts the transaction that updates the value of "delta.redirectReaderWriter" and "delta.redirectWriterOnly".
-	* Concurrent write transactions are aborted using the existing conflict checker mechanism. Therefore, state transitions should commit to both the redirect source and destination tables. This ensures that the Delta table's conflict checker can automatically manage concurrent write transactions.
+	* **DROP-REDIRECT-IN-PROGRESS**: The table redirection is under withdrawal and the redirection property is going to be removed from the delta table. In this state, the modern delta client stops redirecting new queries to redirect destination tables, and only accepts read-only queries to access the redirect source table. The on-going redirected write or metadata transactions, which are visiting redirect destinations, can not commit. This state accepts the transaction that updates the value of "delta.redirectReaderWriter" and "delta.redirectWriterOnly" properties.
+	* Concurrent write transactions are aborted using the existing conflict checker mechanism. When the concurrent write transactions updates table in **ENABLE-REDIRECT-IN-PROGRESS** or **DROP-REDIRECT-IN-PROGRESS** state, the commit conflict checking procedure would know the table is in uncommittable state, and these write transactions would abort themselves. Therefore, state transitions should commit to both the redirect source and destination tables. This ensures that the Delta table's conflict checker can automatically manage concurrent write transactions.
 
 * **Spec**: It is a free form JSON object that describes the information of accessing the redirected destination table. Its value is determined by the Type attribute, so each delta vendor should implement their own implementation of this JSON object. We describe the JSON definitions of a Unity Catalog table and an object store table without any catalog below as examples.
 	* Unity Catalog Table:
@@ -56,7 +57,7 @@ The Redirection feature provides a redirect type for the Modern Delta clients to
 ```
 
 * **NoRedirectRules**: This attribute contains a list of rules for allowing transactions on the redirect source table. It allows maintenance workloads to run on the redirect source tables, for instance, the REFRESH UNIFORM and VACUUM command on the redirect source table. Each rule includes two attributes:
-	* **AppName**: This is the name of the applications that are allowed to execute commands on the redirect source table. When the sessions with these AppName try to access the redirected table, the modern delta client disables table redirection and their queries would be run on the redirect source table.
+	* **AppName**: This is the name of the applications that are allowed to execute commands on the redirect source table. When a session with this AppName tries to access the redirected table, the modern delta client disables table redirection and their queries would be run on the redirect source table.
 	* **AllowWrite**: This field contains the list of delta write operations that are allowed to execute on the redirect source table.
 
 ### Enable & Disable Procedure
