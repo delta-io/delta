@@ -1368,7 +1368,7 @@ case class DeltaSource(
             // check is skipped, so this is technically not safe, but we keep it this way for
             // historical reasons.
             deltaLog.history.checkVersionExists(
-              version, mustBeRecreatable = false, allowOutOfRange)
+              version, catalogTableOpt = None, mustBeRecreatable = false, allowOutOfRange)
           }
           version
       }
@@ -1452,6 +1452,7 @@ object DeltaSource extends DeltaLogging {
     val tz = spark.sessionState.conf.sessionLocalTimeZone
     val commit = deltaLog.history.getActiveCommitAtTime(
       timestamp,
+      catalogTableOpt = None,
       canReturnLastCommit = true,
       mustBeRecreatable = false,
       canReturnEarliestCommit = true)
