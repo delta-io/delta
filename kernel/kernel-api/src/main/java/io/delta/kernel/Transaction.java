@@ -93,9 +93,7 @@ public interface Transaction {
    * once with the same {@code domain} the latest provided {@code config} will be committed in the
    * transaction. Only user-controlled domains are allowed (aka. domains with a `delta.` prefix are
    * not allowed). Adding and removing a domain with the same identifier in the same txn is not
-   * allowed.
-   *
-   * Adding domain metadata to a table that does not support the table feature is not allowed.
+   * allowed. Adding domain metadata to a table that does not support the table feature is not allowed.
    * To enable the table feature, make sure to call {@link TransactionBuilder#withDomainMetadataSupported}
    *
    * @param domain the domain identifier
