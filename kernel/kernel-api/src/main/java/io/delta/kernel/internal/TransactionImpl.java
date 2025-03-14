@@ -190,7 +190,7 @@ public class TransactionImpl implements Transaction {
    * tombstones for the domain metadatas removed in the transaction using {@link
    * Transaction#removeDomainMetadata(String)}. The result is stored in {@code domainMetadatas}.
    *
-   * @return {@link List<DomainMetadata>} containing domain metadata to be committed in this
+   * @return A list of {@link DomainMetadata} containing domain metadata to be committed in this
    *     transaction.
    */
   public List<DomainMetadata> getDomainMetadatas() {
