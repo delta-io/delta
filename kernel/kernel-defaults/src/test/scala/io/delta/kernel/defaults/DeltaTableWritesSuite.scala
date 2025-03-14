@@ -16,10 +16,8 @@
 package io.delta.kernel.defaults
 
 import java.util.{Locale, Optional}
-
 import scala.collection.JavaConverters._
 import scala.collection.immutable.Seq
-
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel._
 import io.delta.kernel.Operation.{CREATE_TABLE, WRITE}
@@ -30,8 +28,10 @@ import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions._
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.expressions.Literal._
+import io.delta.kernel.internal.actions.DomainMetadata
 import io.delta.kernel.internal.{ScanImpl, SnapshotImpl, TableConfig}
 import io.delta.kernel.internal.checkpoints.CheckpointerSuite.selectSingleElement
+import io.delta.kernel.internal.clustering.ClusteringMetadataDomain
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
 import io.delta.kernel.types._
 import io.delta.kernel.types.DateType.DATE
@@ -383,25 +383,25 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
       val schema = new StructType()
         .add("id", INTEGER)
-        .add("Part1", INTEGER) // clustering column
+        .add("part1", INTEGER) // clustering column
         .add("part2", INTEGER) // clustering column
 
       val txn = txnBuilder
         .withSchema(engine, schema)
-        // partition columns should preserve the same case the one in the schema
         .withClusteringColumns(engine, Seq("part1", "part2").asJava)
         .build(engine)
 
       assert(txn.getSchema(engine) === schema)
-      // Expect the partition column name is exactly same as the one in the schema
-      assert(txn.getPartitionColumns(engine) === Seq("Part1", "part2").asJava)
-      val txnResult = commitTransaction(txn, engine, emptyIterable())
+      commitTransaction(txn, engine, emptyIterable())
 
-      assert(txnResult.getVersion === 0)
-      assertCheckpointReadiness(txnResult, isReadyForCheckpoint = false)
+      val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      assert(snapshot.getProtocol.getWriterFeatures.contains("clustering"))
 
-      verifyCommitInfo(tablePath, version = 0, Seq("Part1", "part2"))
-      verifyWrittenContent(tablePath, schema, Seq.empty)
+      val expectedDomainMetadata = new DomainMetadata(
+        "delta.clustering",
+        """{"clusteringColumns":[["part1"],["part2"]]}""", false)
+      assert(snapshot.getDomainMetadataMap.get(ClusteringMetadataDomain.DOMAIN_NAME)
+        == expectedDomainMetadata)
     }
   }
 

@@ -61,7 +61,8 @@ class TableFeaturesSuite extends AnyFunSuite {
     "rowTracking",
     "domainMetadata",
     "icebergCompatV2",
-    "inCommitTimestamp")
+    "inCommitTimestamp",
+    "clustering")
 
   val legacyFeatures = Seq(
     "appendOnly",
@@ -166,7 +167,7 @@ class TableFeaturesSuite extends AnyFunSuite {
     }
   })
 
-  Seq("domainMetadata", "vacuumProtocolCheck").foreach { feature =>
+  Seq("domainMetadata", "vacuumProtocolCheck", "clustering").foreach { feature =>
     test(s"doesn't support auto enable by metadata: $feature") {
       val tableFeature = TableFeatures.getTableFeature(feature)
       assert(!tableFeature.isInstanceOf[FeatureAutoEnabledByMetadata])
@@ -227,7 +228,8 @@ class TableFeaturesSuite extends AnyFunSuite {
       "generatedColumns",
       "changeDataFeed",
       "timestampNtz",
-      "identityColumns")
+      "identityColumns",
+      "clustering")
 
     assert(results.map(_.featureName()).toSet == expected.toSet)
   }
@@ -531,6 +533,11 @@ class TableFeaturesSuite extends AnyFunSuite {
     testMetadata())
 
   checkWriteSupported(
+    "validateKernelCanWriteToTable: protocol 7 with clustering",
+    new Protocol(3, 7, emptySet(), singleton("clustering")),
+    testMetadata())
+
+  checkWriteSupported(
     "validateKernelCanWriteToTable: protocol 7 with rowTracking",
     new Protocol(3, 7, emptySet(), singleton("rowTracking")),
     testMetadata())
@@ -557,7 +564,7 @@ class TableFeaturesSuite extends AnyFunSuite {
       3,
       7,
       Set("v2Checkpoint", "columnMapping").asJava,
-      Set("v2Checkpoint", "columnMapping", "rowTracking", "domainMetadata").asJava),
+      Set("v2Checkpoint", "columnMapping", "rowTracking", "domainMetadata", "clustering").asJava),
     testMetadata(tblProps = Map(
       "delta.checkpointPolicy" -> "v2",
       "delta.columnMapping.mode" -> "id",
