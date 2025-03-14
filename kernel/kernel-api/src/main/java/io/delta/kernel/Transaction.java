@@ -95,6 +95,9 @@ public interface Transaction {
    * not allowed). Adding and removing a domain with the same identifier in the same txn is not
    * allowed.
    *
+   * Adding domain metadata to a table that does not support the table feature is not allowed.
+   * To enable the table feature, make sure to call {@link TransactionBuilder#withDomainMetadataSupported}
+   *
    * @param domain the domain identifier
    * @param config configuration string for this domain
    */
@@ -102,8 +105,8 @@ public interface Transaction {
 
   /**
    * Mark the domain metadata with identifier {@code domain} as removed in this transaction. If this
-   * domain does not exist in the latest version of the table will throw a {@link
-   * DomainDoesNotExistException} upon calling {@link TransactionBuilder#build(Engine)}. Adding and
+   * domain does not exist in the latest version of the table, calling
+   * {@link Transaction#commit(Engine, CloseableIterable)} will throw a {@link DomainDoesNotExistException}. Adding and
    * removing a domain with the same identifier in one txn is not allowed.
    *
    * @param domain the domain identifier for the domain to remove

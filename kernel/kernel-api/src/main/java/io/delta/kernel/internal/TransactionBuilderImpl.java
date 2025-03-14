@@ -115,7 +115,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   }
 
   @Override
-  public TransactionBuilder withDomainMetadata() {
+  public TransactionBuilder withDomainMetadataSupported() {
     needDomainMetadataSupport = true;
     return this;
   }

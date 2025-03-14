@@ -104,7 +104,7 @@ public interface TransactionBuilder {
    * Metadata</a>. This may break existing writers that do not support the Domain Metadata feature;
    * readers will be unaffected.
    */
-  TransactionBuilder withDomainMetadata();
+  TransactionBuilder withDomainMetadataSupported();
 
   /**
    * Build the transaction. Also validates the given info to ensure that a valid transaction can be

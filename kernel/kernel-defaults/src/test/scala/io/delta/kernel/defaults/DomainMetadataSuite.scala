@@ -74,7 +74,7 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
 
     val txnBuilder = createWriteTxnBuilder(TableImpl.forPath(engine, tablePath))
     if (domainMetadatas.nonEmpty && !useInternalApi) {
-      txnBuilder.withDomainMetadata()
+      txnBuilder.withDomainMetadataSupported()
     }
     val txn = txnBuilder.build(engine).asInstanceOf[TransactionImpl]
 
