@@ -185,7 +185,7 @@ public class TransactionImpl implements Transaction {
           // ambiguity. The snapshot read by the connector is inconsistent with the snapshot
           // loaded here as the domain to remove no longer exists.
           throw new DomainDoesNotExistException(
-              this.dataPath.toString(), domainName, readSnapshot.getVersion());
+              readSnapshot.getDataPath().toString(), domainName, readSnapshot.getVersion());
         }
         finalDomainMetadatas.add(domainToRemove.removed());
       } else {
@@ -198,7 +198,7 @@ public class TransactionImpl implements Transaction {
         // Conflict resolution should fail but since the domain does not exist we cannot create
         // a tombstone to mark it as removed and correctly perform conflict resolution.
         throw new DomainDoesNotExistException(
-            this.dataPath.toString(), domainName, readSnapshot.getVersion());
+            readSnapshot.getDataPath().toString(), domainName, readSnapshot.getVersion());
       }
     }
     domainMetadatas = Optional.of(finalDomainMetadatas);
