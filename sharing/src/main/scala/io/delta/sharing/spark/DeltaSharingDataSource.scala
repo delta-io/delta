@@ -408,9 +408,10 @@ private[sharing] class DeltaSharingDataSource
     HadoopFsRelation(
       location = fileIndex,
       // This is copied from DeltaLog.buildHadoopFsRelationWithFileIndex.
-      // Dropping delta metadata because it is not relevant for partition schema.
-      partitionSchema =
-        TahoeDeltaTableUtils.removeInternalDeltaMetadata(spark, fileIndex.partitionSchema),
+      // Dropping column mapping metadata because it is not relevant for partition schema.
+      partitionSchema = TahoeDeltaTableUtils.removeInternalDeltaMetadata(
+        spark, TahoeDeltaTableUtils.removeInternalWriterMetadata(spark, fileIndex.partitionSchema)
+      ),
       // This is copied from DeltaLog.buildHadoopFsRelationWithFileIndex, original comment:
       // We pass all table columns as `dataSchema` so that Spark will preserve the partition
       // column locations. Otherwise, for any partition columns not in `dataSchema`, Spark would

@@ -22,7 +22,10 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Preconditions.checkState;
 import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
 
-import io.delta.kernel.*;
+import io.delta.kernel.Meta;
+import io.delta.kernel.Operation;
+import io.delta.kernel.Transaction;
+import io.delta.kernel.TransactionCommitResult;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.ConcurrentWriteException;
@@ -42,6 +45,11 @@ import io.delta.kernel.internal.replay.ConflictChecker.TransactionRebaseState;
 import io.delta.kernel.internal.rowtracking.RowTracking;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.*;
+import io.delta.kernel.internal.util.Clock;
+import io.delta.kernel.internal.util.ColumnMapping;
+import io.delta.kernel.internal.util.FileNames;
+import io.delta.kernel.internal.util.InCommitTimestampUtils;
+import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.metrics.TransactionMetricsResult;
 import io.delta.kernel.metrics.TransactionReport;
 import io.delta.kernel.types.StructType;
@@ -113,7 +121,14 @@ public class TransactionImpl implements Transaction {
 
   @Override
   public Row getTransactionState(Engine engine) {
-    return TransactionStateRow.of(metadata, dataPath.toString());
+    ColumnMapping.ColumnMappingMode mappingMode =
+        ColumnMapping.getColumnMappingMode(metadata.getConfiguration());
+    StructType basePhysicalSchema = metadata.getSchema();
+    StructType physicalSchema =
+        ColumnMapping.convertToPhysicalSchema(
+            metadata.getSchema(), basePhysicalSchema, mappingMode);
+
+    return TransactionStateRow.of(metadata, dataPath.toString(), physicalSchema);
   }
 
   @Override
@@ -375,11 +390,6 @@ public class TransactionImpl implements Transaction {
     List<Row> metadataActions = new ArrayList<>();
     metadataActions.add(createCommitInfoSingleAction(attemptCommitInfo.toRow()));
     if (shouldUpdateMetadata || isNewTable) {
-      this.metadata =
-          ColumnMapping.updateColumnMappingMetadata(
-              metadata,
-              ColumnMapping.getColumnMappingMode(metadata.getConfiguration()),
-              isNewTable);
       metadataActions.add(createMetadataSingleAction(metadata.toRow()));
     }
     if (shouldUpdateProtocol || isNewTable) {
@@ -558,12 +568,37 @@ public class TransactionImpl implements Transaction {
   /**
    * Get the part of the schema of the table that needs the statistics to be collected per file.
    *
-   * @param engine {@link Engine} instance to use.
-   * @param transactionState State of the transaction
+   * @param transactionState State of the transaction.
    * @return
    */
-  public static List<Column> getStatisticsColumns(Engine engine, Row transactionState) {
-    // TODO: implement this once we start supporting collecting stats
-    return Collections.emptyList();
+  public static List<Column> getStatisticsColumns(Row transactionState) {
+    int numIndexedCols =
+        TableConfig.DATA_SKIPPING_NUM_INDEXED_COLS.fromMetadata(
+            TransactionStateRow.getConfiguration(transactionState));
+
+    // Get the list of partition columns to exclude
+    Set<String> partitionColumns =
+        new HashSet<>(TransactionStateRow.getPartitionColumnsList(transactionState));
+
+    // Collect the leaf-level columns for statistics calculation.
+    // This call selects only the first 'numIndexedCols' leaf columns from the logical schema,
+    // excluding any column whose top-level name appears in 'partitionColumns'.
+    // NOTE: Nested columns (i.e. each leaf within a StructType) count individually toward the
+    // numIndexedCols limit (not Map/ArrayTypes - they're not stats compatible types).
+    //
+    // For example, given the following schema:
+    //   root
+    //     ├─ col1 (int)
+    //     ├─ col2 (string)
+    //     └─ col3 (struct)
+    //           ├─ a (int)
+    //           └─ b (double)
+    //
+    // And if 'numIndexedCols' is set to 2 with no partition columns to exclude, then the returned
+    // stats columns
+    // would be: [col1, col2]. If 'col1' were a partition column, the returned list would be:
+    // [col2, col3.a] (assuming col3.a is encountered before col3.b).
+    return SchemaUtils.collectLeafColumns(
+        TransactionStateRow.getPhysicalSchema(transactionState), partitionColumns, numIndexedCols);
   }
 }

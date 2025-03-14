@@ -30,6 +30,7 @@ import io.delta.kernel.defaults.internal.parquet.ParquetColumnWriters.ColumnWrit
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.Utils;
+import io.delta.kernel.statistics.DataFileStatistics;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.*;
 import java.io.IOException;

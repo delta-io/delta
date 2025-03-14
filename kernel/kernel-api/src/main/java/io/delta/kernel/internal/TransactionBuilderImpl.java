@@ -32,6 +32,7 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.icebergcompat.IcebergCompatV2MetadataValidatorAndUpdater;
 import io.delta.kernel.internal.metrics.SnapshotMetrics;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.replay.LogReplay;
@@ -103,7 +104,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
 
   @Override
   public TransactionBuilder withTableProperties(Engine engine, Map<String, String> properties) {
-    this.tableProperties = Optional.of(new HashMap<>(properties));
+    this.tableProperties =
+        Optional.of(Collections.unmodifiableMap(TableConfig.validateDeltaProperties(properties)));
     return this;
   }
 
@@ -140,38 +142,71 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     }
 
     boolean isNewTable = snapshot.getVersion() < 0;
-    validate(engine, snapshot, isNewTable);
+    validateTransactionInputs(engine, snapshot, isNewTable);
 
-    boolean shouldUpdateMetadata = false;
-    boolean shouldUpdateProtocol = false;
-    Metadata metadata = snapshot.getMetadata();
-    Protocol protocol = snapshot.getProtocol();
-    Map<String, String> validatedProperties =
-        TableConfig.validateDeltaProperties(tableProperties.orElse(Collections.emptyMap()));
-    Map<String, String> newProperties = metadata.filterOutUnchangedProperties(validatedProperties);
+    Metadata snapshotMetadata = snapshot.getMetadata();
+    Protocol snapshotProtocol = snapshot.getProtocol();
+    Optional<Metadata> newMetadata = Optional.empty();
+    Optional<Protocol> newProtocol = Optional.empty();
+
+    // The metadata + protocol transformations get complex with the addition of IcebergCompat which
+    // can mutate the configuration. We walk through an example of this for clarity.
+    /* ----- 1: Update the METADATA with new table properties or schema set in the builder ----- */
+    // Ex: User has set table properties = Map(delta.enableIcebergCompatV2 -> true)
+    Map<String, String> newProperties =
+        snapshotMetadata.filterOutUnchangedProperties(
+            tableProperties.orElse(Collections.emptyMap()));
 
     if (!newProperties.isEmpty()) {
-      shouldUpdateMetadata = true;
-      Map<String, String> oldConfiguration = metadata.getConfiguration();
-
-      metadata = metadata.withNewConfiguration(newProperties);
-
-      ColumnMapping.verifyColumnMappingChange(
-          oldConfiguration, metadata.getConfiguration() /* new config */, isNewTable);
+      newMetadata = Optional.of(snapshotMetadata.withMergedConfiguration(newProperties));
     }
 
+    // TODO In the future update metadata with new schema if provided
+
+    /* ----- 2: Update the PROTOCOL based on the table properties or schema ----- */
+    // This is the only place we update the protocol action; takes care of any dependent features
+    // Ex: We enable feature `icebergCompatV2` plus dependent features `columnMapping`
     Optional<Tuple2<Protocol, Set<TableFeature>>> newProtocolAndFeatures =
         TableFeatures.autoUpgradeProtocolBasedOnMetadata(
-            metadata, needDomainMetadataSupport, protocol);
+            newMetadata.orElse(snapshotMetadata), needDomainMetadataSupport, snapshotProtocol);
     if (newProtocolAndFeatures.isPresent()) {
       logger.info(
           "Automatically enabling table features: {}",
           newProtocolAndFeatures.get()._2.stream().map(TableFeature::featureName).collect(toSet()));
 
-      shouldUpdateProtocol = true;
-      protocol = newProtocolAndFeatures.get()._1;
-      TableFeatures.validateKernelCanWriteToTable(protocol, metadata, table.getPath(engine));
+      newProtocol = Optional.of(newProtocolAndFeatures.get()._1);
+      TableFeatures.validateKernelCanWriteToTable(
+          newProtocol.orElse(snapshotProtocol),
+          newMetadata.orElse(snapshotMetadata),
+          table.getPath(engine));
     }
+
+    /* 3: Validate the METADATA and PROTOCOL and possibly update the METADATA for IcebergCompat */
+    // IcebergCompat validates that the current metadata and protocol is compatible (e.g. all the
+    // required TF are present, no incompatible types, etc). It also updates the metadata for new
+    // tables if needed (e.g. enables column mapping)
+    // Ex: We enable column mapping mode in the configuration such that our properties now include
+    // Map(delta.enableIcebergCompatV2 -> true, delta.columnMapping.mode -> name)
+    Optional<Metadata> icebergCompatV2Metadata =
+        IcebergCompatV2MetadataValidatorAndUpdater.validateAndUpdateIcebergCompatV2Metadata(
+            isNewTable, newMetadata.orElse(snapshotMetadata), newProtocol.orElse(snapshotProtocol));
+    if (icebergCompatV2Metadata.isPresent()) {
+      newMetadata = icebergCompatV2Metadata;
+    }
+
+    /* ----- 4: Update the METADATA with column mapping info if applicable ----- */
+    // We update the column mapping info here after all configuration changes are finished
+    Optional<Metadata> columnMappingMetadata =
+        ColumnMapping.updateColumnMappingMetadataIfNeeded(
+            newMetadata.orElse(snapshotMetadata), isNewTable);
+    if (columnMappingMetadata.isPresent()) {
+      newMetadata = columnMappingMetadata;
+    }
+
+    /* ----- 5: Validate the metadata change ----- */
+    // Now that all the config and schema changes have been made validate the old vs new metadata
+    newMetadata.ifPresent(
+        metadata -> validateMetadataChange(snapshotMetadata, metadata, isNewTable));
 
     return new TransactionImpl(
         isNewTable,
@@ -180,17 +215,28 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         snapshot,
         engineInfo,
         operation,
-        protocol,
-        metadata,
+        newProtocol.orElse(snapshotProtocol),
+        newMetadata.orElse(snapshotMetadata),
         setTxnOpt,
-        shouldUpdateMetadata,
-        shouldUpdateProtocol,
+        newMetadata.isPresent() /* shouldUpdateMetadata */,
+        newProtocol.isPresent() /* shouldUpdateProtocol */,
         maxRetries,
         table.getClock());
   }
 
-  /** Validate the given parameters for the transaction. */
-  private void validate(Engine engine, SnapshotImpl snapshot, boolean isNewTable) {
+  /**
+   * Validates the transaction as built given the parameters input by the user. This includes
+   *
+   * <ul>
+   *   <li>Ensures that the table, as defined by the protocol and metadata of its latest version, is
+   *       writable by Kernel
+   *   <li>Partition columns are not specified for an existing table
+   *   <li>The provided schema is valid (e.g. no duplicate columns, valid names)
+   *   <li>Partition columns provided are valid (e.g. they exist, valid data types)
+   *   <li>Concurrent txn has not already committed to the table with same txnId
+   * </ul>
+   */
+  private void validateTransactionInputs(Engine engine, SnapshotImpl snapshot, boolean isNewTable) {
     String tablePath = table.getPath(engine);
     // Validate the table has no features that Kernel doesn't yet support writing into it.
     TableFeatures.validateKernelCanWriteToTable(
@@ -228,6 +274,23 @@ public class TransactionBuilderImpl implements TransactionBuilder {
                 txnId.getAppId(), txnId.getVersion(), lastTxnVersion.get());
           }
         });
+  }
+
+  /**
+   * Validate that the change from oldMetadata to newMetadata is a valid change. For example, this
+   * checks the following
+   *
+   * <ul>
+   *   <li>Column mapping mode can only go from none->name for existing table
+   * </ul>
+   */
+  private void validateMetadataChange(
+      Metadata oldMetadata, Metadata newMetadata, boolean isNewTable) {
+    ColumnMapping.verifyColumnMappingChange(
+        oldMetadata.getConfiguration(), newMetadata.getConfiguration(), isNewTable);
+    // TODO In the future block enabling IcebergWriterCompatV1 for existing tables
+
+    // TODO In the future validate any schema change
   }
 
   private class InitialSnapshot extends SnapshotImpl {

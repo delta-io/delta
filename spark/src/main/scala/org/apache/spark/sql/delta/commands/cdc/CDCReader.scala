@@ -150,7 +150,16 @@ object CDCReader extends CDCReaderImpl
         snapshotWithSchemaMode.snapshot
     }
 
-    override val schema: StructType = cdcReadSchema(snapshotForBatchSchema.metadata.schema)
+    override val schema: StructType = {
+      cdcReadSchema(
+        DeltaTableUtils.removeInternalDeltaMetadata(
+          sqlContext.sparkSession,
+          DeltaTableUtils.removeInternalWriterMetadata(
+            sqlContext.sparkSession, snapshotForBatchSchema.metadata.schema
+          )
+        )
+      )
+    }
 
     override def unhandledFilters(filters: Array[Filter]): Array[Filter] = Array.empty
 
@@ -169,10 +178,10 @@ object CDCReader extends CDCReaderImpl
       // of the internal DataFrame.
       val outputMap = df.queryExecution.analyzed.output.map(a => a.name -> a).toMap
       val projections =
-        requiredColumns.map(a => Column(a.withExprId(outputMap(a.name).exprId)))
+        requiredColumns.map(a => Column(outputMap(a.name)))
       val filter = Column(
         filters
-          .map(_.transform { case a: Attribute => a.withExprId(outputMap(a.name).exprId) })
+          .map(_.transform { case a: Attribute => outputMap(a.name) })
           .reduceOption(And)
           .getOrElse(Literal.TrueLiteral)
       )
