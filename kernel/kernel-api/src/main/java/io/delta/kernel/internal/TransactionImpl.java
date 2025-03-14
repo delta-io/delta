@@ -130,33 +130,41 @@ public class TransactionImpl implements Transaction {
     return setTxnOpt;
   }
 
-  public Protocol getProtocol() {
-    return protocol;
+  public void addDomainMetadataInternal(String domain, String config) {
+    checkArgument(
+        !domainMetadatasRemoved.contains(domain),
+        "Cannot add a domain that is removed in this transaction");
+    // we override any existing value
+    domainMetadatasAdded.put(domain, new DomainMetadata(domain, config, false /* removed */));
   }
 
   @Override
-  public TransactionCommitResult commit(Engine engine, CloseableIterable<Row> dataActions)
-      throws ConcurrentWriteException {
-    checkState(!closed, "Transaction is already attempted to commit. Create a new transaction.");
-    TransactionMetrics transactionMetrics = new TransactionMetrics();
-    try {
-      TransactionCommitResult result =
-          transactionMetrics.totalCommitTimer.time(
-              () -> commitWithRetry(engine, dataActions, transactionMetrics));
-      recordTransactionReport(
-          engine,
-          Optional.of(result.getVersion()) /* committedVersion */,
-          transactionMetrics,
-          Optional.empty() /* exception */);
-      return result;
-    } catch (Exception e) {
-      recordTransactionReport(
-          engine,
-          Optional.empty() /* committedVersion */,
-          transactionMetrics,
-          Optional.of(e) /* exception */);
-      throw e;
-    }
+  public void addDomainMetadata(String domain, String config) {
+    checkArgument(
+        DomainMetadata.isUserControlledDomain(domain),
+        "Setting a system-controlled domain is not allowed: " + domain);
+    checkState(
+        TableFeatures.isDomainMetadataSupported(protocol),
+        "Unable to add domain metadata when the domain metadata table feature is disabled");
+    addDomainMetadataInternal(domain, config);
+  }
+
+  public void removeDomainMetadataInternal(String domain) {
+    checkArgument(
+        !domainMetadatasAdded.containsKey(domain),
+        "Cannot remove a domain that is added in this transaction");
+    domainMetadatasRemoved.add(domain);
+  }
+
+  @Override
+  public void removeDomainMetadata(String domain) {
+    checkArgument(
+        DomainMetadata.isUserControlledDomain(domain),
+        "Removing a system-controlled domain is not allowed: " + domain);
+    checkState(
+        TableFeatures.isDomainMetadataSupported(protocol),
+        "Unable to add domain metadata when the domain metadata table feature is disabled");
+    removeDomainMetadataInternal(domain);
   }
 
   /**
@@ -203,6 +211,35 @@ public class TransactionImpl implements Transaction {
     }
     domainMetadatas = Optional.of(finalDomainMetadatas);
     return finalDomainMetadatas;
+  }
+
+  public Protocol getProtocol() {
+    return protocol;
+  }
+
+  @Override
+  public TransactionCommitResult commit(Engine engine, CloseableIterable<Row> dataActions)
+      throws ConcurrentWriteException {
+    checkState(!closed, "Transaction is already attempted to commit. Create a new transaction.");
+    TransactionMetrics transactionMetrics = new TransactionMetrics();
+    try {
+      TransactionCommitResult result =
+          transactionMetrics.totalCommitTimer.time(
+              () -> commitWithRetry(engine, dataActions, transactionMetrics));
+      recordTransactionReport(
+          engine,
+          Optional.of(result.getVersion()) /* committedVersion */,
+          transactionMetrics,
+          Optional.empty() /* exception */);
+      return result;
+    } catch (Exception e) {
+      recordTransactionReport(
+          engine,
+          Optional.empty() /* committedVersion */,
+          transactionMetrics,
+          Optional.of(e) /* exception */);
+      throw e;
+    }
   }
 
   private TransactionCommitResult commitWithRetry(
@@ -349,6 +386,7 @@ public class TransactionImpl implements Transaction {
     setTxnOpt.ifPresent(setTxn -> metadataActions.add(createTxnSingleAction(setTxn.toRow())));
 
     List<DomainMetadata> resolvedDomainMetadatas = getDomainMetadatas();
+
     // Check for duplicate domain metadata and if the protocol supports
     DomainMetadataUtils.validateDomainMetadatas(resolvedDomainMetadatas, protocol);
 
@@ -421,43 +459,6 @@ public class TransactionImpl implements Transaction {
     // For now, Kernel just supports blind append.
     // Change this when read-after-write is supported.
     return true;
-  }
-
-  public void addDomainMetadataInternal(String domain, String config) {
-    checkArgument(
-        !domainMetadatasRemoved.contains(domain),
-        "Cannot add a domain that is removed in this transaction");
-    // we override any existing value
-    domainMetadatasAdded.put(domain, new DomainMetadata(domain, config, false /* removed */));
-  }
-
-  @Override
-  public void addDomainMetadata(String domain, String config) {
-    checkArgument(
-        DomainMetadata.isUserControlledDomain(domain),
-        "Setting a system-controlled domain is not allowed: " + domain);
-    checkState(
-        TableFeatures.isDomainMetadataSupported(protocol),
-        "Unable to add domain metadata when the domain metadata table feature is disabled");
-    addDomainMetadataInternal(domain, config);
-  }
-
-  public void removeDomainMetadataInternal(String domain) {
-    checkArgument(
-        !domainMetadatasAdded.containsKey(domain),
-        "Cannot remove a domain that is added in this transaction");
-    domainMetadatasRemoved.add(domain);
-  }
-
-  @Override
-  public void removeDomainMetadata(String domain) {
-    checkArgument(
-        DomainMetadata.isUserControlledDomain(domain),
-        "Removing a system-controlled domain is not allowed: " + domain);
-    checkState(
-        TableFeatures.isDomainMetadataSupported(protocol),
-        "Unable to add domain metadata when the domain metadata table feature is disabled");
-    removeDomainMetadataInternal(domain);
   }
 
   /**
