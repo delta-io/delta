@@ -62,6 +62,14 @@ public interface Transaction {
   List<String> getPartitionColumns(Engine engine);
 
   /**
+   * Gets the latest version of the table used as the base of this transaction. This returns -1 when
+   * the table is being created in this transaction.
+   *
+   * @return The version of the table as of the beginning of this Transaction
+   */
+  long getReadTableVersion();
+
+  /**
    * Get the state of the transaction. The state helps Kernel do the transformations to logical data
    * according to the Delta protocol and table features enabled on the table. The engine should use
    * this at the data writer task to transform the logical data that the engine wants to write to
