@@ -66,7 +66,10 @@ public class Checkpointer {
 
     // Check if writing to the given table protocol version/features is supported in Kernel
     TableFeatures.validateKernelCanWriteToTable(
-        snapshot.getProtocol(), snapshot.getMetadata(), snapshot.getDataPath().toString());
+        snapshot.getProtocol(),
+        snapshot.getMetadata(),
+        snapshot.getDataPath().toString(),
+        false /* isUpdatedProtocol */);
 
     final Path checkpointPath = FileNames.checkpointFileSingular(logPath, version);
 
