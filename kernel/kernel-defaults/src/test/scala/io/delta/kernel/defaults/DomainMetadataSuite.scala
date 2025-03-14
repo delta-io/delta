@@ -790,10 +790,10 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
   test("removing a domain on a table that doesn't have that domain") {
     withTempDirAndEngine { (tablePath, engine) =>
       createTableWithDomainMetadataSupported(engine, tablePath)
+      val txn = createWriteTxnBuilder(Table.forPath(engine, tablePath))
+        .build(engine)
+      txn.removeDomainMetadata("foo")
       intercept[DomainDoesNotExistException] {
-        val txn = createWriteTxnBuilder(Table.forPath(engine, tablePath))
-          .build(engine)
-        txn.removeDomainMetadata("foo")
         txn.commit(engine, emptyIterable())
       }
     }

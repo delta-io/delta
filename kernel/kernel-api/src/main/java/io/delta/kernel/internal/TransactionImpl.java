@@ -171,7 +171,10 @@ public class TransactionImpl implements Transaction {
    * Returns a list of the domain metadatas to commit. This consists of the domain metadatas added
    * in the transaction using {@link Transaction#addDomainMetadata(String, String)} and the
    * tombstones for the domain metadatas removed in the transaction using {@link
-   * Transaction#removeDomainMetadata(String)}.
+   * Transaction#removeDomainMetadata(String)}. The result is stored in {@code domainMetadatas}.
+   *
+   * @return {@link List<DomainMetadata>} containing domain metadata to be committed in this
+   *     transaction.
    */
   public List<DomainMetadata> getDomainMetadatas() {
     // If we have already processed the domain metadatas, then return the list.
