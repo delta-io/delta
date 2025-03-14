@@ -63,7 +63,6 @@ object NonSparkIcebergTestUtils {
    * Writes into an Iceberg table with formats/data types not supported by Spark.
    * This is primarily used for compatibility tests. It includes the following features
    * * TIME data type that is not supported by Spark.
-   * * Date data type that is currently incompatible with Databricks Spark.
    * @param table Iceberg table
    * @param rows  Data rows we write into the table
    * @param dataFileIdx index of the parquet file going to be written in the data folder
