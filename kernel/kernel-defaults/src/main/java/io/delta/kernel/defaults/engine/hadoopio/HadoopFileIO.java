@@ -18,14 +18,11 @@ package io.delta.kernel.defaults.engine.hadoopio;
 import io.delta.kernel.defaults.engine.fileio.FileIO;
 import io.delta.kernel.defaults.engine.fileio.InputFile;
 import io.delta.kernel.defaults.engine.fileio.OutputFile;
-import io.delta.kernel.defaults.engine.fileio.SeekableInputStream;
 import io.delta.kernel.defaults.internal.logstore.LogStoreProvider;
-import io.delta.kernel.engine.FileReadRequest;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import io.delta.storage.LogStore;
-import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.Objects;
@@ -75,13 +72,6 @@ public class HadoopFileIO implements FileIO {
   }
 
   @Override
-  public CloseableIterator<ByteArrayInputStream> readFiles(
-      CloseableIterator<FileReadRequest> readRequests) throws IOException {
-    return readRequests.map(
-        elem -> getStream(elem.getPath(), elem.getStartOffset(), elem.getReadLength()));
-  }
-
-  @Override
   public boolean mkdirs(String path) throws IOException {
     Path pathObject = new Path(path);
     FileSystem fs = pathObject.getFileSystem(hadoopConf);
@@ -107,27 +97,6 @@ public class HadoopFileIO implements FileIO {
   @Override
   public Optional<String> getConf(String confKey) {
     return Optional.ofNullable(hadoopConf.get(confKey));
-  }
-
-  private ByteArrayInputStream getStream(String filePath, int offset, int size) {
-    Path path = new Path(filePath);
-    try {
-      InputFile inputFile = new HadoopInputFile(path.getFileSystem(hadoopConf), path);
-      try (SeekableInputStream stream = inputFile.newStream()) {
-        stream.seek(offset);
-        byte[] buff = new byte[size];
-        stream.readFully(buff, 0, size);
-        return new ByteArrayInputStream(buff);
-      } catch (IOException ex) {
-        throw new UncheckedIOException(
-            String.format(
-                "IOException reading from file %s at offset %s size %s", filePath, offset, size),
-            ex);
-      }
-    } catch (IOException ex) {
-      throw new UncheckedIOException(
-          String.format("Could not resolve the FileSystem for path %s", filePath), ex);
-    }
   }
 
   private FileSystem getFs(String path) {
