@@ -261,7 +261,7 @@ class TableFeaturesSuite extends AnyFunSuite {
     case (minReaderVersion, minWriterVersion) =>
       test(s"validateKernelCanReadTheTable: protocol ($minReaderVersion, $minWriterVersion)") {
         val protocol = new Protocol(minReaderVersion, minWriterVersion)
-        validateKernelCanReadTheTable(protocol, "/test/table")
+        validateKernelCanReadTheTable(protocol, "/test/table", true /* isUpdatedProtocol */ )
       }
   }
 
@@ -278,7 +278,7 @@ class TableFeaturesSuite extends AnyFunSuite {
     "columnMapping").foreach { feature =>
     test(s"validateKernelCanReadTheTable: protocol 3 with $feature") {
       val protocol = new Protocol(3, 1, singleton(feature), Set().asJava)
-      validateKernelCanReadTheTable(protocol, "/test/table")
+      validateKernelCanReadTheTable(protocol, "/test/table", true /* isUpdatedProtocol */ )
     }
   }
 
@@ -288,7 +288,7 @@ class TableFeaturesSuite extends AnyFunSuite {
 
     // legacy reader protocol version
     val protocol1 = new Protocol(1, 7, emptySet(), singleton("unknownFeature"))
-    validateKernelCanReadTheTable(protocol1, "/test/table")
+    validateKernelCanReadTheTable(protocol1, "/test/table", true /* isUpdatedProtocol */ )
 
     // table feature supported reader version
     val protocol2 = new Protocol(
@@ -296,13 +296,13 @@ class TableFeaturesSuite extends AnyFunSuite {
       7,
       Set("columnMapping", "timestampNtz").asJava,
       Set("columnMapping", "timestampNtz", "unknownFeature").asJava)
-    validateKernelCanReadTheTable(protocol2, "/test/table")
+    validateKernelCanReadTheTable(protocol2, "/test/table", true /* isUpdatedProtocol */ )
   }
 
   test("validateKernelCanReadTheTable: unknown readerWriter feature to Kernel") {
     val protocol = new Protocol(3, 7, singleton("unknownFeature"), singleton("unknownFeature"))
     val ex = intercept[KernelException] {
-      validateKernelCanReadTheTable(protocol, "/test/table")
+      validateKernelCanReadTheTable(protocol, "/test/table", true /* isUpdatedProtocol */ )
     }
     assert(ex.getMessage.contains(
       "requires feature \"unknownFeature\" which is unsupported by this version of Delta Kernel"))
@@ -311,7 +311,7 @@ class TableFeaturesSuite extends AnyFunSuite {
   test("validateKernelCanReadTheTable: reader version > 3") {
     val protocol = new Protocol(4, 7, emptySet(), singleton("unknownFeature"))
     val ex = intercept[KernelException] {
-      validateKernelCanReadTheTable(protocol, "/test/table")
+      validateKernelCanReadTheTable(protocol, "/test/table", true /* isUpdatedProtocol */ )
     }
     assert(ex.getMessage.contains(
       "requires reader version 4 which is unsupported by this version of Delta Kernel"))
@@ -882,17 +882,26 @@ class TableFeaturesSuite extends AnyFunSuite {
       protocol: Protocol,
       metadata: Metadata = testMetadata()): Unit = {
     test(testDesc) {
-      validateKernelCanWriteToTable(protocol, metadata, "/test/table")
+      validateKernelCanWriteToTable(
+        protocol,
+        metadata,
+        "/test/table",
+        true /* isUpdatedProtocol */ )
     }
   }
 
+  // todo do we need new tests?
   def checkWriteUnsupported(
       testDesc: String,
       protocol: Protocol,
       metadata: Metadata = testMetadata()): Unit = {
     test(testDesc) {
       intercept[KernelException] {
-        validateKernelCanWriteToTable(protocol, metadata, "/test/table")
+        validateKernelCanWriteToTable(
+          protocol,
+          metadata,
+          "/test/table",
+          true /* isUpdatedProtocol */ )
       }
     }
   }
