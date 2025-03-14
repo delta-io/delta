@@ -165,9 +165,11 @@ public class SchemaUtils {
 
   /** Validate the clustering columns exists in the table schema */
   public static void validateClusteringColumns(StructType schema, List<String> clusteringCols) {
-    List<String> flattenColNames = flattenNestedFieldNames(schema).stream()
+    List<String> flattenColNames =
+        flattenNestedFieldNames(schema).stream()
             .map(name -> name.toLowerCase(Locale.ROOT))
-            .collect(Collectors.toList());;
+            .collect(Collectors.toList());
+    ;
 
     clusteringCols.forEach(
         clusteringCol -> {

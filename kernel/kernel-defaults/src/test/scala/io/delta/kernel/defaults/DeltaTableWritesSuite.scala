@@ -16,8 +16,10 @@
 package io.delta.kernel.defaults
 
 import java.util.{Locale, Optional}
+
 import scala.collection.JavaConverters._
 import scala.collection.immutable.Seq
+
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel._
 import io.delta.kernel.Operation.{CREATE_TABLE, WRITE}
@@ -28,8 +30,8 @@ import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions._
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.expressions.Literal._
-import io.delta.kernel.internal.actions.DomainMetadata
 import io.delta.kernel.internal.{ScanImpl, SnapshotImpl, TableConfig}
+import io.delta.kernel.internal.actions.DomainMetadata
 import io.delta.kernel.internal.checkpoints.CheckpointerSuite.selectSingleElement
 import io.delta.kernel.internal.clustering.ClusteringMetadataDomain
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
@@ -388,7 +390,8 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
       val txn = txnBuilder
         .withSchema(engine, schema)
-        .withClusteringColumns(engine, Seq("part1", "part2").asJava)
+        // clustering columns is case-insensitive and stored in lower case
+        .withClusteringColumns(engine, Seq("Part1", "paRt2").asJava)
         .build(engine)
 
       assert(txn.getSchema(engine) === schema)
@@ -399,7 +402,8 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
       val expectedDomainMetadata = new DomainMetadata(
         "delta.clustering",
-        """{"clusteringColumns":[["part1"],["part2"]]}""", false)
+        """{"clusteringColumns":[["part1"],["part2"]]}""",
+        false)
       assert(snapshot.getDomainMetadataMap.get(ClusteringMetadataDomain.DOMAIN_NAME)
         == expectedDomainMetadata)
     }
