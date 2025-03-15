@@ -53,6 +53,16 @@ public interface TransactionBuilder {
   TransactionBuilder withPartitionColumns(Engine engine, List<String> partitionColumns);
 
   /**
+   * Set the list of clustering columns when create a new clustered table
+   *
+   * @param engine {@link Engine} instance to use.
+   * @param clusteringColumns The partition columns of the table. These should be a subset of the
+   *     columns in the schema.
+   * @return updated {@link TransactionBuilder} instance.
+   */
+  TransactionBuilder withClusteringColumns(Engine engine, List<String> clusteringColumns);
+
+  /**
    * Set the transaction identifier for idempotent writes. Incremental processing systems (e.g.,
    * streaming systems) that track progress using their own application-specific versions need to
    * record what progress has been made, in order to avoid duplicating data in the face of failures

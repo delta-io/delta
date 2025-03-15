@@ -31,7 +31,9 @@ import io.delta.kernel.exceptions._
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.internal.{ScanImpl, SnapshotImpl, TableConfig}
+import io.delta.kernel.internal.actions.DomainMetadata
 import io.delta.kernel.internal.checkpoints.CheckpointerSuite.selectSingleElement
+import io.delta.kernel.internal.clustering.ClusteringMetadataDomain
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
 import io.delta.kernel.types._
 import io.delta.kernel.types.DateType.DATE
@@ -374,6 +376,37 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         verifyCommitInfo(tablePath, version = 0)
         verifyWrittenContent(tablePath, schema, Seq.empty)
       }
+    }
+  }
+
+  test("create a clustered table") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+
+      val schema = new StructType()
+        .add("id", INTEGER)
+        .add("part1", INTEGER) // clustering column
+        .add("part2", INTEGER) // clustering column
+
+      val txn = txnBuilder
+        .withSchema(engine, schema)
+        // clustering columns is case-insensitive and stored in lower case
+        .withClusteringColumns(engine, Seq("Part1", "paRt2").asJava)
+        .build(engine)
+
+      assert(txn.getSchema(engine) === schema)
+      commitTransaction(txn, engine, emptyIterable())
+
+      val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      assert(snapshot.getProtocol.getWriterFeatures.contains("clustering"))
+
+      val expectedDomainMetadata = new DomainMetadata(
+        "delta.clustering",
+        """{"clusteringColumns":[["part1"],["part2"]]}""",
+        false)
+      assert(snapshot.getDomainMetadataMap.get(ClusteringMetadataDomain.DOMAIN_NAME)
+        == expectedDomainMetadata)
     }
   }
 

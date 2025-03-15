@@ -200,6 +200,19 @@ public class TableFeatures {
     }
   }
 
+  public static final TableFeature CLUSTERING_W_FEATURE = new ClusteringMetadataFeature();
+
+  private static class ClusteringMetadataFeature extends TableFeature.WriterFeature {
+    ClusteringMetadataFeature() {
+      super("clustering", /* minWriterVersion = */ 7);
+    }
+
+    @Override
+    public Set<TableFeature> requiredFeatures() {
+      return Collections.singleton(DOMAIN_METADATA_W_FEATURE);
+    }
+  }
+
   public static final TableFeature ROW_TRACKING_W_FEATURE = new RowTrackingFeature();
 
   private static class RowTrackingFeature extends TableFeature.WriterFeature
@@ -358,6 +371,7 @@ public class TableFeatures {
               APPEND_ONLY_W_FEATURE,
               CHECKPOINT_V2_RW_FEATURE,
               CHANGE_DATA_FEED_W_FEATURE,
+              CLUSTERING_W_FEATURE,
               COLUMN_MAPPING_RW_FEATURE,
               CONSTRAINTS_W_FEATURE,
               DELETION_VECTORS_RW_FEATURE,
@@ -421,17 +435,26 @@ public class TableFeatures {
    *
    * @param newMetadata the new metadata to be applied to the table.
    * @param needDomainMetadataSupport whether the table needs to explicitly support domain metadata.
+   * @param needClusteringSupport whether the table needs to explicitly support clustering.
    * @param currentProtocol the current protocol of the table.
    * @return the upgraded protocol and the set of new features that were enabled in the upgrade.
    */
   public static Optional<Tuple2<Protocol, Set<TableFeature>>> autoUpgradeProtocolBasedOnMetadata(
-      Metadata newMetadata, boolean needDomainMetadataSupport, Protocol currentProtocol) {
+      Metadata newMetadata,
+      boolean needDomainMetadataSupport,
+      boolean needClusteringSupport,
+      Protocol currentProtocol) {
 
     Set<TableFeature> allNeededTableFeatures =
         extractAllNeededTableFeatures(newMetadata, currentProtocol);
     if (needDomainMetadataSupport) {
       allNeededTableFeatures =
           Stream.concat(allNeededTableFeatures.stream(), Stream.of(DOMAIN_METADATA_W_FEATURE))
+              .collect(toSet());
+    }
+    if (needClusteringSupport) {
+      allNeededTableFeatures =
+          Stream.concat(allNeededTableFeatures.stream(), Stream.of(CLUSTERING_W_FEATURE))
               .collect(toSet());
     }
     Protocol required =
