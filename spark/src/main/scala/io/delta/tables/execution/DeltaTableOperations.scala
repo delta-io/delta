@@ -89,7 +89,8 @@ trait DeltaTableOperations extends AnalysisHelper { self: io.delta.tables.DeltaT
 
   protected def executeVacuum(
       table: DeltaTableV2,
-      retentionHours: Option[Double]): DataFrame = withActiveSession(sparkSession) {
+      retentionHours: Option[Double],
+      vacuumType: Option[String]): DataFrame = withActiveSession(sparkSession) {
     val tableId = table.getTableIdentifierIfExists
     val path = Option.when(tableId.isEmpty)(deltaLog.dataPath.toString)
     val vacuum = VacuumTableCommand(
@@ -99,7 +100,7 @@ trait DeltaTableOperations extends AnalysisHelper { self: io.delta.tables.DeltaT
       inventoryQuery = None,
       retentionHours,
       dryRun = false,
-      vacuumType = None,
+      vacuumType,
       deltaLog.options)
     toDataset(sparkSession, vacuum)
     sparkSession.emptyDataFrame
