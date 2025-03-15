@@ -25,6 +25,7 @@ import org.apache.flink.table.catalog.Column.MetadataColumn;
 import org.apache.flink.table.catalog.Column.PhysicalColumn;
 import org.apache.flink.table.catalog.ObjectPath;
 import org.apache.flink.table.catalog.ResolvedCatalogTable;
+import org.apache.flink.table.catalog.ResolvedSchema;
 import org.apache.flink.table.catalog.exceptions.CatalogException;
 import org.apache.flink.table.factories.FactoryUtil;
 import org.apache.flink.table.types.DataType;
@@ -227,7 +228,10 @@ public final class DeltaCatalogTableHelper {
     /**
      * Prepare catalog table to store in metastore. This table will have only selected
      * options from DDL and an empty schema.
+     *
+     * @deprecated Use {@link #prepareResolvedMetastoreTable(CatalogBaseTable, String)} instead.
      */
+    @Deprecated
     public static DeltaMetastoreTable prepareMetastoreTable(
             CatalogBaseTable table,
             String deltaTablePath) {
@@ -257,6 +261,42 @@ public final class DeltaCatalogTableHelper {
             )
         );
     }
+
+    /**
+     * Prepare catalog table to store in metastore. This table will have only selected
+     * options from DDL and an empty schema.
+     */
+    public static ResolvedCatalogTable prepareResolvedMetastoreTable(
+            CatalogBaseTable table,
+            String deltaTablePath) {
+        // Store only path, table name and connector type in metastore.
+        // For computed and meta columns are not supported.
+        Map<String, String> optionsToStoreInMetastore = new HashMap<>();
+        optionsToStoreInMetastore.put(FactoryUtil.CONNECTOR.key(),
+            DeltaDynamicTableFactory.DELTA_CONNECTOR_IDENTIFIER);
+        optionsToStoreInMetastore.put(DeltaTableConnectorOptions.TABLE_PATH.key(),
+            deltaTablePath);
+
+        // Flink's Hive catalog calls CatalogTable::getSchema method (deprecated) and apply null
+        // check on the resul.
+        // The default implementation for this method returns null, and the DefaultCatalogTable
+        // returned by CatalogTable.of( ) does not override it,
+        // hence we need to have our own wrapper that will return empty TableSchema when
+        // getSchema method is called.
+        return new ResolvedCatalogTable(
+            CatalogTable.of(
+                // by design don't store schema in metastore. Also watermark and primary key will
+                // not be stored in metastore and for now it will not be supported by Delta
+                // connector SQL.
+                Schema.newBuilder().build(),
+                table.getComment(),
+                Collections.emptyList(),
+                optionsToStoreInMetastore
+            ),
+            ResolvedSchema.of()
+        );
+    }
+
 
     /**
      * Validates DDL options against existing delta table properties. If there is any mismatch (i.e.
