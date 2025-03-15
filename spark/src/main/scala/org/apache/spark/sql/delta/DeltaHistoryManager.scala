@@ -229,6 +229,7 @@ class DeltaHistoryManager(
    */
   def getActiveCommitAtTime(
       timestamp: Timestamp,
+      catalogTableOpt: Option[CatalogTable],
       canReturnLastCommit: Boolean,
       mustBeRecreatable: Boolean = true,
       canReturnEarliestCommit: Boolean = false): Commit = {
@@ -238,7 +239,7 @@ class DeltaHistoryManager(
     } else {
       getEarliestDeltaFile(deltaLog)
     }
-    val snapshot = deltaLog.update()
+    val snapshot = deltaLog.update(catalogTableOpt = catalogTableOpt)
     val commitFileProvider = DeltaCommitFileProvider(snapshot)
     val latestVersion = snapshot.version
 
@@ -340,6 +341,7 @@ class DeltaHistoryManager(
    */
   def checkVersionExists(
       version: Long,
+      catalogTableOpt: Option[CatalogTable],
       mustBeRecreatable: Boolean = true,
       allowOutOfRange: Boolean = false): Unit = {
     val earliest = if (mustBeRecreatable) {
@@ -347,7 +349,7 @@ class DeltaHistoryManager(
     } else {
       getEarliestDeltaFile(deltaLog)
     }
-    val latest = deltaLog.update().version
+    val latest = deltaLog.update(catalogTableOpt = catalogTableOpt).version
     if (version < earliest || ((version > latest) && !allowOutOfRange)) {
       throw VersionNotFoundException(version, earliest, latest)
     }

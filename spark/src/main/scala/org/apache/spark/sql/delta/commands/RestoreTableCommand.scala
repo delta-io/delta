@@ -102,7 +102,8 @@ case class RestoreTableCommand(sourceTable: DeltaTableV2)
       val versionToRestore = version.getOrElse {
         deltaLog
           .history
-          .getActiveCommitAtTime(parseStringToTs(timestamp), canReturnLastCommit = true)
+          .getActiveCommitAtTime(
+            parseStringToTs(timestamp), catalogTableOpt, canReturnLastCommit = true)
           .version
       }
 

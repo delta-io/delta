@@ -169,7 +169,7 @@ class DeltaTableV2 private[delta](
       }
 
       val (version, accessType) = DeltaTableUtils.resolveTimeTravelVersion(
-        spark.sessionState.conf, deltaLog, spec)
+        spark.sessionState.conf, deltaLog, catalogTable, spec)
       val source = spec.creationSource.getOrElse("unknown")
       recordDeltaEvent(deltaLog, s"delta.timeTravel.$source", data = Map(
         // Log the cached version of the table on the cluster
@@ -194,7 +194,7 @@ class DeltaTableV2 private[delta](
       recordDeltaEvent(deltaLog, "delta.cdf.read",
         data = caseInsensitiveOptions.asCaseSensitiveMap())
       Some(CDCReader.getCDCRelation(
-        spark, initialSnapshot, timeTravelSpec.nonEmpty, spark.sessionState.conf,
+        spark, initialSnapshot, catalogTable, timeTravelSpec.nonEmpty, spark.sessionState.conf,
         caseInsensitiveOptions))
     } else {
       None

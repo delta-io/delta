@@ -287,7 +287,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
           try {
             val timestamp = new Timestamp(deleteBeforeTimestamp)
             val commit = new DeltaHistoryManager(deltaLog).getActiveCommitAtTime(
-              timestamp, canReturnLastCommit = true, mustBeRecreatable = false)
+              timestamp, table.catalogTable, canReturnLastCommit = true, mustBeRecreatable = false)
             Some(commit.version)
           } catch {
             case ex: DeltaErrors.TimestampEarlierThanCommitRetentionException => None

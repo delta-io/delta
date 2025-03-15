@@ -17,8 +17,9 @@
 package org.apache.spark.sql.delta.test
 
 import java.io.File
+import java.sql.Timestamp
 
-import org.apache.spark.sql.delta.{DeltaLog, OptimisticTransaction, Snapshot}
+import org.apache.spark.sql.delta.{DeltaHistoryManager, DeltaLog, OptimisticTransaction, Snapshot}
 import org.apache.spark.sql.delta.DeltaOperations.{ManualUpdate, Operation, Write}
 import org.apache.spark.sql.delta.actions.{Action, AddFile, Metadata, Protocol}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
@@ -91,6 +92,21 @@ object DeltaTestImplicits {
 
     def forTable(spark: SparkSession, dataPath: File, clock: Clock): DeltaLog = {
       DeltaLog.forTable(spark, new Path(dataPath.getCanonicalPath), clock)
+    }
+  }
+
+  implicit class DeltaHistoryManagerTestHelper(history: DeltaHistoryManager) {
+    def checkVersionExists(version: Long): Unit = {
+      history.checkVersionExists(version, catalogTableOpt = None)
+    }
+
+    def getActiveCommitAtTime(
+        timestamp: Long,
+        canReturnLastCommit: Boolean): DeltaHistoryManager.Commit = {
+      history.getActiveCommitAtTime(
+        new Timestamp(timestamp),
+        catalogTableOpt = None,
+        canReturnLastCommit)
     }
   }
 
