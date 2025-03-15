@@ -22,9 +22,9 @@ import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaFileProviderUtils, IcebergConstants, Snapshot}
+import org.apache.spark.sql.delta.{DeltaFileProviderUtils, IcebergConstants, NoMapping, Snapshot}
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, RemoveFile}
-import org.apache.spark.sql.delta.icebergShaded.IcebergSchemaUtils._
+import org.apache.spark.sql.delta.icebergShaded.IcebergSchemaUtils
 import org.apache.spark.sql.delta.icebergShaded.IcebergTransactionUtils._
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -211,8 +211,10 @@ class IcebergConversionTransaction(
   //////////////////////
 
   protected val tablePath = postCommitSnapshot.deltaLog.dataPath
+  protected val schemaUtil =
+    IcebergSchemaUtils(postCommitSnapshot.metadata.columnMappingMode == NoMapping)
   protected val icebergSchema =
-    convertDeltaSchemaToIcebergSchema(postCommitSnapshot.metadata.schema)
+    schemaUtil.convertDeltaSchemaToIcebergSchema(postCommitSnapshot.metadata.schema)
   // Initial partition spec converted from Delta
   protected val partitionSpec =
     createPartitionSpec(icebergSchema, postCommitSnapshot.metadata.partitionColumns)
