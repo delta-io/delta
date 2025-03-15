@@ -69,6 +69,9 @@ val scalaTestVersion = "3.2.15"
 val scalaTestVersionForConnectors = "3.0.8"
 val parquet4sVersion = "1.9.4"
 
+// Versios for Kernel
+val hadoopVersionForDeltaKernel = "3.4.0"
+
 // Versions for Hive 3
 val hadoopVersionForHive3 = "3.1.0"
 val hiveVersion = "3.1.2"
@@ -684,7 +687,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
     scalafmtCheckSettings,
     Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
-      "org.apache.hadoop" % "hadoop-client-runtime" % hadoopVersion,
+      "org.apache.hadoop" % "hadoop-client-runtime" % hadoopVersionForDeltaKernel,
       "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5",
       "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % "2.13.5",
       "org.apache.parquet" % "parquet-hadoop" % "1.12.3",
