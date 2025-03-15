@@ -101,10 +101,10 @@ class IcebergStatsUtilsSuite extends SparkFunSuite {
     val actualStatsObj = JsonUtils.fromJson[StatsObject](deltaStats)
     val expectedStatsObj = JsonUtils.fromJson[StatsObject](
       """{"numRecords":1251,
-        |"maxValues":{"col_date":12800,"col_int":-5,"col_double":1.0E-4,
+        |"maxValues":{"col_date":"2005-01-17","col_int":-5,"col_double":1.0E-4,
         |"col_float":0.001,"col_long":-4,"col_strt":{"sc_int":-1,"sc_int2":-1},
         |"col_boolean":false,"col_st":"minval","col_binary":"AQIDBA=="},
-        |"minValues":{"col_date":13800,"col_int":5,"col_double":10.0001,
+        |"minValues":{"col_date":"2007-10-14","col_int":5,"col_double":10.0001,
         |"col_float":10.001,"col_long":4,"col_strt":{"sc_int":128,"sc_int2":512},
         |"col_boolean":true,"col_st":"maxval","col_binary":"AgIDBA=="},
         |"nullCount":{"col_int":0,"col_double":4,"col_float":3,"col_long":1,

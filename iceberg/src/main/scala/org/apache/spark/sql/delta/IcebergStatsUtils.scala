@@ -29,12 +29,14 @@ import org.apache.iceberg.{DataFile, PartitionData, PartitionField, Schema, Stru
 import org.apache.iceberg.types.{Conversions, Type => IcebergType}
 import org.apache.iceberg.types.Type.{PrimitiveType => IcebergPrimitiveType, TypeID}
 import org.apache.iceberg.types.Types.{
+  DateType => IcebergDateType,
   ListType => IcebergListType,
   MapType => IcebergMapType,
   NestedField,
   StringType => IcebergStringType,
   StructType => IcebergStructType
 }
+import org.apache.iceberg.util.DateTimeUtil
 
 object IcebergStatsUtils extends DeltaLogging {
 
@@ -152,6 +154,9 @@ object IcebergStatsUtils extends DeltaLogging {
         case (_, null) => null
         case (_: IcebergStringType, bb: ByteBuffer) =>
           Conversions.fromByteBuffer(ftype, bb).toString
+        case (_: IcebergDateType, bb: ByteBuffer) =>
+          val daysFromEpoch = Conversions.fromByteBuffer(ftype, bb).asInstanceOf[Int]
+          DateTimeUtil.dateFromDays(daysFromEpoch).toString
         case (_, bb: ByteBuffer) =>
           Conversions.fromByteBuffer(ftype, bb)
         case _ => throw new IllegalArgumentException("unable to deserialize unknown values")
