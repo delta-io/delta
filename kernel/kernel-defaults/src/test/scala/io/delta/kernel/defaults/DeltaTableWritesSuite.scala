@@ -99,15 +99,6 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       {
         val ex = intercept[TableAlreadyExistsException] {
           table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
-            .withSchema(engine, testSchema)
-            .build(engine)
-        }
-        assert(ex.getMessage.contains("Table already exists, but provided a new schema. " +
-          "Schema can only be set on a new table."))
-      }
-      {
-        val ex = intercept[TableAlreadyExistsException] {
-          table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
             .withPartitionColumns(engine, Seq("part1", "part2").asJava)
             .build(engine)
         }

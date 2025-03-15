@@ -170,6 +170,196 @@ public class ColumnMapping {
     return maxColumnId;
   }
 
+  /**
+   * The following validation is performed on the updated schema
+   *
+   * <ul>
+   *   <li>Every field has column IDs and physical names, and that these are unique
+   *   <li>Array/map types have valid nested field IDs defined if icebergCompatV2 is enabled
+   *   <li>Physical column names are preserved across the update
+   * </ul>
+   *
+   * @param currentColumnPathToField column path to field (both nested and leaf fields) for current
+   *     schema
+   * @param newColumnPathToField column path to field for updated schema
+   * @param icebergCompatV2 Iceberg compatV2 is enabled
+   * @throws IllegalArgumentException in case of validation failure
+   */
+  static void validateChangedColumnMapping(
+      Map<String, StructField> currentColumnPathToField,
+      Map<String, StructField> newColumnPathToField,
+      boolean icebergCompatV2) {
+
+    Map<Long, String> currentFieldIdToPhysicalName = new HashMap<>();
+    Map<Long, List<NestedIdEntry>> currentFieldIdToNestedIds = new HashMap<>();
+
+    for (Map.Entry<String, StructField> entry : currentColumnPathToField.entrySet()) {
+      StructField field = entry.getValue();
+      long columnId = getColumnId(field);
+      currentFieldIdToPhysicalName.put(columnId, getPhysicalName(field));
+
+      // If there are nested IDs save them for subsequent consistency validation
+      if (hasNestedColumnIds(field)) {
+        currentFieldIdToNestedIds.put(columnId, nestedIdEntriesForField(field));
+      }
+    }
+
+    Map<Long, String> updatedFieldIdToPhysicalName = new HashMap<>();
+    Map<Long, List<NestedIdEntry>> updatedFieldIdToNestedIds = new HashMap<>();
+    for (Map.Entry<String, StructField> entry : newColumnPathToField.entrySet()) {
+      StructField field = entry.getValue();
+      validateFieldHasColumnIdAndPhysicalName(field);
+      long columnId = getColumnId(field);
+      // Check that it's not a duplicate column ID
+      if (updatedFieldIdToPhysicalName.containsKey(columnId)) {
+        throw new IllegalArgumentException(
+            String.format("Field %s with id %d already exists", field.getName(), columnId));
+      }
+
+      String physicalName = getPhysicalName(field);
+      String existingPhysicalName = currentFieldIdToPhysicalName.get(columnId);
+
+      // Check that the physical name for a given column ID hasn't changed
+      // existingPhysicalName can be null if the field is a new field
+      if (existingPhysicalName != null && !existingPhysicalName.equals(physicalName)) {
+        throw new IllegalArgumentException(
+            String.format(
+                "Existing field with id %s in current schema has "
+                    + "physical name %s which is different from %s",
+                columnId, existingPhysicalName, physicalName));
+      }
+
+      updatedFieldIdToPhysicalName.put(columnId, physicalName);
+
+      if (icebergCompatV2) {
+        validateNestedIdsExist(field, updatedFieldIdToNestedIds, columnId);
+      }
+    }
+
+    if (icebergCompatV2) {
+      // Validate that the nested field IDs aren't duplicates
+      Set<Long> dedupedNestedIds = new HashSet<>();
+      for (Map.Entry<Long, List<NestedIdEntry>> entry : updatedFieldIdToNestedIds.entrySet()) {
+        for (NestedIdEntry nestedIdEntry : entry.getValue()) {
+          // Duplicate with top level ID
+          if (updatedFieldIdToPhysicalName.containsKey(nestedIdEntry.id)) {
+            throw new IllegalArgumentException(
+                String.format("Duplicate field id %s", nestedIdEntry.id));
+          }
+
+          // Duplicate with another nested ID
+          if (!dedupedNestedIds.add(nestedIdEntry.id)) {
+            throw new IllegalArgumentException(
+                String.format("Duplicate field id %s", nestedIdEntry.id));
+          }
+        }
+      }
+      validateNestedIdConsistency(currentFieldIdToNestedIds, updatedFieldIdToNestedIds);
+    }
+  }
+
+  private static void validateFieldHasColumnIdAndPhysicalName(StructField field) {
+    if (!hasColumnId(field)) {
+      throw new IllegalArgumentException(
+          String.format(
+              "Column mapping mode is enabled and field %s is missing column id", field.getName()));
+    }
+
+    if (!hasPhysicalName(field)) {
+      throw new IllegalArgumentException(
+          String.format(
+              "Column mapping mode is enabled and field %s is missing physical name",
+              field.getName()));
+    }
+  }
+
+  // Verify that the given field has nested IDs if applicable
+  private static void validateNestedIdsExist(
+      StructField field, Map<Long, List<NestedIdEntry>> nestedIds, Long columnId) {
+    if (!hasNestedColumnIds(field)) {
+      if (field.getDataType() instanceof MapType) {
+        throw new IllegalArgumentException(
+            String.format("Map field %s must have at least 2 nested field ids", field.getName()));
+      } else if (field.getDataType() instanceof ArrayType) {
+        throw new IllegalArgumentException(
+            String.format("Array field %s must have at least 1 nested field id", field.getName()));
+      }
+    } else {
+      if (field.getDataType() instanceof MapType && getNestedFieldIds(field).size() < 2) {
+        throw new IllegalArgumentException(
+            String.format("Map field %s must have at least 2 nested field ids", field.getName()));
+      }
+
+      nestedIds.put(columnId, nestedIdEntriesForField(field));
+    }
+  }
+
+  /**
+   * Validate that any nested IDs that were in the current field are consistent with the ones in the
+   * updated field
+   */
+  private static void validateNestedIdConsistency(
+      Map<Long, List<NestedIdEntry>> currentFieldIdToNestedIds,
+      Map<Long, List<NestedIdEntry>> updatedFieldIdToNestedIds) {
+    /* Validate that nested field IDs exist in the schema
+    and are consistent with the previous schemas */
+    for (Map.Entry<Long, List<NestedIdEntry>> entry : updatedFieldIdToNestedIds.entrySet()) {
+      Long fieldId = entry.getKey();
+      List<NestedIdEntry> updatedNestedIdEntries = entry.getValue();
+      List<NestedIdEntry> existingNestedIdEntries = currentFieldIdToNestedIds.get(fieldId);
+
+      /* If this is not a new column make sure
+      the existing nested IDs are consistent in the updated field */
+      if (existingNestedIdEntries != null) {
+        // Group new ID entries for this field by key and compare
+        Map<String, Long> updatedNestedKeyToColumnId = new HashMap<>();
+        for (NestedIdEntry updatedNestedIdEntry : updatedNestedIdEntries) {
+          updatedNestedKeyToColumnId.put(updatedNestedIdEntry.key, updatedNestedIdEntry.id);
+        }
+
+        for (NestedIdEntry existingNestedIdEntry : existingNestedIdEntries) {
+          Long existingColumnId = updatedNestedKeyToColumnId.get(existingNestedIdEntry.key);
+          if (existingColumnId == null || !existingColumnId.equals(existingNestedIdEntry.id)) {
+            throw new IllegalArgumentException(
+                String.format(
+                    "Expected field with id %s to have nested key %s",
+                    fieldId, existingNestedIdEntry.key));
+          }
+        }
+      }
+    }
+  }
+
+  private static List<NestedIdEntry> nestedIdEntriesForField(StructField field) {
+    return getNestedColumnIds(field).getEntries().entrySet().stream()
+        .map(
+            nestedIdEntry ->
+                new NestedIdEntry(nestedIdEntry.getKey(), (Long) nestedIdEntry.getValue()))
+        .collect(Collectors.toList());
+  }
+
+  /**
+   * Wrapper object for icebergCompatV2 nested ID entry to simplify validation e.g. a schema with
+   * col1 as map[int, array[int]] could look like <key: "col1.key", id: 1> <key: "col1.value", id:
+   * 2> <key: "col1.value.element", id: 3>
+   */
+  private static class NestedIdEntry {
+    private final String key;
+    private final long id;
+
+    NestedIdEntry(String key, long id) {
+      this.key = key;
+      this.id = id;
+    }
+  }
+
+  private static List<Long> getNestedFieldIds(StructField field) {
+    return getNestedColumnIds(field).getEntries().values().stream()
+        .filter(Long.class::isInstance)
+        .map(Long.class::cast)
+        .collect(Collectors.toList());
+  }
+
   private static int findMaxColumnId(StructField field, int maxColumnId) {
     if (hasColumnId(field)) {
       maxColumnId = Math.max(maxColumnId, getColumnId(field));
