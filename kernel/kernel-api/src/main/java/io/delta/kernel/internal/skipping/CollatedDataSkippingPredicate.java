@@ -35,9 +35,8 @@ public class CollatedDataSkippingPredicate extends CollatedPredicate implements 
         super(name, column, literal, collationIdentifier);
         this.referencedCols = Collections.singleton(column);
         this.referencedCollatedCols =
-                new HashMap<>(
-                        Collections.singletonMap(
-                                collationIdentifier, new HashSet<>(Collections.singleton(column))));
+                Collections.singletonMap(
+                        collationIdentifier, Collections.singleton(column));
     }
 
     @Override

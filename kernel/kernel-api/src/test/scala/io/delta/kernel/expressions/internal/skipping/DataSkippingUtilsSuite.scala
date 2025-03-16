@@ -265,11 +265,12 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
   }
 
   test("check constructDataSkippingFilter with CollatedPredicate") {
+    val UTF8_BINARY = StringType.STRING.getCollationIdentifier
     val UTF8_LCASE = CollationIdentifier.fromString("SPARK.UTF8_LCASE")
     val SR_CYRL = CollationIdentifier.fromString("ICU.sr_Cyrl_SRB.75.1")
+    val collations = Seq(UTF8_BINARY, UTF8_LCASE, SR_CYRL)
 
-    cross(Seq("<", "<=", ">", ">="), Seq(UTF8_LCASE, SR_CYRL))
-      .foreach {
+    cross(Seq("<", "<=", ">", ">="), collations).foreach {
       case (comparatorName, collationIdentifier) =>
         for (order <- Seq(0, 1)) {
           order: Int =>
@@ -298,9 +299,102 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
         }
       }
 
-
-
-
+    cross(collations, collations.map(new StringType(_))).foreach {
+      case (comparatorCollation, stringType) =>
+        Seq(
+          // (schema, predicate, expectedDataSkippingPredicate)
+          (
+            new StructType().add("a", stringType),
+            comparator("=", column("a"), Literal.ofString("b"), Some(comparatorCollation)),
+            dataSkippingPredicate(
+              "AND",
+              List(
+                collatedDataSkippingPredicate(
+                  "<=",
+                  List(column(STATS_WITH_COLLATION, comparatorCollation.toString, MIN, "a"),
+                    Literal.ofString("b")),
+                  comparatorCollation,
+                  Set(column(STATS_WITH_COLLATION, comparatorCollation.toString, MIN, "a")),
+                  Map(comparatorCollation ->
+                    Set(column(STATS_WITH_COLLATION, comparatorCollation.toString, MIN, "a")))),
+                collatedDataSkippingPredicate(
+                  ">=",
+                  List(column(STATS_WITH_COLLATION, comparatorCollation.toString, MAX, "a"),
+                    Literal.ofString("b")),
+                  comparatorCollation,
+                  Set(column(STATS_WITH_COLLATION, comparatorCollation.toString, MAX, "a")),
+                  Map(comparatorCollation ->
+                    Set(column(STATS_WITH_COLLATION, comparatorCollation.toString, MAX, "a"))))),
+              Set(
+                column(STATS_WITH_COLLATION, comparatorCollation.toString, MIN, "a"),
+                column(STATS_WITH_COLLATION, comparatorCollation.toString, MAX, "a")),
+              Map(comparatorCollation ->
+                Set(
+                  column(STATS_WITH_COLLATION, comparatorCollation.toString, MIN, "a"),
+                  column(STATS_WITH_COLLATION, comparatorCollation.toString, MAX, "a"))))
+          ),
+          (
+            new StructType().add("a", stringType),
+            comparator(
+              "IS NOT DISTINCT FROM",
+              Literal.ofString("b"),
+              column("a"),
+              Some(comparatorCollation)),
+            dataSkippingPredicate(
+              "AND",
+              List(
+                dataSkippingPredicate(
+                  "<",
+                  List(column(NULL_COUNT, "a"), column(NUM_RECORDS)),
+                  Set(column(NULL_COUNT, "a"), column(NUM_RECORDS)),
+                  Map.empty[CollationIdentifier, Set[Column]]),
+                dataSkippingPredicate(
+                  "AND",
+                  List(
+                    collatedDataSkippingPredicate(
+                      "<=",
+                      List(
+                        column(STATS_WITH_COLLATION, comparatorCollation.toString, MIN, "a"),
+                        Literal.ofString("b")),
+                      comparatorCollation,
+                      Set(column(STATS_WITH_COLLATION, comparatorCollation.toString, MIN, "a")),
+                      Map(comparatorCollation ->
+                        Set(column(STATS_WITH_COLLATION, comparatorCollation.toString, MIN, "a")))),
+                    collatedDataSkippingPredicate(
+                      ">=",
+                      List(
+                        column(STATS_WITH_COLLATION, comparatorCollation.toString, MAX, "a"),
+                        Literal.ofString("b")),
+                      comparatorCollation,
+                      Set(column(STATS_WITH_COLLATION, comparatorCollation.toString, MAX, "a")),
+                      Map(comparatorCollation ->
+                        Set(column(STATS_WITH_COLLATION, comparatorCollation.toString, MAX, "a")))
+                    )),
+                  Set(
+                    column(STATS_WITH_COLLATION, comparatorCollation.toString, MIN, "a"),
+                    column(STATS_WITH_COLLATION, comparatorCollation.toString, MAX, "a")),
+                  Map(comparatorCollation ->
+                    Set(
+                      column(STATS_WITH_COLLATION, comparatorCollation.toString, MIN, "a"),
+                      column(STATS_WITH_COLLATION, comparatorCollation.toString, MAX, "a"))))),
+                Set(
+                  column(NULL_COUNT, "a"),
+                  column(NUM_RECORDS),
+                  column(STATS_WITH_COLLATION, comparatorCollation.toString, MIN, "a"),
+                  column(STATS_WITH_COLLATION, comparatorCollation.toString, MAX, "a")),
+                Map(comparatorCollation ->
+                  Set(
+                    column(STATS_WITH_COLLATION, comparatorCollation.toString, MIN, "a"),
+                    column(STATS_WITH_COLLATION, comparatorCollation.toString, MAX, "a"))))
+          )
+        ).foreach {
+          case (schema, predicate, expectedDataSkippingPredicate) =>
+            checkResult(
+              schema,
+              predicate,
+              Optional.of(expectedDataSkippingPredicate))
+        }
+      }
 
     def cross[X, Y](x: Seq[X], y: Seq[Y]): Seq[(X, Y)] = {
       for { i <- x ; j <- y } yield (i, j)

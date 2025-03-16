@@ -72,7 +72,8 @@ public class DataSkippingPredicate extends Predicate implements IDataSkippingPre
             for (Map.Entry<CollationIdentifier, Set<Column>> entry :
                     left.getReferencedCollatedCols().entrySet()) {
               if (!containsKey(entry.getKey())) {
-                put(entry.getKey(), entry.getValue());
+                put(entry.getKey(), new HashSet<>());
+                get(entry.getKey()).addAll(entry.getValue());
               } else {
                 get(entry.getKey()).addAll(entry.getValue());
               }
@@ -80,7 +81,8 @@ public class DataSkippingPredicate extends Predicate implements IDataSkippingPre
             for (Map.Entry<CollationIdentifier, Set<Column>> entry :
                     right.getReferencedCollatedCols().entrySet()) {
               if (!containsKey(entry.getKey())) {
-                put(entry.getKey(), entry.getValue());
+                put(entry.getKey(), new HashSet<>());
+                get(entry.getKey()).addAll(entry.getValue());
               } else {
                 get(entry.getKey()).addAll(entry.getValue());
               }
