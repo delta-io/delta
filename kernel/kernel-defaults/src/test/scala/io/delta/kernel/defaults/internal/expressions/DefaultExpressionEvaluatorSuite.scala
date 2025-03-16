@@ -1155,8 +1155,8 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
           )
         ).foreach {
           case (expr1, expr2, dataType1, dataType2, schema) =>
-            val expr = new CollatedPredicate(
-              predicateName, expr1, expr2, StringType.STRING.getCollationIdentifier)
+            val expr = comparator(
+              predicateName, expr1, expr2, Some(StringType.STRING.getCollationIdentifier))
             val input = zeroColumnBatch(rowCount = 1)
 
             val e = intercept[UnsupportedOperationException] {
@@ -1691,12 +1691,12 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
   }
 
   private def testCollatedComparator(
-      comparator: String,
+      comparatorName: String,
       left: Expression,
       right: Expression,
       expResult: BooleanJ,
       collationIdentifier: CollationIdentifier): Unit = {
-    val expression = new CollatedPredicate(comparator, left, right, collationIdentifier)
+    val expression = comparator(comparatorName, left, right, Some(collationIdentifier))
     val batch = zeroColumnBatch(rowCount = 1)
 
     if (collationIdentifier.equals(StringType.STRING.getCollationIdentifier)) {
@@ -1706,11 +1706,11 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       assert(outputVector.getDataType === BooleanType.BOOLEAN)
       assert(
         outputVector.isNullAt(0) === (expResult == null),
-        s"Unexpected null value: $comparator($left, $right)")
+        s"Unexpected null value: ($left $comparatorName $right COLLATE $collationIdentifier)")
       if (expResult != null) {
         assert(
           outputVector.getBoolean(0) === expResult,
-          s"Unexpected value: $comparator($left, $right)")
+          s"Unexpected value: ($left $comparatorName $right COLLATE $collationIdentifier)")
       }
     } else {
       checkUnsupportedCollation(batch.getSchema, expression, batch, collationIdentifier)

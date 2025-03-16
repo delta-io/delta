@@ -75,7 +75,7 @@ trait ExpressionSuiteBase extends TestUtils with DefaultVectorTestUtils {
                             symbol: String, left: Expression,
                             right: Expression,
                             collationIdentifier: Option[CollationIdentifier] = None): Predicate = {
-    if (collationIdentifier.isDefined) {
+    if (collationIdentifier.isDefined && collationIdentifier.get != null) {
       new CollatedPredicate(symbol, left, right, collationIdentifier.get)
     } else {
       new Predicate(symbol, left, right)
