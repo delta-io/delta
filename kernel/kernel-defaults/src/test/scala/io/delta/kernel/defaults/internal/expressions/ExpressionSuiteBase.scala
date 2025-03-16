@@ -71,8 +71,15 @@ trait ExpressionSuiteBase extends TestUtils with DefaultVectorTestUtils {
     }
   }
 
-  protected def comparator(symbol: String, left: Expression, right: Expression): Predicate = {
-    new Predicate(symbol, left, right)
+  protected def comparator(
+                            symbol: String, left: Expression,
+                            right: Expression,
+                            collationIdentifier: Option[CollationIdentifier] = None): Predicate = {
+    if (collationIdentifier.isDefined) {
+      new CollatedPredicate(symbol, left, right, collationIdentifier.get)
+    } else {
+      new Predicate(symbol, left, right)
+    }
   }
 
   protected def checkBooleanVectors(actual: ColumnVector, expected: ColumnVector): Unit = {
