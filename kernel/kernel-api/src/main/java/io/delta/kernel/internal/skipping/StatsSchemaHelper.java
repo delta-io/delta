@@ -149,7 +149,7 @@ public class StatsSchemaHelper {
               "%s is not a valid collated min column for data schema %s",
               column,
               dataSchema);
-      return new Tuple2<>(getChildColumn(getChildColumn(getStatsColumn(column, MIN), collationIdentifier.toString()), STATS_WITH_COLLATION), Optional.empty());
+      return new Tuple2<>(getChildColumn(getChildColumn(getStatsColumn(column, MIN), collationIdentifier.get().toString()), STATS_WITH_COLLATION), Optional.empty());
     }
     checkArgument(
             isSkippingEligibleMinMaxColumn(column),
@@ -166,7 +166,7 @@ public class StatsSchemaHelper {
                 "%s is not a valid collated max column for data schema %s",
                 column,
                 dataSchema);
-        return new Tuple2<>(getChildColumn(getChildColumn(getStatsColumn(column, MAX), collationIdentifier.toString()), STATS_WITH_COLLATION), Optional.empty());
+        return new Tuple2<>(getChildColumn(getChildColumn(getStatsColumn(column, MAX), collationIdentifier.get().toString()), STATS_WITH_COLLATION), Optional.empty());
     }
 
     checkArgument(

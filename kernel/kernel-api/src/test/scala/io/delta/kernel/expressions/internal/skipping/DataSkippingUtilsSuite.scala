@@ -1,7 +1,7 @@
 package io.delta.kernel.expressions.internal.skipping
 
 import io.delta.kernel.expressions.{And, CollatedPredicate, Column, Expression, Literal, Or, Predicate}
-import io.delta.kernel.internal.skipping.{CollatedDataSkippingPredicate, DataSkippingPredicate}
+import io.delta.kernel.internal.skipping.{CollatedDataSkippingPredicate, DataSkippingPredicate, IDataSkippingPredicate}
 import io.delta.kernel.internal.skipping.DataSkippingUtils.constructDataSkippingFilter
 import io.delta.kernel.types.{CollationIdentifier, StringType, StructType}
 import org.scalatest.funsuite.AnyFunSuite
@@ -14,7 +14,8 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
   val MIN = "minValues"
   val MAX = "maxValues"
   val NULL_COUNT = "nullCount"
-  val NUM_RECORDS = "numRecords";
+  val NUM_RECORDS = "numRecords"
+  val STATS_WITH_COLLATION = "statsWithCollation"
   val dataSkippingPredicateConstructor =
     classOf[DataSkippingPredicate].getDeclaredConstructor(
       classOf[String],
@@ -31,7 +32,7 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
   dataSkippingPredicateConstructor.setAccessible(true)
   collatedDataSkippingPredicateConstructor.setAccessible(true)
 
-  test("constructDataSkippingFilter") {
+  test("check constructDataSkippingFilter") {
     Seq(
       // (schema, predicate, expectedDataSkippingPredicate)
       (
@@ -247,19 +248,78 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
             .add("a2", StringType.STRING)),
         comparator("<", column("a1"), Literal.ofString("b")),
         Optional.empty
+      ),
+      (
+        new StructType()
+          .add("a", StringType.STRING),
+        comparator("<", column("a"), Literal.ofBinary(Array(1.toByte, 2.toByte))),
+        Optional.empty
       )
     ).foreach {
       case (schema, predicate, expectedDataSkippingPredicate) =>
-        val actualDataSkippingPredicate = constructDataSkippingFilter(predicate, schema)
-        assert(actualDataSkippingPredicate.isPresent == expectedDataSkippingPredicate.isPresent)
-        if (actualDataSkippingPredicate.isPresent) {
-          assert(actualDataSkippingPredicate.get.toString
-            == expectedDataSkippingPredicate.get.toString)
-          assert(actualDataSkippingPredicate.get.getReferencedCols
-            == expectedDataSkippingPredicate.get.getReferencedCols)
-          assert(actualDataSkippingPredicate.get.getReferencedCollatedCols
-            == expectedDataSkippingPredicate.get.getReferencedCollatedCols)
+        checkResult(
+          schema,
+          predicate,
+          expectedDataSkippingPredicate.asInstanceOf[Optional[IDataSkippingPredicate]])
+    }
+  }
+
+  test("check constructDataSkippingFilter with CollatedPredicate") {
+    val UTF8_LCASE = CollationIdentifier.fromString("SPARK.UTF8_LCASE")
+    val SR_CYRL = CollationIdentifier.fromString("ICU.sr_Cyrl_SRB.75.1")
+
+    cross(Seq("<", "<=", ">", ">="), Seq(UTF8_LCASE, SR_CYRL))
+      .foreach {
+      case (comparatorName, collationIdentifier) =>
+        for (order <- Seq(0, 1)) {
+          order: Int =>
+            val prefix = if (comparatorName.startsWith("<") && order == 0) MIN else MAX
+            val cmp =
+            if (order == 0) {
+              comparator(
+                comparatorName, column("a"), Literal.ofString("b"), Some(collationIdentifier))
+            } else {
+              comparator(
+                comparatorName, Literal.ofString("b"), column("a"), Some(collationIdentifier))
+            }
+            checkResult(
+              new StructType().add("a", StringType.STRING),
+              cmp,
+              Optional.of(
+                collatedDataSkippingPredicate(
+                  comparatorName,
+                  List(
+                    column(STATS_WITH_COLLATION, collationIdentifier.toString, prefix, "a"),
+                    Literal.ofString("b")),
+                  collationIdentifier,
+                  Set(column(STATS_WITH_COLLATION, collationIdentifier.toString, prefix, "a")),
+                  Map(collationIdentifier ->
+                    Set(column(STATS_WITH_COLLATION, collationIdentifier.toString, prefix, "a"))))))
         }
+      }
+
+
+
+
+
+    def cross[X, Y](x: Seq[X], y: Seq[Y]): Seq[(X, Y)] = {
+      for { i <- x ; j <- y } yield (i, j)
+    }
+  }
+
+  def checkResult(
+                   schema: StructType,
+                   predicate: Predicate,
+                   expectedDataSkippingPredicate: Optional[IDataSkippingPredicate]): Unit = {
+    val actualDataSkippingPredicate = constructDataSkippingFilter(predicate, schema)
+    assert(actualDataSkippingPredicate.isPresent == expectedDataSkippingPredicate.isPresent)
+    if (actualDataSkippingPredicate.isPresent) {
+      assert(actualDataSkippingPredicate.get.toString
+        == expectedDataSkippingPredicate.get.toString)
+      assert(actualDataSkippingPredicate.get.getReferencedCols
+        == expectedDataSkippingPredicate.get.getReferencedCols)
+      assert(actualDataSkippingPredicate.get.getReferencedCollatedCols
+        == expectedDataSkippingPredicate.get.getReferencedCollatedCols)
     }
   }
 
@@ -294,5 +354,20 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
   : DataSkippingPredicate = {
     dataSkippingPredicateConstructor.newInstance(
       predicateName, children.asJava, columns.asJava, collationMap.mapValues(_.asJava).asJava)
+  }
+
+  def collatedDataSkippingPredicate(
+                                     predicateName: String,
+                                     children: List[Expression],
+                                     collationIdentifier: CollationIdentifier,
+                                     columns: Set[Column],
+                                     collationMap: Map[CollationIdentifier, Set[Column]])
+  : CollatedDataSkippingPredicate = {
+    collatedDataSkippingPredicateConstructor.newInstance(
+      predicateName,
+      children.asJava,
+      collationIdentifier,
+      columns.asJava,
+      collationMap.mapValues(_.asJava).asJava)
   }
 }
