@@ -21,7 +21,7 @@ import org.apache.spark.SparkThrowable
 /**
  * The trait for all exceptions of Delta code path.
  */
-trait DeltaThrowable extends SparkThrowable {
+trait DeltaThrowable extends SparkThrowable { // some change 4
   // Portable error identifier across SQL engines
   // If null, error class or SQLSTATE is not set
   override def getSqlState: String =
