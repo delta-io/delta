@@ -176,6 +176,31 @@ class DeltaTable private[tables](
   }
 
   /**
+   * Optimize the data layout of the table. This returns
+   * a [[DeltaOptimizeBuilder]] object that can be used to specify
+   * the partition filter to limit the scope of optimize and
+   * also execute different optimization techniques such as file
+   * compaction or order data using Z-Order curves.
+   *
+   * See the [[DeltaOptimizeBuilder]] for a full description
+   * of this operation.
+   *
+   * Scala example to run file compaction on a subset of
+   * partitions in the table:
+   * {{{
+   *    deltaTable
+   *     .optimize()
+   *     .where("date='2021-11-18'")
+   *     .executeCompaction();
+   * }}}
+   *
+   * @since 4.0.0
+   */
+  def optimize(): DeltaOptimizeBuilder = {
+    DeltaOptimizeBuilder(sparkSession, table)
+  }
+
+  /**
    * Helper method for the update APIs.
    *
    * @param condition boolean expression as Column object specifying which rows to update.
@@ -379,6 +404,116 @@ class DeltaTable private[tables](
    */
   def updateExpr(condition: String, set: java.util.Map[String, String]): Unit = {
     executeUpdate(Some(functions.expr(condition)), toStrColumnMap(set.asScala.toMap))
+  }
+
+  /**
+   * Merge data from the `source` DataFrame based on the given merge `condition`. This returns
+   * a [[DeltaMergeBuilder]] object that can be used to specify the update, delete, or insert
+   * actions to be performed on rows based on whether the rows matched the condition or not.
+   *
+   * See the [[DeltaMergeBuilder]] for a full description of this operation and what combinations of
+   * update, delete and insert operations are allowed.
+   *
+   * Scala example to update a key-value Delta table with new key-values from a source DataFrame:
+   * {{{
+   *    deltaTable
+   *     .as("target")
+   *     .merge(
+   *       source.as("source"),
+   *       "target.key = source.key")
+   *     .whenMatched
+   *     .updateExpr(Map(
+   *       "value" -> "source.value"))
+   *     .whenNotMatched
+   *     .insertExpr(Map(
+   *       "key" -> "source.key",
+   *       "value" -> "source.value"))
+   *     .execute()
+   * }}}
+   *
+   * Java example to update a key-value Delta table with new key-values from a source DataFrame:
+   * {{{
+   *    deltaTable
+   *     .as("target")
+   *     .merge(
+   *       source.as("source"),
+   *       "target.key = source.key")
+   *     .whenMatched
+   *     .updateExpr(
+   *        new HashMap<String, String>() {{
+   *          put("value" -> "source.value");
+   *        }})
+   *     .whenNotMatched
+   *     .insertExpr(
+   *        new HashMap<String, String>() {{
+   *         put("key", "source.key");
+   *         put("value", "source.value");
+   *       }})
+   *     .execute();
+   * }}}
+   *
+   * @param source    source Dataframe to be merged.
+   * @param condition boolean expression as SQL formatted string.
+   *
+   * @since 4.0.0
+   */
+  def merge(source: DataFrame, condition: String): DeltaMergeBuilder = {
+    merge(source, functions.expr(condition))
+  }
+
+  /**
+   * Merge data from the `source` DataFrame based on the given merge `condition`. This returns
+   * a [[DeltaMergeBuilder]] object that can be used to specify the update, delete, or insert
+   * actions to be performed on rows based on whether the rows matched the condition or not.
+   *
+   * See the [[DeltaMergeBuilder]] for a full description of this operation and what combinations of
+   * update, delete and insert operations are allowed.
+   *
+   * Scala example to update a key-value Delta table with new key-values from a source DataFrame:
+   * {{{
+   *    deltaTable
+   *     .as("target")
+   *     .merge(
+   *       source.as("source"),
+   *       "target.key = source.key")
+   *     .whenMatched
+   *     .updateExpr(Map(
+   *       "value" -> "source.value"))
+   *     .whenNotMatched
+   *     .insertExpr(Map(
+   *       "key" -> "source.key",
+   *       "value" -> "source.value"))
+   *     .execute()
+   * }}}
+   *
+   * Java example to update a key-value Delta table with new key-values from a source DataFrame:
+   * {{{
+   *    deltaTable
+   *     .as("target")
+   *     .merge(
+   *       source.as("source"),
+   *       "target.key = source.key")
+   *     .whenMatched
+   *     .updateExpr(
+   *        new HashMap<String, String>() {{
+   *          put("value" -> "source.value")
+   *        }})
+   *     .whenNotMatched
+   *     .insertExpr(
+   *        new HashMap<String, String>() {{
+   *         put("key", "source.key");
+   *         put("value", "source.value");
+   *       }})
+   *     .execute()
+   * }}}
+   *
+   * @param source    source Dataframe to be merged.
+   * @param condition boolean expression as a Column object.
+   *
+   * @since 4.0.0
+   */
+  def merge(source: DataFrame, condition: Column): DeltaMergeBuilder = {
+    DeltaMergeBuilder(this, source, condition)
   }
 
   /**

@@ -17,6 +17,7 @@
 // scalastyle:off line.size.limit
 
 import java.io.BufferedInputStream
+import java.net.URL
 import java.nio.file.Files
 import java.nio.file.attribute.PosixFilePermission
 import java.util
@@ -26,8 +27,10 @@ import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
 import org.apache.commons.compress.utils.IOUtils
 
 import scala.collection.mutable
+import scala.io.Source
 import scala.sys.process._
 import scala.util.Using
+import scala.xml.XML
 
 import sbt.internal.inc.Analysis
 import sbtprotoc.ProtocPlugin.autoImport._
@@ -298,6 +301,53 @@ lazy val connectCommon = (project in file("spark-connect/common"))
     ),
   )
 
+/**
+ * Downloads the latest nightly release JAR of a given Spark component and saves it to
+ * the specified directory.
+ *
+ * @param sparkComponentName The name of the Spark component.
+ * @param destDir The directory where the JAR should be saved.
+ */
+def downloadLatestSparkReleaseJar(
+    sparkComponentName: String,
+    destDir: File): Unit = {
+  val sparkMasterSnapshotsURL = "https://repository.apache.org/content/groups/snapshots/" +
+    "org/apache/spark/"
+
+  // Construct the URL to the maven-metadata.xml file, the maven-metadata.xml has
+  // metadata information about the latest nightly release of the jar, since the
+  // jar directory also retains slightly older jar versions.
+  //
+  // An example folder is:
+  // https://repository.apache.org/content/groups/snapshots/org/apache/spark/
+  // spark-catalyst_2.13/4.0.0-SNAPSHOT/
+  val latestSparkComponentJarDir = sparkMasterSnapshotsURL +
+    s"$sparkComponentName/$SPARK_MASTER_VERSION/"
+  val metadataUrl = new URL(latestSparkComponentJarDir + "maven-metadata.xml")
+
+  // Fetch and parse the maven-metadata.xml file.
+  val metadataXml = XML.load(metadataUrl)
+
+  // Extract the metadata information about the latest nightly release JAR.
+  val sparkVersion = SPARK_MASTER_VERSION.replace("-SNAPSHOT", "")
+  val timestamp = (metadataXml \\ "snapshot" \ "timestamp").text
+  val buildNumber = (metadataXml \\ "snapshot" \ "buildNumber").text
+
+  // Ensure the metadata information is properly extracted.
+  if (sparkVersion.isEmpty || timestamp.isEmpty || buildNumber.isEmpty) {
+    throw new RuntimeException("Could not extract the required metadata " +
+      "from maven-metadata.xml")
+  }
+
+  // Construct the URL for the latest nightly release JAR.
+  val latestSparkJarName = s"$sparkComponentName-$sparkVersion-$timestamp-$buildNumber.jar"
+  val latestSparkJarUrl = latestSparkComponentJarDir + latestSparkJarName
+  val latestSparkJarPath = destDir / s"$sparkComponentName.jar"
+
+  // Download the latest nightly release JAR.
+  new URL(latestSparkJarUrl) #> latestSparkJarPath !
+}
+
 lazy val connectClient = (project in file("spark-connect/client"))
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .dependsOn(connectCommon % "compile->compile;test->test;provided->provided")
@@ -342,7 +392,6 @@ lazy val connectClient = (project in file("spark-connect/client"))
       val destDir = (Test / resourceManaged).value / "spark"
       if (!destDir.exists()) {
         IO.createDirectory(destDir)
-        val files = mutable.Buffer.empty[File]
         Using(new BufferedInputStream(location.openStream())) { bi =>
           Using(new GzipCompressorInputStream(bi)) { gi =>
             Using(new TarArchiveInputStream(gi)) { ti =>
@@ -352,7 +401,9 @@ lazy val connectClient = (project in file("spark-connect/client"))
                 if (entry.isDirectory) {
                   dest.mkdirs()
                 } else {
-                  files += dest
+                  // Ensure the parent directories exist.
+                  dest.getParentFile.mkdirs()
+
                   Using(Files.newOutputStream(dest.toPath)) { os =>
                     IOUtils.copy(ti, os)
                   }
@@ -368,20 +419,36 @@ lazy val connectClient = (project in file("spark-connect/client"))
             }
           }
         }
-        files
-      } else {
-        destDir.get()
+
+        val sparkJarsDir = destDir / "spark-4.0.0-preview1-bin-hadoop3" / "jars"
+        if (!sparkJarsDir.exists()) {
+          throw new RuntimeException(s"Jars directory $sparkJarsDir does not exist after extraction.")
+        }
+
+        // The Spark Jars have the format "sparkComponentName-4.0.0-preview1.jar", for example:
+        // spark-catalyst_2.13-4.0.0-preview1.jar, spark-core_2.13-4.0.0-preview1.jar, etc.
+        val outdatedJars = sparkJarsDir.listFiles().filter(_.getName.endsWith("preview1.jar"))
+
+        // Replace outdated Spark 4.0 First Preview jars with latest nightly release Spark
+        // Master jars.
+        outdatedJars.foreach { outdatedJar =>
+          val sparkComponentName = outdatedJar.getName.stripSuffix("-4.0.0-preview1.jar")
+          downloadLatestSparkReleaseJar(sparkComponentName, sparkJarsDir)
+        }
+        outdatedJars.foreach(_.delete())
       }
+
+      Seq(destDir)
     }.taskValue,
     (Test / resourceGenerators) += Def.task {
-      val src = url("https://repository.apache.org/content/groups/public/org/apache/spark/spark-connect_2.13/4.0.0-preview1/spark-connect_2.13-4.0.0-preview1.jar")
-      val dest = (Test / resourceManaged).value / "spark-connect.jar"
+      val sparkConnectComponentName = "spark-connect_2.13"
+      val dest = (Test / resourceManaged).value / s"$sparkConnectComponentName.jar"
+
       if (!dest.exists()) {
-        src #> dest !;
-        Seq(dest)
-      } else {
-        dest.get()
+        downloadLatestSparkReleaseJar(sparkConnectComponentName, (Test / resourceManaged).value)
       }
+
+      Seq(dest)
     }.taskValue
   )
 
