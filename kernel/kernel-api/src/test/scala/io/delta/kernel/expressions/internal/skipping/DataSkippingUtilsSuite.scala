@@ -54,6 +54,17 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
       (
         new StructType()
           .add("a", StringType.STRING),
+        comparator("<", Literal.ofString("b"), column("a")),
+        Optional.of(
+          dataSkippingPredicate(
+            ">",
+            List(column(MAX, "a"), Literal.ofString("b")),
+            Set(column(MAX, "a")),
+            Map.empty[CollationIdentifier, Set[Column]]))
+      ),
+      (
+        new StructType()
+          .add("a", StringType.STRING),
         comparator("<=", column("a"), Literal.ofString("b")),
         Optional.of(
           dataSkippingPredicate(
