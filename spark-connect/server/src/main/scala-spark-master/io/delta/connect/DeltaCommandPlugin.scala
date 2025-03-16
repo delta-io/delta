@@ -19,6 +19,7 @@ package org.apache.spark.sql.connect.delta
 import com.google.protobuf
 import io.delta.connect.proto
 
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.connect.common.InvalidPlanInput
 import org.apache.spark.sql.connect.planner.SparkConnectPlanner
 import org.apache.spark.sql.connect.plugin.CommandPlugin
@@ -39,10 +40,35 @@ class DeltaCommandPlugin extends CommandPlugin with DeltaPlannerBase {
 
   private def process(command: proto.DeltaCommand, planner: SparkConnectPlanner): Unit = {
     command.getCommandTypeCase match {
-      // TODO(long.vu): Add support for Clone once we fix shading of
-      // StreamObserver in SparkConnectPlanner.
+      case proto.DeltaCommand.CommandTypeCase.VACUUM_TABLE =>
+        processVacuumTable(planner.session, command.getVacuumTable)
+      case proto.DeltaCommand.CommandTypeCase.UPGRADE_TABLE_PROTOCOL =>
+        processUpgradeTableProtocol(planner.session, command.getUpgradeTableProtocol)
+      case proto.DeltaCommand.CommandTypeCase.GENERATE =>
+        processGenerate(planner.session, command.getGenerate)
       case _ =>
         throw InvalidPlanInput(s"${command.getCommandTypeCase}")
     }
+  }
+
+  private def processVacuumTable(spark: SparkSession, vacuum: proto.VacuumTable): Unit = {
+    val deltaTable = transformDeltaTable(spark, vacuum.getTable)
+    if (vacuum.hasRetentionHours) {
+      deltaTable.vacuum(vacuum.getRetentionHours)
+    } else {
+      deltaTable.vacuum()
+    }
+  }
+
+  private def processUpgradeTableProtocol(
+      spark: SparkSession, upgradeTableProtocol: proto.UpgradeTableProtocol): Unit = {
+    val deltaTable = transformDeltaTable(spark, upgradeTableProtocol.getTable)
+    deltaTable.upgradeTableProtocol(
+      upgradeTableProtocol.getReaderVersion, upgradeTableProtocol.getWriterVersion)
+  }
+
+  private def processGenerate(spark: SparkSession, generate: proto.Generate): Unit = {
+    val deltaTable = transformDeltaTable(spark, generate.getTable)
+    deltaTable.generate(generate.getMode)
   }
 }

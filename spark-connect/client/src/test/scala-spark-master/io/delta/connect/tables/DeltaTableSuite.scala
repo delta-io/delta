@@ -19,6 +19,8 @@ package io.delta.tables
 import java.io.File
 import java.text.SimpleDateFormat
 
+import org.apache.commons.io.FileUtils
+
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.test.DeltaQueryTest
@@ -53,6 +55,28 @@ class DeltaTableSuite extends DeltaQueryTest with RemoteSparkSession {
         DeltaTable.forPath(spark, dir.getAbsolutePath).as("tbl").toDF.select("tbl.value"),
         testData.select("value").collect().toSeq
       )
+    }
+  }
+
+  test("vacuum") {
+    Seq("true", "false").foreach { deltaFormatCheckEnabled =>
+      withTempPath { dir =>
+        testData.write.format("delta").save(dir.getAbsolutePath)
+        val table = io.delta.tables.DeltaTable.forPath(spark, dir.getAbsolutePath)
+
+        // create a uncommitted file.
+        val notCommittedFile = "notCommittedFile.json"
+        val file = new File(dir, notCommittedFile)
+        FileUtils.write(file, "gibberish")
+        // set to ancient time so that the file is eligible to be vacuumed.
+        file.setLastModified(0)
+        assert(file.exists())
+
+        table.vacuum()
+
+        val file2 = new File(dir, notCommittedFile)
+        assert(!file2.exists())
+      }
     }
   }
 
@@ -117,6 +141,18 @@ class DeltaTableSuite extends DeltaQueryTest with RemoteSparkSession {
     withTempPath { dir =>
       testData.write.format("parquet").mode("overwrite").save(dir.getAbsolutePath)
       assert(!DeltaTable.isDeltaTable(spark, dir.getAbsolutePath))
+    }
+  }
+
+  test("generate") {
+    withTempPath { dir =>
+      val path = dir.getAbsolutePath
+      testData.toDF().write.format("delta").save(path)
+      val table = DeltaTable.forPath(spark, path)
+      val manifestDir = new File(dir, "_symlink_format_manifest")
+      assert(!manifestDir.exists())
+      table.generate("symlink_format_manifest")
+      assert(manifestDir.exists())
     }
   }
 
@@ -205,6 +241,19 @@ class DeltaTableSuite extends DeltaQueryTest with RemoteSparkSession {
       checkAnswer(
         spark.read.format("delta").load(path),
         df1)
+    }
+  }
+
+  test("upgradeTableProtocol") {
+    withTempPath { dir =>
+      val path = dir.getAbsolutePath
+      testData.write.format("delta").save(path)
+      val table = DeltaTable.forPath(spark, path)
+      table.upgradeTableProtocol(1, 2)
+      checkAnswer(
+        table.history().select("version", "operation"),
+        Seq(Row(0L, "WRITE"), Row(1L, "SET TBLPROPERTIES"))
+      )
     }
   }
 }
