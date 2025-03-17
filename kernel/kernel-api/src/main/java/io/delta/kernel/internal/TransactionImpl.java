@@ -29,6 +29,7 @@ import io.delta.kernel.TransactionCommitResult;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.ConcurrentWriteException;
+import io.delta.kernel.exceptions.DomainDoesNotExistException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.hook.PostCommitHook;
 import io.delta.kernel.internal.actions.*;
@@ -81,7 +82,9 @@ public class TransactionImpl implements Transaction {
   private final Optional<SetTransaction> setTxnOpt;
   private final boolean shouldUpdateProtocol;
   private final Clock clock;
-  private List<DomainMetadata> domainMetadatas;
+  private final Map<String, DomainMetadata> domainMetadatasAdded = new HashMap<>();
+  private final Set<String> domainMetadatasRemoved = new HashSet<>();
+  private Optional<List<DomainMetadata>> domainMetadatas = Optional.empty();
   private Metadata metadata;
   private boolean shouldUpdateMetadata;
   private int maxRetries;
@@ -101,8 +104,7 @@ public class TransactionImpl implements Transaction {
       boolean shouldUpdateMetadata,
       boolean shouldUpdateProtocol,
       int maxRetries,
-      Clock clock,
-      List<DomainMetadata> domainMetadatas) {
+      Clock clock) {
     this.isNewTable = isNewTable;
     this.dataPath = dataPath;
     this.logPath = logPath;
@@ -116,7 +118,6 @@ public class TransactionImpl implements Transaction {
     this.shouldUpdateProtocol = shouldUpdateProtocol;
     this.maxRetries = maxRetries;
     this.clock = clock;
-    this.domainMetadatas = domainMetadatas;
   }
 
   @Override
@@ -150,18 +151,94 @@ public class TransactionImpl implements Transaction {
     return setTxnOpt;
   }
 
-  /**
-   * Internal API to add domain metadata actions for this transaction. Visible for testing.
-   *
-   * @param domainMetadatas List of domain metadata to be added to the transaction.
-   */
   @VisibleForTesting
-  public void addDomainMetadatas(List<DomainMetadata> domainMetadatas) {
-    this.domainMetadatas.addAll(domainMetadatas);
+  public void addDomainMetadataInternal(String domain, String config) {
+    checkArgument(
+        !domainMetadatasRemoved.contains(domain),
+        "Cannot add a domain that is removed in this transaction");
+    checkState(!closed, "Cannot add a domain metadata after the transaction has completed");
+    // we override any existing value
+    domainMetadatasAdded.put(domain, new DomainMetadata(domain, config, false /* removed */));
   }
 
+  @Override
+  public void addDomainMetadata(String domain, String config) {
+    checkState(
+        TableFeatures.isDomainMetadataSupported(protocol),
+        "Unable to add domain metadata when the domain metadata table feature is disabled");
+    checkArgument(
+        DomainMetadata.isUserControlledDomain(domain),
+        "Setting a system-controlled domain is not allowed: " + domain);
+    addDomainMetadataInternal(domain, config);
+  }
+
+  @VisibleForTesting
+  public void removeDomainMetadataInternal(String domain) {
+    checkArgument(
+        !domainMetadatasAdded.containsKey(domain),
+        "Cannot remove a domain that is added in this transaction");
+    checkState(!closed, "Cannot remove a domain after the transaction has completed");
+    domainMetadatasRemoved.add(domain);
+  }
+
+  @Override
+  public void removeDomainMetadata(String domain) {
+    checkState(
+        TableFeatures.isDomainMetadataSupported(protocol),
+        "Unable to add domain metadata when the domain metadata table feature is disabled");
+    checkArgument(
+        DomainMetadata.isUserControlledDomain(domain),
+        "Removing a system-controlled domain is not allowed: " + domain);
+    removeDomainMetadataInternal(domain);
+  }
+
+  /**
+   * Returns a list of the domain metadatas to commit. This consists of the domain metadatas added
+   * in the transaction using {@link Transaction#addDomainMetadata(String, String)} and the
+   * tombstones for the domain metadatas removed in the transaction using {@link
+   * Transaction#removeDomainMetadata(String)}. The result is stored in {@code domainMetadatas}.
+   *
+   * @return A list of {@link DomainMetadata} containing domain metadata to be committed in this
+   *     transaction.
+   */
   public List<DomainMetadata> getDomainMetadatas() {
-    return domainMetadatas;
+    // If we have already processed the domain metadatas, then return the list.
+    if (domainMetadatas.isPresent()) {
+      return domainMetadatas.get();
+    }
+    // Add all domain metadatas added in the transaction
+    List<DomainMetadata> finalDomainMetadatas = new ArrayList<>(domainMetadatasAdded.values());
+
+    // Generate the tombstones for the removed domain metadatas
+    Map<String, DomainMetadata> snapshotDomainMetadataMap = readSnapshot.getDomainMetadataMap();
+    for (String domainName : domainMetadatasRemoved) {
+      // Note: we know domainName is not already in finalDomainMetadatas because we do not allow
+      // removing and adding a domain with the same identifier in a single txn!
+      if (snapshotDomainMetadataMap.containsKey(domainName)) {
+        DomainMetadata domainToRemove = snapshotDomainMetadataMap.get(domainName);
+        if (domainToRemove.isRemoved()) {
+          // If the domain is already removed we throw an error to avoid any inconsistencies or
+          // ambiguity. The snapshot read by the connector is inconsistent with the snapshot
+          // loaded here as the domain to remove no longer exists.
+          throw new DomainDoesNotExistException(
+              dataPath.toString(), domainName, readSnapshot.getVersion());
+        }
+        finalDomainMetadatas.add(domainToRemove.removed());
+      } else {
+        // We must throw an error if the domain does not exist. Otherwise, there could be unexpected
+        // behavior within conflict resolution. For example, consider the following
+        // 1. Table has no domains set in V0
+        // 2. txnA is started and wants to remove domain "foo"
+        // 3. txnB is started and adds domain "foo" and commits V1 before txnA
+        // 4. txnA needs to perform conflict resolution against the V1 commit from txnB
+        // Conflict resolution should fail but since the domain does not exist we cannot create
+        // a tombstone to mark it as removed and correctly perform conflict resolution.
+        throw new DomainDoesNotExistException(
+            dataPath.toString(), domainName, readSnapshot.getVersion());
+      }
+    }
+    domainMetadatas = Optional.of(finalDomainMetadatas);
+    return finalDomainMetadatas;
   }
 
   public Protocol getProtocol() {
@@ -201,18 +278,20 @@ public class TransactionImpl implements Transaction {
       CommitInfo attemptCommitInfo = generateCommitAction(engine);
       updateMetadataWithICTIfRequired(
           engine, attemptCommitInfo.getInCommitTimestamp(), readSnapshot.getVersion());
+      List<DomainMetadata> resolvedDomainMetadatas = getDomainMetadatas();
 
       // If row tracking is supported, assign base row IDs and default row commit versions to any
       // AddFile actions that do not yet have them. If the row ID high watermark changes, emit a
       // DomainMetadata action to update it.
       if (TableFeatures.isRowTrackingSupported(protocol)) {
-        domainMetadatas =
+        List<DomainMetadata> updatedDomainMetadata =
             RowTracking.updateRowIdHighWatermarkIfNeeded(
                 readSnapshot,
                 protocol,
                 Optional.empty() /* winningTxnRowIdHighWatermark */,
                 dataActions,
-                domainMetadatas);
+                resolvedDomainMetadatas);
+        domainMetadatas = Optional.of(updatedDomainMetadata);
         dataActions =
             RowTracking.assignBaseRowIdAndDefaultRowCommitVersion(
                 readSnapshot,
@@ -239,7 +318,7 @@ public class TransactionImpl implements Transaction {
                 resolveConflicts(engine, commitAsVersion, attemptCommitInfo, numTries, dataActions);
             commitAsVersion = rebaseState.getLatestVersion() + 1;
             dataActions = rebaseState.getUpdatedDataActions();
-            domainMetadatas = rebaseState.getUpdatedDomainMetadatas();
+            domainMetadatas = Optional.of(rebaseState.getUpdatedDomainMetadatas());
           }
         }
         numTries++;
@@ -329,10 +408,12 @@ public class TransactionImpl implements Transaction {
     }
     setTxnOpt.ifPresent(setTxn -> metadataActions.add(createTxnSingleAction(setTxn.toRow())));
 
-    // Check for duplicate domain metadata and if the protocol supports
-    DomainMetadataUtils.validateDomainMetadatas(domainMetadatas, protocol);
+    List<DomainMetadata> resolvedDomainMetadatas = getDomainMetadatas();
 
-    domainMetadatas.forEach(
+    // Check for duplicate domain metadata and if the protocol supports
+    DomainMetadataUtils.validateDomainMetadatas(resolvedDomainMetadatas, protocol);
+
+    resolvedDomainMetadatas.forEach(
         dm -> metadataActions.add(createDomainMetadataSingleAction(dm.toRow())));
 
     try (CloseableIterator<Row> stageDataIter = dataActions.iterator()) {

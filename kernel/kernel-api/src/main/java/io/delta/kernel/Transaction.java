@@ -28,6 +28,7 @@ import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.data.*;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.ConcurrentWriteException;
+import io.delta.kernel.exceptions.DomainDoesNotExistException;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.DataWriteContextImpl;
 import io.delta.kernel.internal.actions.AddFile;
@@ -96,6 +97,31 @@ public interface Transaction {
    */
   TransactionCommitResult commit(Engine engine, CloseableIterable<Row> dataActions)
       throws ConcurrentWriteException;
+
+  /**
+   * Commit the provided domain metadata as part of this transaction. If this is called more than
+   * once with the same {@code domain} the latest provided {@code config} will be committed in the
+   * transaction. Only user-controlled domains are allowed (aka. domains with a `delta.` prefix are
+   * not allowed). Adding and removing a domain with the same identifier in the same txn is not
+   * allowed. Adding domain metadata to a table that does not support the table feature is not
+   * allowed. To enable the table feature, make sure to call {@link
+   * TransactionBuilder#withDomainMetadataSupported}
+   *
+   * @param domain the domain identifier
+   * @param config configuration string for this domain
+   */
+  void addDomainMetadata(String domain, String config);
+
+  /**
+   * Mark the domain metadata with identifier {@code domain} as removed in this transaction. If this
+   * domain does not exist in the latest version of the table, calling {@link
+   * Transaction#commit(Engine, CloseableIterable)} will throw a {@link
+   * DomainDoesNotExistException}. Adding and removing a domain with the same identifier in one txn
+   * is not allowed.
+   *
+   * @param domain the domain identifier for the domain to remove
+   */
+  void removeDomainMetadata(String domain);
 
   /**
    * Given the logical data that needs to be written to the table, convert it into the required
