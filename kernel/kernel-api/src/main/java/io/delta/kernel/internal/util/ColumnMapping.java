@@ -190,21 +190,6 @@ public class ColumnMapping {
     return field.getMetadata().getMetadata(COLUMN_MAPPING_NESTED_IDS_KEY);
   }
 
-  private static void validateFieldHasColumnIdAndPhysicalName(StructField field) {
-    if (!hasColumnId(field)) {
-      throw new IllegalArgumentException(
-          String.format(
-              "Column mapping mode is enabled and field %s is missing column id", field.getName()));
-    }
-
-    if (!hasPhysicalName(field)) {
-      throw new IllegalArgumentException(
-          String.format(
-              "Column mapping mode is enabled and field %s is missing physical name",
-              field.getName()));
-    }
-  }
-
   private static int findMaxColumnId(StructField field, int maxColumnId) {
     if (hasColumnId(field)) {
       maxColumnId = Math.max(maxColumnId, getColumnId(field));
