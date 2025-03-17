@@ -257,7 +257,7 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
       )
     ).foreach {
       case (schema, predicate, expectedDataSkippingPredicate) =>
-        checkResult(
+        checkFilter(
           schema,
           predicate,
           expectedDataSkippingPredicate.asInstanceOf[Optional[IDataSkippingPredicate]])
@@ -283,7 +283,7 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
               comparator(
                 comparatorName, Literal.ofString("b"), column("a"), Some(collationIdentifier))
             }
-            checkResult(
+            checkFilter(
               new StructType().add("a", StringType.STRING),
               cmp,
               Optional.of(
@@ -389,7 +389,7 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
           )
         ).foreach {
           case (schema, predicate, expectedDataSkippingPredicate) =>
-            checkResult(
+            checkFilter(
               schema,
               predicate,
               Optional.of(expectedDataSkippingPredicate))
@@ -401,7 +401,7 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
     }
   }
 
-  def checkResult(
+  def checkFilter(
                    schema: StructType,
                    predicate: Predicate,
                    expectedDataSkippingPredicate: Optional[IDataSkippingPredicate]): Unit = {
