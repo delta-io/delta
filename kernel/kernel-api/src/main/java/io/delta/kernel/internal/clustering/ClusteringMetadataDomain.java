@@ -73,12 +73,14 @@ public final class ClusteringMetadataDomain extends JsonMetadataDomain {
     List<String> physicalNameParts = new ArrayList<>();
     DataType currentType = schema;
 
+    // Traverse through each level of the logical name to resolve its corresponding physical name.
     for (String namePart : logicalNameParts) {
       if (!(currentType instanceof StructType)) {
         throw new IllegalArgumentException("Column not found in schema: " + logicalName);
       }
 
       StructType structType = (StructType) currentType;
+      // Find the field in the current structure that matches the given name
       Optional<StructField> fieldOpt =
           structType.fields().stream()
               .filter(
@@ -94,7 +96,9 @@ public final class ClusteringMetadataDomain extends JsonMetadataDomain {
       }
 
       StructField field = fieldOpt.get();
-      currentType = field.getDataType(); // Move deeper into the nested structure
+      // If the field itself is a struct, update currentType so we can look inside it in the next
+      // iteration.
+      currentType = field.getDataType();
 
       // Convert logical name to physical name using Delta Kernel's column mapping
       physicalNameParts.add(ColumnMapping.getPhysicalName(field));

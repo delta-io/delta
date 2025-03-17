@@ -56,7 +56,7 @@ public interface TransactionBuilder {
    * Set the list of clustering columns when create a new clustered table
    *
    * @param engine {@link Engine} instance to use.
-   * @param clusteringColumns The partition columns of the table. These should be a subset of the
+   * @param clusteringColumns The clustering columns of the table. These should be a subset of the
    *     columns in the schema.
    * @return updated {@link TransactionBuilder} instance.
    */
