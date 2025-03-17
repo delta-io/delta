@@ -53,7 +53,9 @@ You can create tables in the following ways.
     ```
 
 
-SQL also supports creating a table at a path, without creating an entry in the Hive metastore.
+- SQL also supports creating a table at a path, without creating an entry in the Hive metastore.
+  
+  .. code-language-tabs::
 
     ```sql
     -- Create or replace table with path
