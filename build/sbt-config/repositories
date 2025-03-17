@@ -10,3 +10,4 @@
   bintray-typesafe-sbt-plugin-releases: https://dl.bintray.com/typesafe/sbt-plugins/, [organization]/[module]/(scala_[scalaVersion]/)(sbt_[sbtVersion]/)[revision]/[type]s/[artifact](-[classifier]).[ext]
   repos-spark-packages: https://repos.spark-packages.org
   typesafe-releases: https://repo.typesafe.com/typesafe/releases/
+  apache-snapshot: https://repository.apache.org/content/groups/snapshots/

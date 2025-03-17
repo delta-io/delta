@@ -13,20 +13,24 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.spark.sql.delta
 
-import org.apache.spark.SparkThrowable
+import org.apache.spark.sql.catalyst.plans.logical.TableSpec
 
-/**
- * The trait for all exceptions of Delta code path.
- */
-trait DeltaThrowable extends SparkThrowable with DeltaThrowableConditionShim {
-  // Portable error identifier across SQL engines
-  // If null, error class or SQLSTATE is not set
-  override def getSqlState: String =
-    DeltaThrowableHelper.getSqlState(this.getErrorClass.split('.').head)
-
-  // True if this error is an internal error.
-  override def isInternalError: Boolean = DeltaThrowableHelper.isInternalError(this.getErrorClass)
+object TableSpecUtils {
+  def create(
+      properties: Map[String, String],
+      provider: Option[String],
+      location: Option[String],
+      comment: Option[String]): TableSpec = {
+    TableSpec(
+      properties = properties,
+      provider = provider,
+      options = Map.empty,
+      location = location,
+      comment = comment,
+      collation = None,
+      serde = None,
+      external = false)
+  }
 }
