@@ -121,6 +121,15 @@ class DataSkippingUtilsSuite extends AnyFunSuite {
       (
         new StructType()
           .add("a", StringType.STRING),
+        comparator("IS NOT DISTINCT FROM", column("a"), Literal.ofNull(StringType.STRING)),
+        Optional.of(
+          dataSkippingPredicate(">", List(column(NULL_COUNT, "a"), Literal.ofInt(0)),
+            Set(column(NULL_COUNT, "a")),
+            Map.empty[CollationIdentifier, Set[Column]]))
+      ),
+      (
+        new StructType()
+          .add("a", StringType.STRING),
         comparator("IS NOT DISTINCT FROM", Literal.ofString("b"), column("a")),
         Optional.of(
           dataSkippingPredicate(
