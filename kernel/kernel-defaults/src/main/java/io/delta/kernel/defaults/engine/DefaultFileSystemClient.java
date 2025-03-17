@@ -16,6 +16,8 @@
 package io.delta.kernel.defaults.engine;
 
 import io.delta.kernel.defaults.engine.fileio.FileIO;
+import io.delta.kernel.defaults.engine.fileio.InputFile;
+import io.delta.kernel.defaults.engine.fileio.SeekableInputStream;
 import io.delta.kernel.engine.FileReadRequest;
 import io.delta.kernel.engine.FileSystemClient;
 import io.delta.kernel.utils.CloseableIterator;
@@ -75,7 +77,8 @@ public class DefaultFileSystemClient implements FileSystemClient {
   @Override
   public CloseableIterator<ByteArrayInputStream> readFiles(
       CloseableIterator<FileReadRequest> readRequests) throws IOException {
-    return fileIO.readFiles(readRequests);
+    return readRequests.map(
+        elem -> getStream(elem.getPath(), elem.getStartOffset(), elem.getReadLength()));
   }
 
   @Override
@@ -86,5 +89,20 @@ public class DefaultFileSystemClient implements FileSystemClient {
   @Override
   public boolean delete(String path) throws IOException {
     return fileIO.delete(path);
+  }
+
+  private ByteArrayInputStream getStream(String filePath, int offset, int size) {
+    InputFile inputFile = this.fileIO.newInputFile(filePath);
+    try (SeekableInputStream stream = inputFile.newStream()) {
+      stream.seek(offset);
+      byte[] buff = new byte[size];
+      stream.readFully(buff, 0, size);
+      return new ByteArrayInputStream(buff);
+    } catch (IOException ex) {
+      throw new UncheckedIOException(
+          String.format(
+              "IOException reading from file %s at offset %s size %s", filePath, offset, size),
+          ex);
+    }
   }
 }

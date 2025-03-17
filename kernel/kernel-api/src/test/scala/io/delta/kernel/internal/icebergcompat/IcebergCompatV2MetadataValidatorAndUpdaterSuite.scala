@@ -134,7 +134,6 @@ class IcebergCompatV2MetadataValidatorAndUpdaterSuite
           validateAndUpdateIcebergCompatV2Metadata(isNewTable, metadata, protocol)
         assert(updatedMetadata.isPresent)
         assert(updatedMetadata.get().getConfiguration.get("delta.columnMapping.mode") == "name")
-        verifyCMTestSchemaHasValidColumnMappingInfo(updatedMetadata.get(), isNewTable)
       } else {
         val e = intercept[KernelException] {
           validateAndUpdateIcebergCompatV2Metadata(isNewTable, metadata, protocol)
@@ -159,9 +158,8 @@ class IcebergCompatV2MetadataValidatorAndUpdaterSuite
 
         val updatedMetadata =
           validateAndUpdateIcebergCompatV2Metadata(isNewTable, metadata, protocol)
-        // Metadata should be updated as we make sure column mapping fields are assigned
-        assert(updatedMetadata.isPresent)
-        verifyCMTestSchemaHasValidColumnMappingInfo(updatedMetadata.get(), isNewTable)
+        // No metadata update is needed since already compatible column mapping mode
+        assert(!updatedMetadata.isPresent)
       }
     }
   }

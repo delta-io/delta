@@ -141,6 +141,11 @@ public class TransactionImpl implements Transaction {
     return readSnapshot.getSchema();
   }
 
+  @Override
+  public long getReadTableVersion() {
+    return readSnapshot.getVersion();
+  }
+
   public Optional<SetTransaction> getSetTxnOpt() {
     return setTxnOpt;
   }

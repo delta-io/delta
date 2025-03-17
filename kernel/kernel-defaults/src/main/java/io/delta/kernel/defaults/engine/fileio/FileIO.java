@@ -16,10 +16,8 @@
 package io.delta.kernel.defaults.engine.fileio;
 
 import io.delta.kernel.defaults.engine.DefaultEngine;
-import io.delta.kernel.engine.FileReadRequest;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
-import java.io.ByteArrayInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.Optional;
@@ -61,18 +59,6 @@ public interface FileIO {
    * @throws IOException for any other IO error.
    */
   String resolvePath(String path) throws IOException;
-
-  /**
-   * Return an iterator of byte streams one for each read request in {@code readRequests}. The
-   * returned streams are in the same order as the given {@link FileReadRequest}s. It is the
-   * responsibility of the caller to close each returned stream.
-   *
-   * @param readRequests Iterator of read requests
-   * @return Data for each request as one {@link ByteArrayInputStream}.
-   * @throws IOException
-   */
-  CloseableIterator<ByteArrayInputStream> readFiles(CloseableIterator<FileReadRequest> readRequests)
-      throws IOException;
 
   /**
    * Create a directory at the given path including parent directories. This mimics the behavior of

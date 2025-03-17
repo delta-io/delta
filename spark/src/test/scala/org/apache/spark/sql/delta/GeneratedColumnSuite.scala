@@ -17,8 +17,6 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off typedlit
-// scalastyle:off import.ordering.noEmptyLine
-import java.io.PrintWriter
 import java.sql.{Date, Timestamp}
 
 import scala.collection.JavaConverters._
@@ -26,26 +24,19 @@ import scala.collection.JavaConverters._
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
-import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, InvariantViolationException, SchemaUtils}
+import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, InvariantViolationException}
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import io.delta.tables.DeltaTableBuilder
 
-import org.apache.spark.SparkConf
-import org.apache.spark.sql.{AnalysisException, Column, DataFrame, Dataset, QueryTest, Row}
+import org.apache.spark.sql.{AnalysisException, Column, DataFrame, Dataset, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.expressions.Expression
-import org.apache.spark.sql.catalyst.util.DateTimeUtils.{getZoneId, stringToDate, stringToTimestamp, toJavaDate, toJavaTimestamp}
 import org.apache.spark.sql.catalyst.util.quietly
 import org.apache.spark.sql.execution.streaming.MemoryStream
-import org.apache.spark.sql.functions.{current_timestamp, lit, struct, typedLit}
+import org.apache.spark.sql.functions.{lit, make_dt_interval, struct, typedLit}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.{StreamingQueryException, Trigger}
-import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{ArrayType, DataType, DateType, IntegerType, LongType, MetadataBuilder, ShortType, StringType, StructField, StructType, TimestampType}
-import org.apache.spark.unsafe.types.UTF8String
 
 trait GeneratedColumnSuiteBase
     extends GeneratedColumnTest
@@ -1905,6 +1896,12 @@ trait GeneratedColumnSuiteBase
     val tableName1 = "gcEnabledCDCOn"
     val tableName2 = "gcEnabledCDCOff"
     withTable(tableName1, tableName2) {
+      def readCdf(startingVersion: Long): DataFrame = {
+        spark.read.format("delta").option("readChangeData", "true")
+          .option("startingVersion", startingVersion)
+          .table(tableName1)
+          .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
+      }
 
       createTable(
         tableName1,
@@ -1919,24 +1916,26 @@ trait GeneratedColumnSuiteBase
         )
       )
 
+      checkAnswer(readCdf(startingVersion = 0), Seq())
+
       spark.range(100).repartition(10)
-        .withColumn("timeCol", current_timestamp())
+        .withColumn(
+          "timeCol", lit(sqlTimestamp("1970-01-01 00:00:00")) + make_dt_interval($"id"))
         .write
         .format("delta")
         .mode("append")
         .saveAsTable(tableName1)
 
-      spark.sql(s"DELETE FROM ${tableName1} WHERE id < 3")
+      spark.sql(s"DELETE FROM $tableName1 WHERE id < 3")
 
-      val changeData = spark.read.format("delta").option("readChangeData", "true")
-        .option("startingVersion", "2")
-        .table(tableName1)
-        .select("id", CDCReader.CDC_TYPE_COLUMN_NAME, CDCReader.CDC_COMMIT_VERSION)
-
-      val expected = spark.range(0, 3)
-        .withColumn(CDCReader.CDC_TYPE_COLUMN_NAME, lit("delete"))
-        .withColumn(CDCReader.CDC_COMMIT_VERSION, lit(2))
-      checkAnswer(changeData, expected)
+      checkAnswer(
+        readCdf(startingVersion = 2),
+        Seq(
+          Row(0, sqlTimestamp("1970-01-01 00:00:00"), sqlDate("1970-01-01"), "delete", 2),
+          Row(1, sqlTimestamp("1970-01-02 00:00:00"), sqlDate("1970-01-02"), "delete", 2),
+          Row(2, sqlTimestamp("1970-01-03 00:00:00"), sqlDate("1970-01-03"), "delete", 2)
+        )
+      )
 
       // Now write out the data frame of cdc to another table that has generated columns but not
       // cdc enabled.

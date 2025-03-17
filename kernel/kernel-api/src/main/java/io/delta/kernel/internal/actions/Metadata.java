@@ -120,7 +120,7 @@ public class Metadata {
                         .collect(Collectors.toList())));
   }
 
-  public Metadata withNewConfiguration(Map<String, String> configuration) {
+  public Metadata withMergedConfiguration(Map<String, String> configuration) {
     Map<String, String> newConfiguration = new HashMap<>(getConfiguration());
     newConfiguration.putAll(configuration);
     return new Metadata(
