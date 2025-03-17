@@ -378,6 +378,40 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
+  test("create clustered table - clustering column is not part of the schema") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+
+      val ex = intercept[IllegalArgumentException] {
+        txnBuilder
+          .withSchema(engine, testPartitionSchema)
+          .withClusteringColumns(engine, Seq("PART1", "part3").asJava)
+          .build(engine)
+      }
+      assert(ex.getMessage.contains("Clustering column part3 not found in the schema"))
+    }
+  }
+
+  test(
+    "create clustered table - clustering column and partition column cannot be set at same time") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+
+      val ex = intercept[IllegalArgumentException] {
+        txnBuilder
+          .withSchema(engine, testPartitionSchema)
+          .withClusteringColumns(engine, Seq("part1", "part2").asJava)
+          .withPartitionColumns(engine, Seq("part1").asJava)
+          .build(engine)
+      }
+      assert(
+        ex.getMessage
+          .contains("Partition Columns and Clustering Columns cannot be set at the same time"))
+    }
+  }
+
   test("create a clustered table") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
@@ -397,9 +431,11 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       assert(txn.getSchema(engine) === schema)
       commitTransaction(txn, engine, emptyIterable())
 
+      // Verify the clustering feature is included in the protocol
       val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
       assert(snapshot.getProtocol.getWriterFeatures.contains("clustering"))
 
+      // Verify the clustering domain metadata is written
       val expectedDomainMetadata = new DomainMetadata(
         "delta.clustering",
         """{"clusteringColumns":[["part1"],["part2"]]}""",
