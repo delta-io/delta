@@ -168,7 +168,8 @@ IntelliJ is the recommended IDE to use when developing Delta Lake. To import Del
 3. Under `Import project from external model` select `sbt`. Click `Next`.
 4. Under `Project JDK` specify a valid Java `1.8` JDK and opt to use SBT shell for `project reload` and `builds`.
 5. Click `Finish`.
-6. In your terminal, run `build/sbt clean package`. Building will generate files that are necessary for Intellij.
+6. In your terminal, run `build/sbt clean package`. Make sure you use Java `1.8`. The build will generate files 
+   that are necessary for Intellij to index the repository.
 
 ### Setup Verification
 
@@ -189,7 +190,7 @@ Error:(91, 22) not found: type DeltaSqlBaseParser
 ```
 
 then follow these steps:
-1. Ensure you are using JDK 1.8. You can set this using
+1. Ensure you are using Java `1.8`. You can set this using
 ```
 export JAVA_HOME=`/usr/libexec/java_home -v 1.8`
 ```
