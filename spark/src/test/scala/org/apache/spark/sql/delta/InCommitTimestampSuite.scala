@@ -16,13 +16,11 @@
 
 package org.apache.spark.sql.delta
 
-import java.nio.charset.StandardCharsets.UTF_8
 import java.sql.Timestamp
 
 import scala.collection.JavaConverters._
-import scala.concurrent.duration._
 
-import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
+import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo}
@@ -37,7 +35,7 @@ import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.streaming.StreamTest
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.util.{ManualClock, SerializableConfiguration, ThreadUtils}
+import org.apache.spark.util.ManualClock
 
 class InCommitTimestampSuite
   extends QueryTest
@@ -583,7 +581,7 @@ class InCommitTimestampSuite
           deltaCommitFileProvider).get
       assert(commit.version == 11)
       assert(commit.version == deltaLog.history.getActiveCommitAtTime(
-        new Timestamp(startTime + commitTimeDelta*11), true).version)
+        startTime + commitTimeDelta*11, true).version)
 
       // Search for commit 11 when the timestamp is not an exact match.
       commit = DeltaHistoryManager.getActiveCommitAtTimeFromICTRange(
@@ -644,6 +642,7 @@ class InCommitTimestampSuite
       }
       val commit = deltaLog.history.getActiveCommitAtTime(
         new Timestamp(startTime + commitTimeDelta * (numberAdditionalCommits + 1)),
+        catalogTableOpt = None,
         canReturnLastCommit = true)
       assert(commit.version == numberAdditionalCommits)
 
@@ -652,6 +651,7 @@ class InCommitTimestampSuite
       val e = intercept[DeltaErrors.TemporallyUnstableInputException] {
         deltaLog.history.getActiveCommitAtTime(
           new Timestamp(startTime + commitTimeDelta * (numberAdditionalCommits + 1)),
+          catalogTableOpt = None,
           canReturnLastCommit = false)
       }
       assert(e.getMessage.contains("The provided timestamp:") && e.getMessage.contains("is after"))
@@ -685,17 +685,20 @@ class InCommitTimestampSuite
         for (version <- 0L to currentVersion) {
           val ts = deltaLog.getSnapshotAt(version).timestamp
           // Search for the exact timestamp.
-          var commit = deltaLog.history.getActiveCommitAtTime(new Timestamp(ts), true)
+          var commit = deltaLog.history.getActiveCommitAtTime(ts, true)
           assert(commit.version == version)
 
           // Search using a timestamp just before the current timestamp.
           commit = deltaLog.history.getActiveCommitAtTime(
-            new Timestamp(ts-1), true, canReturnEarliestCommit = true)
+            new Timestamp(ts-1),
+            catalogTableOpt = None,
+            canReturnLastCommit = true,
+            canReturnEarliestCommit = true)
           val expectedVersion = if (version == 0) 0 else version - 1
           assert(commit.version == expectedVersion)
 
           // Search using a timestamp just after the current timestamp.
-          commit = deltaLog.history.getActiveCommitAtTime(new Timestamp(ts + 1), true)
+          commit = deltaLog.history.getActiveCommitAtTime(ts + 1, true)
           assert(commit.version == version)
         }
 
@@ -714,8 +717,7 @@ class InCommitTimestampSuite
           fs.delete(FileNames.unsafeDeltaFile(deltaLog.logPath, version), false)
         }
         val e = intercept[DeltaErrors.TimestampEarlierThanCommitRetentionException] {
-          deltaLog.history.getActiveCommitAtTime(
-            new Timestamp(searchTimestamp), false)
+          deltaLog.history.getActiveCommitAtTime(searchTimestamp, false)
         }
         assert(
           e.getMessage.contains("The provided timestamp") && e.getMessage.contains("is before"))
@@ -726,13 +728,15 @@ class InCommitTimestampSuite
           fs.delete(FileNames.unsafeDeltaFile(deltaLog.logPath, version), false)
         }
         intercept[DeltaErrors.TimestampEarlierThanCommitRetentionException] {
-          deltaLog.history.getActiveCommitAtTime(
-            new Timestamp(enablementCommit.timestamp-1), false)
+          deltaLog.history.getActiveCommitAtTime(enablementCommit.timestamp-1, false)
         }
         // The same query should work when the earliest commit is allowed to be returned.
         // The returned commit will be the earliest available ICT commit.
         val commit = deltaLog.history.getActiveCommitAtTime(
-          new Timestamp(enablementCommit.timestamp-1), false, canReturnEarliestCommit = true)
+          new Timestamp(enablementCommit.timestamp-1),
+          catalogTableOpt = None,
+          canReturnLastCommit = false,
+          canReturnEarliestCommit = true)
         // Note that we have already deleted the first two ICT commits.
         assert(commit.version == enablementCommit.version + 2)
         val earliestAvailableICTCommitTs = getInCommitTimestamp(
@@ -1178,7 +1182,7 @@ class InCommitTimestampWithCoordinatedCommitsSuite
       // Search for the exact timestamp.
       for (commit <- commits) {
         val resCommit = deltaLog.history.getActiveCommitAtTime(
-          new Timestamp(commit.timestamp), canReturnLastCommit = false)
+          new Timestamp(commit.timestamp), catalogTableOpt = None, canReturnLastCommit = false)
         assert(resCommit.version == commit.version)
         assert(resCommit.timestamp == commit.timestamp)
       }
