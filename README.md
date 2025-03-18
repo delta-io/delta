@@ -168,6 +168,7 @@ IntelliJ is the recommended IDE to use when developing Delta Lake. To import Del
 3. Under `Import project from external model` select `sbt`. Click `Next`.
 4. Under `Project JDK` specify a valid Java `1.8` JDK and opt to use SBT shell for `project reload` and `builds`.
 5. Click `Finish`.
+6. In your terminal, run `build/sbt clean package`. Building will generate files that are necessary for Intellij.
 
 ### Setup Verification
 
@@ -188,7 +189,11 @@ Error:(91, 22) not found: type DeltaSqlBaseParser
 ```
 
 then follow these steps:
-1. Compile using the SBT CLI: `build/sbt compile`.
+1. Ensure you are using JDK 1.8. You can set this using
+```
+export JAVA_HOME=`/usr/libexec/java_home -v 1.8`
+```
+2. Compile using the SBT CLI: `build/sbt clean compile`.
 2. Go to `File` > `Project Structure...` > `Modules` > `delta-spark`.
 3. In the right panel under `Source Folders` remove any `target` folders, e.g. `target/scala-2.12/src_managed/main [generated]`
 4. Click `Apply` and then re-run your test.
