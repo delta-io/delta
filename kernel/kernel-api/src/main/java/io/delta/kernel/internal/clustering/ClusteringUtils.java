@@ -15,13 +15,14 @@
  */
 package io.delta.kernel.internal.clustering;
 
+import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.types.StructType;
 import java.util.List;
 
 public class ClusteringUtils {
   public static DomainMetadata getClusteringDomainMetadata(
-      List<String> logicalClusteringColumns, StructType schema) {
+      List<Column> logicalClusteringColumns, StructType schema) {
     final ClusteringMetadataDomain clusteringMetadataDomain =
         new ClusteringMetadataDomain(logicalClusteringColumns, schema);
     return clusteringMetadataDomain.toDomainMetadata();

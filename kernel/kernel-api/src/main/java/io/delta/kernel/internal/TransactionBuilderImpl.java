@@ -19,7 +19,6 @@ import static io.delta.kernel.internal.DeltaErrors.requiresSchemaForNewTable;
 import static io.delta.kernel.internal.DeltaErrors.tableAlreadyExists;
 import static io.delta.kernel.internal.TransactionImpl.DEFAULT_READ_VERSION;
 import static io.delta.kernel.internal.TransactionImpl.DEFAULT_WRITE_VERSION;
-import static io.delta.kernel.internal.clustering.ClusteringUtils.getClusteringDomainMetadata;
 import static io.delta.kernel.internal.util.ColumnMapping.isColumnMappingModeEnabled;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames;
@@ -31,6 +30,7 @@ import static java.util.stream.Collectors.toSet;
 import io.delta.kernel.*;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.TableNotFoundException;
+import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.icebergcompat.IcebergCompatV2MetadataValidatorAndUpdater;
@@ -60,7 +60,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   private final Operation operation;
   private Optional<StructType> schema = Optional.empty();
   private Optional<List<String>> partitionColumns = Optional.empty();
-  private Optional<List<String>> clusteringColumns = Optional.empty();
+  private Optional<List<Column>> clusteringColumns = Optional.empty();
   private Optional<SetTransaction> setTxnOpt = Optional.empty();
   private Optional<Map<String, String>> tableProperties = Optional.empty();
   private boolean needDomainMetadataSupport = false;
@@ -93,7 +93,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   }
 
   @Override
-  public TransactionBuilder withClusteringColumns(Engine engine, List<String> clusteringColumns) {
+  public TransactionBuilder withClusteringColumns(Engine engine, List<Column> clusteringColumns) {
     if (!clusteringColumns.isEmpty()) {
       this.clusteringColumns = Optional.of(clusteringColumns);
     }
@@ -231,6 +231,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         newProtocol.orElse(snapshotProtocol),
         newMetadata.orElse(snapshotMetadata),
         setTxnOpt,
+        clusteringColumns.orElse(Collections.emptyList()),
         newMetadata.isPresent() /* shouldUpdateMetadata */,
         newProtocol.isPresent() /* shouldUpdateProtocol */,
         maxRetries,
@@ -285,8 +286,6 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       SchemaUtils.validateSchema(schema.get(), isColumnMappingModeEnabled(mappingMode));
       SchemaUtils.validatePartitionColumns(
           schema.get(), partitionColumns.orElse(Collections.emptyList()));
-      SchemaUtils.validateClusteringColumns(
-          schema.get(), clusteringColumns.orElse(Collections.emptyList()));
     }
 
     setTxnOpt.ifPresent(

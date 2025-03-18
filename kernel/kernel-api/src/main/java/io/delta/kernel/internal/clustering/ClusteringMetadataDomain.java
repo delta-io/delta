@@ -17,10 +17,9 @@ package io.delta.kernel.internal.clustering;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.metadatadomain.JsonMetadataDomain;
 import io.delta.kernel.internal.util.ColumnMapping;
-import io.delta.kernel.types.DataType;
-import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import java.util.*;
 
@@ -59,50 +58,13 @@ public final class ClusteringMetadataDomain extends JsonMetadataDomain {
    *     nested column "a.b.c")
    * @param schema the schema of the table
    */
-  public ClusteringMetadataDomain(List<String> logicalClusteringColumns, StructType schema) {
+  public ClusteringMetadataDomain(List<Column> logicalClusteringColumns, StructType schema) {
     List<List<String>> physicalClusteringColumns = new ArrayList<>();
-    for (String logicalName : logicalClusteringColumns) {
-      physicalClusteringColumns.add(getPhysicalColumnNames(schema, logicalName));
+    for (Column logicalName : logicalClusteringColumns) {
+      List<String> physicalColumnNames =
+          ColumnMapping.convertToPhysicalColumnNames(schema, logicalName);
+      physicalClusteringColumns.add(physicalColumnNames);
     }
     this.clusteringColumns = physicalClusteringColumns;
-  }
-
-  /** Returns the physical column names for logical columns. */
-  private List<String> getPhysicalColumnNames(StructType schema, String logicalName) {
-    String[] logicalNameParts = logicalName.split("\\.");
-    List<String> physicalNameParts = new ArrayList<>();
-    DataType currentType = schema;
-
-    // Traverse through each level of the logical name to resolve its corresponding physical name.
-    for (String namePart : logicalNameParts) {
-      if (!(currentType instanceof StructType)) {
-        throw new IllegalArgumentException("Column not found in schema: " + logicalName);
-      }
-
-      StructType structType = (StructType) currentType;
-      // Find the field in the current structure that matches the given name
-      Optional<StructField> fieldOpt =
-          structType.fields().stream()
-              .filter(
-                  field ->
-                      field
-                          .getName()
-                          .toLowerCase(Locale.ROOT)
-                          .equals(namePart.toLowerCase(Locale.ROOT)))
-              .findFirst();
-
-      if (!fieldOpt.isPresent()) {
-        throw new IllegalArgumentException("Column not found in schema: " + logicalName);
-      }
-
-      StructField field = fieldOpt.get();
-      // If the field itself is a struct, update currentType so we can look inside it in the next
-      // iteration.
-      currentType = field.getDataType();
-
-      // Convert logical name to physical name using Delta Kernel's column mapping
-      physicalNameParts.add(ColumnMapping.getPhysicalName(field));
-    }
-    return physicalNameParts;
   }
 }

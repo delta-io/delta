@@ -19,6 +19,7 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Collections.singletonMap;
 
 import io.delta.kernel.exceptions.InvalidConfigurationValueException;
+import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.types.*;
@@ -105,6 +106,31 @@ public class ColumnMapping {
         throw new UnsupportedOperationException(
             "Unsupported column mapping mode: " + columnMappingMode);
     }
+  }
+
+  public static List<String> convertToPhysicalColumnNames(StructType schema, Column logicalColumn) {
+    List<String> physicalNameParts = new ArrayList<>();
+    DataType currentType = schema;
+
+    // Traverse through each level of the logical name to resolve its corresponding physical name.
+    for (String namePart : logicalColumn.getNames()) {
+      if (!(currentType instanceof StructType)) {
+        throw new IllegalArgumentException("Column not found in schema: " + logicalColumn);
+      }
+
+      StructType structType = (StructType) currentType;
+      // Find the field in the current structure that matches the given name
+      StructField field =
+          structType.fields().stream()
+              .filter(f -> f.getName().equalsIgnoreCase(namePart))
+              .findFirst()
+              .orElseThrow(
+                  () ->
+                      new IllegalArgumentException("Column not found in schema: " + logicalColumn));
+      physicalNameParts.add(ColumnMapping.getPhysicalName(field));
+      currentType = field.getDataType();
+    }
+    return physicalNameParts;
   }
 
   /** Returns the physical name for a given {@link StructField} */

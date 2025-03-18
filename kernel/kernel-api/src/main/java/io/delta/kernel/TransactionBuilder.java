@@ -21,6 +21,7 @@ import io.delta.kernel.exceptions.ConcurrentTransactionException;
 import io.delta.kernel.exceptions.DomainDoesNotExistException;
 import io.delta.kernel.exceptions.InvalidConfigurationValueException;
 import io.delta.kernel.exceptions.UnknownConfigurationException;
+import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.types.StructType;
 import java.util.List;
@@ -60,7 +61,7 @@ public interface TransactionBuilder {
    *     columns in the schema.
    * @return updated {@link TransactionBuilder} instance.
    */
-  TransactionBuilder withClusteringColumns(Engine engine, List<String> clusteringColumns);
+  TransactionBuilder withClusteringColumns(Engine engine, List<Column> clusteringColumns);
 
   /**
    * Set the transaction identifier for idempotent writes. Incremental processing systems (e.g.,

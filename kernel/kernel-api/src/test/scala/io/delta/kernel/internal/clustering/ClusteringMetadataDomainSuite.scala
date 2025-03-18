@@ -19,6 +19,7 @@ import java.util.{Collections, Optional, UUID}
 
 import scala.collection.JavaConverters._
 
+import io.delta.kernel.expressions.Column
 import io.delta.kernel.internal.actions.{Format, Metadata}
 import io.delta.kernel.internal.util.{ColumnMapping, ColumnMappingSuiteBase, VectorUtils}
 import io.delta.kernel.types._
@@ -51,7 +52,7 @@ class ClusteringMetadataDomainSuite
         true)
 
     val clusteringMetadata =
-      new ClusteringMetadataDomain(List("name").asJava, metadata.get.getSchema)
+      new ClusteringMetadataDomain(List(new Column("name")).asJava, metadata.get.getSchema)
 
     assert(clusteringMetadata.toDomainMetadata.getDomain == "delta.clustering")
     assert(clusteringMetadata.getClusteringColumns.asScala == List("name"))
@@ -69,7 +70,9 @@ class ClusteringMetadataDomainSuite
               .add("city", StringType.STRING, true)))
 
     val clusteringMetadata =
-      new ClusteringMetadataDomain(List("user.address.city").asJava, schema)
+      new ClusteringMetadataDomain(
+        List(new Column(Array("user", "address", "city"))).asJava,
+        schema)
 
     assert(clusteringMetadata.toDomainMetadata.getDomain == "delta.clustering")
     assert(clusteringMetadata.getClusteringColumns ==

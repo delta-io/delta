@@ -18,6 +18,7 @@ package io.delta.kernel.internal;
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 import static io.delta.kernel.internal.TableConfig.*;
 import static io.delta.kernel.internal.actions.SingleAction.*;
+import static io.delta.kernel.internal.clustering.ClusteringUtils.getClusteringDomainMetadata;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Preconditions.checkState;
 import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
@@ -82,6 +83,7 @@ public class TransactionImpl implements Transaction {
   private final Optional<SetTransaction> setTxnOpt;
   private final boolean shouldUpdateProtocol;
   private final Clock clock;
+  private final List<Column> clusteringColumns;
   private final Map<String, DomainMetadata> domainMetadatasAdded = new HashMap<>();
   private final Set<String> domainMetadatasRemoved = new HashSet<>();
   private Optional<List<DomainMetadata>> domainMetadatas = Optional.empty();
@@ -101,6 +103,7 @@ public class TransactionImpl implements Transaction {
       Protocol protocol,
       Metadata metadata,
       Optional<SetTransaction> setTxnOpt,
+      List<Column> clusteringColumns,
       boolean shouldUpdateMetadata,
       boolean shouldUpdateProtocol,
       int maxRetries,
@@ -114,6 +117,7 @@ public class TransactionImpl implements Transaction {
     this.protocol = protocol;
     this.metadata = metadata;
     this.setTxnOpt = setTxnOpt;
+    this.clusteringColumns = clusteringColumns;
     this.shouldUpdateMetadata = shouldUpdateMetadata;
     this.shouldUpdateProtocol = shouldUpdateProtocol;
     this.maxRetries = maxRetries;
@@ -192,6 +196,14 @@ public class TransactionImpl implements Transaction {
     removeDomainMetadataInternal(domain);
   }
 
+  private void generateSystemControlledDomainMetadata() {
+    if (!clusteringColumns.isEmpty()) {
+      DomainMetadata clusteringDomainMetadata =
+          getClusteringDomainMetadata(clusteringColumns, metadata.getSchema());
+      domainMetadatasAdded.put(clusteringDomainMetadata.getDomain(), clusteringDomainMetadata);
+    }
+  }
+
   /**
    * Returns a list of the domain metadatas to commit. This consists of the domain metadatas added
    * in the transaction using {@link Transaction#addDomainMetadata(String, String)} and the
@@ -206,6 +218,8 @@ public class TransactionImpl implements Transaction {
     if (domainMetadatas.isPresent()) {
       return domainMetadatas.get();
     }
+    // Generate system controlled domain metadata if needed
+    generateSystemControlledDomainMetadata();
     // Add all domain metadatas added in the transaction
     List<DomainMetadata> finalDomainMetadatas = new ArrayList<>(domainMetadatasAdded.values());
 
