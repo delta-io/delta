@@ -296,9 +296,15 @@ public class TransactionBuilderImpl implements TransactionBuilder {
 
     // Validate the conditions for schema evolution and the updated schema if applicable
     if (schema.isPresent() && !isNewTable) {
-      ColumnMappingMode mappingMode =
+      ColumnMappingMode updatedMappingMode =
           ColumnMapping.getColumnMappingMode(newMetadata.getConfiguration());
-      if (!isColumnMappingModeEnabled(mappingMode)) {
+      ColumnMappingMode currentMappingMode =
+          ColumnMapping.getColumnMappingMode(oldMetadata.getConfiguration());
+      if (currentMappingMode != updatedMappingMode) {
+        throw new KernelException("Cannot update mapping mode and perform schema evolution");
+      }
+
+      if (!isColumnMappingModeEnabled(updatedMappingMode)) {
         throw new KernelException("Cannot update schema for table when column mapping is disabled");
       }
 

@@ -746,9 +746,9 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
         table,
         engine,
         newSchema,
-        "Changing column mapping mode from 'none' to 'id' is not supported",
+        "Cannot update mapping mode and perform schema evolution",
         Map(
-          TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
+          TableConfig.COLUMN_MAPPING_MODE.getKey -> "name",
           TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"))
     }
   }
@@ -1131,7 +1131,7 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
     }
   }
 
-  test("Cannot tighten nullability on array element") {
+  test("Cannot tighten nullability on renamed array element") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
       val initialSchema = new StructType()
