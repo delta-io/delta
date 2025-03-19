@@ -20,7 +20,7 @@ import scala.collection.JavaConverters._
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.actions.Protocol
 import io.delta.kernel.internal.icebergcompat.IcebergCompatV2MetadataValidatorAndUpdater.validateAndUpdateIcebergCompatV2Metadata
-import io.delta.kernel.internal.tablefeatures.TableFeatures.{COLUMN_MAPPING_RW_FEATURE, DELETION_VECTORS_RW_FEATURE, ICEBERG_COMPAT_V2_W_FEATURE, TYPE_WIDENING_RW_FEATURE}
+import io.delta.kernel.internal.tablefeatures.TableFeatures.{COLUMN_MAPPING_RW_FEATURE, DELETION_VECTORS_RW_FEATURE, ICEBERG_COMPAT_V2_W_FEATURE, TYPE_WIDENING_PREVIEW_TABLE_FEATURE, TYPE_WIDENING_RW_FEATURE}
 import io.delta.kernel.internal.util.ColumnMappingSuiteBase
 import io.delta.kernel.test.VectorTestUtils
 import io.delta.kernel.types._
@@ -165,21 +165,25 @@ class IcebergCompatV2MetadataValidatorAndUpdaterSuite
   }
 
   Seq(true, false).foreach { isNewTable =>
-    test(s"can't enable icebergCompatV2 on a table with type widening supported, " +
-      s"isNewTable = $isNewTable") {
-      val schema = new StructType().add("col", BooleanType.BOOLEAN)
-      val metadata = testMetadata(schema).withIcebergCompatV2AndCMEnabled()
-      val protocol = testProtocol(
-        ICEBERG_COMPAT_V2_W_FEATURE,
-        COLUMN_MAPPING_RW_FEATURE,
-        TYPE_WIDENING_RW_FEATURE)
+    Seq(TYPE_WIDENING_RW_FEATURE, TYPE_WIDENING_PREVIEW_TABLE_FEATURE).foreach {
+      typeWideningFeature =>
+        test(s"can't enable icebergCompatV2 on a table $typeWideningFeature supported, " +
+          s"isNewTable = $isNewTable") {
+          val schema = new StructType().add("col", BooleanType.BOOLEAN)
+          val metadata = testMetadata(schema).withIcebergCompatV2AndCMEnabled()
+          val protocol = testProtocol(
+            ICEBERG_COMPAT_V2_W_FEATURE,
+            COLUMN_MAPPING_RW_FEATURE,
+            typeWideningFeature)
 
-      val ex = intercept[KernelException] {
-        validateAndUpdateIcebergCompatV2Metadata(isNewTable, metadata, protocol)
-      }
-      assert(ex.getMessage.contains(
-        "Unsupported Delta table feature: table requires feature \"typeWidening\" which " +
-          "is unsupported by this version of Delta Kernel."))
+          val ex = intercept[KernelException] {
+            validateAndUpdateIcebergCompatV2Metadata(isNewTable, metadata, protocol)
+          }
+          assert(ex.getMessage.contains(
+            s"Unsupported Delta table feature: table requires feature " +
+              s""""${typeWideningFeature.featureName()}" which """ +
+              "is unsupported by this version of Delta Kernel."))
+        }
     }
   }
 
