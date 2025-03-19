@@ -54,11 +54,11 @@ import java.util.stream.Stream;
  *       table features. This simultaneously ensures that any unsupported features are not present
  *       (e.g. CDF, variant type, etc).
  *   <li>Checks that there are no fields with data type byte or short.
- *   <li>Checks that the table feature `invariants` is not active in the table (i.e. there are
- *   no invariants in the table schema). This is a special case where the incompatible feature
- *   `invariants` is in the allow-list of features since it is included by default in the table
- *   protocol for new tables. Since it is incompatible we must verify that it is inactive in
- *   the table.
+ *   <li>Checks that the table feature `invariants` is not active in the table (i.e. there are no
+ *       invariants in the table schema). This is a special case where the incompatible feature
+ *       `invariants` is in the allow-list of features since it is included by default in the table
+ *       protocol for new tables. Since it is incompatible we must verify that it is inactive in the
+ *       table.
  * </ul>
  *
  * TODO additional enforcements coming in (ie physicalName=fieldId)

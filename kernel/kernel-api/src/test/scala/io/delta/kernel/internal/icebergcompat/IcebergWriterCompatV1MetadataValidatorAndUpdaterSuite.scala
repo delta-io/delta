@@ -37,6 +37,7 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
   val columnMappingIdModeProps = Map(
     TableConfig.COLUMN_MAPPING_MODE.getKey -> "id")
 
+  /* icebergWriterCompatV1 restricts additional types allowed by icebergCompatV2 */
   override def simpleTypesToSkip: Set[DataType] = Set(ByteType.BYTE, ShortType.SHORT)
 
   override def getCompatEnabledMetadata(

@@ -33,7 +33,7 @@ trait IcebergCompatV2MetadataValidatorAndUpdaterSuiteBase extends AnyFunSuite
 
   import IcebergCompatV2MetadataValidatorAndUpdaterSuiteBase._
 
-  /** When testing supported data column types skip any types defined here */
+  /** When testing supported simple column types skip any types defined here */
   def simpleTypesToSkip: Set[DataType]
 
   /** Get a metadata with the given schema and partCols with the desired icebergCompat enabled */
@@ -50,7 +50,7 @@ trait IcebergCompatV2MetadataValidatorAndUpdaterSuiteBase extends AnyFunSuite
       metadata: Metadata,
       protocol: Protocol): Unit
 
-  (SIMPLE_TYPES ++ COMPLEX_TYPES).diff(simpleTypesToSkip).foreach {
+  (SIMPLE_TYPES.diff(simpleTypesToSkip) ++ COMPLEX_TYPES).foreach {
     dataType: DataType =>
       Seq(true, false).foreach { isNewTable =>
         test(s"allowed data column types: $dataType, new table = $isNewTable") {
@@ -74,7 +74,7 @@ trait IcebergCompatV2MetadataValidatorAndUpdaterSuiteBase extends AnyFunSuite
       }
   }
 
-  (UNSUPPORTED_DATA_COLUMN_TYPES).foreach {
+  UNSUPPORTED_DATA_COLUMN_TYPES.foreach {
     dataType: DataType =>
       Seq(true, false).foreach { isNewTable =>
         test(s"disallowed data column types: $dataType, new table = $isNewTable") {
