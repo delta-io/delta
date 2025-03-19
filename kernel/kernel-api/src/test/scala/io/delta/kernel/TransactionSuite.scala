@@ -27,7 +27,7 @@ import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.expressions.{Column, Literal}
 import io.delta.kernel.internal.{DataWriteContextImpl, TableConfig, TransactionImpl}
 import io.delta.kernel.internal.TableConfig.ICEBERG_COMPAT_V2_ENABLED
-import io.delta.kernel.internal.actions.{Format, Metadata}
+import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
 import io.delta.kernel.internal.data.TransactionStateRow
 import io.delta.kernel.internal.types.DataTypeJsonSerDe
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
@@ -156,7 +156,8 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
         VectorUtils.buildArrayValue(Seq.empty.asJava, StringType.STRING),
         Optional.empty(),
         stringStringMapValue(configMap.asJava))
-      val txnState = TransactionStateRow.of(metadata, "table path", schema)
+      val protocol = new Protocol(3, 7)
+      val txnState = TransactionStateRow.of(metadata, protocol, "table path", schema)
 
       // Get statistics columns and define expected result
       val statsColumns = TransactionImpl.getStatisticsColumns(txnState)
@@ -262,7 +263,8 @@ object TransactionSuite extends VectorTestUtils with MockEngineUtils {
       Optional.empty(), // createdTime
       stringStringMapValue(configurationMap.asJava) // configurationMap
     )
-    TransactionStateRow.of(metadata, "table path", schema)
+    val protocol = new Protocol(3, 7)
+    TransactionStateRow.of(metadata, protocol, "table path", schema)
   }
 
   def testStats(numRowsOpt: Option[Long]): Option[DataFileStatistics] = {

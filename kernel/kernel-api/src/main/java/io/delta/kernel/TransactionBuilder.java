@@ -48,7 +48,8 @@ public interface TransactionBuilder {
    *
    * @param engine {@link Engine} instance to use.
    * @param partitionColumns The partition columns of the table. These should be a subset of the
-   *     columns in the schema.
+   *     columns in the schema. Only top-level columns are allowed to be partitioned. Note:
+   *     Clustering columns and partition columns cannot coexist in a table.
    * @return updated {@link TransactionBuilder} instance.
    */
   TransactionBuilder withPartitionColumns(Engine engine, List<String> partitionColumns);
@@ -58,7 +59,8 @@ public interface TransactionBuilder {
    *
    * @param engine {@link Engine} instance to use.
    * @param clusteringColumns The clustering columns of the table. These should be a subset of the
-   *     columns in the schema.
+   *     columns in the schema. Both top-level and nested columns are allowed to be clustered. Note:
+   *     Clustering columns and partition columns cannot coexist in a table.
    * @return updated {@link TransactionBuilder} instance.
    */
   TransactionBuilder withClusteringColumns(Engine engine, List<Column> clusteringColumns);

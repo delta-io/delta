@@ -96,8 +96,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   public TransactionBuilder withClusteringColumns(Engine engine, List<Column> clusteringColumns) {
     if (!clusteringColumns.isEmpty()) {
       this.clusteringColumns = Optional.of(clusteringColumns);
+      this.needDomainMetadataSupport = true;
     }
-    this.needDomainMetadataSupport = true;
     return this;
   }
 
