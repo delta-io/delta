@@ -15,10 +15,7 @@
  */
 package io.delta.kernel.internal.icebergcompat;
 
-import static io.delta.kernel.internal.tablefeatures.TableFeatures.COLUMN_MAPPING_RW_FEATURE;
-import static io.delta.kernel.internal.tablefeatures.TableFeatures.DELETION_VECTORS_RW_FEATURE;
-import static io.delta.kernel.internal.tablefeatures.TableFeatures.ICEBERG_COMPAT_V2_W_FEATURE;
-import static io.delta.kernel.internal.tablefeatures.TableFeatures.TYPE_WIDENING_RW_FEATURE;
+import static io.delta.kernel.internal.tablefeatures.TableFeatures.*;
 import static java.util.Collections.singletonList;
 import static java.util.stream.Collectors.toList;
 
@@ -175,6 +172,9 @@ public class IcebergCompatV2MetadataValidatorAndUpdater
           // TODO: Currently Kernel has no support for writing with type widening. When it is
           //  supported extend this to allow a whitelist of supported type widening in Iceberg
           throw DeltaErrors.unsupportedTableFeature(TYPE_WIDENING_RW_FEATURE.featureName());
+        } else if (inputContext.newProtocol.supportsFeature(TYPE_WIDENING_PREVIEW_TABLE_FEATURE)) {
+          throw DeltaErrors.unsupportedTableFeature(
+              TYPE_WIDENING_PREVIEW_TABLE_FEATURE.featureName());
         }
       };
 
