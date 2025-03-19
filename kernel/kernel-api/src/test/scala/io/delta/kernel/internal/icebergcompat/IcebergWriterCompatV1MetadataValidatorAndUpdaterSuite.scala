@@ -211,8 +211,8 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
       "timestampNtz")
     val protocol = new Protocol(3, 7, readerFeatures.asJava, writerFeatures.asJava)
     val metadata = getCompatEnabledMetadata(cmTestSchema())
-    validateAndUpdateIcebergWriterCompatV1Metadata(true /* isNewTable */, metadata, protocol)
-    validateAndUpdateIcebergWriterCompatV1Metadata(false /* isNewTable */, metadata, protocol)
+    validateAndUpdateIcebergWriterCompatV1Metadata(true, metadata, protocol)
+    validateAndUpdateIcebergWriterCompatV1Metadata(false, metadata, protocol)
   }
 
   private def checkUnsupportedOrIncompatibleFeature(
@@ -315,8 +315,9 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
           val e = intercept[KernelException] {
             validateAndUpdateIcebergWriterCompatV1Metadata(isNewTable, metadata, protocol)
           }
-          // Since we run icebergCompatV2 validation as part of ICEBERG_COMPAT_V2_ENABLED.postProcess
-          // we actually hit the missing feature error in the icebergCompatV2 checks first
+          // Since we run icebergCompatV2 validation as part of
+          // ICEBERG_COMPAT_V2_ENABLED.postProcess we actually hit the missing feature error in the
+          // icebergCompatV2 checks first
           assert(e.getMessage.contains(
             s"icebergCompatV2: requires the feature '$missingFeatureStr' to be enabled"))
         }
