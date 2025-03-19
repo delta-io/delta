@@ -55,7 +55,8 @@ class ClusteringMetadataDomainSuite
       new ClusteringMetadataDomain(List(new Column("name")).asJava, metadata.get.getSchema)
 
     assert(clusteringMetadata.toDomainMetadata.getDomain == "delta.clustering")
-    assert(clusteringMetadata.getClusteringColumns.asScala == List("name"))
+    assert(clusteringMetadata.getClusteringColumns.asScala.size == 1)
+    assert(clusteringMetadata.getClusteringColumns.get(0).get(0).startsWith("col-"))
   }
 
   test("Correctly maps nested logical column names to physical column names") {

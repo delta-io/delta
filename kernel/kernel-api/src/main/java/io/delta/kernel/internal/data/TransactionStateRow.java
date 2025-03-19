@@ -16,6 +16,7 @@
 package io.delta.kernel.internal.data;
 
 import static io.delta.kernel.internal.tablefeatures.TableFeatures.CLUSTERING_W_FEATURE;
+import static io.delta.kernel.internal.util.VectorUtils.buildArrayValue;
 import static java.util.stream.Collectors.toMap;
 
 import io.delta.kernel.Transaction;
@@ -27,6 +28,7 @@ import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.types.DataTypeJsonSerDe;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.types.*;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -57,7 +59,9 @@ public class TransactionStateRow extends GenericRow {
     valueMap.put(COL_NAME_TO_ORDINAL.get("partitionColumns"), metadata.getPartitionColumns());
     valueMap.put(COL_NAME_TO_ORDINAL.get("configuration"), metadata.getConfigurationMapValue());
     valueMap.put(COL_NAME_TO_ORDINAL.get("tablePath"), tablePath);
-    valueMap.put(COL_NAME_TO_ORDINAL.get("writerFeatures"), protocol.getWriterFeatures());
+    valueMap.put(
+        COL_NAME_TO_ORDINAL.get("writerFeatures"),
+        buildArrayValue(new ArrayList<>(protocol.getWriterFeatures()), StringType.STRING));
     return new TransactionStateRow(valueMap);
   }
 

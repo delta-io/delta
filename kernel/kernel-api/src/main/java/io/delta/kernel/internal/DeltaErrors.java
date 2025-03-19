@@ -363,6 +363,14 @@ public final class DeltaErrors {
             + " but 'domainMetadata' is unsupported");
   }
 
+  public static KernelException missingStatsForClustering(DataFileStatus dataFileStatus) {
+    return new KernelException(
+        format(
+            "Cannot write to a clustering-supported table without per-file statistics and"
+                + " per-column statistics for clustering columns.\n DataFileStatus: %s",
+            dataFileStatus));
+  }
+
   /* ------------------------ HELPER METHODS ----------------------------- */
   private static String formatTimestamp(long millisSinceEpochUTC) {
     return new Timestamp(millisSinceEpochUTC).toInstant().toString();

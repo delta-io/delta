@@ -16,15 +16,36 @@
 package io.delta.kernel.internal.clustering;
 
 import io.delta.kernel.expressions.Column;
+import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.types.StructType;
+import io.delta.kernel.utils.DataFileStatus;
 import java.util.List;
 
 public class ClusteringUtils {
+  /**
+   * Get the domain metadata for the clustering columns.
+   *
+   * @param logicalClusteringColumns The logical clustering columns.
+   * @param schema The schema of the table.
+   * @return The domain metadata including the clustering columns.
+   */
   public static DomainMetadata getClusteringDomainMetadata(
       List<Column> logicalClusteringColumns, StructType schema) {
     final ClusteringMetadataDomain clusteringMetadataDomain =
         new ClusteringMetadataDomain(logicalClusteringColumns, schema);
     return clusteringMetadataDomain.toDomainMetadata();
+  }
+
+  /**
+   * Validate the given {@link DataFileStatus} that is being added as a {@code add} action to Delta
+   * Log. Currently, it checks that the statistics are not empty.
+   *
+   * @param dataFileStatus The {@link DataFileStatus} to validate.
+   */
+  public static void validateDataFileStatus(DataFileStatus dataFileStatus) {
+    if (!dataFileStatus.getStatistics().isPresent()) {
+      throw DeltaErrors.missingStatsForClustering(dataFileStatus);
+    }
   }
 }

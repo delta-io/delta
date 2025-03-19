@@ -1,10 +1,12 @@
 package io.delta.kernel.defaults
 
 import scala.collection.JavaConverters._
+import scala.collection.immutable.Seq
 
 import io.delta.kernel.Operation.{CREATE_TABLE, WRITE}
 import io.delta.kernel.Table
-import io.delta.kernel.expressions.Column
+import io.delta.kernel.exceptions.TableAlreadyExistsException
+import io.delta.kernel.expressions.{Column, Literal}
 import io.delta.kernel.expressions.Literal.ofInt
 import io.delta.kernel.internal.SnapshotImpl
 import io.delta.kernel.internal.actions.DomainMetadata
@@ -23,7 +25,7 @@ class DeltaClusteringSuite extends DeltaTableWriteSuiteBase {
       val ex = intercept[IllegalArgumentException] {
         val txn = txnBuilder
           .withSchema(engine, testPartitionSchema)
-          .withClusteringColumns(engine, List(new Column(Array("PART1", "part3"))).asJava)
+          .withClusteringColumns(engine, List(new Column("PART1"), new Column("part3")).asJava)
           .build(engine)
         commitTransaction(txn, engine, emptyIterable())
       }
@@ -40,7 +42,7 @@ class DeltaClusteringSuite extends DeltaTableWriteSuiteBase {
       val ex = intercept[IllegalArgumentException] {
         txnBuilder
           .withSchema(engine, testPartitionSchema)
-          .withClusteringColumns(engine, List(new Column(Array("part1", "part2"))).asJava)
+          .withClusteringColumns(engine, testClusteringColumns.asJava)
           .withPartitionColumns(engine, Seq("part1").asJava)
           .build(engine)
       }
@@ -55,23 +57,18 @@ class DeltaClusteringSuite extends DeltaTableWriteSuiteBase {
       val table = Table.forPath(engine, tablePath)
       val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
 
-      val schema = new StructType()
-        .add("id", INTEGER)
-        .add("part1", INTEGER) // clustering column
-        .add("part2", INTEGER) // clustering column
-
       val txn = txnBuilder
-        .withSchema(engine, schema)
+        .withSchema(engine, testPartitionSchema)
         // clustering columns is case-insensitive and stored in lower case
-        .withClusteringColumns(engine, List(new Column(Array("Part1", "paRt2"))).asJava)
+        .withClusteringColumns(engine, testClusteringColumns.asJava)
         .build(engine)
 
-      assert(txn.getSchema(engine) === schema)
+      assert(txn.getSchema(engine) === testPartitionSchema)
       commitTransaction(txn, engine, emptyIterable())
 
       // Verify the clustering feature is included in the protocol
       val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-      assert(snapshot.getProtocol.getWriterFeatures.contains("clustering"))
+      assertHasWriterFeature(snapshot, "clustering")
 
       // Verify the clustering domain metadata is written
       val expectedDomainMetadata = new DomainMetadata(
@@ -83,25 +80,42 @@ class DeltaClusteringSuite extends DeltaTableWriteSuiteBase {
     }
   }
 
-//  test("insert into partitioned table - table created from scratch") {
-  //    withTempDirAndEngine { (tblPath, engine) =>
-  //      val commitResult0 = appendData(
-  //        engine,
-  //        tblPath,
-  //        isNewTable = true,
-  //        testPartitionSchema,
-  //        testPartitionColumns,
-  //        Seq(
-  //          Map("part1" -> ofInt(1), "part2" -> ofInt(2)) -> dataPartitionBatches1,
-  //          Map("part1" -> ofInt(4), "part2" -> ofInt(5)) -> dataPartitionBatches2))
-  //
-  //      val expData = dataPartitionBatches1.flatMap(_.toTestRows) ++
-  //        dataPartitionBatches2.flatMap(_.toTestRows)
-  //
-  //      verifyCommitResult(commitResult0, expVersion = 0, expIsReadyForCheckpoint = false)
-  //      verifyCommitInfo(tblPath, version = 0, testPartitionColumns, operation = WRITE)
-  //      verifyWrittenContent(tblPath, testPartitionSchema, expData)
-  //    }
-  //  }
+  test("update a table with clustering columns should be blocked") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(engine, tablePath, testPartitionSchema)
+      val table = Table.forPath(engine, tablePath)
+      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, WRITE)
 
+      val ex = intercept[TableAlreadyExistsException] {
+        txnBuilder
+          .withClusteringColumns(engine, testClusteringColumns.asJava)
+          .build(engine)
+      }
+      assert(
+        ex.getMessage
+          .contains("Table already exists, but provided new clustering columns."))
+    }
+  }
+
+  test("insert into clustered table") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val testData = Seq(Map.empty[String, Literal] -> dataClusteringBatches)
+      val table = Table.forPath(engine, tablePath)
+      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+
+      val txn = txnBuilder
+        .withSchema(engine, testPartitionSchema)
+        .withClusteringColumns(engine, testClusteringColumns.asJava)
+        .build(engine)
+
+      val commitResult = commitAppendData(engine, txn, testData)
+
+      verifyCommitResult(commitResult, expVersion = 0, expIsReadyForCheckpoint = false)
+      verifyCommitInfo(tablePath, version = 0)
+      verifyWrittenContent(
+        tablePath,
+        testPartitionSchema,
+        dataClusteringBatches.flatMap(_.toTestRows))
+    }
+  }
 }

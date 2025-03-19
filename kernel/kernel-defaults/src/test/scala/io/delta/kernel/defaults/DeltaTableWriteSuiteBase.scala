@@ -29,7 +29,7 @@ import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch,
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.expressions.Literal
+import io.delta.kernel.expressions.{Column, Literal}
 import io.delta.kernel.expressions.Literal.ofInt
 import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
 import io.delta.kernel.internal.{SnapshotImpl, TableConfig, TableImpl}
@@ -69,6 +69,14 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     .add("id", INTEGER)
     .add("part1", INTEGER) // partition column
     .add("part2", INTEGER) // partition column
+
+  val testClusteringColumns = List(new Column("part1"), new Column("part2"))
+  val dataClusteringBatches = generateData(
+    testPartitionSchema,
+    Seq.empty,
+    Map.empty,
+    200,
+    3)
 
   val dataPartitionBatches1 = generateData(
     testPartitionSchema,
