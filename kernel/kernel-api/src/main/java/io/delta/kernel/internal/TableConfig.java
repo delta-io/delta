@@ -258,6 +258,19 @@ public class TableConfig<T> {
           "needs to be larger than or equal to -1.",
           true);
 
+  /**
+   * Table property that enables modifying the table in accordance with the Delta-Iceberg Writer
+   * Compatibility V1 ({@code icebergCompatWriterV1}) protocol.
+   */
+  public static final TableConfig<Boolean> ICEBERG_WRITER_COMPAT_V1_ENABLED =
+      new TableConfig<>(
+          "delta.enableIcebergWriterCompatV1",
+          "false",
+          Boolean::valueOf,
+          value -> true,
+          "needs to be a boolean.",
+          true);
+
   /** All the valid properties that can be set on the table. */
   private static final Map<String, TableConfig<?>> VALID_PROPERTIES =
       Collections.unmodifiableMap(
@@ -283,6 +296,7 @@ public class TableConfig<T> {
               addConfig(this, ICEBERG_COMPAT_V2_ENABLED);
               addConfig(this, COLUMN_MAPPING_MAX_COLUMN_ID);
               addConfig(this, DATA_SKIPPING_NUM_INDEXED_COLS);
+              addConfig(this, ICEBERG_WRITER_COMPAT_V1_ENABLED);
             }
           });
 
