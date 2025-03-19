@@ -40,7 +40,7 @@ package io.delta.tables
 
 import org.scalatest.{BeforeAndAfterAll, Suite}
 
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.connect.SparkSession
 
 /**
  * An util class to start a local Delta Connect server in a different process for local E2E tests.

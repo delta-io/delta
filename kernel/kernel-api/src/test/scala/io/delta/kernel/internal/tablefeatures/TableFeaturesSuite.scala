@@ -62,6 +62,7 @@ class TableFeaturesSuite extends AnyFunSuite {
     "domainMetadata",
     "icebergCompatV2",
     "inCommitTimestamp",
+    "icebergWriterCompatV1",
     "clustering")
 
   val legacyFeatures = Seq(
@@ -158,6 +159,14 @@ class TableFeaturesSuite extends AnyFunSuite {
     (
       "inCommitTimestamp",
       testMetadata(tblProps = Map("delta.enableInCommitTimestamps" -> "false")),
+      false),
+    (
+      "icebergWriterCompatV1",
+      testMetadata(tblProps = Map("delta.enableIcebergWriterCompatV1" -> "true")),
+      true),
+    (
+      "icebergWriterCompatV1",
+      testMetadata(tblProps = Map("delta.enableIcebergWriterCompatV1" -> "false")),
       false)).foreach({ case (feature, metadata, expected) =>
     test(s"metadataRequiresFeatureToBeEnabled - $feature - $metadata") {
       val tableFeature = TableFeatures.getTableFeature(feature)
@@ -229,6 +238,7 @@ class TableFeaturesSuite extends AnyFunSuite {
       "changeDataFeed",
       "timestampNtz",
       "identityColumns",
+      "icebergWriterCompatV1",
       "clustering")
 
     assert(results.map(_.featureName()).toSet == expected.toSet)
@@ -559,6 +569,11 @@ class TableFeaturesSuite extends AnyFunSuite {
     testMetadata(tblProps = Map("delta.checkpointPolicy" -> "v2")))
 
   checkWriteSupported(
+    "validateKernelCanWriteToTable: protocol 7 with icebergWriterCompatV1",
+    new Protocol(3, 7, emptySet(), singleton("icebergWriterCompatV1")),
+    testMetadata(tblProps = Map("delta.enableIcebergWriterCompatV1" -> "true")))
+
+  checkWriteSupported(
     "validateKernelCanWriteToTable: protocol 7 with multiple features supported",
     new Protocol(
       3,
@@ -792,7 +807,50 @@ class TableFeaturesSuite extends AnyFunSuite {
         7,
         set("columnMapping", "deletionVectors"),
         set("columnMapping", "icebergCompatV2", "deletionVectors")),
-      set("icebergCompatV2"))).foreach {
+      set("icebergCompatV2")),
+    (
+      testMetadata(tblProps = Map("delta.enableIcebergWriterCompatV1" -> "true")),
+      new Protocol(1, 2),
+      new Protocol(
+        2,
+        7,
+        set(),
+        set(
+          "columnMapping",
+          "appendOnly",
+          "invariants",
+          "icebergCompatV2",
+          "icebergWriterCompatV1")),
+      set("icebergCompatV2", "columnMapping", "icebergWriterCompatV1")),
+    (
+      testMetadata(tblProps = Map(
+        "delta.enableIcebergWriterCompatV1" -> "true",
+        "delta.enableDeletionVectors" -> "true")),
+      new Protocol(2, 5),
+      new Protocol(
+        3,
+        7,
+        set("columnMapping", "deletionVectors"),
+        set(
+          "columnMapping",
+          "appendOnly",
+          "deletionVectors",
+          "invariants",
+          "icebergCompatV2",
+          "icebergWriterCompatV1",
+          "checkConstraints",
+          "generatedColumns",
+          "changeDataFeed")),
+      set("icebergCompatV2", "icebergWriterCompatV1", "deletionVectors")),
+    (
+      testMetadata(tblProps = Map("delta.enableIcebergWriterCompatV1" -> "true")),
+      new Protocol(3, 7, set("columnMapping", "deletionVectors"), set("columnMapping")),
+      new Protocol(
+        3,
+        7,
+        set("columnMapping", "deletionVectors"),
+        set("columnMapping", "icebergCompatV2", "deletionVectors", "icebergWriterCompatV1")),
+      set("icebergCompatV2", "icebergWriterCompatV1"))).foreach {
     case (newMetadata, currentProtocol, expectedProtocol, expectedNewFeatures) =>
       test(s"autoUpgradeProtocolBasedOnMetadata:" +
         s"$currentProtocol -> $expectedProtocol, $expectedNewFeatures") {
