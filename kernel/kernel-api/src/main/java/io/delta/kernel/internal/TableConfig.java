@@ -260,7 +260,7 @@ public class TableConfig<T> {
 
   /**
    * Table property that enables modifying the table in accordance with the Delta-Iceberg Writer
-   * Compatibility V1 protocol.
+   * Compatibility V1 ({@code icebergCompatWriterV1}) protocol.
    */
   public static final TableConfig<Boolean> ICEBERG_WRITER_COMPAT_V1_ENABLED =
       new TableConfig<>(
