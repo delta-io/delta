@@ -122,7 +122,7 @@ class DeltaIcebergCompatV2Suite extends DeltaTableWriteSuiteBase with ColumnMapp
 
       checkError[KernelException](
         "The value 'none' for the property 'delta.columnMapping.mode' is not " +
-          "compatible with Iceberg compat requirements") {
+          "compatible with icebergCompatV2 requirements") {
         val newTblProps = Map(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true")
         updateTableMetadata(engine, tablePath, tableProperties = newTblProps)
       }
@@ -176,7 +176,7 @@ class DeltaIcebergCompatV2Suite extends DeltaTableWriteSuiteBase with ColumnMapp
 
       checkError[KernelException](
         "The value 'none' for the property 'delta.columnMapping.mode' is not " +
-          "compatible with Iceberg compat requirements") {
+          "compatible with icebergCompatV2 requirements") {
         val tblProps = Map(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true")
         updateTableMetadata(engine, tablePath, testSchema, tableProperties = tblProps)
       }
