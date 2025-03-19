@@ -1762,8 +1762,8 @@ class DeltaColumnMappingSuite extends QueryTest
         val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
         assert(log.update().metadata.configuration("delta.columnMapping.maxColumnId") == "2")
         sql(replaceExternalTblCmd)
-        // Configuration after replacing existing table should be like the table has started new.
-        assert(log.update().metadata.configuration("delta.columnMapping.maxColumnId") == "1")
+        // Replace table starts assigning field id from previous maxColumnId.
+        assert(log.update().metadata.configuration("delta.columnMapping.maxColumnId") == "3")
       }
     }
   }
