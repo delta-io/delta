@@ -19,6 +19,7 @@ import static java.lang.String.format;
 
 import io.delta.kernel.exceptions.*;
 import io.delta.kernel.internal.actions.DomainMetadata;
+import io.delta.kernel.internal.tablefeatures.TableFeature;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.DataFileStatus;
@@ -28,6 +29,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 /** Contains methods to create user-facing Delta exceptions. */
 public final class DeltaErrors {
@@ -361,6 +363,16 @@ public final class DeltaErrors {
     return new KernelException(
         "Feature 'rowTracking' is supported and depends on feature 'domainMetadata',"
             + " but 'domainMetadata' is unsupported");
+  }
+
+  public static KernelException icebergWriterCompatV1IncompatibleTableFeatures(
+      Set<TableFeature> incompatibleFeatures) {
+    return new KernelException(
+        String.format(
+            "Cannot enable table features %s on a table with icebergWriterCompatV1",
+            incompatibleFeatures.stream()
+                .map(TableFeature::featureName)
+                .collect(Collectors.toList())));
   }
 
   /* ------------------------ HELPER METHODS ----------------------------- */
