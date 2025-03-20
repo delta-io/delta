@@ -2346,6 +2346,13 @@ trait DeltaSQLConfBase {
     .booleanConf
     .createWithDefault(true)
 
+  val DELTA_CONVERT_ICEBERG_DECIMAL_STATS = buildConf("collectStats.convertIceberg.decimal")
+    .internal()
+    .doc("When enabled, attempts to convert Iceberg stats for DECIMAL to Delta stats" +
+      "when cloning from an Iceberg source.")
+    .booleanConf
+    .createWithDefault(true)
+
   /////////////////////
   // Optimized Write
   /////////////////////
