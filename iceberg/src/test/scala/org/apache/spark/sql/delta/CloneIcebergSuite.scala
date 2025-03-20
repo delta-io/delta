@@ -611,9 +611,7 @@ trait CloneIcebergSuiteBase extends QueryTest
   testClone("Convert Iceberg decimal type - int32 in parquet") { mode =>
     testStatsConversionAndDataSkipping(
       icebergDataType = "decimal(6, 5)",
-      tableData = Seq(
-        Decimal(0.123),
-      ),
+      tableData = Seq(Decimal(0.123)),
       extractFunc = row => row.getDecimal(0).toString,
       expectedStats = Seq("0.12300"),
       dataSkippingTestParams = Seq(
