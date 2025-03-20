@@ -203,6 +203,8 @@ public class FileSizeHistogram {
 
   private int getBinIndex(long fileSize) {
     int index = Arrays.binarySearch(sortedBinBoundaries, fileSize);
+    // When fileSize is not found in the array, binarySearch returns -(insertion_point) - 1
+    // We need to get the bin that comes before the insertion point, which is (insertion_point - 1)
     return index >= 0 ? index : -(index + 1) - 1;
   }
 
