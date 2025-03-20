@@ -179,7 +179,7 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
     for (IcebergCompatRequiredTablePropertyEnforcer requiredDeltaTableProperty :
         requiredDeltaTableProperties) {
       Optional<Metadata> updated =
-          requiredDeltaTableProperty.validateAndUpdate(inputContext, compatVersion());
+          requiredDeltaTableProperty.validateAndUpdate(inputContext, compatFeatureName());
 
       if (updated.isPresent()) {
         inputContext = inputContext.withUpdatedMetadata(updated.get());
@@ -202,7 +202,7 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
     for (TableFeature requiredDependencyTableFeature : requiredDependencyTableFeatures()) {
       if (!inputContext.newProtocol.supportsFeature(requiredDependencyTableFeature)) {
         throw DeltaErrors.icebergCompatRequiredFeatureMissing(
-            compatVersion(), requiredDependencyTableFeature.featureName());
+            compatFeatureName(), requiredDependencyTableFeature.featureName());
       }
     }
 
@@ -214,7 +214,7 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
     return metadataUpdated ? Optional.of(inputContext.newMetadata) : Optional.empty();
   }
 
-  abstract String compatVersion();
+  abstract String compatFeatureName();
 
   abstract TableConfig<Boolean> requiredDeltaTableProperty();
 

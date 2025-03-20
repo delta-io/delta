@@ -132,7 +132,7 @@ class DeltaIcebergCompatV2Suite extends DeltaTableWriteSuiteBase with ColumnMapp
   test("can't be enabled on a new table with deletion vectors supported") {
     withTempDirAndEngine { (tablePath, engine) =>
       checkError[KernelException](
-        "Simultaneous support for icebergCompatV2 and deletion vectors is not compatible.") {
+        "Table features [deletionVectors] are incompatible with icebergCompatV2") {
         val tblProps = Map(
           TableConfig.DELETION_VECTORS_CREATION_ENABLED.getKey -> "true",
           TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true")
@@ -150,7 +150,7 @@ class DeltaIcebergCompatV2Suite extends DeltaTableWriteSuiteBase with ColumnMapp
       createEmptyTable(engine, tablePath, schema = testSchema, tableProperties = tblProps)
 
       checkError[KernelException](
-        "Simultaneous support for icebergCompatV2 and deletion vectors is not compatible.") {
+        "Table features [deletionVectors] are incompatible with icebergCompatV2") {
         val newTblProps = Map(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true")
         updateTableMetadata(engine, tablePath, tableProperties = newTblProps)
       }
@@ -163,7 +163,7 @@ class DeltaIcebergCompatV2Suite extends DeltaTableWriteSuiteBase with ColumnMapp
       createEmptyTable(engine, tablePath, schema = testSchema, tableProperties = tblProps)
 
       checkError[KernelException](
-        "Simultaneous support for icebergCompatV2 and deletion vectors is not compatible.") {
+        "Table features [deletionVectors] are incompatible with icebergCompatV2") {
         val tblProps = Map(TableConfig.DELETION_VECTORS_CREATION_ENABLED.getKey -> "true")
         updateTableMetadata(engine, tablePath, schema = testSchema, tableProperties = tblProps)
       }

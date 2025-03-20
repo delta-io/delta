@@ -145,7 +145,8 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
           Set<TableFeature> incompatibleFeatures =
               inputContext.newProtocol.getImplicitlyAndExplicitlySupportedFeatures();
           incompatibleFeatures.removeAll(ALLOWED_TABLE_FEATURES);
-          throw DeltaErrors.icebergWriterCompatV1IncompatibleTableFeatures(incompatibleFeatures);
+          throw DeltaErrors.icebergCompatIncompatibleTableFeatures(
+              INSTANCE.compatFeatureName(), incompatibleFeatures);
         }
       };
 
@@ -167,7 +168,7 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
 
         if (!matches.isEmpty()) {
           throw DeltaErrors.icebergCompatUnsupportedTypeColumns(
-              INSTANCE.compatVersion(),
+              INSTANCE.compatFeatureName(),
               matches.stream().map(tuple -> tuple._2.getDataType()).collect(toList()));
         }
       };
@@ -182,13 +183,13 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
       // If Kernel starts supporting the feature `invariants` this check will become applicable
       (inputContext) -> {
         if (TableFeatures.hasInvariants(inputContext.newMetadata.getSchema())) {
-          throw DeltaErrors.icebergWriterCompatV1IncompatibleTableFeatures(
-              Collections.singleton(INVARIANTS_W_FEATURE));
+          throw DeltaErrors.icebergCompatIncompatibleTableFeatures(
+              INSTANCE.compatFeatureName(), Collections.singleton(INVARIANTS_W_FEATURE));
         }
       };
 
   @Override
-  String compatVersion() {
+  String compatFeatureName() {
     return "icebergWriterCompatV1";
   }
 

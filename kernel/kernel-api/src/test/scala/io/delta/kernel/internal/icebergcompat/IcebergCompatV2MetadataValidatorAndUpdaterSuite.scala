@@ -115,7 +115,7 @@ trait IcebergCompatV2MetadataValidatorAndUpdaterSuiteBase extends AnyFunSuite
         runValidateAndUpdateIcebergCompatV2Metadata(isNewTable, metadata, protocol)
       }
       assert(e.getMessage.contains(
-        "Simultaneous support for icebergCompatV2 and deletion vectors is not compatible."))
+        "Table features [deletionVectors] are incompatible with icebergCompatV2"))
     }
   }
 

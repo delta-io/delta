@@ -282,10 +282,15 @@ public final class DeltaErrors {
             compatVersion, dataType));
   }
 
-  public static KernelException icebergCompatDeletionVectorsUnsupported(String compatVersion) {
+  public static KernelException icebergCompatIncompatibleTableFeatures(
+      String compatVersion, Set<TableFeature> incompatibleFeatures) {
     throw new KernelException(
         format(
-            "Simultaneous support for %s and deletion vectors is not compatible.", compatVersion));
+            "Table features %s are incompatible with %s.",
+            incompatibleFeatures.stream()
+                .map(TableFeature::featureName)
+                .collect(Collectors.toList()),
+            compatVersion));
   }
 
   public static KernelException icebergCompatRequiredFeatureMissing(
@@ -363,16 +368,6 @@ public final class DeltaErrors {
     return new KernelException(
         "Feature 'rowTracking' is supported and depends on feature 'domainMetadata',"
             + " but 'domainMetadata' is unsupported");
-  }
-
-  public static KernelException icebergWriterCompatV1IncompatibleTableFeatures(
-      Set<TableFeature> incompatibleFeatures) {
-    return new KernelException(
-        String.format(
-            "Cannot enable table features %s on a table with icebergWriterCompatV1",
-            incompatibleFeatures.stream()
-                .map(TableFeature::featureName)
-                .collect(Collectors.toList())));
   }
 
   /* ------------------------ HELPER METHODS ----------------------------- */

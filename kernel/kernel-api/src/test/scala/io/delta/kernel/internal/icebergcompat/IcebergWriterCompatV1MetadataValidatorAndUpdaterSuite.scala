@@ -262,8 +262,8 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
     test(s"cannot enable with incompatible feature $incompatibleFeature") {
       checkUnsupportedOrIncompatibleFeature(
         incompatibleFeature,
-        s"Cannot enable table features [$incompatibleFeature] on a " +
-          s"table with icebergWriterCompatV1")
+        s"Table features [$incompatibleFeature] are incompatible with " +
+          s"icebergWriterCompatV1")
     }
   }
 
@@ -296,7 +296,7 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
         validateAndUpdateIcebergWriterCompatV1Metadata(isNewTable, metadata, protocol)
       }
       assert(e.getMessage.contains(
-        "Cannot enable table features [invariants] on a table with icebergWriterCompatV1"))
+        "Table features [invariants] are incompatible with icebergWriterCompatV1"))
     }
   }
 
