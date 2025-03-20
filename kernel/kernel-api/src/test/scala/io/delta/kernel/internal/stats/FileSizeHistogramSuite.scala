@@ -229,19 +229,19 @@ class FileSizeHistogramSuite extends AnyFunSuite {
       assert(histogram.getTotalBytes(index) == fileSize * remainingFiles)
     }
 
+    assert(histogram.getTotalBytes(
+      getBinIndexForTesting(histogram.getSortedBinBoundaries, fileSize)) === 0)
     // Test error cases
     intercept[IllegalArgumentException] {
-      assert(histogram.getTotalBytes(getBinIndexForTesting(
-        histogram.getSortedBinBoundaries,
-        fileSize)) === 0)
       histogram.remove(fileSize) // Try to remove from empty bin
     }
 
     histogram.insert(fileSize)
+    assert(
+      getBinIndexForTesting(histogram.getSortedBinBoundaries, fileSize)
+        === getBinIndexForTesting(histogram.getSortedBinBoundaries, fileSize + 1))
     intercept[IllegalArgumentException] {
-      assert(getBinIndexForTesting(histogram.getSortedBinBoundaries, fileSize)
-        === getBinIndexForTesting(histogram.getSortedBinBoundaries, 2 * fileSize))
-      histogram.remove(fileSize * 2) // Try to remove more bytes than available
+      histogram.remove(fileSize + 1) // Try to remove more bytes than available
     }
 
     intercept[IllegalArgumentException] {

@@ -56,15 +56,15 @@ public class FileSizeHistogram {
    * Creates the default bin boundaries for file size categorization.
    *
    * <ul>
-   * <li>Starts with 0 and powers of 2 from 8KB to 4MB</li>
-   * <li>4MB jumps from 8MB to 40MB</li>
-   * <li>8MB jumps from 48MB to 120MB</li>
-   * <li>4MB jumps from 124MB to 144MB</li>
-   * <li>16MB jumps from 160MB to 576MB</li>
-   * <li>64MB jumps from 640MB to 1408MB</li>
-   * <li>128MB jumps from 1536MB to 2GB</li>
-   * <li>256MB jumps from 2304MB to 4GB</li>
-   * <li>Powers of 2 from 8GB to 256GB</li>
+   *   <li>Starts with 0 and powers of 2 from 8KB to 4MB
+   *   <li>4MB jumps from 8MB to 40MB
+   *   <li>8MB jumps from 48MB to 120MB
+   *   <li>4MB jumps from 124MB to 144MB
+   *   <li>16MB jumps from 160MB to 576MB
+   *   <li>64MB jumps from 640MB to 1408MB
+   *   <li>128MB jumps from 1536MB to 2GB
+   *   <li>256MB jumps from 2304MB to 4GB
+   *   <li>Powers of 2 from 8GB to 256GB
    * </ul>
    *
    * @return An array of bin boundaries sorted in ascending order
@@ -183,7 +183,8 @@ public class FileSizeHistogram {
    * Files larger than the maximum bin boundary (256 GB) are placed in the last bin.
    *
    * @param fileSize The size of the file in bytes
-   * @throws IllegalArgumentException if fileSize is negative or if getBinIndex returns an invalid index
+   * @throws IllegalArgumentException if fileSize is negative or if getBinIndex returns an invalid
+   *     index
    */
   public void insert(long fileSize) {
     checkArgument(fileSize >= 0, "File size must be non-negative, got %s", fileSize);
