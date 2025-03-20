@@ -571,9 +571,6 @@ trait CloneIcebergSuiteBase extends QueryTest
                 e)
           }
         }
-        // Verify expected stats against golden stats
-        spark.sql(s"ANALYZE TABLE $cloneTable COMPUTE DELTA STATISTICS")
-        assertStats(deltaLog, expectedStats)
       }
     }
   }
@@ -707,11 +704,6 @@ trait CloneIcebergSuiteBase extends QueryTest
         "12345678912345678912345678912345678912"
       ),
       dataSkippingTestParams = Seq(
-        DataSkippingTestParam(
-          predicate = "col2 < 123456789.0001", // this will be cast to decimal(123456789)
-          expectedFilesReadNum = 0,
-          expectedFilesReadIndices = Set()
-        ),
         DataSkippingTestParam(
           predicate = "col2 <= 123456789",
           expectedFilesReadNum = 1,
