@@ -231,11 +231,16 @@ class FileSizeHistogramSuite extends AnyFunSuite {
 
     // Test error cases
     intercept[IllegalArgumentException] {
+      assert(histogram.getTotalBytes(getBinIndexForTesting(
+        histogram.getSortedBinBoundaries,
+        fileSize)) === 0)
       histogram.remove(fileSize) // Try to remove from empty bin
     }
 
     histogram.insert(fileSize)
     intercept[IllegalArgumentException] {
+      assert(getBinIndexForTesting(histogram.getSortedBinBoundaries, fileSize)
+        === getBinIndexForTesting(histogram.getSortedBinBoundaries, 2 * fileSize))
       histogram.remove(fileSize * 2) // Try to remove more bytes than available
     }
 
@@ -264,6 +269,10 @@ class FileSizeHistogramSuite extends AnyFunSuite {
     assert(histogram === reconstructedHistogram.get())
   }
 
+  /**
+   * Determines the bin index for a given file size using binary search.
+   * Returns the index of the largest bin boundary that is less than or equal to the file size.
+   */
   private def getBinIndexForTesting(boundaries: List[Long], fileSize: Long): Int = {
     import scala.collection.Searching.{Found, InsertionPoint}
     boundaries.search(fileSize) match {
