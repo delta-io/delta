@@ -94,9 +94,6 @@ trait CloneIcebergSuiteBase extends QueryTest
   protected def testClone(testName: String)(f: String => Unit): Unit =
     supportedModes.foreach { mode => test(s"$testName - $mode") { f(mode) } }
 
-  protected def gridTestClone[A](testName: String)(params: Seq[A])(f: String => A => Unit): Unit =
-    supportedModes.foreach { mode => gridTest(s"$testName - $mode")(params)(f(mode))}
-
   testClone("table with deleted files") { mode =>
     withTable(table, cloneTable) {
       spark.sql(
