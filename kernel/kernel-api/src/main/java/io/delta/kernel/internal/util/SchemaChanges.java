@@ -22,10 +22,18 @@ import java.util.List;
 
 /**
  * SchemaChanges encapsulates a list of added, removed, renamed, or updated fields in a schema
- * change. Updated fields include renamed fields, moved fields, type changes, nullability changes,
- * and metadata attribute changes.
+ * change. Updates include renamed fields, reordered fields, type changes, nullability changes, and
+ * metadata attribute changes. This set of updates can apply to nested fields within structs. In
+ * case any update is applied to a nested field, an update will be produced for every level of
+ * nesting. This includes re-ordered columns in a nested field. Note that SchemaChanges does not
+ * capture re-ordered columns in top level schema.
  *
- * <p>ToDo: Possibly track moves/renames independently
+ * <p>For example, given a field struct_col: struct<inner_struct<id: int>> if id is renamed to
+ * `renamed_id` 1 update will be produced for the change to struct_col and 1 update will be produced
+ * for the change to inner_struct
+ *
+ * <p>ToDo: Possibly track moves/renames independently, enable capturing re-ordered columns in top level
+ * schema
  */
 class SchemaChanges {
   private List<StructField> addedFields;
@@ -36,9 +44,9 @@ class SchemaChanges {
       List<StructField> addedFields,
       List<StructField> removedFields,
       List<Tuple2<StructField, StructField>> updatedFields) {
-    this.addedFields = addedFields;
-    this.removedFields = removedFields;
-    this.updatedFields = updatedFields;
+    this.addedFields = Collections.unmodifiableList(addedFields);
+    this.removedFields = Collections.unmodifiableList(removedFields);
+    this.updatedFields = Collections.unmodifiableList(updatedFields);
   }
 
   static class Builder {
@@ -72,16 +80,16 @@ class SchemaChanges {
 
   /* Added Fields */
   public List<StructField> addedFields() {
-    return Collections.unmodifiableList(addedFields);
+    return addedFields;
   }
 
   /* Removed Fields */
   public List<StructField> removedFields() {
-    return Collections.unmodifiableList(removedFields);
+    return removedFields;
   }
 
   /* Updated Fields (e.g. rename, type change) represented as a Tuple<FieldBefore, FieldAfter> */
   public List<Tuple2<StructField, StructField>> updatedFields() {
-    return Collections.unmodifiableList(updatedFields);
+    return updatedFields;
   }
 }
