@@ -17,11 +17,13 @@ package io.delta.kernel.internal.util;
 
 import io.delta.kernel.types.StructField;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
  * SchemaChanges encapsulates a list of added, removed, renamed, or updated fields in a schema
- * change
+ * change. Updated fields include renamed fields, moved fields, type changes, nullability changes,
+ * and metadata attribute changes.
  *
  * <p>ToDo: Possibly track moves/renames independently
  */
@@ -70,16 +72,16 @@ class SchemaChanges {
 
   /* Added Fields */
   public List<StructField> addedFields() {
-    return addedFields;
+    return Collections.unmodifiableList(addedFields);
   }
 
   /* Removed Fields */
   public List<StructField> removedFields() {
-    return removedFields;
+    return Collections.unmodifiableList(removedFields);
   }
 
   /* Updated Fields (e.g. rename, type change) represented as a Tuple<FieldBefore, FieldAfter> */
   public List<Tuple2<StructField, StructField>> updatedFields() {
-    return updatedFields;
+    return Collections.unmodifiableList(updatedFields);
   }
 }

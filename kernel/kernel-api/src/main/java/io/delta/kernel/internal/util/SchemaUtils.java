@@ -317,26 +317,19 @@ public class SchemaUtils {
       // New field added
       if (existingField == null) {
         schemaDiff.withAddedField(updatedField);
-      } else if (isUpdatedField(existingField, fieldInUpdatedSchema.getValue())) {
-        // Field renamed or changed types
-        schemaDiff.withUpdatedField(existingField, fieldInUpdatedSchema.getValue());
+      } else if (!existingField.equals(updatedField)) {
+        // Field changed name, nullability, metadata or type
+        schemaDiff.withUpdatedField(existingField, updatedField);
       }
     }
 
     for (Map.Entry<Long, StructField> entry : currentFieldIdToField.entrySet()) {
-      StructField fieldInUpdatedSchema = updatedFieldIdToField.get(entry.getKey());
-      if (fieldInUpdatedSchema == null) {
+      if (!updatedFieldIdToField.containsKey(entry.getKey())) {
         schemaDiff.withRemovedField(entry.getValue());
       }
     }
 
     return schemaDiff.build();
-  }
-
-  // Returns if the field has been renamed, if the types are different or if fields have been moved
-  private static boolean isUpdatedField(StructField existingField, StructField updatedField) {
-    return !existingField.getName().equals(updatedField.getName())
-        || !existingField.equals(updatedField);
   }
 
   /** column name by concatenating the column path elements (think of nested) with dots */

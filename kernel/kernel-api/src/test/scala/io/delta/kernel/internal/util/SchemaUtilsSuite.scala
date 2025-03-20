@@ -22,7 +22,7 @@ import scala.collection.JavaConverters.mapAsJavaMapConverter
 
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.util.SchemaUtils.{filterRecursively, validateSchema}
-import io.delta.kernel.types.{ArrayType, IntegerType, LongType, MapType, StringType, StructField, StructType}
+import io.delta.kernel.types.{ArrayType, FieldMetadata, IntegerType, LongType, MapType, StringType, StructField, StructType}
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.LongType.LONG
 import io.delta.kernel.types.TimestampType.TIMESTAMP
@@ -311,6 +311,9 @@ class SchemaUtilsSuite extends AnyFunSuite {
     }
   }
 
+  ///////////////////////////////////////////////////////////////////////////
+  // computeSchemaChangesById
+  ///////////////////////////////////////////////////////////////////////////
   test("Compute schema changes with added columns") {
     val fieldMappingBefore = Map(
       1L -> new StructField("id", IntegerType.INTEGER, true)).map { case (k, v) =>
@@ -421,7 +424,9 @@ class SchemaUtilsSuite extends AnyFunSuite {
         new StructType()
           .add(new StructField("id", IntegerType.INTEGER, true))
           .add(new StructField("data", StringType.STRING, true)),
-        true)).map { case (k, v) =>
+        true),
+      2L -> new StructField("id", IntegerType.INTEGER, true),
+      3L -> new StructField("data", StringType.STRING, true)).map { case (k, v) =>
       java.lang.Long.valueOf(k) -> v
     }.asJava
 
@@ -431,7 +436,42 @@ class SchemaUtilsSuite extends AnyFunSuite {
         new StructType()
           .add(new StructField("data", StringType.STRING, true))
           .add(new StructField("id", IntegerType.INTEGER, true)),
-        true)).map { case (k, v) =>
+        true),
+      2L -> new StructField("id", IntegerType.INTEGER, true),
+      3L -> new StructField("data", StringType.STRING, true)).map { case (k, v) =>
+      java.lang.Long.valueOf(k) -> v
+    }.asJava
+
+    val schemaChanges = SchemaUtils.computeSchemaChangesById(fieldMappingBefore, fieldMappingAfter)
+
+    assert(schemaChanges.addedFields().isEmpty)
+    assert(schemaChanges.removedFields().isEmpty)
+    assert(schemaChanges.updatedFields().size() == 1)
+    assert(schemaChanges.updatedFields().get(0) == new Tuple2(
+      fieldMappingBefore.get(1),
+      fieldMappingAfter.get(1)))
+  }
+
+  test("Compute schema changes with field metadata changes") {
+    val fieldMappingBefore = Map(
+      1L -> new StructField(
+        "id",
+        IntegerType.INTEGER,
+        true,
+        FieldMetadata.builder().putString(
+          "metadata_col",
+          "metadata_val").build())).map { case (k, v) =>
+      java.lang.Long.valueOf(k) -> v
+    }.asJava
+
+    val fieldMappingAfter = Map(
+      1L -> new StructField(
+        "id",
+        IntegerType.INTEGER,
+        true,
+        FieldMetadata.builder().putString(
+          "metadata_col",
+          "updated_metadata_val").build())).map { case (k, v) =>
       java.lang.Long.valueOf(k) -> v
     }.asJava
 
