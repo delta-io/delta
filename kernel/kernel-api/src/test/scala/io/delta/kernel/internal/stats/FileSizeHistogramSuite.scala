@@ -276,7 +276,10 @@ class FileSizeHistogramSuite extends AnyFunSuite {
   private def getBinIndexForTesting(boundaries: List[Long], fileSize: Long): Int = {
     import scala.collection.Searching.{Found, InsertionPoint}
     boundaries.search(fileSize) match {
+      // Exact match found, return the matching index
       case Found(index) => index
+      // Not found and got insert point.
+      // Return the index of the bin boundary just below the file size (insert point - 1)
       case InsertionPoint(index) => index - 1
     }
   }
