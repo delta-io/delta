@@ -202,6 +202,13 @@ public class TransactionImpl implements Transaction {
    *     transaction.
    */
   public List<DomainMetadata> getDomainMetadatas() {
+    if (domainMetadatasAdded.isEmpty() && domainMetadatasRemoved.isEmpty()) {
+      // If no domain metadatas are added or removed, return an empty list. This is to avoid
+      // unnecessary loading of the domain metadatas from the snapshot (which is an expensive
+      // operation).
+      return Collections.emptyList();
+    }
+
     // If we have already processed the domain metadatas, then return the list.
     if (domainMetadatas.isPresent()) {
       return domainMetadatas.get();
