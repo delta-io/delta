@@ -179,9 +179,11 @@ public class FileSizeHistogram {
 
   /**
    * Adds a file size to the histogram, incrementing the appropriate bin's count and total bytes.
+   * The appropriate bin refers to a bin with boundary that is less than or equal to the file size.
+   * Files larger than the maximum bin boundary (256 GB) are placed in the last bin.
    *
    * @param fileSize The size of the file in bytes
-   * @throws IllegalArgumentException if fileSize is negative
+   * @throws IllegalArgumentException if fileSize is negative or if getBinIndex returns an invalid index
    */
   public void insert(long fileSize) {
     checkArgument(fileSize >= 0, "File size must be non-negative, got %s", fileSize);
