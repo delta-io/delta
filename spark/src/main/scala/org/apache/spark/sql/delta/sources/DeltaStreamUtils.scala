@@ -20,8 +20,9 @@ import scala.collection.mutable
 
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.{Column, DataFrame, Dataset, Encoder}
-import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
+import org.apache.spark.sql.delta.DataFrameUtils
+
+import org.apache.spark.sql.{Column, DataFrame}
 import org.apache.spark.sql.execution.QueryExecution
 import org.apache.spark.sql.execution.streaming.{IncrementalExecution, IncrementalExecutionShims, StreamExecution}
 
@@ -43,13 +44,6 @@ object DeltaStreamUtils {
       newMicroBatch.queryExecution.logical,
       incrementalExecution)
     newIncrementalExecution.executedPlan // Force the lazy generation of execution plan
-
-
-    // Use reflection to call the private constructor.
-    val constructor =
-      classOf[Dataset[_]].getConstructor(classOf[QueryExecution], classOf[Encoder[_]])
-    constructor.newInstance(
-      newIncrementalExecution,
-      ExpressionEncoder(newIncrementalExecution.analyzed.schema)).asInstanceOf[DataFrame]
+    DataFrameUtils.ofRows(newIncrementalExecution)
   }
 }

@@ -282,10 +282,12 @@ case class RequiredDeltaTableProperty[T](
       isCreatingNewTable: Boolean) : Metadata = newMetadata
 }
 
-object RequireColumnMapping extends RequiredDeltaTableProperty(
+class RequireColumnMapping(allowedModes: Seq[DeltaColumnMappingMode])
+  extends RequiredDeltaTableProperty(
     deltaConfig = DeltaConfigs.COLUMN_MAPPING_MODE,
-    validator = (mode: DeltaColumnMappingMode) => (mode == NameMapping || mode == IdMapping),
-    autoSetValue = NameMapping.name) {
+    validator = (mode: DeltaColumnMappingMode) => allowedModes.contains(mode),
+    autoSetValue = if (allowedModes.contains(NameMapping)) NameMapping.name else IdMapping.name) {
+
   override def postProcess(
       prevMetadata: Metadata,
       newMetadata: Metadata,
@@ -305,6 +307,9 @@ object RequireColumnMapping extends RequiredDeltaTableProperty(
     }
   }
 }
+
+object RequireColumnMapping extends RequireColumnMapping(Seq(NameMapping, IdMapping))
+
 
 case class IcebergCompatContext(
     spark: SparkSession,
@@ -385,15 +390,9 @@ object CheckNoListMapNullType extends IcebergCompatCheck {
   }
 }
 
-object CheckTypeInV2AllowList extends IcebergCompatCheck {
-  private val allowTypes = Set[Class[_]] (
-    ByteType.getClass, ShortType.getClass, IntegerType.getClass, LongType.getClass,
-    FloatType.getClass, DoubleType.getClass, classOf[DecimalType],
-    StringType.getClass, BinaryType.getClass,
-    BooleanType.getClass,
-    TimestampType.getClass, TimestampNTZType.getClass, DateType.getClass,
-    classOf[ArrayType], classOf[MapType], classOf[StructType]
-  )
+class CheckTypeInAllowList extends IcebergCompatCheck {
+  def allowTypes: Set[Class[_]] = Set()
+
   override def apply(context: IcebergCompatContext): Unit = {
     SchemaUtils
       .findAnyTypeRecursively(context.newestMetadata.schema)(t => !allowTypes.contains(t.getClass))
@@ -405,6 +404,18 @@ object CheckTypeInV2AllowList extends IcebergCompatCheck {
     }
   }
 }
+
+object CheckTypeInV2AllowList extends CheckTypeInAllowList {
+  override val allowTypes: Set[Class[_]] = Set[Class[_]] (
+    ByteType.getClass, ShortType.getClass,
+    IntegerType.getClass, LongType.getClass,
+    FloatType.getClass, DoubleType.getClass, classOf[DecimalType],
+    StringType.getClass, BinaryType.getClass,
+    BooleanType.getClass,
+    TimestampType.getClass, TimestampNTZType.getClass, DateType.getClass,
+    classOf[ArrayType], classOf[MapType], classOf[StructType])
+}
+
 
 object CheckPartitionDataTypeInV2AllowList extends IcebergCompatCheck {
   private val allowedTypes = Set[Class[_]] (

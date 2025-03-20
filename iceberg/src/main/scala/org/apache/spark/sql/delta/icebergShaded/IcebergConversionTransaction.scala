@@ -22,9 +22,9 @@ import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaFileProviderUtils, IcebergConstants, Snapshot}
+import org.apache.spark.sql.delta.{DeltaFileProviderUtils, IcebergConstants, NoMapping, Snapshot}
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, RemoveFile}
-import org.apache.spark.sql.delta.icebergShaded.IcebergSchemaUtils._
+import org.apache.spark.sql.delta.icebergShaded.IcebergSchemaUtils
 import org.apache.spark.sql.delta.icebergShaded.IcebergTransactionUtils._
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -32,14 +32,14 @@ import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.conf.Configuration
-import shadedForDelta.org.apache.iceberg.{AppendFiles, DeleteFiles, OverwriteFiles, PartitionSpec, PendingUpdate, RewriteFiles, Transaction => IcebergTransaction}
-import shadedForDelta.org.apache.iceberg.ExpireSnapshots
+import shadedForDelta.org.apache.iceberg.{AppendFiles, DeleteFiles, ExpireSnapshots, OverwriteFiles, PartitionSpec, PendingUpdate, RewriteFiles, TableProperties, Transaction => IcebergTransaction}
 import shadedForDelta.org.apache.iceberg.mapping.MappingUtil
 import shadedForDelta.org.apache.iceberg.mapping.NameMappingParser
 
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import shadedForDelta.org.apache.iceberg.util.LocationUtil
 
 sealed trait IcebergTableOp
 case object CREATE_TABLE extends IcebergTableOp
@@ -211,8 +211,10 @@ class IcebergConversionTransaction(
   //////////////////////
 
   protected val tablePath = postCommitSnapshot.deltaLog.dataPath
+  protected val schemaUtil =
+    IcebergSchemaUtils(postCommitSnapshot.metadata.columnMappingMode == NoMapping)
   protected val icebergSchema =
-    convertDeltaSchemaToIcebergSchema(postCommitSnapshot.metadata.schema)
+    schemaUtil.convertDeltaSchemaToIcebergSchema(postCommitSnapshot.metadata.schema)
   // Initial partition spec converted from Delta
   protected val partitionSpec =
     createPartitionSpec(icebergSchema, postCommitSnapshot.metadata.partitionColumns)
@@ -270,7 +272,26 @@ class IcebergConversionTransaction(
   }
 
   def getExpireSnapshotHelper(): ExpireSnapshotHelper = {
-    val ret = new ExpireSnapshotHelper(txn.expireSnapshots())
+    val table = txn.table()
+    val tableLocation = LocationUtil.stripTrailingSlash(table.location)
+    val defaultWriteMetadataLocation = s"$tableLocation/metadata"
+    val writeMetadataLocation = LocationUtil.stripTrailingSlash(
+      table.properties().getOrDefault(
+        TableProperties.WRITE_METADATA_LOCATION, defaultWriteMetadataLocation))
+    val expireSnapshots = if (tablePath.toString == writeMetadataLocation) {
+      // Don't attempt any file cleanup in the edge-case configuration
+      // that the data location (in Uniform the table root location)
+      // is the same as the Iceberg metadata location
+      txn.expireSnapshots().cleanExpiredFiles(false)
+    } else {
+      txn.expireSnapshots().deleteWith(path => {
+        if (path.startsWith(writeMetadataLocation)) {
+          table.io().deleteFile(path)
+        }
+      })
+    }
+
+    val ret = new ExpireSnapshotHelper(expireSnapshots)
     fileUpdates += ret
     ret
   }

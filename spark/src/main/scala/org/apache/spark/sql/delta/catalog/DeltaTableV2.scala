@@ -22,6 +22,8 @@ import java.{util => ju}
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 
+import org.apache.spark.sql.delta.ClassicColumnConversions._
+import org.apache.spark.sql.delta.DataFrameUtils
 import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumnInfo}
 import org.apache.spark.sql.delta.skipping.clustering.temp.ClusterBySpec
 import org.apache.spark.sql.delta._
@@ -169,7 +171,7 @@ class DeltaTableV2 private[delta](
       }
 
       val (version, accessType) = DeltaTableUtils.resolveTimeTravelVersion(
-        spark.sessionState.conf, deltaLog, spec)
+        spark.sessionState.conf, deltaLog, catalogTable, spec)
       val source = spec.creationSource.getOrElse("unknown")
       recordDeltaEvent(deltaLog, s"delta.timeTravel.$source", data = Map(
         // Log the cached version of the table on the cluster
@@ -194,7 +196,7 @@ class DeltaTableV2 private[delta](
       recordDeltaEvent(deltaLog, "delta.cdf.read",
         data = caseInsensitiveOptions.asCaseSensitiveMap())
       Some(CDCReader.getCDCRelation(
-        spark, initialSnapshot, timeTravelSpec.nonEmpty, spark.sessionState.conf,
+        spark, initialSnapshot, catalogTable, timeTravelSpec.nonEmpty, spark.sessionState.conf,
         caseInsensitiveOptions))
     } else {
       None
@@ -202,10 +204,10 @@ class DeltaTableV2 private[delta](
   }
 
   private lazy val tableSchema: StructType = {
-    val baseSchema = cdcRelation.map(_.schema).getOrElse {
-      DeltaTableUtils.removeInternalWriterMetadata(spark, initialSnapshot.schema)
-    }
-    DeltaTableUtils.removeInternalDeltaMetadata(spark, baseSchema)
+    val baseSchema = cdcRelation.map(_.schema).getOrElse(initialSnapshot.schema)
+    DeltaTableUtils.removeInternalDeltaMetadata(
+      spark, DeltaTableUtils.removeInternalWriterMetadata(spark, baseSchema)
+    )
   }
 
   override def schema(): StructType = tableSchema
@@ -312,7 +314,7 @@ class DeltaTableV2 private[delta](
       // Catalog based tables need a SubqueryAlias that carries their fully-qualified name
       SubqueryAlias(ct.identifier.nameParts, child)
     }
-    Dataset.ofRows(sparkSession, plan)
+    DataFrameUtils.ofRows(sparkSession, plan)
   }
 
   /** Creates a [[DataFrame]] that reads from this table */

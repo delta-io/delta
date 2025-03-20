@@ -45,6 +45,25 @@ public class Protocol {
   /// Public static variables and methods                                                       ///
   /////////////////////////////////////////////////////////////////////////////////////////////////
 
+  /**
+   * Helper method to get the Protocol from the row representation.
+   *
+   * @param row Row representation of the Protocol.
+   * @return the Protocol object
+   */
+  public static Protocol fromRow(Row row) {
+    requireNonNull(row);
+    Set<String> readerFeatures =
+        row.isNullAt(2)
+            ? Collections.emptySet()
+            : Collections.unmodifiableSet(new HashSet<>(VectorUtils.toJavaList(row.getArray(2))));
+    Set<String> writerFeatures =
+        row.isNullAt(3)
+            ? Collections.emptySet()
+            : Collections.unmodifiableSet(new HashSet<>(VectorUtils.toJavaList(row.getArray(3))));
+    return new Protocol(row.getInt(0), row.getInt(1), readerFeatures, writerFeatures);
+  }
+
   public static Protocol fromColumnVector(ColumnVector vector, int rowId) {
     if (vector.isNullAt(rowId)) {
       return null;
@@ -450,6 +469,11 @@ public class Protocol {
     // For example, (2, 3) is normalized to (1, 3). This is because there is no legacy feature
     // in the set with reader version 2 unless the writer version is at least 5.
     return mergedProtocol.denormalizedNormalized();
+  }
+
+  /** Check if the protocol supports the given table feature */
+  public boolean supportsFeature(TableFeature feature) {
+    return getImplicitlyAndExplicitlySupportedFeatures().contains(feature);
   }
 
   /** Validate the protocol contents represents a valid state */

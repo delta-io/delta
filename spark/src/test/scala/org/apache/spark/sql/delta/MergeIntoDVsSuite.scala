@@ -227,7 +227,9 @@ class MergeIntoDVsSuite extends MergeIntoDVsTests {
           tableHasDVs = true,
           targetDf = sourceDF.as("s").join(targetDFWithMetadata.as("t"), condition),
           candidateFiles = corruptedFiles,
-          condition = condition.expr
+          condition = condition.expr,
+          fileNameColumnOpt = Option(col("s._metadata.file_name")),
+          rowIndexColumnOpt = Option(col("s._metadata.row_index"))
         )
       }
       assert(e.getCause.getMessage.contains("Encountered a non matched file path."))
