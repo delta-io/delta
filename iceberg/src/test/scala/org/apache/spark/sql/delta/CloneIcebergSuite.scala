@@ -94,6 +94,9 @@ trait CloneIcebergSuiteBase extends QueryTest
   protected def testClone(testName: String)(f: String => Unit): Unit =
     supportedModes.foreach { mode => test(s"$testName - $mode") { f(mode) } }
 
+  protected def gridTestClone[A](testName: String)(params: Seq[A])(f: String => A => Unit): Unit =
+    supportedModes.foreach { mode => gridTest(s"$testName - $mode")(params)(f(mode))}
+
   testClone("table with deleted files") { mode =>
     withTable(table, cloneTable) {
       spark.sql(
@@ -450,13 +453,78 @@ trait CloneIcebergSuiteBase extends QueryTest
     }
   }
 
-  testClone("Convert Iceberg date stats from int to date string") { mode =>
+  private def assertStats(deltaLog: DeltaLog, expectedStats: Seq[String]): Unit = {
+    val addFiles = deltaLog.update().allFiles.collectAsList().iterator().asScala
+    val addFilesSortedByIndices = addFiles.toList.sortBy { f =>
+      f.partitionValues.head._2
+    }
+
+    addFilesSortedByIndices.zip(expectedStats).foreach { case (f, expectedStat) =>
+      val parsedStats = JsonUtils.fromJson[DeltaStatsClass](
+        f.stats
+      )
+      assert(parsedStats.numRecords == 1)
+      assert(parsedStats.minValues("col2") == expectedStat)
+      assert(parsedStats.maxValues("col2") == expectedStat)
+    }
+  }
+
+  private def assertStateReconstruction(
+      deltaLog: DeltaLog, extractFunc: Row => String, expectedStats: Seq[String]): Unit = {
+    val snapshot = deltaLog.update()
+    val analyzedDf = snapshot.withStatsDeduplicated.queryExecution.analyzed.toString
+    val statsCol = if (analyzedDf.contains("stats_parsed")) "stats_parsed" else "stats"
+    val stats = snapshot.withStats.select(statsCol)
+    val minStats = stats.select(s"$statsCol.minValues.col2").collect()
+    assert(minStats.map(extractFunc(_)).toSet == expectedStats.toSet)
+    val maxStats = stats.select(s"$statsCol.maxValues.col2").collect()
+    assert(maxStats.map(extractFunc(_)).toSet == expectedStats.toSet)
+  }
+
+  private case class DataSkippingTestParam(
+      predicate: String,
+      expectedFilesReadNum: Int,
+      expectedFilesReadIndices: Set[Int])
+
+  /**
+   * E2E test stats conversions and dataSkipping for an iceberg dataType
+   * It will write data into the iceberg table,
+   * verify stats of the addFiles and results of dataSkipping on cloned delta table
+   *
+   * @param icebergDataType Iceberg data type to test
+   *  For example, "date" for date dataType
+   * @param tableData Data to write into the table corresponding to data type
+   *  For example, Seq(
+   *    toDate("2015-01-25"), // index 1
+   *    toDate("1917-02-10") // index 2
+   *   )
+   *  It will be written into col2
+   * @param extractFunc Function to extract the value from the row containing only stat
+   *  For example, for date type, it would be row => row.getDate(0).toString
+   * @param expectedStats: Expected stat values in json string after extraction
+   *  For example, for Date("2025-01-25"), it would be "2025-01-25"
+   * @param dataSkippingTestParams DataSkipping performed and what to verify
+   *  For example,
+   *   DataSkippingTestParam(
+   *    predicate = "col2 < '1918-01-25'",
+   *    expectedFilesReadNum = 1,
+   *    expectedFilesReadIndices = Set(2) // indices of files expected to select out
+   *   )
+   * @param mode Clone mode, for example, by path
+   */
+  private def testStatsConversionAndDataSkipping(
+      icebergDataType: String,
+      tableData: Seq[Any],
+      extractFunc: Row => String,
+      expectedStats: Seq[String],
+      dataSkippingTestParams: Seq[DataSkippingTestParam],
+      mode: String): Unit = {
     withSQLConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_STATS.key-> "true") {
       withTable(table, cloneTable) {
         // Create Iceberg table with date type
         spark.sql(
-          s"""CREATE TABLE $table (col1 int, col2 date)
-             | USING iceberg""".stripMargin)
+          s"""CREATE TABLE $table (col1 int, col2 $icebergDataType)
+             | USING iceberg PARTITIONED BY (col1)""".stripMargin)
         // Write into Iceberg table
         // scalastyle:off deltahadoopconfiguration
         val hadoopTables = new HadoopTables(spark.sessionState.newHadoopConf())
@@ -465,86 +533,213 @@ trait CloneIcebergSuiteBase extends QueryTest
         val icebergTableSchema =
           IcebergSparkSchemaUtil.convert(icebergTable.schema())
         val df = spark.createDataFrame(
-          Seq(
-            Row(1, toDate("2015-01-25"))
-          ).asJava,
-          icebergTableSchema)
+          tableData.zipWithIndex.map { case (elem, index) =>
+            Row(index + 1, elem)
+          }.asJava,
+          icebergTableSchema
+        )
         df.writeTo(table).append()
-
-        // Create cloned table
         runCreateOrReplace(mode, sourceIdentifier)
-        checkAnswer(spark.table(cloneTable), df)
-        // Check stats of cloned table
         val deltaLog = DeltaLog.forTable(
           spark,
           spark.sessionState.catalog.getTableMetadata(TableIdentifier(cloneTable))
         )
-        val snapshot = deltaLog.unsafeVolatileSnapshot
-        snapshot.allFiles.collectAsList().iterator().asScala.foreach { f =>
-          val parsedStats = JsonUtils.fromJson[DeltaStatsClass](
-            f.stats
-          )
-          assert(parsedStats.numRecords == 1)
-          assert(parsedStats.minValues("col2") == "2015-01-25")
-          assert(parsedStats.maxValues("col2") == "2015-01-25")
+        // Verify converted stats against expected stats
+        assertStats(deltaLog, expectedStats)
+        assertStateReconstruction(deltaLog, extractFunc, expectedStats)
+        // Check table read results
+        checkAnswer(spark.table(cloneTable), df)
+        // Check data skipping results
+        dataSkippingTestParams.foreach { dataSkippingParam =>
+          val (predicate, expectedFilesReadNum, expectedFilesReadIndices) =
+            (dataSkippingParam.predicate, dataSkippingParam.expectedFilesReadNum,
+              dataSkippingParam.expectedFilesReadIndices)
+          val filesRead =
+            getFilesRead(spark, deltaLog, predicate, checkEmptyUnusedFilters = false)
+          try {
+            assert(filesRead.size == expectedFilesReadNum)
+            assert(filesRead.map(_.partitionValues.head._2).toSet ==
+              expectedFilesReadIndices.map(_.toString))
+            checkAnswer(
+              spark.sql(s"select * from $cloneTable where $predicate"), df.where(predicate)
+            )
+          } catch {
+            case e: Throwable =>
+              throw new RuntimeException(
+                s"DataSkipping Failed for predicate: $predicate: " +
+                  s"expectedFilesReadNum: $expectedFilesReadNum, " +
+                  s"expectedFilesReadIndices: $expectedFilesReadIndices " +
+                  s"actualFilesRead: $filesRead" +
+                  s"actualFilesIndices: ${filesRead.map(_.partitionValues.head._2)}",
+                e)
+          }
         }
-        // Check state-reconstruction stats
-        val analyzedDf = deltaLog.update().withStatsDeduplicated.queryExecution.analyzed.toString
-        val statsCol = if (analyzedDf.contains("stats_parsed")) "stats_parsed" else "stats"
-        val stats = snapshot.withStats.select(statsCol)
-        assert(stats.select(s"$statsCol.minValues.col2").collect().head
-          .getDate(0).toString == "2015-01-25")
-        assert(stats.select(s"$statsCol.maxValues.col2").collect().head
-          .getDate(0).toString == "2015-01-25")
+        // Verify expected stats against golden stats
+        spark.sql(s"ANALYZE TABLE $cloneTable COMPUTE DELTA STATISTICS")
+        assertStats(deltaLog, expectedStats)
       }
     }
   }
 
-  testClone("DataSkipping on date type") { mode =>
-    withSQLConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_STATS.key-> "true") {
-      withTable(table, cloneTable) {
-        // Create Iceberg table with date type
-        spark.sql(
-          s"""CREATE TABLE $table (col1 int, col2 date)
-             | USING iceberg PARTITIONED BY (col2)""".stripMargin)
-        // Write into Iceberg table
-        // scalastyle:off deltahadoopconfiguration
-        val hadoopTables = new HadoopTables(spark.sessionState.newHadoopConf())
-        // scalastyle:on deltahadoopconfiguration
-        val icebergTable = hadoopTables.load(tablePath)
-        val icebergTableSchema =
-          IcebergSparkSchemaUtil.convert(icebergTable.schema())
-
-        val df = spark.createDataFrame(
-          Seq(
-            Row(1, toDate("2015-01-25")),
-            Row(2, toDate("1917-02-10")),
-            Row(3, toDate("2050-06-23"))
-          ).asJava,
-          icebergTableSchema)
-        df.writeTo(table).append()
-        runCreateOrReplace(mode, sourceIdentifier)
-        // Check read results
-        checkAnswer(spark.table(cloneTable), df)
-        // Check data skipping - 1
-        val deltaLog = DeltaLog.forTable(
-          spark,
-          spark.sessionState.catalog.getTableMetadata(TableIdentifier(cloneTable))
+  testClone("Convert Iceberg date type") { mode =>
+    testStatsConversionAndDataSkipping(
+      icebergDataType = "date",
+      tableData = Seq(
+        toDate("2015-01-25"), // index 1
+        toDate("1917-02-10"), // index 2
+        toDate("2050-06-23")  // index 3
+      ),
+      extractFunc = row => row.getDate(0).toString,
+      expectedStats = Seq("2015-01-25", "1917-02-10", "2050-06-23"),
+      dataSkippingTestParams = Seq(
+        DataSkippingTestParam(
+          predicate = "col2 > '2030-01-25'",
+          expectedFilesReadNum = 1,
+          expectedFilesReadIndices = Set(3)
+        ),
+        DataSkippingTestParam(
+          predicate = "col2 < '1917-02-11'",
+          expectedFilesReadNum = 1,
+          expectedFilesReadIndices = Set(2)
         )
-        val predicate1 = "col2 > '2030-01-25'"
-        val filesRead1 =
-          getFilesRead(spark, deltaLog, predicate1, checkEmptyUnusedFilters = false)
-        assert(filesRead1.size == 1)
-        assert(filesRead1.head.partitionValues.head._2 == "2050-06-23")
-        checkAnswer(spark.sql(s"select * from $cloneTable where $predicate1"), df.where(predicate1))
-        // Check data skipping - 2
-        val predicate2 = "col2 < '1917-02-11'"
-        val filesRead2 =
-          getFilesRead(spark, deltaLog, predicate2, checkEmptyUnusedFilters = false)
-        assert(filesRead2.head.partitionValues.head._2 == "1917-02-10")
-        checkAnswer(spark.sql(s"select * from $cloneTable where $predicate2"), df.where(predicate2))
-      }
-    }
+      ),
+      mode
+    )
+  }
+
+  // int32 for 1 <= precision <= 9
+  testClone("Convert Iceberg decimal type - int32 in parquet") { mode =>
+    testStatsConversionAndDataSkipping(
+      icebergDataType = "decimal(6, 5)",
+      tableData = Seq(
+        Decimal(0.123),
+      ),
+      extractFunc = row => row.getDecimal(0).toString,
+      expectedStats = Seq("0.12300"),
+      dataSkippingTestParams = Seq(
+        DataSkippingTestParam(
+          predicate = "col2 > 0.123",
+          expectedFilesReadNum = 0,
+          expectedFilesReadIndices = Set()
+        ),
+        DataSkippingTestParam(
+          predicate = "col2 >= 0.123",
+          expectedFilesReadNum = 1,
+          expectedFilesReadIndices = Set(1)
+        )
+      ),
+      mode
+    )
+  }
+
+  // int64 for 10 <= precision <= 18
+  testClone("Convert Iceberg decimal type - int64 in parquet") { mode =>
+    testStatsConversionAndDataSkipping(
+      icebergDataType = "decimal(16, 4)",
+      tableData = Seq(BigDecimal("123456789123.4567")),
+      extractFunc = row => row.getDecimal(0).toString,
+      expectedStats = Seq("123456789123.4567"),
+      dataSkippingTestParams = Seq(
+        DataSkippingTestParam(
+          predicate = "col2 < 123456789123.4567",
+          expectedFilesReadNum = 0,
+          expectedFilesReadIndices = Set()
+        ),
+        DataSkippingTestParam(
+          predicate = "col2 <= 123456789123.4567",
+          expectedFilesReadNum = 1,
+          expectedFilesReadIndices = Set(1)
+        )
+      ),
+      mode
+    )
+  }
+
+  // array for precision > 18
+  testClone("Convert Iceberg decimal type - array in parquet") { mode =>
+    testStatsConversionAndDataSkipping(
+      icebergDataType = "decimal(20, 8)",
+      tableData = Seq(
+        BigDecimal("111111.111"), // index 1
+        BigDecimal("111111.112"), // index 2
+        Decimal(123.5) // index 3
+      ),
+      extractFunc = row => row.getDecimal(0).toString,
+      expectedStats = Seq("111111.11100000", "111111.11200000", "123.50000000"),
+      dataSkippingTestParams = Seq(
+        DataSkippingTestParam(
+          predicate = "col2 > 111111.111",
+          expectedFilesReadNum = 1,
+          expectedFilesReadIndices = Set(2)
+        ),
+        DataSkippingTestParam(
+          predicate = "col2 <= 111111.111",
+          expectedFilesReadNum = 2,
+          expectedFilesReadIndices = Set(1, 3)
+        ),
+        DataSkippingTestParam(
+          predicate = "col2 < 123.5001",
+          expectedFilesReadNum = 1,
+          expectedFilesReadIndices = Set(3)
+        ),
+        DataSkippingTestParam(
+          predicate = "col2 < 123.5",
+          expectedFilesReadNum = 0,
+          expectedFilesReadIndices = Set()
+        )
+      ),
+      mode
+    )
+  }
+
+  // common decimal type used in iceberg
+  testClone("Convert Iceberg decimal type - mixed") { mode =>
+    testStatsConversionAndDataSkipping(
+      icebergDataType = "decimal(38, 0)",
+      tableData = Seq(
+        BigDecimal("123456789"), // index 1
+        BigDecimal("123456789123456789"), // index 2
+        BigDecimal("123456789123456789123456789"), // index 3
+        BigDecimal("123456789123456789123456789123456789"), // index 4
+        BigDecimal("12345678912345678912345678912345678912"), // index 5
+      ),
+      extractFunc = row => row.getDecimal(0).toString,
+      expectedStats = Seq(
+        "123456789",
+        "123456789123456789",
+        "123456789123456789123456789",
+        "123456789123456789123456789123456789",
+        "12345678912345678912345678912345678912"
+      ),
+      dataSkippingTestParams = Seq(
+        DataSkippingTestParam(
+          predicate = "col2 < 123456789.0001", // this will be cast to decimal(123456789)
+          expectedFilesReadNum = 0,
+          expectedFilesReadIndices = Set()
+        ),
+        DataSkippingTestParam(
+          predicate = "col2 <= 123456789",
+          expectedFilesReadNum = 1,
+          expectedFilesReadIndices = Set(1)
+        ),
+        DataSkippingTestParam(
+          predicate = "col2 == 123456789123456789",
+          expectedFilesReadNum = 1,
+          expectedFilesReadIndices = Set(2)
+        ),
+        DataSkippingTestParam(
+          predicate = "col2 < 12345678912345678912345678912345678912",
+          expectedFilesReadNum = 4,
+          expectedFilesReadIndices = Set(1, 2, 3, 4)
+        ),
+        DataSkippingTestParam(
+          predicate = "col2 >= 123456789123456789123456789123456789",
+          expectedFilesReadNum = 2,
+          expectedFilesReadIndices = Set(4, 5)
+        ),
+      ),
+      mode
+    )
   }
 }
 
