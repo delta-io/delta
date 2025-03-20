@@ -75,9 +75,11 @@ public interface FileIO {
    * arbitrary position in the file.
    *
    * @param path Fully qualified path to the file.
+   * @param fileSize Size of the file in bytes. If available, it can be used to optimize the read
+   *     otherwise it can be set to -1.
    * @return {@link InputFile} instance.
    */
-  InputFile newInputFile(String path);
+  InputFile newInputFile(String path, long fileSize);
 
   /**
    * Create a {@link OutputFile} to write new file at the given path.

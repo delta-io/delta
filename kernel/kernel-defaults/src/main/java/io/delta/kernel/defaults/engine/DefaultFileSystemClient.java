@@ -92,7 +92,7 @@ public class DefaultFileSystemClient implements FileSystemClient {
   }
 
   private ByteArrayInputStream getStream(String filePath, int offset, int size) {
-    InputFile inputFile = this.fileIO.newInputFile(filePath);
+    InputFile inputFile = this.fileIO.newInputFile(filePath, /* fileSize */ -1);
     try (SeekableInputStream stream = inputFile.newStream()) {
       stream.seek(offset);
       byte[] buff = new byte[size];
