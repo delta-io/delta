@@ -72,12 +72,12 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
    * valid. Currently, the changes we support are
    *
    * <ul>
-   *   <li>No change in enablement (true -> true or false -> false)
-   *   <li>Enabling but only on a new table (false -> true)
-   *   <li>Disabling (true -> false)
+   *   <li>No change in enablement (true to true or false to false)
+   *   <li>Enabling but only on a new table (false to true)
+   *   <li>Disabling (true to false)
    * </ul>
    *
-   * If enabling on an existing table we throw an {@link KernelException}.
+   * If enabling (false to true) on an existing table we throw an {@link KernelException}.
    */
   public static void validateIcebergWriterCompatV1Change(
       Map<String, String> oldConfig, Map<String, String> newConfig, boolean isNewTable) {
