@@ -21,6 +21,7 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.internal.data.GenericRow;
+import io.delta.kernel.internal.util.InternalUtils;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.types.ArrayType;
 import io.delta.kernel.types.LongType;
@@ -45,11 +46,49 @@ public class FileSizeHistogram {
           .add("fileCounts", new ArrayType(LongType.LONG, false))
           .add("totalBytes", new ArrayType(LongType.LONG, false));
 
+  /**
+   * Creates a default FileSizeHistogram with predefined bin boundaries and zero counts.
+   *
+   * @return A new FileSizeHistogram instance with default boundaries and zero counts
+   */
   public static FileSizeHistogram createDefaultHistogram() {
     long[] defaultBoundaries = createDefaultBinBoundaries();
     long[] zeroCounts = new long[defaultBoundaries.length];
     long[] zeroBytes = new long[defaultBoundaries.length];
     return new FileSizeHistogram(defaultBoundaries, zeroCounts, zeroBytes);
+  }
+
+  /**
+   * Creates a FileSizeHistogram from a column vector.
+   */
+  public static Optional<FileSizeHistogram> fromColumnVector(ColumnVector vector, int rowId) {
+    if (vector.isNullAt(rowId)) {
+      return Optional.empty();
+    }
+
+    int boundariesIdx = FULL_SCHEMA.indexOf("sortedBinBoundaries");
+    int totalBytesIdx = FULL_SCHEMA.indexOf("totalBytes");
+    int fileCountsIdx = FULL_SCHEMA.indexOf("fileCounts");
+
+    List<Long> boundariesList =
+        VectorUtils.toJavaList(
+            InternalUtils.requireNonNull(
+                    vector.getChild(boundariesIdx), rowId, "sortedBinBoundaries")
+                .getArray(rowId));
+    List<Long> totalBytesList =
+        VectorUtils.toJavaList(
+            InternalUtils.requireNonNull(vector.getChild(totalBytesIdx), rowId, "totalBytes")
+                .getArray(rowId));
+    List<Long> fileCountsList =
+        VectorUtils.toJavaList(
+            InternalUtils.requireNonNull(vector.getChild(fileCountsIdx), rowId, "fileCounts")
+                .getArray(rowId));
+
+    long[] boundaries = boundariesList.stream().mapToLong(Long::longValue).toArray();
+    long[] totalBytesArray = totalBytesList.stream().mapToLong(Long::longValue).toArray();
+    long[] fileCountsArray = fileCountsList.stream().mapToLong(Long::longValue).toArray();
+
+    return Optional.of(new FileSizeHistogram(boundaries, fileCountsArray, totalBytesArray));
   }
 
   /**
@@ -124,29 +163,6 @@ public class FileSizeHistogram {
     checkArgument(
         idx == totalSize, "Incorrect pre-calculated size. Expected %s but got %s", totalSize, idx);
     return boundaries;
-  }
-
-  public static Optional<FileSizeHistogram> fromColumnVector(ColumnVector vector, int rowId) {
-    if (vector.isNullAt(rowId)) {
-      return Optional.empty();
-    }
-
-    int boundariesIdx = FULL_SCHEMA.indexOf("sortedBinBoundaries");
-    int totalBytesIdx = FULL_SCHEMA.indexOf("totalBytes");
-    int fileCountsIdx = FULL_SCHEMA.indexOf("fileCounts");
-
-    List<Long> boundariesList =
-        VectorUtils.toJavaList(vector.getChild(boundariesIdx).getArray(rowId));
-    List<Long> totalBytesList =
-        VectorUtils.toJavaList(vector.getChild(totalBytesIdx).getArray(rowId));
-    List<Long> fileCountsList =
-        VectorUtils.toJavaList(vector.getChild(fileCountsIdx).getArray(rowId));
-
-    long[] boundaries = boundariesList.stream().mapToLong(Long::longValue).toArray();
-    long[] totalBytesArray = totalBytesList.stream().mapToLong(Long::longValue).toArray();
-    long[] fileCountsArray = fileCountsList.stream().mapToLong(Long::longValue).toArray();
-
-    return Optional.of(new FileSizeHistogram(boundaries, fileCountsArray, totalBytesArray));
   }
 
   ////////////////////////////////////
