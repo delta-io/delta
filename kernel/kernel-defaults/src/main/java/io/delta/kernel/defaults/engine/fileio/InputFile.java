@@ -22,7 +22,7 @@ public interface InputFile {
   /**
    * Get the size of the file.
    *
-   * @return the size of the file. If not known, this should return -1.
+   * @return the size of the file.
    */
   long length() throws IOException;
 
