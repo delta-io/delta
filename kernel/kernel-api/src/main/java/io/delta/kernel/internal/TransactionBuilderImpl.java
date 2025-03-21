@@ -29,6 +29,7 @@ import static java.util.stream.Collectors.toSet;
 
 import io.delta.kernel.*;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.fs.Path;
@@ -161,7 +162,9 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       newMetadata = Optional.of(snapshotMetadata.withMergedConfiguration(newProperties));
     }
 
-    // TODO In the future update metadata with new schema if provided
+    if (schema.isPresent() && !isNewTable) {
+      newMetadata = Optional.of(newMetadata.orElse(snapshotMetadata).withNewSchema(schema.get()));
+    }
 
     /* ----- 2: Update the PROTOCOL based on the table properties or schema ----- */
     // This is the only place we update the protocol action; takes care of any dependent features
@@ -187,6 +190,13 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     // tables if needed (e.g. enables column mapping)
     // Ex: We enable column mapping mode in the configuration such that our properties now include
     // Map(delta.enableIcebergCompatV2 -> true, delta.columnMapping.mode -> name)
+    // ToDo Cleanup duplicate validatePartitionColumns. Done to have a better error message
+    // in case ICEBERG_COMPAT_V2_CHECK_HAS_ALLOWED_PARTITION_TYPES
+    // attempts to lookup partition columns that don't exist in schema
+    if (schema.isPresent() && !isNewTable) {
+      SchemaUtils.validatePartitionColumns(schema.get(), snapshot.getPartitionColumnNames());
+    }
+
     Optional<Metadata> icebergCompatV2Metadata =
         IcebergCompatV2MetadataValidatorAndUpdater.validateAndUpdateIcebergCompatV2Metadata(
             isNewTable, newMetadata.orElse(snapshotMetadata), newProtocol.orElse(snapshotProtocol));
@@ -243,12 +253,6 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         snapshot.getProtocol(), snapshot.getMetadata(), tablePath);
 
     if (!isNewTable) {
-      if (schema.isPresent()) {
-        throw tableAlreadyExists(
-            tablePath,
-            "Table already exists, but provided a new schema. "
-                + "Schema can only be set on a new table.");
-      }
       if (partitionColumns.isPresent()) {
         throw tableAlreadyExists(
             tablePath,
@@ -290,7 +294,26 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         oldMetadata.getConfiguration(), newMetadata.getConfiguration(), isNewTable);
     // TODO In the future block enabling IcebergWriterCompatV1 for existing tables
 
-    // TODO In the future validate any schema change
+    // Validate the conditions for schema evolution and the updated schema if applicable
+    if (schema.isPresent() && !isNewTable) {
+      ColumnMappingMode updatedMappingMode =
+          ColumnMapping.getColumnMappingMode(newMetadata.getConfiguration());
+      ColumnMappingMode currentMappingMode =
+          ColumnMapping.getColumnMappingMode(oldMetadata.getConfiguration());
+      if (currentMappingMode != updatedMappingMode) {
+        throw new KernelException("Cannot update mapping mode and perform schema evolution");
+      }
+
+      if (!isColumnMappingModeEnabled(updatedMappingMode)) {
+        throw new KernelException("Cannot update schema for table when column mapping is disabled");
+      }
+
+      SchemaUtils.validateUpdatedSchema(
+          oldMetadata.getSchema(),
+          newMetadata.getSchema(),
+          oldMetadata.getPartitionColNames(),
+          newMetadata);
+    }
   }
 
   private class InitialSnapshot extends SnapshotImpl {
