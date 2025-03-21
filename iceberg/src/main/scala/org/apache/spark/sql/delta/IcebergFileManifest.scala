@@ -27,6 +27,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
 import org.apache.iceberg.{BaseTable, DataFile, DataFiles, FileContent, FileFormat, ManifestContent, ManifestFile, ManifestFiles, PartitionData, PartitionSpec, RowLevelOperationMode, Schema, StructLike, Table, TableProperties}
 import org.apache.iceberg.transforms.IcebergPartitionUtil
+import org.apache.iceberg.types.Type.TypeID
 
 import org.apache.spark.SparkThrowable
 import org.apache.spark.internal.{LoggingShims, MDC}
@@ -56,6 +57,8 @@ class IcebergFileManifest(
 
   private val partitionEvolutionEnabled =
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_PARTITION_EVOLUTION_ENABLED)
+
+  private val statsAllowTypes: Set[TypeID] = IcebergStatsUtils.typesAllowStatsConversion(spark)
 
   val basePath = table.location()
 
@@ -125,6 +128,7 @@ class IcebergFileManifest(
     }
 
     val shouldConvertStats = convertStats
+    val statsAllowTypesSet = statsAllowTypes
 
     val shouldCheckPartitionEvolution = !partitionEvolutionEnabled
     val specIdsToIfSpecHasNonBucketPartitionMap = specIdsToIfSpecHasNonBucketPartition
@@ -159,7 +163,7 @@ class IcebergFileManifest(
             Some(convertPartition.toDelta(dataFile.partition()))
           } else None,
           stats = if (shouldConvertStats) {
-            IcebergStatsUtils.icebergStatsToDelta(localTable.schema, dataFile)
+            IcebergStatsUtils.icebergStatsToDelta(localTable.schema, dataFile, statsAllowTypesSet)
           } else None
         )
       }
