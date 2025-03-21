@@ -32,8 +32,8 @@ import java.util.List;
  * `renamed_id` 1 update will be produced for the change to struct_col and 1 update will be produced
  * for the change to inner_struct
  *
- * <p>ToDo: Possibly track moves/renames independently, enable capturing re-ordered columns in top level
- * schema
+ * <p>ToDo: Possibly track moves/renames independently, enable capturing re-ordered columns in top
+ * level schema
  */
 class SchemaChanges {
   private List<StructField> addedFields;

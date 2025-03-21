@@ -316,105 +316,85 @@ class SchemaUtilsSuite extends AnyFunSuite {
   ///////////////////////////////////////////////////////////////////////////
   test("Compute schema changes with added columns") {
     val fieldMappingBefore = Map(
-      1L -> new StructField("id", IntegerType.INTEGER, true)).map { case (k, v) =>
-      java.lang.Long.valueOf(k) -> v
-    }.asJava
+      1L -> new StructField("id", IntegerType.INTEGER, true))
 
     val fieldMappingAfter = Map(
       1L -> new StructField("id", IntegerType.INTEGER, true),
-      2L -> new StructField("data", StringType.STRING, true)).map { case (k, v) =>
-      java.lang.Long.valueOf(k) -> v
-    }.asJava
+      2L -> new StructField("data", StringType.STRING, true))
 
-    val schemaChanges = SchemaUtils.computeSchemaChangesById(fieldMappingBefore, fieldMappingAfter)
+    val schemaChanges = schemaChangesHelper(fieldMappingBefore, fieldMappingAfter)
 
     assert(schemaChanges.removedFields().isEmpty)
     assert(schemaChanges.updatedFields().isEmpty)
     assert(schemaChanges.addedFields().size() == 1)
-    assert(schemaChanges.addedFields().get(0) == fieldMappingAfter.get(2))
+    assert(schemaChanges.addedFields().get(0) == fieldMappingAfter(2))
   }
 
   test("Compute schema changes with renamed fields") {
     val fieldMappingBefore = Map(
-      1L -> new StructField("id", IntegerType.INTEGER, true)).map { case (k, v) =>
-      java.lang.Long.valueOf(k) -> v
-    }.asJava
+      1L -> new StructField("id", IntegerType.INTEGER, true))
 
     val fieldMappingAfter = Map(
-      1L -> new StructField("renamed_id", IntegerType.INTEGER, true)).map { case (k, v) =>
-      java.lang.Long.valueOf(k) -> v
-    }.asJava
+      1L -> new StructField("renamed_id", IntegerType.INTEGER, true))
 
-    val schemaChanges = SchemaUtils.computeSchemaChangesById(fieldMappingBefore, fieldMappingAfter)
+    val schemaChanges = schemaChangesHelper(fieldMappingBefore, fieldMappingAfter)
 
     assert(schemaChanges.addedFields().isEmpty)
     assert(schemaChanges.removedFields().isEmpty)
     assert(schemaChanges.updatedFields().size() == 1)
     assert(schemaChanges.updatedFields().get(0) ==
-      new Tuple2(fieldMappingBefore.get(1L), fieldMappingAfter.get(1)))
+      new Tuple2(fieldMappingBefore(1), fieldMappingAfter(1)))
   }
 
   test("Compute schema changes with type changed columns") {
     val fieldMappingBefore = Map(
-      1L -> new StructField("id", IntegerType.INTEGER, true)).map { case (k, v) =>
-      java.lang.Long.valueOf(k) -> v
-    }.asJava
+      1L -> new StructField("id", IntegerType.INTEGER, true))
 
     val fieldMappingAfter = Map(
-      1L -> new StructField("promoted_to_long", LongType.LONG, true)).map { case (k, v) =>
-      java.lang.Long.valueOf(k) -> v
-    }.asJava
+      1L -> new StructField("promoted_to_long", LongType.LONG, true))
 
-    val schemaChanges = SchemaUtils.computeSchemaChangesById(fieldMappingBefore, fieldMappingAfter)
+    val schemaChanges = schemaChangesHelper(fieldMappingBefore, fieldMappingAfter)
 
     assert(schemaChanges.addedFields().isEmpty)
     assert(schemaChanges.removedFields().isEmpty)
     assert(schemaChanges.updatedFields().size() == 1)
     assert(schemaChanges.updatedFields().get(0) ==
-      new Tuple2(fieldMappingBefore.get(1L), fieldMappingAfter.get(1)))
+      new Tuple2(fieldMappingBefore(1), fieldMappingAfter(1)))
   }
 
   test("Compute schema changes with dropped fields") {
     val fieldMappingBefore = Map(
       1L -> new StructField("id", IntegerType.INTEGER, true),
-      2L -> new StructField("data", StringType.STRING, true)).map { case (k, v) =>
-      java.lang.Long.valueOf(k) -> v
-    }.asJava
+      2L -> new StructField("data", StringType.STRING, true))
 
     val fieldMappingAfter = Map(
-      2L -> new StructField("data", StringType.STRING, true)).map { case (k, v) =>
-      java.lang.Long.valueOf(k) -> v
-    }.asJava
+      2L -> new StructField("data", StringType.STRING, true))
 
-    val schemaChanges = SchemaUtils.computeSchemaChangesById(fieldMappingBefore, fieldMappingAfter)
+    val schemaChanges = schemaChangesHelper(fieldMappingBefore, fieldMappingAfter)
 
     assert(schemaChanges.addedFields().isEmpty)
     assert(schemaChanges.updatedFields().isEmpty)
     assert(schemaChanges.removedFields().size() == 1)
-    assert(schemaChanges.removedFields().get(0) == fieldMappingBefore.get(1))
+    assert(schemaChanges.removedFields().get(0) == fieldMappingBefore(1))
   }
 
   test("Compute schema changes with nullability change") {
     val fieldMappingBefore = Map(
       1L -> new StructField("id", IntegerType.INTEGER, true),
-      2L -> new StructField("data", StringType.STRING, true)).map { case (k, v) =>
-      java.lang.Long.valueOf(k) -> v
-    }.asJava
+      2L -> new StructField("data", StringType.STRING, true))
 
     val fieldMappingAfter = Map(
       1L -> new StructField("id", IntegerType.INTEGER, true),
-      2L -> new StructField("required_data", StringType.STRING, false)).map { case (k, v) =>
-      java.lang.Long.valueOf(k) -> v
-    }.asJava
+      2L -> new StructField("required_data", StringType.STRING, false))
 
-    val schemaChanges = SchemaUtils.computeSchemaChangesById(fieldMappingBefore, fieldMappingAfter)
+    val schemaChanges = schemaChangesHelper(fieldMappingBefore, fieldMappingAfter)
 
     assert(schemaChanges.addedFields().isEmpty)
     assert(schemaChanges.removedFields().isEmpty)
     assert(schemaChanges.updatedFields().size() == 1)
     assert(schemaChanges.updatedFields().get(0) == new Tuple2(
-      fieldMappingBefore.get(2),
-      fieldMappingAfter.get(2)))
+      fieldMappingBefore(2),
+      fieldMappingAfter(2)))
   }
 
   test("Compute schema changes with moved fields") {
@@ -426,9 +406,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
           .add(new StructField("data", StringType.STRING, true)),
         true),
       2L -> new StructField("id", IntegerType.INTEGER, true),
-      3L -> new StructField("data", StringType.STRING, true)).map { case (k, v) =>
-      java.lang.Long.valueOf(k) -> v
-    }.asJava
+      3L -> new StructField("data", StringType.STRING, true))
 
     val fieldMappingAfter = Map(
       1L -> new StructField(
@@ -438,18 +416,16 @@ class SchemaUtilsSuite extends AnyFunSuite {
           .add(new StructField("id", IntegerType.INTEGER, true)),
         true),
       2L -> new StructField("id", IntegerType.INTEGER, true),
-      3L -> new StructField("data", StringType.STRING, true)).map { case (k, v) =>
-      java.lang.Long.valueOf(k) -> v
-    }.asJava
+      3L -> new StructField("data", StringType.STRING, true))
 
-    val schemaChanges = SchemaUtils.computeSchemaChangesById(fieldMappingBefore, fieldMappingAfter)
+    val schemaChanges = schemaChangesHelper(fieldMappingBefore, fieldMappingAfter)
 
     assert(schemaChanges.addedFields().isEmpty)
     assert(schemaChanges.removedFields().isEmpty)
     assert(schemaChanges.updatedFields().size() == 1)
     assert(schemaChanges.updatedFields().get(0) == new Tuple2(
-      fieldMappingBefore.get(1),
-      fieldMappingAfter.get(1)))
+      fieldMappingBefore(1),
+      fieldMappingAfter(1)))
   }
 
   test("Compute schema changes with field metadata changes") {
@@ -460,9 +436,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
         true,
         FieldMetadata.builder().putString(
           "metadata_col",
-          "metadata_val").build())).map { case (k, v) =>
-      java.lang.Long.valueOf(k) -> v
-    }.asJava
+          "metadata_val").build()))
 
     val fieldMappingAfter = Map(
       1L -> new StructField(
@@ -471,18 +445,28 @@ class SchemaUtilsSuite extends AnyFunSuite {
         true,
         FieldMetadata.builder().putString(
           "metadata_col",
-          "updated_metadata_val").build())).map { case (k, v) =>
-      java.lang.Long.valueOf(k) -> v
-    }.asJava
+          "updated_metadata_val").build()))
 
-    val schemaChanges = SchemaUtils.computeSchemaChangesById(fieldMappingBefore, fieldMappingAfter)
+    val schemaChanges = schemaChangesHelper(fieldMappingBefore, fieldMappingAfter)
 
     assert(schemaChanges.addedFields().isEmpty)
     assert(schemaChanges.removedFields().isEmpty)
     assert(schemaChanges.updatedFields().size() == 1)
     assert(schemaChanges.updatedFields().get(0) == new Tuple2(
-      fieldMappingBefore.get(1),
-      fieldMappingAfter.get(1)))
+      fieldMappingBefore(1),
+      fieldMappingAfter(1)))
+  }
+
+  private def schemaChangesHelper(
+      before: Map[Long, StructField],
+      after: Map[Long, StructField]): SchemaChanges = {
+    SchemaUtils.computeSchemaChangesById(
+      before.map {
+        case (k, v) => java.lang.Long.valueOf(k) -> v
+      }.asJava,
+      after.map {
+        case (k, v) => java.lang.Long.valueOf(k) -> v
+      }.asJava)
   }
 
   ///////////////////////////////////////////////////////////////////////////
