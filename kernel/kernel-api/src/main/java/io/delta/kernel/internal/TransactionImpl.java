@@ -129,7 +129,7 @@ public class TransactionImpl implements Transaction {
         ColumnMapping.convertToPhysicalSchema(
             metadata.getSchema(), basePhysicalSchema, mappingMode);
 
-    return TransactionStateRow.of(metadata, dataPath.toString(), physicalSchema);
+    return TransactionStateRow.of(metadata, dataPath.toString(), physicalSchema, maxRetries);
   }
 
   @Override
