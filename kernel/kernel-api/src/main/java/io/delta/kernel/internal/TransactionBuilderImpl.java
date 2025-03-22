@@ -33,6 +33,7 @@ import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.icebergcompat.IcebergCompatV2MetadataValidatorAndUpdater;
+import io.delta.kernel.internal.icebergcompat.IcebergWriterCompatV1MetadataValidatorAndUpdater;
 import io.delta.kernel.internal.metrics.SnapshotMetrics;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.replay.LogReplay;
@@ -187,6 +188,19 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     // tables if needed (e.g. enables column mapping)
     // Ex: We enable column mapping mode in the configuration such that our properties now include
     // Map(delta.enableIcebergCompatV2 -> true, delta.columnMapping.mode -> name)
+
+    // We must do our icebergWriterCompatV1 checks/updates FIRST since it has stricter column
+    // mapping requirements (id mode) than icebergCompatV2. It also may enable icebergCompatV2.
+    Optional<Metadata> icebergWriterCompatV1 =
+        IcebergWriterCompatV1MetadataValidatorAndUpdater
+            .validateAndUpdateIcebergWriterCompatV1Metadata(
+                isNewTable,
+                newMetadata.orElse(snapshotMetadata),
+                newProtocol.orElse(snapshotProtocol));
+    if (icebergWriterCompatV1.isPresent()) {
+      newMetadata = icebergWriterCompatV1;
+    }
+
     Optional<Metadata> icebergCompatV2Metadata =
         IcebergCompatV2MetadataValidatorAndUpdater.validateAndUpdateIcebergCompatV2Metadata(
             isNewTable, newMetadata.orElse(snapshotMetadata), newProtocol.orElse(snapshotProtocol));
@@ -282,13 +296,16 @@ public class TransactionBuilderImpl implements TransactionBuilder {
    *
    * <ul>
    *   <li>Column mapping mode can only go from none->name for existing table
+   *   <li>icebergWriterCompatV1 cannot be enabled on existing tables (only supported upon table
+   *       creation)
    * </ul>
    */
   private void validateMetadataChange(
       Metadata oldMetadata, Metadata newMetadata, boolean isNewTable) {
     ColumnMapping.verifyColumnMappingChange(
         oldMetadata.getConfiguration(), newMetadata.getConfiguration(), isNewTable);
-    // TODO In the future block enabling IcebergWriterCompatV1 for existing tables
+    IcebergWriterCompatV1MetadataValidatorAndUpdater.validateIcebergWriterCompatV1Change(
+        oldMetadata.getConfiguration(), newMetadata.getConfiguration(), isNewTable);
 
     // TODO In the future validate any schema change
   }
