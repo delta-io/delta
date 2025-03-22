@@ -16,7 +16,7 @@
 
 from dataclasses import dataclass
 from typing import (
-    TYPE_CHECKING, cast, overload, Any, Dict, Iterable, Optional, Union, NoReturn, List, Tuple
+    TYPE_CHECKING, cast, overload, Any, Dict, Iterable, Optional, Union, NoReturn, List, Tuple, Literal
 )
 
 import delta.exceptions  # noqa: F401; pylint: disable=unused-variable
@@ -223,7 +223,11 @@ class DeltaTable(object):
         return DeltaMergeBuilder(self._spark, jbuilder)
 
     @since(0.4)  # type: ignore[arg-type]
-    def vacuum(self, retentionHours: Optional[float] = None) -> DataFrame:
+    def vacuum(
+        self,
+        retentionHours: Optional[float] = None,
+        vacuumType: Optional[Literal["FULL", "LITE"]] = None
+    ) -> DataFrame:
         """
         Recursively delete files and directories in the table that are not needed by the table for
         maintaining older versions up to the given retention threshold. This method will return an
@@ -233,20 +237,40 @@ class DeltaTable(object):
 
             deltaTable.vacuum()     # vacuum files not required by versions more than 7 days old
 
-            deltaTable.vacuum(100)  # vacuum files not required by versions more than 100 hours old
+            deltaTable.vacuum(retentionHours=100)  # vacuum files not required by versions more than 100 hours old
 
+            deltaTable.vacuum(vacuumType="LITE")  # vacuum files that are dereferenced by Delta log (without FS list)
+
+        :param vacuumType: Type of VACUUM operation to perform. Possible values are FULL and LITE.
+                           VACUUM FULL lists files in the underlying directory, VACUUM LITE only uses files
+                           dereferenced by Delta log (without FS list)
         :param retentionHours: Optional number of hours retain history. If not specified, then the
                                default retention period of 168 hours (7 days) will be used.
         """
         jdt = self._jdt
-        if retentionHours is None:
+
+        if retentionHours is not None:
+            retentionHours = float(retentionHours)
+
+        if all([retentionHours is None, vacuumType is None]):
             return DataFrame(
                 jdt.vacuum(),
                 getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
             )
+
+        elif retentionHours is not None:
+            return DataFrame(
+                jdt.vacuum(retentionHours),
+                getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
+            )
+        elif vacuumType is not None:
+            return DataFrame(
+                jdt.vacuum(vacuumType),
+                getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
+            )
         else:
             return DataFrame(
-                jdt.vacuum(float(retentionHours)),
+                jdt.vacuum(),
                 getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
             )
 
