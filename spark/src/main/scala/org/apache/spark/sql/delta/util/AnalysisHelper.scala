@@ -92,7 +92,7 @@ trait AnalysisHelper {
     DataFrameUtils.ofRows(sparkSession, logicalPlan)
   }
 
-  protected def improveUnsupportedOpError(f: => Unit): Unit = {
+  protected def improveUnsupportedOpError[T](f: => T): T = {
     val possibleErrorMsgs = Seq(
       "is only supported with v2 table", // full error: DELETE is only supported with v2 tables
       "is not supported temporarily",    // full error: UPDATE TABLE is not supported temporarily
@@ -110,6 +110,10 @@ trait AnalysisHelper {
       case e: Exception if isExtensionOrCatalogError(e) =>
         throw DeltaErrors.configureSparkSessionWithExtensionAndCatalog(Some(e))
     }
+  }
+
+  protected def improveUnsupportedOpError(f: => Unit): Unit = {
+    improveUnsupportedOpError[Unit](f)
   }
 
 }
