@@ -15,6 +15,8 @@
  */
 package io.delta.kernel.internal.data;
 
+import static io.delta.kernel.internal.tablefeatures.TableFeatures.CLUSTERING_W_FEATURE;
+import static io.delta.kernel.internal.util.VectorUtils.buildArrayValue;
 import static java.util.stream.Collectors.toMap;
 
 import io.delta.kernel.Transaction;
@@ -22,9 +24,11 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.types.DataTypeJsonSerDe;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.types.*;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -39,7 +43,8 @@ public class TransactionStateRow extends GenericRow {
           .add(
               "configuration",
               new MapType(StringType.STRING, StringType.STRING, false /* valueContainsNull */))
-          .add("tablePath", StringType.STRING);
+          .add("tablePath", StringType.STRING)
+          .add("writerFeatures", new ArrayType(StringType.STRING, false /* containsNull */));
 
   private static final Map<String, Integer> COL_NAME_TO_ORDINAL =
       IntStream.range(0, SCHEMA.length())
@@ -47,13 +52,16 @@ public class TransactionStateRow extends GenericRow {
           .collect(toMap(i -> SCHEMA.at(i).getName(), i -> i));
 
   public static TransactionStateRow of(
-      Metadata metadata, String tablePath, StructType physicalSchema) {
+      Metadata metadata, Protocol protocol, String tablePath, StructType physicalSchema) {
     HashMap<Integer, Object> valueMap = new HashMap<>();
     valueMap.put(COL_NAME_TO_ORDINAL.get("logicalSchemaString"), metadata.getSchemaString());
     valueMap.put(COL_NAME_TO_ORDINAL.get("physicalSchemaString"), physicalSchema.toJson());
     valueMap.put(COL_NAME_TO_ORDINAL.get("partitionColumns"), metadata.getPartitionColumns());
     valueMap.put(COL_NAME_TO_ORDINAL.get("configuration"), metadata.getConfigurationMapValue());
     valueMap.put(COL_NAME_TO_ORDINAL.get("tablePath"), tablePath);
+    valueMap.put(
+        COL_NAME_TO_ORDINAL.get("writerFeatures"),
+        buildArrayValue(new ArrayList<>(protocol.getWriterFeatures()), StringType.STRING));
     return new TransactionStateRow(valueMap);
   }
 
@@ -109,6 +117,30 @@ public class TransactionStateRow extends GenericRow {
     return Boolean.parseBoolean(
         getConfiguration(transactionState)
             .getOrDefault(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey(), "false"));
+  }
+
+  /**
+   * Get the writerFeatures from the transaction state {@link Row} returned by {@link
+   * Transaction#getTransactionState(Engine)}
+   *
+   * @param transactionState
+   * @return A list of supported writer features as strings.
+   */
+  public static List<String> getWriterFeatures(Row transactionState) {
+    return VectorUtils.toJavaList(
+        transactionState.getArray(COL_NAME_TO_ORDINAL.get("writerFeatures")));
+  }
+
+  /**
+   * Get the clustering table feature enabled or not from the transaction state {@link Row} returned
+   * by {@link Transaction#getTransactionState(Engine)}
+   *
+   * @param transactionState Transaction state state {@link Row}
+   * @return true if clustering is enabled (i.e., "clustering" is present in writerFeatures),
+   *     otherwise false
+   */
+  public static boolean isClusteredTableSupported(Row transactionState) {
+    return getWriterFeatures(transactionState).contains(CLUSTERING_W_FEATURE.featureName());
   }
 
   /**
