@@ -307,6 +307,31 @@ public class SchemaUtils {
     return filtered;
   }
 
+  /* Compute the SchemaChanges using field IDs */
+  static SchemaChanges computeSchemaChangesById(
+      Map<Long, StructField> currentFieldIdToField, Map<Long, StructField> updatedFieldIdToField) {
+    SchemaChanges.Builder schemaDiff = SchemaChanges.builder();
+    for (Map.Entry<Long, StructField> fieldInUpdatedSchema : updatedFieldIdToField.entrySet()) {
+      StructField existingField = currentFieldIdToField.get(fieldInUpdatedSchema.getKey());
+      StructField updatedField = fieldInUpdatedSchema.getValue();
+      // New field added
+      if (existingField == null) {
+        schemaDiff.withAddedField(updatedField);
+      } else if (!existingField.equals(updatedField)) {
+        // Field changed name, nullability, metadata or type
+        schemaDiff.withUpdatedField(existingField, updatedField);
+      }
+    }
+
+    for (Map.Entry<Long, StructField> entry : currentFieldIdToField.entrySet()) {
+      if (!updatedFieldIdToField.containsKey(entry.getKey())) {
+        schemaDiff.withRemovedField(entry.getValue());
+      }
+    }
+
+    return schemaDiff.build();
+  }
+
   /** column name by concatenating the column path elements (think of nested) with dots */
   private static String concatWithDot(List<String> columnPath) {
     return columnPath.stream().map(SchemaUtils::escapeDots).collect(Collectors.joining("."));
