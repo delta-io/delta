@@ -8,7 +8,6 @@ import javax.annotation.ParametersAreNonnullByDefault;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
-import io.delta.flink.internal.table.DeltaCatalogTableHelper.DeltaMetastoreTable;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.table.api.Schema;
@@ -218,8 +217,8 @@ public class DeltaCatalog {
             }
 
             // Add table to metastore
-            DeltaMetastoreTable metastoreTable =
-                DeltaCatalogTableHelper.prepareMetastoreTable(table, deltaTablePath);
+            ResolvedCatalogTable metastoreTable =
+                DeltaCatalogTableHelper.prepareResolvedMetastoreTable(table, deltaTablePath);
             this.decoratedCatalog.createTable(tableCatalogPath, metastoreTable, ignoreIfExists);
         } else {
             // Table does not exist on filesystem, we have to create a new _delta_log
@@ -237,8 +236,8 @@ public class DeltaCatalog {
                 Operation.Name.CREATE_TABLE
             );
 
-            DeltaMetastoreTable metastoreTable =
-                DeltaCatalogTableHelper.prepareMetastoreTable(table, deltaTablePath);
+            ResolvedCatalogTable metastoreTable =
+                DeltaCatalogTableHelper.prepareResolvedMetastoreTable(table, deltaTablePath);
 
             // add table to metastore
             this.decoratedCatalog.createTable(tableCatalogPath, metastoreTable, ignoreIfExists);
