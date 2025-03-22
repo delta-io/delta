@@ -15,9 +15,25 @@
  */
 package io.delta.kernel.internal.actions;
 
+import static io.delta.kernel.internal.util.InternalUtils.relativizePath;
+import static io.delta.kernel.internal.util.PartitionUtils.serializePartitionMap;
+import static java.util.Objects.requireNonNull;
+
+import io.delta.kernel.data.MapValue;
+import io.delta.kernel.data.Row;
+import io.delta.kernel.expressions.Literal;
+import io.delta.kernel.internal.data.GenericRow;
+import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.statistics.DataFileStatistics;
 import io.delta.kernel.types.*;
+import io.delta.kernel.utils.DataFileStatus;
+import java.net.URI;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Optional;
 
 /** Metadata about {@code remove} action in the Delta Log. */
+// extends RowBackedAction
 public class RemoveFile {
   /** Full schema of the {@code remove} action in the Delta Log. */
   public static final StructType FULL_SCHEMA =
@@ -40,4 +56,53 @@ public class RemoveFile {
   //  connectors to generate and commit them. Once we have the need for this, we should ensure
   //  that the baseRowId and defaultRowCommitVersion fields of RemoveFile actions are correctly
   //  populated to match the corresponding AddFile actions.
+
+  public static Row createRemoveFileRowWithExtendedFileMetadata(
+      String path,
+      long deletionTimestamp,
+      boolean dataChange,
+      MapValue partitionValues,
+      long size,
+      Optional<DataFileStatistics> stats,
+      StructType physicalSchema) {
+    Map<Integer, Object> fieldMap = new HashMap<>();
+    fieldMap.put(FULL_SCHEMA.indexOf("path"), requireNonNull(path));
+    fieldMap.put(FULL_SCHEMA.indexOf("deletionTimestamp"), deletionTimestamp);
+    fieldMap.put(FULL_SCHEMA.indexOf("dataChange"), dataChange);
+    fieldMap.put(FULL_SCHEMA.indexOf("extendedFileMetadata"), true);
+    fieldMap.put(FULL_SCHEMA.indexOf("partitionValues"), requireNonNull(partitionValues));
+    fieldMap.put(FULL_SCHEMA.indexOf("size"), size);
+    stats.ifPresent(
+        stat -> fieldMap.put(FULL_SCHEMA.indexOf("stats"), stat.serializeAsJson(physicalSchema)));
+    return new GenericRow(FULL_SCHEMA, fieldMap);
+  }
+
+  // TODO docs about when this should be used
+  public static Row convertDataFileStatus(
+      StructType physicalSchema,
+      URI tableRoot,
+      DataFileStatus dataFileStatus,
+      Map<String, Literal> partitionValues,
+      boolean dataChange) {
+    return createRemoveFileRowWithExtendedFileMetadata(
+        relativizePath(new Path(dataFileStatus.getPath()), tableRoot).toUri().toString(),
+        dataFileStatus.getModificationTime(),
+        dataChange,
+        serializePartitionMap(partitionValues),
+        dataFileStatus.getSize(),
+        dataFileStatus.getStatistics(),
+        physicalSchema);
+  }
+
+  // TODO re-org
+  /*
+  public static Row createRemoveFileRow(
+      String path,
+      Optional<Long> deletionTimestamp,
+      boolean dataChange,
+      Optional<Boolean> extendedFileMetadata,
+      Optional<MapValue> partitionValues,
+      Optional<Long>
+  )
+   */
 }
