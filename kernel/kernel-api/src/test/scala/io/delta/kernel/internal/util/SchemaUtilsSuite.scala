@@ -15,13 +15,19 @@
  */
 package io.delta.kernel.internal.util
 
-import java.util.Locale
+import java.util
+import java.util.{Collections, Locale, Optional}
 
 import scala.collection.JavaConverters._
 import scala.collection.JavaConverters.mapAsJavaMapConverter
 
+import io.delta.kernel.data.{ArrayValue, MapValue}
 import io.delta.kernel.exceptions.KernelException
+import io.delta.kernel.internal.actions.{Format, Metadata}
+import io.delta.kernel.internal.types.DataTypeJsonSerDe
+import io.delta.kernel.internal.util.ColumnMapping.{COLUMN_MAPPING_ID_KEY, COLUMN_MAPPING_MODE_KEY, COLUMN_MAPPING_PHYSICAL_NAME_KEY, ColumnMappingMode}
 import io.delta.kernel.internal.util.SchemaUtils.{filterRecursively, validateSchema}
+import io.delta.kernel.internal.util.VectorUtils.stringStringMapValue
 import io.delta.kernel.types.{ArrayType, FieldMetadata, IntegerType, LongType, MapType, StringType, StructField, StructType}
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.LongType.LONG
@@ -467,6 +473,154 @@ class SchemaUtilsSuite extends AnyFunSuite {
       after.map {
         case (k, v) => java.lang.Long.valueOf(k) -> v
       }.asJava)
+  }
+
+  ///////////////////////////////////////////////////////////////////////////
+  // validateUpdatedSchema
+  ///////////////////////////////////////////////////////////////////////////
+  test("validateUpdatedSchema fails when column mapping is disabled") {
+    val current = new StructType().add(new StructField("id", IntegerType.INTEGER, true))
+    val updated = current.add(new StructField("data", StringType.STRING, true))
+
+    val e = intercept[IllegalArgumentException] {
+      SchemaUtils.validateUpdatedSchema(
+        current,
+        updated,
+        metadata(current, properties = Map(COLUMN_MAPPING_MODE_KEY -> "none")))
+    }
+
+    assert(e.getMessage == "Cannot validate updated schema when column mapping is disabled")
+  }
+
+  test("validateUpdatedSchema fails when physical names are not consistent across ids") {
+    val current = new StructType()
+      .add(
+        "id",
+        IntegerType.INTEGER,
+        true,
+        FieldMetadata.builder().putLong(COLUMN_MAPPING_ID_KEY, 1L)
+          .putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, "id").build())
+
+    val updated = new StructType()
+      .add(
+        "renamed_id",
+        IntegerType.INTEGER,
+        true,
+        FieldMetadata.builder().putLong(COLUMN_MAPPING_ID_KEY, 1L)
+          .putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, "inconsistent_id").build())
+
+    val e = intercept[IllegalArgumentException] {
+      SchemaUtils.validateUpdatedSchema(current, updated, metadata(current))
+    }
+
+    assert(e.getMessage == "Existing field with id 1 in current schema has " +
+      "physical name id which is different from inconsistent_id")
+  }
+
+  test("validateUpdatedSchema fails when field is missing ID") {
+    val current = new StructType()
+      .add(
+        "id",
+        IntegerType.INTEGER,
+        true,
+        FieldMetadata.builder().putLong(COLUMN_MAPPING_ID_KEY, 1L)
+          .putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, "id").build())
+
+    val updated = new StructType()
+      .add(
+        "renamed_id",
+        IntegerType.INTEGER,
+        true,
+        FieldMetadata.builder().putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, "id").build())
+
+    val e = intercept[IllegalArgumentException] {
+      SchemaUtils.validateUpdatedSchema(current, updated, metadata(current))
+    }
+
+    assert(e.getMessage == "Field renamed_id is missing column id")
+  }
+
+  test("validateUpdatedSchema fails when field is missing physical name") {
+    val current = new StructType()
+      .add(
+        "id",
+        IntegerType.INTEGER,
+        true,
+        FieldMetadata.builder().putLong(COLUMN_MAPPING_ID_KEY, 1L)
+          .putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, "id").build())
+
+    val updated = new StructType()
+      .add(
+        "renamed_id",
+        IntegerType.INTEGER,
+        true,
+        FieldMetadata.builder().putLong(COLUMN_MAPPING_ID_KEY, 1L).build())
+
+    val e = intercept[IllegalArgumentException] {
+      SchemaUtils.validateUpdatedSchema(current, updated, metadata(current))
+    }
+
+    assert(e.getMessage == "Field renamed_id is missing physical name")
+  }
+
+  test("validateUpdatedSchema fails with schema with duplicate column ID") {
+    val current = new StructType()
+      .add(
+        "id",
+        IntegerType.INTEGER,
+        true,
+        FieldMetadata.builder().putLong(COLUMN_MAPPING_ID_KEY, 1L)
+          .putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, "id").build())
+
+    val updated = current.add(
+      "duplicate_field",
+      StringType.STRING,
+      true,
+      FieldMetadata.builder().putLong(COLUMN_MAPPING_ID_KEY, 1L)
+        .putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, "id").build())
+
+    val e = intercept[IllegalArgumentException] {
+      SchemaUtils.validateUpdatedSchema(current, updated, metadata(current))
+    }
+
+    assert(e.getMessage == "Field duplicate_field with id 1 already exists")
+  }
+
+  test("validateUpdatedSchema succeeds with valid ID and physical name") {
+    val current = new StructType()
+      .add(
+        "id",
+        IntegerType.INTEGER,
+        true,
+        FieldMetadata.builder().putLong(COLUMN_MAPPING_ID_KEY, 1L)
+          .putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, "id").build())
+
+    val updated = new StructType()
+      .add(
+        "renamed_id",
+        IntegerType.INTEGER,
+        true,
+        FieldMetadata.builder().putLong(COLUMN_MAPPING_ID_KEY, 1L)
+          .putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, "id").build())
+
+    SchemaUtils.validateUpdatedSchema(current, updated, metadata(current))
+  }
+
+  private def metadata(
+      schema: StructType,
+      properties: Map[String, String] =
+        Map(ColumnMapping.COLUMN_MAPPING_MODE_KEY -> "id")): Metadata = {
+    new Metadata(
+      "id",
+      Optional.empty(), /* name */
+      Optional.empty(), /* description */
+      new Format(),
+      DataTypeJsonSerDe.serializeDataType(schema),
+      schema,
+      VectorUtils.buildArrayValue(util.Arrays.asList(), StringType.STRING), // partitionColumns
+      Optional.empty(), // createdTime
+      stringStringMapValue(properties.asJava) // configurationMap
+    )
   }
 
   ///////////////////////////////////////////////////////////////////////////
