@@ -897,9 +897,9 @@ class SchemaUtilsSuite extends AnyFunSuite {
   }
 
   private def metadata(
-      schema: StructType,
-      properties: Map[String, String] =
-        Map(ColumnMapping.COLUMN_MAPPING_MODE_KEY -> "id")): Metadata = {
+                        schema: StructType,
+                        properties: Map[String, String] =
+                        Map(ColumnMapping.COLUMN_MAPPING_MODE_KEY -> "id")): Metadata = {
     new Metadata(
       "id",
       Optional.empty(), /* name */
