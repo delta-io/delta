@@ -683,15 +683,6 @@ trait OptimisticTransactionImpl extends DeltaTransaction
       }
     }
 
-    if (spark.sessionState.conf
-      .getConf(DeltaSQLConf.REMOVE_EXISTS_DEFAULT_FROM_SCHEMA_ON_EVERY_METADATA_CHANGE)) {
-      val schemaWithRemovedExistsDefaults =
-        SchemaUtils.removeExistsDefaultMetadata(newMetadataTmp.schema)
-      if (schemaWithRemovedExistsDefaults != newMetadataTmp.schema) {
-        newMetadataTmp = newMetadataTmp.copy(schemaString = schemaWithRemovedExistsDefaults.json)
-      }
-    }
-
     // Table features Part 2: add manually-supported features specified in table properties, aka
     // those start with [[FEATURE_PROP_PREFIX]].
     //
@@ -815,6 +806,23 @@ trait OptimisticTransactionImpl extends DeltaTransaction
   def updateMetadataForTableOverwrite(proposedNewMetadata: Metadata): Unit = {
     isOverwritingSchema = true
     updateMetadata(proposedNewMetadata)
+  }
+
+  /**
+   * Remove the 'EXISTS_DEFAULT' metadata key from the schema. This is used for new tables, but
+   * not on existing tables because we cannot assure that the 'EXISTS_DEFAULT' values is actually
+   * required without reading the data.
+   */
+  def updateSchemaRemoveExistsDefault(): Unit = {
+    if (spark.sessionState.conf.getConf(DeltaSQLConf.REMOVE_EXISTS_DEFAULT_AT_TABLE_CREATION)) {
+      if (newMetadata.isDefined) {
+        val schemaWithRemovedExistsDefaults =
+          SchemaUtils.removeExistsDefaultMetadata(newMetadata.get.schema)
+        if (schemaWithRemovedExistsDefaults != newMetadata.get.schema) {
+          newMetadata = newMetadata.map(_.copy(schemaString = schemaWithRemovedExistsDefaults.json))
+        }
+      }
+    }
   }
 
   protected def assertMetadata(metadata: Metadata): Unit = {

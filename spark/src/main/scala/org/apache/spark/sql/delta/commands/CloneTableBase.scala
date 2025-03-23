@@ -196,6 +196,7 @@ abstract class CloneTableBase(
     }
 
     val metadataToUpdate = determineTargetMetadata(spark, txn.snapshot, deltaOperation.name)
+    txn.updateSchemaRemoveExistsDefault()
     // Don't merge in the default properties when cloning, or we'll end up with different sets of
     // properties between source and target.
     txn.updateMetadata(metadataToUpdate, ignoreDefaultProperties = true)
