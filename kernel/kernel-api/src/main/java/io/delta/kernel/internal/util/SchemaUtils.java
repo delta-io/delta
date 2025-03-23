@@ -22,6 +22,7 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.DeltaErrors;
+import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.types.*;
 import java.util.*;
@@ -406,7 +407,10 @@ public class SchemaUtils {
     // Validate physical name consistency on the updated fields
     validatePhysicalNameConsistency(schemaChanges.updatedFields());
 
-    // ToDo Validate IcebergCompatV2 nested IDs
+    // If IcebergCompatV2 validate nested ID existence and consistency for relevant fields
+    if (TableConfig.ICEBERG_COMPAT_V2_ENABLED.fromMetadata(metadata)) {
+      validateNestedIds(schemaChanges, currentFieldsById, updatedFieldsById);
+    }
 
     // ToDo: Validate schema compatibility
   }
@@ -434,6 +438,124 @@ public class SchemaUtils {
     }
 
     return columnIdToField;
+  }
+
+  private static void validateNestedIds(
+      SchemaChanges schemaChanges,
+      Map<Long, StructField> currentFieldsById,
+      Map<Long, StructField> updatedFieldsById) {
+    for (Tuple2<StructField, StructField> updatedField : schemaChanges.updatedFields()) {
+      validateNestedIdsExist(updatedField._2);
+    }
+
+    for (StructField addedField : schemaChanges.addedFields()) {
+      validateNestedIdsExist(addedField);
+    }
+
+    validateNestedIdConsistency(currentFieldsById, updatedFieldsById);
+  }
+
+  private static void validateNestedIdsExist(StructField field) {
+    if (field.getDataType() instanceof MapType || field.getDataType() instanceof ArrayType) {
+      checkArgument(
+          hasNestedColumnIds(field),
+          "Field %s is missing expected nested column IDs",
+          field.getName());
+      if (field.getDataType() instanceof MapType) {
+        checkArgument(
+            getNestedFieldIds(field).size() >= 2,
+            "Map field %s needs at least 2 nested IDs, one for the key and one for the value",
+            field.getName());
+      }
+    }
+  }
+
+  /* Mapping of field ID to nested IDs for that field */
+  private static Map<Long, List<NestedIdEntry>> columnIdToNestedIds(
+      Map<Long, StructField> currentFieldIdToField) {
+    Map<Long, List<NestedIdEntry>> nestedIdEntries = new HashMap<>();
+    for (Map.Entry<Long, StructField> entry : currentFieldIdToField.entrySet()) {
+      if (hasNestedColumnIds(entry.getValue())) {
+        nestedIdEntries.put(entry.getKey(), getNestedFieldIds(entry.getValue()));
+      }
+    }
+
+    return nestedIdEntries;
+  }
+
+  /**
+   * Validate that any nested IDs that were in the current field are consistent with the ones in the
+   * updated field and that the nested IDs are not duplicate
+   */
+  private static void validateNestedIdConsistency(
+      Map<Long, StructField> currentFieldsById, Map<Long, StructField> updatedFieldsById) {
+    Map<Long, List<NestedIdEntry>> currentFieldIdToNestedIds =
+        columnIdToNestedIds(currentFieldsById);
+    Map<Long, List<NestedIdEntry>> updatedFieldIdToNestedIds =
+        columnIdToNestedIds(updatedFieldsById);
+    /* Validate that nested field IDs exist in the schema
+    and are consistent with the previous schemas */
+    for (Map.Entry<Long, List<NestedIdEntry>> entry : updatedFieldIdToNestedIds.entrySet()) {
+      Long fieldId = entry.getKey();
+      List<NestedIdEntry> updatedNestedIdEntries = entry.getValue();
+      Set<Long> seenNestedIds = new HashSet<>();
+      for (NestedIdEntry nestedIdEntry : updatedNestedIdEntries) {
+        // Duplicate nested ID with top level field
+        if (updatedFieldIdToNestedIds.containsKey(nestedIdEntry.id)) {
+          throw new IllegalArgumentException(
+              String.format("Duplicate field id %s", nestedIdEntry.id));
+        } else if (!seenNestedIds.add(nestedIdEntry.id)) {
+          throw new IllegalArgumentException(
+              String.format("Duplicate field id %s", nestedIdEntry.id));
+        }
+      }
+
+      List<NestedIdEntry> existingNestedIdEntries = currentFieldIdToNestedIds.get(fieldId);
+
+      /* If this is not a new column make sure
+      the existing nested IDs are consistent in the updated field */
+      if (existingNestedIdEntries != null) {
+        // Group new ID entries for this field by key and compare
+        Map<String, Long> updatedNestedKeyToColumnId = new HashMap<>();
+        for (NestedIdEntry updatedNestedIdEntry : updatedNestedIdEntries) {
+          updatedNestedKeyToColumnId.put(updatedNestedIdEntry.key, updatedNestedIdEntry.id);
+        }
+
+        for (NestedIdEntry existingNestedIdEntry : existingNestedIdEntries) {
+          Long updatedNestedColumnId = updatedNestedKeyToColumnId.get(existingNestedIdEntry.key);
+          if (updatedNestedColumnId == null
+              || !updatedNestedColumnId.equals(existingNestedIdEntry.id)) {
+            throw new IllegalArgumentException(
+                String.format(
+                    "Expected field with id %s to have nested key %s with value %s",
+                    fieldId, existingNestedIdEntry.key, existingNestedIdEntry.id));
+          }
+        }
+      }
+    }
+  }
+
+  private static List<NestedIdEntry> getNestedFieldIds(StructField field) {
+    return getNestedColumnIds(field).getEntries().entrySet().stream()
+        .map(
+            nestedIdEntry ->
+                new NestedIdEntry(nestedIdEntry.getKey(), (Long) nestedIdEntry.getValue()))
+        .collect(Collectors.toList());
+  }
+
+  /**
+   * Wrapper object for icebergCompatV2 nested ID entry to simplify validation e.g. a schema with
+   * col1 as map[int, array[int]] could look like <key: "col1.key", id: 1> <key: "col1.value", id:
+   * 2> <key: "col1.value.element", id: 3>
+   */
+  private static class NestedIdEntry {
+    private final String key;
+    private final long id;
+
+    NestedIdEntry(String key, long id) {
+      this.key = key;
+      this.id = id;
+    }
   }
 
   /** column name by concatenating the column path elements (think of nested) with dots */

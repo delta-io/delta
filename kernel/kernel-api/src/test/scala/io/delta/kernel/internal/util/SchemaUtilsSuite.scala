@@ -25,7 +25,7 @@ import io.delta.kernel.data.{ArrayValue, MapValue}
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.actions.{Format, Metadata}
 import io.delta.kernel.internal.types.DataTypeJsonSerDe
-import io.delta.kernel.internal.util.ColumnMapping.{COLUMN_MAPPING_ID_KEY, COLUMN_MAPPING_MODE_KEY, COLUMN_MAPPING_PHYSICAL_NAME_KEY, ColumnMappingMode}
+import io.delta.kernel.internal.util.ColumnMapping.{COLUMN_MAPPING_ID_KEY, COLUMN_MAPPING_MODE_KEY, COLUMN_MAPPING_NESTED_IDS_KEY, COLUMN_MAPPING_PHYSICAL_NAME_KEY, ColumnMappingMode}
 import io.delta.kernel.internal.util.SchemaUtils.{filterRecursively, validateSchema}
 import io.delta.kernel.internal.util.VectorUtils.stringStringMapValue
 import io.delta.kernel.types.{ArrayType, FieldMetadata, IntegerType, LongType, MapType, StringType, StructField, StructType}
@@ -495,16 +495,41 @@ class SchemaUtilsSuite extends AnyFunSuite {
     assert(e.getMessage == "Cannot validate updated schema when column mapping is disabled")
   }
 
+  private val primitiveSchema = new StructType()
+    .add(
+      "id",
+      IntegerType.INTEGER,
+      true,
+      fieldMetadata(id = 1, physicalName = "id"))
+
+  private val mapWithStructKey = new StructType()
+    .add(
+      "map",
+      new MapType(
+        new StructType()
+          .add("id", IntegerType.INTEGER, false, fieldMetadata(id = 2, physicalName = "id")),
+        IntegerType.INTEGER,
+        false),
+      true,
+      fieldMetadata(id = 1, physicalName = "map"))
+
+  private val structWithArrayOfStructs = new StructType()
+    .add(
+      "top_level_struct",
+      new StructType().add(
+        "array",
+        new ArrayType(
+          new StructType().add("id", IntegerType.INTEGER, fieldMetadata(4L, "id")),
+          false),
+        false,
+        fieldMetadata(2L, "array_field")),
+      fieldMetadata(1L, "top_level_struct"))
+
   private val updatedSchemasWithInconsistentPhysicalNames = Table(
     ("schemaBefore", "updatedSchemaWithInconsistentPhysicalNames"),
     // Top level primitive has inconsistent physical name
     (
-      new StructType()
-        .add(
-          "id",
-          IntegerType.INTEGER,
-          true,
-          fieldMetadata(id = 1, physicalName = "id")),
+      primitiveSchema,
       new StructType()
         .add(
           "renamed_id",
@@ -513,19 +538,10 @@ class SchemaUtilsSuite extends AnyFunSuite {
           fieldMetadata(id = 1, physicalName = "inconsistent_name"))),
     // Map with struct key has inconsistent physical name
     (
+      mapWithStructKey,
       new StructType()
         .add(
-          "id_map",
-          new MapType(
-            new StructType()
-              .add("id", IntegerType.INTEGER, false, fieldMetadata(id = 2, physicalName = "id")),
-            IntegerType.INTEGER,
-            false),
-          true,
-          fieldMetadata(id = 1, physicalName = "id_map")),
-      new StructType()
-        .add(
-          "id_map",
+          "map",
           new MapType(
             new StructType()
               .add(
@@ -536,20 +552,10 @@ class SchemaUtilsSuite extends AnyFunSuite {
             IntegerType.INTEGER,
             false),
           true,
-          fieldMetadata(id = 1, physicalName = "id_map"))),
+          fieldMetadata(id = 1, physicalName = "map"))),
     // Struct with array of struct field where inner struct field has inconsistent physical name
     (
-      new StructType()
-        .add(
-          "top_level_struct",
-          new StructType().add(
-            "array",
-            new ArrayType(
-              new StructType().add("id", IntegerType.INTEGER, fieldMetadata(4L, "id")),
-              false),
-            false,
-            fieldMetadata(2L, "array_field")),
-          fieldMetadata(1L, "top_level_struct")),
+      structWithArrayOfStructs,
       new StructType()
         .add(
           "top_level_struct",
@@ -579,12 +585,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
     ("schemaBefore", "updatedSchemaWithMissingId"),
     // Top level primitive missing field ID
     (
-      new StructType()
-        .add(
-          "id",
-          IntegerType.INTEGER,
-          true,
-          fieldMetadata(id = 1, physicalName = "id")),
+      primitiveSchema,
       new StructType()
         .add(
           "renamed_id",
@@ -593,16 +594,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
           FieldMetadata.builder().putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, "id").build())),
     // Map with struct key missing field ID
     (
-      new StructType()
-        .add(
-          "map",
-          new MapType(
-            new StructType()
-              .add("id", IntegerType.INTEGER, false, fieldMetadata(id = 2, physicalName = "id")),
-            IntegerType.INTEGER,
-            false),
-          true,
-          fieldMetadata(id = 1, physicalName = "map")),
+      mapWithStructKey,
       new StructType()
         .add(
           "map",
@@ -619,17 +611,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
           fieldMetadata(id = 1, physicalName = "map"))),
     // Struct with array of struct field where inner struct is missing ID
     (
-      new StructType()
-        .add(
-          "top_level_struct",
-          new StructType().add(
-            "array",
-            new ArrayType(
-              new StructType().add("id", IntegerType.INTEGER, fieldMetadata(4L, "id")),
-              false),
-            false,
-            fieldMetadata(2L, "array_field")),
-          fieldMetadata(1L, "top_level_struct")),
+      structWithArrayOfStructs,
       new StructType()
         .add(
           "top_level_struct",
@@ -660,12 +642,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
     ("schemaBefore", "updatedSchemaWithMissingPhysicalName"),
     // Top level primitive missing physical name
     (
-      new StructType()
-        .add(
-          "id",
-          IntegerType.INTEGER,
-          true,
-          fieldMetadata(id = 1, physicalName = "id")),
+      primitiveSchema,
       new StructType()
         .add(
           "renamed_id",
@@ -674,16 +651,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
           FieldMetadata.builder().putLong(COLUMN_MAPPING_ID_KEY, 1).build())),
     // Map with struct key missing physical name
     (
-      new StructType()
-        .add(
-          "id_map",
-          new MapType(
-            new StructType()
-              .add("id", IntegerType.INTEGER, false, fieldMetadata(id = 2, physicalName = "id")),
-            IntegerType.INTEGER,
-            false),
-          true,
-          fieldMetadata(id = 1, physicalName = "id_map")),
+      mapWithStructKey,
       new StructType()
         .add(
           "id_map",
@@ -697,20 +665,10 @@ class SchemaUtilsSuite extends AnyFunSuite {
             IntegerType.INTEGER,
             false),
           true,
-          fieldMetadata(id = 1, physicalName = "id_map"))),
+          fieldMetadata(id = 1, physicalName = "map"))),
     // Struct with array of struct field where inner struct is missing physical name
     (
-      new StructType()
-        .add(
-          "top_level_struct",
-          new StructType().add(
-            "array",
-            new ArrayType(
-              new StructType().add("id", IntegerType.INTEGER, fieldMetadata(4L, "id")),
-              false),
-            false,
-            fieldMetadata(2L, "array_field")),
-          fieldMetadata(1L, "top_level_struct")),
+      structWithArrayOfStructs,
       new StructType()
         .add(
           "top_level_struct",
@@ -741,12 +699,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
     ("schemaBefore", "updatedSchemaWithMissingPhysicalName"),
     // Top level primitive has duplicate id
     (
-      new StructType()
-        .add(
-          "id",
-          IntegerType.INTEGER,
-          true,
-          fieldMetadata(id = 1, physicalName = "id")),
+      primitiveSchema,
       new StructType()
         .add(
           "id",
@@ -760,16 +713,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
           fieldMetadata(id = 1, physicalName = "duplicate_id"))),
     // Map with struct key adds duplicate field
     (
-      new StructType()
-        .add(
-          "id_map",
-          new MapType(
-            new StructType()
-              .add("id", IntegerType.INTEGER, false, fieldMetadata(id = 2, physicalName = "id")),
-            IntegerType.INTEGER,
-            false),
-          true,
-          fieldMetadata(id = 1, physicalName = "id_map")),
+      mapWithStructKey,
       new StructType()
         .add(
           "id_map",
@@ -786,17 +730,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
           fieldMetadata(id = 2, physicalName = "duplicate_id"))),
     // Struct with array of struct field where field with duplicate ID is added
     (
-      new StructType()
-        .add(
-          "top_level_struct",
-          new StructType().add(
-            "array",
-            new ArrayType(
-              new StructType().add("id", IntegerType.INTEGER, fieldMetadata(4L, "id")),
-              false),
-            false,
-            fieldMetadata(2L, "array_field")),
-          fieldMetadata(1L, "top_level_struct")),
+      structWithArrayOfStructs,
       new StructType()
         .add(
           "top_level_struct",
@@ -827,12 +761,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
     ("schemaBefore", "updatedSchemaWithRenamedColumns"),
     // Top level primitive missing physical name
     (
-      new StructType()
-        .add(
-          "id",
-          IntegerType.INTEGER,
-          true,
-          fieldMetadata(id = 1, physicalName = "id")),
+      primitiveSchema,
       new StructType()
         .add(
           "renamed_id",
@@ -841,16 +770,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
           fieldMetadata(id = 1, physicalName = "id"))),
     // Map with struct key renamed
     (
-      new StructType()
-        .add(
-          "id_map",
-          new MapType(
-            new StructType()
-              .add("id", IntegerType.INTEGER, false, fieldMetadata(id = 2, physicalName = "id")),
-            IntegerType.INTEGER,
-            false),
-          true,
-          fieldMetadata(id = 1, physicalName = "id_map")),
+      mapWithStructKey,
       new StructType()
         .add(
           "id_map",
@@ -864,20 +784,10 @@ class SchemaUtilsSuite extends AnyFunSuite {
             IntegerType.INTEGER,
             false),
           true,
-          fieldMetadata(id = 1, physicalName = "id_map"))),
+          fieldMetadata(id = 1, physicalName = "map"))),
     // Struct with array of struct field where inner struct is missing physical name
     (
-      new StructType()
-        .add(
-          "top_level_struct",
-          new StructType().add(
-            "array",
-            new ArrayType(
-              new StructType().add("id", IntegerType.INTEGER, fieldMetadata(4L, "id")),
-              false),
-            false,
-            fieldMetadata(2L, "array_field")),
-          fieldMetadata(1L, "top_level_struct")),
+      structWithArrayOfStructs,
       new StructType()
         .add(
           "top_level_struct",
@@ -896,10 +806,108 @@ class SchemaUtilsSuite extends AnyFunSuite {
     }
   }
 
+  private val mapWithStructKeyIcebergCompatV2 = new StructType()
+    .add(
+      "map",
+      mapWithStructKey.get("map").getDataType,
+      true,
+      FieldMetadata.builder()
+        .fromMetadata(fieldMetadata(id = 1, physicalName = "map"))
+        .putFieldMetadata(
+          COLUMN_MAPPING_NESTED_IDS_KEY,
+          FieldMetadata.builder().putLong("map.key", 5L)
+            .putLong("map.value", 6L).build()).build())
+
+  private val structWithArrayOfStructsIcebergCompatV2 = new StructType()
+    .add(
+      "top_level_struct",
+      new StructType().add(
+        "array",
+        structWithArrayOfStructs
+          .get("top_level_struct").getDataType.asInstanceOf[StructType].get("array").getDataType,
+        false,
+        FieldMetadata.builder().fromMetadata(fieldMetadata(2L, "array_field")).putFieldMetadata(
+          COLUMN_MAPPING_NESTED_IDS_KEY,
+          FieldMetadata.builder().putLong("array.element", 3L).build()).build()),
+      fieldMetadata(1L, "top_level_struct"))
+
+  private val missingNestedIdsEvolution = Table(
+    ("schemaBefore", "updatedSchemaWithNoNestedId"),
+    // Map with struct key missing nested IDs
+    (
+      mapWithStructKeyIcebergCompatV2,
+      mapWithStructKey),
+    // Struct with array of struct field where inner struct is missing nested IDs
+    (
+      structWithArrayOfStructsIcebergCompatV2,
+      structWithArrayOfStructs))
+
+  test("validateUpdatedSchema fails when missing nested IDs in IcebergCompatV2") {
+    forAll(missingNestedIdsEvolution) { (schemaBefore, schemaAfter) =>
+      val e = intercept[IllegalArgumentException] {
+        val tableProperties =
+          Map(COLUMN_MAPPING_MODE_KEY -> "id", "delta.enableIcebergCompatV2" -> "true")
+        SchemaUtils.validateUpdatedSchema(
+          schemaBefore,
+          schemaAfter,
+          metadata(schemaBefore, tableProperties))
+      }
+
+      assert(e.getMessage.matches("Field .* is missing expected nested column IDs"))
+    }
+  }
+
+  private val mapWithStructKeyInconsistentNestedIds = new StructType()
+    .add(
+      "map",
+      mapWithStructKey.get("map").getDataType,
+      true,
+      FieldMetadata.builder()
+        .fromMetadata(fieldMetadata(id = 1, physicalName = "map"))
+        .putFieldMetadata(
+          COLUMN_MAPPING_NESTED_IDS_KEY,
+          FieldMetadata.builder().putLong("map.key", 8L)
+            .putLong("map.value", 9L).build()).build())
+
+  private val inconsistentNestedIdsEvolution = Table(
+    ("schemaBefore", "updatedSchemaWithNoNestedId"),
+    // Map with struct key with inconsistent nested IDs
+    (
+      mapWithStructKeyIcebergCompatV2,
+      mapWithStructKeyInconsistentNestedIds))
+
+  test("validateUpdatedSchema fails when nestedIds are not consistent in IcebergCompatV2") {
+    forAll(inconsistentNestedIdsEvolution) { (schemaBefore, schemaAfter) =>
+      val e = intercept[IllegalArgumentException] {
+        val tableProperties =
+          Map(COLUMN_MAPPING_MODE_KEY -> "id", "delta.enableIcebergCompatV2" -> "true")
+        SchemaUtils.validateUpdatedSchema(
+          schemaBefore,
+          schemaAfter,
+          metadata(schemaBefore, tableProperties))
+      }
+
+      assert(e.getMessage.matches("Expected field with id .* to have nested key.*"))
+    }
+  }
+
+  test("validateUpdatedSchema with valid nested IDs succeeds in IcebergCompatV2") {
+    val validNestedIdsEvolution =
+      missingNestedIdsEvolution.map(evolution => (evolution._2, evolution._1))
+    forAll(validNestedIdsEvolution) { (schemaBefore, schemaAfter) =>
+      val tableProperties =
+        Map(COLUMN_MAPPING_MODE_KEY -> "id", "delta.enableIcebergCompatV2" -> "true")
+      SchemaUtils.validateUpdatedSchema(
+        schemaBefore,
+        schemaAfter,
+        metadata(schemaBefore, tableProperties))
+    }
+  }
+
   private def metadata(
-                        schema: StructType,
-                        properties: Map[String, String] =
-                        Map(ColumnMapping.COLUMN_MAPPING_MODE_KEY -> "id")): Metadata = {
+      schema: StructType,
+      properties: Map[String, String] =
+        Map(ColumnMapping.COLUMN_MAPPING_MODE_KEY -> "id")): Metadata = {
     new Metadata(
       "id",
       Optional.empty(), /* name */
