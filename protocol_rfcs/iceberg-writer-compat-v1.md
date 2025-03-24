@@ -31,7 +31,7 @@ For `IcebergWriterCompatV1` writers must ensure:
 
 - Each field _must_ have a column mapping physical name that is exactly `col-[column id]`. That is the `delta.columnMapping.physicalName` in the column metadata _must_ be equal to `col-[delta.columnMapping.id]`. The following is an example compliant schema definition:
 
-  ```json
+```json
 {
   "type": "struct",
   "fields": [
@@ -55,7 +55,7 @@ For `IcebergWriterCompatV1` writers must ensure:
     }
   ]
 }
-  ```
+```
 
 - The table does not contain any columns with the type `byte` or `short`
   - Note that these types _are_ allowed by `IcebergCompatV2`
