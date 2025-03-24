@@ -16,10 +16,10 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.{SparkSession, Strategy}
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.planning.ScanOperation
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.execution.SparkPlan
+import org.apache.spark.sql.execution.{SparkPlan, SparkStrategy}
 import org.apache.spark.sql.execution.datasources.{FileSourceStrategy, HadoopFsRelation, LogicalRelationWithTable}
 
 /**
@@ -31,7 +31,7 @@ import org.apache.spark.sql.execution.datasources.{FileSourceStrategy, HadoopFsR
  * list.
  */
 case class PreprocessTableWithDVsStrategy(session: SparkSession)
-    extends Strategy
+    extends SparkStrategy
     with PreprocessTableWithDVs {
 
   override def apply(plan: LogicalPlan): Seq[SparkPlan] = plan match {

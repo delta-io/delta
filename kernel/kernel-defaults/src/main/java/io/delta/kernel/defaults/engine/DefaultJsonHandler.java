@@ -22,10 +22,11 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.*;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.delta.kernel.data.*;
+import io.delta.kernel.defaults.engine.fileio.FileIO;
+import io.delta.kernel.defaults.engine.fileio.SeekableInputStream;
 import io.delta.kernel.defaults.internal.data.DefaultJsonRow;
 import io.delta.kernel.defaults.internal.data.DefaultRowBasedColumnarBatch;
 import io.delta.kernel.defaults.internal.json.JsonUtils;
-import io.delta.kernel.defaults.internal.logstore.LogStoreProvider;
 import io.delta.kernel.engine.JsonHandler;
 import io.delta.kernel.exceptions.KernelEngineException;
 import io.delta.kernel.expressions.Predicate;
@@ -37,8 +38,6 @@ import io.delta.storage.LogStore;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
-import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.*;
 
 /** Default implementation of {@link JsonHandler} based on Hadoop APIs. */
 public class DefaultJsonHandler implements JsonHandler {
@@ -47,12 +46,16 @@ public class DefaultJsonHandler implements JsonHandler {
   private static final ObjectReader objectReaderReadBigDecimals =
       new ObjectMapper().reader(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS);
 
-  private final Configuration hadoopConf;
+  private final FileIO fileIO;
   private final int maxBatchSize;
 
-  public DefaultJsonHandler(Configuration hadoopConf) {
-    this.hadoopConf = hadoopConf;
-    this.maxBatchSize = hadoopConf.getInt("delta.kernel.default.json.reader.batch-size", 1024);
+  public DefaultJsonHandler(FileIO fileIO) {
+    this.fileIO = fileIO;
+    this.maxBatchSize =
+        fileIO
+            .getConf("delta.kernel.default.json.reader.batch-size")
+            .map(Integer::valueOf)
+            .orElse(1024);
     checkArgument(maxBatchSize > 0, "invalid JSON reader batch size: %d", maxBatchSize);
   }
 
@@ -139,11 +142,9 @@ public class DefaultJsonHandler implements JsonHandler {
 
         if (scanFileIter.hasNext()) {
           currentFile = scanFileIter.next();
-          Path filePath = new Path(currentFile.getPath());
-          FileSystem fs = filePath.getFileSystem(hadoopConf);
-          FSDataInputStream stream = null;
+          SeekableInputStream stream = null;
           try {
-            stream = fs.open(filePath);
+            stream = fileIO.newInputFile(currentFile.getPath()).newStream();
             currentFileReader =
                 new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8));
           } catch (Exception e) {
@@ -167,27 +168,7 @@ public class DefaultJsonHandler implements JsonHandler {
   @Override
   public void writeJsonFileAtomically(
       String filePath, CloseableIterator<Row> data, boolean overwrite) throws IOException {
-    Path path = new Path(filePath);
-    LogStore logStore = LogStoreProvider.getLogStore(hadoopConf, path.toUri().getScheme());
-    try {
-      logStore.write(
-          path,
-          new Iterator<String>() {
-            @Override
-            public boolean hasNext() {
-              return data.hasNext();
-            }
-
-            @Override
-            public String next() {
-              return JsonUtils.rowToJson(data.next());
-            }
-          },
-          overwrite,
-          hadoopConf);
-    } finally {
-      Utils.closeCloseables(data);
-    }
+    fileIO.newOutputFile(filePath).writeAtomically(data.map(JsonUtils::rowToJson), overwrite);
   }
 
   private Row parseJson(String json, StructType readSchema) {

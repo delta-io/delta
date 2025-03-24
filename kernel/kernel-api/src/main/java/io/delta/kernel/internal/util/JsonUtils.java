@@ -16,16 +16,58 @@
 
 package io.delta.kernel.internal.util;
 
+import com.fasterxml.jackson.core.JsonFactory;
+import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.delta.kernel.exceptions.KernelException;
+import java.io.IOException;
+import java.io.StringWriter;
+import java.io.UncheckedIOException;
 import java.util.Collections;
 import java.util.Map;
 
 public class JsonUtils {
-  private static final ObjectMapper MAPPER = new ObjectMapper();
 
   private JsonUtils() {}
+
+  private static final ObjectMapper MAPPER = new ObjectMapper();
+  private static final JsonFactory FACTORY = new JsonFactory();
+
+  public static JsonFactory factory() {
+    return FACTORY;
+  }
+
+  public static ObjectMapper mapper() {
+    return MAPPER;
+  }
+
+  @FunctionalInterface
+  public interface ToJson {
+    void generate(JsonGenerator generator) throws IOException;
+  }
+
+  @FunctionalInterface
+  public interface JsonValueWriter<T> {
+    void write(JsonGenerator generator, T value) throws IOException;
+  }
+
+  /**
+   * Utility class for writing JSON with a Jackson {@link JsonGenerator}.
+   *
+   * @param toJson function that produces JSON using a {@link JsonGenerator}
+   * @return a JSON string produced from the generator
+   */
+  public static String generate(ToJson toJson) {
+    try (StringWriter writer = new StringWriter();
+        JsonGenerator generator = factory().createGenerator(writer)) {
+      toJson.generate(generator);
+      generator.flush();
+      return writer.toString();
+    } catch (IOException e) {
+      throw new UncheckedIOException(e);
+    }
+  }
 
   /**
    * Parses the given JSON string into a map of key-value pairs.

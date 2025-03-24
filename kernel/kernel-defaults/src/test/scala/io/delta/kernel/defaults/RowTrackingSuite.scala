@@ -15,6 +15,12 @@
  */
 package io.delta.kernel.defaults
 
+import java.util
+import java.util.{Collections, Optional}
+
+import scala.collection.JavaConverters._
+import scala.collection.immutable.Seq
+
 import io.delta.kernel.data.{FilteredColumnarBatch, Row}
 import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
 import io.delta.kernel.engine.Engine
@@ -22,21 +28,18 @@ import io.delta.kernel.exceptions.{KernelException, ProtocolChangedException}
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl, TableImpl}
 import io.delta.kernel.internal.actions.{AddFile, Protocol, SingleAction}
-import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.internal.rowtracking.RowTrackingMetadataDomain
+import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.internal.util.VectorUtils
 import io.delta.kernel.internal.util.VectorUtils.stringStringMapValue
-import io.delta.kernel.types.StructType
 import io.delta.kernel.types.LongType.LONG
+import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.CloseableIterable
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
-import org.apache.hadoop.fs.Path
+
 import org.apache.spark.sql.delta.DeltaLog
 
-import java.util
-import java.util.{Collections, Optional}
-import scala.collection.JavaConverters._
-import scala.collection.immutable.Seq
+import org.apache.hadoop.fs.Path
 
 class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
   private def prepareActionsForCommit(actions: Row*): CloseableIterable[Row] = {
@@ -51,8 +54,8 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
     val protocol = new Protocol(
       3, // minReaderVersion
       7, // minWriterVersion
-      Collections.emptyList(), // readerFeatures
-      writerFeatures.asJava // writerFeatures
+      Collections.emptySet(), // readerFeatures
+      writerFeatures.toSet.asJava // writerFeatures
     )
     val protocolAction = SingleAction.createProtocolSingleAction(protocol.toRow)
     val txn = createTxn(engine, tablePath, isNewTable = false, schema, Seq.empty)
@@ -126,8 +129,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
       val commitVersion = appendData(
         engine,
         tablePath,
-        data = prepareDataForCommit(dataBatch1, dataBatch2, dataBatch3)
-      ).getVersion
+        data = prepareDataForCommit(dataBatch1, dataBatch2, dataBatch3)).getVersion
 
       verifyBaseRowIDs(engine, tablePath, Seq(0, 100, 300))
       verifyDefaultRowCommitVersion(engine, tablePath, Seq.fill(3)(commitVersion))
@@ -143,8 +145,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
       val commitVersion1 = appendData(
         engine,
         tablePath,
-        data = Seq(dataBatch1).map(Map.empty[String, Literal] -> _)
-      ).getVersion
+        data = Seq(dataBatch1).map(Map.empty[String, Literal] -> _)).getVersion
 
       verifyBaseRowIDs(engine, tablePath, Seq(0))
       verifyDefaultRowCommitVersion(engine, tablePath, Seq(commitVersion1))
@@ -154,8 +155,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
       val commitVersion2 = appendData(
         engine,
         tablePath,
-        data = prepareDataForCommit(dataBatch2)
-      ).getVersion
+        data = prepareDataForCommit(dataBatch2)).getVersion
 
       verifyBaseRowIDs(engine, tablePath, Seq(0, 100))
       verifyDefaultRowCommitVersion(engine, tablePath, Seq(commitVersion1, commitVersion2))
@@ -174,14 +174,12 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
       val commitVersion1 = appendData(
         engine,
         tablePath,
-        data = prepareDataForCommit(dataBatch1)
-      ).getVersion
+        data = prepareDataForCommit(dataBatch1)).getVersion
 
       val commitVersion2 = appendData(
         engine,
         tablePath,
-        data = prepareDataForCommit(dataBatch2)
-      ).getVersion
+        data = prepareDataForCommit(dataBatch2)).getVersion
 
       // Checkpoint the table
       val table = TableImpl.forPath(engine, tablePath)
@@ -191,15 +189,13 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
       val commitVersion3 = appendData(
         engine,
         tablePath,
-        data = prepareDataForCommit(dataBatch3)
-      ).getVersion
+        data = prepareDataForCommit(dataBatch3)).getVersion
 
       verifyBaseRowIDs(engine, tablePath, Seq(0, 100, 300))
       verifyDefaultRowCommitVersion(
         engine,
         tablePath,
-        Seq(commitVersion1, commitVersion2, commitVersion3)
-      )
+        Seq(commitVersion1, commitVersion2, commitVersion3))
       verifyHighWatermark(engine, tablePath, 699)
     }
   }
@@ -209,6 +205,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
       createTableWithRowTrackingSupported(engine, tablePath)
 
       val addFileRow = AddFile.createAddFileRow(
+        null,
         "fakePath",
         VectorUtils.stringStringMapValue(new util.HashMap[String, String]()),
         0L,
@@ -230,38 +227,9 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
       assert(
         e.getMessage.contains(
           "Cannot write to a rowTracking-supported table without 'numRecords' statistics. "
-          + "Connectors are expected to populate the number of records statistics when "
-          + "writing to a Delta table with 'rowTracking' table feature supported."
-        )
-      )
+            + "Connectors are expected to populate the number of records statistics when "
+            + "writing to a Delta table with 'rowTracking' table feature supported."))
     }
-  }
-
-  test("Fail if row tracking is supported but domain metadata is not supported") {
-    withTempDirAndEngine((tablePath, engine) => {
-      createTxn(engine, tablePath, isNewTable = true, testSchema, Seq.empty)
-        .commit(engine, emptyIterable())
-
-      // Only 'rowTracking' is supported, not 'domainMetadata'
-      setWriterFeatureSupported(engine, tablePath, testSchema, Seq("rowTracking"))
-
-      val dataBatch1 = generateData(testSchema, Seq.empty, Map.empty, 100, 1)
-      val e = intercept[KernelException] {
-        appendData(
-          engine,
-          tablePath,
-          data = prepareDataForCommit(dataBatch1)
-        ).getVersion
-      }
-
-      assert(
-        e.getMessage
-          .contains(
-            "Feature 'rowTracking' is supported and depends on feature 'domainMetadata',"
-            + " but 'domainMetadata' is unsupported"
-          )
-      )
-    })
   }
 
   test("Integration test - Write table with Kernel then write with Spark") {
@@ -310,8 +278,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
              |  'delta.feature.domainMetadata' = 'enabled',
              |  'delta.feature.rowTracking' = 'supported'
              |)
-             |""".stripMargin
-        )
+             |""".stripMargin)
 
         // Write to the table using delta-spark
         spark.range(0, 20).write.format("delta").mode("append").save(tablePath) // version 1
@@ -441,8 +408,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
         tablePath,
         dataSizeTxn1 = 200,
         dataSizeTxn2 = 300,
-        dataSizeTxn3 = 400
-      )
+        dataSizeTxn3 = 400)
     })
   }
 
@@ -453,8 +419,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
         tablePath,
         dataSizeTxn1 = 200,
         dataSizeTxn2 = 300,
-        dataSizeTxn3 = 0
-      )
+        dataSizeTxn3 = 0)
     })
     withTempDirAndEngine((tablePath, engine) => {
       validateConflictResolution(
@@ -462,8 +427,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
         tablePath,
         dataSizeTxn1 = 200,
         dataSizeTxn2 = 0,
-        dataSizeTxn3 = 300
-      )
+        dataSizeTxn3 = 300)
     })
   }
 
@@ -474,8 +438,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
         tablePath,
         dataSizeTxn1 = 200,
         dataSizeTxn2 = 0,
-        dataSizeTxn3 = 0
-      )
+        dataSizeTxn3 = 0)
     })
   }
 
@@ -486,15 +449,13 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
         tablePath,
         dataSizeTxn1 = 0,
         dataSizeTxn2 = 200,
-        dataSizeTxn3 = 300
-      )
+        dataSizeTxn3 = 300)
     })
   }
 
   test(
     "Conflict resolution - two concurrent txns were commited by delta-spark " +
-    "and both added new files"
-  ) {
+      "and both added new files") {
     withTempDirAndEngine((tablePath, engine) => {
       validateConflictResolution(
         engine,
@@ -503,8 +464,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
         dataSizeTxn2 = 300,
         useSparkTxn2 = true,
         dataSizeTxn3 = 400,
-        useSparkTxn3 = true
-      )
+        useSparkTxn3 = true)
     })
   }
 
@@ -526,8 +486,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
         commitAppendData(
           engine,
           txn1,
-          prepareDataForCommit(dataBatch1)
-        )
+          prepareDataForCommit(dataBatch1))
       }
     })
   }
@@ -548,8 +507,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
         commitAppendData(
           engine,
           txn1,
-          prepareDataForCommit(dataBatch1)
-        )
+          prepareDataForCommit(dataBatch1))
       }
     })
   }

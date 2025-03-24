@@ -18,6 +18,7 @@ package io.delta.kernel;
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.ConcurrentTransactionException;
+import io.delta.kernel.exceptions.DomainDoesNotExistException;
 import io.delta.kernel.exceptions.InvalidConfigurationValueException;
 import io.delta.kernel.exceptions.UnknownConfigurationException;
 import io.delta.kernel.internal.TableConfig;
@@ -92,6 +93,21 @@ public interface TransactionBuilder {
   TransactionBuilder withMaxRetries(int maxRetries);
 
   /**
+   * Enables support for Domain Metadata on this table if it is not supported already. The table
+   * feature _must_ be supported on the table to add or remove domain metadata using {@link
+   * Transaction#addDomainMetadata} or {@link Transaction#removeDomainMetadata}. See <a
+   * href="https://docs.delta.io/latest/versioning.html#how-does-delta-lake-manage-feature-compatibility">
+   * How does Delta Lake manage feature compatibility?</a> for more details on table feature
+   * support.
+   *
+   * <p>See the Delta protocol for more information on how to use <a
+   * href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#domain-metadata">Domain
+   * Metadata</a>. This may break existing writers that do not support the Domain Metadata feature;
+   * readers will be unaffected.
+   */
+  TransactionBuilder withDomainMetadataSupported();
+
+  /**
    * Build the transaction. Also validates the given info to ensure that a valid transaction can be
    * created.
    *
@@ -101,6 +117,8 @@ public interface TransactionBuilder {
    * @throws InvalidConfigurationValueException if the value of the property is invalid.
    * @throws UnknownConfigurationException if any of the properties are unknown to {@link
    *     TableConfig}.
+   * @throws DomainDoesNotExistException if removing a domain that does not exist in the latest
+   *     version of the table
    */
   Transaction build(Engine engine);
 }

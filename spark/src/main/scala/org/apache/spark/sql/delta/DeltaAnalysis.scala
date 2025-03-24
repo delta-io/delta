@@ -23,6 +23,7 @@ import scala.util.control.NonFatal
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.catalyst.TimeTravel
+import org.apache.spark.sql.delta.DataFrameUtils
 import org.apache.spark.sql.delta.DeltaErrors.{TemporallyUnstableInputException, TimestampEarlierThanCommitRetentionException}
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
@@ -571,7 +572,7 @@ class DeltaAnalysis(session: SparkSession)
       val v1TableName = child.identifier.asTableIdentifier
       namespace.foreach { ns =>
         if (v1TableName.database.exists(!resolver(_, ns.head))) {
-          throw QueryCompilationErrors.showColumnsWithConflictDatabasesError(ns, v1TableName)
+          throw DeltaThrowableHelperShims.showColumnsWithConflictDatabasesError(ns, v1TableName)
         }
       }
       ShowDeltaTableColumnsCommand(child)
@@ -690,7 +691,8 @@ class DeltaAnalysis(session: SparkSession)
     val isCreate = statement.isCreateCommand
     val ifNotExists = statement.ifNotExists
 
-    import session.sessionState.analyzer.{NonSessionCatalogAndIdentifier, SessionCatalogAndIdentifier}
+    val analyzer = session.sessionState.analyzer
+    import analyzer.{NonSessionCatalogAndIdentifier, SessionCatalogAndIdentifier}
     val targetLocation = statement.targetLocation
     val (saveMode, tableCreationMode) = resolveCreateTableMode(isCreate, isReplace, ifNotExists)
     // We don't use information in the catalog if the table is time travelled
@@ -925,7 +927,7 @@ class DeltaAnalysis(session: SparkSession)
         if s != t && sNull == tNull =>
         addCastsToArrayStructs(tblName, attr, s, t, sNull, typeWideningMode)
       case (s: AtomicType, t: AtomicType)
-        if typeWideningMode.shouldWidenType(fromType = t, toType = s) =>
+        if typeWideningMode.shouldWidenTo(fromType = t, toType = s) =>
         // Keep the type from the query, the target schema will be updated to widen the existing
         // type to match it.
         attr
@@ -1097,7 +1099,7 @@ class DeltaAnalysis(session: SparkSession)
 
       case (StructField(name, sourceType: AtomicType, _, _),
             i @ TargetIndex(StructField(targetName, targetType: AtomicType, _, targetMetadata)))
-          if typeWideningMode.shouldWidenType(fromType = targetType, toType = sourceType) =>
+          if typeWideningMode.shouldWidenTo(fromType = targetType, toType = sourceType) =>
         Alias(
           GetStructField(parent, i, Option(name)),
           targetName)(explicitMetadata = Option(targetMetadata))
@@ -1435,7 +1437,7 @@ case class DeltaDynamicPartitionOverwriteCommand(
       deltaOptions,
       partitionColumns = Nil,
       deltaTable.deltaLog.unsafeVolatileSnapshot.metadata.configuration,
-      Dataset.ofRows(sparkSession, query),
+      DataFrameUtils.ofRows(sparkSession, query),
       deltaTable.catalogTable
     ).run(sparkSession)
   }

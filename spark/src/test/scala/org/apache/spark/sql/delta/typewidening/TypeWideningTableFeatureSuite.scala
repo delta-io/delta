@@ -197,12 +197,12 @@ trait TypeWideningTableFeatureTests
         checkError(
           intercept[DeltaTableFeatureException] {
             sql(s"ALTER TABLE $databaseName.$tableName " +
-              s"DROP FEATURE '${TypeWideningPreviewTableFeature.name}'"
+              s"DROP FEATURE '${TypeWideningTableFeature.name}'"
             ).collect()
           },
           "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD",
           parameters = Map(
-            "feature" -> TypeWideningPreviewTableFeature.name,
+            "feature" -> TypeWideningTableFeature.name,
             "logRetentionPeriodKey" -> DeltaConfigs.LOG_RETENTION.key,
             "logRetentionPeriod" -> DeltaConfigs.LOG_RETENTION
               .fromMetaData(deltaLog.unsafeVolatileMetadata).toString,
@@ -471,7 +471,7 @@ trait TypeWideningTableFeatureTests
           schemaString = new StructType()
             .add("s", new StructType()
               .add("a", BooleanType, nullable = true,
-                metadata = typeWideningMetadata(version = 1, IntegerType, BooleanType)))
+                metadata = typeWideningMetadata(IntegerType, BooleanType)))
           .json
         )),
         ManualUpdate)
@@ -508,20 +508,20 @@ trait TypeWideningTableFeatureTests
         Seq(txn.snapshot.metadata.copy(
           schemaString = new StructType()
             .add("a", StringType, nullable = true,
-              metadata = typeWideningMetadata(version = 1, StringType, CharType(4)))
+              metadata = typeWideningMetadata(StringType, CharType(4)))
             .add("b", StringType, nullable = true,
-              metadata = typeWideningMetadata(version = 1, StringType, VarcharType(4)))
+              metadata = typeWideningMetadata(StringType, VarcharType(4)))
             .add("c", StringType, nullable = true,
-              metadata = typeWideningMetadata(version = 1, CharType(4), StringType))
+              metadata = typeWideningMetadata(CharType(4), StringType))
             .add("d", StringType, nullable = true,
-              metadata = typeWideningMetadata(version = 1, CharType(4), VarcharType(4)))
+              metadata = typeWideningMetadata(CharType(4), VarcharType(4)))
             .add("e", StringType, nullable = true,
-              metadata = typeWideningMetadata(version = 1, VarcharType(4), StringType))
+              metadata = typeWideningMetadata(VarcharType(4), StringType))
             .add("f", StringType, nullable = true,
-              metadata = typeWideningMetadata(version = 1, VarcharType(4), CharType(4)))
+              metadata = typeWideningMetadata(VarcharType(4), CharType(4)))
             .add("s", new StructType()
               .add("x", StringType, nullable = true,
-                metadata = typeWideningMetadata(version = 1, StringType, CharType(4)))
+                metadata = typeWideningMetadata(StringType, CharType(4)))
             )
             .json
         )),
@@ -538,7 +538,6 @@ trait TypeWideningTableFeatureTests
         new MetadataBuilder()
           .putString("toType", "long")
           .putString("fromType", "int")
-          .putLong("tableVersion", 1)
           .build()
       )).build()
 
@@ -562,7 +561,7 @@ trait TypeWideningTableFeatureTests
         "fieldPath" -> "a",
         "fromType" -> "INT",
         "toType" -> "BIGINT",
-        "typeWideningFeatureName" -> "typeWidening-preview"
+        "typeWideningFeatureName" -> "typeWidening"
       )
     )
   }
@@ -667,7 +666,7 @@ trait TypeWideningTableFeatureTests
     // transient it will leave files behind that some clients can't read.
     withSQLConf(SQLConf.IGNORE_CORRUPT_FILES.key -> "true") {
       val ex = intercept[SparkException] {
-        sql(s"ALTER TABLE delta.`$tempDir` DROP FEATURE '${TypeWideningPreviewTableFeature.name}'")
+        sql(s"ALTER TABLE delta.`$tempDir` DROP FEATURE '${TypeWideningTableFeature.name}'")
       }
       assert(ex.getMessage.contains("Cannot seek after EOF"))
     }
@@ -703,27 +702,27 @@ trait TypeWideningTableFeatureTests
     addSingleFile(Seq(1), ByteType)
     sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE int")
 
-    // The stable feature isn't supported and can't be dropped.
-    assertFeatureSupported(preview = true, stable = false)
+    // The preview feature isn't supported and can't be dropped.
+    assertFeatureSupported(preview = false, stable = true)
     dropTableFeature(
-      feature = TypeWideningTableFeature,
+      feature = TypeWideningPreviewTableFeature,
       expectedOutcome = ExpectedOutcome.FAIL_FEATURE_NOT_PRESENT,
       expectedNumFilesRewritten = 0,
       expectedColumnTypes = Map("a" -> ByteType)
     )
 
-    // The preview feature is supported and can be dropped.
+    // The stable feature is supported and can be dropped.
     dropTableFeature(
-      feature = TypeWideningPreviewTableFeature,
+      feature = TypeWideningTableFeature,
       expectedOutcome = ExpectedOutcome.FAIL_CURRENT_VERSION_USES_FEATURE,
       expectedNumFilesRewritten = 1,
       expectedColumnTypes = Map("a" -> IntegerType)
     )
-    assertFeatureSupported(preview = true, stable = false)
+    assertFeatureSupported(preview = false, stable = true)
 
     advancePastRetentionPeriod()
     dropTableFeature(
-      feature = TypeWideningPreviewTableFeature,
+      feature = TypeWideningTableFeature,
       expectedOutcome = ExpectedOutcome.SUCCESS,
       expectedNumFilesRewritten = 0,
       expectedColumnTypes = Map("a" -> IntegerType)
@@ -778,39 +777,39 @@ trait TypeWideningTableFeatureTests
     assertFeatureSupported(preview = false, stable = false)
   }
 
-  test("tables created with the stable feature aren't automatically enabling the preview feature") {
+  test("tables created with the preview feature aren't automatically enabling the stable feature") {
     setupManualClock()
     sql(s"CREATE TABLE delta.`$tempPath` (a byte) USING DELTA " +
       s"TBLPROPERTIES ('${DeltaConfigs.ENABLE_TYPE_WIDENING.key}' = 'false')")
 
-    addTableFeature(tempPath, TypeWideningTableFeature)
-    assertFeatureSupported(preview = false, stable = true)
+    addTableFeature(tempPath, TypeWideningPreviewTableFeature)
+    assertFeatureSupported(preview = true, stable = false)
 
-    // Enable the table property, this should keep the stable feature but not add the preview one.
+    // Enable the table property, this should keep the preview feature but not add the stable one.
     enableTypeWidening(tempPath)
-    assertFeatureSupported(preview = false, stable = true)
+    assertFeatureSupported(preview = true, stable = false)
 
     addSingleFile(Seq(1), ByteType)
     sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE int")
 
     dropTableFeature(
-      feature = TypeWideningPreviewTableFeature,
+      feature = TypeWideningTableFeature,
       expectedOutcome = ExpectedOutcome.FAIL_FEATURE_NOT_PRESENT,
       expectedNumFilesRewritten = 0,
       expectedColumnTypes = Map("a" -> ByteType)
     )
-    // The stable table feature can be dropped.
+    // The preview table feature can be dropped.
     dropTableFeature(
-      feature = TypeWideningTableFeature,
+      feature = TypeWideningPreviewTableFeature,
       expectedOutcome = ExpectedOutcome.FAIL_CURRENT_VERSION_USES_FEATURE,
       expectedNumFilesRewritten = 1,
       expectedColumnTypes = Map("a" -> IntegerType)
     )
-    assertFeatureSupported(preview = false, stable = true)
+    assertFeatureSupported(preview = true, stable = false)
 
     advancePastRetentionPeriod()
     dropTableFeature(
-      feature = TypeWideningTableFeature,
+      feature = TypeWideningPreviewTableFeature,
       expectedOutcome = ExpectedOutcome.SUCCESS,
       expectedNumFilesRewritten = 0,
       expectedColumnTypes = Map("a" -> IntegerType)
@@ -827,7 +826,7 @@ trait TypeWideningTableFeatureTests
     addSingleFile(Seq(1), ByteType)
     sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE short")
 
-    assert(readDeltaTable(tempPath).schema === new StructType()
+    assert(deltaLog.update().metadata.schema === new StructType()
       .add("a", ShortType, nullable = true, metadata = new MetadataBuilder()
         .putMetadataArray("delta.typeChanges", Array(
           new MetadataBuilder()
@@ -841,7 +840,7 @@ trait TypeWideningTableFeatureTests
     // specs are compatible. In that case, we still populate the `tableVersion` field.
     addTableFeature(tempPath, TypeWideningTableFeature)
     sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE int")
-    assert(readDeltaTable(tempPath).schema === new StructType()
+    assert(deltaLog.update().metadata.schema === new StructType()
       .add("a", IntegerType, nullable = true, metadata = new MetadataBuilder()
         .putMetadataArray("delta.typeChanges", Array(
           new MetadataBuilder()
@@ -865,7 +864,7 @@ trait TypeWideningTableFeatureTests
     enableTypeWidening(tempPath)
     addSingleFile(Seq(1), ByteType)
     sql(s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE short")
-    assert(readDeltaTable(tempPath).schema === new StructType()
+    assert(deltaLog.update().metadata.schema === new StructType()
       .add("a", ShortType, nullable = true, metadata = new MetadataBuilder()
         .putMetadataArray("delta.typeChanges", Array(
           new MetadataBuilder()

@@ -29,12 +29,12 @@ import io.delta.kernel.metrics.{ScanReport, SnapshotReport}
 import io.delta.kernel.types.{IntegerType, LongType, StructType}
 import io.delta.kernel.utils.CloseableIterator
 
-import org.apache.spark.sql.functions.col
-import org.scalatest.funsuite.AnyFunSuite
-
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.StatisticsCollection
+
+import org.apache.spark.sql.functions.col
+import org.scalatest.funsuite.AnyFunSuite
 
 class ScanReportSuite extends AnyFunSuite with MetricsReportTestUtils {
 
@@ -49,10 +49,10 @@ class ScanReportSuite extends AnyFunSuite with MetricsReportTestUtils {
    * @return (ScanReport, durationToConsumeScanFiles, SnapshotReport, ExceptionIfThrown)
    */
   def getScanAndSnapshotReport(
-    getScan: Engine => Scan,
-    expectException: Boolean,
-    consumeScanFiles: CloseableIterator[FilteredColumnarBatch] => Unit
-  ): (ScanReport, Long, SnapshotReport, Option[Exception]) = {
+      getScan: Engine => Scan,
+      expectException: Boolean,
+      consumeScanFiles: CloseableIterator[FilteredColumnarBatch] => Unit)
+      : (ScanReport, Long, SnapshotReport, Option[Exception]) = {
     val timer = new Timer()
 
     val (metricsReports, exception) = collectMetricsReports(
@@ -61,15 +61,17 @@ class ScanReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         // Time the actual operation
         timer.timeCallable(() => consumeScanFiles(scan.getScanFiles(engine)))
       },
-      expectException
-    )
+      expectException)
 
     val scanReports = metricsReports.filter(_.isInstanceOf[ScanReport])
     assert(scanReports.length == 1, "Expected exactly 1 ScanReport")
     val snapshotReports = metricsReports.filter(_.isInstanceOf[SnapshotReport])
     assert(snapshotReports.length == 1, "Expected exactly 1 SnapshotReport")
-    (scanReports.head.asInstanceOf[ScanReport], timer.totalDurationNs(),
-      snapshotReports.head.asInstanceOf[SnapshotReport], exception)
+    (
+      scanReports.head.asInstanceOf[ScanReport],
+      timer.totalDurationNs(),
+      snapshotReports.head.asInstanceOf[SnapshotReport],
+      exception)
   }
 
   /**
@@ -92,21 +94,21 @@ class ScanReportSuite extends AnyFunSuite with MetricsReportTestUtils {
    */
   // scalastyle:off
   def checkScanReport(
-    path: String,
-    expectException: Boolean,
-    expectedNumAddFiles: Long,
-    expectedNumAddFilesFromDeltaFiles: Long,
-    expectedNumActiveAddFiles: Long,
-    expectedNumDuplicateAddFiles: Long = 0,
-    expectedNumRemoveFilesSeenFromDeltaFiles: Long = 0,
-    expectedPartitionPredicate: Option[Predicate] = None,
-    expectedDataSkippingFilter: Option[Predicate] = None,
-    expectedIsFullyConsumed: Boolean = true,
-    filter: Option[Predicate] = None,
-    readSchema: Option[StructType] = None,
-    // toSeq triggers log replay, consumes the actions and closes the iterator
-    consumeScanFiles: CloseableIterator[FilteredColumnarBatch] => Unit = iter => iter.toSeq
-  ): Unit = {
+      path: String,
+      expectException: Boolean,
+      expectedNumAddFiles: Long,
+      expectedNumAddFilesFromDeltaFiles: Long,
+      expectedNumActiveAddFiles: Long,
+      expectedNumDuplicateAddFiles: Long = 0,
+      expectedNumRemoveFilesSeenFromDeltaFiles: Long = 0,
+      expectedPartitionPredicate: Option[Predicate] = None,
+      expectedDataSkippingFilter: Option[Predicate] = None,
+      expectedIsFullyConsumed: Boolean = true,
+      filter: Option[Predicate] = None,
+      readSchema: Option[StructType] = None,
+      // toSeq triggers log replay, consumes the actions and closes the iterator
+      consumeScanFiles: CloseableIterator[FilteredColumnarBatch] => Unit =
+        iter => iter.toSeq): Unit = {
     // scalastyle:on
     // We need to save the snapshotSchema to check against the generated scan report
     // In order to use the utils to collect the reports, we need to generate the snapshot in a anon
@@ -127,8 +129,7 @@ class ScanReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         scanBuilder.build()
       },
       expectException,
-      consumeScanFiles
-    )
+      consumeScanFiles)
 
     // Verify contents
     assert(scanReport.getTablePath == defaultEngine.getFileSystemClient.resolvePath(path))
@@ -142,7 +143,8 @@ class ScanReportSuite extends AnyFunSuite with MetricsReportTestUtils {
     }
     assert(scanReport.getReportUUID != null)
 
-    assert(snapshotReport.getVersion.isPresent,
+    assert(
+      snapshotReport.getVersion.isPresent,
       "Version should be present for success SnapshotReport")
     assert(scanReport.getTableVersion() == snapshotReport.getVersion.get())
     assert(scanReport.getTableSchema() == snapshotSchema)
@@ -184,8 +186,7 @@ class ScanReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         expectException = false,
         expectedNumAddFiles = 1,
         expectedNumAddFilesFromDeltaFiles = 1,
-        expectedNumActiveAddFiles = 1
-      )
+        expectedNumActiveAddFiles = 1)
     }
   }
 
@@ -203,8 +204,7 @@ class ScanReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         expectedNumAddFiles = 1,
         expectedNumAddFilesFromDeltaFiles = 1,
         expectedNumActiveAddFiles = 1,
-        readSchema = Some(new StructType().add("id", LongType.LONG))
-      )
+        readSchema = Some(new StructType().add("id", LongType.LONG)))
     }
   }
 
@@ -219,7 +219,9 @@ class ScanReportSuite extends AnyFunSuite with MetricsReportTestUtils {
       val partFilter = new Predicate("=", new Column("part"), Literal.ofLong(0))
       val dataFilter = new Predicate("<=", new Column("id"), Literal.ofLong(0))
       val expectedSkippingFilter = new Predicate(
-        "<=", new Column(Array("minValues", "id")), Literal.ofLong(0))
+        "<=",
+        new Column(Array("minValues", "id")),
+        Literal.ofLong(0))
 
       // The below metrics are incremented during log replay before any filtering happens and thus
       // should be the same for all of the following test cases
@@ -233,8 +235,7 @@ class ScanReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         expectException = false,
         expectedNumAddFiles = expectedNumAddFiles,
         expectedNumAddFilesFromDeltaFiles = expectedNumAddFilesFromDeltaFiles,
-        expectedNumActiveAddFiles = expectedNumActiveAddFiles
-      )
+        expectedNumActiveAddFiles = expectedNumActiveAddFiles)
 
       // With partition filter
       checkScanReport(
@@ -244,8 +245,7 @@ class ScanReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         expectedNumAddFilesFromDeltaFiles = expectedNumAddFilesFromDeltaFiles,
         expectedNumActiveAddFiles = expectedNumActiveAddFiles,
         filter = Some(partFilter),
-        expectedPartitionPredicate = Some(partFilter)
-      )
+        expectedPartitionPredicate = Some(partFilter))
 
       // With data filter
       checkScanReport(
@@ -255,8 +255,7 @@ class ScanReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         expectedNumAddFilesFromDeltaFiles = expectedNumAddFilesFromDeltaFiles,
         expectedNumActiveAddFiles = expectedNumActiveAddFiles,
         filter = Some(dataFilter),
-        expectedDataSkippingFilter = Some(expectedSkippingFilter)
-      )
+        expectedDataSkippingFilter = Some(expectedSkippingFilter))
 
       // With data and partition filter
       checkScanReport(
@@ -267,8 +266,7 @@ class ScanReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         expectedNumActiveAddFiles = expectedNumActiveAddFiles,
         filter = Some(new Predicate("AND", partFilter, dataFilter)),
         expectedDataSkippingFilter = Some(expectedSkippingFilter),
-        expectedPartitionPredicate = Some(partFilter)
-      )
+        expectedPartitionPredicate = Some(partFilter))
     }
   }
 
@@ -317,8 +315,7 @@ class ScanReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         expectedNumActiveAddFiles = 0,
         expectedIsFullyConsumed = false,
         filter = Some(partFilter),
-        expectedPartitionPredicate = Some(partFilter)
-      )
+        expectedPartitionPredicate = Some(partFilter))
     }
   }
 
@@ -340,13 +337,11 @@ class ScanReportSuite extends AnyFunSuite with MetricsReportTestUtils {
       // Overwrite json file with giberish (this will have a schema mismatch issue for `add`)
       val giberishRow = new GenericRow(
         new StructType().add("add", IntegerType.INTEGER),
-        Collections.singletonMap(0, Integer.valueOf(0))
-      )
+        Collections.singletonMap(0, Integer.valueOf(0)))
       defaultEngine.getJsonHandler.writeJsonFileAtomically(
         FileNames.deltaFile(new Path(tempDir.toString, "_delta_log"), 0),
         Utils.singletonCloseableIterator(giberishRow),
-        true
-      )
+        true)
 
       checkScanReport(
         path,
@@ -354,8 +349,7 @@ class ScanReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         expectedNumAddFiles = 0,
         expectedNumAddFilesFromDeltaFiles = 0,
         expectedNumActiveAddFiles = 0,
-        expectedIsFullyConsumed = false
-      )
+        expectedIsFullyConsumed = false)
     }
   }
 
@@ -375,8 +369,7 @@ class ScanReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         expectException = false,
         expectedNumAddFiles = 20, // each commit creates 2 files
         expectedNumAddFilesFromDeltaFiles = 20,
-        expectedNumActiveAddFiles = 20
-      )
+        expectedNumActiveAddFiles = 20)
     }
   }
 
@@ -398,8 +391,7 @@ class ScanReportSuite extends AnyFunSuite with MetricsReportTestUtils {
           expectException = false,
           expectedNumAddFiles = 20, // each commit creates 2 files
           expectedNumAddFilesFromDeltaFiles = 12, // checkpoint is created at version 3
-          expectedNumActiveAddFiles = 20
-        )
+          expectedNumActiveAddFiles = 20)
       }
     }
   }
@@ -427,8 +419,7 @@ class ScanReportSuite extends AnyFunSuite with MetricsReportTestUtils {
           expectedNumAddFiles = 5 /* checkpoint */ + 8, /* delta */
           expectedNumAddFilesFromDeltaFiles = 8,
           expectedNumActiveAddFiles = 10,
-          expectedNumRemoveFilesSeenFromDeltaFiles = 3
-        )
+          expectedNumRemoveFilesSeenFromDeltaFiles = 3)
       }
     }
   }
@@ -458,8 +449,7 @@ class ScanReportSuite extends AnyFunSuite with MetricsReportTestUtils {
           expectedNumAddFilesFromDeltaFiles = 18,
           expectedNumActiveAddFiles = 7,
           expectedNumDuplicateAddFiles = 12,
-          expectedNumRemoveFilesSeenFromDeltaFiles = 2
-        )
+          expectedNumRemoveFilesSeenFromDeltaFiles = 2)
       }
     }
   }

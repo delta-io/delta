@@ -38,12 +38,14 @@ object NonSparkIcebergTestUtils {
    * @param location Iceberg table root path
    * @param schema   Iceberg table schema
    * @param rows     Data rows we write into the table
+   * @param dataFileIdx index of the parquet file going to be written in the data folder
    */
   def createIcebergTable(
        spark: SparkSession,
        location: String,
        schema: Schema,
-       rows: Seq[Map[String, Any]]): Table = {
+       rows: Seq[Map[String, Any]],
+       dataFileIdx: Int = 1): Table = {
     // scalastyle:off deltahadoopconfiguration
     val tables = new HadoopTables(spark.sessionState.newHadoopConf())
     // scalastyle:on deltahadoopconfiguration
@@ -53,6 +55,23 @@ object NonSparkIcebergTestUtils {
       location
     )
 
+    writeIntoIcebergTable(table, rows, dataFileIdx)
+    table
+  }
+
+  /**
+   * Writes into an Iceberg table with formats/data types not supported by Spark.
+   * This is primarily used for compatibility tests. It includes the following features
+   * * TIME data type that is not supported by Spark.
+   * @param table Iceberg table
+   * @param rows  Data rows we write into the table
+   * @param dataFileIdx index of the parquet file going to be written in the data folder
+   */
+  def writeIntoIcebergTable(
+      table: Table,
+      rows: Seq[Map[String, Any]],
+      dataFileIdx: Int): Unit = {
+    val schema = table.schema()
     val records = rows.map { row =>
       val record = GenericRecord.create(schema)
       row.foreach {
@@ -61,7 +80,7 @@ object NonSparkIcebergTestUtils {
       record
     }
 
-    val parquetLocation = location + "/data/001.parquet"
+    val parquetLocation = table.location() + s"/data/$dataFileIdx.parquet"
 
     val fileAppender: FileAppender[GenericRecord] = Parquet
       .write(table.io().newOutputFile(parquetLocation))
@@ -84,6 +103,5 @@ object NonSparkIcebergTestUtils {
       .newAppend
       .appendFile(dataFile)
       .commit
-    table
   }
 }

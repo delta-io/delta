@@ -28,17 +28,19 @@ import scala.util.Try
 import scala.util.control.NonFatal
 
 import com.databricks.spark.util.TagDefinitions._
+import org.apache.spark.sql.delta.DataFrameUtils
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsUtils
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.redirect.RedirectFeature
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources._
 import org.apache.spark.sql.delta.storage.LogStoreProvider
-import org.apache.spark.sql.delta.util.FileNames
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
+import org.apache.spark.sql.delta.util.FileNames
 import com.google.common.cache.{Cache, CacheBuilder, RemovalNotification}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
@@ -80,7 +82,7 @@ class DeltaLog private(
     val options: Map[String, String],
     val allOptions: Map[String, String],
     val clock: Clock,
-    initialCatalogTable: Option[CatalogTable]
+    val initialCatalogTable: Option[CatalogTable]
   ) extends Checkpoints
   with MetadataCleanup
   with LogStoreProvider
@@ -160,6 +162,7 @@ class DeltaLog private(
   /** The unique identifier for this table. */
   def tableId: String = unsafeVolatileMetadata.id // safe because table id never changes
 
+  def getInitialCatalogTable: Option[CatalogTable] = initialCatalogTable
   /**
    * Combines the tableId with the path of the table to ensure uniqueness. Normally `tableId`
    * should be globally unique, but nothing stops users from copying a Delta table directly to
@@ -187,7 +190,7 @@ class DeltaLog private(
   def loadIndex(
       index: DeltaLogFileIndex,
       schema: StructType = Action.logSchema): DataFrame = {
-    Dataset.ofRows(spark, indexToRelation(index, schema))
+    DataFrameUtils.ofRows(spark, indexToRelation(index, schema))
   }
 
   /* ------------------ *
@@ -557,7 +560,7 @@ class DeltaLog private(
       fileIndex,
       bucketSpec = None,
       dropNullTypeColumnsFromSchema = dropNullTypeColumnsFromSchema)
-    Dataset.ofRows(spark, LogicalRelation(relation, isStreaming = isStreaming))
+    DataFrameUtils.ofRows(spark, LogicalRelation(relation, isStreaming = isStreaming))
   }
 
   /**
@@ -582,7 +585,7 @@ class DeltaLog private(
     }
 
     val fileIndex = TahoeLogFileIndex(
-      spark, this, dataPath, snapshotToUse, partitionFilters, isTimeTravelQuery)
+      spark, this, dataPath, snapshotToUse, catalogTableOpt, partitionFilters, isTimeTravelQuery)
     var bucketSpec: Option[BucketSpec] = None
 
     val r = buildHadoopFsRelationWithFileIndex(snapshotToUse, fileIndex, bucketSpec = bucketSpec)
@@ -620,13 +623,15 @@ class DeltaLog private(
     }
     HadoopFsRelation(
       fileIndex,
-      partitionSchema = DeltaColumnMapping.dropColumnMappingMetadata(
-        snapshot.metadata.partitionSchema),
+      partitionSchema = DeltaTableUtils.removeInternalDeltaMetadata(
+        spark,
+        DeltaTableUtils.removeInternalWriterMetadata(spark, snapshot.metadata.partitionSchema)
+      ),
       // We pass all table columns as `dataSchema` so that Spark will preserve the partition
       // column locations. Otherwise, for any partition columns not in `dataSchema`, Spark would
       // just append them to the end of `dataSchema`.
-      dataSchema = DeltaColumnMapping.dropColumnMappingMetadata(
-        DeltaTableUtils.removeInternalWriterMetadata(spark, dataSchema)
+      dataSchema = DeltaTableUtils.removeInternalDeltaMetadata(
+        spark, DeltaTableUtils.removeInternalWriterMetadata(spark, dataSchema)
       ),
       bucketSpec = bucketSpec,
       fileFormat(snapshot.protocol, snapshot.metadata),
@@ -688,11 +693,15 @@ class DeltaLog private(
 object DeltaLog extends DeltaLogging {
 
   /**
-   * The key type of `DeltaLog` cache. It's a pair of the canonicalized table path and the file
-   * system options (options starting with "fs." or "dfs." prefix) passed into
-   * `DataFrameReader/Writer`
+   * The key type of `DeltaLog` cache. It consists of
+   * - The canonicalized table path
+   * - File system options (options starting with "fs." or "dfs." prefix) passed into
+   *   `DataFrameReader/Writer`
    */
-  private type DeltaLogCacheKey = (Path, Map[String, String])
+  case class DeltaLogCacheKey(
+    path: Path,
+    fsOptions: Map[String, String]
+  )
 
   /** The name of the subdirectory that holds Delta metadata files */
   private[delta] val LOG_DIR_NAME = "_delta_log"
@@ -705,9 +714,8 @@ object DeltaLog extends DeltaLogging {
    * We create only a single [[DeltaLog]] for any given `DeltaLogCacheKey` to avoid wasted work
    * in reconstructing the log.
    */
-  type CacheKey = (Path, Map[String, String])
   private[delta] def getOrCreateCache(conf: SQLConf):
-      Cache[CacheKey, DeltaLog] = synchronized {
+      Cache[DeltaLogCacheKey, DeltaLog] = synchronized {
     deltaLogCache match {
       case Some(c) => c
       case None =>
@@ -721,12 +729,12 @@ object DeltaLog extends DeltaLogging {
               // Various layers will throw null pointer if the RDD is already gone.
             }
           })
-        deltaLogCache = Some(builder.build[CacheKey, DeltaLog]())
+        deltaLogCache = Some(builder.build[DeltaLogCacheKey, DeltaLog]())
         deltaLogCache.get
     }
   }
 
-  private var deltaLogCache: Option[Cache[CacheKey, DeltaLog]] = None
+  private var deltaLogCache: Option[Cache[DeltaLogCacheKey, DeltaLog]] = None
 
   /**
    * Helper to create delta log caches
@@ -889,6 +897,29 @@ object DeltaLog extends DeltaLogging {
     }
 
   /**
+   * Helper method for transforming a given delta log path to the consistent formal path format.
+   */
+  def formalizeDeltaPath(
+      spark: SparkSession,
+      options: Map[String, String],
+      rootPath: Path): Path = {
+    val fileSystemOptions: Map[String, String] =
+      if (spark.sessionState.conf.getConf(
+        DeltaSQLConf.LOAD_FILE_SYSTEM_CONFIGS_FROM_DATAFRAME_OPTIONS)) {
+        options.filterKeys { k =>
+          DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
+        }.toMap
+      } else {
+        Map.empty
+      }
+    // scalastyle:off deltahadoopconfiguration
+    val hadoopConf = spark.sessionState.newHadoopConfWithOptions(fileSystemOptions)
+    // scalastyle:on deltahadoopconfiguration
+    val fs = rootPath.getFileSystem(hadoopConf)
+    fs.makeQualified(rootPath)
+  }
+
+  /**
    * Helper function to be used with the forTableWithSnapshot calls. Thunk is a
    * partially applied DeltaLog.forTable call, which we can then wrap around with a
    * snapshot update. We use the system clock to avoid back-to-back updates.
@@ -926,14 +957,14 @@ object DeltaLog extends DeltaLogging {
     // scalastyle:on deltahadoopconfiguration
     val fs = rawPath.getFileSystem(hadoopConf)
     val path = fs.makeQualified(rawPath)
-    def createDeltaLog(): DeltaLog = recordDeltaOperation(
+    def createDeltaLog(tablePath: Path = path): DeltaLog = recordDeltaOperation(
       null,
       "delta.log.create",
-      Map(TAG_TAHOE_PATH -> path.getParent.toString)) {
+      Map(TAG_TAHOE_PATH -> tablePath.getParent.toString)) {
         AnalysisHelper.allowInvokingTransformsInAnalyzer {
           new DeltaLog(
-            logPath = path,
-            dataPath = path.getParent,
+            logPath = tablePath,
+            dataPath = tablePath.getParent,
             options = fileSystemOptions,
             allOptions = options,
             clock = clock,
@@ -941,7 +972,11 @@ object DeltaLog extends DeltaLogging {
           )
         }
     }
-    def getDeltaLogFromCache(): DeltaLog = {
+    val cacheKey = DeltaLogCacheKey(
+      path,
+      fileSystemOptions)
+
+    def getDeltaLogFromCache: DeltaLog = {
       // The following cases will still create a new ActionLog even if there is a cached
       // ActionLog using a different format path:
       // - Different `scheme`
@@ -949,7 +984,7 @@ object DeltaLog extends DeltaLogging {
       // - Different mount point.
       try {
         getOrCreateCache(spark.sessionState.conf)
-          .get(path -> fileSystemOptions, () => {
+          .get(cacheKey, () => {
             createDeltaLog()
           }
         )
@@ -959,15 +994,51 @@ object DeltaLog extends DeltaLogging {
       }
     }
 
-    val deltaLog = getDeltaLogFromCache()
-    if (Option(deltaLog.sparkContext.get).map(_.isStopped).getOrElse(true)) {
-      // Invalid the cached `DeltaLog` and create a new one because the `SparkContext` of the cached
-      // `DeltaLog` has been stopped.
-      getOrCreateCache(spark.sessionState.conf).invalidate(path -> fileSystemOptions)
-      getDeltaLogFromCache()
-    } else {
-      deltaLog
+    def initializeDeltaLog(): DeltaLog = {
+      val deltaLog = getDeltaLogFromCache
+      if (Option(deltaLog.sparkContext.get).map(_.isStopped).getOrElse(true)) {
+        // Invalid the cached `DeltaLog` and create a new one because the `SparkContext` of the
+        // cached `DeltaLog` has been stopped.
+        getOrCreateCache(spark.sessionState.conf).invalidate(cacheKey)
+        getDeltaLogFromCache
+      } else {
+        deltaLog
+      }
     }
+
+    val deltaLog = initializeDeltaLog()
+    // The deltaLog object may be cached while other session updates table redirect property.
+    // To avoid this potential race condition, we would add a validation inside deltaLog.update
+    // method to ensure deltaLog points to correct place after snapshot is updated.
+    val redirectConfigOpt = RedirectFeature.needDeltaLogRedirect(
+      spark,
+      deltaLog,
+      initialCatalogTable
+    )
+    redirectConfigOpt.map { redirectConfig =>
+      val (redirectLoc, catalogTableOpt) = RedirectFeature
+        .getRedirectLocationAndTable(spark, deltaLog, redirectConfig)
+      val formalizedPath = formalizeDeltaPath(spark, options, redirectLoc)
+      //  with redirect prefix to prevent interference between redirection and normal access.
+      val redirectKey = new Path(RedirectFeature.DELTALOG_PREFIX, redirectLoc)
+      val deltaLogCacheKey = DeltaLogCacheKey(
+        redirectKey,
+        fileSystemOptions)
+      getOrCreateCache(spark.sessionState.conf).get(
+        deltaLogCacheKey,
+        () => {
+            var redirectedDeltaLog = new DeltaLog(
+              logPath = formalizedPath,
+              dataPath = formalizedPath.getParent,
+              options = fileSystemOptions,
+              allOptions = options,
+              clock = clock,
+              initialCatalogTable = catalogTableOpt
+            )
+            redirectedDeltaLog
+        }
+      )
+    }.getOrElse(deltaLog)
   }
 
   /** Invalidate the cached DeltaLog object for the given `dataPath`. */
@@ -990,13 +1061,15 @@ object DeltaLog extends DeltaLogging {
         val iter = deltaLogCache.asMap().keySet().iterator()
         while (iter.hasNext) {
           val key = iter.next()
-          if (key._1 == path) {
+          if (key.path == path) {
             keysToBeRemoved += key
           }
         }
         deltaLogCache.invalidateAll(keysToBeRemoved.asJava)
       } else {
-        deltaLogCache.invalidate(path -> Map.empty)
+        deltaLogCache.invalidate(DeltaLogCacheKey(
+          path,
+          fsOptions = Map.empty))
       }
     } catch {
       case NonFatal(e) => logWarning(e.getMessage, e)

@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.sources
 
-import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaTestUtilsBase, DeltaThrowable}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaOptions, DeltaTestUtilsBase, DeltaThrowable}
 
 import org.apache.spark.{SparkConf, SparkFunSuite}
 import org.apache.spark.sql.test.SharedSparkSession
@@ -87,7 +87,7 @@ class DeltaSourceMetadataEvolutionSupportSuite
   }
 
   /**
-   * Unit test runner covering `validateIfSchemaChangeCanBeUnblockedWithSQLConf()`. Takes as input
+   * Unit test runner covering `validateIfSchemaChangeCanBeUnblocked()`. Takes as input
    * an initial schema (from) and an updated schema (to) and checks that:
    *   1. Non-additive schema changes are correctly detected: matches `expectedResult`
    *   2. Setting SQL confs to unblock the changes allows the check to succeeds.
@@ -117,27 +117,40 @@ class DeltaSourceMetadataEvolutionSupportSuite
       unblock: Seq[Seq[String]] = Seq.empty,
       confs: Seq[(String, String)] = Seq.empty): Unit =
     test(s"$name") {
-      def validate(): Unit =
-        DeltaSourceMetadataEvolutionSupport.validateIfSchemaChangeCanBeUnblockedWithSQLConf(
+      def validate(parameters: Map[String, String]): Unit =
+        DeltaSourceMetadataEvolutionSupport.validateIfSchemaChangeCanBeUnblocked(
           spark,
-           metadataPath = "sourceMetadataPath",
+          parameters,
+          metadataPath = "sourceMetadataPath",
           currentSchema = persistedMetadata(toDDL, toPhysicalNames),
           previousSchema = persistedMetadata(fromDDL, fromPhysicalNames)
         )
       withSQLConf(confs: _*) {
         expectedResult match {
-          case ExpectedResult.Success(_) => validate()
+          case ExpectedResult.Success(_) => validate(parameters = Map.empty)
           case ExpectedResult.Failure(checkError) =>
+            // Run first without setting any configuration to unblock and check that the validation
+            // fails => column dropped, renamed or with changed type.
             val ex = intercept[DeltaThrowable] {
-              validate()
+              validate(parameters = Map.empty)
             }
             checkError(ex)
 
             // Verify that we can unblock using SQL confs
             for (u <- unblock) {
               withSQLConfUnblockedChanges(u) {
-                validate()
+                validate(parameters = Map.empty)
               }
+            }
+            // Verify that we can unblock using dataframe reader options.
+            for (u <- unblock) {
+              val parameters = u.flatMap {
+                case "allowSourceColumnRenameAndDrop" =>
+                  Seq(DeltaOptions.ALLOW_SOURCE_COLUMN_RENAME -> "always",
+                    DeltaOptions.ALLOW_SOURCE_COLUMN_DROP -> "always")
+                case option => Seq(option -> "always")
+              }
+              validate(parameters.toMap)
             }
         }
       }
@@ -598,12 +611,55 @@ class DeltaSourceMetadataEvolutionSupportSuite
 
   test("combining individual SQL confs to unblock is supported") {
     withSQLConfUnblockedChanges(Seq("allowSourceColumnRename", "allowSourceColumnDrop")) {
-      DeltaSourceMetadataEvolutionSupport.validateIfSchemaChangeCanBeUnblockedWithSQLConf(
+      DeltaSourceMetadataEvolutionSupport.validateIfSchemaChangeCanBeUnblocked(
         spark,
+        parameters = Map.empty,
         metadataPath = "sourceMetadataPath",
         currentSchema = persistedMetadata("a int", Map(Seq("a") -> "b")),
         previousSchema = persistedMetadata("a int, b int", Map.empty)
       )
     }
+  }
+
+  test("combining SQL confs and reader options to unblock is supported") {
+    withSQLConfUnblockedChanges(Seq("allowSourceColumnRename")) {
+      DeltaSourceMetadataEvolutionSupport.validateIfSchemaChangeCanBeUnblocked(
+        spark,
+        parameters = Map("allowSourceColumnDrop" -> "always"),
+        metadataPath = "sourceMetadataPath",
+        currentSchema = persistedMetadata("a int", Map(Seq("a") -> "b")),
+        previousSchema = persistedMetadata("a int, b int", Map.empty)
+      )
+    }
+  }
+
+  test("unblocking column drop for specific version with reader option is supported") {
+    DeltaSourceMetadataEvolutionSupport.validateIfSchemaChangeCanBeUnblocked(
+      spark,
+      parameters = Map("allowSourceColumnDrop" -> "0"),
+      metadataPath = "sourceMetadataPath",
+      currentSchema = persistedMetadata("a int", Map.empty),
+      previousSchema = persistedMetadata("a int, b int", Map.empty)
+    )
+  }
+
+  test("unblocking column rename for specific version with reader option is supported") {
+    DeltaSourceMetadataEvolutionSupport.validateIfSchemaChangeCanBeUnblocked(
+      spark,
+      parameters = Map("allowSourceColumnRename" -> "0"),
+      metadataPath = "sourceMetadataPath",
+      currentSchema = persistedMetadata("b int", Map(Seq("b") -> "a")),
+      previousSchema = persistedMetadata("a int", Map.empty)
+    )
+  }
+
+  test("unblocking column type change for specific version with reader option is supported") {
+    DeltaSourceMetadataEvolutionSupport.validateIfSchemaChangeCanBeUnblocked(
+      spark,
+      parameters = Map("allowSourceColumnTypeChange" -> "0"),
+      metadataPath = "sourceMetadataPath",
+      currentSchema = persistedMetadata("a int", Map.empty),
+      previousSchema = persistedMetadata("a byte", Map.empty)
+    )
   }
 }

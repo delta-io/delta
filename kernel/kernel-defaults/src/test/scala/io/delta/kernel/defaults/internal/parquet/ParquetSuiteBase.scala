@@ -17,15 +17,19 @@ package io.delta.kernel.defaults.internal.parquet
 
 import java.nio.file.{Files, Paths}
 import java.util.Optional
+
 import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
+
 import io.delta.kernel.data.{ColumnarBatch, FilteredColumnarBatch}
+import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
 import io.delta.kernel.expressions.{Column, Predicate}
 import io.delta.kernel.internal.util.ColumnMapping
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.types.{ArrayType, DataType, MapType, StructField, StructType}
 import io.delta.kernel.utils.{DataFileStatus, FileStatus}
+
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.apache.parquet.hadoop.metadata.{ColumnPath, ParquetMetadata}
@@ -33,6 +37,7 @@ import org.apache.parquet.hadoop.metadata.{ColumnPath, ParquetMetadata}
 trait ParquetSuiteBase extends TestUtils {
 
   implicit class DataFileStatusOps(dataFileStatus: DataFileStatus) {
+
     /**
      * Convert the [[DataFileStatus]] to a [[TestRow]].
      * (path, size, modification time, numRecords,
@@ -54,8 +59,7 @@ trait ParquetSuiteBase extends TestUtils {
               Seq(
                 Option(stats.getMinValues.get(column)).map(_.getValue).orNull,
                 Option(stats.getMaxValues.get(column)).map(_.getValue).orNull,
-                Option(stats.getNullCounts.get(column)).orNull
-              )
+                Option(stats.getNullCounts.get(column)).orNull)
             } else {
               Seq(null, null, null)
             }
@@ -92,8 +96,8 @@ trait ParquetSuiteBase extends TestUtils {
    * Use Kernel Parquet reader to read the data from the Parquet files.
    */
   def verifyContentUsingKernelReader(
-    actualFileDir: String,
-    expected: Seq[FilteredColumnarBatch]): Unit = {
+      actualFileDir: String,
+      expected: Seq[FilteredColumnarBatch]): Unit = {
 
     val dataSchema = expected.head.getData.getSchema
 
@@ -112,8 +116,8 @@ trait ParquetSuiteBase extends TestUtils {
    * Use Spark Parquet reader to read the data from the Parquet files.
    */
   def verifyContentUsingSparkReader(
-    actualFileDir: String,
-    expected: Seq[FilteredColumnarBatch]): Unit = {
+      actualFileDir: String,
+      expected: Seq[FilteredColumnarBatch]): Unit = {
 
     val dataSchema = expected.head.getData.getSchema;
 
@@ -185,8 +189,7 @@ trait ParquetSuiteBase extends TestUtils {
                 verifyNestedFieldId(
                   nearestAncestorStructField,
                   relativePathToNearestAncestor,
-                  elemPathInParquet
-                )
+                  elemPathInParquet)
               }
               visitDeltaType(
                 elemPathInParquet,
@@ -204,13 +207,11 @@ trait ParquetSuiteBase extends TestUtils {
                 verifyNestedFieldId(
                   nearestAncestorStructField,
                   keyRelativePathToNearestAncestor,
-                  keyPathInParquet
-                )
+                  keyPathInParquet)
                 verifyNestedFieldId(
                   nearestAncestorStructField,
                   valueRelativePathToNearestAncestor,
-                  valuePathInParquet
-                )
+                  valuePathInParquet)
               }
 
               visitDeltaType(
@@ -253,14 +254,17 @@ trait ParquetSuiteBase extends TestUtils {
    * verify the data using the Kernel Parquet reader and Spark Parquet reader.
    */
   def writeToParquetUsingKernel(
-    filteredData: Seq[FilteredColumnarBatch],
-    location: String,
-    targetFileSize: Long = 1024 * 1024,
-    statsColumns: Seq[Column] = Seq.empty): Seq[DataFileStatus] = {
+      filteredData: Seq[FilteredColumnarBatch],
+      location: String,
+      targetFileSize: Long = 1024 * 1024,
+      statsColumns: Seq[Column] = Seq.empty): Seq[DataFileStatus] = {
     val conf = new Configuration(configuration);
     conf.setLong(ParquetFileWriter.TARGET_FILE_SIZE_CONF, targetFileSize)
-    val parquetWriter = new ParquetFileWriter(
-      conf, new Path(location), statsColumns.asJava)
+    val fileIO = new HadoopFileIO(conf)
+    val parquetWriter = ParquetFileWriter.multiFileWriter(
+      fileIO,
+      location,
+      statsColumns.asJava)
 
     parquetWriter.write(toCloseableIterator(filteredData.asJava.iterator())).toSeq
   }
@@ -326,7 +330,8 @@ trait ParquetSuiteBase extends TestUtils {
 
   // Read the parquet files in actionFileDir using Spark Parquet reader
   def readParquetFilesUsingSpark(
-    actualFileDir: String, readSchema: StructType): Seq[TestRow] = {
+      actualFileDir: String,
+      readSchema: StructType): Seq[TestRow] = {
     spark.read
       .format("parquet")
       .parquet(actualFileDir)

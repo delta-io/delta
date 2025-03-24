@@ -32,6 +32,7 @@ import org.apache.spark.sql.delta.hooks.AutoCompactType
 import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.redirect.NoRedirectRule
+import org.apache.spark.sql.delta.redirect.RedirectSpec
 import org.apache.spark.sql.delta.redirect.RedirectState
 import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, InvariantViolationException, SchemaUtils, UnsupportedDataTypeInfo}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -357,18 +358,49 @@ trait DeltaErrorsBase
     )
   }
 
-  def invalidRedirectStateTransition(
-      table: String,
-      oldState: RedirectState,
-      newState: RedirectState): Unit = {
+  def deltaRelationPathMismatch(
+      relationPath: Seq[String],
+      targetType: String,
+      targetPath: Seq[String]
+  ): Throwable = {
     new DeltaIllegalStateException(
-      errorClass = "DELTA_TABLE_INVALID_REDIRECT_STATE_TRANSITION",
+      errorClass = "DELTA_RELATION_PATH_MISMATCH",
       messageParameters = Array(
-        table, table, oldState.name, newState.name)
+        relationPath.mkString("."),
+        targetType,
+        targetPath.mkString(".")
+      )
     )
   }
 
-  def invalidRemoveTableRedirect(table: String, currentState: RedirectState): Unit = {
+  def unrecognizedRedirectSpec(spec: RedirectSpec): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_TABLE_UNRECOGNIZED_REDIRECT_SPEC",
+      messageParameters = Array(spec.toString)
+    )
+  }
+
+  def invalidSetUnSetRedirectCommand(
+      table: String,
+      newProperty: String,
+      existingProperty: String): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_TABLE_INVALID_SET_UNSET_REDIRECT",
+      messageParameters = Array(table, existingProperty, newProperty)
+    )
+  }
+
+  def invalidRedirectStateTransition(
+      table: String,
+      oldState: RedirectState,
+      newState: RedirectState): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_TABLE_INVALID_REDIRECT_STATE_TRANSITION",
+      messageParameters = Array(table, oldState.name, newState.name)
+    )
+  }
+
+  def invalidRemoveTableRedirect(table: String, currentState: RedirectState): Throwable = {
     new DeltaIllegalStateException(
       errorClass = "DELTA_TABLE_INVALID_REMOVE_TABLE_REDIRECT",
       messageParameters = Array(table, table, currentState.name)
@@ -376,7 +408,7 @@ trait DeltaErrorsBase
   }
 
   def invalidCommitIntermediateRedirectState(state: RedirectState): Throwable = {
-    throw new DeltaIllegalStateException (
+    new DeltaIllegalStateException (
       errorClass = "DELTA_COMMIT_INTERMEDIATE_REDIRECT_STATE",
       messageParameters = Array(state.name)
     )
@@ -385,7 +417,7 @@ trait DeltaErrorsBase
   def noRedirectRulesViolated(
       op: DeltaOperations.Operation,
       noRedirectRules: Set[NoRedirectRule]): Throwable = {
-    throw new DeltaIllegalStateException (
+    new DeltaIllegalStateException (
       errorClass = "DELTA_NO_REDIRECT_RULES_VIOLATED",
       messageParameters =
         Array(op.name, noRedirectRules.map("\"" + _ + "\"").mkString("[", ",\n", "]"))
@@ -2126,6 +2158,12 @@ trait DeltaErrorsBase
       messageParameters = Array(oldMode, newMode))
   }
 
+  def enablingColumnMappingDisallowedWhenColumnMappingMetadataAlreadyExists(): Throwable = {
+    new DeltaColumnMappingUnsupportedException(
+      errorClass =
+        "DELTA_ENABLING_COLUMN_MAPPING_DISALLOWED_WHEN_COLUMN_MAPPING_METADATA_ALREADY_EXISTS")
+  }
+
   def generateManifestWithColumnMappingNotSupported: Throwable = {
     new DeltaColumnMappingUnsupportedException(
       errorClass = "DELTA_UNSUPPORTED_MANIFEST_GENERATION_WITH_COLUMN_MAPPING")
@@ -3036,6 +3074,20 @@ trait DeltaErrorsBase
     )
   }
 
+  def cloneFromIcebergSourceWithPartitionEvolution(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CLONE_INCOMPATIBLE_SOURCE.ICEBERG_UNDERGONE_PARTITION_EVOLUTION",
+      messageParameters = Array()
+    )
+  }
+
+  def cloneFromIcebergSourceWithoutSpecs(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CLONE_INCOMPATIBLE_SOURCE.ICEBERG_MISSING_PARTITION_SPECS",
+      messageParameters = Array()
+    )
+  }
+
   def partitionSchemaInIcebergTables: Throwable = {
     new DeltaIllegalArgumentException(errorClass = "DELTA_PARTITION_SCHEMA_IN_ICEBERG_TABLES")
   }
@@ -3130,7 +3182,14 @@ trait DeltaErrorsBase
       previousSchemaChangeVersion: Long,
       currentSchemaChangeVersion: Long,
       checkpointHash: Int,
+      readerOptionsUnblock: Seq[String],
       sqlConfsUnblock: Seq[String]): Throwable = {
+    val unblockChangeOptions = readerOptionsUnblock.map { option =>
+        s"""  .option("$option", "$currentSchemaChangeVersion")"""
+      }.mkString("\n")
+    val unblockStreamOptions = readerOptionsUnblock.map { option =>
+        s"""  .option("$option", "always")"""
+      }.mkString("\n")
     val unblockChangeConfs = sqlConfsUnblock.map { conf =>
         s"""  SET $conf.ckpt_$checkpointHash = $currentSchemaChangeVersion;"""
       }.mkString("\n")
@@ -3148,6 +3207,8 @@ trait DeltaErrorsBase
         previousSchemaChangeVersion.toString,
         currentSchemaChangeVersion.toString,
         currentSchemaChangeVersion.toString,
+        unblockChangeOptions,
+        unblockStreamOptions,
         unblockChangeConfs,
         unblockStreamConfs,
         unblockAllConfs
@@ -3159,6 +3220,7 @@ trait DeltaErrorsBase
       previousSchemaChangeVersion: Long,
       currentSchemaChangeVersion: Long,
       checkpointHash: Int,
+      readerOptionsUnblock: Seq[String],
       sqlConfsUnblock: Seq[String],
       wideningTypeChanges: Seq[TypeChange]): Throwable = {
 
@@ -3167,6 +3229,12 @@ trait DeltaErrorsBase
         s"${change.toType.sql}"
       }.mkString("\n")
 
+    val unblockChangeOptions = readerOptionsUnblock.map { option =>
+        s"""  .option("$option", "$currentSchemaChangeVersion")"""
+      }.mkString("\n")
+    val unblockStreamOptions = readerOptionsUnblock.map { option =>
+        s"""  .option("$option", "always")"""
+      }.mkString("\n")
     val unblockChangeConfs = sqlConfsUnblock.map { conf =>
         s"""  SET $conf.ckpt_$checkpointHash = $currentSchemaChangeVersion;"""
       }.mkString("\n")
@@ -3184,6 +3252,8 @@ trait DeltaErrorsBase
         currentSchemaChangeVersion.toString,
         wideningTypeChangesStr,
         currentSchemaChangeVersion.toString,
+        unblockChangeOptions,
+        unblockStreamOptions,
         unblockChangeConfs,
         unblockStreamConfs,
         unblockAllConfs

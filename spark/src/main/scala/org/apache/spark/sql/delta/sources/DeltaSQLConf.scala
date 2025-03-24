@@ -22,9 +22,9 @@ import java.util.concurrent.TimeUnit
 import org.apache.spark.internal.config.ConfigBuilder
 import org.apache.spark.network.util.ByteUnit
 import org.apache.spark.sql.catalyst.FileSourceOptions
+import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.storage.StorageLevel
-import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 
 /**
  * [[SQLConf]] entries for Delta features.
@@ -440,15 +440,33 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
-  val FAST_DROP_FEATURE_ENABLED =
-    buildConf("tableFeatures.dev.fastDropFeature.enabled")
+  val ALLOW_METADATA_CLEANUP_WHEN_ALL_PROTOCOLS_SUPPORTED =
+    buildConf("tableFeatures.allowMetadataCleanupWhenAllProtocolsSupported")
       .internal()
       .doc(
-        """Whether to enable the fast drop feature feature functionality.
-          |This feature is currently in development and this config is only intended to be enabled
-          |for testing purposes.""".stripMargin)
+        """Whether to perform protocol validation when the client is unable to clean
+          |up to 'delta.requireCheckpointProtectionBeforeVersion'.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val ALLOW_METADATA_CLEANUP_CHECKPOINT_EXISTENCE_CHECK_DISABLED =
+    buildConf("tableFeatures.dev.allowMetadataCleanupCheckpointExistenceCheck.disabled")
+      .internal()
+      .doc(
+        """Whether to disable the checkpoint check at the cleanup boundary when performing
+          |the CheckpointProtectionTableFeature validations.
+          |This is only used for testing purposes.'.""".stripMargin)
       .booleanConf
       .createWithDefault(false)
+
+  val FAST_DROP_FEATURE_ENABLED =
+    buildConf("tableFeatures.fastDropFeature.enabled")
+      .internal()
+      .doc(
+        """Whether to allow dropping features with the fast drop feature feature
+          |functionality.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
 
   val FAST_DROP_FEATURE_DV_DISCOVERY_IN_VACUUM_DISABLED =
     buildConf("tableFeatures.dev.fastDropFeature.DVDiscoveryInVacuum.disabled")
@@ -460,7 +478,7 @@ trait DeltaSQLConfBase {
       .createWithDefault(false)
 
   val FAST_DROP_FEATURE_GENERATE_DV_TOMBSTONES =
-    buildConf("tableFeatures.dev.fastDropFeature.generateDVTombstones.enabled")
+    buildConf("tableFeatures.fastDropFeature.generateDVTombstones.enabled")
       .internal()
       .doc(
         """Whether to generate DV tombstones when dropping deletion vectors.
@@ -470,7 +488,7 @@ trait DeltaSQLConfBase {
       .createWithDefaultFunction(() => SQLConf.get.getConf(DeltaSQLConf.FAST_DROP_FEATURE_ENABLED))
 
   val FAST_DROP_FEATURE_DV_TOMBSTONE_COUNT_THRESHOLD =
-    buildConf("tableFeatures.dev.fastDropFeature.dvTombstoneCountThreshold")
+    buildConf("tableFeatures.fastDropFeature.dvTombstoneCountThreshold")
       .doc(
         """The maximum number of DV tombstones we are allowed store to memory when dropping
           |deletion vectors. When the resulting number of DV tombstones is higher, we use
@@ -479,6 +497,15 @@ trait DeltaSQLConfBase {
       .intConf
       .checkValue(_ >= 0, "DVTombstoneCountThreshold must not be negative.")
       .createWithDefault(10000)
+
+  val FAST_DROP_FEATURE_STREAMING_ALWAYS_VALIDATE_PROTOCOL =
+    buildConf("tableFeatures.fastDropFeature.alwaysValidateProtocolInStreaming.enabled")
+      .internal()
+      .doc(
+        """Whether to validate the protocol when starting a stream from arbitrary
+          |versions.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
 
   val DELTA_MAX_SNAPSHOT_LINEAGE_LENGTH =
     buildConf("maxSnapshotLineageLength")
@@ -615,6 +642,18 @@ trait DeltaSQLConfBase {
       .doc("When enabled, reads will not fail if the commit coordinator implementation " +
         "is missing. Writes will still fail and reads will just rely on backfilled commits. " +
         "This also means that reads can be stale.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val REMOVE_EXISTS_DEFAULT_FROM_SCHEMA_ON_EVERY_METADATA_CHANGE =
+    buildConf("allowColumnDefaults.removeExistsDefaultFromSchemaOnMetadataChange")
+      .internal()
+      .doc("When enabled, remove all field metadata entries using the 'EXISTS_DEFAULT' key " +
+        "from the schema whenever the table metadata is updated. 'EXISTS_DEFAULT' holds values " +
+        "that are used in Spark for existing rows when a new column with a default value is " +
+        "added to a table. Since we do not support adding columns with a default value in " +
+        "Delta, this configuration should always be removed, also when it was written by an " +
+        "older version that still put it into the schema.")
       .booleanConf
       .createWithDefault(true)
 
@@ -1295,6 +1334,14 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+    val DELTA_TYPE_WIDENING_REMOVE_SCHEMA_METADATA =
+    buildConf("typeWidening.removeSchemaMetadata")
+      .doc("When true, type widening metadata is removed from schemas that are surfaced outside " +
+        "of Delta or used for schema comparisons")
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_IS_DELTA_TABLE_THROW_ON_ERROR =
     buildConf("isDeltaTable.throwOnError")
       .internal()
@@ -1953,6 +2000,18 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_COLUMN_MAPPING_DISALLOW_ENABLING_WHEN_METADATA_ALREADY_EXISTS =
+    buildConf("columnMapping.disallowEnablingWhenColumnMappingMetadataAlreadyExists")
+      .doc(
+        """
+          |If Delta table already has column mapping metadata before the feature is enabled, it is
+          |as a result of a corruption or a bug. Enabling column mapping in such a case can lead to
+          |further corruption of the table and should be disallowed.
+          |""".stripMargin)
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
+
   val DYNAMIC_PARTITION_OVERWRITE_ENABLED =
     buildConf("dynamicPartitionOverwrite.enabled")
       .doc("Whether to overwrite partitions dynamically when 'partitionOverwriteMode' is set to " +
@@ -2137,6 +2196,15 @@ trait DeltaSQLConfBase {
       .doc("Controls the target file deletion vector file size when packing multiple" +
         "deletion vectors in a single file.")
       .bytesConf(ByteUnit.BYTE)
+      /**
+       * A [[DeletionVectorDescriptor]] stores an offset as a 32-bit integer into the file where the
+       * deletion vector is stored. There is a hard limit of ~2.1GB for this file before the offset
+       * integer overflows. Since we do bin packing with estimates, we set a lower internal
+       * limit to be safe.
+       */
+      .checkValue(_ >= 0, "deletionVectors.packing.targetSize must be non-negative")
+      .checkValue(_ < 3L * 1024L * 1024L * 1024L / 2L,
+         "deletionVectors.packing.targetSize must be less than 1.5GB")
       .createWithDefault(2L * 1024L * 1024L)
 
   val TIGHT_BOUND_COLUMN_ON_FILE_INIT_DISABLED =
@@ -2261,6 +2329,16 @@ trait DeltaSQLConfBase {
       .checkValue(v => v >= 1, "Must be at least 1.")
       .createWithDefault(100)
 
+  val DELTA_STATS_COLLECTION_FALLBACK_TO_INTERPRETED_PROJECTION =
+    buildConf("collectStats.fallbackToInterpretedProjection")
+      .internal()
+      .doc("When enabled, the updateStats expression will use the standard code path" +
+        " that falls back to an interpreted expression if codegen fails. This should" +
+        " always be true. The config only exists to force the old behavior, which was" +
+        " to always use codegen.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_CONVERT_ICEBERG_STATS = buildConf("collectStats.convertIceberg")
     .internal()
     .doc("When enabled, attempts to convert Iceberg stats to Delta stats when cloning from " +
@@ -2289,6 +2367,13 @@ trait DeltaSQLConfBase {
   val SKIP_REDIRECT_FEATURE =
     buildConf("skipRedirectFeature")
       .doc("True if skipping the redirect feature.")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
+  val ENABLE_TABLE_REDIRECT_FEATURE =
+    buildConf("enableTableRedirectFeature")
+      .doc("True if enabling the table redirect feature.")
       .internal()
       .booleanConf
       .createWithDefault(false)

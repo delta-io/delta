@@ -15,17 +15,16 @@
  */
 package io.delta.kernel.internal.actions
 
-import org.scalatest.funsuite.AnyFunSuite
+import java.lang.{Boolean => JBoolean, Long => JLong}
+import java.util.Optional
 
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.data.Row
-import io.delta.kernel.internal.util.VectorUtils
+import io.delta.kernel.internal.util.{StatsUtils, VectorUtils}
 import io.delta.kernel.internal.util.VectorUtils.stringStringMapValue
-import io.delta.kernel.utils.DataFileStatistics.deserializeFromJson
 
-import java.util.Optional
-import java.lang.{Boolean => JBoolean, Long => JLong}
+import org.scalatest.funsuite.AnyFunSuite
 
 class AddFileSuite extends AnyFunSuite {
 
@@ -42,14 +41,14 @@ class AddFileSuite extends AnyFunSuite {
       tags: Option[Map[String, String]] = Option.empty,
       baseRowId: Option[Long] = Option.empty,
       defaultRowCommitVersion: Option[Long] = Option.empty,
-      stats: Option[String] = Option.empty
-  ): Row = {
+      stats: Option[String] = Option.empty): Row = {
     def toJavaOptional[T](option: Option[T]): Optional[T] = option match {
       case Some(value) => Optional.of(value)
       case None => Optional.empty()
     }
 
     AddFile.createAddFileRow(
+      null,
       path,
       stringStringMapValue(partitionValues.asJava),
       size.asInstanceOf[JLong],
@@ -59,8 +58,7 @@ class AddFileSuite extends AnyFunSuite {
       toJavaOptional(tags.map(_.asJava).map(stringStringMapValue)),
       toJavaOptional(baseRowId.asInstanceOf[Option[JLong]]),
       toJavaOptional(defaultRowCommitVersion.asInstanceOf[Option[JLong]]),
-      deserializeFromJson(stats.getOrElse(""))
-    )
+      StatsUtils.deserializeFromJson(stats.getOrElse("")))
   }
 
   test("getters can read AddFile's fields from the backing row") {
@@ -74,8 +72,7 @@ class AddFileSuite extends AnyFunSuite {
       tags = Option(Map("tag1" -> "value1")),
       baseRowId = Option(30L),
       defaultRowCommitVersion = Option(40L),
-      stats = Option("{\"numRecords\":100}")
-    )
+      stats = Option("{\"numRecords\":100}"))
 
     val addFile = new AddFile(addFileRow)
     assert(addFile.getPath === "test/path")
@@ -88,7 +85,7 @@ class AddFileSuite extends AnyFunSuite {
     assert(addFile.getBaseRowId === Optional.of(30L))
     assert(addFile.getDefaultRowCommitVersion === Optional.of(40L))
     // DataFileStatistics doesn't have an equals() override, so we need to compare the string
-    assert(addFile.getStats.get().toString === "{\"numRecords\":100}")
+    assert(addFile.getStats.get().serializeAsJson(null) === "{\"numRecords\":100}")
     assert(addFile.getNumRecords === Optional.of(100L))
   }
 
@@ -108,8 +105,7 @@ class AddFileSuite extends AnyFunSuite {
       generateTestAddFileRow(
         path = "test/path",
         baseRowId = Option(0L),
-        defaultRowCommitVersion = Option(0L)
-      )
+        defaultRowCommitVersion = Option(0L))
     var addFileAction = new AddFile(baseAddFileRow)
 
     (1L until 10L).foreach { i =>
@@ -133,8 +129,7 @@ class AddFileSuite extends AnyFunSuite {
       tags = Option(Map("tag1" -> "value1")),
       baseRowId = Option(12345L),
       defaultRowCommitVersion = Option(67890L),
-      stats = Option("{\"numRecords\":10000}")
-    )
+      stats = Option("{\"numRecords\":10000}"))
     val addFile = new AddFile(addFileRow)
     val expectedString = "AddFile{" +
       "path='test/path', " +
@@ -146,7 +141,7 @@ class AddFileSuite extends AnyFunSuite {
       "tags=Optional[{tag1=value1}], " +
       "baseRowId=Optional[12345], " +
       "defaultRowCommitVersion=Optional[67890], " +
-      "stats=Optional[{\"numRecords\":10000}]}"
+      "stats={\"numRecords\":10000}}"
     assert(addFile.toString == expectedString)
   }
 
@@ -156,8 +151,7 @@ class AddFileSuite extends AnyFunSuite {
       size = 100L,
       partitionValues = Map("a" -> "1"),
       baseRowId = Option(12345L),
-      stats = Option("{\"numRecords\":100}")
-    )
+      stats = Option("{\"numRecords\":100}"))
 
     // Create an identical AddFile
     val addFileRow2 = generateTestAddFileRow(
@@ -165,8 +159,7 @@ class AddFileSuite extends AnyFunSuite {
       size = 100L,
       partitionValues = Map("a" -> "1"),
       baseRowId = Option(12345L),
-      stats = Option("{\"numRecords\":100}")
-    )
+      stats = Option("{\"numRecords\":100}"))
 
     // Create a AddFile with different path
     val addFileRowDiffPath = generateTestAddFileRow(
@@ -174,8 +167,7 @@ class AddFileSuite extends AnyFunSuite {
       size = 100L,
       partitionValues = Map("a" -> "1"),
       baseRowId = Option(12345L),
-      stats = Option("{\"numRecords\":100}")
-    )
+      stats = Option("{\"numRecords\":100}"))
 
     // Create a AddFile with different partition values, which is handled specially in equals()
     val addFileRowDiffPartition = generateTestAddFileRow(
@@ -183,8 +175,7 @@ class AddFileSuite extends AnyFunSuite {
       size = 100L,
       partitionValues = Map("x" -> "0"),
       baseRowId = Option(12345L),
-      stats = Option("{\"numRecords\":100}")
-    )
+      stats = Option("{\"numRecords\":100}"))
 
     val addFile1 = new AddFile(addFileRow1)
     val addFile2 = new AddFile(addFileRow2)
@@ -210,16 +201,14 @@ class AddFileSuite extends AnyFunSuite {
       size = 100L,
       partitionValues = Map("a" -> "1"),
       baseRowId = Option(12345L),
-      stats = Option("{\"numRecords\":100}")
-    )
+      stats = Option("{\"numRecords\":100}"))
 
     val addFileRow2 = generateTestAddFileRow(
       path = "test/path",
       size = 100L,
       partitionValues = Map("a" -> "1"),
       baseRowId = Option(12345L),
-      stats = Option("{\"numRecords\":100}")
-    )
+      stats = Option("{\"numRecords\":100}"))
 
     val addFile1 = new AddFile(addFileRow1)
     val addFile2 = new AddFile(addFileRow2)

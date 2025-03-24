@@ -15,35 +15,43 @@
  */
 package io.delta.kernel.defaults
 
+import java.math.{BigDecimal => JBigDecimal}
+import java.sql.Date
+import java.time.{Instant, OffsetDateTime}
+import java.time.temporal.ChronoUnit
+import java.util.Optional
+
+import scala.collection.JavaConverters._
+
 import io.delta.golden.GoldenTableUtils.goldenTablePath
-import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch, Row}
+import io.delta.kernel.{Scan, Snapshot, Table}
+import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch, Row}
 import io.delta.kernel.defaults.engine.{DefaultEngine, DefaultJsonHandler, DefaultParquetHandler}
+import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO
+import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
+import io.delta.kernel.defaults.internal.data.vector.{DefaultGenericVector, DefaultStructVector}
 import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestUtils}
 import io.delta.kernel.engine.{Engine, JsonHandler, ParquetHandler}
-import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.expressions._
+import io.delta.kernel.expressions.Literal._
+import io.delta.kernel.internal.{InternalScanFileUtils, ScanImpl, TableConfig}
 import io.delta.kernel.internal.util.InternalUtils
-import io.delta.kernel.internal.{InternalScanFileUtils, ScanImpl}
 import io.delta.kernel.types._
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.StringType.STRING
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
-import io.delta.kernel.{Scan, Snapshot, Table}
-import org.apache.hadoop.conf.Configuration
-import org.apache.spark.sql.catalyst.plans.SQLHelper
+import io.delta.kernel.utils.CloseableIterable.emptyIterable
+
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog}
-import org.apache.spark.sql.types.{IntegerType => SparkIntegerType, StructField => SparkStructField, StructType => SparkStructType}
+
+import org.apache.hadoop.conf.Configuration
 import org.apache.spark.sql.{Row => SparkRow}
+import org.apache.spark.sql.catalyst.plans.SQLHelper
+import org.apache.spark.sql.types.{IntegerType => SparkIntegerType, StructField => SparkStructField, StructType => SparkStructType}
 import org.scalatest.funsuite.AnyFunSuite
 
-import java.math.{BigDecimal => JBigDecimal}
-import java.sql.Date
-import java.time.temporal.ChronoUnit
-import java.time.{Instant, OffsetDateTime}
-import java.util.Optional
-import scala.collection.JavaConverters._
-
-class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with SQLHelper {
+class ScanSuite extends AnyFunSuite with TestUtils
+    with ExpressionTestUtils with SQLHelper with DeltaTableWriteSuiteBase {
 
   import io.delta.kernel.defaults.ScanSuite._
 
@@ -52,7 +60,8 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
   // scalastyle:on sparkimplicits
 
   private def getDataSkippingConfs(
-    indexedCols: Option[Int], deltaStatsColNamesOpt: Option[String]): Seq[(String, String)] = {
+      indexedCols: Option[Int],
+      deltaStatsColNamesOpt: Option[String]): Seq[(String, String)] = {
     val numIndexedColsConfOpt = indexedCols
       .map(DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.defaultTablePropertyKey -> _.toString)
     val indexedColNamesConfOpt = deltaStatsColNamesOpt
@@ -61,11 +70,11 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
   }
 
   def writeDataSkippingTable(
-    tablePath: String,
-    data: String,
-    schema: SparkStructType,
-    indexedCols: Option[Int],
-    deltaStatsColNamesOpt: Option[String]): Unit = {
+      tablePath: String,
+      data: String,
+      schema: SparkStructType,
+      indexedCols: Option[Int],
+      deltaStatsColNamesOpt: Option[String]): Unit = {
     withSQLConf(getDataSkippingConfs(indexedCols, deltaStatsColNamesOpt): _*) {
       val jsonRecords = data.split("\n").toSeq
       val reader = spark.read
@@ -105,9 +114,10 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
         snapshot.getScanBuilder()
           .withFilter(predicate)
           .build())
-      assert(scanFiles.isEmpty, s"Expected miss but got hit for $predicate\n" +
-        s"Returned scan files have stats: ${getScanFileStats(scanFiles)}"
-      )
+      assert(
+        scanFiles.isEmpty,
+        s"Expected miss but got hit for $predicate\n" +
+          s"Returned scan files have stats: ${getScanFileStats(scanFiles)}")
     }
   }
 
@@ -120,19 +130,20 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
     filterToNumExpFiles.foreach { case (filter, numExpFiles) =>
       val scanFiles = collectScanFileRows(
         snapshot.getScanBuilder().withFilter(filter).build())
-      assert(scanFiles.length == numExpFiles,
+      assert(
+        scanFiles.length == numExpFiles,
         s"Expected $numExpFiles but found ${scanFiles.length} for $filter")
     }
   }
 
   def testSkipping(
-    testName: String,
-    data: String,
-    schema: SparkStructType = null,
-    hits: Seq[Predicate],
-    misses: Seq[Predicate],
-    indexedCols: Option[Int] = None,
-    deltaStatsColNamesOpt: Option[String] = None): Unit = {
+      testName: String,
+      data: String,
+      schema: SparkStructType = null,
+      hits: Seq[Predicate],
+      misses: Seq[Predicate],
+      indexedCols: Option[Int] = None,
+      deltaStatsColNamesOpt: Option[String] = None): Unit = {
     test(testName) {
       withTempDir { tempDir =>
         writeDataSkippingTable(
@@ -140,28 +151,30 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
           data,
           schema,
           indexedCols,
-          deltaStatsColNamesOpt
-        )
+          deltaStatsColNamesOpt)
         checkSkipping(
           tempDir.getCanonicalPath,
           hits,
-          misses
-        )
+          misses)
       }
     }
   }
 
   /* Where timestampStr is in the format of "yyyy-MM-dd'T'HH:mm:ss.SSSXXX" */
-  def getTimestampPredicate(expr: String, col: Column,
-                            timestampStr: String, timeStampType: String): Predicate = {
+  def getTimestampPredicate(
+      expr: String,
+      col: Column,
+      timestampStr: String,
+      timeStampType: String): Predicate = {
     val time = OffsetDateTime.parse(timestampStr)
-    new Predicate(expr, col,
+    new Predicate(
+      expr,
+      col,
       if (timeStampType.equalsIgnoreCase("timestamp")) {
         ofTimestamp(ChronoUnit.MICROS.between(Instant.EPOCH, time))
       } else {
         ofTimestampNtz(ChronoUnit.MICROS.between(Instant.EPOCH, time))
-      }
-    )
+      })
   }
 
   //////////////////////////////////////////////////////////////////////////////////
@@ -208,8 +221,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       not(nullSafeEquals(ofInt(1), col("a"))), // NOT 1 <=> a
       nullSafeEquals(ofInt(2), col("a")), // 2 <=> a
       nullSafeEquals(col("a"), ofInt(2)) // a <=> 2
-    )
-  )
+    ))
 
   testSkipping(
     "data skipping - nested, single 1",
@@ -225,8 +237,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       equals(nestedCol("a.b"), ofInt(2)), // a.b = 2
       greaterThan(nestedCol("a.b"), ofInt(1)), // a.b > 1
       lessThan(nestedCol("a.b"), ofInt(1)) // a.b < 1
-    )
-  )
+    ))
 
   testSkipping(
     "data skipping - double nested, single 1",
@@ -242,8 +253,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       equals(nestedCol("a.b.c"), ofInt(2)), // a.b.c = 2
       greaterThan(nestedCol("a.b.c"), ofInt(1)), // a.b.c > 1
       lessThan(nestedCol("a.b.c"), ofInt(1)) // a.b.c < 1
-    )
-  )
+    ))
 
   private def longString(str: String) = str * 1000
 
@@ -263,9 +273,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
     ),
     misses = Seq(
       lessThan(col("a"), ofString("AA")),
-      greaterThan(col("a"), ofString("CD"))
-    )
-  )
+      greaterThan(col("a"), ofString("CD"))))
 
   testSkipping(
     "data skipping - long strings - long max",
@@ -285,9 +293,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
     ),
     misses = Seq(
       greaterThanOrEqual(col("a"), ofString("D")),
-      greaterThan(col("a"), ofString("CD"))
-    )
-  )
+      greaterThan(col("a"), ofString("CD"))))
 
   // Test:'starts with'  Expression: like
   // Test:'starts with, nested'  Expression: like
@@ -301,20 +307,14 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
     hits = Seq(
       new And(
         greaterThan(col("a"), ofInt(0)),
-        lessThan(col("a"), ofInt(3))
-      ),
+        lessThan(col("a"), ofInt(3))),
       new And(
         lessThanOrEqual(col("a"), ofInt(1)),
-        greaterThan(col("a"), ofInt(-1))
-      )
-    ),
+        greaterThan(col("a"), ofInt(-1)))),
     misses = Seq(
       new And(
         lessThan(col("a"), ofInt(0)),
-        greaterThan(col("a"), ofInt(-2))
-      )
-    )
-  )
+        greaterThan(col("a"), ofInt(-2)))))
 
   testSkipping(
     "data skipping - and statements - two fields",
@@ -325,25 +325,19 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
     hits = Seq(
       new And(
         greaterThan(col("a"), ofInt(0)),
-        equals(col("b"), ofString("2017-09-01"))
-      ),
+        equals(col("b"), ofString("2017-09-01"))),
       new And(
         equals(col("a"), ofInt(2)),
-        greaterThanOrEqual(col("b"), ofString("2017-08-30"))
-      ),
+        greaterThanOrEqual(col("b"), ofString("2017-08-30"))),
       // note startsWith is not supported yet but these should still be hits once supported
       new And( //  a >= 2 AND b like '2017-08-%'
         greaterThanOrEqual(col("a"), ofInt(2)),
-        startsWith(col("b"), ofString("2017-08-"))
-      ),
+        startsWith(col("b"), ofString("2017-08-"))),
       // MOVE BELOW EXPRESSION TO MISSES ONCE SUPPORTED BY DATA SKIPPING
       new And( // a > 0 AND b like '2016-%'
         greaterThan(col("a"), ofInt(0)),
-        startsWith(col("b"), ofString("2016-"))
-      )
-    ),
-    misses = Seq()
-  )
+        startsWith(col("b"), ofString("2016-")))),
+    misses = Seq())
 
   private val aRem100 = new ScalarExpression("%", Seq(col("a"), ofInt(100)).asJava)
   private val bRem100 = new ScalarExpression("%", Seq(col("b"), ofInt(100)).asJava)
@@ -356,15 +350,12 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
     """,
     hits = Seq(
       // a % 100 < 10 AND b % 100 > 20
-      new And(lessThan(aRem100, ofInt(10)), greaterThan(bRem100, ofInt(20)))
-    ),
+      new And(lessThan(aRem100, ofInt(10)), greaterThan(bRem100, ofInt(20)))),
     misses = Seq(
       // a < 10 AND b % 100 > 20
       new And(lessThan(col("a"), ofInt(10)), greaterThan(bRem100, ofInt(20))),
       // a % 100 < 10 AND b > 20
-      new And(lessThan(aRem100, ofInt(10)), greaterThan(col("b"), ofInt(20)))
-    )
-  )
+      new And(lessThan(aRem100, ofInt(10)), greaterThan(col("b"), ofInt(20)))))
 
   testSkipping(
     "data skipping - or statements - simple",
@@ -376,13 +367,10 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       // a > 0 or a < -3
       new Or(greaterThan(col("a"), ofInt(0)), lessThan(col("a"), ofInt(-3))),
       // a >= 2 or a < -1
-      new Or(greaterThanOrEqual(col("a"), ofInt(2)), lessThan(col("a"), ofInt(-1)))
-    ),
+      new Or(greaterThanOrEqual(col("a"), ofInt(2)), lessThan(col("a"), ofInt(-1)))),
     misses = Seq(
       // a > 5 or a < -2
-      new Or(greaterThan(col("a"), ofInt(5)), lessThan(col("a"), ofInt(-2)))
-    )
-  )
+      new Or(greaterThan(col("a"), ofInt(5)), lessThan(col("a"), ofInt(-2)))))
 
   testSkipping(
     "data skipping - or statements - two fields",
@@ -393,29 +381,22 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
     hits = Seq(
       new Or(
         lessThan(col("a"), ofInt(0)),
-        equals(col("b"), ofString("2017-09-01"))
-      ),
+        equals(col("b"), ofString("2017-09-01"))),
       new Or(
         equals(col("a"), ofInt(2)),
-        lessThan(col("b"), ofString("2017-08-30"))
-      ),
+        lessThan(col("b"), ofString("2017-08-30"))),
       // note startsWith is not supported yet but these should still be hits once supported
       new Or( //  a < 2 or b like '2017-08-%'
         lessThan(col("a"), ofInt(2)),
-        startsWith(col("b"), ofString("2017-08-"))
-      ),
+        startsWith(col("b"), ofString("2017-08-"))),
       new Or( //  a >= 2 or b like '2016-08-%'
         greaterThanOrEqual(col("a"), ofInt(2)),
-        startsWith(col("b"), ofString("2016-08-"))
-      ),
+        startsWith(col("b"), ofString("2016-08-"))),
       // MOVE BELOW EXPRESSION TO MISSES ONCE SUPPORTED BY DATA SKIPPING
       new Or( // a < 0 or b like '2016-%'
         lessThan(col("a"), ofInt(0)),
-        startsWith(col("b"), ofString("2016-"))
-      )
-    ),
-    misses = Seq()
-  )
+        startsWith(col("b"), ofString("2016-")))),
+    misses = Seq())
 
   // One side of OR by itself isn't powerful enough to prune any files.
   testSkipping(
@@ -428,13 +409,10 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       // a % 100 < 10 OR b > 20
       new Or(lessThan(aRem100, ofInt(10)), greaterThan(col("b"), ofInt(20))),
       // a < 10 OR b % 100 > 20
-      new Or(lessThan(col("a"), ofInt(10)), greaterThan(bRem100, ofInt(20)))
-    ),
+      new Or(lessThan(col("a"), ofInt(10)), greaterThan(bRem100, ofInt(20)))),
     misses = Seq(
       // a < 10 OR b > 20
-      new Or(lessThan(col("a"), ofInt(10)), greaterThan(col("b"), ofInt(20)))
-    )
-  )
+      new Or(lessThan(col("a"), ofInt(10)), greaterThan(col("b"), ofInt(20)))))
 
   testSkipping(
     "data skipping - not statements - simple",
@@ -443,17 +421,14 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       {"a": 2}
     """,
     hits = Seq(
-      not(lessThan(col("a"), ofInt(0)))
-    ),
+      not(lessThan(col("a"), ofInt(0)))),
     misses = Seq(
       not(greaterThan(col("a"), ofInt(0))),
       not(lessThan(col("a"), ofInt(3))),
       not(greaterThanOrEqual(col("a"), ofInt(1))),
       not(lessThanOrEqual(col("a"), ofInt(2))),
       not(not(lessThan(col("a"), ofInt(0)))),
-      not(not(equals(col("a"), ofInt(3))))
-    )
-  )
+      not(not(equals(col("a"), ofInt(3))))))
 
   // NOT(AND(a, b)) === OR(NOT(a), NOT(b)) ==> One side by itself cannot prune.
   testSkipping(
@@ -466,31 +441,20 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       not(
         new And(
           greaterThanOrEqual(aRem100, ofInt(10)),
-          lessThanOrEqual(bRem100, ofInt(20))
-        )
-      ),
+          lessThanOrEqual(bRem100, ofInt(20)))),
       not(
         new And(
           greaterThanOrEqual(col("a"), ofInt(10)),
-          lessThanOrEqual(bRem100, ofInt(20))
-        )
-      ),
+          lessThanOrEqual(bRem100, ofInt(20)))),
       not(
         new And(
           greaterThanOrEqual(aRem100, ofInt(10)),
-          lessThanOrEqual(col("b"), ofInt(20))
-        )
-      )
-    ),
+          lessThanOrEqual(col("b"), ofInt(20))))),
     misses = Seq(
       not(
         new And(
           greaterThanOrEqual(col("a"), ofInt(10)),
-          lessThanOrEqual(col("b"), ofInt(20))
-        )
-      )
-    )
-  )
+          lessThanOrEqual(col("b"), ofInt(20))))))
 
   // NOT(OR(a, b)) === AND(NOT(a), NOT(b)) => One side by itself is enough to prune.
   testSkipping(
@@ -503,23 +467,17 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       // NOT(a < 1 OR b > 20),
       not(new Or(lessThan(col("a"), ofInt(1)), greaterThan(col("b"), ofInt(20)))),
       // NOT(a % 100 >= 1 OR b % 100 <= 20)
-      not(new Or(greaterThanOrEqual(aRem100, ofInt(1)), lessThanOrEqual(bRem100, ofInt(20))))
-    ),
+      not(new Or(greaterThanOrEqual(aRem100, ofInt(1)), lessThanOrEqual(bRem100, ofInt(20))))),
     misses = Seq(
       // NOT(a >= 1 OR b <= 20)
       not(
-        new Or(greaterThanOrEqual(col("a"), ofInt(1)), lessThanOrEqual(col("b"), ofInt(20)))
-      ),
+        new Or(greaterThanOrEqual(col("a"), ofInt(1)), lessThanOrEqual(col("b"), ofInt(20)))),
       // NOT(a % 100 >= 1 OR b <= 20),
       not(
-        new Or(greaterThanOrEqual(aRem100, ofInt(1)), lessThanOrEqual(col("b"), ofInt(20)))
-      ),
+        new Or(greaterThanOrEqual(aRem100, ofInt(1)), lessThanOrEqual(col("b"), ofInt(20)))),
       // NOT(a >= 1 OR b % 100 <= 20)
       not(
-        new Or(greaterThanOrEqual(col("a"), ofInt(1)), lessThanOrEqual(bRem100, ofInt(20)))
-      )
-    )
-  )
+        new Or(greaterThanOrEqual(col("a"), ofInt(1)), lessThanOrEqual(bRem100, ofInt(20))))))
 
   // If a column does not have stats, it does not participate in data skipping, which disqualifies
   // that leg of whatever conjunct it was part of.
@@ -534,21 +492,18 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       lessThan(col("b"), ofInt(10)), // b < 10: disqualified
       // note OR is not supported yet but these should still be hits once supported
       new Or( // a < 1 OR b < 10: a disqualified by b (same conjunct)
-        lessThan(col("a"), ofInt(1)), lessThan(col("b"), ofInt(10))),
+        lessThan(col("a"), ofInt(1)),
+        lessThan(col("b"), ofInt(10))),
       new Or( // a < 1 OR (a >= 1 AND b < 10): ==> a < 1 OR a >=1 ==> TRUE
         lessThan(col("a"), ofInt(1)),
-        new And(greaterThanOrEqual(col("a"), ofInt(1)), lessThan(col("b"), ofInt(10)))
-      )
-    ),
+        new And(greaterThanOrEqual(col("a"), ofInt(1)), lessThan(col("b"), ofInt(10))))),
     misses = Seq(
       new And( // a < 1 AND b < 10: ==> a < 1 ==> FALSE
-        lessThan(col("a"), ofInt(1)), lessThan(col("b"), ofInt(10))),
+        lessThan(col("a"), ofInt(1)),
+        lessThan(col("b"), ofInt(10))),
       new Or( // a < 1 OR (a > 10 AND b < 10): ==> a < 1 OR a > 10 ==> FALSE
         lessThan(col("a"), ofInt(1)),
-        new And(greaterThan(col("a"), ofInt(10)), lessThan(col("b"), ofInt(10)))
-      )
-    )
-  )
+        new And(greaterThan(col("a"), ofInt(10)), lessThan(col("b"), ofInt(10))))))
 
   private def generateJsonData(numCols: Int): String = {
     val fields = (0 until numCols).map(i => s""""col${"%02d".format(i)}":$i""".stripMargin)
@@ -562,12 +517,9 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
     hits = Seq(
       equals(col("col00"), ofInt(0)),
       equals(col("col32"), ofInt(32)),
-      equals(col("col32"), ofInt(-1))
-    ),
+      equals(col("col32"), ofInt(-1))),
     misses = Seq(
-      equals(col("col00"), ofInt(1))
-    )
-  )
+      equals(col("col00"), ofInt(1))))
 
   testSkipping(
     "data skipping - nested schema - # indexed column = 3",
@@ -603,8 +555,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       lessThan(col("a"), ofInt(0)), // a < 0
       lessThan(nestedCol("b.c.d"), ofInt(0)), // b.c.d < 0
       lessThan(nestedCol("b.c.e"), ofInt(0)) // b.c.e < 0
-    )
-  )
+    ))
 
   testSkipping(
     "data skipping - nested schema - # indexed column = 0",
@@ -633,10 +584,8 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       lessThan(nestedCol("b.c.d"), ofInt(0)),
       lessThan(nestedCol("b.c.f.i"), ofInt(0)),
       lessThan(nestedCol("b.l"), ofInt(0)),
-      lessThan(col("m"), ofInt(0))
-    ),
-    misses = Seq()
-  )
+      lessThan(col("m"), ofInt(0))),
+    misses = Seq())
 
   testSkipping(
     "data skipping - indexed column names - " +
@@ -665,8 +614,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       // these all have missing stats
       lessThan(col("a"), ofInt(0)),
       lessThan(nestedCol("b.l"), ofInt(0)),
-      lessThan(col("m"), ofInt(0))
-    ),
+      lessThan(col("m"), ofInt(0))),
     misses = Seq(
       lessThan(nestedCol("b.c.d"), ofInt(0)),
       lessThan(nestedCol("b.c.e"), ofInt(0)),
@@ -674,9 +622,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       lessThan(nestedCol("b.c.f.h"), ofInt(0)),
       lessThan(nestedCol("b.c.f.i"), ofInt(0)),
       lessThan(nestedCol("b.c.j"), ofInt(0)),
-      lessThan(nestedCol("b.c.k"), ofInt(0))
-    )
-  )
+      lessThan(nestedCol("b.c.k"), ofInt(0))))
 
   testSkipping(
     "data skipping - indexed column names - index only a subset of leaf columns",
@@ -707,15 +653,12 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       lessThan(nestedCol("b.c.f.g"), ofInt(0)),
       lessThan(nestedCol("b.c.f.i"), ofInt(0)),
       lessThan(nestedCol("b.c.j"), ofInt(0)),
-      lessThan(col("m"), ofInt(0))
-    ),
+      lessThan(col("m"), ofInt(0))),
     misses = Seq(
       lessThan(nestedCol("b.c.e"), ofInt(0)),
       lessThan(nestedCol("b.c.f.h"), ofInt(0)),
       lessThan(nestedCol("b.c.k"), ofInt(0)),
-      lessThan(nestedCol("b.l"), ofInt(0))
-    )
-  )
+      lessThan(nestedCol("b.l"), ofInt(0))))
 
   testSkipping(
     "data skipping - boolean comparisons",
@@ -726,10 +669,8 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       lessThanOrEqual(col("a"), ofBoolean(false)),
       equals(ofBoolean(true), col("a")),
       lessThan(ofBoolean(true), col("a")),
-      not(equals(col("a"), ofBoolean(false)))
-    ),
-    misses = Seq()
-  )
+      not(equals(col("a"), ofBoolean(false)))),
+    misses = Seq())
 
   // Data skipping by stats should still work even when the only data in file is null, in spite of
   // the NULL min/max stats that result -- this is different to having no stats at all.
@@ -759,15 +700,12 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       lessThan(col("a"), ofInt(1)),
       greaterThan(col("a"), ofInt(1)),
       not(equals(col("a"), ofInt(1))),
-      notEquals(col("a"), ofInt(1))
-    ),
+      notEquals(col("a"), ofInt(1))),
     misses = Seq(
       AlwaysFalse.ALWAYS_FALSE,
       nullSafeEquals(col("a"), ofInt(1)),
       not(nullSafeEquals(col("a"), ofNull(INTEGER))),
-      isNotNull(col("a"))
-    )
-  )
+      isNotNull(col("a"))))
 
   testSkipping(
     "data skipping - nulls - null + not-null in same file",
@@ -795,15 +733,12 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       not(nullSafeEquals(col("a"), ofInt(1))),
 
       // MOVE BELOW EXPRESSIONS TO MISSES ONCE SUPPORTED BY DATA SKIPPING
-      notEquals(col("a"), ofInt(1))
-    ),
+      notEquals(col("a"), ofInt(1))),
     misses = Seq(
       AlwaysFalse.ALWAYS_FALSE,
       lessThan(col("a"), ofInt(1)),
       greaterThan(col("a"), ofInt(1)),
-      not(equals(col("a"), ofInt(1)))
-    )
-  )
+      not(equals(col("a"), ofInt(1)))))
 
   Seq("TIMESTAMP", "TIMESTAMP_NTZ").foreach { dataType =>
     test(s"data skipping - on $dataType type") {
@@ -826,20 +761,29 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
             getTimestampPredicate(">=", col("ts"), "2019-09-09T01:02:03.456789Z", dataType),
             getTimestampPredicate("<=", col("ts"), "2019-09-09T01:02:03.456789Z", dataType),
             getTimestampPredicate(
-              ">=", nestedCol("nested.ts"), "2019-09-09T01:02:03.456789Z", dataType),
+              ">=",
+              nestedCol("nested.ts"),
+              "2019-09-09T01:02:03.456789Z",
+              dataType),
             getTimestampPredicate(
-              "<=", nestedCol("nested.ts"), "2019-09-09T01:02:03.456789Z", dataType)
-          ),
+              "<=",
+              nestedCol("nested.ts"),
+              "2019-09-09T01:02:03.456789Z",
+              dataType)),
           misses = Seq(
             getTimestampPredicate("=", col("ts"), "2019-09-09T01:02:03.457001Z", dataType),
             getTimestampPredicate(">=", col("ts"), "2019-09-09T01:02:03.457001Z", dataType),
             getTimestampPredicate("<=", col("ts"), "2019-09-09T01:02:03.455999Z", dataType),
             getTimestampPredicate(
-              ">=", nestedCol("nested.ts"), "2019-09-09T01:02:03.457001Z", dataType),
+              ">=",
+              nestedCol("nested.ts"),
+              "2019-09-09T01:02:03.457001Z",
+              dataType),
             getTimestampPredicate(
-              "<=", nestedCol("nested.ts"), "2019-09-09T01:02:03.455999Z", dataType)
-          )
-        )
+              "<=",
+              nestedCol("nested.ts"),
+              "2019-09-09T01:02:03.455999Z",
+              dataType)))
       }
     }
   }
@@ -864,7 +808,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
           equals(col("c1"), ofInt(1)),
           equals(col("c2"), ofString("2")),
           lessThan(col("c3"), ofFloat(1.5f)),
-          greaterThan(col("c4"), ofFloat(1.0F)),
+          greaterThan(col("c4"), ofFloat(1.0f)),
           equals(col("c6"), ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("2002-02-02")))),
           // Binary Column doesn't support delta statistics.
           equals(col("c7"), ofBinary("1111".getBytes)),
@@ -872,8 +816,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
           equals(col("c8"), ofBoolean(true)),
           equals(col("c8"), ofBoolean(false)),
           greaterThan(col("c9"), ofDecimal(JBigDecimal.valueOf(1.5), 3, 2)),
-          getTimestampPredicate(">=", col("c5"), "2001-01-01T01:00:00-07:00", "TIMESTAMP")
-        ),
+          getTimestampPredicate(">=", col("c5"), "2001-01-01T01:00:00-07:00", "TIMESTAMP")),
         misses = Seq(
           equals(col("c1"), ofInt(10)),
           equals(col("c2"), ofString("4")),
@@ -881,9 +824,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
           greaterThan(col("c4"), ofFloat(5.0f)),
           equals(col("c6"), ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("2003-02-02")))),
           greaterThan(col("c9"), ofDecimal(JBigDecimal.valueOf(2.5), 3, 2)),
-          getTimestampPredicate(">=", col("c5"), "2003-01-01T01:00:00-07:00", "TIMESTAMP")
-        )
-      )
+          getTimestampPredicate(">=", col("c5"), "2003-01-01T01:00:00-07:00", "TIMESTAMP")))
     }
   }
 
@@ -925,8 +866,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
           equals(col("cc8"), ofBoolean(true)),
           equals(col("cc8"), ofBoolean(false)),
           greaterThan(col("cc9"), ofDecimal(JBigDecimal.valueOf(1.5), 3, 2)),
-          getTimestampPredicate(">=", col("cc5"), "2001-01-01T01:00:00-07:00", "TIMESTAMP")
-        ),
+          getTimestampPredicate(">=", col("cc5"), "2001-01-01T01:00:00-07:00", "TIMESTAMP")),
         misses = Seq(
           equals(col("cc1"), ofInt(10)),
           equals(col("cc2"), ofString("4")),
@@ -934,9 +874,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
           greaterThan(col("cc4"), ofFloat(5.0f)),
           equals(col("cc6"), ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("2003-02-02")))),
           getTimestampPredicate(">=", col("cc5"), "2003-01-01T01:00:00-07:00", "TIMESTAMP"),
-          greaterThan(col("cc9"), ofDecimal(JBigDecimal.valueOf(2.5), 3, 2))
-        )
-      )
+          greaterThan(col("cc9"), ofDecimal(JBigDecimal.valueOf(2.5), 3, 2))))
     }
   }
 
@@ -974,8 +912,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
           equals(col("c6"), ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("2002-02-02")))),
           greaterThan(col("c9"), ofDecimal(JBigDecimal.valueOf(1.5), 3, 2)),
           getTimestampPredicate(">=", col("c5"), "2001-01-01T01:00:00-07:00", "TIMESTAMP"),
-          getTimestampPredicate(">=", col("c10"), "2001-01-01T01:00:00-07:00", "TIMESTAMP_NTZ")
-        ),
+          getTimestampPredicate(">=", col("c10"), "2001-01-01T01:00:00-07:00", "TIMESTAMP_NTZ")),
         misses = Seq(
           equals(col("c1"), ofInt(10)),
           lessThan(col("c3"), ofFloat(0.5f)),
@@ -983,37 +920,39 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
           equals(col("c6"), ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("2003-02-02")))),
           greaterThan(col("c9"), ofDecimal(JBigDecimal.valueOf(2.5), 3, 2)),
           getTimestampPredicate(">=", col("c5"), "2003-01-01T01:00:00-07:00", "TIMESTAMP"),
-          getTimestampPredicate(">=", col("c10"), "2003-01-01T01:00:00-07:00", "TIMESTAMP_NTZ")
-        )
-      )
+          getTimestampPredicate(">=", col("c10"), "2003-01-01T01:00:00-07:00", "TIMESTAMP_NTZ")))
     }
   }
 
   test("data skipping by partition and data values - nulls") {
     withTempDir { tableDir =>
-      val dataSeqs = Seq( // each sequence produce a single file
-        Seq((null, null)),
-        Seq((null, "a")),
-        Seq((null, "b")),
-        Seq(("a", "a"), ("a", null)),
-        Seq(("b", null))
-      )
+      val dataSeqs =
+        Seq( // each sequence produce a single file
+          Seq((null, null)),
+          Seq((null, "a")),
+          Seq((null, "b")),
+          Seq(("a", "a"), ("a", null)),
+          Seq(("b", null)))
       dataSeqs.foreach { seq =>
         seq.toDF("key", "value").coalesce(1)
           .write.format("delta").partitionBy("key").mode("append").save(tableDir.getCanonicalPath)
       }
       def checkResults(
-          predicate: Predicate, expNumPartitions: Int, expNumFiles: Long): Unit = {
+          predicate: Predicate,
+          expNumPartitions: Int,
+          expNumFiles: Long): Unit = {
         val snapshot = latestSnapshot(tableDir.getCanonicalPath)
         val scanFiles = collectScanFileRows(
           snapshot.getScanBuilder().withFilter(predicate).build())
-        assert(scanFiles.length == expNumFiles,
+        assert(
+          scanFiles.length == expNumFiles,
           s"Expected $expNumFiles but found ${scanFiles.length} for $predicate")
 
         val partitionValues = scanFiles.map { row =>
           InternalScanFileUtils.getPartitionValues(row)
         }.distinct
-        assert(partitionValues.length == expNumPartitions,
+        assert(
+          partitionValues.length == expNumPartitions,
           s"Expected $expNumPartitions partitions but found ${partitionValues.length}")
       }
 
@@ -1027,40 +966,45 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       checkResults(
         predicate = isNotNull(col("key")),
         expNumPartitions = 2,
-        expNumFiles = 2) // 2 files with key = 'a', and 1 file with key = 'b'
+        expNumFiles = 2
+      ) // 2 files with key = 'a', and 1 file with key = 'b'
 
       checkResults(
         predicate = equals(col("key"), ofString("a")),
         expNumPartitions = 1,
-        expNumFiles = 1) // 1 files with key = 'a'
-
+        expNumFiles = 1
+      ) // 1 files with key = 'a'
 
       checkResults(
         predicate = equals(col("key"), ofString("b")),
         expNumPartitions = 1,
-        expNumFiles = 1) // 1 files with key = 'b'
+        expNumFiles = 1
+      ) // 1 files with key = 'b'
 
       // TODO shouldn't partition filters on unsupported expressions just not prune instead of fail?
       checkResults(
         predicate = isNull(col("key")),
         expNumPartitions = 1,
-        expNumFiles = 3) // 3 files with key = null
-
+        expNumFiles = 3
+      ) // 3 files with key = null
 
       checkResults(
         predicate = nullSafeEquals(col("key"), ofNull(STRING)),
         expNumPartitions = 1,
-        expNumFiles = 3) // 3 files with key = null
+        expNumFiles = 3
+      ) // 3 files with key = null
 
       checkResults(
         predicate = nullSafeEquals(col("key"), ofString("a")),
         expNumPartitions = 1,
-        expNumFiles = 1) // 1 files with key <=> 'a'
+        expNumFiles = 1
+      ) // 1 files with key <=> 'a'
 
       checkResults(
         predicate = nullSafeEquals(col("key"), ofString("b")),
         expNumPartitions = 1,
-        expNumFiles = 1) // 1 files with key <=> 'b'
+        expNumFiles = 1
+      ) // 1 files with key <=> 'b'
 
       // Conditions on partitions keys and values
       checkResults(
@@ -1071,7 +1015,8 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       checkResults(
         predicate = isNotNull(col("value")),
         expNumPartitions = 2, // one of the partitions has no files left after data skipping
-        expNumFiles = 3) // files with all NULL values get skipped
+        expNumFiles = 3
+      ) // files with all NULL values get skipped
 
       checkResults(
         predicate = nullSafeEquals(col("value"), ofNull(STRING)),
@@ -1086,7 +1031,8 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       checkResults(
         predicate = equals(col("value"), ofString("a")),
         expNumPartitions = 3, // should be 2 if we can correctly skip "value = 'a'" for nulls
-        expNumFiles = 4) // should be 2 if we can correctly skip "value = 'a'" for nulls
+        expNumFiles = 4
+      ) // should be 2 if we can correctly skip "value = 'a'" for nulls
 
       checkResults(
         predicate = nullSafeEquals(col("value"), ofString("a")),
@@ -1101,12 +1047,14 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       checkResults(
         predicate = notEquals(col("value"), ofString("a")),
         expNumPartitions = 3, // should be 1 once <> is supported
-        expNumFiles = 5) // should be 1 once <> is supported
+        expNumFiles = 5
+      ) // should be 1 once <> is supported
 
       checkResults(
         predicate = equals(col("value"), ofString("b")),
         expNumPartitions = 2, // should be 1 if we can correctly skip "value = 'b'" for nulls
-        expNumFiles = 3) // should be 1 if we can correctly skip "value = 'a'" for nulls
+        expNumFiles = 3
+      ) // should be 1 if we can correctly skip "value = 'a'" for nulls
 
       checkResults(
         predicate = nullSafeEquals(col("value"), ofString("b")),
@@ -1126,18 +1074,21 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
         ofNull(STRING))),
         expNumPartitions = 1,
         expNumFiles = 1) // 3 files with key = null, but only 1 with val = null.
-      */
+       */
 
       checkResults(
         predicate = new And(isNotNull(col("key")), isNotNull(col("value"))),
         expNumPartitions = 1,
-        expNumFiles = 1) // 1 file with (*, a)
+        expNumFiles = 1
+      ) // 1 file with (*, a)
 
       checkResults(
         predicate = new Or(
-          nullSafeEquals(col("key"), ofNull(STRING)), nullSafeEquals(col("value"), ofNull(STRING))),
+          nullSafeEquals(col("key"), ofNull(STRING)),
+          nullSafeEquals(col("value"), ofNull(STRING))),
         expNumPartitions = 3,
-        expNumFiles = 5) // all 5 files
+        expNumFiles = 5
+      ) // all 5 files
     }
   }
 
@@ -1155,22 +1106,22 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       "as_float" -> (ofFloat(0), ofFloat(-1), ofFloat(1)),
       "as_double" -> (ofDouble(0), ofDouble(-1), ofDouble(1)),
       "as_string" -> (ofString("0"), ofString("!"), ofString("1")),
-      "as_date" -> (ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("2000-01-01"))),
+      "as_date" -> (
+        ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("2000-01-01"))),
         ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("1999-01-01"))),
         ofDate(InternalUtils.daysSinceEpoch(Date.valueOf("2000-01-02")))),
       // TODO (delta-io/delta#2462) add Timestamp once we support skipping for TimestampType
-      "as_big_decimal" -> (ofDecimal(JBigDecimal.valueOf(0), 1, 0),
+      "as_big_decimal" -> (
+        ofDecimal(JBigDecimal.valueOf(0), 1, 0),
         ofDecimal(JBigDecimal.valueOf(-1), 1, 0),
-        ofDecimal(JBigDecimal.valueOf(1), 1, 0))
-    )
+        ofDecimal(JBigDecimal.valueOf(1), 1, 0)))
     val misses = colToLits.flatMap { case (colName, (value, small, big)) =>
       Seq(
         equals(col(colName), small),
         greaterThan(col(colName), value),
         greaterThanOrEqual(col(colName), big),
         lessThan(col(colName), value),
-        lessThanOrEqual(col(colName), small)
-      )
+        lessThanOrEqual(col(colName), small))
     }.toSeq
     val hits = colToLits.flatMap { case (colName, (value, small, big)) =>
       Seq(
@@ -1178,20 +1129,17 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
         greaterThan(col(colName), small),
         greaterThanOrEqual(col(colName), value),
         lessThan(col(colName), big),
-        lessThanOrEqual(col(colName), value)
-      )
+        lessThanOrEqual(col(colName), value))
     }.toSeq
     Seq(
       "data-skipping-basic-stats-all-types",
       "data-skipping-basic-stats-all-types-columnmapping-name",
       "data-skipping-basic-stats-all-types-columnmapping-id",
-      "data-skipping-basic-stats-all-types-checkpoint"
-    ).foreach { goldenTable =>
+      "data-skipping-basic-stats-all-types-checkpoint").foreach { goldenTable =>
       checkSkipping(
         goldenTablePath(goldenTable),
         hits,
-        misses
-      )
+        misses)
     }
   }
 
@@ -1200,13 +1148,10 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       goldenTablePath("data-skipping-basic-stats-all-types"),
       hits = Seq(
         equals(col("as_short"), ofFloat(0f)),
-        equals(col("as_float"), ofShort(0))
-      ),
+        equals(col("as_float"), ofShort(0))),
       misses = Seq(
         equals(col("as_short"), ofFloat(1f)),
-        equals(col("as_float"), ofShort(1))
-      )
-    )
+        equals(col("as_float"), ofShort(1))))
   }
 
   test("data skipping - incompatible schema change doesn't break") {
@@ -1221,12 +1166,9 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       checkSkipping(
         tablePath,
         hits = Seq(
-          equals(col("value"), ofString("1"))
-        ),
+          equals(col("value"), ofString("1"))),
         misses = Seq(
-          equals(col("value"), ofString("3"))
-        )
-      )
+          equals(col("value"), ofString("3"))))
     }
   }
 
@@ -1234,8 +1176,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
     checkSkipping(
       goldenTablePath("data-skipping-basic-stats-all-types"),
       hits = Seq(equals(col("foo"), ofInt(1))),
-      misses = Seq()
-    )
+      misses = Seq())
   }
 
   // todo add a test with dvs where tightBounds=false
@@ -1248,8 +1189,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
           greaterThan(col("part"), ofInt(0)),
           greaterThan(col("id"), ofInt(0))
         ) -> 1 // should prune 3 files from partition + data filter
-      )
-    )
+      ))
   }
 
   test("data skipping - stats collected changing across versions") {
@@ -1262,8 +1202,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
           equals(col("col1"), ofInt(1)),
           equals(col("col2"), ofInt(1))
         ) -> 1 // should prune 2 files
-      )
-    )
+      ))
   }
 
   test("data skipping - range of ints") {
@@ -1279,8 +1218,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
           lessThanOrEqual(col("id"), ofInt(9)),
           greaterThan(col("id"), ofInt(3)),
           greaterThan(col("id"), ofInt(-1)),
-          greaterThanOrEqual(col("id"), ofInt(0))
-        ),
+          greaterThanOrEqual(col("id"), ofInt(0))),
         misses = Seq(
           equals(col("id"), ofInt(10)),
           lessThan(col("id"), ofInt(0)),
@@ -1288,9 +1226,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
           lessThanOrEqual(col("id"), ofInt(-1)),
           greaterThan(col("id"), ofInt(10)),
           greaterThan(col("id"), ofInt(11)),
-          greaterThanOrEqual(col("id"), ofInt(11))
-        )
-      )
+          greaterThanOrEqual(col("id"), ofInt(11))))
     }
   }
 
@@ -1317,21 +1253,17 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
           not(isNull(col("map_col"))),
           not(isNull(col("struct_col"))),
           not(isNull(nestedCol("struct_col.field1"))),
-          isNull(col("struct_col"))
-        ),
+          isNull(col("struct_col"))),
         misses = Seq(
           equals(col("id"), ofInt(1)),
           not(isNotNull(col("id"))),
           not(isNotNull(col("arr_col"))),
           not(isNotNull(col("map_col"))),
           not(isNotNull(nestedCol("struct_col.field1"))),
-
           isNull(col("id")),
           isNull(col("arr_col")),
           isNull(col("map_col")),
-          isNull(nestedCol("struct_col.field1"))
-        )
-      )
+          isNull(nestedCol("struct_col.field1"))))
     }
   }
 
@@ -1357,9 +1289,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
           isNotNull(col("id")),
           isNotNull(col("arr_col")),
           isNotNull(col("map_col")),
-          isNotNull(nestedCol("struct_col.field1"))
-        )
-      )
+          isNotNull(nestedCol("struct_col.field1"))))
     }
   }
 
@@ -1385,10 +1315,8 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
           isNotNull(col("arr_col")),
           isNotNull(col("map_col")),
           isNotNull(col("struct_col")),
-          isNotNull(nestedCol("struct_col.field1"))
-        ),
-        misses = Seq()
-      )
+          isNotNull(nestedCol("struct_col.field1"))),
+        misses = Seq())
     }
   }
 
@@ -1415,10 +1343,8 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
             tempDir.getCanonicalPath,
             hits = Seq(
               isNotNull(col("col2")),
-              isNotNull(col("col1"))
-            ),
-            misses = Seq()
-          )
+              isNotNull(col("col1"))),
+            misses = Seq())
         }
 
         // remove no rows
@@ -1444,12 +1370,9 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
           checkSkipping(
             tempDir.getCanonicalPath,
             hits = Seq(
-              isNotNull(col("col1"))
-            ),
+              isNotNull(col("col1"))),
             misses = Seq(
-              isNotNull(col("col2"))
-            )
-          )
+              isNotNull(col("col2"))))
         }
         // write initial table with all nulls for col2
         val data = SparkRow(0, null) :: SparkRow(1, null) :: Nil
@@ -1507,11 +1430,13 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
 
   test("data skipping - prune schema correctly for various predicates") {
     def structTypeToLeafColumns(
-        schema: StructType, parentPath: Seq[String] = Seq()): Set[Column] = {
+        schema: StructType,
+        parentPath: Seq[String] = Seq()): Set[Column] = {
       schema.fields().asScala.flatMap { field =>
         field.getDataType() match {
           case nestedSchema: StructType =>
-            assert(nestedSchema.fields().size() > 0,
+            assert(
+              nestedSchema.fields().size() > 0,
               "Schema should not have field of type StructType with no child fields")
             structTypeToLeafColumns(nestedSchema, parentPath ++ Seq(field.getName()))
           case _ =>
@@ -1533,15 +1458,100 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       lessThanOrEqual(col("as_int"), ofInt(0)) -> Set(nestedCol("minValues.as_int")),
       new And(
         lessThan(col("as_int"), ofInt(0)),
-        greaterThan(col("as_long"), ofInt(0))
-      ) -> Set(nestedCol("minValues.as_int"), nestedCol("maxValues.as_long"))
-    ).foreach { case (predicate, expectedCols) =>
+        greaterThan(col("as_long"), ofInt(0))) -> Set(
+        nestedCol("minValues.as_int"),
+        nestedCol("maxValues.as_long"))).foreach { case (predicate, expectedCols) =>
       val engine = engineVerifyJsonParseSchema(verifySchema(expectedCols))
       collectScanFileRows(
         Table.forPath(engine, path).getLatestSnapshot(engine)
           .getScanBuilder().withFilter(predicate).build(),
         engine = engine)
     }
+  }
+
+  test("data skipping - validate stats written by kernel can be read and used") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val schema = new StructType()
+        .add(
+          "nested",
+          new StructType()
+            .add("byteCol", ByteType.BYTE)
+            .add("intCol", IntegerType.INTEGER)
+            .add("floatCol", FloatType.FLOAT)
+            .add("normalDouble", DoubleType.DOUBLE) // used for filtering
+            .add("weirdDouble", DoubleType.DOUBLE) // may contain NaN/Infinity
+            .add("decimalCol", new DecimalType(10, 2)))
+
+      val tableProps = Map(TableConfig.DATA_SKIPPING_NUM_INDEXED_COLS.getKey -> "10")
+      val txn = createTxn(engine, tablePath, isNewTable = true, schema, List.empty, tableProps)
+      txn.commit(engine, emptyIterable())
+
+      // Build some rows with corner-case values
+      val testRows = Seq(
+        (
+          -128.toByte,
+          Int.MinValue,
+          Float.NaN,
+          1500.0,
+          Double.PositiveInfinity,
+          new java.math.BigDecimal("98765.43")),
+        (0.toByte, 0, 1.23f, 10.0, -42.99, new java.math.BigDecimal("0.00")),
+        (
+          127.toByte,
+          Int.MaxValue,
+          Float.NegativeInfinity,
+          200.0,
+          Double.NaN,
+          new java.math.BigDecimal("9999999.99")))
+
+      testRows.zipWithIndex.foreach { case ((b, i, f, normalD, weirdD, dec), idx) =>
+        val singleRowBatch =
+          buildSingleStructColumnRowBatch(schema, Array[Any](b, i, f, normalD, weirdD, dec))
+        val commitResult = appendData(
+          engine,
+          tablePath,
+          data = List(Map.empty[String, Literal] -> List(singleRowBatch)))
+        verifyCommitResult(commitResult, expVersion = idx + 1, expIsReadyForCheckpoint = false)
+      }
+
+      // Filter: select rows where nested.normalDouble > 50.0.
+      // Expected: Row 0 (1500.0) and Row 2 (200.0) pass, Row 1 (10.0) is pruned.
+      val skipFilter = greaterThan(nestedCol("nested.normalDouble"), ofDouble(50.0))
+      val snapshot = Table.forPath(engine, tablePath).getLatestSnapshot(engine)
+      val scan = snapshot.getScanBuilder().withFilter(skipFilter).build()
+      val scanFiles = collectScanFileRows(scan, engine)
+
+      // Assert that exactly 2 files (rows) match the filter.
+      assert(
+        scanFiles.size == 2,
+        s"Expected exactly 2 matching files (rows with normalDouble > 50.0: row 0 & 2)." +
+          s" Found ${scanFiles.size}.")
+    }
+  }
+
+  /**
+   * Creates a single-row FilteredColumnarBatch assuming the schema has one top-level StructType
+   * and `rowValues` align with its subfields.
+   */
+  def buildSingleStructColumnRowBatch(
+      schema: StructType,
+      rowValues: Array[Any]): FilteredColumnarBatch = {
+    require(schema.length() == 1, s"Expected 1 field, found ${schema.length()}")
+    val nestedType = schema.get("nested").getDataType.asInstanceOf[StructType]
+    require(
+      nestedType.length() == rowValues.length,
+      s"${nestedType.length()} vs ${rowValues.length}")
+
+    // We zip each field with an index so we can pick rowValues(i)
+    val childVectors: Array[ColumnVector] =
+      nestedType.fields().asScala.zipWithIndex.map { case (field: StructField, i: Int) =>
+        DefaultGenericVector.fromArray(field.getDataType, Array(rowValues(i).asInstanceOf[AnyRef]))
+      }.toArray
+
+    val structVector =
+      new DefaultStructVector(1, nestedType, java.util.Optional.empty(), childVectors)
+    val batch = new DefaultColumnarBatch(1, schema, Array(structVector))
+    new FilteredColumnarBatch(batch, java.util.Optional.empty())
   }
 
   //////////////////////////////////////////////////////////////////////////////////////////
@@ -1560,8 +1570,7 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
       }
       // No query filter
       checkStatsPresent(
-        latestSnapshot(tempDir.getCanonicalPath).getScanBuilder().build()
-      )
+        latestSnapshot(tempDir.getCanonicalPath).getScanBuilder().build())
       // Query filter but no valid data skipping filter
       checkStatsPresent(
         latestSnapshot(tempDir.getCanonicalPath)
@@ -1569,69 +1578,62 @@ class ScanSuite extends AnyFunSuite with TestUtils with ExpressionTestUtils with
           .withFilter(
             greaterThan(
               new ScalarExpression("+", Seq(col("id"), ofInt(10)).asJava),
-              ofInt(100)
-            )
-          ).build()
-      )
+              ofInt(100))).build())
       // With valid data skipping filter present
       checkStatsPresent(
         latestSnapshot(tempDir.getCanonicalPath)
           .getScanBuilder()
           .withFilter(greaterThan(col("id"), ofInt(0)))
-          .build()
-      )
+          .build())
     }
   }
 
   Seq(
     "spark-variant-checkpoint",
-    "spark-variant-stable-feature-checkpoint"
-  ).foreach { tableName =>
+    "spark-variant-stable-feature-checkpoint").foreach { tableName =>
     Seq(
       ("version 0 no predicate", None, Some(0), 2),
       ("latest version (has checkpoint) no predicate", None, None, 4),
-      ("version 0 with predicate", Some(equals(col("id"), ofLong(10))), Some(0), 1)
-    ).foreach { case (nameSuffix, predicate, snapshotVersion, expectedNumFiles) =>
-      test(s"read scan files with variant - $nameSuffix - $tableName") {
-        val path = getTestResourceFilePath(tableName)
-        val table = Table.forPath(defaultEngine, path)
-        val snapshot = snapshotVersion match {
-          case Some(version) => table.getSnapshotAsOfVersion(defaultEngine, version)
-          case None => table.getLatestSnapshot(defaultEngine)
-        }
-        val snapshotSchema = snapshot.getSchema()
+      ("version 0 with predicate", Some(equals(col("id"), ofLong(10))), Some(0), 1)).foreach {
+      case (nameSuffix, predicate, snapshotVersion, expectedNumFiles) =>
+        test(s"read scan files with variant - $nameSuffix - $tableName") {
+          val path = getTestResourceFilePath(tableName)
+          val table = Table.forPath(defaultEngine, path)
+          val snapshot = snapshotVersion match {
+            case Some(version) => table.getSnapshotAsOfVersion(defaultEngine, version)
+            case None => table.getLatestSnapshot(defaultEngine)
+          }
+          val snapshotSchema = snapshot.getSchema()
 
-        val expectedSchema = new StructType()
-          .add("id", LongType.LONG, true)
-          .add("v", VariantType.VARIANT, true)
-          .add("array_of_variants", new ArrayType(VariantType.VARIANT, true), true)
-          .add("struct_of_variants", new StructType().add("v", VariantType.VARIANT, true))
-          .add("map_of_variants", new MapType(StringType.STRING, VariantType.VARIANT, true), true)
-          .add(
-            "array_of_struct_of_variants",
-            new ArrayType(new StructType().add("v", VariantType.VARIANT, true), true),
-            true
-          )
-          .add(
-            "struct_of_array_of_variants",
-            new StructType().add("v", new ArrayType(VariantType.VARIANT, true), true),
-            true
-          )
+          val expectedSchema = new StructType()
+            .add("id", LongType.LONG, true)
+            .add("v", VariantType.VARIANT, true)
+            .add("array_of_variants", new ArrayType(VariantType.VARIANT, true), true)
+            .add("struct_of_variants", new StructType().add("v", VariantType.VARIANT, true))
+            .add("map_of_variants", new MapType(StringType.STRING, VariantType.VARIANT, true), true)
+            .add(
+              "array_of_struct_of_variants",
+              new ArrayType(new StructType().add("v", VariantType.VARIANT, true), true),
+              true)
+            .add(
+              "struct_of_array_of_variants",
+              new StructType().add("v", new ArrayType(VariantType.VARIANT, true), true),
+              true)
 
-        assert(snapshotSchema == expectedSchema)
+          assert(snapshotSchema == expectedSchema)
 
-        val scanBuilder = snapshot.getScanBuilder()
-        val scan = predicate match {
-          case Some(pred) => scanBuilder.withFilter(pred).build()
-          case None => scanBuilder.build()
+          val scanBuilder = snapshot.getScanBuilder()
+          val scan = predicate match {
+            case Some(pred) => scanBuilder.withFilter(pred).build()
+            case None => scanBuilder.build()
+          }
+          val scanFiles = scan.asInstanceOf[ScanImpl].getScanFiles(defaultEngine, true)
+          var numFiles: Int = 0
+          scanFiles.forEach { s =>
+            numFiles += s.getRows().toSeq.length
+          }
+          assert(numFiles == expectedNumFiles)
         }
-        val scanFiles = scan.asInstanceOf[ScanImpl].getScanFiles(defaultEngine, true)
-        var numFiles: Int = 0
-        scanFiles.forEach { s =>
-          numFiles += s.getRows().toSeq.length
-        }
-        assert(numFiles == expectedNumFiles)
-      }
     }
   }
 }
@@ -1650,11 +1652,11 @@ object ScanSuite {
    * for parquet or json handlers.
    */
   def engineDisallowedStatsReads: Engine = {
-    val hadoopConf = new Configuration()
-    new DefaultEngine(hadoopConf) {
+    val fileIO = new HadoopFileIO(new Configuration())
+    new DefaultEngine(fileIO) {
 
       override def getParquetHandler: ParquetHandler = {
-        new DefaultParquetHandler(hadoopConf) {
+        new DefaultParquetHandler(fileIO) {
           override def readParquetFiles(
               fileIter: CloseableIterator[FileStatus],
               physicalSchema: StructType,
@@ -1666,7 +1668,7 @@ object ScanSuite {
       }
 
       override def getJsonHandler: JsonHandler = {
-        new DefaultJsonHandler(hadoopConf) {
+        new DefaultJsonHandler(fileIO) {
           override def readJsonFiles(
               fileIter: CloseableIterator[FileStatus],
               physicalSchema: StructType,
@@ -1680,11 +1682,13 @@ object ScanSuite {
   }
 
   def engineVerifyJsonParseSchema(verifyFx: StructType => Unit): Engine = {
-    val hadoopConf = new Configuration()
-    new DefaultEngine(hadoopConf) {
+    val fileIO = new HadoopFileIO(new Configuration())
+    new DefaultEngine(fileIO) {
       override def getJsonHandler: JsonHandler = {
-        new DefaultJsonHandler(hadoopConf) {
-          override def parseJson(stringVector: ColumnVector, schema: StructType,
+        new DefaultJsonHandler(fileIO) {
+          override def parseJson(
+              stringVector: ColumnVector,
+              schema: StructType,
               selectionVector: Optional[ColumnVector]): ColumnarBatch = {
             verifyFx(schema)
             super.parseJson(stringVector, schema, selectionVector)

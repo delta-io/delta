@@ -526,15 +526,18 @@ object DeltaTableUtils extends PredicateHelper
   def resolveTimeTravelVersion(
       conf: SQLConf,
       deltaLog: DeltaLog,
+      catalogTableOpt: Option[CatalogTable],
       tt: DeltaTimeTravelSpec,
       canReturnLastCommit: Boolean = false): (Long, String) = {
     if (tt.version.isDefined) {
       val userVersion = tt.version.get
-      deltaLog.history.checkVersionExists(userVersion)
+      deltaLog.history.checkVersionExists(userVersion, catalogTableOpt)
       userVersion -> "version"
     } else {
       val timestamp = tt.getTimestamp(conf)
-      deltaLog.history.getActiveCommitAtTime(timestamp, canReturnLastCommit).version -> "timestamp"
+      val commit =
+        deltaLog.history.getActiveCommitAtTime(timestamp, catalogTableOpt, canReturnLastCommit)
+      commit.version -> "timestamp"
     }
   }
 
@@ -643,6 +646,23 @@ object DeltaTableUtils extends PredicateHelper
     ColumnWithDefaultExprUtils.removeDefaultExpressions(
       removeSparkInternalMetadata(spark, schema)
     )
+  }
+
+  /**
+   * Removes internal Delta metadata from the given schema. This includes tyically metadata used by
+   * reader-writer table features that shouldn't leak outside of the table. Use
+   * [[removeInternalWriterMetadata]] in addition / instead to remove metadata for writer-only table
+   * features.
+   */
+  def removeInternalDeltaMetadata(spark: SparkSession, schema: StructType): StructType = {
+    val cleanedSchema = DeltaColumnMapping.dropColumnMappingMetadata(schema)
+
+    val conf = spark.sessionState.conf
+    if (conf.getConf(DeltaSQLConf.DELTA_TYPE_WIDENING_REMOVE_SCHEMA_METADATA)) {
+      TypeWideningMetadata.removeTypeWideningMetadata(cleanedSchema)._1
+    } else {
+      cleanedSchema
+    }
   }
 
 }

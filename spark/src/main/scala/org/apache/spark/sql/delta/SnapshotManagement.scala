@@ -32,10 +32,10 @@ import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.coordinatedcommits.{CoordinatedCommitsUsageLogs, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.FileNames._
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.spark.sql.delta.util.threads.DeltaThreadPool
-import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import com.fasterxml.jackson.annotation.JsonIgnore
 import io.delta.storage.commit.{Commit, GetCommitsResponse}
 import org.apache.hadoop.fs.{BlockLocation, FileStatus, LocatedFileStatus, Path}
@@ -103,29 +103,26 @@ trait SnapshotManagement { self: DeltaLog =>
     isCheckpointFile(path) || isDeltaFile(path)
   }
 
-  /** Returns an iterator containing a list of files found from the provided path */
-  protected def listFromOrNone(startVersion: Long): Option[Iterator[FileStatus]] = {
-    // LIST the directory, starting from the provided lower bound (treat missing dir as empty).
-    // NOTE: "empty/missing" is _NOT_ equivalent to "contains no useful commit files."
-    try {
-      Some(listFrom(startVersion)).filterNot(_.isEmpty)
-    } catch {
-      case _: FileNotFoundException => None
-    }
-  }
-
   /**
    * @return A tuple where the first element is an array of log files (possibly empty, if no
    *         usable log files are found), and the second element is the latest checksum file found
    *         which has a version less than or equal to `versionToLoad`.
    */
-  private def listFromFileSystemInternal(
+  private[delta] def listFromFileSystemInternal(
       startVersion: Long,
       versionToLoad: Option[Long],
       includeMinorCompactions: Boolean
   ): (Option[Array[(FileStatus, FileType.Value, Long)]], Option[FileStatus]) = {
     var latestAvailableChecksumFileStatus = Option.empty[FileStatus]
-    val files = listFromOrNone(startVersion).map {
+    // LIST the directory, starting from the provided lower bound (treat missing dir as empty).
+    // NOTE: "empty/missing" is _NOT_ equivalent to "contains no useful commit files."
+    val filesOpt = try {
+      Some(listFrom(startVersion)).filterNot(_.isEmpty)
+    } catch {
+      case _: FileNotFoundException => None
+    }
+    val files =
+      filesOpt.map {
       _.flatMap {
         case DeltaFile(f, fileVersion) =>
           Some((f, FileType.DELTA, fileVersion))
@@ -175,7 +172,11 @@ trait SnapshotManagement { self: DeltaLog =>
       includeMinorCompactions: Boolean): (Option[Array[FileStatus]], Option[FileStatus]) = {
     val tableCommitCoordinatorClient = tableCommitCoordinatorClientOpt.getOrElse {
       val (filesOpt, checksumOpt) =
-        listFromFileSystemInternal(startVersion, versionToLoad, includeMinorCompactions)
+        listFromFileSystemInternal(
+          startVersion,
+          versionToLoad,
+          includeMinorCompactions
+        )
       return (filesOpt.map(_.map(_._1)), checksumOpt)
     }
 
@@ -203,7 +204,11 @@ trait SnapshotManagement { self: DeltaLog =>
 
     var maxDeltaVersionSeen = startVersion - 1
     val (initialLogTuplesFromFsListingOpt, initialChecksumOpt) =
-      listFromFileSystemInternal(startVersion, versionToLoad, includeMinorCompactions)
+      listFromFileSystemInternal(
+        startVersion,
+        versionToLoad,
+        includeMinorCompactions
+      )
     // Ideally listFromFileSystemInternal should return lexicographically sorted files and so
     // maxDeltaVersionSeen should be equal to the last delta version. But we are being
     // defensive here and taking max of all the delta fileVersions seen.
@@ -245,7 +250,10 @@ trait SnapshotManagement { self: DeltaLog =>
         recordDeltaEvent(
           this, CoordinatedCommitsUsageLogs.COMMIT_COORDINATOR_ADDITIONAL_LISTING_REQUIRED)
         listFromFileSystemInternal(
-          startVersion = initialMaxDeltaVersionSeen + 1, versionToLoad, includeMinorCompactions)
+          startVersion = initialMaxDeltaVersionSeen + 1,
+          versionToLoad,
+          includeMinorCompactions
+        )
       } else {
         (None, initialChecksumOpt)
       }

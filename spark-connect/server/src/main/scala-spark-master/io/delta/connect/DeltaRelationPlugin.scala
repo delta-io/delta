@@ -35,6 +35,7 @@ import org.apache.spark.sql.connect.delta.DeltaRelationPlugin.{parseAnyFrom, par
 import org.apache.spark.sql.connect.delta.ImplicitProtoConversions._
 import org.apache.spark.sql.connect.planner.SparkConnectPlanner
 import org.apache.spark.sql.connect.plugin.RelationPlugin
+import org.apache.spark.sql.delta.DataFrameUtils
 import org.apache.spark.sql.delta.commands.ConvertToDeltaCommand
 import org.apache.spark.sql.types.StructType
 
@@ -154,7 +155,7 @@ class DeltaRelationPlugin extends RelationPlugin with DeltaPlannerBase {
     } else {
       None
     }
-    Dataset.ofRows(
+    DataFrameUtils.ofRows(
         planner.session, DeleteFromTable(target, condition.getOrElse(Literal.TrueLiteral)))
       .queryExecution.commandExecuted
   }
@@ -168,7 +169,7 @@ class DeltaRelationPlugin extends RelationPlugin with DeltaPlannerBase {
       None
     }
     val assignments = updateTable.getAssignmentsList.asScala.map(transformAssignment(planner, _))
-    Dataset.ofRows(planner.session, UpdateTable(target, assignments.toSeq, condition))
+    DataFrameUtils.ofRows(planner.session, UpdateTable(target, assignments.toSeq, condition))
       .queryExecution.commandExecuted
   }
 

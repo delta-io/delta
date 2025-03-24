@@ -20,15 +20,16 @@ import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingMode, DeltaErrors, DeltaLog, GeneratedColumn, NoMapping, TypeWidening, TypeWideningMode}
 import org.apache.spark.sql.delta.{RowCommitVersion, RowId}
 import org.apache.spark.sql.delta.ClassicColumnConversions._
-import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils._
+import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
 import org.apache.spark.sql.delta.sources.{DeltaSQLConf, DeltaStreamUtils}
 import org.apache.spark.sql.util.ScalaExtensions._
@@ -39,7 +40,7 @@ import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.expressions.{Alias, AttributeReference, Expression, GetArrayItem, GetArrayStructFields, GetMapValue, GetStructField}
 import org.apache.spark.sql.catalyst.plans.logical.{LocalRelation, Project}
-import org.apache.spark.sql.catalyst.util.CharVarcharUtils
+import org.apache.spark.sql.catalyst.util.{CharVarcharUtils, ResolveDefaultColumnsUtils}
 import org.apache.spark.sql.execution.streaming.IncrementalExecution
 import org.apache.spark.sql.functions.{col, struct}
 import org.apache.spark.sql.internal.SQLConf
@@ -286,8 +287,10 @@ def normalizeColumnNamesInDataType(
         // When schema evolution adds a new column during MERGE, it can be represented with
         // a NullType in the schema of the data written by the MERGE.
         sourceDataType
-      case (_: IntegralType, _: IntegralType) =>
-        // The integral types can be cast to each other later on.
+      case (_: AtomicType, _: AtomicType) =>
+        // Some atomic types (e.g. integral types) can be cast to each other later on. For now,
+        // it's enough to know that there are no nested fields inside the atomic types that might
+        // require normalization.
         sourceDataType
       case _ =>
         if (DeltaUtils.isTesting) {
@@ -441,7 +444,7 @@ def normalizeColumnNamesInDataType(
             isDatatypeReadCompatible(e.keyType, n.keyType) &&
             isDatatypeReadCompatible(e.valueType, n.valueType)
         case (e: AtomicType, n: AtomicType)
-          if typeWideningMode.shouldWidenType(fromType = e, toType = n) => true
+          if typeWideningMode.shouldWidenTo(fromType = e, toType = n) => true
         case (a, b) => a == b
       }
     }
@@ -1543,6 +1546,30 @@ def normalizeColumnNamesInDataType(
   // resolver (case insensitive comparison).
   def areLogicalNamesEqual(col1: Seq[String], col2: Seq[String]): Boolean = {
     col1.length == col2.length && col1.zip(col2).forall(DELTA_COL_RESOLVER.tupled)
+  }
+
+  def removeExistsDefaultMetadata(schema: StructType): StructType = {
+    // 'EXISTS_DEFAULT' is not used in Delta because it is not allowed to add a column with a
+    // default value. Spark does though still add the metadata key when a column with a default
+    // value is added at table creation.
+    // We remove the metadata field here because it is not part of the Delta protocol and
+    // having it in the schema prohibits CTAS from a table with a dropped default value.
+    // @TODO: Clarify if active default values should be propagated to the target table in CTAS or
+    //        not and if not also remove 'CURRENT_DEFAULT' in CTAS.
+    SchemaUtils.transformSchema(schema) {
+      case (_, StructType(fields), _)
+        if fields.exists(_.metadata.contains(
+          ResolveDefaultColumnsUtils.EXISTS_DEFAULT_COLUMN_METADATA_KEY)) =>
+        val newFields = fields.map { field =>
+          val builder = new MetadataBuilder()
+            .withMetadata(field.metadata)
+            .remove(ResolveDefaultColumnsUtils.EXISTS_DEFAULT_COLUMN_METADATA_KEY)
+
+          field.copy(metadata = builder.build())
+        }
+        StructType(newFields)
+      case (_, other, _) => other
+    }
   }
 }
 

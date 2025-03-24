@@ -46,7 +46,7 @@ case class ManifestFileWrapper(
     existingRowsCount: JLong,
     deletedFilesCount: JInt,
     deletedRowsCount: JLong,
-    _partitions: Seq[PartitionFieldSummaryWrapper])
+    _partitions: Option[Seq[PartitionFieldSummaryWrapper]])
   extends ManifestFile {
 
   def this(manifest: ManifestFile) =
@@ -63,11 +63,11 @@ case class ManifestFileWrapper(
       manifest.existingRowsCount,
       manifest.deletedFilesCount,
       manifest.deletedRowsCount,
-      manifest.partitions.asScala.map(new PartitionFieldSummaryWrapper(_)).toSeq
+      Option(manifest.partitions).map(_.asScala.map(new PartitionFieldSummaryWrapper(_)).toSeq)
     )
   override def content: ManifestContent = ManifestContent.DATA
   override def partitions: JList[PartitionFieldSummary] =
-    _partitions.asJava.asInstanceOf[JList[PartitionFieldSummary]]
+    _partitions.map(_.asJava.asInstanceOf[JList[PartitionFieldSummary]]).orNull
   override def copy: ManifestFile = this.copy
 }
 

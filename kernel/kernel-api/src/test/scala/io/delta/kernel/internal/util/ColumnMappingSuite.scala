@@ -15,19 +15,18 @@
  */
 package io.delta.kernel.internal.util
 
-import io.delta.kernel.internal.TableConfig
-import io.delta.kernel.internal.actions.{Format, Metadata}
-import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode._
+import java.util
+
+import io.delta.kernel.internal.actions.Metadata
 import io.delta.kernel.internal.util.ColumnMapping._
+import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode._
 import io.delta.kernel.types.{ArrayType, FieldMetadata, IntegerType, MapType, StringType, StructField, StructType}
+
 import org.assertj.core.api.Assertions.{assertThat, assertThatNoException, assertThatThrownBy}
 import org.assertj.core.util.Maps
 import org.scalatest.funsuite.AnyFunSuite
 
-import java.util
-import java.util.{Collections, Optional, UUID}
-
-class ColumnMappingSuite extends AnyFunSuite {
+class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
   test("column mapping is only enabled on known mapping modes") {
     assertThat(ColumnMapping.isColumnMappingModeEnabled(null)).isFalse
     assertThat(ColumnMapping.isColumnMappingModeEnabled(NONE)).isFalse
@@ -38,7 +37,9 @@ class ColumnMappingSuite extends AnyFunSuite {
   test("column mapping change with empty config") {
     assertThatNoException.isThrownBy(() =>
       ColumnMapping.verifyColumnMappingChange(
-        new util.HashMap(), new util.HashMap(), true /* isNewTable */))
+        new util.HashMap(),
+        new util.HashMap(),
+        true /* isNewTable */ ))
   }
 
   test("column mapping mode change is allowed") {
@@ -73,21 +74,24 @@ class ColumnMappingSuite extends AnyFunSuite {
     assertThatThrownBy(() =>
       ColumnMapping.verifyColumnMappingChange(
         Maps.newHashMap(COLUMN_MAPPING_MODE_KEY, NAME.toString),
-        Maps.newHashMap(COLUMN_MAPPING_MODE_KEY, ID.toString), isNewTable))
+        Maps.newHashMap(COLUMN_MAPPING_MODE_KEY, ID.toString),
+        isNewTable))
       .isInstanceOf(classOf[IllegalArgumentException])
       .hasMessage("Changing column mapping mode from 'name' to 'id' is not supported")
 
     assertThatThrownBy(() =>
       ColumnMapping.verifyColumnMappingChange(
         Maps.newHashMap(COLUMN_MAPPING_MODE_KEY, ID.toString),
-        Maps.newHashMap(COLUMN_MAPPING_MODE_KEY, NAME.toString), isNewTable))
+        Maps.newHashMap(COLUMN_MAPPING_MODE_KEY, NAME.toString),
+        isNewTable))
       .isInstanceOf(classOf[IllegalArgumentException])
       .hasMessage("Changing column mapping mode from 'id' to 'name' is not supported")
 
     assertThatThrownBy(() =>
       ColumnMapping.verifyColumnMappingChange(
         new util.HashMap(),
-        Maps.newHashMap(COLUMN_MAPPING_MODE_KEY, ID.toString), isNewTable))
+        Maps.newHashMap(COLUMN_MAPPING_MODE_KEY, ID.toString),
+        isNewTable))
       .isInstanceOf(classOf[IllegalArgumentException])
       .hasMessage("Changing column mapping mode from 'none' to 'id' is not supported")
   }
@@ -111,10 +115,12 @@ class ColumnMappingSuite extends AnyFunSuite {
     // nested columns are currently not supported
     assertThat(ColumnMapping.findMaxColumnId(
       new StructType().add("a", StringType.STRING, createMetadataWithFieldId(14))
-        .add("b",
+        .add(
+          "b",
           new StructType()
             .add("d", IntegerType.INTEGER, true)
-            .add("e", IntegerType.INTEGER, true), createMetadataWithFieldId(15))
+            .add("e", IntegerType.INTEGER, true),
+          createMetadataWithFieldId(15))
         .add("c", IntegerType.INTEGER, createMetadataWithFieldId(7))))
       .isEqualTo(15)
   }
@@ -152,7 +158,8 @@ class ColumnMappingSuite extends AnyFunSuite {
 
     val nestedMeta = FieldMetadata.builder()
       .putLong(COLUMN_MAPPING_ID_KEY, 2)
-      .putFieldMetadata(COLUMN_MAPPING_NESTED_IDS_KEY,
+      .putFieldMetadata(
+        COLUMN_MAPPING_NESTED_IDS_KEY,
         FieldMetadata.builder().putLong("b.element", 6).build())
       .build()
 
@@ -171,7 +178,8 @@ class ColumnMappingSuite extends AnyFunSuite {
 
     val nestedMeta = FieldMetadata.builder()
       .putLong(COLUMN_MAPPING_ID_KEY, 2)
-      .putFieldMetadata(COLUMN_MAPPING_NESTED_IDS_KEY,
+      .putFieldMetadata(
+        COLUMN_MAPPING_NESTED_IDS_KEY,
         FieldMetadata.builder()
           .putLong("b.key", 11)
           .putLong("b.value", 12).build())
@@ -179,327 +187,339 @@ class ColumnMappingSuite extends AnyFunSuite {
 
     val schema = new StructType()
       .add("a", StringType.STRING, createMetadataWithFieldId(1))
-      .add("b", new MapType(IntegerType.INTEGER,
-        new StructField("d", nestedStruct, false).getDataType, false), nestedMeta)
+      .add(
+        "b",
+        new MapType(
+          IntegerType.INTEGER,
+          new StructField("d", nestedStruct, false).getDataType,
+          false),
+        nestedMeta)
       .add("c", IntegerType.INTEGER, createMetadataWithFieldId(3))
 
     assertThat(ColumnMapping.findMaxColumnId(schema)).isEqualTo(12)
   }
 
-  test("assign id and physical name to new table") {
-    val schema: StructType = new StructType()
-      .add("a", StringType.STRING, true)
-      .add("b", StringType.STRING, true)
+  Seq(true, false).foreach { isNewTable =>
+    test(s"assign id and physical name to new table: $isNewTable") {
+      val schema: StructType = new StructType()
+        .add("a", StringType.STRING, true)
+        .add("b", StringType.STRING, true)
 
-    val metadata: Metadata =
-      ColumnMapping.updateColumnMappingMetadata(createMetadata(schema), ID, true)
+      val metadata: Metadata = updateColumnMappingMetadataIfNeeded(
+        testMetadata(schema).withColumnMappingEnabled("id"),
+        isNewTable).orElseGet(() => fail("Metadata should not be empty"))
 
-    assertColumnMapping(metadata.getSchema.get("a"), 1L)
-    assertColumnMapping(metadata.getSchema.get("b"), 2L)
+      assertColumnMapping(metadata.getSchema.get("a"), 1L, if (isNewTable) "UUID" else "a")
+      assertColumnMapping(metadata.getSchema.get("b"), 2L, if (isNewTable) "UUID" else "b")
 
-    assertThat(metadata.getConfiguration)
-      .containsEntry(ColumnMapping.COLUMN_MAPPING_MAX_COLUMN_ID_KEY, "2")
-  }
+      assertThat(metadata.getConfiguration)
+        .containsEntry(ColumnMapping.COLUMN_MAPPING_MAX_COLUMN_ID_KEY, "2")
 
-  test("assign id and physical name to updated table") {
-    val schema = new StructType()
-      .add("a", StringType.STRING, true)
-      .add("b", StringType.STRING, true)
-
-    val metadata = ColumnMapping.updateColumnMappingMetadata(createMetadata(schema), ID, false)
-
-    assertColumnMapping(metadata.getSchema.get("a"), 1L, "a")
-    assertColumnMapping(metadata.getSchema.get("b"), 2L, "b")
-
-    assertThat(metadata.getConfiguration)
-      .containsEntry(ColumnMapping.COLUMN_MAPPING_MAX_COLUMN_ID_KEY, "2")
+      // Requesting the same operation on the same schema shouldn't change anything
+      // as the schema already has the necessary column mapping info
+      assertNoOpOnUpdateColumnMappingMetadataRequest(
+        metadata.getSchema,
+        enableIcebergCompatV2 = false,
+        isNewTable)
+    }
   }
 
   test("none mapping mode returns original schema") {
     val schema = new StructType().add("a", StringType.STRING, true)
-
-    val metadata =
-      ColumnMapping.updateColumnMappingMetadata(createMetadata(schema), NONE, true)
-    assertThat(metadata.getSchema).isEqualTo(schema)
+    assertThat(updateColumnMappingMetadataIfNeeded(testMetadata(schema), true)).isEmpty
   }
 
   test("assigning id and physical name preserves field metadata") {
     val schema = new StructType()
-      .add("a", StringType.STRING,
+      .add(
+        "a",
+        StringType.STRING,
         FieldMetadata.builder.putString("key1", "val1").putString("key2", "val2").build)
 
-    val metadata = ColumnMapping.updateColumnMappingMetadata(createMetadata(schema), ID, true)
+    val metadata = updateColumnMappingMetadataIfNeeded(
+      testMetadata(schema).withColumnMappingEnabled(),
+      true).orElseGet(() => fail("Metadata should not be empty"))
     val fieldMetadata = metadata.getSchema.get("a").getMetadata.getEntries
 
     assertThat(fieldMetadata)
       .containsEntry("key1", "val1")
       .containsEntry("key2", "val2")
       .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, (1L).asInstanceOf[AnyRef])
-      .hasEntrySatisfying(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
+      .hasEntrySatisfying(
+        ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
         (k: AnyRef) => assertThat(k).asString.startsWith("col-"))
   }
 
-  test("assign id and physical name to new table with nested struct type" +
-    " and enableIcebergCompatV2=true") {
-    val schema: StructType =
-      new StructType()
-        .add("a", StringType.STRING)
-        .add("b",
-          new StructType()
-            .add("d", IntegerType.INTEGER)
-            .add("e", IntegerType.INTEGER))
-        .add("c", IntegerType.INTEGER)
+  runWithIcebergCompatV2ComboForNewAndExistingTables(
+    "assign id and physical name to schema with nested struct type") {
+    (isNewTable, enableIcebergCompatV2) =>
+      val schema: StructType =
+        new StructType()
+          .add("a", StringType.STRING)
+          .add(
+            "b",
+            new StructType()
+              .add("d", IntegerType.INTEGER)
+              .add("e", IntegerType.INTEGER))
+          .add("c", IntegerType.INTEGER)
 
-    val metadata: Metadata =
-      ColumnMapping.updateColumnMappingMetadata(
-        withIcebergCompatV2Enabled(createMetadata(schema)),
-        ID,
-        true /** isNewTable */)
+      var inputMetadata = testMetadata(schema).withColumnMappingEnabled("id")
+      if (enableIcebergCompatV2) {
+        inputMetadata = inputMetadata.withIcebergCompatV2Enabled
+      }
+      val metadata = updateColumnMappingMetadataIfNeeded(inputMetadata, isNewTable)
+        .orElseGet(() => fail("Metadata should not be empty"))
 
-    assertColumnMapping(metadata.getSchema.get("a"), 1L)
-    assertColumnMapping(metadata.getSchema.get("b"), 2L)
-    val innerStruct = metadata.getSchema.get("b").getDataType.asInstanceOf[StructType]
-    assertColumnMapping(innerStruct.get("d"), 3L)
-    assertColumnMapping(innerStruct.get("e"), 4L)
-    assertColumnMapping(metadata.getSchema.get("c"), 5L)
+      assertColumnMapping(metadata.getSchema.get("a"), 1L, if (isNewTable) "UUID" else "a")
+      assertColumnMapping(metadata.getSchema.get("b"), 2L, if (isNewTable) "UUID" else "b")
+      val innerStruct = metadata.getSchema.get("b").getDataType.asInstanceOf[StructType]
+      assertColumnMapping(innerStruct.get("d"), 3L, if (isNewTable) "UUID" else "d")
+      assertColumnMapping(innerStruct.get("e"), 4L, if (isNewTable) "UUID" else "e")
+      assertColumnMapping(metadata.getSchema.get("c"), 5L, if (isNewTable) "UUID" else "c")
 
-    assertThat(metadata.getConfiguration)
-      .containsEntry(ColumnMapping.COLUMN_MAPPING_MAX_COLUMN_ID_KEY, "5")
+      assertThat(metadata.getConfiguration)
+        .containsEntry(ColumnMapping.COLUMN_MAPPING_MAX_COLUMN_ID_KEY, "5")
+
+      // Requesting the same operation on the same schema shouldn't change anything
+      // as the schema already has the necessary column mapping info
+      assertNoOpOnUpdateColumnMappingMetadataRequest(
+        metadata.getSchema,
+        enableIcebergCompatV2,
+        isNewTable)
   }
 
-  test("assign id and physical name to new table with array type and enableIcebergCompatV2=true") {
-    val schema: StructType =
-      new StructType()
-        .add("a", StringType.STRING)
-        .add("b", new ArrayType(IntegerType.INTEGER, false))
-        .add("c", IntegerType.INTEGER)
+  runWithIcebergCompatV2ComboForNewAndExistingTables(
+    "assign id and physical name to schema with array type") {
+    (isNewTable, enableIcebergCompatV2) =>
+      val schema: StructType =
+        new StructType()
+          .add("a", StringType.STRING)
+          .add("b", new ArrayType(IntegerType.INTEGER, false))
+          .add("c", IntegerType.INTEGER)
 
-    val metadata: Metadata =
-      ColumnMapping.updateColumnMappingMetadata(
-        withIcebergCompatV2Enabled(createMetadata(schema)),
-        ID,
-        true /** isNewTable */)
+      var inputMetadata = testMetadata(schema).withColumnMappingEnabled("id")
+      if (enableIcebergCompatV2) {
+        inputMetadata = inputMetadata.withIcebergCompatV2Enabled
+      }
+      val metadata = updateColumnMappingMetadataIfNeeded(inputMetadata, isNewTable)
+        .orElseGet(() => fail("Metadata should not be empty"))
 
-    assertColumnMapping(metadata.getSchema.get("a"), 1L)
-    assertColumnMapping(metadata.getSchema.get("b"), 2L)
-    assertColumnMapping(metadata.getSchema.get("c"), 3L)
+      assertColumnMapping(metadata.getSchema.get("a"), 1L, if (isNewTable) "UUID" else "a")
+      assertColumnMapping(metadata.getSchema.get("b"), 2L, if (isNewTable) "UUID" else "b")
+      assertColumnMapping(metadata.getSchema.get("c"), 3L, if (isNewTable) "UUID" else "c")
 
-    // verify nested ids
-    assertThat(metadata.getSchema.get("b").getMetadata.getEntries
-      .get(COLUMN_MAPPING_NESTED_IDS_KEY).asInstanceOf[FieldMetadata].getEntries)
-      .hasSize(1)
-      .anySatisfy((k: AnyRef, v: AnyRef) => {
-        assertThat(k).asString.startsWith("col-")
-        assertThat(k).asString.endsWith(".element")
-        assertThat(v).isEqualTo(4L)
-      })
+      if (enableIcebergCompatV2) {
+        // verify nested ids
+        assertThat(metadata.getSchema.get("b").getMetadata.getEntries
+          .get(COLUMN_MAPPING_NESTED_IDS_KEY).asInstanceOf[FieldMetadata].getEntries)
+          .hasSize(1)
+          .anySatisfy((k: AnyRef, v: AnyRef) => {
+            assertThat(k).asString.startsWith(if (isNewTable) "col-" else "b.")
+            assertThat(k).asString.endsWith(".element")
+            assertThat(v).isEqualTo(4L)
+          })
 
-    assertThat(metadata.getConfiguration)
-      .containsEntry(ColumnMapping.COLUMN_MAPPING_MAX_COLUMN_ID_KEY, "4")
+        assertThat(metadata.getConfiguration)
+          .containsEntry(ColumnMapping.COLUMN_MAPPING_MAX_COLUMN_ID_KEY, "4")
+      } else {
+        assertThat(metadata.getSchema.get("b").getMetadata.getEntries)
+          .doesNotContainKey(COLUMN_MAPPING_NESTED_IDS_KEY)
+
+        assertThat(metadata.getConfiguration)
+          .containsEntry(ColumnMapping.COLUMN_MAPPING_MAX_COLUMN_ID_KEY, "3")
+      }
+
+      // Requesting the same operation on the same schema shouldn't change anything
+      // as the schema already has the necessary column mapping info
+      assertNoOpOnUpdateColumnMappingMetadataRequest(
+        metadata.getSchema,
+        enableIcebergCompatV2,
+        isNewTable)
   }
 
-  test("assign id and physical name to existing table with array type " +
-    "and enableIcebergCompatV2=true") {
-    val schema: StructType =
-      new StructType()
-        .add("a", StringType.STRING)
-        .add("b", new ArrayType(IntegerType.INTEGER, false))
-        .add("c", IntegerType.INTEGER)
+  runWithIcebergCompatV2ComboForNewAndExistingTables(
+    "assign id and physical name to schema with map type") {
+    (isNewTable, enableIcebergCompatV2) =>
+      val schema: StructType =
+        new StructType()
+          .add("a", StringType.STRING)
+          .add("b", new MapType(IntegerType.INTEGER, StringType.STRING, false))
+          .add("c", IntegerType.INTEGER)
 
-    val metadata: Metadata =
-      ColumnMapping.updateColumnMappingMetadata(
-        withIcebergCompatV2Enabled(createMetadata(schema)),
-        ID,
-        false /** isNewTable */)
+      var inputMetadata = testMetadata(schema).withColumnMappingEnabled("id")
+      if (enableIcebergCompatV2) {
+        inputMetadata = inputMetadata.withIcebergCompatV2Enabled
+      }
+      val metadata = updateColumnMappingMetadataIfNeeded(inputMetadata, isNewTable)
+        .orElseGet(() => fail("Metadata should not be empty"))
 
-    assertColumnMapping(metadata.getSchema.get("a"), 1L, "a")
-    assertColumnMapping(metadata.getSchema.get("b"), 2L, "b")
-    assertColumnMapping(metadata.getSchema.get("c"), 3L, "c")
+      assertColumnMapping(metadata.getSchema.get("a"), 1L, if (isNewTable) "UUID" else "a")
+      assertColumnMapping(metadata.getSchema.get("b"), 2L, if (isNewTable) "UUID" else "b")
+      assertColumnMapping(metadata.getSchema.get("c"), 3L, if (isNewTable) "UUID" else "c")
 
-    // verify nested ids
-    assertThat(metadata.getSchema.get("b").getMetadata.getEntries
-      .get(COLUMN_MAPPING_NESTED_IDS_KEY).asInstanceOf[FieldMetadata].getEntries)
-      .hasSize(1)
-      .containsEntry("b.element", 4L.asInstanceOf[AnyRef])
+      if (enableIcebergCompatV2) {
+        // verify nested ids
+        assertThat(metadata.getSchema.get("b").getMetadata.getEntries
+          .get(COLUMN_MAPPING_NESTED_IDS_KEY).asInstanceOf[FieldMetadata].getEntries)
+          .hasSize(2)
+          .anySatisfy((k: AnyRef, v: AnyRef) => {
+            assertThat(k).asString.startsWith(if (isNewTable) "col-" else "b.")
+            assertThat(k).asString.endsWith(".key")
+            assertThat(v).isEqualTo(4L)
+          })
+          .anySatisfy((k: AnyRef, v: AnyRef) => {
+            assertThat(k).asString.startsWith(if (isNewTable) "col-" else "b.")
+            assertThat(k).asString.endsWith(".value")
+            assertThat(v).isEqualTo(5L)
+          })
+      } else {
+        assertThat(metadata.getSchema.get("b").getMetadata.getEntries)
+          .doesNotContainKey(COLUMN_MAPPING_NESTED_IDS_KEY)
+      }
 
-    assertThat(metadata.getConfiguration)
-      .containsEntry(ColumnMapping.COLUMN_MAPPING_MAX_COLUMN_ID_KEY, "4")
+      assertThat(metadata.getConfiguration).containsEntry(
+        ColumnMapping.COLUMN_MAPPING_MAX_COLUMN_ID_KEY,
+        if (enableIcebergCompatV2) "5" else "3")
+
+      // Requesting the same operation on the same schema shouldn't change anything
+      // as the schema already has the necessary column mapping info
+      assertNoOpOnUpdateColumnMappingMetadataRequest(
+        metadata.getSchema,
+        enableIcebergCompatV2,
+        isNewTable)
   }
 
-  test("assign id and physical name to new table with map type and enableIcebergCompatV2=true") {
-    val schema: StructType =
-      new StructType()
-        .add("a", StringType.STRING)
-        .add("b", new MapType(IntegerType.INTEGER, StringType.STRING, false))
-        .add("c", IntegerType.INTEGER)
+  runWithIcebergCompatV2ComboForNewAndExistingTables(
+    "assign id and physical name to schema with nested schema") {
+    (isNewTable, enableIcebergCompatV2) =>
+      val schema: StructType = cmTestSchema()
 
-    val metadata: Metadata =
-      ColumnMapping.updateColumnMappingMetadata(
-        withIcebergCompatV2Enabled(createMetadata(schema)),
-        ID,
-        true /** isNewTable */)
+      var inputMetadata = testMetadata(schema).withColumnMappingEnabled("id")
+      if (enableIcebergCompatV2) {
+        inputMetadata = inputMetadata.withIcebergCompatV2Enabled
+      }
+      val metadata = updateColumnMappingMetadataIfNeeded(inputMetadata, isNewTable)
+        .orElseGet(() => fail("Metadata should not be empty"))
 
-    assertColumnMapping(metadata.getSchema.get("a"), 1L)
-    assertColumnMapping(metadata.getSchema.get("b"), 2L)
-    assertColumnMapping(metadata.getSchema.get("c"), 3L)
+      verifyCMTestSchemaHasValidColumnMappingInfo(metadata, isNewTable, enableIcebergCompatV2)
 
-    // verify nested ids
-    assertThat(metadata.getSchema.get("b").getMetadata.getEntries
-      .get(COLUMN_MAPPING_NESTED_IDS_KEY).asInstanceOf[FieldMetadata].getEntries)
-      .hasSize(2)
-      .anySatisfy((k: AnyRef, v: AnyRef) => {
-        assertThat(k).asString.startsWith("col-")
-        assertThat(k).asString.endsWith(".key")
-        assertThat(v).isEqualTo(4L)
-      })
-      .anySatisfy((k: AnyRef, v: AnyRef) => {
-        assertThat(k).asString.startsWith("col-")
-        assertThat(k).asString.endsWith(".value")
-        assertThat(v).isEqualTo(5L)
-      })
-
-    assertThat(metadata.getConfiguration)
-      .containsEntry(ColumnMapping.COLUMN_MAPPING_MAX_COLUMN_ID_KEY, "5")
+      // Requesting the same operation on the same schema shouldn't change anything
+      // as the schema already has the necessary column mapping info
+      assertNoOpOnUpdateColumnMappingMetadataRequest(
+        metadata.getSchema,
+        enableIcebergCompatV2,
+        isNewTable)
   }
 
-  test("assign id and physical name to existing table with map type " +
-    "and enableIcebergCompatV2=true") {
-    val schema: StructType =
-      new StructType()
-        .add("a", StringType.STRING)
-        .add("b", new MapType(IntegerType.INTEGER, StringType.STRING, false))
-        .add("c", IntegerType.INTEGER)
+  Seq(true, false).foreach { icebergCompatV2Enabled =>
+    test(s"assign id and physical name to only to the fields that don't have " +
+      s"with icebergCompatV2=$icebergCompatV2Enabled") {
+      val schema: StructType =
+        new StructType().add("a", StringType.STRING)
 
-    val metadata: Metadata =
-      ColumnMapping.updateColumnMappingMetadata(
-        withIcebergCompatV2Enabled(createMetadata(schema)),
-        ID,
-        false /** isNewTable */)
+      val inputMetadata = testMetadata(schema).withColumnMappingEnabled("id")
+      val updatedMetadata = updateColumnMappingMetadataIfNeeded(
+        if (icebergCompatV2Enabled) inputMetadata.withIcebergCompatV2Enabled else inputMetadata,
+        true).orElseGet(() => fail("Metadata should not be empty"))
 
-    assertColumnMapping(metadata.getSchema.get("a"), 1L, "a")
-    assertColumnMapping(metadata.getSchema.get("b"), 2L, "b")
-    assertColumnMapping(metadata.getSchema.get("c"), 3L, "c")
+      assertColumnMapping(updatedMetadata.getSchema.get("a"), 1L)
 
-    // verify nested ids
-    assertThat(metadata.getSchema.get("b").getMetadata.getEntries
-      .get(COLUMN_MAPPING_NESTED_IDS_KEY).asInstanceOf[FieldMetadata].getEntries)
-      .hasSize(2)
-      .containsEntry("b.key", 4L.asInstanceOf[AnyRef])
-      .containsEntry("b.value", 5L.asInstanceOf[AnyRef])
+      // Now add few more fields to the same schema
+      val updateSchema = updatedMetadata.getSchema
+        .add("b", StringType.STRING)
+        .add("c", new ArrayType(IntegerType.INTEGER, false))
+        .add("d", new MapType(IntegerType.INTEGER, StringType.STRING, false))
+        .add("e", new StructType().add("h", IntegerType.INTEGER))
 
-    assertThat(metadata.getConfiguration)
-      .containsEntry(ColumnMapping.COLUMN_MAPPING_MAX_COLUMN_ID_KEY, "5")
+      val inputMetadata2 = testMetadata(updateSchema).withColumnMappingEnabled("id")
+      val updatedMetadata2 = updateColumnMappingMetadataIfNeeded(
+        if (icebergCompatV2Enabled) inputMetadata2.withIcebergCompatV2Enabled else inputMetadata2,
+        false).orElseGet(() => fail("Metadata should not be empty"))
+
+      var fieldId = 0L
+
+      def nextFieldId: Long = {
+        fieldId += 1
+        fieldId
+      }
+
+      assertColumnMapping(updatedMetadata2.getSchema.get("a"), nextFieldId)
+      // newly added columns will have the physical names same as logical names
+      assertColumnMapping(updatedMetadata2.getSchema.get("b"), nextFieldId, "b")
+      assertColumnMapping(updatedMetadata2.getSchema.get("c"), nextFieldId, "c")
+      assertColumnMapping(updatedMetadata2.getSchema.get("d"), nextFieldId, "d")
+      assertColumnMapping(updatedMetadata2.getSchema.get("e"), nextFieldId, "e")
+      assertColumnMapping(
+        updatedMetadata2.getSchema.get("e")
+          .getDataType.asInstanceOf[StructType].get("h"),
+        nextFieldId,
+        "h")
+
+      if (icebergCompatV2Enabled) {
+        // verify nested ids
+        assertThat(updatedMetadata2.getSchema.get("c").getMetadata.getEntries
+          .get(COLUMN_MAPPING_NESTED_IDS_KEY).asInstanceOf[FieldMetadata].getEntries)
+          .hasSize(1)
+          .anySatisfy((k: AnyRef, v: AnyRef) => {
+            assertThat(k).asString.startsWith("c.")
+            assertThat(k).asString.endsWith(".element")
+            assertThat(v).isEqualTo(nextFieldId)
+          })
+
+        assertThat(updatedMetadata2.getSchema.get("d").getMetadata.getEntries
+          .get(COLUMN_MAPPING_NESTED_IDS_KEY).asInstanceOf[FieldMetadata].getEntries)
+          .hasSize(2)
+          .anySatisfy((k: AnyRef, v: AnyRef) => {
+            assertThat(k).asString.startsWith("d.")
+            assertThat(k).asString.endsWith(".key")
+            assertThat(v).isEqualTo(nextFieldId)
+          })
+          .anySatisfy((k: AnyRef, v: AnyRef) => {
+            assertThat(k).asString.startsWith("d.")
+            assertThat(k).asString.endsWith(".value")
+            assertThat(v).isEqualTo(nextFieldId)
+          })
+      } else {
+        assertThat(updatedMetadata2.getSchema.get("c").getMetadata.getEntries)
+          .doesNotContainKey(COLUMN_MAPPING_NESTED_IDS_KEY)
+        assertThat(updatedMetadata2.getSchema.get("d").getMetadata.getEntries)
+          .doesNotContainKey(COLUMN_MAPPING_NESTED_IDS_KEY)
+      }
+
+      assertNoOpOnUpdateColumnMappingMetadataRequest(
+        updatedMetadata2.getSchema,
+        icebergCompatV2Enabled,
+        isNewTable = false)
+    }
   }
 
-  test("assign id and physical name to new table with nested schema " +
-    "and enableIcebergCompatV2=true") {
-    val schema: StructType =
-      new StructType()
-        .add("a", StringType.STRING)
-        .add("b", new MapType(
-          IntegerType.INTEGER,
-          new StructType()
-            .add("d", IntegerType.INTEGER)
-            .add("e", IntegerType.INTEGER)
-            .add("f", new ArrayType(
-              new StructType()
-                .add("g", IntegerType.INTEGER)
-                .add("h", IntegerType.INTEGER),
-                false),
-              false),
-          false))
-        .add("c", IntegerType.INTEGER)
+  /**
+   * A struct type with all necessary CM info won't cause metadata change by
+   * [[updateColumnMappingMetadataIfNeeded]]
+   */
+  def assertNoOpOnUpdateColumnMappingMetadataRequest(
+      schemaWithCMInfo: StructType,
+      enableIcebergCompatV2: Boolean,
+      isNewTable: Boolean): Unit = {
 
-    val metadata: Metadata =
-      ColumnMapping.updateColumnMappingMetadata(
-        withIcebergCompatV2Enabled(createMetadata(schema)),
-        ID,
-        true /** isNewTable */)
+    var metadata = testMetadata(schemaWithCMInfo).withColumnMappingEnabled("id")
+    if (enableIcebergCompatV2) {
+      metadata = metadata.withIcebergCompatV2Enabled
+    }
 
-    assertColumnMapping(metadata.getSchema.get("a"), 1L)
-    assertColumnMapping(metadata.getSchema.get("b"), 2L)
-    val mapType = metadata.getSchema.get("b").getDataType.asInstanceOf[MapType]
-    val innerStruct = mapType.getValueField.getDataType.asInstanceOf[StructType]
-    assertColumnMapping(innerStruct.get("d"), 3L)
-    assertColumnMapping(innerStruct.get("e"), 4L)
-    assertColumnMapping(innerStruct.get("f"), 5L)
-    val innerArray = innerStruct.get("f").getDataType.asInstanceOf[ArrayType]
-    val structInArray = innerArray.getElementField.getDataType.asInstanceOf[StructType]
-    assertColumnMapping(structInArray.get("g"), 6L)
-    assertColumnMapping(structInArray.get("h"), 7L)
-    assertColumnMapping(metadata.getSchema.get("c"), 8L)
-
-    // verify nested ids
-    assertThat(metadata.getSchema.get("b").getMetadata.getEntries
-      .get(COLUMN_MAPPING_NESTED_IDS_KEY).asInstanceOf[FieldMetadata].getEntries)
-      .hasSize(2)
-      .anySatisfy((k: AnyRef, v: AnyRef) => {
-        assertThat(k).asString.startsWith("col-")
-        assertThat(k).asString.endsWith(".key")
-        assertThat(v).isEqualTo(9L)
-      })
-      .anySatisfy((k: AnyRef, v: AnyRef) => {
-        assertThat(k).asString.startsWith("col-")
-        assertThat(k).asString.endsWith(".value")
-        assertThat(v).isEqualTo(10L)
-      })
-
-    assertThat(mapType.getKeyField.getMetadata.getEntries)
-      .doesNotContainKey(ColumnMapping.COLUMN_MAPPING_ID_KEY)
-      .doesNotContainKey(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY)
-
-    assertThat(mapType.getValueField.getMetadata.getEntries)
-      .doesNotContainKey(ColumnMapping.COLUMN_MAPPING_ID_KEY)
-      .doesNotContainKey(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY)
-
-    // verify nested ids
-    assertThat(innerStruct.get("f").getMetadata.getEntries
-      .get(COLUMN_MAPPING_NESTED_IDS_KEY).asInstanceOf[FieldMetadata].getEntries)
-      .hasSize(1)
-      .anySatisfy((k: AnyRef, v: AnyRef) => {
-        assertThat(k).asString.startsWith("col-")
-        assertThat(k).asString.endsWith(".element")
-        assertThat(v).isEqualTo(11L)
-      })
-
-    assertThat(metadata.getConfiguration)
-      .containsEntry(ColumnMapping.COLUMN_MAPPING_MAX_COLUMN_ID_KEY, "11")
+    assertThat(updateColumnMappingMetadataIfNeeded(metadata, isNewTable)).isEmpty
   }
 
-  private def createMetadata(schema: StructType) = new Metadata(
-    UUID.randomUUID.toString,
-    Optional.empty(),
-    Optional.empty(),
-    new Format,
-    schema.toJson,
-    schema,
-    VectorUtils.stringArrayValue(Collections.emptyList()),
-    Optional.empty(),
-    VectorUtils.stringStringMapValue(Collections.emptyMap()))
-
-  private def assertColumnMapping(
-    field: StructField,
-    expId: Long,
-    expPhysicalName: String = "UUID"): Unit = {
-    assertThat(field.getMetadata.getEntries)
-      .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, expId.asInstanceOf[AnyRef])
-      .hasEntrySatisfying(
-        ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
-        (k: AnyRef) => {
-          if (expPhysicalName == "UUID") {
-            assertThat(k).asString.startsWith("col-")
-          } else {
-            assertThat(k).asString.isEqualTo(expPhysicalName)
-          }
-        })
-  }
-
-  private def withIcebergCompatV2Enabled(metadata: Metadata): Metadata = {
-    metadata.withNewConfiguration(
-      Maps.newHashMap(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey, "true"))
-  }
-
-  private def createMetadataWithFieldId(fieldId: Int) = {
-    FieldMetadata.builder.putLong(COLUMN_MAPPING_ID_KEY, fieldId).build()
+  def runWithIcebergCompatV2ComboForNewAndExistingTables(testName: String)(f: (
+      Boolean,
+      Boolean) => Unit): Unit = {
+    for {
+      isNewTable <- Seq(true, false)
+      enableIcebergCompatV2 <- Seq(true, false)
+    } {
+      test(s"$testName, enableIcebergCompatV2=$enableIcebergCompatV2, isNewTable=$isNewTable") {
+        f(isNewTable, enableIcebergCompatV2)
+      }
+    }
   }
 }

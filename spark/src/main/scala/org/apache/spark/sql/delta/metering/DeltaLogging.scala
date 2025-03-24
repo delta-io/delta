@@ -31,9 +31,9 @@ import com.databricks.spark.util.TagDefinitions.{
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
+import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.DeltaProgressReporter
 import org.apache.spark.sql.delta.util.JsonUtils
-import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.util.ScalaExtensions._
 
 import org.apache.hadoop.fs.Path

@@ -20,6 +20,7 @@ import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{RemoveFile, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.AlterTableDropFeatureDeltaCommand
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import com.google.common.math.DoubleMath
@@ -46,6 +47,11 @@ trait TypeWideningTestMixin extends DeltaSQLCommandTest with DeltaDMLTestUtils {
       .set(SQLConf.ANSI_ENABLED.key, "true")
       // Rebase mode must be set explicitly to allow writing dates before 1582-10-15.
       .set(SQLConf.PARQUET_REBASE_MODE_IN_WRITE.key, LegacyBehaviorPolicy.CORRECTED.toString)
+      // All the drop feature tests below are based on the drop feature with history truncation
+      // implementation. The fast drop feature implementation does not require any waiting time.
+      // The fast drop feature implementation is tested extensively in the
+      // DeltaFastDropFeatureSuite.
+      .set(DeltaSQLConf.FAST_DROP_FEATURE_ENABLED.key, false.toString)
   }
 
   /** Enable (or disable) type widening for the table under the given path. */
@@ -66,13 +72,12 @@ trait TypeWideningTestMixin extends DeltaSQLCommandTest with DeltaDMLTestUtils {
 
   /** Short-hand to create type widening metadata for struct fields. */
   protected def typeWideningMetadata(
-      version: Long,
       from: AtomicType,
       to: AtomicType,
       path: Seq[String] = Seq.empty): Metadata =
     new MetadataBuilder()
       .putMetadataArray(
-        "delta.typeChanges", Array(TypeChange(Some(version), from, to, path).toMetadata))
+        "delta.typeChanges", Array(TypeChange(None, from, to, path).toMetadata))
       .build()
 
   def addSingleFile[T: Encoder](values: Seq[T], dataType: DataType): Unit =
@@ -136,7 +141,7 @@ trait TypeWideningDropFeatureTestMixin
    * files all contain the expected type for specified columns.
    */
   def dropTableFeature(
-      feature: TableFeature = TypeWideningPreviewTableFeature,
+      feature: TableFeature = TypeWideningTableFeature,
       expectedOutcome: ExpectedOutcome.Value,
       expectedNumFilesRewritten: Long,
       expectedColumnTypes: Map[String, DataType]): Unit = {

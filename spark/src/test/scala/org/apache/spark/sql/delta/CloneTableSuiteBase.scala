@@ -20,6 +20,7 @@ import java.io.File
 import java.util.Locale
 
 import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
+import org.apache.spark.sql.delta.DataFrameUtils
 import org.apache.spark.sql.delta.actions.{FileAction, Metadata, Protocol, SetTransaction, SingleAction, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
@@ -168,8 +169,8 @@ trait CloneTableSuiteBase extends QueryTest
         } else {
           None
         }
-      val deltaTable = DeltaTableV2(spark, sourceLog.dataPath, None, None, timeTravelSpec)
-      val sourceData = Dataset.ofRows(
+      val deltaTable = DeltaTableV2(spark, sourceLog.dataPath, timeTravelOpt = timeTravelSpec)
+      val sourceData = DataFrameUtils.ofRows(
         spark,
         LogicalRelation(sourceLog.createRelation(
           snapshotToUseOpt = Some(deltaTable.initialSnapshot),
@@ -239,7 +240,7 @@ trait CloneTableSuiteBase extends QueryTest
       "A file was added and removed in the same commit")
 
     // Check whether the resulting datasets are the same
-    val targetDf = Dataset.ofRows(
+    val targetDf = DataFrameUtils.ofRows(
       spark,
       LogicalRelation(targetLog.createRelation()))
     checkAnswer(

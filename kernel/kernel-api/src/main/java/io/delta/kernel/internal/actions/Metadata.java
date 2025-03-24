@@ -120,7 +120,7 @@ public class Metadata {
                         .collect(Collectors.toList())));
   }
 
-  public Metadata withNewConfiguration(Map<String, String> configuration) {
+  public Metadata withMergedConfiguration(Map<String, String> configuration) {
     Map<String, String> newConfiguration = new HashMap<>(getConfiguration());
     newConfiguration.putAll(configuration);
     return new Metadata(
@@ -265,6 +265,28 @@ public class Metadata {
     metadataMap.put(7, configurationMapValue);
 
     return new GenericRow(Metadata.FULL_SCHEMA, metadataMap);
+  }
+
+  @Override
+  public int hashCode() {
+    return Objects.hash(
+        id, name, description, format, schema, partitionColNames, createdTime, configuration);
+  }
+
+  @Override
+  public boolean equals(Object o) {
+    if (!(o instanceof Metadata)) {
+      return false;
+    }
+    Metadata other = (Metadata) o;
+    return id.equals(other.id)
+        && name.equals(other.name)
+        && description.equals(other.description)
+        && format.equals(other.format)
+        && schema.equals(other.schema)
+        && partitionColNames.get().equals(other.partitionColNames.get())
+        && createdTime.equals(other.createdTime)
+        && configuration.get().equals(other.configuration.get());
   }
 
   /** Helper method to load the partition column names. */
