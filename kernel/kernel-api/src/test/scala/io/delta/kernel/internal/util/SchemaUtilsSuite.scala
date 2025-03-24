@@ -34,6 +34,8 @@ import io.delta.kernel.types.LongType.LONG
 import io.delta.kernel.types.TimestampType.TIMESTAMP
 
 import org.scalatest.funsuite.AnyFunSuite
+import org.scalatest.prop.TableDrivenPropertyChecks.forAll
+import org.scalatest.prop.Tables.Table
 
 class SchemaUtilsSuite extends AnyFunSuite {
   private def expectFailure(shouldContain: String*)(f: => Unit): Unit = {
@@ -483,127 +485,415 @@ class SchemaUtilsSuite extends AnyFunSuite {
     val updated = current.add(new StructField("data", StringType.STRING, true))
 
     val e = intercept[IllegalArgumentException] {
+      val tblProperties = Map(COLUMN_MAPPING_MODE_KEY -> "none")
       SchemaUtils.validateUpdatedSchema(
         current,
         updated,
-        metadata(current, properties = Map(COLUMN_MAPPING_MODE_KEY -> "none")))
+        metadata(current, properties = tblProperties))
     }
 
     assert(e.getMessage == "Cannot validate updated schema when column mapping is disabled")
   }
 
+  private val updatedSchemasWithInconsistentPhysicalNames = Table(
+    ("schemaBefore", "updatedSchemaWithInconsistentPhysicalNames"),
+    // Top level primitive has inconsistent physical name
+    (
+      new StructType()
+        .add(
+          "id",
+          IntegerType.INTEGER,
+          true,
+          fieldMetadata(id = 1, physicalName = "id")),
+      new StructType()
+        .add(
+          "renamed_id",
+          IntegerType.INTEGER,
+          true,
+          fieldMetadata(id = 1, physicalName = "inconsistent_name"))),
+    // Map with struct key has inconsistent physical name
+    (
+      new StructType()
+        .add(
+          "id_map",
+          new MapType(
+            new StructType()
+              .add("id", IntegerType.INTEGER, false, fieldMetadata(id = 2, physicalName = "id")),
+            IntegerType.INTEGER,
+            false),
+          true,
+          fieldMetadata(id = 1, physicalName = "id_map")),
+      new StructType()
+        .add(
+          "id_map",
+          new MapType(
+            new StructType()
+              .add(
+                "renamed_id",
+                IntegerType.INTEGER,
+                false,
+                fieldMetadata(id = 2, physicalName = "inconsistent_name")),
+            IntegerType.INTEGER,
+            false),
+          true,
+          fieldMetadata(id = 1, physicalName = "id_map"))),
+    // Struct with array of struct field where inner struct field has inconsistent physical name
+    (
+      new StructType()
+        .add(
+          "top_level_struct",
+          new StructType().add(
+            "array",
+            new ArrayType(
+              new StructType().add("id", IntegerType.INTEGER, fieldMetadata(4L, "id")),
+              false),
+            false,
+            fieldMetadata(2L, "array_field")),
+          fieldMetadata(1L, "top_level_struct")),
+      new StructType()
+        .add(
+          "top_level_struct",
+          new StructType().add(
+            "array",
+            new ArrayType(
+              new StructType().add(
+                "renamed_id",
+                IntegerType.INTEGER,
+                fieldMetadata(4L, "inconsistent_name")),
+              false),
+            false,
+            fieldMetadata(2L, "array_field")),
+          fieldMetadata(1L, "top_level_struct"))))
+
   test("validateUpdatedSchema fails when physical names are not consistent across ids") {
-    val current = new StructType()
-      .add(
-        "id",
-        IntegerType.INTEGER,
-        true,
-        FieldMetadata.builder().putLong(COLUMN_MAPPING_ID_KEY, 1L)
-          .putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, "id").build())
+    forAll(updatedSchemasWithInconsistentPhysicalNames) { (schemaBefore, schemaAfter) =>
+      val e = intercept[IllegalArgumentException] {
+        SchemaUtils.validateUpdatedSchema(schemaBefore, schemaAfter, metadata(schemaBefore))
+      }
 
-    val updated = new StructType()
-      .add(
-        "renamed_id",
-        IntegerType.INTEGER,
-        true,
-        FieldMetadata.builder().putLong(COLUMN_MAPPING_ID_KEY, 1L)
-          .putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, "inconsistent_id").build())
-
-    val e = intercept[IllegalArgumentException] {
-      SchemaUtils.validateUpdatedSchema(current, updated, metadata(current))
+      assert(e.getMessage.contains("physical name id which is different from inconsistent_name"))
     }
-
-    assert(e.getMessage == "Existing field with id 1 in current schema has " +
-      "physical name id which is different from inconsistent_id")
   }
+
+  private val updatedSchemasMissingId = Table(
+    ("schemaBefore", "updatedSchemaWithMissingId"),
+    // Top level primitive missing field ID
+    (
+      new StructType()
+        .add(
+          "id",
+          IntegerType.INTEGER,
+          true,
+          fieldMetadata(id = 1, physicalName = "id")),
+      new StructType()
+        .add(
+          "renamed_id",
+          IntegerType.INTEGER,
+          true,
+          FieldMetadata.builder().putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, "id").build())),
+    // Map with struct key missing field ID
+    (
+      new StructType()
+        .add(
+          "map",
+          new MapType(
+            new StructType()
+              .add("id", IntegerType.INTEGER, false, fieldMetadata(id = 2, physicalName = "id")),
+            IntegerType.INTEGER,
+            false),
+          true,
+          fieldMetadata(id = 1, physicalName = "map")),
+      new StructType()
+        .add(
+          "map",
+          new MapType(
+            new StructType()
+              .add(
+                "renamed_id",
+                IntegerType.INTEGER,
+                false,
+                FieldMetadata.builder().putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, "id").build()),
+            IntegerType.INTEGER,
+            false),
+          true,
+          fieldMetadata(id = 1, physicalName = "map"))),
+    // Struct with array of struct field where inner struct is missing ID
+    (
+      new StructType()
+        .add(
+          "top_level_struct",
+          new StructType().add(
+            "array",
+            new ArrayType(
+              new StructType().add("id", IntegerType.INTEGER, fieldMetadata(4L, "id")),
+              false),
+            false,
+            fieldMetadata(2L, "array_field")),
+          fieldMetadata(1L, "top_level_struct")),
+      new StructType()
+        .add(
+          "top_level_struct",
+          new StructType().add(
+            "array",
+            new ArrayType(
+              new StructType().add(
+                "renamed_id",
+                IntegerType.INTEGER,
+                FieldMetadata.builder()
+                  .putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, "id").build()),
+              false),
+            false,
+            fieldMetadata(2L, "array_field")),
+          fieldMetadata(1L, "top_level_struct"))))
 
   test("validateUpdatedSchema fails when field is missing ID") {
-    val current = new StructType()
-      .add(
-        "id",
-        IntegerType.INTEGER,
-        true,
-        FieldMetadata.builder().putLong(COLUMN_MAPPING_ID_KEY, 1L)
-          .putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, "id").build())
+    forAll(updatedSchemasMissingId) { (schemaBefore, schemaAfter) =>
+      val e = intercept[IllegalArgumentException] {
+        SchemaUtils.validateUpdatedSchema(schemaBefore, schemaAfter, metadata(schemaBefore))
+      }
 
-    val updated = new StructType()
-      .add(
-        "renamed_id",
-        IntegerType.INTEGER,
-        true,
-        FieldMetadata.builder().putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, "id").build())
-
-    val e = intercept[IllegalArgumentException] {
-      SchemaUtils.validateUpdatedSchema(current, updated, metadata(current))
+      assert(e.getMessage == "Field renamed_id is missing column id")
     }
-
-    assert(e.getMessage == "Field renamed_id is missing column id")
   }
+
+  private val updatedSchemasMissingPhysicalName = Table(
+    ("schemaBefore", "updatedSchemaWithMissingPhysicalName"),
+    // Top level primitive missing physical name
+    (
+      new StructType()
+        .add(
+          "id",
+          IntegerType.INTEGER,
+          true,
+          fieldMetadata(id = 1, physicalName = "id")),
+      new StructType()
+        .add(
+          "renamed_id",
+          IntegerType.INTEGER,
+          true,
+          FieldMetadata.builder().putLong(COLUMN_MAPPING_ID_KEY, 1).build())),
+    // Map with struct key missing physical name
+    (
+      new StructType()
+        .add(
+          "id_map",
+          new MapType(
+            new StructType()
+              .add("id", IntegerType.INTEGER, false, fieldMetadata(id = 2, physicalName = "id")),
+            IntegerType.INTEGER,
+            false),
+          true,
+          fieldMetadata(id = 1, physicalName = "id_map")),
+      new StructType()
+        .add(
+          "id_map",
+          new MapType(
+            new StructType()
+              .add(
+                "renamed_id",
+                IntegerType.INTEGER,
+                false,
+                FieldMetadata.builder().putLong(COLUMN_MAPPING_ID_KEY, 1).build()),
+            IntegerType.INTEGER,
+            false),
+          true,
+          fieldMetadata(id = 1, physicalName = "id_map"))),
+    // Struct with array of struct field where inner struct is missing physical name
+    (
+      new StructType()
+        .add(
+          "top_level_struct",
+          new StructType().add(
+            "array",
+            new ArrayType(
+              new StructType().add("id", IntegerType.INTEGER, fieldMetadata(4L, "id")),
+              false),
+            false,
+            fieldMetadata(2L, "array_field")),
+          fieldMetadata(1L, "top_level_struct")),
+      new StructType()
+        .add(
+          "top_level_struct",
+          new StructType().add(
+            "array",
+            new ArrayType(
+              new StructType().add(
+                "renamed_id",
+                IntegerType.INTEGER,
+                FieldMetadata.builder()
+                  .putLong(COLUMN_MAPPING_ID_KEY, 4L).build()),
+              false),
+            false,
+            fieldMetadata(2L, "array_field")),
+          fieldMetadata(1L, "top_level_struct"))))
 
   test("validateUpdatedSchema fails when field is missing physical name") {
-    val current = new StructType()
-      .add(
-        "id",
-        IntegerType.INTEGER,
-        true,
-        FieldMetadata.builder().putLong(COLUMN_MAPPING_ID_KEY, 1L)
-          .putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, "id").build())
+    forAll(updatedSchemasMissingPhysicalName) { (schemaBefore, schemaAfter) =>
+      val e = intercept[IllegalArgumentException] {
+        SchemaUtils.validateUpdatedSchema(schemaBefore, schemaAfter, metadata(schemaBefore))
+      }
 
-    val updated = new StructType()
-      .add(
-        "renamed_id",
-        IntegerType.INTEGER,
-        true,
-        FieldMetadata.builder().putLong(COLUMN_MAPPING_ID_KEY, 1L).build())
-
-    val e = intercept[IllegalArgumentException] {
-      SchemaUtils.validateUpdatedSchema(current, updated, metadata(current))
+      assert(e.getMessage == "Field renamed_id is missing physical name")
     }
-
-    assert(e.getMessage == "Field renamed_id is missing physical name")
   }
+
+  private val updatedSchemaHasDuplicateColumnId = Table(
+    ("schemaBefore", "updatedSchemaWithMissingPhysicalName"),
+    // Top level primitive has duplicate id
+    (
+      new StructType()
+        .add(
+          "id",
+          IntegerType.INTEGER,
+          true,
+          fieldMetadata(id = 1, physicalName = "id")),
+      new StructType()
+        .add(
+          "id",
+          IntegerType.INTEGER,
+          true,
+          fieldMetadata(id = 1, physicalName = "id"))
+        .add(
+          "duplicate_id",
+          IntegerType.INTEGER,
+          true,
+          fieldMetadata(id = 1, physicalName = "duplicate_id"))),
+    // Map with struct key adds duplicate field
+    (
+      new StructType()
+        .add(
+          "id_map",
+          new MapType(
+            new StructType()
+              .add("id", IntegerType.INTEGER, false, fieldMetadata(id = 2, physicalName = "id")),
+            IntegerType.INTEGER,
+            false),
+          true,
+          fieldMetadata(id = 1, physicalName = "id_map")),
+      new StructType()
+        .add(
+          "id_map",
+          new MapType(
+            new StructType()
+              .add("id", IntegerType.INTEGER, false, fieldMetadata(id = 2, physicalName = "id")),
+            IntegerType.INTEGER,
+            false),
+          true,
+          fieldMetadata(id = 1, physicalName = "id_map"))
+        .add(
+          "duplicate_id",
+          IntegerType.INTEGER,
+          fieldMetadata(id = 2, physicalName = "duplicate_id"))),
+    // Struct with array of struct field where field with duplicate ID is added
+    (
+      new StructType()
+        .add(
+          "top_level_struct",
+          new StructType().add(
+            "array",
+            new ArrayType(
+              new StructType().add("id", IntegerType.INTEGER, fieldMetadata(4L, "id")),
+              false),
+            false,
+            fieldMetadata(2L, "array_field")),
+          fieldMetadata(1L, "top_level_struct")),
+      new StructType()
+        .add(
+          "top_level_struct",
+          new StructType().add(
+            "array",
+            new ArrayType(
+              new StructType().add("id", IntegerType.INTEGER, fieldMetadata(4L, "id")),
+              false),
+            false,
+            fieldMetadata(2L, "array_field")),
+          fieldMetadata(1L, "top_level_struct"))
+        .add(
+          "duplicate_id",
+          IntegerType.INTEGER,
+          fieldMetadata(4L, "duplicate_id"))))
 
   test("validateUpdatedSchema fails with schema with duplicate column ID") {
-    val current = new StructType()
-      .add(
-        "id",
-        IntegerType.INTEGER,
-        true,
-        FieldMetadata.builder().putLong(COLUMN_MAPPING_ID_KEY, 1L)
-          .putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, "id").build())
+    forAll(updatedSchemaHasDuplicateColumnId) { (schemaBefore, schemaAfter) =>
+      val e = intercept[IllegalArgumentException] {
+        SchemaUtils.validateUpdatedSchema(schemaBefore, schemaAfter, metadata(schemaBefore))
+      }
 
-    val updated = current.add(
-      "duplicate_field",
-      StringType.STRING,
-      true,
-      FieldMetadata.builder().putLong(COLUMN_MAPPING_ID_KEY, 1L)
-        .putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, "id").build())
-
-    val e = intercept[IllegalArgumentException] {
-      SchemaUtils.validateUpdatedSchema(current, updated, metadata(current))
+      assert(e.getMessage.matches("Field duplicate_id with id .* already exists"))
     }
-
-    assert(e.getMessage == "Field duplicate_field with id 1 already exists")
   }
 
+  private val validUpdatedSchemas = Table(
+    ("schemaBefore", "updatedSchemaWithRenamedColumns"),
+    // Top level primitive missing physical name
+    (
+      new StructType()
+        .add(
+          "id",
+          IntegerType.INTEGER,
+          true,
+          fieldMetadata(id = 1, physicalName = "id")),
+      new StructType()
+        .add(
+          "renamed_id",
+          IntegerType.INTEGER,
+          true,
+          fieldMetadata(id = 1, physicalName = "id"))),
+    // Map with struct key renamed
+    (
+      new StructType()
+        .add(
+          "id_map",
+          new MapType(
+            new StructType()
+              .add("id", IntegerType.INTEGER, false, fieldMetadata(id = 2, physicalName = "id")),
+            IntegerType.INTEGER,
+            false),
+          true,
+          fieldMetadata(id = 1, physicalName = "id_map")),
+      new StructType()
+        .add(
+          "id_map",
+          new MapType(
+            new StructType()
+              .add(
+                "renamed_id",
+                IntegerType.INTEGER,
+                false,
+                fieldMetadata(id = 2, physicalName = "id")),
+            IntegerType.INTEGER,
+            false),
+          true,
+          fieldMetadata(id = 1, physicalName = "id_map"))),
+    // Struct with array of struct field where inner struct is missing physical name
+    (
+      new StructType()
+        .add(
+          "top_level_struct",
+          new StructType().add(
+            "array",
+            new ArrayType(
+              new StructType().add("id", IntegerType.INTEGER, fieldMetadata(4L, "id")),
+              false),
+            false,
+            fieldMetadata(2L, "array_field")),
+          fieldMetadata(1L, "top_level_struct")),
+      new StructType()
+        .add(
+          "top_level_struct",
+          new StructType().add(
+            "array",
+            new ArrayType(
+              new StructType().add("renamed_id", IntegerType.INTEGER, fieldMetadata(4L, "id")),
+              false),
+            false,
+            fieldMetadata(2L, "array_field")),
+          fieldMetadata(1L, "top_level_struct"))))
+
   test("validateUpdatedSchema succeeds with valid ID and physical name") {
-    val current = new StructType()
-      .add(
-        "id",
-        IntegerType.INTEGER,
-        true,
-        FieldMetadata.builder().putLong(COLUMN_MAPPING_ID_KEY, 1L)
-          .putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, "id").build())
-
-    val updated = new StructType()
-      .add(
-        "renamed_id",
-        IntegerType.INTEGER,
-        true,
-        FieldMetadata.builder().putLong(COLUMN_MAPPING_ID_KEY, 1L)
-          .putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, "id").build())
-
-    SchemaUtils.validateUpdatedSchema(current, updated, metadata(current))
+    forAll(validUpdatedSchemas) { (schemaBefore, schemaAfter) =>
+      SchemaUtils.validateUpdatedSchema(schemaBefore, schemaAfter, metadata(schemaBefore))
+    }
   }
 
   private def metadata(
@@ -621,6 +911,13 @@ class SchemaUtilsSuite extends AnyFunSuite {
       Optional.empty(), // createdTime
       stringStringMapValue(properties.asJava) // configurationMap
     )
+  }
+
+  private def fieldMetadata(id: Long, physicalName: String): FieldMetadata = {
+    FieldMetadata.builder()
+      .putLong(COLUMN_MAPPING_ID_KEY, id)
+      .putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, physicalName)
+      .build()
   }
 
   ///////////////////////////////////////////////////////////////////////////

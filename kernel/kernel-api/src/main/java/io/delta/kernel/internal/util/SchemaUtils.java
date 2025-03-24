@@ -422,22 +422,14 @@ public class SchemaUtils {
     Map<Long, StructField> columnIdToField = new HashMap<>();
     for (Tuple2<List<String>, StructField> pathAndField : columnPathToStructField) {
       StructField field = pathAndField._2;
-      if (!hasColumnId(field)) {
-        throw new IllegalArgumentException(
-            String.format("Field %s is missing column id", field.getName()));
-      }
-
-      if (!hasPhysicalName(field)) {
-        throw new IllegalArgumentException(
-            String.format("Field %s is missing physical name", field.getName()));
-      }
-
-      Long columnId = field.getMetadata().getLong(COLUMN_MAPPING_ID_KEY);
-      if (columnIdToField.containsKey(columnId)) {
-        throw new IllegalArgumentException(
-            String.format("Field %s with id %d already exists", field.getName(), columnId));
-      }
-
+      checkArgument(hasColumnId(field), "Field %s is missing column id", field.getName());
+      checkArgument(hasPhysicalName(field), "Field %s is missing physical name", field.getName());
+      long columnId = field.getMetadata().getLong(COLUMN_MAPPING_ID_KEY);
+      checkArgument(
+          !columnIdToField.containsKey(columnId),
+          "Field %s with id %d already exists",
+          field.getName(),
+          columnId);
       columnIdToField.put(columnId, field);
     }
 
