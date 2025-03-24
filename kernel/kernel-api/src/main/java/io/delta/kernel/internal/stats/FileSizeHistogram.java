@@ -226,8 +226,8 @@ public class FileSizeHistogram {
         "getBinIndex must return non-negative index for non-negative fileSize, got %s",
         index);
     checkArgument(
-        totalBytes[index] >= fileSize,
-        "Cannot remove %s bytes from bin %d which only has %s bytes",
+        totalBytes[index] >= fileSize && fileCounts[index] > 0,
+        "Cannot remove %s bytes from bin %d which only has %s bytes or does not have any files",
         fileSize,
         index,
         totalBytes[index]);

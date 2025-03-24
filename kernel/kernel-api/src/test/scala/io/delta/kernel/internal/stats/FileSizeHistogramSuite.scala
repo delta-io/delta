@@ -171,8 +171,8 @@ class FileSizeHistogramSuite extends AnyFunSuite {
     testSizes.foreach { size =>
       histogram.insert(size)
       val index = getBinIndexForTesting(histogram.getSortedBinBoundaries, size)
-      assert(histogram.getFileCounts(index) >= 1L)
-      assert(histogram.getTotalBytes(index) >= size)
+      assert(histogram.getFileCounts(index) == 1L)
+      assert(histogram.getTotalBytes(index) == size)
     }
 
     // Test multiple insertions in same bin
