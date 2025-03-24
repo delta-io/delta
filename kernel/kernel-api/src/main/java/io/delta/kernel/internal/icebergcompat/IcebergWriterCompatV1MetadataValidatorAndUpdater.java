@@ -19,6 +19,7 @@ import static io.delta.kernel.internal.tablefeatures.TableFeatures.*;
 import static java.util.stream.Collectors.toList;
 import static java.util.stream.Collectors.toSet;
 
+import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
@@ -65,6 +66,30 @@ import java.util.stream.Stream;
  */
 public class IcebergWriterCompatV1MetadataValidatorAndUpdater
     extends IcebergCompatMetadataValidatorAndUpdater {
+
+  /**
+   * Validates that any change to property {@link TableConfig#ICEBERG_WRITER_COMPAT_V1_ENABLED} is
+   * valid. Currently, the changes we support are
+   *
+   * <ul>
+   *   <li>No change in enablement (true to true or false to false)
+   *   <li>Enabling but only on a new table (false to true)
+   *   <li>Disabling (true to false)
+   * </ul>
+   *
+   * If enabling (false to true) on an existing table we throw an {@link KernelException}.
+   */
+  public static void validateIcebergWriterCompatV1Change(
+      Map<String, String> oldConfig, Map<String, String> newConfig, boolean isNewTable) {
+    if (!isNewTable) {
+      boolean wasEnabled = TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.fromMetadata(oldConfig);
+      boolean isEnabled = TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.fromMetadata(newConfig);
+      if (!wasEnabled && isEnabled) {
+        throw DeltaErrors.enablingIcebergWriterCompatV1OnExistingTable(
+            TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey());
+      }
+    }
+  }
 
   /**
    * Validate and update the given Iceberg Writer Compat V1 metadata.

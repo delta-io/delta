@@ -370,6 +370,14 @@ public final class DeltaErrors {
             + " but 'domainMetadata' is unsupported");
   }
 
+  public static KernelException enablingIcebergWriterCompatV1OnExistingTable(String key) {
+    return new KernelException(
+        String.format(
+            "Cannot enable %s on an existing table. "
+                + "Enablement is only supported upon table creation.",
+            key));
+  }
+
   /* ------------------------ HELPER METHODS ----------------------------- */
   private static String formatTimestamp(long millisSinceEpochUTC) {
     return new Timestamp(millisSinceEpochUTC).toInstant().toString();
