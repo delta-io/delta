@@ -29,6 +29,34 @@ For `IcebergWriterCompatV1` writers must ensure:
 - The table is using [Column Mapping](#column-mapping) and that it is set to `id` mode.
   - Note this is a tightening of the `IcebergCompatV2` requirement which supports `name` and `id` mode.
 
+- Each field _must_ have a column mapping physical name that is exactly `col-[column id]`. That is the `delta.columnMapping.physicalName` in the column metadata _must_ be equal to `col-[delta.columnMapping.id]`. The following is an example compliant schema definition:
+
+  ```json
+{
+  "type": "struct",
+  "fields": [
+    {
+      "name": "a",
+      "type": "integer",
+      "nullable": false,
+      "metadata": {
+        "delta.columnMapping.id": 1,
+        "delta.columnMapping.physicalName": "col-1"
+      }
+    },
+    {
+      "name": "b",
+      "type": "string",
+      "nullable": false,
+      "metadata": {
+        "delta.columnMapping.id": 2,
+        "delta.columnMapping.physicalName": "col-2"
+      }
+    }
+  ]
+}
+  ```
+
 - The table does not contain any columns with the type `byte` or `short`
   - Note that these types _are_ allowed by `IcebergCompatV2`
   - Therefore the list of allowed types for a table with `IcebergWriterCompatV1` enabled is: [`integer`, `long`, `float`, `double`, `decimal`, `string`, `binary`, `boolean`, `timestamp`, `timestampNTZ`, `date`, `array`, `map`, `struct`].
@@ -38,7 +66,7 @@ For `IcebergWriterCompatV1` writers must ensure:
 
 - Any enabled features are in the [allowlist](#allowed-supported-list-of-features)
 
-- All (Disallowed features)[#disallowed-features] are not supported and/or inactive (see below)
+- All [Disallowed features](#disallowed-features) are not supported and/or inactive (see below)
 
 ### Disallowed Features
 For this section, we use the specific meanings of "supported" and "active" from [Supported Features](#supported-features). All the following features must not be used in the table. For legacy features (any feature introduced before writer version 7), the feature _can_ be "supported", but must _not_ be "active".
