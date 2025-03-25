@@ -29,7 +29,6 @@ import io.delta.kernel.internal.{DataWriteContextImpl, TableConfig, TransactionI
 import io.delta.kernel.internal.TableConfig.ICEBERG_COMPAT_V2_ENABLED
 import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
 import io.delta.kernel.internal.data.TransactionStateRow
-import io.delta.kernel.internal.data.TransactionStateRow.isClusteredTableSupported
 import io.delta.kernel.internal.tablefeatures.TableFeatures.CLUSTERING_W_FEATURE
 import io.delta.kernel.internal.types.DataTypeJsonSerDe
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
@@ -159,7 +158,12 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
         Optional.empty(),
         stringStringMapValue(configMap.asJava))
       val protocol = new Protocol(3, 7)
-      val txnState = TransactionStateRow.of(metadata, protocol, "table path", schema)
+      val txnState = TransactionStateRow.of(
+        metadata,
+        protocol,
+        "table path",
+        schema,
+        List.empty[Column].asJava)
 
       // Get statistics columns and define expected result
       val statsColumns = TransactionImpl.getStatisticsColumns(txnState)
@@ -318,7 +322,7 @@ object TransactionSuite extends VectorTestUtils with MockEngineUtils {
     if (supportClusteredTableFeature) {
       protocol = protocol.withFeature(CLUSTERING_W_FEATURE)
     }
-    TransactionStateRow.of(metadata, protocol, "table path", schema)
+    TransactionStateRow.of(metadata, protocol, "table path", schema, List.empty[Column].asJava)
   }
 
   def testStats(numRowsOpt: Option[Long]): Option[DataFileStatistics] = {

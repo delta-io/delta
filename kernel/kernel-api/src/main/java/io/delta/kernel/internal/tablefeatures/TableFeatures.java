@@ -200,10 +200,10 @@ public class TableFeatures {
     }
   }
 
-  public static final TableFeature CLUSTERING_W_FEATURE = new ClusteringMetadataFeature();
+  public static final TableFeature CLUSTERING_W_FEATURE = new ClusteringTableFeature();
 
-  private static class ClusteringMetadataFeature extends TableFeature.WriterFeature {
-    ClusteringMetadataFeature() {
+  private static class ClusteringTableFeature extends TableFeature.WriterFeature {
+    ClusteringTableFeature() {
       super("clustering", /* minWriterVersion = */ 7);
     }
 
@@ -542,6 +542,10 @@ public class TableFeatures {
     return protocol
         .getImplicitlyAndExplicitlySupportedFeatures()
         .contains(DOMAIN_METADATA_W_FEATURE);
+  }
+
+  public static boolean isClusteringTableFeatureSupported(Protocol protocol) {
+    return protocol.getImplicitlyAndExplicitlySupportedFeatures().contains(CLUSTERING_W_FEATURE);
   }
 
   /////////////////////////////////////////////////////////////////////////////////

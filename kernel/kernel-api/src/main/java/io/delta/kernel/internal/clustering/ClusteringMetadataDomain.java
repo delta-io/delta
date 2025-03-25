@@ -15,13 +15,15 @@
  */
 package io.delta.kernel.internal.clustering;
 
-import com.fasterxml.jackson.annotation.JsonCreator;
-import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.expressions.Column;
+import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.metadatadomain.JsonMetadataDomain;
 import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.types.StructType;
 import java.util.*;
+import java.util.stream.Collectors;
 
 /** Represents the metadata domain for clustering. */
 public final class ClusteringMetadataDomain extends JsonMetadataDomain {
@@ -29,42 +31,59 @@ public final class ClusteringMetadataDomain extends JsonMetadataDomain {
   public static final String DOMAIN_NAME = "delta.clustering";
 
   /** The physical column names used for clustering */
-  private final List<List<String>> clusteringColumns;
+  private final List<Column> clusteringColumns;
+
+  /**
+   * Constructs a ClusteringMetadataDomain with the specified logical clustering columns and schema.
+   *
+   * @param logicalClusteringColumns the logical columns used for clustering
+   * @param schema the schema of the table
+   */
+  public ClusteringMetadataDomain(List<Column> logicalClusteringColumns, StructType schema) {
+    List<Column> physicalClusteringColumns = new ArrayList<>();
+    for (Column logicalName : logicalClusteringColumns) {
+      Column physicalColumnNames = ColumnMapping.convertToPhysicalColumnNames(schema, logicalName);
+      physicalClusteringColumns.add(physicalColumnNames);
+    }
+    this.clusteringColumns = physicalClusteringColumns;
+  }
 
   @Override
   public String getDomainName() {
     return DOMAIN_NAME;
   }
 
-  public List<List<String>> getClusteringColumns() {
+  /** @return the physical column names used for clustering */
+  public List<Column> getClusteringColumns() {
     return clusteringColumns;
   }
 
   /**
-   * Constructs a ClusteringMetadataDomain with the specified physical clustering columns.
+   * Creates an instance of {@link ClusteringMetadataDomain} from a {@link SnapshotImpl}.
    *
-   * @param physicalClusteringColumns the physical columns used for clustering
+   * @param snapshot the snapshot instance
+   * @return an {@link Optional} containing the {@link ClusteringMetadataDomain} if present
    */
-  @JsonCreator
-  public ClusteringMetadataDomain(
-      @JsonProperty("clusteringColumns") List<List<String>> physicalClusteringColumns) {
-    this.clusteringColumns = physicalClusteringColumns;
+  public static Optional<ClusteringMetadataDomain> fromSnapshot(SnapshotImpl snapshot) {
+    return JsonMetadataDomain.fromSnapshot(snapshot, ClusteringMetadataDomain.class, DOMAIN_NAME);
   }
 
-  /**
-   * Constructs a ClusteringMetadataDomain with the specified logical clustering columns and schema.
-   *
-   * @param logicalClusteringColumns the logical columns used for clustering (e.g. "a.b.c" for a
-   *     nested column "a.b.c")
-   * @param schema the schema of the table
-   */
-  public ClusteringMetadataDomain(List<Column> logicalClusteringColumns, StructType schema) {
-    List<List<String>> physicalClusteringColumns = new ArrayList<>();
-    for (Column logicalName : logicalClusteringColumns) {
-      List<String> physicalColumnNames =
-          ColumnMapping.convertToPhysicalColumnNames(schema, logicalName);
-      physicalClusteringColumns.add(physicalColumnNames);
+  @Override
+  public String toJsonConfiguration() {
+    List<String[]> columnList =
+        clusteringColumns.stream().map(Column::getNames).collect(Collectors.toList());
+
+    Map<String, Object> jsonMap = new HashMap<>();
+    jsonMap.put("clusteringColumns", columnList);
+
+    try {
+      return OBJECT_MAPPER.writeValueAsString(jsonMap);
+    } catch (JsonProcessingException e) {
+      throw new KernelException(
+          String.format(
+              "Could not serialize %s (domain: %s) to JSON",
+              this.getClass().getSimpleName(), getDomainName()),
+          e);
     }
-    this.clusteringColumns = physicalClusteringColumns;
   }
 }

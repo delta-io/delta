@@ -17,12 +17,19 @@ package io.delta.kernel.internal.clustering;
 
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.DeltaErrors;
+import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.DataFileStatus;
 import java.util.List;
+import java.util.Optional;
 
 public class ClusteringUtils {
+
+  private ClusteringUtils() {
+    // Empty private constructor to prevent instantiation
+  }
+
   /**
    * Get the domain metadata for the clustering columns.
    *
@@ -35,6 +42,11 @@ public class ClusteringUtils {
     final ClusteringMetadataDomain clusteringMetadataDomain =
         new ClusteringMetadataDomain(logicalClusteringColumns, schema);
     return clusteringMetadataDomain.toDomainMetadata();
+  }
+
+  public static Optional<List<Column>> getClusteringColumnsOptional(SnapshotImpl snapshot) {
+    return ClusteringMetadataDomain.fromSnapshot(snapshot)
+        .map(ClusteringMetadataDomain::getClusteringColumns);
   }
 
   /**

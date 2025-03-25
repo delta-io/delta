@@ -18,7 +18,6 @@ package io.delta.kernel.internal;
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 import static io.delta.kernel.internal.TableConfig.*;
 import static io.delta.kernel.internal.actions.SingleAction.*;
-import static io.delta.kernel.internal.clustering.ClusteringUtils.getClusteringDomainMetadata;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Preconditions.checkState;
 import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
@@ -36,6 +35,8 @@ import io.delta.kernel.hook.PostCommitHook;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.checksum.CRCInfo;
+import io.delta.kernel.internal.clustering.ClusteringMetadataDomain;
+import io.delta.kernel.internal.clustering.ClusteringUtils;
 import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.hook.CheckpointHook;
@@ -83,7 +84,7 @@ public class TransactionImpl implements Transaction {
   private final Optional<SetTransaction> setTxnOpt;
   private final boolean shouldUpdateProtocol;
   private final Clock clock;
-  private final List<Column> clusteringColumns;
+  private final Optional<List<Column>> clusteringColumnsOpt;
   private final Map<String, DomainMetadata> domainMetadatasAdded = new HashMap<>();
   private final Set<String> domainMetadatasRemoved = new HashSet<>();
   private Optional<List<DomainMetadata>> domainMetadatas = Optional.empty();
@@ -103,7 +104,7 @@ public class TransactionImpl implements Transaction {
       Protocol protocol,
       Metadata metadata,
       Optional<SetTransaction> setTxnOpt,
-      List<Column> clusteringColumns,
+      Optional<List<Column>> clusteringColumns,
       boolean shouldUpdateMetadata,
       boolean shouldUpdateProtocol,
       int maxRetries,
@@ -117,7 +118,7 @@ public class TransactionImpl implements Transaction {
     this.protocol = protocol;
     this.metadata = metadata;
     this.setTxnOpt = setTxnOpt;
-    this.clusteringColumns = clusteringColumns;
+    this.clusteringColumnsOpt = clusteringColumns;
     this.shouldUpdateMetadata = shouldUpdateMetadata;
     this.shouldUpdateProtocol = shouldUpdateProtocol;
     this.maxRetries = maxRetries;
@@ -133,7 +134,8 @@ public class TransactionImpl implements Transaction {
         ColumnMapping.convertToPhysicalSchema(
             metadata.getSchema(), basePhysicalSchema, mappingMode);
 
-    return TransactionStateRow.of(metadata, protocol, dataPath.toString(), physicalSchema);
+    return TransactionStateRow.of(
+        metadata, protocol, dataPath.toString(), physicalSchema, getClusteringColumns());
   }
 
   @Override
@@ -153,6 +155,20 @@ public class TransactionImpl implements Transaction {
 
   public Optional<SetTransaction> getSetTxnOpt() {
     return setTxnOpt;
+  }
+
+  /**
+   *
+   * @return
+   */
+  public List<Column> getClusteringColumns() {
+    if (TableFeatures.isClusteringTableFeatureSupported(protocol)) {
+      return clusteringColumnsOpt.orElse(
+              ClusteringUtils.getClusteringColumnsOptional(readSnapshot)
+              .orElse(Collections.emptyList()));
+    } else {
+      return Collections.emptyList();
+    }
   }
 
   @VisibleForTesting
@@ -196,14 +212,6 @@ public class TransactionImpl implements Transaction {
     removeDomainMetadataInternal(domain);
   }
 
-  private void generateSystemControlledDomainMetadata() {
-    if (!clusteringColumns.isEmpty()) {
-      DomainMetadata clusteringDomainMetadata =
-          getClusteringDomainMetadata(clusteringColumns, metadata.getSchema());
-      domainMetadatasAdded.put(clusteringDomainMetadata.getDomain(), clusteringDomainMetadata);
-    }
-  }
-
   /**
    * Returns a list of the domain metadatas to commit. This consists of the domain metadatas added
    * in the transaction using {@link Transaction#addDomainMetadata(String, String)} and the
@@ -218,8 +226,8 @@ public class TransactionImpl implements Transaction {
     if (domainMetadatas.isPresent()) {
       return domainMetadatas.get();
     }
-    // Generate system controlled domain metadata if needed
-    generateSystemControlledDomainMetadata();
+    // Generate clustering domain metadata if needed
+    generateClusteringDomainMetadataIfNeeded();
 
     if (domainMetadatasAdded.isEmpty() && domainMetadatasRemoved.isEmpty()) {
       // If no domain metadatas are added or removed, return an empty list. This is to avoid
@@ -505,6 +513,19 @@ public class TransactionImpl implements Transaction {
     // For now, Kernel just supports blind append.
     // Change this when read-after-write is supported.
     return true;
+  }
+
+  /**
+   * Generate the domain metadata for the clustering columns if they are present in the transaction.
+   */
+  private void generateClusteringDomainMetadataIfNeeded() {
+    if (clusteringColumnsOpt.isPresent()) {
+      DomainMetadata clusteringDomainMetadata =
+          ClusteringUtils.getClusteringDomainMetadata(
+              clusteringColumnsOpt.get(), metadata.getSchema());
+      addDomainMetadataInternal(
+          clusteringDomainMetadata.getDomain(), clusteringDomainMetadata.getConfiguration());
+    }
   }
 
   /**

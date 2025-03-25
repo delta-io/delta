@@ -60,7 +60,7 @@ import java.util.Optional;
  */
 public abstract class JsonMetadataDomain {
   // Configure the ObjectMapper with the same settings used in Delta-Spark
-  private static final ObjectMapper OBJECT_MAPPER =
+  protected static final ObjectMapper OBJECT_MAPPER =
       new ObjectMapper()
           .registerModule(new Jdk8Module()) // To support Optional
           .setSerializationInclusion(JsonInclude.Include.NON_ABSENT) // Exclude empty Optionals

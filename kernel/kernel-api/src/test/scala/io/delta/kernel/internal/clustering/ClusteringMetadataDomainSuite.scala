@@ -41,6 +41,49 @@ class ClusteringMetadataDomainSuite
     Optional.empty(),
     VectorUtils.stringStringMapValue(Collections.emptyMap()))
 
+  test("Successfully get DomainMetadata for non-nested columns") {
+    val schema = new StructType()
+      .add("id", IntegerType.INTEGER, true)
+      .add("name", IntegerType.INTEGER, true)
+      .add("age", IntegerType.INTEGER, true)
+
+    val clusterColumns = List(new Column("name"), new Column("age"))
+    val clusteringMetadataDomain =
+      new ClusteringMetadataDomain(
+        clusterColumns.asJava,
+        schema)
+
+    val clusteringDomainMetadata = clusteringMetadataDomain.toDomainMetadata
+    assert(clusteringMetadataDomain.getClusteringColumns == clusterColumns.asJava)
+    assert(clusteringDomainMetadata.getDomain == "delta.clustering")
+    assert(clusteringDomainMetadata.getConfiguration ==
+      "{\"clusteringColumns\":[[\"name\"],[\"age\"]]}")
+  }
+
+  test("Successfully get DomainMetadata for nested columns") {
+    val schema = new StructType()
+      .add("id", IntegerType.INTEGER, true)
+      .add(
+        "user",
+        new StructType()
+          .add(
+            "address",
+            new StructType()
+              .add("city", StringType.STRING, true)))
+
+    val clusteringMetadataDomain =
+      new ClusteringMetadataDomain(
+        List(new Column(Array("user", "address", "city"))).asJava,
+        schema)
+
+    val clusteringDomainMetadata = clusteringMetadataDomain.toDomainMetadata
+    assert(clusteringMetadataDomain.getClusteringColumns ==
+      List(new Column(Array("user", "address", "city"))).asJava)
+    assert(clusteringDomainMetadata.getDomain == "delta.clustering")
+    assert(clusteringDomainMetadata.getConfiguration ==
+      "{\"clusteringColumns\":[[\"user\",\"address\",\"city\"]]}")
+  }
+
   test("Correctly maps logical column names to physical column names") {
     val schema = new StructType()
       .add("id", IntegerType.INTEGER, true)
@@ -56,29 +99,6 @@ class ClusteringMetadataDomainSuite
 
     assert(clusteringMetadata.toDomainMetadata.getDomain == "delta.clustering")
     assert(clusteringMetadata.getClusteringColumns.asScala.size == 1)
-    assert(clusteringMetadata.getClusteringColumns.get(0).get(0).startsWith("col-"))
-  }
-
-  test("Correctly maps nested logical column names to physical column names") {
-    val schema = new StructType()
-      .add("id", IntegerType.INTEGER, true)
-      .add(
-        "user",
-        new StructType()
-          .add(
-            "address",
-            new StructType()
-              .add("city", StringType.STRING, true)))
-
-    val clusteringMetadata =
-      new ClusteringMetadataDomain(
-        List(new Column(Array("user", "address", "city"))).asJava,
-        schema)
-
-    assert(clusteringMetadata.toDomainMetadata.getDomain == "delta.clustering")
-    assert(clusteringMetadata.getClusteringColumns ==
-      List(List("user", "address", "city").asJava).asJava)
-    assert(clusteringMetadata.toDomainMetadata.getConfiguration ==
-      "{\"clusteringColumns\":[[\"user\",\"address\",\"city\"]]}")
+    assert(clusteringMetadata.getClusteringColumns.get(0).getNames()(0).startsWith("col-"))
   }
 }

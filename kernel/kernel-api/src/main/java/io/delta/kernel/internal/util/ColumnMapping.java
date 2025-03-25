@@ -108,8 +108,11 @@ public class ColumnMapping {
     }
   }
 
-  public static List<String> convertToPhysicalColumnNames(StructType schema, Column logicalColumn) {
-    List<String> physicalNameParts = new ArrayList<>();
+  /**
+   * Returns the physical column for a given logical column based on the schema.
+   */
+  public static Column convertToPhysicalColumnNames(StructType schema, Column logicalColumn) {
+    Column physicalColumn = new Column(new String[0]);
     DataType currentType = schema;
 
     // Traverse through each level of the logical name to resolve its corresponding physical name.
@@ -127,10 +130,10 @@ public class ColumnMapping {
               .orElseThrow(
                   () ->
                       new IllegalArgumentException("Column not found in schema: " + logicalColumn));
-      physicalNameParts.add(ColumnMapping.getPhysicalName(field));
+      physicalColumn.appendNestedField(ColumnMapping.getPhysicalName(field));
       currentType = field.getDataType();
     }
-    return physicalNameParts;
+    return physicalColumn;
   }
 
   /** Returns the physical name for a given {@link StructField} */
