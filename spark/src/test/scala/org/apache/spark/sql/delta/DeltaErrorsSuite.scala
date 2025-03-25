@@ -923,7 +923,7 @@ trait DeltaErrorsSuiteBase
           override val name: String = "DummyPostCommitHook"
           override def run(
             spark: SparkSession, txn: DeltaTransaction, committedVersion: Long,
-            postCommitSnapshot: Snapshot, committedActions: Seq[Action]): Unit = {}
+            postCommitSnapshot: Snapshot, committedActions: Iterator[Action]): Unit = {}
         }, 0, "msg", null)
       }
       checkErrorMessage(e, Some("DELTA_POST_COMMIT_HOOK_FAILED"), Some("2DKD0"),
@@ -936,7 +936,7 @@ trait DeltaErrorsSuiteBase
           override val name: String = "DummyPostCommitHook"
           override def run(
             spark: SparkSession, txn: DeltaTransaction, committedVersion: Long,
-            postCommitSnapshot: Snapshot, committedActions: Seq[Action]): Unit = {}
+            postCommitSnapshot: Snapshot, committedActions: Iterator[Action]): Unit = {}
         }, 0, null, null)
       }
       checkErrorMessage(e, Some("DELTA_POST_COMMIT_HOOK_FAILED"), Some("2DKD0"),

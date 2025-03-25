@@ -30,7 +30,7 @@ object CheckpointHook extends PostCommitHook {
       txn: DeltaTransaction,
       committedVersion: Long,
       postCommitSnapshot: Snapshot,
-      committedActions: Seq[Action]): Unit = {
+      committedActions: Iterator[Action]): Unit = {
     if (!txn.needsCheckpoint) return
 
     // Since the postCommitSnapshot isn't guaranteed to match committedVersion, we have to
