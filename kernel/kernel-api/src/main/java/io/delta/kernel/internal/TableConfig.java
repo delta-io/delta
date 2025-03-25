@@ -287,9 +287,6 @@ public class TableConfig<T> {
               addConfig(this, TOMBSTONE_RETENTION);
               addConfig(this, CHECKPOINT_INTERVAL);
               addConfig(this, IN_COMMIT_TIMESTAMPS_ENABLED);
-              addConfig(this, TOMBSTONE_RETENTION);
-              addConfig(this, CHECKPOINT_INTERVAL);
-              addConfig(this, IN_COMMIT_TIMESTAMPS_ENABLED);
               addConfig(this, IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION);
               addConfig(this, IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP);
               addConfig(this, COLUMN_MAPPING_MODE);
