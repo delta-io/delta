@@ -46,9 +46,7 @@ public class FileSizeHistogram {
           .add("fileCounts", new ArrayType(LongType.LONG, false))
           .add("totalBytes", new ArrayType(LongType.LONG, false));
 
-  /**
-   * Creates a default FileSizeHistogram with predefined bin boundaries and zero counts.
-   */
+  /** Creates a default FileSizeHistogram with predefined bin boundaries and zero counts. */
   public static FileSizeHistogram createDefaultHistogram() {
     long[] defaultBoundaries = createDefaultBinBoundaries();
     long[] zeroCounts = new long[defaultBoundaries.length];
@@ -240,9 +238,7 @@ public class FileSizeHistogram {
     return index >= 0 ? index : -(index + 1) - 1;
   }
 
-  /**
-   * Encode as a {@link Row} object with the schema {@link FileSizeHistogram#FULL_SCHEMA}.
-   */
+  /** Encode as a {@link Row} object with the schema {@link FileSizeHistogram#FULL_SCHEMA}. */
   public Row toRow() {
     Map<Integer, Object> value = new HashMap<>();
     value.put(
