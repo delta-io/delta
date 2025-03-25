@@ -140,7 +140,7 @@ case class DeltaFormatSharingSource(
   }
 
   // Latest endOffset of the getBatch call, used to compute startingOffset which will then be used
-  // to compare with the the latest table version on server to decide whether to fetch new data.
+  // to compare with the latest table version on server to decide whether to fetch new data.
   private var latestProcessedEndOffsetOption: Option[DeltaSourceOffset] = None
 
   // Latest table version for the data fetched from the delta sharing server, and stored in the
