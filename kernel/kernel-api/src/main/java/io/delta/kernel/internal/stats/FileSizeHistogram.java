@@ -54,6 +54,15 @@ public class FileSizeHistogram {
     return new FileSizeHistogram(defaultBoundaries, zeroCounts, zeroBytes);
   }
 
+  public static Optional<FileSizeHistogram> fromRow(Row row) {
+    requireNonNull(row);
+    if (!FULL_SCHEMA.equals(row.getSchema())) {
+      return Optional.empty();
+    }
+    return fromColumnVector(
+        VectorUtils.buildColumnVector(Collections.singletonList(row), FULL_SCHEMA), 0);
+  }
+
   /** Creates a FileSizeHistogram from a column vector. */
   public static Optional<FileSizeHistogram> fromColumnVector(ColumnVector vector, int rowId) {
     if (vector.isNullAt(rowId)) {

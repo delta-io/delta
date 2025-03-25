@@ -18,8 +18,6 @@ package io.delta.kernel.internal.checksum
 import java.util
 import java.util.{Collections, Optional}
 
-import scala.collection.JavaConverters.seqAsJavaListConverter
-
 import io.delta.kernel.data.Row
 import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
 import io.delta.kernel.internal.checksum.CRCInfo.CRC_FILE_SCHEMA
@@ -117,11 +115,8 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
       assert(actualCheckSumRow.isNullAt(TXN_ID_IDX))
     }
 
-    assert(expectedFileSizeHistogram === FileSizeHistogram.fromColumnVector(
-      buildColumnVector(
-        Seq(actualCheckSumRow.getStruct(FILE_SIZE_HISTOGRAM_IDX)).asJava,
-        FileSizeHistogram.FULL_SCHEMA),
-      0))
+    assert(expectedFileSizeHistogram === FileSizeHistogram.fromRow(
+      actualCheckSumRow.getStruct(FILE_SIZE_HISTOGRAM_IDX)))
   }
 
   private def verifyMetadataAndProtocol(
