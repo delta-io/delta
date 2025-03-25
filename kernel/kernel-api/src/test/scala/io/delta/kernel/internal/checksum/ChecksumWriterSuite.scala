@@ -18,13 +18,16 @@ package io.delta.kernel.internal.checksum
 import java.util
 import java.util.{Collections, Optional}
 
+import scala.collection.JavaConverters.seqAsJavaListConverter
+
 import io.delta.kernel.data.Row
 import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
 import io.delta.kernel.internal.checksum.CRCInfo.CRC_FILE_SCHEMA
 import io.delta.kernel.internal.data.GenericRow
 import io.delta.kernel.internal.fs.Path
+import io.delta.kernel.internal.stats.FileSizeHistogram
 import io.delta.kernel.internal.util.VectorUtils
-import io.delta.kernel.internal.util.VectorUtils.{buildArrayValue, stringStringMapValue}
+import io.delta.kernel.internal.util.VectorUtils.{buildArrayValue, buildColumnVector, stringStringMapValue}
 import io.delta.kernel.test.{BaseMockJsonHandler, MockEngineUtils}
 import io.delta.kernel.types.{StringType, StructType}
 import io.delta.kernel.utils.CloseableIterator
@@ -46,6 +49,7 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
   private val TXN_ID_IDX = CRC_FILE_SCHEMA.indexOf("txnId")
   private val METADATA_IDX = CRC_FILE_SCHEMA.indexOf("metadata")
   private val PROTOCOL_IDX = CRC_FILE_SCHEMA.indexOf("protocol")
+  private val FILE_SIZE_HISTOGRAM_IDX = CRC_FILE_SCHEMA.indexOf("fileSizeHistogram")
 
   test("write checksum") {
     val jsonHandler = new MockCheckSumFileJsonWriter()
@@ -57,13 +61,27 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
       val version = 1L
       val tableSizeBytes = 100L
       val numFiles = 1L
+      val fileSizeHistogram = FileSizeHistogram.createDefaultHistogram()
+      fileSizeHistogram.insert(tableSizeBytes)
 
       checksumWriter.writeCheckSum(
         mockEngine(jsonHandler = jsonHandler),
-        new CRCInfo(version, metadata, protocol, tableSizeBytes, numFiles, txn))
+        new CRCInfo(
+          version,
+          metadata,
+          protocol,
+          tableSizeBytes,
+          numFiles,
+          txn,
+          Optional.of(fileSizeHistogram)))
 
       verifyChecksumFile(jsonHandler, version)
-      verifyChecksumContent(jsonHandler.capturedCrcRow.get, tableSizeBytes, numFiles, txn)
+      verifyChecksumContent(
+        jsonHandler.capturedCrcRow.get,
+        tableSizeBytes,
+        numFiles,
+        txn,
+        Optional.of(fileSizeHistogram))
       verifyMetadataAndProtocol(jsonHandler.capturedCrcRow.get, metadata, protocol)
     }
 
@@ -82,7 +100,8 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
       actualCheckSumRow: Row,
       expectedTableSizeBytes: Long,
       expectedNumFiles: Long,
-      expectedTxnId: Optional[String]): Unit = {
+      expectedTxnId: Optional[String],
+      expectedFileSizeHistogram: Optional[FileSizeHistogram]): Unit = {
     assert(!actualCheckSumRow.isNullAt(TABLE_SIZE_BYTES_IDX) && actualCheckSumRow.getLong(
       TABLE_SIZE_BYTES_IDX) == expectedTableSizeBytes)
     assert(!actualCheckSumRow.isNullAt(
@@ -97,6 +116,12 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
     } else {
       assert(actualCheckSumRow.isNullAt(TXN_ID_IDX))
     }
+
+    assert(expectedFileSizeHistogram === FileSizeHistogram.fromColumnVector(
+      buildColumnVector(
+        Seq(actualCheckSumRow.getStruct(FILE_SIZE_HISTOGRAM_IDX)).asJava,
+        FileSizeHistogram.FULL_SCHEMA),
+      0))
   }
 
   private def verifyMetadataAndProtocol(
