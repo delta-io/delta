@@ -20,7 +20,7 @@ package org.apache.spark.sql.delta.commands
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.{DeltaConfig, DeltaConfigs, DeltaErrors, DeltaOperations, Snapshot}
-import org.apache.spark.sql.delta.IcebergCompat.{getEnabledVersion, getIcebergCompatVersionConfigForValidVersion}
+import org.apache.spark.sql.delta.IcebergCompat.{getConfigForVersion, getEnabledVersion}
 import org.apache.spark.sql.delta.UniversalFormat.{icebergEnabled, ICEBERG_FORMAT}
 import org.apache.spark.sql.delta.actions.{AddFile, Protocol}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
@@ -68,7 +68,7 @@ trait ReorgTableForUpgradeUniformHelper extends DeltaLogging {
       DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name"
     )
     if (currIcebergCompatVersionOpt.nonEmpty) {
-      val currIcebergCompatVersionDeltaConfig = getIcebergCompatVersionConfigForValidVersion(
+      val currIcebergCompatVersionDeltaConfig = getConfigForVersion(
         currIcebergCompatVersionOpt.get)
       enableIcebergCompatConf ++= Map(currIcebergCompatVersionDeltaConfig.key -> "false")
     }
@@ -146,7 +146,7 @@ trait ReorgTableForUpgradeUniformHelper extends DeltaLogging {
 
     val snapshot = target.update()
     val currIcebergCompatVersionOpt = getEnabledVersion(snapshot.metadata)
-    val targetVersionDeltaConfig = getIcebergCompatVersionConfigForValidVersion(
+    val targetVersionDeltaConfig = getConfigForVersion(
       targetIcebergCompatVersion)
     val versionChangeMayNeedRewrite = reorgMayNeedRewrite(
       currIcebergCompatVersionOpt.getOrElse(0), targetIcebergCompatVersion)

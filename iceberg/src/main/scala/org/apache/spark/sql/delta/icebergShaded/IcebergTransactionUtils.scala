@@ -23,7 +23,7 @@ import java.time.format.DateTimeParseException
 import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaConfig, DeltaConfigs, DeltaErrors, DeltaLog, Snapshot}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaConfig, DeltaConfigs, DeltaErrors, DeltaLog, IcebergCompat, Snapshot}
 import org.apache.spark.sql.delta.DeltaConfigs.parseCalendarInterval
 import org.apache.spark.sql.delta.actions.{AddFile, FileAction, RemoveFile}
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -311,8 +311,17 @@ object IcebergTransactionUtils
   //  inferred as min of delta.logRetentionDuration and delta.deletedFileRetentionDuration
   private def additionalIcebergPropertiesFromDeltaProperties(
       properties: Map[String, String]): Map[String, String] = {
-    icebergRetentionPropertyFromDelta(properties)
+    icebergRetentionPropertyFromDelta(properties) ++
+      icebergFormatVersion(properties)
   }
+
+  private def icebergFormatVersion(
+      deltaProperties: Map[String, String]): Map[String, String] =
+    IcebergCompat
+      .anyEnabled(deltaProperties)
+      .filter(_.icebergFormatVersion != 1) // version 1 is default
+      .map((TableProperties.FORMAT_VERSION -> _.icebergFormatVersion.toString))
+      .toMap
 
   private def icebergRetentionPropertyFromDelta(
       deltaProperties: Map[String, String]): Map[String, String] = {
