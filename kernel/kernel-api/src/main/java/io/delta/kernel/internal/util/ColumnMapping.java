@@ -88,19 +88,19 @@ public class ColumnMapping {
    * Helper method that converts the logical schema (requested by the connector) to physical schema
    * of the data stored in data files based on the table's column mapping mode.
    *
-   * @param logicalSchema Logical schema of the scan
-   * @param physicalSchema Physical schema of the scan
+   * @param prunedSchema TODO
+   * @param fullDeltaSchema TODO
    * @param columnMappingMode Column mapping mode
    */
   public static StructType convertToPhysicalSchema(
-      StructType logicalSchema, StructType physicalSchema, ColumnMappingMode columnMappingMode) {
+      StructType prunedSchema, StructType fullDeltaSchema, ColumnMappingMode columnMappingMode) {
     switch (columnMappingMode) {
       case NONE:
-        return logicalSchema;
+        return prunedSchema;
       case ID: // fall through
       case NAME:
         boolean includeFieldIds = columnMappingMode == ColumnMappingMode.ID;
-        return convertToPhysicalSchema(logicalSchema, physicalSchema, includeFieldIds);
+        return convertToPhysicalSchema(prunedSchema, fullDeltaSchema, includeFieldIds);
       default:
         throw new UnsupportedOperationException(
             "Unsupported column mapping mode: " + columnMappingMode);
@@ -198,22 +198,22 @@ public class ColumnMapping {
   }
 
   /**
-   * Utility method to convert the given logical schema to physical schema, recursively converting
-   * sub-types in case of complex types. When {@code includeFieldId} is true, converted physical
-   * schema will have field ids in the metadata.
+   * TODO improve docs Utility method to convert the given logical schema to physical schema,
+   * recursively converting sub-types in case of complex types. When {@code includeFieldId} is true,
+   * converted physical schema will have field ids in the metadata.
    */
   private static StructType convertToPhysicalSchema(
-      StructType logicalSchema, StructType physicalSchema, boolean includeFieldId) {
+      StructType prunedSchema, StructType fullDeltaSchema, boolean includeFieldId) {
     StructType newSchema = new StructType();
-    for (StructField logicalField : logicalSchema.fields()) {
-      DataType logicalType = logicalField.getDataType();
-      StructField physicalField = physicalSchema.get(logicalField.getName());
+    for (StructField prunedField : prunedSchema.fields()) {
+      StructField completeField = fullDeltaSchema.get(prunedField.getName());
       DataType physicalType =
-          convertToPhysicalType(logicalType, physicalField.getDataType(), includeFieldId);
-      String physicalName = physicalField.getMetadata().getString(COLUMN_MAPPING_PHYSICAL_NAME_KEY);
+          convertToPhysicalType(
+              prunedField.getDataType(), completeField.getDataType(), includeFieldId);
+      String physicalName = completeField.getMetadata().getString(COLUMN_MAPPING_PHYSICAL_NAME_KEY);
 
       if (includeFieldId) {
-        Long fieldId = physicalField.getMetadata().getLong(COLUMN_MAPPING_ID_KEY);
+        Long fieldId = completeField.getMetadata().getLong(COLUMN_MAPPING_ID_KEY);
         FieldMetadata.Builder builder =
             FieldMetadata.builder().putLong(PARQUET_FIELD_ID_KEY, fieldId);
 
@@ -222,15 +222,15 @@ public class ColumnMapping {
         // the 'element' and 'key'/'value' fields of Arrays/Maps haven been written,
         // then IcebergCompatV2 is enabled because the schema we are looking at is from
         // the DeltaLog and has nested field IDs setup
-        if (hasNestedColumnIds(physicalField)) {
+        if (hasNestedColumnIds(completeField)) {
           builder.putFieldMetadata(
-              PARQUET_FIELD_NESTED_IDS_METADATA_KEY, getNestedColumnIds(physicalField));
+              PARQUET_FIELD_NESTED_IDS_METADATA_KEY, getNestedColumnIds(completeField));
         }
 
         newSchema =
-            newSchema.add(physicalName, physicalType, logicalField.isNullable(), builder.build());
+            newSchema.add(physicalName, physicalType, prunedField.isNullable(), builder.build());
       } else {
-        newSchema = newSchema.add(physicalName, physicalType, logicalField.isNullable());
+        newSchema = newSchema.add(physicalName, physicalType, prunedField.isNullable());
       }
     }
     return newSchema;

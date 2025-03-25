@@ -23,6 +23,7 @@ import io.delta.kernel.data.*;
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.types.DataTypeJsonSerDe;
+import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.types.*;
 import java.util.*;
@@ -230,6 +231,13 @@ public class Metadata {
 
   public Map<String, String> getConfiguration() {
     return Collections.unmodifiableMap(configuration.get());
+  }
+
+  // TODO docs
+  public StructType getPhysicalSchema() {
+    ColumnMapping.ColumnMappingMode mappingMode =
+        ColumnMapping.getColumnMappingMode(getConfiguration());
+    return ColumnMapping.convertToPhysicalSchema(schema, schema, mappingMode);
   }
 
   /**
