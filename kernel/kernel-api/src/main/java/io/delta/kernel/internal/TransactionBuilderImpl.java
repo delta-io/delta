@@ -169,7 +169,10 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     // Ex: We enable feature `icebergCompatV2` plus dependent features `columnMapping`
     Optional<Tuple2<Protocol, Set<TableFeature>>> newProtocolAndFeatures =
         TableFeatures.autoUpgradeProtocolBasedOnMetadata(
-            newMetadata.orElse(snapshotMetadata), needDomainMetadataSupport, snapshotProtocol);
+            newMetadata.orElse(snapshotMetadata),
+            needDomainMetadataSupport,
+            /* needClusteringTableFeature = */ false,
+            snapshotProtocol);
     if (newProtocolAndFeatures.isPresent()) {
       logger.info(
           "Automatically enabling table features: {}",
