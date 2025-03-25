@@ -585,7 +585,7 @@ public class TableFeatures {
     }
   }
 
-  private static boolean hasInvariants(StructType tableSchema) {
+  public static boolean hasInvariants(StructType tableSchema) {
     return !SchemaUtils.filterRecursively(
             tableSchema,
             // invariants are not allowed in maps or arrays

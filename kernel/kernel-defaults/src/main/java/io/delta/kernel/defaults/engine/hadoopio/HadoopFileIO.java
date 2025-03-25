@@ -79,8 +79,8 @@ public class HadoopFileIO implements FileIO {
   }
 
   @Override
-  public InputFile newInputFile(String path) {
-    return new HadoopInputFile(getFs(path), new Path(path));
+  public InputFile newInputFile(String path, long fileSize) {
+    return new HadoopInputFile(getFs(path), new Path(path), fileSize);
   }
 
   @Override

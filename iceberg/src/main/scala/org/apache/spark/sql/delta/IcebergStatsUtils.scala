@@ -23,6 +23,7 @@ import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeltaStatistics._
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.iceberg.{DataFile, PartitionData, PartitionField, Schema, StructLike, Table}
@@ -38,8 +39,15 @@ import org.apache.iceberg.types.Types.{
 }
 import org.apache.iceberg.util.DateTimeUtil
 
+import org.apache.spark.sql.SparkSession
+
 object IcebergStatsUtils extends DeltaLogging {
 
+  // Types that are currently supported for converting stats to delta
+  // The stats for these types will be converted to Delta stats
+  // except for following types:
+  //  DECIMAL (decided by DeltaSQLConf.DELTA_CONVERT_ICEBERG_DECIMAL_STATS)
+  // which are decided by spark configs dynamically
   private val STATS_ALLOW_TYPES = Set[TypeID](
     TypeID.BOOLEAN,
     TypeID.INTEGER,
@@ -53,9 +61,23 @@ object IcebergStatsUtils extends DeltaLogging {
     TypeID.STRING,
 //    TypeID.UUID,
 //    TypeID.FIXED,
-    TypeID.BINARY
-//    TypeID.DECIMAL
+    TypeID.BINARY,
+    TypeID.DECIMAL
   )
+
+  def typesAllowStatsConversion(spark: SparkSession): Set[TypeID] = {
+    val statsDisallowTypes =
+      if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_DECIMAL_STATS)) {
+        Set.empty[TypeID]
+      } else {
+        Set(TypeID.DECIMAL)
+      }
+    typesAllowStatsConversion(statsDisallowTypes)
+  }
+
+  def typesAllowStatsConversion(statsDisallowTypes: Set[TypeID]): Set[TypeID] = {
+    STATS_ALLOW_TYPES -- statsDisallowTypes
+  }
 
   /**
    * Convert Iceberg DataFile stats into a Json string containing Delta stats.
@@ -68,7 +90,8 @@ object IcebergStatsUtils extends DeltaLogging {
    */
   def icebergStatsToDelta(
       icebergSchema: Schema,
-      dataFile: DataFile): Option[String] = {
+      dataFile: DataFile,
+      statsAllowTypes: Set[TypeID]): Option[String] = {
     try {
       // Any empty or null fields means Iceberg has disabled column stats
       if (dataFile.upperBounds == null ||
@@ -85,7 +108,8 @@ object IcebergStatsUtils extends DeltaLogging {
         dataFile.recordCount,
         dataFile.upperBounds.asScala.toMap,
         dataFile.lowerBounds.asScala.toMap,
-        dataFile.nullValueCounts.asScala.toMap
+        dataFile.nullValueCounts.asScala.toMap,
+        statsAllowTypes
       ))
     } catch {
       case NonFatal(e) =>
@@ -139,7 +163,7 @@ object IcebergStatsUtils extends DeltaLogging {
    * @param maxMap                 Iceberg stats of max value ( field_id -> value )
    * @param minMap                 Iceberg stats of min value ( field_id -> value )
    * @param nullCountMap           Iceberg stats of null count ( field_id -> value )
-   * @param logicalToPhysicalNames Delta logical to physical name mapping
+   * @param statsAllowTypes        dataTypes that will convert stats to Delta
    * @return json string representing Delta stats
    */
   private[convert] def icebergStatsToDelta(
@@ -147,7 +171,8 @@ object IcebergStatsUtils extends DeltaLogging {
       numRecords: Long,
       maxMap: Map[JInt, ByteBuffer],
       minMap: Map[JInt, ByteBuffer],
-      nullCountMap: Map[JInt, JLong]): String = {
+      nullCountMap: Map[JInt, JLong],
+      statsAllowTypes: Set[TypeID]): String = {
 
     def deserialize(ftype: IcebergType, value: Any): Any = {
       (ftype, value) match {
@@ -169,14 +194,16 @@ object IcebergStatsUtils extends DeltaLogging {
     def collectStats(
         fields: java.util.List[NestedField],
         valueMap: Map[JInt, Any],
-        deserializer: (IcebergType, Any) => Any): Map[String, Any] = {
+        deserializer: (IcebergType, Any) => Any,
+        statsAllowTypes: Set[TypeID]): Map[String, Any] = {
       fields.asScala.flatMap { field =>
         field.`type`() match {
           // Both Iceberg and Delta do not maintain stats for List/Map. Ignore them
           case st: IcebergStructType =>
-            Some(field.name -> collectStats(st.fields, valueMap, deserializer))
+            Some(field.name ->
+              collectStats(st.fields, valueMap, deserializer, statsAllowTypes))
           case pt: IcebergPrimitiveType
-            if valueMap.contains(field.fieldId) && STATS_ALLOW_TYPES.contains(pt.typeId) =>
+            if valueMap.contains(field.fieldId) && statsAllowTypes.contains(pt.typeId) =>
             Option(deserializer(pt, valueMap(field.fieldId))).map(field.name -> _)
           case _ => None
         }
@@ -186,10 +213,10 @@ object IcebergStatsUtils extends DeltaLogging {
     JsonUtils.toJson(
       Map(
         NUM_RECORDS -> numRecords,
-        MAX -> collectStats(icebergSchema.columns, maxMap, deserialize),
-        MIN -> collectStats(icebergSchema.columns, minMap, deserialize),
+        MAX -> collectStats(icebergSchema.columns, maxMap, deserialize, statsAllowTypes),
+        MIN -> collectStats(icebergSchema.columns, minMap, deserialize, statsAllowTypes),
         NULL_COUNT -> collectStats(
-          icebergSchema.columns, nullCountMap, (_: IcebergType, v: Any) => v
+          icebergSchema.columns, nullCountMap, (_: IcebergType, v: Any) => v, statsAllowTypes
         )
       )
     )
