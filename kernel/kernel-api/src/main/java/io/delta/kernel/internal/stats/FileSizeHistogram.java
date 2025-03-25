@@ -48,8 +48,6 @@ public class FileSizeHistogram {
 
   /**
    * Creates a default FileSizeHistogram with predefined bin boundaries and zero counts.
-   *
-   * @return A new FileSizeHistogram instance with default boundaries and zero counts
    */
   public static FileSizeHistogram createDefaultHistogram() {
     long[] defaultBoundaries = createDefaultBinBoundaries();
@@ -244,8 +242,6 @@ public class FileSizeHistogram {
 
   /**
    * Encode as a {@link Row} object with the schema {@link FileSizeHistogram#FULL_SCHEMA}.
-   *
-   * @return {@link Row} object with the schema {@link FileSizeHistogram#FULL_SCHEMA}
    */
   public Row toRow() {
     Map<Integer, Object> value = new HashMap<>();
