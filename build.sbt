@@ -20,6 +20,7 @@ import java.io.BufferedInputStream
 import java.nio.file.Files
 import java.nio.file.attribute.PosixFilePermission
 import java.util
+import java.util.Locale
 
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
@@ -258,6 +259,13 @@ def runTaskOnlyOnSparkMaster[T](
   }
 }
 
+val commonDeltaConnectShadeRules = Seq(
+  ShadeRule.rename("com.google.**" -> "org.deltaproject.connect.com.google.@1").inAll,
+  ShadeRule.rename("io.grpc.**" -> "org.deltaproject.connect.io.grpc.@1").inAll,
+  ShadeRule.rename("org.checkerframework.**" -> "org.deltaproject.connect.checkerframework.@1").inAll,
+  ShadeRule.rename("javax.annotation.**" -> "org.deltaproject.connect.javax.annotation.@1").inAll
+)
+
 lazy val connectCommon = (project in file("spark-connect/common"))
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings(
@@ -275,12 +283,26 @@ lazy val connectCommon = (project in file("spark-connect/common"))
       task = Test / test,
       taskName = "test",
       projectName = "delta-connect-common",
-      emptyValue = ()).value,
+      emptyValue = ()
+    ).value,
     publish := runTaskOnlyOnSparkMaster(
       task = publish,
       taskName = "publish",
       projectName = "delta-connect-common",
-      emptyValue = ()).value,
+      emptyValue = ()
+    ).value,
+    publishM2 := runTaskOnlyOnSparkMaster(
+      task = publishM2,
+      taskName = "publishM2",
+      projectName = "delta-connect-common",
+      emptyValue = ()
+    ).value,
+    assembly := runTaskOnlyOnSparkMaster(
+      task = assembly,
+      taskName = "assembly",
+      projectName = "delta-connect-common",
+      emptyValue = file("")
+    ).value,
     libraryDependencies ++= Seq(
       "io.grpc" % "protoc-gen-grpc-java" % grpcVersion asProtocPlugin(),
       "io.grpc" % "grpc-protobuf" % grpcVersion,
@@ -295,6 +317,18 @@ lazy val connectCommon = (project in file("spark-connect/common"))
       PB.gens.java -> (Compile / sourceManaged).value,
       PB.gens.plugin("grpc-java") -> (Compile / sourceManaged).value
     ),
+    Compile / packageBin := assembly.value,
+    (assembly / test) := { },
+    (assembly / logLevel) := Level.Info,
+    // Exclude `scala-library` from assembly.
+    (assembly / assemblyPackageScala / assembleArtifact) := false,
+    (assembly / assemblyShadeRules) := commonDeltaConnectShadeRules,
+    (assembly / assemblyMergeStrategy) := {
+      case m if m.toLowerCase(Locale.ROOT).endsWith("manifest.mf") => MergeStrategy.discard
+      // Drop all proto files that are not needed as artifacts of the build.
+      case m if m.toLowerCase(Locale.ROOT).endsWith(".proto") => MergeStrategy.discard
+      case _ => MergeStrategy.first
+    }
   )
 
 lazy val connectClient = (project in file("spark-connect/client"))
@@ -321,6 +355,18 @@ lazy val connectClient = (project in file("spark-connect/client"))
       taskName = "publish",
       projectName = "delta-connect-client",
       emptyValue = ()
+    ).value,
+    publishM2 := runTaskOnlyOnSparkMaster(
+      task = publishM2,
+      taskName = "publishM2",
+      projectName = "delta-connect-client",
+      emptyValue = ()
+    ).value,
+    assembly := runTaskOnlyOnSparkMaster(
+      task = assembly,
+      taskName = "assembly",
+      projectName = "delta-connect-client",
+      emptyValue = file("")
     ).value,
     crossSparkSettings(),
     libraryDependencies ++= Seq(
@@ -379,7 +425,21 @@ lazy val connectClient = (project in file("spark-connect/client"))
       } else {
         dest.get()
       }
-    }.taskValue
+    }.taskValue,
+    Compile / packageBin := assembly.value,
+    (assembly / test) := { },
+    (assembly / logLevel) := Level.Info,
+    // Exclude `scala-library` from assembly.
+    (assembly / assemblyPackageScala / assembleArtifact) := false,
+    (assembly / assemblyShadeRules) := commonDeltaConnectShadeRules ++ Seq(
+      ShadeRule.rename("org.scalatest.**" -> "org.deltaproject.connect.org.scalatest.@1").inAll
+    ),
+    (assembly / assemblyMergeStrategy) := {
+      case m if m.toLowerCase(Locale.ROOT).endsWith("manifest.mf") => MergeStrategy.discard
+      // Drop all proto files that are not needed as artifacts of the build.
+      case m if m.toLowerCase(Locale.ROOT).endsWith(".proto") => MergeStrategy.discard
+      case _ => MergeStrategy.first
+    }
   )
 
 lazy val connectServer = (project in file("spark-connect/server"))
@@ -408,6 +468,18 @@ lazy val connectServer = (project in file("spark-connect/server"))
       projectName = "delta-connect-server",
       emptyValue = ()
     ).value,
+    publishM2 := runTaskOnlyOnSparkMaster(
+      task = publishM2,
+      taskName = "publishM2",
+      projectName = "delta-connect-server",
+      emptyValue = ()
+    ).value,
+    assembly := runTaskOnlyOnSparkMaster(
+      task = assembly,
+      taskName = "assembly",
+      projectName = "delta-connect-server",
+      emptyValue = file("")
+    ).value,
     crossSparkSettings(),
     libraryDependencies ++= Seq(
       "com.google.protobuf" % "protobuf-java" % protoVersion % "protobuf",
@@ -424,6 +496,18 @@ lazy val connectServer = (project in file("spark-connect/server"))
       "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
       "org.apache.spark" %% "spark-connect" % sparkVersion.value % "test" classifier "tests",
     ),
+    Compile / packageBin := assembly.value,
+    (assembly / test) := { },
+    (assembly / logLevel) := Level.Info,
+    // Exclude `scala-library` from assembly.
+    (assembly / assemblyPackageScala / assembleArtifact) := false,
+    (assembly / assemblyShadeRules) := commonDeltaConnectShadeRules,
+    (assembly / assemblyMergeStrategy) := {
+      case m if m.toLowerCase(Locale.ROOT).endsWith("manifest.mf") => MergeStrategy.discard
+      // Drop all proto files that are not needed as artifacts of the build.
+      case m if m.toLowerCase(Locale.ROOT).endsWith(".proto") => MergeStrategy.discard
+      case _ => MergeStrategy.first
+    }
   )
 
 lazy val spark = (project in file("spark"))
