@@ -547,7 +547,7 @@ public class TableFeatures {
   }
 
   public static boolean isClusteringTableFeatureSupported(Protocol protocol) {
-    return protocol.getImplicitlyAndExplicitlySupportedFeatures().contains(CLUSTERING_W_FEATURE);
+    return protocol.supportsFeature(CLUSTERING_W_FEATURE);
   }
 
   /////////////////////////////////////////////////////////////////////////////////
