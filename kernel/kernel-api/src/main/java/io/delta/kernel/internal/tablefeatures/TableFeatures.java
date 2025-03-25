@@ -467,12 +467,12 @@ public class TableFeatures {
 
     Set<TableFeature> allNeededTableFeatures =
         extractAllNeededTableFeatures(newMetadata, currentProtocol);
-    // clustering table feature also requires domain metadata support
-    if (needDomainMetadataSupport || needClusteringTableFeature) {
+    if (needDomainMetadataSupport) {
       allNeededTableFeatures =
           Stream.concat(allNeededTableFeatures.stream(), Stream.of(DOMAIN_METADATA_W_FEATURE))
               .collect(toSet());
     }
+    // Its dependency feature(domainMetadata) would be enabled automatically.
     if (needClusteringTableFeature) {
       allNeededTableFeatures =
           Stream.concat(allNeededTableFeatures.stream(), Stream.of(CLUSTERING_W_FEATURE))
