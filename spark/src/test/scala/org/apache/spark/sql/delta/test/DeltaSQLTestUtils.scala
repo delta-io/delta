@@ -155,7 +155,6 @@ trait DeltaSQLTestUtils extends SQLTestUtils {
       tableName: String,
       stats: JsonNode,
       columnName: String): (Option[String], Option[String]) = {
-    val columnPath = columnName.split('.')
     val schema = getSnapshot(tableName).schema
 
     val physicalColumnPath = getPhysicalColumnPath(schema, columnName)
