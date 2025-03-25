@@ -18,13 +18,14 @@ package org.apache.spark.sql.delta
 
 import java.util.concurrent.TimeUnit
 
-import org.apache.spark.sql.delta.DeltaConfigs.{getMilliSeconds, isValidIntervalConfigValue, parseCalendarInterval}
+import org.apache.spark.sql.delta.DeltaConfigs.{getMilliSeconds, isValidIntervalConfigValue, mergeGlobalConfigs, parseCalendarInterval}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.AnalysisException
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.unsafe.types.CalendarInterval
 import org.apache.spark.util.ManualClock
@@ -207,6 +208,42 @@ class DeltaConfigSuite extends SparkFunSuite
   test("getAllConfigs API") {
     assert(DeltaConfigs.getAllConfigs.contains("minreaderversion"))
     assert(!DeltaConfigs.getAllConfigs.contains("confignotexist"))
+  }
+
+  test("change configurations prefix from spark.databricks.delta to spark.delta") {
+    // case 1: Current config and deprecated config have different values.
+    val sqlConf = new SQLConf
+    sqlConf.setConfString("spark.delta.properties.defaults.checkpointInterval", "1")
+    sqlConf.setConfString("spark.databricks.delta.properties.defaults.checkpointInterval", "2")
+    val e = intercept[DeltaAnalysisException] {
+      mergeGlobalConfigs(sqlConf, Map.empty[String, String])
+    }
+    val msg = s"""
+                 |Ambiguous configurations were specified:
+                 |spark.delta.properties.defaults.checkpointInterval=1,
+                 |spark.databricks.delta.properties.defaults.checkpointInterval=2
+                 |""".stripMargin.linesIterator.mkString(" ").trim
+    assert(e.getMessage == msg)
+
+    // case 2: Current config and deprecated config have the same value.
+    sqlConf.setConfString("spark.delta.properties.defaults.checkpointInterval", "2")
+    assert(mergeGlobalConfigs(sqlConf, Map.empty[String, String]) == Map(
+      "delta.checkpointInterval" -> "2"
+    ))
+
+    // case 3: Use current config only.
+    val sqlConf3 = new SQLConf
+    sqlConf3.setConfString("spark.delta.properties.defaults.checkpointInterval", "3")
+    assert(mergeGlobalConfigs(sqlConf3, Map.empty[String, String]) == Map(
+      "delta.checkpointInterval" -> "3"
+    ))
+
+    // case 4: Use deprecated config only.
+    val sqlConf4 = new SQLConf
+    sqlConf4.setConfString("spark.databricks.delta.properties.defaults.checkpointInterval", "4")
+    assert(mergeGlobalConfigs(sqlConf4, Map.empty[String, String]) == Map(
+      "delta.checkpointInterval" -> "4"
+    ))
   }
 }
 
