@@ -708,9 +708,12 @@ class DeltaAnalysis(session: SparkSession)
             Identifier.of(Array("delta"), path.toString))
         }
         // Trying to clone something on itself should be a no-op
-        if (sourceTbl == new CloneDeltaSource(targetTbl)) {
-          return LocalRelation()
+        sourceTbl match {
+          case deltaSourceTbl: CloneDeltaSource if deltaSourceTbl.sourceTable == targetTbl =>
+            return LocalRelation()
+          case _ => ()
         }
+
         // If this is a path based table and an external location is also defined throw an error
         if (statement.targetLocation.exists(loc => new Path(loc).toString != path.toString)) {
           throw DeltaErrors.cloneAmbiguousTarget(statement.targetLocation.get, tblIdent)
