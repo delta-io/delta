@@ -26,7 +26,7 @@ class ChecksumSuite extends DeltaTableWriteSuiteBase {
       val txnState = txn.getTransactionState(engine)
 
       // Create test data files
-      val dataFiles = Seq(
+      val addFiles = Seq(
         new DataFileStatus("/path/to/file1", 1, 100, Optional.empty()),
         new DataFileStatus("/path/to/file2", 1025, 100, Optional.empty()))
       val expectedFileSizeHistogram = FileSizeHistogram.createDefaultHistogram()
@@ -34,13 +34,16 @@ class ChecksumSuite extends DeltaTableWriteSuiteBase {
       expectedFileSizeHistogram.insert(1025)
 
       // Generate append actions
-      val addedFiles = toCloseableIterator(dataFiles.iterator.asJava)
       val writeContext = Transaction.getWriteContext(
         defaultEngine,
         txnState,
-        Map.empty[String, Literal].asJava)
+        Map.empty[String, Literal].asJava /* partitionValues */)
       val actions = inMemoryIterable(
-        Transaction.generateAppendActions(defaultEngine, txnState, addedFiles, writeContext))
+        Transaction.generateAppendActions(
+          defaultEngine,
+          txnState,
+          toCloseableIterator(addFiles.iterator.asJava),
+          writeContext))
 
       // Commit transaction and collect P&M
       val commitResult = commitTransaction(txn, engine, actions)
@@ -52,22 +55,16 @@ class ChecksumSuite extends DeltaTableWriteSuiteBase {
       // Invoke post-commit hooks including the CRC_SIMPLE
       commitResult.getPostCommitHooks.forEach(hook => hook.threadSafeInvoke(engine))
 
-      // Verify checksum exists and extract it
+      // Verify checksum exists and content are correct.
       val crcInfo =
         Option(ChecksumReader.getCRCInfo(engine, new Path(tablePath + "/_delta_log"), 0L, 0L))
           .filter(_.isPresent)
           .map(_.get()).getOrElse {
-            fail("Checksum information should be present")
+            fail("CRC information should be present")
           }
-
-      // Verify file count and total size
       assert(crcInfo.getNumFiles === 2)
       assert(crcInfo.getTableSizeBytes === 1026)
-
-      // Verify file size histogram
       assert(crcInfo.getFileSizeHistogram === Optional.of(expectedFileSizeHistogram))
-
-      // Verify metadata and protocol match table snapshot
       assert(crcInfo.getMetadata === expectedMetadata)
       assert(crcInfo.getProtocol === expectedProtocol)
     }
