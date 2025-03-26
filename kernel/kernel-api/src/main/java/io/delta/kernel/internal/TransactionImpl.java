@@ -566,7 +566,7 @@ public class TransactionImpl implements Transaction {
   private Optional<CRCInfo> buildPostCommitCrcInfoIfCurrentCrcAvailable(
       long commitAtVersion,
       TransactionMetricsResult metricsResult,
-      Optional<FileSizeHistogram> currentFileSizeHistogram) {
+      Optional<FileSizeHistogram> fileSizeHistogram) {
     if (isNewTable) {
       return Optional.of(
           new CRCInfo(
@@ -576,7 +576,7 @@ public class TransactionImpl implements Transaction {
               metricsResult.getTotalAddFilesSizeInBytes(),
               metricsResult.getNumAddFiles(),
               Optional.of(txnId.toString()),
-              currentFileSizeHistogram));
+              fileSizeHistogram));
     }
 
     return readSnapshot
@@ -594,7 +594,7 @@ public class TransactionImpl implements Transaction {
                     lastCrcInfo.getTableSizeBytes() + metricsResult.getTotalAddFilesSizeInBytes(),
                     lastCrcInfo.getNumFiles() + metricsResult.getNumAddFiles(),
                     Optional.of(txnId.toString()),
-                    currentFileSizeHistogram));
+                    fileSizeHistogram));
   }
 
   /**
