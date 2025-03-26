@@ -23,9 +23,8 @@ import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
 import io.delta.kernel.internal.checksum.CRCInfo.CRC_FILE_SCHEMA
 import io.delta.kernel.internal.data.GenericRow
 import io.delta.kernel.internal.fs.Path
-import io.delta.kernel.internal.types.DataTypeJsonSerDe
 import io.delta.kernel.internal.stats.FileSizeHistogram
-import io.delta.kernel.internal.util.VectorUtils
+import io.delta.kernel.internal.types.DataTypeJsonSerDe
 import io.delta.kernel.internal.util.VectorUtils.{buildArrayValue, buildColumnVector, stringStringMapValue}
 import io.delta.kernel.test.{BaseMockJsonHandler, MockEngineUtils}
 import io.delta.kernel.types.{StringType, StructType}
