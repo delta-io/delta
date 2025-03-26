@@ -29,9 +29,9 @@ class ChecksumSuite extends DeltaTableWriteSuiteBase {
       val dataFiles = Seq(
         new DataFileStatus("/path/to/file1", 1, 100, Optional.empty()),
         new DataFileStatus("/path/to/file2", 1025, 100, Optional.empty()))
-      val expectedHistogram = FileSizeHistogram.createDefaultHistogram()
-      expectedHistogram.insert(1)
-      expectedHistogram.insert(1025)
+      val expectedFileSizeHistogram = FileSizeHistogram.createDefaultHistogram()
+      expectedFileSizeHistogram.insert(1)
+      expectedFileSizeHistogram.insert(1025)
 
       // Generate append actions
       val addedFiles = toCloseableIterator(dataFiles.iterator.asJava)
@@ -65,7 +65,7 @@ class ChecksumSuite extends DeltaTableWriteSuiteBase {
       assert(crcInfo.getTableSizeBytes === 1026)
 
       // Verify file size histogram
-      assert(crcInfo.getFileSizeHistogram === Optional.of(expectedHistogram))
+      assert(crcInfo.getFileSizeHistogram === Optional.of(expectedFileSizeHistogram))
 
       // Verify metadata and protocol match table snapshot
       assert(crcInfo.getMetadata === expectedMetadata)
