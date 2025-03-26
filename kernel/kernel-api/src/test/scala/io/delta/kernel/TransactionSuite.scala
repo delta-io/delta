@@ -27,8 +27,9 @@ import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.expressions.{Column, Literal}
 import io.delta.kernel.internal.{DataWriteContextImpl, TableConfig, TransactionImpl}
 import io.delta.kernel.internal.TableConfig.ICEBERG_COMPAT_V2_ENABLED
-import io.delta.kernel.internal.actions.{Format, Metadata}
+import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
 import io.delta.kernel.internal.data.TransactionStateRow
+import io.delta.kernel.internal.tablefeatures.TableFeatures.CLUSTERING_W_FEATURE
 import io.delta.kernel.internal.types.DataTypeJsonSerDe
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.internal.util.VectorUtils
@@ -156,7 +157,13 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
         VectorUtils.buildArrayValue(Seq.empty.asJava, StringType.STRING),
         Optional.empty(),
         stringStringMapValue(configMap.asJava))
-      val txnState = TransactionStateRow.of(metadata, "table path", schema)
+      val protocol = new Protocol(3, 7)
+      val txnState = TransactionStateRow.of(
+        metadata,
+        protocol,
+        "table path",
+        schema,
+        List.empty[Column].asJava)
 
       // Get statistics columns and define expected result
       val statsColumns = TransactionImpl.getStatisticsColumns(txnState)
@@ -183,6 +190,54 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
           s"With numIndexedCols=$numIndexedCols," +
             s" expected no columns but got ${statsColumns.size} columns")
       }
+    }
+  }
+
+  Seq(true, false).foreach { isClusteredTableSupported =>
+    test(s"generateAppendActions: statistics check for " +
+      s"isClusteredTableSupported=$isClusteredTableSupported") {
+      val txnState =
+        testTxnState(testSchema, supportClusteredTableFeature = isClusteredTableSupported)
+      val engine = mockEngine()
+
+      Seq(
+        // missing stats
+        (
+          testDataFileStatuses(
+            "file1" -> testStats(Some(10)), // valid stats
+            "file2" -> None // missing stats
+          ),
+          // expected error message
+          "Cannot write to a clustering-supported table without per-file statistics")).foreach {
+        case (actionRows, expectedErrorMsg) =>
+          if (isClusteredTableSupported) {
+            val ex = intercept[KernelException] {
+              generateAppendActions(engine, txnState, actionRows, testDataWriteContext())
+                .forEachRemaining(_ => ()) // consume the iterator
+            }
+            assert(ex.getMessage.contains(expectedErrorMsg))
+          } else {
+            generateAppendActions(engine, txnState, actionRows, testDataWriteContext())
+              .forEachRemaining(_ => ()) // consume the iterator
+          }
+      }
+
+      // valid stats
+      val dataFileStatuses = testDataFileStatuses(
+        "file1" -> testStats(Some(10)),
+        "file2" -> testStats(Some(20)))
+      var actStats: Seq[String] = Seq.empty
+      generateAppendActions(engine, txnState, dataFileStatuses, testDataWriteContext())
+        .forEachRemaining { addActionRow =>
+          val addOrdinal = addActionRow.getSchema.indexOf("add")
+          val add = addActionRow.getStruct(addOrdinal)
+          val statsOrdinal = add.getSchema.indexOf("stats")
+          actStats = actStats :+ add.getString(statsOrdinal)
+        }
+
+      assert(actStats === Seq(
+        "{\"numRecords\":10,\"minValues\":{},\"maxValues\":{},\"nullCounts\":{}}",
+        "{\"numRecords\":20,\"minValues\":{},\"maxValues\":{},\"nullCounts\":{}}"))
     }
   }
 }
@@ -249,7 +304,8 @@ object TransactionSuite extends VectorTestUtils with MockEngineUtils {
   def testTxnState(
       schema: StructType,
       partitionCols: Seq[String] = Seq.empty,
-      enableIcebergCompatV2: Boolean = false): Row = {
+      enableIcebergCompatV2: Boolean = false,
+      supportClusteredTableFeature: Boolean = false): Row = {
     val configurationMap = Map(ICEBERG_COMPAT_V2_ENABLED.getKey -> enableIcebergCompatV2.toString)
     val metadata = new Metadata(
       "id",
@@ -262,7 +318,11 @@ object TransactionSuite extends VectorTestUtils with MockEngineUtils {
       Optional.empty(), // createdTime
       stringStringMapValue(configurationMap.asJava) // configurationMap
     )
-    TransactionStateRow.of(metadata, "table path", schema)
+    var protocol = new Protocol(3, 7)
+    if (supportClusteredTableFeature) {
+      protocol = protocol.withFeature(CLUSTERING_W_FEATURE)
+    }
+    TransactionStateRow.of(metadata, protocol, "table path", schema, List.empty[Column].asJava)
   }
 
   def testStats(numRowsOpt: Option[Long]): Option[DataFileStatistics] = {

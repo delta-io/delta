@@ -30,6 +30,7 @@ import static java.util.stream.Collectors.toSet;
 import io.delta.kernel.*;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.TableNotFoundException;
+import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.icebergcompat.IcebergCompatV2MetadataValidatorAndUpdater;
@@ -60,6 +61,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   private final Operation operation;
   private Optional<StructType> schema = Optional.empty();
   private Optional<List<String>> partitionColumns = Optional.empty();
+  private Optional<List<Column>> clusteringColumns = Optional.empty();
   private Optional<SetTransaction> setTxnOpt = Optional.empty();
   private Optional<Map<String, String>> tableProperties = Optional.empty();
   private boolean needDomainMetadataSupport = false;
@@ -87,6 +89,15 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   public TransactionBuilder withPartitionColumns(Engine engine, List<String> partitionColumns) {
     if (!partitionColumns.isEmpty()) {
       this.partitionColumns = Optional.of(partitionColumns);
+    }
+    return this;
+  }
+
+  @Override
+  public TransactionBuilder withClusteringColumns(Engine engine, List<Column> clusteringColumns) {
+    if (!clusteringColumns.isEmpty()) {
+      this.clusteringColumns = Optional.of(clusteringColumns);
+      this.needDomainMetadataSupport = true;
     }
     return this;
   }
@@ -161,7 +172,6 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     if (!newProperties.isEmpty()) {
       newMetadata = Optional.of(snapshotMetadata.withMergedConfiguration(newProperties));
     }
-
     // TODO In the future update metadata with new schema if provided
 
     /* ----- 2: Update the PROTOCOL based on the table properties or schema ----- */
@@ -169,7 +179,10 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     // Ex: We enable feature `icebergCompatV2` plus dependent features `columnMapping`
     Optional<Tuple2<Protocol, Set<TableFeature>>> newProtocolAndFeatures =
         TableFeatures.autoUpgradeProtocolBasedOnMetadata(
-            newMetadata.orElse(snapshotMetadata), needDomainMetadataSupport, snapshotProtocol);
+            newMetadata.orElse(snapshotMetadata),
+            needDomainMetadataSupport,
+            clusteringColumns.isPresent(),
+            snapshotProtocol);
     if (newProtocolAndFeatures.isPresent()) {
       logger.info(
           "Automatically enabling table features: {}",
@@ -232,6 +245,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         newProtocol.orElse(snapshotProtocol),
         newMetadata.orElse(snapshotMetadata),
         setTxnOpt,
+        clusteringColumns,
         newMetadata.isPresent() /* shouldUpdateMetadata */,
         newProtocol.isPresent() /* shouldUpdateProtocol */,
         maxRetries,
@@ -269,11 +283,20 @@ public class TransactionBuilderImpl implements TransactionBuilder {
             "Table already exists, but provided new partition columns. "
                 + "Partition columns can only be set on a new table.");
       }
+      if (clusteringColumns.isPresent()) {
+        throw tableAlreadyExists(
+            tablePath,
+            "Table already exists, but provided new clustering columns. "
+                + "Clustering columns can only be set on a new table for now.");
+      }
     } else {
       // New table verify the given schema and partition columns
       ColumnMappingMode mappingMode =
           ColumnMapping.getColumnMappingMode(tableProperties.orElse(Collections.emptyMap()));
 
+      checkArgument(
+          !(partitionColumns.isPresent() && clusteringColumns.isPresent()),
+          "Partition Columns and Clustering Columns cannot be set at the same time");
       SchemaUtils.validateSchema(schema.get(), isColumnMappingModeEnabled(mappingMode));
       SchemaUtils.validatePartitionColumns(
           schema.get(), partitionColumns.orElse(Collections.emptyList()));

@@ -370,6 +370,14 @@ public final class DeltaErrors {
             + " but 'domainMetadata' is unsupported");
   }
 
+  public static KernelException missingStatsForClustering(DataFileStatus dataFileStatus) {
+    return new KernelException(
+        format(
+            "Cannot write to a clustering-supported table without per-file statistics and"
+                + " per-column statistics for clustering columns.\n DataFileStatus: %s",
+            dataFileStatus));
+  }
+
   public static KernelException enablingIcebergWriterCompatV1OnExistingTable(String key) {
     return new KernelException(
         String.format(

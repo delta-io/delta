@@ -15,19 +15,21 @@
  */
 package io.delta.kernel.internal.data;
 
+import static io.delta.kernel.internal.util.VectorUtils.buildArrayValue;
 import static java.util.stream.Collectors.toMap;
 
 import io.delta.kernel.Transaction;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.types.DataTypeJsonSerDe;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.types.*;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
+import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 public class TransactionStateRow extends GenericRow {
@@ -36,6 +38,9 @@ public class TransactionStateRow extends GenericRow {
           .add("logicalSchemaString", StringType.STRING)
           .add("physicalSchemaString", StringType.STRING)
           .add("partitionColumns", new ArrayType(StringType.STRING, false /* containsNull */))
+          .add(
+              "clusteringColumns",
+              new ArrayType(new ArrayType(StringType.STRING, false /* containsNull */), false))
           .add(
               "configuration",
               new MapType(StringType.STRING, StringType.STRING, false /* valueContainsNull */))
@@ -47,13 +52,29 @@ public class TransactionStateRow extends GenericRow {
           .collect(toMap(i -> SCHEMA.at(i).getName(), i -> i));
 
   public static TransactionStateRow of(
-      Metadata metadata, String tablePath, StructType physicalSchema) {
+      Metadata metadata,
+      Protocol protocol,
+      String tablePath,
+      StructType physicalSchema,
+      List<Column> clusteringColumns) {
     HashMap<Integer, Object> valueMap = new HashMap<>();
     valueMap.put(COL_NAME_TO_ORDINAL.get("logicalSchemaString"), metadata.getSchemaString());
     valueMap.put(COL_NAME_TO_ORDINAL.get("physicalSchemaString"), physicalSchema.toJson());
     valueMap.put(COL_NAME_TO_ORDINAL.get("partitionColumns"), metadata.getPartitionColumns());
     valueMap.put(COL_NAME_TO_ORDINAL.get("configuration"), metadata.getConfigurationMapValue());
     valueMap.put(COL_NAME_TO_ORDINAL.get("tablePath"), tablePath);
+    valueMap.put(
+        COL_NAME_TO_ORDINAL.get("clusteringColumns"),
+        buildArrayValue(
+            clusteringColumns.stream()
+                .map(
+                    col ->
+                        buildArrayValue(
+                            Arrays.stream(col.getNames()).collect(Collectors.toList()),
+                            StringType.STRING))
+                .collect(Collectors.toList()),
+            new ArrayType(StringType.STRING, false /* containsNull */)));
+
     return new TransactionStateRow(valueMap);
   }
 
