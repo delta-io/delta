@@ -17,6 +17,8 @@ package io.delta.kernel.internal.util
 
 import java.util
 
+import io.delta.kernel.exceptions.KernelException
+import io.delta.kernel.expressions.Column
 import io.delta.kernel.internal.actions.Metadata
 import io.delta.kernel.internal.util.ColumnMapping._
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode._
@@ -197,6 +199,100 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
       .add("c", IntegerType.INTEGER, createMetadataWithFieldId(3))
 
     assertThat(ColumnMapping.findMaxColumnId(schema)).isEqualTo(12)
+  }
+
+  test("convertToPhysicalColumnNames: get physical column name with column mapping disabled") {
+    assert(ColumnMapping.convertToPhysicalColumnNames(
+      new StructType()
+        .add("a", StringType.STRING)
+        .add("b", IntegerType.INTEGER),
+      new Column("a")) == new Column("a"))
+
+    assert(ColumnMapping.convertToPhysicalColumnNames(
+      new StructType().add("a", StringType.STRING)
+        .add(
+          "b",
+          new StructType()
+            .add("d", IntegerType.INTEGER)
+            .add("e", IntegerType.INTEGER))
+        .add("c", IntegerType.INTEGER),
+      new Column(Array("b", "d"))) == new Column(Array("b", "d")))
+  }
+
+  test("convertToPhysicalColumnNames: get physical column name with column mapping enabled") {
+    val schema: StructType = new StructType()
+      .add("a", StringType.STRING, true)
+      .add("b", StringType.STRING, true)
+
+    val metadata: Metadata = updateColumnMappingMetadataIfNeeded(
+      testMetadata(schema).withColumnMappingEnabled("id"),
+      true).orElseGet(() => fail("Metadata should not be empty"))
+
+    val physicalColumn = ColumnMapping.convertToPhysicalColumnNames(
+      metadata.getSchema,
+      new Column("a"))
+    assert(physicalColumn.getNames.length == 1)
+    assert(physicalColumn.getNames()(0).startsWith("col-"))
+
+    val nestedSchema: StructType = new StructType().add("a", StringType.STRING)
+      .add(
+        "b",
+        new StructType()
+          .add("d", IntegerType.INTEGER)
+          .add("e", IntegerType.INTEGER))
+      .add("c", IntegerType.INTEGER)
+
+    val nestedMetadata: Metadata = updateColumnMappingMetadataIfNeeded(
+      testMetadata(nestedSchema).withColumnMappingEnabled("id"),
+      true).orElseGet(() => fail("Metadata should not be empty"))
+
+    val nestedPhysicalColumn = ColumnMapping.convertToPhysicalColumnNames(
+      nestedMetadata.getSchema,
+      new Column(Array("b", "d")))
+    assert(nestedPhysicalColumn.getNames.length == 2)
+    assert(nestedPhysicalColumn.getNames.forall(_.startsWith("col-")))
+  }
+
+  test("convertToPhysicalColumnNames should respect case sensitivity of table schema") {
+    assert(ColumnMapping.convertToPhysicalColumnNames(
+      new StructType()
+        .add("A", StringType.STRING)
+        .add("b", IntegerType.INTEGER),
+      new Column("a")) == new Column("A"))
+
+    assert(ColumnMapping.convertToPhysicalColumnNames(
+      new StructType().add("a", StringType.STRING)
+        .add(
+          "b",
+          new StructType()
+            .add("D", IntegerType.INTEGER)
+            .add("e", IntegerType.INTEGER))
+        .add("c", IntegerType.INTEGER),
+      new Column(Array("B", "d"))) == new Column(Array("b", "D")))
+  }
+
+  test("convertToPhysicalColumnNames: exception expected when column does not exist") {
+    val ex = intercept[KernelException] {
+      ColumnMapping.convertToPhysicalColumnNames(
+        new StructType()
+          .add("A", StringType.STRING)
+          .add("b", IntegerType.INTEGER),
+        new Column("abc"))
+    }
+    assert(ex.getMessage.contains("Column 'column(`abc`)' was not found in the table schema"))
+
+    val ex1 = intercept[KernelException] {
+      ColumnMapping.convertToPhysicalColumnNames(
+        new StructType().add("a", StringType.STRING)
+          .add(
+            "b",
+            new StructType()
+              .add("D", IntegerType.INTEGER)
+              .add("e", IntegerType.INTEGER))
+          .add("c", IntegerType.INTEGER),
+        new Column(Array("Bbb", "d")))
+    }
+    assert(ex1.getMessage.contains("Column 'column(`Bbb`.`d`)' was not found in the table schema"))
   }
 
   Seq(true, false).foreach { isNewTable =>

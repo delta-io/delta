@@ -18,6 +18,7 @@ package io.delta.kernel.internal;
 import static java.lang.String.format;
 
 import io.delta.kernel.exceptions.*;
+import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.tablefeatures.TableFeature;
 import io.delta.kernel.types.DataType;
@@ -249,6 +250,11 @@ public final class DeltaErrors {
     String msgFormat =
         "Type mismatch for field '%s' when writing statistics: expected %s, but found %s";
     return new KernelException(format(msgFormat, fieldName, expected, actual));
+  }
+
+  public static KernelException columnNotFoundInSchema(Column column, StructType tableSchema) {
+    String msgFormat = "Column '%s' was not found in the table schema: %s";
+    return new KernelException(format(msgFormat, column, tableSchema));
   }
 
   /// Start: icebergCompat exceptions
