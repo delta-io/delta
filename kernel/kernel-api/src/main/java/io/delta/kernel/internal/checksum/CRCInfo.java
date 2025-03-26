@@ -25,6 +25,7 @@ import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.data.GenericRow;
+import io.delta.kernel.internal.data.StructRow;
 import io.delta.kernel.internal.util.InternalUtils;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.types.ArrayType;
@@ -32,6 +33,7 @@ import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import java.util.*;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -86,7 +88,10 @@ public class CRCInfo {
     Optional<List<DomainMetadata>> domainMetadata =
         domainMetadataVector.isNullAt(rowId)
             ? Optional.empty()
-            : Optional.of(VectorUtils.toJavaList(domainMetadataVector.getArray(rowId)));
+            : Optional.of(
+                VectorUtils.toJavaList(domainMetadataVector.getArray(rowId)).stream()
+                    .map(row -> DomainMetadata.fromRow((StructRow) row))
+                    .collect(Collectors.toList()));
 
     //  protocol and metadata are nullable per fromColumnVector's implementation.
     if (protocol == null || metadata == null) {
@@ -175,7 +180,11 @@ public class CRCInfo {
         domainMetadataList ->
             values.put(
                 getSchemaIndex(DOMAIN_METADATA),
-                VectorUtils.buildArrayValue(domainMetadataList, DomainMetadata.FULL_SCHEMA)));
+                VectorUtils.buildArrayValue(
+                    domainMetadataList.stream()
+                        .map(DomainMetadata::toRow)
+                        .collect(Collectors.toList()),
+                    DomainMetadata.FULL_SCHEMA)));
     txnId.ifPresent(txn -> values.put(getSchemaIndex(TXN_ID), txn));
     return new GenericRow(CRC_FILE_SCHEMA, values);
   }

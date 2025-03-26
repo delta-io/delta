@@ -196,12 +196,7 @@ public class TransactionImpl implements Transaction {
   private Optional<List<DomainMetadata>> getPostCommitDomainMetadatas() {
     // For new tables, just filter out any removed metadata
     if (isNewTable) {
-      List<DomainMetadata> filteredMetadata =
-          getDomainMetadatas().stream()
-              .filter(metadata -> !metadata.isRemoved())
-              .collect(Collectors.toList());
-
-      return Optional.of(filteredMetadata);
+      return Optional.of(getDomainMetadatas());
     }
 
     // For existing tables, merge with pre-commit metadata
@@ -215,14 +210,7 @@ public class TransactionImpl implements Transaction {
                       .collect(Collectors.toMap(DomainMetadata::getDomain, Function.identity()));
 
               getDomainMetadatas()
-                  .forEach(
-                      metadata -> {
-                        if (metadata.isRemoved()) {
-                          metadataMap.remove(metadata.getDomain());
-                        } else {
-                          metadataMap.put(metadata.getDomain(), metadata);
-                        }
-                      });
+                  .forEach(metadata -> metadataMap.put(metadata.getDomain(), metadata));
 
               return new ArrayList<>(metadataMap.values());
             });
