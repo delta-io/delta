@@ -37,7 +37,7 @@ class ChecksumSuite extends DeltaTableWriteSuiteBase {
       val writeContext = Transaction.getWriteContext(
         defaultEngine,
         txnState,
-        Map.empty[String, Literal].asJava /* partitionValues */)
+        Map.empty[String, Literal].asJava /* partitionValues */ )
       val actions = inMemoryIterable(
         Transaction.generateAppendActions(
           defaultEngine,
