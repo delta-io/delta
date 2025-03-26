@@ -1,0 +1,159 @@
+/*
+ * Copyright (2023) The Delta Lake Project Authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package io.delta.kernel.internal.compaction;
+
+import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
+import static io.delta.kernel.internal.lang.ListUtils.getLast;
+import static java.util.Collections.emptyList;
+import static java.util.Objects.requireNonNull;
+
+import io.delta.kernel.data.FilteredColumnarBatch;
+import io.delta.kernel.data.Row;
+import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.DeltaLogActionUtils;
+import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.replay.CreateCheckpointIterator;
+import io.delta.kernel.internal.snapshot.LogSegment;
+import io.delta.kernel.internal.util.FileNames.DeltaLogFileType;
+import io.delta.kernel.utils.CloseableIterator;
+import io.delta.kernel.utils.FileStatus;
+import java.io.IOException;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Optional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/** Utility for writing out minor log compactions. */
+public class MinorCompactionWriter {
+
+  private static final Logger logger = LoggerFactory.getLogger(MinorCompactionWriter.class);
+
+  private final Path logPath;
+  private final long startVersion;
+  private final long endVersion;
+
+  public MinorCompactionWriter(Path logPath, long startVersion, long endVersion) {
+    this.logPath = requireNonNull(logPath);
+    this.startVersion = startVersion;
+    this.endVersion = endVersion;
+  }
+
+  public void writeMinorCompactionFile(Engine engine) throws IOException {
+    String fileName = String.format("%020d.%020d.compacted.json", startVersion, endVersion);
+    Path compactedPath = new Path(logPath, fileName);
+
+    logger.info(
+        "Writing compacted log file for versions {} to {} to path: {}",
+        startVersion,
+        endVersion,
+        compactedPath);
+
+    final long startTimeMillis = System.currentTimeMillis();
+    final List<FileStatus> deltas =
+        DeltaLogActionUtils.listDeltaLogFilesAsIter(
+                engine,
+                new HashSet<>(Arrays.asList(DeltaLogFileType.COMMIT)),
+                logPath,
+                startVersion,
+                Optional.of(endVersion),
+                true /* mustBeRecreatable */)
+            .toInMemoryList();
+
+    logger.info(
+        "{}: Took {}ms to list commit files for minor compaction",
+        logPath,
+        System.currentTimeMillis() - startTimeMillis);
+
+    if (deltas.isEmpty()) {
+      logger.warn(
+          "Asked to do a minor compaction between {} and {}, "
+              + "but there are no files to compact",
+          startVersion,
+          endVersion);
+      return;
+    }
+
+    final long lastCommitTimestamp = getLast(deltas).getModificationTime();
+
+    LogSegment segment =
+        new LogSegment(logPath, endVersion, deltas, emptyList(), lastCommitTimestamp);
+    CreateCheckpointIterator checkpointIterator = new CreateCheckpointIterator(engine, segment, 0);
+    wrapEngineExceptionThrowsIO(
+        () -> {
+          try (CloseableIterator<Row> rows = new FilteredBatchToRowIter(checkpointIterator)) {
+            engine.getJsonHandler().writeJsonFileAtomically(compactedPath.toString(), rows, false);
+          }
+          logger.info("Successfully wrote compacted log file `{}`", compactedPath);
+          return null;
+        },
+        "Wrote compacted log file `%s`",
+        compactedPath);
+  }
+
+  /** Utility to determine if log compaction should run for the given commit version. */
+  public static boolean shouldCompact(long commitVersion, long compactionInterval) {
+    return commitVersion > 0 && (commitVersion % compactionInterval == 0);
+  }
+
+  /** Utility to convert an Iterator<FilteredColumnarBatch> into an Iterator<Row> */
+  private static class FilteredBatchToRowIter implements CloseableIterator<Row> {
+    private final CloseableIterator<FilteredColumnarBatch> sourceBatches;
+    private CloseableIterator<Row> current;
+    private boolean isClosed = false;
+
+    FilteredBatchToRowIter(CloseableIterator<FilteredColumnarBatch> sourceBatches) {
+      this.sourceBatches = sourceBatches;
+    }
+
+    @Override
+    public boolean hasNext() {
+      if (isClosed) {
+        return false;
+      }
+      while ((current == null || !current.hasNext()) && sourceBatches.hasNext()) {
+        if (current != null) {
+          try {
+            current.close();
+          } catch (IOException e) {
+            logger.warn("Error closing previous batch rows", e);
+          }
+        }
+        FilteredColumnarBatch next = sourceBatches.next();
+        current = next.getRows();
+      }
+      return current != null && current.hasNext();
+    }
+
+    @Override
+    public Row next() {
+      if (!hasNext()) {
+        throw new java.util.NoSuchElementException("No more rows available");
+      }
+      return current.next();
+    }
+
+    @Override
+    public void close() throws IOException {
+      isClosed = true;
+      if (current != null) {
+        current.close();
+      }
+      sourceBatches.close();
+    }
+  }
+}
