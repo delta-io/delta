@@ -33,7 +33,7 @@ import io.delta.kernel.utils.CloseableIterator
 import org.scalatest.funsuite.AnyFunSuite
 
 /**
- * Test suite for ChecksumWriter functionality.
+ * Test suite for Checksum writing functionality.
  */
 class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
 
