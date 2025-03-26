@@ -470,7 +470,6 @@ public class SchemaUtils {
     }
   }
 
-  /* Mapping of field ID to nested IDs for that field */
   private static Map<Long, List<NestedIdEntry>> columnIdToNestedIds(
       Map<Long, StructField> currentFieldIdToField) {
     Map<Long, List<NestedIdEntry>> nestedIdEntries = new HashMap<>();
@@ -484,7 +483,7 @@ public class SchemaUtils {
   }
 
   /**
-   * Validate that any nested IDs that were in the current field are consistent with the ones in the
+   * Validate that any nested IDs that were in the current field are unchanged with the ones in the
    * updated field and that the nested IDs are not duplicate
    */
   private static void validateNestedIdConsistency(
@@ -501,13 +500,13 @@ public class SchemaUtils {
       Set<Long> seenNestedIds = new HashSet<>();
       for (NestedIdEntry nestedIdEntry : updatedNestedIdEntries) {
         // Duplicate nested ID with top level field
-        if (updatedFieldIdToNestedIds.containsKey(nestedIdEntry.id)) {
-          throw new IllegalArgumentException(
-              String.format("Duplicate field id %s", nestedIdEntry.id));
-        } else if (!seenNestedIds.add(nestedIdEntry.id)) {
-          throw new IllegalArgumentException(
-              String.format("Duplicate field id %s", nestedIdEntry.id));
-        }
+        checkArgument(
+            !updatedFieldIdToNestedIds.containsKey(nestedIdEntry.id),
+            "Duplicate field id %s",
+            nestedIdEntry.id);
+        // Duplicate with nested ID
+        checkArgument(
+            seenNestedIds.add(nestedIdEntry.id), "Duplicate field id %s", nestedIdEntry.id);
       }
 
       List<NestedIdEntry> existingNestedIdEntries = currentFieldIdToNestedIds.get(fieldId);
@@ -523,13 +522,13 @@ public class SchemaUtils {
 
         for (NestedIdEntry existingNestedIdEntry : existingNestedIdEntries) {
           Long updatedNestedColumnId = updatedNestedKeyToColumnId.get(existingNestedIdEntry.key);
-          if (updatedNestedColumnId == null
-              || !updatedNestedColumnId.equals(existingNestedIdEntry.id)) {
-            throw new IllegalArgumentException(
-                String.format(
-                    "Expected field with id %s to have nested key %s with value %s",
-                    fieldId, existingNestedIdEntry.key, existingNestedIdEntry.id));
-          }
+          checkArgument(
+              updatedNestedColumnId != null
+                  && updatedNestedColumnId.equals(existingNestedIdEntry.id),
+              "Expected field with id %s to have nested key %s with value %s",
+              fieldId,
+              existingNestedIdEntry.key,
+              existingNestedIdEntry.id);
         }
       }
     }
