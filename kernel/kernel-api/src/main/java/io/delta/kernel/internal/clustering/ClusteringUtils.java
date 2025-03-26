@@ -15,17 +15,24 @@
  */
 package io.delta.kernel.internal.clustering;
 
+import static io.delta.kernel.internal.util.VectorUtils.buildArrayValue;
+
+import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.statistics.DataFileStatistics;
+import io.delta.kernel.types.ArrayType;
+import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.DataFileStatus;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 public class ClusteringUtils {
 
@@ -56,6 +63,26 @@ public class ClusteringUtils {
   public static Optional<List<Column>> getClusteringColumnsOptional(SnapshotImpl snapshot) {
     return ClusteringMetadataDomain.fromSnapshot(snapshot)
         .map(ClusteringMetadataDomain::fetchClusteringColumns);
+  }
+
+  /**
+   * Converts the given list of clustering columns to an {@link ArrayValue} of {@link ArrayValue} of
+   * strings.
+   *
+   * @param clusteringColumns The list of clustering columns to convert.
+   * @return An {@link ArrayValue} where each element is an {@link ArrayValue} of strings
+   *     representing a column path.
+   */
+  public static ArrayValue convertToArrays(List<Column> clusteringColumns) {
+    return buildArrayValue(
+        clusteringColumns.stream()
+            .map(
+                col ->
+                    buildArrayValue(
+                        Arrays.stream(col.getNames()).collect(Collectors.toList()),
+                        StringType.STRING))
+            .collect(Collectors.toList()),
+        new ArrayType(StringType.STRING, false /* containsNull */));
   }
 
   /**
