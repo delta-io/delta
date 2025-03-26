@@ -421,6 +421,10 @@ trait DataSkippingReaderBase
      * NOTE: The skipping predicate does *NOT* need to worry about missing stats columns (which also
      * manifest as NULL). That case is handled separately by `verifyStatsForFilter` (which disables
      * skipping for any file that lacks the needed stats columns).
+     *
+     * @return An optional data skipping predicate, if this function returns None, then this means
+     * that the dataFilter Expression is not eligible for data skipping, i.e. we cannot skip any
+     * files.
      */
     private[stats] def constructDataFilters(dataFilter: Expression):
         Option[DataSkippingPredicate] = dataFilter match {
