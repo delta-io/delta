@@ -150,6 +150,7 @@ public class CRCInfo {
     return txnId;
   }
 
+  /** The {@link FileSizeHistogram} stored in this CRCInfo. */
   public Optional<FileSizeHistogram> getFileSizeHistogram() {
     return fileSizeHistogram;
   }
