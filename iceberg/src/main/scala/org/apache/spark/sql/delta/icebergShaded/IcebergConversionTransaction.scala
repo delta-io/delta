@@ -449,7 +449,7 @@ class IcebergConversionTransaction(
     val tableExists = hiveCatalog.tableExists(icebergTableId)
 
     def tableBuilder = {
-      val properties = getIcebergPropertiesFromDeltaProperties(
+      val properties = DeltaToIcebergConvert.TableProperties(
         postCommitSnapshot.metadata.configuration
       )
 
