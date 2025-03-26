@@ -24,12 +24,14 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames;
 import static io.delta.kernel.internal.util.VectorUtils.buildArrayValue;
 import static io.delta.kernel.internal.util.VectorUtils.stringStringMapValue;
+import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.toSet;
 
 import io.delta.kernel.*;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.TableNotFoundException;
+import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.icebergcompat.IcebergCompatV2MetadataValidatorAndUpdater;
@@ -60,6 +62,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   private final Operation operation;
   private Optional<StructType> schema = Optional.empty();
   private Optional<List<String>> partitionColumns = Optional.empty();
+  private Optional<List<Column>> clusteringColumns = Optional.empty();
   private Optional<SetTransaction> setTxnOpt = Optional.empty();
   private Optional<Map<String, String>> tableProperties = Optional.empty();
   private boolean needDomainMetadataSupport = false;
@@ -87,6 +90,14 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   public TransactionBuilder withPartitionColumns(Engine engine, List<String> partitionColumns) {
     if (!partitionColumns.isEmpty()) {
       this.partitionColumns = Optional.of(partitionColumns);
+    }
+    return this;
+  }
+
+  @Override
+  public TransactionBuilder withClusteringColumns(Engine engine, List<Column> clusteringColumns) {
+    if (!clusteringColumns.isEmpty()) {
+      this.clusteringColumns = Optional.of(clusteringColumns);
     }
     return this;
   }
@@ -181,7 +192,14 @@ public class TransactionBuilderImpl implements TransactionBuilder {
 
     Optional<Tuple2<Protocol, Set<TableFeature>>> newProtocolAndFeatures =
         TableFeatures.autoUpgradeProtocolBasedOnMetadata(
+<<<<<<< HEAD
             newMetadata.orElse(snapshotMetadata), manuallyEnabledFeatures, snapshotProtocol);
+=======
+            newMetadata.orElse(snapshotMetadata),
+            needDomainMetadataSupport,
+            /* needClusteringTableFeature = */ clusteringColumns.isPresent(),
+            snapshotProtocol);
+>>>>>>> 3a073f3bb (add withClusteringColumns api)
     if (newProtocolAndFeatures.isPresent()) {
       logger.info(
           "Automatically enabling table features: {}",
@@ -244,6 +262,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         newProtocol.orElse(snapshotProtocol),
         newMetadata.orElse(snapshotMetadata),
         setTxnOpt,
+        clusteringColumns,
         newMetadata.isPresent() /* shouldUpdateMetadata */,
         newProtocol.isPresent() /* shouldUpdateProtocol */,
         maxRetries,
@@ -256,7 +275,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
    * <ul>
    *   <li>Ensures that the table, as defined by the protocol and metadata of its latest version, is
    *       writable by Kernel
-   *   <li>Partition columns are not specified for an existing table
+   *   <li>Partition columns and clustering columns are not specified for an existing table
+   *   <li>Partition columns and clustering columns cannot be set together
    *   <li>The provided schema is valid (e.g. no duplicate columns, valid names)
    *   <li>Partition columns provided are valid (e.g. they exist, valid data types)
    *   <li>Concurrent txn has not already committed to the table with same txnId
@@ -281,7 +301,19 @@ public class TransactionBuilderImpl implements TransactionBuilder {
             "Table already exists, but provided new partition columns. "
                 + "Partition columns can only be set on a new table.");
       }
+      if (clusteringColumns.isPresent()) {
+        throw tableAlreadyExists(
+            tablePath,
+            format(
+                "Table already exists, but provided new clustering columns %s. "
+                    + "Clustering columns can only be set on a new table for now.",
+                clusteringColumns.get()));
+      }
     } else {
+      checkArgument(
+          !(partitionColumns.isPresent() && clusteringColumns.isPresent()),
+          "Partition Columns and Clustering Columns cannot be set at the same time");
+
       // New table verify the given schema and partition columns
       ColumnMappingMode mappingMode =
           ColumnMapping.getColumnMappingMode(tableProperties.orElse(Collections.emptyMap()));
@@ -289,6 +321,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       SchemaUtils.validateSchema(schema.get(), isColumnMappingModeEnabled(mappingMode));
       SchemaUtils.validatePartitionColumns(
           schema.get(), partitionColumns.orElse(Collections.emptyList()));
+      SchemaUtils.validateClusteringColumns(
+          schema.get(), clusteringColumns.orElse(Collections.emptyList()));
     }
 
     setTxnOpt.ifPresent(

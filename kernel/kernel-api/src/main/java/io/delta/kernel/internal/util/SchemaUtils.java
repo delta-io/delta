@@ -192,6 +192,28 @@ public class SchemaUtils {
   }
 
   /**
+   * Verify the clustering columns exists in the table schema.
+   *
+   * @param schema The schema of the table
+   * @param clusteringCols List of clustering columns
+   */
+  public static void validateClusteringColumns(StructType schema, List<Column> clusteringCols) {
+    List<String> flattenColNames =
+        flattenNestedFieldNames(schema).stream()
+            .map(name -> name.toLowerCase(Locale.ROOT))
+            .collect(Collectors.toList());
+
+    clusteringCols.forEach(
+        clusteringCol -> {
+          checkArgument(
+              flattenColNames.contains(
+                  concatWithDot(Arrays.asList(clusteringCol.getNames())).toLowerCase(Locale.ROOT)),
+              "Clustering column %s not found in the schema",
+              clusteringCol);
+        });
+  }
+
+  /**
    * Search (case-insensitive) for the given {@code colName} in the {@code schema} and return its
    * position in the {@code schema}.
    *

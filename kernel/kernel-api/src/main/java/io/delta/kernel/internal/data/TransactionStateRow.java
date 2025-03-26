@@ -20,14 +20,17 @@ import static java.util.stream.Collectors.toMap;
 import io.delta.kernel.Transaction;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.clustering.ClusteringUtils;
 import io.delta.kernel.internal.types.DataTypeJsonSerDe;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.types.*;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 public class TransactionStateRow extends GenericRow {
@@ -39,14 +42,20 @@ public class TransactionStateRow extends GenericRow {
           .add(
               "configuration",
               new MapType(StringType.STRING, StringType.STRING, false /* valueContainsNull */))
-          .add("tablePath", StringType.STRING);
+          .add("tablePath", StringType.STRING)
+          .add(
+              "clusteringColumns",
+              new ArrayType(new ArrayType(StringType.STRING, false /* containsNull */), false));
 
   private static final Map<String, Integer> COL_NAME_TO_ORDINAL =
       IntStream.range(0, SCHEMA.length())
           .boxed()
           .collect(toMap(i -> SCHEMA.at(i).getName(), i -> i));
 
-  public static TransactionStateRow of(Metadata metadata, String tablePath) {
+  public static TransactionStateRow of(
+      Metadata metadata,
+      String tablePath,
+      List<Column> clusteringColumns) {
     HashMap<Integer, Object> valueMap = new HashMap<>();
     valueMap.put(COL_NAME_TO_ORDINAL.get("logicalSchemaString"), metadata.getSchemaString());
     valueMap.put(
@@ -54,6 +63,9 @@ public class TransactionStateRow extends GenericRow {
     valueMap.put(COL_NAME_TO_ORDINAL.get("partitionColumns"), metadata.getPartitionColumns());
     valueMap.put(COL_NAME_TO_ORDINAL.get("configuration"), metadata.getConfigurationMapValue());
     valueMap.put(COL_NAME_TO_ORDINAL.get("tablePath"), tablePath);
+    valueMap.put(
+        COL_NAME_TO_ORDINAL.get("clusteringColumns"),
+        ClusteringUtils.convertToArrays(clusteringColumns));
     return new TransactionStateRow(valueMap);
   }
 
@@ -121,6 +133,22 @@ public class TransactionStateRow extends GenericRow {
   public static List<String> getPartitionColumnsList(Row transactionState) {
     return VectorUtils.toJavaList(
         transactionState.getArray(COL_NAME_TO_ORDINAL.get("partitionColumns")));
+  }
+
+  /**
+   * Get the list of clustering columns from the transaction state {@link Row} returned by {@link
+   * Transaction#getTransactionState(Engine)}
+   *
+   * @param transactionState Transaction state state {@link Row}
+   * @return List of partition column names according to the scan state.
+   */
+  public static List<Column> getClusteringColumns(Row transactionState) {
+    List<List<String>> arrayValue =
+        VectorUtils.toJavaList(
+            transactionState.getArray(COL_NAME_TO_ORDINAL.get("clusteringColumns")));
+    return arrayValue.stream()
+        .map(list -> new Column(list.toArray(new String[0])))
+        .collect(Collectors.toList());
   }
 
   /**

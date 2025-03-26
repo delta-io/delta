@@ -29,10 +29,12 @@ import io.delta.kernel.data.*;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.ConcurrentWriteException;
 import io.delta.kernel.exceptions.DomainDoesNotExistException;
+import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.DataWriteContextImpl;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.SingleAction;
+import io.delta.kernel.internal.clustering.ClusteringUtils;
 import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.icebergcompat.IcebergCompatV2MetadataValidatorAndUpdater;
@@ -241,11 +243,15 @@ public interface Transaction {
         "DataWriteContext is not created by the `Transaction.getWriteContext()`");
 
     boolean isIcebergCompatV2Enabled = isIcebergCompatV2Enabled(transactionState);
+    List<Column> clusteringColumns = getClusteringColumns(transactionState);
     URI tableRoot = new Path(getTablePath(transactionState)).toUri();
     return fileStatusIter.map(
         dataFileStatus -> {
           if (isIcebergCompatV2Enabled) {
             IcebergCompatV2MetadataValidatorAndUpdater.validateDataFileStatus(dataFileStatus);
+          }
+          if (!clusteringColumns.isEmpty()) {
+            ClusteringUtils.validateDataFileStatus(clusteringColumns, dataFileStatus);
           }
           AddFile addFileRow =
               AddFile.convertDataFileStatus(

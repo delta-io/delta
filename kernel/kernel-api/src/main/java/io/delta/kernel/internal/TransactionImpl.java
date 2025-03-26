@@ -35,6 +35,8 @@ import io.delta.kernel.hook.PostCommitHook;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.checksum.CRCInfo;
+import io.delta.kernel.internal.clustering.ClusteringMetadataDomain;
+import io.delta.kernel.internal.clustering.ClusteringUtils;
 import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.hook.CheckpointHook;
@@ -79,6 +81,7 @@ public class TransactionImpl implements Transaction {
   private final Protocol protocol;
   private final SnapshotImpl readSnapshot;
   private final Optional<SetTransaction> setTxnOpt;
+  private final Optional<List<Column>> clusteringColumnsOpt;
   private final boolean shouldUpdateProtocol;
   private final Clock clock;
   private final Map<String, DomainMetadata> domainMetadatasAdded = new HashMap<>();
@@ -100,6 +103,7 @@ public class TransactionImpl implements Transaction {
       Protocol protocol,
       Metadata metadata,
       Optional<SetTransaction> setTxnOpt,
+      Optional<List<Column>> clusteringColumnsOpt,
       boolean shouldUpdateMetadata,
       boolean shouldUpdateProtocol,
       int maxRetries,
@@ -113,6 +117,7 @@ public class TransactionImpl implements Transaction {
     this.protocol = protocol;
     this.metadata = metadata;
     this.setTxnOpt = setTxnOpt;
+    this.clusteringColumnsOpt = clusteringColumnsOpt;
     this.shouldUpdateMetadata = shouldUpdateMetadata;
     this.shouldUpdateProtocol = shouldUpdateProtocol;
     this.maxRetries = maxRetries;
@@ -121,7 +126,19 @@ public class TransactionImpl implements Transaction {
 
   @Override
   public Row getTransactionState(Engine engine) {
+<<<<<<< HEAD
     return TransactionStateRow.of(metadata, dataPath.toString());
+=======
+    ColumnMapping.ColumnMappingMode mappingMode =
+        ColumnMapping.getColumnMappingMode(metadata.getConfiguration());
+    StructType basePhysicalSchema = metadata.getSchema();
+    StructType physicalSchema =
+        ColumnMapping.convertToPhysicalSchema(
+            metadata.getSchema(), basePhysicalSchema, mappingMode);
+
+    List<Column> clusteringColumns = getPhysicalClusteringColumns();
+    return TransactionStateRow.of(metadata, dataPath.toString(), physicalSchema, clusteringColumns);
+>>>>>>> 3a073f3bb (add withClusteringColumns api)
   }
 
   @Override
@@ -198,7 +215,8 @@ public class TransactionImpl implements Transaction {
     if (domainMetadatas.isPresent()) {
       return domainMetadatas.get();
     }
-
+    // Generate clustering domain metadata if needed
+    generateClusteringDomainMetadataIfNeeded();
     if (domainMetadatasAdded.isEmpty() && domainMetadatasRemoved.isEmpty()) {
       // If no domain metadatas are added or removed, return an empty list. This is to avoid
       // unnecessary loading of the domain metadatas from the snapshot (which is an expensive
@@ -583,6 +601,37 @@ public class TransactionImpl implements Transaction {
                     lastCrcInfo.getTableSizeBytes() + metricsResult.getTotalAddFilesSizeInBytes(),
                     lastCrcInfo.getNumFiles() + metricsResult.getNumAddFiles(),
                     Optional.of(txnId.toString())));
+  }
+
+  /** Retrieves the physical clustering columns based on the current protocol and metadata. */
+  private List<Column> getPhysicalClusteringColumns() {
+    if (!TableFeatures.isClusteringTableFeatureSupported(protocol)) {
+      return Collections.emptyList();
+    }
+
+    if (clusteringColumnsOpt.isPresent()) {
+      // If the clustering columns are provided, we convert it to physical column name.
+      return new ClusteringMetadataDomain(clusteringColumnsOpt.get(), metadata.getSchema())
+          .fetchClusteringColumns();
+    } else {
+      // If the clustering columns are not provided, we try to get it from the snapshot.
+      return ClusteringUtils.getClusteringColumnsOptional(readSnapshot)
+          .orElse(Collections.emptyList());
+    }
+  }
+
+  /**
+   * Generate the domain metadata for the clustering columns if they are present in the transaction.
+   */
+  private void generateClusteringDomainMetadataIfNeeded() {
+    if (TableFeatures.isClusteringTableFeatureSupported(protocol)
+        && clusteringColumnsOpt.isPresent()) {
+      DomainMetadata clusteringDomainMetadata =
+          ClusteringUtils.getClusteringDomainMetadata(
+              clusteringColumnsOpt.get(), metadata.getSchema());
+      addDomainMetadataInternal(
+          clusteringDomainMetadata.getDomain(), clusteringDomainMetadata.getConfiguration());
+    }
   }
 
   /**
