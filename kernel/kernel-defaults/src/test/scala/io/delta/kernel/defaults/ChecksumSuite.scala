@@ -18,6 +18,7 @@ package io.delta.kernel.defaults
 import java.util.Optional
 
 import scala.jdk.CollectionConverters.{asJavaIteratorConverter, mapAsJavaMapConverter}
+import scala.collection.immutable.Seq
 
 import io.delta.kernel.{Table, Transaction}
 import io.delta.kernel.expressions.Literal
