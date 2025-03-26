@@ -61,7 +61,7 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
 
       checksumWriter.writeCheckSum(
         mockEngine(jsonHandler = jsonHandler),
-        new CRCInfo(version, metadata, protocol, tableSizeBytes, numFiles, txn))
+        new CRCInfo(version, metadata, protocol, tableSizeBytes, numFiles, Optional.empty(), txn))
 
       verifyChecksumFile(jsonHandler, version)
       verifyChecksumContent(

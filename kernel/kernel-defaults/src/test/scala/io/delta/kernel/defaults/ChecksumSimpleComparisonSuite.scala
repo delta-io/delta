@@ -124,6 +124,7 @@ class ChecksumSimpleComparisonSuite extends DeltaTableWriteSuiteBase with TestUt
         crcInfo.getProtocol,
         crcInfo.getTableSizeBytes,
         crcInfo.getNumFiles,
+        Optional.empty(),
         Optional.empty())
     }
   }
