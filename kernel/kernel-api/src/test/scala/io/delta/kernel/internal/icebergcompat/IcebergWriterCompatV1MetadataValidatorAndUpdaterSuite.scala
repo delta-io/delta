@@ -193,7 +193,6 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
 
   test("all supported features are allowed") {
     val readerFeatures = Set("columnMapping", "timestampNtz", "v2Checkpoint", "vacuumProtocolCheck")
-    // TODO add clustering here once it's added to Kernel
     // TODO add typeWidening and typeWidening-preview here once it's no longer blocked
     //  icebergCompatV2
     val writerFeatures = Set(
@@ -206,7 +205,7 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
       "vacuumProtocolCheck",
       "v2Checkpoint",
       "inCommitTimestamp",
-      // "clustering", add this to this test once we support clustering
+      "clustering",
       // "typeWidening", add this to this test once we support typeWidening
       // "typeWidening-preview", add this to this test once we support typeWidening
       "timestampNtz")
@@ -237,7 +236,7 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
     }
   }
 
-  Seq("clustering", "typeWidening", "typeWidening-preview").foreach {
+  Seq("typeWidening", "typeWidening-preview").foreach {
     unsupportedCompatibleFeature =>
       test(s"cannot enable with compatible UNSUPPORTED feature $unsupportedCompatibleFeature") {
         // We add this test here so that it will fail when we add Kernel support for these features
