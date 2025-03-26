@@ -153,7 +153,7 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
               VACUUM_PROTOCOL_CHECK_RW_FEATURE,
               CHECKPOINT_V2_RW_FEATURE,
               IN_COMMIT_TIMESTAMP_W_FEATURE,
-              // TODO: add clustering once we support it in Kernel
+              CLUSTERING_W_FEATURE,
               TIMESTAMP_NTZ_RW_FEATURE,
               TYPE_WIDENING_RW_FEATURE,
               TYPE_WIDENING_PREVIEW_TABLE_FEATURE)
