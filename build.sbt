@@ -52,7 +52,7 @@ val default_scala_version = settingKey[String]("Default Scala version")
 Global / default_scala_version := scala213
 
 val LATEST_RELEASED_SPARK_VERSION = "3.5.0"
-val SPARK_MASTER_VERSION = "4.0.0-preview1"
+val SPARK_MASTER_VERSION = "4.0.0-preview2"
 val sparkVersion = settingKey[String]("Spark version")
 spark / sparkVersion := getSparkVersion()
 connectCommon / sparkVersion := getSparkVersion()
@@ -295,7 +295,7 @@ lazy val connectClient = (project in file("spark-connect/client"))
     ),
     (Test / javaOptions) += s"-Ddelta.test.home=" + file(".").getAbsoluteFile.getParentFile,
     (Test / resourceGenerators) += Def.task {
-      val location = url("https://dist.apache.org/repos/dist/release/spark/spark-4.0.0-preview1/spark-4.0.0-preview1-bin-hadoop3.tgz")
+      val location = url("https://dist.apache.org/repos/dist/release/spark/spark-4.0.0-preview2/spark-4.0.0-preview2-bin-hadoop3.tgz")
       val destDir = (Test / resourceManaged).value / "spark"
       if (!destDir.exists()) {
         IO.createDirectory(destDir)
@@ -331,7 +331,7 @@ lazy val connectClient = (project in file("spark-connect/client"))
       }
     }.taskValue,
     (Test / resourceGenerators) += Def.task {
-      val src = url("https://repository.apache.org/content/groups/public/org/apache/spark/spark-connect_2.13/4.0.0-preview1/spark-connect_2.13-4.0.0-preview1.jar")
+      val src = url("https://repository.apache.org/content/groups/public/org/apache/spark/spark-connect_2.13/4.0.0-preview2/spark-connect_2.13-4.0.0-preview2.jar")
       val dest = (Test / resourceManaged).value / "spark-connect.jar"
       if (!dest.exists()) {
         src #> dest !;

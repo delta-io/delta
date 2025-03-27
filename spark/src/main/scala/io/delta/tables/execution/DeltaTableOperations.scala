@@ -24,6 +24,7 @@ import org.apache.spark.sql.delta.DeltaTableUtils.withActiveSession
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.{DeltaGenerateCommand, DescribeDeltaDetailCommand, VacuumCommand}
 import org.apache.spark.sql.delta.util.AnalysisHelper
+import org.apache.spark.sql.delta.util.ColumnExpressionUtils
 import io.delta.tables.DeltaTable
 
 import org.apache.spark.sql.{functions, Column, DataFrame}
@@ -78,10 +79,12 @@ trait DeltaTableOperations extends AnalysisHelper { self: DeltaTable =>
       condition: Option[Column]): Unit = improveUnsupportedOpError {
     withActiveSession(sparkSession) {
       val assignments = set.map { case (targetColName, column) =>
-        Assignment(UnresolvedAttribute.quotedString(targetColName), column.expr)
+        Assignment(UnresolvedAttribute.quotedString(targetColName),
+          ColumnExpressionUtils.toExpression(sparkSession, column))
       }.toSeq
       val update =
-        UpdateTable(self.toDF.queryExecution.analyzed, assignments, condition.map(_.expr))
+        UpdateTable(self.toDF.queryExecution.analyzed, assignments,
+          condition.map(c => ColumnExpressionUtils.toExpression(sparkSession, c)))
       toDataset(sparkSession, update)
     }
   }

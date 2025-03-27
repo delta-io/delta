@@ -43,6 +43,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats._
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, JsonUtils}
+import org.apache.spark.sql.delta.util.ColumnExpressionUtils
 import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
@@ -858,7 +859,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       .as[AddFile]
       .collect()
     trackReadPredicates(
-      Seq(isFileInTouchedPartitions.expr), partitionOnly = true, shouldRewriteFilter = false)
+      Seq(ColumnExpressionUtils.toExpression(spark, isFileInTouchedPartitions)),
+      partitionOnly = true, shouldRewriteFilter = false)
     filteredFiles
   }
 

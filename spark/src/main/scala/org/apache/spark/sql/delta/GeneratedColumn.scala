@@ -26,6 +26,7 @@ import org.apache.spark.sql.delta.schema.SchemaUtils.quoteIdentifier
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.AnalysisHelper
+import org.apache.spark.sql.delta.util.ColumnExpressionUtils
 
 import org.apache.spark.sql.{AnalysisException, Column, Dataset, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.Analyzer
@@ -38,6 +39,8 @@ import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.types.{Metadata => FieldMetadata}
+import org.apache.spark.sql.functions.{expr, col}
+
 /**
  * Provide utility methods to implement Generated Columns for Delta. Users can use the following
  * SQL syntax to create a table with generated columns.
@@ -220,16 +223,17 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
     val selectExprs = generatedColumns.map { f =>
       getGenerationExpressionStr(f) match {
         case Some(exprString) =>
-          val expr = parseGenerationExpression(spark, exprString)
-          validateColumnReferences(spark, f.name, expr, schema)
-          new Column(expr).alias(f.name)
+          val expression = parseGenerationExpression(spark, exprString)
+          validateColumnReferences(spark, f.name, expression, schema)
+          expr(expression.sql).alias(f.name)
         case None =>
           // Should not happen
           throw DeltaErrors.expressionsNotFoundInGeneratedColumn(f.name)
       }
     }
     val dfWithExprs = try {
-      val plan = Project(selectExprs.map(_.expr.asInstanceOf[NamedExpression]), relation)
+      val plan = Project(selectExprs.map(col =>
+        ColumnExpressionUtils.toExpression(spark, col).asInstanceOf[NamedExpression]), relation)
       Dataset.ofRows(spark, plan)
     } catch {
       case e: AnalysisException if e.getMessage != null =>
@@ -277,8 +281,8 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
   def getGeneratedColumnsAndColumnsUsedByGeneratedColumns(schema: StructType): Set[String] = {
     val generationExprs = schema.flatMap { col =>
       getGenerationExpressionStr(col).map { exprStr =>
-        val expr = parseGenerationExpression(SparkSession.active, exprStr)
-        new Column(expr).alias(col.name)
+        val expression = parseGenerationExpression(SparkSession.active, exprStr)
+        expr(expression.sql).alias(col.name)
       }
     }
     if (generationExprs.isEmpty) {
@@ -326,8 +330,8 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
       partitionSchema: StructType): Map[String, Seq[OptimizablePartitionExpression]] = {
     val partitionGenerationExprs = partitionSchema.flatMap { col =>
       getGenerationExpressionStr(col).map { exprStr =>
-        val expr = parseGenerationExpression(SparkSession.active, exprStr)
-        new Column(expr).alias(col.name)
+        val expression = parseGenerationExpression(SparkSession.active, exprStr)
+        expr(expression.sql).alias(col.name)
       }
     }
     if (partitionGenerationExprs.isEmpty) {

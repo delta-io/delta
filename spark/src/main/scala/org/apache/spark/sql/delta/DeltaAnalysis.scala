@@ -573,7 +573,10 @@ class DeltaAnalysis(session: SparkSession)
       val v1TableName = child.identifier.asTableIdentifier
       namespace.foreach { ns =>
         if (v1TableName.database.exists(!resolver(_, ns.head))) {
-          throw QueryCompilationErrors.showColumnsWithConflictDatabasesError(ns, v1TableName)
+          throw DeltaErrors.cannotResolveShowColumnsWithConflictingDatabases(
+            ns,
+            v1TableName // v1TableName is already a TableIdentifier
+          )
         }
       }
       ShowDeltaTableColumnsCommand(child)

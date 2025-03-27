@@ -24,6 +24,8 @@ import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.{Column, Dataset}
 import org.apache.spark.sql.catalyst.expressions.ElementAt
 import org.apache.spark.sql.functions.lit
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.functions.expr
 
 /**
  * Various utility methods used by Delta.
@@ -64,8 +66,9 @@ object Utils {
    * otherwise.
    */
   def try_element_at(mapColumn: Column, key: Any): Column = {
-    Column {
-      ElementAt(mapColumn.expr, lit(key).expr, failOnError = false)
-    }
+    expr(ElementAt(
+      ColumnExpressionUtils.toExpression(SparkSession.active, mapColumn),
+      ColumnExpressionUtils.toExpression(SparkSession.active, lit(key)),
+      failOnError = false).sql)
   }
 }

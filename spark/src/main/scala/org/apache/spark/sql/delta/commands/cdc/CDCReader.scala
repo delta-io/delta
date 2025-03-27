@@ -42,6 +42,7 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.sources.{BaseRelation, Filter, PrunedFilteredScan}
 import org.apache.spark.sql.types.{LongType, StringType, StructType, TimestampType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
+import org.apache.spark.sql.functions.{expr, col}
 
 /**
  * The API that allows reading Change data between two versions of a table.
@@ -160,7 +161,7 @@ object CDCReader extends CDCReaderImpl
         sqlContext.sparkSession,
         readSchemaSnapshot = Some(snapshotForBatchSchema))
 
-      val filter = new Column(DeltaSourceUtils.translateFilters(filters))
+      val filter = expr(DeltaSourceUtils.translateFilters(filters).sql)
       val projections = requiredColumns.map(SchemaUtils.fieldNameToColumn)
       df.filter(filter).select(projections: _*).rdd
     }

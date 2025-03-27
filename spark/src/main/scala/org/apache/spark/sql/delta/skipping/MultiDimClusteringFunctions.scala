@@ -18,16 +18,21 @@ package org.apache.spark.sql.delta.skipping
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.expressions.{HilbertByteArrayIndex, HilbertLongIndex, InterleaveBits, RangePartitionId}
+import org.apache.spark.sql.delta.util.ColumnExpressionUtils
 
 import org.apache.spark.SparkException
 import org.apache.spark.sql.Column
-import org.apache.spark.sql.catalyst.expressions.{Cast, Expression}
+import org.apache.spark.sql.catalyst.expressions.{Cast, Expression, NamedExpression, Alias}
 import org.apache.spark.sql.types.StringType
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.functions.{expr => functions}
 
 /** Functions for multi-dimensional clustering of the data */
 object MultiDimClusteringFunctions {
-  private def withExpr(expr: Expression): Column = new Column(expr)
-
+  private def withExpr(expr: Expression): Column = expr match {
+    case e: NamedExpression => functions(e.sql)
+    case e => functions(Alias(e, "_tmp")().sql)
+  }
   /**
    * Conceptually range-partitions the domain of values of the given column into `numPartitions`
    * partitions and computes the partition number that every value of that column corresponds to.
@@ -37,7 +42,7 @@ object MultiDimClusteringFunctions {
    * partition range ids as (0, 0, 1, 1, 2, 2).
    */
   def range_partition_id(col: Column, numPartitions: Int): Column = withExpr {
-    RangePartitionId(col.expr, numPartitions)
+    RangePartitionId(ColumnExpressionUtils.toExpression(SparkSession.active, col), numPartitions)
   }
 
   /**
@@ -54,7 +59,7 @@ object MultiDimClusteringFunctions {
    * @note Only supports input expressions of type Int for now.
    */
   def interleave_bits(cols: Column*): Column = withExpr {
-    InterleaveBits(cols.map(_.expr))
+    InterleaveBits(cols.map(col => ColumnExpressionUtils.toExpression(SparkSession.active, col)))
   }
 
   // scalastyle:off line.size.limit
@@ -73,9 +78,11 @@ object MultiDimClusteringFunctions {
     }
     val hilbertBits = cols.length * numBits
     if (hilbertBits < 64) {
-      HilbertLongIndex(numBits, cols.map(_.expr))
+      HilbertLongIndex(numBits, cols.map(col =>
+        ColumnExpressionUtils.toExpression(SparkSession.active, col)))
     } else {
-      Cast(HilbertByteArrayIndex(numBits, cols.map(_.expr)), StringType)
+      Cast(HilbertByteArrayIndex(numBits, cols.map(col =>
+        ColumnExpressionUtils.toExpression(SparkSession.active, col))), StringType)
     }
   }
 }

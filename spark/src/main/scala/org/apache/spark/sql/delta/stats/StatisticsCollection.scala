@@ -359,7 +359,7 @@ trait StatisticsCollection extends DeltaLogging {
       schema.flatMap {
         case f @ StructField(name, s: StructType, _, _) =>
           val column = parent.map(_.getItem(name))
-            .getOrElse(new Column(UnresolvedAttribute.quoted(name)))
+            .getOrElse(expr(UnresolvedAttribute.quoted(name).sql))
           val stats = collectStats(s, Some(column), parentFields :+ name, function)
           if (stats.nonEmpty) {
             Some(struct(stats: _*) as DeltaColumnMapping.getPhysicalName(f))
@@ -369,7 +369,7 @@ trait StatisticsCollection extends DeltaLogging {
         case f @ StructField(name, _, _, _) =>
           val fieldPath = UnresolvedAttribute(parentFields :+ name).name
           val column = parent.map(_.getItem(name))
-            .getOrElse(new Column(UnresolvedAttribute.quoted(name)))
+            .getOrElse(expr(UnresolvedAttribute.quoted(name).sql))
           // alias the column with its physical name
           // Note: explodedDataSchemaNames comes from dataSchema. In the read path, dataSchema comes
           // from the table's metadata.dataSchema, which is the same as tableSchema. In the
@@ -386,7 +386,7 @@ trait StatisticsCollection extends DeltaLogging {
     if (stats.nonEmpty) {
       struct(stats: _*).as(name)
     } else {
-      lit(null).as(name)
+      expr(null).as(name)
     }
   }
 }

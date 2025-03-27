@@ -29,6 +29,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeltaDataSkippingType.DeltaDataSkippingType
 import org.apache.spark.sql.delta.stats.DeltaStatistics._
 import org.apache.spark.sql.delta.util.StateCache
+import org.apache.spark.sql.delta.util.ColumnExpressionUtils
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{DataFrame, _}
@@ -41,6 +42,7 @@ import org.apache.spark.sql.expressions.SparkUserDefinedFunction
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.{AtomicType, BooleanType, CalendarIntervalType, DataType, DateType, LongType, NumericType, StringType, StructField, StructType, TimestampNTZType, TimestampType}
 import org.apache.spark.unsafe.types.{CalendarInterval, UTF8String}
+import org.apache.spark.sql.functions.{expr => functions}
 
 /**
  * Used to hold the list of files and scan stats after pruning files using the limit.
@@ -146,7 +148,7 @@ object SkippingEligibleColumn {
  */
 object SkippingEligibleLiteral {
   def unapply(arg: Literal): Option[Column] = {
-    if (SkippingEligibleDataType(arg.dataType)) Some(new Column(arg)) else None
+    if (SkippingEligibleDataType(arg.dataType)) Some(expr(arg.sql)) else None
   }
 }
 
@@ -170,7 +172,7 @@ private[delta] object DataSkippingReader {
   /** Default number of cols for which we should collect stats */
   val DATA_SKIPPING_NUM_INDEXED_COLS_DEFAULT_VALUE = 32
 
-  private[this] def col(e: Expression): Column = new Column(e)
+  private[this] def col(e: Expression): Column = expr(e.sql)
   def fold(e: Expression): Column = col(new Literal(e.eval(), e.dataType))
 
   // Literals often used in the data skipping reader expressions.
@@ -272,7 +274,7 @@ trait DataSkippingReaderBase
     // For excessively long IN-lists, we just test whether the file's min/max range overlaps the
     // range spanned by the list's smallest and largest elements.
     private def constructLiteralInListDataFilters(a: Expression, possiblyNullValues: Seq[Any]):
-        Option[DataSkippingPredicate] = {
+    Option[DataSkippingPredicate] = {
       // The Ordering we use for sorting cannot handle null values, and these can anyway
       // be safely ignored because they will never cause an IN-list predicate to return TRUE.
       val values = possiblyNullValues.filter(_ != null)
@@ -389,7 +391,7 @@ trait DataSkippingReaderBase
      * skipping for any file that lacks the needed stats columns).
      */
     private[stats] def constructDataFilters(dataFilter: Expression):
-        Option[DataSkippingPredicate] = dataFilter match {
+    Option[DataSkippingPredicate] = dataFilter match {
       // Expressions that contain only literals are not eligible for skipping.
       case cmp: Expression if cmp.children.forall(areAllLeavesLiteral) => None
 
@@ -541,7 +543,7 @@ trait DataSkippingReaderBase
 
       // Match any file whose max is larger than or equal to the requested lower bound.
       case GreaterThanOrEqual(
-          SkippingEligibleExpression(c, _, builder), SkippingEligibleLiteral(v)) =>
+      SkippingEligibleExpression(c, _, builder), SkippingEligibleLiteral(v)) =>
         builder.greaterThanOrEqual(statsProvider, c, v)
       case GreaterThanOrEqual(v: Literal, a) =>
         constructDataFilters(LessThanOrEqual(a, v))
@@ -599,7 +601,7 @@ trait DataSkippingReaderBase
      */
     object SkippingEligibleExpression {
       def unapply(arg: Expression)
-          : Option[(Seq[String], DataType, DataSkippingPredicateBuilder)] = arg match {
+      : Option[(Seq[String], DataType, DataSkippingPredicateBuilder)] = arg match {
         case SkippingEligibleColumn(c, dt) =>
           Some((c, dt, DataSkippingPredicateBuilder.ColumnBuilder))
         case _ => None
@@ -686,11 +688,13 @@ trait DataSkippingReaderBase
           //
           // There is a longer term task SC-22825 to fix the serialization problem that caused this.
           // But we need the adjustment in any case to correctly read stats written by old versions.
-          new Column(Cast(TimeAdd(statCol.expr, oneMillisecondLiteralExpr), TimestampType))
+          val expr = ColumnExpressionUtils.toExpression(SparkSession.active, statCol)
+          functions(Cast(TimeAdd(expr, oneMillisecondLiteralExpr), TimestampType).sql)
         case (statCol, TimestampNTZType, _) if pathToStatType.head == MAX =>
           // We also apply the same adjustment of max stats that was applied to Timestamp
           // for TimestampNTZ because these 2 types have the same precision in terms of time.
-          new Column(Cast(TimeAdd(statCol.expr, oneMillisecondLiteralExpr), TimestampNTZType))
+          val expr = ColumnExpressionUtils.toExpression(SparkSession.active, statCol)
+          functions(Cast(TimeAdd(expr, oneMillisecondLiteralExpr), TimestampNTZType).sql)
         case (statCol, _, _) =>
           statCol
       }
@@ -808,7 +812,7 @@ trait DataSkippingReaderBase
    *                       This may slow down the query as it has to parse json.
    */
   protected def getAllFiles(keepNumRecords: Boolean): Seq[AddFile] = recordFrameProfile(
-      "Delta", "DataSkippingReader.getAllFiles") {
+    "Delta", "DataSkippingReader.getAllFiles") {
     val ds = if (keepNumRecords) {
       withStats // use withStats instead of allFiles so the `stats` column is already parsed
         // keep only the numRecords field as a Json string in the stats field
@@ -827,7 +831,7 @@ trait DataSkippingReaderBase
     recordFrameProfile("Delta", "DataSkippingReader.constructPartitionFilters") {
       val rewritten = DeltaLog.rewritePartitionFilters(
         metadata.partitionSchema, spark.sessionState.conf.resolver, filters)
-      rewritten.reduceOption(And).map { expr => new Column(expr) }.getOrElse(trueLiteral)
+      rewritten.reduceOption(And).map(expr => functions(expr.sql)).getOrElse(trueLiteral)
     }
   }
 

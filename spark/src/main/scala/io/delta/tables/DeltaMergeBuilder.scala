@@ -24,6 +24,7 @@ import org.apache.spark.sql.delta.DeltaTableUtils.withActiveSession
 import org.apache.spark.sql.delta.DeltaViewHelper
 import org.apache.spark.sql.delta.commands.MergeIntoCommand
 import org.apache.spark.sql.delta.util.AnalysisHelper
+import org.apache.spark.sql.delta.util.ColumnExpressionUtils
 
 import org.apache.spark.annotation._
 import org.apache.spark.internal.Logging
@@ -345,7 +346,7 @@ class DeltaMergeBuilder private(
   private def mergePlan: DeltaMergeInto = {
     var targetPlan = targetTable.toDF.queryExecution.analyzed
     var sourcePlan = source.queryExecution.analyzed
-    var condition = onCondition.expr
+    var condition = ColumnExpressionUtils.toExpression(SparkSession.active, onCondition)
     var clauses = whenClauses
 
     // If source and target have duplicate, pre-resolved references (can happen with self-merge),
@@ -467,8 +468,9 @@ class DeltaMergeMatchedActionBuilder private(
    * @since 0.3.0
    */
   def updateAll(): DeltaMergeBuilder = {
+    val spark = SparkSession.active
     val updateClause = DeltaMergeIntoMatchedUpdateClause(
-      matchCondition.map(_.expr),
+      matchCondition.map(c => ColumnExpressionUtils.toExpression(spark, c)),
       DeltaMergeIntoClause.toActions(Nil, Nil))
     mergeBuilder.withClause(updateClause)
   }
@@ -478,7 +480,9 @@ class DeltaMergeMatchedActionBuilder private(
    * @since 0.3.0
    */
   def delete(): DeltaMergeBuilder = {
-    val deleteClause = DeltaMergeIntoMatchedDeleteClause(matchCondition.map(_.expr))
+    val spark = SparkSession.active
+    val deleteClause = DeltaMergeIntoMatchedDeleteClause(
+      matchCondition.map(c => ColumnExpressionUtils.toExpression(spark, c)))
     mergeBuilder.withClause(deleteClause)
   }
 
@@ -487,13 +491,14 @@ class DeltaMergeMatchedActionBuilder private(
       // This is a catch all clause that doesn't update anything: we can ignore it.
       mergeBuilder
     } else {
+      val spark = SparkSession.active
       val setActions = set.toSeq
       val updateActions = DeltaMergeIntoClause.toActions(
         colNames = setActions.map(x => UnresolvedAttribute.quotedString(x._1)),
-        exprs = setActions.map(x => x._2.expr),
+        exprs = setActions.map(x => ColumnExpressionUtils.toExpression(spark, x._2)),
         isEmptySeqEqualToStar = false)
       val updateClause = DeltaMergeIntoMatchedUpdateClause(
-        matchCondition.map(_.expr),
+        matchCondition.map(c => ColumnExpressionUtils.toExpression(spark, c)),
         updateActions)
       mergeBuilder.withClause(updateClause)
     }
@@ -582,20 +587,22 @@ class DeltaMergeNotMatchedActionBuilder private(
    * @since 0.3.0
    */
   def insertAll(): DeltaMergeBuilder = {
+    val spark = SparkSession.active
     val insertClause = DeltaMergeIntoNotMatchedInsertClause(
-      notMatchCondition.map(_.expr),
+      notMatchCondition.map(c => ColumnExpressionUtils.toExpression(spark, c)),
       DeltaMergeIntoClause.toActions(Nil, Nil))
     mergeBuilder.withClause(insertClause)
   }
 
   private def addInsertClause(setValues: Map[String, Column]): DeltaMergeBuilder = {
+    val spark = SparkSession.active
     val values = setValues.toSeq
     val insertActions = DeltaMergeIntoClause.toActions(
       colNames = values.map(x => UnresolvedAttribute.quotedString(x._1)),
-      exprs = values.map(x => x._2.expr),
+      exprs = values.map(x => ColumnExpressionUtils.toExpression(spark, x._2)),
       isEmptySeqEqualToStar = false)
     val insertClause = DeltaMergeIntoNotMatchedInsertClause(
-      notMatchCondition.map(_.expr),
+      notMatchCondition.map(c => ColumnExpressionUtils.toExpression(spark, c)),
       insertActions)
     mergeBuilder.withClause(insertClause)
   }
@@ -680,7 +687,8 @@ class DeltaMergeNotMatchedBySourceActionBuilder private(
    */
   def delete(): DeltaMergeBuilder = {
     val deleteClause =
-      DeltaMergeIntoNotMatchedBySourceDeleteClause(notMatchBySourceCondition.map(_.expr))
+      DeltaMergeIntoNotMatchedBySourceDeleteClause(notMatchBySourceCondition.map(c =>
+        ColumnExpressionUtils.toExpression(SparkSession.active, c)))
     mergeBuilder.withClause(deleteClause)
   }
 
@@ -689,13 +697,14 @@ class DeltaMergeNotMatchedBySourceActionBuilder private(
       // This is a catch all clause that doesn't update anything: we can ignore it.
       mergeBuilder
     } else {
+      val spark = SparkSession.active
       val setActions = set.toSeq
       val updateActions = DeltaMergeIntoClause.toActions(
         colNames = setActions.map(x => UnresolvedAttribute.quotedString(x._1)),
-        exprs = setActions.map(x => x._2.expr),
+        exprs = setActions.map(x => ColumnExpressionUtils.toExpression(spark, x._2)),
         isEmptySeqEqualToStar = false)
       val updateClause = DeltaMergeIntoNotMatchedBySourceUpdateClause(
-        notMatchBySourceCondition.map(_.expr),
+        notMatchBySourceCondition.map(c => ColumnExpressionUtils.toExpression(spark, c)),
         updateActions)
       mergeBuilder.withClause(updateClause)
     }

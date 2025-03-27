@@ -55,6 +55,7 @@ import org.apache.spark.sql.sources.{BaseRelation, InsertableRelation}
 import org.apache.spark.sql.types.{StructField, StructType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 import org.apache.spark.util._
+import org.apache.spark.sql.functions.{expr => functions}
 
 /**
  * Used to query the current state of the log as well as modify it by adding
@@ -970,7 +971,7 @@ object DeltaLog extends DeltaLogging {
       partitionFilters
     }
     val expr = rewrittenFilters.reduceLeftOption(And).getOrElse(Literal.TrueLiteral)
-    val columnFilter = new Column(expr)
+    val columnFilter = functions(expr.sql)
     files.filter(columnFilter)
   }
 

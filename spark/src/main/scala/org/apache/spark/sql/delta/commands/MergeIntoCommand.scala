@@ -72,6 +72,8 @@ case class MergeIntoCommand(
   with InsertOnlyMergeExecutor
   with ClassicMergeExecutor {
 
+  override protected def spark: SparkSession = super[ClassicMergeExecutor].spark
+
   override val output: Seq[Attribute] = Seq(
     AttributeReference("num_affected_rows", LongType)(),
     AttributeReference("num_updated_rows", LongType)(),
