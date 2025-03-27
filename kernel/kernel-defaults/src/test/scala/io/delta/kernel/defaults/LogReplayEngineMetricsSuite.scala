@@ -484,9 +484,6 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
         expJsonVersionsRead = Seq(4, 3),
         expParquetVersionsRead = Nil,
         expParquetReadSetSizes = Nil,
-        // First attempted to read checksum for version 4 which doesn't exists,
-        // then we do a listing of last 100 crc files and read the latest
-        // one which is version 2 (as version 3-6 are deleted)
         expChecksumReadSet = Seq(2))
       // read version 4 which sets the snapshot P&M hint to 4
 
