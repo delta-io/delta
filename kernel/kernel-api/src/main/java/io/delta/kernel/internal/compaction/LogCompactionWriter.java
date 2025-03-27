@@ -38,17 +38,17 @@ import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/** Utility for writing out minor log compactions. */
-public class MinorCompactionWriter {
+/** Utility for writing out log compactions. */
+public class LogCompactionWriter {
 
-  private static final Logger logger = LoggerFactory.getLogger(MinorCompactionWriter.class);
+  private static final Logger logger = LoggerFactory.getLogger(LogCompactionWriter.class);
 
   private final Path logPath;
   private final long startVersion;
   private final long endVersion;
   private final long minFileRetentionTimestampMillis;
 
-  public MinorCompactionWriter(
+  public LogCompactionWriter(
       Path logPath, long startVersion, long endVersion, long minFileRetentionTimestampMillis) {
     this.logPath = requireNonNull(logPath);
     this.startVersion = startVersion;
@@ -56,7 +56,7 @@ public class MinorCompactionWriter {
     this.minFileRetentionTimestampMillis = minFileRetentionTimestampMillis;
   }
 
-  public void writeMinorCompactionFile(Engine engine) throws IOException {
+  public void writeLogCompactionFile(Engine engine) throws IOException {
     String fileName = String.format("%020d.%020d.compacted.json", startVersion, endVersion);
     Path compactedPath = new Path(logPath, fileName);
 
@@ -78,14 +78,13 @@ public class MinorCompactionWriter {
             .toInMemoryList();
 
     logger.info(
-        "{}: Took {}ms to list commit files for minor compaction",
+        "{}: Took {}ms to list commit files for log compaction",
         logPath,
         System.currentTimeMillis() - startTimeMillis);
 
     if (deltas.isEmpty()) {
       logger.warn(
-          "Asked to do a minor compaction between {} and {}, "
-              + "but there are no files to compact",
+          "Asked to do a log compaction between {} and {}, " + "but there are no files to compact",
           startVersion,
           endVersion);
       return;

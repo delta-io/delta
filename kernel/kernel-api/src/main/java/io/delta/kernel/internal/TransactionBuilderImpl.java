@@ -71,8 +71,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
    */
   private int maxRetries = 200;
 
-  /** Default number of commits between running minor log compations. */
-  private int minorCompactionInterval = 10;
+  /** Default number of commits between running log compations. */
+  private int logCompactionInterval = 10;
 
   public TransactionBuilderImpl(TableImpl table, String engineInfo, Operation operation) {
     this.table = table;
@@ -121,9 +121,9 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   }
 
   @Override
-  public TransactionBuilder withMinorCompactionInverval(int minorCompactionInterval) {
-    checkArgument(minorCompactionInterval >= 0, "minorCompactionInterval must be >= 0");
-    this.minorCompactionInterval = minorCompactionInterval;
+  public TransactionBuilder withLogCompactionInverval(int logCompactionInterval) {
+    checkArgument(logCompactionInterval >= 0, "logCompactionInterval must be >= 0");
+    this.logCompactionInterval = logCompactionInterval;
     return this;
   }
 
@@ -245,7 +245,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         newMetadata.isPresent() /* shouldUpdateMetadata */,
         newProtocol.isPresent() /* shouldUpdateProtocol */,
         maxRetries,
-        minorCompactionInterval,
+        logCompactionInterval,
         table.getClock());
   }
 

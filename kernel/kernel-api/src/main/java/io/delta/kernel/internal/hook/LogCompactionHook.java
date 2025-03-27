@@ -19,12 +19,12 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.hook.PostCommitHook;
-import io.delta.kernel.internal.compaction.MinorCompactionWriter;
+import io.delta.kernel.internal.compaction.LogCompactionWriter;
 import io.delta.kernel.internal.fs.Path;
 import java.io.IOException;
 
 /**
- * A post-commit hook that performs inline minor log compaction. It merges commit JSON files over a
+ * A post-commit hook that performs inline log compaction. It merges commit JSON files over a
  * compaction interval into a single compacted JSON file.
  */
 public class LogCompactionHook implements PostCommitHook {
@@ -44,10 +44,10 @@ public class LogCompactionHook implements PostCommitHook {
 
   @Override
   public void threadSafeInvoke(Engine engine) throws IOException {
-    MinorCompactionWriter compactionWriter =
-        new MinorCompactionWriter(
+    LogCompactionWriter compactionWriter =
+        new LogCompactionWriter(
             logPath, startVersion, commitVersion, minFileRetentionTimestampMillis);
-    compactionWriter.writeMinorCompactionFile(engine);
+    compactionWriter.writeLogCompactionFile(engine);
   }
 
   @Override

@@ -35,7 +35,7 @@ import io.delta.kernel.hook.PostCommitHook;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.checksum.CRCInfo;
-import io.delta.kernel.internal.compaction.MinorCompactionWriter;
+import io.delta.kernel.internal.compaction.LogCompactionWriter;
 import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.hook.CheckpointHook;
@@ -90,7 +90,7 @@ public class TransactionImpl implements Transaction {
   private Metadata metadata;
   private boolean shouldUpdateMetadata;
   private int maxRetries;
-  private int minorCompactionInterval;
+  private int logCompactionInterval;
 
   private boolean closed; // To avoid trying to commit the same transaction again.
 
@@ -107,7 +107,7 @@ public class TransactionImpl implements Transaction {
       boolean shouldUpdateMetadata,
       boolean shouldUpdateProtocol,
       int maxRetries,
-      int minorCompactionInterval,
+      int logCompactionInterval,
       Clock clock) {
     this.isNewTable = isNewTable;
     this.dataPath = dataPath;
@@ -121,7 +121,7 @@ public class TransactionImpl implements Transaction {
     this.shouldUpdateMetadata = shouldUpdateMetadata;
     this.shouldUpdateProtocol = shouldUpdateProtocol;
     this.maxRetries = maxRetries;
-    this.minorCompactionInterval = minorCompactionInterval;
+    this.logCompactionInterval = logCompactionInterval;
     this.clock = clock;
   }
 
@@ -484,9 +484,9 @@ public class TransactionImpl implements Transaction {
               commitAsVersion, transactionMetrics.captureTransactionMetricsResult())
           .ifPresent(crcInfo -> postCommitHooks.add(new ChecksumSimpleHook(crcInfo, logPath)));
 
-      if (minorCompactionInterval > 0
-          && MinorCompactionWriter.shouldCompact(commitAsVersion, minorCompactionInterval)) {
-        long startVersion = commitAsVersion - minorCompactionInterval + 1;
+      if (logCompactionInterval > 0
+          && LogCompactionWriter.shouldCompact(commitAsVersion, logCompactionInterval)) {
+        long startVersion = commitAsVersion - logCompactionInterval + 1;
         long minFileRetentionTimestampMillis =
             System.currentTimeMillis() - TOMBSTONE_RETENTION.fromMetadata(metadata);
         postCommitHooks.add(
