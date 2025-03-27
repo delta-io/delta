@@ -93,7 +93,8 @@ public interface TransactionBuilder {
   TransactionBuilder withMaxRetries(int maxRetries);
 
   /**
-   * Set the number of commits between minor log compactions defaults to 10
+   * Set the number of commits between minor log compactions defaults to 10. Set to 0 to disable
+   * minor compactions.
    *
    * @param minorCompactionInterval The commits between minor compactions
    * @return updated {@link TransactionBuilder} instance

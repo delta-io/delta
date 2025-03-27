@@ -165,6 +165,7 @@ class ChecksumSimpleComparisonSuite extends DeltaTableWriteSuiteBase with TestUt
 
     val txn = Table.forPath(engine, path)
       .createTransactionBuilder(engine, "test-engine", Operation.WRITE)
+      .withMinorCompactionInverval(0) // disable compaction
       .build(engine)
 
     val tableChange = Table.forPath(engine, sparkTablePath).asInstanceOf[TableImpl].getChanges(

@@ -484,7 +484,8 @@ public class TransactionImpl implements Transaction {
               commitAsVersion, transactionMetrics.captureTransactionMetricsResult())
           .ifPresent(crcInfo -> postCommitHooks.add(new ChecksumSimpleHook(crcInfo, logPath)));
 
-      if (MinorCompactionWriter.shouldCompact(commitAsVersion, minorCompactionInterval)) {
+      if (minorCompactionInterval > 0
+          && MinorCompactionWriter.shouldCompact(commitAsVersion, minorCompactionInterval)) {
         long startVersion = commitAsVersion - minorCompactionInterval + 1;
         postCommitHooks.add(new LogCompactionHook(logPath, startVersion, commitAsVersion));
       }
