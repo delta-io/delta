@@ -316,7 +316,7 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     }
 
     if (withDomainMetadataSupported) {
-      txnBuilder.withDomainMetadataSupported()
+      txnBuilder = txnBuilder.withDomainMetadataSupported()
     }
 
     txnBuilder.build(engine)
