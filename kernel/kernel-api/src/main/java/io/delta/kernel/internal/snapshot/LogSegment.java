@@ -222,8 +222,8 @@ public class LogSegment {
   }
 
   /**
-   * Returns the most recent file checksum if available, the checksum file is not necessary to be the read version.
-   * Caller should take the responsibility of checking the version before use.
+   * Returns the most recent file checksum if available, the checksum file is not necessary to be
+   * the read version. Caller should take the responsibility of checking the version before use.
    */
   public Optional<FileStatus> getLastSeenChecksum() {
     return lastSeenChecksum;
