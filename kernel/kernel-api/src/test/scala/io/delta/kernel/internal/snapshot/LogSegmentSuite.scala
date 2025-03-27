@@ -17,7 +17,9 @@
 package io.delta.kernel.internal.snapshot
 
 import java.util.{Collections, Optional}
+
 import scala.collection.JavaConverters._
+
 import io.delta.kernel.test.MockFileSystemClientUtils
 import io.delta.kernel.utils.FileStatus
 
@@ -46,7 +48,12 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils {
     // logPath is null
     intercept[NullPointerException] {
       new LogSegment(
-        null, 1, Collections.emptyList(), Collections.emptyList(), Optional.empty(), -1)
+        null,
+        1,
+        Collections.emptyList(),
+        Collections.emptyList(),
+        Optional.empty(),
+        -1)
     }
     // deltas is null
     intercept[NullPointerException] {
@@ -87,7 +94,12 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils {
   test("constructor -- if version >= 0 then both deltas and checkpoints cannot be empty") {
     val exMsg = intercept[IllegalArgumentException] {
       new LogSegment(
-        logPath, 12, Collections.emptyList(), Collections.emptyList(), Optional.empty(), 1)
+        logPath,
+        12,
+        Collections.emptyList(),
+        Collections.emptyList(),
+        Optional.empty(),
+        1)
     }.getMessage
     assert(exMsg === "No files to read")
   }
@@ -137,8 +149,7 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils {
         Collections.emptyList(),
         checkpointFs10List,
         Optional.empty(),
-        1
-      )
+        1)
       assert(logSegment.isComplete)
     }
     {
@@ -156,8 +167,7 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils {
         deltasFs11To12List,
         Collections.emptyList(),
         Optional.empty(),
-        1
-      )
+        1)
       assert(!logSegment.isComplete)
     }
     {
@@ -168,7 +178,12 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
   test("toString") {
     val logSegment = new LogSegment(
-      logPath, 12, deltasFs11To12List, checkpointFs10List, Optional.of(checksumAtVersion10), 1)
+      logPath,
+      12,
+      deltasFs11To12List,
+      checkpointFs10List,
+      Optional.of(checksumAtVersion10),
+      1)
     // scalastyle:off line.size.limit
     val expectedToString =
       """LogSegment {
