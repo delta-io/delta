@@ -33,10 +33,12 @@ import io.delta.kernel.internal.actions.{AddFile, Metadata, SingleAction}
 import io.delta.kernel.internal.checksum.{ChecksumReader, CRCInfo}
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.FileNames
+import io.delta.kernel.internal.util.FileNames.checksumFile
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.types.LongType.LONG
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
+import io.delta.kernel.utils.FileStatus
 
 import org.apache.spark.sql.functions.col
 
@@ -148,7 +150,9 @@ class ChecksumSimpleComparisonSuite extends DeltaTableWriteSuiteBase with TestUt
 
   private def readCrcInfo(engine: Engine, path: String, version: Long): CRCInfo = {
     ChecksumReader
-      .getCRCInfo(engine, new Path(s"$path/_delta_log"), version, version)
+      .getCRCInfo(
+        engine,
+        FileStatus.of(checksumFile(new Path(f"$path/_delta_log/"), version).toString))
       .orElseThrow(() => new IllegalStateException(s"CRC info not found for version $version"))
   }
 
