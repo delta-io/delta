@@ -512,6 +512,7 @@ public class SnapshotManager {
 
     final long lastCommitTimestamp =
         ListUtils.getLast(listedDeltaFileStatuses).getModificationTime();
+
     return new LogSegment(
         logPath,
         newVersion,
