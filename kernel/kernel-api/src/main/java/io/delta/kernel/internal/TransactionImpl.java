@@ -487,7 +487,11 @@ public class TransactionImpl implements Transaction {
       if (minorCompactionInterval > 0
           && MinorCompactionWriter.shouldCompact(commitAsVersion, minorCompactionInterval)) {
         long startVersion = commitAsVersion - minorCompactionInterval + 1;
-        postCommitHooks.add(new LogCompactionHook(logPath, startVersion, commitAsVersion));
+        long minFileRetentionTimestampMillis =
+            System.currentTimeMillis() - TOMBSTONE_RETENTION.fromMetadata(metadata);
+        postCommitHooks.add(
+            new LogCompactionHook(
+                logPath, startVersion, commitAsVersion, minFileRetentionTimestampMillis));
       }
 
       return new TransactionCommitResult(commitAsVersion, postCommitHooks);

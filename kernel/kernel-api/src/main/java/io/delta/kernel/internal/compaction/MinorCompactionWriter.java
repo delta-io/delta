@@ -46,11 +46,14 @@ public class MinorCompactionWriter {
   private final Path logPath;
   private final long startVersion;
   private final long endVersion;
+  private final long minFileRetentionTimestampMillis;
 
-  public MinorCompactionWriter(Path logPath, long startVersion, long endVersion) {
+  public MinorCompactionWriter(
+      Path logPath, long startVersion, long endVersion, long minFileRetentionTimestampMillis) {
     this.logPath = requireNonNull(logPath);
     this.startVersion = startVersion;
     this.endVersion = endVersion;
+    this.minFileRetentionTimestampMillis = minFileRetentionTimestampMillis;
   }
 
   public void writeMinorCompactionFile(Engine engine) throws IOException {
@@ -92,7 +95,8 @@ public class MinorCompactionWriter {
 
     LogSegment segment =
         new LogSegment(logPath, endVersion, deltas, emptyList(), lastCommitTimestamp);
-    CreateCheckpointIterator checkpointIterator = new CreateCheckpointIterator(engine, segment, 0);
+    CreateCheckpointIterator checkpointIterator =
+        new CreateCheckpointIterator(engine, segment, minFileRetentionTimestampMillis);
     wrapEngineExceptionThrowsIO(
         () -> {
           try (CloseableIterator<Row> rows = new FilteredBatchToRowIter(checkpointIterator)) {

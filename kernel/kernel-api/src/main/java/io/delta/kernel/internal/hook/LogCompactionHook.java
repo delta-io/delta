@@ -32,17 +32,21 @@ public class LogCompactionHook implements PostCommitHook {
   private final Path logPath;
   private final long startVersion;
   private final long commitVersion;
+  private final long minFileRetentionTimestampMillis;
 
-  public LogCompactionHook(Path logPath, long startVersion, long commitVersion) {
+  public LogCompactionHook(
+      Path logPath, long startVersion, long commitVersion, long minFileRetentionTimestampMillis) {
     this.logPath = requireNonNull(logPath, "logPath cannot be null");
     this.startVersion = startVersion;
     this.commitVersion = commitVersion;
+    this.minFileRetentionTimestampMillis = minFileRetentionTimestampMillis;
   }
 
   @Override
   public void threadSafeInvoke(Engine engine) throws IOException {
     MinorCompactionWriter compactionWriter =
-        new MinorCompactionWriter(logPath, startVersion, commitVersion);
+        new MinorCompactionWriter(
+            logPath, startVersion, commitVersion, minFileRetentionTimestampMillis);
     compactionWriter.writeMinorCompactionFile(engine);
   }
 
