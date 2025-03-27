@@ -642,13 +642,42 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
     }
   }
 
-  // Produce a test table with 0 to 11 .json, 0 to 11.crc, 10.checkpoint.parquet
-  def buildTableWithCrc(path: String): Unit = {
+  test("crc found at older than read version - 100 => full log replay") {
+    withTempDirAndMetricsEngine { (path, engine) =>
+      buildTableWithCrc(path, 100)
+      (1 to 101).foreach { version =>
+        assert(
+          Files.deleteIfExists(
+            new File(FileNames.checksumFile(
+              new Path(f"$path/_delta_log"),
+              version).toString).toPath))
+        if (version % 10 == 0) {
+          assert(
+            Files.deleteIfExists(
+              new File(
+                FileNames.checkpointFileSingular(
+                  new Path(f"$path/_delta_log"),
+                  version).toString).toPath))
+        }
+      }
+      val table = Table.forPath(engine, path)
+
+      loadPandMCheckMetrics(
+        table.getSnapshotAsOfVersion(engine, 101).getSchema(),
+        engine,
+        expJsonVersionsRead = (0L to 101L).reverse,
+        expParquetVersionsRead = Nil,
+        expParquetReadSetSizes = Nil,
+        expChecksumReadSet = Nil)
+    }
+  }
+
+  def buildTableWithCrc(path: String, numOfWrite: Int = 10): Unit = {
     withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true") {
       spark.sql(
         s"CREATE TABLE delta.`$path` USING DELTA AS " +
           s"SELECT 0L as id")
-      for (_ <- 0 to 10) { appendCommit(path) }
+      for (_ <- 0 to numOfWrite) { appendCommit(path) }
     }
   }
 }
