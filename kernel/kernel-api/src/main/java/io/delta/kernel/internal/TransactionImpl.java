@@ -60,6 +60,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.FileAlreadyExistsException;
 import java.util.*;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -192,6 +193,28 @@ public class TransactionImpl implements Transaction {
     removeDomainMetadataInternal(domain);
   }
 
+  private Optional<List<DomainMetadata>> getPostCommitDomainMetadatas() {
+    // For new tables, just filter out any removed metadata
+    if (isNewTable) {
+      return Optional.of(getDomainMetadatas());
+    }
+
+    // For existing tables, merge with pre-commit metadata
+    return readSnapshot
+        .getCurrentCrcInfo()
+        .flatMap(CRCInfo::getDomainMetadata)
+        .map(
+            preCommitMetadata -> {
+              Map<String, DomainMetadata> metadataMap =
+                  preCommitMetadata.stream()
+                      .collect(Collectors.toMap(DomainMetadata::getDomain, Function.identity()));
+
+              getDomainMetadatas()
+                  .forEach(metadata -> metadataMap.put(metadata.getDomain(), metadata));
+
+              return new ArrayList<>(metadataMap.values());
+            });
+  }
   /**
    * Returns a list of the domain metadatas to commit. This consists of the domain metadatas added
    * in the transaction using {@link Transaction#addDomainMetadata(String, String)} and the
@@ -564,6 +587,7 @@ public class TransactionImpl implements Transaction {
               protocol,
               metricsResult.getTotalAddFilesSizeInBytes(),
               metricsResult.getNumAddFiles(),
+              getPostCommitDomainMetadatas(),
               Optional.of(txnId.toString())));
     }
 
@@ -581,6 +605,7 @@ public class TransactionImpl implements Transaction {
                     // TODO: handle RemoveFiles for calculating table size and num of files.
                     lastCrcInfo.getTableSizeBytes() + metricsResult.getTotalAddFilesSizeInBytes(),
                     lastCrcInfo.getNumFiles() + metricsResult.getNumAddFiles(),
+                    getPostCommitDomainMetadatas(),
                     Optional.of(txnId.toString())));
   }
 

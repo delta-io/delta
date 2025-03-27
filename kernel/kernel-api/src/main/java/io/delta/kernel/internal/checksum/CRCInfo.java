@@ -21,17 +21,19 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
+import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.data.GenericRow;
+import io.delta.kernel.internal.data.StructRow;
 import io.delta.kernel.internal.util.InternalUtils;
+import io.delta.kernel.internal.util.VectorUtils;
+import io.delta.kernel.types.ArrayType;
 import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Optional;
+import java.util.*;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -43,6 +45,7 @@ public class CRCInfo {
   private static final String NUM_FILES = "numFiles";
   private static final String NUM_METADATA = "numMetadata";
   private static final String NUM_PROTOCOL = "numProtocol";
+  private static final String DOMAIN_METADATA = "domainMetadata";
   private static final String METADATA = "metadata";
   private static final String PROTOCOL = "protocol";
   private static final String TXN_ID = "txnId";
@@ -55,6 +58,7 @@ public class CRCInfo {
           .add(NUM_PROTOCOL, LongType.LONG)
           .add(METADATA, Metadata.FULL_SCHEMA)
           .add(PROTOCOL, Protocol.FULL_SCHEMA)
+          .add(DOMAIN_METADATA, new ArrayType(DomainMetadata.FULL_SCHEMA, false), /*nullable*/ true)
           .add(TXN_ID, StringType.STRING, /*nullable*/ true);
 
   public static Optional<CRCInfo> fromColumnarBatch(
@@ -80,12 +84,22 @@ public class CRCInfo {
             ? Optional.empty()
             : Optional.of(txnIdColumnVector.getString(rowId));
 
+    ColumnVector domainMetadataVector = batch.getColumnVector(getSchemaIndex(DOMAIN_METADATA));
+    Optional<List<DomainMetadata>> domainMetadata =
+        domainMetadataVector.isNullAt(rowId)
+            ? Optional.empty()
+            : Optional.of(
+                VectorUtils.toJavaList(domainMetadataVector.getArray(rowId)).stream()
+                    .map(row -> DomainMetadata.fromRow((StructRow) row))
+                    .collect(Collectors.toList()));
+
     //  protocol and metadata are nullable per fromColumnVector's implementation.
     if (protocol == null || metadata == null) {
       logger.warn("Invalid checksum file missing protocol and/or metadata: {}", crcFilePath);
       return Optional.empty();
     }
-    return Optional.of(new CRCInfo(version, metadata, protocol, tableSizeBytes, numFiles, txnId));
+    return Optional.of(
+        new CRCInfo(version, metadata, protocol, tableSizeBytes, numFiles, domainMetadata, txnId));
   }
 
   private final long version;
@@ -93,6 +107,7 @@ public class CRCInfo {
   private final Protocol protocol;
   private final long tableSizeBytes;
   private final long numFiles;
+  private final Optional<List<DomainMetadata>> domainMetadata;
   private final Optional<String> txnId;
 
   public CRCInfo(
@@ -101,6 +116,7 @@ public class CRCInfo {
       Protocol protocol,
       long tableSizeBytes,
       long numFiles,
+      Optional<List<DomainMetadata>> domainMetadata,
       Optional<String> txnId) {
     checkArgument(tableSizeBytes >= 0);
     checkArgument(numFiles >= 0);
@@ -109,6 +125,7 @@ public class CRCInfo {
     this.protocol = requireNonNull(protocol);
     this.tableSizeBytes = tableSizeBytes;
     this.numFiles = numFiles;
+    this.domainMetadata = domainMetadata;
     this.txnId = requireNonNull(txnId);
   }
 
@@ -135,6 +152,10 @@ public class CRCInfo {
     return tableSizeBytes;
   }
 
+  public Optional<List<DomainMetadata>> getDomainMetadata() {
+    return domainMetadata;
+  }
+
   public Optional<String> getTxnId() {
     return txnId;
   }
@@ -155,13 +176,23 @@ public class CRCInfo {
     values.put(getSchemaIndex(PROTOCOL), protocol.toRow());
 
     // Add optional fields
+    domainMetadata.ifPresent(
+        domainMetadataList ->
+            values.put(
+                getSchemaIndex(DOMAIN_METADATA),
+                VectorUtils.buildArrayValue(
+                    domainMetadataList.stream()
+                        .map(DomainMetadata::toRow)
+                        .collect(Collectors.toList()),
+                    DomainMetadata.FULL_SCHEMA)));
     txnId.ifPresent(txn -> values.put(getSchemaIndex(TXN_ID), txn));
     return new GenericRow(CRC_FILE_SCHEMA, values);
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(version, metadata, protocol, tableSizeBytes, numFiles, txnId);
+    return Objects.hash(
+        version, metadata, protocol, tableSizeBytes, numFiles, domainMetadata, txnId);
   }
 
   @Override
@@ -175,6 +206,7 @@ public class CRCInfo {
         && numFiles == other.numFiles
         && metadata.equals(other.metadata)
         && protocol.equals(other.protocol)
+        && domainMetadata.equals(other.domainMetadata)
         && txnId.equals(other.txnId);
   }
 
