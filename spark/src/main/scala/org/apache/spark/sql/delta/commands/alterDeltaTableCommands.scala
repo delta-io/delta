@@ -47,6 +47,7 @@ import org.apache.spark.sql.connector.catalog.TableChange.{After, ColumnPosition
 import org.apache.spark.sql.connector.expressions.FieldReference
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.types._
+import org.apache.spark.sql.functions.{expr, col}
 
 /**
  * A super trait for alter table commands that modify Delta tables.
@@ -1009,7 +1010,7 @@ case class AlterTableAddConstraintDeltaCommand(
       val unresolvedExpr = sparkSession.sessionState.sqlParser.parseExpression(exprText)
 
       try {
-        df.where(new Column(unresolvedExpr)).queryExecution.analyzed
+        df.where(expr(unresolvedExpr.sql)).queryExecution.analyzed
       } catch {
         case a: AnalysisException
             if a.errorClass.contains("DATATYPE_MISMATCH.FILTER_NOT_BOOLEAN") =>
@@ -1024,7 +1025,7 @@ case class AlterTableAddConstraintDeltaCommand(
       recordDeltaOperation(
           txn.snapshot.deltaLog,
           "delta.ddl.alter.addConstraint.checkExisting") {
-        val n = df.where(new Column(Or(Not(unresolvedExpr), IsUnknown(unresolvedExpr)))).count()
+        val n = df.where(expr(Or(Not(unresolvedExpr), IsUnknown(unresolvedExpr)).sql)).count()
 
         if (n > 0) {
           throw DeltaErrors.newCheckConstraintViolated(n, table.name(), exprText)

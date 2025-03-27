@@ -45,7 +45,7 @@ import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.datasources.FileFormat
 import org.apache.spark.sql.execution.datasources.OutputWriter
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
-import org.apache.spark.sql.functions.{coalesce, col, struct, when}
+import org.apache.spark.sql.functions.{coalesce, col, expr, struct, when}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.SerializableConfiguration
@@ -1132,14 +1132,13 @@ object Checkpoints
     val partitionValues = partitionSchema.map { field =>
       val physicalName = DeltaColumnMapping.getPhysicalName(field)
       val attribute = UnresolvedAttribute.quotedString(partitionValuesColName)
-      new Column(Cast(
+      expr(Cast(
         ElementAt(
           attribute,
           Literal(physicalName),
           failOnError = false),
         field.dataType,
-        ansiEnabled = false)
-      ).as(physicalName)
+        ansiEnabled = false).sql).as(physicalName)
     }
     if (partitionValues.isEmpty) {
       None

@@ -38,6 +38,7 @@ import org.apache.spark.sql.functions.{col, struct}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
+import org.apache.spark.sql.functions.{expr, col}
 
 object SchemaUtils extends DeltaLogging {
   // We use case insensitive resolution while writing into Delta
@@ -1216,7 +1217,7 @@ def normalizeColumnNamesInDataType(
   }
 
   def fieldToColumn(field: StructField): Column = {
-    new Column(UnresolvedAttribute.quoted(field.name))
+    expr(UnresolvedAttribute.quoted(field.name).sql)
   }
 
   /**  converting field name to column type with quoted back-ticks */

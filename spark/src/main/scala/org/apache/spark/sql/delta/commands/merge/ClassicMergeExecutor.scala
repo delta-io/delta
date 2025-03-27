@@ -25,11 +25,14 @@ import org.apache.spark.sql.delta.commands.cdc.CDCReader.{CDC_TYPE_COLUMN_NAME, 
 import org.apache.spark.sql.delta.commands.merge.MergeOutputGeneration.{SOURCE_ROW_INDEX_COL, TARGET_ROW_INDEX_COL}
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
 import org.apache.spark.sql.delta.util.SetAccumulator
+import org.apache.spark.sql.delta.util.ColumnExpressionUtils
 
 import org.apache.spark.sql.{Column, Dataset, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.{And, Expression, Literal, Or}
 import org.apache.spark.sql.catalyst.plans.logical.DeltaMergeIntoClause
 import org.apache.spark.sql.functions.{coalesce, col, count, input_file_name, lit, monotonically_increasing_id, sum}
+import org.apache.spark.sql.expressions.Window
+import org.apache.spark.sql.functions.expr
 
 /**
  * Trait with merge execution in two phases:
@@ -61,6 +64,8 @@ import org.apache.spark.sql.functions.{coalesce, col, count, input_file_name, li
 trait ClassicMergeExecutor extends MergeOutputGeneration {
   self: MergeIntoCommandBase =>
   import MergeIntoCommandBase._
+
+  override protected def spark: SparkSession = self.spark
 
   /**
    * Find the target table files that contain the rows that satisfy the merge condition. This is
@@ -122,7 +127,7 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
     // We can't use filter() directly on the expression because that will prevent
     // column pruning. We don't need the SOURCE_ROW_PRESENT_COL so we immediately drop it.
     val sourceDF = getMergeSource.df
-      .withColumn(SOURCE_ROW_PRESENT_COL, Column(incrSourceRowCountExpr))
+      .withColumn(SOURCE_ROW_PRESENT_COL, expr(incrSourceRowCountExpr.sql))
       .filter(SOURCE_ROW_PRESENT_COL)
       .drop(SOURCE_ROW_PRESENT_COL)
     val targetPlan =
@@ -136,7 +141,7 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
       .withColumn(FILE_NAME_COL, input_file_name())
 
     val joinToFindTouchedFiles =
-      sourceDF.join(targetDF, Column(condition), joinType)
+      sourceDF.join(targetDF, expr(condition.sql), joinType)
 
     // UDFs to records touched files names and add them to the accumulator
     val recordTouchedFileName =
@@ -150,7 +155,7 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
     // Process the matches from the inner join to record touched files and find multiple matches
     val collectTouchedFiles = joinToFindTouchedFiles
       .select(col(ROW_ID_COL),
-        recordTouchedFileName(col(FILE_NAME_COL), Column(matchedPredicate)).as("one"))
+        recordTouchedFileName(col(FILE_NAME_COL), expr(matchedPredicate.sql)).as("one"))
 
     // Calculate frequency of matches per source row
     val matchedRowCounts = collectTouchedFiles.groupBy(ROW_ID_COL).agg(sum("one").as("count"))
@@ -164,7 +169,7 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
       .collect()
       .head
 
-    val hasMultipleMatches = multipleMatchCount > 0
+    val hasMultipleMatches = multipleMatchCount.asInstanceOf[Long] > 0
     throwErrorOnMultipleMatches(hasMultipleMatches, spark)
     if (hasMultipleMatches) {
       // This is only allowed for delete-only queries.
@@ -172,8 +177,8 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
       // because we count matches after the join and not just the target rows.
       // We have to compensate for this by subtracting the duplicates later,
       // so we need to record them here.
-      val duplicateCount = multipleMatchSum - multipleMatchCount
-      multipleMatchDeleteOnlyOvercount = Some(duplicateCount)
+      val duplicateCount = multipleMatchSum.asInstanceOf[Long] -
+        multipleMatchCount.asInstanceOf[Long]
     }
 
     // Get the AddFiles using the touched file names.
@@ -246,14 +251,15 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
    */
   protected def generateFilterForModifiedRows(): Expression = {
     val matchedExpression = if (matchedClauses.nonEmpty) {
-      And(Column(condition).expr, clauseDisjunction(matchedClauses))
+      And(condition, clauseDisjunction(matchedClauses))
     } else {
       Literal.FalseLiteral
     }
 
     val notMatchedBySourceExpression = if (notMatchedBySourceClauses.nonEmpty) {
       val combinedClauses = clauseDisjunction(notMatchedBySourceClauses)
-      And(col(SOURCE_ROW_PRESENT_COL).isNull.expr, combinedClauses)
+      And(ColumnExpressionUtils.toExpression(spark,
+        col(SOURCE_ROW_PRESENT_COL).isNull), combinedClauses)
     } else {
       Literal.FalseLiteral
     }
@@ -268,7 +274,8 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
   protected def generateFilterForNewRows(): Expression = {
     if (notMatchedClauses.nonEmpty) {
       val combinedClauses = clauseDisjunction(notMatchedClauses)
-      And(col(TARGET_ROW_PRESENT_COL).isNull.expr, combinedClauses)
+      And(ColumnExpressionUtils.toExpression(spark,
+        col(TARGET_ROW_PRESENT_COL).isNull), combinedClauses)
     } else {
       Literal.FalseLiteral
     }
@@ -358,7 +365,7 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
         sourceDF = sourceDF.withColumn(SOURCE_ROW_INDEX_COL, monotonically_increasing_id())
       }
       val left = sourceDF
-          .withColumn(SOURCE_ROW_PRESENT_COL, Column(incrSourceRowCountExpr))
+          .withColumn(SOURCE_ROW_PRESENT_COL, expr(incrSourceRowCountExpr.sql))
           // In some cases, the optimizer (incorrectly) decides to omit the metrics column.
           // This causes issues in the source determinism validation. We work around the issue by
           // adding a redundant dummy filter to make sure the column is not pruned.
@@ -371,7 +378,7 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
       } else {
         targetDF
       }
-      left.join(right, Column(condition), joinType)
+      left.join(right, expr(condition.sql), joinType)
     }
 
     val joinedDF =
@@ -379,7 +386,7 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
         joinedBaseDF
       } else {
         val filter = Or(generateFilterForModifiedRows(), generateFilterForNewRows())
-        joinedBaseDF.filter(Column(filter))
+        joinedBaseDF.filter(expr(filter.sql))
       }
 
     // Precompute conditions in matched and not matched clauses and generate
@@ -517,7 +524,7 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
 
     val joinedDF = getMergeSource.df
       .withColumn(SOURCE_ROW_PRESENT_COL, lit(true))
-      .join(targetDF, Column(condition), joinType)
+      .join(targetDF, expr(condition.sql), joinType)
 
     val modifiedRowsFilter = generateFilterForModifiedRows()
     val matchedDVResult =

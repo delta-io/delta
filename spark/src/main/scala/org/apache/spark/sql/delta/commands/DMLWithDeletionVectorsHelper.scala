@@ -38,15 +38,18 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql._
-import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Expression}
+import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Expression, ExpressionInfo}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Project}
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.execution.datasources.FileFormat.{FILE_PATH, METADATA_NAME}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
-import org.apache.spark.sql.functions.{col, lit}
+import org.apache.spark.sql.functions.{col, lit, expr}
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.{SerializableConfiguration, Utils => SparkUtils}
-
+import org.apache.spark.sql.Column
+import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
+import org.apache.spark.sql.internal.ColumnNode
+import org.apache.spark.sql.delta.util.ColumnExpressionUtils
 
 /**
  * Contains utility classes and method for performing DML operations with Deletion Vectors.
@@ -338,8 +341,9 @@ object DeletionVectorBitmapGenerator {
 
     /** Create a bitmap set aggregator over the given column */
     private def createBitmapSetAggregator(indexColumn: Column): Column = {
-      val func = new BitmapAggregator(indexColumn.expr, RoaringBitmapArrayFormat.Portable)
-      new Column(func.toAggregateExpression(isDistinct = false))
+      val expression = ColumnExpressionUtils.toExpression(spark, indexColumn)
+      val func = new BitmapAggregator(expression, RoaringBitmapArrayFormat.Portable)
+      expr(func.toAggregateExpression(isDistinct = false).sql)
     }
 
     protected def outputColumns: Seq[Column] =
@@ -396,10 +400,10 @@ object DeletionVectorBitmapGenerator {
       rowIndexColumnOpt.getOrElse(col(ROW_INDEX_COLUMN_NAME))
     }
     val matchedRowsDf = targetDf
+      .filter(expr(condition.sql))
       .withColumn(FILE_NAME_COL, fileNameColumn)
       // Filter after getting input file name as the filter might introduce a join and we
       // cannot get input file name on join's output.
-      .filter(new Column(condition))
       .withColumn(ROW_INDEX_COL, rowIndexColumn)
 
     val df = if (tableHasDVs) {

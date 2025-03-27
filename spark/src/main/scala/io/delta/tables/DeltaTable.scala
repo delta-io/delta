@@ -24,6 +24,7 @@ import org.apache.spark.sql.delta.actions.{Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.AlterTableSetPropertiesDeltaCommand
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.util.ColumnExpressionUtils
 import io.delta.tables.execution._
 import org.apache.hadoop.fs.Path
 
@@ -182,7 +183,8 @@ class DeltaTable private[tables](
    * @since 0.3.0
    */
   def delete(condition: Column): Unit = {
-    executeDelete(Some(condition.expr))
+    val spark = SparkSession.active
+    executeDelete(Some(ColumnExpressionUtils.toExpression(spark, condition)))
   }
 
   /**

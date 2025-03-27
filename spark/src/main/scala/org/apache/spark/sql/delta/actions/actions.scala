@@ -47,6 +47,7 @@ import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.types.{DataType, StructField, StructType}
 import org.apache.spark.util.Utils
+import org.apache.spark.sql.functions.{expr, lit}
 
 object Action {
   /**
@@ -1373,13 +1374,13 @@ object SingleAction extends Logging {
     org.apache.spark.sql.delta.implicits.addFileEncoder
 
   lazy val nullLitForRemoveFile: Column =
-    new Column(Literal(null, ScalaReflection.schemaFor[RemoveFile].dataType))
+    expr(Literal.create(null, ScalaReflection.schemaFor[RemoveFile].dataType).sql)
 
   lazy val nullLitForAddCDCFile: Column =
-    new Column(Literal(null, ScalaReflection.schemaFor[AddCDCFile].dataType))
+    expr(Literal.create(null, ScalaReflection.schemaFor[AddCDCFile].dataType).sql)
 
   lazy val nullLitForMetadataAction: Column =
-    new Column(Literal(null, ScalaReflection.schemaFor[Metadata].dataType))
+    expr(Literal.create(null, ScalaReflection.schemaFor[Metadata].dataType).sql)
 }
 
 /** Serializes Maps containing JSON strings without extra escaping. */

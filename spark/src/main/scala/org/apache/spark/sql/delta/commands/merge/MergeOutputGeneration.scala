@@ -21,6 +21,7 @@ import scala.collection.mutable
 import org.apache.spark.sql.delta.{RowCommitVersion, RowId}
 import org.apache.spark.sql.delta.commands.MergeIntoCommandBase
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
+import org.apache.spark.sql.delta.util.ColumnExpressionUtils
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
@@ -82,7 +83,7 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
     // Add the columns to the given `sourceDF` to precompute clause conditions
     val sourceWithPrecompConditions = {
       val newCols = preComputedClauseConditions.map { case (colName, conditionExpr) =>
-        Column(conditionExpr).as(colName)
+        expr(conditionExpr.sql).as(colName)
       }.toSeq
       sourceDF.select(col("*") +: newCols: _*)
     }
@@ -164,8 +165,10 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
     // That is, conditionally invokes them based on whether there was a match in the outer join.
 
     // Predicates to check whether there was a match in the full outer join.
-    val ifSourceRowNull = col(SOURCE_ROW_PRESENT_COL).isNull.expr
-    val ifTargetRowNull = col(TARGET_ROW_PRESENT_COL).isNull.expr
+    val ifSourceRowNull = ColumnExpressionUtils.toExpression(spark,
+      col(SOURCE_ROW_PRESENT_COL).isNull)
+    val ifTargetRowNull = ColumnExpressionUtils.toExpression(spark,
+      col(TARGET_ROW_PRESENT_COL).isNull)
 
     val outputCols = targetWriteColNames.zipWithIndex.map { case (name, i) =>
       // Coupled with the clause conditions, the resultant possibly-nested CaseWhens can
@@ -203,17 +206,17 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
         /*  otherwise  */ matchedExprs(i))
       if (rowIdColumnExpressionOpt.exists(_.name == name)) {
         // Add Row ID metadata to allow writing the column.
-        Column(Alias(caseWhen, name)(
-          explicitMetadata = Some(RowId.columnMetadata(name))))
+        expr(Alias(caseWhen, name)(explicitMetadata = Some(RowId.columnMetadata(name))).sql)
       } else if (rowCommitVersionColumnExpressionOpt.exists(_.name == name)) {
         // Add Row Commit Versions metadata to allow writing the column.
-        Column(Alias(caseWhen, name)(
-          explicitMetadata = Some(RowCommitVersion.columnMetadata(name))))
+        expr(Alias(caseWhen, name)(explicitMetadata =
+          Some(RowCommitVersion.columnMetadata(name))).sql)
       } else {
-        Column(Alias(caseWhen, name)())
+        expr(Alias(caseWhen, name)().sql)
       }
     }
-    logDebug("writeAllChanges: join output expressions\n\t" + seqToString(outputCols.map(_.expr)))
+    logDebug("writeAllChanges: join output expressions\n\t" +
+      seqToString(outputCols.map(col => ColumnExpressionUtils.toExpression(spark, col))))
     outputCols
   }.toIndexedSeq
 
@@ -393,7 +396,7 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
     import org.apache.spark.sql.delta.commands.cdc.CDCReader._
     // The main partition just needs to swap in the CDC_TYPE_NOT_CDC value.
     val mainDataOutput =
-      outputCols.dropRight(1) :+ Column(CDC_TYPE_NOT_CDC).as(CDC_TYPE_COLUMN_NAME)
+      outputCols.dropRight(1) :+ expr(CDC_TYPE_NOT_CDC.sql).as(CDC_TYPE_COLUMN_NAME)
 
     // Deleted rows are sent to the CDC partition instead of the main partition. These rows are
     // marked as dropped, we need to retain them while incrementing the original metric column
@@ -408,7 +411,7 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
     val cdcNoopExprs = noopCopyExprs.dropRight(2) :+
       Literal.FalseLiteral :+ Literal(CDC_TYPE_UPDATE_PREIMAGE)
     val updatePreimageCdcOutput = cdcNoopExprs.zipWithIndex.map {
-      case (e, i) => Column(Alias(e, outputColNames(i))())
+      case (e, i) => expr(Alias(e, outputColNames(i))().sql)
     }
 
     // To avoid duplicate evaluation of nondeterministic column values such as
@@ -420,38 +423,40 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
     // main data rows stay the same.
 
     val cdcTypeCol = outputCols.last
-    val cdcArray = Column(CaseWhen(Seq(
-      EqualNullSafe(cdcTypeCol.expr, Literal(CDC_TYPE_INSERT)) -> array(
-        struct(outputCols: _*)).expr,
+    val cdcTypeExpr = ColumnExpressionUtils.toExpression(spark, cdcTypeCol)
+    val cdcArray = expr(CaseWhen(Seq(
+      (EqualNullSafe(cdcTypeExpr, Literal(CDC_TYPE_INSERT)),
+        ColumnExpressionUtils.toExpression(spark, array(struct(outputCols: _*)))),
 
-      EqualNullSafe(cdcTypeCol.expr, Literal(CDC_TYPE_UPDATE_POSTIMAGE)) -> array(
-        struct(updatePreimageCdcOutput: _*),
-        struct(outputCols: _*)).expr,
+      (EqualNullSafe(cdcTypeExpr, Literal(CDC_TYPE_UPDATE_POSTIMAGE)),
+        ColumnExpressionUtils.toExpression(spark,
+          array(struct(updatePreimageCdcOutput: _*), struct(outputCols: _*)))),
 
-      EqualNullSafe(cdcTypeCol.expr, CDC_TYPE_DELETE) -> array(
-        struct(deleteCdcOutput: _*)).expr),
+      (EqualNullSafe(cdcTypeExpr, CDC_TYPE_DELETE),
+        ColumnExpressionUtils.toExpression(spark, array(struct(deleteCdcOutput: _*)))),
 
-      // If none of the CDC cases apply (true for purely rewritten target rows, dropped source
-      // rows, etc.) just stick to the normal output.
-      array(struct(mainDataOutput: _*)).expr
-    ))
+      (Literal.TrueLiteral,
+        ColumnExpressionUtils.toExpression(spark, array(struct(mainDataOutput: _*))))
+    )).sql)
 
-    val cdcToMainDataArray = Column(If(
+    val cdcToMainDataArray = expr(If(
       Or(
-        EqualNullSafe(col(s"packedCdc.$CDC_TYPE_COLUMN_NAME").expr,
+        EqualNullSafe(ColumnExpressionUtils.toExpression(spark,
+          col(s"packedCdc.$CDC_TYPE_COLUMN_NAME")),
           Literal(CDC_TYPE_INSERT)),
-        EqualNullSafe(col(s"packedCdc.$CDC_TYPE_COLUMN_NAME").expr,
+        EqualNullSafe(ColumnExpressionUtils.toExpression(spark,
+          col(s"packedCdc.$CDC_TYPE_COLUMN_NAME")),
           Literal(CDC_TYPE_UPDATE_POSTIMAGE))),
-      array(
+      ColumnExpressionUtils.toExpression(spark, array(
         col("packedCdc"),
         struct(
           outputColNames
             .dropRight(1)
-            .map { n => col(s"packedCdc.`$n`") }
-            :+ Column(CDC_TYPE_NOT_CDC).as(CDC_TYPE_COLUMN_NAME): _*)
-      ).expr,
-      array(col("packedCdc")).expr
-    ))
+            .map(n => col(s"packedCdc.`$n`"))
+            :+ expr(CDC_TYPE_NOT_CDC.sql).as(CDC_TYPE_COLUMN_NAME): _*)
+      )),
+      ColumnExpressionUtils.toExpression(spark, array(col("packedCdc")))
+    ).sql)
 
     if (deduplicateDeletes.enabled) {
       deduplicateCDFDeletes(
@@ -572,6 +577,8 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
       .dropDuplicates(TARGET_ROW_INDEX_COL, CDC_TYPE_COLUMN_NAME)
       .drop(TARGET_ROW_INDEX_COL, SOURCE_ROW_INDEX_COL)
   }
+  // Add spark as a member variable
+  protected def spark: SparkSession = self.spark
 }
 
 /**

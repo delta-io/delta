@@ -3408,6 +3408,17 @@ trait DeltaErrorsBase
       messageParameters = Array(
         UnresolvedAttribute(columnPath).name, schema.treeString, extraErrMsg))
   }
+
+  def cannotResolveShowColumnsWithConflictingDatabases(namespace: Seq[String],
+                                                       tableName: TableIdentifier): Throwable = {
+    new AnalysisException(
+      errorClass = "DELTA_CANNOT_RESOLVE_SHOW_COLUMNS",
+      messageParameters = Map(
+        "namespace" -> namespace.mkString("."),
+        "tableName" -> tableName.identifier
+      )
+    )
+  }
 }
 
 object DeltaErrors extends DeltaErrorsBase

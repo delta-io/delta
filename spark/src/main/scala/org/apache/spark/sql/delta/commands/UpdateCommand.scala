@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, FileAction}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader.{CDC_TYPE_COLUMN_NAME, CDC_TYPE_NOT_CDC, CDC_TYPE_UPDATE_POSTIMAGE, CDC_TYPE_UPDATE_PREIMAGE}
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.util.ColumnExpressionUtils
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkContext
@@ -38,7 +39,7 @@ import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.{createMetric, createTimingMetric}
-import org.apache.spark.sql.functions.{array, col, explode, input_file_name, lit, struct}
+import org.apache.spark.sql.functions.{expr, struct, array, col, explode, input_file_name}
 import org.apache.spark.sql.types.LongType
 
 /**
@@ -57,6 +58,8 @@ case class UpdateCommand(
     updateExpressions: Seq[Expression],
     condition: Option[Expression])
   extends LeafRunnableCommand with DeltaCommand {
+
+  private lazy val sparkSession = SparkSession.active
 
   override val output: Seq[Attribute] = {
     Seq(AttributeReference("num_affected_rows", LongType)())
@@ -182,9 +185,9 @@ case class UpdateCommand(
         val incrUpdatedCountExpr = IncrementMetric(TrueLiteral, metrics("numUpdatedRows"))
         val pathsToRewrite =
           withStatusCode("DELTA", UpdateCommand.FINDING_TOUCHED_FILES_MSG) {
-            data.filter(new Column(updateCondition))
+            data.filter(expr(updateCondition.sql))
               .select(input_file_name())
-              .filter(new Column(incrUpdatedCountExpr))
+              .filter(expr(incrUpdatedCountExpr.sql))
               .distinct()
               .as[String]
               .collect()
@@ -352,13 +355,13 @@ case class UpdateCommand(
       updateExpressions)
 
     val targetDfWithEvaluatedCondition = {
-      val evalDf = targetDf.withColumn(UpdateCommand.CONDITION_COLUMN_NAME, new Column(condition))
+      val evalDf = targetDf.withColumn(UpdateCommand.CONDITION_COLUMN_NAME, expr(condition.sql))
       val copyAndUpdateRowsDf = if (copyUnmodifiedRows) {
         evalDf
       } else {
-        evalDf.filter(new Column(UpdateCommand.CONDITION_COLUMN_NAME))
+        evalDf.filter(expr(UpdateCommand.CONDITION_COLUMN_NAME))
       }
-      copyAndUpdateRowsDf.filter(new Column(incrTouchedCountExpr))
+      copyAndUpdateRowsDf.filter(expr(incrTouchedCountExpr.sql))
     }
 
     val updatedDataFrame = UpdateCommand.withUpdatedColumns(
@@ -427,55 +430,66 @@ object UpdateCommand {
       shouldOutputCdc: Boolean): DataFrame = {
     val resultDf = if (shouldOutputCdc) {
       val namedUpdateCols = updateExpressions.zip(originalExpressions).map {
-        case (expr, targetCol) => new Column(expr).as(targetCol.name, targetCol.metadata)
+        case (updateExpr, targetCol) => expr(updateExpr.sql).as(targetCol.name, targetCol.metadata)
       }
 
       // Build an array of output rows to be unpacked later. If the condition is matched, we
       // generate CDC pre and postimages in addition to the final output row; if the condition
       // isn't matched, we just generate a rewritten no-op row without any CDC events.
-      val preimageCols = originalExpressions.map(new Column(_)) :+
-        lit(CDC_TYPE_UPDATE_PREIMAGE).as(CDC_TYPE_COLUMN_NAME)
+      val preimageCols = originalExpressions.map(origExpr => expr(origExpr.sql)) :+
+        expr(Literal(CDC_TYPE_UPDATE_PREIMAGE).sql).as(CDC_TYPE_COLUMN_NAME)
       val postimageCols = namedUpdateCols :+
-        lit(CDC_TYPE_UPDATE_POSTIMAGE).as(CDC_TYPE_COLUMN_NAME)
-      val notCdcCol = new Column(CDC_TYPE_NOT_CDC).as(CDC_TYPE_COLUMN_NAME)
+        expr(Literal(CDC_TYPE_UPDATE_POSTIMAGE).sql).as(CDC_TYPE_COLUMN_NAME)
+      val notCdcCol = expr(Literal(CDC_TYPE_NOT_CDC).sql).as(CDC_TYPE_COLUMN_NAME)
       val updatedDataCols = namedUpdateCols :+ notCdcCol
-      val noopRewriteCols = originalExpressions.map(new Column(_)) :+ notCdcCol
+      val noopRewriteCols = originalExpressions.map(origExpr => expr(origExpr.sql)) :+ notCdcCol
       val packedUpdates = array(
         struct(preimageCols: _*),
         struct(postimageCols: _*),
         struct(updatedDataCols: _*)
-      ).expr
+      )
 
-      val packedData = if (condition == Literal.TrueLiteral) {
+      val packedData = if (condition == TrueLiteral) {
         packedUpdates
       } else {
-        If(
-          UnresolvedAttribute(CONDITION_COLUMN_NAME),
-          packedUpdates, // if it should be updated, then use `packagedUpdates`
-          array(struct(noopRewriteCols: _*)).expr) // else, this is a noop rewrite
+        val conditionExpr = ColumnExpressionUtils.toExpression(
+          dfWithEvaluatedCondition.sparkSession,
+          col(UpdateCommand.CONDITION_COLUMN_NAME))
+        val packedUpdatesExpr = ColumnExpressionUtils.toExpression(
+          dfWithEvaluatedCondition.sparkSession,
+          packedUpdates)
+        val noopRewriteExpr = ColumnExpressionUtils.toExpression(
+          dfWithEvaluatedCondition.sparkSession,
+          array(struct(noopRewriteCols: _*)))
+
+        expr(If(conditionExpr, packedUpdatesExpr, noopRewriteExpr).sql)
       }
 
       // Explode the packed array, and project back out the final data columns.
-      val finalColumns = (originalExpressions :+ UnresolvedAttribute(CDC_TYPE_COLUMN_NAME)).map {
-        a => col(s"packedData.`${a.name}`").as(a.name, a.metadata)
+      val finalColumns = (originalExpressions :+ expr(UpdateCommand.CONDITION_COLUMN_NAME)).map {
+        case attr: Attribute =>
+          col(s"packedData.`${attr.name}`").as(attr.name, attr.metadata)
       }
       dfWithEvaluatedCondition
-        .select(explode(new Column(packedData)).as("packedData"))
+        .select(explode(packedData).as("packedData"))
         .select(finalColumns: _*)
     } else {
       val finalCols = updateExpressions.zip(originalExpressions).map { case (update, original) =>
-        val updated = if (condition == Literal.TrueLiteral) {
+        val updated = if (condition == TrueLiteral) {
           update
         } else {
-          If(UnresolvedAttribute(CONDITION_COLUMN_NAME), update, original)
+          val conditionExpr = ColumnExpressionUtils.toExpression(
+            dfWithEvaluatedCondition.sparkSession,
+            expr(UpdateCommand.CONDITION_COLUMN_NAME))
+          If(conditionExpr, update, original)
         }
-        new Column(updated).as(original.name, original.metadata)
+        expr(updated.sql).as(original.name, original.metadata)
       }
 
       dfWithEvaluatedCondition.select(finalCols: _*)
     }
 
-    resultDf.drop(CONDITION_COLUMN_NAME)
+    resultDf.drop(UpdateCommand.CONDITION_COLUMN_NAME)
   }
 
   /**

@@ -17,12 +17,16 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.OptimizablePartitionExpression._
+import org.apache.spark.sql.delta.util.ColumnExpressionUtils
 
 import org.apache.spark.sql.Column
 import org.apache.spark.sql.catalyst.dsl.expressions._
 import org.apache.spark.sql.catalyst.expressions.{Cast, DateFormatClass, DayOfMonth, Expression, Hour, IsNull, Literal, Month, Or, Substring, TruncDate, TruncTimestamp, UnixTimestamp, Year}
 import org.apache.spark.sql.catalyst.util.quoteIfNeeded
 import org.apache.spark.sql.types.{DateType, StringType, TimestampType}
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.functions
+import org.apache.spark.sql.functions.{expr, col}
 
 /**
  * Defines rules to convert a data filter to a partition filter for a special generation expression
@@ -78,7 +82,9 @@ object OptimizablePartitionExpression {
   /** Provide a convenient method to convert a string to a column expression */
   implicit class ColumnExpression(val colName: String) extends AnyVal {
     // This will always be a top level column so quote it if necessary
-    def toPartCol: Expression = new Column(quoteIfNeeded(colName)).expr
+    def toPartCol: Expression = ColumnExpressionUtils.toExpression(
+      SparkSession.active,
+      functions.expr(quoteIfNeeded(colName)))
   }
 }
 

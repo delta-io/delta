@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.commands.DeleteCommand.{rewritingFilesMsg, FIN
 import org.apache.spark.sql.delta.commands.MergeIntoCommandBase.totalBytesAndDistinctPartitionValues
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.util.ColumnExpressionUtils
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 
 import org.apache.spark.SparkContext
@@ -39,6 +40,7 @@ import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.{createMetric, createTimingMetric}
 import org.apache.spark.sql.functions.input_file_name
+import org.apache.spark.sql.functions.expr
 import org.apache.spark.sql.types.LongType
 
 trait DeleteCommandMetrics { self: LeafRunnableCommand =>
@@ -301,9 +303,9 @@ case class DeleteCommand(
                 if (candidateFiles.isEmpty) {
                   Array.empty[String]
                 } else {
-                  data.filter(new Column(cond))
+                  data.filter(expr(cond.sql))
                     .select(input_file_name())
-                    .filter(new Column(incrDeletedCountExpr))
+                    .filter(expr(incrDeletedCountExpr.sql))
                     .distinct()
                     .as[String]
                     .collect()
@@ -446,15 +448,15 @@ case class DeleteCommand(
         // as table data, while all rows which don't match are removed from the rewritten table data
         // but do get included in the output as CDC events.
         baseData
-          .filter(new Column(incrTouchedCountExpr))
+          .filter(expr(incrTouchedCountExpr.sql))
           .withColumn(
             CDC_TYPE_COLUMN_NAME,
-            new Column(If(filterCondition, CDC_TYPE_NOT_CDC, CDC_TYPE_DELETE))
+            expr(If(filterCondition, CDC_TYPE_NOT_CDC, CDC_TYPE_DELETE).sql)
           )
       } else {
         baseData
-          .filter(new Column(incrTouchedCountExpr))
-          .filter(new Column(filterCondition))
+          .filter(expr(incrTouchedCountExpr.sql))
+          .filter(expr(filterCondition.sql))
       }
 
       txn.writeFiles(dfToWrite)
