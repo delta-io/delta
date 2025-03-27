@@ -33,7 +33,6 @@ import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.FileNames.DeltaLogFileType;
-import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.utils.FileStatus;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicReference;
@@ -318,17 +317,33 @@ public class SnapshotManager {
     // Step 5: Partition $listedFileStatuses into the checkpoints and deltas. //
     ////////////////////////////////////////////////////////////////////////////
 
-    final Tuple2<List<FileStatus>, List<FileStatus>> listedCheckpointAndDeltaFileStatuses =
-        ListUtils.partition(
-            listedFileStatuses,
-            fileStatus -> FileNames.isCheckpointFile(new Path(fileStatus.getPath()).getName()));
-    final List<FileStatus> listedCheckpointFileStatuses = listedCheckpointAndDeltaFileStatuses._1;
-    final Tuple2<List<FileStatus>, List<FileStatus>> listedDeltaFileCheckSumStatuses =
-        ListUtils.partition(
-            listedCheckpointAndDeltaFileStatuses._2,
-            fileStatus -> FileNames.isCommitFile(new Path(fileStatus.getPath()).getName()));
-    final List<FileStatus> listedDeltaFileStatuses = listedDeltaFileCheckSumStatuses._1;
-    final List<FileStatus> listedChecksumFileStatues = listedDeltaFileCheckSumStatuses._2;
+    Map<DeltaLogFileType, List<FileStatus>> partitionedFiles =
+        listedFileStatuses.stream()
+            .collect(
+                Collectors.groupingBy(
+                    file -> {
+                      String fileName = file.getPath();
+                      if (FileNames.isCommitFile(fileName)) {
+                        return DeltaLogFileType.COMMIT;
+                      } else if (FileNames.isCheckpointFile(fileName)) {
+                        return DeltaLogFileType.CHECKPOINT;
+                      } else if (FileNames.isChecksumFile(fileName)) {
+                        return DeltaLogFileType.CHECKSUM;
+                      } else {
+                        throw new IllegalStateException("Unexpected file types");
+                      }
+                    },
+                    LinkedHashMap::new, // Ensure order is maintained
+                    Collectors.toList()));
+
+    List<FileStatus> listedDeltaFileStatuses =
+        partitionedFiles.getOrDefault(DeltaLogFileType.COMMIT, Collections.emptyList());
+
+    List<FileStatus> listedCheckpointFileStatuses =
+        partitionedFiles.getOrDefault(DeltaLogFileType.CHECKPOINT, Collections.emptyList());
+
+    List<FileStatus> listedChecksumFileStatues =
+        partitionedFiles.getOrDefault(DeltaLogFileType.CHECKSUM, Collections.emptyList());
 
     logDebugFileStatuses("listedCheckpointFileStatuses", listedCheckpointFileStatuses);
     logDebugFileStatuses("listedDeltaFileStatuses", listedDeltaFileStatuses);
@@ -497,21 +512,14 @@ public class SnapshotManager {
 
     final long lastCommitTimestamp =
         ListUtils.getLast(listedDeltaFileStatuses).getModificationTime();
-
     return new LogSegment(
         logPath,
         newVersion,
         deltasAfterCheckpoint,
         latestCompleteCheckpointFileStatuses,
-        listedChecksumFileStatues.stream()
-            .max(
-                new Comparator<FileStatus>() {
-                  public int compare(FileStatus file1, FileStatus file2) {
-                    return Long.compare(
-                        FileNames.getFileVersion(new Path(file1.getPath())),
-                        FileNames.getFileVersion(new Path(file2.getPath())));
-                  }
-                }),
+        listedChecksumFileStatues.isEmpty()
+            ? Optional.empty()
+            : Optional.of(ListUtils.getLast(listedChecksumFileStatues)),
         lastCommitTimestamp);
   }
 
