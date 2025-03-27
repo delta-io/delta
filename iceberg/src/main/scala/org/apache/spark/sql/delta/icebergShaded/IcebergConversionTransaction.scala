@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta.icebergShaded
 
 import java.util.ConcurrentModificationException
+import java.util.function.Consumer
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
@@ -203,6 +204,16 @@ class IcebergConversionTransaction(
   class ExpireSnapshotHelper(expireSnapshot: ExpireSnapshots)
       extends TransactionHelper(expireSnapshot) {
 
+    def cleanExpiredFiles(clean: Boolean): ExpireSnapshotHelper = {
+      expireSnapshot.cleanExpiredFiles(clean)
+      this
+    }
+
+    def deleteWith(newDeleteFunc: Consumer[String]): ExpireSnapshotHelper = {
+      expireSnapshot.deleteWith(newDeleteFunc)
+      this
+    }
+
     override def opType: String = "expireSnapshot"
   }
 
@@ -272,26 +283,7 @@ class IcebergConversionTransaction(
   }
 
   def getExpireSnapshotHelper(): ExpireSnapshotHelper = {
-    val table = txn.table()
-    val tableLocation = LocationUtil.stripTrailingSlash(table.location)
-    val defaultWriteMetadataLocation = s"$tableLocation/metadata"
-    val writeMetadataLocation = LocationUtil.stripTrailingSlash(
-      table.properties().getOrDefault(
-        TableProperties.WRITE_METADATA_LOCATION, defaultWriteMetadataLocation))
-    val expireSnapshots = if (tablePath.toString == writeMetadataLocation) {
-      // Don't attempt any file cleanup in the edge-case configuration
-      // that the data location (in Uniform the table root location)
-      // is the same as the Iceberg metadata location
-      txn.expireSnapshots().cleanExpiredFiles(false)
-    } else {
-      txn.expireSnapshots().deleteWith(path => {
-        if (path.startsWith(writeMetadataLocation)) {
-          table.io().deleteFile(path)
-        }
-      })
-    }
-
-    val ret = new ExpireSnapshotHelper(expireSnapshots)
+    val ret = new ExpireSnapshotHelper(txn.expireSnapshots())
     fileUpdates += ret
     ret
   }
