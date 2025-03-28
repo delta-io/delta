@@ -117,7 +117,7 @@ class IcebergStatsUtilsSuite extends SparkFunSuite {
     assertResult(expectedStatsObj)(actualStatsObj)
   }
 
-  test("stats conversion from timestamp 64 is disabled") {
+  test("stats conversion for decimal and timestamp") {
     val icebergSchema = new Schema(10, Seq[NestedField](
       NestedField.required(1, "col_ts", TimestampType.withZone),
       NestedField.required(2, "col_tsnz", TimestampType.withoutZone),
@@ -152,9 +152,17 @@ class IcebergStatsUtilsSuite extends SparkFunSuite {
     assertResult(
       JsonUtils.fromJson[StatsObject](
         """{"numRecords":1251,
-          |"maxValues":{"col_decimal":9.99999},
-          |"minValues":{"col_decimal":3.44141},
-          |"nullCount":{"col_decimal":31}}""".stripMargin))(
+          |"maxValues":{
+          | "col_ts":"2024-12-17T00:22:59+00:00",
+          | "col_tsnz":"2024-12-17T00:22:59",
+          | "col_decimal":9.99999
+          | },
+          |"minValues":{
+          | "col_ts":"2024-12-16T23:32:59+00:00",
+          | "col_tsnz":"2024-12-16T23:32:59",
+          | "col_decimal":3.44141
+          | },
+          |"nullCount":{"col_ts":20,"col_tsnz":10,"col_decimal":31}}""".stripMargin))(
       JsonUtils.fromJson[StatsObject](deltaStats))
   }
 
