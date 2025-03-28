@@ -129,9 +129,9 @@ public class Metadata {
 
   /**
    * Returns a new metadata object that has a new configuration which is the combination of its
-   * current configuration and {@code configuration}. 
+   * current configuration and {@code configuration}.
    *
-   * For overlapping keys the values from {@code configuration} take precedence.
+   * <p> For overlapping keys the values from {@code configuration} take precedence.
    */
   public Metadata withMergedConfiguration(Map<String, String> configuration) {
     Map<String, String> newConfiguration = new HashMap<>(getConfiguration());
