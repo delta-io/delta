@@ -335,7 +335,7 @@ public class SchemaUtils {
     return filtered;
   }
 
-  /* Compute the SchemaChanges using field IDs */
+  /** Compute the SchemaChanges using field IDs */
   static SchemaChanges computeSchemaChangesById(
       Map<Integer, StructField> currentFieldIdToField,
       Map<Integer, StructField> updatedFieldIdToField) {
@@ -378,7 +378,7 @@ public class SchemaUtils {
     }
   }
 
-  /* Validate if a given schema evolution is safe for a given column mapping mode*/
+  /** Validate if a given schema evolution is safe for a given column mapping mode */
   private static void validateSchemaEvolution(
       StructType currentSchema, StructType newSchema, Metadata metadata) {
     ColumnMappingMode columnMappingMode =
