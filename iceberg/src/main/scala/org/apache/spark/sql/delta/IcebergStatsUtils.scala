@@ -228,7 +228,7 @@ object IcebergStatsUtils extends DeltaLogging {
 
   private def microTimestampToString(
       microTS: JLong, tsType: IcebergTimestampType): String = {
-    // iceberg timestamptz should have shouldAdjustToUTC() => true
+    // iceberg timestamptz will have shouldAdjustToUTC() as true
     if (tsType.shouldAdjustToUTC()) {
       DateTimeUtil.microsToIsoTimestamptz(microTS)
     } else {

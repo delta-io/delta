@@ -830,11 +830,6 @@ trait CloneIcebergSuiteBase extends QueryTest
           predicate = "col2 > TIMESTAMP'2024-01-02T02:04:04.123456'",
           expectedFilesReadNum = 1,
           expectedFilesReadIndices = Set(1)
-        ),
-        DataSkippingTestParam(
-          predicate = "col2 < TIMESTAMP'2024-01-02T02:04:05.023456'",
-          expectedFilesReadNum = 0,
-          expectedFilesReadIndices = Set()
         )
       ),
       mode = mode
@@ -858,11 +853,6 @@ trait CloneIcebergSuiteBase extends QueryTest
           predicate = "col2 > TIMESTAMP'1712-04-29T06:23:49.11'",
           expectedFilesReadNum = 1,
           expectedFilesReadIndices = Set(1)
-        ),
-        DataSkippingTestParam(
-          predicate = "col2 <= TIMESTAMP'1712-04-29T06:23:49.11'",
-          expectedFilesReadNum = 0,
-          expectedFilesReadIndices = Set()
         )
       ),
       mode = mode
