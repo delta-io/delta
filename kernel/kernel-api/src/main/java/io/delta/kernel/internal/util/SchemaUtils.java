@@ -337,9 +337,10 @@ public class SchemaUtils {
 
   /* Compute the SchemaChanges using field IDs */
   static SchemaChanges computeSchemaChangesById(
-      Map<Long, StructField> currentFieldIdToField, Map<Long, StructField> updatedFieldIdToField) {
+      Map<Integer, StructField> currentFieldIdToField,
+      Map<Integer, StructField> updatedFieldIdToField) {
     SchemaChanges.Builder schemaDiff = SchemaChanges.builder();
-    for (Map.Entry<Long, StructField> fieldInUpdatedSchema : updatedFieldIdToField.entrySet()) {
+    for (Map.Entry<Integer, StructField> fieldInUpdatedSchema : updatedFieldIdToField.entrySet()) {
       StructField existingField = currentFieldIdToField.get(fieldInUpdatedSchema.getKey());
       StructField updatedField = fieldInUpdatedSchema.getValue();
       // New field added
@@ -351,7 +352,7 @@ public class SchemaUtils {
       }
     }
 
-    for (Map.Entry<Long, StructField> entry : currentFieldIdToField.entrySet()) {
+    for (Map.Entry<Integer, StructField> entry : currentFieldIdToField.entrySet()) {
       if (!updatedFieldIdToField.containsKey(entry.getKey())) {
         schemaDiff.withRemovedField(entry.getValue());
       }
@@ -396,12 +397,14 @@ public class SchemaUtils {
     }
   }
 
-  /* Validates a given schema evolution by using field ID
-  as the source of truth for identifying fields */
+  /**
+   * Validates a given schema evolution by using field ID as the source of truth for identifying
+   * fields
+   */
   private static void validateSchemaEvolutionById(
       StructType currentSchema, StructType newSchema, Metadata metadata) {
-    Map<Long, StructField> currentFieldsById = fieldsById(currentSchema);
-    Map<Long, StructField> updatedFieldsById = fieldsById(newSchema);
+    Map<Integer, StructField> currentFieldsById = fieldsById(currentSchema);
+    Map<Integer, StructField> updatedFieldsById = fieldsById(newSchema);
     SchemaChanges schemaChanges = computeSchemaChangesById(currentFieldsById, updatedFieldsById);
 
     // Validate physical name consistency on the updated fields
@@ -409,26 +412,26 @@ public class SchemaUtils {
 
     // If IcebergCompatV2 validate nested ID existence and consistency for relevant fields
     if (TableConfig.ICEBERG_COMPAT_V2_ENABLED.fromMetadata(metadata)) {
-      validateNestedIds(schemaChanges, currentFieldsById, updatedFieldsById);
+      validateNestedIds(schemaChanges);
     }
 
     // ToDo: Validate schema compatibility
   }
 
   /** Returns a map from field ID to the field in the schema */
-  private static Map<Long, StructField> fieldsById(StructType schema) {
+  private static Map<Integer, StructField> fieldsById(StructType schema) {
     List<Tuple2<List<String>, StructField>> columnPathToStructField =
         filterRecursively(
             schema,
             true /* recurseIntoMapOrArrayElements */,
             false /* stopOnFirstMatch */,
             sf -> true);
-    Map<Long, StructField> columnIdToField = new HashMap<>();
+    Map<Integer, StructField> columnIdToField = new HashMap<>();
     for (Tuple2<List<String>, StructField> pathAndField : columnPathToStructField) {
       StructField field = pathAndField._2;
       checkArgument(hasColumnId(field), "Field %s is missing column id", field.getName());
       checkArgument(hasPhysicalName(field), "Field %s is missing physical name", field.getName());
-      long columnId = field.getMetadata().getLong(COLUMN_MAPPING_ID_KEY);
+      int columnId = field.getMetadata().getLong(COLUMN_MAPPING_ID_KEY).intValue();
       checkArgument(
           !columnIdToField.containsKey(columnId),
           "Field %s with id %d already exists",
@@ -440,21 +443,36 @@ public class SchemaUtils {
     return columnIdToField;
   }
 
-  private static void validateNestedIds(
-      SchemaChanges schemaChanges,
-      Map<Long, StructField> currentFieldsById,
-      Map<Long, StructField> updatedFieldsById) {
+  /**
+   * Validates that array and map types have valid nested IDs defined and that the updated array/map
+   * types have unchanged nested IDs for existing fields
+   */
+  private static void validateNestedIds(SchemaChanges schemaChanges) {
+    Map<Integer, StructField> existingFieldsWithNestedIds = new HashMap<>();
+    Map<Integer, StructField> updatedFieldsRequiringValidation = new HashMap<>();
     for (Tuple2<StructField, StructField> updatedField : schemaChanges.updatedFields()) {
-      validateNestedIdsExist(updatedField._2);
+      if (shouldValidateNestedIds(updatedField._2)) {
+        validateNestedIdsExist(updatedField._2);
+        existingFieldsWithNestedIds.put(getColumnId(updatedField._1), updatedField._1);
+        updatedFieldsRequiringValidation.put(getColumnId(updatedField._2), updatedField._2);
+      }
     }
 
     for (StructField addedField : schemaChanges.addedFields()) {
-      validateNestedIdsExist(addedField);
+      if (shouldValidateNestedIds(addedField)) {
+        validateNestedIdsExist(addedField);
+        updatedFieldsRequiringValidation.put(getColumnId(addedField), addedField);
+      }
     }
 
-    validateNestedIdConsistency(currentFieldsById, updatedFieldsById);
+    validateNestedIdConsistency(existingFieldsWithNestedIds, updatedFieldsRequiringValidation);
   }
 
+  private static boolean shouldValidateNestedIds(StructField field) {
+    return field.getDataType() instanceof MapType || field.getDataType() instanceof ArrayType;
+  }
+
+  /** Validate the given field has nested IDs. This applies only for map and array data types */
   private static void validateNestedIdsExist(StructField field) {
     if (field.getDataType() instanceof MapType || field.getDataType() instanceof ArrayType) {
       checkArgument(
@@ -470,10 +488,10 @@ public class SchemaUtils {
     }
   }
 
-  private static Map<Long, List<NestedIdEntry>> columnIdToNestedIds(
-      Map<Long, StructField> currentFieldIdToField) {
-    Map<Long, List<NestedIdEntry>> nestedIdEntries = new HashMap<>();
-    for (Map.Entry<Long, StructField> entry : currentFieldIdToField.entrySet()) {
+  private static Map<Integer, List<NestedIdEntry>> columnIdToNestedIds(
+      Map<Integer, StructField> currentFieldIdToField) {
+    Map<Integer, List<NestedIdEntry>> nestedIdEntries = new HashMap<>();
+    for (Map.Entry<Integer, StructField> entry : currentFieldIdToField.entrySet()) {
       if (hasNestedColumnIds(entry.getValue())) {
         nestedIdEntries.put(entry.getKey(), getNestedFieldIds(entry.getValue()));
       }
@@ -487,17 +505,17 @@ public class SchemaUtils {
    * updated field and that the nested IDs are not duplicate
    */
   private static void validateNestedIdConsistency(
-      Map<Long, StructField> currentFieldsById, Map<Long, StructField> updatedFieldsById) {
-    Map<Long, List<NestedIdEntry>> currentFieldIdToNestedIds =
+      Map<Integer, StructField> currentFieldsById, Map<Integer, StructField> updatedFieldsById) {
+    Map<Integer, List<NestedIdEntry>> currentFieldIdToNestedIds =
         columnIdToNestedIds(currentFieldsById);
-    Map<Long, List<NestedIdEntry>> updatedFieldIdToNestedIds =
+    Map<Integer, List<NestedIdEntry>> updatedFieldIdToNestedIds =
         columnIdToNestedIds(updatedFieldsById);
     /* Validate that nested field IDs exist in the schema
     and are consistent with the previous schemas */
-    for (Map.Entry<Long, List<NestedIdEntry>> entry : updatedFieldIdToNestedIds.entrySet()) {
-      Long fieldId = entry.getKey();
+    for (Map.Entry<Integer, List<NestedIdEntry>> entry : updatedFieldIdToNestedIds.entrySet()) {
+      int fieldId = entry.getKey();
       List<NestedIdEntry> updatedNestedIdEntries = entry.getValue();
-      Set<Long> seenNestedIds = new HashSet<>();
+      Set<Integer> seenNestedIds = new HashSet<>();
       for (NestedIdEntry nestedIdEntry : updatedNestedIdEntries) {
         // Duplicate nested ID with top level field
         checkArgument(
@@ -515,13 +533,13 @@ public class SchemaUtils {
       the existing nested IDs are consistent in the updated field */
       if (existingNestedIdEntries != null) {
         // Group new ID entries for this field by key and compare
-        Map<String, Long> updatedNestedKeyToColumnId = new HashMap<>();
+        Map<String, Integer> updatedNestedKeyToColumnId = new HashMap<>();
         for (NestedIdEntry updatedNestedIdEntry : updatedNestedIdEntries) {
           updatedNestedKeyToColumnId.put(updatedNestedIdEntry.key, updatedNestedIdEntry.id);
         }
 
         for (NestedIdEntry existingNestedIdEntry : existingNestedIdEntries) {
-          Long updatedNestedColumnId = updatedNestedKeyToColumnId.get(existingNestedIdEntry.key);
+          Integer updatedNestedColumnId = updatedNestedKeyToColumnId.get(existingNestedIdEntry.key);
           checkArgument(
               updatedNestedColumnId != null
                   && updatedNestedColumnId.equals(existingNestedIdEntry.id),
@@ -538,7 +556,8 @@ public class SchemaUtils {
     return getNestedColumnIds(field).getEntries().entrySet().stream()
         .map(
             nestedIdEntry ->
-                new NestedIdEntry(nestedIdEntry.getKey(), (Long) nestedIdEntry.getValue()))
+                new NestedIdEntry(
+                    nestedIdEntry.getKey(), ((Long) nestedIdEntry.getValue()).intValue()))
         .collect(Collectors.toList());
   }
 
@@ -549,9 +568,9 @@ public class SchemaUtils {
    */
   private static class NestedIdEntry {
     private final String key;
-    private final long id;
+    private final int id;
 
-    NestedIdEntry(String key, long id) {
+    NestedIdEntry(String key, int id) {
       this.key = key;
       this.id = id;
     }

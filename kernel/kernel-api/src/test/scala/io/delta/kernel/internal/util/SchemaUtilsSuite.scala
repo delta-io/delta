@@ -326,11 +326,11 @@ class SchemaUtilsSuite extends AnyFunSuite {
   ///////////////////////////////////////////////////////////////////////////
   test("Compute schema changes with added columns") {
     val fieldMappingBefore = Map(
-      1L -> new StructField("id", IntegerType.INTEGER, true))
+      1 -> new StructField("id", IntegerType.INTEGER, true))
 
     val fieldMappingAfter = Map(
-      1L -> new StructField("id", IntegerType.INTEGER, true),
-      2L -> new StructField("data", StringType.STRING, true))
+      1 -> new StructField("id", IntegerType.INTEGER, true),
+      2 -> new StructField("data", StringType.STRING, true))
 
     val schemaChanges = schemaChangesHelper(fieldMappingBefore, fieldMappingAfter)
 
@@ -342,10 +342,10 @@ class SchemaUtilsSuite extends AnyFunSuite {
 
   test("Compute schema changes with renamed fields") {
     val fieldMappingBefore = Map(
-      1L -> new StructField("id", IntegerType.INTEGER, true))
+      1 -> new StructField("id", IntegerType.INTEGER, true))
 
     val fieldMappingAfter = Map(
-      1L -> new StructField("renamed_id", IntegerType.INTEGER, true))
+      1 -> new StructField("renamed_id", IntegerType.INTEGER, true))
 
     val schemaChanges = schemaChangesHelper(fieldMappingBefore, fieldMappingAfter)
 
@@ -358,10 +358,10 @@ class SchemaUtilsSuite extends AnyFunSuite {
 
   test("Compute schema changes with type changed columns") {
     val fieldMappingBefore = Map(
-      1L -> new StructField("id", IntegerType.INTEGER, true))
+      1 -> new StructField("id", IntegerType.INTEGER, true))
 
     val fieldMappingAfter = Map(
-      1L -> new StructField("promoted_to_long", LongType.LONG, true))
+      1 -> new StructField("promoted_to_long", LongType.LONG, true))
 
     val schemaChanges = schemaChangesHelper(fieldMappingBefore, fieldMappingAfter)
 
@@ -374,11 +374,11 @@ class SchemaUtilsSuite extends AnyFunSuite {
 
   test("Compute schema changes with dropped fields") {
     val fieldMappingBefore = Map(
-      1L -> new StructField("id", IntegerType.INTEGER, true),
-      2L -> new StructField("data", StringType.STRING, true))
+      1 -> new StructField("id", IntegerType.INTEGER, true),
+      2 -> new StructField("data", StringType.STRING, true))
 
     val fieldMappingAfter = Map(
-      2L -> new StructField("data", StringType.STRING, true))
+      2 -> new StructField("data", StringType.STRING, true))
 
     val schemaChanges = schemaChangesHelper(fieldMappingBefore, fieldMappingAfter)
 
@@ -390,12 +390,12 @@ class SchemaUtilsSuite extends AnyFunSuite {
 
   test("Compute schema changes with nullability change") {
     val fieldMappingBefore = Map(
-      1L -> new StructField("id", IntegerType.INTEGER, true),
-      2L -> new StructField("data", StringType.STRING, true))
+      1 -> new StructField("id", IntegerType.INTEGER, true),
+      2 -> new StructField("data", StringType.STRING, true))
 
     val fieldMappingAfter = Map(
-      1L -> new StructField("id", IntegerType.INTEGER, true),
-      2L -> new StructField("required_data", StringType.STRING, false))
+      1 -> new StructField("id", IntegerType.INTEGER, true),
+      2 -> new StructField("required_data", StringType.STRING, false))
 
     val schemaChanges = schemaChangesHelper(fieldMappingBefore, fieldMappingAfter)
 
@@ -409,24 +409,24 @@ class SchemaUtilsSuite extends AnyFunSuite {
 
   test("Compute schema changes with moved fields") {
     val fieldMappingBefore = Map(
-      1L -> new StructField(
+      1 -> new StructField(
         "struct",
         new StructType()
           .add(new StructField("id", IntegerType.INTEGER, true))
           .add(new StructField("data", StringType.STRING, true)),
         true),
-      2L -> new StructField("id", IntegerType.INTEGER, true),
-      3L -> new StructField("data", StringType.STRING, true))
+      2 -> new StructField("id", IntegerType.INTEGER, true),
+      3 -> new StructField("data", StringType.STRING, true))
 
     val fieldMappingAfter = Map(
-      1L -> new StructField(
+      1 -> new StructField(
         "struct",
         new StructType()
           .add(new StructField("data", StringType.STRING, true))
           .add(new StructField("id", IntegerType.INTEGER, true)),
         true),
-      2L -> new StructField("id", IntegerType.INTEGER, true),
-      3L -> new StructField("data", StringType.STRING, true))
+      2 -> new StructField("id", IntegerType.INTEGER, true),
+      3 -> new StructField("data", StringType.STRING, true))
 
     val schemaChanges = schemaChangesHelper(fieldMappingBefore, fieldMappingAfter)
 
@@ -440,7 +440,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
 
   test("Compute schema changes with field metadata changes") {
     val fieldMappingBefore = Map(
-      1L -> new StructField(
+      1 -> new StructField(
         "id",
         IntegerType.INTEGER,
         true,
@@ -449,7 +449,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
           "metadata_val").build()))
 
     val fieldMappingAfter = Map(
-      1L -> new StructField(
+      1 -> new StructField(
         "id",
         IntegerType.INTEGER,
         true,
@@ -468,14 +468,14 @@ class SchemaUtilsSuite extends AnyFunSuite {
   }
 
   private def schemaChangesHelper(
-      before: Map[Long, StructField],
-      after: Map[Long, StructField]): SchemaChanges = {
+      before: Map[Int, StructField],
+      after: Map[Int, StructField]): SchemaChanges = {
     SchemaUtils.computeSchemaChangesById(
       before.map {
-        case (k, v) => java.lang.Long.valueOf(k) -> v
+        case (k, v) => java.lang.Integer.valueOf(k) -> v
       }.asJava,
       after.map {
-        case (k, v) => java.lang.Long.valueOf(k) -> v
+        case (k, v) => java.lang.Integer.valueOf(k) -> v
       }.asJava)
   }
 
