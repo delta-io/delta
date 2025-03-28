@@ -22,7 +22,7 @@ import io.delta.kernel.expressions.Column
 import io.delta.kernel.internal.actions.Metadata
 import io.delta.kernel.internal.util.ColumnMapping._
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode._
-import io.delta.kernel.types.{ArrayType, FieldMetadata, IntegerType, MapType, StringType, StructField, StructType}
+import io.delta.kernel.types._
 
 import org.assertj.core.api.Assertions.{assertThat, assertThatNoException, assertThatThrownBy}
 import org.assertj.core.util.Maps
@@ -201,79 +201,84 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
     assertThat(ColumnMapping.findMaxColumnId(schema)).isEqualTo(12)
   }
 
-  test("convertToPhysicalColumnNames: get physical column name with column mapping disabled") {
-    assert(ColumnMapping.convertToPhysicalColumnNames(
+  private val testingSchema = new StructType()
+    .add("a", StringType.STRING)
+    .add(
+      "b",
       new StructType()
-        .add("a", StringType.STRING)
-        .add("b", IntegerType.INTEGER),
-      new Column("a")) == new Column("a"))
-
-    assert(ColumnMapping.convertToPhysicalColumnNames(
-      new StructType().add("a", StringType.STRING)
-        .add(
-          "b",
-          new StructType()
-            .add("d", IntegerType.INTEGER)
-            .add("e", IntegerType.INTEGER))
-        .add("c", IntegerType.INTEGER),
-      new Column(Array("b", "d"))) == new Column(Array("b", "d")))
-  }
-
-  test("convertToPhysicalColumnNames: get physical column name with column mapping enabled") {
-    val schema: StructType = new StructType()
-      .add("a", StringType.STRING, true)
-      .add("b", StringType.STRING, true)
-
-    val metadata: Metadata = updateColumnMappingMetadataIfNeeded(
-      testMetadata(schema).withColumnMappingEnabled("id"),
-      true).orElseGet(() => fail("Metadata should not be empty"))
-
-    val physicalColumn = ColumnMapping.convertToPhysicalColumnNames(
-      metadata.getSchema,
-      new Column("a"))
-    assert(physicalColumn.getNames.length == 1)
-    assert(physicalColumn.getNames()(0).startsWith("col-"))
-
-    val nestedSchema: StructType = new StructType().add("a", StringType.STRING)
-      .add(
-        "b",
-        new StructType()
-          .add("d", IntegerType.INTEGER)
-          .add("e", IntegerType.INTEGER))
-      .add("c", IntegerType.INTEGER)
-
-    val nestedMetadata: Metadata = updateColumnMappingMetadataIfNeeded(
-      testMetadata(nestedSchema).withColumnMappingEnabled("id"),
-      true).orElseGet(() => fail("Metadata should not be empty"))
-
-    val nestedPhysicalColumn = ColumnMapping.convertToPhysicalColumnNames(
-      nestedMetadata.getSchema,
-      new Column(Array("b", "d")))
-    assert(nestedPhysicalColumn.getNames.length == 2)
-    assert(nestedPhysicalColumn.getNames.forall(_.startsWith("col-")))
-  }
-
-  test("convertToPhysicalColumnNames should respect case sensitivity of table schema") {
-    assert(ColumnMapping.convertToPhysicalColumnNames(
+        .add("c", DoubleType.DOUBLE)
+        .add("d", DateType.DATE))
+    .add("e", FloatType.FLOAT)
+    .add(
+      "f",
       new StructType()
-        .add("A", StringType.STRING)
-        .add("b", IntegerType.INTEGER),
-      new Column("a")) == new Column("A"))
-
-    assert(ColumnMapping.convertToPhysicalColumnNames(
-      new StructType().add("a", StringType.STRING)
         .add(
-          "b",
+          "g",
           new StructType()
-            .add("D", IntegerType.INTEGER)
-            .add("e", IntegerType.INTEGER))
-        .add("c", IntegerType.INTEGER),
-      new Column(Array("B", "d"))) == new Column(Array("b", "D")))
+            .add("h", TimestampNTZType.TIMESTAMP_NTZ)))
+    .add("i", new MapType(StringType.STRING, DoubleType.DOUBLE, false))
+    .add("j", new ArrayType(StringType.STRING, false))
+
+  Seq(
+    (Array("a"), StringType.STRING),
+    (Array("b", "c"), DoubleType.DOUBLE),
+    (Array("b", "d"), DateType.DATE),
+    (Array("e"), FloatType.FLOAT),
+    (Array("f", "g", "h"), TimestampNTZType.TIMESTAMP_NTZ),
+    (Array("i"), new MapType(StringType.STRING, DoubleType.DOUBLE, false)),
+    (Array("j"), new ArrayType(StringType.STRING, false))).foreach {
+    case (columnName, expectedType) =>
+      test(s"get physical column name and dataType for $columnName") {
+        // case 1: column mapping disabled
+        val column = new Column(columnName)
+        val resultTuple =
+          ColumnMapping.getPhysicalColumnNameAndDataType(testingSchema, column)
+
+        val actualColumn = resultTuple._1
+        val actualType = resultTuple._2
+        assert(actualColumn == column)
+        assert(actualType == expectedType)
+
+        // case 2: column mapping disabled
+        val metadata: Metadata = updateColumnMappingMetadataIfNeeded(
+          testMetadata(testingSchema).withColumnMappingEnabled("id"),
+          true).orElseGet(() => fail("Metadata should not be empty"))
+
+        val physicalResultTuple = ColumnMapping.getPhysicalColumnNameAndDataType(
+          metadata.getSchema,
+          column)
+        val actualPhysicalColumn = physicalResultTuple._1
+        val actualPhysicalType = physicalResultTuple._2
+        assert(actualPhysicalColumn.getNames.length == columnName.length)
+        assert(actualPhysicalType == expectedType)
+      }
   }
 
-  test("convertToPhysicalColumnNames: exception expected when column does not exist") {
+  Seq(
+    (Array("A"), Array("a"), StringType.STRING),
+    (Array("B", "C"), Array("b", "c"), DoubleType.DOUBLE),
+    (Array("B", "D"), Array("b", "d"), DateType.DATE),
+    (Array("E"), Array("e"), FloatType.FLOAT),
+    (Array("F", "G", "H"), Array("f", "g", "h"), TimestampNTZType.TIMESTAMP_NTZ),
+    (Array("I"), Array("i"), new MapType(StringType.STRING, DoubleType.DOUBLE, false)),
+    (Array("J"), Array("j"), new ArrayType(StringType.STRING, false))).foreach {
+    case (inputColumnName, expectedColumnName, expectedType) =>
+      test(s"get physical column name should respect case of table schema, $inputColumnName") {
+
+        val column = new Column(inputColumnName)
+        val resultTuple =
+          ColumnMapping.getPhysicalColumnNameAndDataType(testingSchema, column)
+
+        val actualColumn = resultTuple._1
+        val actualType = resultTuple._2
+        assert(actualColumn == new Column(expectedColumnName))
+        assert(actualType == expectedType)
+      }
+  }
+
+  test("getPhysicalColumnNameAndDataType: exception expected when column does not exist") {
     val ex = intercept[KernelException] {
-      ColumnMapping.convertToPhysicalColumnNames(
+      ColumnMapping.getPhysicalColumnNameAndDataType(
         new StructType()
           .add("A", StringType.STRING)
           .add("b", IntegerType.INTEGER),
@@ -282,7 +287,7 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
     assert(ex.getMessage.contains("Column 'column(`abc`)' was not found in the table schema"))
 
     val ex1 = intercept[KernelException] {
-      ColumnMapping.convertToPhysicalColumnNames(
+      ColumnMapping.getPhysicalColumnNameAndDataType(
         new StructType().add("a", StringType.STRING)
           .add(
             "b",

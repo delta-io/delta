@@ -159,8 +159,9 @@ public class ColumnMapping {
     }
   }
 
-  /** Returns the physical column for a given logical column based on the schema. */
-  public static Column convertToPhysicalColumnNames(StructType schema, Column logicalColumn) {
+  /** Returns the physical column and data type for a given logical column based on the schema. */
+  public static Tuple2<Column, DataType> getPhysicalColumnNameAndDataType(
+      StructType schema, Column logicalColumn) {
     List<String> physicalNameParts = new ArrayList<>();
     DataType currentType = schema;
 
@@ -180,7 +181,7 @@ public class ColumnMapping {
       physicalNameParts.add(ColumnMapping.getPhysicalName(field));
       currentType = field.getDataType();
     }
-    return new Column(physicalNameParts.toArray(new String[0]));
+    return new Tuple2<>(new Column(physicalNameParts.toArray(new String[0])), currentType);
   }
 
   ////////////////////////////
