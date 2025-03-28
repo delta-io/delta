@@ -201,8 +201,9 @@ class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
       val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
-      val domainMetadataKey =
-        s"${TableFeatures.PROPERTIES_FEATURE_OVERRIDE_PREFIX}${TableFeatures.DOMAIN_METADATA_W_FEATURE.featureName}"
+      val domainMetadataKey = (
+        TableFeatures.PROPERTIES_FEATURE_OVERRIDE_PREFIX
+          + TableFeatures.DOMAIN_METADATA_W_FEATURE.featureName)
       val properties = Map(
         "delta.feature.vacuumProtocolCheck" -> "supported",
         domainMetadataKey -> "supported")
