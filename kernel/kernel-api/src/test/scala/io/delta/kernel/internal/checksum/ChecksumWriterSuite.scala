@@ -81,7 +81,7 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
         metadata,
         protocol,
         txn,
-        Optional.of(fileSizeHistogram))
+        fileSizeHistogram)
     }
 
     // Test with and without transaction ID
@@ -102,7 +102,7 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
       expectedMetadata: Metadata,
       expectedProtocol: Protocol,
       expectedTxnId: Optional[String],
-      expectedFileSizeHistogram: Optional[FileSizeHistogram]): Unit = {
+      expectedFileSizeHistogram: FileSizeHistogram): Unit = {
     assert(!actualCheckSumRow.isNullAt(TABLE_SIZE_BYTES_IDX) && actualCheckSumRow.getLong(
       TABLE_SIZE_BYTES_IDX) == expectedTableSizeBytes)
     assert(!actualCheckSumRow.isNullAt(
