@@ -459,15 +459,18 @@ public class TransactionImpl implements Transaction {
                     dataAndMetadataActions.map(
                         action -> {
                           transactionMetrics.totalActionsCounter.increment();
-                          // TODO: handle RemoveFiles.
                           if (!action.isNullAt(ADD_FILE_ORDINAL)) {
-                            transactionMetrics.addFilesCounter.increment();
                             long addFileSize =
                                 new AddFile(action.getStruct(ADD_FILE_ORDINAL)).getSize();
+
+                            transactionMetrics.addFilesCounter.increment();
                             transactionMetrics.addFilesSizeInBytesCounter.increment(addFileSize);
                             fileSizeHistogram.ifPresent(histogram -> histogram.insert(addFileSize));
                           } else if (!action.isNullAt(REMOVE_FILE_ORDINAL)) {
                             transactionMetrics.removeFilesCounter.increment();
+                            // TODO: handle RemoveFiles.
+                            throw new UnsupportedOperationException(
+                                "Remove File is not yet supported");
                           }
                           return action;
                         }),

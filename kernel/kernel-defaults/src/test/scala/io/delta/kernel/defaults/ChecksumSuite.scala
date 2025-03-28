@@ -72,12 +72,8 @@ class ChecksumSuite extends DeltaTableWriteSuiteBase {
       commitResult.getPostCommitHooks.forEach(hook => hook.threadSafeInvoke(engine))
 
       // Verify checksum exists and content are correct.
-      val crcInfo =
-        Option(ChecksumReader.getCRCInfo(engine, new Path(tablePath + "/_delta_log"), 0L, 0L))
-          .filter(_.isPresent)
-          .map(_.get()).getOrElse {
-            fail("CRC information should be present")
-          }
+      val crcInfo = ChecksumReader.getCRCInfo(engine, new Path(tablePath + "/_delta_log"), 0L, 0L)
+        .orElseThrow(() => new AssertionError("CRC information should be present"))
       assert(crcInfo.getNumFiles === 2)
       assert(crcInfo.getTableSizeBytes === 1026)
       assert(crcInfo.getFileSizeHistogram === Optional.of(expectedFileSizeHistogram))
