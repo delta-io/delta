@@ -56,9 +56,7 @@ public class FileSizeHistogram {
 
   public static Optional<FileSizeHistogram> fromRow(Row row) {
     requireNonNull(row);
-    if (!FULL_SCHEMA.equals(row.getSchema())) {
-      return Optional.empty();
-    }
+    checkArgument(FULL_SCHEMA.equals(row.getSchema()));
     return fromColumnVector(
         VectorUtils.buildColumnVector(Collections.singletonList(row), FULL_SCHEMA), 0);
   }
