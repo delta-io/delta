@@ -23,7 +23,9 @@ import scala.jdk.CollectionConverters._
 import io.delta.kernel.Operation.CREATE_TABLE
 import io.delta.kernel.Table
 import io.delta.kernel.expressions.Literal
+import io.delta.kernel.internal.SnapshotImpl
 import io.delta.kernel.internal.actions.{Protocol => KernelProtocol}
+import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.types.{StructType, TimestampNTZType}
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
@@ -192,6 +194,31 @@ class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
       spark.sql("ALTER TABLE delta.`" + tablePath +
         "` SET TBLPROPERTIES ('delta.feature.timestampNtz' = 'supported')")
       spark.sql("ALTER TABLE delta.`" + tablePath + "` ADD COLUMN newCol TIMESTAMP_NTZ")
+    }
+  }
+
+  test("feature can be enabled via delta.feature prefix") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+      val domainMetadataKey =
+        s"${TableFeatures.PROPERTIES_FEATURE_OVERRIDE_PREFIX}${TableFeatures.DOMAIN_METADATA_W_FEATURE.featureName}"
+      val properties = Map(
+        "delta.feature.vacuumProtocolCheck" -> "supported",
+        domainMetadataKey -> "supported")
+      val txn = txnBuilder
+        .withTableProperties(engine, properties.asJava)
+        .withSchema(engine, testSchema)
+        .build(engine)
+      val txnResult = commitTransaction(txn, engine, emptyIterable())
+
+      assert(txnResult.getVersion === 0)
+
+      val writtenSnapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      assert(writtenSnapshot.getMetadata.getConfiguration.isEmpty)
+      assert(writtenSnapshot.getProtocol.getExplicitlySupportedFeatures.containsAll(Set(
+        TableFeatures.VACUUM_PROTOCOL_CHECK_RW_FEATURE,
+        TableFeatures.DOMAIN_METADATA_W_FEATURE).asJava))
     }
   }
 

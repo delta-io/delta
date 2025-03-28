@@ -944,6 +944,63 @@ class TableFeaturesSuite extends AnyFunSuite {
       }
   }
 
+  test(
+    "updateProtocolWithFeaturOptionsOverrides add missing features and removes them from metadta") {
+    val protocol = new Protocol(3, 7).withFeature(TableFeatures.APPEND_ONLY_W_FEATURE)
+    val metadata = testMetadata(tblProps = Map(
+      "delta.feature.deletionVectors" -> "supported",
+      "delta.feature.appendOnly" -> "supported",
+      "anotherkey" -> "some_value",
+      "delta.enableRowTracking" -> "true"))
+
+    val updatedProtocolAndMetadata =
+      TableFeatures.updateProtocolWithFeaturePropertyOverrides(protocol, metadata)
+
+    assert(updatedProtocolAndMetadata.isPresent)
+    val newProtocol = updatedProtocolAndMetadata.get()._1
+    val newMetadata = updatedProtocolAndMetadata.get()._2
+    assert(
+      newProtocol.getExplicitlySupportedFeatures.equals(Set(
+        TableFeatures.APPEND_ONLY_W_FEATURE,
+        TableFeatures.DELETION_VECTORS_RW_FEATURE).asJava),
+      s"Explicit features: ${newProtocol.getExplicitlySupportedFeatures}")
+
+    val tableConfig = newMetadata.getConfiguration
+    val expectedMap = Map("anotherkey" -> "some_value", "delta.enableRowTracking" -> "true")
+    assert(expectedMap.asJava.equals(tableConfig), s"$tableConfig != $expectedMap")
+  }
+
+  Seq(
+    // Feature already present
+    (
+      new Protocol(3, 7).withFeature(TableFeatures.DELETION_VECTORS_RW_FEATURE),
+      Map("delta.feature.deletionVectors" -> "supported")),
+    // No feature provied
+    (new Protocol(3, 7), Map[String, String]()),
+    (new Protocol(3, 7), Map("delta.other" -> "some_value"))).foreach {
+    case (currentProtocol, properties) =>
+      test(s"updateProtocolWithFeatureProperty: no change: $currentProtocol $properties") {
+        val metadata = testMetadata(tblProps = properties)
+
+        assert(TableFeatures.updateProtocolWithFeaturePropertyOverrides(
+          currentProtocol,
+          metadata).isEmpty)
+      }
+  }
+
+  Seq(
+    Map("delta.feature.deletionVectors" -> "not_valid_value"),
+    Map("delta.feature.invalidFeatureName" -> "supported")).foreach {
+    properties =>
+      test(s"updateProtocolWithFeatureOptionOverrides throws: $properties") {
+        intercept[KernelException] {
+          TableFeatures.updateProtocolWithFeaturePropertyOverrides(
+            new Protocol(3, 7),
+            testMetadata(tblProps = properties))
+        }
+      }
+  }
+
   /////////////////////////////////////////////////////////////////////////////////////////////////
   // Test utility methods.                                                                       //
   /////////////////////////////////////////////////////////////////////////////////////////////////
