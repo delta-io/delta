@@ -149,10 +149,10 @@ case class IcebergCompatBase(
               if (isCreatingOrReorgTable) {
                 tblFeatureUpdates += f
               } else {
-                throw DeltaErrors.icebergCompatMissingRequiredTableFeatureException(version, f)
+                handleMissingTableFeature(f)
               }
             case (true, false) => // txn is removing/un-supporting it!
-              throw DeltaErrors.icebergCompatDisablingRequiredTableFeatureException(version, f)
+              handleDisablingRequiredTableFeature(f)
           }
         }
 
@@ -163,9 +163,6 @@ case class IcebergCompatBase(
             val newestValueOkay = validator(newestValue)
             val newestValueExplicitlySet = newestMetadata.configuration.contains(deltaConfig.key)
 
-            val err = DeltaErrors.icebergCompatWrongRequiredTablePropertyException(
-              version, deltaConfig.key, newestValue.toString, autoSetValue)
-
             if (!newestValueOkay) {
               if (!newestValueExplicitlySet && isCreatingOrReorgTable) {
                 // This case covers both CREATE and REPLACE TABLE commands that
@@ -175,7 +172,8 @@ case class IcebergCompatBase(
               } else {
                 // In all other cases, if the property value is not compatible
                 // with the IcebergV1 requirements, we fail
-                throw err
+                handleMissingRequiredTableProperties(
+                  deltaConfig.key, newestValue.toString, autoSetValue)
               }
             }
         }
@@ -218,6 +216,17 @@ case class IcebergCompatBase(
         (protocolResult, metadataResult)
     }
   }
+
+  protected def handleMissingTableFeature(feature: TableFeature): Unit =
+    throw DeltaErrors.icebergCompatMissingRequiredTableFeatureException(version, feature)
+
+  protected def handleDisablingRequiredTableFeature(feature: TableFeature): Unit =
+    throw DeltaErrors.icebergCompatDisablingRequiredTableFeatureException(version, feature)
+
+  protected def handleMissingRequiredTableProperties(
+      confKey: String, actualVal: String, requiredVal: String): Unit =
+    throw DeltaErrors.icebergCompatWrongRequiredTablePropertyException(
+      version, confKey, actualVal, requiredVal)
 }
 
 /**
