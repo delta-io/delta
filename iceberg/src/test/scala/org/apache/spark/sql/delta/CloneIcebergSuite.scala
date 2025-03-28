@@ -18,8 +18,11 @@ package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
 import java.sql.Date
-import java.time.LocalDate
+import java.sql.Timestamp
+import java.time.LocalDateTime
 import java.time.LocalTime
+import java.time.format.DateTimeFormatter
+import java.util.TimeZone
 
 import scala.collection.JavaConverters._
 import scala.util.Try
@@ -38,8 +41,9 @@ import org.apache.iceberg.types.Types.NestedField
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.util.DateTimeUtils.{stringToDate, toJavaDate}
+import org.apache.spark.sql.catalyst.util.DateTimeUtils.{getZoneId, microsToLocalDateTime, stringToDate, stringToTimestamp, stringToTimestampWithoutTimeZone, toJavaDate, toJavaTimestamp}
 import org.apache.spark.sql.functions.{col, expr, from_json, lit, struct, substring}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{Decimal, DecimalType, LongType, StringType, StructField, StructType, TimestampType}
 import org.apache.spark.unsafe.types.UTF8String
 // scalastyle:on import.ordering.noEmptyLine
@@ -554,12 +558,12 @@ trait CloneIcebergSuiteBase extends QueryTest
           val filesRead =
             getFilesRead(spark, deltaLog, predicate, checkEmptyUnusedFilters = false)
           try {
-            assert(filesRead.size == expectedFilesReadNum)
-            assert(filesRead.map(_.partitionValues.head._2).toSet ==
-              expectedFilesReadIndices.map(_.toString))
             checkAnswer(
               spark.sql(s"select * from $cloneTable where $predicate"), df.where(predicate)
             )
+            assert(filesRead.size == expectedFilesReadNum)
+            assert(filesRead.map(_.partitionValues.head._2).toSet ==
+              expectedFilesReadIndices.map(_.toString))
           } catch {
             case e: Throwable =>
               throw new RuntimeException(
@@ -597,7 +601,7 @@ trait CloneIcebergSuiteBase extends QueryTest
           expectedFilesReadIndices = Set(2)
         )
       ),
-      mode
+      mode = mode
     )
   }
 
@@ -620,7 +624,7 @@ trait CloneIcebergSuiteBase extends QueryTest
           expectedFilesReadIndices = Set(1)
         )
       ),
-      mode
+      mode = mode
     )
   }
 
@@ -643,7 +647,7 @@ trait CloneIcebergSuiteBase extends QueryTest
           expectedFilesReadIndices = Set(1)
         )
       ),
-      mode
+      mode = mode
     )
   }
 
@@ -680,7 +684,7 @@ trait CloneIcebergSuiteBase extends QueryTest
           expectedFilesReadIndices = Set()
         )
       ),
-      mode
+      mode = mode
     )
   }
 
@@ -725,8 +729,167 @@ trait CloneIcebergSuiteBase extends QueryTest
           expectedFilesReadIndices = Set(4, 5)
         )
       ),
-      mode
+      mode = mode
     )
+  }
+
+  // Exactly on minutes
+  testClone("Convert Iceberg timestamptz type - 1") { mode =>
+    testStatsConversionAndDataSkipping(
+      icebergDataType = "timestamp", // spark timestamp => iceberg timestamptz
+      tableData = Seq(
+        toTimestamp("1908-03-15 10:1:17")
+      ),
+      extractFunc = row => {
+        timestamptzExtracter(row, pattern = "yyyy-MM-dd'T'HH:mm:ssXXX")
+      },
+      expectedStats = Seq("1908-03-15T10:01:17+00:00"),
+      dataSkippingTestParams = Seq(
+        DataSkippingTestParam(
+          predicate = "col2 > TIMESTAMP'1908-03-15T10:01:18+00:00'",
+          expectedFilesReadNum = 0,
+          expectedFilesReadIndices = Set()
+        ),
+        DataSkippingTestParam(
+          predicate = "col2 <= TIMESTAMP'1908-03-15T10:01:17+00:00'",
+          expectedFilesReadNum = 1,
+          expectedFilesReadIndices = Set(1)
+        )
+      ),
+      mode = mode
+    )
+  }
+
+  // Fractional time
+  testClone("Convert Iceberg timestamptz type - 2") { mode =>
+    testStatsConversionAndDataSkipping(
+      icebergDataType = "timestamp", // spark timestamp => iceberg timestamptz
+      tableData = Seq(
+        toTimestamp("1997-12-11 5:40:19.23349")
+      ),
+      extractFunc = row => {
+        timestamptzExtracter(row, pattern = "yyyy-MM-dd'T'HH:mm:ss.SSSSSXXX")
+      },
+      expectedStats = Seq("1997-12-11T05:40:19.23349+00:00"),
+      dataSkippingTestParams = Seq(
+        DataSkippingTestParam(
+          predicate = "col2 > TIMESTAMP'1997-12-11T05:40:19.233+00:00'",
+          expectedFilesReadNum = 1,
+          expectedFilesReadIndices = Set(1)
+        ),
+        DataSkippingTestParam(
+          predicate = "col2 <= TIMESTAMP'1997-12-11T05:40:19.10+00:00'",
+          expectedFilesReadNum = 0,
+          expectedFilesReadIndices = Set()
+        )
+      ),
+      mode = mode
+    )
+  }
+
+  // Customized timezone
+  testClone("Convert Iceberg timestamptz type - 3") { mode =>
+    testStatsConversionAndDataSkipping(
+      icebergDataType = "timestamp", // spark timestamp => iceberg timestamptz
+      tableData = Seq(
+        toTimestamp("2077-11-11 3:23:11.23456+02:15")
+      ),
+      extractFunc = row => {
+        timestamptzExtracter(row, pattern = "yyyy-MM-dd'T'HH:mm:ss.SSSSSXXX")
+      },
+      expectedStats = Seq("2077-11-11T01:08:11.23456+00:00"),
+      dataSkippingTestParams = Seq(
+        DataSkippingTestParam(
+          predicate = "col2 > TIMESTAMP'2077-11-11T03:23:11.23456+02:16'",
+          expectedFilesReadNum = 1,
+          expectedFilesReadIndices = Set(1)
+        ),
+        DataSkippingTestParam(
+          predicate = "col2 < TIMESTAMP'2077-11-11T03:23:11.23456+02:16'",
+          expectedFilesReadNum = 0,
+          expectedFilesReadIndices = Set()
+        )
+      ),
+      mode = mode
+    )
+  }
+
+  // Exactly on minutes
+  testClone("Convert Iceberg timestamp type - 1") { mode =>
+    testStatsConversionAndDataSkipping(
+      icebergDataType = "timestamp_ntz", // spark timestamp_ntz => iceberg timestamp
+      tableData = Seq(
+        toTimestampNTZ("2024-01-02T02:04:05.123456")
+      ),
+      extractFunc = row => {
+        row.get(0).asInstanceOf[LocalDateTime].toString
+      },
+      expectedStats = Seq("2024-01-02T02:04:05.123456"),
+      dataSkippingTestParams = Seq(
+        DataSkippingTestParam(
+          predicate = "col2 > TIMESTAMP'2024-01-02T02:04:04.123456'",
+          expectedFilesReadNum = 1,
+          expectedFilesReadIndices = Set(1)
+        ),
+        DataSkippingTestParam(
+          predicate = "col2 < TIMESTAMP'2024-01-02T02:04:05.023456'",
+          expectedFilesReadNum = 0,
+          expectedFilesReadIndices = Set()
+        )
+      ),
+      mode = mode
+    )
+  }
+
+  // Fractional time
+  testClone("Convert Iceberg timestamp type - 2") { mode =>
+    testStatsConversionAndDataSkipping(
+      icebergDataType = "timestamp_ntz", // spark timestamp_ntz => iceberg timestamp
+      tableData = Seq(
+        toTimestampNTZ("1712-4-29T06:23:49.12")
+      ),
+      extractFunc = row => {
+        row.get(0).asInstanceOf[LocalDateTime].toString
+          .replaceAll("0+$", "") // remove trailing zeros
+      },
+      expectedStats = Seq("1712-04-29T06:23:49.12"),
+      dataSkippingTestParams = Seq(
+        DataSkippingTestParam(
+          predicate = "col2 > TIMESTAMP'1712-04-29T06:23:49.11'",
+          expectedFilesReadNum = 1,
+          expectedFilesReadIndices = Set(1)
+        ),
+        DataSkippingTestParam(
+          predicate = "col2 <= TIMESTAMP'1712-04-29T06:23:49.11'",
+          expectedFilesReadNum = 0,
+          expectedFilesReadIndices = Set()
+        )
+      ),
+      mode = mode
+    )
+  }
+
+  private def toTimestamp(timestamp: String): Timestamp = {
+    toJavaTimestamp(stringToTimestamp(UTF8String.fromString(timestamp),
+      getZoneId(SQLConf.get.sessionLocalTimeZone)).get)
+  }
+
+  private def toTimestampNTZ(timestampNTZ: String): LocalDateTime = {
+    microsToLocalDateTime(
+      stringToTimestampWithoutTimeZone(
+        UTF8String.fromString(timestampNTZ)
+      ).get
+    )
+  }
+
+  private def timestamptzExtracter(row: Row, pattern: String): String = {
+    val ts = row.getTimestamp(0).toLocalDateTime.atZone(
+      getZoneId(TimeZone.getDefault.getID)
+    )
+    ts.withZoneSameInstant(getZoneId(SQLConf.get.sessionLocalTimeZone))
+      .format(DateTimeFormatter.ofPattern(pattern))
+      .replace("UTC", "+00:00")
+      .replace("Z", "+00:00")
   }
 }
 

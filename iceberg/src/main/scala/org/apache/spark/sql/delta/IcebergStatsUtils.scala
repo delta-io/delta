@@ -35,7 +35,8 @@ import org.apache.iceberg.types.Types.{
   MapType => IcebergMapType,
   NestedField,
   StringType => IcebergStringType,
-  StructType => IcebergStructType
+  StructType => IcebergStructType,
+  TimestampType => IcebergTimestampType
 }
 import org.apache.iceberg.util.DateTimeUtil
 
@@ -56,7 +57,7 @@ object IcebergStatsUtils extends DeltaLogging {
     TypeID.DOUBLE,
     TypeID.DATE,
 //    TypeID.TIME,
-//    TypeID.TIMESTAMP,
+    TypeID.TIMESTAMP,
 //    TypeID.TIMESTAMP_NANO,
     TypeID.STRING,
 //    TypeID.UUID,
@@ -182,6 +183,9 @@ object IcebergStatsUtils extends DeltaLogging {
         case (_: IcebergDateType, bb: ByteBuffer) =>
           val daysFromEpoch = Conversions.fromByteBuffer(ftype, bb).asInstanceOf[Int]
           DateTimeUtil.dateFromDays(daysFromEpoch).toString
+        case (tsType: IcebergTimestampType, bb: ByteBuffer) =>
+          val microts = Conversions.fromByteBuffer(tsType, bb).asInstanceOf[JLong]
+          microTimestampToString(microts, tsType)
         case (_, bb: ByteBuffer) =>
           Conversions.fromByteBuffer(ftype, bb)
         case _ => throw new IllegalArgumentException("unable to deserialize unknown values")
@@ -220,5 +224,16 @@ object IcebergStatsUtils extends DeltaLogging {
         )
       )
     )
+  }
+
+  private def microTimestampToString(
+      microTS: JLong, tsType: IcebergTimestampType): String = {
+    // iceberg timestamptz should have shouldAdjustToUTC() => true
+    if (tsType.shouldAdjustToUTC()) {
+      DateTimeUtil.microsToIsoTimestamptz(microTS)
+    } else {
+    // iceberg timestamp doesn't need to adjust to UTC
+      DateTimeUtil.microsToIsoTimestamp(microTS)
+    }
   }
 }
