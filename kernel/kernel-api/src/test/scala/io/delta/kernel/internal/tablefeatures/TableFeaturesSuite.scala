@@ -982,9 +982,9 @@ class TableFeaturesSuite extends AnyFunSuite {
       test(s"updateProtocolWithFeatureProperty: no change: $currentProtocol $properties") {
         val metadata = testMetadata(tblProps = properties)
 
-        assert(TableFeatures.updateProtocolWithFeaturePropertyOverrides(
+        assert(!TableFeatures.updateProtocolWithFeaturePropertyOverrides(
           currentProtocol,
-          metadata).isEmpty)
+          metadata).isPresent)
       }
   }
 
