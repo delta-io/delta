@@ -35,10 +35,12 @@ import io.delta.kernel.hook.PostCommitHook;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.checksum.CRCInfo;
+import io.delta.kernel.internal.compaction.LogCompactionWriter;
 import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.hook.CheckpointHook;
 import io.delta.kernel.internal.hook.ChecksumSimpleHook;
+import io.delta.kernel.internal.hook.LogCompactionHook;
 import io.delta.kernel.internal.metrics.TransactionMetrics;
 import io.delta.kernel.internal.metrics.TransactionReportImpl;
 import io.delta.kernel.internal.replay.ConflictChecker;
@@ -88,6 +90,7 @@ public class TransactionImpl implements Transaction {
   private Metadata metadata;
   private boolean shouldUpdateMetadata;
   private int maxRetries;
+  private int logCompactionInterval;
 
   private boolean closed; // To avoid trying to commit the same transaction again.
 
@@ -104,6 +107,7 @@ public class TransactionImpl implements Transaction {
       boolean shouldUpdateMetadata,
       boolean shouldUpdateProtocol,
       int maxRetries,
+      int logCompactionInterval,
       Clock clock) {
     this.isNewTable = isNewTable;
     this.dataPath = dataPath;
@@ -117,6 +121,7 @@ public class TransactionImpl implements Transaction {
     this.shouldUpdateMetadata = shouldUpdateMetadata;
     this.shouldUpdateProtocol = shouldUpdateProtocol;
     this.maxRetries = maxRetries;
+    this.logCompactionInterval = logCompactionInterval;
     this.clock = clock;
   }
 
@@ -478,6 +483,16 @@ public class TransactionImpl implements Transaction {
       buildPostCommitCrcInfoIfCurrentCrcAvailable(
               commitAsVersion, transactionMetrics.captureTransactionMetricsResult())
           .ifPresent(crcInfo -> postCommitHooks.add(new ChecksumSimpleHook(crcInfo, logPath)));
+
+      if (logCompactionInterval > 0
+          && LogCompactionWriter.shouldCompact(commitAsVersion, logCompactionInterval)) {
+        long startVersion = commitAsVersion - logCompactionInterval + 1;
+        long minFileRetentionTimestampMillis =
+            System.currentTimeMillis() - TOMBSTONE_RETENTION.fromMetadata(metadata);
+        postCommitHooks.add(
+            new LogCompactionHook(
+                logPath, startVersion, commitAsVersion, minFileRetentionTimestampMillis));
+      }
 
       return new TransactionCommitResult(commitAsVersion, postCommitHooks);
     } catch (FileAlreadyExistsException e) {
