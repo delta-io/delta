@@ -20,6 +20,7 @@ import static io.delta.kernel.internal.DeltaErrors.*;
 import static io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode.NONE;
 import static io.delta.kernel.types.TimestampNTZType.TIMESTAMP_NTZ;
 import static io.delta.kernel.types.VariantType.VARIANT;
+import static java.util.stream.Collectors.toMap;
 import static java.util.stream.Collectors.toSet;
 
 import io.delta.kernel.exceptions.KernelException;
@@ -38,6 +39,9 @@ import java.util.stream.Stream;
 
 /** Contains utility methods related to the Delta table feature support in protocol. */
 public class TableFeatures {
+
+  /** The prefix for setting an override of a feature option in the */
+  public static String PROPERTIES_FEATURE_OVERRIDE_PREFIX = "delta.feature.";
 
   /////////////////////////////////////////////////////////////////////////////////
   /// START: Define the {@link TableFeature}s                                   ///
@@ -493,6 +497,56 @@ public class TableFeatures {
     } else {
       return Optional.empty();
     }
+  }
+
+  /**
+   * Adds features from currentProtocol based on overrides in properties.
+   *
+   * <p>Overrides are specified using a key in th form {@linkplain
+   * #PROPERTIES_FEATURE_OVERRIDE_PREFIX} + {featureName}. (e.g. {@code
+   * delta.feature.icebergWriterCompatV1}). The value should be "supported" to add the feature.
+   * Currently, removing values is not handled.
+   *
+   * @return An updated properties map and protocol if there are overrides present and the features
+   *     are not in {@code currentProtocol} and the current protocol can be upgraded to support the
+   *     new features.
+   * @throws KernelException if the feature name for the override is invalid or the value is not
+   *     equal to "supported".
+   */
+  public static Optional<Tuple2<Protocol, Metadata>> updateProtocolWithFeaturePropertyOverrides(
+      Protocol currentProtocol, Metadata currentMetadata) {
+    Set<TableFeature> features = new HashSet<>();
+    Map<String, String> properties = currentMetadata.getConfiguration();
+    for (Map.Entry<String, String> entry : properties.entrySet()) {
+      if (entry.getKey().startsWith(PROPERTIES_FEATURE_OVERRIDE_PREFIX)) {
+        String featureName = entry.getKey().substring(PROPERTIES_FEATURE_OVERRIDE_PREFIX.length());
+
+        TableFeature feature = getTableFeature(featureName);
+        features.add(feature);
+        if (!entry.getValue().equals("supported")) {
+          throw DeltaErrors.invalidConfigurationValueException(
+              entry.getKey(),
+              entry.getValue(),
+              "TableFeature override options may only have \"supported\" as there value");
+        }
+      }
+    }
+
+    if (currentProtocol.getExplicitlySupportedFeatures().containsAll(features)) {
+      return Optional.empty();
+    }
+    Protocol newProtocol =
+        new Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
+            .withFeatures(features)
+            .merge(currentProtocol)
+            .normalized();
+
+    Map<String, String> cleanedProperties =
+        properties.entrySet().stream()
+            .filter(e -> !e.getKey().startsWith(PROPERTIES_FEATURE_OVERRIDE_PREFIX))
+            .collect(toMap(Map.Entry::getKey, Map.Entry::getValue));
+    return Optional.of(
+        new Tuple2<>(newProtocol, currentMetadata.withConfiguration(cleanedProperties)));
   }
 
   /** Utility method to check if the table with given protocol is readable by the Kernel. */
