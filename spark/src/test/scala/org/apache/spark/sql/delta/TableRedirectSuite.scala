@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.redirect.{
   EnableRedirectInProgress,
   NoRedirectRule,
   PathBasedRedirectSpec,
+  RedirectFeature,
   RedirectReaderWriter,
   RedirectReady,
   RedirectSpec,
@@ -395,5 +396,24 @@ class TableRedirectSuite extends QueryTest
           result = sql("select * from t1").collect()
           assert(result.length == 4)
     }
+  }
+
+  test("test getRedirectConfiguration") {
+    val redirectSpec = new PathBasedRedirectSpec("sourcePath", "targetPath")
+    val properties1 = RedirectReaderWriter.generateRedirectMetadata(
+      PathBasedRedirectSpec.REDIRECT_TYPE,
+      EnableRedirectInProgress,
+      redirectSpec,
+      noRedirectRules = Set.empty)
+    val properties2 = RedirectWriterOnly.generateRedirectMetadata(
+      PathBasedRedirectSpec.REDIRECT_TYPE,
+      RedirectReady,
+      redirectSpec,
+      noRedirectRules = Set.empty)
+
+    val configuration = RedirectFeature.getRedirectConfiguration(properties1 ++ properties2)
+    assert(configuration.isDefined)
+    // RedirectReaderWriter should be preferred over RedirectWriterOnly.
+    assert(configuration.get.redirectState == EnableRedirectInProgress)
   }
 }
