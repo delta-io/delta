@@ -278,20 +278,6 @@ trait DeltaErrorsBase
       messageParameters = Array(s"${UnresolvedAttribute(constraint.column).name}"))
   }
 
-  def nestedNotNullConstraint(
-      parent: String, nested: DataType, nestType: String): AnalysisException = {
-        new DeltaAnalysisException(
-          errorClass = "DELTA_NESTED_NOT_NULL_CONSTRAINT",
-          messageParameters = Array(
-            s"$nestType",
-            s"$parent",
-            s"${DeltaSQLConf.ALLOW_UNENFORCED_NOT_NULL_CONSTRAINTS.key}",
-            s"$nestType",
-            s"${nested.prettyJson}"
-          )
-        )
-  }
-
   def nullableParentWithNotNullNestedField : Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_NOT_NULL_NESTED_FIELD",

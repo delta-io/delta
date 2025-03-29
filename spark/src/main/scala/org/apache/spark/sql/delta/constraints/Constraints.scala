@@ -22,7 +22,8 @@ import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.schema.SchemaUtils
 
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.catalyst.expressions.{Expression, IsNotNull}
 
 /**
  * A constraint defined on a Delta table, which writers must verify before writing.
@@ -39,11 +40,17 @@ sealed trait Constraint {
  */
 object Constraints {
   /**
-   * A constraint that the specified column must not be NULL. Note that when the column is nested,
-   * this implies its parents must also not be NULL.
+   * A constraint that the specified column must not be NULL.
    */
-  case class NotNull(column: Seq[String]) extends Constraint {
+  case class NotNull(column: Seq[String], expression: Expression) extends Constraint {
     override val name: String = "NOT NULL"
+  }
+
+  object NotNull {
+    // Used by unit tests to easily create a not null constraint
+    private[delta] def apply(column: Seq[String]): NotNull = {
+      NotNull(column, IsNotNull(UnresolvedAttribute(column)))
+    }
   }
 
   /** A SQL expression to check for when writing out data. */

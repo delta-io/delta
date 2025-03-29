@@ -1984,8 +1984,7 @@ trait GeneratedColumnSuiteBase
       val e1 = intercept[DeltaInvariantViolationException] {
         df1.write.format("delta").mode("append").saveAsTable("tbl")
       }
-      assert(e1.getMessage.contains("Column c2, which has a NOT NULL constraint," +
-        " is missing from the data being written into the table."))
+      assert(e1.getMessage.contains("NOT NULL constraint violated for column: c2"))
     }
   }
 

@@ -581,19 +581,6 @@ trait OptimisticTransactionImpl extends DeltaTransaction
       newMetadataTmp = newMetadataTmp.copy(schemaString = schema.json)
     }
 
-    newMetadataTmp = if (snapshot.metadata.schemaString == newMetadataTmp.schemaString) {
-      // Shortcut when the schema hasn't changed to avoid generating spurious schema change logs.
-      // It's fine if two different but semantically equivalent schema strings skip this special
-      // case - that indicates that something upstream attempted to do a no-op schema change, and
-      // we'll just end up doing a bit of redundant work in the else block.
-      newMetadataTmp
-    } else {
-      val fixedSchema = SchemaUtils.removeUnenforceableNotNullConstraints(
-        newMetadataTmp.schema, spark.sessionState.conf).json
-      newMetadataTmp.copy(schemaString = fixedSchema)
-    }
-
-
     if (canAssignAnyNewProtocol) {
       // Check for the new protocol version after the removal of the unenforceable not null
       // constraints
