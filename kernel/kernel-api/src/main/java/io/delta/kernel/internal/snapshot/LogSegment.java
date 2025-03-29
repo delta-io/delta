@@ -38,7 +38,8 @@ public class LogSegment {
   //////////////////////////////////
 
   public static LogSegment empty(Path logPath) {
-    return new LogSegment(logPath, -1, Collections.emptyList(), Collections.emptyList(), -1);
+    return new LogSegment(
+        logPath, -1, Collections.emptyList(), Collections.emptyList(), Optional.empty(), -1);
   }
 
   //////////////////////////////////
@@ -50,6 +51,7 @@ public class LogSegment {
   private final List<FileStatus> deltas;
   private final List<FileStatus> checkpoints;
   private final Optional<Long> checkpointVersionOpt;
+  private final Optional<FileStatus> lastSeenChecksum;
   private final long lastCommitTimestamp;
   private final Lazy<List<FileStatus>> allFiles;
   private final Lazy<List<FileStatus>> allFilesReversed;
@@ -84,6 +86,7 @@ public class LogSegment {
       long version,
       List<FileStatus> deltas,
       List<FileStatus> checkpoints,
+      Optional<FileStatus> lastSeenChecksum,
       long lastCommitTimestamp) {
 
     ///////////////////////
@@ -161,6 +164,7 @@ public class LogSegment {
     this.version = version;
     this.deltas = deltas;
     this.checkpoints = checkpoints;
+    this.lastSeenChecksum = lastSeenChecksum;
     this.lastCommitTimestamp = lastCommitTimestamp;
 
     this.allFiles =
@@ -217,6 +221,14 @@ public class LogSegment {
     return checkpointVersionOpt;
   }
 
+  /**
+   * Returns the most recent file checksum if available, the checksum file is not necessary to be
+   * the read version. Caller should take the responsibility of checking the version before use.
+   */
+  public Optional<FileStatus> getLastSeenChecksum() {
+    return lastSeenChecksum;
+  }
+
   public long getLastCommitTimestamp() {
     return lastCommitTimestamp;
   }
@@ -245,6 +257,7 @@ public class LogSegment {
             + "  version=%d,\n"
             + "  deltas=[%s\n  ],\n"
             + "  checkpoints=[%s\n  ],\n"
+            + "  lastSeenChecksum=%s,\n"
             + "  checkpointVersion=%s,\n"
             + "  lastCommitTimestamp=%d\n"
             + "}",
@@ -252,6 +265,7 @@ public class LogSegment {
         version,
         formatList(deltas),
         formatList(checkpoints),
+        lastSeenChecksum.map(FileStatus::toString).orElse("None"),
         checkpointVersionOpt.map(String::valueOf).orElse("None"),
         lastCommitTimestamp);
   }
