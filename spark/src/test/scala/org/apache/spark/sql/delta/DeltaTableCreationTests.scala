@@ -42,6 +42,7 @@ import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, Ex
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.catalyst.util.ResolveDefaultColumnsUtils
 import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Identifier, Table, TableCatalog}
+import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{MetadataBuilder, StructType}
@@ -2417,62 +2418,87 @@ class DeltaTableCreationSuite
       _.metadata.contains(ResolveDefaultColumnsUtils.EXISTS_DEFAULT_COLUMN_METADATA_KEY))
   }
 
-  test("Default column values: A table metadata update removes EXISTS_DEFAULT from a table") {
-    val testTableName = "test_table"
-    val metadataOperations = Seq(
-      s"ALTER TABLE $testTableName ALTER COLUMN int_col SET DEFAULT 2",
-      s"ALTER TABLE $testTableName CLUSTER BY (int_col)",
-      s"COMMENT ON TABLE $testTableName IS 'test comment'"
-    )
-
-    metadataOperations.foreach { metadataUpdatingQuery =>
-      withTable(testTableName) {
-        // Create the table and ensure that EXISTS_DEFAULT is part of the schema.
-        withSQLConf(DeltaSQLConf
-            .REMOVE_EXISTS_DEFAULT_FROM_SCHEMA_ON_EVERY_METADATA_CHANGE.key -> "false") {
-          sql(s"""CREATE TABLE $testTableName(int_col INT DEFAULT 2)
-                 |USING delta
-                 |TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'supported')""".stripMargin)
-          assert(schemaContainsExistsDefaultKey(testTableName))
-        }
-
-        // Execute the metadata operation and assert that it removed EXISTS_DEFAULT from the schema.
-        withSQLConf(DeltaSQLConf
-            .REMOVE_EXISTS_DEFAULT_FROM_SCHEMA_ON_EVERY_METADATA_CHANGE.key -> "true") {
-          sql(metadataUpdatingQuery)
-          assert(!schemaContainsExistsDefaultKey(testTableName),
-            s"Operation '$metadataUpdatingQuery' did not remove EXISTS_DEFAULT from the schema.")
-        }
-      }
-    }
-  }
-
-  test("Default column values: Writes to a table do not remove EXISTS_DEFAULT from a table") {
+  private def withDeltaTableUsingExistsDefault(testFun: String => Unit): Unit = {
     val testTableName = "test_table"
     withTable(testTableName) {
-      // Add an EXISTS_DEFAULT entry to the schema by disabling the feature flag.
-      withSQLConf(DeltaSQLConf
-          .REMOVE_EXISTS_DEFAULT_FROM_SCHEMA_ON_EVERY_METADATA_CHANGE.key -> "false") {
-        sql(s"""CREATE TABLE $testTableName(int_col INT DEFAULT 2)
-               |USING delta
-               |TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'supported')""".stripMargin)
-        assert(schemaContainsExistsDefaultKey(testTableName))
+      withSQLConf(DeltaSQLConf.REMOVE_EXISTS_DEFAULT_AT_TABLE_CREATION.key -> "false") {
+        sql(s"""CREATE TABLE $testTableName (id INT, column_with_default INT DEFAULT 1)
+               |USING DELTA
+               |TBLPROPERTIES('delta.feature.allowColumnDefaults' = 'supported')""".stripMargin)
 
-        withSQLConf(DeltaSQLConf
-            .REMOVE_EXISTS_DEFAULT_FROM_SCHEMA_ON_EVERY_METADATA_CHANGE.key -> "true") {
-          sql(s"INSERT INTO $testTableName VALUES (1)")
-          // Validate that EXISTS_DEFAULT is still part of the schema.
-          assert(schemaContainsExistsDefaultKey(testTableName))
+        assert(schemaContainsExistsDefaultKey(testTableName))
+      }
+
+      testFun(testTableName)
+    }
+  }
+
+  test("Default column values: Writes do not remove EXISTS_DEFAULT from a table") {
+    val testTableName = "test_table"
+    val writeOperations = Seq(
+      s"ALTER TABLE $testTableName ALTER COLUMN id SET DEFAULT 2",
+      s"ALTER TABLE $testTableName CLUSTER BY (id)",
+      s"COMMENT ON TABLE $testTableName IS 'test comment'",
+      s"INSERT INTO $testTableName VALUES (1, 1)"
+    )
+
+    writeOperations.foreach { metadataUpdatingQuery =>
+      withDeltaTableUsingExistsDefault { testTableName =>
+        // Execute the operation and assert that it keep EXISTS_DEFAULT in the schema.
+        withSQLConf(DeltaSQLConf.REMOVE_EXISTS_DEFAULT_AT_TABLE_CREATION.key -> "true") {
+          sql(metadataUpdatingQuery)
+          assert(schemaContainsExistsDefaultKey(testTableName),
+            s"Operation '$metadataUpdatingQuery' did remove EXISTS_DEFAULT from the schema.")
         }
       }
     }
   }
 
-  test("Default column values: CREATE TABLE selecting from a table with dropped column defaults") {
+  test("Default column values: SHALLOW CLONE keeps EXISTS_DEFAULT") {
+    withDeltaTableUsingExistsDefault { testTableName =>
+      val targetTableName = "target_table"
+      withTable(targetTableName) {
+        sql(s"CREATE TABLE $targetTableName SHALLOW CLONE $testTableName")
+        assert(schemaContainsExistsDefaultKey(targetTableName),
+          s"SHALLOW CLONE did remove EXISTS_DEFAULT from the schema.")
+      }
+    }
+  }
+
+  test("Default column values: CREATE TABLE with column defaults") {
+    val testTableName = "test_table"
+    for (removeExistsDefault <- Seq(true, false)) {
+      withTable(testTableName) {
+        withSQLConf(DeltaSQLConf.REMOVE_EXISTS_DEFAULT_AT_TABLE_CREATION.key ->
+            removeExistsDefault.toString) {
+          sql(s"""CREATE TABLE $testTableName(int_with_default INT DEFAULT 2)
+                 |USING DELTA
+                 |TBLPROPERTIES('delta.feature.allowColumnDefaults' = 'supported')""".stripMargin)
+          assert(schemaContainsExistsDefaultKey(testTableName) != removeExistsDefault)
+        }
+      }
+    }
+  }
+
+  test("Default column values: CONVERT TO DELTA keeps EXISTS_DEFAULT") {
+    withTable("test_table") {
+      withSQLConf("spark.databricks.delta.properties.defaults.columnMapping.mode" -> "none") {
+        spark.range(end = 1).write.format("parquet").saveAsTable("test_table")
+        // EXISTS_DEFAULT is used for the existing row.
+        sql("ALTER TABLE test_table ADD COLUMN new_column_with_a_default INT DEFAULT 1")
+
+        sql("CONVERT TO DELTA test_table")
+
+        checkAnswer(spark.table("test_table"), Row(0, 1) :: Nil)
+      }
+    }
+  }
+
+  test("Default column values: CREATE TABLE AS SELECT from a table with dropped column defaults") {
     for (sourceTableSchemaContainsKey <- Seq(true, false)) {
       withTable("test_table", "test_table_2", "test_table_3") {
           // To test with the 'EXISTS_DEFAULT' key present in the source table, we disable removal.
-          withSQLConf(DeltaSQLConf.REMOVE_EXISTS_DEFAULT_FROM_SCHEMA_ON_EVERY_METADATA_CHANGE.key
+          withSQLConf(DeltaSQLConf.REMOVE_EXISTS_DEFAULT_AT_TABLE_CREATION.key
             -> (!sourceTableSchemaContainsKey).toString) {
             // Defaults are only possible for top level columns.
             sql("""CREATE TABLE test_table(int_col INT DEFAULT 2)
