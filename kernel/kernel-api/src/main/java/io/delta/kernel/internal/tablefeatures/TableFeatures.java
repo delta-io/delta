@@ -495,8 +495,15 @@ public class TableFeatures {
     }
   }
 
-  /** Utility method to check if the table with given protocol is readable by the Kernel. */
-  public static void validateKernelCanReadTheTable(Protocol protocol, String tablePath) {
+  /**
+   * Utility method to check if the table with given protocol is readable by the Kernel.
+   *
+   * @param isUpdatedProtocol true when we are validating whether we can read a (theoretical)
+   *     updated protocol as part of a txn. False when we are validating whether we can read an
+   *     existing version of the table.
+   */
+  public static void validateKernelCanReadTheTable(
+      Protocol protocol, String tablePath, boolean isUpdatedProtocol) {
     if (protocol.getMinReaderVersion() > TABLE_FEATURES_MIN_READER_VERSION) {
       throw DeltaErrors.unsupportedReaderProtocol(tablePath, protocol.getMinReaderVersion());
     }
@@ -507,19 +514,28 @@ public class TableFeatures {
             .collect(toSet());
 
     if (!unsupportedFeatures.isEmpty()) {
-      throw unsupportedReaderFeatures(
-          tablePath, unsupportedFeatures.stream().map(TableFeature::featureName).collect(toSet()));
+      Set<String> featureNames =
+          unsupportedFeatures.stream().map(TableFeature::featureName).collect(toSet());
+      if (isUpdatedProtocol) {
+        throw unsupportedReaderFeaturesEnablement(tablePath, featureNames);
+      } else {
+        throw unsupportedReaderFeatures(tablePath, featureNames);
+      }
     }
   }
 
   /**
    * Utility method to check if the table with given protocol and metadata is writable by the
    * Kernel.
+   *
+   * @param isUpdatedProtocol true when we are validating whether we can write to a (theoretical)
+   *     updated protocol as part of a txn. False when we are validating whether we can write to an
+   *     existing version of the table.
    */
   public static void validateKernelCanWriteToTable(
-      Protocol protocol, Metadata metadata, String tablePath) {
+      Protocol protocol, Metadata metadata, String tablePath, boolean isUpdatedProtocol) {
 
-    validateKernelCanReadTheTable(protocol, tablePath);
+    validateKernelCanReadTheTable(protocol, tablePath, isUpdatedProtocol);
 
     if (protocol.getMinWriterVersion() > TABLE_FEATURES_MIN_WRITER_VERSION) {
       throw unsupportedWriterProtocol(tablePath, protocol.getMinWriterVersion());
@@ -531,8 +547,13 @@ public class TableFeatures {
             .collect(toSet());
 
     if (!unsupportedFeatures.isEmpty()) {
-      throw unsupportedWriterFeatures(
-          tablePath, unsupportedFeatures.stream().map(TableFeature::featureName).collect(toSet()));
+      Set<String> featureNames =
+          unsupportedFeatures.stream().map(TableFeature::featureName).collect(toSet());
+      if (isUpdatedProtocol) {
+        throw unsupportedWriterFeaturesEnablement(tablePath, featureNames);
+      } else {
+        throw unsupportedWriterFeatures(tablePath, featureNames);
+      }
     }
   }
 
