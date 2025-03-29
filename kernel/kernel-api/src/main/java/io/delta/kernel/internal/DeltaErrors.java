@@ -18,6 +18,7 @@ package io.delta.kernel.internal;
 import static java.lang.String.format;
 
 import io.delta.kernel.exceptions.*;
+import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.tablefeatures.TableFeature;
 import io.delta.kernel.types.DataType;
@@ -251,6 +252,11 @@ public final class DeltaErrors {
     return new KernelException(format(msgFormat, fieldName, expected, actual));
   }
 
+  public static KernelException columnNotFoundInSchema(Column column, StructType tableSchema) {
+    String msgFormat = "Column '%s' was not found in the table schema: %s";
+    return new KernelException(format(msgFormat, column, tableSchema));
+  }
+
   /// Start: icebergCompat exceptions
   public static KernelException icebergCompatMissingNumRecordsStats(
       String compatVersion, DataFileStatus dataFileStatus) {
@@ -368,6 +374,24 @@ public final class DeltaErrors {
     return new KernelException(
         "Feature 'rowTracking' is supported and depends on feature 'domainMetadata',"
             + " but 'domainMetadata' is unsupported");
+  }
+
+  public static KernelException missingFileStatsForClustering(
+      List<Column> columns, DataFileStatus dataFileStatus) {
+    return new KernelException(
+        String.format(
+            "Cannot write to a clustering-enabled table without per-file statistics. "
+                + "Missing statistics for clustering columns: %s. DataFileStatus: %s",
+            columns, dataFileStatus));
+  }
+
+  public static KernelException missingColumnStatsForClustering(
+      Column column, DataFileStatus dataFileStatus) {
+    return new KernelException(
+        String.format(
+            "Cannot write to a clustering-enabled table without per-column statistics. "
+                + "Missing statistics for clustering column: %s. DataFileStatus: %s",
+            column, dataFileStatus));
   }
 
   public static KernelException enablingIcebergWriterCompatV1OnExistingTable(String key) {
