@@ -182,6 +182,14 @@ public class ColumnMapping {
     return field.getMetadata().getLong(COLUMN_MAPPING_ID_KEY).intValue();
   }
 
+  static boolean hasNestedColumnIds(StructField field) {
+    return field.getMetadata().contains(COLUMN_MAPPING_NESTED_IDS_KEY);
+  }
+
+  static FieldMetadata getNestedColumnIds(StructField field) {
+    return field.getMetadata().getMetadata(COLUMN_MAPPING_NESTED_IDS_KEY);
+  }
+
   private static int findMaxColumnId(StructField field, int maxColumnId) {
     if (hasColumnId(field)) {
       maxColumnId = Math.max(maxColumnId, getColumnId(field));
@@ -429,14 +437,6 @@ public class ColumnMapping {
                   .build());
     }
     return field;
-  }
-
-  private static boolean hasNestedColumnIds(StructField field) {
-    return field.getMetadata().contains(COLUMN_MAPPING_NESTED_IDS_KEY);
-  }
-
-  private static FieldMetadata getNestedColumnIds(StructField field) {
-    return field.getMetadata().getMetadata(COLUMN_MAPPING_NESTED_IDS_KEY);
   }
 
   private static int getMaxNestedColumnId(StructField field) {
