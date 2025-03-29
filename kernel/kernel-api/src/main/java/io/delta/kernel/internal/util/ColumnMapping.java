@@ -15,10 +15,12 @@
  */
 package io.delta.kernel.internal.util;
 
+import static io.delta.kernel.internal.DeltaErrors.columnNotFoundInSchema;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Collections.singletonMap;
 
 import io.delta.kernel.exceptions.InvalidConfigurationValueException;
+import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.types.*;
@@ -155,6 +157,31 @@ public class ColumnMapping {
         throw new UnsupportedOperationException(
             "Unsupported column mapping mode: " + columnMappingMode);
     }
+  }
+
+  /** Returns the physical column and data type for a given logical column based on the schema. */
+  public static Tuple2<Column, DataType> getPhysicalColumnNameAndDataType(
+      StructType schema, Column logicalColumn) {
+    List<String> physicalNameParts = new ArrayList<>();
+    DataType currentType = schema;
+
+    // Traverse through each level of the logical name to resolve its corresponding physical name.
+    for (String namePart : logicalColumn.getNames()) {
+      if (!(currentType instanceof StructType)) {
+        throw columnNotFoundInSchema(logicalColumn, schema);
+      }
+
+      StructType structType = (StructType) currentType;
+      // Find the field in the current structure that matches the given name
+      StructField field =
+          structType.fields().stream()
+              .filter(f -> f.getName().equalsIgnoreCase(namePart))
+              .findFirst()
+              .orElseThrow(() -> columnNotFoundInSchema(logicalColumn, schema));
+      physicalNameParts.add(ColumnMapping.getPhysicalName(field));
+      currentType = field.getDataType();
+    }
+    return new Tuple2<>(new Column(physicalNameParts.toArray(new String[0])), currentType);
   }
 
   ////////////////////////////
