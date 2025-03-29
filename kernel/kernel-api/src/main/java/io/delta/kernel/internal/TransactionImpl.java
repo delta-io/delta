@@ -44,6 +44,7 @@ import io.delta.kernel.internal.metrics.TransactionReportImpl;
 import io.delta.kernel.internal.replay.ConflictChecker;
 import io.delta.kernel.internal.replay.ConflictChecker.TransactionRebaseState;
 import io.delta.kernel.internal.rowtracking.RowTracking;
+import io.delta.kernel.internal.stats.FileSizeHistogram;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.*;
 import io.delta.kernel.internal.util.Clock;
@@ -444,6 +445,10 @@ public class TransactionImpl implements Transaction {
       // Action counters may be partially incremented from previous tries, reset the counters to 0
       transactionMetrics.resetActionCounters();
 
+      Optional<FileSizeHistogram> fileSizeHistogram =
+          isNewTable
+              ? Optional.of(FileSizeHistogram.createDefaultHistogram())
+              : readSnapshot.getCurrentCrcInfo().flatMap(CRCInfo::getFileSizeHistogram);
       // Write the staged data to a delta file
       wrapEngineExceptionThrowsIO(
           () -> {
@@ -454,13 +459,18 @@ public class TransactionImpl implements Transaction {
                     dataAndMetadataActions.map(
                         action -> {
                           transactionMetrics.totalActionsCounter.increment();
-                          // TODO: handle RemoveFiles.
                           if (!action.isNullAt(ADD_FILE_ORDINAL)) {
+                            long addFileSize =
+                                new AddFile(action.getStruct(ADD_FILE_ORDINAL)).getSize();
+
                             transactionMetrics.addFilesCounter.increment();
-                            transactionMetrics.addFilesSizeInBytesCounter.increment(
-                                new AddFile(action.getStruct(ADD_FILE_ORDINAL)).getSize());
+                            transactionMetrics.addFilesSizeInBytesCounter.increment(addFileSize);
+                            fileSizeHistogram.ifPresent(histogram -> histogram.insert(addFileSize));
                           } else if (!action.isNullAt(REMOVE_FILE_ORDINAL)) {
                             transactionMetrics.removeFilesCounter.increment();
+                            // TODO: handle RemoveFiles.
+                            throw new UnsupportedOperationException(
+                                "Remove File is not yet supported");
                           }
                           return action;
                         }),
@@ -476,7 +486,9 @@ public class TransactionImpl implements Transaction {
       }
 
       buildPostCommitCrcInfoIfCurrentCrcAvailable(
-              commitAsVersion, transactionMetrics.captureTransactionMetricsResult())
+              commitAsVersion,
+              transactionMetrics.captureTransactionMetricsResult(),
+              fileSizeHistogram)
           .ifPresent(crcInfo -> postCommitHooks.add(new ChecksumSimpleHook(crcInfo, logPath)));
 
       return new TransactionCommitResult(commitAsVersion, postCommitHooks);
@@ -555,7 +567,9 @@ public class TransactionImpl implements Transaction {
   }
 
   private Optional<CRCInfo> buildPostCommitCrcInfoIfCurrentCrcAvailable(
-      long commitAtVersion, TransactionMetricsResult metricsResult) {
+      long commitAtVersion,
+      TransactionMetricsResult metricsResult,
+      Optional<FileSizeHistogram> fileSizeHistogram) {
     if (isNewTable) {
       return Optional.of(
           new CRCInfo(
@@ -564,7 +578,8 @@ public class TransactionImpl implements Transaction {
               protocol,
               metricsResult.getTotalAddFilesSizeInBytes(),
               metricsResult.getNumAddFiles(),
-              Optional.of(txnId.toString())));
+              Optional.of(txnId.toString()),
+              fileSizeHistogram));
     }
 
     return readSnapshot
@@ -581,7 +596,8 @@ public class TransactionImpl implements Transaction {
                     // TODO: handle RemoveFiles for calculating table size and num of files.
                     lastCrcInfo.getTableSizeBytes() + metricsResult.getTotalAddFilesSizeInBytes(),
                     lastCrcInfo.getNumFiles() + metricsResult.getNumAddFiles(),
-                    Optional.of(txnId.toString())));
+                    Optional.of(txnId.toString()),
+                    fileSizeHistogram));
   }
 
   /**
