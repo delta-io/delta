@@ -30,6 +30,10 @@ import org.apache.spark.sql.types.StructType
  * This rule adds a Project on top of Delta tables that support the Row tracking table feature to
  * provide a default generated Row ID and row commit version for rows that don't have them
  * materialized in the data file.
+ *
+ * Note: This rule adds a Project node on top of the scan that will prevent _metadata column
+ * propagation through SubQueryAlias nodes. For that reason, it must be run after analysis
+ * completed.
  */
 object GenerateRowIDs extends Rule[LogicalPlan] {
 
@@ -37,49 +41,64 @@ object GenerateRowIDs extends Rule[LogicalPlan] {
    * Matcher for a scan on a Delta table that has Row tracking enabled.
    */
   private object DeltaScanWithRowTrackingEnabled {
-    def unapply(plan: LogicalPlan): Option[LogicalRelation] = plan match {
+    def unapply(plan: LogicalPlan): Option[(LogicalRelation, DeltaParquetFileFormat)] = plan match {
       case scan @ LogicalRelationWithTable(relation: HadoopFsRelation, _) =>
         relation.fileFormat match {
           case format: DeltaParquetFileFormat
-            if RowTracking.isEnabled(format.protocol, format.metadata) => Some(scan)
+            if RowTracking.isEnabled(format.protocol, format.metadata) => Some(scan, format)
           case _ => None
         }
       case _ => None
     }
   }
 
+  /**
+   * Helper method to check if the given scan returns either `_metadata.row_id` or
+   * `_metadata.row_commit_version` metadata fields. Use to skip applying the rule if we don't
+   * need to generate expressions for these fields.
+   */
+  private def usesRowTrackingFields(scan: LogicalRelation): Boolean = {
+    scan.output.exists {
+      case MetadataAttributeWithLogicalName(a, FileFormat.METADATA_NAME) =>
+        a.dataType.asInstanceOf[StructType].fieldNames.exists {
+          case RowId.ROW_ID | RowCommitVersion.METADATA_STRUCT_FIELD_NAME => true
+          case _ => false
+        }
+      case _ => false
+    }
+  }
+
   override def apply(plan: LogicalPlan): LogicalPlan = plan.transformUpWithNewOutput {
-    case DeltaScanWithRowTrackingEnabled(
-            scan @ LogicalRelationWithTable(baseRelation: HadoopFsRelation, _)) =>
-      // While Row IDs and commit versions are non-nullable, we'll use the Row ID & commit
-      // version attributes to read the materialized values from now on, which can be null. We make
-      // the materialized Row ID & commit version attributes nullable in the scan here.
+    case node @ DeltaScanWithRowTrackingEnabled(scan, fileFormat)
+      if node.resolved && usesRowTrackingFields(scan) && !fileFormat.rowTrackingFieldsUpdated =>
+      // Set rowTrackingFieldsUpdated so that:
+      // 1. We don't apply this rule again on the same plan.
+      // 2. Row tracking metadata fields `_metadata.row_id` and `_metadata.row_commit_version`
+      //    become nullable, since these will reference the materialized fields from now on.
+      val newFileFormat = fileFormat.copy(rowTrackingFieldsUpdated = true)
 
-      // Update nullability in the scan `metadataOutput` by updating the delta file format.
-      val newFileFormat = baseRelation.fileFormat match {
-        case format: DeltaParquetFileFormat =>
-          format.copy(nullableRowTrackingFields = true)
-      }
-      val newBaseRelation = baseRelation.copy(fileFormat = newFileFormat)(baseRelation.sparkSession)
-
-      // Update the output metadata column's data type (now with nullable row tracking fields).
-      val newOutput = scan.output.map {
-        case MetadataAttributeWithLogicalName(metadata, FileFormat.METADATA_NAME) =>
-          metadata.withDataType(newFileFormat.createFileMetadataCol().dataType)
-        case other => other
-      }
-      val newScan = scan.copy(relation = newBaseRelation, output = newOutput)
-      newScan.copyTagsFrom(scan)
-
-      // Add projection with row tracking column expressions.
+      // Keep track of the updated metadata attribute to replace all references to it in the plan
+      // with [[transformUpWithNewOutput]].
       val updatedAttributes = mutable.Buffer.empty[(Attribute, Attribute)]
-      val projectList = newOutput.map {
-        case MetadataAttributeWithLogicalName(metadata, FileFormat.METADATA_NAME) =>
-          val updatedMetadata = metadataWithRowTrackingColumnsProjection(metadata)
-          updatedAttributes += metadata -> updatedMetadata.toAttribute
-          updatedMetadata
-        case other => other
-      }
+
+      // Generate default Row ID and row commit version values:
+      // 1. Update the `_metadata` attribute returned from the scan so that it includes fields that
+      //    the expressions will reference. See [[metadataWithRequiredRowTrackingColumns]].
+      // 2. Add a Project on top of the scan that will apply expressions to generate the default
+      //    Row ID and row commit version values. See [[metadataWithRowTrackingColumnsProjection]].
+      val (scanOutput, projectList) = scan.output.map {
+        case MetadataAttributeWithLogicalName(originalMetadata, FileFormat.METADATA_NAME) =>
+          val newScanMetadata =
+            metadataWithRequiredRowTrackingColumns(originalMetadata, newFileFormat)
+          val projectedMetadata =
+            metadataWithRowTrackingColumnsProjection(originalMetadata, newScanMetadata)
+          updatedAttributes += originalMetadata -> projectedMetadata.toAttribute
+          (newScanMetadata, projectedMetadata)
+        // Not a metadata field, return as is from scan and projection.
+        case other => (other, other)
+      }.unzip
+
+      val newScan = DeltaTableUtils.replaceFileFormat(scan.copy(output = scanOutput), newFileFormat)
       Project(projectList = projectList, child = newScan) -> updatedAttributes.toSeq
     case o =>
       val newPlan = o.transformExpressionsWithPruning(_.containsPattern(PLAN_EXPRESSION)) {
@@ -92,6 +111,33 @@ object GenerateRowIDs extends Rule[LogicalPlan] {
             planExpression.withNewPlan(apply(planExpression.plan))
       }
       newPlan -> Nil
+  }
+
+  /**
+   * Creates a new metadata attribute with additional row tracking columns that are required to
+   * generate the default row ID and row commit version values:
+   * - For `_metadata.row_id`, we need `_metadata.base_row_id` and `_metadata.row_index`.
+   * - For `_metadata.row_commit_version`, we need `_metadata.default_row_commit_version`.
+   */
+  private def metadataWithRequiredRowTrackingColumns(
+      originalMetadata: AttributeReference,
+      fileFormat: DeltaParquetFileFormat): AttributeReference = {
+    def originalMetadataContains(fieldName: String): Boolean =
+      originalMetadata.dataType.asInstanceOf[StructType].exists(_.name == fieldName)
+
+    // Create a new metadata struct with all fields, then prune the ones we don't need.
+    val newMetadataType = fileFormat.createFileMetadataCol().dataType.asInstanceOf[StructType]
+
+    val metadataFieldNames = newMetadataType.fieldNames.filter {
+      case RowId.BASE_ROW_ID if originalMetadataContains(RowId.ROW_ID) => true
+      case ParquetFileFormat.ROW_INDEX if originalMetadataContains(RowId.ROW_ID) => true
+      case DefaultRowCommitVersion.METADATA_STRUCT_FIELD_NAME
+        if originalMetadataContains(RowCommitVersion.METADATA_STRUCT_FIELD_NAME) => true
+      case other => originalMetadataContains(other)
+    }
+    val metadataFields = newMetadataType.filter(f => metadataFieldNames.contains(f.name))
+    // Update the original metadata to include all required fields.
+    originalMetadata.withDataType(StructType(metadataFields))
   }
 
   /**
@@ -135,19 +181,20 @@ object GenerateRowIDs extends Rule[LogicalPlan] {
    * the materialized values if present, or the default Row ID / row commit version values if not.
    */
   private def metadataWithRowTrackingColumnsProjection(
-      metadata: AttributeReference): NamedExpression = {
-    val metadataFields = metadata.dataType.asInstanceOf[StructType].map {
+      originalMetadata: AttributeReference, scanMetadata: AttributeReference): NamedExpression = {
+    val metadataFields = originalMetadata.dataType.asInstanceOf[StructType].map {
       case field if field.name == RowId.ROW_ID =>
-        field -> rowIdExpr(metadata)
+        field -> rowIdExpr(scanMetadata)
       case field if field.name == RowCommitVersion.METADATA_STRUCT_FIELD_NAME =>
-        field -> rowCommitVersionExpr(metadata)
+        field -> rowCommitVersionExpr(scanMetadata)
       case field =>
-        field -> getField(metadata, field.name)
+        field -> getField(scanMetadata, field.name)
     }.flatMap { case (oldField, newExpr) =>
       // Propagate the type metadata from the old fields to the new fields.
       val newField = Alias(newExpr, oldField.name)(explicitMetadata = Some(oldField.metadata))
       Seq(Literal(oldField.name), newField)
     }
-    Alias(CreateNamedStruct(metadataFields), metadata.name)()
+    Alias(CreateNamedStruct(metadataFields), originalMetadata.name)(
+      explicitMetadata = Some(originalMetadata.metadata))
   }
 }

@@ -58,7 +58,7 @@ import org.apache.spark.util.SerializableConfiguration
 case class DeltaParquetFileFormat(
     protocol: Protocol,
     metadata: Metadata,
-    nullableRowTrackingFields: Boolean = false,
+    rowTrackingFieldsUpdated: Boolean = false,
     optimizationsEnabled: Boolean = true,
     tablePath: Option[String] = None,
     isCDCRead: Boolean = false)
@@ -147,6 +147,7 @@ case class DeltaParquetFileFormat(
       case ff: DeltaParquetFileFormat =>
         ff.columnMappingMode == columnMappingMode &&
         ff.referenceSchema == referenceSchema &&
+        ff.rowTrackingFieldsUpdated == rowTrackingFieldsUpdated &&
         ff.optimizationsEnabled == optimizationsEnabled
       case _ => false
     }
@@ -255,7 +256,10 @@ case class DeltaParquetFileFormat(
     (protocol, metadata) match {
       // We should not expose row tracking fields for CDC reads.
       case (p, m) if RowId.isEnabled(p, m) && !isCDCRead =>
-        val extraFields = RowTracking.createMetadataStructFields(p, m, nullableRowTrackingFields)
+        // The row tracking fields are updated when [[GenerateRowIDs]] is applied. After that, they
+        // reference the materialized fields which are nullable.
+        val extraFields =
+          RowTracking.createMetadataStructFields(p, m, nullable = rowTrackingFieldsUpdated)
         super.metadataSchemaFields ++ extraFields
       case (p, m) if deletionVectorsReadable(p, m) => super.metadataSchemaFields
       case _ => super.metadataSchemaFields.filter(_ != ParquetFileFormat.ROW_INDEX_FIELD)
