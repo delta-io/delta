@@ -89,13 +89,12 @@ public class ColumnMapping {
    * of the data stored in data files based on the table's column mapping mode. Field-id column
    * metadata is preserved when cmMode = ID, all column metadata is otherwise removed.
    *
-   * <p>We require {@code fullSchema} in addition to the pruned schema we want to convert since
-   * we need the complete field metadata as it is stored in the schema in the _delta_log. We
-   * cannot be sure (and do not enforce) that this metadata is preserved by the connector.
+   * <p>We require {@code fullSchema} in addition to the pruned schema we want to convert since we
+   * need the complete field metadata as it is stored in the schema in the _delta_log. We cannot be
+   * sure (and do not enforce) that this metadata is preserved by the connector.
    *
    * @param prunedSchema the logical read schema requested by the connector
-   * @param fullSchema the full delta schema (with complete metadata) as read from the
-   *     _delta_log
+   * @param fullSchema the full delta schema (with complete metadata) as read from the _delta_log
    * @param columnMappingMode Column mapping mode
    */
   public static StructType convertToPhysicalSchema(
