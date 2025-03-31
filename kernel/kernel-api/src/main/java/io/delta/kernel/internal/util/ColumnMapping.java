@@ -86,10 +86,12 @@ public class ColumnMapping {
 
   /**
    * Helper method that converts the logical schema (requested by the connector) to physical schema
-   * of the data stored in data files based on the table's column mapping mode.
+   * of the data stored in data files based on the table's column mapping mode. Field-id column
+   * metadata is preserved when cmMode = ID, all column metadata is otherwise removed.
    *
-   * @param prunedSchema TODO
-   * @param fullDeltaSchema TODO
+   * @param prunedSchema the logical read schema requested by the connector
+   * @param fullDeltaSchema the full delta schema (with complete metadata) as read from the
+   *     _delta_log
    * @param columnMappingMode Column mapping mode
    */
   public static StructType convertToPhysicalSchema(
@@ -198,9 +200,9 @@ public class ColumnMapping {
   }
 
   /**
-   * TODO improve docs Utility method to convert the given logical schema to physical schema,
-   * recursively converting sub-types in case of complex types. When {@code includeFieldId} is true,
-   * converted physical schema will have field ids in the metadata.
+   * Utility method to convert the given logical schema to physical schema, recursively converting
+   * sub-types in case of complex types. When {@code includeFieldId} is true, converted physical
+   * schema will have field ids in the metadata. Column metadata is otherwise removed.
    */
   private static StructType convertToPhysicalSchema(
       StructType prunedSchema, StructType fullDeltaSchema, boolean includeFieldId) {

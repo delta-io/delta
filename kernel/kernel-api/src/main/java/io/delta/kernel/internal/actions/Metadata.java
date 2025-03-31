@@ -233,7 +233,12 @@ public class Metadata {
     return Collections.unmodifiableMap(configuration.get());
   }
 
-  // TODO docs
+  /**
+   * The full schema (including partition columns) with the field names converted to their physical
+   * names (column names used in the data files) based on the table's column mapping mode. When
+   * column mapping mode is ID, fieldId metadata is preserved in the field metadata; all column
+   * metadata is otherwise removed.
+   */
   public StructType getPhysicalSchema() {
     ColumnMapping.ColumnMappingMode mappingMode =
         ColumnMapping.getColumnMappingMode(getConfiguration());
