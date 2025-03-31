@@ -19,6 +19,7 @@ package io.delta.tables
 import scala.collection.JavaConverters._
 import scala.collection.Map
 
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.{DeltaAnalysisException, PostHocResolveUpCast, PreprocessTableMerge, ResolveDeltaMergeInto}
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.DeltaTableUtils.withActiveSession
@@ -318,15 +319,7 @@ class DeltaMergeBuilder private(
       val resolvedMergeInto =
       ResolveDeltaMergeInto.resolveReferencesAndSchema(mergePlan, sparkSession.sessionState.conf)(
         tryResolveReferencesForExpressions(sparkSession))
-      if (!resolvedMergeInto.resolved) {
-        throw new ExtendedAnalysisException(
-          new DeltaAnalysisException(
-            errorClass = "_LEGACY_ERROR_TEMP_DELTA_0011",
-            messageParameters = Array.empty
-          ),
-          resolvedMergeInto
-        )
-      }
+
       val strippedMergeInto = resolvedMergeInto.copy(
         target = DeltaViewHelper.stripTempViewForMerge(resolvedMergeInto.target, SQLConf.get)
       )

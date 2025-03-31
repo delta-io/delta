@@ -1454,7 +1454,7 @@ trait OptimisticTransactionImpl extends DeltaTransaction
         throw e
     }
 
-    runPostCommitHooks(version, postCommitSnapshot, actualCommittedActions)
+    runPostCommitHooks(version, postCommitSnapshot, actualCommittedActions.toIterator)
 
     executionObserver.transactionCommitted()
     Some(version)
@@ -2683,7 +2683,7 @@ trait OptimisticTransactionImpl extends DeltaTransaction
   protected def runPostCommitHooks(
       version: Long,
       postCommitSnapshot: Snapshot,
-      committedActions: Seq[Action]): Unit = {
+      committedActions: Iterator[Action]): Unit = {
     assert(committed, "Can't call post commit hooks before committing")
 
     // Keep track of the active txn because hooks may create more txns and overwrite the active one.
@@ -2701,7 +2701,7 @@ trait OptimisticTransactionImpl extends DeltaTransaction
       hook: PostCommitHook,
       version: Long,
       postCommitSnapshot: Snapshot,
-      committedActions: Seq[Action]): Unit = {
+      committedActions: Iterator[Action]): Unit = {
     try {
       hook.run(spark, this, version, postCommitSnapshot, committedActions)
     } catch {

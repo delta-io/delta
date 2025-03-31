@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.util
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaErrors}
+import org.apache.spark.sql.delta.{DataFrameUtils, DeltaAnalysisException, DeltaErrors}
 
 import org.apache.spark.sql.{AnalysisException, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.ExtendedAnalysisException
@@ -89,7 +89,7 @@ trait AnalysisHelper {
   }
 
   protected def toDataset(sparkSession: SparkSession, logicalPlan: LogicalPlan): Dataset[Row] = {
-    Dataset.ofRows(sparkSession, logicalPlan)
+    DataFrameUtils.ofRows(sparkSession, logicalPlan)
   }
 
   protected def improveUnsupportedOpError[T](f: => T): T = {

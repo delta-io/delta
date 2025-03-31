@@ -32,9 +32,10 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.Path
-import shadedForDelta.org.apache.iceberg.{Table => IcebergTable}
+import shadedForDelta.org.apache.iceberg.{Table => IcebergTable, TableProperties}
 import shadedForDelta.org.apache.iceberg.exceptions.CommitFailedException
 import shadedForDelta.org.apache.iceberg.hive.{HiveCatalog, HiveTableOperations}
+import shadedForDelta.org.apache.iceberg.util.LocationUtil
 
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
@@ -418,6 +419,24 @@ class IcebergConverter(spark: SparkSession)
         log"[path = ${MDC(DeltaLogKeys.PATH, log.logPath)}] tableId=" +
         log"${MDC(DeltaLogKeys.TABLE_ID, log.tableId)}]")
       val expireSnapshotHelper = icebergTxn.getExpireSnapshotHelper()
+      val table = icebergTxn.txn.table()
+      val tableLocation = LocationUtil.stripTrailingSlash(table.location)
+      val defaultWriteMetadataLocation = s"$tableLocation/metadata"
+      val writeMetadataLocation = LocationUtil.stripTrailingSlash(
+        table.properties().getOrDefault(
+          TableProperties.WRITE_METADATA_LOCATION, defaultWriteMetadataLocation))
+      if (snapshotToConvert.path.toString == writeMetadataLocation) {
+        // Don't attempt any file cleanup in the edge-case configuration
+        // that the data location (in Uniform the table root location)
+        // is the same as the Iceberg metadata location
+        expireSnapshotHelper.cleanExpiredFiles(false)
+      } else {
+        expireSnapshotHelper.deleteWith(path => {
+          if (path.startsWith(writeMetadataLocation)) {
+            table.io().deleteFile(path)
+          }
+        })
+      }
       expireSnapshotHelper.commit()
     }
 

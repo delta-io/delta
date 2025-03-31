@@ -44,8 +44,8 @@ class DeltaGenerateSymlinkManifestSuite
   extends DeltaGenerateSymlinkManifestSuiteBase
   with DeltaSQLCommandTest
 
-trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
-  with SharedSparkSession
+trait DeltaGenerateSymlinkManifestSuiteBase
+  extends DeltaGenerateSymlinkManifestTestHelper
   with DeletionVectorsTestUtils
   with DeltaTestUtilsForTempViews {
 
@@ -67,16 +67,15 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
   }
 
   test("basic case: SQL command - name-based table") {
+    val tableName = "deltaTable"
     withTable("deltaTable") {
       spark.createDataset(spark.sparkContext.parallelize(1 to 100, 7))
-        .write.format("delta").saveAsTable("deltaTable")
+        .write.format("delta").saveAsTable(tableName)
 
-      val tableId = TableIdentifier("deltaTable")
-      val tablePath = new File(spark.sessionState.catalog.getTableMetadata(tableId).location)
-      assertManifest(tablePath, expectSameFiles = false, expectedNumFiles = 0)
+      assertManifest(tableName, expectSameFiles = false, expectedNumFiles = 0)
 
-      spark.sql(s"GENERATE symlink_ForMat_Manifest FOR TABLE deltaTable")
-      assertManifest(tablePath, expectSameFiles = true, expectedNumFiles = 7)
+      spark.sql(s"GENERATE symlink_ForMat_Manifest FOR TABLE $tableName")
+      assertManifest(tableName, expectSameFiles = true, expectedNumFiles = 7)
     }
   }
 
@@ -158,22 +157,21 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
   }
 
   test("basic case: Scala API - name-based table") {
-    withTable("deltaTable") {
+    val tableName = "deltaTable"
+    withTable(tableName) {
       spark.createDataset(spark.sparkContext.parallelize(1 to 100, 7))
-        .write.format("delta").saveAsTable("deltaTable")
+        .write.format("delta").saveAsTable(tableName)
 
-      val tableId = TableIdentifier("deltaTable")
-      val tablePath = new File(spark.sessionState.catalog.getTableMetadata(tableId).location)
-      assertManifest(tablePath, expectSameFiles = false, expectedNumFiles = 0)
+      assertManifest(tableName, expectSameFiles = false, expectedNumFiles = 0)
 
-      val deltaTable = io.delta.tables.DeltaTable.forName("deltaTable")
+      val deltaTable = io.delta.tables.DeltaTable.forName(tableName)
       deltaTable.generate("symlink_format_manifest")
-      assertManifest(tablePath, expectSameFiles = true, expectedNumFiles = 7)
+      assertManifest(tableName, expectSameFiles = true, expectedNumFiles = 7)
     }
   }
 
 
-  test ("full manifest: non-partitioned table") {
+  test("full manifest: non-partitioned table") {
     withTempDir { tablePath =>
       tablePath.delete()
 
@@ -323,8 +321,6 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
         tablePath, expectSameFiles = true, expectedNumFiles = 0)
     }
   }
-
-
 
   test("incremental manifest: partitioned table") {
     withTempDir { tablePath =>
@@ -700,38 +696,71 @@ trait DeltaGenerateSymlinkManifestSuiteBase extends QueryTest
       }
     }
   }
+}
+
+trait DeltaGenerateSymlinkManifestTestHelper
+  extends QueryTest
+  with SharedSparkSession {
+
+  import testImplicits._
+
+  protected def assertManifest(
+    tablePath: File,
+    expectSameFiles: Boolean,
+    expectedNumFiles: Int): Unit = {
+    val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, tablePath.toString)
+    assertManifest(snapshot, tablePath, expectSameFiles, expectedNumFiles)
+  }
+
+  protected def assertManifest(
+      tableName: String,
+      expectSameFiles: Boolean,
+      expectedNumFiles: Int): Unit = {
+    val (log, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(tableName))
+    assertManifest(snapshot, new File(log.dataPath.toUri), expectSameFiles, expectedNumFiles)
+  }
 
   /**
    * Assert that the manifest files in the table meet the expectations.
+   * @param deltaSnapshot Snapshot of the Delta table to check against
    * @param tablePath Path of the Delta table
    * @param expectSameFiles Expect that the manifest files contain the same data files
    *                        as the latest version of the table
    * @param expectedNumFiles Expected number of manifest files
    */
-  def assertManifest(
+  private def assertManifest(
+      deltaSnapshot: Snapshot,
       tablePath: File,
       expectSameFiles: Boolean,
       expectedNumFiles: Int): Unit = {
-    val deltaSnapshot = DeltaLog.forTable(spark, tablePath.toString).update()
     val manifestPath = new File(tablePath, GenerateSymlinkManifest.MANIFEST_LOCATION)
-
     if (!manifestPath.exists) {
       assert(expectedNumFiles == 0 && !expectSameFiles)
       return
     }
 
     // Validate the expected number of files are present in the manifest
-    val filesInManifest = spark.read.text(manifestPath.toString).select("value").as[String]
-      .map { _.stripPrefix("file:") }.toDF("file")
+    val filesInManifest = spark.read.text(manifestPath.toString)
+      .select("value")
+      .as[String]
+      .collect()
+      .map(_.stripPrefix("file:"))
+      .toSeq
+      .toDF("file")
     assert(filesInManifest.count() == expectedNumFiles)
 
     // Validate that files in the latest version of DeltaLog is same as those in the manifest
-    val filesInLog = deltaSnapshot.allFiles.map { addFile =>
-      // Note: this unescapes the relative path in `addFile`
-      DeltaFileOperations.absolutePath(tablePath.toString, addFile.path).toString
-    }.toDF("file")
+    val filesInLog = deltaSnapshot.allFiles
+      .collect()
+      .map { addFile =>
+        // Note: this unescapes the relative path in `addFile`
+        DeltaFileOperations.absolutePath(tablePath.toString, addFile.path).toString
+      }
+      .toSeq
+      .toDF("file")
+
     if (expectSameFiles) {
-      checkAnswer(filesInManifest, filesInLog.toDF())
+      checkAnswer(filesInManifest, filesInLog)
 
       // Validate that each file in the manifest is actually present in table. This mainly checks
       // whether the file names in manifest are not escaped and therefore are readable directly

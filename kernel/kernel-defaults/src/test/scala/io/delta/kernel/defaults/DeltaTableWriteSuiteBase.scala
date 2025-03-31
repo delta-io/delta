@@ -33,7 +33,7 @@ import io.delta.kernel.expressions.Literal
 import io.delta.kernel.expressions.Literal.ofInt
 import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
 import io.delta.kernel.internal.{SnapshotImpl, TableConfig, TableImpl}
-import io.delta.kernel.internal.actions.SingleAction
+import io.delta.kernel.internal.actions.{Metadata, Protocol, SingleAction}
 import io.delta.kernel.internal.fs.{Path => DeltaPath}
 import io.delta.kernel.internal.util.{Clock, FileNames, VectorUtils}
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
@@ -183,9 +183,20 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     Option.empty
   }
 
+  def getMetadata(engine: Engine, tablePath: String): Metadata = {
+    Table.forPath(engine, tablePath).getLatestSnapshot(engine)
+      .asInstanceOf[SnapshotImpl].getMetadata
+  }
+
+  def getProtocol(engine: Engine, tablePath: String): Protocol = {
+    Table.forPath(engine, tablePath).getLatestSnapshot(engine)
+      .asInstanceOf[SnapshotImpl].getProtocol
+  }
+
   /**
    *  Helper method to read the Metadata from the commit file of the given version if it is not
    *  null, otherwise return null.
+   *  TODO: get rid of this and use getMetadata instead
    */
   def getMetadataActionFromCommit(
       engine: Engine,
@@ -208,6 +219,7 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
   /**
    *  Helper method to read the Protocol from the commit file of the given version if it is not
    *  null, otherwise return null.
+   *  TODO: get rid of this and use getProtocol instead
    */
   def getProtocolActionFromCommit(engine: Engine, table: Table, version: Long): Option[Row] = {
     readCommitFile(
@@ -288,7 +300,8 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       schema: StructType = null,
       partCols: Seq[String] = null,
       tableProperties: Map[String, String] = null,
-      clock: Clock = () => System.currentTimeMillis): Transaction = {
+      clock: Clock = () => System.currentTimeMillis,
+      withDomainMetadataSupported: Boolean = false): Transaction = {
 
     var txnBuilder = createWriteTxnBuilder(
       TableImpl.forPath(engine, tablePath, clock))
@@ -300,6 +313,10 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
 
     if (tableProperties != null) {
       txnBuilder = txnBuilder.withTableProperties(engine, tableProperties.asJava)
+    }
+
+    if (withDomainMetadataSupported) {
+      txnBuilder = txnBuilder.withDomainMetadataSupported()
     }
 
     txnBuilder.build(engine)
@@ -316,8 +333,51 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       stageData(txnState, partValues, partData)
     }
 
-    val combineActions = inMemoryIterable(actions.reduceLeft(_ combine _))
-    commitTransaction(txn, engine, combineActions)
+    actions.reduceLeftOption(_ combine _) match {
+      case Some(combinedActions) =>
+        val combineActions = inMemoryIterable(combinedActions)
+        commitTransaction(txn, engine, combineActions)
+      case None =>
+        commitTransaction(txn, engine, emptyIterable[Row])
+    }
+  }
+
+  /** Utility to create table, with no data */
+  def createEmptyTable(
+      engine: Engine = defaultEngine,
+      tablePath: String,
+      schema: StructType,
+      partCols: Seq[String] = Seq.empty,
+      clock: Clock = () => System.currentTimeMillis,
+      tableProperties: Map[String, String] = null): TransactionCommitResult = {
+
+    appendData(
+      engine,
+      tablePath,
+      isNewTable = true,
+      schema,
+      partCols,
+      data = Seq.empty,
+      clock,
+      tableProperties)
+  }
+
+  /** Update an existing table - metadata only changes (no data changes) */
+  def updateTableMetadata(
+      engine: Engine = defaultEngine,
+      tablePath: String,
+      schema: StructType = null, // non-null schema means schema change
+      clock: Clock = () => System.currentTimeMillis,
+      tableProperties: Map[String, String] = null): TransactionCommitResult = {
+    appendData(
+      engine,
+      tablePath,
+      isNewTable = false,
+      schema,
+      Seq.empty,
+      data = Seq.empty,
+      clock,
+      tableProperties)
   }
 
   def appendData(

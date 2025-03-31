@@ -16,10 +16,13 @@
 package io.delta.kernel.internal.util;
 
 import static io.delta.kernel.internal.DeltaErrors.*;
+import static io.delta.kernel.internal.util.ColumnMapping.*;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
+import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.DeltaErrors;
+import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.types.*;
 import java.util.*;
 import java.util.function.Function;
@@ -76,6 +79,31 @@ public class SchemaUtils {
     }
 
     validateSupportedType(schema);
+  }
+
+  /**
+   * Performs the following validations on an updated table schema using the current schema as a
+   * base for validation. ColumnMapping must be enabled to call this
+   *
+   * <p>The following checks are performed:
+   *
+   * <ul>
+   *   <li>No duplicate columns are allowed
+   *   <li>Column names contain only valid characters
+   *   <li>Data types are supported
+   *   <li>Physical column name consistency is preserved in the new schema
+   *   <li>ToDo: No new non-nullable fields are added or no tightening of nullable fields
+   *   <li>ToDo: Nested IDs for array/map types are preserved in the new schema for IcebergCompatV2
+   *   <li>ToDo: No type changes
+   * </ul>
+   */
+  public static void validateUpdatedSchema(
+      StructType currentSchema, StructType newSchema, Metadata metadata) {
+    checkArgument(
+        isColumnMappingModeEnabled(ColumnMapping.getColumnMappingMode(metadata.getConfiguration())),
+        "Cannot validate updated schema when column mapping is disabled");
+    validateSchema(newSchema, true /*columnMappingEnabled*/);
+    validateSchemaEvolution(currentSchema, newSchema, metadata);
   }
 
   /**
@@ -200,6 +228,18 @@ public class SchemaUtils {
         schema, new ArrayList<>(), recurseIntoMapOrArrayElements, stopOnFirstMatch, f);
   }
 
+  /**
+   * Collects all leaf columns from the given schema (including flattened columns only for
+   * StructTypes), up to maxColumns. NOTE: If maxColumns = -1, we collect ALL leaf columns in the
+   * schema.
+   */
+  public static List<Column> collectLeafColumns(
+      StructType schema, Set<String> excludedColumns, int maxColumns) {
+    List<Column> result = new ArrayList<>();
+    collectLeafColumnsInternal(schema, null, excludedColumns, result, maxColumns);
+    return result;
+  }
+
   /////////////////////////////////////////////////////////////////////////////////////////////////
   /// Private methods                                                                           ///
   /////////////////////////////////////////////////////////////////////////////////////////////////
@@ -294,6 +334,108 @@ public class SchemaUtils {
     return filtered;
   }
 
+  /* Compute the SchemaChanges using field IDs */
+  static SchemaChanges computeSchemaChangesById(
+      Map<Long, StructField> currentFieldIdToField, Map<Long, StructField> updatedFieldIdToField) {
+    SchemaChanges.Builder schemaDiff = SchemaChanges.builder();
+    for (Map.Entry<Long, StructField> fieldInUpdatedSchema : updatedFieldIdToField.entrySet()) {
+      StructField existingField = currentFieldIdToField.get(fieldInUpdatedSchema.getKey());
+      StructField updatedField = fieldInUpdatedSchema.getValue();
+      // New field added
+      if (existingField == null) {
+        schemaDiff.withAddedField(updatedField);
+      } else if (!existingField.equals(updatedField)) {
+        // Field changed name, nullability, metadata or type
+        schemaDiff.withUpdatedField(existingField, updatedField);
+      }
+    }
+
+    for (Map.Entry<Long, StructField> entry : currentFieldIdToField.entrySet()) {
+      if (!updatedFieldIdToField.containsKey(entry.getKey())) {
+        schemaDiff.withRemovedField(entry.getValue());
+      }
+    }
+
+    return schemaDiff.build();
+  }
+
+  private static void validatePhysicalNameConsistency(
+      List<Tuple2<StructField, StructField>> updatedFields) {
+    for (Tuple2<StructField, StructField> updatedField : updatedFields) {
+      StructField currentField = updatedField._1;
+      StructField newField = updatedField._2;
+      if (!getPhysicalName(currentField).equals(getPhysicalName(newField))) {
+        throw new IllegalArgumentException(
+            String.format(
+                "Existing field with id %s in current schema has "
+                    + "physical name %s which is different from %s",
+                getColumnId(currentField),
+                getPhysicalName(currentField),
+                getPhysicalName(newField)));
+      }
+    }
+  }
+
+  /* Validate if a given schema evolution is safe for a given column mapping mode*/
+  private static void validateSchemaEvolution(
+      StructType currentSchema, StructType newSchema, Metadata metadata) {
+    ColumnMappingMode columnMappingMode =
+        ColumnMapping.getColumnMappingMode(metadata.getConfiguration());
+    switch (columnMappingMode) {
+      case ID:
+      case NAME:
+        validateSchemaEvolutionById(currentSchema, newSchema, metadata);
+        return;
+      case NONE:
+        throw new UnsupportedOperationException(
+            "Schema evolution without column mapping is not supported");
+      default:
+        throw new UnsupportedOperationException(
+            "Unknown column mapping mode: " + columnMappingMode);
+    }
+  }
+
+  /* Validates a given schema evolution by using field ID
+  as the source of truth for identifying fields */
+  private static void validateSchemaEvolutionById(
+      StructType currentSchema, StructType newSchema, Metadata metadata) {
+    Map<Long, StructField> currentFieldsById = fieldsById(currentSchema);
+    Map<Long, StructField> updatedFieldsById = fieldsById(newSchema);
+    SchemaChanges schemaChanges = computeSchemaChangesById(currentFieldsById, updatedFieldsById);
+
+    // Validate physical name consistency on the updated fields
+    validatePhysicalNameConsistency(schemaChanges.updatedFields());
+
+    // ToDo Validate IcebergCompatV2 nested IDs
+
+    // ToDo: Validate schema compatibility
+  }
+
+  /** Returns a map from field ID to the field in the schema */
+  private static Map<Long, StructField> fieldsById(StructType schema) {
+    List<Tuple2<List<String>, StructField>> columnPathToStructField =
+        filterRecursively(
+            schema,
+            true /* recurseIntoMapOrArrayElements */,
+            false /* stopOnFirstMatch */,
+            sf -> true);
+    Map<Long, StructField> columnIdToField = new HashMap<>();
+    for (Tuple2<List<String>, StructField> pathAndField : columnPathToStructField) {
+      StructField field = pathAndField._2;
+      checkArgument(hasColumnId(field), "Field %s is missing column id", field.getName());
+      checkArgument(hasPhysicalName(field), "Field %s is missing physical name", field.getName());
+      long columnId = field.getMetadata().getLong(COLUMN_MAPPING_ID_KEY);
+      checkArgument(
+          !columnIdToField.containsKey(columnId),
+          "Field %s with id %d already exists",
+          field.getName(),
+          columnId);
+      columnIdToField.put(columnId, field);
+    }
+
+    return columnIdToField;
+  }
+
   /** column name by concatenating the column path elements (think of nested) with dots */
   private static String concatWithDot(List<String> columnPath) {
     return columnPath.stream().map(SchemaUtils::escapeDots).collect(Collectors.joining("."));
@@ -301,6 +443,38 @@ public class SchemaUtils {
 
   private static String escapeDots(String name) {
     return name.contains(".") ? "`" + name + "`" : name;
+  }
+
+  private static void collectLeafColumnsInternal(
+      StructType schema,
+      Column parentColumn,
+      Set<String> excludedColumns,
+      List<Column> result,
+      int maxColumns) {
+    boolean hasLimit = maxColumns != -1;
+    for (StructField field : schema.fields()) {
+      if (hasLimit && result.size() >= maxColumns) {
+        return;
+      }
+
+      Column currentColumn = null;
+      if (parentColumn == null) {
+        // Skip excluded top-level columns
+        if (excludedColumns.contains(field.getName())) {
+          continue;
+        }
+        currentColumn = new Column(field.getName());
+      } else {
+        currentColumn = parentColumn.appendNestedField(field.getName());
+      }
+
+      if (field.getDataType() instanceof StructType) {
+        collectLeafColumnsInternal(
+            (StructType) field.getDataType(), currentColumn, excludedColumns, result, maxColumns);
+      } else {
+        result.add(currentColumn);
+      }
+    }
   }
 
   protected static void validParquetColumnNames(List<String> columnNames) {

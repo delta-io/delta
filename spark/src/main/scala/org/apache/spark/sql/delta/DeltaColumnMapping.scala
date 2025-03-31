@@ -421,7 +421,8 @@ trait DeltaColumnMappingBase extends DeltaLogging {
       isOverwritingSchema: Boolean): Metadata = {
     val rawSchema = newMetadata.schema
     var maxId = DeltaConfigs.COLUMN_MAPPING_MAX_ID.fromMetaData(newMetadata) max
-                findMaxColumnId(rawSchema)
+      DeltaConfigs.COLUMN_MAPPING_MAX_ID.fromMetaData(oldMetadata) max
+      findMaxColumnId(rawSchema)
     val startId = maxId
     val newSchema =
       SchemaMergingUtils.transformColumns(rawSchema)((path, field, _) => {

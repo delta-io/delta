@@ -46,7 +46,7 @@ object UCCommitCoordinatorBuilder extends CommitCoordinatorBuilder with DeltaLog
 
   /** Connector class name for filtering relevant Unity Catalog catalogs. */
   final private val UNITY_CATALOG_CONNECTOR_CLASS: String =
-    "io.unitycatalog.connectors.spark.UCSingleCatalog"
+    "io.unitycatalog.spark.UCSingleCatalog"
 
   /** Suffix for the URI configuration of a catalog. */
   final private val URI_SUFFIX = "uri"

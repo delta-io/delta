@@ -145,29 +145,37 @@ trait DeltaErrorsSuiteBase
     regexToFindUrl.findAllIn(message).toList
   }
 
+  def testUrl(errName: String, url: String): Unit = {
+    Given(s"*** Checking response for url: $url")
+    val lastResponse = (1 to MAX_URL_ACCESS_RETRIES).map { attempt =>
+      if (attempt > 1) Thread.sleep(1000)
+      val response = try {
+        Process("curl -I " + url).!!
+      } catch {
+        case e: RuntimeException =>
+          val sw = new StringWriter
+          e.printStackTrace(new PrintWriter(sw))
+          sw.toString
+      }
+      if (checkIfValidResponse(url, response)) {
+        // The URL is correct. No need to retry.
+        return
+      }
+      response
+    }.last
+
+    // None of the attempts resulted in a valid response. Fail the test.
+    fail(
+      s"""
+         |A link to the URL: '$url' is broken in the error: $errName, accessing this URL
+         |does not result in a valid response, received the following response: $lastResponse
+       """.stripMargin)
+  }
+
   def testUrls(): Unit = {
     errorMessagesToTest.foreach { case (errName, message) =>
       getUrlsFromMessage(message).foreach { url =>
-        Given(s"*** Checking response for url: $url")
-        var response = ""
-        (1 to MAX_URL_ACCESS_RETRIES).foreach { attempt =>
-          if (attempt > 1) Thread.sleep(1000)
-          response = try {
-            Process("curl -I " + url).!!
-          } catch {
-            case e: RuntimeException =>
-              val sw = new StringWriter
-              e.printStackTrace(new PrintWriter(sw))
-              sw.toString
-          }
-          if (!checkIfValidResponse(url, response)) {
-            fail(
-              s"""
-                 |A link to the URL: '$url' is broken in the error: $errName, accessing this URL
-                 |does not result in a valid response, received the following response: $response
-         """.stripMargin)
-          }
-        }
+        testUrl(errName, url)
       }
     }
   }
@@ -915,7 +923,7 @@ trait DeltaErrorsSuiteBase
           override val name: String = "DummyPostCommitHook"
           override def run(
             spark: SparkSession, txn: DeltaTransaction, committedVersion: Long,
-            postCommitSnapshot: Snapshot, committedActions: Seq[Action]): Unit = {}
+            postCommitSnapshot: Snapshot, committedActions: Iterator[Action]): Unit = {}
         }, 0, "msg", null)
       }
       checkErrorMessage(e, Some("DELTA_POST_COMMIT_HOOK_FAILED"), Some("2DKD0"),
@@ -928,7 +936,7 @@ trait DeltaErrorsSuiteBase
           override val name: String = "DummyPostCommitHook"
           override def run(
             spark: SparkSession, txn: DeltaTransaction, committedVersion: Long,
-            postCommitSnapshot: Snapshot, committedActions: Seq[Action]): Unit = {}
+            postCommitSnapshot: Snapshot, committedActions: Iterator[Action]): Unit = {}
         }, 0, null, null)
       }
       checkErrorMessage(e, Some("DELTA_POST_COMMIT_HOOK_FAILED"), Some("2DKD0"),
@@ -3241,19 +3249,6 @@ trait DeltaErrorsSuiteBase
       )
     }
     {
-      val e = intercept[DeltaAnalysisException] {
-        throw new DeltaAnalysisException(
-          errorClass = "_LEGACY_ERROR_TEMP_DELTA_0011",
-          messageParameters = Array.empty)
-      }
-      checkErrorMessage(
-        e,
-        Some("_LEGACY_ERROR_TEMP_DELTA_0011"),
-        None,
-        Some("Failed to resolve plan.")
-      )
-    }
-    {
       val exprs = Seq("1".expr, "2".expr)
       val e = intercept[DeltaAnalysisException] {
         throw new DeltaAnalysisException(
@@ -3322,32 +3317,21 @@ trait DeltaErrorsSuiteBase
         DeltaErrors.multipleSourceRowMatchingTargetRowInMergeException(spark)
       assert(exceptionWithContext.getMessage.contains("https") === true)
 
-      withCustomContext(spark, null) {
-        val exceptionWithoutContext =
-          DeltaErrors.multipleSourceRowMatchingTargetRowInMergeException(spark)
-        assert(exceptionWithoutContext.getMessage.contains("https") === false)
-      }
+      val newSession = spark.newSession()
+      setCustomContext(newSession, null)
+      val exceptionWithoutContext =
+        DeltaErrors.multipleSourceRowMatchingTargetRowInMergeException(newSession)
+      assert(exceptionWithoutContext.getMessage.contains("https") === false)
     }
   }
 
   private def setCustomContext(session: SparkSession, context: SparkContext): Unit = {
-    val scField = classOf[SparkSession].getDeclaredField("sparkContext")
+    val scField = session.getClass.getDeclaredField("sparkContext")
     scField.setAccessible(true)
     try {
       scField.set(session, context)
     } finally {
       scField.setAccessible(false)
-    }
-  }
-
-  /** Runs `f` with custom context used in spark session. */
-  private def withCustomContext(session: SparkSession, context: SparkContext)(f: => Unit): Unit = {
-    val originalContext = session.sparkContext
-    try {
-      setCustomContext(session, context)
-      f
-    } finally {
-      setCustomContext(session, originalContext)
     }
   }
 }

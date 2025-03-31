@@ -30,6 +30,13 @@ import java.util.stream.Collectors;
 
 public class Metadata {
 
+  public static Metadata fromRow(Row row) {
+    requireNonNull(row);
+    checkArgument(FULL_SCHEMA.equals(row.getSchema()));
+    return fromColumnVector(
+        VectorUtils.buildColumnVector(Collections.singletonList(row), FULL_SCHEMA), /* rowId */ 0);
+  }
+
   public static Metadata fromColumnVector(ColumnVector vector, int rowId) {
     if (vector.isNullAt(rowId)) {
       return null;
@@ -120,7 +127,7 @@ public class Metadata {
                         .collect(Collectors.toList())));
   }
 
-  public Metadata withNewConfiguration(Map<String, String> configuration) {
+  public Metadata withMergedConfiguration(Map<String, String> configuration) {
     Map<String, String> newConfiguration = new HashMap<>(getConfiguration());
     newConfiguration.putAll(configuration);
     return new Metadata(

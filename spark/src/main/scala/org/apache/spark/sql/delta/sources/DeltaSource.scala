@@ -41,6 +41,7 @@ import org.apache.spark.internal.MDC
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
+import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
 import org.apache.spark.sql.connector.read.streaming
 import org.apache.spark.sql.connector.read.streaming.{ReadAllAvailable, ReadLimit, ReadMaxFiles, SupportsAdmissionControl, SupportsTriggerAvailableNow}
 import org.apache.spark.sql.execution.streaming._
@@ -225,18 +226,18 @@ trait DeltaSourceBase extends Source
   @volatile protected var hasCheckedReadIncompatibleSchemaChangesOnStreamStart: Boolean = false
 
   override val schema: StructType = {
-    val readSchema = DeltaTableUtils.removeInternalWriterMetadata(spark, readSchemaAtSourceInit)
     val readSchemaWithCdc = if (options.readChangeFeed) {
-      CDCReader.cdcReadSchema(readSchema)
+      CDCReader.cdcReadSchema(readSchemaAtSourceInit)
     } else {
-      readSchema
+      readSchemaAtSourceInit
     }
-    DeltaTableUtils.removeInternalDeltaMetadata(spark, readSchemaWithCdc)
+    DeltaTableUtils.removeInternalDeltaMetadata(
+      spark, DeltaTableUtils.removeInternalWriterMetadata(spark, readSchemaWithCdc))
   }
 
   // A dummy empty dataframe that can be returned at various point during streaming
-  protected val emptyDataFrame: DataFrame = spark.sqlContext.internalCreateDataFrame(
-    spark.sparkContext.emptyRDD[InternalRow], schema, isStreaming = true)
+  protected val emptyDataFrame: DataFrame =
+    DataFrameUtils.ofRows(spark, LocalRelation(schema).copy(isStreaming = true))
 
   /**
    * When `AvailableNow` is used, this offset will be the upper bound where this run of the query
@@ -1368,7 +1369,7 @@ case class DeltaSource(
             // check is skipped, so this is technically not safe, but we keep it this way for
             // historical reasons.
             deltaLog.history.checkVersionExists(
-              version, mustBeRecreatable = false, allowOutOfRange)
+              version, catalogTableOpt = None, mustBeRecreatable = false, allowOutOfRange)
           }
           version
       }
@@ -1452,6 +1453,7 @@ object DeltaSource extends DeltaLogging {
     val tz = spark.sessionState.conf.sessionLocalTimeZone
     val commit = deltaLog.history.getActiveCommitAtTime(
       timestamp,
+      catalogTableOpt = None,
       canReturnLastCommit = true,
       mustBeRecreatable = false,
       canReturnEarliestCommit = true)

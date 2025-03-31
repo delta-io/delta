@@ -15,7 +15,12 @@
  */
 package io.delta.kernel.internal.util;
 
+import static io.delta.kernel.internal.DeltaErrors.columnNotFoundInSchema;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import static java.util.Collections.singletonMap;
+
 import io.delta.kernel.exceptions.InvalidConfigurationValueException;
+import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.types.*;
@@ -118,7 +123,7 @@ public class ColumnMapping {
     ColumnMappingMode oldMappingMode = getColumnMappingMode(oldConfig);
     ColumnMappingMode newMappingMode = getColumnMappingMode(newConfig);
 
-    Preconditions.checkArgument(
+    checkArgument(
         isNewTable || validModeChange(oldMappingMode, newMappingMode),
         "Changing column mapping mode from '%s' to '%s' is not supported",
         oldMappingMode,
@@ -129,11 +134,22 @@ public class ColumnMapping {
     return columnMappingMode == ColumnMappingMode.ID || columnMappingMode == ColumnMappingMode.NAME;
   }
 
-  public static Metadata updateColumnMappingMetadata(
-      Metadata metadata, ColumnMappingMode columnMappingMode, boolean isNewTable) {
+  /**
+   * Updates the column mapping metadata if needed based on the column mapping mode and whether the
+   * icebergCompatV2 is enabled. If column mapping/iceberg compat info is already present in the
+   * metadata, this method does nothing and returns an empty Optional. Callers can avoid updating
+   * the metadata if the metadata has not changed.
+   *
+   * @param metadata Current metadata.
+   * @param isNewTable Whether this is part of a commit that sets the mapping mode on a new table.
+   * @return Optional of the updated metadata if it has changed, Optional.empty() otherwise.
+   */
+  public static Optional<Metadata> updateColumnMappingMetadataIfNeeded(
+      Metadata metadata, boolean isNewTable) {
+    ColumnMappingMode columnMappingMode = getColumnMappingMode(metadata.getConfiguration());
     switch (columnMappingMode) {
       case NONE:
-        return metadata;
+        return Optional.empty();
       case ID: // fall through
       case NAME:
         return assignColumnIdAndPhysicalName(metadata, isNewTable);
@@ -141,6 +157,31 @@ public class ColumnMapping {
         throw new UnsupportedOperationException(
             "Unsupported column mapping mode: " + columnMappingMode);
     }
+  }
+
+  /** Returns the physical column and data type for a given logical column based on the schema. */
+  public static Tuple2<Column, DataType> getPhysicalColumnNameAndDataType(
+      StructType schema, Column logicalColumn) {
+    List<String> physicalNameParts = new ArrayList<>();
+    DataType currentType = schema;
+
+    // Traverse through each level of the logical name to resolve its corresponding physical name.
+    for (String namePart : logicalColumn.getNames()) {
+      if (!(currentType instanceof StructType)) {
+        throw columnNotFoundInSchema(logicalColumn, schema);
+      }
+
+      StructType structType = (StructType) currentType;
+      // Find the field in the current structure that matches the given name
+      StructField field =
+          structType.fields().stream()
+              .filter(f -> f.getName().equalsIgnoreCase(namePart))
+              .findFirst()
+              .orElseThrow(() -> columnNotFoundInSchema(logicalColumn, schema));
+      physicalNameParts.add(ColumnMapping.getPhysicalName(field));
+      currentType = field.getDataType();
+    }
+    return new Tuple2<>(new Column(physicalNameParts.toArray(new String[0])), currentType);
   }
 
   ////////////////////////////
@@ -154,6 +195,18 @@ public class ColumnMapping {
       maxColumnId = findMaxColumnId(field, maxColumnId);
     }
     return maxColumnId;
+  }
+
+  static boolean hasColumnId(StructField field) {
+    return field.getMetadata().contains(COLUMN_MAPPING_ID_KEY);
+  }
+
+  static boolean hasPhysicalName(StructField field) {
+    return field.getMetadata().contains(COLUMN_MAPPING_PHYSICAL_NAME_KEY);
+  }
+
+  static int getColumnId(StructField field) {
+    return field.getMetadata().getLong(COLUMN_MAPPING_ID_KEY).intValue();
   }
 
   private static int findMaxColumnId(StructField field, int maxColumnId) {
@@ -261,10 +314,13 @@ public class ColumnMapping {
    *
    * @param metadata The new metadata to assign ids and physical names to
    * @param isNewTable whether this is part of a commit that sets the mapping mode on a new table
-   * @return {@link Metadata} with a new schema where ids and physical names have been assigned
+   * @return Optional {@link Metadata} with a new schema where ids and physical names have been
+   *     assigned if the schema has changed, returns Optional.empty() otherwise
    */
-  private static Metadata assignColumnIdAndPhysicalName(Metadata metadata, boolean isNewTable) {
-    StructType schema = metadata.getSchema();
+  private static Optional<Metadata> assignColumnIdAndPhysicalName(
+      Metadata metadata, boolean isNewTable) {
+    StructType oldSchema = metadata.getSchema();
+
     AtomicInteger maxColumnId =
         new AtomicInteger(
             Math.max(
@@ -272,9 +328,12 @@ public class ColumnMapping {
                     metadata
                         .getConfiguration()
                         .getOrDefault(COLUMN_MAPPING_MAX_COLUMN_ID_KEY, "0")),
-                findMaxColumnId(schema)));
+                findMaxColumnId(oldSchema)));
+
+    int oldMaxColumnId = maxColumnId.get();
+
     StructType newSchema = new StructType();
-    for (StructField field : schema.fields()) {
+    for (StructField field : oldSchema.fields()) {
       newSchema =
           newSchema.add(
               transformAndAssignColumnIdAndPhysicalName(
@@ -290,10 +349,25 @@ public class ColumnMapping {
       newSchema = rewriteFieldIdsForIceberg(newSchema, maxColumnId);
     }
 
-    Map<String, String> config = new HashMap<>();
-    config.put(COLUMN_MAPPING_MAX_COLUMN_ID_KEY, Integer.toString(maxColumnId.get()));
+    // We are comparing the old schema with the new schema to determine if the schema has changed.
+    // If this becomes hotspot, we can consider updating the methods to pass around AtomicBoolean
+    // to track if the schema has changed. It is a bit convoluted to pass around and update the
+    // AtomicBoolean in the recursive and multiple methods.
+    if (oldSchema.equals(newSchema)) {
+      checkArgument(
+          oldMaxColumnId == maxColumnId.get(),
+          "The schema hasn't changed but the max column id has changed from %s to %s",
+          oldMaxColumnId,
+          maxColumnId.get());
 
-    return metadata.withNewSchema(newSchema).withNewConfiguration(config);
+      return Optional.empty();
+    }
+
+    String maxFieldId = Integer.toString(maxColumnId.get());
+    return Optional.of(
+        metadata
+            .withNewSchema(newSchema)
+            .withMergedConfiguration(singletonMap(COLUMN_MAPPING_MAX_COLUMN_ID_KEY, maxFieldId)));
   }
 
   /**
@@ -382,18 +456,6 @@ public class ColumnMapping {
                   .build());
     }
     return field;
-  }
-
-  private static boolean hasColumnId(StructField field) {
-    return field.getMetadata().contains(COLUMN_MAPPING_ID_KEY);
-  }
-
-  private static boolean hasPhysicalName(StructField field) {
-    return field.getMetadata().contains(COLUMN_MAPPING_PHYSICAL_NAME_KEY);
-  }
-
-  private static int getColumnId(StructField field) {
-    return field.getMetadata().getLong(COLUMN_MAPPING_ID_KEY).intValue();
   }
 
   private static boolean hasNestedColumnIds(StructField field) {

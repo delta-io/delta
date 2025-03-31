@@ -63,7 +63,7 @@ class UCCommitCoordinatorClientSuite extends UCCommitCoordinatorClientSuiteBase
     with PrivateMethodTester
 {
   protected override def sparkConf = super.sparkConf
-      .set("spark.sql.catalog.main", "io.unitycatalog.connectors.spark.UCSingleCatalog")
+      .set("spark.sql.catalog.main", "io.unitycatalog.spark.UCSingleCatalog")
       .set("spark.sql.catalog.main.uri", "https://test-uri.com")
       .set("spark.sql.catalog.main.token", "test-token")
       .set("spark.hadoop.fs.file.impl", classOf[LocalFileSystem].getCanonicalName)

@@ -33,6 +33,9 @@ import org.apache.spark.SparkFunSuite
 
 class IcebergStatsUtilsSuite extends SparkFunSuite {
 
+  private val StatsAllowTypes =
+    IcebergStatsUtils.typesAllowStatsConversion(statsDisallowTypes = Set.empty)
+
   test("stats conversion from basic columns") {
     val icebergSchema = new Schema(10, Seq[NestedField](
       NestedField.required(1, "col_int", IntegerType.get),
@@ -95,16 +98,17 @@ class IcebergStatsUtilsSuite extends SparkFunSuite {
       1251,
       minMap,
       maxMap,
-      nullCountMap
+      nullCountMap,
+      statsAllowTypes = StatsAllowTypes
     )
 
     val actualStatsObj = JsonUtils.fromJson[StatsObject](deltaStats)
     val expectedStatsObj = JsonUtils.fromJson[StatsObject](
       """{"numRecords":1251,
-        |"maxValues":{"col_date":12800,"col_int":-5,"col_double":1.0E-4,
+        |"maxValues":{"col_date":"2005-01-17","col_int":-5,"col_double":1.0E-4,
         |"col_float":0.001,"col_long":-4,"col_strt":{"sc_int":-1,"sc_int2":-1},
         |"col_boolean":false,"col_st":"minval","col_binary":"AQIDBA=="},
-        |"minValues":{"col_date":13800,"col_int":5,"col_double":10.0001,
+        |"minValues":{"col_date":"2007-10-14","col_int":5,"col_double":10.0001,
         |"col_float":10.001,"col_long":4,"col_strt":{"sc_int":128,"sc_int2":512},
         |"col_boolean":true,"col_st":"maxval","col_binary":"AgIDBA=="},
         |"nullCount":{"col_int":0,"col_double":4,"col_float":3,"col_long":1,
@@ -113,7 +117,7 @@ class IcebergStatsUtilsSuite extends SparkFunSuite {
     assertResult(expectedStatsObj)(actualStatsObj)
   }
 
-  test("stats conversion from timestamp 64 and decimal is disabled") {
+  test("stats conversion for decimal and timestamp") {
     val icebergSchema = new Schema(10, Seq[NestedField](
       NestedField.required(1, "col_ts", TimestampType.withZone),
       NestedField.required(2, "col_tsnz", TimestampType.withoutZone),
@@ -142,11 +146,23 @@ class IcebergStatsUtilsSuite extends SparkFunSuite {
         Integer.valueOf(1) -> JLong.valueOf(20),
         Integer.valueOf(2) -> JLong.valueOf(10),
         Integer.valueOf(3) -> JLong.valueOf(31)
-      )
+      ),
+      statsAllowTypes = StatsAllowTypes
     )
     assertResult(
       JsonUtils.fromJson[StatsObject](
-        """{"numRecords":1251,"maxValues":{},"minValues":{},"nullCount":{}}"""))(
+        """{"numRecords":1251,
+          |"maxValues":{
+          | "col_ts":"2024-12-17T00:22:59+00:00",
+          | "col_tsnz":"2024-12-17T00:22:59",
+          | "col_decimal":9.99999
+          | },
+          |"minValues":{
+          | "col_ts":"2024-12-16T23:32:59+00:00",
+          | "col_tsnz":"2024-12-16T23:32:59",
+          | "col_decimal":3.44141
+          | },
+          |"nullCount":{"col_ts":20,"col_tsnz":10,"col_decimal":31}}""".stripMargin))(
       JsonUtils.fromJson[StatsObject](deltaStats))
   }
 
@@ -175,7 +191,8 @@ class IcebergStatsUtilsSuite extends SparkFunSuite {
         Integer.valueOf(2) -> null,
         Integer.valueOf(3) -> JLong.valueOf(2),
         Integer.valueOf(5) -> JLong.valueOf(3)
-      )
+      ),
+      statsAllowTypes = StatsAllowTypes
     )
     assertResult(
       JsonUtils.fromJson[StatsObject](
@@ -198,16 +215,22 @@ class IcebergStatsUtilsSuite extends SparkFunSuite {
         |"minValues":{"col_int":100992003},"nullCount":{"col_int":2}}"""
         .stripMargin)
     val actualStats =
-      IcebergStatsUtils.icebergStatsToDelta(icebergSchema, DummyDataFile())
+      IcebergStatsUtils.icebergStatsToDelta(icebergSchema, DummyDataFile(), StatsAllowTypes)
         .map(JsonUtils.fromJson[StatsObject](_))
         .get
     assertResult(expectedStats)(actualStats)
-    assertResult(None)(IcebergStatsUtils.icebergStatsToDelta(icebergSchema,
-      DummyDataFile(upperBounds = null)))
-    assertResult(None)(IcebergStatsUtils.icebergStatsToDelta(icebergSchema,
-      DummyDataFile(lowerBounds = null)))
-    assertResult(None)(IcebergStatsUtils.icebergStatsToDelta(icebergSchema,
-      DummyDataFile(nullValueCounts = null)))
+    assertResult(None)(IcebergStatsUtils.icebergStatsToDelta(
+      icebergSchema,
+      DummyDataFile(upperBounds = null),
+      statsAllowTypes = StatsAllowTypes))
+    assertResult(None)(IcebergStatsUtils.icebergStatsToDelta(
+      icebergSchema,
+      DummyDataFile(lowerBounds = null),
+      statsAllowTypes = StatsAllowTypes))
+    assertResult(None)(IcebergStatsUtils.icebergStatsToDelta(
+      icebergSchema,
+      DummyDataFile(nullValueCounts = null),
+      statsAllowTypes = StatsAllowTypes))
   }
 }
 

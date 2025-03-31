@@ -200,6 +200,19 @@ public class TableFeatures {
     }
   }
 
+  public static final TableFeature CLUSTERING_W_FEATURE = new ClusteringTableFeature();
+
+  private static class ClusteringTableFeature extends TableFeature.WriterFeature {
+    ClusteringTableFeature() {
+      super("clustering", /* minWriterVersion = */ 7);
+    }
+
+    @Override
+    public Set<TableFeature> requiredFeatures() {
+      return Collections.singleton(DOMAIN_METADATA_W_FEATURE);
+    }
+  }
+
   public static final TableFeature ROW_TRACKING_W_FEATURE = new RowTrackingFeature();
 
   private static class RowTrackingFeature extends TableFeature.WriterFeature
@@ -339,6 +352,24 @@ public class TableFeatures {
     }
   }
 
+  public static final TableFeature ICEBERG_WRITER_COMPAT_V1 = new IcebergWriterCompatV1();
+
+  private static class IcebergWriterCompatV1 extends TableFeature.WriterFeature
+      implements FeatureAutoEnabledByMetadata {
+    IcebergWriterCompatV1() {
+      super("icebergWriterCompatV1", /* minWriterVersion = */ 7);
+    }
+
+    @Override
+    public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
+      return TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.fromMetadata(metadata);
+    }
+
+    public @Override Set<TableFeature> requiredFeatures() {
+      return Collections.singleton(ICEBERG_COMPAT_V2_W_FEATURE);
+    }
+  }
+
   /////////////////////////////////////////////////////////////////////////////////
   /// END: Define the {@link TableFeature}s                                     ///
   /////////////////////////////////////////////////////////////////////////////////
@@ -358,6 +389,7 @@ public class TableFeatures {
               APPEND_ONLY_W_FEATURE,
               CHECKPOINT_V2_RW_FEATURE,
               CHANGE_DATA_FEED_W_FEATURE,
+              CLUSTERING_W_FEATURE,
               COLUMN_MAPPING_RW_FEATURE,
               CONSTRAINTS_W_FEATURE,
               DELETION_VECTORS_RW_FEATURE,
@@ -373,7 +405,8 @@ public class TableFeatures {
               TYPE_WIDENING_RW_FEATURE,
               VACUUM_PROTOCOL_CHECK_RW_FEATURE,
               VARIANT_RW_FEATURE,
-              VARIANT_RW_PREVIEW_FEATURE));
+              VARIANT_RW_PREVIEW_FEATURE,
+              ICEBERG_WRITER_COMPAT_V1));
 
   public static final Map<String, TableFeature> TABLE_FEATURE_MAP =
       Collections.unmodifiableMap(
@@ -421,17 +454,28 @@ public class TableFeatures {
    *
    * @param newMetadata the new metadata to be applied to the table.
    * @param needDomainMetadataSupport whether the table needs to explicitly support domain metadata.
+   * @param needClusteringTableFeature whether the table needs to support clustering table feature
+   *     if true it would add domainMetadata support as well.
    * @param currentProtocol the current protocol of the table.
    * @return the upgraded protocol and the set of new features that were enabled in the upgrade.
    */
   public static Optional<Tuple2<Protocol, Set<TableFeature>>> autoUpgradeProtocolBasedOnMetadata(
-      Metadata newMetadata, boolean needDomainMetadataSupport, Protocol currentProtocol) {
+      Metadata newMetadata,
+      boolean needDomainMetadataSupport,
+      boolean needClusteringTableFeature,
+      Protocol currentProtocol) {
 
     Set<TableFeature> allNeededTableFeatures =
         extractAllNeededTableFeatures(newMetadata, currentProtocol);
     if (needDomainMetadataSupport) {
       allNeededTableFeatures =
           Stream.concat(allNeededTableFeatures.stream(), Stream.of(DOMAIN_METADATA_W_FEATURE))
+              .collect(toSet());
+    }
+    // Its dependency feature(domainMetadata) would be enabled automatically.
+    if (needClusteringTableFeature) {
+      allNeededTableFeatures =
+          Stream.concat(allNeededTableFeatures.stream(), Stream.of(CLUSTERING_W_FEATURE))
               .collect(toSet());
     }
     Protocol required =
@@ -502,6 +546,10 @@ public class TableFeatures {
         .contains(DOMAIN_METADATA_W_FEATURE);
   }
 
+  public static boolean isClusteringTableFeatureSupported(Protocol protocol) {
+    return protocol.supportsFeature(CLUSTERING_W_FEATURE);
+  }
+
   /////////////////////////////////////////////////////////////////////////////////
   /// Private methods                                                           ///
   /////////////////////////////////////////////////////////////////////////////////
@@ -543,7 +591,7 @@ public class TableFeatures {
     }
   }
 
-  private static boolean hasInvariants(StructType tableSchema) {
+  public static boolean hasInvariants(StructType tableSchema) {
     return !SchemaUtils.filterRecursively(
             tableSchema,
             // invariants are not allowed in maps or arrays

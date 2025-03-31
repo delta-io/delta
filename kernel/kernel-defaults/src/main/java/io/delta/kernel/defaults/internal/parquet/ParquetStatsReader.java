@@ -21,11 +21,11 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.function.UnaryOperator.identity;
 import static org.apache.hadoop.shaded.com.google.common.collect.ImmutableMap.toImmutableMap;
 
-import io.delta.kernel.defaults.engine.fileio.FileIO;
+import io.delta.kernel.defaults.engine.fileio.InputFile;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
+import io.delta.kernel.statistics.DataFileStatistics;
 import io.delta.kernel.types.*;
-import io.delta.kernel.utils.DataFileStatistics;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.BigInteger;
@@ -35,7 +35,9 @@ import org.apache.hadoop.shaded.com.google.common.collect.Multimap;
 import org.apache.parquet.column.statistics.*;
 import org.apache.parquet.format.converter.ParquetMetadataConverter;
 import org.apache.parquet.hadoop.ParquetFileReader;
-import org.apache.parquet.hadoop.metadata.*;
+import org.apache.parquet.hadoop.metadata.BlockMetaData;
+import org.apache.parquet.hadoop.metadata.ColumnChunkMetaData;
+import org.apache.parquet.hadoop.metadata.ParquetMetadata;
 import org.apache.parquet.schema.LogicalTypeAnnotation;
 import org.apache.parquet.schema.LogicalTypeAnnotation.DecimalLogicalTypeAnnotation;
 
@@ -44,18 +46,17 @@ public class ParquetStatsReader {
   /**
    * Read the statistics for the given Parquet file.
    *
-   * @param parquetFilePath The path to the Parquet file.
-   * @param fileIO The file IO implementation to use for reading the file.
+   * @param kernelInputFile {@link InputFile} representing the Parquet file.
    * @param dataSchema The schema of the Parquet file. Type info is used to decode statistics.
    * @param statsColumns The columns for which statistics should be collected and returned.
    * @return File/column level statistics as {@link DataFileStatistics} instance.
    */
   public static DataFileStatistics readDataFileStatistics(
-      FileIO fileIO, String parquetFilePath, StructType dataSchema, List<Column> statsColumns)
+      InputFile kernelInputFile, StructType dataSchema, List<Column> statsColumns)
       throws IOException {
     // Read the Parquet footer to compute the statistics
     org.apache.parquet.io.InputFile parquetFile =
-        ParquetIOUtils.createParquetInputFile(fileIO.newInputFile(parquetFilePath));
+        ParquetIOUtils.createParquetInputFile(kernelInputFile);
     ParquetMetadata footer =
         ParquetFileReader.readFooter(parquetFile, ParquetMetadataConverter.NO_FILTER);
     ImmutableMultimap.Builder<Column, ColumnChunkMetaData> metadataForColumn =
