@@ -882,23 +882,26 @@ class TableFeaturesSuite extends AnyFunSuite {
               !(manualFeatures & Set(
                 TableFeatures.CLUSTERING_W_FEATURE,
                 TableFeatures.DOMAIN_METADATA_W_FEATURE)).isEmpty
-            ) 7
+            ) { 7 }
             else expectedProtocol.getMinWriterVersion
           assert(newProtocol.getMinWriterVersion == expectedWriterVersion)
 
           // Expected enabled features
-          val expectedEnabledFeatures = expectedNewFeatures.asScala ++ manualFeatures ++ (
-            if (manualFeatures.contains(TableFeatures.CLUSTERING_W_FEATURE)) Set("domainMetadata")
-            else Set.empty
-          )
+          val expectedEnabledFeatures =
+            expectedNewFeatures.asScala ++ manualFeatures.map(_.featureName()).toSet ++ (
+              if (manualFeatures.contains(TableFeatures.CLUSTERING_W_FEATURE)) Set("domainMetadata")
+              else Set.empty
+            )
           assert(newFeaturesEnabled.asScala.map(_.featureName()).toSet == expectedEnabledFeatures)
 
           // Expected supported features
+          val implicitAndExplicitFeatures =
+            expectedProtocol.getImplicitlyAndExplicitlySupportedFeatures.asScala
           val expectedSupportedFeatures =
-            expectedProtocol.getImplicitlyAndExplicitlySupportedFeatures.asScala ++ manualFeatures ++ (
-              if (manualFeatures.contains(TableFeatures.CLUSTERING_W_FEATURE))
+            implicitAndExplicitFeatures ++ manualFeatures ++ (
+              if (manualFeatures.contains(TableFeatures.CLUSTERING_W_FEATURE)) {
                 Set(TableFeatures.DOMAIN_METADATA_W_FEATURE)
-              else Set.empty
+              } else { Set.empty }
             )
           assert(newProtocol.getImplicitlyAndExplicitlySupportedFeatures.asScala
             == expectedSupportedFeatures)
@@ -953,8 +956,8 @@ class TableFeaturesSuite extends AnyFunSuite {
   test(
     "extractFeaturePropertyOverrides returns feature options and removes from them from metadata") {
     val metadata = testMetadata(tblProps = Map(
-      "delta.feature.deletionVectors" -> "supported",
-      "delta.feature.appendOnly" -> "supported",
+      "delta.feature.deletionVectors" -> "true",
+      "delta.feature.appendOnly" -> "true",
       "anotherkey" -> "some_value",
       "delta.enableRowTracking" -> "true"))
 
