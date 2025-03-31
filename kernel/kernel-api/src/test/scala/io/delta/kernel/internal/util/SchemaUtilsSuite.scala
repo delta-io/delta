@@ -921,6 +921,40 @@ class SchemaUtilsSuite extends AnyFunSuite {
     }
   }
 
+  private val validateMetadataChange = Table(
+    ("schemaBefore", "schemaWithAddedField"),
+    // Adding column comment to id column
+    (
+      primitiveSchema,
+      new StructType()
+        .add(
+          "id",
+          IntegerType.INTEGER,
+          true,
+          FieldMetadata.builder().fromMetadata(fieldMetadata(
+            id = 1,
+            physicalName = "id")).putString("comment", "id comment").build())),
+    // Struct of array of struct where inner struct has added column comment to metadata
+    (
+      structWithArrayOfStructs,
+      structWithArrayOfStructs(
+        arrayType = new ArrayType(
+          new StructType().add(
+            "id",
+            IntegerType.INTEGER,
+            true,
+            FieldMetadata.builder().fromMetadata(fieldMetadata(4, "id")).putString(
+              "comment",
+              "id comment").build()),
+          false),
+        arrayName = "renamed_array")))
+
+  test("validateUpdatedSchema succeeds when updating field metadata") {
+    forAll(validateMetadataChange) { (schemaBefore, schemaAfter) =>
+      validateUpdatedSchema(schemaBefore, schemaAfter, metadata(schemaBefore))
+    }
+  }
+
   private def mapWithStructKey(
       mapType: DataType =
         mapWithStructKey.get("map").getDataType,
