@@ -36,10 +36,10 @@ class MetadataSuite extends AnyFunSuite {
     assert(newMetadata.getConfiguration.equals(Map("a" -> "c", "d" -> "f", "f" -> "g").asJava))
   }
 
-  test("withConfiguration replaces values") {
+  test("withReplacedConfiguration replaces values") {
     val metadata = testMetadata(Map("a" -> "b", "f" -> "g"))
 
-    val newMetadata = metadata.withConfiguration(Map("a" -> "c", "d" -> "f").asJava)
+    val newMetadata = metadata.withReplacedConfiguration(Map("a" -> "c", "d" -> "f").asJava)
 
     assert(newMetadata.getConfiguration.equals(Map("a" -> "c", "d" -> "f").asJava))
   }

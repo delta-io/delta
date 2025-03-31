@@ -319,9 +319,12 @@ public class TableConfig<T> {
       String key = kv.getKey().toLowerCase(Locale.ROOT);
       String value = kv.getValue();
 
-      // TableFeature properties validation is handled separately in TransactionBuilder.
-      if (key.startsWith("delta.")
-          && !key.startsWith(TableFeatures.PROPERTIES_FEATURE_OVERRIDE_PREFIX)) {
+      boolean isTableFeatureOverrideKey =
+          key.startsWith(TableFeatures.PROPERTIES_FEATURE_OVERRIDE_PREFIX);
+      boolean isTableConfigKey = key.startsWith("delta.");
+      // TableFeature override properties validation is handled separately in TransactionBuilder.
+      boolean shouldValidateProperties = isTableConfigKey && !isTableFeatureOverrideKey;
+      if (shouldValidateProperties) {
         // If it is a delta table property, make sure it is a supported property and editable
         if (!VALID_PROPERTIES.containsKey(key)) {
           throw DeltaErrors.unknownConfigurationException(kv.getKey());

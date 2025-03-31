@@ -136,14 +136,14 @@ public class Metadata {
   public Metadata withMergedConfiguration(Map<String, String> configuration) {
     Map<String, String> newConfiguration = new HashMap<>(getConfiguration());
     newConfiguration.putAll(configuration);
-    return withConfiguration(newConfiguration);
+    return withReplacedConfiguration(newConfiguration);
   }
 
   /**
    * Returns a new Metadata object with the configuration provided with newConfiguration (any prior
    * configuration is replaced).
    */
-  public Metadata withConfiguration(Map<String, String> newConfiguration) {
+  public Metadata withReplacedConfiguration(Map<String, String> newConfiguration) {
     return new Metadata(
         this.id,
         this.name,

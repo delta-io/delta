@@ -20,8 +20,9 @@ import java.util.Collections
 import scala.collection.immutable.Seq
 import scala.jdk.CollectionConverters._
 
+import io.delta.kernel.{Operation, Table}
 import io.delta.kernel.Operation.CREATE_TABLE
-import io.delta.kernel.Table
+import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.SnapshotImpl
 import io.delta.kernel.internal.actions.{Protocol => KernelProtocol}
@@ -205,17 +206,15 @@ class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
         TableFeatures.PROPERTIES_FEATURE_OVERRIDE_PREFIX
           + TableFeatures.DOMAIN_METADATA_W_FEATURE.featureName)
       val properties = Map(
-        "delta.feature.vacuumProtocolCheck" -> "supported",
-        domainMetadataKey -> "supported")
+        "delta.feature.vacuumProtocolCheck" -> "true",
+        domainMetadataKey -> "true")
       val txn = txnBuilder
         .withTableProperties(engine, properties.asJava)
         .withSchema(engine, testSchema)
         .build(engine)
-      val txnResult = commitTransaction(txn, engine, emptyIterable())
+      commitTransaction(txn, engine, emptyIterable())
 
-      assert(txnResult.getVersion === 0)
-
-      val writtenSnapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      val writtenSnapshot = latestSnapshot(table, engine)
       assert(writtenSnapshot.getMetadata.getConfiguration.isEmpty)
       assert(writtenSnapshot.getProtocol.getExplicitlySupportedFeatures.containsAll(Set(
         TableFeatures.VACUUM_PROTOCOL_CHECK_RW_FEATURE,
@@ -223,9 +222,71 @@ class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
     }
   }
 
+  test("withDomainMetadata adds corresponding feature option") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+      val properties = Map("delta.feature.vacuumProtocolCheck" -> "true")
+      val txn = txnBuilder.withTableProperties(
+        engine,
+        properties.asJava).withSchema(engine, testSchema).build(engine)
+      commitTransaction(txn, engine, emptyIterable())
+      assert(latestSnapshot(table, engine).getProtocol.getExplicitlySupportedFeatures.contains(
+        TableFeatures.DOMAIN_METADATA_W_FEATURE))
+    }
+  }
+
+  test("delta.feature prefixed keys are removed even if property is already present on protocol") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // Create Table
+      val table = Table.forPath(engine, tablePath)
+      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+      val properties = Map("delta.feature.vacuumProtocolCheck" -> "true")
+      val txn = txnBuilder.withTableProperties(
+        engine,
+        properties.asJava).withSchema(engine, testSchema).build(engine)
+      commitTransaction(txn, engine, emptyIterable())
+      assert(latestSnapshot(table, engine).getMetadata.getConfiguration.isEmpty)
+
+      // Update table with the same feature override set.
+      val updateTxnBuilder =
+        table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
+      val updateTxn = updateTxnBuilder.withTableProperties(engine, properties.asJava).build(engine)
+
+      commitTransaction(updateTxn, engine, emptyIterable())
+
+      assert(latestSnapshot(table, engine).getMetadata.getConfiguration.isEmpty)
+    }
+  }
+
+  test("delta.feature override populate dependent features") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+      val properties = Map("delta.feature.clustering" -> "true")
+      val txn = txnBuilder.withTableProperties(
+        engine,
+        properties.asJava).withSchema(engine, testSchema).build(engine)
+
+      commitTransaction(txn, engine, emptyIterable())
+
+      val writtenSnapshot = latestSnapshot(table, engine)
+      assert(
+        writtenSnapshot.getProtocol.getExplicitlySupportedFeatures.containsAll(Set(
+          TableFeatures.CLUSTERING_W_FEATURE,
+          TableFeatures.DOMAIN_METADATA_W_FEATURE).asJava),
+        s"${writtenSnapshot.getProtocol.getExplicitlySupportedFeatures}")
+
+    }
+  }
+
   ///////////////////////////////////////////////////////////////////////////
   // Helper methods
   ///////////////////////////////////////////////////////////////////////////
+  def latestSnapshot(table: Table, engine: Engine): SnapshotImpl = {
+    table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+  }
+
   def checkWriterFeaturesSupported(
       tblPath: String,
       expWriterOnlyFeatures: String*): Unit = {
