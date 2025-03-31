@@ -226,10 +226,8 @@ class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
       val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
-      val properties = Map("delta.feature.vacuumProtocolCheck" -> "true")
-      val txn = txnBuilder.withTableProperties(
-        engine,
-        properties.asJava).withSchema(engine, testSchema).build(engine)
+      val properties = Map()
+      val txn = txnBuilder.withDomainMetadataSupported().withSchema(engine, testSchema).build(engine)
       commitTransaction(txn, engine, emptyIterable())
       assert(latestSnapshot(table, engine).getProtocol.getExplicitlySupportedFeatures.contains(
         TableFeatures.DOMAIN_METADATA_W_FEATURE))
