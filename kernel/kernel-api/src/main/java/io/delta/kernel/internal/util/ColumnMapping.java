@@ -89,20 +89,24 @@ public class ColumnMapping {
    * of the data stored in data files based on the table's column mapping mode. Field-id column
    * metadata is preserved when cmMode = ID, all column metadata is otherwise removed.
    *
+   * <p>We require {@code fullSchema} in addition to the pruned schema we want to convert since
+   * we need the complete field metadata as it is stored in the schema in the _delta_log. We
+   * cannot be sure (and do not enforce) that this metadata is preserved by the connector.
+   *
    * @param prunedSchema the logical read schema requested by the connector
-   * @param fullDeltaSchema the full delta schema (with complete metadata) as read from the
+   * @param fullSchema the full delta schema (with complete metadata) as read from the
    *     _delta_log
    * @param columnMappingMode Column mapping mode
    */
   public static StructType convertToPhysicalSchema(
-      StructType prunedSchema, StructType fullDeltaSchema, ColumnMappingMode columnMappingMode) {
+      StructType prunedSchema, StructType fullSchema, ColumnMappingMode columnMappingMode) {
     switch (columnMappingMode) {
       case NONE:
         return prunedSchema;
       case ID: // fall through
       case NAME:
         boolean includeFieldIds = columnMappingMode == ColumnMappingMode.ID;
-        return convertToPhysicalSchema(prunedSchema, fullDeltaSchema, includeFieldIds);
+        return convertToPhysicalSchema(prunedSchema, fullSchema, includeFieldIds);
       default:
         throw new UnsupportedOperationException(
             "Unsupported column mapping mode: " + columnMappingMode);
@@ -205,10 +209,10 @@ public class ColumnMapping {
    * schema will have field ids in the metadata. Column metadata is otherwise removed.
    */
   private static StructType convertToPhysicalSchema(
-      StructType prunedSchema, StructType fullDeltaSchema, boolean includeFieldId) {
+      StructType prunedSchema, StructType fullSchema, boolean includeFieldId) {
     StructType newSchema = new StructType();
     for (StructField prunedField : prunedSchema.fields()) {
-      StructField completeField = fullDeltaSchema.get(prunedField.getName());
+      StructField completeField = fullSchema.get(prunedField.getName());
       DataType physicalType =
           convertToPhysicalType(
               prunedField.getDataType(), completeField.getDataType(), includeFieldId);
