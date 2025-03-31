@@ -300,7 +300,8 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       schema: StructType = null,
       partCols: Seq[String] = null,
       tableProperties: Map[String, String] = null,
-      clock: Clock = () => System.currentTimeMillis): Transaction = {
+      clock: Clock = () => System.currentTimeMillis,
+      withDomainMetadataSupported: Boolean = false): Transaction = {
 
     var txnBuilder = createWriteTxnBuilder(
       TableImpl.forPath(engine, tablePath, clock))
@@ -312,6 +313,10 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
 
     if (tableProperties != null) {
       txnBuilder = txnBuilder.withTableProperties(engine, tableProperties.asJava)
+    }
+
+    if (withDomainMetadataSupported) {
+      txnBuilder = txnBuilder.withDomainMetadataSupported()
     }
 
     txnBuilder.build(engine)

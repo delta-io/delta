@@ -39,11 +39,13 @@ import org.apache.spark.sql.types._
  * enabled but UniForm (Iceberg) not enabled.
  */
 
-object IcebergCompatV1 extends IcebergCompat(
+object IcebergCompatV1 extends IcebergCompatBase(
   version = 1,
+  icebergFormatVersion = 1,
   config = DeltaConfigs.ICEBERG_COMPAT_V1_ENABLED,
   requiredTableFeatures = Seq(ColumnMappingTableFeature),
   requiredTableProperties = Seq(RequireColumnMapping),
+  incompatibleTableFeatures = Set(DeletionVectorsTableFeature),
   checks = Seq(
     CheckOnlySingleVersionEnabled,
     CheckAddFileHasStats,
@@ -54,11 +56,13 @@ object IcebergCompatV1 extends IcebergCompat(
   )
 )
 
-object IcebergCompatV2 extends IcebergCompat(
+object IcebergCompatV2 extends IcebergCompatBase(
   version = 2,
+  icebergFormatVersion = 1,
   config = DeltaConfigs.ICEBERG_COMPAT_V2_ENABLED,
   requiredTableFeatures = Seq(ColumnMappingTableFeature),
   requiredTableProperties = Seq(RequireColumnMapping),
+  incompatibleTableFeatures = Set(DeletionVectorsTableFeature),
   checks = Seq(
     CheckOnlySingleVersionEnabled,
     CheckAddFileHasStats,
@@ -74,18 +78,23 @@ object IcebergCompatV2 extends IcebergCompat(
  * All IcebergCompatVx should extend from this base class
  *
  * @param version the compat version number
+ * @param icebergFormatVersion iceberg format version written by this compat
  * @param config  the DeltaConfig for this IcebergCompat version
  * @param requiredTableFeatures a list of table features it relies on
  * @param requiredTableProperties a list of table properties it relies on.
  *                                See [[RequiredDeltaTableProperty]]
+ * @param incompatibleTableFeatures a set of table features it is incompatible
+ *                                  with. Used by [[IcebergCompat.isAnyIncompatibleEnabled]]
  * @param checks  a list of checks this IcebergCompatVx will perform.
  *                @see [[RequiredDeltaTableProperty]]
  */
-case class IcebergCompat(
+case class IcebergCompatBase(
     version: Integer,
+    icebergFormatVersion: Integer,
     config: DeltaConfig[Option[Boolean]],
     requiredTableFeatures: Seq[TableFeature],
     requiredTableProperties: Seq[RequiredDeltaTableProperty[_<:Any]],
+    incompatibleTableFeatures: Set[TableFeature] = Set.empty,
     checks: Seq[IcebergCompatCheck]) extends DeltaLogging {
   def isEnabled(metadata: Metadata): Boolean = config.fromMetaData(metadata).getOrElse(false)
 
@@ -140,10 +149,10 @@ case class IcebergCompat(
               if (isCreatingOrReorgTable) {
                 tblFeatureUpdates += f
               } else {
-                throw DeltaErrors.icebergCompatMissingRequiredTableFeatureException(version, f)
+                handleMissingTableFeature(f)
               }
             case (true, false) => // txn is removing/un-supporting it!
-              throw DeltaErrors.icebergCompatDisablingRequiredTableFeatureException(version, f)
+              handleDisablingRequiredTableFeature(f)
           }
         }
 
@@ -154,9 +163,6 @@ case class IcebergCompat(
             val newestValueOkay = validator(newestValue)
             val newestValueExplicitlySet = newestMetadata.configuration.contains(deltaConfig.key)
 
-            val err = DeltaErrors.icebergCompatWrongRequiredTablePropertyException(
-              version, deltaConfig.key, newestValue.toString, autoSetValue)
-
             if (!newestValueOkay) {
               if (!newestValueExplicitlySet && isCreatingOrReorgTable) {
                 // This case covers both CREATE and REPLACE TABLE commands that
@@ -166,7 +172,8 @@ case class IcebergCompat(
               } else {
                 // In all other cases, if the property value is not compatible
                 // with the IcebergV1 requirements, we fail
-                throw err
+                handleMissingRequiredTableProperties(
+                  deltaConfig.key, newestValue.toString, autoSetValue)
               }
             }
         }
@@ -209,17 +216,23 @@ case class IcebergCompat(
         (protocolResult, metadataResult)
     }
   }
+
+  protected def handleMissingTableFeature(feature: TableFeature): Unit =
+    throw DeltaErrors.icebergCompatMissingRequiredTableFeatureException(version, feature)
+
+  protected def handleDisablingRequiredTableFeature(feature: TableFeature): Unit =
+    throw DeltaErrors.icebergCompatDisablingRequiredTableFeatureException(version, feature)
+
+  protected def handleMissingRequiredTableProperties(
+      confKey: String, actualVal: String, requiredVal: String): Unit =
+    throw DeltaErrors.icebergCompatWrongRequiredTablePropertyException(
+      version, confKey, actualVal, requiredVal)
 }
 
 /**
  * Util methods to manage between IcebergCompat versions
  */
-object IcebergCompat extends DeltaLogging {
-
-  val knownVersions = Seq(
-    DeltaConfigs.ICEBERG_COMPAT_V1_ENABLED -> 1,
-    DeltaConfigs.ICEBERG_COMPAT_V2_ENABLED -> 2)
-
+case class IcebergCompatVersionBase(knownVersions: Set[IcebergCompatBase]) {
   /**
    * Fetch from Metadata the current enabled IcebergCompat version.
    * @return a number indicate the version. E.g., 1 for CompatV1.
@@ -227,8 +240,8 @@ object IcebergCompat extends DeltaLogging {
    */
   def getEnabledVersion(metadata: Metadata): Option[Int] =
     knownVersions
-      .find{ case (config, _) => config.fromMetaData(metadata).getOrElse(false) }
-      .map{ case (_, version) => version }
+      .find{ _.config.fromMetaData(metadata).getOrElse(false) }
+      .map{ _.version }
 
   /**
    * Get the DeltaConfig for the given IcebergCompat version. If version is not valid,
@@ -236,30 +249,52 @@ object IcebergCompat extends DeltaLogging {
    * @return the DeltaConfig for the given version. E.g.,
    *         [[DeltaConfigs.ICEBERG_COMPAT_V1_ENABLED]] for version 1.
    */
-  def getIcebergCompatVersionConfigForValidVersion(version: Int): DeltaConfig[Option[Boolean]] = {
-    if (version <= 0 || version > knownVersions.length) {
-      throw DeltaErrors.icebergCompatVersionNotSupportedException(
-        version, knownVersions.length
-      )
-    }
-    knownVersions(version - 1)._1
+  def getConfigForVersion(version: Int): DeltaConfig[Option[Boolean]] = {
+    knownVersions
+      .find(_.version == version)
+      .map(_.config)
+      .getOrElse(
+        throw DeltaErrors.icebergCompatVersionNotSupportedException(
+          version, knownVersions.size
+        )
+    )
   }
+
+  /**
+   * @return any enabled IcebergCompat in the conf
+   */
+  def anyEnabled(conf: Map[String, String]): Option[IcebergCompatBase] =
+    knownVersions.find { compat =>
+      conf.getOrElse[String](compat.config.key, "false").toBoolean
+    }
+
+  /**
+   * @return true if any version of IcebergCompat is enabled
+   */
+  def isAnyEnabled(conf: Map[String, String]): Boolean = anyEnabled(conf).nonEmpty
 
   /**
    * @return true if any version of IcebergCompat is enabled
    */
   def isAnyEnabled(metadata: Metadata): Boolean =
-    knownVersions.exists{ case (config, _) => config.fromMetaData(metadata).getOrElse(false) }
+    knownVersions.exists { _.config.fromMetaData(metadata).getOrElse(false) }
 
   /**
-   * @return true if the target version is enabled on the table.
+   * @return true if any version of IcebergCompat is enabled, and is incompatible
+   *         with the given table feature
    */
-  def isVersionEnabled(metadata: Metadata, version: Integer): Boolean =
-    knownVersions.exists {
-      case (config, v) =>
-        (v == version) && (config.fromMetaData(metadata).getOrElse(false))
+  def isAnyIncompatibleEnabled(
+      configuration: Map[String, String], feature: TableFeature): Boolean =
+    knownVersions.exists { compat =>
+      configuration.getOrElse[String](compat.config.key, "false").toBoolean &&
+        compat.incompatibleTableFeatures.contains(feature)
     }
 }
+
+object IcebergCompat
+  extends IcebergCompatVersionBase(Set(IcebergCompatV1, IcebergCompatV2)) with DeltaLogging
+
+
 
 /**
  * Wrapper class for table property validation
@@ -332,9 +367,9 @@ trait IcebergCompatCheck extends (IcebergCompatContext => Unit)
  */
 object CheckOnlySingleVersionEnabled extends IcebergCompatCheck {
   override def apply(context: IcebergCompatContext): Unit = {
-    val numEnabled = IcebergCompat.knownVersions
-      .map { case (config, _) =>
-        if (config.fromMetaData(context.newestMetadata).getOrElse(false)) 1 else 0
+    val numEnabled = IcebergCompat.knownVersions.toSeq
+      .map { compat =>
+        if (compat.isEnabled(context.newestMetadata)) 1 else 0
       }.sum
     if (numEnabled > 1) {
       throw DeltaErrors.icebergCompatVersionMutualExclusive(context.version)
