@@ -253,8 +253,8 @@ public final class DeltaErrors {
   }
 
   public static KernelException columnNotFoundInSchema(Column column, StructType tableSchema) {
-    String msgFormat = "Column '%s' was not found in the table schema: %s";
-    return new KernelException(format(msgFormat, column, tableSchema));
+    return new KernelException(
+        format("Column '%s' was not found in the table schema: %s", column, tableSchema));
   }
 
   /// Start: icebergCompat exceptions
