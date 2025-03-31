@@ -16,12 +16,11 @@
 package io.delta.kernel.internal.clustering;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.metadatadomain.JsonMetadataDomain;
-import io.delta.kernel.internal.util.ColumnMapping;
-import io.delta.kernel.types.StructType;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -30,44 +29,17 @@ public final class ClusteringMetadataDomain extends JsonMetadataDomain {
 
   public static final String DOMAIN_NAME = "delta.clustering";
 
-  /** The physical column names used for clustering */
-  private final List<List<String>> clusteringColumns;
-
   /**
-   * Constructs a ClusteringMetadataDomain with the specified logical clustering columns and schema.
+   * Constructs a ClusteringMetadataDomain with the specified physical clustering columns and
+   * schema.
    *
-   * @param physicalClusteringColumns the physical columns used for clustering
+   * @param physicalColumns the physical columns used for clustering
    */
-  @JsonCreator
-  public ClusteringMetadataDomain(
-      @JsonProperty("clusteringColumns") List<List<String>> physicalClusteringColumns) {
-    this.clusteringColumns = physicalClusteringColumns;
-  }
-
-  /**
-   * Constructs a ClusteringMetadataDomain with the specified logical clustering columns and schema.
-   *
-   * @param logicalClusteringColumns the logical columns used for clustering
-   * @param schema the schema of the table
-   */
-  public ClusteringMetadataDomain(List<Column> logicalClusteringColumns, StructType schema) {
-    this(convertToPhysicalClusteringColumns(logicalClusteringColumns, schema));
-  }
-
-  @Override
-  public String getDomainName() {
-    return DOMAIN_NAME;
-  }
-
-  public List<List<String>> getClusteringColumns() {
-    return clusteringColumns;
-  }
-
-  /** @return the physical column names used for clustering. It would be in List[Column] type */
-  public List<Column> fetchClusteringColumns() {
-    return clusteringColumns.stream()
-        .map(list -> new Column(list.toArray(new String[0])))
-        .collect(Collectors.toList());
+  public static ClusteringMetadataDomain fromPhysicalColumns(List<Column> physicalColumns) {
+    return new ClusteringMetadataDomain(
+        physicalColumns.stream()
+            .map(column -> Arrays.asList(column.getNames()))
+            .collect(Collectors.toList()));
   }
 
   /**
@@ -90,13 +62,39 @@ public final class ClusteringMetadataDomain extends JsonMetadataDomain {
     return JsonMetadataDomain.fromSnapshot(snapshot, ClusteringMetadataDomain.class, DOMAIN_NAME);
   }
 
-  private static List<List<String>> convertToPhysicalClusteringColumns(
-      List<Column> logicalClusteringColumns, StructType schema) {
-    List<List<String>> physicalClusteringColumns = new ArrayList<>();
-    for (Column logicalName : logicalClusteringColumns) {
-      Column physicalColumn = ColumnMapping.convertToPhysicalColumnNames(schema, logicalName);
-      physicalClusteringColumns.add(Arrays.asList(physicalColumn.getNames()));
-    }
-    return physicalClusteringColumns;
+  /**
+   * The physical column names used for clustering. Stored as a List of Lists to avoid customized
+   * serialization and deserialization logic.
+   */
+  private final List<List<String>> clusteringColumns;
+
+  /**
+   * Constructs a ClusteringMetadataDomain with the specified logical clustering columns and schema.
+   *
+   * @param physicalClusteringColumns the physical columns used for clustering
+   */
+  @JsonCreator
+  private ClusteringMetadataDomain(
+      @JsonProperty("clusteringColumns") List<List<String>> physicalClusteringColumns) {
+    this.clusteringColumns = physicalClusteringColumns;
+  }
+
+  @Override
+  public String getDomainName() {
+    return DOMAIN_NAME;
+  }
+
+  public List<List<String>> getClusteringColumns() {
+    return clusteringColumns;
+  }
+
+  /**
+   * @return the physical column names used for clustering, as a list of {@link Column} instances.
+   */
+  @JsonIgnore
+  public List<Column> getClusteringColumnsAsColumnList() {
+    return clusteringColumns.stream()
+        .map(list -> new Column(list.toArray(new String[0])))
+        .collect(Collectors.toList());
   }
 }

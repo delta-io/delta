@@ -41,6 +41,36 @@ class ClusteringMetadataDomainSuite
     Optional.empty(),
     VectorUtils.stringStringMapValue(Collections.emptyMap()))
 
+  private def convertToPhysicalColumn(
+      logicalColumns: List[Column],
+      schema: StructType): List[Column] = {
+    logicalColumns.map { column =>
+      ColumnMapping.getPhysicalColumnNameAndDataType(schema, column)._1
+    }
+  }
+
+  test("ClusteringDomainMetadata could be serialized") {
+    val clusteringColumns =
+      List(new Column(Array("col1", "`col2,col3`", "`col4.col5`,col6")))
+    val clusteringMetadataDomain = ClusteringMetadataDomain.fromPhysicalColumns(
+      clusteringColumns.asJava)
+    val serializedString = clusteringMetadataDomain.toDomainMetadata.toString
+    assert(serializedString ===
+      """|DomainMetadata{domain='delta.clustering', configuration=
+         |'{"clusteringColumns":[["col1","`col2,col3`","`col4.col5`,col6"]]}',
+         | removed='false'}""".stripMargin.replace("\n", ""))
+  }
+
+  test("ClusteringDomainMetadata could be deserialized") {
+    val configJson = """{"clusteringColumns":[["col1","`col2,col3`","`col4.col5`,col6"]]}"""
+    val clusteringMD = ClusteringMetadataDomain.fromJsonConfiguration(configJson)
+
+    assert(clusteringMD.getClusteringColumnsAsColumnList === List(new Column(Array(
+      "col1",
+      "`col2,col3`",
+      "`col4.col5`,col6"))).asJava)
+  }
+
   test("Successfully get DomainMetadata for non-nested columns") {
     val schema = new StructType()
       .add("id", IntegerType.INTEGER, true)
@@ -48,13 +78,14 @@ class ClusteringMetadataDomainSuite
       .add("age", IntegerType.INTEGER, true)
 
     val clusterColumns = List(new Column("name"), new Column("age"))
+    val physicalColumns = convertToPhysicalColumn(clusterColumns, schema)
+
     val clusteringMetadataDomain =
-      new ClusteringMetadataDomain(
-        clusterColumns.asJava,
-        schema)
+      ClusteringMetadataDomain.fromPhysicalColumns(
+        physicalColumns.asJava)
 
     val clusteringDomainMetadata = clusteringMetadataDomain.toDomainMetadata
-    assert(clusteringMetadataDomain.fetchClusteringColumns == clusterColumns.asJava)
+    assert(clusteringMetadataDomain.getClusteringColumnsAsColumnList == clusterColumns.asJava)
     assert(clusteringDomainMetadata.getDomain == "delta.clustering")
     assert(clusteringDomainMetadata.getConfiguration ==
       """{"clusteringColumns":[["name"],["age"]]}""")
@@ -71,13 +102,14 @@ class ClusteringMetadataDomainSuite
             new StructType()
               .add("city", StringType.STRING, true)))
 
-    val clusteringMetadataDomain =
-      new ClusteringMetadataDomain(
-        List(new Column(Array("user", "address", "city"))).asJava,
-        schema)
+    val clusterColumns = List(new Column(Array("user", "address", "city")))
+    val physicalColumns = convertToPhysicalColumn(clusterColumns, schema)
+
+    val clusteringMetadataDomain = ClusteringMetadataDomain.fromPhysicalColumns(
+      physicalColumns.asJava)
 
     val clusteringDomainMetadata = clusteringMetadataDomain.toDomainMetadata
-    assert(clusteringMetadataDomain.fetchClusteringColumns ==
+    assert(clusteringMetadataDomain.getClusteringColumnsAsColumnList ==
       List(new Column(Array("user", "address", "city"))).asJava)
     assert(clusteringDomainMetadata.getDomain == "delta.clustering")
     assert(clusteringDomainMetadata.getConfiguration ==
@@ -94,21 +126,15 @@ class ClusteringMetadataDomainSuite
         createMetadata(schema).withColumnMappingEnabled("id"),
         true)
 
-    val clusteringMetadata =
-      new ClusteringMetadataDomain(List(new Column("name")).asJava, metadata.get.getSchema)
+    val clusterColumns = List(new Column("name"))
+    val physicalColumns = convertToPhysicalColumn(clusterColumns, metadata.get.getSchema)
 
-    assert(clusteringMetadata.toDomainMetadata.getDomain == "delta.clustering")
-    assert(clusteringMetadata.fetchClusteringColumns.asScala.size == 1)
-    assert(clusteringMetadata.fetchClusteringColumns.get(0).getNames()(0).startsWith("col-"))
-  }
+    val clusteringMetadataDomain = ClusteringMetadataDomain.fromPhysicalColumns(
+      physicalColumns.asJava)
 
-  test("ClusteringDomainMetadata could be serialized/deserialized") {
-    val configJson = """{"clusteringColumns":[["user","address","city"]]}"""
-    val clusteringMD = ClusteringMetadataDomain.fromJsonConfiguration(configJson)
-
-    assert(clusteringMD.fetchClusteringColumns() === List(new Column(Array(
-      "user",
-      "address",
-      "city"))).asJava)
+    assert(clusteringMetadataDomain.toDomainMetadata.getDomain == "delta.clustering")
+    assert(clusteringMetadataDomain.getClusteringColumnsAsColumnList.asScala.size == 1)
+    assert(clusteringMetadataDomain.getClusteringColumnsAsColumnList.get(
+      0).getNames()(0).startsWith("col-"))
   }
 }
