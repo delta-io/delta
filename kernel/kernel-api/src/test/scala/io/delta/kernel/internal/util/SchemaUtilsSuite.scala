@@ -26,7 +26,7 @@ import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.actions.{Format, Metadata}
 import io.delta.kernel.internal.types.DataTypeJsonSerDe
 import io.delta.kernel.internal.util.ColumnMapping.{COLUMN_MAPPING_ID_KEY, COLUMN_MAPPING_MODE_KEY, COLUMN_MAPPING_NESTED_IDS_KEY, COLUMN_MAPPING_PHYSICAL_NAME_KEY, ColumnMappingMode}
-import io.delta.kernel.internal.util.SchemaUtils.{filterRecursively, validateSchema, validateUpdatedSchema}
+import io.delta.kernel.internal.util.SchemaUtils.{filterRecursively, validateSchema, validateUpdatedSchema, StructFieldWithIds}
 import io.delta.kernel.internal.util.VectorUtils.stringStringMapValue
 import io.delta.kernel.types.{ArrayType, DataType, FieldMetadata, IntegerType, LongType, MapType, StringType, StructField, StructType}
 import io.delta.kernel.types.IntegerType.INTEGER
@@ -325,42 +325,49 @@ class SchemaUtilsSuite extends AnyFunSuite {
   ///////////////////////////////////////////////////////////////////////////
   test("Compute schema changes with added columns") {
     val fieldMappingBefore = Map(
-      1 -> new StructField("id", IntegerType.INTEGER, true))
+      1 -> wrapStructField(new StructField("id", IntegerType.INTEGER, true), 1, null, "id"))
 
     val fieldMappingAfter = Map(
-      1 -> new StructField("id", IntegerType.INTEGER, true),
-      2 -> new StructField("data", StringType.STRING, true))
+      1 -> wrapStructField(new StructField("id", IntegerType.INTEGER, true), 1, null, "id"),
+      2 -> wrapStructField(new StructField("data", StringType.STRING, true), 2, null, "data"))
 
     val schemaChanges = schemaChangesHelper(fieldMappingBefore, fieldMappingAfter)
 
     assert(schemaChanges.removedFields().isEmpty)
     assert(schemaChanges.updatedFields().isEmpty)
     assert(schemaChanges.addedFields().size() == 1)
-    assert(schemaChanges.addedFields().get(0) == fieldMappingAfter(2))
+    assert(schemaChanges.addedFields().get(0).field() == fieldMappingAfter(2).field())
   }
 
   test("Compute schema changes with renamed fields") {
     val fieldMappingBefore = Map(
-      1 -> new StructField("id", IntegerType.INTEGER, true))
+      1 -> wrapStructField(new StructField("id", IntegerType.INTEGER, true), 1, null, "id"))
 
     val fieldMappingAfter = Map(
-      1 -> new StructField("renamed_id", IntegerType.INTEGER, true))
+      1 -> wrapStructField(
+        new StructField("renamed_id", IntegerType.INTEGER, true),
+        1,
+        null,
+        "renamed_id"))
 
     val schemaChanges = schemaChangesHelper(fieldMappingBefore, fieldMappingAfter)
 
     assert(schemaChanges.addedFields().isEmpty)
     assert(schemaChanges.removedFields().isEmpty)
-    assert(schemaChanges.updatedFields().size() == 1)
-    assert(schemaChanges.updatedFields().get(0) ==
-      new Tuple2(fieldMappingBefore(1), fieldMappingAfter(1)))
+    assert(schemaChanges.updatedFields().isEmpty)
+    assert(schemaChanges.renamedFields().get(0) == fieldMappingAfter(1))
   }
 
   test("Compute schema changes with type changed columns") {
     val fieldMappingBefore = Map(
-      1 -> new StructField("id", IntegerType.INTEGER, true))
+      1 -> wrapStructField(new StructField("id", IntegerType.INTEGER, true), 1, null, "id"))
 
     val fieldMappingAfter = Map(
-      1 -> new StructField("promoted_to_long", LongType.LONG, true))
+      1 -> wrapStructField(
+        new StructField("promoted_to_long", LongType.LONG, true),
+        1,
+        null,
+        "promoted_to_long"))
 
     val schemaChanges = schemaChangesHelper(fieldMappingBefore, fieldMappingAfter)
 
@@ -373,11 +380,11 @@ class SchemaUtilsSuite extends AnyFunSuite {
 
   test("Compute schema changes with dropped fields") {
     val fieldMappingBefore = Map(
-      1 -> new StructField("id", IntegerType.INTEGER, true),
-      2 -> new StructField("data", StringType.STRING, true))
+      1 -> wrapStructField(new StructField("id", IntegerType.INTEGER, true), 1, null, "id"),
+      2 -> wrapStructField(new StructField("data", StringType.STRING, true), 2, null, "data"))
 
     val fieldMappingAfter = Map(
-      2 -> new StructField("data", StringType.STRING, true))
+      2 -> wrapStructField(new StructField("data", StringType.STRING, true), 2, null, "data"))
 
     val schemaChanges = schemaChangesHelper(fieldMappingBefore, fieldMappingAfter)
 
@@ -389,12 +396,16 @@ class SchemaUtilsSuite extends AnyFunSuite {
 
   test("Compute schema changes with nullability change") {
     val fieldMappingBefore = Map(
-      1 -> new StructField("id", IntegerType.INTEGER, true),
-      2 -> new StructField("data", StringType.STRING, true))
+      1 -> wrapStructField(new StructField("id", IntegerType.INTEGER, true), 1, null, "id"),
+      2 -> wrapStructField(new StructField("data", StringType.STRING, true), 2, null, "data"))
 
     val fieldMappingAfter = Map(
-      1 -> new StructField("id", IntegerType.INTEGER, true),
-      2 -> new StructField("required_data", StringType.STRING, false))
+      1 -> wrapStructField(new StructField("id", IntegerType.INTEGER, true), 1, null, "id"),
+      2 -> wrapStructField(
+        new StructField("required_data", StringType.STRING, false),
+        2,
+        null,
+        "data"))
 
     val schemaChanges = schemaChangesHelper(fieldMappingBefore, fieldMappingAfter)
 
@@ -408,24 +419,32 @@ class SchemaUtilsSuite extends AnyFunSuite {
 
   test("Compute schema changes with moved fields") {
     val fieldMappingBefore = Map(
-      1 -> new StructField(
-        "struct",
-        new StructType()
-          .add(new StructField("id", IntegerType.INTEGER, true))
-          .add(new StructField("data", StringType.STRING, true)),
-        true),
-      2 -> new StructField("id", IntegerType.INTEGER, true),
-      3 -> new StructField("data", StringType.STRING, true))
+      1 -> wrapStructField(
+        new StructField(
+          "struct",
+          new StructType()
+            .add(new StructField("id", IntegerType.INTEGER, true))
+            .add(new StructField("data", StringType.STRING, true)),
+          true),
+        1,
+        null,
+        "struct"),
+      2 -> wrapStructField(new StructField("id", IntegerType.INTEGER, true), 2, null, "id"),
+      3 -> wrapStructField(new StructField("data", StringType.STRING, true), 3, null, "data"))
 
     val fieldMappingAfter = Map(
-      1 -> new StructField(
-        "struct",
-        new StructType()
-          .add(new StructField("data", StringType.STRING, true))
-          .add(new StructField("id", IntegerType.INTEGER, true)),
-        true),
-      2 -> new StructField("id", IntegerType.INTEGER, true),
-      3 -> new StructField("data", StringType.STRING, true))
+      1 -> wrapStructField(
+        new StructField(
+          "struct",
+          new StructType()
+            .add(new StructField("data", StringType.STRING, true))
+            .add(new StructField("id", IntegerType.INTEGER, true)),
+          true),
+        1,
+        null,
+        "struct"),
+      2 -> wrapStructField(new StructField("id", IntegerType.INTEGER, true), 2, null, "id"),
+      3 -> wrapStructField(new StructField("data", StringType.STRING, true), 3, null, "data"))
 
     val schemaChanges = schemaChangesHelper(fieldMappingBefore, fieldMappingAfter)
 
@@ -439,22 +458,30 @@ class SchemaUtilsSuite extends AnyFunSuite {
 
   test("Compute schema changes with field metadata changes") {
     val fieldMappingBefore = Map(
-      1 -> new StructField(
-        "id",
-        IntegerType.INTEGER,
-        true,
-        FieldMetadata.builder().putString(
-          "metadata_col",
-          "metadata_val").build()))
+      1 -> wrapStructField(
+        new StructField(
+          "id",
+          IntegerType.INTEGER,
+          true,
+          FieldMetadata.builder().putString(
+            "metadata_col",
+            "metadata_val").build()),
+        1,
+        null,
+        "id"))
 
     val fieldMappingAfter = Map(
-      1 -> new StructField(
-        "id",
-        IntegerType.INTEGER,
-        true,
-        FieldMetadata.builder().putString(
-          "metadata_col",
-          "updated_metadata_val").build()))
+      1 -> wrapStructField(
+        new StructField(
+          "id",
+          IntegerType.INTEGER,
+          true,
+          FieldMetadata.builder().putString(
+            "metadata_col",
+            "updated_metadata_val").build()),
+        1,
+        null,
+        "id"))
 
     val schemaChanges = schemaChangesHelper(fieldMappingBefore, fieldMappingAfter)
 
@@ -467,8 +494,8 @@ class SchemaUtilsSuite extends AnyFunSuite {
   }
 
   private def schemaChangesHelper(
-      before: Map[Int, StructField],
-      after: Map[Int, StructField]): SchemaChanges = {
+      before: Map[Int, StructFieldWithIds],
+      after: Map[Int, StructFieldWithIds]): SchemaChanges[StructFieldWithIds] = {
     SchemaUtils.computeSchemaChangesById(
       before.map {
         case (k, v) => java.lang.Integer.valueOf(k) -> v
@@ -476,6 +503,14 @@ class SchemaUtilsSuite extends AnyFunSuite {
       after.map {
         case (k, v) => java.lang.Integer.valueOf(k) -> v
       }.asJava)
+  }
+
+  private def wrapStructField(
+      field: StructField,
+      id: Integer,
+      parentId: Integer,
+      path: String): StructFieldWithIds = {
+    new StructFieldWithIds(field, id, parentId, path)
   }
 
   ///////////////////////////////////////////////////////////////////////////
@@ -953,6 +988,79 @@ class SchemaUtilsSuite extends AnyFunSuite {
     forAll(validateMetadataChange) { (schemaBefore, schemaAfter) =>
       validateUpdatedSchema(schemaBefore, schemaAfter, metadata(schemaBefore))
     }
+  }
+
+  private val validateInvalidMoves = Table(
+    ("schemaBefore", "schemaWithAddedField"),
+    // Struct of array of struct where inner struct field illegally moved to within top level struct
+    (
+      structWithArrayOfStructs,
+      new StructType()
+        .add(
+          "top_level_struct",
+          new StructType().add(
+            "array",
+            new ArrayType(
+              new StructType().add(
+                "some_other_field",
+                StringType.STRING,
+                true,
+                fieldMetadata(5, "string")),
+              false),
+            false,
+            fieldMetadata(2, "array_field")),
+          fieldMetadata(1, "top_level_struct"))
+        .add("id", IntegerType.INTEGER, true, fieldMetadata(4, "id"))))
+
+  test("validateUpdatedSchema fails when moving a field outside of its containing struct") {
+    assertSchemaEvolutionFailure[KernelException](
+      validateInvalidMoves,
+      "Cannot move field .* outside of its containing struct")
+  }
+
+  private val mapWithStructKeyIcebergCompatV2 = mapWithStructKey(mapFieldMetadata =
+    FieldMetadata.builder()
+      .fromMetadata(fieldMetadata(id = 1, physicalName = "map"))
+      .putFieldMetadata(
+        COLUMN_MAPPING_NESTED_IDS_KEY,
+        FieldMetadata.builder().putLong("map.key", 5L)
+          .putLong("map.value", 6L).build()).build())
+
+  private val validateMapKeyModificationIcebergCompatV2 = Table(
+    ("schemaBefore", "schemaWithAddedField"),
+    // Struct of array of struct where inner struct field illegally moved to within top level struct
+    // Map with struct key where data field is added
+    (
+      mapWithStructKeyIcebergCompatV2,
+      mapWithStructKey(
+        mapType = new MapType(
+          new StructType()
+            .add(
+              "renamed_id",
+              IntegerType.INTEGER,
+              true,
+              fieldMetadata(id = 2, physicalName = "id"))
+            .add(
+              "invalid_added_field",
+              StringType.STRING,
+              true,
+              fieldMetadata(id = 3, physicalName = "data")),
+          IntegerType.INTEGER,
+          false),
+        mapFieldMetadata =
+          FieldMetadata.builder()
+            .fromMetadata(fieldMetadata(id = 1, physicalName = "map"))
+            .putFieldMetadata(
+              COLUMN_MAPPING_NESTED_IDS_KEY,
+              FieldMetadata.builder().putLong("map.key", 5L)
+                .putLong("map.value", 6L).build()).build())))
+
+  test(
+    "validateUpdatedSchema fails when modifying map key in icebergCompatV2 when key is a struct") {
+    assertSchemaEvolutionFailure[KernelException](
+      validateMapKeyModificationIcebergCompatV2,
+      "Cannot modify map field .* with struct key in icebergCompatV2",
+      Map(ColumnMapping.COLUMN_MAPPING_MODE_KEY -> "id", "delta.enableIcebergCompatV2" -> "true"))
   }
 
   private def mapWithStructKey(
