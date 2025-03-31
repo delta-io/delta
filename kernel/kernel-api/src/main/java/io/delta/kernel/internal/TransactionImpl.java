@@ -263,6 +263,7 @@ public class TransactionImpl implements Transaction {
       TransactionCommitResult result =
           transactionMetrics.totalCommitTimer.time(
               () -> commitWithRetry(engine, dataActions, transactionMetrics));
+      // This is an issue because we time out here - so the timer metrics are wrong
       recordTransactionReport(
           engine,
           Optional.of(result.getVersion()) /* committedVersion */,
@@ -475,11 +476,11 @@ public class TransactionImpl implements Transaction {
         postCommitHooks.add(new CheckpointHook(dataPath, commitAsVersion));
       }
 
-      buildPostCommitCrcInfoIfCurrentCrcAvailable(
-              commitAsVersion, transactionMetrics.captureTransactionMetricsResult())
+      TransactionMetricsResult txnMetrics = transactionMetrics.captureTransactionMetricsResult();
+      buildPostCommitCrcInfoIfCurrentCrcAvailable(commitAsVersion, txnMetrics)
           .ifPresent(crcInfo -> postCommitHooks.add(new ChecksumSimpleHook(crcInfo, logPath)));
 
-      return new TransactionCommitResult(commitAsVersion, postCommitHooks);
+      return new TransactionCommitResult(commitAsVersion, postCommitHooks, txnMetrics);
     } catch (FileAlreadyExistsException e) {
       throw e;
     } catch (IOException ioe) {
