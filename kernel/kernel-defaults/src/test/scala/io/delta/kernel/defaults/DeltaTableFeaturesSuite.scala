@@ -200,20 +200,16 @@ class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
 
   test("feature can be enabled via delta.feature prefix") {
     withTempDirAndEngine { (tablePath, engine) =>
-      val table = Table.forPath(engine, tablePath)
-      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
       val domainMetadataKey = (
         TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX
           + TableFeatures.DOMAIN_METADATA_W_FEATURE.featureName)
       val properties = Map(
         "delta.feature.vacuumProtocolCheck" -> "supported",
         domainMetadataKey -> "supported")
-      val txn = txnBuilder
-        .withTableProperties(engine, properties.asJava)
-        .withSchema(engine, testSchema)
-        .build(engine)
-      commitTransaction(txn, engine, emptyIterable())
 
+      createEmptyTable(engine, tablePath, testSchema, tableProperties = properties)
+
+      val table = Table.forPath(engine, tablePath)
       val writtenSnapshot = latestSnapshot(table, engine)
       assert(writtenSnapshot.getMetadata.getConfiguration.isEmpty)
       assert(writtenSnapshot.getProtocol.getExplicitlySupportedFeatures.containsAll(Set(
@@ -236,14 +232,9 @@ class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
 
   test("delta.feature prefixed keys are removed even if property is already present on protocol") {
     withTempDirAndEngine { (tablePath, engine) =>
-      // Create Table
-      val table = Table.forPath(engine, tablePath)
-      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
       val properties = Map("delta.feature.vacuumProtocolCheck" -> "supported")
-      val txn = txnBuilder.withTableProperties(
-        engine,
-        properties.asJava).withSchema(engine, testSchema).build(engine)
-      commitTransaction(txn, engine, emptyIterable())
+      createEmptyTable(engine, tablePath, testSchema, tableProperties = properties)
+      val table = Table.forPath(engine, tablePath)
       assert(latestSnapshot(table, engine).getMetadata.getConfiguration.isEmpty)
 
       // Update table with the same feature override set.
@@ -259,22 +250,17 @@ class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
 
   test("delta.feature override populate dependent features") {
     withTempDirAndEngine { (tablePath, engine) =>
-      val table = Table.forPath(engine, tablePath)
-      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
       val properties = Map("delta.feature.clustering" -> "supported")
-      val txn = txnBuilder.withTableProperties(
-        engine,
-        properties.asJava).withSchema(engine, testSchema).build(engine)
 
-      commitTransaction(txn, engine, emptyIterable())
+      createEmptyTable(engine, tablePath, testSchema, tableProperties = properties)
 
+      val table = Table.forPath(engine, tablePath)
       val writtenSnapshot = latestSnapshot(table, engine)
       assert(
         writtenSnapshot.getProtocol.getExplicitlySupportedFeatures.containsAll(Set(
           TableFeatures.CLUSTERING_W_FEATURE,
           TableFeatures.DOMAIN_METADATA_W_FEATURE).asJava),
         s"${writtenSnapshot.getProtocol.getExplicitlySupportedFeatures}")
-
     }
   }
 
