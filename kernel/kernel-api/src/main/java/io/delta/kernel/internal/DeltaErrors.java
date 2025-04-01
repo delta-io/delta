@@ -182,13 +182,33 @@ public final class DeltaErrors {
     return new KernelException(message);
   }
 
+  public static KernelException unsupportedReaderFeaturesEnablement(
+      String tablePath, Set<String> readerFeatures) {
+    String message =
+        String.format(
+            "Unsupported Delta reader features: enabling reader table features [%s] on table `%s`"
+                + "which is unsupported by this version of Delta Kernel.",
+            tablePath, String.join(", ", readerFeatures));
+    return new KernelException(message);
+  }
+
   public static KernelException unsupportedWriterFeatures(
       String tablePath, Set<String> writerFeatures) {
     String message =
         String.format(
-            "Unsupported Delta writer feature: table `%s` requires writer table feature \"%s\" "
+            "Unsupported Delta writer features: table `%s` requires writer table feature \"%s\" "
                 + "which is unsupported by this version of Delta Kernel.",
             tablePath, writerFeatures);
+    return new KernelException(message);
+  }
+
+  public static KernelException unsupportedWriterFeaturesEnablement(
+      String tablePath, Set<String> writerFeatures) {
+    String message =
+        String.format(
+            "Unsupported Delta writer features: enabling writer table features [%s] on table `%s`"
+                + "which is unsupported by this version of Delta Kernel.",
+            tablePath, String.join(", ", writerFeatures));
     return new KernelException(message);
   }
 

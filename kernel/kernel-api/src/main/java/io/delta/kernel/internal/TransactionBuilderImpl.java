@@ -143,6 +143,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     }
 
     boolean isNewTable = snapshot.getVersion() < 0;
+    // This includes validating that Kernel can write to the table (protocol-wise)
     validateTransactionInputs(engine, snapshot, isNewTable);
 
     Metadata snapshotMetadata = snapshot.getMetadata();
@@ -179,10 +180,13 @@ public class TransactionBuilderImpl implements TransactionBuilder {
           newProtocolAndFeatures.get()._2.stream().map(TableFeature::featureName).collect(toSet()));
 
       newProtocol = Optional.of(newProtocolAndFeatures.get()._1);
+      // Since we already validated that we support `snapshotProtocol` this validates that we
+      // support any newly enabled features
       TableFeatures.validateKernelCanWriteToTable(
           newProtocol.orElse(snapshotProtocol),
           newMetadata.orElse(snapshotMetadata),
-          table.getPath(engine));
+          table.getPath(engine),
+          true /* isUpdatedProtocol */);
     }
 
     /* 3: Validate the METADATA and PROTOCOL and possibly update the METADATA for IcebergCompat */
@@ -257,7 +261,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     String tablePath = table.getPath(engine);
     // Validate the table has no features that Kernel doesn't yet support writing into it.
     TableFeatures.validateKernelCanWriteToTable(
-        snapshot.getProtocol(), snapshot.getMetadata(), tablePath);
+        snapshot.getProtocol(), snapshot.getMetadata(), tablePath, false /* isUpdatedProtocol */);
 
     if (!isNewTable) {
       if (schema.isPresent()) {
