@@ -206,8 +206,8 @@ class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
         TableFeatures.PROPERTIES_FEATURE_OVERRIDE_PREFIX
           + TableFeatures.DOMAIN_METADATA_W_FEATURE.featureName)
       val properties = Map(
-        "delta.feature.vacuumProtocolCheck" -> "true",
-        domainMetadataKey -> "true")
+        "delta.feature.vacuumProtocolCheck" -> "supported",
+        domainMetadataKey -> "supported")
       val txn = txnBuilder
         .withTableProperties(engine, properties.asJava)
         .withSchema(engine, testSchema)
@@ -226,7 +226,6 @@ class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
       val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
-      val properties = Map()
       val txn =
         txnBuilder.withDomainMetadataSupported().withSchema(engine, testSchema).build(engine)
       commitTransaction(txn, engine, emptyIterable())
@@ -240,7 +239,7 @@ class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
       // Create Table
       val table = Table.forPath(engine, tablePath)
       val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
-      val properties = Map("delta.feature.vacuumProtocolCheck" -> "true")
+      val properties = Map("delta.feature.vacuumProtocolCheck" -> "supported")
       val txn = txnBuilder.withTableProperties(
         engine,
         properties.asJava).withSchema(engine, testSchema).build(engine)
@@ -262,7 +261,7 @@ class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
       val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
-      val properties = Map("delta.feature.clustering" -> "true")
+      val properties = Map("delta.feature.clustering" -> "supported")
       val txn = txnBuilder.withTableProperties(
         engine,
         properties.asJava).withSchema(engine, testSchema).build(engine)

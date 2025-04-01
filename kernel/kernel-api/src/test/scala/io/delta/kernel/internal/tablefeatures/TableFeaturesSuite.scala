@@ -956,8 +956,8 @@ class TableFeaturesSuite extends AnyFunSuite {
   test(
     "extractFeaturePropertyOverrides returns feature options and removes from them from metadata") {
     val metadata = testMetadata(tblProps = Map(
-      "delta.feature.deletionVectors" -> "true",
-      "delta.feature.appendOnly" -> "true",
+      "delta.feature.deletionVectors" -> "supported",
+      "delta.feature.appendOnly" -> "supported",
       "anotherkey" -> "some_value",
       "delta.enableRowTracking" -> "true"))
 
@@ -993,7 +993,7 @@ class TableFeaturesSuite extends AnyFunSuite {
 
   Seq(
     Map("delta.feature.deletionVectors" -> "not_valid_value"),
-    Map("delta.feature.invalidFeatureName" -> "true")).foreach {
+    Map("delta.feature.invalidFeatureName" -> "supported")).foreach {
     properties =>
       test(s"extractFeaturePropertyOverrides throws: $properties") {
         intercept[KernelException] {

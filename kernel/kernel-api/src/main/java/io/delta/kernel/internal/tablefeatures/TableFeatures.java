@@ -506,13 +506,13 @@ public class TableFeatures {
    *
    * <p>Overrides are specified using a key in th form {@linkplain
    * #PROPERTIES_FEATURE_OVERRIDE_PREFIX} + {featureName}. (e.g. {@code
-   * delta.feature.icebergWriterCompatV1}). The value should be "true" to add the feature.
+   * delta.feature.icebergWriterCompatV1}). The value must be "supported" to add the feature.
    * Currently, removing values is not handled.
    *
    * @return A set of features that had overrides and Metadata object with the properties removed if
    *     any overrides were present.
    * @throws KernelException if the feature name for the override is invalid or the value is not
-   *     equal to "true".
+   *     equal to "supported".
    */
   public static Tuple2<Set<TableFeature>, Optional<Metadata>> extractFeaturePropertyOverrides(
       Metadata currentMetadata) {
@@ -524,11 +524,11 @@ public class TableFeatures {
 
         TableFeature feature = getTableFeature(featureName);
         features.add(feature);
-        if (!entry.getValue().equals("true")) {
+        if (!entry.getValue().equals("supported")) {
           throw DeltaErrors.invalidConfigurationValueException(
               entry.getKey(),
               entry.getValue(),
-              "TableFeature override options may only have \"true\" as there value");
+              "TableFeature override options may only have \"supported\" as there value");
         }
       }
     }
