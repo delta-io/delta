@@ -167,12 +167,21 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     /* ----- 2: Update the PROTOCOL based on the table properties or schema ----- */
     // This is the only place we update the protocol action; takes care of any dependent features
     // Ex: We enable feature `icebergCompatV2` plus dependent features `columnMapping`
+    Set<TableFeature> manuallyEnabledFeatures = new HashSet<>();
+    if (needDomainMetadataSupport) {
+      manuallyEnabledFeatures.add(TableFeatures.DOMAIN_METADATA_W_FEATURE);
+    }
+
+    Tuple2<Set<TableFeature>, Optional<Metadata>> newFeaturesAndMetadata =
+        TableFeatures.extractFeaturePropertyOverrides(newMetadata.orElse(snapshotMetadata));
+    manuallyEnabledFeatures.addAll(newFeaturesAndMetadata._1);
+    if (newFeaturesAndMetadata._2.isPresent()) {
+      newMetadata = newFeaturesAndMetadata._2;
+    }
+
     Optional<Tuple2<Protocol, Set<TableFeature>>> newProtocolAndFeatures =
         TableFeatures.autoUpgradeProtocolBasedOnMetadata(
-            newMetadata.orElse(snapshotMetadata),
-            needDomainMetadataSupport,
-            /* needClusteringTableFeature = */ false,
-            snapshotProtocol);
+            newMetadata.orElse(snapshotMetadata), manuallyEnabledFeatures, snapshotProtocol);
     if (newProtocolAndFeatures.isPresent()) {
       logger.info(
           "Automatically enabling table features: {}",

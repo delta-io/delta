@@ -128,9 +128,23 @@ public class Metadata {
                         .collect(Collectors.toList())));
   }
 
+  /**
+   * Returns a new metadata object that has a new configuration which is the combination of its
+   * current configuration and {@code configuration}.
+   *
+   * <p>For overlapping keys the values from {@code configuration} take precedence.
+   */
   public Metadata withMergedConfiguration(Map<String, String> configuration) {
     Map<String, String> newConfiguration = new HashMap<>(getConfiguration());
     newConfiguration.putAll(configuration);
+    return withReplacedConfiguration(newConfiguration);
+  }
+
+  /**
+   * Returns a new Metadata object with the configuration provided with newConfiguration (any prior
+   * configuration is replaced).
+   */
+  public Metadata withReplacedConfiguration(Map<String, String> newConfiguration) {
     return new Metadata(
         this.id,
         this.name,
