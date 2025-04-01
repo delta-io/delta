@@ -21,7 +21,6 @@ import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.statistics.DataFileStatistics;
-import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.DataFileStatus;
 import java.util.List;
 import java.util.Map;
@@ -36,14 +35,12 @@ public class ClusteringUtils {
   /**
    * Get the domain metadata for the clustering columns.
    *
-   * @param logicalClusteringColumns The logical clustering columns.
-   * @param schema The schema of the table.
+   * @param physicalClusteringColumns The physical clustering columns.
    * @return The domain metadata including the clustering columns.
    */
-  public static DomainMetadata getClusteringDomainMetadata(
-      List<Column> logicalClusteringColumns, StructType schema) {
+  public static DomainMetadata getClusteringDomainMetadata(List<Column> physicalClusteringColumns) {
     final ClusteringMetadataDomain clusteringMetadataDomain =
-        new ClusteringMetadataDomain(logicalClusteringColumns, schema);
+        ClusteringMetadataDomain.fromPhysicalColumns(physicalClusteringColumns);
     return clusteringMetadataDomain.toDomainMetadata();
   }
 
@@ -55,7 +52,7 @@ public class ClusteringUtils {
    */
   public static Optional<List<Column>> getClusteringColumnsOptional(SnapshotImpl snapshot) {
     return ClusteringMetadataDomain.fromSnapshot(snapshot)
-        .map(ClusteringMetadataDomain::fetchClusteringColumns);
+        .map(ClusteringMetadataDomain::getClusteringColumnsAsColumnList);
   }
 
   /**
@@ -74,15 +71,19 @@ public class ClusteringUtils {
 
     DataFileStatistics dataFileStatistics = dataFileStatus.getStatistics().get();
 
+    Long numRecords = dataFileStatistics.getNumRecords();
     Map<Column, Literal> minValues = dataFileStatistics.getMinValues();
     Map<Column, Literal> maxValues = dataFileStatistics.getMaxValues();
     Map<Column, Long> nullCounts = dataFileStatistics.getNullCounts();
 
     for (Column column : clusteringColumns) {
-      if (!minValues.containsKey(column)
-          || !maxValues.containsKey(column)
-          || !nullCounts.containsKey(column)) {
-        throw DeltaErrors.missingColumnStatsForClustering(column, dataFileStatus);
+      boolean minAndMaxPresent = minValues.containsKey(column) && maxValues.containsKey(column);
+      if (!minAndMaxPresent) {
+        // if min/max values are missing and nullCount is not equal to numRecords,
+        // then we throw the exception
+        if (!nullCounts.containsKey(column) || !nullCounts.get(column).equals(numRecords)) {
+          throw DeltaErrors.missingColumnStatsForClustering(column, dataFileStatus);
+        }
       }
     }
   }

@@ -379,7 +379,7 @@ public final class DeltaErrors {
   public static KernelException missingFileStatsForClustering(
       List<Column> columns, DataFileStatus dataFileStatus) {
     return new KernelException(
-        String.format(
+        format(
             "Cannot write to a clustering-enabled table without per-file statistics. "
                 + "Missing statistics for clustering columns: %s. DataFileStatus: %s",
             columns, dataFileStatus));
@@ -388,7 +388,7 @@ public final class DeltaErrors {
   public static KernelException missingColumnStatsForClustering(
       Column column, DataFileStatus dataFileStatus) {
     return new KernelException(
-        String.format(
+        format(
             "Cannot write to a clustering-enabled table without per-column statistics. "
                 + "Missing statistics for clustering column: %s. DataFileStatus: %s",
             column, dataFileStatus));

@@ -58,6 +58,39 @@ class ClusteringUtilsSuite extends AnyFunSuite with Matchers {
       "Cannot write to a clustering-enabled table without per-column statistics."))
   }
 
+  test("validateDataFileStatus: Throws when min/max is missing and nullCount != numRecords " +
+    "for a clustering column") {
+    val col = new Column("a")
+    val stats = new DataFileStatistics(
+      10L,
+      Map.empty[Column, Literal].asJava,
+      Map.empty[Column, Literal].asJava,
+      Map(col -> java.lang.Long.valueOf(5L)).asJava)
+    val dataFile = new DataFileStatus("path", 100L, 123456L, Optional.of(stats))
+
+    val ex = intercept[KernelException] {
+      ClusteringUtils.validateDataFileStatus(List(col).asJava, dataFile)
+    }
+
+    assert(ex.getMessage.contains(
+      "Cannot write to a clustering-enabled table without per-column statistics."))
+  }
+
+  test("validateDataFileStatus: Passes when min/max is missing but nullCount == numRecords " +
+    "for a clustering column") {
+    val col = new Column("a")
+    val stats = new DataFileStatistics(
+      10L,
+      Map.empty[Column, Literal].asJava,
+      Map.empty[Column, Literal].asJava,
+      Map(col -> java.lang.Long.valueOf(10L)).asJava)
+    val dataFile = new DataFileStatus("path", 100L, 123456L, Optional.of(stats))
+
+    noException should be thrownBy {
+      ClusteringUtils.validateDataFileStatus(List(col).asJava, dataFile)
+    }
+  }
+
   test("validateDataFileStatus: Passes when all stats exist for clustering column") {
     val col = new Column("a")
     val stats = new DataFileStatistics(
