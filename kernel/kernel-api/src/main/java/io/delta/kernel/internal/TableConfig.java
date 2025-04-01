@@ -320,7 +320,7 @@ public class TableConfig<T> {
       String value = kv.getValue();
 
       boolean isTableFeatureOverrideKey =
-          key.startsWith(TableFeatures.PROPERTIES_FEATURE_OVERRIDE_PREFIX);
+          key.startsWith(TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX);
       boolean isTableConfigKey = key.startsWith("delta.");
       // TableFeature override properties validation is handled separately in TransactionBuilder.
       boolean shouldValidateProperties = isTableConfigKey && !isTableFeatureOverrideKey;

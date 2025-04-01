@@ -50,7 +50,7 @@ public class TableFeatures {
    *
    * <p>Disabling features via this method is unsupported.
    */
-  public static String PROPERTIES_FEATURE_OVERRIDE_PREFIX = "delta.feature.";
+  public static String SET_TABLE_FEATURE_SUPPORTED_PREFIX = "delta.feature.";
 
   /////////////////////////////////////////////////////////////////////////////////
   /// START: Define the {@link TableFeature}s                                   ///
@@ -505,7 +505,7 @@ public class TableFeatures {
    * overrides are present.
    *
    * <p>Overrides are specified using a key in th form {@linkplain
-   * #PROPERTIES_FEATURE_OVERRIDE_PREFIX} + {featureName}. (e.g. {@code
+   * #SET_TABLE_FEATURE_SUPPORTED_PREFIX} + {featureName}. (e.g. {@code
    * delta.feature.icebergWriterCompatV1}). The value must be "supported" to add the feature.
    * Currently, removing values is not handled.
    *
@@ -519,8 +519,8 @@ public class TableFeatures {
     Set<TableFeature> features = new HashSet<>();
     Map<String, String> properties = currentMetadata.getConfiguration();
     for (Map.Entry<String, String> entry : properties.entrySet()) {
-      if (entry.getKey().startsWith(PROPERTIES_FEATURE_OVERRIDE_PREFIX)) {
-        String featureName = entry.getKey().substring(PROPERTIES_FEATURE_OVERRIDE_PREFIX.length());
+      if (entry.getKey().startsWith(SET_TABLE_FEATURE_SUPPORTED_PREFIX)) {
+        String featureName = entry.getKey().substring(SET_TABLE_FEATURE_SUPPORTED_PREFIX.length());
 
         TableFeature feature = getTableFeature(featureName);
         features.add(feature);
@@ -539,7 +539,7 @@ public class TableFeatures {
 
     Map<String, String> cleanedProperties =
         properties.entrySet().stream()
-            .filter(e -> !e.getKey().startsWith(PROPERTIES_FEATURE_OVERRIDE_PREFIX))
+            .filter(e -> !e.getKey().startsWith(SET_TABLE_FEATURE_SUPPORTED_PREFIX))
             .collect(toMap(Map.Entry::getKey, Map.Entry::getValue));
     return new Tuple2<>(
         features, Optional.of(currentMetadata.withReplacedConfiguration(cleanedProperties)));
