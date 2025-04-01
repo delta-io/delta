@@ -413,7 +413,8 @@ class TableRedirectSuite extends QueryTest
 
     val configuration = RedirectFeature.getRedirectConfiguration(properties1 ++ properties2)
     assert(configuration.isDefined)
-    // RedirectReaderWriter should be preferred over RedirectWriterOnly.
-    assert(configuration.get.redirectState == EnableRedirectInProgress)
+    // redirect-reader-writer should be preferred over redirect-writer-only.
+    assert(JsonUtils.toJson(configuration.get) ==
+      properties1(DeltaConfigs.REDIRECT_READER_WRITER.key))
   }
 }

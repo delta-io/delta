@@ -492,7 +492,7 @@ object RedirectFeature {
 
   /**
    * Get the current `TableRedirectConfiguration` object from the table properties.
-   * Note that the redirect-rw takes precedence over redirect-w.
+   * Note that the redirect-reader-writer takes precedence over redirect-writer-only.
    */
   def getRedirectConfiguration(
       properties: Map[String, String]): Option[TableRedirectConfiguration] = {
@@ -520,7 +520,7 @@ object RedirectFeature {
 
   /**
    * Get the current `TableRedirectConfiguration` object from the snapshot.
-   * Note that the redirect-rw takes precedence over redirect-w.
+   * Note that the redirect-reader-writer takes precedence over redirect-writer-only.
    */
   def getRedirectConfiguration(snapshot: Snapshot): Option[TableRedirectConfiguration] = {
     getRedirectConfiguration(snapshot.metadata.configuration)
