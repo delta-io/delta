@@ -1060,7 +1060,7 @@ trait SnapshotManagement { self: DeltaLog =>
           val newSnapshot = updateInternal(
             isAsync = false,
             catalogTableOpt)
-          sendEvent(newSnapshot = capturedSnapshot.snapshot)
+          sendEvent(newSnapshot = newSnapshot)
           newSnapshot
         }
       }
