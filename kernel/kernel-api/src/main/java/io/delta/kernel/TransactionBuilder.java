@@ -93,6 +93,15 @@ public interface TransactionBuilder {
   TransactionBuilder withMaxRetries(int maxRetries);
 
   /**
+   * Set the number of commits between log compactions defaults to 10. Set to 0 to disable log
+   * compactions.
+   *
+   * @param logCompactionInterval The commits between log compactions
+   * @return updated {@link TransactionBuilder} instance
+   */
+  TransactionBuilder withLogCompactionInverval(int logCompactionInterval);
+
+  /**
    * Enables support for Domain Metadata on this table if it is not supported already. The table
    * feature _must_ be supported on the table to add or remove domain metadata using {@link
    * Transaction#addDomainMetadata} or {@link Transaction#removeDomainMetadata}. See <a
