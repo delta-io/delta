@@ -46,11 +46,11 @@ public class TransactionStateRow extends GenericRow {
           .boxed()
           .collect(toMap(i -> SCHEMA.at(i).getName(), i -> i));
 
-  public static TransactionStateRow of(
-      Metadata metadata, String tablePath, StructType physicalSchema) {
+  public static TransactionStateRow of(Metadata metadata, String tablePath) {
     HashMap<Integer, Object> valueMap = new HashMap<>();
     valueMap.put(COL_NAME_TO_ORDINAL.get("logicalSchemaString"), metadata.getSchemaString());
-    valueMap.put(COL_NAME_TO_ORDINAL.get("physicalSchemaString"), physicalSchema.toJson());
+    valueMap.put(
+        COL_NAME_TO_ORDINAL.get("physicalSchemaString"), metadata.getPhysicalSchema().toJson());
     valueMap.put(COL_NAME_TO_ORDINAL.get("partitionColumns"), metadata.getPartitionColumns());
     valueMap.put(COL_NAME_TO_ORDINAL.get("configuration"), metadata.getConfigurationMapValue());
     valueMap.put(COL_NAME_TO_ORDINAL.get("tablePath"), tablePath);
