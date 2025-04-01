@@ -478,6 +478,7 @@ public class TableFeatures {
     Set<TableFeature> allNeededTableFeatures =
         extractAllNeededTableFeatures(newMetadata, currentProtocol);
     if (manuallyEnabledFeatures != null && !manuallyEnabledFeatures.isEmpty()) {
+      // Note that any dependent features are handled below in the withFeatures call.
       allNeededTableFeatures =
           Stream.concat(allNeededTableFeatures.stream(), manuallyEnabledFeatures.stream())
               .collect(toSet());

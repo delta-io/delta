@@ -264,6 +264,26 @@ class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
     }
   }
 
+  test("delta.feature override and TableConfig populate necessary features") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val properties =
+        Map("delta.feature.clustering" -> "supported", "delta.enableDeletionVectors" -> "true")
+
+      createEmptyTable(engine, tablePath, testSchema, tableProperties = properties)
+
+      val table = Table.forPath(engine, tablePath)
+      val writtenSnapshot = latestSnapshot(table, engine)
+      assert(
+        writtenSnapshot.getProtocol.getExplicitlySupportedFeatures.containsAll(Set(
+          TableFeatures.CLUSTERING_W_FEATURE,
+          TableFeatures.DOMAIN_METADATA_W_FEATURE,
+          TableFeatures.DELETION_VECTORS_RW_FEATURE).asJava),
+        s"${writtenSnapshot.getProtocol.getExplicitlySupportedFeatures}")
+      assert(writtenSnapshot.getMetadata.getConfiguration == Map(
+        "delta.enableDeletionVectors" -> "true").asJava)
+    }
+  }
+
   ///////////////////////////////////////////////////////////////////////////
   // Helper methods
   ///////////////////////////////////////////////////////////////////////////
