@@ -30,14 +30,14 @@ public final class ClusteringMetadataDomain extends JsonMetadataDomain {
   public static final String DOMAIN_NAME = "delta.clustering";
 
   /**
-   * Constructs a ClusteringMetadataDomain with the specified physical clustering columns and
-   * schema.
+   * Constructs a ClusteringMetadataDomain with the clustering columns.
    *
-   * @param physicalColumns the physical columns used for clustering
+   * @param clusteringColumns the columns used for clustering. If column mapping is enabled, use the
+   *     physical name assigned; otherwise, use the logical column name.
    */
-  public static ClusteringMetadataDomain fromPhysicalColumns(List<Column> physicalColumns) {
+  public static ClusteringMetadataDomain fromClusteringColumns(List<Column> clusteringColumns) {
     return new ClusteringMetadataDomain(
-        physicalColumns.stream()
+        clusteringColumns.stream()
             .map(column -> Arrays.asList(column.getNames()))
             .collect(Collectors.toList()));
   }
@@ -46,33 +46,30 @@ public final class ClusteringMetadataDomain extends JsonMetadataDomain {
    * Creates an instance of {@link ClusteringMetadataDomain} from a JSON configuration string.
    *
    * @param json the JSON configuration string
-   * @return an instance of {@link ClusteringMetadataDomain}
    */
   public static ClusteringMetadataDomain fromJsonConfiguration(String json) {
     return JsonMetadataDomain.fromJsonConfiguration(json, ClusteringMetadataDomain.class);
   }
 
   /**
-   * Creates an instance of {@link ClusteringMetadataDomain} from a {@link SnapshotImpl}.
+   * Creates an optional instance of {@link ClusteringMetadataDomain} from a {@link SnapshotImpl} if
+   * present.
    *
    * @param snapshot the snapshot instance
-   * @return an {@link Optional} containing the {@link ClusteringMetadataDomain} if present
    */
+  // TODO: Add the test coverage for this function in the integration test.
   public static Optional<ClusteringMetadataDomain> fromSnapshot(SnapshotImpl snapshot) {
     return JsonMetadataDomain.fromSnapshot(snapshot, ClusteringMetadataDomain.class, DOMAIN_NAME);
   }
 
   /**
-   * The physical column names used for clustering. Stored as a List of Lists to avoid customized
-   * serialization and deserialization logic.
+   * The column names used for clustering. If column mapping is enabled, we use physical column
+   * names, otherwise we would store its logical column names. Stored as a List of Lists to avoid
+   * customized serialization and deserialization logic.
    */
+  @JsonProperty("clusteringColumns")
   private final List<List<String>> clusteringColumns;
 
-  /**
-   * Constructs a ClusteringMetadataDomain with the specified logical clustering columns and schema.
-   *
-   * @param physicalClusteringColumns the physical columns used for clustering
-   */
   @JsonCreator
   private ClusteringMetadataDomain(
       @JsonProperty("clusteringColumns") List<List<String>> physicalClusteringColumns) {
@@ -84,15 +81,8 @@ public final class ClusteringMetadataDomain extends JsonMetadataDomain {
     return DOMAIN_NAME;
   }
 
-  public List<List<String>> getClusteringColumns() {
-    return clusteringColumns;
-  }
-
-  /**
-   * @return the physical column names used for clustering, as a list of {@link Column} instances.
-   */
   @JsonIgnore
-  public List<Column> getClusteringColumnsAsColumnList() {
+  public List<Column> getClusteringColumns() {
     return clusteringColumns.stream()
         .map(list -> new Column(list.toArray(new String[0])))
         .collect(Collectors.toList());
