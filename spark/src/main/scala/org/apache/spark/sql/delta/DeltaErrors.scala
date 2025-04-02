@@ -1099,7 +1099,8 @@ trait DeltaErrorsBase
         deltaVersions.mkString(", "),
         startVersion.toString,
         endVersion.toString,
-        versionToLoad.toString))
+        versionToLoad.toString
+      )
     )
   }
 
