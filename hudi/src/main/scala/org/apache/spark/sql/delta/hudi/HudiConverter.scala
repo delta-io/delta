@@ -260,8 +260,7 @@ class HudiConverter(spark: SparkSession)
           spark = spark,
           deltaLog = log,
           startVersion = prevSnapshot.version + 1,
-          endVersion = snapshotToConvert.version,
-        )
+          endVersion = snapshotToConvert.version)
 
         recordDeltaEvent(
           snapshotToConvert.deltaLog,
