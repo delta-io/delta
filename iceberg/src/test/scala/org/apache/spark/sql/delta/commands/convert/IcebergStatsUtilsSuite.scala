@@ -237,7 +237,6 @@ class IcebergStatsUtilsSuite extends SparkFunSuite with SharedSparkSession {
       DummyDataFile(nullValueCounts = null),
       statsAllowTypes = StatsAllowTypes))
   }
-
 }
 
 private case class StatsObject(
