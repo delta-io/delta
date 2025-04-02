@@ -30,7 +30,7 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.unsafe.types.UTF8String
 
-object DeltaFileProviderUtils {
+object DeltaFileProviderUtils extends DeltaLogging {
 
   protected def readThreadPool = SnapshotManagement.deltaLogAsyncUpdateThreadPool
 
