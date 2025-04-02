@@ -2353,6 +2353,20 @@ trait DeltaSQLConfBase {
     .booleanConf
     .createWithDefault(true)
 
+  val DELTA_CONVERT_ICEBERG_DATE_STATS = buildConf("collectStats.convertIceberg.date")
+    .internal()
+    .doc("When enabled, attempts to convert Iceberg stats for DATE to Delta stats" +
+      "when cloning from an Iceberg source.")
+    .booleanConf
+    .createWithDefault(true)
+
+  val DELTA_CONVERT_ICEBERG_TIMESTAMP_STATS = buildConf("collectStats.convertIceberg.timestamp")
+    .internal()
+    .doc("When enabled, attempts to convert Iceberg stats for TIMESTAMP to Delta stats" +
+      "when cloning from an Iceberg source.")
+    .booleanConf
+    .createWithDefault(true)
+
   /////////////////////
   // Optimized Write
   /////////////////////

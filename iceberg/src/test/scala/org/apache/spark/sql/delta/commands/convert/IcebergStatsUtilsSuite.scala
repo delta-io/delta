@@ -23,15 +23,20 @@ import java.util.{List => JList, Map => JMap}
 
 import scala.collection.JavaConverters._
 
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.iceberg.{DataFile, FileContent, FileFormat, PartitionData, PartitionSpec, Schema, StructLike}
 import org.apache.iceberg.transforms._
 import org.apache.iceberg.types.Conversions
+import org.apache.iceberg.types.Type
+import org.apache.iceberg.types.Type.TypeID
 import org.apache.iceberg.types.Types._
 
 import org.apache.spark.SparkFunSuite
+import org.apache.spark.internal.config.ConfigEntry
+import org.apache.spark.sql.test.SharedSparkSession
 
-class IcebergStatsUtilsSuite extends SparkFunSuite {
+class IcebergStatsUtilsSuite extends SparkFunSuite with SharedSparkSession {
 
   private val StatsAllowTypes =
     IcebergStatsUtils.typesAllowStatsConversion(statsDisallowTypes = Set.empty)
@@ -231,6 +236,149 @@ class IcebergStatsUtilsSuite extends SparkFunSuite {
       icebergSchema,
       DummyDataFile(nullValueCounts = null),
       statsAllowTypes = StatsAllowTypes))
+  }
+
+  private def testStatsConversionConfigForType(
+      configKV: (ConfigEntry[Boolean], Boolean),
+      dataType: Type, value: Object, expectedValue: String): Unit = {
+    val (convertTypeConfig, convertTypeEnabled) = configKV
+    withSQLConf(
+      convertTypeConfig.key -> s"$convertTypeEnabled"
+    ) {
+      val icebergSchema = new Schema(10, Seq[NestedField](
+        NestedField.required(1, "col_int", IntegerType.get),
+        NestedField.required(7, "col_test", dataType)
+      ).asJava)
+
+      val minMap = Map(
+        Integer.valueOf(1) -> Conversions.toByteBuffer(IntegerType.get, JInt.valueOf(-5)),
+        Integer.valueOf(7) -> Conversions.toByteBuffer(dataType, value)
+      )
+      val maxMap = Map(
+        Integer.valueOf(1) -> Conversions.toByteBuffer(IntegerType.get, JInt.valueOf(5)),
+        Integer.valueOf(7) -> Conversions.toByteBuffer(dataType, value)
+      )
+      val nullCountMap = Map(
+        Integer.valueOf(1) -> JLong.valueOf(0),
+        Integer.valueOf(7) -> JLong.valueOf(1)
+      )
+
+      val deltaStats = IcebergStatsUtils.icebergStatsToDelta(
+        icebergSchema,
+        1251,
+        minMap,
+        maxMap,
+        nullCountMap,
+        statsAllowTypes = IcebergStatsUtils.typesAllowStatsConversion(spark)
+      )
+
+      val actualStatsObj = JsonUtils.fromJson[StatsObject](deltaStats)
+      val expectedStatsObj = JsonUtils.fromJson[StatsObject](
+        if (convertTypeEnabled) {
+          s"""{"numRecords":1251,
+             |"maxValues":{"col_test":$expectedValue,"col_int":-5},
+             |"minValues":{"col_test":$expectedValue,"col_int":5},
+             |"nullCount":{"col_int":0,"col_test":1}
+             |}""".stripMargin.replaceAll("\n", "")
+        } else {
+          """{"numRecords":1251,
+            |"maxValues":{"col_int":-5},
+            |"minValues":{"col_int":5},
+            |"nullCount":{"col_int":0}
+            |}""".stripMargin.replaceAll("\n", "")
+        }
+      )
+      assertResult(expectedStatsObj)(actualStatsObj)
+    }
+  }
+
+  gridTest("Convert date stats when enabled")(Seq(true, false)) { convertedDateEnabled =>
+    testStatsConversionConfigForType(
+      (DeltaSQLConf.DELTA_CONVERT_ICEBERG_DATE_STATS, convertedDateEnabled),
+      DateType.get,
+      value = JInt.valueOf(12800),
+      expectedValue = if (convertedDateEnabled) """"2005-01-17"""" else ""
+    )
+  }
+
+  gridTest("Convert decimal stats when enabled")(Seq(true, false)) { convertedDecimalEnabled =>
+    testStatsConversionConfigForType(
+      (DeltaSQLConf.DELTA_CONVERT_ICEBERG_DECIMAL_STATS, convertedDecimalEnabled),
+      DecimalType.of(10, 5),
+      value = new BigDecimal("3.44141"),
+      expectedValue = if (convertedDecimalEnabled) "3.44141" else ""
+    )
+  }
+
+  gridTest("Convert timestamp stats when enabled")(Seq(true, false)) { convertedTimestampEnabled =>
+    testStatsConversionConfigForType(
+      (DeltaSQLConf.DELTA_CONVERT_ICEBERG_TIMESTAMP_STATS, convertedTimestampEnabled),
+      TimestampType.withZone,
+      value = JLong.valueOf(1734391979000000L),
+      expectedValue = if (convertedTimestampEnabled) """"2024-12-16T23:32:59+00:00"""" else ""
+    )
+  }
+
+  gridTest("Convert timestamp_nz stats when enabled")(Seq(true, false)) {
+      convertedTimestampEnabled =>
+    testStatsConversionConfigForType(
+      (DeltaSQLConf.DELTA_CONVERT_ICEBERG_TIMESTAMP_STATS, convertedTimestampEnabled),
+      TimestampType.withoutZone(),
+      value = JLong.valueOf(1734391979000000L),
+      expectedValue = if (convertedTimestampEnabled) """"2024-12-16T23:32:59"""" else ""
+    )
+  }
+
+  gridTest("Stats conversion with disabled types")(Seq(true, false)) {
+      convertDateStats =>
+
+    val icebergSchema = new Schema(10, Seq[NestedField](
+      NestedField.required(1, "col_int", IntegerType.get),
+      NestedField.required(7, "col_date", DateType.get)
+    ).asJava)
+
+    val minMap = Map(
+      Integer.valueOf(1) -> Conversions.toByteBuffer(IntegerType.get, JInt.valueOf(-5)),
+      Integer.valueOf(7) -> Conversions.toByteBuffer(DateType.get, JInt.valueOf(12800))
+    )
+    val maxMap = Map(
+      Integer.valueOf(1) -> Conversions.toByteBuffer(IntegerType.get, JInt.valueOf(5)),
+      Integer.valueOf(7) -> Conversions.toByteBuffer(DateType.get, JInt.valueOf(13800))
+    )
+    val nullCountMap = Map(
+      Integer.valueOf(1) -> JLong.valueOf(0),
+      Integer.valueOf(7) -> JLong.valueOf(1)
+    )
+
+    val deltaStats = IcebergStatsUtils.icebergStatsToDelta(
+      icebergSchema,
+      1251,
+      minMap,
+      maxMap,
+      nullCountMap,
+      statsAllowTypes =
+        IcebergStatsUtils.typesAllowStatsConversion(
+          statsDisallowTypes = if (convertDateStats) Set.empty else Set(TypeID.DATE)
+        )
+    )
+
+    val actualStatsObj = JsonUtils.fromJson[StatsObject](deltaStats)
+    val expectedStatsObj = JsonUtils.fromJson[StatsObject](
+      if (convertDateStats) {
+        """{"numRecords":1251,
+          |"maxValues":{"col_date":"2005-01-17","col_int":-5},
+          |"minValues":{"col_date":"2007-10-14","col_int":5},
+          |"nullCount":{"col_int":0,"col_date":1}
+          |}""".stripMargin.replaceAll("\n", "")
+      } else {
+        """{"numRecords":1251,
+          |"maxValues":{"col_int":-5},
+          |"minValues":{"col_int":5},
+          |"nullCount":{"col_int":0}
+          |}""".stripMargin.replaceAll("\n", "")
+      }
+    )
+    assertResult(expectedStatsObj)(actualStatsObj)
   }
 }
 
