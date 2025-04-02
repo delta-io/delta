@@ -1088,10 +1088,18 @@ trait DeltaErrorsBase
   }
 
   def deltaVersionsNotContiguousException(
-      spark: SparkSession, deltaVersions: Seq[Long]): Throwable = {
+      spark: SparkSession,
+      deltaVersions: Seq[Long],
+      startVersion: Long,
+      endVersion: Long,
+      versionToLoad: Long): Throwable = {
     new DeltaIllegalStateException(
       errorClass = "DELTA_VERSIONS_NOT_CONTIGUOUS",
-      messageParameters = Array(deltaVersions.mkString(", "))
+      messageParameters = Array(
+        deltaVersions.mkString(", "),
+        startVersion.toString,
+        endVersion.toString,
+        versionToLoad.toString))
     )
   }
 

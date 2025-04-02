@@ -257,7 +257,11 @@ class HudiConverter(spark: SparkSession)
         // Read the actions directly from the delta json files.
         // TODO: Run this as a spark job on executors
         val deltaFiles = DeltaFileProviderUtils.getDeltaFilesInVersionRange(
-          spark, log, prevSnapshot.version + 1, snapshotToConvert.version)
+          spark = spark,
+          deltaLog = log,
+          startVersion = prevSnapshot.version + 1,
+          endVersion = snapshotToConvert.version,
+        )
 
         recordDeltaEvent(
           snapshotToConvert.deltaLog,
