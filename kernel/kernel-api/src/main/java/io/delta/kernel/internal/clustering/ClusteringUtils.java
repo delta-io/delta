@@ -33,26 +33,22 @@ public class ClusteringUtils {
   }
 
   /**
-   * Get the domain metadata for the clustering columns.
-   *
-   * @param physicalClusteringColumns The physical clustering columns.
-   * @return The domain metadata including the clustering columns.
+   * Get the domain metadata for the clustering columns. If column mapping is enabled, pass the list
+   * of physical names assigned; otherwise, use the logical column names.
    */
-  public static DomainMetadata getClusteringDomainMetadata(List<Column> physicalClusteringColumns) {
-    final ClusteringMetadataDomain clusteringMetadataDomain =
-        ClusteringMetadataDomain.fromPhysicalColumns(physicalClusteringColumns);
+  public static DomainMetadata getClusteringDomainMetadata(List<Column> clusteringColumns) {
+    ClusteringMetadataDomain clusteringMetadataDomain =
+        ClusteringMetadataDomain.fromClusteringColumns(clusteringColumns);
     return clusteringMetadataDomain.toDomainMetadata();
   }
 
   /**
    * Extract ClusteringColumns from a given snapshot. Return None if the clustering domain metadata
    * is missing.
-   *
-   * @param snapshot The snapshot instance
    */
   public static Optional<List<Column>> getClusteringColumnsOptional(SnapshotImpl snapshot) {
     return ClusteringMetadataDomain.fromSnapshot(snapshot)
-        .map(ClusteringMetadataDomain::getClusteringColumnsAsColumnList);
+        .map(ClusteringMetadataDomain::getClusteringColumns);
   }
 
   /**
@@ -71,7 +67,7 @@ public class ClusteringUtils {
 
     DataFileStatistics dataFileStatistics = dataFileStatus.getStatistics().get();
 
-    Long numRecords = dataFileStatistics.getNumRecords();
+    long numRecords = dataFileStatistics.getNumRecords();
     Map<Column, Literal> minValues = dataFileStatistics.getMinValues();
     Map<Column, Literal> maxValues = dataFileStatistics.getMaxValues();
     Map<Column, Long> nullCounts = dataFileStatistics.getNullCounts();

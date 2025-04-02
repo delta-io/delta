@@ -380,8 +380,8 @@ public final class DeltaErrors {
       List<Column> columns, DataFileStatus dataFileStatus) {
     return new KernelException(
         format(
-            "Cannot write to a clustering-enabled table without per-file statistics. "
-                + "Missing statistics for clustering columns: %s. DataFileStatus: %s",
+            "Unable to write the given data file to a clustering-enabled table: "
+                + "Missing per-file statistics for clustering columns [%s]. DataFileStatus: %s",
             columns, dataFileStatus));
   }
 
@@ -389,8 +389,8 @@ public final class DeltaErrors {
       Column column, DataFileStatus dataFileStatus) {
     return new KernelException(
         format(
-            "Cannot write to a clustering-enabled table without per-column statistics. "
-                + "Missing statistics for clustering column: %s. DataFileStatus: %s",
+            "Unable to write the given data file to a clustering-enabled table: "
+                + "Missing per-file statistics for clustering column: %s. DataFileStatus: %s",
             column, dataFileStatus));
   }
 

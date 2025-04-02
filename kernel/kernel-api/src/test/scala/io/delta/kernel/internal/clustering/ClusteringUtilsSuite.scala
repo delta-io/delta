@@ -29,6 +29,14 @@ import org.scalatest.matchers.must.Matchers
 
 class ClusteringUtilsSuite extends AnyFunSuite with Matchers {
 
+  test("getClusteringDomainMetadata: Returns the domain metadata for clustering columns") {
+    val clusteringCols = List(new Column("a"), new Column("b"))
+    val domainMetadata = ClusteringUtils.getClusteringDomainMetadata(clusteringCols.asJava)
+    assert(domainMetadata.getDomain === "delta.clustering")
+    assert(domainMetadata.getConfiguration ===
+      """{"clusteringColumns":[["a"],["b"]]}""")
+  }
+
   test("validateDataFileStatus: Throws when statistics are missing entirely") {
     val dataFile = new DataFileStatus("path", 100L, 123456L, Optional.empty())
     val clusteringCols = List(new Column("a"))
@@ -38,7 +46,8 @@ class ClusteringUtilsSuite extends AnyFunSuite with Matchers {
     }
 
     assert(ex.getMessage.contains(
-      "Cannot write to a clustering-enabled table without per-file statistics."))
+      "Unable to write the given data file to a clustering-enabled table: " +
+        "Missing per-file statistics for clustering columns"))
   }
 
   test("validateDataFileStatus: Throws when min/max/nullCount is missing for a clustering column") {
@@ -55,7 +64,8 @@ class ClusteringUtilsSuite extends AnyFunSuite with Matchers {
     }
 
     assert(ex.getMessage.contains(
-      "Cannot write to a clustering-enabled table without per-column statistics."))
+      "Unable to write the given data file to a clustering-enabled table: " +
+        "Missing per-file statistics for clustering column"))
   }
 
   test("validateDataFileStatus: Throws when min/max is missing and nullCount != numRecords " +
@@ -73,7 +83,8 @@ class ClusteringUtilsSuite extends AnyFunSuite with Matchers {
     }
 
     assert(ex.getMessage.contains(
-      "Cannot write to a clustering-enabled table without per-column statistics."))
+      "Unable to write the given data file to a clustering-enabled table: " +
+        "Missing per-file statistics for clustering column"))
   }
 
   test("validateDataFileStatus: Passes when min/max is missing but nullCount == numRecords " +
