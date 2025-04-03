@@ -88,7 +88,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
         .add("id", INTEGER)
         .add("part1", INTEGER) // partition column
         .add("mapType", new MapType(INTEGER, INTEGER, false));
-      val ex = intercept[IllegalArgumentException] {
+      val ex = intercept[KernelException] {
         createTxn(
           engine,
           tablePath,

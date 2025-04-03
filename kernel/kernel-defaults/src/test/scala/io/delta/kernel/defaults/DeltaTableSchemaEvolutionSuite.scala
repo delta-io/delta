@@ -21,6 +21,7 @@ import scala.collection.immutable.Seq
 import io.delta.kernel.{Operation, Table}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.KernelException
+import io.delta.kernel.expressions.Column
 import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.util.{ColumnMapping, ColumnMappingSuiteBase}
 import io.delta.kernel.types.{ArrayType, FieldMetadata, IntegerType, LongType, MapType, StringType, StructType}
@@ -1153,6 +1154,36 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
         engine,
         newSchema,
         "Cannot change the type of existing field c from integer to string")
+    }
+  }
+
+  // TODO: need to remove this once we support schema evolution with clustering columns
+  test("Cannot update schema with clustering columns") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val initialSchema = new StructType()
+        .add("a", StringType.STRING, true)
+        .add("c", IntegerType.INTEGER, true)
+
+      createEmptyTable(
+        engine,
+        tablePath,
+        initialSchema,
+        clusteringCols = List(new Column("c")),
+        tableProperties = Map(
+          TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
+          TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"))
+
+      val currentSchema = table.getLatestSnapshot(engine).getSchema
+      val newSchema = new StructType()
+        .add("c", StringType.STRING, true, currentSchema.get("c").getMetadata)
+        .add("a", StringType.STRING, true, currentSchema.get("a").getMetadata)
+
+      assertSchemaEvolutionFails[IllegalArgumentException](
+        table,
+        engine,
+        newSchema,
+        "Cannot update schema for table with clustering columns")
     }
   }
 

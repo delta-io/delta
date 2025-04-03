@@ -34,6 +34,7 @@ import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.*;
+import io.delta.kernel.internal.clustering.ClusteringUtils;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.icebergcompat.IcebergCompatV2MetadataValidatorAndUpdater;
 import io.delta.kernel.internal.icebergcompat.IcebergWriterCompatV1MetadataValidatorAndUpdater;
@@ -248,8 +249,9 @@ public class TransactionBuilderImpl implements TransactionBuilder {
 
     /* ----- 5: Validate the metadata change ----- */
     // Now that all the config and schema changes have been made validate the old vs new metadata
-    newMetadata.ifPresent(
-        metadata -> validateMetadataChange(snapshotMetadata, metadata, isNewTable));
+    if (newMetadata.isPresent()) {
+      validateMetadataChange(snapshot, snapshotMetadata, newMetadata.get(), isNewTable);
+    }
 
     /* ----- 6: Additional validation and adjustment ----- */
     List<Column> casePreservingClusteringColumns =
@@ -344,7 +346,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
    * </ul>
    */
   private void validateMetadataChange(
-      Metadata oldMetadata, Metadata newMetadata, boolean isNewTable) {
+      SnapshotImpl snapshot, Metadata oldMetadata, Metadata newMetadata, boolean isNewTable) {
     ColumnMapping.verifyColumnMappingChange(
         oldMetadata.getConfiguration(), newMetadata.getConfiguration(), isNewTable);
     IcebergWriterCompatV1MetadataValidatorAndUpdater.validateIcebergWriterCompatV1Change(
@@ -362,6 +364,16 @@ public class TransactionBuilderImpl implements TransactionBuilder {
 
       if (!isColumnMappingModeEnabled(updatedMappingMode)) {
         throw new KernelException("Cannot update schema for table when column mapping is disabled");
+      }
+
+      // TODO: revisit this once we want to support schema evolution with clustering columns
+      Optional<List<Column>> clusteringColumns =
+          ClusteringUtils.getClusteringColumnsOptional(snapshot);
+      if (clusteringColumns.isPresent() && !clusteringColumns.get().isEmpty()) {
+        throw new KernelException(
+            format(
+                "Cannot update schema for table with clustering columns %s",
+                clusteringColumns.get()));
       }
 
       SchemaUtils.validateUpdatedSchema(
