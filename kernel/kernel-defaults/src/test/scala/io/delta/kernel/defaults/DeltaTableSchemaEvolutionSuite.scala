@@ -32,7 +32,7 @@ import io.delta.kernel.utils.CloseableIterable.emptyIterable
  */
 class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with ColumnMappingSuiteBase {
 
-  test("Add nullable column succeeds") {
+  test("Add nullable column succeeds and correctly updates maxFieldId") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
       val initialSchema = new StructType()
@@ -70,6 +70,8 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
       assertColumnMapping(innerStruct.get("d"), 4, "d")
       assertColumnMapping(innerStruct.get("e"), 5, "e")
       assertColumnMapping(structType.get("c"), 2)
+      assert(TableConfig.COLUMN_MAPPING_MAX_COLUMN_ID
+        .fromMetadata(getMetadata(engine, tablePath)) == 5)
     }
   }
 
