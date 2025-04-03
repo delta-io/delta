@@ -214,7 +214,7 @@ public class SchemaUtils {
             .collect(Collectors.toList());
 
     if (!nonSkippingEligibleColumns.isEmpty()) {
-      throw new IllegalArgumentException(
+      throw new KernelException(
           format(
               "Clustering is not supported because the following column(s): %s "
                   + "don't support data skipping",

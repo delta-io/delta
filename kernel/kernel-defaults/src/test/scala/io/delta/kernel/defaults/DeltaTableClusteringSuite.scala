@@ -26,9 +26,15 @@ import io.delta.kernel.expressions.Literal.ofInt
 import io.delta.kernel.internal.SnapshotImpl
 import io.delta.kernel.internal.actions.DomainMetadata
 import io.delta.kernel.internal.clustering.ClusteringMetadataDomain
+import io.delta.kernel.internal.util.ColumnMapping
 import io.delta.kernel.types.{MapType, StructType}
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
+
+import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.clustering.{ClusteringMetadataDomain => SparkClusteringMetadataDomain}
+
+import org.apache.hadoop.fs.Path
 
 class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
 
@@ -44,7 +50,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
       == expectedDomainMetadata)
   }
 
-  test("build clustered table txn: clustering column should be part of the schema") {
+  test("build table txn: clustering column should be part of the schema") {
     withTempDirAndEngine { (tablePath, engine) =>
       val ex = intercept[KernelException] {
         createTxn(
@@ -58,7 +64,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
     }
   }
 
-  test("build clustered table txn: " +
+  test("build table txn: " +
     "clustering column and partition column cannot be set at same time") {
     withTempDirAndEngine { (tablePath, engine) =>
       val ex = intercept[IllegalArgumentException] {
@@ -76,7 +82,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
     }
   }
 
-  test("build clustered table txn: clustering column should be data skipping supported data type") {
+  test("build table txn: clustering column should be data skipping supported data type") {
     withTempDirAndEngine { (tablePath, engine) =>
       val testPartitionSchema = new StructType()
         .add("id", INTEGER)
@@ -109,6 +115,40 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
 
       // Verify the clustering domain metadata is written
       verifyClusteringDomainMetadata(snapshot)
+
+      // Use Spark to read the table's clustering metadata domain and verify the result
+      val deltaLog = DeltaLog.forTable(spark, new Path(tablePath))
+      val clusteringMetadataDomainRead =
+        SparkClusteringMetadataDomain.fromSnapshot(deltaLog.snapshot)
+      assert(clusteringMetadataDomainRead.exists(_.clusteringColumns === Seq(
+        Seq("part1"),
+        Seq("part2"))))
+    }
+  }
+
+  test("clustering column should store as physical name with column mapping") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(
+        engine,
+        tablePath,
+        testPartitionSchema,
+        clusteringCols = testClusteringColumns,
+        tableProperties = Map(ColumnMapping.COLUMN_MAPPING_MODE_KEY -> "id"))
+
+      val table = Table.forPath(engine, tablePath)
+      // Verify the clustering feature is included in the protocol
+      val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      assertHasWriterFeature(snapshot, "clustering")
+
+      // Verify the clustering domain metadata is written
+      val schema = table.getLatestSnapshot(engine).getSchema
+      val col1 = schema.get("part1").getMetadata.get(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY)
+      val col2 = schema.get("part2").getMetadata.get(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY)
+      val expectedDomainMetadata = new DomainMetadata(
+        "delta.clustering",
+        s"""{"clusteringColumns":[["$col1"],["$col2"]]}""",
+        false)
+      verifyClusteringDomainMetadata(snapshot, expectedDomainMetadata)
     }
   }
 
@@ -173,6 +213,8 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
 
   test("insert into clustered table - already existing table") {
     withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+
       {
         val commitResult0 = appendData(
           engine,
@@ -187,6 +229,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
         verifyCommitResult(commitResult0, expVersion = 0, expIsReadyForCheckpoint = false)
         verifyCommitInfo(tablePath, version = 0, operation = WRITE)
         verifyWrittenContent(tablePath, testPartitionSchema, expData)
+        verifyClusteringDomainMetadata(table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl])
       }
       {
         val commitResult1 = appendData(
@@ -200,6 +243,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
         verifyCommitResult(commitResult1, expVersion = 1, expIsReadyForCheckpoint = false)
         verifyCommitInfo(tablePath, version = 1, partitionCols = null, operation = WRITE)
         verifyWrittenContent(tablePath, testPartitionSchema, expData)
+        verifyClusteringDomainMetadata(table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl])
       }
     }
   }
