@@ -211,7 +211,7 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
       stringStringMapValue(Map.empty[String, String].asJava))
 
     val clusteringColumns = List(new Column(Array("metrics", "temperature"))).asJava
-    val txnState = TransactionStateRow.of(metadata, "table path", schema, clusteringColumns)
+    val txnState = TransactionStateRow.of(metadata, "table path", clusteringColumns)
 
     // Empty clustering columns should return empty list
     val clusteringColumnsFetched = TransactionStateRow.getClusteringColumns(txnState)
@@ -219,7 +219,7 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
     assert(clusteringColumnsFetched == clusteringColumns)
 
     val txnStateNoClusterColumn =
-      TransactionStateRow.of(metadata, "table path", schema, List.empty.asJava)
+      TransactionStateRow.of(metadata, "table path", List.empty.asJava)
     val columnFetched = TransactionStateRow.getClusteringColumns(txnStateNoClusterColumn)
     assert(columnFetched.size() == 0)
   }
@@ -349,11 +349,7 @@ object TransactionSuite extends VectorTestUtils with MockEngineUtils {
       Optional.empty(), // createdTime
       stringStringMapValue(configurationMap.asJava) // configurationMap
     )
-<<<<<<< HEAD
-    TransactionStateRow.of(metadata, "table path")
-=======
-    TransactionStateRow.of(metadata, "table path", schema, clusteringCols.asJava)
->>>>>>> 3a073f3bb (add withClusteringColumns api)
+    TransactionStateRow.of(metadata, "table path", clusteringCols.asJava)
   }
 
   def testStats(numRowsOpt: Option[Long]): Option[DataFileStatistics] = {

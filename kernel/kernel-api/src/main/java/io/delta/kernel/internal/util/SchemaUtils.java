@@ -197,11 +197,9 @@ public class SchemaUtils {
    * @param schema The schema of the table
    * @param clusteringCols List of clustering columns
    */
-  public static void validateClusteringColumns(StructType schema, List<Column> clusteringCols) {
-    List<String> flattenColNames =
-        flattenNestedFieldNames(schema).stream()
-            .map(name -> name.toLowerCase(Locale.ROOT))
-            .collect(Collectors.toList());
+  public static List<Column> validateClusteringColumns(StructType schema, List<Column> clusteringCols) {
+
+
 
     clusteringCols.forEach(
         clusteringCol -> {

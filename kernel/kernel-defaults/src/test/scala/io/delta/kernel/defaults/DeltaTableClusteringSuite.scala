@@ -30,7 +30,7 @@ import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
 
-class DeltaTableClusteringE2ESite extends DeltaTableWriteSuiteBase {
+class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
 
   private val testingDomainMetadata = new DomainMetadata(
     "delta.clustering",

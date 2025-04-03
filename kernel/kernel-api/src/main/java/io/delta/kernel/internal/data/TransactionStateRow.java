@@ -53,9 +53,7 @@ public class TransactionStateRow extends GenericRow {
           .collect(toMap(i -> SCHEMA.at(i).getName(), i -> i));
 
   public static TransactionStateRow of(
-      Metadata metadata,
-      String tablePath,
-      List<Column> clusteringColumns) {
+      Metadata metadata, String tablePath, List<Column> clusteringColumns) {
     HashMap<Integer, Object> valueMap = new HashMap<>();
     valueMap.put(COL_NAME_TO_ORDINAL.get("logicalSchemaString"), metadata.getSchemaString());
     valueMap.put(

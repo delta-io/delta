@@ -26,7 +26,6 @@ import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.statistics.DataFileStatistics;
 import io.delta.kernel.types.ArrayType;
 import io.delta.kernel.types.StringType;
-import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.DataFileStatus;
 import java.util.Arrays;
 import java.util.List;

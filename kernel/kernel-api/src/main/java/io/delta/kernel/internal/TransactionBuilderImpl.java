@@ -182,6 +182,9 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     if (needDomainMetadataSupport) {
       manuallyEnabledFeatures.add(TableFeatures.DOMAIN_METADATA_W_FEATURE);
     }
+    if (clusteringColumns.isPresent()) {
+      manuallyEnabledFeatures.add(TableFeatures.CLUSTERING_W_FEATURE);
+    }
 
     Tuple2<Set<TableFeature>, Optional<Metadata>> newFeaturesAndMetadata =
         TableFeatures.extractFeaturePropertyOverrides(newMetadata.orElse(snapshotMetadata));
@@ -192,14 +195,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
 
     Optional<Tuple2<Protocol, Set<TableFeature>>> newProtocolAndFeatures =
         TableFeatures.autoUpgradeProtocolBasedOnMetadata(
-<<<<<<< HEAD
             newMetadata.orElse(snapshotMetadata), manuallyEnabledFeatures, snapshotProtocol);
-=======
-            newMetadata.orElse(snapshotMetadata),
-            needDomainMetadataSupport,
-            /* needClusteringTableFeature = */ clusteringColumns.isPresent(),
-            snapshotProtocol);
->>>>>>> 3a073f3bb (add withClusteringColumns api)
     if (newProtocolAndFeatures.isPresent()) {
       logger.info(
           "Automatically enabling table features: {}",
