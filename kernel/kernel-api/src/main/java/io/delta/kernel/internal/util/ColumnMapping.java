@@ -326,6 +326,10 @@ public class ColumnMapping {
       Metadata metadata, boolean isNewTable) {
     StructType oldSchema = metadata.getSchema();
 
+    // This is the maxColumnId to use when assigning any new field-ids; we update this as we
+    // traverse the schema and after traversal this is the value that should be stored in the
+    // metadata. Note - this could be greater than the current value stored in the metadata if
+    // the connector has added new fields with field-ids
     AtomicInteger maxColumnId =
         new AtomicInteger(
             Math.max(
@@ -334,8 +338,6 @@ public class ColumnMapping {
                         .getConfiguration()
                         .getOrDefault(COLUMN_MAPPING_MAX_COLUMN_ID_KEY, "0")),
                 findMaxColumnId(oldSchema)));
-
-    int oldMaxColumnId = maxColumnId.get();
 
     StructType newSchema = new StructType();
     for (StructField field : oldSchema.fields()) {
@@ -354,6 +356,8 @@ public class ColumnMapping {
       newSchema = rewriteFieldIdsForIceberg(newSchema, maxColumnId);
     }
 
+    // The maxColumnId in the metadata may be out-of-date either due to field-id assignment
+    // performed in this fx, or due to connector adding new fields
     boolean shouldUpdateMaxId =
         TableConfig.COLUMN_MAPPING_MAX_COLUMN_ID.fromMetadata(metadata) != maxColumnId.get();
 
@@ -362,12 +366,6 @@ public class ColumnMapping {
     // to track if the schema has changed. It is a bit convoluted to pass around and update the
     // AtomicBoolean in the recursive and multiple methods.
     if (oldSchema.equals(newSchema) && !shouldUpdateMaxId) {
-      checkArgument(
-          oldMaxColumnId == maxColumnId.get(),
-          "The schema hasn't changed but the max column id has changed from %s to %s",
-          oldMaxColumnId,
-          maxColumnId.get());
-
       return Optional.empty();
     }
 
