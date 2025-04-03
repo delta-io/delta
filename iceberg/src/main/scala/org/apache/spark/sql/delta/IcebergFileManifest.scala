@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.commands.convert
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 
+import com.databricks.spark.util.FrameProfiler
 import org.apache.spark.sql.delta.{DeltaColumnMapping, SerializableFileStatus}
 import org.apache.spark.sql.delta.DeltaErrors.cloneFromIcebergSourceWithPartitionEvolution
 import org.apache.spark.sql.delta.commands.convert.IcebergTable.ERR_MULTIPLE_PARTITION_SPECS
@@ -134,40 +135,46 @@ class IcebergFileManifest(
     val specIdsToIfSpecHasNonBucketPartitionMap = specIdsToIfSpecHasNonBucketPartition
     val tableSpecsSize = table.specs().size()
 
-    val manifestFiles = localTable
-      .currentSnapshot()
-      .dataManifests(localTable.io())
-      .asScala
-      .map(new ManifestFileWrapper(_))
-      .toSeq
+    val manifestFiles = FrameProfiler.record(
+        "icebergFileManifest:getFileSparkResults", "listManifestFiles") {
+      localTable
+        .currentSnapshot()
+        .dataManifests(localTable.io())
+        .asScala
+        .map(new ManifestFileWrapper(_))
+        .toSeq
+    }
 
-    spark
-      .createDataset(manifestFiles)
-      .flatMap(ManifestFiles.read(_, localTable.io()).asScala.map(new DataFileWrapper(_)))
-      .map { dataFile: DataFileWrapper =>
-        if (shouldCheckPartitionEvolution) {
-          IcebergFileManifest.validateLimitedPartitionEvolution(
-            dataFile.specId,
-            tableSpecsSize,
-            specIdsToIfSpecHasNonBucketPartitionMap
+    FrameProfiler.record(
+      "icebergFileManifest:getFileSparkResults", "readManifestFiles") {
+      spark
+        .createDataset(manifestFiles)
+        .flatMap(ManifestFiles.read(_, localTable.io()).asScala.map(new DataFileWrapper(_)))
+        .map { dataFile: DataFileWrapper =>
+          if (shouldCheckPartitionEvolution) {
+            IcebergFileManifest.validateLimitedPartitionEvolution(
+              dataFile.specId,
+              tableSpecsSize,
+              specIdsToIfSpecHasNonBucketPartitionMap
+            )
+          }
+          ConvertTargetFile(
+            SerializableFileStatus(
+              path = dataFile.path,
+              length = dataFile.fileSizeInBytes,
+              isDir = false,
+              modificationTime = snapshotTs
+            ),
+            partitionValues = if (shouldConvertPartition) {
+              Some(convertPartition.toDelta(dataFile.partition()))
+            } else None,
+            stats = if (shouldConvertStats) {
+              IcebergStatsUtils.icebergStatsToDelta(localTable.schema, dataFile, statsAllowTypesSet)
+            } else None
           )
         }
-        ConvertTargetFile(
-          SerializableFileStatus(
-            path = dataFile.path,
-            length = dataFile.fileSizeInBytes,
-            isDir = false,
-            modificationTime = snapshotTs
-          ),
-          partitionValues = if (shouldConvertPartition) {
-            Some(convertPartition.toDelta(dataFile.partition()))
-          } else None,
-          stats = if (shouldConvertStats) {
-            IcebergStatsUtils.icebergStatsToDelta(localTable.schema, dataFile, statsAllowTypesSet)
-          } else None
-        )
-      }
-      .cache()
+        .cache()
+    }
   }
 
 
