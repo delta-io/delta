@@ -23,8 +23,9 @@ import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
 import io.delta.kernel.internal.checksum.CRCInfo.CRC_FILE_SCHEMA
 import io.delta.kernel.internal.data.GenericRow
 import io.delta.kernel.internal.fs.Path
+import io.delta.kernel.internal.types.DataTypeJsonSerDe
 import io.delta.kernel.internal.util.VectorUtils
-import io.delta.kernel.internal.util.VectorUtils.{buildArrayValue, stringStringMapValue}
+import io.delta.kernel.internal.util.VectorUtils.{buildArrayValue, buildColumnVector, stringStringMapValue}
 import io.delta.kernel.test.{BaseMockJsonHandler, MockEngineUtils}
 import io.delta.kernel.types.{StringType, StructType}
 import io.delta.kernel.utils.CloseableIterator
@@ -63,8 +64,13 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
         new CRCInfo(version, metadata, protocol, tableSizeBytes, numFiles, txn))
 
       verifyChecksumFile(jsonHandler, version)
-      verifyChecksumContent(jsonHandler.capturedCrcRow.get, tableSizeBytes, numFiles, txn)
-      verifyMetadataAndProtocol(jsonHandler.capturedCrcRow.get, metadata, protocol)
+      verifyChecksumContent(
+        jsonHandler.capturedCrcRow.get,
+        tableSizeBytes,
+        numFiles,
+        metadata,
+        protocol,
+        txn)
     }
 
     // Test with and without transaction ID
@@ -82,6 +88,8 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
       actualCheckSumRow: Row,
       expectedTableSizeBytes: Long,
       expectedNumFiles: Long,
+      expectedMetadata: Metadata,
+      expectedProtocol: Protocol,
       expectedTxnId: Optional[String]): Unit = {
     assert(!actualCheckSumRow.isNullAt(TABLE_SIZE_BYTES_IDX) && actualCheckSumRow.getLong(
       TABLE_SIZE_BYTES_IDX) == expectedTableSizeBytes)
@@ -91,6 +99,8 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
       NUM_METADATA_IDX) && actualCheckSumRow.getLong(NUM_METADATA_IDX) == 1L)
     assert(!actualCheckSumRow.isNullAt(
       NUM_PROTOCOL_IDX) && actualCheckSumRow.getLong(NUM_PROTOCOL_IDX) == 1L)
+    assert(expectedProtocol === Protocol.fromRow(actualCheckSumRow.getStruct(PROTOCOL_IDX)))
+    assert(expectedMetadata === Metadata.fromRow(actualCheckSumRow.getStruct(METADATA_IDX)))
 
     if (expectedTxnId.isPresent) {
       assert(actualCheckSumRow.getString(TXN_ID_IDX) == expectedTxnId.get())
@@ -99,68 +109,13 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
     }
   }
 
-  private def verifyMetadataAndProtocol(
-      actualRow: Row,
-      expectedMetadata: Metadata,
-      expectedProtocol: Protocol): Unit = {
-    checkMetadata(expectedMetadata, actualRow.getStruct(METADATA_IDX))
-    checkProtocol(expectedProtocol, actualRow.getStruct(PROTOCOL_IDX))
-  }
-
-  // TODO: implement compare in Metadata and remove this method
-  private def checkMetadata(expectedMetadata: Metadata, actualMetadataRow: Row): Unit = {
-    assert(actualMetadataRow.getSchema == Metadata.FULL_SCHEMA)
-
-    def getOptionalString(field: String): Optional[String] =
-      Optional.ofNullable(actualMetadataRow.getString(Metadata.FULL_SCHEMA.indexOf(field)))
-
-    assert(
-      actualMetadataRow.getString(Metadata.FULL_SCHEMA.indexOf("id")) == expectedMetadata.getId)
-    assert(getOptionalString("name") == expectedMetadata.getName)
-    assert(getOptionalString("description") == expectedMetadata.getDescription)
-
-    val formatRow = actualMetadataRow.getStruct(Metadata.FULL_SCHEMA.indexOf("format"))
-    assert(
-      formatRow
-        .getString(
-          Format.FULL_SCHEMA.indexOf("provider")) == expectedMetadata.getFormat.getProvider)
-
-    assert(
-      actualMetadataRow
-        .getString(
-          Metadata.FULL_SCHEMA.indexOf("schemaString")) == expectedMetadata.getSchemaString)
-    assert(
-      actualMetadataRow
-        .getArray(Metadata.FULL_SCHEMA.indexOf("partitionColumns"))
-        == expectedMetadata.getPartitionColumns)
-    assert(
-      Optional
-        .ofNullable(actualMetadataRow.getLong(Metadata.FULL_SCHEMA.indexOf("createdTime")))
-        == expectedMetadata.getCreatedTime)
-    assert(
-      VectorUtils
-        .toJavaMap(actualMetadataRow.getMap(Metadata.FULL_SCHEMA.indexOf("configuration")))
-        == expectedMetadata.getConfiguration)
-  }
-
-  // TODO: implement compare in Protocol and remove this method
-  private def checkProtocol(expectedProtocol: Protocol, actualProtocolRow: Row): Unit = {
-    assert(actualProtocolRow.getSchema == Protocol.FULL_SCHEMA)
-    assert(
-      expectedProtocol.getMinReaderVersion == actualProtocolRow
-        .getInt(Protocol.FULL_SCHEMA.indexOf("minReaderVersion")))
-    assert(
-      expectedProtocol.getMinWriterVersion == actualProtocolRow
-        .getInt(Protocol.FULL_SCHEMA.indexOf("minWriterVersion")))
-  }
-
   private def createTestMetadata(): Metadata = {
     new Metadata(
       "id",
       Optional.of("name"),
       Optional.of("description"),
       new Format("parquet", Collections.emptyMap()),
-      "schemaString",
+      DataTypeJsonSerDe.serializeDataType(new StructType()),
       new StructType(),
       buildArrayValue(util.Arrays.asList("c3"), StringType.STRING),
       Optional.of(123),

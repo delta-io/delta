@@ -18,6 +18,7 @@ package io.delta.kernel.internal;
 import io.delta.kernel.exceptions.InvalidConfigurationValueException;
 import io.delta.kernel.exceptions.UnknownConfigurationException;
 import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.*;
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
 import java.util.*;
@@ -287,9 +288,6 @@ public class TableConfig<T> {
               addConfig(this, TOMBSTONE_RETENTION);
               addConfig(this, CHECKPOINT_INTERVAL);
               addConfig(this, IN_COMMIT_TIMESTAMPS_ENABLED);
-              addConfig(this, TOMBSTONE_RETENTION);
-              addConfig(this, CHECKPOINT_INTERVAL);
-              addConfig(this, IN_COMMIT_TIMESTAMPS_ENABLED);
               addConfig(this, IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION);
               addConfig(this, IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP);
               addConfig(this, COLUMN_MAPPING_MODE);
@@ -321,7 +319,12 @@ public class TableConfig<T> {
       String key = kv.getKey().toLowerCase(Locale.ROOT);
       String value = kv.getValue();
 
-      if (key.startsWith("delta.")) {
+      boolean isTableFeatureOverrideKey =
+          key.startsWith(TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX);
+      boolean isTableConfigKey = key.startsWith("delta.");
+      // TableFeature override properties validation is handled separately in TransactionBuilder.
+      boolean shouldValidateProperties = isTableConfigKey && !isTableFeatureOverrideKey;
+      if (shouldValidateProperties) {
         // If it is a delta table property, make sure it is a supported property and editable
         if (!VALID_PROPERTIES.containsKey(key)) {
           throw DeltaErrors.unknownConfigurationException(kv.getKey());

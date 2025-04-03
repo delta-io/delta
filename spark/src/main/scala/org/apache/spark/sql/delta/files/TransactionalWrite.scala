@@ -518,10 +518,13 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
     }
 
     // add [[AddFile.Tags.ICEBERG_COMPAT_VERSION.name]] tags to addFiles
-    if (IcebergCompatV2.isEnabled(metadata)) {
+    // starting from IcebergCompatV2
+    val enabledCompat = IcebergCompat.anyEnabled(metadata)
+    if (enabledCompat.exists(_.version >= 2)) {
       resultFiles = resultFiles.map { addFile =>
-        val tags = if (addFile.tags != null) addFile.tags else Map.empty[String, String]
-        addFile.copy(tags = tags + (AddFile.Tags.ICEBERG_COMPAT_VERSION.name -> "2"))
+        addFile.copy(tags = Option(addFile.tags).getOrElse(Map.empty[String, String]) +
+          (AddFile.Tags.ICEBERG_COMPAT_VERSION.name -> enabledCompat.get.version.toString)
+        )
       }
     }
 

@@ -35,7 +35,7 @@ object IcebergConverterHook extends PostCommitHook with DeltaLogging {
       txn: DeltaTransaction,
       committedVersion: Long,
       postCommitSnapshot: Snapshot,
-      committedActions: Seq[Action]): Unit = {
+      committedActions: Iterator[Action]): Unit = {
     // Only convert to Iceberg if the snapshot matches the version committed.
     // This is to skip converting the same actions multiple times - they'll be written out
     // by another commit anyways.

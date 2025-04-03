@@ -57,4 +57,6 @@ public interface TransactionMetricsResult {
    *     this metric may be incomplete.
    */
   long getTotalAddFilesSizeInBytes();
+
+  // TODO add fileSizeHistogram
 }

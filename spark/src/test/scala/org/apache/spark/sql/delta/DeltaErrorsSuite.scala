@@ -145,29 +145,37 @@ trait DeltaErrorsSuiteBase
     regexToFindUrl.findAllIn(message).toList
   }
 
+  def testUrl(errName: String, url: String): Unit = {
+    Given(s"*** Checking response for url: $url")
+    val lastResponse = (1 to MAX_URL_ACCESS_RETRIES).map { attempt =>
+      if (attempt > 1) Thread.sleep(1000)
+      val response = try {
+        Process("curl -I " + url).!!
+      } catch {
+        case e: RuntimeException =>
+          val sw = new StringWriter
+          e.printStackTrace(new PrintWriter(sw))
+          sw.toString
+      }
+      if (checkIfValidResponse(url, response)) {
+        // The URL is correct. No need to retry.
+        return
+      }
+      response
+    }.last
+
+    // None of the attempts resulted in a valid response. Fail the test.
+    fail(
+      s"""
+         |A link to the URL: '$url' is broken in the error: $errName, accessing this URL
+         |does not result in a valid response, received the following response: $lastResponse
+       """.stripMargin)
+  }
+
   def testUrls(): Unit = {
     errorMessagesToTest.foreach { case (errName, message) =>
       getUrlsFromMessage(message).foreach { url =>
-        Given(s"*** Checking response for url: $url")
-        var response = ""
-        (1 to MAX_URL_ACCESS_RETRIES).foreach { attempt =>
-          if (attempt > 1) Thread.sleep(1000)
-          response = try {
-            Process("curl -I " + url).!!
-          } catch {
-            case e: RuntimeException =>
-              val sw = new StringWriter
-              e.printStackTrace(new PrintWriter(sw))
-              sw.toString
-          }
-          if (!checkIfValidResponse(url, response)) {
-            fail(
-              s"""
-                 |A link to the URL: '$url' is broken in the error: $errName, accessing this URL
-                 |does not result in a valid response, received the following response: $response
-         """.stripMargin)
-          }
-        }
+        testUrl(errName, url)
       }
     }
   }
@@ -915,7 +923,7 @@ trait DeltaErrorsSuiteBase
           override val name: String = "DummyPostCommitHook"
           override def run(
             spark: SparkSession, txn: DeltaTransaction, committedVersion: Long,
-            postCommitSnapshot: Snapshot, committedActions: Seq[Action]): Unit = {}
+            postCommitSnapshot: Snapshot, committedActions: Iterator[Action]): Unit = {}
         }, 0, "msg", null)
       }
       checkErrorMessage(e, Some("DELTA_POST_COMMIT_HOOK_FAILED"), Some("2DKD0"),
@@ -928,7 +936,7 @@ trait DeltaErrorsSuiteBase
           override val name: String = "DummyPostCommitHook"
           override def run(
             spark: SparkSession, txn: DeltaTransaction, committedVersion: Long,
-            postCommitSnapshot: Snapshot, committedActions: Seq[Action]): Unit = {}
+            postCommitSnapshot: Snapshot, committedActions: Iterator[Action]): Unit = {}
         }, 0, null, null)
       }
       checkErrorMessage(e, Some("DELTA_POST_COMMIT_HOOK_FAILED"), Some("2DKD0"),
@@ -3238,19 +3246,6 @@ trait DeltaErrorsSuiteBase
         None,
         Some(s"prefixMsg - Found unsupported expression ${expr.sql} while parsing target column " +
             s"name parts.")
-      )
-    }
-    {
-      val e = intercept[DeltaAnalysisException] {
-        throw new DeltaAnalysisException(
-          errorClass = "_LEGACY_ERROR_TEMP_DELTA_0011",
-          messageParameters = Array.empty)
-      }
-      checkErrorMessage(
-        e,
-        Some("_LEGACY_ERROR_TEMP_DELTA_0011"),
-        None,
-        Some("Failed to resolve plan.")
       )
     }
     {

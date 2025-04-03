@@ -15,9 +15,12 @@
  */
 package io.delta.kernel;
 
+import static java.util.Objects.requireNonNull;
+
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.hook.PostCommitHook;
+import io.delta.kernel.metrics.TransactionMetricsResult;
 import io.delta.kernel.utils.CloseableIterable;
 import java.util.List;
 
@@ -31,10 +34,15 @@ import java.util.List;
 public class TransactionCommitResult {
   private final long version;
   private final List<PostCommitHook> postCommitHooks;
+  private final TransactionMetricsResult transactionMetrics;
 
-  public TransactionCommitResult(long version, List<PostCommitHook> postCommitHooks) {
+  public TransactionCommitResult(
+      long version,
+      List<PostCommitHook> postCommitHooks,
+      TransactionMetricsResult transactionMetrics) {
     this.version = version;
-    this.postCommitHooks = postCommitHooks;
+    this.postCommitHooks = requireNonNull(postCommitHooks);
+    this.transactionMetrics = requireNonNull(transactionMetrics);
   }
 
   /**
@@ -61,5 +69,10 @@ public class TransactionCommitResult {
    */
   public List<PostCommitHook> getPostCommitHooks() {
     return postCommitHooks;
+  }
+
+  /** @return the metrics for this transaction */
+  public TransactionMetricsResult getTransactionMetrics() {
+    return transactionMetrics;
   }
 }
