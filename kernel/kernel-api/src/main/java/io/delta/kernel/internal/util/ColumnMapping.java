@@ -358,7 +358,12 @@ public class ColumnMapping {
     // If this becomes hotspot, we can consider updating the methods to pass around AtomicBoolean
     // to track if the schema has changed. It is a bit convoluted to pass around and update the
     // AtomicBoolean in the recursive and multiple methods.
-    if (oldSchema.equals(newSchema)) {
+    boolean schemasEqual = oldSchema.equals(newSchema);
+    // If IDs are prepopulated on a schema then this value might not have been put in metadata yet
+    // so ensure we write the values in this case.
+    boolean maxIdPresent =
+        metadata.getConfiguration().containsKey(COLUMN_MAPPING_MAX_COLUMN_ID_KEY);
+    if (schemasEqual && maxIdPresent) {
       checkArgument(
           oldMaxColumnId == maxColumnId.get(),
           "The schema hasn't changed but the max column id has changed from %s to %s",
