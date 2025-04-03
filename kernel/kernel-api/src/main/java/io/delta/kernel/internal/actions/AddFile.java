@@ -91,7 +91,7 @@ public class AddFile extends RowBackedAction {
             dataFileStatus.getSize(),
             dataFileStatus.getModificationTime(),
             dataChange,
-            Optional.empty(), // deletionVector
+            dataFileStatus.getDeletionVectorDescriptor(), // deletionVector
             Optional.empty(), // tags
             Optional.empty(), // baseRowId
             Optional.empty(), // defaultRowCommitVersion
