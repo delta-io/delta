@@ -48,6 +48,8 @@ object IcebergStatsUtils extends DeltaLogging {
   // The stats for these types will be converted to Delta stats
   // except for following types:
   //  DECIMAL (decided by DeltaSQLConf.DELTA_CONVERT_ICEBERG_DECIMAL_STATS)
+  //  DATE (decided by DeltaSQLConf.DELTA_CONVERT_ICEBERG_DATE_STATS)
+  //  TIMESTAMP (decided by DeltaSQLConf.DELTA_CONVERT_ICEBERG_TIMESTAMP_STATS)
   // which are decided by spark configs dynamically
   private val STATS_ALLOW_TYPES = Set[TypeID](
     TypeID.BOOLEAN,
@@ -66,13 +68,17 @@ object IcebergStatsUtils extends DeltaLogging {
     TypeID.DECIMAL
   )
 
+  private val CONFIGS_TO_STATS_ALLOW_TYPES = Map(
+    DeltaSQLConf.DELTA_CONVERT_ICEBERG_DATE_STATS -> TypeID.DATE,
+    DeltaSQLConf.DELTA_CONVERT_ICEBERG_TIMESTAMP_STATS -> TypeID.TIMESTAMP,
+    DeltaSQLConf.DELTA_CONVERT_ICEBERG_DECIMAL_STATS -> TypeID.DECIMAL
+  )
+
   def typesAllowStatsConversion(spark: SparkSession): Set[TypeID] = {
-    val statsDisallowTypes =
-      if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_DECIMAL_STATS)) {
-        Set.empty[TypeID]
-      } else {
-        Set(TypeID.DECIMAL)
-      }
+    val statsDisallowTypes = CONFIGS_TO_STATS_ALLOW_TYPES.filter {
+      case (conf, _) => !spark.sessionState.conf.getConf(conf)
+    }.values.toSet
+
     typesAllowStatsConversion(statsDisallowTypes)
   }
 

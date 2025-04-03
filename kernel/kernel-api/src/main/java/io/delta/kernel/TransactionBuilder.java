@@ -35,11 +35,29 @@ import java.util.Map;
 @Evolving
 public interface TransactionBuilder {
   /**
-   * Set the schema of the table when creating a new table.
+   * Set the schema of the table. If setting the schema on an existing table for a schema evolution,
+   * then column mapping must be enabled. This API will preserve field metadata for fields such as
+   * field IDs and physical names. If field metadata is not specified for a field, it is considered
+   * as a new column and new IDs/physical names will be specified. The possible schema evolutions
+   * supported include column additions, removals, renames, and moves. If a schema evolution is
+   * performed, implementations must perform the following validations:
+   *
+   * <ul>
+   *   <li>No duplicate columns are allowed
+   *   <li>Column names contain only valid characters
+   *   <li>Data types are supported
+   *   <li>No new non-nullable fields are added
+   *   <li>Physical column name consistency is preserved in the new schema
+   *   <li>No type changes
+   *   <li>ToDo: Nested IDs for array/map types are preserved in the new schema
+   *   <li>ToDo: Validate invalid field reorderings
+   * </ul>
    *
    * @param engine {@link Engine} instance to use.
    * @param schema The new schema of the table.
    * @return updated {@link TransactionBuilder} instance.
+   * @throws io.delta.kernel.exceptions.KernelException in case column mapping is not enabled
+   * @throws IllegalArgumentException in case of any validation failure
    */
   TransactionBuilder withSchema(Engine engine, StructType schema);
 

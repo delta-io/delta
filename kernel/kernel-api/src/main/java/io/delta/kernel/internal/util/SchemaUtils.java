@@ -101,12 +101,17 @@ public class SchemaUtils {
    * </ul>
    */
   public static void validateUpdatedSchema(
-      StructType currentSchema, StructType newSchema, Metadata metadata) {
+      StructType currentSchema,
+      StructType newSchema,
+      Set<String> currentPartitionColumns,
+      Metadata newMetadata) {
     checkArgument(
-        isColumnMappingModeEnabled(ColumnMapping.getColumnMappingMode(metadata.getConfiguration())),
+        isColumnMappingModeEnabled(
+            ColumnMapping.getColumnMappingMode(newMetadata.getConfiguration())),
         "Cannot validate updated schema when column mapping is disabled");
     validateSchema(newSchema, true /*columnMappingEnabled*/);
-    validateSchemaEvolution(currentSchema, newSchema, metadata);
+    validatePartitionColumns(newSchema, new ArrayList<>(currentPartitionColumns));
+    validateSchemaEvolution(currentSchema, newSchema, newMetadata);
   }
 
   /**
