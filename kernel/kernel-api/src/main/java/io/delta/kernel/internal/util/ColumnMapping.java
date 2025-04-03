@@ -354,11 +354,14 @@ public class ColumnMapping {
       newSchema = rewriteFieldIdsForIceberg(newSchema, maxColumnId);
     }
 
+    boolean shouldUpdateMaxId =
+        TableConfig.COLUMN_MAPPING_MAX_COLUMN_ID.fromMetadata(metadata) != maxColumnId.get();
+
     // We are comparing the old schema with the new schema to determine if the schema has changed.
     // If this becomes hotspot, we can consider updating the methods to pass around AtomicBoolean
     // to track if the schema has changed. It is a bit convoluted to pass around and update the
     // AtomicBoolean in the recursive and multiple methods.
-    if (oldSchema.equals(newSchema)) {
+    if (oldSchema.equals(newSchema) && !shouldUpdateMaxId) {
       checkArgument(
           oldMaxColumnId == maxColumnId.get(),
           "The schema hasn't changed but the max column id has changed from %s to %s",
