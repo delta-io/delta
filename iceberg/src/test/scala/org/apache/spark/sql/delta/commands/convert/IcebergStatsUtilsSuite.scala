@@ -23,15 +23,20 @@ import java.util.{List => JList, Map => JMap}
 
 import scala.collection.JavaConverters._
 
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.iceberg.{DataFile, FileContent, FileFormat, PartitionData, PartitionSpec, Schema, StructLike}
 import org.apache.iceberg.transforms._
 import org.apache.iceberg.types.Conversions
+import org.apache.iceberg.types.Type
+import org.apache.iceberg.types.Type.TypeID
 import org.apache.iceberg.types.Types._
 
 import org.apache.spark.SparkFunSuite
+import org.apache.spark.internal.config.ConfigEntry
+import org.apache.spark.sql.test.SharedSparkSession
 
-class IcebergStatsUtilsSuite extends SparkFunSuite {
+class IcebergStatsUtilsSuite extends SparkFunSuite with SharedSparkSession {
 
   private val StatsAllowTypes =
     IcebergStatsUtils.typesAllowStatsConversion(statsDisallowTypes = Set.empty)
