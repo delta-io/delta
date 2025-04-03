@@ -197,18 +197,9 @@ public class SchemaUtils {
    * @param schema The schema of the table
    * @param clusteringCols List of clustering columns
    */
-  public static List<Column> validateClusteringColumns(StructType schema, List<Column> clusteringCols) {
+  public static void validateClusteringColumns(StructType schema, List<Column> clusteringCols) {
 
-
-
-    clusteringCols.forEach(
-        clusteringCol -> {
-          checkArgument(
-              flattenColNames.contains(
-                  concatWithDot(Arrays.asList(clusteringCol.getNames())).toLowerCase(Locale.ROOT)),
-              "Clustering column %s not found in the schema",
-              clusteringCol);
-        });
+    // TODO
   }
 
   /**

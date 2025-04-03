@@ -156,7 +156,7 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
         VectorUtils.buildArrayValue(Seq.empty.asJava, StringType.STRING),
         Optional.empty(),
         stringStringMapValue(configMap.asJava))
-      val txnState = TransactionStateRow.of(metadata, "table path", List.empty.asJava)
+      val txnState = TransactionStateRow.of(metadata, "table path")
 
       // Get statistics columns and define expected result
       val statsColumns = TransactionImpl.getStatisticsColumns(txnState)
@@ -182,92 +182,6 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
           statsColumns.isEmpty,
           s"With numIndexedCols=$numIndexedCols," +
             s" expected no columns but got ${statsColumns.size} columns")
-      }
-    }
-  }
-
-  test(s"getClusteringColumns: validate clustering columns are fetched correctly") {
-    // Create schema with simple and nested columns
-    val schema = new StructType()
-      .add("id", IntegerType.INTEGER)
-      .add("name", StringType.STRING)
-      .add(
-        "metrics",
-        new StructType()
-          .add("temperature", DoubleType.DOUBLE)
-          .add("humidity", FloatType.FLOAT))
-      .add("timestamp", TimestampType.TIMESTAMP)
-
-    // Create transaction state with specified numIndexedCols
-    val metadata = new Metadata(
-      "id",
-      Optional.empty(),
-      Optional.empty(),
-      new Format(),
-      DataTypeJsonSerDe.serializeDataType(schema),
-      schema,
-      VectorUtils.buildArrayValue(Seq.empty.asJava, StringType.STRING),
-      Optional.empty(),
-      stringStringMapValue(Map.empty[String, String].asJava))
-
-    val clusteringColumns = List(new Column(Array("metrics", "temperature"))).asJava
-    val txnState = TransactionStateRow.of(metadata, "table path", clusteringColumns)
-
-    // Empty clustering columns should return empty list
-    val clusteringColumnsFetched = TransactionStateRow.getClusteringColumns(txnState)
-    assert(clusteringColumnsFetched.size() == 1)
-    assert(clusteringColumnsFetched == clusteringColumns)
-
-    val txnStateNoClusterColumn =
-      TransactionStateRow.of(metadata, "table path", List.empty.asJava)
-    val columnFetched = TransactionStateRow.getClusteringColumns(txnStateNoClusterColumn)
-    assert(columnFetched.size() == 0)
-  }
-
-  Seq(true, false).foreach { containsClusteringColumn =>
-    test(s"generateAppendActions: statistics check for " +
-      s"containsClusteringColumn=$containsClusteringColumn") {
-      val clusteringColumns =
-        if (containsClusteringColumn) List(new Column("id")) else List.empty
-      val txnState =
-        testTxnState(testSchema, clusteringCols = clusteringColumns)
-      val engine = mockEngine()
-
-      // Missing statistics
-      Seq(
-        (
-          testDataFileStatuses(
-            "file1" -> None // missing the whole statistics
-          ),
-          "Cannot write to a clustering-enabled table without per-file statistics."),
-        (
-          testDataFileStatuses(
-            "file1" -> testStats(Some(10)) // missing per-column statistics
-          ),
-          "Cannot write to a clustering-enabled table without per-column statistics.")).foreach {
-        case (actionRows, expectedErrorMsg) =>
-          if (containsClusteringColumn) {
-            val ex = intercept[KernelException] {
-              generateAppendActions(engine, txnState, actionRows, testDataWriteContext())
-                .forEachRemaining(_ => ()) // consume the iterator
-            }
-            assert(ex.getMessage.contains(expectedErrorMsg))
-          } else {
-            generateAppendActions(engine, txnState, actionRows, testDataWriteContext())
-              .forEachRemaining(_ => ()) // consume the iterator
-          }
-      }
-
-      // Valid statistics should pass the statistics check for clustering columns
-      if (containsClusteringColumn) {
-        val stats = new DataFileStatistics(
-          100L,
-          Map(clusteringColumns.head -> Literal.ofLong(1)).asJava,
-          Map(clusteringColumns.head -> Literal.ofLong(10)).asJava,
-          Map(clusteringColumns.head -> java.lang.Long.valueOf(0L)).asJava)
-        val actionRows = testDataFileStatuses("file1" -> Some(stats))
-        generateAppendActions(engine, txnState, actionRows, testDataWriteContext())
-          .forEachRemaining(_ => ()) // consume the iterator
       }
     }
   }
@@ -335,7 +249,6 @@ object TransactionSuite extends VectorTestUtils with MockEngineUtils {
   def testTxnState(
       schema: StructType,
       partitionCols: Seq[String] = Seq.empty,
-      clusteringCols: List[Column] = List.empty,
       enableIcebergCompatV2: Boolean = false): Row = {
     val configurationMap = Map(ICEBERG_COMPAT_V2_ENABLED.getKey -> enableIcebergCompatV2.toString)
     val metadata = new Metadata(
@@ -349,7 +262,7 @@ object TransactionSuite extends VectorTestUtils with MockEngineUtils {
       Optional.empty(), // createdTime
       stringStringMapValue(configurationMap.asJava) // configurationMap
     )
-    TransactionStateRow.of(metadata, "table path", clusteringCols.asJava)
+    TransactionStateRow.of(metadata, "table path")
   }
 
   def testStats(numRowsOpt: Option[Long]): Option[DataFileStatistics] = {

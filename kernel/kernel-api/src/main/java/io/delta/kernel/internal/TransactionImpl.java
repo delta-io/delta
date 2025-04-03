@@ -125,7 +125,7 @@ public class TransactionImpl implements Transaction {
 
   @Override
   public Row getTransactionState(Engine engine) {
-    return TransactionStateRow.of(metadata, dataPath.toString(), getPhysicalClusteringColumns());
+    return TransactionStateRow.of(metadata, dataPath.toString());
   }
 
   @Override
@@ -588,18 +588,6 @@ public class TransactionImpl implements Transaction {
                     lastCrcInfo.getTableSizeBytes() + metricsResult.getTotalAddFilesSizeInBytes(),
                     lastCrcInfo.getNumFiles() + metricsResult.getNumAddFiles(),
                     Optional.of(txnId.toString())));
-  }
-
-  /** Retrieves the physical clustering columns based on the current protocol and metadata. */
-  private List<Column> getPhysicalClusteringColumns() {
-    if (!TableFeatures.isClusteringTableFeatureSupported(protocol)) {
-      return Collections.emptyList();
-    }
-
-    return clusteringColumnsOpt.orElseGet(
-        () ->
-            ClusteringUtils.getClusteringColumnsOptional(readSnapshot)
-                .orElse(Collections.emptyList()));
   }
 
   /**

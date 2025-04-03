@@ -137,8 +137,6 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
 
   test("insert into clustered table - already existing table") {
     withTempDirAndEngine { (tablePath, engine) =>
-      val testData = Seq(Map.empty[String, Literal] -> dataClusteringBatches1)
-
       {
         val commitResult0 = appendData(
           engine,
