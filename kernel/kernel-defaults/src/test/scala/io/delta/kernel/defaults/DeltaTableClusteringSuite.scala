@@ -20,14 +20,14 @@ import scala.collection.immutable.Seq
 
 import io.delta.kernel.Operation.{CREATE_TABLE, WRITE}
 import io.delta.kernel.Table
-import io.delta.kernel.exceptions.TableAlreadyExistsException
+import io.delta.kernel.exceptions.{KernelException, TableAlreadyExistsException}
 import io.delta.kernel.expressions.{Column, Literal}
 import io.delta.kernel.expressions.Literal.ofInt
 import io.delta.kernel.internal.SnapshotImpl
 import io.delta.kernel.internal.actions.DomainMetadata
 import io.delta.kernel.internal.clustering.ClusteringMetadataDomain
+import io.delta.kernel.types.{MapType, StructType}
 import io.delta.kernel.types.IntegerType.INTEGER
-import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
 
 class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
@@ -44,9 +44,9 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
       == expectedDomainMetadata)
   }
 
-  test("create clustered table - clustering column is not part of the schema") {
+  test("build clustered table txn: clustering column should be part of the schema") {
     withTempDirAndEngine { (tablePath, engine) =>
-      val ex = intercept[IllegalArgumentException] {
+      val ex = intercept[KernelException] {
         createTxn(
           engine,
           tablePath,
@@ -54,12 +54,12 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
           testPartitionSchema,
           clusteringCols = List(new Column("PART1"), new Column("part3")))
       }
-      assert(ex.getMessage.contains("Clustering column column(`part3`) not found in the schema"))
+      assert(ex.getMessage.contains("Column 'column(`part3`)' was not found in the table schema"))
     }
   }
 
-  test(
-    "create clustered table - clustering column and partition column cannot be set at same time") {
+  test("build clustered table txn: " +
+    "clustering column and partition column cannot be set at same time") {
     withTempDirAndEngine { (tablePath, engine) =>
       val ex = intercept[IllegalArgumentException] {
         createTxn(
@@ -76,13 +76,49 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
     }
   }
 
-  test("create a clustered table") {
+  test("build clustered table txn: clustering column should be data skipping supported data type") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val testPartitionSchema = new StructType()
+        .add("id", INTEGER)
+        .add("part1", INTEGER) // partition column
+        .add("mapType", new MapType(INTEGER, INTEGER, false));
+      val ex = intercept[IllegalArgumentException] {
+        createTxn(
+          engine,
+          tablePath,
+          isNewTable = true,
+          testPartitionSchema,
+          clusteringCols = List(new Column("mapType")))
+      }
+      assert(ex.getMessage.contains("Clustering is not supported because the following column(s)"))
+    }
+  }
+
+  test("create a clustered table should succeed") {
     withTempDirAndEngine { (tablePath, engine) =>
       createEmptyTable(
         engine,
         tablePath,
         testPartitionSchema,
         clusteringCols = testClusteringColumns)
+
+      val table = Table.forPath(engine, tablePath)
+      // Verify the clustering feature is included in the protocol
+      val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      assertHasWriterFeature(snapshot, "clustering")
+
+      // Verify the clustering domain metadata is written
+      verifyClusteringDomainMetadata(snapshot)
+    }
+  }
+
+  test("create a clustered table should succeed with column case matches schema") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(
+        engine,
+        tablePath,
+        testPartitionSchema,
+        clusteringCols = List(new Column("pArT1"), new Column("PaRt2")))
 
       val table = Table.forPath(engine, tablePath)
       // Verify the clustering feature is included in the protocol

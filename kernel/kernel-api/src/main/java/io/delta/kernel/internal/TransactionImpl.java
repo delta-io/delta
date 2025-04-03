@@ -80,7 +80,7 @@ public class TransactionImpl implements Transaction {
   private final Protocol protocol;
   private final SnapshotImpl readSnapshot;
   private final Optional<SetTransaction> setTxnOpt;
-  private final Optional<List<Column>> clusteringColumnsOpt;
+  private final List<Column> clusteringColumns;
   private final boolean shouldUpdateProtocol;
   private final Clock clock;
   private final Map<String, DomainMetadata> domainMetadatasAdded = new HashMap<>();
@@ -102,7 +102,7 @@ public class TransactionImpl implements Transaction {
       Protocol protocol,
       Metadata metadata,
       Optional<SetTransaction> setTxnOpt,
-      Optional<List<Column>> clusteringColumnsOpt,
+      List<Column> clusteringColumns,
       boolean shouldUpdateMetadata,
       boolean shouldUpdateProtocol,
       int maxRetries,
@@ -116,7 +116,7 @@ public class TransactionImpl implements Transaction {
     this.protocol = protocol;
     this.metadata = metadata;
     this.setTxnOpt = setTxnOpt;
-    this.clusteringColumnsOpt = clusteringColumnsOpt;
+    this.clusteringColumns = clusteringColumns;
     this.shouldUpdateMetadata = shouldUpdateMetadata;
     this.shouldUpdateProtocol = shouldUpdateProtocol;
     this.maxRetries = maxRetries;
@@ -594,10 +594,9 @@ public class TransactionImpl implements Transaction {
    * Generate the domain metadata for the clustering columns if they are present in the transaction.
    */
   private void generateClusteringDomainMetadataIfNeeded() {
-    if (TableFeatures.isClusteringTableFeatureSupported(protocol)
-        && clusteringColumnsOpt.isPresent()) {
+    if (TableFeatures.isClusteringTableFeatureSupported(protocol) && !clusteringColumns.isEmpty()) {
       DomainMetadata clusteringDomainMetadata =
-          ClusteringUtils.getClusteringDomainMetadata(clusteringColumnsOpt.get());
+          ClusteringUtils.getClusteringDomainMetadata(clusteringColumns);
       addDomainMetadataInternal(
           clusteringDomainMetadata.getDomain(), clusteringDomainMetadata.getConfiguration());
     }

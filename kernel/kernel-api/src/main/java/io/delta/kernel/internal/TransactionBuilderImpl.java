@@ -248,6 +248,12 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     newMetadata.ifPresent(
         metadata -> validateMetadataChange(snapshotMetadata, metadata, isNewTable));
 
+    /* ----- 6: Additional validation and adjustment ----- */
+    List<Column> casePreservingClusteringColumns =
+        SchemaUtils.casePreservingEligibleClusterColumns(
+            newMetadata.orElse(snapshotMetadata).getSchema(),
+            clusteringColumns.orElse(Collections.emptyList()));
+
     return new TransactionImpl(
         isNewTable,
         table.getDataPath(),
@@ -258,7 +264,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         newProtocol.orElse(snapshotProtocol),
         newMetadata.orElse(snapshotMetadata),
         setTxnOpt,
-        clusteringColumns,
+        casePreservingClusteringColumns,
         newMetadata.isPresent() /* shouldUpdateMetadata */,
         newProtocol.isPresent() /* shouldUpdateProtocol */,
         maxRetries,
@@ -317,8 +323,6 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       SchemaUtils.validateSchema(schema.get(), isColumnMappingModeEnabled(mappingMode));
       SchemaUtils.validatePartitionColumns(
           schema.get(), partitionColumns.orElse(Collections.emptyList()));
-      SchemaUtils.validateClusteringColumns(
-          schema.get(), clusteringColumns.orElse(Collections.emptyList()));
     }
 
     setTxnOpt.ifPresent(
