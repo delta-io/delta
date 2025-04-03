@@ -645,13 +645,15 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
-  val REMOVE_EXISTS_DEFAULT_AT_TABLE_CREATION =
-    buildConf("allowColumnDefaults.storeExistsDefaultAtTableCreation")
+  val REMOVE_EXISTS_DEFAULT_FROM_SCHEMA =
+    buildConf("schema.removeExistsDefault")
       .internal()
-      .doc("When enabled, do not store the 'EXISTS_DEFAULT' metadata key when a with a default " +
-        "value is created. 'EXISTS_DEFAULT' holds values that are used in Spark for existing " +
-        "rows when a new column with a default value is added to a table. Since we do not " +
-        "support adding columns with a default value in Delta, this metadata key can be omitted.")
+      .doc("When enabled, do not store the 'EXISTS_DEFAULT' metadata key when a table with a " +
+        "default value is created and this table does not re-use existing data files." +
+        "'EXISTS_DEFAULT' holds values that are used in Spark for existing rows when a new column" +
+        "with a default value is added to a table. Since we do not support adding columns with a" +
+        "default value in Delta, this metadata key can be omitted, except in cases like when" +
+        "we convert a table to Delta that might actually require 'EXISTS_DEFAULT'.")
       .booleanConf
       .createWithDefault(true)
 

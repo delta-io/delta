@@ -303,7 +303,7 @@ case class CreateDeltaTableCommand(
       )
       // The 'deltaWriter' initialized the schema. Remove 'EXISTS_DEFAULT' metadata keys because
       // they are not required on tables created by CTAS.
-      txn.updateSchemaRemoveExistsDefault()
+      txn.removeExistsDefaultFromSchema()
       // Metadata updates for creating table (with any writer) and replacing table
       // (only with V1 writer) will be handled inside WriteIntoDelta.
       // For createOrReplace operation, metadata updates are handled here if the table already
@@ -397,7 +397,7 @@ case class CreateDeltaTableCommand(
 
         txn.updateMetadataForNewTable(newMetadata)
         // Remove 'EXISTS_DEFAULT' because it is not required for tables created with CREATE TABLE.
-        txn.updateSchemaRemoveExistsDefault()
+        txn.removeExistsDefaultFromSchema()
         protocol.foreach { protocol =>
           txn.updateProtocol(protocol)
         }

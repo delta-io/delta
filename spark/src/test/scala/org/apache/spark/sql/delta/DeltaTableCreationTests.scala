@@ -2421,7 +2421,7 @@ class DeltaTableCreationSuite
   private def withDeltaTableUsingExistsDefault(testFun: String => Unit): Unit = {
     val testTableName = "test_table"
     withTable(testTableName) {
-      withSQLConf(DeltaSQLConf.REMOVE_EXISTS_DEFAULT_AT_TABLE_CREATION.key -> "false") {
+      withSQLConf(DeltaSQLConf.REMOVE_EXISTS_DEFAULT_FROM_SCHEMA.key -> "false") {
         sql(s"""CREATE TABLE $testTableName (id INT, column_with_default INT DEFAULT 1)
                |USING DELTA
                |TBLPROPERTIES('delta.feature.allowColumnDefaults' = 'supported')""".stripMargin)
@@ -2445,7 +2445,7 @@ class DeltaTableCreationSuite
     writeOperations.foreach { metadataUpdatingQuery =>
       withDeltaTableUsingExistsDefault { testTableName =>
         // Execute the operation and assert that it keep EXISTS_DEFAULT in the schema.
-        withSQLConf(DeltaSQLConf.REMOVE_EXISTS_DEFAULT_AT_TABLE_CREATION.key -> "true") {
+        withSQLConf(DeltaSQLConf.REMOVE_EXISTS_DEFAULT_FROM_SCHEMA.key -> "true") {
           sql(metadataUpdatingQuery)
           assert(schemaContainsExistsDefaultKey(testTableName),
             s"Operation '$metadataUpdatingQuery' did remove EXISTS_DEFAULT from the schema.")
@@ -2469,7 +2469,7 @@ class DeltaTableCreationSuite
     val testTableName = "test_table"
     for (removeExistsDefault <- Seq(true, false)) {
       withTable(testTableName) {
-        withSQLConf(DeltaSQLConf.REMOVE_EXISTS_DEFAULT_AT_TABLE_CREATION.key ->
+        withSQLConf(DeltaSQLConf.REMOVE_EXISTS_DEFAULT_FROM_SCHEMA.key ->
             removeExistsDefault.toString) {
           sql(s"""CREATE TABLE $testTableName(int_with_default INT DEFAULT 2)
                  |USING DELTA
@@ -2498,7 +2498,7 @@ class DeltaTableCreationSuite
     for (sourceTableSchemaContainsKey <- Seq(true, false)) {
       withTable("test_table", "test_table_2", "test_table_3") {
           // To test with the 'EXISTS_DEFAULT' key present in the source table, we disable removal.
-          withSQLConf(DeltaSQLConf.REMOVE_EXISTS_DEFAULT_AT_TABLE_CREATION.key
+          withSQLConf(DeltaSQLConf.REMOVE_EXISTS_DEFAULT_FROM_SCHEMA.key
             -> (!sourceTableSchemaContainsKey).toString) {
             // Defaults are only possible for top level columns.
             sql("""CREATE TABLE test_table(int_col INT DEFAULT 2)
