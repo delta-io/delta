@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.commands.convert
 
 import java.lang.{Integer => JInt, Long => JLong}
 import java.nio.ByteBuffer
+import java.util.{Map => JMap}
 
 import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
@@ -93,36 +94,48 @@ object IcebergStatsUtils extends DeltaLogging {
    *
    * @param icebergSchema            Iceberg table schema
    * @param dataFile                 Iceberg DataFile that contains stats info
+   * @param statsAllowTypes          Iceberg types that are allowed to convert stats
+   * @param shouldSkipForFile        Function => true if a data file should be skipped
    * @return None if stats is missing on the DataFile or error occurs during conversion
    */
   def icebergStatsToDelta(
       icebergSchema: Schema,
       dataFile: DataFile,
-      statsAllowTypes: Set[TypeID]): Option[String] = {
+      statsAllowTypes: Set[TypeID],
+      shouldSkipForFile: DataFile => Boolean): Option[String] = {
+    if (shouldSkipForFile(dataFile)) {
+      return None
+    }
     try {
-      // Any empty or null fields means Iceberg has disabled column stats
-      if (dataFile.upperBounds == null ||
-        dataFile.upperBounds.isEmpty ||
-        dataFile.lowerBounds == null ||
-        dataFile.lowerBounds.isEmpty ||
-        dataFile.nullValueCounts == null ||
-        dataFile.nullValueCounts.isEmpty
-      ) {
-        return None
-      }
       Some(icebergStatsToDelta(
         icebergSchema,
         dataFile.recordCount,
-        dataFile.upperBounds.asScala.toMap,
-        dataFile.lowerBounds.asScala.toMap,
-        dataFile.nullValueCounts.asScala.toMap,
+        Option(dataFile.upperBounds).map(_.asScala.toMap).filter(_.nonEmpty),
+        Option(dataFile.lowerBounds).map(_.asScala.toMap).filter(_.nonEmpty),
+        Option(dataFile.nullValueCounts).map(_.asScala.toMap).filter(_.nonEmpty),
         statsAllowTypes
       ))
     } catch {
       case NonFatal(e) =>
-        logError("Exception while converting Iceberg stats to Delta format", e)
+        logInfo("[Iceberg-Stats-Conversion] " +
+          "Exception while converting Iceberg stats to Delta format", e)
         None
     }
+  }
+
+  def hasPartialStats(dataFile: DataFile): Boolean = {
+    def nonEmptyMap[K, V](m: JMap[K, V]): Boolean = {
+      m != null && !m.isEmpty
+    }
+    // nullValueCounts is less common, so we ignore it
+    val hasPartialStats =
+      !nonEmptyMap(dataFile.upperBounds()) ||
+      !nonEmptyMap(dataFile.lowerBounds())
+    if (hasPartialStats) {
+      logInfo(s"[Iceberg-Stats-Conversion] $dataFile only has partial stats:" +
+        s"upperBounds=${dataFile.upperBounds}, lowerBounds = ${dataFile.lowerBounds()}")
+    }
+    hasPartialStats
   }
 
   /**
@@ -176,9 +189,9 @@ object IcebergStatsUtils extends DeltaLogging {
   private[convert] def icebergStatsToDelta(
       icebergSchema: Schema,
       numRecords: Long,
-      maxMap: Map[JInt, ByteBuffer],
-      minMap: Map[JInt, ByteBuffer],
-      nullCountMap: Map[JInt, JLong],
+      maxMap: Option[Map[JInt, ByteBuffer]],
+      minMap: Option[Map[JInt, ByteBuffer]],
+      nullCountMap: Option[Map[JInt, JLong]],
       statsAllowTypes: Set[TypeID]): String = {
 
     def deserialize(ftype: IcebergType, value: Any): Any = {
@@ -222,11 +235,14 @@ object IcebergStatsUtils extends DeltaLogging {
 
     JsonUtils.toJson(
       Map(
-        NUM_RECORDS -> numRecords,
-        MAX -> collectStats(icebergSchema.columns, maxMap, deserialize, statsAllowTypes),
-        MIN -> collectStats(icebergSchema.columns, minMap, deserialize, statsAllowTypes),
+        NUM_RECORDS -> numRecords
+      ) ++ maxMap.map(
+        MAX -> collectStats(icebergSchema.columns, _, deserialize, statsAllowTypes)
+      ) ++ minMap.map(
+        MIN -> collectStats(icebergSchema.columns, _, deserialize, statsAllowTypes)
+      ) ++ nullCountMap.map(
         NULL_COUNT -> collectStats(
-          icebergSchema.columns, nullCountMap, (_: IcebergType, v: Any) => v, statsAllowTypes
+          icebergSchema.columns, _, (_: IcebergType, v: Any) => v, statsAllowTypes
         )
       )
     )
