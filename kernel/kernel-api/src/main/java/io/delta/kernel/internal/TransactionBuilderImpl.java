@@ -372,7 +372,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       if (clusteringColumns.isPresent() && !clusteringColumns.get().isEmpty()) {
         throw new KernelException(
             format(
-                "Cannot update schema for table with clustering columns %s",
+                "Update schema for table with clustering columns %s is not yet supported",
                 clusteringColumns.get()));
       }
 

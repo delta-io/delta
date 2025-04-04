@@ -1179,11 +1179,11 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
         .add("c", StringType.STRING, true, currentSchema.get("c").getMetadata)
         .add("a", StringType.STRING, true, currentSchema.get("a").getMetadata)
 
-      assertSchemaEvolutionFails[IllegalArgumentException](
+      assertSchemaEvolutionFails[KernelException](
         table,
         engine,
         newSchema,
-        "Cannot update schema for table with clustering columns")
+        "Update schema for table with clustering columns")
     }
   }
 
