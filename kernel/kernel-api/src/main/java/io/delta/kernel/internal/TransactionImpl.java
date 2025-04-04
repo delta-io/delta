@@ -121,7 +121,7 @@ public class TransactionImpl implements Transaction {
 
   @Override
   public Row getTransactionState(Engine engine) {
-    return TransactionStateRow.of(metadata, dataPath.toString());
+    return TransactionStateRow.of(metadata, dataPath.toString(), maxRetries);
   }
 
   @Override
