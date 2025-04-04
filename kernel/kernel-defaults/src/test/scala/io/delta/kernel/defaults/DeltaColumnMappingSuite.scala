@@ -86,8 +86,9 @@ class DeltaColumnMappingSuite extends DeltaTableWriteSuiteBase with ColumnMappin
       assertColumnMapping(structType.get("a"), 1)
       assertColumnMapping(structType.get("b"), 2)
 
-      val config = getMetadata(engine, tablePath).getConfiguration.asScala
-      assert(config.get(TableConfig.COLUMN_MAPPING_MAX_COLUMN_ID.getKey).contains("2"))
+      assert(TableConfig.COLUMN_MAPPING_MAX_COLUMN_ID.fromMetadata(getMetadata(
+        engine,
+        tablePath)) == 2)
 
       val protocol = getProtocol(engine, tablePath)
       assert(protocol.getMinReaderVersion == 2 && protocol.getMinWriterVersion == 7)
@@ -106,9 +107,9 @@ class DeltaColumnMappingSuite extends DeltaTableWriteSuiteBase with ColumnMappin
 
       val structtype = getMetadata(engine, tablePath).getSchema
       assertColumnMapping(structtype.get("col_name"), 1)
-
-      val config = getMetadata(engine, tablePath).getConfiguration.asScala
-      assert(config.get(TableConfig.COLUMN_MAPPING_MAX_COLUMN_ID.getKey).contains("1"))
+      assert(TableConfig.COLUMN_MAPPING_MAX_COLUMN_ID.fromMetadata(getMetadata(
+        engine,
+        tablePath)) == 1)
     }
   }
 
