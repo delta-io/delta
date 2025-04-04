@@ -440,6 +440,8 @@ case class CreateDeltaTableCommand(
           options,
           sparkSession,
           tableWithLocation.schema)
+        // Remove 'EXISTS_DEFAULT' because it is not required for tables created with REPLACE TABLE.
+        txn.removeExistsDefaultFromSchema()
         // Truncate the table
         val operationTimestamp = System.currentTimeMillis()
         var actionsToCommit = Seq.empty[Action]

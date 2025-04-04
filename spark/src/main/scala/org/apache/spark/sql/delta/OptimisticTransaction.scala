@@ -810,10 +810,10 @@ trait OptimisticTransactionImpl extends DeltaTransaction
 
   /**
    * Remove the 'EXISTS_DEFAULT' metadata key from the schema. This is used for new tables that are
-   * not re-using data files of existing tables (i.e. CREATE TABLE, CTAS, DEEP CLONE). It is not
+   * not re-using data files of existing tables (i.e. CREATE TABLE, REPLACE TABLE, CTAS). It is not
    * used on code paths of commands that create new tables but re-use data files (i.e. CONVERT TO
-   * DELTA, SHALLOW CLONE) because we cannot assure that 'EXISTS_DEFAULT' values is actually not
-   * required without reading the data.
+   * DELTA, CLONE) because we cannot assure that 'EXISTS_DEFAULT' values is actually not required
+   * without reading the data.
    */
   def removeExistsDefaultFromSchema(): Unit = {
     if (spark.sessionState.conf.getConf(DeltaSQLConf.REMOVE_EXISTS_DEFAULT_FROM_SCHEMA)) {
