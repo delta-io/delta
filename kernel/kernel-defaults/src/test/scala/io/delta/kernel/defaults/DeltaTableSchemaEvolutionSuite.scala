@@ -32,7 +32,7 @@ import io.delta.kernel.utils.CloseableIterable.emptyIterable
  */
 class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with ColumnMappingSuiteBase {
 
-  test("Add nullable column succeeds") {
+  test("Add nullable column succeeds and correctly updates maxFieldId") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
       val initialSchema = new StructType()
@@ -70,6 +70,7 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
       assertColumnMapping(innerStruct.get("d"), 4, "d")
       assertColumnMapping(innerStruct.get("e"), 5, "e")
       assertColumnMapping(structType.get("c"), 2)
+      assert(getMaxFieldId(engine, tablePath) == 5)
     }
   }
 
@@ -87,6 +88,7 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
         tableProperties = Map(
           TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
           TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"))
+      assertColumnMapping(table.getLatestSnapshot(engine).getSchema.get("c"), 2)
 
       val currentSchema = table.getLatestSnapshot(engine).getSchema()
       val newSchema = new StructType()
@@ -98,6 +100,7 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
 
       val structType = table.getLatestSnapshot(engine).getSchema
       assertColumnMapping(structType.get("a"), 1)
+      assert(getMaxFieldId(engine, tablePath) == 2)
     }
   }
 
@@ -1208,5 +1211,10 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
 
     assert(e.isInstanceOf[T])
     assert(e.getMessage.contains(expectedMessageContained))
+  }
+
+  private def getMaxFieldId(engine: Engine, tablePath: String): Long = {
+    TableConfig.COLUMN_MAPPING_MAX_COLUMN_ID
+      .fromMetadata(getMetadata(engine, tablePath))
   }
 }

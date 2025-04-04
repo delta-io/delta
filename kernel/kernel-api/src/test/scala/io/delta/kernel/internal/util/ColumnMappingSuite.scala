@@ -17,6 +17,8 @@ package io.delta.kernel.internal.util
 
 import java.util
 
+import scala.collection.JavaConverters.mapAsJavaMapConverter
+
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.expressions.Column
 import io.delta.kernel.internal.actions.Metadata
@@ -606,6 +608,12 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
     var metadata = testMetadata(schemaWithCMInfo).withColumnMappingEnabled("id")
     if (enableIcebergCompatV2) {
       metadata = metadata.withIcebergCompatV2Enabled
+    }
+    if (!metadata.getConfiguration.containsKey(COLUMN_MAPPING_MAX_COLUMN_ID_KEY)) {
+      // A hack, if the metadata doesn't have max column ID in it,
+      // then new metadata is always returned.
+      metadata =
+        metadata.withMergedConfiguration(Map(COLUMN_MAPPING_MAX_COLUMN_ID_KEY -> "100").asJava)
     }
 
     assertThat(updateColumnMappingMetadataIfNeeded(metadata, isNewTable)).isEmpty
