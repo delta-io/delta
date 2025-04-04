@@ -2528,13 +2528,13 @@ class DeltaTableCreationSuite
 
   test("Default column values: CREATE TABLE AS SELECT from a table with column defaults") {
     for (sourceTableSchemaContainsKey <- Seq(true, false)) {
-      withTable("test_table", "test_table_2", "test_table_3") {
+      withTable("test_table", "test_table_2", "test_table_3", "test_table_4") {
           // To test with the 'EXISTS_DEFAULT' key present in the source table, we disable removal.
           withSQLConf(DeltaSQLConf.REMOVE_EXISTS_DEFAULT_FROM_SCHEMA.key
             -> (!sourceTableSchemaContainsKey).toString) {
             // Defaults are only possible for top level columns.
             sql("""CREATE TABLE test_table(int_col INT DEFAULT 2)
-                  |USING delta
+                  |USING DELTA
                   |TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'supported')""".stripMargin)
           }
 
@@ -2545,15 +2545,18 @@ class DeltaTableCreationSuite
             }
           }
 
+        def schemaContainsCurrentDefaultKey(tableName: String): Boolean = {
+          val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(tableName))
+          snapshot.schema.fields.exists { field =>
+            field.metadata.contains(ResolveDefaultColumnsUtils.CURRENT_DEFAULT_COLUMN_METADATA_KEY)
+          }
+        }
+
           def defaultsTableFeatureEnabled(tableName: String): Boolean = {
             val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(tableName))
             val isEnabled =
               snapshot.protocol.writerFeatureNames.contains(AllowColumnDefaultsTableFeature.name)
-            val schemaContainsCurrentDefaultKey = snapshot.schema.fields.exists { field =>
-              field.metadata.contains(
-                ResolveDefaultColumnsUtils.CURRENT_DEFAULT_COLUMN_METADATA_KEY)
-            }
-            assert(schemaContainsCurrentDefaultKey === isEnabled)
+            assert(schemaContainsCurrentDefaultKey(tableName) === isEnabled)
             isEnabled
           }
 
@@ -2571,19 +2574,23 @@ class DeltaTableCreationSuite
             sql("CREATE TABLE test_table_2 USING DELTA AS SELECT * FROM test_table")
           }
 
-          // @TODO: It is possible to copy the default value if the table property is explicitely
-          //        specified. This is probably not the desired behavior.
+          // @TODO: It is possible to CTAS from a table with an active column default when the table
+          //        feature is explicitly enabled. This copies the default values setting, which is
+          //        probably not the desired behaviour.
           sql("""CREATE TABLE test_table_3
                 |USING DELTA
                 |TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'supported')
                 |AS SELECT * FROM test_table""".stripMargin)
-          assert(schemaContainsExistsKey("test_table_3") == sourceTableSchemaContainsKey)
+          assert(schemaContainsCurrentDefaultKey("test_table_3"))
+          assert(schemaContainsExistsKey("test_table_3") === false)
+          assert(defaultsTableFeatureEnabled("test_table_3"))
 
+          // Remove the active column default from the source table and CTAS from it.
           sql("ALTER TABLE test_table ALTER COLUMN int_col DROP DEFAULT")
           sql("CREATE TABLE test_table_4 USING DELTA AS SELECT * FROM test_table")
-
-          assert(schemaContainsExistsKey("test_table_3") === false)
-          assert(!defaultsTableFeatureEnabled("test_table_3"))
+          assert(schemaContainsCurrentDefaultKey("test_table_4") === false)
+          assert(schemaContainsExistsKey("test_table_4") === false)
+          assert(defaultsTableFeatureEnabled("test_table_4") === false)
       }
     }
   }

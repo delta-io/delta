@@ -653,7 +653,7 @@ trait DeltaSQLConfBase {
         "'EXISTS_DEFAULT' holds values that are used in Spark for existing rows when a new column" +
         "with a default value is added to a table. Since we do not support adding columns with a" +
         "default value in Delta, this metadata key can be omitted, except in cases like when" +
-        "we convert a table to Delta that might actually require 'EXISTS_DEFAULT'.")
+        "we convert a table to Delta that does actually require 'EXISTS_DEFAULT'.")
       .booleanConf
       .createWithDefault(true)
 
