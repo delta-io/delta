@@ -3104,13 +3104,6 @@
     ],
     "sqlState" : "55019"
   },
-  "DUPLICATE_KEY_IN_ICEBERG_TABLE_PROPERTY" : {
-    "message" : [
-      "Duplicate keys <tblProperties> found in table properties on Iceberg Table, please check the ",
-      "if these properties with and without prefix \"delta.universalformat.config.iceberg\" are both set"
-    ],
-    "sqlState" : "23505"
-  },
   "INCORRECT_NUMBER_OF_ARGUMENTS" : {
     "message" : [
       "<failure>, <functionName> requires at least <minArgs> arguments and at most <maxArgs> arguments."
