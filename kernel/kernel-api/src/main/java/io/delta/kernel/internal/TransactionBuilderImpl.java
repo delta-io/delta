@@ -33,6 +33,7 @@ import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.icebergcompat.IcebergCompatV2MetadataValidatorAndUpdater;
+import io.delta.kernel.internal.icebergcompat.IcebergUniversalFormatMetadataValidatorAndUpdater;
 import io.delta.kernel.internal.icebergcompat.IcebergWriterCompatV1MetadataValidatorAndUpdater;
 import io.delta.kernel.internal.metrics.SnapshotMetrics;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
@@ -218,6 +219,13 @@ public class TransactionBuilderImpl implements TransactionBuilder {
             isNewTable, newMetadata.orElse(snapshotMetadata), newProtocol.orElse(snapshotProtocol));
     if (icebergCompatV2Metadata.isPresent()) {
       newMetadata = icebergCompatV2Metadata;
+    }
+
+    Optional<Metadata> universalFormatMetadata =
+        IcebergUniversalFormatMetadataValidatorAndUpdater.validateAndUpdate(
+            newMetadata.orElse(snapshotMetadata));
+    if (universalFormatMetadata.isPresent()) {
+      newMetadata = universalFormatMetadata;
     }
 
     /* ----- 4: Update the METADATA with column mapping info if applicable ----- */

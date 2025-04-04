@@ -272,6 +272,32 @@ public class TableConfig<T> {
           "needs to be a boolean.",
           true);
 
+  /**
+   * The value that enables uniform exports to Iceberg for {@linkplain #UNIFORM_ENABLED_FORMATS}.
+   *
+   * <p>{@link #ICEBERG_COMPAT_V2_ENABLED but also be set to true} to fully enable this feature.
+   */
+  public static final String UNIVERSAL_FORMAT_ICEBERG = "iceberg";
+
+  /**
+   * The value to use to enable uniform exports to Iceberg for {@linkplain
+   * #UNIFORM_ENABLED_FORMATS}.
+   */
+  public static final String UNIVERSAL_FORMAT_HUDI = "hudi";
+
+  private static final Collection<String> ALLOWED_UNIFORM_FORMATS =
+      Collections.unmodifiableList(Arrays.asList(UNIVERSAL_FORMAT_HUDI, UNIVERSAL_FORMAT_ICEBERG));
+
+  /** Table config that allows for translation of Delta metadata to other table formats metadata. */
+  public static final TableConfig<Set<String>> UNIVERSAL_FORMAT_ENABLED_FORMATS =
+      new TableConfig<>(
+          "delta.universalFormat.enabledFormats",
+          null,
+          TableConfig::parseStringSet,
+          value -> value.stream().allMatch(ALLOWED_UNIFORM_FORMATS::contains),
+          String.format("each value must in the the set: %s", ALLOWED_UNIFORM_FORMATS),
+          true);
+
   /** All the valid properties that can be set on the table. */
   private static final Map<String, TableConfig<?>> VALID_PROPERTIES =
       Collections.unmodifiableMap(
@@ -295,6 +321,7 @@ public class TableConfig<T> {
               addConfig(this, ICEBERG_WRITER_COMPAT_V1_ENABLED);
               addConfig(this, COLUMN_MAPPING_MAX_COLUMN_ID);
               addConfig(this, DATA_SKIPPING_NUM_INDEXED_COLS);
+              addConfig(this, UNIVERSAL_FORMAT_ENABLED_FORMATS);
             }
           });
 
@@ -411,5 +438,18 @@ public class TableConfig<T> {
     if (!validator.test(parsedValue)) {
       throw DeltaErrors.invalidConfigurationValueException(key, value, helpMessage);
     }
+  }
+
+  private static Set<String> parseStringSet(String value) {
+    if (value == null || value.isEmpty()) {
+      return Collections.emptySet();
+    }
+    String[] formats = value.split(",");
+    Set<String> config = new HashSet<>();
+
+    for (String format : formats) {
+      config.add(format.trim());
+    }
+    return config;
   }
 }
