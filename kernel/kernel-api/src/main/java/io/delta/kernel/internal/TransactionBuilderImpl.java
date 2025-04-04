@@ -29,6 +29,7 @@ import static java.util.stream.Collectors.toSet;
 
 import io.delta.kernel.*;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.fs.Path;
@@ -162,17 +163,28 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       newMetadata = Optional.of(snapshotMetadata.withMergedConfiguration(newProperties));
     }
 
-    // TODO In the future update metadata with new schema if provided
+    if (schema.isPresent() && !isNewTable) {
+      newMetadata = Optional.of(newMetadata.orElse(snapshotMetadata).withNewSchema(schema.get()));
+    }
 
     /* ----- 2: Update the PROTOCOL based on the table properties or schema ----- */
     // This is the only place we update the protocol action; takes care of any dependent features
     // Ex: We enable feature `icebergCompatV2` plus dependent features `columnMapping`
+    Set<TableFeature> manuallyEnabledFeatures = new HashSet<>();
+    if (needDomainMetadataSupport) {
+      manuallyEnabledFeatures.add(TableFeatures.DOMAIN_METADATA_W_FEATURE);
+    }
+
+    Tuple2<Set<TableFeature>, Optional<Metadata>> newFeaturesAndMetadata =
+        TableFeatures.extractFeaturePropertyOverrides(newMetadata.orElse(snapshotMetadata));
+    manuallyEnabledFeatures.addAll(newFeaturesAndMetadata._1);
+    if (newFeaturesAndMetadata._2.isPresent()) {
+      newMetadata = newFeaturesAndMetadata._2;
+    }
+
     Optional<Tuple2<Protocol, Set<TableFeature>>> newProtocolAndFeatures =
         TableFeatures.autoUpgradeProtocolBasedOnMetadata(
-            newMetadata.orElse(snapshotMetadata),
-            needDomainMetadataSupport,
-            /* needClusteringTableFeature = */ false,
-            snapshotProtocol);
+            newMetadata.orElse(snapshotMetadata), manuallyEnabledFeatures, snapshotProtocol);
     if (newProtocolAndFeatures.isPresent()) {
       logger.info(
           "Automatically enabling table features: {}",
@@ -260,12 +272,6 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         snapshot.getProtocol(), snapshot.getMetadata(), tablePath);
 
     if (!isNewTable) {
-      if (schema.isPresent()) {
-        throw tableAlreadyExists(
-            tablePath,
-            "Table already exists, but provided a new schema. "
-                + "Schema can only be set on a new table.");
-      }
       if (partitionColumns.isPresent()) {
         throw tableAlreadyExists(
             tablePath,
@@ -310,7 +316,26 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     IcebergWriterCompatV1MetadataValidatorAndUpdater.validateIcebergWriterCompatV1Change(
         oldMetadata.getConfiguration(), newMetadata.getConfiguration(), isNewTable);
 
-    // TODO In the future validate any schema change
+    // Validate the conditions for schema evolution and the updated schema if applicable
+    if (schema.isPresent() && !isNewTable) {
+      ColumnMappingMode updatedMappingMode =
+          ColumnMapping.getColumnMappingMode(newMetadata.getConfiguration());
+      ColumnMappingMode currentMappingMode =
+          ColumnMapping.getColumnMappingMode(oldMetadata.getConfiguration());
+      if (currentMappingMode != updatedMappingMode) {
+        throw new KernelException("Cannot update mapping mode and perform schema evolution");
+      }
+
+      if (!isColumnMappingModeEnabled(updatedMappingMode)) {
+        throw new KernelException("Cannot update schema for table when column mapping is disabled");
+      }
+
+      SchemaUtils.validateUpdatedSchema(
+          oldMetadata.getSchema(),
+          newMetadata.getSchema(),
+          oldMetadata.getPartitionColNames(),
+          newMetadata);
+    }
   }
 
   private class InitialSnapshot extends SnapshotImpl {

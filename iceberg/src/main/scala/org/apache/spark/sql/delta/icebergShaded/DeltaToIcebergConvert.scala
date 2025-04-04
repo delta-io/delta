@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.icebergShaded
 
 import org.apache.spark.sql.delta.{DeltaConfig, DeltaConfigs, IcebergCompat}
 import org.apache.spark.sql.delta.DeltaConfigs.{LOG_RETENTION, TOMBSTONE_RETENTION}
+import org.apache.spark.sql.delta.DeltaErrors.icebergTablePropertiesConflictException
 import shadedForDelta.org.apache.iceberg.{TableProperties => IcebergTableProperties}
 
 import org.apache.spark.unsafe.types.CalendarInterval
@@ -30,24 +31,42 @@ object DeltaToIcebergConvert {
   object TableProperties {
     /**
      * We generate Iceberg Table properties from Delta table properties
-     * using two methods.
+     * using three methods.
      * 1. If a Delta property key starts with "delta.universalformat.config.iceberg"
      * we strip the prefix from the key and include the property pair.
      * Note the key is already normalized to lower case.
-     * 2. We compute Iceberg properties from Delta using custom logic
+     * 2. If it is a non delta property, i.e. property not starting with "delta.",
+     * include the property pair.
+     * 3. We compute Iceberg properties from Delta using custom logic
      * This now includes
      * a) Iceberg format version
      * b) Iceberg snapshot retention
      */
     def apply(deltaProperties: Map[String, String]): Map[String, String] = {
       val prefix = DeltaConfigs.DELTA_UNIVERSAL_FORMAT_ICEBERG_CONFIG_PREFIX
-      val copiedFromDelta =
+      // Key with delta.universalformat.config.iceberg prefix
+      // will have the prefix stripped and copied to iceberg
+      val stripedPrefixProperties =
         deltaProperties
           .filterKeys(_.startsWith(prefix))
           .map { case (key, value) => key.stripPrefix(prefix) -> value }
           .toSeq
           .toMap
 
+      // Key without delta. prefix will be copied to Iceberg directly.
+      val customProperties = deltaProperties.filterKeys(!_.startsWith("delta."))
+
+      // Setting "delta.universalformat.config.iceberg.property_name_foo"
+      // and "property_name_foo" will be considered as duplicate because
+      // "delta.universalformat.config.iceberg.property_name_foo" will be
+      // converted to "property_name_foo" after stripping prefix.
+      val duplicateUserSpecifiedProperties =
+        stripedPrefixProperties.keySet.intersect(customProperties.keySet)
+      if (duplicateUserSpecifiedProperties.nonEmpty) {
+        throw icebergTablePropertiesConflictException(duplicateUserSpecifiedProperties)
+      }
+
+      val copiedFromDelta = stripedPrefixProperties ++ customProperties
       val computers = Seq(FormatVersionComputer, RetentionPeriodComputer)
       val computed: Map[String, String] = computers
         .map(_.apply(deltaProperties, copiedFromDelta))

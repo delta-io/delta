@@ -44,8 +44,9 @@ import org.apache.spark.storage.BlockId
 private[spark] class TestClientForDeltaFormatSharing(
     profileProvider: DeltaSharingProfileProvider,
     timeoutInSeconds: Int = 120,
-    numRetries: Int = 10,
+    numRetries: Int = 3,
     maxRetryDuration: Long = Long.MaxValue,
+    retrySleepInterval: Long = 1000,
     sslTrustAll: Boolean = false,
     forStreaming: Boolean = false,
     responseFormat: String = DeltaSharingRestClient.RESPONSE_FORMAT_DELTA,

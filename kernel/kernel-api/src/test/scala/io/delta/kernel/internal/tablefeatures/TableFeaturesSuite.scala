@@ -856,13 +856,16 @@ class TableFeaturesSuite extends AnyFunSuite {
         s"$currentProtocol -> $expectedProtocol, $expectedNewFeatures") {
 
         for (
-          (needDomainMetadata, needClusteringTableFeature) <-
-            Seq((false, false), (false, true), (true, false), (true, true))
+          (manualFeatures) <-
+            Seq(
+              Set[TableFeature](),
+              Set(TableFeatures.DOMAIN_METADATA_W_FEATURE),
+              Set(TableFeatures.CLUSTERING_W_FEATURE),
+              Set(TableFeatures.CLUSTERING_W_FEATURE, TableFeatures.DOMAIN_METADATA_W_FEATURE))
         ) {
           val newProtocolAndNewFeaturesEnabled = TableFeatures.autoUpgradeProtocolBasedOnMetadata(
             newMetadata,
-            needDomainMetadata,
-            needClusteringTableFeature,
+            manualFeatures.asJava,
             currentProtocol)
 
           assert(newProtocolAndNewFeaturesEnabled.isPresent, "expected protocol upgrade")
@@ -874,24 +877,31 @@ class TableFeaturesSuite extends AnyFunSuite {
           assert(newProtocol.getMinReaderVersion == expectedProtocol.getMinReaderVersion)
 
           // Writer version: upgrade to 7 if domain metadata or clustering feature is enabled
-          val expectedWriterVersion = if (needDomainMetadata || needClusteringTableFeature) 7
-          else expectedProtocol.getMinWriterVersion
+          val expectedWriterVersion =
+            if (
+              !(manualFeatures & Set(
+                TableFeatures.CLUSTERING_W_FEATURE,
+                TableFeatures.DOMAIN_METADATA_W_FEATURE)).isEmpty
+            ) { 7 }
+            else expectedProtocol.getMinWriterVersion
           assert(newProtocol.getMinWriterVersion == expectedWriterVersion)
 
           // Expected enabled features
-          val expectedEnabledFeatures = expectedNewFeatures.asScala ++ (
-            if (needClusteringTableFeature) Set("domainMetadata", "clustering")
-            else if (needDomainMetadata) Set("domainMetadata")
-            else Set.empty
-          )
+          val expectedEnabledFeatures =
+            expectedNewFeatures.asScala ++ manualFeatures.map(_.featureName()).toSet ++ (
+              if (manualFeatures.contains(TableFeatures.CLUSTERING_W_FEATURE)) Set("domainMetadata")
+              else Set.empty
+            )
           assert(newFeaturesEnabled.asScala.map(_.featureName()).toSet == expectedEnabledFeatures)
 
           // Expected supported features
+          val implicitAndExplicitFeatures =
+            expectedProtocol.getImplicitlyAndExplicitlySupportedFeatures.asScala
           val expectedSupportedFeatures =
-            expectedProtocol.getImplicitlyAndExplicitlySupportedFeatures.asScala ++ (
-              if (needClusteringTableFeature) Set(DOMAIN_METADATA_W_FEATURE, CLUSTERING_W_FEATURE)
-              else if (needDomainMetadata) Set(DOMAIN_METADATA_W_FEATURE)
-              else Set.empty
+            implicitAndExplicitFeatures ++ manualFeatures ++ (
+              if (manualFeatures.contains(TableFeatures.CLUSTERING_W_FEATURE)) {
+                Set(TableFeatures.DOMAIN_METADATA_W_FEATURE)
+              } else { Set.empty }
             )
           assert(newProtocol.getImplicitlyAndExplicitlySupportedFeatures.asScala
             == expectedSupportedFeatures)
@@ -937,10 +947,59 @@ class TableFeaturesSuite extends AnyFunSuite {
         val newProtocolAndNewFeaturesEnabled =
           TableFeatures.autoUpgradeProtocolBasedOnMetadata(
             newMetadata,
-            /* needDomainMetadataSupport = */ false,
-            /* needClusteringTableFeature = */ false,
+            Set.empty.asJava,
             currentProtocol)
         assert(!newProtocolAndNewFeaturesEnabled.isPresent, "expected no-op upgrade")
+      }
+  }
+
+  test(
+    "extractFeaturePropertyOverrides returns feature options and removes from them from metadata") {
+    val metadata = testMetadata(tblProps = Map(
+      "delta.feature.deletionVectors" -> "supported",
+      "delta.feature.appendOnly" -> "supported",
+      "anotherkey" -> "some_value",
+      "delta.enableRowTracking" -> "true"))
+
+    val tableFeaturesAndMetadata =
+      TableFeatures.extractFeaturePropertyOverrides(metadata)
+
+    val newFeatures = tableFeaturesAndMetadata._1
+    assert(tableFeaturesAndMetadata._2.isPresent)
+    val newMetadata = tableFeaturesAndMetadata._2.get
+    assert(
+      newFeatures.equals(Set(
+        TableFeatures.APPEND_ONLY_W_FEATURE,
+        TableFeatures.DELETION_VECTORS_RW_FEATURE).asJava),
+      s"Explicit features: ${newFeatures}")
+
+    val tableConfig = newMetadata.getConfiguration
+    val expectedMap = Map("anotherkey" -> "some_value", "delta.enableRowTracking" -> "true")
+    assert(expectedMap.asJava.equals(tableConfig), s"$tableConfig != $expectedMap")
+  }
+
+  test(
+    "extractFeaturePropertyOverrides returns empty metadata with no change") {
+    val metadata = testMetadata(tblProps = Map(
+      "anotherkey" -> "some_value",
+      "delta.enableRowTracking" -> "true"))
+
+    val tableFeaturesAndMetadata =
+      TableFeatures.extractFeaturePropertyOverrides(metadata)
+
+    assert(tableFeaturesAndMetadata._1.isEmpty)
+    assert(!tableFeaturesAndMetadata._2.isPresent)
+  }
+
+  Seq(
+    Map("delta.feature.deletionVectors" -> "not_valid_value"),
+    Map("delta.feature.invalidFeatureName" -> "supported")).foreach {
+    properties =>
+      test(s"extractFeaturePropertyOverrides throws: $properties") {
+        intercept[KernelException] {
+          TableFeatures.extractFeaturePropertyOverrides(
+            testMetadata(tblProps = properties))
+        }
       }
   }
 

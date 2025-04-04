@@ -3092,6 +3092,13 @@ trait DeltaErrorsBase
     new DeltaIllegalArgumentException(errorClass = "DELTA_PARTITION_SCHEMA_IN_ICEBERG_TABLES")
   }
 
+  def icebergTablePropertiesConflictException(duplicatedKeys: Set[String]): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DUPLICATE_KEY_IN_ICEBERG_TABLE_PROPERTY",
+      messageParameters = Array(duplicatedKeys.mkString(", "))
+    )
+  }
+
   def icebergClassMissing(sparkConf: SparkConf, cause: Throwable): Throwable = {
     new DeltaIllegalStateException(
       errorClass = "DELTA_MISSING_ICEBERG_CLASS",

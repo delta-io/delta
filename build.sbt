@@ -568,7 +568,7 @@ lazy val sharing = (project in file("sharing"))
     libraryDependencies ++= Seq(
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
 
-      "io.delta" %% "delta-sharing-client" % "1.2.2",
+      "io.delta" %% "delta-sharing-client" % "1.2.4",
 
       // Test deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
