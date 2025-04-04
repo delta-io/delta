@@ -376,6 +376,24 @@ public final class DeltaErrors {
             + " but 'domainMetadata' is unsupported");
   }
 
+  public static KernelException missingFileStatsForClustering(
+      List<Column> columns, DataFileStatus dataFileStatus) {
+    return new KernelException(
+        format(
+            "Unable to write the given data file to a clustering-enabled table: "
+                + "Missing per-file statistics for clustering columns [%s]. DataFileStatus: %s",
+            columns, dataFileStatus));
+  }
+
+  public static KernelException missingColumnStatsForClustering(
+      Column column, DataFileStatus dataFileStatus) {
+    return new KernelException(
+        format(
+            "Unable to write the given data file to a clustering-enabled table: "
+                + "Missing per-file statistics for clustering column: %s. DataFileStatus: %s",
+            column, dataFileStatus));
+  }
+
   public static KernelException enablingIcebergWriterCompatV1OnExistingTable(String key) {
     return new KernelException(
         String.format(
