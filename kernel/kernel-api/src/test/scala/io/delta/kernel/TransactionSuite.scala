@@ -156,7 +156,7 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
         VectorUtils.buildArrayValue(Seq.empty.asJava, StringType.STRING),
         Optional.empty(),
         stringStringMapValue(configMap.asJava))
-      val txnState = TransactionStateRow.of(metadata, "table path")
+      val txnState = TransactionStateRow.of(metadata, "table path", 200)
 
       // Get statistics columns and define expected result
       val statsColumns = TransactionImpl.getStatisticsColumns(txnState)
@@ -262,7 +262,7 @@ object TransactionSuite extends VectorTestUtils with MockEngineUtils {
       Optional.empty(), // createdTime
       stringStringMapValue(configurationMap.asJava) // configurationMap
     )
-    TransactionStateRow.of(metadata, "table path")
+    TransactionStateRow.of(metadata, "table path", 200)
   }
 
   def testStats(numRowsOpt: Option[Long]): Option[DataFileStatistics] = {

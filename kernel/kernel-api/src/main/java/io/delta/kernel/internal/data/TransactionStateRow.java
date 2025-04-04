@@ -39,14 +39,15 @@ public class TransactionStateRow extends GenericRow {
           .add(
               "configuration",
               new MapType(StringType.STRING, StringType.STRING, false /* valueContainsNull */))
-          .add("tablePath", StringType.STRING);
+          .add("tablePath", StringType.STRING)
+          .add("maxRetries", IntegerType.INTEGER);
 
   private static final Map<String, Integer> COL_NAME_TO_ORDINAL =
       IntStream.range(0, SCHEMA.length())
           .boxed()
           .collect(toMap(i -> SCHEMA.at(i).getName(), i -> i));
 
-  public static TransactionStateRow of(Metadata metadata, String tablePath) {
+  public static TransactionStateRow of(Metadata metadata, String tablePath, int maxRetries) {
     HashMap<Integer, Object> valueMap = new HashMap<>();
     valueMap.put(COL_NAME_TO_ORDINAL.get("logicalSchemaString"), metadata.getSchemaString());
     valueMap.put(
@@ -54,6 +55,7 @@ public class TransactionStateRow extends GenericRow {
     valueMap.put(COL_NAME_TO_ORDINAL.get("partitionColumns"), metadata.getPartitionColumns());
     valueMap.put(COL_NAME_TO_ORDINAL.get("configuration"), metadata.getConfigurationMapValue());
     valueMap.put(COL_NAME_TO_ORDINAL.get("tablePath"), tablePath);
+    valueMap.put(COL_NAME_TO_ORDINAL.get("maxRetries"), maxRetries);
     return new TransactionStateRow(valueMap);
   }
 
@@ -132,5 +134,16 @@ public class TransactionStateRow extends GenericRow {
    */
   public static String getTablePath(Row transactionState) {
     return transactionState.getString(COL_NAME_TO_ORDINAL.get("tablePath"));
+  }
+
+  /**
+   * Get the maxRetries from scan state {@link Row} returned by {@link
+   * Transaction#getTransactionState(Engine)}
+   *
+   * @param transactionState Transaction state state {@link Row}
+   * @return the maxRetries set when building the transaction
+   */
+  public static int getMaxRetries(Row transactionState) {
+    return transactionState.getInt(COL_NAME_TO_ORDINAL.get("maxRetries"));
   }
 }

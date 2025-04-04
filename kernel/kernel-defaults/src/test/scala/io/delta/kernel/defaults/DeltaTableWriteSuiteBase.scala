@@ -301,7 +301,8 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       partCols: Seq[String] = null,
       tableProperties: Map[String, String] = null,
       clock: Clock = () => System.currentTimeMillis,
-      withDomainMetadataSupported: Boolean = false): Transaction = {
+      withDomainMetadataSupported: Boolean = false,
+      maxRetries: Int = -1): Transaction = {
 
     var txnBuilder = createWriteTxnBuilder(
       TableImpl.forPath(engine, tablePath, clock))
@@ -317,6 +318,10 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
 
     if (withDomainMetadataSupported) {
       txnBuilder = txnBuilder.withDomainMetadataSupported()
+    }
+
+    if (maxRetries >= 0) {
+      txnBuilder = txnBuilder.withMaxRetries(maxRetries)
     }
 
     txnBuilder.build(engine)
