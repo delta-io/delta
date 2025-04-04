@@ -47,7 +47,7 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
           TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
           TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"))
 
-      val currentSchema = table.getLatestSnapshot(engine).getSchema()
+      val currentSchema = table.getLatestSnapshot(engine).getSchema
       val newSchema = new StructType()
         .add("a", StringType.STRING, true, currentSchema.get("a").getMetadata)
         .add(
@@ -59,17 +59,10 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
           fieldMetadataForColumn(3, "b"))
         .add("c", IntegerType.INTEGER, true, currentSchema.get("c").getMetadata)
 
-      table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
-        .withSchema(engine, newSchema)
-        .build(engine).commit(engine, emptyIterable())
+      updateTableMetadata(engine, tablePath, newSchema)
 
-      val structType = table.getLatestSnapshot(engine).getSchema
-      assertColumnMapping(structType.get("a"), 1)
-
-      val innerStruct = structType.get("b").getDataType.asInstanceOf[StructType]
-      assertColumnMapping(innerStruct.get("d"), 4, "d")
-      assertColumnMapping(innerStruct.get("e"), 5, "e")
-      assertColumnMapping(structType.get("c"), 2)
+      val actualSchema = getMetadata(engine, tablePath).getSchema
+      assert(actualSchema == newSchema)
     }
   }
 
@@ -88,16 +81,14 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
           TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
           TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"))
 
-      val currentSchema = table.getLatestSnapshot(engine).getSchema()
+      val currentSchema = table.getLatestSnapshot(engine).getSchema
       val newSchema = new StructType()
         .add("a", StringType.STRING, true, currentSchema.get("a").getMetadata)
 
-      table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
-        .withSchema(engine, newSchema)
-        .build(engine).commit(engine, emptyIterable())
+      updateTableMetadata(engine, tablePath, newSchema)
 
-      val structType = table.getLatestSnapshot(engine).getSchema
-      assertColumnMapping(structType.get("a"), 1)
+      val actualSchema = getMetadata(engine, tablePath).getSchema
+      assert(actualSchema == newSchema)
     }
   }
 
@@ -122,7 +113,7 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
           TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
           TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"))
 
-      val currentSchema = table.getLatestSnapshot(engine).getSchema()
+      val currentSchema = table.getLatestSnapshot(engine).getSchema
 
       val innerStruct = currentSchema.get("b").getDataType.asInstanceOf[StructType]
       val newSchema = new StructType()
@@ -136,17 +127,10 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
           currentSchema.get("b").getMetadata)
         .add("renamed-c", IntegerType.INTEGER, true, currentSchema.get("c").getMetadata)
 
-      table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
-        .withSchema(engine, newSchema)
-        .build(engine).commit(engine, emptyIterable())
+      updateTableMetadata(engine, tablePath, newSchema)
 
-      val updatedSchema = table.getLatestSnapshot(engine).getSchema
-      assertColumnMapping(updatedSchema.get("a"), 1)
-
-      val updatedInnerStruct = updatedSchema.get("b").getDataType.asInstanceOf[StructType]
-      assertColumnMapping(updatedInnerStruct.get("renamed-d"), 3)
-      assertColumnMapping(updatedInnerStruct.get("e"), 4)
-      assertColumnMapping(updatedSchema.get("renamed-c"), 5)
+      val actualSchema = getMetadata(engine, tablePath).getSchema
+      assert(actualSchema == newSchema)
     }
   }
 
@@ -171,7 +155,7 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
           TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
           TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"))
 
-      val currentSchema = table.getLatestSnapshot(engine).getSchema()
+      val currentSchema = table.getLatestSnapshot(engine).getSchema
 
       val innerStruct = currentSchema.get("b").getDataType.asInstanceOf[StructType]
       val newSchema = new StructType()
@@ -185,23 +169,10 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
           true,
           currentSchema.get("b").getMetadata)
 
-      table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
-        .withSchema(engine, newSchema)
-        .build(engine).commit(engine, emptyIterable())
+      updateTableMetadata(engine, tablePath, newSchema)
 
-      val updatedSchema = table.getLatestSnapshot(engine).getSchema
-      assertColumnMapping(updatedSchema.get("a"), 1)
-
-      val updatedInnerStruct = updatedSchema.get("b").getDataType.asInstanceOf[StructType]
-      assertColumnMapping(updatedInnerStruct.get("d"), 3)
-      assertColumnMapping(updatedInnerStruct.get("e"), 4)
-      assertColumnMapping(updatedSchema.get("c"), 5)
-
-      // Verify the top level and nested field reordering is maintained
-      val topLevelFields = updatedSchema.fieldNames().asScala
-      assert(topLevelFields == Array("a", "c", "b").toSeq)
-      val innerFields = updatedInnerStruct.fieldNames().asScala
-      assert(innerFields == Array("e", "d").toSeq)
+      val actualSchema = getMetadata(engine, tablePath).getSchema
+      assert(actualSchema == newSchema)
     }
   }
 
@@ -233,18 +204,10 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
           true,
           fieldMetadataForMapColumn(4, "map", "map", 5, 6))
 
-      table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
-        .withSchema(engine, newSchema)
-        .build(engine).commit(engine, emptyIterable())
+      updateTableMetadata(engine, tablePath, newSchema)
 
-      val structType = table.getLatestSnapshot(engine).getSchema
-      assertColumnMapping(structType.get("a"), 1)
-      assertColumnMapping(structType.get("arr"), 2, "arr")
-      assertColumnMapping(structType.get("map"), 4, "map")
-      assert(structType.get("arr").getMetadata.get(ColumnMapping.COLUMN_MAPPING_NESTED_IDS_KEY)
-        == FieldMetadata.builder().putLong("arr.element", 3).build())
-      assert(structType.get("map").getMetadata.get(ColumnMapping.COLUMN_MAPPING_NESTED_IDS_KEY)
-        == FieldMetadata.builder().putLong("map.key", 5).putLong("map.value", 6).build())
+      val actualSchema = getMetadata(engine, tablePath).getSchema
+      assert(actualSchema == newSchema)
     }
   }
 
@@ -279,15 +242,10 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
           true,
           fieldMetadataForMapColumn(4, "map", "map", 5, 6))
 
-      table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
-        .withSchema(engine, newSchema)
-        .build(engine).commit(engine, emptyIterable())
+      updateTableMetadata(engine, tablePath, newSchema)
 
-      val structType = table.getLatestSnapshot(engine).getSchema
-      assertColumnMapping(structType.get("a"), 1)
-      assertColumnMapping(structType.get("map"), 4, "map")
-      assert(structType.get("map").getMetadata.get(ColumnMapping.COLUMN_MAPPING_NESTED_IDS_KEY)
-        == FieldMetadata.builder().putLong("map.key", 5).putLong("map.value", 6).build())
+      val actualSchema = table.getLatestSnapshot(engine).getSchema
+      assert(actualSchema == newSchema)
     }
   }
 
@@ -334,13 +292,10 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
           true,
           currentSchema.get("map").getMetadata)
 
-      table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
-        .withSchema(engine, newSchema)
-        .build(engine).commit(engine, emptyIterable())
+      updateTableMetadata(engine, tablePath, newSchema)
 
-      val structType = table.getLatestSnapshot(engine).getSchema
-      assertColumnMapping(structType.get("a"), 1)
-      assertColumnMapping(structType.get("map"), 2)
+      val actualSchema = table.getLatestSnapshot(engine).getSchema
+      assert(actualSchema == newSchema)
     }
   }
 
@@ -390,20 +345,10 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
           true,
           currentSchema.get("map").getMetadata)
 
-      table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
-        .withSchema(engine, newSchema)
-        .build(engine).commit(engine, emptyIterable())
+      updateTableMetadata(engine, tablePath, newSchema)
 
-      val structType = table.getLatestSnapshot(engine).getSchema
-      assertColumnMapping(structType.get("a"), 1)
-      assertColumnMapping(structType.get("map"), 2)
-
-      val mapType = structType.get("map").getDataType.asInstanceOf[MapType]
-      val updatedArrayValue = mapType.getValueField.getDataType.asInstanceOf[ArrayType]
-      val updatedInnerStruct = updatedArrayValue.getElementType.asInstanceOf[StructType]
-
-      assertColumnMapping(updatedInnerStruct.get("field_to_add"), 6, "field_to_add")
-
+      val actualSchema = table.getLatestSnapshot(engine).getSchema
+      assert(actualSchema == newSchema)
     }
   }
 
@@ -446,7 +391,7 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
                 FieldMetadata.builder()
                   .putFieldMetadata(
                     ColumnMapping.COLUMN_MAPPING_NESTED_IDS_KEY,
-                    FieldMetadata.builder().putLong("array_field_to_add", 7).build())
+                    FieldMetadata.builder().putLong("array_field_to_add.element", 7).build())
                   .putLong(ColumnMapping.COLUMN_MAPPING_ID_KEY, 6)
                   .putString(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, "array_field_to_add")
                   .build()),
@@ -454,17 +399,10 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
           true,
           currentSchema.get("map").getMetadata)
 
-      table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
-        .withSchema(engine, newSchema)
-        .build(engine).commit(engine, emptyIterable())
+      updateTableMetadata(engine, tablePath, newSchema)
 
-      val structType = table.getLatestSnapshot(engine).getSchema
-      assertColumnMapping(structType.get("a"), 1)
-      assertColumnMapping(structType.get("map"), 2)
-      val mapType = structType.get("map").getDataType.asInstanceOf[MapType]
-      val updatedInnerStruct = mapType.getValueType.asInstanceOf[StructType]
-
-      assertColumnMapping(updatedInnerStruct.get("array_field_to_add"), 6, "array_field_to_add")
+      val actualSchema = table.getLatestSnapshot(engine).getSchema
+      assert(actualSchema == newSchema)
     }
   }
 
@@ -564,13 +502,8 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
         .withSchema(engine, newSchema)
         .build(engine).commit(engine, emptyIterable())
 
-      val structType = table.getLatestSnapshot(engine).getSchema
-      assertColumnMapping(structType.get("a"), 1)
-      assertColumnMapping(structType.get("map"), 2)
-      val mapType = structType.get("map").getDataType.asInstanceOf[MapType]
-      val updatedInnerStruct = mapType.getValueType.asInstanceOf[StructType]
-
-      assert(updatedInnerStruct == innerStruct.withoutField("array_field_to_drop"))
+      val actualSchema = table.getLatestSnapshot(engine).getSchema
+      assert(actualSchema == newSchema)
     }
   }
 
@@ -616,20 +549,10 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
           true,
           currentSchema.get("map").getMetadata)
 
-      table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
-        .withSchema(engine, newSchema)
-        .build(engine).commit(engine, emptyIterable())
+      updateTableMetadata(engine, tablePath, newSchema)
 
-      val structType = table.getLatestSnapshot(engine).getSchema
-      assertColumnMapping(structType.get("a"), 1)
-      assertColumnMapping(structType.get("map"), 2)
-      val mapType = structType.get("map").getDataType.asInstanceOf[MapType]
-      val updatedInnerStruct = mapType.getValueType.asInstanceOf[StructType]
-
-      assert(updatedInnerStruct.get("renamed_array_field").getDataType
-        == innerStruct.get("array_field_to_rename").getDataType)
-      assert(updatedInnerStruct.get("renamed_array_field").getMetadata
-        == innerStruct.get("array_field_to_rename").getMetadata)
+      val actualSchema = getMetadata(engine, tablePath).getSchema
+      assert(actualSchema == newSchema)
     }
   }
 
@@ -648,7 +571,7 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
           TableConfig.COLUMN_MAPPING_MODE.getKey -> "name",
           TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"))
 
-      val currentSchema = table.getLatestSnapshot(engine).getSchema()
+      val currentSchema = table.getLatestSnapshot(engine).getSchema
       val newSchema = new StructType()
         .add("a", StringType.STRING, true, currentSchema.get("a").getMetadata)
         .add(
@@ -663,26 +586,17 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
           fieldMetadataForColumn(3, "b"))
         .add("c", IntegerType.INTEGER, true, currentSchema.get("c").getMetadata)
 
-      table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
-        .withSchema(engine, newSchema)
-        .build(engine).commit(engine, emptyIterable())
+      updateTableMetadata(engine, tablePath, newSchema)
 
-      val structType = table.getLatestSnapshot(engine).getSchema
-      assertColumnMapping(structType.get("a"), 1)
-
-      val firstInnerStruct = structType.get("b").getDataType.asInstanceOf[StructType]
-      assertColumnMapping(firstInnerStruct.get("d"), 4, "d")
-
-      val secondInnerStruct = firstInnerStruct.get("d").getDataType.asInstanceOf[StructType]
-      assertColumnMapping(secondInnerStruct.get("e"), 5, "e")
+      val actualSchema = table.getLatestSnapshot(engine).getSchema
+      assert(actualSchema == newSchema)
     }
   }
 
   test("Add array of arrays") {
     withTempDirAndEngine { (tablePath, engine) =>
-      val table = Table.forPath(engine, tablePath)
       val initialSchema = new StructType()
-        .add("a", StringType.STRING, true)
+        .add("a", StringType.STRING, true, fieldMetadataForColumn(1, "a"))
       createEmptyTable(
         engine,
         tablePath,
@@ -691,10 +605,7 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
           TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
           TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"))
 
-      val currentSchema = table.getLatestSnapshot(engine).getSchema()
-
-      val newSchema = new StructType()
-        .add("a", StringType.STRING, true, currentSchema.get("a").getMetadata)
+      val newSchema = initialSchema
         .add(
           "array_of_arrays",
           new ArrayType(new ArrayType(IntegerType.INTEGER, true), true),
@@ -707,20 +618,11 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
               FieldMetadata.builder().putLong("array_of_arrays.element", 2L)
                 .putLong("array_of_arrays.element.element", 3L).build()).build())
 
-      table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
-        .withSchema(engine, newSchema)
-        .build(engine).commit(engine, emptyIterable())
+      updateTableMetadata(engine, tablePath, newSchema)
 
-      val updatedSchema = table.getLatestSnapshot(engine).getSchema()
+      val actualSchema = getMetadata(engine, tablePath).getSchema
 
-      assertColumnMapping(updatedSchema.get("a"), 1)
-      assertColumnMapping(updatedSchema.get("array_of_arrays"), 4L, "array_of_arrays")
-
-      val arrayMetadata = updatedSchema.get("array_of_arrays").getMetadata
-      assert(arrayMetadata.getMetadata(ColumnMapping.COLUMN_MAPPING_NESTED_IDS_KEY)
-        .getLong("array_of_arrays.element") == 2L)
-      assert(arrayMetadata.getMetadata(ColumnMapping.COLUMN_MAPPING_NESTED_IDS_KEY)
-        .getLong("array_of_arrays.element.element") == 3L)
+      assert(actualSchema == newSchema)
     }
   }
 
@@ -729,22 +631,11 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
       val table = Table.forPath(engine, tablePath)
       val initialSchema = new StructType()
         .add("a", StringType.STRING, true)
-        .add("c", IntegerType.INTEGER, true)
 
       // Create a table initially without column mapping
       createEmptyTable(engine, tablePath, initialSchema)
 
-      val currentSchema = table.getLatestSnapshot(engine).getSchema()
-      val newSchema = new StructType()
-        .add("a", StringType.STRING, true, currentSchema.get("a").getMetadata)
-        .add(
-          "b",
-          new StructType()
-            .add("d", IntegerType.INTEGER, true, fieldMetadataForColumn(4, "d"))
-            .add("e", IntegerType.INTEGER, true, fieldMetadataForColumn(5, "e")),
-          true,
-          fieldMetadataForColumn(3, "b"))
-        .add("c", IntegerType.INTEGER, true, currentSchema.get("c").getMetadata)
+      val newSchema = initialSchema.add("c", IntegerType.INTEGER, true)
 
       assertSchemaEvolutionFails[IllegalArgumentException](
         table,
@@ -762,20 +653,10 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
       val table = Table.forPath(engine, tablePath)
       val initialSchema = new StructType()
         .add("a", StringType.STRING, true)
-        .add("c", IntegerType.INTEGER, true)
 
       createEmptyTable(engine, tablePath, initialSchema, tableProperties = Map.empty)
 
-      val currentSchema = table.getLatestSnapshot(engine).getSchema
-      val newSchema = new StructType()
-        .add("a", StringType.STRING, true, currentSchema.get("a").getMetadata)
-        .add(
-          "b",
-          new StructType()
-            .add("d", IntegerType.INTEGER, true, fieldMetadataForColumn(4, "d")),
-          true,
-          fieldMetadataForColumn(3, "b"))
-        .add("c", IntegerType.INTEGER, true, currentSchema.get("c").getMetadata)
+      val newSchema = initialSchema.add("c", IntegerType.INTEGER, true)
 
       assertSchemaEvolutionFails[KernelException](
         table,
@@ -808,9 +689,7 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
         .add("partition1", StringType.STRING, true, currentSchema.get("partition1").getMetadata)
         .add("data", StringType.STRING, true, currentSchema.get("data").getMetadata)
 
-      table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
-        .withSchema(engine, newSchema)
-        .build(engine).commit(engine, emptyIterable())
+      updateTableMetadata(engine, tablePath, newSchema)
       val updatedSchema = table.getLatestSnapshot(engine).getSchema
 
       // Verify the ordering is expected
