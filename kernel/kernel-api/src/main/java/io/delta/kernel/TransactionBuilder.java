@@ -21,6 +21,7 @@ import io.delta.kernel.exceptions.ConcurrentTransactionException;
 import io.delta.kernel.exceptions.DomainDoesNotExistException;
 import io.delta.kernel.exceptions.InvalidConfigurationValueException;
 import io.delta.kernel.exceptions.UnknownConfigurationException;
+import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.types.StructType;
 import java.util.List;
@@ -65,10 +66,22 @@ public interface TransactionBuilder {
    *
    * @param engine {@link Engine} instance to use.
    * @param partitionColumns The partition columns of the table. These should be a subset of the
-   *     columns in the schema.
+   *     columns in the schema. Only top-level columns are allowed to be partitioned. Note:
+   *     Clustering columns and partition columns cannot coexist in a table.
    * @return updated {@link TransactionBuilder} instance.
    */
   TransactionBuilder withPartitionColumns(Engine engine, List<String> partitionColumns);
+
+  /**
+   * Set the list of clustering columns when create a new clustered table.
+   *
+   * @param engine {@link Engine} instance to use.
+   * @param clusteringColumns The clustering columns of the table. These should be a subset of the
+   *     columns in the schema. Both top-level and nested columns are allowed to be clustered. Note:
+   *     Clustering columns and partition columns cannot coexist in a table.
+   * @return updated {@link TransactionBuilder} instance.
+   */
+  TransactionBuilder withClusteringColumns(Engine engine, List<Column> clusteringColumns);
 
   /**
    * Set the transaction identifier for idempotent writes. Incremental processing systems (e.g.,

@@ -18,12 +18,14 @@ package io.delta.kernel.internal.util;
 import static io.delta.kernel.internal.DeltaErrors.*;
 import static io.delta.kernel.internal.util.ColumnMapping.*;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import static java.lang.String.format;
 
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.skipping.StatsSchemaHelper;
 import io.delta.kernel.types.*;
 import java.util.*;
 import java.util.function.Function;
@@ -194,6 +196,37 @@ public class SchemaUtils {
             Collectors.toMap(
                 entry -> partitionColNameMap.get(entry.getKey().toLowerCase(Locale.ROOT)),
                 Map.Entry::getValue));
+  }
+
+  /**
+   * Verify the clustering columns exists in the table schema.
+   *
+   * @param schema The schema of the table
+   * @param clusteringCols List of clustering columns
+   */
+  public static List<Column> casePreservingEligibleClusterColumns(
+      StructType schema, List<Column> clusteringCols) {
+
+    List<Tuple2<Column, DataType>> physicalColumnsWithTypes =
+        clusteringCols.stream()
+            .map(col -> ColumnMapping.getPhysicalColumnNameAndDataType(schema, col))
+            .collect(Collectors.toList());
+
+    List<String> nonSkippingEligibleColumns =
+        physicalColumnsWithTypes.stream()
+            .filter(tuple -> !StatsSchemaHelper.isSkippingEligibleDataType(tuple._2))
+            .map(tuple -> tuple._1.toString() + " : " + tuple._2)
+            .collect(Collectors.toList());
+
+    if (!nonSkippingEligibleColumns.isEmpty()) {
+      throw new KernelException(
+          format(
+              "Clustering is not supported because the following column(s): %s "
+                  + "don't support data skipping",
+              nonSkippingEligibleColumns));
+    }
+
+    return physicalColumnsWithTypes.stream().map(tuple -> tuple._1).collect(Collectors.toList());
   }
 
   /**
