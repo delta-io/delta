@@ -328,8 +328,11 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     var txnBuilder = createWriteTxnBuilder(
       TableImpl.forPath(engine, tablePath, clock))
 
-    if (isNewTable) {
+    if (schema != null) {
       txnBuilder = txnBuilder.withSchema(engine, schema)
+    }
+
+    if (isNewTable) {
       if (partCols != null) {
         txnBuilder = txnBuilder.withPartitionColumns(engine, partCols.asJava)
       }
