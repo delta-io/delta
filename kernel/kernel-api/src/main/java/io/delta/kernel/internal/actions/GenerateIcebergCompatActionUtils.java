@@ -15,22 +15,32 @@
  */
 package io.delta.kernel.internal.actions;
 
+import static io.delta.kernel.internal.data.TransactionStateRow.*;
+import static io.delta.kernel.internal.util.InternalUtils.relativizePath;
+import static io.delta.kernel.internal.util.PartitionUtils.serializePartitionMap;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
-import static io.delta.kernel.internal.util.Preconditions.checkState;
+import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.Transaction;
+import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.expressions.Literal;
+import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.TableConfig;
+import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.icebergcompat.IcebergCompatV2MetadataValidatorAndUpdater;
+import io.delta.kernel.statistics.DataFileStatistics;
+import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.kernel.utils.DataFileStatus;
 import java.net.URI;
+import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 
 /** Utilities to convert Iceberg add/removes to Delta Kernel add/removes */
 public final class GenerateIcebergCompatActionUtils {
@@ -90,6 +100,65 @@ public final class GenerateIcebergCompatActionUtils {
   }
 
   /**
+   * Create a remove action {@link Row} that can be passed to {@link Transaction#commit(Engine,
+   * CloseableIterable)} from an Iceberg remove.
+   *
+   * @param transactionState the transaction state from the built transaction
+   * @param fileStatus the file status to create the remove with (contains path, time, size, and
+   *     stats)
+   * @param partitionValues the partition values for the remove
+   * @param dataChange whether or not the remove constitutes a dataChange (i.e. delete vs.
+   *     compaction)
+   * @return remove action row that can be committed to the transaction
+   * @throws UnsupportedOperationException if icebergWriterCompatV1 is not enabled
+   * @throws UnsupportedOperationException if maxRetries != 0 in the transaction
+   * @throws KernelException if the table is an append-only table and dataChange=true
+   * @throws UnsupportedOperationException if the table is partitioned (currently unsupported)
+   */
+  public static Row generateIcebergCompatWriterV1RemoveAction(
+      Row transactionState,
+      DataFileStatus fileStatus,
+      Map<String, Literal> partitionValues,
+      boolean dataChange) {
+    Map<String, String> config = getConfiguration(transactionState);
+
+    /* ----- Validate that this is a valid usage of this API ----- */
+    validateIcebergWriterCompatV1Enabled(config);
+    validateMaxRetriesSetToZero(transactionState);
+
+    /* ----- Validate this is valid write given the table's protocol & configurations ----- */
+    // We only allow removes with dataChange=false when appendOnly=true
+    if (dataChange && TableConfig.APPEND_ONLY_ENABLED.fromMetadata(config)) {
+      throw DeltaErrors.cannotModifyAppendOnlyTable(getTablePath(transactionState));
+    }
+
+    /* --- Validate and update partitionValues ---- */
+    // Currently we don't support partitioned tables; fail here
+    if (!getPartitionColumnsList(transactionState).isEmpty()) {
+      throw new UnsupportedOperationException(
+          "Currently GenerateIcebergCompatActionUtils "
+              + "is not supported for partitioned tables");
+    }
+    checkArgument(
+        partitionValues.isEmpty(), "Non-empty partitionValues provided for an unpartitioned table");
+
+    URI tableRoot = new Path(getTablePath(transactionState)).toUri();
+    // This takes care of relativizing the file path and serializing the file statistics
+    Row removeFileRow =
+        convertRemoveDataFileStatus(
+            TransactionStateRow.getPhysicalSchema(transactionState),
+            tableRoot,
+            fileStatus,
+            partitionValues,
+            dataChange);
+    return SingleAction.createRemoveFileSingleAction(removeFileRow);
+  }
+
+  /////////////////////
+  // Private helpers //
+  /////////////////////
+
+  /**
    * Validates that table feature `icebergWriterCompatV1` is enabled. We restrict usage of these
    * APIs to require that this table feature is enabled to prevent any unsafe usage due to the table
    * features that are blocked via `icebergWriterCompatV1` (for example, rowTracking or
@@ -118,5 +187,53 @@ public final class GenerateIcebergCompatActionUtils {
                   + "found maxRetries=%s",
               TransactionStateRow.getMaxRetries(transactionState)));
     }
+  }
+
+  //////////////////////////////////////////////////
+  // Private methods for creating RemoveFile rows //
+  //////////////////////////////////////////////////
+  // I've added these APIs here since they rely on the assumptions validated within
+  // GenerateIcebergCompatActionUtils such as icebergWriterCompatV1 is enabled --> rowTracking is
+  // disabled. Since these APIs are not valid without these assumptions, holding off on putting them
+  // within RemoveFile.java until we add full support for deletes (which will likely involve
+  // generating RemoveFiles directly from AddFiles anyway)
+
+  private static Row createRemoveFileRowWithExtendedFileMetadata(
+      String path,
+      long deletionTimestamp,
+      boolean dataChange,
+      MapValue partitionValues,
+      long size,
+      Optional<DataFileStatistics> stats,
+      StructType physicalSchema) {
+    Map<Integer, Object> fieldMap = new HashMap<>();
+    fieldMap.put(RemoveFile.FULL_SCHEMA.indexOf("path"), requireNonNull(path));
+    fieldMap.put(RemoveFile.FULL_SCHEMA.indexOf("deletionTimestamp"), deletionTimestamp);
+    fieldMap.put(RemoveFile.FULL_SCHEMA.indexOf("dataChange"), dataChange);
+    fieldMap.put(RemoveFile.FULL_SCHEMA.indexOf("extendedFileMetadata"), true);
+    fieldMap.put(
+        RemoveFile.FULL_SCHEMA.indexOf("partitionValues"), requireNonNull(partitionValues));
+    fieldMap.put(RemoveFile.FULL_SCHEMA.indexOf("size"), size);
+    stats.ifPresent(
+        stat ->
+            fieldMap.put(
+                RemoveFile.FULL_SCHEMA.indexOf("stats"), stat.serializeAsJson(physicalSchema)));
+    return new GenericRow(RemoveFile.FULL_SCHEMA, fieldMap);
+  }
+
+  private static Row convertRemoveDataFileStatus(
+      StructType physicalSchema,
+      URI tableRoot,
+      DataFileStatus dataFileStatus,
+      Map<String, Literal> partitionValues,
+      boolean dataChange) {
+    return createRemoveFileRowWithExtendedFileMetadata(
+        relativizePath(new Path(dataFileStatus.getPath()), tableRoot).toUri().toString(),
+        dataFileStatus.getModificationTime(),
+        dataChange,
+        serializePartitionMap(partitionValues),
+        dataFileStatus.getSize(),
+        dataFileStatus.getStatistics(),
+        physicalSchema);
   }
 }
