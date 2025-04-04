@@ -374,7 +374,6 @@ class IcebergConverter(spark: SparkSession)
               runIcebergConversionForActions(
                 icebergTxn,
                 actions,
-                log.dataPath,
                 prevConvertedSnapshotOpt)
             }
           } finally {
@@ -406,7 +405,7 @@ class IcebergConverter(spark: SparkSession)
           .grouped(actionBatchSize)
           .foreach { actions =>
             needsExpireSnapshot ||= existsOptimize(actions)
-            runIcebergConversionForActions(icebergTxn, actions, log.dataPath, None)
+            runIcebergConversionForActions(icebergTxn, actions, None)
         }
 
         // Always attempt to update table metadata (schema/properties) for REPLACE_TABLE
@@ -508,18 +507,17 @@ class IcebergConverter(spark: SparkSession)
   private[delta] def runIcebergConversionForActions(
       icebergTxn: IcebergConversionTransaction,
       actionsToCommit: Seq[Action],
-      dataPath: Path,
       prevSnapshotOpt: Option[Snapshot]): Unit = {
     prevSnapshotOpt match {
       case None =>
         // If we don't have a previous snapshot, that implies that the table is either being
         // created or replaced. We can assume that the actions have already been deduped, and
         // only addFiles are present.
-        val appendHelper = icebergTxn.getAppendOnlyHelper()
+        val appendHelper = icebergTxn.getAppendOnlyHelper
         actionsToCommit.foreach {
           case a: AddFile => appendHelper.add(a)
           case _ => throw new IllegalStateException(s"Must provide only AddFiles when creating " +
-            s"or replacing an Iceberg Table $dataPath.")
+            s"or replacing an Iceberg Table.")
         }
         appendHelper.commit()
 
@@ -562,17 +560,23 @@ class IcebergConverter(spark: SparkSession)
           .filter(sa => sa.remove != null || sa.add != null)
 
         if (hasAdds && hasRemoves && !hasDataChange && allDeltaActionsCaptured) {
-          val rewriteHelper = icebergTxn.getRewriteHelper()
+          val rewriteHelper = icebergTxn.getRewriteHelper
           val split = addsAndRemoves.partition(_.add == null)
-          rewriteHelper.rewrite(removes = split._1.map(_.remove), adds = split._2.map(_.add))
+          addsAndRemoves.foreach { action =>
+            if (action.add != null) {
+              rewriteHelper.add(action.add)
+            } else {
+              rewriteHelper.add(action.remove)
+            }
+          }
           rewriteHelper.commit()
         } else if ((hasAdds && hasRemoves) || !allDeltaActionsCaptured) {
-          val overwriteHelper = icebergTxn.getOverwriteHelper()
+          val overwriteHelper = icebergTxn.getOverwriteHelper
           addsAndRemoves.foreach { action =>
             if (action.add != null) {
               overwriteHelper.add(action.add)
             } else {
-              overwriteHelper.remove(action.remove)
+              overwriteHelper.add(action.remove)
             }
           }
           overwriteHelper.commit()
@@ -582,13 +586,13 @@ class IcebergConverter(spark: SparkSession)
               log"without any RemoveFiles or data change. CommitInfo: " +
               log"${MDC(DeltaLogKeys.DELTA_COMMIT_INFO, commitInfo)}")
           } else {
-            val appendHelper = icebergTxn.getAppendOnlyHelper()
+            val appendHelper = icebergTxn.getAppendOnlyHelper
               addsAndRemoves.foreach(action => appendHelper.add(action.add))
               appendHelper.commit()
           }
         } else if (hasRemoves) {
-          val removeHelper = icebergTxn.getRemoveOnlyHelper()
-          addsAndRemoves.foreach(action => removeHelper.remove(action.remove))
+          val removeHelper = icebergTxn.getRemoveOnlyHelper
+          addsAndRemoves.foreach(action => removeHelper.add(action.remove))
           removeHelper.commit()
         }
     }

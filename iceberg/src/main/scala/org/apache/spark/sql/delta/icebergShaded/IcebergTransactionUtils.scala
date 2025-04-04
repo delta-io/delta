@@ -162,31 +162,15 @@ object IcebergTransactionUtils
       logicalToPhysicalPartitionNames: Map[String, String],
       snapshot: Snapshot): DataFiles.Builder = {
     val absPath = canonicalizeFilePath(f, tablePath)
-    val schema = snapshot.schema
     var builder = DataFiles
       .builder(partitionSpec)
       .withPath(absPath)
       .withFileSizeInBytes(f.getFileSize)
       .withFormat(FileFormat.PARQUET)
-    val nameToDataTypes = schema.fields.map(f => f.name -> f.dataType).toMap
-
     if (partitionSpec.isPartitioned) {
-      val ICEBERG_NULL_PARTITION_VALUE = "__HIVE_DEFAULT_PARTITION__"
-      val partitionPath = partitionSpec.fields()
-      val partitionVals = new Array[Any](partitionSpec.fields().size())
-      for (i <- partitionVals.indices) {
-        val logicalPartCol = partitionPath.get(i).name()
-        val physicalPartKey = logicalToPhysicalPartitionNames(logicalPartCol)
-        // ICEBERG_NULL_PARTITION_VALUE is referred in Iceberg lib to mark NULL partition value
-        val partValue = Option(f.partitionValues.getOrElse(physicalPartKey, null))
-          .getOrElse(ICEBERG_NULL_PARTITION_VALUE)
-        val partitionColumnDataType = nameToDataTypes(logicalPartCol)
-        val icebergPartitionValue =
-          stringToIcebergPartitionValue(partitionColumnDataType, partValue, snapshot.version)
-        partitionVals(i) = icebergPartitionValue
-      }
-
-      builder = builder.withPartition(new Row(partitionVals))
+      builder = builder.withPartition(
+        DeltaToIcebergConvert.Partition.convertPartitionValues(
+          snapshot, partitionSpec, f.partitionValues, logicalToPhysicalPartitionNames))
     }
     builder
   }
@@ -198,7 +182,7 @@ object IcebergTransactionUtils
    * Follows deserialization as specified here
    * https://github.com/delta-io/delta/blob/master/PROTOCOL.md#Partition-Value-Serialization
    */
-  private def stringToIcebergPartitionValue(
+  private[delta] def stringToIcebergPartitionValue(
       elemType: DataType,
       partitionVal: String,
       version: Long): Any = {

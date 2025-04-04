@@ -16,10 +16,14 @@
 
 package org.apache.spark.sql.delta.icebergShaded
 
-import org.apache.spark.sql.delta.{DeltaConfig, DeltaConfigs, IcebergCompat}
+import org.apache.spark.sql.delta.{DeltaConfig, DeltaConfigs, IcebergCompat, Snapshot}
 import org.apache.spark.sql.delta.DeltaConfigs.{LOG_RETENTION, TOMBSTONE_RETENTION}
-import shadedForDelta.org.apache.iceberg.{TableProperties => IcebergTableProperties}
+import org.apache.spark.sql.delta.actions.{DeletionVectorDescriptor, FileAction}
+import org.apache.spark.sql.delta.icebergShaded.IcebergTransactionUtils
+import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore.getTotalSizeOfDVFieldsInFile
+import shadedForDelta.org.apache.iceberg.{DataFile, DeleteFile, FileFormat, FileMetadata, PartitionSpec, StructLike, TableProperties => IcebergTableProperties}
 
+import org.apache.spark.sql.types.DataType
 import org.apache.spark.unsafe.types.CalendarInterval
 
 /**
@@ -129,6 +133,66 @@ object DeltaToIcebergConvert {
           .map { IcebergTableProperties.MAX_SNAPSHOT_AGE_MS -> _.toString }
           .toMap
       }
+    }
+  }
+
+  object Partition {
+
+    private[delta] def convertPartitionValues(
+        snapshot: Snapshot,
+        partitionSpec: PartitionSpec,
+        partitionValues: Map[String, String],
+        logicalToPhysicalPartitionNames: Map[String, String]): StructLike = {
+      val schema = snapshot.schema
+      val ICEBERG_NULL_PARTITION_VALUE = "__HIVE_DEFAULT_PARTITION__"
+      val partitionPath = partitionSpec.fields()
+      val partitionVals = new Array[Any](partitionSpec.fields().size())
+      val nameToDataTypes: Map[String, DataType] =
+        schema.fields.map(f => f.name -> f.dataType).toMap
+      for (i <- partitionVals.indices) {
+        val logicalPartCol = partitionPath.get(i).name()
+        val physicalPartKey = logicalToPhysicalPartitionNames(logicalPartCol)
+        // ICEBERG_NULL_PARTITION_VALUE is referred in Iceberg lib to mark NULL partition value
+        val partValue = Option(partitionValues.getOrElse(physicalPartKey, null))
+          .getOrElse(ICEBERG_NULL_PARTITION_VALUE)
+        val partitionColumnDataType = nameToDataTypes(logicalPartCol)
+        val icebergPartitionValue =
+          IcebergTransactionUtils.stringToIcebergPartitionValue(
+            partitionColumnDataType, partValue, snapshot.version)
+        partitionVals(i) = icebergPartitionValue
+      }
+      new IcebergTransactionUtils.Row(partitionVals)
+    }
+  }
+
+  object Action {
+
+    private[delta] def dvToDeleteFile(
+        dvSource: FileAction,
+        partitionSpec: PartitionSpec,
+        logicalToPhysicalPartitionNames: Map[String, String],
+        snapshot: Snapshot): DeleteFile = {
+      val dv = dvSource.deletionVector
+      if (dv == null || !dv.isOnDisk || dv.offset.isEmpty) {
+        throw new IllegalArgumentException("Invalid DeletionVector. Cannot convert.")
+      }
+      var builder = FileMetadata.deleteFileBuilder(partitionSpec)
+        .ofPositionDeletes()
+        .withFormat(FileFormat.PUFFIN)
+        .withPath(dv.absolutePath(snapshot.deltaLog.dataPath).toString)
+        .withFileSizeInBytes(dv.offset.get + getTotalSizeOfDVFieldsInFile(dv.sizeInBytes))
+        .withReferencedDataFile(dvSource.absolutePath(snapshot.deltaLog).toString)
+        .withContentOffset(dv.offset.get)
+        .withContentSizeInBytes(getTotalSizeOfDVFieldsInFile(dv.sizeInBytes))
+        .withRecordCount(dv.cardinality)
+
+      if (partitionSpec.isPartitioned) {
+        builder = builder.withPartition(
+          Partition.convertPartitionValues(snapshot, partitionSpec,
+            dvSource.partitionValues, logicalToPhysicalPartitionNames)
+        )
+      }
+      builder.build
     }
   }
 }
