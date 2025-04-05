@@ -35,7 +35,7 @@ class GenerateIcebergCompatActionUtilsSuite extends AnyFunSuite {
 
   import GenerateIcebergCompatActionUtilsSuite._
 
-  private def testTransactionStateRow(
+  private def getTestTransactionStateRow(
       tblProperties: Map[String, String],
       maxRetries: Int = 0,
       partitionColumns: Seq[String] = Seq.empty): Row = {
@@ -78,7 +78,7 @@ class GenerateIcebergCompatActionUtilsSuite extends AnyFunSuite {
 
   test("GenerateIcebergCompatActionUtils requires maxRetries=0") {
     testErrorAddAndRemove(
-      testTransactionStateRow(compatibleTableProperties, maxRetries = 1),
+      getTestTransactionStateRow(compatibleTableProperties, maxRetries = 1),
       testDataFileStatusWithStatistics,
       partitionValues = Collections.emptyMap(),
       dataChange = true,
@@ -88,14 +88,14 @@ class GenerateIcebergCompatActionUtilsSuite extends AnyFunSuite {
   test("GenerateIcebergCompatActionUtils requires icebergWriterCompatV1") {
     // Not set at all
     testErrorAddAndRemove(
-      testTransactionStateRow(tblProperties = Map()),
+      getTestTransactionStateRow(tblProperties = Map()),
       testDataFileStatusWithStatistics,
       partitionValues = Collections.emptyMap(),
       dataChange = true,
       "only supported on tables with 'delta.enableIcebergWriterCompatV1' set to true")
     // Set to false
     testErrorAddAndRemove(
-      testTransactionStateRow(tblProperties = Map(
+      getTestTransactionStateRow(tblProperties = Map(
         TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey -> "FALSE",
         TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true",
         TableConfig.COLUMN_MAPPING_MODE.getKey -> "id")),
@@ -107,7 +107,7 @@ class GenerateIcebergCompatActionUtilsSuite extends AnyFunSuite {
 
   test("GenerateIcebergCompatActionUtils doesn't support partitioned tables") {
     testErrorAddAndRemove(
-      testTransactionStateRow(compatibleTableProperties, partitionColumns = Seq("id")),
+      getTestTransactionStateRow(compatibleTableProperties, partitionColumns = Seq("id")),
       testDataFileStatusWithStatistics,
       partitionValues = Map("id" -> Literal.ofInt(1)).asJava,
       dataChange = true,
@@ -118,7 +118,7 @@ class GenerateIcebergCompatActionUtilsSuite extends AnyFunSuite {
     assert(
       intercept[KernelException] {
         GenerateIcebergCompatActionUtils.generateIcebergCompatWriterV1AddAction(
-          testTransactionStateRow(compatibleTableProperties),
+          getTestTransactionStateRow(compatibleTableProperties),
           testDataFileStatusWithoutStatistics,
           Collections.emptyMap(), // partitionValues
           true // dataChange
@@ -164,12 +164,12 @@ class GenerateIcebergCompatActionUtilsSuite extends AnyFunSuite {
 
   test("generateIcebergCompatWriterV1AddAction creates correct add row") {
     Seq(true, false).foreach { dataChange =>
-      val txnRow = testTransactionStateRow(compatibleTableProperties)
+      val txnRow = getTestTransactionStateRow(compatibleTableProperties)
       val statsString = testDataFileStatusWithStatistics.getStatistics.get
         .serializeAsJson(TransactionStateRow.getPhysicalSchema(txnRow))
       validateAddAction(
         GenerateIcebergCompatActionUtils.generateIcebergCompatWriterV1AddAction(
-          testTransactionStateRow(compatibleTableProperties),
+          getTestTransactionStateRow(compatibleTableProperties),
           testDataFileStatusWithStatistics,
           Collections.emptyMap(), // partitionValues
           dataChange),

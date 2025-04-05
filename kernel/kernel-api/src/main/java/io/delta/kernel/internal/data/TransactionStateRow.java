@@ -114,8 +114,8 @@ public class TransactionStateRow extends GenericRow {
   }
 
   /**
-   * Get the list of partition column names from the write state {@link Row} returned by {@link
-   * Transaction#getTransactionState(Engine)}
+   * Get the list of partition column names from the transaction state {@link Row} returned by
+   * {@link Transaction#getTransactionState(Engine)}
    *
    * @param transactionState Transaction state state {@link Row}
    * @return List of partition column names according to the scan state.
@@ -126,7 +126,7 @@ public class TransactionStateRow extends GenericRow {
   }
 
   /**
-   * Get the table path from scan state {@link Row} returned by {@link
+   * Get the table path from transaction state {@link Row} returned by {@link
    * Transaction#getTransactionState(Engine)}
    *
    * @param transactionState Transaction state state {@link Row}
@@ -137,11 +137,8 @@ public class TransactionStateRow extends GenericRow {
   }
 
   /**
-   * Get the maxRetries from scan state {@link Row} returned by {@link
+   * Get the maxRetries from transaction state {@link Row} returned by {@link
    * Transaction#getTransactionState(Engine)}
-   *
-   * @param transactionState Transaction state state {@link Row}
-   * @return the maxRetries set when building the transaction
    */
   public static int getMaxRetries(Row transactionState) {
     return transactionState.getInt(COL_NAME_TO_ORDINAL.get("maxRetries"));
