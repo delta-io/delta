@@ -42,7 +42,8 @@ class IcebergUniversalFormatMetadataValidatorAndUpdaterSuite extends AnyFunSuite
     assert(result.isEmpty)
   }
 
-  test("validateAndUpdate should return empty when iceberg is enabled and ICEBERG_COMPAT_V2_ENABLED is true") {
+  test("validateAndUpdate should return empty when iceberg is enabled" +
+    " and ICEBERG_COMPAT_V2_ENABLED is true") {
     val metadata = createMetadata(Map(
       TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey -> "iceberg,hudi",
       TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true",
@@ -54,7 +55,8 @@ class IcebergUniversalFormatMetadataValidatorAndUpdaterSuite extends AnyFunSuite
   Seq(
     Map(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "false"),
     Map[String, String]()).foreach { disabledIcebergCompatV2Enabled =>
-    test(s"validateAndUpdate should remove iceberg when ICEBERG_COMPAT_V2_ENABLED $disabledIcebergCompatV2Enabled") {
+    test(s"validateAndUpdate should remove iceberg when" +
+      s" ICEBERG_COMPAT_V2_ENABLED $disabledIcebergCompatV2Enabled") {
       val metadata = createMetadata(Map(
         TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey -> "iceberg,hudi",
         "unrelated_key" -> "unrelated_value") ++ disabledIcebergCompatV2Enabled)
@@ -71,7 +73,8 @@ class IcebergUniversalFormatMetadataValidatorAndUpdaterSuite extends AnyFunSuite
   Seq(
     Map(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "false"),
     Map[String, String]()).foreach { disableIcebergCompatV2Enabled =>
-    test(s"validateAndUpdate should remove key entirely when only iceberg is present and not compatible $disableIcebergCompatV2Enabled") {
+    test("validateAndUpdate should remove key entirely when only iceberg is present " +
+      s"and not compatible $disableIcebergCompatV2Enabled") {
       val metadata = createMetadata(Map(
         TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey -> "iceberg",
         "unrelated_key" -> "unrelated_value"))
