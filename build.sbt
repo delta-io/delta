@@ -35,6 +35,7 @@ import sbtprotoc.ProtocPlugin.autoImport._
 import xsbti.compile.CompileAnalysis
 
 import Checkstyle._
+import ShadedIcebergBuild._
 import Mima._
 import Unidoc._
 
@@ -437,6 +438,8 @@ lazy val spark = (project in file("spark"))
     sparkMimaSettings,
     releaseSettings,
     crossSparkSettings(),
+    // iceberg-core 1.8.0 brings jackson 2.18.2 thus force upgrade
+    dependencyOverrides += "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.18.2",
     libraryDependencies ++= Seq(
       // Adding test classifier seems to break transitive resolution of the core dependencies
       "org.apache.spark" %% "spark-hive" % sparkVersion.value % "provided",
@@ -857,9 +860,7 @@ lazy val iceberg = (project in file("iceberg"))
     assemblyPackageScala / assembleArtifact := false
   )
 // scalastyle:on println
-
-lazy val generateIcebergJarsTask = TaskKey[Unit]("generateIcebergJars", "Generate Iceberg JARs")
-
+val icebergShadedVersion = "1.8.0"
 lazy val icebergShaded = (project in file("icebergShaded"))
   .dependsOn(spark % "provided")
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
@@ -867,17 +868,26 @@ lazy val icebergShaded = (project in file("icebergShaded"))
     name := "iceberg-shaded",
     commonSettings,
     skipReleaseSettings,
-
-    // Compile, patch and generated Iceberg JARs
-    generateIcebergJarsTask := {
-      import sys.process._
-      val scriptPath = baseDirectory.value / "generate_iceberg_jars.py"
-      // Download iceberg code in `iceberg_src` dir and generate the JARs in `lib` dir
-      Seq("python3", scriptPath.getPath)!
-    },
-    Compile / unmanagedJars := (Compile / unmanagedJars).dependsOn(generateIcebergJarsTask).value,
-    cleanFiles += baseDirectory.value / "iceberg_src",
-    cleanFiles += baseDirectory.value / "lib",
+    // must exclude all dependencies from Iceberg that delta-spark includes
+    libraryDependencies ++= Seq(
+      // Fix Iceberg's legacy java.lang.NoClassDefFoundError: scala/jdk/CollectionConverters$ error
+      // due to legacy scala.
+      "org.scala-lang.modules" %% "scala-collection-compat" % "2.1.1" % "provided",
+      "org.apache.iceberg" % "iceberg-core" % icebergShadedVersion excludeAll (
+        icebergExclusionRules: _*
+      ),
+      "org.apache.iceberg" % "iceberg-hive-metastore" % icebergShadedVersion excludeAll (
+        icebergExclusionRules: _*
+      ),
+      // the hadoop client and hive metastore versions come from this file in the
+      // iceberg repo of icebergShadedVersion: iceberg/gradle/libs.versions.toml
+      "org.apache.hadoop" % "hadoop-client" % "2.7.3" % "provided" excludeAll (
+        hadoopClientExclusionRules: _*
+      ),
+      "org.apache.hive" % "hive-metastore" % "2.3.8" % "provided" excludeAll (
+        hiveMetastoreExclusionRules: _*
+      )
+    ),
 
     // Generated shaded Iceberg JARs
     Compile / packageBin := assembly.value,
@@ -885,10 +895,20 @@ lazy val icebergShaded = (project in file("icebergShaded"))
     assembly / logLevel := Level.Info,
     assembly / test := {},
     assembly / assemblyShadeRules := Seq(
-      ShadeRule.rename("org.apache.iceberg.**" -> "shadedForDelta.@0").inAll,
+      ShadeRule.rename("org.apache.iceberg.**" -> "shadedForDelta.@0").inAll
     ),
+    assembly / assemblyExcludedJars := {
+      val cp = (fullClasspath in assembly).value
+      cp.filter { jar =>
+        val doExclude = jar.data.getName.contains("jackson-annotations") ||
+          jar.data.getName.contains("RoaringBitmap")
+        doExclude
+      }
+    },
+    // all following clases have Delta customized implementation under icebergShaded/src and thus
+    // require them to be 'first' to replace the class from iceberg jar
+    assembly / assemblyMergeStrategy := updateMergeStrategy((assembly / assemblyMergeStrategy).value),
     assemblyPackageScala / assembleArtifact := false,
-    // Make the 'compile' invoke the 'assembly' task to generate the uber jar.
   )
 
 lazy val hudi = (project in file("hudi"))
