@@ -127,14 +127,14 @@ class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
       PostHocResolveUpCast(session)
     }
 
-    extensions.injectPlanNormalizationRule { _ => GenerateRowIDs }
-
     extensions.injectPreCBORule { session =>
       new PrepareDeltaScan(session)
     }
     // Fold constants that may have been introduced by PrepareDeltaScan. This is only useful with
     // Spark 3.5 as later versions apply constant folding after pre-CBO rules.
     extensions.injectPreCBORule { _ => ConstantFolding }
+
+    extensions.injectOptimizerRule { _ => GenerateRowIDs }
 
     // Add skip row column and filter.
     extensions.injectPlannerStrategy(PreprocessTableWithDVsStrategy)
