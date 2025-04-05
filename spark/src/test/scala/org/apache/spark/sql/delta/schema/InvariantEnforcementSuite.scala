@@ -167,25 +167,6 @@ class InvariantEnforcementSuite extends QueryTest
     }
   }
 
-  test("write empty DataFrame - zero columns") {
-    val schema = new StructType()
-      .add("key", StringType, nullable = false)
-      .add("value", IntegerType)
-    testBatchWriteRejection(
-      NotNull(Seq("key")),
-      schema,
-      Seq[Int](1, 2).toDF("value").drop("value"),
-      "key"
-    )
-    testStreamingWriteRejection[Int](
-      NotNull(Seq("key")),
-      schema,
-      _.toDF().toDF("value").drop("value"),
-      Seq[Int](1, 2),
-      "key"
-    )
-  }
-
   testQuietly("reject non-nullable nested column") {
     val schema = new StructType()
       .add("top", new StructType()
@@ -197,12 +178,17 @@ class InvariantEnforcementSuite extends QueryTest
       spark.createDataFrame(Seq(Row(Row("a", 1)), Row(Row(null, 2))).asJava, schema.asNullable),
       "top.key"
     )
-    testBatchWriteRejection(
-      NotNull(Seq("key")),
-      schema,
-      spark.createDataFrame(Seq(Row(Row("a", 1)), Row(null)).asJava, schema.asNullable),
-      "top.key"
-    )
+  }
+
+  test("allow nullable struct with non-nullable nested column") {
+    val schema = new StructType()
+      .add("top", new StructType()
+        .add("key", StringType, nullable = false)
+        .add("value", IntegerType))
+    tableWithSchema(schema) { path =>
+      spark.createDataFrame(Seq(Row(Row("a", 1)), Row(null)).asJava, schema.asNullable)
+        .write.mode("append").format("delta").save(path)
+    }
   }
 
   testQuietly("reject non-nullable array column") {
@@ -215,6 +201,129 @@ class InvariantEnforcementSuite extends QueryTest
       schema,
       spark.createDataFrame(Seq(Row(Seq(Seq(Row("a", 1)))), Row(null)).asJava, schema.asNullable),
       "top"
+    )
+  }
+
+  testQuietly("reject non-nullable array element") {
+    val schema = new StructType()
+      .add("top", ArrayType(IntegerType, false))
+    testBatchWriteRejection(
+      NotNull(Seq("top", "element")),
+      schema,
+      spark.createDataFrame(Seq(Row(Seq(1, null))).asJava, schema.asNullable)
+    )
+  }
+
+  test("allow null array with non-nullable element") {
+    val schema = new StructType()
+      .add("top", ArrayType(IntegerType, false))
+    tableWithSchema(schema) { path =>
+      spark.createDataFrame(Seq(Row(null)).asJava, schema.asNullable).write
+        .mode("append").format("delta").save(path)
+    }
+  }
+
+  testQuietly("reject non-nullable array nested struct") {
+    val schema = new StructType()
+      .add("top", ArrayType(ArrayType(new StructType()
+        .add("key", StringType)
+        .add("value", IntegerType, nullable = false))))
+    testBatchWriteRejection(
+      NotNull(Seq("top", "element", "value")),
+      schema,
+      spark.createDataFrame(Seq(Row(Seq(Seq(Row("a", null))))).asJava, schema.asNullable)
+    )
+
+    val partialSchema = new StructType()
+      .add("top", ArrayType(ArrayType(new StructType()
+        .add("key", StringType))))
+
+    testBatchWriteRejection(
+      NotNull(Seq("top", "element", "value")),
+      schema,
+      spark.createDataFrame(Seq(Row(Seq(Seq(Row("a"))))).asJava, partialSchema)
+    )
+  }
+
+  test("allow null array element with non-nullable nested field") {
+    val schema = new StructType()
+      .add("top", ArrayType(new StructType()
+        .add("key", StringType)
+        .add("value", IntegerType, nullable = false)))
+    tableWithSchema(schema) { path =>
+      spark.createDataFrame(Seq(Row(Seq(null))).asJava, schema.asNullable).write
+        .mode("append").format("delta").save(path)
+    }
+  }
+
+  testQuietly("reject deeply nested array") {
+    val schema = new StructType()
+      .add("top", ArrayType(new StructType()
+        .add("middle", ArrayType(new StructType()
+          .add("child_arr", new ArrayType(IntegerType, false))
+          .add("child_val", IntegerType, nullable = false)))))
+    testBatchWriteRejection(
+      NotNull(Seq("top", "element", "middle", "element", "child_arr", "element")),
+      schema,
+      spark.createDataFrame(Seq(Row(Seq(Row(Seq(Row(Seq(null), 1)))))).asJava, schema.asNullable)
+    )
+
+    testBatchWriteRejection(
+      NotNull(Seq("top", "element", "middle", "element", "child_val")),
+      schema,
+      spark.createDataFrame(Seq(Row(Seq(Row(Seq(Row(Seq(1), null)))))).asJava, schema.asNullable)
+    )
+  }
+
+  test("allow deeply nested array") {
+    val schema = new StructType()
+      .add("top", ArrayType(new StructType()
+        .add("middle", ArrayType(new StructType()
+          .add("child_arr", new ArrayType(IntegerType, false))
+          .add("child_val", IntegerType, nullable = false)))))
+    tableWithSchema(schema) { path =>
+      val rows = Seq(
+        Row(Seq(Row(Seq(Row(null, 1))))),
+        Row(Seq(Row(Seq(null)))),
+        Row(Seq(Row(null))),
+        Row(Seq(null)),
+        Row(null)
+      )
+      spark.createDataFrame(Seq(Row(Seq(null))).asJava, schema.asNullable).write
+        .mode("append").format("delta").save(path)
+    }
+  }
+
+  testQuietly("reject non-nullable map value") {
+    val schema = new StructType()
+      .add("top", MapType(IntegerType, IntegerType, false))
+    testBatchWriteRejection(
+      NotNull(Seq("top", "value")),
+      schema,
+      spark.createDataFrame(Seq(Row(Seq(1 -> null).toMap)).asJava, schema.asNullable)
+    )
+  }
+
+  test("allow null map with non-nullable value") {
+    val schema = new StructType()
+      .add("top", MapType(IntegerType, IntegerType, false))
+    tableWithSchema(schema) { path =>
+      spark.createDataFrame(Seq(Row(null)).asJava, schema.asNullable).write
+        .mode("append").format("delta").save(path)
+    }
+  }
+
+  testQuietly("reject non-nullable map key nested struct") {
+    val schema = new StructType()
+      .add("top", MapType(
+        new StructType()
+          .add("a", IntegerType)
+          .add("b", IntegerType, nullable = false),
+        IntegerType, true))
+    testBatchWriteRejection(
+      NotNull(Seq("top", "key", "b")),
+      schema,
+      spark.createDataFrame(Seq(Row(Seq(Row(1, null) -> 2).toMap)).asJava, schema.asNullable)
     )
   }
 
@@ -446,71 +555,6 @@ class InvariantEnforcementSuite extends QueryTest
       }
     }
   }
-
-  def testUnenforcedNestedConstraints(
-      testName: String,
-      schemaString: String,
-      expectedError: String,
-      data: Row): Unit = {
-    testQuietly(testName) {
-      val nullTable = "nullTbl"
-      withTable(nullTable) {
-        // Try creating the table with the check enabled first, which should fail, then create it
-        // for real with the check off which should succeed.
-        if (expectedError != null) {
-          val ex = intercept[AnalysisException] {
-            sql(s"CREATE TABLE $nullTable ($schemaString) USING delta")
-          }
-          assert(ex.getMessage.contains(expectedError))
-        }
-        withSQLConf(("spark.databricks.delta.constraints.allowUnenforcedNotNull.enabled", "true")) {
-          sql(s"CREATE TABLE $nullTable ($schemaString) USING delta")
-        }
-
-        // Once we've created the table, writes should succeed even if they violate the constraint.
-        spark.createDataFrame(
-          Seq(data).asJava,
-          spark.table(nullTable).schema
-        ).write.mode("append").format("delta").saveAsTable(nullTable)
-
-        if (expectedError != null) {
-          val ex = intercept[AnalysisException] {
-            sql(s"REPLACE TABLE $nullTable ($schemaString) USING delta")
-          }
-          assert(ex.getMessage.contains(expectedError))
-        }
-        withSQLConf(("spark.databricks.delta.constraints.allowUnenforcedNotNull.enabled", "true")) {
-          sql(s"REPLACE TABLE $nullTable ($schemaString) USING delta")
-        }
-      }
-    }
-  }
-
-  testUnenforcedNestedConstraints(
-    "not null within array",
-    schemaString = "arr array<struct<name:string,mailbox:string NOT NULL>> NOT NULL",
-    expectedError = "The element type of the field arr contains a NOT NULL constraint.",
-    data = Row(Seq(Row("myName", null))))
-
-  testUnenforcedNestedConstraints(
-    "not null within map key",
-    schemaString = "m map<struct<name:string,mailbox:string NOT NULL>, int> NOT NULL",
-    expectedError = "The key type of the field m contains a NOT NULL constraint.",
-    data = Row(Map(Row("myName", null) -> 1)))
-
-  testUnenforcedNestedConstraints(
-    "not null within map value",
-    schemaString = "m map<int, struct<name:string,mailbox:string NOT NULL>> NOT NULL",
-    expectedError = "The value type of the field m contains a NOT NULL constraint.",
-    data = Row(Map(1 -> Row("myName", null))))
-
-  testUnenforcedNestedConstraints(
-    "not null within nested array",
-    schemaString =
-      "s struct<n:int NOT NULL, arr:array<struct<name:string,mailbox:string NOT NULL>> NOT NULL>",
-    expectedError = "The element type of the field s.arr contains a NOT NULL constraint.",
-    data = Row(Row(1, Seq(Row("myName", null)))))
-
 
   // Helper function to construct the full test name as "RuntimeRepalceable: func"
   private def testReplaceableExpr(targetFunc: String, testTags: org.scalatest.Tag*)

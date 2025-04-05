@@ -266,20 +266,6 @@ trait DeltaErrorsSuiteBase
         "from the data being written into the table."))
     }
     {
-      val parent = "parent"
-      val nested = IntegerType
-      val nestType = "nestType"
-      val e = intercept[DeltaAnalysisException] {
-        throw DeltaErrors.nestedNotNullConstraint(parent, nested, nestType)
-      }
-      checkErrorMessage(e, Some("DELTA_NESTED_NOT_NULL_CONSTRAINT"), Some("0AKDC"),
-        Some(s"The $nestType type of the field $parent contains a NOT NULL " +
-        s"constraint. Delta does not support NOT NULL constraints nested within arrays or maps. " +
-        s"To suppress this error and silently ignore the specified constraints, set " +
-        s"${DeltaSQLConf.ALLOW_UNENFORCED_NOT_NULL_CONSTRAINTS.key} = true.\n" +
-        s"Parsed $nestType type:\n${nested.prettyJson}"))
-    }
-    {
       val e = intercept[DeltaInvariantViolationException] {
         throw DeltaInvariantViolationException(Constraints.NotNull(Seq("col1")))
       }

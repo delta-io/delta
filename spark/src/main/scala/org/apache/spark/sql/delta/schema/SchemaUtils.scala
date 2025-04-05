@@ -1224,55 +1224,6 @@ def normalizeColumnNamesInDataType(
     columnNames.filter(colName => badChars.map(_.toString).exists(colName.contains))
   }
 
-  /**
-   * Go through the schema to look for unenforceable NOT NULL constraints. By default we'll throw
-   * when they're encountered, but if this is suppressed through SQLConf they'll just be silently
-   * removed.
-   *
-   * Note that this should only be applied to schemas created from explicit user DDL - in other
-   * scenarios, the nullability information may be inaccurate and Delta should always coerce the
-   * nullability flag to true.
-   */
-  def removeUnenforceableNotNullConstraints(schema: StructType, conf: SQLConf): StructType = {
-    val allowUnenforceableNotNulls =
-      conf.getConf(DeltaSQLConf.ALLOW_UNENFORCED_NOT_NULL_CONSTRAINTS)
-
-    def checkField(path: Seq[String], f: StructField, r: Resolver): StructField = f match {
-      case StructField(name, ArrayType(elementType, containsNull), nullable, metadata) =>
-        val nullableElementType = SchemaUtils.typeAsNullable(elementType)
-        if (elementType != nullableElementType && !allowUnenforceableNotNulls) {
-          throw DeltaErrors.nestedNotNullConstraint(
-            prettyFieldName(path :+ f.name), elementType, nestType = "element")
-        }
-        StructField(
-          name, ArrayType(nullableElementType, containsNull), nullable, metadata)
-
-      case f @ StructField(
-          name, MapType(keyType, valueType, containsNull), nullable, metadata) =>
-        val nullableKeyType = SchemaUtils.typeAsNullable(keyType)
-        val nullableValueType = SchemaUtils.typeAsNullable(valueType)
-
-        if (keyType != nullableKeyType && !allowUnenforceableNotNulls) {
-          throw DeltaErrors.nestedNotNullConstraint(
-            prettyFieldName(path :+ f.name), keyType, nestType = "key")
-        }
-        if (valueType != nullableValueType && !allowUnenforceableNotNulls) {
-          throw DeltaErrors.nestedNotNullConstraint(
-            prettyFieldName(path :+ f.name), valueType, nestType = "value")
-        }
-
-        StructField(
-          name,
-          MapType(nullableKeyType, nullableValueType, containsNull),
-          nullable,
-          metadata)
-
-      case s: StructField => s
-    }
-
-    SchemaMergingUtils.transformColumns(schema)(checkField)
-  }
-
   def fieldToColumn(field: StructField): Column = {
     Column(UnresolvedAttribute.quoted(field.name))
   }
