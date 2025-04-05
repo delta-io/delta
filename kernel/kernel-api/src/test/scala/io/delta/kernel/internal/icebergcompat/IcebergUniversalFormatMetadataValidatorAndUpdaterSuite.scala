@@ -30,7 +30,7 @@ class IcebergUniversalFormatMetadataValidatorAndUpdaterSuite extends AnyFunSuite
   test("validateAndUpdate should return empty when UNIVERSAL_FORMAT_ENABLED_FORMATS is not set") {
     val metadata = createMetadata(Map("unrelated_key" -> "unrelated_value"))
     val result = IcebergUniversalFormatMetadataValidatorAndUpdater.validateAndUpdate(metadata)
-    assert(result.isEmpty)
+    assert(!result.isPresent)
   }
 
   test(
@@ -39,7 +39,7 @@ class IcebergUniversalFormatMetadataValidatorAndUpdaterSuite extends AnyFunSuite
       TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey -> "hudi",
       "unrelated_key" -> "unrelated_value"))
     val result = IcebergUniversalFormatMetadataValidatorAndUpdater.validateAndUpdate(metadata)
-    assert(result.isEmpty)
+    assert(!result.isPresent)
   }
 
   test("validateAndUpdate should return empty when iceberg is enabled" +
@@ -49,7 +49,7 @@ class IcebergUniversalFormatMetadataValidatorAndUpdaterSuite extends AnyFunSuite
       TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true",
       "unrelated_key" -> "unrelated_value"))
     val result = IcebergUniversalFormatMetadataValidatorAndUpdater.validateAndUpdate(metadata)
-    assert(result.isEmpty)
+    assert(!result.isPresent)
   }
 
   Seq(
