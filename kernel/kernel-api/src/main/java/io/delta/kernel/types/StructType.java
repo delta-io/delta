@@ -135,6 +135,19 @@ public final class StructType extends DataType {
   }
 
   @Override
+  public boolean equalsIgnoringNames(DataType dataType) {
+    if (!(dataType instanceof StructType)) {
+      return false;
+    }
+
+    StructType otherType = ((StructType) dataType);
+    return otherType.length() == length()
+        && IntStream.range(0, length())
+            .mapToObj(i -> otherType.at(i).getDataType().equalsIgnoringNames(at(i).getDataType()))
+            .allMatch(result -> result);
+  }
+
+  @Override
   public String toString() {
     return String.format(
         "struct(%s)", fields.stream().map(StructField::toString).collect(Collectors.joining(", ")));

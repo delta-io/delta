@@ -67,6 +67,16 @@ public class ArrayType extends DataType {
   }
 
   @Override
+  public boolean equalsIgnoringNames(DataType dataType) {
+    if (!(dataType instanceof ArrayType)) {
+      return false;
+    }
+    ArrayType arrayType = (ArrayType) dataType;
+    return arrayType.containsNull() == containsNull()
+        && arrayType.getElementType().equalsIgnoringNames(getElementType());
+  }
+
+  @Override
   public int hashCode() {
     return Objects.hash(elementField);
   }

@@ -36,6 +36,16 @@ public abstract class DataType {
     return equals(dataType);
   }
 
+  /**
+   * Returns true if the data types are equal ignoring only column names
+   *
+   * @param dataType
+   * @return
+   */
+  public boolean equalsIgnoringNames(DataType dataType) {
+    return equals(dataType);
+  }
+
   @Override
   public abstract int hashCode();
 

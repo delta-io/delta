@@ -68,6 +68,18 @@ public class MapType extends DataType {
   }
 
   @Override
+  public boolean equalsIgnoringNames(DataType dataType) {
+    if (!(dataType instanceof MapType)) {
+      return false;
+    }
+
+    MapType mapType = (MapType) dataType;
+    return mapType.isValueContainsNull() == isValueContainsNull()
+        && equalsIgnoringNames(mapType.getKeyType())
+        && equalsIgnoringNames(mapType.getValueType());
+  }
+
+  @Override
   public boolean equals(Object o) {
     if (this == o) {
       return true;

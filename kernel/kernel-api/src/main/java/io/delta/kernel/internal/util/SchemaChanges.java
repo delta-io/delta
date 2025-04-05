@@ -19,14 +19,15 @@ import io.delta.kernel.types.StructField;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.function.Supplier;
 
 /**
  * SchemaChanges encapsulates a list of added, removed, renamed, or updated fields in a schema
- * change. Updates include renamed fields, reordered fields, type changes, nullability changes, and
- * metadata attribute changes. This set of updates can apply to nested fields within structs. In
- * case any update is applied to a nested field, an update will be produced for every level of
- * nesting. This includes re-ordered columns in a nested field. Note that SchemaChanges does not
- * capture re-ordered columns in top level schema.
+ * change. Updates include reordered fields, type changes, nullability changes, and metadata
+ * attribute changes. This set of updates can apply to nested fields within structs. In case any
+ * update is applied to a nested field, an update will be produced for every level of nesting. This
+ * includes re-ordered columns in a nested field. Note that SchemaChanges does not capture
+ * re-ordered columns in top level schema.
  *
  * <p>For example, given a field struct_col: struct<inner_struct<id: int>> if id is renamed to
  * `renamed_id` 1 update will be produced for the change to struct_col and 1 update will be produced
@@ -35,61 +36,75 @@ import java.util.List;
  * <p>ToDo: Possibly track moves/renames independently, enable capturing re-ordered columns in top
  * level schema
  */
-class SchemaChanges {
-  private List<StructField> addedFields;
-  private List<StructField> removedFields;
-  private List<Tuple2<StructField, StructField>> updatedFields;
+class SchemaChanges<T extends Supplier<StructField>> {
+  private final List<T> addedFields;
+  private final List<T> removedFields;
+  private final List<T> renamedFields;
+  private final List<Tuple2<T, T>> updatedFields;
 
   private SchemaChanges(
-      List<StructField> addedFields,
-      List<StructField> removedFields,
-      List<Tuple2<StructField, StructField>> updatedFields) {
+      List<T> addedFields,
+      List<T> removedFields,
+      List<Tuple2<T, T>> updatedFields,
+      List<T> renamedFields) {
     this.addedFields = Collections.unmodifiableList(addedFields);
     this.removedFields = Collections.unmodifiableList(removedFields);
     this.updatedFields = Collections.unmodifiableList(updatedFields);
+    this.renamedFields = Collections.unmodifiableList(renamedFields);
   }
 
-  static class Builder {
-    private List<StructField> addedFields = new ArrayList<>();
-    private List<StructField> removedFields = new ArrayList<>();
-    private List<Tuple2<StructField, StructField>> updatedFields = new ArrayList<>();
+  static class Builder<T extends Supplier<StructField>> {
+    private final List<T> addedFields = new ArrayList<>();
+    private final List<T> removedFields = new ArrayList<>();
+    private final List<T> renamedFields = new ArrayList<>();
+    private final List<Tuple2<T, T>> updatedFields = new ArrayList<>();
 
-    public Builder withAddedField(StructField addedField) {
+    public Builder<T> withAddedField(T addedField) {
       addedFields.add(addedField);
       return this;
     }
 
-    public Builder withRemovedField(StructField removedField) {
+    public Builder<T> withRemovedField(T removedField) {
       removedFields.add(removedField);
       return this;
     }
 
-    public Builder withUpdatedField(StructField existingField, StructField newField) {
+    public Builder<T> withUpdatedField(T existingField, T newField) {
       updatedFields.add(new Tuple2<>(existingField, newField));
       return this;
     }
 
-    public SchemaChanges build() {
-      return new SchemaChanges(addedFields, removedFields, updatedFields);
+    public Builder<T> withRenamedField(T renamedField) {
+      renamedFields.add(renamedField);
+      return this;
+    }
+
+    public SchemaChanges<T> build() {
+      return new SchemaChanges<T>(addedFields, removedFields, updatedFields, renamedFields);
     }
   }
 
-  public static Builder builder() {
-    return new Builder();
+  public static <T extends Supplier<StructField>> Builder<T> builder() {
+    return new Builder<>();
   }
 
   /* Added Fields */
-  public List<StructField> addedFields() {
+  public List<T> addedFields() {
     return addedFields;
   }
 
   /* Removed Fields */
-  public List<StructField> removedFields() {
+  public List<T> removedFields() {
     return removedFields;
   }
 
   /* Updated Fields (e.g. rename, type change) represented as a Tuple<FieldBefore, FieldAfter> */
-  public List<Tuple2<StructField, StructField>> updatedFields() {
+  public List<Tuple2<T, T>> updatedFields() {
     return updatedFields;
+  }
+
+  /* Returns fields which are only renamed */
+  public List<T> renamedFields() {
+    return renamedFields;
   }
 }
