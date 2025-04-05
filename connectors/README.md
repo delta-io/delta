@@ -9,7 +9,7 @@ See [Delta Standalone](https://docs.delta.io/latest/delta-standalone.html) for d
 
 ## Hive Connector
 
-Read Delta tables directly from Apache Hive using the [Hive Connector](/hive/README.md). See the dedicated [README.md](/hive/README.md) for more details.
+Read Delta tables directly from Apache Hive using the [Hive Connector](/connectors/hive/README.md). See the dedicated [README.md](/connectors/hive/README.md) for more details.
 
 ## Flink/Delta Connector
 
