@@ -31,6 +31,7 @@ import com.databricks.spark.util.TagDefinitions.TAG_ASYNC
 import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.coordinatedcommits.{CoordinatedCommitsUsageLogs, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
+import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.FileNames._
@@ -456,7 +457,12 @@ trait SnapshotManagement { self: DeltaLog =>
         case CompactedDeltaFile(_, startV, endV) => (startV to endV)
         case DeltaFile(_, v) => Seq(v)
       }
-      verifyDeltaVersions(spark, deltaVersions, Some(checkpointVersion + 1), versionToLoad)
+      verifyDeltaVersions(
+        spark = spark,
+        versions = deltaVersions,
+        expectedStartVersion = Some(checkpointVersion + 1),
+        expectedEndVersion = versionToLoad,
+        cachedSnapshot = Some(unsafeVolatileSnapshot))
     }
   }
 
@@ -551,7 +557,10 @@ trait SnapshotManagement { self: DeltaLog =>
       // segment) and hence the validation if attempted will fail. So we need to set
       // `validateLogSegmentWithoutCompactedDeltas` to false in that case.
       if (validateLogSegmentWithoutCompactedDeltas) {
-        validateDeltaVersions(deltasAfterCheckpoint, newCheckpointVersion, versionToLoad)
+        validateDeltaVersions(
+          selectedDeltas = deltasAfterCheckpoint,
+          checkpointVersion = newCheckpointVersion,
+          versionToLoad = versionToLoad)
       }
 
       val newVersion =
@@ -579,7 +588,9 @@ trait SnapshotManagement { self: DeltaLog =>
         checkpointVersionToUse = newCheckpointVersion)
 
       validateDeltaVersions(
-        deltasAndCompactedDeltasForLogSegment, newCheckpointVersion, versionToLoad)
+        selectedDeltas = deltasAndCompactedDeltasForLogSegment,
+        checkpointVersion = newCheckpointVersion,
+        versionToLoad = versionToLoad)
 
       Some(LogSegment(
         logPath,
@@ -795,7 +806,12 @@ trait SnapshotManagement { self: DeltaLog =>
         val deltaVersions = deltasAfterCheckpoint.map(deltaVersion)
         // `deltaVersions` should not be empty and `verifyDeltaVersions` will verify it
         try {
-          verifyDeltaVersions(spark, deltaVersions, Some(cp.version + 1), Some(snapshotVersion))
+          verifyDeltaVersions(
+            spark = spark,
+            versions = deltaVersions,
+            expectedStartVersion = Some(cp.version + 1),
+            expectedEndVersion = Some(snapshotVersion),
+            cachedSnapshot = Some(unsafeVolatileSnapshot))
         } catch {
           case NonFatal(e) =>
             logWarning(log"Failed to find a valid LogSegment for " +
@@ -822,7 +838,12 @@ trait SnapshotManagement { self: DeltaLog =>
             .flatMap(DeltaFile.unapply(_))
             .unzip
         try {
-          verifyDeltaVersions(spark, deltaVersions, Some(0), Some(snapshotVersion))
+          verifyDeltaVersions(
+            spark = spark,
+            versions = deltaVersions,
+            expectedStartVersion = Some(0),
+            expectedEndVersion = Some(snapshotVersion),
+            cachedSnapshot = Some(unsafeVolatileSnapshot))
         } catch {
           case NonFatal(e) =>
             logWarning(log"Failed to find a valid LogSegment for " +
@@ -1440,7 +1461,7 @@ trait SnapshotManagement { self: DeltaLog =>
   private[delta] def getCapturedSnapshot(): CapturedSnapshot = currentSnapshot
 }
 
-object SnapshotManagement {
+object SnapshotManagement extends DeltaLogging {
   // A thread pool for reading checkpoint files and collecting checkpoint v2 actions like
   // checkpointMetadata, sidecarFiles.
   private[delta] lazy val checkpointV2ThreadPool = {
@@ -1470,12 +1491,40 @@ object SnapshotManagement {
       spark: SparkSession,
       versions: Array[Long],
       expectedStartVersion: Option[Long],
-      expectedEndVersion: Option[Long]): Unit = {
+      expectedEndVersion: Option[Long],
+      cachedSnapshot: Option[Snapshot]): Unit = {
     if (versions.nonEmpty) {
       // Turn this to a vector so that we can compare it with a range.
       val deltaVersions = versions.toVector
       if ((deltaVersions.head to deltaVersions.last) != deltaVersions) {
-        throw DeltaErrors.deltaVersionsNotContiguousException(spark, deltaVersions)
+        // [[cachedSnapshot]] maybe null (e.g., uninitialized snapshot being passed in)
+        // in some cases, which needs to be explicitly filtered out.
+        val snapshot = cachedSnapshot.filter(_ != null)
+        recordDeltaEvent(
+          deltaLog = null,
+          opType = "delta.exceptions.deltaVersionsNotContiguous",
+          data = Map(
+            // Remove the first element of the stack trace since this represents
+            // the [[Thread.getStackTrace]] call itself.
+            "stackTrace" -> Thread.currentThread().getStackTrace.tail.mkString("\n\t"),
+            "startVersion" -> deltaVersions.head,
+            "endVersion" -> deltaVersions.last,
+            "versionToLoad" -> expectedEndVersion.getOrElse(-1L),
+            "unsafeVolatileSnapshot.latestCheckpointVersion" ->
+              snapshot.map(_.checkpointProvider.version).getOrElse(-1L),
+            "unsafeVolatileSnapshot.latestSnapshotVersion" ->
+              snapshot.map(_.version).getOrElse(-1L),
+            "unsafeVolatileSnapshot.checksumOpt" ->
+              snapshot.map(_.checksumOpt).orNull
+          ))
+        throw DeltaErrors.deltaVersionsNotContiguousException(
+          spark = spark,
+          deltaVersions = deltaVersions,
+          startVersion = deltaVersions.head,
+          endVersion = deltaVersions.last,
+          // `expectedEndVersion` is the version we'd like to construct/load the [[Snapshot]],
+          // pass -1L if it's not available/specified.
+          versionToLoad = expectedEndVersion.getOrElse(-1L))
       }
     }
     expectedStartVersion.foreach { v =>

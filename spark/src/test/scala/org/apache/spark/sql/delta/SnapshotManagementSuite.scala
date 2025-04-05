@@ -333,57 +333,66 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
       spark,
       versions = Array.empty,
       expectedStartVersion = None,
-      expectedEndVersion = None)
+      expectedEndVersion = None,
+      cachedSnapshot = None)
     // contiguous versions
     verifyDeltaVersions(
       spark,
       versions = Array(1, 2, 3),
       expectedStartVersion = None,
-      expectedEndVersion = None)
+      expectedEndVersion = None,
+      cachedSnapshot = None)
     // contiguous versions with correct `expectedStartVersion` and `expectedStartVersion`
     verifyDeltaVersions(
       spark,
       versions = Array(1, 2, 3),
       expectedStartVersion = None,
-      expectedEndVersion = Some(3))
+      expectedEndVersion = Some(3),
+      cachedSnapshot = None)
     verifyDeltaVersions(
       spark,
       versions = Array(1, 2, 3),
       expectedStartVersion = Some(1),
-      expectedEndVersion = None)
+      expectedEndVersion = None,
+      cachedSnapshot = None)
     verifyDeltaVersions(
       spark,
       versions = Array(1, 2, 3),
       expectedStartVersion = Some(1),
-      expectedEndVersion = Some(3))
+      expectedEndVersion = Some(3),
+      cachedSnapshot = None)
     // `expectedStartVersion` or `expectedEndVersion` doesn't match
     intercept[IllegalArgumentException] {
       verifyDeltaVersions(
         spark,
         versions = Array(1, 2),
         expectedStartVersion = Some(0),
-        expectedEndVersion = None)
+        expectedEndVersion = None,
+        cachedSnapshot = None)
     }
     intercept[IllegalArgumentException] {
       verifyDeltaVersions(
         spark,
         versions = Array(1, 2),
         expectedStartVersion = None,
-        expectedEndVersion = Some(3))
+        expectedEndVersion = Some(3),
+        cachedSnapshot = None)
     }
     intercept[IllegalArgumentException] {
       verifyDeltaVersions(
         spark,
         versions = Array.empty,
         expectedStartVersion = Some(0),
-        expectedEndVersion = None)
+        expectedEndVersion = None,
+        cachedSnapshot = None)
     }
     intercept[IllegalArgumentException] {
       verifyDeltaVersions(
         spark,
         versions = Array.empty,
         expectedStartVersion = None,
-        expectedEndVersion = Some(3))
+        expectedEndVersion = Some(3),
+        cachedSnapshot = None)
     }
     // non contiguous versions
     intercept[IllegalStateException] {
@@ -391,7 +400,8 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
         spark,
         versions = Array(1, 3),
         expectedStartVersion = None,
-        expectedEndVersion = None)
+        expectedEndVersion = None,
+        cachedSnapshot = None)
     }
     // duplicates in versions
     intercept[IllegalStateException] {
@@ -399,7 +409,8 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
         spark,
         versions = Array(1, 2, 2, 3),
         expectedStartVersion = None,
-        expectedEndVersion = None)
+        expectedEndVersion = None,
+        cachedSnapshot = None)
     }
     // unsorted versions
     intercept[IllegalStateException] {
@@ -407,7 +418,96 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
         spark,
         versions = Array(3, 2, 1),
         expectedStartVersion = None,
-        expectedEndVersion = None)
+        expectedEndVersion = None,
+        cachedSnapshot = None)
+    }
+
+    // -----------------------------------------------------
+    // | Usage logs validation for non-contiguous versions |
+    // -----------------------------------------------------
+
+    /**
+     * Helper function to validate the usage log properties for the
+     * given `usageLogs` and `expected*` values.
+     */
+    def validateUsageLogProperties(
+        usageLogs: Seq[UsageRecord],
+        expectedStartVersion: Long,
+        expectedEndVersion: Long,
+        expectedVersionToLoad: Long,
+        expectedLatestSnapshotVersion: Long,
+        expectedLatestCheckpointVersion: Long,
+        shouldChecksumOptPresent: Boolean): Unit = {
+      assert(usageLogs.size == 1)
+      val usageLog = usageLogs.head
+      // `tags.opType` should be "delta.exceptions.deltaVersionsNotContiguous"
+      assert(usageLog.tags.getOrElse("opType", "null") ==
+        "delta.exceptions.deltaVersionsNotContiguous")
+      val blob = JsonUtils.fromJson[Map[String, Any]](usageLog.blob)
+      // `blob` validation
+      assert(blob.get("startVersion").exists(_.toString.toLong == expectedStartVersion))
+      assert(blob.get("endVersion").exists(_.toString.toLong == expectedEndVersion))
+      assert(blob.get("versionToLoad").exists(_.toString.toLong == expectedVersionToLoad))
+      assert(
+        blob.get("unsafeVolatileSnapshot.latestSnapshotVersion").exists(_.toString.toLong ==
+          expectedLatestSnapshotVersion))
+      assert(
+        blob.get("unsafeVolatileSnapshot.latestCheckpointVersion").exists(_.toString.toLong ==
+          expectedLatestCheckpointVersion))
+      // `stackTrace` should contain the entire stack trace,
+      // here we verify the starting of the stack trace.
+      assert(blob.get("stackTrace").exists(_.toString.startsWith(
+          "org.apache.spark.sql.delta.SnapshotManagement$.verifyDeltaVersions")))
+      // Check whether `unsafeVolatileSnapshot.checksumOpt` is present or not
+      assert(blob.contains("unsafeVolatileSnapshot.checksumOpt") == shouldChecksumOptPresent)
+    }
+
+    // 1. Basic usage log validation.
+    val usageLogs = Log4jUsageLogger.track {
+        intercept[IllegalStateException] {
+          verifyDeltaVersions(
+            spark,
+            versions = Array(1, 3),
+            expectedStartVersion = None,
+            expectedEndVersion = None,
+            cachedSnapshot = None)
+        }
+      }.filter(_.metric == "tahoeEvent")
+    validateUsageLogProperties(
+      usageLogs,
+      expectedStartVersion = 1,
+      expectedEndVersion = 3,
+      expectedVersionToLoad = -1,
+      expectedLatestSnapshotVersion = -1,
+      expectedLatestCheckpointVersion = -1,
+      shouldChecksumOptPresent = false)
+
+    // 2. Usage log validation with `expectedStartVersion`, `expectedEndVersion`
+    //    and `cachedSnapshot`.
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      import testImplicits._
+      // Commit 0 - to trigger the initial snapshot construction for version 0
+      Seq(1).toDF().write.format("delta").mode("overwrite").save(path)
+      val snapshot = DeltaLog.forTable(spark, path).update()
+      val usageLogs = Log4jUsageLogger.track {
+        intercept[IllegalStateException] {
+          verifyDeltaVersions(
+            spark,
+            versions = Array(1, 3),
+            expectedStartVersion = Some(1),
+            expectedEndVersion = Some(4),
+            cachedSnapshot = Some(snapshot))
+        }
+      }.filter(_.metric == "tahoeEvent")
+      validateUsageLogProperties(
+        usageLogs,
+        expectedStartVersion = 1,
+        expectedEndVersion = 3,
+        expectedVersionToLoad = 4,
+        expectedLatestSnapshotVersion = 0,
+        expectedLatestCheckpointVersion = -1,
+        shouldChecksumOptPresent = true)
     }
   }
 
