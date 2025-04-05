@@ -24,7 +24,7 @@ import io.delta.kernel.{Operation, Table}
 import io.delta.kernel.Operation.CREATE_TABLE
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.Literal
-import io.delta.kernel.internal.SnapshotImpl
+import io.delta.kernel.internal.{SnapshotImpl, TableConfig}
 import io.delta.kernel.internal.actions.{Protocol => KernelProtocol}
 import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.types.{StructType, TimestampNTZType}
@@ -281,6 +281,32 @@ class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
         s"${writtenSnapshot.getProtocol.getExplicitlySupportedFeatures}")
       assert(writtenSnapshot.getMetadata.getConfiguration == Map(
         "delta.enableDeletionVectors" -> "true").asJava)
+    }
+  }
+
+  test("UNIVERSAL_FORMAT feature can be populated") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val properties =
+        Map(
+          TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey -> "iceberg",
+          TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true")
+      createEmptyTable(engine, tablePath, testSchema, tableProperties = properties)
+
+      val table = Table.forPath(engine, tablePath)
+      val writtenSnapshot = latestSnapshot(table, engine)
+      assert(TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.fromMetadata(
+        writtenSnapshot.getMetadata).contains(TableConfig.UNIVERSAL_FORMAT_ICEBERG))
+
+      val txn = table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
+        .withTableProperties(
+          engine,
+          Map(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "false").asJava)
+        .build(engine)
+      txn.commit(engine, emptyIterable())
+
+      val updatedSnapshot = latestSnapshot(table, engine)
+      assert(TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.fromMetadata(
+        updatedSnapshot.getMetadata).isEmpty)
     }
   }
 
