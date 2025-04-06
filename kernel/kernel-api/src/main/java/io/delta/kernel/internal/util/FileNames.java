@@ -31,7 +31,8 @@ public final class FileNames {
 
   public enum DeltaLogFileType {
     COMMIT,
-    CHECKPOINT
+    CHECKPOINT,
+    CHECKSUM
   }
 
   /** Example: 00000000000000000001.json */
