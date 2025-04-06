@@ -26,18 +26,16 @@ import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.{Meta, Operation, Table, Transaction, TransactionBuilder, TransactionCommitResult}
 import io.delta.kernel.Operation.CREATE_TABLE
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch, Row}
-import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.expressions.Literal
+import io.delta.kernel.expressions.{Column, Literal}
 import io.delta.kernel.expressions.Literal.ofInt
 import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
 import io.delta.kernel.internal.{SnapshotImpl, TableConfig, TableImpl}
 import io.delta.kernel.internal.actions.{Metadata, Protocol, SingleAction}
 import io.delta.kernel.internal.fs.{Path => DeltaPath}
-import io.delta.kernel.internal.util.Clock
-import io.delta.kernel.internal.util.FileNames
+import io.delta.kernel.internal.util.{Clock, FileNames, VectorUtils}
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
@@ -85,6 +83,21 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     Map("part1" -> ofInt(4), "part2" -> ofInt(5)),
     batchSize = 876,
     numBatches = 7)
+
+  val testClusteringColumns = List(new Column("part1"), new Column("part2"))
+  val dataClusteringBatches1 = generateData(
+    testPartitionSchema,
+    partitionCols = Seq.empty,
+    partitionValues = Map.empty,
+    batchSize = 200,
+    numBatches = 3)
+
+  val dataClusteringBatches2 = generateData(
+    testPartitionSchema,
+    partitionCols = Seq.empty,
+    partitionValues = Map.empty,
+    batchSize = 456,
+    numBatches = 5)
 
   def verifyLastCheckpointMetadata(tablePath: String, checkpointAt: Long, expSize: Long): Unit = {
     val filePath = f"$tablePath/_delta_log/_last_checkpoint"
@@ -185,9 +198,20 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     Option.empty
   }
 
+  def getMetadata(engine: Engine, tablePath: String): Metadata = {
+    Table.forPath(engine, tablePath).getLatestSnapshot(engine)
+      .asInstanceOf[SnapshotImpl].getMetadata
+  }
+
+  def getProtocol(engine: Engine, tablePath: String): Protocol = {
+    Table.forPath(engine, tablePath).getLatestSnapshot(engine)
+      .asInstanceOf[SnapshotImpl].getProtocol
+  }
+
   /**
    *  Helper method to read the Metadata from the commit file of the given version if it is not
    *  null, otherwise return null.
+   *  TODO: get rid of this and use getMetadata instead
    */
   def getMetadataActionFromCommit(
       engine: Engine,
@@ -210,6 +234,7 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
   /**
    *  Helper method to read the Protocol from the commit file of the given version if it is not
    *  null, otherwise return null.
+   *  TODO: get rid of this and use getProtocol instead
    */
   def getProtocolActionFromCommit(engine: Engine, table: Table, version: Long): Option[Row] = {
     readCommitFile(
@@ -290,18 +315,29 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       schema: StructType = null,
       partCols: Seq[String] = null,
       tableProperties: Map[String, String] = null,
-      clock: Clock = () => System.currentTimeMillis): Transaction = {
+      clock: Clock = () => System.currentTimeMillis,
+      withDomainMetadataSupported: Boolean = false,
+      clusteringCols: List[Column] = List.empty): Transaction = {
 
     var txnBuilder = createWriteTxnBuilder(
       TableImpl.forPath(engine, tablePath, clock))
 
     if (isNewTable) {
       txnBuilder = txnBuilder.withSchema(engine, schema)
-        .withPartitionColumns(engine, partCols.asJava)
+      if (partCols != null) {
+        txnBuilder = txnBuilder.withPartitionColumns(engine, partCols.asJava)
+      }
+      if (clusteringCols.nonEmpty) {
+        txnBuilder = txnBuilder.withClusteringColumns(engine, clusteringCols.asJava)
+      }
     }
 
     if (tableProperties != null) {
       txnBuilder = txnBuilder.withTableProperties(engine, tableProperties.asJava)
+    }
+
+    if (withDomainMetadataSupported) {
+      txnBuilder = txnBuilder.withDomainMetadataSupported()
     }
 
     txnBuilder.build(engine)
@@ -318,8 +354,53 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       stageData(txnState, partValues, partData)
     }
 
-    val combineActions = inMemoryIterable(actions.reduceLeft(_ combine _))
-    commitTransaction(txn, engine, combineActions)
+    actions.reduceLeftOption(_ combine _) match {
+      case Some(combinedActions) =>
+        val combineActions = inMemoryIterable(combinedActions)
+        commitTransaction(txn, engine, combineActions)
+      case None =>
+        commitTransaction(txn, engine, emptyIterable[Row])
+    }
+  }
+
+  /** Utility to create table, with no data */
+  def createEmptyTable(
+      engine: Engine = defaultEngine,
+      tablePath: String,
+      schema: StructType,
+      partCols: Seq[String] = Seq.empty,
+      clock: Clock = () => System.currentTimeMillis,
+      tableProperties: Map[String, String] = null,
+      clusteringCols: List[Column] = List.empty): TransactionCommitResult = {
+
+    appendData(
+      engine,
+      tablePath,
+      isNewTable = true,
+      schema,
+      partCols,
+      data = Seq.empty,
+      clock,
+      tableProperties,
+      clusteringCols)
+  }
+
+  /** Update an existing table - metadata only changes (no data changes) */
+  def updateTableMetadata(
+      engine: Engine = defaultEngine,
+      tablePath: String,
+      schema: StructType = null, // non-null schema means schema change
+      clock: Clock = () => System.currentTimeMillis,
+      tableProperties: Map[String, String] = null): TransactionCommitResult = {
+    appendData(
+      engine,
+      tablePath,
+      isNewTable = false,
+      schema,
+      Seq.empty,
+      data = Seq.empty,
+      clock,
+      tableProperties)
   }
 
   def appendData(
@@ -330,9 +411,18 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       partCols: Seq[String] = null,
       data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])],
       clock: Clock = () => System.currentTimeMillis,
-      tableProperties: Map[String, String] = null): TransactionCommitResult = {
+      tableProperties: Map[String, String] = null,
+      clusteringCols: List[Column] = List.empty): TransactionCommitResult = {
 
-    val txn = createTxn(engine, tablePath, isNewTable, schema, partCols, tableProperties, clock)
+    val txn = createTxn(
+      engine,
+      tablePath,
+      isNewTable,
+      schema,
+      partCols,
+      tableProperties,
+      clock,
+      clusteringCols = clusteringCols)
     commitAppendData(engine, txn, data)
   }
 

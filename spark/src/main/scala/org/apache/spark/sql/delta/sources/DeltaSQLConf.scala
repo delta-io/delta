@@ -2196,6 +2196,15 @@ trait DeltaSQLConfBase {
       .doc("Controls the target file deletion vector file size when packing multiple" +
         "deletion vectors in a single file.")
       .bytesConf(ByteUnit.BYTE)
+      /**
+       * A [[DeletionVectorDescriptor]] stores an offset as a 32-bit integer into the file where the
+       * deletion vector is stored. There is a hard limit of ~2.1GB for this file before the offset
+       * integer overflows. Since we do bin packing with estimates, we set a lower internal
+       * limit to be safe.
+       */
+      .checkValue(_ >= 0, "deletionVectors.packing.targetSize must be non-negative")
+      .checkValue(_ < 3L * 1024L * 1024L * 1024L / 2L,
+         "deletionVectors.packing.targetSize must be less than 1.5GB")
       .createWithDefault(2L * 1024L * 1024L)
 
   val TIGHT_BOUND_COLUMN_ON_FILE_INIT_DISABLED =
@@ -2336,6 +2345,44 @@ trait DeltaSQLConfBase {
       "an Iceberg source.")
     .booleanConf
     .createWithDefault(true)
+
+  val DELTA_CONVERT_ICEBERG_DECIMAL_STATS = buildConf("collectStats.convertIceberg.decimal")
+    .internal()
+    .doc("When enabled, attempts to convert Iceberg stats for DECIMAL to Delta stats" +
+      "when cloning from an Iceberg source.")
+    .booleanConf
+    .createWithDefault(true)
+
+  val DELTA_CONVERT_ICEBERG_DATE_STATS = buildConf("collectStats.convertIceberg.date")
+    .internal()
+    .doc("When enabled, attempts to convert Iceberg stats for DATE to Delta stats" +
+      "when cloning from an Iceberg source.")
+    .booleanConf
+    .createWithDefault(true)
+
+  val DELTA_CONVERT_ICEBERG_TIMESTAMP_STATS = buildConf("collectStats.convertIceberg.timestamp")
+    .internal()
+    .doc("When enabled, attempts to convert Iceberg stats for TIMESTAMP to Delta stats" +
+      "when cloning from an Iceberg source.")
+    .booleanConf
+    .createWithDefault(true)
+
+  /**
+   * For iceberg clone,
+   * When stats conversion from iceberg off, fallback to slow stats conversion enabled
+   * When stats conversion from iceberg on,
+   *  fallback to slow stats conversion will not happen if partial stats conversion enabled
+   *  fallback only happens if partial stats conversion disabled and iceberg has partial stats
+   *  - either minValues or maxValues is missing
+   */
+  val DELTA_CLONE_ICEBERG_ALLOW_PARTIAL_STATS =
+    buildConf("clone.iceberg.allowPartialStats")
+      .internal()
+      .doc("If true, allow converting partial stats from iceberg stats " +
+        "to delta stats during clone."
+      )
+      .booleanConf
+      .createWithDefault(true)
 
   /////////////////////
   // Optimized Write

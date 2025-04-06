@@ -16,13 +16,13 @@
 
 package org.apache.spark.sql.delta.test
 
+import org.apache.spark.sql.delta.Relocated._
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import io.delta.sql.DeltaSparkSessionExtension
 import org.scalatest.BeforeAndAfterAll
 
 import org.apache.spark.{SparkContext, SparkFunSuite}
-import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.hive.test.{TestHive, TestHiveContext}
 import org.apache.spark.sql.internal.{SQLConf, StaticSQLConf}
 
@@ -46,7 +46,7 @@ trait DeltaHiveTest extends SparkFunSuite with BeforeAndAfterAll { self: DeltaSQ
     _sc = new SparkContext("local", this.getClass.getName, conf)
     _hiveContext = new TestHiveContext(_sc)
     _session = _hiveContext.sparkSession
-    SparkSession.setActiveSession(_session)
+    setActiveSession(_session)
     super.beforeAll()
   }
 

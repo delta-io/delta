@@ -18,6 +18,7 @@ package io.delta.kernel.internal;
 import io.delta.kernel.exceptions.InvalidConfigurationValueException;
 import io.delta.kernel.exceptions.UnknownConfigurationException;
 import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.*;
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
 import java.util.*;
@@ -241,6 +242,36 @@ public class TableConfig<T> {
           "needs to be a boolean.",
           true);
 
+  /**
+   * The number of columns to collect stats on for data skipping. A value of -1 means collecting
+   * stats for all columns.
+   *
+   * <p>For Struct types, all leaf fields count individually toward this limit in depth-first order.
+   * For example, if a table has columns a, b.c, b.d, and e, then the first three indexed columns
+   * would be a, b.c, and b.d. Map and array types are not supported for statistics collection.
+   */
+  public static final TableConfig<Integer> DATA_SKIPPING_NUM_INDEXED_COLS =
+      new TableConfig<>(
+          "delta.dataSkippingNumIndexedCols",
+          "32",
+          Integer::valueOf,
+          value -> value >= -1,
+          "needs to be larger than or equal to -1.",
+          true);
+
+  /**
+   * Table property that enables modifying the table in accordance with the Delta-Iceberg Writer
+   * Compatibility V1 ({@code icebergCompatWriterV1}) protocol.
+   */
+  public static final TableConfig<Boolean> ICEBERG_WRITER_COMPAT_V1_ENABLED =
+      new TableConfig<>(
+          "delta.enableIcebergWriterCompatV1",
+          "false",
+          Boolean::valueOf,
+          value -> true,
+          "needs to be a boolean.",
+          true);
+
   /** All the valid properties that can be set on the table. */
   private static final Map<String, TableConfig<?>> VALID_PROPERTIES =
       Collections.unmodifiableMap(
@@ -257,14 +288,13 @@ public class TableConfig<T> {
               addConfig(this, TOMBSTONE_RETENTION);
               addConfig(this, CHECKPOINT_INTERVAL);
               addConfig(this, IN_COMMIT_TIMESTAMPS_ENABLED);
-              addConfig(this, TOMBSTONE_RETENTION);
-              addConfig(this, CHECKPOINT_INTERVAL);
-              addConfig(this, IN_COMMIT_TIMESTAMPS_ENABLED);
               addConfig(this, IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION);
               addConfig(this, IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP);
               addConfig(this, COLUMN_MAPPING_MODE);
               addConfig(this, ICEBERG_COMPAT_V2_ENABLED);
+              addConfig(this, ICEBERG_WRITER_COMPAT_V1_ENABLED);
               addConfig(this, COLUMN_MAPPING_MAX_COLUMN_ID);
+              addConfig(this, DATA_SKIPPING_NUM_INDEXED_COLS);
             }
           });
 
@@ -289,7 +319,12 @@ public class TableConfig<T> {
       String key = kv.getKey().toLowerCase(Locale.ROOT);
       String value = kv.getValue();
 
-      if (key.startsWith("delta.")) {
+      boolean isTableFeatureOverrideKey =
+          key.startsWith(TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX);
+      boolean isTableConfigKey = key.startsWith("delta.");
+      // TableFeature override properties validation is handled separately in TransactionBuilder.
+      boolean shouldValidateProperties = isTableConfigKey && !isTableFeatureOverrideKey;
+      if (shouldValidateProperties) {
         // If it is a delta table property, make sure it is a supported property and editable
         if (!VALID_PROPERTIES.containsKey(key)) {
           throw DeltaErrors.unknownConfigurationException(kv.getKey());

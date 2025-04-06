@@ -22,6 +22,7 @@ import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
 import io.delta.kernel.data.{ColumnarBatch, FilteredColumnarBatch}
+import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
 import io.delta.kernel.expressions.{Column, Predicate}
 import io.delta.kernel.internal.util.ColumnMapping
@@ -85,7 +86,7 @@ trait ParquetSuiteBase extends TestUtils {
    */
   def verifyFileMetadata(targetDir: String): Unit = {
     parquetFiles(targetDir).foreach { file =>
-      footer(file).getFileMetaData
+      footer(file.getPath).getFileMetaData
         .getKeyValueMetaData.containsKey("io.delta.kernel.default-parquet-writer")
     }
   }
@@ -139,7 +140,7 @@ trait ParquetSuiteBase extends TestUtils {
       targetDir: String,
       deltaSchema: StructType,
       expectNestedFiledIds: Boolean): Unit = {
-    parquetFiles(targetDir).map(footer(_)).foreach {
+    parquetFiles(targetDir).map(_.getPath).map(footer(_)).foreach {
       footer =>
         val parquetSchema = footer.getFileMetaData.getSchema
 
@@ -259,9 +260,10 @@ trait ParquetSuiteBase extends TestUtils {
       statsColumns: Seq[Column] = Seq.empty): Seq[DataFileStatus] = {
     val conf = new Configuration(configuration);
     conf.setLong(ParquetFileWriter.TARGET_FILE_SIZE_CONF, targetFileSize)
-    val parquetWriter = new ParquetFileWriter(
-      conf,
-      new Path(location),
+    val fileIO = new HadoopFileIO(conf)
+    val parquetWriter = ParquetFileWriter.multiFileWriter(
+      fileIO,
+      location,
       statsColumns.asJava)
 
     parquetWriter.write(toCloseableIterator(filteredData.asJava.iterator())).toSeq
@@ -281,7 +283,6 @@ trait ParquetSuiteBase extends TestUtils {
       readSchema: StructType,
       predicate: Optional[Predicate] = Optional.empty()): Seq[ColumnarBatch] = {
     val parquetFileList = parquetFiles(inputFileOrDir)
-      .map(FileStatus.of(_, 0, 0))
 
     val data = defaultEngine.getParquetHandler.readParquetFiles(
       toCloseableIterator(parquetFileList.asJava.iterator()),
@@ -299,23 +300,21 @@ trait ParquetSuiteBase extends TestUtils {
     var rowCount = 0L
     files.foreach { file =>
       // read parquet file using spark and count.
-      rowCount = rowCount + spark.read.parquet(file).count()
+      rowCount = rowCount + spark.read.parquet(file.getPath).count()
     }
 
     rowCount
   }
 
-  def parquetFiles(fileOrDir: String): Seq[String] = {
-    val fileOrDirPath = Paths.get(fileOrDir)
-    if (Files.isDirectory(fileOrDirPath)) {
-      Files.list(fileOrDirPath)
-        .iterator().asScala
-        .map(_.toString)
-        .filter(path => path.endsWith(".parquet"))
-        .toSeq
-    } else {
-      Seq(fileOrDir)
-    }
+  def parquetFiles(fileOrDir: String): Seq[FileStatus] = {
+    val fileOrDirPath = new Path(fileOrDir)
+    val hadoopFs = new Path(fileOrDir).getFileSystem(configuration)
+    hadoopFs.listStatus(fileOrDirPath)
+      .iterator
+      .filter(_.getPath.toString.endsWith(".parquet"))
+      .map(status =>
+        FileStatus.of(status.getPath.toString, status.getLen, status.getModificationTime))
+      .toSeq
   }
 
   def footer(path: String): ParquetMetadata = {

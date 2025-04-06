@@ -22,6 +22,7 @@ import java.io.Closeable
 import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumnInfo}
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaLog, DeltaTableUtils}
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
@@ -170,6 +171,25 @@ object SkippingEligibleDataType {
   def unapply(f: StructField): Option[DataType] = unapply(f.dataType)
 }
 
+/**
+ * An extractor that matches expressions that are eligible for data skipping predicates.
+ *
+ * @return A tuple of 1) column name referenced in the expression, 2) date type for the
+ *         expression, 3) [[DataSkippingPredicateBuilder]] that builds the data skipping
+ *         predicate for the expression, if the given expression is eligible.
+ *         Otherwise, return None.
+ */
+abstract class GenericSkippingEligibleExpression() {
+
+  def unapply(arg: Expression): Option[(Seq[String], DataType, DataSkippingPredicateBuilder)] = {
+    arg match {
+      case SkippingEligibleColumn(c, dt) =>
+        Some((c, dt, DataSkippingPredicateBuilder.ColumnBuilder))
+      case _ => None
+    }
+  }
+}
+
 private[delta] object DataSkippingReader {
 
   /** Default number of cols for which we should collect stats */
@@ -273,6 +293,8 @@ trait DataSkippingReaderBase
       protected val dataSkippingType: DeltaDataSkippingType)
   {
     protected val statsProvider: StatsProvider = new StatsProvider(getStatsColumnOpt)
+
+    object SkippingEligibleExpression extends GenericSkippingEligibleExpression()
 
     // Main function for building data filters.
     def apply(dataFilter: Expression): Option[DataSkippingPredicate] =
@@ -399,6 +421,10 @@ trait DataSkippingReaderBase
      * NOTE: The skipping predicate does *NOT* need to worry about missing stats columns (which also
      * manifest as NULL). That case is handled separately by `verifyStatsForFilter` (which disables
      * skipping for any file that lacks the needed stats columns).
+     *
+     * @return An optional data skipping predicate, if this function returns None, then this means
+     * that the dataFilter Expression is not eligible for data skipping, i.e. we cannot skip any
+     * files.
      */
     private[stats] def constructDataFilters(dataFilter: Expression):
         Option[DataSkippingPredicate] = dataFilter match {
@@ -870,23 +896,6 @@ trait DataSkippingReaderBase
       case _: Literal => true
       case _ if e.children.nonEmpty => e.children.forall(areAllLeavesLiteral)
       case _ => false
-    }
-
-    /**
-     * An extractor that matches expressions that are eligible for data skipping predicates.
-     *
-     * @return A tuple of 1) column name referenced in the expression, 2) date type for the
-     *         expression, 3) [[DataSkippingPredicateBuilder]] that builds the data skipping
-     *         predicate for the expression, if the given expression is eligible.
-     *         Otherwise, return None.
-     */
-    object SkippingEligibleExpression {
-      def unapply(arg: Expression)
-          : Option[(Seq[String], DataType, DataSkippingPredicateBuilder)] = arg match {
-        case SkippingEligibleColumn(c, dt) =>
-          Some((c, dt, DataSkippingPredicateBuilder.ColumnBuilder))
-        case _ => None
-      }
     }
   }
 

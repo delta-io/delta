@@ -18,14 +18,16 @@ package org.apache.spark.sql.delta.icebergShaded
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.DeltaColumnMapping
+import org.apache.spark.sql.delta.{DeltaColumnMapping, Snapshot}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import shadedForDelta.org.apache.iceberg.{Schema => IcebergSchema}
 import shadedForDelta.org.apache.iceberg.types.{Type => IcebergType, Types => IcebergTypes}
 
 import org.apache.spark.sql.types._
 
-object IcebergSchemaUtils extends DeltaLogging {
+trait IcebergSchemaUtils extends DeltaLogging {
+
+  import IcebergSchemaUtils._
 
   /////////////////
   // Public APIs //
@@ -43,16 +45,14 @@ object IcebergSchemaUtils extends DeltaLogging {
     new IcebergSchema(icebergStruct.fields())
   }
 
-  private[delta] def getNestedFieldId(field: Option[StructField], path: Seq[String]): Int = {
-    field.get.metadata
-      .getMetadata(DeltaColumnMapping.COLUMN_MAPPING_METADATA_NESTED_IDS_KEY)
-      .getLong(path.mkString("."))
-      .toInt
-  }
 
   ////////////////////
   // Helper Methods //
   ////////////////////
+
+  protected def getFieldId(field: Option[StructField]): Int
+
+  private[delta] def getNestedFieldId(field: Option[StructField], path: Seq[String]): Int
 
   /** Visible for testing */
   private[delta] def convertStruct(deltaSchema: StructType): IcebergTypes.StructType = {
@@ -69,12 +69,8 @@ object IcebergSchemaUtils extends DeltaLogging {
         : IcebergType = elem match {
       case StructType(fields) =>
         IcebergTypes.StructType.of(fields.map { f =>
-          if (!DeltaColumnMapping.hasColumnId(f)) {
-            throw new UnsupportedOperationException("UniForm requires Column Mapping")
-          }
-
           IcebergTypes.NestedField.of(
-            DeltaColumnMapping.getColumnId(f),
+            getFieldId(Some(f)),
             f.nullable,
             f.name,
             transform(f.dataType, Some(f), Seq(DeltaColumnMapping.getPhysicalName(f))),
@@ -119,6 +115,56 @@ object IcebergSchemaUtils extends DeltaLogging {
     }
 
     transform(deltaSchema, None, Seq.empty).asStructType()
+  }
+}
+
+object IcebergSchemaUtils {
+
+  /**
+   * Creates a schema utility for Delta to Iceberg schema conversion.
+   * @param icebergDefaultNameMapping: whether to generate schemas for Iceberg default name mapping,
+   *                                   where the column name is the ground of truth.
+   * @return an Iceberg schema utility.
+   */
+  def apply(icebergDefaultNameMapping: Boolean = false): IcebergSchemaUtils = {
+    if (icebergDefaultNameMapping) new IcebergSchemaUtilsNameMapping()
+    else new IcebergSchemaUtilsIdMapping()
+  }
+
+  private class IcebergSchemaUtilsNameMapping() extends IcebergSchemaUtils {
+
+    // Dummy field ID to support Delta table with NoMapping mode, where logical column name is the
+    // ground of truth and no column Id is available.
+    private var dummyId: Int = 1
+
+
+    def getFieldId(field: Option[StructField]): Int = {
+      val fieldId = dummyId
+      dummyId += 1
+      fieldId
+    }
+
+    def getNestedFieldId(field: Option[StructField], path: Seq[String]): Int =
+      getFieldId(field)
+  }
+
+  private class IcebergSchemaUtilsIdMapping() extends IcebergSchemaUtils {
+
+
+    def getFieldId(field: Option[StructField]): Int = {
+      if (!field.exists(f => DeltaColumnMapping.hasColumnId(f))) {
+        throw new UnsupportedOperationException("UniForm requires Column Mapping")
+      }
+
+      DeltaColumnMapping.getColumnId(field.get)
+    }
+
+    def getNestedFieldId(field: Option[StructField], path: Seq[String]): Int = {
+      field.get.metadata
+        .getMetadata(DeltaColumnMapping.COLUMN_MAPPING_METADATA_NESTED_IDS_KEY)
+        .getLong(path.mkString("."))
+        .toInt
+    }
   }
 
   /**

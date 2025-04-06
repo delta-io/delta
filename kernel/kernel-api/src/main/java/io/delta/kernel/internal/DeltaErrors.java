@@ -18,7 +18,9 @@ package io.delta.kernel.internal;
 import static java.lang.String.format;
 
 import io.delta.kernel.exceptions.*;
+import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.DomainMetadata;
+import io.delta.kernel.internal.tablefeatures.TableFeature;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.DataFileStatus;
@@ -28,6 +30,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 /** Contains methods to create user-facing Delta exceptions. */
 public final class DeltaErrors {
@@ -200,6 +203,10 @@ public final class DeltaErrors {
     return new KernelException("Kernel doesn't support writing data of type: " + dataType);
   }
 
+  public static KernelException unsupportedStatsDataType(DataType dataType) {
+    return new KernelException("Kernel doesn't support writing stats data of type: " + dataType);
+  }
+
   public static KernelException unsupportedPartitionDataType(String colName, DataType dataType) {
     String msgT = "Kernel doesn't support writing data with partition column (%s) of type: %s";
     return new KernelException(format(msgT, colName, dataType));
@@ -238,12 +245,66 @@ public final class DeltaErrors {
     return new KernelException(format(msgT, tablePath, tableSchema, dataSchema));
   }
 
-  public static KernelException missingNumRecordsStatsForIcebergCompatV2(
-      DataFileStatus dataFileStatus) {
+  public static KernelException statsTypeMismatch(
+      String fieldName, DataType expected, DataType actual) {
+    String msgFormat =
+        "Type mismatch for field '%s' when writing statistics: expected %s, but found %s";
+    return new KernelException(format(msgFormat, fieldName, expected, actual));
+  }
+
+  public static KernelException columnNotFoundInSchema(Column column, StructType tableSchema) {
+    return new KernelException(
+        format("Column '%s' was not found in the table schema: %s", column, tableSchema));
+  }
+
+  /// Start: icebergCompat exceptions
+  public static KernelException icebergCompatMissingNumRecordsStats(
+      String compatVersion, DataFileStatus dataFileStatus) {
     throw new KernelException(
         format(
-            "Iceberg V2 compatibility requires statistics.\n DataFileStatus: %s", dataFileStatus));
+            "%s compatibility requires 'numRecords' statistic.\n DataFileStatus: %s",
+            compatVersion, dataFileStatus));
   }
+
+  public static KernelException icebergCompatIncompatibleVersionEnabled(
+      String compatVersion, String incompatibleIcebergCompatVersion) {
+    throw new KernelException(
+        format(
+            "%s: Only one IcebergCompat version can be enabled. Incompatible version enabled: %s",
+            compatVersion, incompatibleIcebergCompatVersion));
+  }
+
+  public static KernelException icebergCompatUnsupportedTypeColumns(
+      String compatVersion, List<DataType> dataTypes) {
+    throw new KernelException(
+        format("%s does not support the data types: %s.", compatVersion, dataTypes));
+  }
+
+  public static KernelException icebergCompatUnsupportedTypePartitionColumn(
+      String compatVersion, DataType dataType) {
+    throw new KernelException(
+        format(
+            "%s does not support the data type '%s' for a partition column.",
+            compatVersion, dataType));
+  }
+
+  public static KernelException icebergCompatIncompatibleTableFeatures(
+      String compatVersion, Set<TableFeature> incompatibleFeatures) {
+    throw new KernelException(
+        format(
+            "Table features %s are incompatible with %s.",
+            incompatibleFeatures.stream()
+                .map(TableFeature::featureName)
+                .collect(Collectors.toList()),
+            compatVersion));
+  }
+
+  public static KernelException icebergCompatRequiredFeatureMissing(
+      String compatVersion, String feature) {
+    throw new KernelException(
+        format("%s: requires the feature '%s' to be enabled.", compatVersion, feature));
+  }
+  // End: icebergCompat exceptions
 
   public static KernelException partitionColumnMissingInData(
       String tablePath, String partitionColumn) {
@@ -313,6 +374,14 @@ public final class DeltaErrors {
     return new KernelException(
         "Feature 'rowTracking' is supported and depends on feature 'domainMetadata',"
             + " but 'domainMetadata' is unsupported");
+  }
+
+  public static KernelException enablingIcebergWriterCompatV1OnExistingTable(String key) {
+    return new KernelException(
+        String.format(
+            "Cannot enable %s on an existing table. "
+                + "Enablement is only supported upon table creation.",
+            key));
   }
 
   /* ------------------------ HELPER METHODS ----------------------------- */

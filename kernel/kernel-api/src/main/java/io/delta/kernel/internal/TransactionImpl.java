@@ -22,15 +22,20 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Preconditions.checkState;
 import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
 
-import io.delta.kernel.*;
+import io.delta.kernel.Meta;
+import io.delta.kernel.Operation;
+import io.delta.kernel.Transaction;
+import io.delta.kernel.TransactionCommitResult;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.ConcurrentWriteException;
+import io.delta.kernel.exceptions.DomainDoesNotExistException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.hook.PostCommitHook;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.checksum.CRCInfo;
+import io.delta.kernel.internal.clustering.ClusteringUtils;
 import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.hook.CheckpointHook;
@@ -42,6 +47,10 @@ import io.delta.kernel.internal.replay.ConflictChecker.TransactionRebaseState;
 import io.delta.kernel.internal.rowtracking.RowTracking;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.*;
+import io.delta.kernel.internal.util.Clock;
+import io.delta.kernel.internal.util.FileNames;
+import io.delta.kernel.internal.util.InCommitTimestampUtils;
+import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.metrics.TransactionMetricsResult;
 import io.delta.kernel.metrics.TransactionReport;
 import io.delta.kernel.types.StructType;
@@ -71,9 +80,12 @@ public class TransactionImpl implements Transaction {
   private final Protocol protocol;
   private final SnapshotImpl readSnapshot;
   private final Optional<SetTransaction> setTxnOpt;
+  private final List<Column> clusteringColumns;
   private final boolean shouldUpdateProtocol;
   private final Clock clock;
-  private List<DomainMetadata> domainMetadatas;
+  private final Map<String, DomainMetadata> domainMetadatasAdded = new HashMap<>();
+  private final Set<String> domainMetadatasRemoved = new HashSet<>();
+  private Optional<List<DomainMetadata>> domainMetadatas = Optional.empty();
   private Metadata metadata;
   private boolean shouldUpdateMetadata;
   private int maxRetries;
@@ -90,11 +102,11 @@ public class TransactionImpl implements Transaction {
       Protocol protocol,
       Metadata metadata,
       Optional<SetTransaction> setTxnOpt,
+      List<Column> clusteringColumns,
       boolean shouldUpdateMetadata,
       boolean shouldUpdateProtocol,
       int maxRetries,
-      Clock clock,
-      List<DomainMetadata> domainMetadatas) {
+      Clock clock) {
     this.isNewTable = isNewTable;
     this.dataPath = dataPath;
     this.logPath = logPath;
@@ -104,11 +116,11 @@ public class TransactionImpl implements Transaction {
     this.protocol = protocol;
     this.metadata = metadata;
     this.setTxnOpt = setTxnOpt;
+    this.clusteringColumns = clusteringColumns;
     this.shouldUpdateMetadata = shouldUpdateMetadata;
     this.shouldUpdateProtocol = shouldUpdateProtocol;
     this.maxRetries = maxRetries;
     this.clock = clock;
-    this.domainMetadatas = domainMetadatas;
   }
 
   @Override
@@ -126,22 +138,112 @@ public class TransactionImpl implements Transaction {
     return readSnapshot.getSchema();
   }
 
+  @Override
+  public long getReadTableVersion() {
+    return readSnapshot.getVersion();
+  }
+
   public Optional<SetTransaction> getSetTxnOpt() {
     return setTxnOpt;
   }
 
-  /**
-   * Internal API to add domain metadata actions for this transaction. Visible for testing.
-   *
-   * @param domainMetadatas List of domain metadata to be added to the transaction.
-   */
   @VisibleForTesting
-  public void addDomainMetadatas(List<DomainMetadata> domainMetadatas) {
-    this.domainMetadatas.addAll(domainMetadatas);
+  public void addDomainMetadataInternal(String domain, String config) {
+    checkArgument(
+        !domainMetadatasRemoved.contains(domain),
+        "Cannot add a domain that is removed in this transaction");
+    checkState(!closed, "Cannot add a domain metadata after the transaction has completed");
+    // we override any existing value
+    domainMetadatasAdded.put(domain, new DomainMetadata(domain, config, false /* removed */));
   }
 
+  @Override
+  public void addDomainMetadata(String domain, String config) {
+    checkState(
+        TableFeatures.isDomainMetadataSupported(protocol),
+        "Unable to add domain metadata when the domain metadata table feature is disabled");
+    checkArgument(
+        DomainMetadata.isUserControlledDomain(domain),
+        "Setting a system-controlled domain is not allowed: " + domain);
+    addDomainMetadataInternal(domain, config);
+  }
+
+  @VisibleForTesting
+  public void removeDomainMetadataInternal(String domain) {
+    checkArgument(
+        !domainMetadatasAdded.containsKey(domain),
+        "Cannot remove a domain that is added in this transaction");
+    checkState(!closed, "Cannot remove a domain after the transaction has completed");
+    domainMetadatasRemoved.add(domain);
+  }
+
+  @Override
+  public void removeDomainMetadata(String domain) {
+    checkState(
+        TableFeatures.isDomainMetadataSupported(protocol),
+        "Unable to add domain metadata when the domain metadata table feature is disabled");
+    checkArgument(
+        DomainMetadata.isUserControlledDomain(domain),
+        "Removing a system-controlled domain is not allowed: " + domain);
+    removeDomainMetadataInternal(domain);
+  }
+
+  /**
+   * Returns a list of the domain metadatas to commit. This consists of the domain metadatas added
+   * in the transaction using {@link Transaction#addDomainMetadata(String, String)} and the
+   * tombstones for the domain metadatas removed in the transaction using {@link
+   * Transaction#removeDomainMetadata(String)}. The result is stored in {@code domainMetadatas}.
+   *
+   * @return A list of {@link DomainMetadata} containing domain metadata to be committed in this
+   *     transaction.
+   */
   public List<DomainMetadata> getDomainMetadatas() {
-    return domainMetadatas;
+    // If we have already processed the domain metadatas, then return the list.
+    if (domainMetadatas.isPresent()) {
+      return domainMetadatas.get();
+    }
+    generateClusteringDomainMetadataIfNeeded();
+    if (domainMetadatasAdded.isEmpty() && domainMetadatasRemoved.isEmpty()) {
+      // If no domain metadatas are added or removed, return an empty list. This is to avoid
+      // unnecessary loading of the domain metadatas from the snapshot (which is an expensive
+      // operation).
+      domainMetadatas = Optional.of(Collections.emptyList());
+      return Collections.emptyList();
+    }
+
+    // Add all domain metadatas added in the transaction
+    List<DomainMetadata> finalDomainMetadatas = new ArrayList<>(domainMetadatasAdded.values());
+
+    // Generate the tombstones for the removed domain metadatas
+    Map<String, DomainMetadata> snapshotDomainMetadataMap = readSnapshot.getDomainMetadataMap();
+    for (String domainName : domainMetadatasRemoved) {
+      // Note: we know domainName is not already in finalDomainMetadatas because we do not allow
+      // removing and adding a domain with the same identifier in a single txn!
+      if (snapshotDomainMetadataMap.containsKey(domainName)) {
+        DomainMetadata domainToRemove = snapshotDomainMetadataMap.get(domainName);
+        if (domainToRemove.isRemoved()) {
+          // If the domain is already removed we throw an error to avoid any inconsistencies or
+          // ambiguity. The snapshot read by the connector is inconsistent with the snapshot
+          // loaded here as the domain to remove no longer exists.
+          throw new DomainDoesNotExistException(
+              dataPath.toString(), domainName, readSnapshot.getVersion());
+        }
+        finalDomainMetadatas.add(domainToRemove.removed());
+      } else {
+        // We must throw an error if the domain does not exist. Otherwise, there could be unexpected
+        // behavior within conflict resolution. For example, consider the following
+        // 1. Table has no domains set in V0
+        // 2. txnA is started and wants to remove domain "foo"
+        // 3. txnB is started and adds domain "foo" and commits V1 before txnA
+        // 4. txnA needs to perform conflict resolution against the V1 commit from txnB
+        // Conflict resolution should fail but since the domain does not exist we cannot create
+        // a tombstone to mark it as removed and correctly perform conflict resolution.
+        throw new DomainDoesNotExistException(
+            dataPath.toString(), domainName, readSnapshot.getVersion());
+      }
+    }
+    domainMetadatas = Optional.of(finalDomainMetadatas);
+    return finalDomainMetadatas;
   }
 
   public Protocol getProtocol() {
@@ -154,15 +256,20 @@ public class TransactionImpl implements Transaction {
     checkState(!closed, "Transaction is already attempted to commit. Create a new transaction.");
     TransactionMetrics transactionMetrics = new TransactionMetrics();
     try {
-      TransactionCommitResult result =
+      long committedVersion =
           transactionMetrics.totalCommitTimer.time(
               () -> commitWithRetry(engine, dataActions, transactionMetrics));
       recordTransactionReport(
           engine,
-          Optional.of(result.getVersion()) /* committedVersion */,
+          Optional.of(committedVersion),
           transactionMetrics,
           Optional.empty() /* exception */);
-      return result;
+      TransactionMetricsResult txnMetricsCaptured =
+          transactionMetrics.captureTransactionMetricsResult();
+      return new TransactionCommitResult(
+          committedVersion,
+          generatePostCommitHooks(committedVersion, txnMetricsCaptured),
+          txnMetricsCaptured);
     } catch (Exception e) {
       recordTransactionReport(
           engine,
@@ -173,7 +280,7 @@ public class TransactionImpl implements Transaction {
     }
   }
 
-  private TransactionCommitResult commitWithRetry(
+  private long commitWithRetry(
       Engine engine, CloseableIterable<Row> dataActions, TransactionMetrics transactionMetrics) {
     try {
       long commitAsVersion = readSnapshot.getVersion() + 1;
@@ -181,18 +288,20 @@ public class TransactionImpl implements Transaction {
       CommitInfo attemptCommitInfo = generateCommitAction(engine);
       updateMetadataWithICTIfRequired(
           engine, attemptCommitInfo.getInCommitTimestamp(), readSnapshot.getVersion());
+      List<DomainMetadata> resolvedDomainMetadatas = getDomainMetadatas();
 
       // If row tracking is supported, assign base row IDs and default row commit versions to any
       // AddFile actions that do not yet have them. If the row ID high watermark changes, emit a
       // DomainMetadata action to update it.
       if (TableFeatures.isRowTrackingSupported(protocol)) {
-        domainMetadatas =
+        List<DomainMetadata> updatedDomainMetadata =
             RowTracking.updateRowIdHighWatermarkIfNeeded(
                 readSnapshot,
                 protocol,
                 Optional.empty() /* winningTxnRowIdHighWatermark */,
                 dataActions,
-                domainMetadatas);
+                resolvedDomainMetadatas);
+        domainMetadatas = Optional.of(updatedDomainMetadata);
         dataActions =
             RowTracking.assignBaseRowIdAndDefaultRowCommitVersion(
                 readSnapshot,
@@ -219,7 +328,7 @@ public class TransactionImpl implements Transaction {
                 resolveConflicts(engine, commitAsVersion, attemptCommitInfo, numTries, dataActions);
             commitAsVersion = rebaseState.getLatestVersion() + 1;
             dataActions = rebaseState.getUpdatedDataActions();
-            domainMetadatas = rebaseState.getUpdatedDomainMetadatas();
+            domainMetadatas = Optional.of(rebaseState.getUpdatedDomainMetadatas());
           }
         }
         numTries++;
@@ -291,7 +400,7 @@ public class TransactionImpl implements Transaction {
     return attemptInCommitTimestamp;
   }
 
-  private TransactionCommitResult doCommit(
+  private long doCommit(
       Engine engine,
       long commitAsVersion,
       CommitInfo attemptCommitInfo,
@@ -301,11 +410,6 @@ public class TransactionImpl implements Transaction {
     List<Row> metadataActions = new ArrayList<>();
     metadataActions.add(createCommitInfoSingleAction(attemptCommitInfo.toRow()));
     if (shouldUpdateMetadata || isNewTable) {
-      this.metadata =
-          ColumnMapping.updateColumnMappingMetadata(
-              metadata,
-              ColumnMapping.getColumnMappingMode(metadata.getConfiguration()),
-              isNewTable);
       metadataActions.add(createMetadataSingleAction(metadata.toRow()));
     }
     if (shouldUpdateProtocol || isNewTable) {
@@ -314,10 +418,12 @@ public class TransactionImpl implements Transaction {
     }
     setTxnOpt.ifPresent(setTxn -> metadataActions.add(createTxnSingleAction(setTxn.toRow())));
 
-    // Check for duplicate domain metadata and if the protocol supports
-    DomainMetadataUtils.validateDomainMetadatas(domainMetadatas, protocol);
+    List<DomainMetadata> resolvedDomainMetadatas = getDomainMetadatas();
 
-    domainMetadatas.forEach(
+    // Check for duplicate domain metadata and if the protocol supports
+    DomainMetadataUtils.validateDomainMetadatas(resolvedDomainMetadatas, protocol);
+
+    resolvedDomainMetadatas.forEach(
         dm -> metadataActions.add(createDomainMetadataSingleAction(dm.toRow())));
 
     try (CloseableIterator<Row> stageDataIter = dataActions.iterator()) {
@@ -365,16 +471,7 @@ public class TransactionImpl implements Transaction {
           "Write file actions to JSON log file `%s`",
           FileNames.deltaFile(logPath, commitAsVersion));
 
-      List<PostCommitHook> postCommitHooks = new ArrayList<>();
-      if (isReadyForCheckpoint(commitAsVersion)) {
-        postCommitHooks.add(new CheckpointHook(dataPath, commitAsVersion));
-      }
-
-      buildPostCommitCrcInfoIfCurrentCrcAvailable(
-              commitAsVersion, transactionMetrics.captureTransactionMetricsResult())
-          .ifPresent(crcInfo -> postCommitHooks.add(new ChecksumSimpleHook(crcInfo, logPath)));
-
-      return new TransactionCommitResult(commitAsVersion, postCommitHooks);
+      return commitAsVersion;
     } catch (FileAlreadyExistsException e) {
       throw e;
     } catch (IOException ioe) {
@@ -386,6 +483,19 @@ public class TransactionImpl implements Transaction {
     // For now, Kernel just supports blind append.
     // Change this when read-after-write is supported.
     return true;
+  }
+
+  private List<PostCommitHook> generatePostCommitHooks(
+      long committedVersion, TransactionMetricsResult txnMetrics) {
+    List<PostCommitHook> postCommitHooks = new ArrayList<>();
+    if (isReadyForCheckpoint(committedVersion)) {
+      postCommitHooks.add(new CheckpointHook(dataPath, committedVersion));
+    }
+
+    buildPostCommitCrcInfoIfCurrentCrcAvailable(committedVersion, txnMetrics)
+        .ifPresent(crcInfo -> postCommitHooks.add(new ChecksumSimpleHook(crcInfo, logPath)));
+
+    return postCommitHooks;
   }
 
   /**
@@ -480,14 +590,51 @@ public class TransactionImpl implements Transaction {
   }
 
   /**
+   * Generate the domain metadata for the clustering columns if they are present in the transaction.
+   */
+  private void generateClusteringDomainMetadataIfNeeded() {
+    if (TableFeatures.isClusteringTableFeatureSupported(protocol) && !clusteringColumns.isEmpty()) {
+      DomainMetadata clusteringDomainMetadata =
+          ClusteringUtils.getClusteringDomainMetadata(clusteringColumns);
+      addDomainMetadataInternal(
+          clusteringDomainMetadata.getDomain(), clusteringDomainMetadata.getConfiguration());
+    }
+  }
+
+  /**
    * Get the part of the schema of the table that needs the statistics to be collected per file.
    *
-   * @param engine {@link Engine} instance to use.
-   * @param transactionState State of the transaction
+   * @param transactionState State of the transaction.
    * @return
    */
-  public static List<Column> getStatisticsColumns(Engine engine, Row transactionState) {
-    // TODO: implement this once we start supporting collecting stats
-    return Collections.emptyList();
+  public static List<Column> getStatisticsColumns(Row transactionState) {
+    int numIndexedCols =
+        TableConfig.DATA_SKIPPING_NUM_INDEXED_COLS.fromMetadata(
+            TransactionStateRow.getConfiguration(transactionState));
+
+    // Get the list of partition columns to exclude
+    Set<String> partitionColumns =
+        new HashSet<>(TransactionStateRow.getPartitionColumnsList(transactionState));
+
+    // Collect the leaf-level columns for statistics calculation.
+    // This call selects only the first 'numIndexedCols' leaf columns from the logical schema,
+    // excluding any column whose top-level name appears in 'partitionColumns'.
+    // NOTE: Nested columns (i.e. each leaf within a StructType) count individually toward the
+    // numIndexedCols limit (not Map/ArrayTypes - they're not stats compatible types).
+    //
+    // For example, given the following schema:
+    //   root
+    //     ├─ col1 (int)
+    //     ├─ col2 (string)
+    //     └─ col3 (struct)
+    //           ├─ a (int)
+    //           └─ b (double)
+    //
+    // And if 'numIndexedCols' is set to 2 with no partition columns to exclude, then the returned
+    // stats columns
+    // would be: [col1, col2]. If 'col1' were a partition column, the returned list would be:
+    // [col2, col3.a] (assuming col3.a is encountered before col3.b).
+    return SchemaUtils.collectLeafColumns(
+        TransactionStateRow.getPhysicalSchema(transactionState), partitionColumns, numIndexedCols);
   }
 }

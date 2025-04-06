@@ -51,6 +51,15 @@ public class StatsSchemaHelper {
     return isSkippingEligibleDataType(literal.getDataType());
   }
 
+  /** Returns true if the given data type is eligible for MIN/MAX data skipping. */
+  public static boolean isSkippingEligibleDataType(DataType dataType) {
+    return SKIPPING_ELIGIBLE_TYPE_NAMES.contains(dataType.toString())
+        ||
+        // DecimalType is eligible but since its string includes scale + precision it needs to
+        // be matched separately
+        dataType instanceof DecimalType;
+  }
+
   /**
    * Returns the expected statistics schema given a table schema.
    *
@@ -221,15 +230,6 @@ public class StatsSchemaHelper {
           add("string");
         }
       };
-
-  /** Returns true if the given data type is eligible for MIN/MAX data skipping. */
-  private static boolean isSkippingEligibleDataType(DataType dataType) {
-    return SKIPPING_ELIGIBLE_TYPE_NAMES.contains(dataType.toString())
-        ||
-        // DecimalType is eligible but since its string includes scale + precision it needs to
-        // be matched separately
-        dataType instanceof DecimalType;
-  }
 
   /**
    * Given a data schema returns the expected schema for a min or max statistics column. This means

@@ -1762,8 +1762,30 @@ class DeltaColumnMappingSuite extends QueryTest
         val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
         assert(log.update().metadata.configuration("delta.columnMapping.maxColumnId") == "2")
         sql(replaceExternalTblCmd)
-        // Configuration after replacing existing table should be like the table has started new.
-        assert(log.update().metadata.configuration("delta.columnMapping.maxColumnId") == "1")
+        // Replace table starts assigning field id from previous maxColumnId.
+        assert(log.update().metadata.configuration("delta.columnMapping.maxColumnId") == "3")
+      }
+    }
+  }
+
+  test("restore Delta table with name column mapping enabled") {
+    withTempDir { dir =>
+      withTable("t1") {
+        sql(s"""
+               |CREATE OR REPLACE TABLE t1 (a long)
+               |USING DELTA
+               |LOCATION '${dir.getCanonicalPath}'
+               |TBLPROPERTIES('delta.columnMapping.mode'='name')""".stripMargin)
+        // Add column and drop the old one to increment max column ID
+        sql(s"ALTER TABLE t1 ADD COLUMN (b long)")
+        sql(s"ALTER TABLE t1 DROP COLUMN a")
+        sql(s"ALTER TABLE t1 RENAME COLUMN b to a")
+        val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
+        assert(log.update().metadata.configuration("delta.columnMapping.maxColumnId") == "2")
+        sql(s"RESTORE TABLE t1 TO VERSION AS OF 0")
+        // Restore should not reduce the max field id,
+        // but it should also not give out new field ids to the restored schema.
+        assert(log.update().metadata.configuration("delta.columnMapping.maxColumnId") == "2")
       }
     }
   }

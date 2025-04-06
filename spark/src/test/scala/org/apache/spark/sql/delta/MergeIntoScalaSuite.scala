@@ -69,6 +69,15 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase
     // scalastyle:on line.size.limit
     )
 
+  // Maps expected error classes to actual error classes. Used to handle error classes that are
+  // different when running using SQL vs. Scala.
+  override protected val mappedErrorClasses: Map[String, String] = Map(
+   "NON_LAST_MATCHED_CLAUSE_OMIT_CONDITION" -> "DELTA_NON_LAST_MATCHED_CLAUSE_OMIT_CONDITION",
+   "NON_LAST_NOT_MATCHED_BY_TARGET_CLAUSE_OMIT_CONDITION" ->
+     "DELTA_NON_LAST_NOT_MATCHED_CLAUSE_OMIT_CONDITION",
+   "NON_LAST_NOT_MATCHED_BY_SOURCE_CLAUSE_OMIT_CONDITION" ->
+     "DELTA_NON_LAST_NOT_MATCHED_BY_SOURCE_CLAUSE_OMIT_CONDITION"
+  )
 
   test("basic scala API") {
     withTable("source") {

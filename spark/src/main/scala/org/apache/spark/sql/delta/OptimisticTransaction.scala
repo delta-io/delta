@@ -2691,7 +2691,8 @@ trait OptimisticTransactionImpl extends DeltaTransaction
     OptimisticTransaction.clearActive()
 
     try {
-      postCommitHooks.foreach(runPostCommitHook(_, version, postCommitSnapshot, committedActions))
+      postCommitHooks.foreach(
+        runPostCommitHook(_, version, postCommitSnapshot, committedActions.toIterator))
     } finally {
       activeCommit.foreach(OptimisticTransaction.setActive)
     }
@@ -2701,7 +2702,7 @@ trait OptimisticTransactionImpl extends DeltaTransaction
       hook: PostCommitHook,
       version: Long,
       postCommitSnapshot: Snapshot,
-      committedActions: Seq[Action]): Unit = {
+      committedActions: Iterator[Action]): Unit = {
     try {
       hook.run(spark, this, version, postCommitSnapshot, committedActions)
     } catch {
