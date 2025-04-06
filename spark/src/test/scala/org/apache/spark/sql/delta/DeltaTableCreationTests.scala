@@ -2448,7 +2448,7 @@ class DeltaTableCreationSuite
       () => { writeDF.mode("append").saveAsTable(testTableName) },
       () => { writeDF.mode("overwrite").saveAsTable(testTableName) },
       () => { writeDF.mode("append")
-        .save(DeltaLog.forTable(spark, TableIdentifier(testTableName)).logPath.toString) }
+        .save(DeltaLog.forTable(spark, TableIdentifier(testTableName)).dataPath.toString) }
     )
 
     writeOperations.foreach { metadataUpdatingQuery =>
