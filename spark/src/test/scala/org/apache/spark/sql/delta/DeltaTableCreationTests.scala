@@ -2545,12 +2545,13 @@ class DeltaTableCreationSuite
             }
           }
 
-        def schemaContainsCurrentDefaultKey(tableName: String): Boolean = {
-          val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(tableName))
-          snapshot.schema.fields.exists { field =>
-            field.metadata.contains(ResolveDefaultColumnsUtils.CURRENT_DEFAULT_COLUMN_METADATA_KEY)
+          def schemaContainsCurrentDefaultKey(tableName: String): Boolean = {
+            val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(tableName))
+            snapshot.schema.fields.exists { field =>
+              field.metadata.contains(
+                ResolveDefaultColumnsUtils.CURRENT_DEFAULT_COLUMN_METADATA_KEY)
+            }
           }
-        }
 
           def defaultsTableFeatureEnabled(tableName: String): Boolean = {
             val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(tableName))
