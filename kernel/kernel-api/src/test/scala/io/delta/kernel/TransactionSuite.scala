@@ -285,7 +285,8 @@ object TransactionSuite extends VectorTestUtils with MockEngineUtils {
           fileName,
           23L, // size - arbitrary value as this is just for tests.
           23L, // modificationTime - arbitrary value as this is just for tests.
-          Optional.ofNullable(statsOpt.orNull))
+          Optional.ofNullable(statsOpt.orNull),
+          Optional.empty())
       }.asJava.iterator())
   }
 
