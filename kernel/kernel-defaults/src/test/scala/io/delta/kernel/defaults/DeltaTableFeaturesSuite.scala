@@ -23,6 +23,7 @@ import scala.jdk.CollectionConverters._
 import io.delta.kernel.{Operation, Table}
 import io.delta.kernel.Operation.CREATE_TABLE
 import io.delta.kernel.engine.Engine
+import io.delta.kernel.exceptions.{InvalidConfigurationValueException, KernelException}
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.{SnapshotImpl, TableConfig}
 import io.delta.kernel.internal.actions.{Protocol => KernelProtocol}
@@ -307,6 +308,23 @@ class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
       val updatedSnapshot = latestSnapshot(table, engine)
       assert(TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.fromMetadata(
         updatedSnapshot.getMetadata).isEmpty)
+    }
+  }
+
+  test("UNIVERSAL_FORMAT feature will throw if IcebergCompat was not enabled") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(engine, tablePath, testSchema)
+
+      val table = Table.forPath(engine, tablePath)
+      val writtenSnapshot = latestSnapshot(table, engine)
+
+      intercept[InvalidConfigurationValueException] {
+        table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
+          .withTableProperties(
+            engine,
+            Map(TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey -> "iceberg").asJava)
+          .build(engine)
+      }
     }
   }
 

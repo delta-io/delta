@@ -223,7 +223,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
 
     Optional<Metadata> universalFormatMetadata =
         IcebergUniversalFormatMetadataValidatorAndUpdater.validateAndUpdate(
-            newMetadata.orElse(snapshotMetadata));
+            newMetadata.orElse(snapshotMetadata), snapshotMetadata);
     if (universalFormatMetadata.isPresent()) {
       newMetadata = universalFormatMetadata;
     }

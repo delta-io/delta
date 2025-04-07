@@ -17,6 +17,7 @@ package io.delta.kernel.internal.icebergcompat
 
 import scala.collection.JavaConverters._
 
+import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.actions.Metadata
 import io.delta.kernel.internal.util.ColumnMappingSuiteBase
@@ -29,7 +30,9 @@ class IcebergUniversalFormatMetadataValidatorAndUpdaterSuite extends AnyFunSuite
     with ColumnMappingSuiteBase {
   test("validateAndUpdate should return empty when UNIVERSAL_FORMAT_ENABLED_FORMATS is not set") {
     val metadata = createMetadata(Map("unrelated_key" -> "unrelated_value"))
-    val result = IcebergUniversalFormatMetadataValidatorAndUpdater.validateAndUpdate(metadata)
+    val result = IcebergUniversalFormatMetadataValidatorAndUpdater.validateAndUpdate(
+      metadata,
+      createMetadata())
     assert(!result.isPresent)
   }
 
@@ -38,7 +41,9 @@ class IcebergUniversalFormatMetadataValidatorAndUpdaterSuite extends AnyFunSuite
     val metadata = createMetadata(Map(
       TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey -> "hudi",
       "unrelated_key" -> "unrelated_value"))
-    val result = IcebergUniversalFormatMetadataValidatorAndUpdater.validateAndUpdate(metadata)
+    val result = IcebergUniversalFormatMetadataValidatorAndUpdater.validateAndUpdate(
+      metadata,
+      createMetadata())
     assert(!result.isPresent)
   }
 
@@ -48,7 +53,9 @@ class IcebergUniversalFormatMetadataValidatorAndUpdaterSuite extends AnyFunSuite
       TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey -> "iceberg,hudi",
       TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true",
       "unrelated_key" -> "unrelated_value"))
-    val result = IcebergUniversalFormatMetadataValidatorAndUpdater.validateAndUpdate(metadata)
+    val result = IcebergUniversalFormatMetadataValidatorAndUpdater.validateAndUpdate(
+      metadata,
+      createMetadata())
     assert(!result.isPresent)
   }
 
@@ -60,7 +67,9 @@ class IcebergUniversalFormatMetadataValidatorAndUpdaterSuite extends AnyFunSuite
       val metadata = createMetadata(Map(
         TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey -> "iceberg,hudi",
         "unrelated_key" -> "unrelated_value") ++ disabledIcebergCompatV2Enabled)
-      val result = IcebergUniversalFormatMetadataValidatorAndUpdater.validateAndUpdate(metadata)
+      val result = IcebergUniversalFormatMetadataValidatorAndUpdater.validateAndUpdate(
+        metadata,
+        createMetadata(Map(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true")))
       assert(result.isPresent)
       assert(TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.fromMetadata(result.get()) == Set(
         "hudi").asJava)
@@ -78,7 +87,9 @@ class IcebergUniversalFormatMetadataValidatorAndUpdaterSuite extends AnyFunSuite
       val metadata = createMetadata(Map(
         TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey -> "iceberg",
         "unrelated_key" -> "unrelated_value"))
-      val result = IcebergUniversalFormatMetadataValidatorAndUpdater.validateAndUpdate(metadata)
+      val result = IcebergUniversalFormatMetadataValidatorAndUpdater.validateAndUpdate(
+        metadata,
+        createMetadata(Map(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true")))
       assert(result.isPresent)
       val updatedConfig = result.get().getConfiguration
       assert(!updatedConfig.containsKey(TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey))
@@ -86,7 +97,23 @@ class IcebergUniversalFormatMetadataValidatorAndUpdaterSuite extends AnyFunSuite
     }
   }
 
-  def createMetadata(tblProps: Map[String, String]): Metadata = {
+  Seq(
+    Map(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "false"),
+    Map[String, String]()).foreach { disableIcebergCompatV2Enabled =>
+    test("validateAndUpdate should throw when iceberg compat is not enabled " +
+      s"and prior metadata did not contain the value $disableIcebergCompatV2Enabled") {
+      val metadata = createMetadata(Map(
+        TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey -> "iceberg",
+        "unrelated_key" -> "unrelated_value"))
+      intercept[KernelException] {
+        IcebergUniversalFormatMetadataValidatorAndUpdater.validateAndUpdate(
+          metadata,
+          createMetadata())
+      }
+    }
+  }
+
+  def createMetadata(tblProps: Map[String, String] = Map.empty): Metadata = {
     val schema = new StructType()
       .add("c1", IntegerType.INTEGER)
     testMetadata(schema, tblProps = tblProps)
