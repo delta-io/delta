@@ -43,9 +43,9 @@ public interface PostCommitHook {
     CHECKSUM_SIMPLE,
 
     /**
-     * Writes a compacted log file that merges a range of commit JSON files into a single file. This
-     * hook is triggered on a configurable interval (e.g., every 10 commits) and reduces the number
-     * of small log files that need to be read when reconstructing the table state, thereby
+     * Writes a log compaction file that merges a range of commit JSON files into a single file.
+     * This hook is triggered on a configurable interval (e.g., every 10 commits) and reduces the
+     * number of small log files that need to be read when reconstructing the table state, thereby
      * improving read performance.
      */
     LOG_COMPACTION

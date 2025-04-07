@@ -93,7 +93,7 @@ public interface TransactionBuilder {
   TransactionBuilder withMaxRetries(int maxRetries);
 
   /**
-   * Set the number of commits between log compactions defaults to 10. Set to 0 to disable log
+   * Set the number of commits between log compactions. Defaults to 10. Set to 0 to disable log
    * compactions.
    *
    * @param logCompactionInterval The commits between log compactions

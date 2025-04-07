@@ -71,7 +71,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
    */
   private int maxRetries = 200;
 
-  /** Default number of commits between running log compations. */
+  /** Number of commits between producing a log compaction file. */
   private int logCompactionInterval = 10;
 
   public TransactionBuilderImpl(TableImpl table, String engineInfo, Operation operation) {

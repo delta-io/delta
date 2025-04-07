@@ -27,6 +27,7 @@ import io.delta.kernel.internal.DeltaLogActionUtils;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.replay.CreateCheckpointIterator;
 import io.delta.kernel.internal.snapshot.LogSegment;
+import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.FileNames.DeltaLogFileType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
@@ -57,11 +58,10 @@ public class LogCompactionWriter {
   }
 
   public void writeLogCompactionFile(Engine engine) throws IOException {
-    String fileName = String.format("%020d.%020d.compacted.json", startVersion, endVersion);
-    Path compactedPath = new Path(logPath, fileName);
+    Path compactedPath = FileNames.logCompactionPath(logPath, startVersion, endVersion);
 
     logger.info(
-        "Writing compacted log file for versions {} to {} to path: {}",
+        "Writing log compaction file for versions {} to {} to path: {}",
         startVersion,
         endVersion,
         compactedPath);
@@ -74,7 +74,7 @@ public class LogCompactionWriter {
                 logPath,
                 startVersion,
                 Optional.of(endVersion),
-                true /* mustBeRecreatable */)
+                false /* mustBeRecreatable */)
             .toInMemoryList();
 
     logger.info(
@@ -84,7 +84,7 @@ public class LogCompactionWriter {
 
     if (deltas.isEmpty()) {
       logger.warn(
-          "Asked to do a log compaction between {} and {}, " + "but there are no files to compact",
+          "Asked to do a log compaction between {} and {}, but there are no files to compact",
           startVersion,
           endVersion);
       return;
@@ -101,10 +101,10 @@ public class LogCompactionWriter {
           try (CloseableIterator<Row> rows = new FilteredBatchToRowIter(checkpointIterator)) {
             engine.getJsonHandler().writeJsonFileAtomically(compactedPath.toString(), rows, false);
           }
-          logger.info("Successfully wrote compacted log file `{}`", compactedPath);
+          logger.info("Successfully wrote log compaction file `{}`", compactedPath);
           return null;
         },
-        "Wrote compacted log file `%s`",
+        "Writing log compaction file `%s`",
         compactedPath);
   }
 
