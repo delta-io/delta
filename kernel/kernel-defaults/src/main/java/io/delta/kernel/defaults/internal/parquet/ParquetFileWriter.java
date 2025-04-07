@@ -464,7 +464,8 @@ public class ParquetFileWriter {
           resolvedPath,
           fileStatus.getSize(),
           fileStatus.getModificationTime(),
-          Optional.ofNullable(stats));
+          Optional.ofNullable(stats),
+          Optional.empty());
     } catch (IOException ioe) {
       throw new UncheckedIOException("Failed to read the stats for: " + path, ioe);
     }
