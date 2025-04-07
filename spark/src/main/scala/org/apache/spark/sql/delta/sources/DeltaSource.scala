@@ -158,12 +158,24 @@ trait DeltaSourceBase extends Source
     snapshotAtSourceInit.metadata.columnMappingMode != NoMapping
 
   /**
+   * Feature flag enabling reading from a Delta source that had a widening type change applied.
+   */
+  protected lazy val allowTypeWidening: Boolean =
+    spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_ALLOW_TYPE_WIDENING_STREAMING_SOURCE)
+
+  /**
+   * Whether we are streaming from a table that has the type widening table feature enabled.
+   */
+  protected lazy val isStreamingFromTypeWideningTable: Boolean =
+    TypeWidening.isSupported(snapshotAtSourceInit.protocol)
+
+  /**
    * Whether we should track widening type changes to allow users to accept them and resume
    * stream processing.
    */
-  protected lazy val shouldCheckTypeWideningChanges: Boolean =
-    spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_ALLOW_TYPE_WIDENING_STREAMING_SOURCE) &&
-     TypeWidening.isSupported(snapshotAtSourceInit.protocol)
+  protected lazy val enableSchemaTrackingForTypeWidening: Boolean =
+    spark.sessionState.conf
+      .getConf(DeltaSQLConf.DELTA_TYPE_WIDENING_ENABLE_STREAMING_SCHEMA_TRACKING)
 
   /**
    * The persisted schema from the schema log that must be used to read data files in this Delta
@@ -570,7 +582,8 @@ trait DeltaSourceBase extends Source
     }
 
     // Perform schema check if we need to, considering all escape flags.
-    if (!allowUnsafeStreamingReadOnColumnMappingSchemaChanges || (shouldCheckTypeWideningChanges) ||
+    if (!allowUnsafeStreamingReadOnColumnMappingSchemaChanges ||
+        (allowTypeWidening && isStreamingFromTypeWideningTable) ||
         !forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart) {
       startVersionSnapshotOpt.foreach { snapshot =>
         checkReadIncompatibleSchemaChanges(
@@ -631,7 +644,8 @@ trait DeltaSourceBase extends Source
     }
 
     def shouldTrackSchema: Boolean =
-      if (shouldCheckTypeWideningChanges &&
+      if (allowTypeWidening && isStreamingFromTypeWideningTable &&
+        enableSchemaTrackingForTypeWidening &&
         TypeWidening.containsWideningTypeChanges(oldMetadata.schema, newMetadata.schema)) {
         true
       } else if (allowUnsafeStreamingReadOnColumnMappingSchemaChanges) {
@@ -669,6 +683,16 @@ trait DeltaSourceBase extends Source
       // nullable, or in other words, `schema` should not tighten nullability from `schemaChange`,
       // because we don't ever want to read back any nulls when the read schema is non-nullable.
       val shouldForbidTightenNullability = !forceEnableUnsafeReadOnNullabilityChange
+      // By default, widening type changes are handled using schema tracking - see above - and
+      // aren't going through this code path. That is unless schema tracking for type widening is
+      // explicitly disabled (internal conf), in which case we allow widening type changes here.
+      val typeWideningMode =
+        if (allowTypeWidening && isStreamingFromTypeWideningTable &&
+            !enableSchemaTrackingForTypeWidening) {
+          TypeWideningMode.AllTypeWidening
+        } else {
+         TypeWideningMode.NoTypeWidening
+        }
       if (!SchemaUtils.isReadCompatible(
           schemaChange, schema,
           forbidTightenNullability = shouldForbidTightenNullability,
@@ -683,6 +707,7 @@ trait DeltaSourceBase extends Source
             isStreamingFromColumnMappingTable &&
               allowUnsafeStreamingReadOnColumnMappingSchemaChanges &&
               backfilling,
+          typeWideningMode = typeWideningMode,
           // Partition column change will be ignored if user enable the unsafe flag
           newPartitionColumns = if (allowUnsafeStreamingReadOnPartitionColumnChanges) Seq.empty
             else newMetadata.partitionColumns,
@@ -698,7 +723,11 @@ trait DeltaSourceBase extends Source
         // and if it works (including that `schemaChange` should not tighten the nullability
         // constraint from `schema`), it is a retryable exception.
         val retryable = !backfilling && SchemaUtils.isReadCompatible(
-          schema, schemaChange, forbidTightenNullability = shouldForbidTightenNullability)
+          schema,
+          schemaChange,
+          forbidTightenNullability = shouldForbidTightenNullability,
+          typeWideningMode = typeWideningMode
+        )
         throw DeltaErrors.schemaChangedException(
           schema,
           schemaChange,
