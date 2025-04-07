@@ -66,9 +66,7 @@ public final class GenerateIcebergCompatActionUtils {
         "icebergCompatV2 not enabled despite icebergWriterCompatV1 enabled");
     // We require field `numRecords` when icebergCompatV2 is enabled
     IcebergCompatV2MetadataValidatorAndUpdater.validateDataFileStatus(fileStatus);
-
-    // TODO possible stats enforcement for clustering (maybe not necessary due to icebergCompatV2?)
-
+    
     /* --- Validate and update partitionValues ---- */
     // Currently we don't support partitioned tables; fail here
     if (!TransactionStateRow.getPartitionColumnsList(transactionState).isEmpty()) {
