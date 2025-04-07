@@ -116,8 +116,6 @@ public class AddFile extends RowBackedAction {
 
     checkArgument(path != null, "path is not nullable");
     checkArgument(partitionValues != null, "partitionValues is not nullable");
-    // TODO - Add support for DeletionVectorDescriptor
-    checkArgument(!deletionVector.isPresent(), "DeletionVectorDescriptor is unsupported");
 
     Map<Integer, Object> fieldMap = new HashMap<>();
     fieldMap.put(FULL_SCHEMA.indexOf("path"), path);
