@@ -2451,13 +2451,13 @@ class DeltaTableCreationSuite
         .save(DeltaLog.forTable(spark, TableIdentifier(testTableName)).dataPath.toString) }
     )
 
-    writeOperations.foreach { metadataUpdatingQuery =>
+    writeOperations.foreach { writeOperation =>
       withDeltaTableUsingExistsDefault { testTableName =>
         // Execute the operation and assert that it keep EXISTS_DEFAULT in the schema.
         withSQLConf(DeltaSQLConf.REMOVE_EXISTS_DEFAULT_FROM_SCHEMA.key -> "true") {
-          metadataUpdatingQuery()
+          writeOperation()
           assert(schemaContainsExistsDefaultKey(testTableName),
-            s"Operation '$metadataUpdatingQuery' did remove EXISTS_DEFAULT from the schema.")
+            s"Operation '$writeOperation' did remove EXISTS_DEFAULT from the schema.")
         }
       }
     }
@@ -2475,13 +2475,17 @@ class DeltaTableCreationSuite
              |TBLPROPERTIES('delta.feature.allowColumnDefaults' = 'supported')""".stripMargin)
     }),
     "REPLACE TABLE" -> (() => {
-      sql("CREATE TABLE test_table(id INT) USING DELTA")
+      withSQLConf(DeltaSQLConf.REMOVE_EXISTS_DEFAULT_FROM_SCHEMA.key -> "false") {
+        sql("CREATE TABLE test_table(id INT) USING DELTA")
+      }
       sql(s"""REPLACE TABLE test_table(int_with_default INT DEFAULT 2)
              |USING DELTA
              |TBLPROPERTIES ('delta.feature.allowColumnDefaults'= 'supported')""".stripMargin)
     }),
     "CREATE OR REPLACE TABLE that REPLACES" -> (() => {
-      sql("CREATE TABLE test_table(id INT) USING DELTA")
+      withSQLConf(DeltaSQLConf.REMOVE_EXISTS_DEFAULT_FROM_SCHEMA.key -> "false") {
+        sql("CREATE TABLE test_table(id INT) USING DELTA")
+      }
       sql(s"""CREATE OR REPLACE TABLE test_table(int_with_default INT DEFAULT 2)
              |USING DELTA
              |TBLPROPERTIES('delta.feature.allowColumnDefaults' = 'supported')""".stripMargin)
