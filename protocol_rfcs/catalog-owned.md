@@ -1,0 +1,481 @@
+# Catalog-owned tables
+**Associated Github issue for discussions: https://github.com/delta-io/delta/issues/4381**
+
+This RFC proposes a new reader-writer table feature `catalogOwned` which changes the way Delta Lake
+accesses tables.
+
+Today’s Delta protocol relies entirely on the filesystem for read-time discovery as well as
+write-time commit atomicity. This feature request is to allow catalog-owned Delta tables whose
+discovery and commits go through the table's owning catalog instead of going directly to the
+filesystem (s3, abfs, etc). In particular, the catalog becomes the source of truth about whether a
+given commit attempt succeeded or not, instead of relying exclusively on filesystem PUT-if-absent
+primitives.
+
+Making the catalog the source of truth for commits to a table brings several important advantages:
+
+1. Allows the catalog to broker all commits to the tables it owns, and to reject filesystem-based
+   commits that would bypass the catalog. Otherwise, the catalog cannot reliably stay in sync with the
+   table state, nor can it reject invalid commits, because it doesn’t even know about writes until they
+   are already durable and visible to readers. For example, a catalog would want to block attempts to
+   drop the NOT NULL constraint on a column which is referenced by a FOREIGN KEY constraint in a
+   different table.
+
+2. Opens a clear path to transactions that could span multiple tables and/or involve non-table
+   catalog updates. Otherwise, the catalog cannot participate in commit at all, because
+   filesystem-based commits (i.e. using PUT-if-absent) do not admit any way to coordinate with other
+   entities.
+
+3. Allows the catalog to facilitate efficient writes of the table, e.g. by directly hosting the
+   content of small commits instead of forcing clients to write them to cloud storage first. Otherwise,
+   the catalog is not a source of truth, and at best it can only mirror stale copies of table state.
+
+4. Allows the catalog to facilitate efficient reads of the table. Examples include vending storage
+   credentials, as well as serving up the content of small commits and/or table state such as [version
+   checksum file](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#version-checksum-file), so
+   that clients do not have to read those files from cloud storage. Otherwise, the catalog is not even
+   involved with reads, let alone a source of truth about the table, and so it cannot help readers in
+   any way.
+
+5. Allows the catalog to trigger followup actions based on a commit, such as VACUUMing, data layout
+   optimizations, automatic UniForm conversions, or triggering arbitrary listeners such as downstream
+   ETL or streaming pipelines.
+
+--------
+
+# Changes to existing sections
+
+### Delta Log Entries
+
+> ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#delta-log-entries)***
+
+Delta files are stored as JSON in a directory at the root of the table named `_delta_log`, and
+together with checkpoints make up the log of all changes that have occurred to a table. Delta files
+are the unit of atomicity for a table, and are named using the next available version number,
+zero-padded to 20 digits.
+
+For example:
+
+```
+./_delta_log/00000000000000000000.json
+```
+
+<ins>**Note:** If the [`catalogOwned` table feature](#catalog-owned-tables) is enabled on the table,
+recently ratified commits may not yet be published to the `_delta_log` directory - they may be
+hosted directly by the catalog or reside in the `_delta_log/_staged_commits` directory. Delta
+clients must contact the table's owning catalog in order to find the information about the
+[ratified, potentially-unpublished commits](#publishing-commits).</ins>
+
+<ins>The `_delta_log/_staged_commits` directory is the staging area for proposed [staged](#staged-commit)
+commits. Delta files in this directory have a UUID embedded into them and follow the pattern
+`<version>.<uuid>.json`, where the version corresponds to the proposed commit version, zero-padded
+to 20 digits.</ins>
+
+<ins>For example:</ins>
+
+```
+./_delta_log/_staged_commits/00000000000000000000.3a0d65cd-4056-49b8-937b-95f9e3ee90e5.json
+./_delta_log/_staged_commits/00000000000000000001.7d17ac10-5cc3-401b-bd1a-9c82dd2ea032.json
+./_delta_log/_staged_commits/00000000000000000001.016ae953-37a9-438e-8683-9a9a4a79a395.json
+./_delta_log/_staged_commits/00000000000000000002.3ae45b72-24e1-865a-a211-34987ae02f2a.json
+```
+
+<ins>NOTE: The (proposed) version number of a staged commit is authoritative - file
+`00000000000000000100.<uuid>.json` always corresponds to a commit attempt for version 100. Besides
+simplifying implementations, it also acknowledges the fact that commit files cannot safely be reused
+for multiple commit attempts. For example, resolving conflicts in a table with [row
+tracking](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#row-tracking) enabled requires
+rewriting all file actions to update their `baseRowId` field.</ins>
+
+<ins>The [catalog](#terminology-catalogs) is the source of truth about which staged commit files in
+the `_delta_log/_staged_commits` directory correspond to ratified versions, and Delta clients should
+not attempt to directly interpret the contents of that directory. Refer to
+[catalog-owned tables](#catalog-owned-tables) for more details.</ins>
+
+~~Delta files use new-line delimited JSON format, where every action is stored as a single line JSON
+document. A delta file, `n.json`, contains an atomic set of [_actions_](#actions) that should be
+applied to the previous table state, `n-1.json`, in order to the construct `n`th snapshot of the
+table. An action changes one aspect of the table's state, for example, adding or removing a file.~~
+
+<ins>Delta files use newline-delimited JSON format, where every action is stored as a single-line
+JSON document. A Delta file, corresponding to version `v`, contains an atomic set of
+[_actions_](#Actions) that should be applied to the previous table state corresponding to version
+`v-1`, in order to construct the `v`th snapshot of the table. An action changes one aspect of the
+table's state, for example, adding or removing a file.</ins>
+
+### Commit Provenance Information
+
+> ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#commit-provenance-information)***
+
+<ins>When the `catalogOwned` table feature is enabled, the `commitInfo` action must have a field
+`txnId` that stores a unique transaction identifier string.</ins>
+
+### Metadata Cleanup
+
+> ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#metadata-cleanup)***
+
+2. Identify the newest checkpoint that is not newer than the `cutOffCommit`. A checkpoint at the
+   `cutOffCommit` is ideal, but an older one will do. Lets call it `cutOffCheckpoint`. We need to
+   preserve the `cutOffCheckpoint` and all <ins>published</ins> commits after it, because we need
+   them to enable time travel for commits between `cutOffCheckpoint` and the next available
+   checkpoint.
+    - <ins>If no `cutOffCheckpoint` can be found, do not proceed with metadata cleanup as there is
+      nothing to cleanup.</ins>
+3. Delete all [delta log entries](#delta-log-entries) and [checkpoint files](#checkpoints) before
+   the `cutOffCheckpoint` checkpoint. Also delete all the [log compaction files](#log-compaction-files)
+   having startVersion <= `cutOffCheckpoint`'s version.
+    - <ins>Also delete all the [staged commit files](#staged-commit) having version <=
+      `cutOffCheckpoint`'s version from the `_delta_log/_staged_commits` directory.</ins>
+
+--------
+
+> ***The next set of sections will be added to the existing spec just before [Iceberg Compatibility V1](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#iceberg-compatibility-v1) section***
+
+# Catalog-owned tables
+
+With this feature enabled, the [catalog](#terminology-catalogs) that manages the table becomes the
+source of truth for whether a given commit attempt succeeded.
+
+The table feature defines the parts of the [commit protocol](#commit-protocol) that directly impact
+the Delta table (e.g. atomicity requirements, publishing, etc). The Delta client and catalog
+together are responsible for implementing the Delta-specific aspects of commit as defined by this
+spec, but are otherwise free to define their own APIs and protocols for communication with each
+other.
+
+**NOTE**: Filesytem-based access to catalog-owned tables is not supported. Delta clients are
+expected to discover and access catalog-owned tables through the owning catalog, not by direct
+listing in the filesystem. This feature is primarily designed to warn filesystem-based readers that
+might attempt to access a catalog-owned table's storage location without going through the catalog
+first, and to block filesystem-based writers who could otherwise corrupt both the table and the
+catalog by failing to commit through the catalog.
+
+Before we can go into details of this protocol feature, we must first align our terminology.
+
+## Terminology: Commits
+
+A commit is a set of [actions](#actions) that transform a Delta table from version `v - 1` to `v`.
+A commit contains the same content as a [Delta file](#delta-log-entries).
+
+There are several types of commits:
+
+1. **Proposed commit**:  A commit that a Delta client has proposed for the next version of the
+   table. It could be "staged" or "inline". It will either become "ratified" or be rejected.
+
+2. **Staged commit** <a name="staged-commit"></a>: A proposed commit that is written to disk at
+   `_delta_log/_staged_commits/<v>.<uuid>.json`.
+    - Here, the `uuid` is a random UUID that is generated for each commit and `v` is the version
+      which is being committed, zero-padded to 20 digits.
+    - The catalog tracks only the location, not the content, of a staged commit.
+    - The mere existence of one of these files does not mean that the file is a _ratified_ commit.
+      It might correspond to a failed or in-progress commit attempt.
+    - The catalog is the source of truth around which staged commits are "ratified".
+
+3. **Inline commit** <a name="inline-commit"></a>: A proposed commit that is not written to disk but
+   rather has its content sent to the catalog for the catalog to track directly.
+
+4. **Ratified commit**: A proposed commit that a catalog has determined has won the commit at the
+   desired version of the table.
+    - It may or may not yet be "published".
+    - It may or may not even be _tracked_ by the catalog at all - the catalog may have just
+      atomically published it to the filesystem directly, relying on PUT-if-absent primitives to
+      facilitate the ratification and publication all in one step.
+    - The catalog must track ratified commits until they are published to the `_delta_log` directory.
+
+5. **Published commit** <a name="published-commit"></a>: A ratified commit that has been copied into
+   the `_delta_log` as a normal Delta file, i.e. `_delta_log/<v>.json`.
+    - Here, the `v` is the version which is being committed, zero-padded to 20 digits.
+    - The existence of a `<v>.json` file proves that the corresponding version `v` is ratified,
+      regardless of whether the table is catalog-owned for filesystem-based. The catalog is allowed
+      to return information about published commits, but Delta clients can also use filesystem
+      listing operations to directly discover them.
+    - Published commits do not need to be tracked by the catalog.
+
+## Terminology: Catalogs
+
+1. **Catalog**: A catalog is a entity which manages a Delta table, including its creation, writes,
+   reads, and eventual deletion.
+    - It could be backed by a database, a filesystem, or any other persistence mechanism.
+    - Each catalog has its own spec around how Delta clients should contact them, and how they
+      perform a commit.
+
+2. **Catalog Client**: The catalog always has a client-side component which the Delta client
+   interacts with directly.
+    - The Delta client is responsible for defining the client-side API that catalogs should target.
+    - This client-side component has two primary responsibilities:
+        - implement any client-side catalog-specific logic (such as [publishing](#publishing-commits))
+        - communicate with the Catalog Server, if any
+
+3. **Catalog Server**: The catalog may also involve a server-side component which the client-side
+   component would be responsible to communicate with.
+    - This server is responsible for coordinating commits and potentially persisting table metadata
+      and enforcing authorization policies.
+    - Not all catalogs require a server; some may be entirely client-side (e.g. filesystem-backed
+      catalogs).
+
+**NOTE**: This specification outlines the responsibilities and actions that catalogs must implement.
+This spec does its best not to assume any specific catalog _implementation_, though it does call out
+likely client-side and server-side responsibilities. Nonetheless, what a given catalog does
+client-side or server-side is up to each catalog implementation to decide for itself.
+
+## Catalog Responsibilities
+
+When the `catalogOwned` table feature is enabled, a catalog performs commits to the table on behalf
+of the Delta client.
+
+As stated above, the Delta spec does not mandate any particular client-server design or API for
+catalogs that manage Delta tables. However, the catalog does need to provide certain capabilities
+for reading and writing Delta tables:
+
+- Atomically commit a version `v` with a given set of `actions`. This is explained in detail in the
+  [commit protocol](#commit-protocol) section.
+- Retrieve information about recent ratified commits and the latest ratified version on the table.
+  This is explained in detail in the [Getting Ratified Commits from the Catalog](#getting-ratified-commits-from-the-catalog) section.
+- Though not required, it is encouraged that catalogs also return the latest table-level metadata,
+  such as the latest Protocol and Metadata actions, for the table. This can provide significant
+  performance advantages to conforming Delta clients, who may forgo log replay and instead trust
+  the information provided by the catalog during query planning.
+
+## Reading Catalog-owned Tables
+
+A catalog-owned table can have a mix of (a) published and (b) ratified and non-published commits.
+The catalog is the source of truth for ratified commits. Also recall that ratified commits can be
+[staged commits](#staged-commit) that are persisted to the the `_delta_log/_staged_commits`
+directory, or [inline commits](#inline-commit) whose content the catalog tracks directly.
+
+For example, suppose the `_delta_log` directory contains the following files:
+
+```
+00000000000000000000.json
+00000000000000000001.json
+00000000000000000002.json
+00000000000000000002.checkpoint.parquet
+00000000000000000003.json
+00000000000000000003.00000000000000000005.compacted.json
+00000000000000000004.json
+00000000000000000005.json
+00000000000000000007.json
+_staged_commits/00000000000000000006.3a0d65cd-4056-49b8-937b-95f9e3ee90e5.json // ratified
+_staged_commits/00000000000000000007.016ae953-37a9-438e-8683-9a9a4a79a395.json // ratified and published
+_staged_commits/00000000000000000008.7d17ac10-5cc3-401b-bd1a-9c82dd2ea032.json // ratified
+_staged_commits/00000000000000000008.b91807ba-fe18-488c-a15e-c4807dbd2174.json // rejected
+_staged_commits/00000000000000000010.0f707846-cd18-4e01-b40e-84ee0ae987b0.json // not yet ratified
+_staged_commits/00000000000000000010.7a980438-cb67-4b89-82d2-86f73239b6d6.json // not yet ratified
+```
+
+Further, suppose the catalog is tracking the following ratified commits:
+```
+{
+  6  -> "00000000000000000006.3a0d65cd-4056-49b8-937b-95f9e3ee90e5.json",
+  7  -> "00000000000000000007.016ae953-37a9-438e-8683-9a9a4a79a395.json",
+  8  -> "00000000000000000008.7d17ac10-5cc3-401b-bd1a-9c82dd2ea032.json",
+  9  -> <inline commit: content stored by the catalog directly>
+}
+```
+
+Some things to note are:
+- the catalog isn't aware that commit 7 was already published - perhaps the response from the
+  filesystem was dropped
+- commit 9 is an inline commit
+- neither of the two staged commits for version 10 have been ratified
+
+To read such tables, Delta clients must first contact the catalog to get the ratified commits. This
+informs the Delta client of commits [6, 9] as well as the latest ratified version, 9.
+
+If this information is insufficient to construct a complete snapshot of the table, Delta clients
+must LIST the `_delta_log` directory to get information about the published commits. For commits
+that are both returned by the catalog and already published, Delta clients can choose to read
+either. Delta clients must ignore any files with versions greater than the latest ratified commit
+version returned by the catalog.
+
+Combining these two sets of files and commits enables Delta clients to generate a snapshot at the
+latest version of the table.
+
+**NOTE**: This spec prescribes the _minimum_ required interactions between Delta clients and
+catalogs for commits. Catalogs may very well expose APIs and work with Delta clients to be
+informed of other non-commit [file types](#file-types), such as checkpoint, log
+compaction, and version checksum files. This would allow catalogs to return additional
+information to Delta clients during query and scan planning, potentially allowing Delta
+clients to avoid LISTing the filesystem altogether.
+
+## Commit Protocol
+
+To start, Delta Clients send the desired actions to be commited to the client-side component of the
+catalog.
+
+This component then has several options for proposing, ratifying, and publishing the commit,
+detailed below.
+
+- Write the actions (likely client-side) to an [staged commit file](#staged-commit) in the
+  `_delta_log/_staged_commits` directory and then ratify the staged commit by atomically recording
+  (likely server-side) (in persistent storage of some kind) that the file corresponds to version
+  `v`.
+- Treat this as an [inline commit](#inline-commit) (i.e. likely that the client-side component sends
+  the contents to the server-side component) and atomically record the content of the commit as
+  version `v` of the table.
+- Propose, ratify, and publish all-in-one by atomically writing a [published commit file](#published-commit)
+  in the `_delta_log` directory. Note that this commit will be considered to have succeeded as soon
+  as the file becomes visible in the filesystem, regardless of when or whether the catalog is made
+  aware of the successful publish. The catalog does not need to track these files.
+
+Note that when a catalog receives a request to ratify version `v`, it must first verify that the
+previous version `v-1` already exists (ratified or published), and that version `v` does not yet
+exist.
+
+The catalog must track both flavors of ratified commits (staged or inline) and make them available
+to readers until they are [published](#publishing-commits).
+
+Delta clients are encouraged to establish an API contract where the catalog provides the latest
+ratified commit information whenever a commit fails due to version conflict.
+
+## Getting Ratified Commits from the Catalog
+
+Even after a commit is ratified, it is not discoverable through filesystem operations until it is
+[published](#publishing-commits).
+
+The catalog is responsible to implement an API (defined by the Delta client) that Delta clients can
+use to retrieve the latest ratified commit version (authoritative), as well as the set of ratified
+commits the catalog is still tracking for the table. If some commits needed to complete the snapshot
+are not tracked by the catalog, as they are already published, Delta clients can issue a filesystem
+LIST operation to retrieve them.
+
+Delta clients must establish an API contract where the catalog provides ratified commit information
+as part of the standard table resolution process performed at query planning time.
+
+## Publishing Commits
+
+Publishing is the process of copying the ratified commit with version `<v>` to
+`_delta_log/<v>.json`. The ratified commit may be a staged commit located in
+`_delta_log/_staged_commits/<v>.<uuid>.json`, or it may be an inline commit whose content the
+catalog tracks itself. Because the content of a ratified commit is immutable, it does not matter
+whether the client-side, server-side, or both catalog components initiate publishing.
+
+Implementations are strongly encouraged to publish commits promptly. This reduces the number of
+commits the catalog needs to track internally (and serve up to readers).
+
+Importantly, no ordering constraints apply to publishing. That is, version `v - 1` does not need to
+be published before version `v`. This will allow for parallel publishing and achieving higher
+throughput. It will enable catalog implementations to publish ratified commits right away without
+the need for synchronization or coordination between conurrent writers.
+
+Because of this, "gaps" may appears in the `_delta_log` in the filesystem: cases where versions `v`
+and `v + 2` are published, but version `v + 1` is not.
+
+**NOTE**: Because commit publishing can happen at any time and in any order after the commit
+succeeds, the file modification timestamp of the published file will not accurately reflect the
+original commit time. For this reason, catalog-owned tables must use
+[in-commit-timestamps](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#in-commit-timestamps)
+to ensure stability of time travel reads. Refer to
+[Writer Requirements for Catalog-Owned Tables](#writer-requirements-for-catalog-owned-tables)
+section for more details.
+
+## Maintenance Operations on Catalog-owned Tables
+
+Delta clients must follow the owning catalog's rules, if any, when performing maintenance
+operations like [Checkpoints](#checkpoints-1), [Log Compaction Files](#log-compaction-files),
+[Metadata Cleanup](#metadata-cleanup), and VACUUM. These rules can be unique to each catalog and may
+evolve over time.
+
+In particular, maintenance operations like Checkpoints and Log Compaction Files can only be
+performed on published versions.
+
+To highlight: Because the catalog controls the lifetime and potentially the storage of the table,
+and may also provide automatic table maintenance, Delta clients MUST NOT attempt to VACUUM the
+table's files directly. Attempting to do so could result in table corruption.
+
+## Creating and Dropping Catalog-owned Tables
+
+The catalog and query engine ultimately dictate how to create and drop catalog-owned tables.
+
+As one example, table creation often works in three phases:
+
+1. An initial catalog operation to obtain a unique storage location which serves as an unnamed
+   "staging" table
+2. A table operation that physically initializes a new `catalogOwned`-enabled table at the staging
+   location.
+3. A final catalog operation that registers the new table with its intended name.
+
+Delta clients would primarily be involved with the second step, but an implementation could choose
+to combine the second and third steps so that a single catalog call registers the table as part of
+the table's first commit.
+
+As another example, dropping a table can be as simple as removing its name from the catalog (a "soft
+delete"), followed at some later point by a "hard delete" that physically purges the data. The Delta
+client would not be involved at all in this process, because no commits are made to the table.
+
+## Catalog-owned Table Enablement
+
+The `catalogOwned` table feature is supported and active when:
+- The table is on Reader Version 3 and Writer Version 7.
+- The table has a `protocol` action with `readerFeatures` and `writerFeatures` both containing the
+  feature `catalogOwned`.
+
+## Writer Requirements for Catalog-owned tables
+
+When supported and active:
+
+- Writers must discover and access the table using catalog calls, which happens before the table's
+  protocol is known.
+- The [in-commit-timestamps](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#in-commit-timestamps)
+  table feature must be supported and active.
+- The `commitInfo` action must also a field `txnId` that stores a unique transaction identifier
+  string
+- Writers must follow the catalog's [commit protocol](#commit-protocol) and must not perform
+  ordinary filesystem-based commits against the table.
+- Writers must follow the catalog's [maintenance operation protocol](#maintenance-operations-on-catalog-owned-tables)
+
+## Reader Requirements for Catalog-owned tables
+
+When supported and active:
+
+- Readers must access the table using catalog calls, which happens before the table's protocol
+  is known.
+- Readers must contact the catalog for information about unpublished ratified commits.
+
+## Sample client API
+
+The following is an example of a possible API which a Java-based Delta client might require catalog
+implementations to target:
+
+```java
+
+interface CatalogOwnedTable {
+    /**
+     * Commits the given set of `actions` to the given commit `version`.
+     *
+     * @param version The version we want to commit.
+     * @param actions Actions that need to be committed.
+     *
+     * @return CommitResponse which has details around the new committed delta file.
+     */
+    def commit(
+        version: Long,
+        actions: Iterator[String]): CommitResponse
+
+    /**
+     * Retrieves a (possibly empty) suffix of ratified commits in the range [startVersion,
+     * endVersion] for this table.
+     * 
+     * Some of these ratified commits may already have been published. Some of them may be staged,
+     * in which case the staged commit file path is returned, while others may be inline, in which
+     * case the inline commit content is returned.
+     * 
+     * The returned commits are sorted in ascending version number. The returned commits may not be
+     * contiguous.
+     *
+     * If neither start nor end version is specified, the catalog will return all available ratified
+     * commits (possibly empty, if all commits have been published).
+     *
+     * In all cases, the response also includes the table's latest ratified commit version.
+     *
+     * @return GetCommitsResponse which contains an ordered list of ratified commits
+     *         tracked by the catalog, as well as table's latest commit version.
+     */
+    def getRatifiedCommits(
+        startVersion: Option[Long],
+        endVersion: Option[Long]): GetCommitsResponse
+}
+```
+
+Note that the above is only one example of a possible Delta Client API. It is also _NOT_ a catalog
+API (no table discovery, ACL, create/drop, etc). The Delta protocol is agnostic to API details, and
+the API surface Delta clients define should only cover the specific catalog capabilities that Delta
+client needs to correctly read and write catalog-owned tables.
