@@ -490,6 +490,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
       validateUpdatedSchema(
         current,
         updated,
+        Set.empty.asJava,
         metadata(current, properties = tblProperties))
     }
 
@@ -682,7 +683,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
   test("validateUpdatedSchema fails with schema with duplicate column ID") {
     forAll(updatedSchemaHasDuplicateColumnId) { (schemaBefore, schemaAfter) =>
       val e = intercept[IllegalArgumentException] {
-        validateUpdatedSchema(schemaBefore, schemaAfter, metadata(schemaBefore))
+        validateUpdatedSchema(schemaBefore, schemaAfter, Set.empty.asJava, metadata(schemaBefore))
       }
 
       assert(e.getMessage.matches("Field duplicate_id with id .* already exists"))
@@ -731,7 +732,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
 
   test("validateUpdatedSchema succeeds with valid ID and physical name") {
     forAll(validUpdatedSchemas) { (schemaBefore, schemaAfter) =>
-      validateUpdatedSchema(schemaBefore, schemaAfter, metadata(schemaBefore))
+      validateUpdatedSchema(schemaBefore, schemaAfter, Set.empty.asJava, metadata(schemaBefore))
     }
   }
 
@@ -917,7 +918,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
 
   test("validateUpdatedSchema succeeds when adding field") {
     forAll(validateAddedFields) { (schemaBefore, schemaAfter) =>
-      validateUpdatedSchema(schemaBefore, schemaAfter, metadata(schemaBefore))
+      validateUpdatedSchema(schemaBefore, schemaAfter, Set.empty.asJava, metadata(schemaBefore))
     }
   }
 
@@ -951,7 +952,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
 
   test("validateUpdatedSchema succeeds when updating field metadata") {
     forAll(validateMetadataChange) { (schemaBefore, schemaAfter) =>
-      validateUpdatedSchema(schemaBefore, schemaAfter, metadata(schemaBefore))
+      validateUpdatedSchema(schemaBefore, schemaAfter, Set.empty.asJava, metadata(schemaBefore))
     }
   }
 
@@ -1001,6 +1002,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
         validateUpdatedSchema(
           schemaBefore,
           schemaAfter,
+          Set.empty.asJava,
           metadata(schemaBefore, tableProperties))
       }
 

@@ -21,8 +21,8 @@ import scala.collection.immutable.Seq
 import io.delta.kernel.Table
 import io.delta.kernel.exceptions.InvalidConfigurationValueException
 import io.delta.kernel.internal.TableConfig
-import io.delta.kernel.internal.util.ColumnMappingSuiteBase
-import io.delta.kernel.types.{IntegerType, StringType, StructType}
+import io.delta.kernel.internal.util.{ColumnMapping, ColumnMappingSuiteBase}
+import io.delta.kernel.types.{FieldMetadata, IntegerType, StringType, StructField, StructType}
 
 class DeltaColumnMappingSuite extends DeltaTableWriteSuiteBase with ColumnMappingSuiteBase {
 
@@ -86,8 +86,30 @@ class DeltaColumnMappingSuite extends DeltaTableWriteSuiteBase with ColumnMappin
       assertColumnMapping(structType.get("a"), 1)
       assertColumnMapping(structType.get("b"), 2)
 
+      assert(TableConfig.COLUMN_MAPPING_MAX_COLUMN_ID.fromMetadata(getMetadata(
+        engine,
+        tablePath)) == 2)
+
       val protocol = getProtocol(engine, tablePath)
       assert(protocol.getMinReaderVersion == 2 && protocol.getMinWriterVersion == 7)
+    }
+  }
+
+  test("new table with existing column mappings in schema writes COLUMN_MAPPING_MAX_COLUMN_ID") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val props = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "id")
+      val fieldMetadata = FieldMetadata.builder()
+        .putLong(ColumnMapping.COLUMN_MAPPING_ID_KEY, 1)
+        .putString(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, "col-0").build()
+      val structField = new StructField("col_name", IntegerType.INTEGER, false, fieldMetadata)
+      val schema = new StructType(Seq(structField).asJava)
+      createEmptyTable(engine, tablePath, schema, tableProperties = props)
+
+      val structtype = getMetadata(engine, tablePath).getSchema
+      assertColumnMapping(structtype.get("col_name"), 1)
+      assert(TableConfig.COLUMN_MAPPING_MAX_COLUMN_ID.fromMetadata(getMetadata(
+        engine,
+        tablePath)) == 1)
     }
   }
 
