@@ -460,6 +460,7 @@ public class ParquetFileWriter {
                 fileIO.newInputFile(resolvedPath, fileStatus.getSize()), dataSchema, statsColumns);
       }
 
+      // TODO (LC-7744): Add support for DeletionVectorDescriptor
       return new DataFileStatus(
           resolvedPath,
           fileStatus.getSize(),
