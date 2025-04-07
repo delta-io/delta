@@ -29,7 +29,7 @@ import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch,
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.expressions.Literal
+import io.delta.kernel.expressions.{Column, Literal}
 import io.delta.kernel.expressions.Literal.ofInt
 import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
 import io.delta.kernel.internal.{SnapshotImpl, TableConfig, TableImpl}
@@ -83,6 +83,21 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     Map("part1" -> ofInt(4), "part2" -> ofInt(5)),
     batchSize = 876,
     numBatches = 7)
+
+  val testClusteringColumns = List(new Column("part1"), new Column("part2"))
+  val dataClusteringBatches1 = generateData(
+    testPartitionSchema,
+    partitionCols = Seq.empty,
+    partitionValues = Map.empty,
+    batchSize = 200,
+    numBatches = 3)
+
+  val dataClusteringBatches2 = generateData(
+    testPartitionSchema,
+    partitionCols = Seq.empty,
+    partitionValues = Map.empty,
+    batchSize = 456,
+    numBatches = 5)
 
   def verifyLastCheckpointMetadata(tablePath: String, checkpointAt: Long, expSize: Long): Unit = {
     val filePath = f"$tablePath/_delta_log/_last_checkpoint"
@@ -302,14 +317,20 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       tableProperties: Map[String, String] = null,
       clock: Clock = () => System.currentTimeMillis,
       withDomainMetadataSupported: Boolean = false,
-      maxRetries: Int = -1): Transaction = {
+      maxRetries: Int = -1,
+      clusteringCols: List[Column] = List.empty): Transaction = {
 
     var txnBuilder = createWriteTxnBuilder(
       TableImpl.forPath(engine, tablePath, clock))
 
     if (isNewTable) {
       txnBuilder = txnBuilder.withSchema(engine, schema)
-        .withPartitionColumns(engine, partCols.asJava)
+      if (partCols != null) {
+        txnBuilder = txnBuilder.withPartitionColumns(engine, partCols.asJava)
+      }
+      if (clusteringCols.nonEmpty) {
+        txnBuilder = txnBuilder.withClusteringColumns(engine, clusteringCols.asJava)
+      }
     }
 
     if (tableProperties != null) {
@@ -354,7 +375,8 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       schema: StructType,
       partCols: Seq[String] = Seq.empty,
       clock: Clock = () => System.currentTimeMillis,
-      tableProperties: Map[String, String] = null): TransactionCommitResult = {
+      tableProperties: Map[String, String] = null,
+      clusteringCols: List[Column] = List.empty): TransactionCommitResult = {
 
     appendData(
       engine,
@@ -364,7 +386,8 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       partCols,
       data = Seq.empty,
       clock,
-      tableProperties)
+      tableProperties,
+      clusteringCols)
   }
 
   /** Update an existing table - metadata only changes (no data changes) */
@@ -393,9 +416,18 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       partCols: Seq[String] = null,
       data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])],
       clock: Clock = () => System.currentTimeMillis,
-      tableProperties: Map[String, String] = null): TransactionCommitResult = {
+      tableProperties: Map[String, String] = null,
+      clusteringCols: List[Column] = List.empty): TransactionCommitResult = {
 
-    val txn = createTxn(engine, tablePath, isNewTable, schema, partCols, tableProperties, clock)
+    val txn = createTxn(
+      engine,
+      tablePath,
+      isNewTable,
+      schema,
+      partCols,
+      tableProperties,
+      clock,
+      clusteringCols = clusteringCols)
     commitAppendData(engine, txn, data)
   }
 
