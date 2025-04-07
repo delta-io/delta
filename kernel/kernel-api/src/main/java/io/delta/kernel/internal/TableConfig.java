@@ -273,7 +273,8 @@ public class TableConfig<T> {
           true);
 
   /**
-   * The value that enables uniform exports to Iceberg for {@linkplain #UNIFORM_ENABLED_FORMATS}.
+   * The value that enables uniform exports to Iceberg for {@linkplain
+   * #UNIVERSAL_FORMAT_ENABLED_FORMATS}.
    *
    * <p>{@link #ICEBERG_COMPAT_V2_ENABLED but also be set to true} to fully enable this feature.
    */
@@ -281,7 +282,7 @@ public class TableConfig<T> {
 
   /**
    * The value to use to enable uniform exports to Iceberg for {@linkplain
-   * #UNIFORM_ENABLED_FORMATS}.
+   * #UNIVERSAL_FORMAT_ENABLED_FORMATS}.
    */
   public static final String UNIVERSAL_FORMAT_HUDI = "hudi";
 

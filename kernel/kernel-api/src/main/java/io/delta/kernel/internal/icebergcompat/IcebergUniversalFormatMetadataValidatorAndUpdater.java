@@ -33,7 +33,7 @@ public class IcebergUniversalFormatMetadataValidatorAndUpdater {
    *
    * <p>If required {@linkplain TableConfig}s are no longer set to a supported a target format the
    * target format will be removed from the returned {@linkplain Metadata} object. If the required
-   * configs were not set in {@argument currentMetadata} then an exception is raised.
+   * configs were not set in {@code currentMetadata} then an exception is raised.
    *
    * <p>"hudi" is trivially compatible with Metadata.
    *
