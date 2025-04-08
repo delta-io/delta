@@ -280,98 +280,72 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
     }
   }
 
-  /* --- INVARIANTS_INACTIVE_CHECK tests --- */
-  Seq(true, false).foreach { isNewTable =>
-    test(s"cannot enable with invariants active in the schema, isNewTable = $isNewTable") {
-      val schema = new StructType()
-        .add("c1", IntegerType.INTEGER)
-        .add(
-          "c2",
-          IntegerType.INTEGER,
-          FieldMetadata.builder()
-            .putString("delta.invariants", "{\"expression\": { \"expression\": \"x > 3\"} }")
-            .build())
-      val metadata = getCompatEnabledMetadata(schema)
-      val protocol = getCompatEnabledProtocol()
-      val e = intercept[KernelException] {
-        validateAndUpdateIcebergWriterCompatV1Metadata(isNewTable, metadata, protocol)
+  private def testIncompatibleActiveLegacyFeature(
+      activeFeatureMetadata: Metadata,
+      tableFeature: String): Unit = {
+    Seq(true, false).foreach { isNewTable =>
+      test(s"cannot enable with $tableFeature active, isNewTable = $isNewTable") {
+        val e = intercept[KernelException] {
+          validateAndUpdateIcebergWriterCompatV1Metadata(
+            isNewTable,
+            activeFeatureMetadata,
+            getCompatEnabledProtocol())
+        }
+        assert(e.getMessage.contains(
+          s"Table features [$tableFeature] are incompatible with icebergWriterCompatV1"))
       }
-      assert(e.getMessage.contains(
-        "Table features [invariants] are incompatible with icebergWriterCompatV1"))
     }
   }
+
+  /* --- INVARIANTS_INACTIVE_CHECK tests --- */
+  testIncompatibleActiveLegacyFeature(
+    getCompatEnabledMetadata(new StructType()
+      .add("c1", IntegerType.INTEGER)
+      .add(
+        "c2",
+        IntegerType.INTEGER,
+        FieldMetadata.builder()
+          .putString("delta.invariants", "{\"expression\": { \"expression\": \"x > 3\"} }")
+          .build())),
+    "invariants")
 
   /* --- CHANGE_DATA_FEED_INACTIVE_CHECK tests --- */
-  Seq(true, false).foreach { isNewTable =>
-    test(s"cannot enable with change data feed active, isNewTable = $isNewTable") {
-      val metadata = getCompatEnabledMetadata(cmTestSchema())
-        .withMergedConfiguration(Map(TableConfig.CHANGE_DATA_FEED_ENABLED.getKey -> "true").asJava)
-      val protocol = getCompatEnabledProtocol()
-      val e = intercept[KernelException] {
-        validateAndUpdateIcebergWriterCompatV1Metadata(isNewTable, metadata, protocol)
-      }
-      assert(e.getMessage.contains(
-        "Table features [changeDataFeed] are incompatible with icebergWriterCompatV1"))
-    }
-  }
+  testIncompatibleActiveLegacyFeature(
+    getCompatEnabledMetadata(cmTestSchema())
+      .withMergedConfiguration(Map(TableConfig.CHANGE_DATA_FEED_ENABLED.getKey -> "true").asJava),
+    "changeDataFeed")
 
   /* --- CHECK_CONSTRAINTS_INACTIVE_CHECK tests --- */
-  Seq(true, false).foreach { isNewTable =>
-    test(s"cannot enable with check constraints active, isNewTable = $isNewTable") {
-      val metadata = getCompatEnabledMetadata(cmTestSchema())
-        .withMergedConfiguration(Map("delta.constraints.a" -> "a = b").asJava)
-      val protocol = getCompatEnabledProtocol()
-      val e = intercept[KernelException] {
-        validateAndUpdateIcebergWriterCompatV1Metadata(isNewTable, metadata, protocol)
-      }
-      assert(e.getMessage.contains(
-        "Table features [checkConstraints] are incompatible with icebergWriterCompatV1"))
-    }
-  }
+  testIncompatibleActiveLegacyFeature(
+    getCompatEnabledMetadata(cmTestSchema())
+      .withMergedConfiguration(Map("delta.constraints.a" -> "a = b").asJava),
+    "checkConstraints")
 
   /* --- IDENTITY_COLUMNS_INACTIVE_CHECK tests --- */
-  Seq(true, false).foreach { isNewTable =>
-    test(s"cannot enable with identity columns active, isNewTable = $isNewTable") {
-      val schema = new StructType()
-        .add("c1", IntegerType.INTEGER)
-        .add(
-          "c2",
-          IntegerType.INTEGER,
-          FieldMetadata.builder()
-            .putLong("delta.identity.start", 1L)
-            .putLong("delta.identity.step", 2L)
-            .putBoolean("delta.identity.allowExplicitInsert", true)
-            .build())
-      val metadata = getCompatEnabledMetadata(schema)
-      val protocol = getCompatEnabledProtocol()
-      val e = intercept[KernelException] {
-        validateAndUpdateIcebergWriterCompatV1Metadata(isNewTable, metadata, protocol)
-      }
-      assert(e.getMessage.contains(
-        "Table features [identityColumns] are incompatible with icebergWriterCompatV1"))
-    }
-  }
+  testIncompatibleActiveLegacyFeature(
+    getCompatEnabledMetadata(new StructType()
+      .add("c1", IntegerType.INTEGER)
+      .add(
+        "c2",
+        IntegerType.INTEGER,
+        FieldMetadata.builder()
+          .putLong("delta.identity.start", 1L)
+          .putLong("delta.identity.step", 2L)
+          .putBoolean("delta.identity.allowExplicitInsert", true)
+          .build())),
+    "identityColumns")
 
   /* --- GENERATED_COLUMNS_INACTIVE_CHECK tests --- */
-  Seq(true, false).foreach { isNewTable =>
-    test(s"cannot enable with generated columns active, isNewTable = $isNewTable") {
-      val schema = new StructType()
-        .add("c1", IntegerType.INTEGER)
-        .add(
-          "c2",
-          IntegerType.INTEGER,
-          FieldMetadata.builder()
-            .putString("delta.generationExpression", "{\"expression\": \"c1 + 1\"}")
-            .build())
-      val metadata = getCompatEnabledMetadata(schema)
-      val protocol = getCompatEnabledProtocol()
-      val e = intercept[KernelException] {
-        validateAndUpdateIcebergWriterCompatV1Metadata(isNewTable, metadata, protocol)
-      }
-      assert(e.getMessage.contains(
-        "Table features [generatedColumns] are incompatible with icebergWriterCompatV1"))
-    }
-  }
+  testIncompatibleActiveLegacyFeature(
+    getCompatEnabledMetadata(new StructType()
+      .add("c1", IntegerType.INTEGER)
+      .add(
+        "c2",
+        IntegerType.INTEGER,
+        FieldMetadata.builder()
+          .putString("delta.generationExpression", "{\"expression\": \"c1 + 1\"}")
+          .build())),
+    "generatedColumns")
 
   /* --- requiredDependencyTableFeatures tests --- */
   Seq(
