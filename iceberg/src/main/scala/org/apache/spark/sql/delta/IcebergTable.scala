@@ -24,14 +24,42 @@ import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaColumnMappingMode, D
 import org.apache.spark.sql.delta.DeltaErrors.{cloneFromIcebergSourceWithoutSpecs, cloneFromIcebergSourceWithPartitionEvolution}
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.iceberg.{PartitionSpec, Table, TableProperties}
+import org.apache.iceberg.{PartitionSpec, Schema, Snapshot => IcebergSnapshot, Table, TableProperties}
 import org.apache.iceberg.hadoop.HadoopTables
+import org.apache.iceberg.io.FileIO
 import org.apache.iceberg.transforms.{Bucket, IcebergPartitionUtil}
 import org.apache.iceberg.util.PropertyUtil
 
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.execution.datasources.PartitioningUtils
 import org.apache.spark.sql.types.StructType
+
+/** Subset of [[Table]] functionality required for conversion to Delta. */
+trait IcebergTableLike {
+  def location(): String
+  def schema(): Schema
+  def properties(): java.util.Map[String, String]
+  def specs(): java.util.Map[Integer, PartitionSpec]
+  def spec(): PartitionSpec
+  def currentSnapshot(): IcebergSnapshot
+  def snapshot(id: Long): IcebergSnapshot
+  def io(): FileIO
+}
+
+/**
+ * Implementation of [[IcebergTableLike]] that can safely rely on the functionality of an
+ * underlying [[Table]].
+ */
+case class DelegatingIcebergTable(table: Table) extends IcebergTableLike {
+  override def location(): String = table.location()
+  override def schema(): Schema = table.schema()
+  override def properties(): java.util.Map[String, String] = table.properties()
+  override def specs(): java.util.Map[Integer, PartitionSpec] = table.specs()
+  override def spec(): PartitionSpec = table.spec()
+  override def currentSnapshot(): IcebergSnapshot = table.currentSnapshot()
+  override def snapshot(id: Long): IcebergSnapshot = table.snapshot(id)
+  override def io(): FileIO = table.io()
+}
 
 /**
  * A target Iceberg table for conversion to a Delta table.
@@ -49,15 +77,24 @@ import org.apache.spark.sql.types.StructType
  */
 class IcebergTable(
     spark: SparkSession,
-    icebergTable: Table,
+    icebergTable: IcebergTableLike,
     deltaSnapshot: Option[Snapshot],
     convertStats: Boolean) extends ConvertTargetTable {
+  def this(
+      spark: SparkSession,
+      table: Table,
+      deltaSnapshot: Option[Snapshot],
+      convertStats: Boolean) =
+    this(spark, DelegatingIcebergTable(table), deltaSnapshot, convertStats)
 
   def this(spark: SparkSession, basePath: String, deltaTable: Option[Snapshot],
            convertStats: Boolean = true) =
     // scalastyle:off deltahadoopconfiguration
-    this(spark, new HadoopTables(spark.sessionState.newHadoopConf).load(basePath),
-      deltaTable, convertStats)
+    this(
+      spark,
+      DelegatingIcebergTable(new HadoopTables(spark.sessionState.newHadoopConf).load(basePath)),
+      deltaTable,
+      convertStats)
     // scalastyle:on deltahadoopconfiguration
 
   protected val existingSchema: Option[StructType] = deltaSnapshot.map(_.schema)
