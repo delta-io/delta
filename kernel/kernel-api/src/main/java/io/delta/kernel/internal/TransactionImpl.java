@@ -464,9 +464,9 @@ public class TransactionImpl implements Transaction {
                             transactionMetrics.removeFilesCounter.increment();
                             // TODO add removeFileSizeInBytes and increment
                             // TODO update fileSizeHistogram
-                            if (isAppendOnlyTable
-                                && new RemoveFile(action.getStruct(REMOVE_FILE_ORDINAL))
-                                    .getDataChange()) {
+                            RemoveFile removeFile =
+                                new RemoveFile(action.getStruct(REMOVE_FILE_ORDINAL));
+                            if (isAppendOnlyTable && removeFile.getDataChange()) {
                               throw DeltaErrors.cannotModifyAppendOnlyTable(dataPath.toString());
                             }
                           }

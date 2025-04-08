@@ -387,7 +387,7 @@ public final class DeltaErrors {
   public static KernelException cannotModifyAppendOnlyTable(String tablePath) {
     return new KernelException(
         String.format(
-            "Cannot modify append only table. Table `%s` has configuration %s=true.",
+            "Cannot modify append-only table. Table `%s` has configuration %s=true.",
             tablePath, TableConfig.APPEND_ONLY_ENABLED.getKey()));
   }
 

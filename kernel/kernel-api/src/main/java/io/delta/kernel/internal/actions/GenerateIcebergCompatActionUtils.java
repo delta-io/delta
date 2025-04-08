@@ -19,6 +19,7 @@ import static io.delta.kernel.internal.data.TransactionStateRow.*;
 import static io.delta.kernel.internal.util.InternalUtils.relativizePath;
 import static io.delta.kernel.internal.util.PartitionUtils.serializePartitionMap;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import static io.delta.kernel.internal.util.Preconditions.checkState;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.Transaction;
@@ -29,6 +30,7 @@ import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.TableConfig;
+import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.internal.fs.Path;
@@ -198,7 +200,24 @@ public final class GenerateIcebergCompatActionUtils {
   // within RemoveFile.java until we add full support for deletes (which will likely involve
   // generating RemoveFiles directly from AddFiles anyway)
 
-  private static Row createRemoveFileRowWithExtendedFileMetadata(
+  private static Row convertRemoveDataFileStatus(
+      StructType physicalSchema,
+      URI tableRoot,
+      DataFileStatus dataFileStatus,
+      Map<String, Literal> partitionValues,
+      boolean dataChange) {
+    return createRemoveFileRowWithExtendedFileMetadata(
+        relativizePath(new Path(dataFileStatus.getPath()), tableRoot).toUri().toString(),
+        dataFileStatus.getModificationTime(),
+        dataChange,
+        serializePartitionMap(partitionValues),
+        dataFileStatus.getSize(),
+        dataFileStatus.getStatistics(),
+        physicalSchema);
+  }
+
+  @VisibleForTesting
+  public static Row createRemoveFileRowWithExtendedFileMetadata(
       String path,
       long deletionTimestamp,
       boolean dataChange,
@@ -219,21 +238,5 @@ public final class GenerateIcebergCompatActionUtils {
             fieldMap.put(
                 RemoveFile.FULL_SCHEMA.indexOf("stats"), stat.serializeAsJson(physicalSchema)));
     return new GenericRow(RemoveFile.FULL_SCHEMA, fieldMap);
-  }
-
-  private static Row convertRemoveDataFileStatus(
-      StructType physicalSchema,
-      URI tableRoot,
-      DataFileStatus dataFileStatus,
-      Map<String, Literal> partitionValues,
-      boolean dataChange) {
-    return createRemoveFileRowWithExtendedFileMetadata(
-        relativizePath(new Path(dataFileStatus.getPath()), tableRoot).toUri().toString(),
-        dataFileStatus.getModificationTime(),
-        dataChange,
-        serializePartitionMap(partitionValues),
-        dataFileStatus.getSize(),
-        dataFileStatus.getStatistics(),
-        physicalSchema);
   }
 }
