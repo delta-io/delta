@@ -15,7 +15,6 @@
  */
 package io.delta.kernel.internal.actions;
 
-import static io.delta.kernel.internal.data.TransactionStateRow.*;
 import static io.delta.kernel.internal.util.InternalUtils.relativizePath;
 import static io.delta.kernel.internal.util.PartitionUtils.serializePartitionMap;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
@@ -81,13 +80,7 @@ public final class GenerateIcebergCompatActionUtils {
 
     /* --- Validate and update partitionValues ---- */
     // Currently we don't support partitioned tables; fail here
-    if (!TransactionStateRow.getPartitionColumnsList(transactionState).isEmpty()) {
-      throw new UnsupportedOperationException(
-          "Currently GenerateIcebergCompatActionUtils "
-              + "is not supported for partitioned tables");
-    }
-    checkArgument(
-        partitionValues.isEmpty(), "Non-empty partitionValues provided for an unpartitioned table");
+    blockPartitionedTables(transactionState, partitionValues);
 
     URI tableRoot = new Path(TransactionStateRow.getTablePath(transactionState)).toUri();
     // This takes care of relativizing the file path and serializing the file statistics
@@ -122,7 +115,7 @@ public final class GenerateIcebergCompatActionUtils {
       DataFileStatus fileStatus,
       Map<String, Literal> partitionValues,
       boolean dataChange) {
-    Map<String, String> config = getConfiguration(transactionState);
+    Map<String, String> config = TransactionStateRow.getConfiguration(transactionState);
 
     /* ----- Validate that this is a valid usage of this API ----- */
     validateIcebergWriterCompatV1Enabled(config);
@@ -131,20 +124,15 @@ public final class GenerateIcebergCompatActionUtils {
     /* ----- Validate this is valid write given the table's protocol & configurations ----- */
     // We only allow removes with dataChange=false when appendOnly=true
     if (dataChange && TableConfig.APPEND_ONLY_ENABLED.fromMetadata(config)) {
-      throw DeltaErrors.cannotModifyAppendOnlyTable(getTablePath(transactionState));
+      throw DeltaErrors.cannotModifyAppendOnlyTable(
+          TransactionStateRow.getTablePath(transactionState));
     }
 
     /* --- Validate and update partitionValues ---- */
     // Currently we don't support partitioned tables; fail here
-    if (!getPartitionColumnsList(transactionState).isEmpty()) {
-      throw new UnsupportedOperationException(
-          "Currently GenerateIcebergCompatActionUtils "
-              + "is not supported for partitioned tables");
-    }
-    checkArgument(
-        partitionValues.isEmpty(), "Non-empty partitionValues provided for an unpartitioned table");
+    blockPartitionedTables(transactionState, partitionValues);
 
-    URI tableRoot = new Path(getTablePath(transactionState)).toUri();
+    URI tableRoot = new Path(TransactionStateRow.getTablePath(transactionState)).toUri();
     // This takes care of relativizing the file path and serializing the file statistics
     Row removeFileRow =
         convertRemoveDataFileStatus(
@@ -189,6 +177,17 @@ public final class GenerateIcebergCompatActionUtils {
                   + "found maxRetries=%s",
               TransactionStateRow.getMaxRetries(transactionState)));
     }
+  }
+
+  private static void blockPartitionedTables(
+      Row transactionState, Map<String, Literal> partitionValues) {
+    if (!TransactionStateRow.getPartitionColumnsList(transactionState).isEmpty()) {
+      throw new UnsupportedOperationException(
+          "Currently GenerateIcebergCompatActionUtils "
+              + "is not supported for partitioned tables");
+    }
+    checkArgument(
+        partitionValues.isEmpty(), "Non-empty partitionValues provided for an unpartitioned table");
   }
 
   //////////////////////////////////////////////////
