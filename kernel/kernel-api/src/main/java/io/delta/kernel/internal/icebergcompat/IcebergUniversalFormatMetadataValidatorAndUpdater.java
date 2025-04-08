@@ -47,7 +47,7 @@ public class IcebergUniversalFormatMetadataValidatorAndUpdater {
    *     enabled in currentMetadata.
    */
   public static Optional<Metadata> validateAndUpdate(
-      Metadata newMetadata, Metadata currentMetadata) {
+      Metadata currentMetadata, Metadata newMetadata) {
     if (!newMetadata
         .getConfiguration()
         .containsKey(TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey())) {

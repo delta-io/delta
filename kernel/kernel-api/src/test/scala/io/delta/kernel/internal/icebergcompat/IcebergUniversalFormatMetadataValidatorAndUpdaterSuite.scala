@@ -31,8 +31,8 @@ class IcebergUniversalFormatMetadataValidatorAndUpdaterSuite extends AnyFunSuite
   test("validateAndUpdate should return empty when UNIVERSAL_FORMAT_ENABLED_FORMATS is not set") {
     val metadata = createMetadata(Map("unrelated_key" -> "unrelated_value"))
     val result = IcebergUniversalFormatMetadataValidatorAndUpdater.validateAndUpdate(
-      metadata,
-      createMetadata())
+      createMetadata(),
+      metadata)
     assert(!result.isPresent)
   }
 
@@ -42,8 +42,8 @@ class IcebergUniversalFormatMetadataValidatorAndUpdaterSuite extends AnyFunSuite
       TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey -> "hudi",
       "unrelated_key" -> "unrelated_value"))
     val result = IcebergUniversalFormatMetadataValidatorAndUpdater.validateAndUpdate(
-      metadata,
-      createMetadata())
+      createMetadata(),
+      metadata)
     assert(!result.isPresent)
   }
 
@@ -54,8 +54,8 @@ class IcebergUniversalFormatMetadataValidatorAndUpdaterSuite extends AnyFunSuite
       TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true",
       "unrelated_key" -> "unrelated_value"))
     val result = IcebergUniversalFormatMetadataValidatorAndUpdater.validateAndUpdate(
-      metadata,
-      createMetadata())
+      createMetadata(),
+      metadata)
     assert(!result.isPresent)
   }
 
@@ -68,8 +68,8 @@ class IcebergUniversalFormatMetadataValidatorAndUpdaterSuite extends AnyFunSuite
         TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey -> "iceberg,hudi",
         "unrelated_key" -> "unrelated_value") ++ disabledIcebergCompatV2Enabled)
       val result = IcebergUniversalFormatMetadataValidatorAndUpdater.validateAndUpdate(
-        metadata,
-        createMetadata(Map(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true")))
+        createMetadata(Map(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true")),
+        metadata)
       assert(result.isPresent)
       assert(TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.fromMetadata(result.get()) == Set(
         "hudi").asJava)
@@ -88,8 +88,8 @@ class IcebergUniversalFormatMetadataValidatorAndUpdaterSuite extends AnyFunSuite
         TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey -> "iceberg",
         "unrelated_key" -> "unrelated_value"))
       val result = IcebergUniversalFormatMetadataValidatorAndUpdater.validateAndUpdate(
-        metadata,
-        createMetadata(Map(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true")))
+        createMetadata(Map(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true")),
+        metadata)
       assert(result.isPresent)
       val updatedConfig = result.get().getConfiguration
       assert(!updatedConfig.containsKey(TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey))
@@ -107,8 +107,8 @@ class IcebergUniversalFormatMetadataValidatorAndUpdaterSuite extends AnyFunSuite
         "unrelated_key" -> "unrelated_value"))
       intercept[KernelException] {
         IcebergUniversalFormatMetadataValidatorAndUpdater.validateAndUpdate(
-          metadata,
-          createMetadata())
+          createMetadata(),
+          metadata)
       }
     }
   }
