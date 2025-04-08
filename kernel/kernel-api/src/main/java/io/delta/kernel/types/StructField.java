@@ -125,6 +125,12 @@ public class StructField {
         && metadata.equals(that.metadata);
   }
 
+  public boolean equalsIgnoringNames(StructField other) {
+    return nullable == other.nullable
+        && dataType.equalsIgnoringNames(other.dataType)
+        && metadata.equals(other.metadata);
+  }
+
   @Override
   public int hashCode() {
     return Objects.hash(name, dataType, nullable, metadata);
