@@ -630,6 +630,12 @@ trait DeltaSourceBase extends Source
       (metadata, snapshotAtSourceInit.metadata)
     }
 
+    // Table ID has changed during streaming
+    if (newMetadata.id != oldMetadata.id) {
+      throw DeltaErrors.differentDeltaTableReadByStreamingSource(
+        newTableId = newMetadata.id, oldTableId = oldMetadata.id)
+    }
+
     def shouldTrackSchema: Boolean =
       if (shouldCheckTypeWideningChanges &&
         TypeWidening.containsWideningTypeChanges(oldMetadata.schema, newMetadata.schema)) {
