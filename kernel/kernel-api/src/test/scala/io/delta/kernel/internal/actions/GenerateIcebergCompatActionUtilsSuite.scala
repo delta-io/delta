@@ -144,7 +144,7 @@ class GenerateIcebergCompatActionUtilsSuite extends AnyFunSuite {
           Collections.emptyMap(), // partitionValues
           true // dataChange
         )
-      }.getMessage.contains("Cannot modify append only table"))
+      }.getMessage.contains("Cannot modify append-only table"))
   }
 
   /* ----- Valid cases ----- */
