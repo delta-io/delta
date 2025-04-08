@@ -170,7 +170,8 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
       }
       assert(e.getMessage.contains(
         "IcebergWriterCompatV1 requires column mapping field physical names be equal to "
-          + "'col-[fieldId]', but this is not true for the following fields"))
+          + "'col-[fieldId]', but this is not true for the following fields " +
+          "[c1(physicalName='c1', columnId=1)]"))
     }
   }
 

@@ -74,7 +74,9 @@ class IcebergWriterCompatV1Suite extends DeltaTableWriteSuiteBase with ColumnMap
             cmTestSchema(),
             tableProperties = tblPropertiesIcebergWriterCompatV1Enabled ++ tblProperties)
           verifyIcebergWriterCompatV1Enabled(tablePath, engine)
-          verifyCMTestSchemaHasValidColumnMappingInfo(getMetadata(engine, tablePath))
+          verifyCMTestSchemaHasValidColumnMappingInfo(
+            getMetadata(engine, tablePath),
+            enableIcebergWriterCompatV1 = true)
         }
       }
   }
@@ -225,9 +227,11 @@ class IcebergWriterCompatV1Suite extends DeltaTableWriteSuiteBase with ColumnMap
             .build(engine)
             .commit(engine, emptyIterable())
         }
+        val expectedInvalidColumnId = if (isNewTable) 1 else 2
         assert(e.getMessage.contains(
           "IcebergWriterCompatV1 requires column mapping field physical names be equal to "
-            + "'col-[fieldId]', but this is not true for the following fields"))
+            + "'col-[fieldId]', but this is not true for the following fields " +
+            s"[c2(physicalName='c2', columnId=$expectedInvalidColumnId)]"))
       }
     }
   }
