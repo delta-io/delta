@@ -1101,13 +1101,13 @@
     "message" : [
       "Unable to enable table feature <feature> because it requires a higher reader protocol version (current <current>). Consider upgrading the table's reader protocol version to <required>, or to a version which supports reader table features. Refer to <docLink> for more information on table protocol versions."
     ],
-    "sqlState" : "0AKDC"
+    "sqlState" : "55000"
   },
   "DELTA_FEATURE_REQUIRES_HIGHER_WRITER_VERSION" : {
     "message" : [
       "Unable to enable table feature <feature> because it requires a higher writer protocol version (current <current>). Consider upgrading the table's writer protocol version to <required>, or to a version which supports writer table features. Refer to <docLink> for more information on table protocol versions."
     ],
-    "sqlState" : "0AKDC"
+    "sqlState" : "55000"
   },
   "DELTA_FILE_ALREADY_EXISTS" : {
     "message" : [
