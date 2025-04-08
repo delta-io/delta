@@ -15,7 +15,6 @@
  */
 package io.delta.kernel.internal.actions
 
-import java.lang.{Boolean => JBoolean, Long => JLong}
 import java.util.Optional
 
 import scala.collection.JavaConverters._
