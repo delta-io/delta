@@ -196,7 +196,13 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
     // TODO add typeWidening and typeWidening-preview here once it's no longer blocked
     //  icebergCompatV2
     val writerFeatures = Set(
+      // Legacy incompatible features (allowed as long as they are inactive)
       "invariants",
+      "checkConstraints",
+      "changeDataFeed",
+      "identityColumns",
+      "generatedColumns",
+      // Compatible table features
       "appendOnly",
       "columnMapping",
       "icebergCompatV2",
@@ -250,10 +256,6 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
   }
 
   Seq(
-    "changeDataFeed",
-    "checkConstraints",
-    "identityColumns",
-    "generatedColumns",
     // "defaultColumns", add this to this test once we support defaultColumns
     "rowTracking",
     // "collations", add this to this test once we support collations
@@ -296,6 +298,78 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
       }
       assert(e.getMessage.contains(
         "Table features [invariants] are incompatible with icebergWriterCompatV1"))
+    }
+  }
+
+  /* --- CHANGE_DATA_FEED_INACTIVE_CHECK tests --- */
+  Seq(true, false).foreach { isNewTable =>
+    test(s"cannot enable with change data feed active, isNewTable = $isNewTable") {
+      val metadata = getCompatEnabledMetadata(cmTestSchema())
+        .withMergedConfiguration(Map(TableConfig.CHANGE_DATA_FEED_ENABLED.getKey -> "true").asJava)
+      val protocol = getCompatEnabledProtocol()
+      val e = intercept[KernelException] {
+        validateAndUpdateIcebergWriterCompatV1Metadata(isNewTable, metadata, protocol)
+      }
+      assert(e.getMessage.contains(
+        "Table features [changeDataFeed] are incompatible with icebergWriterCompatV1"))
+    }
+  }
+
+  /* --- CHECK_CONSTRAINTS_INACTIVE_CHECK tests --- */
+  Seq(true, false).foreach { isNewTable =>
+    test(s"cannot enable with check constraints active, isNewTable = $isNewTable") {
+      val metadata = getCompatEnabledMetadata(cmTestSchema())
+        .withMergedConfiguration(Map("delta.constraints.a" -> "a = b").asJava)
+      val protocol = getCompatEnabledProtocol()
+      val e = intercept[KernelException] {
+        validateAndUpdateIcebergWriterCompatV1Metadata(isNewTable, metadata, protocol)
+      }
+      assert(e.getMessage.contains(
+        "Table features [checkConstraints] are incompatible with icebergWriterCompatV1"))
+    }
+  }
+
+  /* --- IDENTITY_COLUMNS_INACTIVE_CHECK tests --- */
+  Seq(true, false).foreach { isNewTable =>
+    test(s"cannot enable with identity columns active, isNewTable = $isNewTable") {
+      val schema = new StructType()
+        .add("c1", IntegerType.INTEGER)
+        .add(
+          "c2",
+          IntegerType.INTEGER,
+          FieldMetadata.builder()
+            .putLong("delta.identity.start", 1L)
+            .putLong("delta.identity.step", 2L)
+            .putBoolean("delta.identity.allowExplicitInsert", true)
+            .build())
+      val metadata = getCompatEnabledMetadata(schema)
+      val protocol = getCompatEnabledProtocol()
+      val e = intercept[KernelException] {
+        validateAndUpdateIcebergWriterCompatV1Metadata(isNewTable, metadata, protocol)
+      }
+      assert(e.getMessage.contains(
+        "Table features [identityColumns] are incompatible with icebergWriterCompatV1"))
+    }
+  }
+
+  /* --- GENERATED_COLUMNS_INACTIVE_CHECK tests --- */
+  Seq(true, false).foreach { isNewTable =>
+    test(s"cannot enable with generated columns active, isNewTable = $isNewTable") {
+      val schema = new StructType()
+        .add("c1", IntegerType.INTEGER)
+        .add(
+          "c2",
+          IntegerType.INTEGER,
+          FieldMetadata.builder()
+            .putString("delta.generationExpression", "{\"expression\": \"c1 + 1\"}")
+            .build())
+      val metadata = getCompatEnabledMetadata(schema)
+      val protocol = getCompatEnabledProtocol()
+      val e = intercept[KernelException] {
+        validateAndUpdateIcebergWriterCompatV1Metadata(isNewTable, metadata, protocol)
+      }
+      assert(e.getMessage.contains(
+        "Table features [generatedColumns] are incompatible with icebergWriterCompatV1"))
     }
   }
 

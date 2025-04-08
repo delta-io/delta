@@ -652,7 +652,7 @@ public class TableFeatures {
         .isEmpty();
   }
 
-  private static boolean hasCheckConstraints(Metadata metadata) {
+  public static boolean hasCheckConstraints(Metadata metadata) {
     return metadata.getConfiguration().keySet().stream()
         .anyMatch(s -> s.startsWith("delta.constraints."));
   }
@@ -669,7 +669,7 @@ public class TableFeatures {
         .isEmpty();
   }
 
-  private static boolean hasIdentityColumns(Metadata metadata) {
+  public static boolean hasIdentityColumns(Metadata metadata) {
     return !SchemaUtils.filterRecursively(
             metadata.getSchema(),
             /* recurseIntoMapOrArrayElements = */ false, // don't expected identity columns in
@@ -697,7 +697,7 @@ public class TableFeatures {
         .isEmpty();
   }
 
-  private static boolean hasGeneratedColumns(Metadata metadata) {
+  public static boolean hasGeneratedColumns(Metadata metadata) {
     return !SchemaUtils.filterRecursively(
             metadata.getSchema(),
             /* recurseIntoMapOrArrayElements = */ false, // don't expected generated columns in

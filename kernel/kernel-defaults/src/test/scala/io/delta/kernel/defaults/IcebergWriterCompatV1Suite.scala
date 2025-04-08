@@ -26,7 +26,7 @@ import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.icebergcompat.IcebergCompatV2MetadataValidatorAndUpdaterSuiteBase.COMPLEX_TYPES
 import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.internal.util.{ColumnMappingSuiteBase, VectorUtils}
-import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode
+import io.delta.kernel.internal.util.ColumnMapping.{COLUMN_MAPPING_NESTED_IDS_KEY, ColumnMappingMode}
 import io.delta.kernel.types.{ByteType, DataType, FieldMetadata, IntegerType, ShortType, StringType, StructType, TimestampNTZType, TimestampType, VariantType}
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
 
@@ -288,6 +288,8 @@ class IcebergWriterCompatV1Suite extends DeltaTableWriteSuiteBase with ColumnMap
       testOnExistingTable)
   }
 
+  /* ----- Incompatible features not supported when ACTIVE in the table ----- */
+
   testIncompatibleUnsupportedTableFeature(
     "changeDataFeed",
     tablePropertiesToEnable = Map(TableConfig.CHANGE_DATA_FEED_ENABLED.getKey -> "true"))
@@ -347,11 +349,6 @@ class IcebergWriterCompatV1Suite extends DeltaTableWriteSuiteBase with ColumnMap
     // We throw an error earlier for variant for some reason
     expectedErrorMessage = "Kernel doesn't support writing data of type: variant")
 
-  // typeWidening is blocked transitively by icebergCompatV2; update this test if that check changes
-  testIncompatibleUnsupportedTableFeature(
-    "typeWidening",
-    tablePropertiesToEnable = Map("delta.enableTypeWidening" -> "true"))
-
   // For some reason rowTracking throws an UnsupportedOperationException (due to partial support?)
   // so cannot use test fx here
   test(
@@ -399,7 +396,90 @@ class IcebergWriterCompatV1Suite extends DeltaTableWriteSuiteBase with ColumnMap
     expectedErrorMessage =
       "Table features [deletionVectors] are incompatible with icebergCompatV2")
 
-  test("All expected compatible features can be enabled with icebergWriterCompatV1") {
+  /* ----- Non-legacy incompatible features not allowed even when inactive  ----- */
+
+  testIncompatibleUnsupportedTableFeature(
+    "variantType inactive",
+    tablePropertiesToEnable = Map("delta.feature.variantType" -> "supported"))
+
+  // deletionVectors is blocked by both icebergCompatV2 and icebergWriterCompatV1; since the
+  // icebergCompatV2 checks are executed first as part of ICEBERG_COMPAT_V2_ENABLED.postProcess we
+  // hit that error message first
+  testIncompatibleTableFeature(
+    "deletionVectors inactive",
+    tablePropertiesToEnable = Map("delta.feature.deletionVectors" -> "supported"),
+    expectedErrorMessage =
+      "Table features [deletionVectors] are incompatible with icebergCompatV2")
+
+  testIncompatibleTableFeature(
+    "rowTracking inactive",
+    tablePropertiesToEnable = Map("delta.feature.rowTracking" -> "supported"),
+    expectedErrorMessage =
+      "Table features [rowTracking] are incompatible with icebergWriterCompatV1")
+
+  // defaultColumns is not added to Kernel yet --> throws an error on feature lookup
+  testIncompatibleUnsupportedTableFeature(
+    "defaultColumns inactive",
+    tablePropertiesToEnable = Map("delta.feature.defaultColumns" -> "supported"),
+    expectedErrorMessage = "Unsupported Delta table feature")
+
+  // collations is not added to Kernel yet --> throws an error on feature lookup
+  testIncompatibleUnsupportedTableFeature(
+    "collations inactive",
+    tablePropertiesToEnable = Map("delta.feature.collations" -> "supported"),
+    expectedErrorMessage = "Unsupported Delta table feature")
+
+  /* ----- Legacy incompatible features allowed if they are inactive  ----- */
+
+  test("legacy table features allowed with icebergWriterCompatV1 if inactive") {
+    val tblProperties =
+      Seq("invariants", "changeDataFeed", "checkConstraints", "identityColumns", "generatedColumns")
+        .map(tableFeature => s"delta.feature.$tableFeature" -> "supported")
+        .toMap
+
+    // New table with these features + icebergWriterCompatV1
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(
+        engine,
+        tablePath,
+        cmTestSchema(),
+        tableProperties = tblProperties ++ tblPropertiesIcebergWriterCompatV1Enabled)
+      verifyIcebergWriterCompatV1Enabled(tablePath, engine)
+      // Check all the features are supported
+      val protocol = getProtocol(engine, tablePath)
+      assert(protocol.supportsFeature(TableFeatures.GENERATED_COLUMNS_W_FEATURE))
+      assert(protocol.supportsFeature(TableFeatures.IDENTITY_COLUMNS_W_FEATURE))
+      assert(protocol.supportsFeature(TableFeatures.CONSTRAINTS_W_FEATURE))
+      assert(protocol.supportsFeature(TableFeatures.CHANGE_DATA_FEED_W_FEATURE))
+      assert(protocol.supportsFeature(TableFeatures.INVARIANTS_W_FEATURE))
+    }
+
+    // Existing table with icebergWriterCompatV1 - enable these features
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(
+        engine,
+        tablePath,
+        cmTestSchema(),
+        tableProperties = tblPropertiesIcebergWriterCompatV1Enabled)
+      verifyIcebergWriterCompatV1Enabled(tablePath, engine)
+
+      updateTableMetadata(
+        engine,
+        tablePath,
+        tableProperties = tblProperties)
+      // Check all the features are supported
+      val protocol = getProtocol(engine, tablePath)
+      assert(protocol.supportsFeature(TableFeatures.GENERATED_COLUMNS_W_FEATURE))
+      assert(protocol.supportsFeature(TableFeatures.IDENTITY_COLUMNS_W_FEATURE))
+      assert(protocol.supportsFeature(TableFeatures.CONSTRAINTS_W_FEATURE))
+      assert(protocol.supportsFeature(TableFeatures.CHANGE_DATA_FEED_W_FEATURE))
+      assert(protocol.supportsFeature(TableFeatures.INVARIANTS_W_FEATURE))
+    }
+  }
+
+  /* ----- Compatible features allowed when active  ----- */
+
+  test("All expected compatible features can be active with icebergWriterCompatV1") {
 
     val tblProperties = Map(
       TableConfig.APPEND_ONLY_ENABLED.getKey -> "true", // appendOnly
@@ -460,7 +540,19 @@ class IcebergWriterCompatV1Suite extends DeltaTableWriteSuiteBase with ColumnMap
   }
 
   /* -------------------- Enforcements blocked by icebergCompatV2 -------------------- */
-  // We test the typeWidening and deletionVector checks above as part of blocked table feature tests
+  // We test the deletionVector checks above as part of blocked table feature tests
+
+  // We don't support typeWidening yet in Kernel or for icebergCompatV2; when we add support update
+  // these tests (only certain transforms allowed) and add to the above test for compatible table
+  // features
+
+  testIncompatibleUnsupportedTableFeature(
+    "typeWidening",
+    tablePropertiesToEnable = Map("delta.enableTypeWidening" -> "true"))
+
+  testIncompatibleUnsupportedTableFeature(
+    "typeWidening inactive",
+    tablePropertiesToEnable = Map("delta.feature.typeWidening" -> "supported"))
 
   // We cannot test enabling icebergCompatV1 since it is not a table feature in Kernel; This is
   // tested in the unit tests in IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
