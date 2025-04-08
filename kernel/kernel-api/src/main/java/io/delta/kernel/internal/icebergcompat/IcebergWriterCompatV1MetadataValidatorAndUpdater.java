@@ -75,10 +75,14 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
    * <ul>
    *   <li>No change in enablement (true to true or false to false)
    *   <li>Enabling but only on a new table (false to true)
-   *   <li>Disabling (true to false)
    * </ul>
    *
-   * If enabling (false to true) on an existing table we throw an {@link KernelException}.
+   * The changes that we do not support and for which we throw an {@link KernelException} are
+   *
+   * <ul>
+   *   <li>Disabling on an existing table (true to false)
+   *   <li>Enabling on an existing table (false to true)
+   * </ul>
    */
   public static void validateIcebergWriterCompatV1Change(
       Map<String, String> oldConfig, Map<String, String> newConfig, boolean isNewTable) {
@@ -87,6 +91,10 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
       boolean isEnabled = TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.fromMetadata(newConfig);
       if (!wasEnabled && isEnabled) {
         throw DeltaErrors.enablingIcebergWriterCompatV1OnExistingTable(
+            TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey());
+      }
+      if (wasEnabled && !isEnabled) {
+        throw DeltaErrors.disablingIcebergWriterCompatV1OnExistingTable(
             TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey());
       }
     }

@@ -320,6 +320,11 @@ public final class DeltaErrors {
                 + "'col-[fieldId]', but this is not true for the following fields %s",
             invalidFields));
   }
+
+  public static KernelException disablingIcebergWriterCompatV1OnExistingTable(String key) {
+    return new KernelException(
+        String.format("Disabling %s on an existing table is not allowed.", key));
+  }
   // End: icebergCompat exceptions
 
   public static KernelException partitionColumnMissingInData(
