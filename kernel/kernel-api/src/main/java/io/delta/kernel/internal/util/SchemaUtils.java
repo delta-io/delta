@@ -547,7 +547,7 @@ public class SchemaUtils {
   }
 
   /** column name by concatenating the column path elements (think of nested) with dots */
-  private static String concatWithDot(List<String> columnPath) {
+  public static String concatWithDot(List<String> columnPath) {
     return columnPath.stream().map(SchemaUtils::escapeDots).collect(Collectors.joining("."));
   }
 

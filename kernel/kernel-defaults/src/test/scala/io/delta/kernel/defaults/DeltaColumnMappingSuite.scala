@@ -211,7 +211,7 @@ class DeltaColumnMappingSuite extends DeltaTableWriteSuiteBase with ColumnMappin
         verifyCMTestSchemaHasValidColumnMappingInfo(
           getMetadata(engine, tablePath),
           isNewTable = true,
-          enableIcebergComaptV2 = withIcebergCompatV2)
+          enableIcebergCompatV2 = withIcebergCompatV2)
       }
     }
   }

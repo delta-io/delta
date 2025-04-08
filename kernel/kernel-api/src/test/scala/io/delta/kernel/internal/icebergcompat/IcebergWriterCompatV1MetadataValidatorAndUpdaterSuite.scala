@@ -23,6 +23,7 @@ import io.delta.kernel.internal.actions.{Metadata, Protocol}
 import io.delta.kernel.internal.icebergcompat.IcebergWriterCompatV1MetadataValidatorAndUpdater.validateAndUpdateIcebergWriterCompatV1Metadata
 import io.delta.kernel.internal.tablefeatures.TableFeature
 import io.delta.kernel.internal.tablefeatures.TableFeatures.{COLUMN_MAPPING_RW_FEATURE, ICEBERG_COMPAT_V2_W_FEATURE, ICEBERG_WRITER_COMPAT_V1}
+import io.delta.kernel.internal.util.ColumnMapping
 import io.delta.kernel.types.{ByteType, DataType, FieldMetadata, IntegerType, ShortType, StructType}
 
 class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
@@ -89,7 +90,7 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
     }
   }
 
-  /* --- CM_ID_MODE_ENABLED tests --- */
+  /* --- CM_ID_MODE_ENABLED and PHYSICAL_NAMES_MATCH_FIELD_IDS_CHECK tests --- */
 
   Seq(true, false).foreach { isNewTable =>
     Seq(true, false).foreach { icebergCompatV2Enabled =>
@@ -112,6 +113,12 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
             validateAndUpdateIcebergWriterCompatV1Metadata(isNewTable, metadata, protocol)
           assert(updatedMetadata.isPresent)
           assert(updatedMetadata.get().getConfiguration.get("delta.columnMapping.mode") == "id")
+          // We correctly populate the column mapping metadata
+          verifyCMTestSchemaHasValidColumnMappingInfo(
+            updatedMetadata.get(),
+            isNewTable,
+            enableIcebergCompatV2 = true,
+            enableIcebergWriterCompatV1 = true)
         } else {
           val e = intercept[KernelException] {
             validateAndUpdateIcebergWriterCompatV1Metadata(isNewTable, metadata, protocol)
@@ -141,6 +148,51 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
           s"The value '$cmMode' for the property 'delta.columnMapping.mode' is" +
             " not compatible with icebergWriterCompatV1 requirements"))
       }
+    }
+  }
+
+  Seq(true, false).foreach { isNewTable =>
+    test(s"cannot set physicalName to anything other than col-{fieldId}, isNewTable=$isNewTable") {
+      val schema = new StructType()
+        .add(
+          "c1",
+          IntegerType.INTEGER,
+          FieldMetadata.builder()
+            .putLong(ColumnMapping.COLUMN_MAPPING_ID_KEY, 1)
+            .putString(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, "c1")
+            .build())
+
+      val metadata = getCompatEnabledMetadata(schema)
+      val protocol = getCompatEnabledProtocol()
+
+      val e = intercept[KernelException] {
+        validateAndUpdateIcebergWriterCompatV1Metadata(isNewTable, metadata, protocol)
+      }
+      assert(e.getMessage.contains(
+        "IcebergWriterCompatV1 requires column mapping field physical names be equal to "
+          + "'col-[fieldId]', but this is not true for the following fields"))
+    }
+  }
+
+  Seq(true, false).foreach { isNewTable =>
+    test(s"can provide correct physicalName=col-{fieldId}, isNewTable=$isNewTable") {
+      val schema = new StructType()
+        .add(
+          "c1",
+          IntegerType.INTEGER,
+          FieldMetadata.builder()
+            .putLong(ColumnMapping.COLUMN_MAPPING_ID_KEY, 1)
+            .putString(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, "col-1")
+            .build())
+
+      val metadata = getCompatEnabledMetadata(schema)
+        .withMergedConfiguration(Map(ColumnMapping.COLUMN_MAPPING_MAX_COLUMN_ID_KEY -> "1").asJava)
+      val protocol = getCompatEnabledProtocol()
+
+      val updatedMetadata =
+        validateAndUpdateIcebergWriterCompatV1Metadata(isNewTable, metadata, protocol)
+      // No metadata update happens
+      assert(!updatedMetadata.isPresent)
     }
   }
 
