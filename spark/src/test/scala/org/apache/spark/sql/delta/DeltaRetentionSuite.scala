@@ -675,6 +675,10 @@ class DeltaRetentionSuite extends QueryTest
         val deltaFile = new File(FileNames.unsafeDeltaFile(log.logPath, version).toUri)
         val time = clock.getTimeMillis() + version * 1000
         deltaFile.setLastModified(time)
+        val checkpointFile = new File(FileNames.checkpointFileSingular(log.logPath, version).toUri)
+        if (checkpointFile.exists()) {
+          checkpointFile.setLastModified(time)
+        }
         val crcFile = new File(FileNames.checksumFile(log.logPath, version).toUri)
         crcFile.setLastModified(time)
       }
@@ -763,6 +767,10 @@ class DeltaRetentionSuite extends QueryTest
         val deltaFile = new File(FileNames.unsafeDeltaFile(log.logPath, version).toUri)
         val time = clock.getTimeMillis() + version * 1000
         deltaFile.setLastModified(time)
+        val checkpointFile = new File(FileNames.checkpointFileSingular(log.logPath, version).toUri)
+        if (checkpointFile.exists()) {
+          checkpointFile.setLastModified(time)
+        }
         val crcFile = new File(FileNames.checksumFile(log.logPath, version).toUri)
         crcFile.setLastModified(time)
       }
