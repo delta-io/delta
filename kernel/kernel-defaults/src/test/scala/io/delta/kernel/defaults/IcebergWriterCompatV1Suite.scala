@@ -127,8 +127,6 @@ class IcebergWriterCompatV1Suite extends DeltaTableWriteSuiteBase with ColumnMap
           engine,
           tablePath,
           tableProperties = Map(TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey -> "false"))
-        assert(!TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.fromMetadata(
-          getMetadata(engine, tablePath)))
       }
       assert(e.getMessage.contains(
         "Disabling delta.enableIcebergWriterCompatV1 on an existing table is not allowed"))
@@ -161,6 +159,28 @@ class IcebergWriterCompatV1Suite extends DeltaTableWriteSuiteBase with ColumnMap
           testSchema,
           tableProperties = tblPropertiesIcebergWriterCompatV1Enabled ++
             Map(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "false"))
+      }
+      assert(e.getMessage.contains("'false' for the property 'delta.enableIcebergCompatV2' is " +
+        "not compatible with icebergWriterCompatV1"))
+    }
+  }
+
+  test("Cannot disable icebergCompatV2 on an existing table") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // Create an empty table with icebergWriterCompatV1 enabled
+      createEmptyTable(
+        engine,
+        tablePath,
+        cmTestSchema(),
+        tableProperties = tblPropertiesIcebergWriterCompatV1Enabled)
+      verifyIcebergWriterCompatV1Enabled(tablePath, engine)
+
+      val e = intercept[KernelException] {
+        // Disable icebergCompatV2
+        updateTableMetadata(
+          engine,
+          tablePath,
+          tableProperties = Map(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "false"))
       }
       assert(e.getMessage.contains("'false' for the property 'delta.enableIcebergCompatV2' is " +
         "not compatible with icebergWriterCompatV1"))
