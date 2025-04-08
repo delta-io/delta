@@ -55,7 +55,7 @@ public class IcebergUniversalFormatMetadataValidatorAndUpdater {
     }
     Set<String> targetFormats =
         TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.fromMetadata(newMetadata);
-    if (!targetFormats.contains(TableConfig.UNIVERSAL_FORMAT_ICEBERG)) {
+    if (!targetFormats.contains(TableConfig.UniversalFormats.FORMAT_ICEBERG)) {
       return Optional.empty();
     }
 
@@ -69,7 +69,7 @@ public class IcebergUniversalFormatMetadataValidatorAndUpdater {
       // The user is trying to turn on the new iceberg universal format without enabling iceberg v2.
       throw new InvalidConfigurationValueException(
           TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey(),
-          TableConfig.UNIVERSAL_FORMAT_ICEBERG,
+          TableConfig.UniversalFormats.FORMAT_ICEBERG,
           String.format(
               "%s must be set to \"true\" to enable iceberg uniform format.",
               TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey()));
@@ -79,7 +79,7 @@ public class IcebergUniversalFormatMetadataValidatorAndUpdater {
     // formats.
     String updatedFormats =
         targetFormats.stream()
-            .filter(s -> !TableConfig.UNIVERSAL_FORMAT_ICEBERG.equals(s))
+            .filter(s -> !TableConfig.UniversalFormats.FORMAT_ICEBERG.equals(s))
             .collect(Collectors.joining(","));
 
     if (updatedFormats.isEmpty()) {

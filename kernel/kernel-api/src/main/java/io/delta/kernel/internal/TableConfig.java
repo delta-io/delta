@@ -272,22 +272,25 @@ public class TableConfig<T> {
           "needs to be a boolean.",
           true);
 
-  /**
-   * The value that enables uniform exports to Iceberg for {@linkplain
-   * #UNIVERSAL_FORMAT_ENABLED_FORMATS}.
-   *
-   * <p>{@link #ICEBERG_COMPAT_V2_ENABLED but also be set to true} to fully enable this feature.
-   */
-  public static final String UNIVERSAL_FORMAT_ICEBERG = "iceberg";
+  public static class UniversalFormats {
 
-  /**
-   * The value to use to enable uniform exports to Iceberg for {@linkplain
-   * #UNIVERSAL_FORMAT_ENABLED_FORMATS}.
-   */
-  public static final String UNIVERSAL_FORMAT_HUDI = "hudi";
+    /**
+     * The value that enables uniform exports to Iceberg for {@linkplain
+     * TableConfig#UNIVERSAL_FORMAT_ENABLED_FORMATS}.
+     *
+     * <p>{@link #ICEBERG_COMPAT_V2_ENABLED but also be set to true} to fully enable this feature.
+     */
+    public static final String FORMAT_ICEBERG = "iceberg";
+    /**
+     * The value to use to enable uniform exports to Iceberg for {@linkplain
+     * TableConfig#UNIVERSAL_FORMAT_ENABLED_FORMATS}.
+     */
+    public static final String FORMAT_HUDI = "hudi";
+  }
 
   private static final Collection<String> ALLOWED_UNIFORM_FORMATS =
-      Collections.unmodifiableList(Arrays.asList(UNIVERSAL_FORMAT_HUDI, UNIVERSAL_FORMAT_ICEBERG));
+      Collections.unmodifiableList(
+          Arrays.asList(UniversalFormats.FORMAT_HUDI, UniversalFormats.FORMAT_ICEBERG));
 
   /** Table config that allows for translation of Delta metadata to other table formats metadata. */
   public static final TableConfig<Set<String>> UNIVERSAL_FORMAT_ENABLED_FORMATS =
@@ -295,7 +298,7 @@ public class TableConfig<T> {
           "delta.universalFormat.enabledFormats",
           null,
           TableConfig::parseStringSet,
-          value -> value.stream().allMatch(ALLOWED_UNIFORM_FORMATS::contains),
+          value -> ALLOWED_UNIFORM_FORMATS.containsAll(value),
           String.format("each value must in the the set: %s", ALLOWED_UNIFORM_FORMATS),
           true);
 
