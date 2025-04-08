@@ -478,10 +478,12 @@ public class ColumnMapping {
     }
     if (!hasPhysicalName(field)) {
       // re-use old display names as physical names when a table is updated
-      String physicalName = isNewTable ? "col-" + UUID.randomUUID() : field.getName();
+      String physicalName;
       if (useColumnIdForPhysicalName) {
         long columnId = getColumnId(field);
         physicalName = String.format("col-%s", columnId);
+      } else {
+        physicalName = isNewTable ? "col-" + UUID.randomUUID() : field.getName();
       }
 
       field =
