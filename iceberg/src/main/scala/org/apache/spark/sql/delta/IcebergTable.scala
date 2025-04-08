@@ -36,7 +36,6 @@ import org.apache.spark.sql.types.StructType
 
 /** Subset of [[Table]] functionality required for conversion to Delta. */
 trait IcebergTableLike {
-  def uuid(): java.util.UUID
   def location(): String
   def schema(): Schema
   def properties(): java.util.Map[String, String]
@@ -52,7 +51,6 @@ trait IcebergTableLike {
  * underlying [[Table]].
  */
 case class DelegatingIcebergTable(table: Table) extends IcebergTableLike {
-  override def uuid(): java.util.UUID = table.uuid()
   override def location(): String = table.location()
   override def schema(): Schema = table.schema()
   override def properties(): java.util.Map[String, String] = table.properties()
