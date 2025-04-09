@@ -37,6 +37,7 @@ import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.clustering.ClusteringUtils;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.icebergcompat.IcebergCompatV2MetadataValidatorAndUpdater;
+import io.delta.kernel.internal.icebergcompat.IcebergUniversalFormatMetadataValidatorAndUpdater;
 import io.delta.kernel.internal.icebergcompat.IcebergWriterCompatV1MetadataValidatorAndUpdater;
 import io.delta.kernel.internal.metrics.SnapshotMetrics;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
@@ -357,6 +358,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         oldMetadata.getConfiguration(), newMetadata.getConfiguration(), isNewTable);
     IcebergWriterCompatV1MetadataValidatorAndUpdater.validateIcebergWriterCompatV1Change(
         oldMetadata.getConfiguration(), newMetadata.getConfiguration(), isNewTable);
+    IcebergUniversalFormatMetadataValidatorAndUpdater.validate(newMetadata);
 
     // Validate the conditions for schema evolution and the updated schema if applicable
     if (schema.isPresent() && !isNewTable) {
