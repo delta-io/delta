@@ -151,7 +151,6 @@ case class DeltaParquetFileFormat(
         ff.columnMappingMode == columnMappingMode &&
         ff.referenceSchema == referenceSchema &&
         ff.nullableRowTrackingConstantFields == nullableRowTrackingConstantFields &&
-        ff.nullableRowTrackingGeneratedFields == nullableRowTrackingGeneratedFields &&
         ff.optimizationsEnabled == optimizationsEnabled
       case _ => false
     }
