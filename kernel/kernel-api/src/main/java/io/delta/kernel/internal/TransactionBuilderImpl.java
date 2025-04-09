@@ -221,9 +221,6 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       newMetadata = icebergCompatV2Metadata;
     }
 
-    IcebergUniversalFormatMetadataValidatorAndUpdater.validate(
-        newMetadata.orElse(snapshotMetadata));
-
     /* ----- 4: Update the METADATA with column mapping info if applicable ----- */
     // We update the column mapping info here after all configuration changes are finished
     Optional<Metadata> columnMappingMetadata =
@@ -322,6 +319,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         oldMetadata.getConfiguration(), newMetadata.getConfiguration(), isNewTable);
     IcebergWriterCompatV1MetadataValidatorAndUpdater.validateIcebergWriterCompatV1Change(
         oldMetadata.getConfiguration(), newMetadata.getConfiguration(), isNewTable);
+    IcebergUniversalFormatMetadataValidatorAndUpdater.validate(newMetadata);
 
     // TODO In the future validate any schema change
   }

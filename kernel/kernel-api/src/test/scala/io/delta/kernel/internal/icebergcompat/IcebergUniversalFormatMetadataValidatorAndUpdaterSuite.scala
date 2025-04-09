@@ -15,7 +15,7 @@
  */
 package io.delta.kernel.internal.icebergcompat
 
-import io.delta.kernel.exceptions.KernelException
+import io.delta.kernel.exceptions.{InvalidConfigurationValueException, KernelException}
 import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.actions.Metadata
 import io.delta.kernel.internal.util.ColumnMappingSuiteBase
@@ -57,10 +57,13 @@ class IcebergUniversalFormatMetadataValidatorAndUpdaterSuite extends AnyFunSuite
         + s"icebergCompatV2 isn't $disableIcebergCompatV2") {
       val metadata = createMetadata(Map(
         TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey -> "iceberg",
-        "unrelated_key" -> "unrelated_value"))
-      intercept[KernelException] {
+        "unrelated_key" -> "unrelated_value") ++ disableIcebergCompatV2)
+      val exc = intercept[InvalidConfigurationValueException] {
         IcebergUniversalFormatMetadataValidatorAndUpdater.validate(metadata)
       }
+      assert(exc.getMessage == "Invalid value for table property 'delta.universalFormat.enabledFormats': 'iceberg'." +
+        " 'delta.enableIcebergCompatV2' must be set to \"true\" to enable iceberg uniform format.")
+
     }
   }
 
