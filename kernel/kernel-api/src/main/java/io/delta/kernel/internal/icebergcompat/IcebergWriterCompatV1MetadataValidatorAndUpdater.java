@@ -16,6 +16,7 @@
 package io.delta.kernel.internal.icebergcompat;
 
 import static io.delta.kernel.internal.tablefeatures.TableFeatures.*;
+import static io.delta.kernel.internal.util.SchemaUtils.concatWithDot;
 import static java.util.stream.Collectors.toList;
 import static java.util.stream.Collectors.toSet;
 
@@ -125,7 +126,12 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
       new IcebergCompatRequiredTablePropertyEnforcer<>(
           TableConfig.COLUMN_MAPPING_MODE,
           (value) -> ColumnMapping.ColumnMappingMode.ID == value,
-          ColumnMapping.ColumnMappingMode.ID.value);
+          ColumnMapping.ColumnMappingMode.ID.value,
+          // We need to update the CM info in the schema here because we check that the physical
+          // name is correctly set as part of icebergWriterCompatV1 checks
+          (inputContext) ->
+              ColumnMapping.updateColumnMappingMetadataIfNeeded(
+                  inputContext.newMetadata, inputContext.isCreatingNewTable));
 
   private static final IcebergCompatRequiredTablePropertyEnforcer ICEBERG_COMPAT_V2_ENABLED =
       new IcebergCompatRequiredTablePropertyEnforcer<>(
@@ -207,6 +213,38 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
       };
 
   /**
+   * Checks that in the schema column mapping is set up such that the physicalName is equal to
+   * "col-[fieldId]". This check assumes column mapping is enabled (and so should be performed after
+   * that check).
+   */
+  private static final IcebergCompatCheck PHYSICAL_NAMES_MATCH_FIELD_IDS_CHECK =
+      (inputContext) -> {
+        List<Tuple2<List<String>, StructField>> invalidFields =
+            SchemaUtils.filterRecursively(
+                inputContext.newMetadata.getSchema(),
+                /* recurseIntoMapAndArrayTypes= */ true,
+                /* stopOnFirstMatch = */ false,
+                field -> {
+                  String physicalName = ColumnMapping.getPhysicalName(field);
+                  long columnId = ColumnMapping.getColumnId(field);
+                  return !physicalName.equals(String.format("col-%s", columnId));
+                });
+        if (!invalidFields.isEmpty()) {
+          List<String> invalidFieldsFormatted =
+              invalidFields.stream()
+                  .map(
+                      pair ->
+                          String.format(
+                              "%s(physicalName='%s', columnId=%s)",
+                              concatWithDot(pair._1),
+                              ColumnMapping.getPhysicalName(pair._2),
+                              ColumnMapping.getColumnId(pair._2)))
+                  .collect(toList());
+          throw DeltaErrors.icebergWriterCompatInvalidPhysicalName(invalidFieldsFormatted);
+        }
+      };
+
+  /**
    * Checks that the table feature `invariants` is not active in the table, meaning there are no
    * invariants stored in the table schema.
    */
@@ -245,7 +283,11 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
 
   @Override
   List<IcebergCompatCheck> icebergCompatChecks() {
-    return Stream.of(UNSUPPORTED_FEATURES_CHECK, UNSUPPORTED_TYPES_CHECK, INVARIANTS_INACTIVE_CHECK)
+    return Stream.of(
+            UNSUPPORTED_FEATURES_CHECK,
+            UNSUPPORTED_TYPES_CHECK,
+            PHYSICAL_NAMES_MATCH_FIELD_IDS_CHECK,
+            INVARIANTS_INACTIVE_CHECK)
         .collect(toList());
   }
 }

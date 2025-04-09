@@ -219,6 +219,12 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     // Ex: We enable column mapping mode in the configuration such that our properties now include
     // Map(delta.enableIcebergCompatV2 -> true, delta.columnMapping.mode -> name)
 
+    // Validate this is a valid config change earlier for a clearer error message
+    newMetadata.ifPresent(
+        metadata ->
+            IcebergWriterCompatV1MetadataValidatorAndUpdater.validateIcebergWriterCompatV1Change(
+                snapshotMetadata.getConfiguration(), metadata.getConfiguration(), isNewTable));
+
     // We must do our icebergWriterCompatV1 checks/updates FIRST since it has stricter column
     // mapping requirements (id mode) than icebergCompatV2. It also may enable icebergCompatV2.
     Optional<Metadata> icebergWriterCompatV1 =

@@ -304,6 +304,27 @@ public final class DeltaErrors {
     throw new KernelException(
         format("%s: requires the feature '%s' to be enabled.", compatVersion, feature));
   }
+
+  public static KernelException enablingIcebergWriterCompatV1OnExistingTable(String key) {
+    return new KernelException(
+        String.format(
+            "Cannot enable %s on an existing table. "
+                + "Enablement is only supported upon table creation.",
+            key));
+  }
+
+  public static KernelException icebergWriterCompatInvalidPhysicalName(List<String> invalidFields) {
+    return new KernelException(
+        String.format(
+            "IcebergWriterCompatV1 requires column mapping field physical names be equal to "
+                + "'col-[fieldId]', but this is not true for the following fields %s",
+            invalidFields));
+  }
+
+  public static KernelException disablingIcebergWriterCompatV1OnExistingTable(String key) {
+    return new KernelException(
+        String.format("Disabling %s on an existing table is not allowed.", key));
+  }
   // End: icebergCompat exceptions
 
   public static KernelException partitionColumnMissingInData(
@@ -374,19 +395,6 @@ public final class DeltaErrors {
     return new KernelException(
         "Feature 'rowTracking' is supported and depends on feature 'domainMetadata',"
             + " but 'domainMetadata' is unsupported");
-  }
-
-  public static KernelException enablingIcebergWriterCompatV1OnExistingTable(String key) {
-    return new KernelException(
-        String.format(
-            "Cannot enable %s on an existing table. "
-                + "Enablement is only supported upon table creation.",
-            key));
-  }
-
-  public static KernelException disablingIcebergWriterCompatV1OnExistingTable(String key) {
-    return new KernelException(
-        String.format("Disabling %s on an existing table is not allowed.", key));
   }
 
   /* ------------------------ HELPER METHODS ----------------------------- */
