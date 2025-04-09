@@ -174,11 +174,11 @@ There are several types of commits:
 
 4. **Ratified commit**: A proposed commit that a catalog has determined has won the commit at the
    desired version of the table.
-    - It may or may not yet be "published".
-    - It may or may not even be _tracked_ by the catalog at all - the catalog may have just
-      atomically published it to the filesystem directly, relying on PUT-if-absent primitives to
-      facilitate the ratification and publication all in one step.
     - The catalog must track ratified commits until they are published to the `_delta_log` directory.
+    - A ratified commit may or may not yet be published.
+    - A ratified commit may or may not even be _tracked_ by the catalog at all - the catalog may
+      have just atomically published it to the filesystem directly, relying on PUT-if-absent
+      primitives to facilitate the ratification and publication all in one step.
 
 5. **Published commit** <a name="published-commit"></a>: A ratified commit that has been copied into
    the `_delta_log` as a normal Delta file, i.e. `_delta_log/<v>.json`.
@@ -188,6 +188,15 @@ There are several types of commits:
       to return information about published commits, but Delta clients can also use filesystem
       listing operations to directly discover them.
     - Published commits do not need to be tracked by the catalog.
+
+## Terminology: Delta Client
+
+This is the component that implements support for reading and writing Delta tables, and implements
+the logic required by the `catalogOwned` table feature. Among other things, it
+- triggers the filesystem listing, if needed, to discover published commits
+- generates the commit content (the set of [actions](#actions))
+- works together with the query engine to trigger the commit process and invoke the client-side
+  catalog component with the commit content
 
 ## Terminology: Catalogs
 
@@ -304,21 +313,20 @@ catalog.
 This component then has several options for proposing, ratifying, and publishing the commit,
 detailed below.
 
-- Write the actions (likely client-side) to an [staged commit file](#staged-commit) in the
+- Option 1: Write the actions (likely client-side) to an [staged commit file](#staged-commit) in the
   `_delta_log/_staged_commits` directory and then ratify the staged commit by atomically recording
   (likely server-side) (in persistent storage of some kind) that the file corresponds to version
   `v`.
-- Treat this as an [inline commit](#inline-commit) (i.e. likely that the client-side component sends
-  the contents to the server-side component) and atomically record the content of the commit as
-  version `v` of the table.
-- Propose, ratify, and publish all-in-one by atomically writing a [published commit file](#published-commit)
+- Option 2: Treat this as an [inline commit](#inline-commit) (i.e. likely that the client-side
+  component sends the contents to the server-side component) and atomically record the content of
+  the commit as version `v` of the table.
+- Option 3: Propose, ratify, and publish all-in-one by atomically writing a [published commit file](#published-commit)
   in the `_delta_log` directory. Note that this commit will be considered to have succeeded as soon
   as the file becomes visible in the filesystem, regardless of when or whether the catalog is made
   aware of the successful publish. The catalog does not need to track these files.
 
-Note that when a catalog receives a request to ratify version `v`, it must first verify that the
-previous version `v-1` already exists (ratified or published), and that version `v` does not yet
-exist.
+A catalog must not ratify version `v` until it has ratified version `v - 1`, and it must ratify
+version `v` at most once.
 
 The catalog must track both flavors of ratified commits (staged or inline) and make them available
 to readers until they are [published](#publishing-commits).
@@ -374,8 +382,8 @@ operations like [Checkpoints](#checkpoints-1), [Log Compaction Files](#log-compa
 [Metadata Cleanup](#metadata-cleanup), and VACUUM. These rules can be unique to each catalog and may
 evolve over time.
 
-In particular, maintenance operations like Checkpoints and Log Compaction Files can only be
-performed on published versions.
+In particular, maintenance operations like Checkpoints, Log Compaction Files, and Metadata Cleanup
+can only be performed on published versions, unless the catalog specifies otherwise.
 
 To highlight: Because the catalog controls the lifetime and potentially the storage of the table,
 and may also provide automatic table maintenance, Delta clients MUST NOT attempt to VACUUM the
@@ -426,7 +434,7 @@ When supported and active:
 
 When supported and active:
 
-- Readers must access the table using catalog calls, which happens before the table's protocol
+- Readers must discover the table using catalog calls, which happens before the table's protocol
   is known.
 - Readers must contact the catalog for information about unpublished ratified commits.
 
@@ -455,8 +463,8 @@ interface CatalogOwnedTable {
      * endVersion] for this table.
      * 
      * Some of these ratified commits may already have been published. Some of them may be staged,
-     * in which case the staged commit file path is returned, while others may be inline, in which
-     * case the inline commit content is returned.
+     * in which case the staged commit file path is returned; others may be inline, in which case
+     * the inline commit content is returned.
      * 
      * The returned commits are sorted in ascending version number. The returned commits may not be
      * contiguous.
