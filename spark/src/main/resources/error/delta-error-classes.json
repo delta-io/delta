@@ -984,7 +984,7 @@
     "message" : [
       "Unable to operate on this table because the following table features are enabled in metadata but not listed in protocol: <features>."
     ],
-    "sqlState" : "0AKDE"
+    "sqlState" : "KD004"
   },
   "DELTA_FEATURES_REQUIRE_MANUAL_ENABLEMENT" : {
     "message" : [
@@ -996,7 +996,7 @@
       "",
       "Current supported feature(s): <supportedFeatures>."
     ],
-    "sqlState" : "0AKDE"
+    "sqlState" : "42000"
   },
   "DELTA_FEATURE_CAN_ONLY_DROP_CHECKPOINT_PROTECTION_WITH_HISTORY_TRUNCATION" : {
     "message" : [
@@ -1033,20 +1033,20 @@
       "Please try the operation again.",
       "<concurrentCommit>"
     ],
-    "sqlState" : "0AKDE"
+    "sqlState" : "40000"
   },
   "DELTA_FEATURE_DROP_DEPENDENT_FEATURE" : {
     "message" : [
       "Cannot drop table feature `<feature>` because some other features (<dependentFeatures>) in this table depends on `<feature>`.",
       "Consider dropping them first before dropping this feature."
     ],
-    "sqlState" : "0AKDE"
+    "sqlState" : "55000"
   },
   "DELTA_FEATURE_DROP_FEATURE_NOT_PRESENT" : {
     "message" : [
       "Cannot drop <feature> from this table because it is not currently present in the table's protocol."
     ],
-    "sqlState" : "0AKDE"
+    "sqlState" : "55000"
   },
   "DELTA_FEATURE_DROP_HISTORICAL_VERSIONS_EXIST" : {
     "message" : [
@@ -1058,26 +1058,26 @@
       "and then run:",
       "    ALTER TABLE table_name DROP FEATURE feature_name TRUNCATE HISTORY"
     ],
-    "sqlState" : "0AKDE"
+    "sqlState" : "22KD0"
   },
   "DELTA_FEATURE_DROP_HISTORY_TRUNCATION_NOT_ALLOWED" : {
     "message" : [
       "The particular feature does not require history truncation."
     ],
-    "sqlState" : "0AKDE"
+    "sqlState" : "42000"
   },
   "DELTA_FEATURE_DROP_NONREMOVABLE_FEATURE" : {
     "message" : [
       "Cannot drop <feature> because dropping this feature is not supported."
     ],
-    "sqlState" : "0AKDE"
+    "sqlState" : "0AKDC"
   },
   "DELTA_FEATURE_DROP_UNSUPPORTED_CLIENT_FEATURE" : {
     "message" : [
       "Cannot drop <feature> because it is not supported by this Delta version.",
       "Consider using Delta with a higher version."
     ],
-    "sqlState" : "0AKDE"
+    "sqlState" : "0AKDC"
   },
   "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD" : {
     "message" : [
@@ -1095,19 +1095,19 @@
       "and then run:",
       "    ALTER TABLE table_name DROP FEATURE feature_name TRUNCATE HISTORY"
     ],
-    "sqlState" : "0AKDE"
+    "sqlState" : "22KD0"
   },
   "DELTA_FEATURE_REQUIRES_HIGHER_READER_VERSION" : {
     "message" : [
       "Unable to enable table feature <feature> because it requires a higher reader protocol version (current <current>). Consider upgrading the table's reader protocol version to <required>, or to a version which supports reader table features. Refer to <docLink> for more information on table protocol versions."
     ],
-    "sqlState" : "0AKDE"
+    "sqlState" : "55000"
   },
   "DELTA_FEATURE_REQUIRES_HIGHER_WRITER_VERSION" : {
     "message" : [
       "Unable to enable table feature <feature> because it requires a higher writer protocol version (current <current>). Consider upgrading the table's writer protocol version to <required>, or to a version which supports writer table features. Refer to <docLink> for more information on table protocol versions."
     ],
-    "sqlState" : "0AKDE"
+    "sqlState" : "55000"
   },
   "DELTA_FILE_ALREADY_EXISTS" : {
     "message" : [
