@@ -923,7 +923,7 @@ trait DeltaErrorsSuiteBase
           override val name: String = "DummyPostCommitHook"
           override def run(
             spark: SparkSession, txn: DeltaTransaction, committedVersion: Long,
-            postCommitSnapshot: Snapshot, committedActions: Seq[Action]): Unit = {}
+            postCommitSnapshot: Snapshot, committedActions: Iterator[Action]): Unit = {}
         }, 0, "msg", null)
       }
       checkErrorMessage(e, Some("DELTA_POST_COMMIT_HOOK_FAILED"), Some("2DKD0"),
@@ -936,7 +936,7 @@ trait DeltaErrorsSuiteBase
           override val name: String = "DummyPostCommitHook"
           override def run(
             spark: SparkSession, txn: DeltaTransaction, committedVersion: Long,
-            postCommitSnapshot: Snapshot, committedActions: Seq[Action]): Unit = {}
+            postCommitSnapshot: Snapshot, committedActions: Iterator[Action]): Unit = {}
         }, 0, null, null)
       }
       checkErrorMessage(e, Some("DELTA_POST_COMMIT_HOOK_FAILED"), Some("2DKD0"),
@@ -1600,7 +1600,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.tableFeatureDropHistoryTruncationNotAllowed()
       }
       checkErrorMessage(e, Some("DELTA_FEATURE_DROP_HISTORY_TRUNCATION_NOT_ALLOWED"),
-        Some("0AKDE"), Some("The particular feature does not require history truncation."))
+        Some("42000"), Some("The particular feature does not require history truncation."))
     }
     {
       val logRetention = DeltaConfigs.LOG_RETENTION
@@ -1624,7 +1624,7 @@ trait DeltaErrorsSuiteBase
           |Alternatively, please wait for the TRUNCATE HISTORY retention period to expire (24 hours)
           |and then run:
           |    ALTER TABLE table_name DROP FEATURE feature_name TRUNCATE HISTORY""".stripMargin
-      checkErrorMessage(e, Some("DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD"), Some("0AKDE"),
+      checkErrorMessage(e, Some("DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD"), Some("22KD0"),
         Some(expectedMessage))
     }
   }
@@ -2744,7 +2744,8 @@ trait DeltaErrorsSuiteBase
           sqlConfsUnblock = Seq(
             "spark.databricks.delta.streaming.allowSourceColumnRename",
             "spark.databricks.delta.streaming.allowSourceColumnTypeChange"),
-          checkpointHash = 15)
+          checkpointHash = 15,
+          prettyColumnChangeDetails = "some column details")
       }
       checkError(e,
         "DELTA_STREAMING_CANNOT_CONTINUE_PROCESSING_POST_SCHEMA_EVOLUTION",
@@ -2752,6 +2753,7 @@ trait DeltaErrorsSuiteBase
           "opType" -> "RENAME AND TYPE WIDENING",
           "previousSchemaChangeVersion" -> "0",
           "currentSchemaChangeVersion" -> "1",
+          "columnChangeDetails" -> "some column details",
           "unblockChangeOptions" ->
             s"""  .option("allowSourceColumnRename", "1")
                |  .option("allowSourceColumnTypeChange", "1")""".stripMargin,
@@ -2767,33 +2769,6 @@ trait DeltaErrorsSuiteBase
           "unblockAllConfs" ->
             s"""  SET spark.databricks.delta.streaming.allowSourceColumnRename = "always";
                |  SET spark.databricks.delta.streaming.allowSourceColumnTypeChange = "always";""".stripMargin
-        )
-      )
-    }
-    {
-      val e = intercept[DeltaRuntimeException] {
-        throw DeltaErrors.cannotContinueStreamingTypeWidening(
-          previousSchemaChangeVersion = 0,
-          currentSchemaChangeVersion = 1,
-          readerOptionsUnblock = Seq("allowSourceColumnTypeChange"),
-          sqlConfsUnblock = Seq("spark.databricks.delta.streaming.allowSourceColumnTypeChange"),
-          checkpointHash = 15,
-          wideningTypeChanges = Seq(TypeChange(None, IntegerType, LongType, Seq("a"))))
-      }
-      checkError(e,
-        "DELTA_STREAMING_CANNOT_CONTINUE_PROCESSING_TYPE_WIDENING",
-        parameters = Map(
-          "previousSchemaChangeVersion" -> "0",
-          "currentSchemaChangeVersion" -> "1",
-          "wideningTypeChanges" -> "  a: INT -> BIGINT",
-          "unblockChangeOptions" -> "  .option(\"allowSourceColumnTypeChange\", \"1\")",
-          "unblockStreamOptions" -> "  .option(\"allowSourceColumnTypeChange\", \"always\")",
-          "unblockChangeConfs" ->
-            "  SET spark.databricks.delta.streaming.allowSourceColumnTypeChange.ckpt_15 = 1;",
-          "unblockStreamConfs" ->
-            "  SET spark.databricks.delta.streaming.allowSourceColumnTypeChange.ckpt_15 = \"always\";",
-          "unblockAllConfs" ->
-            "  SET spark.databricks.delta.streaming.allowSourceColumnTypeChange = \"always\";"
         )
       )
     }
@@ -3246,19 +3221,6 @@ trait DeltaErrorsSuiteBase
         None,
         Some(s"prefixMsg - Found unsupported expression ${expr.sql} while parsing target column " +
             s"name parts.")
-      )
-    }
-    {
-      val e = intercept[DeltaAnalysisException] {
-        throw new DeltaAnalysisException(
-          errorClass = "_LEGACY_ERROR_TEMP_DELTA_0011",
-          messageParameters = Array.empty)
-      }
-      checkErrorMessage(
-        e,
-        Some("_LEGACY_ERROR_TEMP_DELTA_0011"),
-        None,
-        Some("Failed to resolve plan.")
       )
     }
     {

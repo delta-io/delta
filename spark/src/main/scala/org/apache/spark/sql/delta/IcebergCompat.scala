@@ -149,10 +149,10 @@ case class IcebergCompatBase(
               if (isCreatingOrReorgTable) {
                 tblFeatureUpdates += f
               } else {
-                throw DeltaErrors.icebergCompatMissingRequiredTableFeatureException(version, f)
+                handleMissingTableFeature(f)
               }
             case (true, false) => // txn is removing/un-supporting it!
-              throw DeltaErrors.icebergCompatDisablingRequiredTableFeatureException(version, f)
+              handleDisablingRequiredTableFeature(f)
           }
         }
 
@@ -163,9 +163,6 @@ case class IcebergCompatBase(
             val newestValueOkay = validator(newestValue)
             val newestValueExplicitlySet = newestMetadata.configuration.contains(deltaConfig.key)
 
-            val err = DeltaErrors.icebergCompatWrongRequiredTablePropertyException(
-              version, deltaConfig.key, newestValue.toString, autoSetValue)
-
             if (!newestValueOkay) {
               if (!newestValueExplicitlySet && isCreatingOrReorgTable) {
                 // This case covers both CREATE and REPLACE TABLE commands that
@@ -175,7 +172,8 @@ case class IcebergCompatBase(
               } else {
                 // In all other cases, if the property value is not compatible
                 // with the IcebergV1 requirements, we fail
-                throw err
+                handleMissingRequiredTableProperties(
+                  deltaConfig.key, newestValue.toString, autoSetValue)
               }
             }
         }
@@ -218,6 +216,17 @@ case class IcebergCompatBase(
         (protocolResult, metadataResult)
     }
   }
+
+  protected def handleMissingTableFeature(feature: TableFeature): Unit =
+    throw DeltaErrors.icebergCompatMissingRequiredTableFeatureException(version, feature)
+
+  protected def handleDisablingRequiredTableFeature(feature: TableFeature): Unit =
+    throw DeltaErrors.icebergCompatDisablingRequiredTableFeatureException(version, feature)
+
+  protected def handleMissingRequiredTableProperties(
+      confKey: String, actualVal: String, requiredVal: String): Unit =
+    throw DeltaErrors.icebergCompatWrongRequiredTablePropertyException(
+      version, confKey, actualVal, requiredVal)
 }
 
 /**
@@ -235,21 +244,18 @@ case class IcebergCompatVersionBase(knownVersions: Set[IcebergCompatBase]) {
       .map{ _.version }
 
   /**
-   * Get the DeltaConfig for the given IcebergCompat version. If version is not valid,
+   * Get the IcebergCompat by version. If version is not valid,
    * throw an exception.
-   * @return the DeltaConfig for the given version. E.g.,
-   *         [[DeltaConfigs.ICEBERG_COMPAT_V1_ENABLED]] for version 1.
+   * @return the IcebergCompatVx object
    */
-  def getConfigForVersion(version: Int): DeltaConfig[Option[Boolean]] = {
+  def getForVersion(version: Int): IcebergCompatBase =
     knownVersions
       .find(_.version == version)
-      .map(_.config)
       .getOrElse(
         throw DeltaErrors.icebergCompatVersionNotSupportedException(
           version, knownVersions.size
         )
     )
-  }
 
   /**
    * @return any enabled IcebergCompat in the conf
@@ -259,17 +265,22 @@ case class IcebergCompatVersionBase(knownVersions: Set[IcebergCompatBase]) {
       conf.getOrElse[String](compat.config.key, "false").toBoolean
     }
 
+  def anyEnabled(metadata: Metadata): Option[IcebergCompatBase] =
+    knownVersions.find { _.config.fromMetaData(metadata).getOrElse(false) }
+
   /**
    * @return true if any version of IcebergCompat is enabled
    */
   def isAnyEnabled(conf: Map[String, String]): Boolean = anyEnabled(conf).nonEmpty
 
-  /**
-   * @return true if any version of IcebergCompat is enabled
-   */
   def isAnyEnabled(metadata: Metadata): Boolean =
     knownVersions.exists { _.config.fromMetaData(metadata).getOrElse(false) }
 
+  /**
+   * @return true if a CompatVx greater or eq to the required version is enabled
+   */
+  def isGeqEnabled(metadata: Metadata, requiredVersion: Int): Boolean =
+    anyEnabled(metadata).exists(_.version >= requiredVersion)
   /**
    * @return true if any version of IcebergCompat is enabled, and is incompatible
    *         with the given table feature
@@ -282,8 +293,9 @@ case class IcebergCompatVersionBase(knownVersions: Set[IcebergCompatBase]) {
     }
 }
 
-object IcebergCompat
-  extends IcebergCompatVersionBase(Set(IcebergCompatV1, IcebergCompatV2)) with DeltaLogging
+object IcebergCompat extends IcebergCompatVersionBase(
+    Set(IcebergCompatV1, IcebergCompatV2)
+  ) with DeltaLogging
 
 
 

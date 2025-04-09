@@ -67,7 +67,7 @@ trait UpdateCatalogBase extends PostCommitHook with DeltaLogging {
       txn: DeltaTransaction,
       committedVersion: Long,
       postCommitSnapshot: Snapshot,
-      actions: Seq[Action]): Unit = {
+      actions: Iterator[Action]): Unit = {
     // There's a potential race condition here, where a newer commit has already triggered
     // this to run. That's fine.
     executeOnWrite(spark, postCommitSnapshot)

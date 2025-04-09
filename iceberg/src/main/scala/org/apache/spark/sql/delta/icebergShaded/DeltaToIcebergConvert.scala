@@ -16,16 +16,20 @@
 
 package org.apache.spark.sql.delta.icebergShaded
 
-import org.apache.spark.sql.delta.{DeltaConfig, DeltaConfigs, IcebergCompat}
+import org.apache.spark.sql.delta.{DeltaConfig, DeltaConfigs, IcebergCompat, Snapshot}
 import org.apache.spark.sql.delta.DeltaConfigs.{LOG_RETENTION, TOMBSTONE_RETENTION}
-import shadedForDelta.org.apache.iceberg.{TableProperties => IcebergTableProperties}
+import org.apache.spark.sql.delta.metering.DeltaLogging
+import shadedForDelta.org.apache.iceberg.{PartitionSpec, StructLike, TableProperties => IcebergTableProperties}
 
+import org.apache.spark.sql.types.DataType
 import org.apache.spark.unsafe.types.CalendarInterval
 
 /**
  * Utils for converting a Delta Table to Iceberg Table
  */
-object DeltaToIcebergConvert {
+object DeltaToIcebergConvert
+  extends DeltaLogging
+  {
 
   object TableProperties {
     /**
@@ -129,6 +133,35 @@ object DeltaToIcebergConvert {
           .map { IcebergTableProperties.MAX_SNAPSHOT_AGE_MS -> _.toString }
           .toMap
       }
+    }
+  }
+
+  object Partition {
+
+    private[delta] def convertPartitionValues(
+        snapshot: Snapshot,
+        partitionSpec: PartitionSpec,
+        partitionValues: Map[String, String],
+        logicalToPhysicalPartitionNames: Map[String, String]): StructLike = {
+      val schema = snapshot.schema
+      val ICEBERG_NULL_PARTITION_VALUE = "__HIVE_DEFAULT_PARTITION__"
+      val partitionPath = partitionSpec.fields()
+      val partitionVals = new Array[Any](partitionSpec.fields().size())
+      val nameToDataTypes: Map[String, DataType] =
+        schema.fields.map(f => f.name -> f.dataType).toMap
+      for (i <- partitionVals.indices) {
+        val logicalPartCol = partitionPath.get(i).name()
+        val physicalPartKey = logicalToPhysicalPartitionNames(logicalPartCol)
+        // ICEBERG_NULL_PARTITION_VALUE is referred in Iceberg lib to mark NULL partition value
+        val partValue = Option(partitionValues.getOrElse(physicalPartKey, null))
+          .getOrElse(ICEBERG_NULL_PARTITION_VALUE)
+        val partitionColumnDataType = nameToDataTypes(logicalPartCol)
+        val icebergPartitionValue =
+          IcebergTransactionUtils.stringToIcebergPartitionValue(
+            partitionColumnDataType, partValue, snapshot.version)
+        partitionVals(i) = icebergPartitionValue
+      }
+      new IcebergTransactionUtils.Row(partitionVals)
     }
   }
 }

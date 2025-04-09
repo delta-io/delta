@@ -213,6 +213,13 @@ public class DataFileStatistics {
     return result;
   }
 
+  @Override
+  public String toString() {
+    return String.format(
+        "DataFileStatistics(numRecords=%s, minValues=%s, maxValues=%s, nullCounts=%s)",
+        numRecords, minValues, maxValues, nullCounts);
+  }
+
   /////////////////////////////////////////////////////////////////////////////////
   /// Private methods                                                           ///
   /////////////////////////////////////////////////////////////////////////////////

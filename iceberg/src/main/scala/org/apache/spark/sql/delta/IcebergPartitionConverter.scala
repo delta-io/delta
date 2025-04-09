@@ -53,7 +53,7 @@ object IcebergPartitionConverter {
   //                         value, as the partField and partitionData from file1 have different
   //                         ordering and thus same index indicates different column.
   def physicalNameToPartitionField(
-      table: Table, partitionSchema: StructType): Map[String, PartitionField] =
+      table: IcebergTableLike, partitionSchema: StructType): Map[String, PartitionField] =
     table.spec().fields().asScala.collect {
       case field if field.transform().toString != "void" &&
           !field.transform().toString.contains("bucket") =>
@@ -69,7 +69,10 @@ case class IcebergPartitionConverter(
   val timestampFormatter: TimestampFormatter =
       TimestampFormatter(ConvertUtils.timestampPartitionPattern, java.util.TimeZone.getDefault)
 
-  def this(table: Table, partitionSchema: StructType, partitionEvolutionEnabled: Boolean) =
+  def this(
+      table: IcebergTableLike,
+      partitionSchema: StructType,
+      partitionEvolutionEnabled: Boolean) =
     this(table.schema(),
       // We only allow empty partition when partition evolution happened
       // This is an extra safety mechanism as we should have already passed

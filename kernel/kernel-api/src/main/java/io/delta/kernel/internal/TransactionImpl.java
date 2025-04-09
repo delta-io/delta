@@ -35,6 +35,7 @@ import io.delta.kernel.hook.PostCommitHook;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.checksum.CRCInfo;
+import io.delta.kernel.internal.clustering.ClusteringUtils;
 import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.hook.CheckpointHook;
@@ -48,7 +49,6 @@ import io.delta.kernel.internal.stats.FileSizeHistogram;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.*;
 import io.delta.kernel.internal.util.Clock;
-import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.InCommitTimestampUtils;
 import io.delta.kernel.internal.util.VectorUtils;
@@ -81,6 +81,7 @@ public class TransactionImpl implements Transaction {
   private final Protocol protocol;
   private final SnapshotImpl readSnapshot;
   private final Optional<SetTransaction> setTxnOpt;
+  private final List<Column> clusteringColumns;
   private final boolean shouldUpdateProtocol;
   private final Clock clock;
   private final Map<String, DomainMetadata> domainMetadatasAdded = new HashMap<>();
@@ -102,6 +103,7 @@ public class TransactionImpl implements Transaction {
       Protocol protocol,
       Metadata metadata,
       Optional<SetTransaction> setTxnOpt,
+      List<Column> clusteringColumns,
       boolean shouldUpdateMetadata,
       boolean shouldUpdateProtocol,
       int maxRetries,
@@ -115,6 +117,7 @@ public class TransactionImpl implements Transaction {
     this.protocol = protocol;
     this.metadata = metadata;
     this.setTxnOpt = setTxnOpt;
+    this.clusteringColumns = clusteringColumns;
     this.shouldUpdateMetadata = shouldUpdateMetadata;
     this.shouldUpdateProtocol = shouldUpdateProtocol;
     this.maxRetries = maxRetries;
@@ -123,14 +126,7 @@ public class TransactionImpl implements Transaction {
 
   @Override
   public Row getTransactionState(Engine engine) {
-    ColumnMapping.ColumnMappingMode mappingMode =
-        ColumnMapping.getColumnMappingMode(metadata.getConfiguration());
-    StructType basePhysicalSchema = metadata.getSchema();
-    StructType physicalSchema =
-        ColumnMapping.convertToPhysicalSchema(
-            metadata.getSchema(), basePhysicalSchema, mappingMode);
-
-    return TransactionStateRow.of(metadata, dataPath.toString(), physicalSchema);
+    return TransactionStateRow.of(metadata, dataPath.toString(), maxRetries);
   }
 
   @Override
@@ -207,7 +203,7 @@ public class TransactionImpl implements Transaction {
     if (domainMetadatas.isPresent()) {
       return domainMetadatas.get();
     }
-
+    generateClusteringDomainMetadataIfNeeded();
     if (domainMetadatasAdded.isEmpty() && domainMetadatasRemoved.isEmpty()) {
       // If no domain metadatas are added or removed, return an empty list. This is to avoid
       // unnecessary loading of the domain metadatas from the snapshot (which is an expensive
@@ -261,15 +257,20 @@ public class TransactionImpl implements Transaction {
     checkState(!closed, "Transaction is already attempted to commit. Create a new transaction.");
     TransactionMetrics transactionMetrics = new TransactionMetrics();
     try {
-      TransactionCommitResult result =
+      long committedVersion =
           transactionMetrics.totalCommitTimer.time(
               () -> commitWithRetry(engine, dataActions, transactionMetrics));
       recordTransactionReport(
           engine,
-          Optional.of(result.getVersion()) /* committedVersion */,
+          Optional.of(committedVersion),
           transactionMetrics,
           Optional.empty() /* exception */);
-      return result;
+      TransactionMetricsResult txnMetricsCaptured =
+          transactionMetrics.captureTransactionMetricsResult();
+      return new TransactionCommitResult(
+          committedVersion,
+          generatePostCommitHooks(committedVersion, txnMetricsCaptured),
+          txnMetricsCaptured);
     } catch (Exception e) {
       recordTransactionReport(
           engine,
@@ -280,7 +281,7 @@ public class TransactionImpl implements Transaction {
     }
   }
 
-  private TransactionCommitResult commitWithRetry(
+  private long commitWithRetry(
       Engine engine, CloseableIterable<Row> dataActions, TransactionMetrics transactionMetrics) {
     try {
       long commitAsVersion = readSnapshot.getVersion() + 1;
@@ -400,7 +401,7 @@ public class TransactionImpl implements Transaction {
     return attemptInCommitTimestamp;
   }
 
-  private TransactionCommitResult doCommit(
+  private long doCommit(
       Engine engine,
       long commitAsVersion,
       CommitInfo attemptCommitInfo,
@@ -444,6 +445,7 @@ public class TransactionImpl implements Transaction {
 
       // Action counters may be partially incremented from previous tries, reset the counters to 0
       transactionMetrics.resetActionCounters();
+      boolean isAppendOnlyTable = APPEND_ONLY_ENABLED.fromMetadata(metadata);
 
       Optional<FileSizeHistogram> fileSizeHistogram =
           isNewTable
@@ -468,9 +470,13 @@ public class TransactionImpl implements Transaction {
                             fileSizeHistogram.ifPresent(histogram -> histogram.insert(addFileSize));
                           } else if (!action.isNullAt(REMOVE_FILE_ORDINAL)) {
                             transactionMetrics.removeFilesCounter.increment();
-                            // TODO: handle RemoveFiles.
-                            throw new UnsupportedOperationException(
-                                "Remove File is not yet supported");
+                            // TODO add removeFileSizeInBytes and increment
+                            // TODO update fileSizeHistogram
+                            RemoveFile removeFile =
+                                new RemoveFile(action.getStruct(REMOVE_FILE_ORDINAL));
+                            if (isAppendOnlyTable && removeFile.getDataChange()) {
+                              throw DeltaErrors.cannotModifyAppendOnlyTable(dataPath.toString());
+                            }
                           }
                           return action;
                         }),
@@ -480,18 +486,7 @@ public class TransactionImpl implements Transaction {
           "Write file actions to JSON log file `%s`",
           FileNames.deltaFile(logPath, commitAsVersion));
 
-      List<PostCommitHook> postCommitHooks = new ArrayList<>();
-      if (isReadyForCheckpoint(commitAsVersion)) {
-        postCommitHooks.add(new CheckpointHook(dataPath, commitAsVersion));
-      }
-
-      buildPostCommitCrcInfoIfCurrentCrcAvailable(
-              commitAsVersion,
-              transactionMetrics.captureTransactionMetricsResult(),
-              fileSizeHistogram)
-          .ifPresent(crcInfo -> postCommitHooks.add(new ChecksumSimpleHook(crcInfo, logPath)));
-
-      return new TransactionCommitResult(commitAsVersion, postCommitHooks);
+      return commitAsVersion;
     } catch (FileAlreadyExistsException e) {
       throw e;
     } catch (IOException ioe) {
@@ -503,6 +498,19 @@ public class TransactionImpl implements Transaction {
     // For now, Kernel just supports blind append.
     // Change this when read-after-write is supported.
     return true;
+  }
+
+  private List<PostCommitHook> generatePostCommitHooks(
+      long committedVersion, TransactionMetricsResult txnMetrics, Optional<FileSizeHistogram> fileSizeHistogram) {
+    List<PostCommitHook> postCommitHooks = new ArrayList<>();
+    if (isReadyForCheckpoint(committedVersion)) {
+      postCommitHooks.add(new CheckpointHook(dataPath, committedVersion));
+    }
+
+    buildPostCommitCrcInfoIfCurrentCrcAvailable(committedVersion, txnMetrics, fileSizeHistogram)
+        .ifPresent(crcInfo -> postCommitHooks.add(new ChecksumSimpleHook(crcInfo, logPath)));
+
+    return postCommitHooks;
   }
 
   /**
@@ -598,6 +606,18 @@ public class TransactionImpl implements Transaction {
                     lastCrcInfo.getNumFiles() + metricsResult.getNumAddFiles(),
                     Optional.of(txnId.toString()),
                     fileSizeHistogram));
+  }
+
+  /**
+   * Generate the domain metadata for the clustering columns if they are present in the transaction.
+   */
+  private void generateClusteringDomainMetadataIfNeeded() {
+    if (TableFeatures.isClusteringTableFeatureSupported(protocol) && !clusteringColumns.isEmpty()) {
+      DomainMetadata clusteringDomainMetadata =
+          ClusteringUtils.getClusteringDomainMetadata(clusteringColumns);
+      addDomainMetadataInternal(
+          clusteringDomainMetadata.getDomain(), clusteringDomainMetadata.getConfiguration());
+    }
   }
 
   /**

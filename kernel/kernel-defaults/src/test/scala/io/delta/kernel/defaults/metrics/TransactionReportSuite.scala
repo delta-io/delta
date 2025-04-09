@@ -27,7 +27,7 @@ import io.delta.kernel.internal.actions.{RemoveFile, SingleAction}
 import io.delta.kernel.internal.data.GenericRow
 import io.delta.kernel.internal.metrics.Timer
 import io.delta.kernel.internal.util.Utils
-import io.delta.kernel.metrics.{SnapshotReport, TransactionReport}
+import io.delta.kernel.metrics.{SnapshotReport, TransactionMetricsResult, TransactionReport}
 import io.delta.kernel.types.{IntegerType, StructType}
 import io.delta.kernel.utils.{CloseableIterable, CloseableIterator, DataFileStatus}
 
@@ -51,7 +51,8 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
   def getTransactionAndSnapshotReport(
       createTransaction: Engine => Transaction,
       generateCommitActions: (Transaction, Engine) => CloseableIterable[Row],
-      expectException: Boolean)
+      expectException: Boolean,
+      validateTransactionMetrics: (TransactionMetricsResult, Long) => Unit)
       : (TransactionReport, Long, Option[SnapshotReport], Option[Exception]) = {
     val timer = new Timer()
 
@@ -59,7 +60,10 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
       engine => {
         val transaction = createTransaction(engine)
         val actionsToCommit = generateCommitActions(transaction, engine)
-        timer.time(() => transaction.commit(engine, actionsToCommit)) // Time the actual operation
+        val txnCommitResult = timer.time(() =>
+          transaction.commit(engine, actionsToCommit)) // Time the actual operation
+        // Validate the txn metrics returned in txnCommitResult
+        validateTransactionMetrics(txnCommitResult.getTransactionMetrics, timer.totalDurationNs())
       },
       expectException)
 
@@ -109,6 +113,18 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
       operation: Operation = Operation.MANUAL_UPDATE): Unit = {
     // scalastyle:on
     assert(expectException == expectedCommitVersion.isEmpty)
+    def validateTransactionMetrics(txnMetrics: TransactionMetricsResult, duration: Long): Unit = {
+      // Since we cannot know the actual duration of commit we sanity check that they are > 0 and
+      // less than the total operation duration
+      assert(txnMetrics.getTotalCommitDurationNs > 0)
+      assert(txnMetrics.getTotalCommitDurationNs < duration)
+
+      assert(txnMetrics.getNumCommitAttempts == expectedNumAttempts)
+      assert(txnMetrics.getNumAddFiles == expectedNumAddFiles)
+      assert(txnMetrics.getTotalAddFilesSizeInBytes == expectedTotalAddFilesSizeInBytes)
+      assert(txnMetrics.getNumRemoveFiles == expectedNumRemoveFiles)
+      assert(txnMetrics.getNumTotalActions == expectedNumTotalActions)
+    }
 
     val (transactionReport, duration, snapshotReportOpt, exception) =
       getTransactionAndSnapshotReport(
@@ -117,7 +133,8 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
             Table.forPath(engine, path).createTransactionBuilder(engine, engineInfo, operation),
             engine),
         generateCommitActions,
-        expectException)
+        expectException,
+        validateTransactionMetrics)
 
     // Verify contents
     assert(transactionReport.getTablePath == defaultEngine.getFileSystemClient.resolvePath(path))
@@ -143,18 +160,7 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
       })
     }
     assert(transactionReport.getCommittedVersion.toScala == expectedCommitVersion)
-
-    // Since we cannot know the actual duration of commit we sanity check that they are > 0 and
-    // less than the total operation duration
-    assert(transactionReport.getTransactionMetrics.getTotalCommitDurationNs > 0)
-    assert(transactionReport.getTransactionMetrics.getTotalCommitDurationNs < duration)
-
-    assert(transactionReport.getTransactionMetrics.getNumCommitAttempts == expectedNumAttempts)
-    assert(transactionReport.getTransactionMetrics.getNumAddFiles == expectedNumAddFiles)
-    assert(transactionReport.getTransactionMetrics.getTotalAddFilesSizeInBytes
-      == expectedTotalAddFilesSizeInBytes)
-    assert(transactionReport.getTransactionMetrics.getNumRemoveFiles == expectedNumRemoveFiles)
-    assert(transactionReport.getTransactionMetrics.getNumTotalActions == expectedNumTotalActions)
+    validateTransactionMetrics(transactionReport.getTransactionMetrics, duration)
   }
 
   def generateAppendActions(fileStatusIter: CloseableIterator[DataFileStatus])(

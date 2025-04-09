@@ -19,19 +19,24 @@ package org.apache.spark.sql.delta.commands.convert
 import java.lang.{Boolean => JBoolean, Double => JDouble, Float => JFloat, Integer => JInt, Long => JLong}
 import java.math.BigDecimal
 import java.nio.ByteBuffer
-import java.util.{List => JList, Map => JMap}
+import java.util.{HashMap => JHashMap, List => JList, Map => JMap}
 
 import scala.collection.JavaConverters._
 
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.iceberg.{DataFile, FileContent, FileFormat, PartitionData, PartitionSpec, Schema, StructLike}
 import org.apache.iceberg.transforms._
 import org.apache.iceberg.types.Conversions
+import org.apache.iceberg.types.Type
+import org.apache.iceberg.types.Type.TypeID
 import org.apache.iceberg.types.Types._
 
 import org.apache.spark.SparkFunSuite
+import org.apache.spark.internal.config.ConfigEntry
+import org.apache.spark.sql.test.SharedSparkSession
 
-class IcebergStatsUtilsSuite extends SparkFunSuite {
+class IcebergStatsUtilsSuite extends SparkFunSuite with SharedSparkSession {
 
   private val StatsAllowTypes =
     IcebergStatsUtils.typesAllowStatsConversion(statsDisallowTypes = Set.empty)
@@ -96,9 +101,9 @@ class IcebergStatsUtilsSuite extends SparkFunSuite {
     val deltaStats = IcebergStatsUtils.icebergStatsToDelta(
       icebergSchema,
       1251,
-      minMap,
-      maxMap,
-      nullCountMap,
+      Some(minMap),
+      Some(maxMap),
+      Some(nullCountMap),
       statsAllowTypes = StatsAllowTypes
     )
 
@@ -117,7 +122,7 @@ class IcebergStatsUtilsSuite extends SparkFunSuite {
     assertResult(expectedStatsObj)(actualStatsObj)
   }
 
-  test("stats conversion from timestamp 64 is disabled") {
+  test("stats conversion for decimal and timestamp") {
     val icebergSchema = new Schema(10, Seq[NestedField](
       NestedField.required(1, "col_ts", TimestampType.withZone),
       NestedField.required(2, "col_tsnz", TimestampType.withoutZone),
@@ -126,35 +131,43 @@ class IcebergStatsUtilsSuite extends SparkFunSuite {
     val deltaStats = IcebergStatsUtils.icebergStatsToDelta(
       icebergSchema,
       1251,
-      minMap = Map(
+      minMap = Some(Map(
         Integer.valueOf(1) ->
           Conversions.toByteBuffer(TimestampType.withZone, JLong.valueOf(1734391979000000L)),
         Integer.valueOf(2) ->
           Conversions.toByteBuffer(TimestampType.withoutZone, JLong.valueOf(1734391979000000L)),
         Integer.valueOf(3) ->
           Conversions.toByteBuffer(DecimalType.of(10, 5), new BigDecimal("3.44141"))
-      ),
-      maxMap = Map(
+      )),
+      maxMap = Some(Map(
         Integer.valueOf(1) ->
           Conversions.toByteBuffer(TimestampType.withZone, JLong.valueOf(1734394979000000L)),
         Integer.valueOf(2) ->
           Conversions.toByteBuffer(TimestampType.withoutZone, JLong.valueOf(1734394979000000L)),
         Integer.valueOf(3) ->
           Conversions.toByteBuffer(DecimalType.of(10, 5), new BigDecimal("9.99999"))
-      ),
-      nullCountMap = Map(
+      )),
+      nullCountMap = Some(Map(
         Integer.valueOf(1) -> JLong.valueOf(20),
         Integer.valueOf(2) -> JLong.valueOf(10),
         Integer.valueOf(3) -> JLong.valueOf(31)
-      ),
+      )),
       statsAllowTypes = StatsAllowTypes
     )
     assertResult(
       JsonUtils.fromJson[StatsObject](
         """{"numRecords":1251,
-          |"maxValues":{"col_decimal":9.99999},
-          |"minValues":{"col_decimal":3.44141},
-          |"nullCount":{"col_decimal":31}}""".stripMargin))(
+          |"maxValues":{
+          | "col_ts":"2024-12-17T00:22:59+00:00",
+          | "col_tsnz":"2024-12-17T00:22:59",
+          | "col_decimal":9.99999
+          | },
+          |"minValues":{
+          | "col_ts":"2024-12-16T23:32:59+00:00",
+          | "col_tsnz":"2024-12-16T23:32:59",
+          | "col_decimal":3.44141
+          | },
+          |"nullCount":{"col_ts":20,"col_tsnz":10,"col_decimal":31}}""".stripMargin))(
       JsonUtils.fromJson[StatsObject](deltaStats))
   }
 
@@ -167,23 +180,23 @@ class IcebergStatsUtilsSuite extends SparkFunSuite {
     val deltaStats = IcebergStatsUtils.icebergStatsToDelta(
       icebergSchema,
       1251,
-      minMap = Map(
+      minMap = Some(Map(
         Integer.valueOf(1) -> Conversions.toByteBuffer(IntegerType.get, JInt.valueOf(-5)),
         Integer.valueOf(2) -> Conversions.toByteBuffer(LongType.get, null),
         Integer.valueOf(3) -> null
-      ),
-      maxMap = Map(
+      )),
+      maxMap = Some(Map(
         Integer.valueOf(1) -> Conversions.toByteBuffer(IntegerType.get, JInt.valueOf(5)),
         // stats for value 2 is missing
         Integer.valueOf(3) -> Conversions.toByteBuffer(StringType.get, "maxval"),
         Integer.valueOf(5) -> Conversions.toByteBuffer(StringType.get, "maxval")
-      ),
-      nullCountMap = Map(
+      )),
+      nullCountMap = Some(Map(
         Integer.valueOf(1) -> JLong.valueOf(0),
         Integer.valueOf(2) -> null,
         Integer.valueOf(3) -> JLong.valueOf(2),
         Integer.valueOf(5) -> JLong.valueOf(3)
-      ),
+      )),
       statsAllowTypes = StatsAllowTypes
     )
     assertResult(
@@ -196,33 +209,68 @@ class IcebergStatsUtilsSuite extends SparkFunSuite {
       JsonUtils.fromJson[StatsObject](deltaStats))
   }
 
+  private def testStatsConversion(
+      expectedStatsJson: String, dataFile: DataFile, icebergSchema: Schema): Unit = {
+    val expectedStats = JsonUtils.fromJson[StatsObject](expectedStatsJson)
+    val actualStats =
+      IcebergStatsUtils.icebergStatsToDelta(
+          icebergSchema, dataFile, StatsAllowTypes, shouldSkipForFile = _ => false
+        )
+        .map(JsonUtils.fromJson[StatsObject](_))
+        .get
+    assertResult(expectedStats)(actualStats)
+  }
+
   test("stats conversion while DataFile misses the stats fields") {
     val icebergSchema = new Schema(10, Seq[NestedField](
       NestedField.required(1, "col_int", IntegerType.get),
       NestedField.required(2, "col_long", LongType.get),
       NestedField.required(3, "col_st", StringType.get)
     ).asJava)
-    val expectedStats = JsonUtils.fromJson[StatsObject](
+    val expectedStatsJson =
       """{"numRecords":0,"maxValues":{"col_int":100992003},
         |"minValues":{"col_int":100992003},"nullCount":{"col_int":2}}"""
-        .stripMargin)
-    val actualStats =
-      IcebergStatsUtils.icebergStatsToDelta(icebergSchema, DummyDataFile(), StatsAllowTypes)
-        .map(JsonUtils.fromJson[StatsObject](_))
-        .get
-    assertResult(expectedStats)(actualStats)
-    assertResult(None)(IcebergStatsUtils.icebergStatsToDelta(
-      icebergSchema,
-      DummyDataFile(upperBounds = null),
-      statsAllowTypes = StatsAllowTypes))
-    assertResult(None)(IcebergStatsUtils.icebergStatsToDelta(
-      icebergSchema,
-      DummyDataFile(lowerBounds = null),
-      statsAllowTypes = StatsAllowTypes))
-    assertResult(None)(IcebergStatsUtils.icebergStatsToDelta(
-      icebergSchema,
-      DummyDataFile(nullValueCounts = null),
-      statsAllowTypes = StatsAllowTypes))
+        .stripMargin
+    testStatsConversion(expectedStatsJson, DummyDataFile(), icebergSchema)
+
+    val expectedStatsWithoutUpperBound =
+      """{"numRecords":0,"minValues":{"col_int":100992003},
+        |"nullCount":{"col_int":2}}"""
+        .stripMargin
+    testStatsConversion(
+      expectedStatsWithoutUpperBound, DummyDataFile(upperBounds = null), icebergSchema
+    )
+    testStatsConversion(
+      expectedStatsWithoutUpperBound,
+      DummyDataFile(upperBounds = new JHashMap[Integer, ByteBuffer]()),
+      icebergSchema
+    )
+
+    val expectedStatsWithoutLowerBound =
+      """{"numRecords":0,"maxValues":{"col_int":100992003},
+        |"nullCount":{"col_int":2}}"""
+        .stripMargin
+    testStatsConversion(
+      expectedStatsWithoutLowerBound, DummyDataFile(lowerBounds = null), icebergSchema
+    )
+    testStatsConversion(
+      expectedStatsWithoutLowerBound,
+      DummyDataFile(lowerBounds = new JHashMap[Integer, ByteBuffer]()),
+      icebergSchema
+    )
+
+    val expectedStatsWithoutNullCounts =
+      """{"numRecords":0,"maxValues":{"col_int":100992003},
+        |"minValues":{"col_int":100992003}}"""
+        .stripMargin
+    testStatsConversion(
+      expectedStatsWithoutNullCounts, DummyDataFile(nullValueCounts = null), icebergSchema
+    )
+    testStatsConversion(
+      expectedStatsWithoutNullCounts,
+      DummyDataFile(nullValueCounts = new JHashMap[Integer, JLong]()),
+      icebergSchema
+    )
   }
 }
 

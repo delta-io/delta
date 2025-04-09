@@ -16,6 +16,7 @@
 package io.delta.kernel.internal.icebergcompat;
 
 import static io.delta.kernel.internal.tablefeatures.TableFeatures.*;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Collections.singletonList;
 import static java.util.stream.Collectors.toList;
 
@@ -131,9 +132,15 @@ public class IcebergCompatV2MetadataValidatorAndUpdater
               .newMetadata
               .getPartitionColNames()
               .forEach(
-                  partitonCol -> {
+                  partitionCol -> {
+                    int partitionFieldIndex =
+                        inputContext.newMetadata.getSchema().indexOf(partitionCol);
+                    checkArgument(
+                        partitionFieldIndex != -1,
+                        "Partition column %s not found in the schema",
+                        partitionCol);
                     DataType dataType =
-                        inputContext.newMetadata.getSchema().get(partitonCol).getDataType();
+                        inputContext.newMetadata.getSchema().at(partitionFieldIndex).getDataType();
                     boolean validType =
                         dataType instanceof ByteType
                             || dataType instanceof ShortType

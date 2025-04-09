@@ -36,8 +36,10 @@ public class TransactionMetrics {
   public final Counter removeFilesCounter = new Counter();
 
   public final Counter totalActionsCounter = new Counter();
-  // TODO: collect removed file's total size.
+
   public final Counter addFilesSizeInBytesCounter = new Counter();
+
+  // TODO: add removeFilesSizeInBytesCounter (and to TransactionMetricsResult)
 
   /**
    * Resets the action counters (addFilesCounter, removeFilesCounter and totalActionsCounter) to 0.

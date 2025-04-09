@@ -36,7 +36,7 @@ import org.apache.spark.sql.types.StructType
 
 class IcebergFileManifest(
     spark: SparkSession,
-    table: Table,
+    table: IcebergTableLike,
     partitionSchema: StructType,
     convertStats: Boolean = true) extends ConvertTargetFileManifest with LoggingShims {
 
@@ -59,6 +59,10 @@ class IcebergFileManifest(
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_PARTITION_EVOLUTION_ENABLED)
 
   private val statsAllowTypes: Set[TypeID] = IcebergStatsUtils.typesAllowStatsConversion(spark)
+  private val allowPartialStatsConverted: Boolean =
+    spark.sessionState.conf.getConf(
+      DeltaSQLConf.DELTA_CLONE_ICEBERG_ALLOW_PARTIAL_STATS
+    )
 
   val basePath = table.location()
 
@@ -128,6 +132,7 @@ class IcebergFileManifest(
     }
 
     val shouldConvertStats = convertStats
+    val partialStatsConvertedEnabled = allowPartialStatsConverted
     val statsAllowTypesSet = statsAllowTypes
 
     val shouldCheckPartitionEvolution = !partitionEvolutionEnabled
@@ -163,7 +168,14 @@ class IcebergFileManifest(
             Some(convertPartition.toDelta(dataFile.partition()))
           } else None,
           stats = if (shouldConvertStats) {
-            IcebergStatsUtils.icebergStatsToDelta(localTable.schema, dataFile, statsAllowTypesSet)
+            IcebergStatsUtils.icebergStatsToDelta(
+              localTable.schema,
+              dataFile,
+              statsAllowTypesSet,
+              shouldSkipForFile = (df: DataFile) => {
+                !partialStatsConvertedEnabled && IcebergStatsUtils.hasPartialStats(df)
+              }
+            )
           } else None
         )
       }

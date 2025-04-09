@@ -56,114 +56,14 @@ trait UniversalFormatSuiteUtilsBase
     .filterNot { case (r, w) => w < 7 && r >= 3 }
 }
 
-/** Contains shared tests for both IcebergCompatV1 and IcebergCompatV2 suites. */
-trait UniversalFormatSuiteTestBase extends UniversalFormatSuiteUtilsBase {
-  private def loadIcebergTable(
-      spark: SparkSession,
-      id: TableIdentifier): Option[shadedForDelta.org.apache.iceberg.Table] = {
-    val deltaLog = DeltaLog.forTable(spark, id)
-    val catalogTable = spark.sessionState.catalog.getTableMetadata(id)
-    val hiveCatalog = IcebergTransactionUtils
-      .createHiveCatalog(deltaLog.newDeltaHadoopConf())
-    val icebergTableId = IcebergTransactionUtils
-      .convertSparkTableIdentifierToIcebergHive(catalogTable.identifier)
-    if (hiveCatalog.tableExists(icebergTableId)) {
-      Some(hiveCatalog.loadTable(icebergTableId))
-    } else {
-      None
-    }
-  }
-
-  protected def getCompatVersionOtherThan(version: Int): Int
-
-  protected def getCompatVersionsOtherThan(version: Int): Seq[Int]
-
-  test("CTAS new UniForm (Iceberg) table without manually enabling column mapping") {
-    // These are the versions with column mapping enabled
-    allReaderWriterVersions.foreach { case (r, w) =>
-      withTempTableAndDir { case (from_id, from_loc) =>
-        withTempTableAndDir { case (to_id1, to_loc1) =>
-          withTempTableAndDir { case (to_id2, to_loc2) =>
-            executeSql(
-              s"""
-                 |CREATE TABLE $from_id (PID INT, PCODE INT) USING DELTA LOCATION $from_loc
-                 | TBLPROPERTIES (
-                 |  'delta.minReaderVersion' = $r,
-                 |  'delta.minWriterVersion' = $w
-                 |)""".stripMargin)
-            executeSql(
-              s"""
-                 |INSERT INTO TABLE $from_id (PID, PCODE)
-                 | VALUES (1,2),(2,3),(3,4),(4,5),(5,6),(6,7),(7,8)""".stripMargin)
-            executeSql(
-              s"""
-                 |CREATE TABLE $to_id1 USING DELTA LOCATION $to_loc1 TBLPROPERTIES (
-                 |  'delta.universalFormat.enabledFormats' = 'iceberg',
-                 |  'delta.enableIcebergCompatV$compatVersion' = 'true',
-                 |  'delta.minReaderVersion' = $r,
-                 |  'delta.minWriterVersion' = $w
-                 |) AS SELECT * FROM $from_id""".stripMargin)
-            executeSql(
-              s"""
-                 |CREATE TABLE $to_id2 USING DELTA LOCATION $to_loc2 TBLPROPERTIES (
-                 |  'delta.universalFormat.enabledFormats' = 'iceberg',
-                 |  'delta.columnMapping.mode' = 'name',
-                 |  'delta.enableIcebergCompatV$compatVersion' = 'true',
-                 |  'delta.minReaderVersion' = $r,
-                 |  'delta.minWriterVersion' = $w
-                 |) AS SELECT * FROM $from_id""".stripMargin)
-
-            val icebergTable1 = loadIcebergTable(spark, new TableIdentifier(to_id1))
-            if (icebergTable1.isDefined) {
-              assert(icebergTable1.get.schema().asStruct().fields().toArray.length == 2)
-            }
-
-            val expected1: Array[Row] = (1 to 7).map { i => Row(i, i + 1) }.toArray
-            readAndVerify(to_id1, "PID, PCODE", "PID", expected1)
-
-            val icebergTable2 = loadIcebergTable(spark, new TableIdentifier(to_id2))
-            if (icebergTable2.isDefined) {
-              assert(icebergTable2.get.schema().asStruct().fields().toArray.length == 2)
-            }
-
-            val expected2: Array[Row] = (1 to 7).map { i => Row(i, i + 1) }.toArray
-            readAndVerify(to_id2, "PID, PCODE", "PID", expected2)
-          }
-        }
-      }
-    }
-  }
-
-  test("REORG TABLE: command does not support where clause") {
-    withTempTableAndDir { case (id, loc) =>
-      val anotherCompatVersion = getCompatVersionOtherThan(compatVersion)
-      executeSql(s"""
-                    | CREATE TABLE $id (ID INT) USING DELTA LOCATION $loc TBLPROPERTIES (
-                    |  'delta.universalFormat.enabledFormats' = 'iceberg',
-                    |  'delta.enableIcebergCompatV$anotherCompatVersion' = 'true'
-                    |)""".stripMargin)
-      val e = intercept[ParseException] {
-        spark.sessionState.sqlParser.parsePlan(
-          s"""
-             | REORG TABLE $id
-             | WHERE ID > 0
-             | APPLY (UPGRADE UNIFORM (ICEBERGCOMPATVERSION = $compatVersion))
-         """.stripMargin).asInstanceOf[DeltaReorgTableCommand]
-      }
-      assert(e.getErrorClass === "PARSE_SYNTAX_ERROR")
-      assert(e.getMessage.contains("Syntax error at or near 'REORG'"))
-    }
-  }
-}
-
 class UniversalFormatSuite
     extends UniversalFormatMiscSuiteBase
     with UniversalFormatSuiteUtilsBase
 
 class UniFormWithIcebergCompatV1Suite
-    extends UniversalFormatSuiteTestBase
+    extends UniversalFormatSuiteUtilsBase
     with UniFormWithIcebergCompatV1SuiteBase
 
 class UniFormWithIcebergCompatV2Suite
-    extends UniversalFormatSuiteTestBase
+    extends UniversalFormatSuiteUtilsBase
     with UniFormWithIcebergCompatV2SuiteBase

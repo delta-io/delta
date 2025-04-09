@@ -16,6 +16,7 @@
 package io.delta.kernel.internal.icebergcompat;
 
 import static io.delta.kernel.internal.tablefeatures.TableFeatures.*;
+import static io.delta.kernel.internal.util.SchemaUtils.concatWithDot;
 import static java.util.stream.Collectors.toList;
 import static java.util.stream.Collectors.toSet;
 
@@ -74,10 +75,14 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
    * <ul>
    *   <li>No change in enablement (true to true or false to false)
    *   <li>Enabling but only on a new table (false to true)
-   *   <li>Disabling (true to false)
    * </ul>
    *
-   * If enabling (false to true) on an existing table we throw an {@link KernelException}.
+   * The changes that we do not support and for which we throw an {@link KernelException} are
+   *
+   * <ul>
+   *   <li>Disabling on an existing table (true to false)
+   *   <li>Enabling on an existing table (false to true)
+   * </ul>
    */
   public static void validateIcebergWriterCompatV1Change(
       Map<String, String> oldConfig, Map<String, String> newConfig, boolean isNewTable) {
@@ -86,6 +91,10 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
       boolean isEnabled = TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.fromMetadata(newConfig);
       if (!wasEnabled && isEnabled) {
         throw DeltaErrors.enablingIcebergWriterCompatV1OnExistingTable(
+            TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey());
+      }
+      if (wasEnabled && !isEnabled) {
+        throw DeltaErrors.disablingIcebergWriterCompatV1OnExistingTable(
             TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey());
       }
     }
@@ -117,7 +126,12 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
       new IcebergCompatRequiredTablePropertyEnforcer<>(
           TableConfig.COLUMN_MAPPING_MODE,
           (value) -> ColumnMapping.ColumnMappingMode.ID == value,
-          ColumnMapping.ColumnMappingMode.ID.value);
+          ColumnMapping.ColumnMappingMode.ID.value,
+          // We need to update the CM info in the schema here because we check that the physical
+          // name is correctly set as part of icebergWriterCompatV1 checks
+          (inputContext) ->
+              ColumnMapping.updateColumnMappingMetadataIfNeeded(
+                  inputContext.newMetadata, inputContext.isCreatingNewTable));
 
   private static final IcebergCompatRequiredTablePropertyEnforcer ICEBERG_COMPAT_V2_ENABLED =
       new IcebergCompatRequiredTablePropertyEnforcer<>(
@@ -132,19 +146,20 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
 
   /**
    * Current set of allowed table features. This may evolve as the protocol evolves. This includes
-   * `invariants` because it is auto-enabled for tables due to the default writer protocol version =
-   * 2. Below in INVARIANTS_INACTIVE_CHECK we check that there are no invariants in the table
-   * schema.
-   *
-   * <p>Notably, we do NOT include the other legacy table features here (such as CDF) because since
-   * we only support enabling IcebergWriterCompatV1 on *new* tables, if those features are present
-   * in the protocol they must be active (since they were enabled by the metadata). Thus, we know
-   * any protocol with those features we are incompatible with. `invariants` is a special case since
-   * it may be present but inactive even for new tables.
+   * the incompatible legacy features (invariants, changeDataFeed, checkConstraints,
+   * identityColumns, generatedColumns) because they may be present in the table protocol even when
+   * they are not in use. In later checks we validate that these incompatible features are inactive
+   * in the table. See the protocol spec for more details.
    */
   private static Set<TableFeature> ALLOWED_TABLE_FEATURES =
       Stream.of(
+              // Incompatible legacy table features
               INVARIANTS_W_FEATURE,
+              CHANGE_DATA_FEED_W_FEATURE,
+              CONSTRAINTS_W_FEATURE,
+              IDENTITY_COLUMNS_W_FEATURE,
+              GENERATED_COLUMNS_W_FEATURE,
+              // Compatible table features
               APPEND_ONLY_W_FEATURE,
               COLUMN_MAPPING_RW_FEATURE,
               ICEBERG_COMPAT_V2_W_FEATURE,
@@ -199,6 +214,38 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
       };
 
   /**
+   * Checks that in the schema column mapping is set up such that the physicalName is equal to
+   * "col-[fieldId]". This check assumes column mapping is enabled (and so should be performed after
+   * that check).
+   */
+  private static final IcebergCompatCheck PHYSICAL_NAMES_MATCH_FIELD_IDS_CHECK =
+      (inputContext) -> {
+        List<Tuple2<List<String>, StructField>> invalidFields =
+            SchemaUtils.filterRecursively(
+                inputContext.newMetadata.getSchema(),
+                /* recurseIntoMapAndArrayTypes= */ true,
+                /* stopOnFirstMatch = */ false,
+                field -> {
+                  String physicalName = ColumnMapping.getPhysicalName(field);
+                  long columnId = ColumnMapping.getColumnId(field);
+                  return !physicalName.equals(String.format("col-%s", columnId));
+                });
+        if (!invalidFields.isEmpty()) {
+          List<String> invalidFieldsFormatted =
+              invalidFields.stream()
+                  .map(
+                      pair ->
+                          String.format(
+                              "%s(physicalName='%s', columnId=%s)",
+                              concatWithDot(pair._1),
+                              ColumnMapping.getPhysicalName(pair._2),
+                              ColumnMapping.getColumnId(pair._2)))
+                  .collect(toList());
+          throw DeltaErrors.icebergWriterCompatInvalidPhysicalName(invalidFieldsFormatted);
+        }
+      };
+
+  /**
    * Checks that the table feature `invariants` is not active in the table, meaning there are no
    * invariants stored in the table schema.
    */
@@ -210,6 +257,68 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
         if (TableFeatures.hasInvariants(inputContext.newMetadata.getSchema())) {
           throw DeltaErrors.icebergCompatIncompatibleTableFeatures(
               INSTANCE.compatFeatureName(), Collections.singleton(INVARIANTS_W_FEATURE));
+        }
+      };
+
+  /**
+   * Checks that the table feature `changeDataFeed` is not active in the table, meaning the table
+   * property `delta.enableChangeDataFeed` is not enabled.
+   */
+  private static final IcebergCompatCheck CHANGE_DATA_FEED_INACTIVE_CHECK =
+      // Note - since Kernel currently does not support the table feature `changeDataFeed` we will
+      // not hit this check for E2E writes since we will fail early due to unsupported write
+      // If Kernel starts supporting the feature `changeDataFeed` this check will become applicable
+      (inputContext) -> {
+        if (TableConfig.CHANGE_DATA_FEED_ENABLED.fromMetadata(inputContext.newMetadata)) {
+          throw DeltaErrors.icebergCompatIncompatibleTableFeatures(
+              INSTANCE.compatFeatureName(), Collections.singleton(CHANGE_DATA_FEED_W_FEATURE));
+        }
+      };
+
+  /**
+   * Checks that the table feature `checkConstraints` is not active in the table, meaning the table
+   * has no check constraints stored in its metadata configuration.
+   */
+  private static final IcebergCompatCheck CHECK_CONSTRAINTS_INACTIVE_CHECK =
+      // Note - since Kernel currently does not support the table feature `checkConstraints` we will
+      // not hit this check for E2E writes since we will fail early due to unsupported write
+      // If Kernel starts supporting the feature `checkConstraints` this check will become
+      // applicable
+      (inputContext) -> {
+        if (TableFeatures.hasCheckConstraints(inputContext.newMetadata)) {
+          throw DeltaErrors.icebergCompatIncompatibleTableFeatures(
+              INSTANCE.compatFeatureName(), Collections.singleton(CONSTRAINTS_W_FEATURE));
+        }
+      };
+
+  /**
+   * Checks that the table feature `identityColumns` is not active in the table, meaning no identity
+   * columns exist in the table schema.
+   */
+  private static final IcebergCompatCheck IDENTITY_COLUMNS_INACTIVE_CHECK =
+      // Note - since Kernel currently does not support the table feature `identityColumns` we will
+      // not hit this check for E2E writes since we will fail early due to unsupported write
+      // If Kernel starts supporting the feature `identityColumns` this check will become applicable
+      (inputContext) -> {
+        if (TableFeatures.hasIdentityColumns(inputContext.newMetadata)) {
+          throw DeltaErrors.icebergCompatIncompatibleTableFeatures(
+              INSTANCE.compatFeatureName(), Collections.singleton(IDENTITY_COLUMNS_W_FEATURE));
+        }
+      };
+
+  /**
+   * Checks that the table feature `generatedColumns` is not active in the table, meaning no
+   * generated columns exist in the table schema.
+   */
+  private static final IcebergCompatCheck GENERATED_COLUMNS_INACTIVE_CHECK =
+      // Note - since Kernel currently does not support the table feature `generatedColumns` we will
+      // not hit this check for E2E writes since we will fail early due to unsupported write
+      // If Kernel starts supporting the feature `generatedColumns` this check will become
+      // applicable
+      (inputContext) -> {
+        if (TableFeatures.hasGeneratedColumns(inputContext.newMetadata)) {
+          throw DeltaErrors.icebergCompatIncompatibleTableFeatures(
+              INSTANCE.compatFeatureName(), Collections.singleton(GENERATED_COLUMNS_W_FEATURE));
         }
       };
 
@@ -237,7 +346,15 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
 
   @Override
   List<IcebergCompatCheck> icebergCompatChecks() {
-    return Stream.of(UNSUPPORTED_FEATURES_CHECK, UNSUPPORTED_TYPES_CHECK, INVARIANTS_INACTIVE_CHECK)
+    return Stream.of(
+            UNSUPPORTED_FEATURES_CHECK,
+            UNSUPPORTED_TYPES_CHECK,
+            PHYSICAL_NAMES_MATCH_FIELD_IDS_CHECK,
+            INVARIANTS_INACTIVE_CHECK,
+            CHANGE_DATA_FEED_INACTIVE_CHECK,
+            CHECK_CONSTRAINTS_INACTIVE_CHECK,
+            IDENTITY_COLUMNS_INACTIVE_CHECK,
+            GENERATED_COLUMNS_INACTIVE_CHECK)
         .collect(toList());
   }
 }
