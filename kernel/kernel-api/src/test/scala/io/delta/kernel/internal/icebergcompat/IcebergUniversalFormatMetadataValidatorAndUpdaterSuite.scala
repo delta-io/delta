@@ -61,9 +61,9 @@ class IcebergUniversalFormatMetadataValidatorAndUpdaterSuite extends AnyFunSuite
       val exc = intercept[InvalidConfigurationValueException] {
         IcebergUniversalFormatMetadataValidatorAndUpdater.validate(metadata)
       }
-      assert(exc.getMessage == "Invalid value for table property 'delta.universalFormat.enabledFormats': 'iceberg'." +
-        " 'delta.enableIcebergCompatV2' must be set to \"true\" to enable iceberg uniform format.")
-
+      assert(exc.getMessage == "Invalid value for table property " +
+        "'delta.universalFormat.enabledFormats': 'iceberg'. " +
+        "'delta.enableIcebergCompatV2' must be set to \"true\" to enable iceberg uniform format.")
     }
   }
 
