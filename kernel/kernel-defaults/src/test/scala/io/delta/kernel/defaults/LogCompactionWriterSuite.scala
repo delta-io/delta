@@ -32,6 +32,8 @@ import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.FileStatus
 
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+
 /**
  * Test suite for io.delta.kernel.internal.compaction.LogCompactionWriter
  */
@@ -139,6 +141,26 @@ class LogCompactionWriterSuite extends CheckpointSuiteBase {
         val actionsFromCompacted = getActionsFromCompacted(compactedPath, engine)
 
         checkAnswer(actionsFromCompacted, actionsFromCommits)
+      }
+    }
+  }
+
+  Seq(false, true).foreach { includeRemoves =>
+    val testMsgUpdate = if (includeRemoves) " and removes" else ""
+    test(s"Read table with adds$testMsgUpdate") {
+      withTempDirAndEngine { (tablePath, engine) =>
+        addData(tablePath, alternateBetweenAddsAndRemoves = includeRemoves, numberIter = 10)
+
+        spark.conf.set(DeltaSQLConf.DELTALOG_MINOR_COMPACTION_USE_FOR_READS.key, "false")
+        val withoutCompactionData = readUsingSpark(tablePath)
+
+        val hook = new LogCompactionHook(new Path(tablePath), 0, 9, 0)
+        hook.threadSafeInvoke(engine)
+
+        spark.conf.set(DeltaSQLConf.DELTALOG_MINOR_COMPACTION_USE_FOR_READS.key, "true")
+        val withCompactionData = readUsingSpark(tablePath)
+
+        checkAnswer(withCompactionData, withoutCompactionData)
       }
     }
   }
