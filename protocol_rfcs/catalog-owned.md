@@ -198,6 +198,8 @@ the logic required by the `catalogOwned` table feature. Among other things, it
 - works together with the query engine to trigger the commit process and invoke the client-side
   catalog component with the commit content
 
+The Delta client is also responsible for defining the client-side API that catalogs should target.
+
 ## Terminology: Catalogs
 
 1. **Catalog**: A catalog is a entity which manages a Delta table, including its creation, writes,
@@ -208,7 +210,6 @@ the logic required by the `catalogOwned` table feature. Among other things, it
 
 2. **Catalog Client**: The catalog always has a client-side component which the Delta client
    interacts with directly.
-    - The Delta client is responsible for defining the client-side API that catalogs should target.
     - This client-side component has two primary responsibilities:
         - implement any client-side catalog-specific logic (such as [publishing](#publishing-commits))
         - communicate with the Catalog Server, if any
