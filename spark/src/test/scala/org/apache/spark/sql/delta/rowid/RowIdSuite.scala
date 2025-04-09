@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.rowid
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaIllegalStateException, DeltaLog, DeltaOperations, DeltaTableUtils, MaterializedRowCommitVersion, MaterializedRowId, RowCommitVersion, RowId, RowTrackingFeature, Serializable, SnapshotIsolation}
+import org.apache.spark.sql.delta.{DataFrameUtils, DeltaConfigs, DeltaIllegalStateException, DeltaLog, DeltaOperations, DeltaTableUtils, MaterializedRowCommitVersion, MaterializedRowId, RowCommitVersion, RowId, RowTrackingFeature, Serializable, SnapshotIsolation}
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
@@ -32,7 +32,7 @@ import org.apache.parquet.column.ParquetProperties
 import org.apache.parquet.hadoop.ParquetOutputFormat
 
 import org.apache.spark.SparkException
-import org.apache.spark.sql.{AnalysisException, DataFrame, Dataset, QueryTest, Row}
+import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.execution.{FileSourceScanExec, SparkPlan}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetTest
@@ -863,15 +863,15 @@ class RowIdSuite extends QueryTest
       }
 
       // Create a dataframe that allows reading missing row ids and row commit versions.
-      var df = spark.read.table(tableName)
-      val plan = DeltaTableUtils.transformFileFormat(df.queryExecution.analyzed) {
+      val originalPlan = spark.read.table(tableName).queryExecution.analyzed
+      val transformedPlan = DeltaTableUtils.transformFileFormat(originalPlan) {
         case format =>
           format.copy(
             nullableRowTrackingConstantFields = true,
             nullableRowTrackingGeneratedFields = true
           )
       }
-      df = Dataset.ofRows(spark, plan)
+      val df = DataFrameUtils.ofRows(spark, transformedPlan)
 
       checkAnswer(
         df.select("id", RowId.QUALIFIED_COLUMN_NAME, RowCommitVersion.QUALIFIED_COLUMN_NAME),
