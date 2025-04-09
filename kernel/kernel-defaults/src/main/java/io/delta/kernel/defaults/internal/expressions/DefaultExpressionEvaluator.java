@@ -20,6 +20,7 @@ import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUti
 import static io.delta.kernel.defaults.internal.expressions.ImplicitCastExpression.canCastTo;
 import static io.delta.kernel.internal.util.ExpressionUtils.*;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import static io.delta.kernel.types.StringType.STRING;
 import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.toList;
@@ -295,7 +296,7 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
               substring,
               children.stream().map(e -> e.expression).collect(toList()),
               children.stream().map(e -> e.outputType).collect(toList()));
-      return new ExpressionTransformResult(transformedExpression, StringType.STRING);
+      return new ExpressionTransformResult(transformedExpression, STRING);
     }
 
     @Override
@@ -334,11 +335,48 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
       return (Predicate) result.expression;
     }
 
+    private CollatedPredicate checkCollatedPredicateArgs(
+        CollatedPredicate predicate,
+        ExpressionTransformResult leftResult,
+        ExpressionTransformResult rightResult) {
+      String msg =
+          format(
+              "CollatedPredicate should be used to compare strings,"
+                  + " but got left type=%s, right type=%s",
+              leftResult.outputType, rightResult.outputType);
+      checkIsStringType(leftResult.outputType, predicate, msg);
+      checkIsStringType(rightResult.outputType, predicate, msg);
+
+      if (!predicate.getCollationIdentifier().equals(STRING.getCollationIdentifier())) {
+        msg =
+            format(
+                "Unsupported collation: \"%s\". Default Engine supports"
+                    + " just \"%s\" collation.",
+                predicate.getCollationIdentifier(), STRING.getCollationIdentifier());
+        throw unsupportedExpressionException(predicate, msg);
+      } else {
+        return predicate;
+      }
+    }
+
     private Expression transformBinaryComparator(Predicate predicate) {
       ExpressionTransformResult leftResult = visit(getLeft(predicate));
       ExpressionTransformResult rightResult = visit(getRight(predicate));
       Expression left = leftResult.expression;
       Expression right = rightResult.expression;
+
+      // We have a separate check for CollatedPredicate because it can compare StringTypes with
+      // different collation identifiers.
+      // In that case, it means that the types are not equivalent, so we
+      // would need to cast one to another.
+      // That is not needed because we fetch those Strings as regular Java Strings in the end and
+      // just compare them with the "SPARK.UTF8_BINARY" collation.
+      // So we just return the predicate as is.
+      // If the collation is not "SPARK.UTF8_BINARY" we throw an exception.
+      if (predicate instanceof CollatedPredicate) {
+        return checkCollatedPredicateArgs((CollatedPredicate) predicate, leftResult, rightResult);
+      }
+
       if (!leftResult.outputType.equivalent(rightResult.outputType)) {
         if (canCastTo(leftResult.outputType, rightResult.outputType)) {
           left = new ImplicitCastExpression(left, rightResult.outputType);
