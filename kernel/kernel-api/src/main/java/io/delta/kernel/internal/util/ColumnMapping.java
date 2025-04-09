@@ -123,6 +123,14 @@ public class ColumnMapping {
     }
   }
 
+  /** Returns the column id for a given {@link StructField} */
+  public static int getColumnId(StructField field) {
+    checkArgument(
+        field.getMetadata().contains(COLUMN_MAPPING_ID_KEY),
+        "Field does not have column id set in it's metadata");
+    return field.getMetadata().getLong(COLUMN_MAPPING_ID_KEY).intValue();
+  }
+
   public static void verifyColumnMappingChange(
       Map<String, String> oldConfig, Map<String, String> newConfig, boolean isNewTable) {
     ColumnMappingMode oldMappingMode = getColumnMappingMode(oldConfig);
@@ -208,10 +216,6 @@ public class ColumnMapping {
 
   static boolean hasPhysicalName(StructField field) {
     return field.getMetadata().contains(COLUMN_MAPPING_PHYSICAL_NAME_KEY);
-  }
-
-  static int getColumnId(StructField field) {
-    return field.getMetadata().getLong(COLUMN_MAPPING_ID_KEY).intValue();
   }
 
   private static int findMaxColumnId(StructField field, int maxColumnId) {
@@ -315,7 +319,8 @@ public class ColumnMapping {
   /**
    * For each column/field in a {@link Metadata}'s schema, assign an id using the current maximum id
    * as the basis and increment from there. Additionally, assign a physical name based on a random
-   * UUID or re-use the old display name if the mapping mode is updated on an existing table.
+   * UUID or re-use the old display name if the mapping mode is updated on an existing table. When
+   * `icebergWriterCompatV1` is enabled, we assign physical names as 'col-[colId]'.
    *
    * @param metadata The new metadata to assign ids and physical names to
    * @param isNewTable whether this is part of a commit that sets the mapping mode on a new table
@@ -325,6 +330,10 @@ public class ColumnMapping {
   private static Optional<Metadata> assignColumnIdAndPhysicalName(
       Metadata metadata, boolean isNewTable) {
     StructType oldSchema = metadata.getSchema();
+
+    // When icebergWriterCompatV1 is enabled we require physicalName='col-[columnId]'
+    boolean useColumnIdForPhysicalName =
+        TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.fromMetadata(metadata);
 
     // This is the maxColumnId to use when assigning any new field-ids; we update this as we
     // traverse the schema and after traversal this is the value that should be stored in the
@@ -344,9 +353,11 @@ public class ColumnMapping {
       newSchema =
           newSchema.add(
               transformAndAssignColumnIdAndPhysicalName(
-                  assignColumnIdAndPhysicalNameToField(field, maxColumnId, isNewTable),
+                  assignColumnIdAndPhysicalNameToField(
+                      field, maxColumnId, isNewTable, useColumnIdForPhysicalName),
                   maxColumnId,
-                  isNewTable));
+                  isNewTable,
+                  useColumnIdForPhysicalName));
     }
 
     if (Boolean.parseBoolean(
@@ -389,12 +400,17 @@ public class ColumnMapping {
    *     id value is used to keep the current value always the max id
    * @param isNewTable Whether this is a new or an existing table. For existing tables the physical
    *     name will be re-used from the old display name
+   * @param useColumnIdForPhysicalName Whether we should assign physical names to 'col-[colId]'.
+   *     When false uses the default behavior described above.
    * @return A new {@link StructField} with updated metadata under the {@link
    *     ColumnMapping#COLUMN_MAPPING_ID_KEY} and the {@link
    *     ColumnMapping#COLUMN_MAPPING_PHYSICAL_NAME_KEY} keys
    */
   private static StructField transformAndAssignColumnIdAndPhysicalName(
-      StructField field, AtomicInteger maxColumnId, boolean isNewTable) {
+      StructField field,
+      AtomicInteger maxColumnId,
+      boolean isNewTable,
+      boolean useColumnIdForPhysicalName) {
     DataType dataType = field.getDataType();
     if (dataType instanceof StructType) {
       StructType type = (StructType) dataType;
@@ -403,24 +419,28 @@ public class ColumnMapping {
         schema =
             schema.add(
                 transformAndAssignColumnIdAndPhysicalName(
-                    assignColumnIdAndPhysicalNameToField(f, maxColumnId, isNewTable),
+                    assignColumnIdAndPhysicalNameToField(
+                        f, maxColumnId, isNewTable, useColumnIdForPhysicalName),
                     maxColumnId,
-                    isNewTable));
+                    isNewTable,
+                    useColumnIdForPhysicalName));
       }
       return new StructField(field.getName(), schema, field.isNullable(), field.getMetadata());
     } else if (dataType instanceof ArrayType) {
       ArrayType type = (ArrayType) dataType;
       StructField elementField =
           transformAndAssignColumnIdAndPhysicalName(
-              type.getElementField(), maxColumnId, isNewTable);
+              type.getElementField(), maxColumnId, isNewTable, useColumnIdForPhysicalName);
       return new StructField(
           field.getName(), new ArrayType(elementField), field.isNullable(), field.getMetadata());
     } else if (dataType instanceof MapType) {
       MapType type = (MapType) dataType;
       StructField key =
-          transformAndAssignColumnIdAndPhysicalName(type.getKeyField(), maxColumnId, isNewTable);
+          transformAndAssignColumnIdAndPhysicalName(
+              type.getKeyField(), maxColumnId, isNewTable, useColumnIdForPhysicalName);
       StructField value =
-          transformAndAssignColumnIdAndPhysicalName(type.getValueField(), maxColumnId, isNewTable);
+          transformAndAssignColumnIdAndPhysicalName(
+              type.getValueField(), maxColumnId, isNewTable, useColumnIdForPhysicalName);
       return new StructField(
           field.getName(), new MapType(key, value), field.isNullable(), field.getMetadata());
     }
@@ -437,12 +457,17 @@ public class ColumnMapping {
    *     id value is used to keep the current value always the max id
    * @param isNewTable Whether this is a new or an existing table. For existing tables the physical
    *     name will be re-used from the old display name
+   * @param useColumnIdForPhysicalName Whether we should assign physical names to 'col-[colId]'.
+   *     When false uses the default behavior described above.
    * @return A new {@link StructField} with updated metadata under the {@link
    *     ColumnMapping#COLUMN_MAPPING_ID_KEY} and the {@link
    *     ColumnMapping#COLUMN_MAPPING_PHYSICAL_NAME_KEY} keys
    */
   private static StructField assignColumnIdAndPhysicalNameToField(
-      StructField field, AtomicInteger maxColumnId, boolean isNewTable) {
+      StructField field,
+      AtomicInteger maxColumnId,
+      boolean isNewTable,
+      boolean useColumnIdForPhysicalName) {
     if (!hasColumnId(field)) {
       field =
           field.withNewMetadata(
@@ -453,7 +478,14 @@ public class ColumnMapping {
     }
     if (!hasPhysicalName(field)) {
       // re-use old display names as physical names when a table is updated
-      String physicalName = isNewTable ? "col-" + UUID.randomUUID() : field.getName();
+      String physicalName;
+      if (useColumnIdForPhysicalName) {
+        long columnId = getColumnId(field);
+        physicalName = String.format("col-%s", columnId);
+      } else {
+        physicalName = isNewTable ? "col-" + UUID.randomUUID() : field.getName();
+      }
+
       field =
           field.withNewMetadata(
               FieldMetadata.builder()

@@ -36,7 +36,7 @@ import org.apache.spark.sql.types.StructType
 
 class IcebergFileManifest(
     spark: SparkSession,
-    table: Table,
+    table: IcebergTableLike,
     partitionSchema: StructType,
     convertStats: Boolean = true) extends ConvertTargetFileManifest with LoggingShims {
 

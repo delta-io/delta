@@ -279,6 +279,11 @@ public class SchemaUtils {
     return result;
   }
 
+  /** @return column name by concatenating the column path elements (think of nested) with dots */
+  public static String concatWithDot(List<String> columnPath) {
+    return columnPath.stream().map(SchemaUtils::escapeDots).collect(Collectors.joining("."));
+  }
+
   /////////////////////////////////////////////////////////////////////////////////////////////////
   /// Private methods                                                                           ///
   /////////////////////////////////////////////////////////////////////////////////////////////////
@@ -544,11 +549,6 @@ public class SchemaUtils {
     }
 
     return columnIdToField;
-  }
-
-  /** column name by concatenating the column path elements (think of nested) with dots */
-  private static String concatWithDot(List<String> columnPath) {
-    return columnPath.stream().map(SchemaUtils::escapeDots).collect(Collectors.joining("."));
   }
 
   private static String escapeDots(String name) {

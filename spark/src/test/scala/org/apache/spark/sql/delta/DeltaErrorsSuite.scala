@@ -1600,7 +1600,7 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.tableFeatureDropHistoryTruncationNotAllowed()
       }
       checkErrorMessage(e, Some("DELTA_FEATURE_DROP_HISTORY_TRUNCATION_NOT_ALLOWED"),
-        Some("0AKDE"), Some("The particular feature does not require history truncation."))
+        Some("42000"), Some("The particular feature does not require history truncation."))
     }
     {
       val logRetention = DeltaConfigs.LOG_RETENTION
@@ -1624,7 +1624,7 @@ trait DeltaErrorsSuiteBase
           |Alternatively, please wait for the TRUNCATE HISTORY retention period to expire (24 hours)
           |and then run:
           |    ALTER TABLE table_name DROP FEATURE feature_name TRUNCATE HISTORY""".stripMargin
-      checkErrorMessage(e, Some("DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD"), Some("0AKDE"),
+      checkErrorMessage(e, Some("DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD"), Some("22KD0"),
         Some(expectedMessage))
     }
   }

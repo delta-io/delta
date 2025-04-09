@@ -444,6 +444,7 @@ public class TransactionImpl implements Transaction {
 
       // Action counters may be partially incremented from previous tries, reset the counters to 0
       transactionMetrics.resetActionCounters();
+      boolean isAppendOnlyTable = APPEND_ONLY_ENABLED.fromMetadata(metadata);
 
       // Write the staged data to a delta file
       wrapEngineExceptionThrowsIO(
@@ -455,13 +456,19 @@ public class TransactionImpl implements Transaction {
                     dataAndMetadataActions.map(
                         action -> {
                           transactionMetrics.totalActionsCounter.increment();
-                          // TODO: handle RemoveFiles.
                           if (!action.isNullAt(ADD_FILE_ORDINAL)) {
                             transactionMetrics.addFilesCounter.increment();
                             transactionMetrics.addFilesSizeInBytesCounter.increment(
                                 new AddFile(action.getStruct(ADD_FILE_ORDINAL)).getSize());
                           } else if (!action.isNullAt(REMOVE_FILE_ORDINAL)) {
                             transactionMetrics.removeFilesCounter.increment();
+                            // TODO add removeFileSizeInBytes and increment
+                            // TODO update fileSizeHistogram
+                            RemoveFile removeFile =
+                                new RemoveFile(action.getStruct(REMOVE_FILE_ORDINAL));
+                            if (isAppendOnlyTable && removeFile.getDataChange()) {
+                              throw DeltaErrors.cannotModifyAppendOnlyTable(dataPath.toString());
+                            }
                           }
                           return action;
                         }),

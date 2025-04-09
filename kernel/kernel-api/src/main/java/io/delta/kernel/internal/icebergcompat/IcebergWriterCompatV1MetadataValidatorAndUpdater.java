@@ -16,6 +16,7 @@
 package io.delta.kernel.internal.icebergcompat;
 
 import static io.delta.kernel.internal.tablefeatures.TableFeatures.*;
+import static io.delta.kernel.internal.util.SchemaUtils.concatWithDot;
 import static java.util.stream.Collectors.toList;
 import static java.util.stream.Collectors.toSet;
 
@@ -74,10 +75,14 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
    * <ul>
    *   <li>No change in enablement (true to true or false to false)
    *   <li>Enabling but only on a new table (false to true)
-   *   <li>Disabling (true to false)
    * </ul>
    *
-   * If enabling (false to true) on an existing table we throw an {@link KernelException}.
+   * The changes that we do not support and for which we throw an {@link KernelException} are
+   *
+   * <ul>
+   *   <li>Disabling on an existing table (true to false)
+   *   <li>Enabling on an existing table (false to true)
+   * </ul>
    */
   public static void validateIcebergWriterCompatV1Change(
       Map<String, String> oldConfig, Map<String, String> newConfig, boolean isNewTable) {
@@ -86,6 +91,10 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
       boolean isEnabled = TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.fromMetadata(newConfig);
       if (!wasEnabled && isEnabled) {
         throw DeltaErrors.enablingIcebergWriterCompatV1OnExistingTable(
+            TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey());
+      }
+      if (wasEnabled && !isEnabled) {
+        throw DeltaErrors.disablingIcebergWriterCompatV1OnExistingTable(
             TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey());
       }
     }
@@ -117,7 +126,12 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
       new IcebergCompatRequiredTablePropertyEnforcer<>(
           TableConfig.COLUMN_MAPPING_MODE,
           (value) -> ColumnMapping.ColumnMappingMode.ID == value,
-          ColumnMapping.ColumnMappingMode.ID.value);
+          ColumnMapping.ColumnMappingMode.ID.value,
+          // We need to update the CM info in the schema here because we check that the physical
+          // name is correctly set as part of icebergWriterCompatV1 checks
+          (inputContext) ->
+              ColumnMapping.updateColumnMappingMetadataIfNeeded(
+                  inputContext.newMetadata, inputContext.isCreatingNewTable));
 
   private static final IcebergCompatRequiredTablePropertyEnforcer ICEBERG_COMPAT_V2_ENABLED =
       new IcebergCompatRequiredTablePropertyEnforcer<>(
@@ -196,6 +210,38 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
           throw DeltaErrors.icebergCompatUnsupportedTypeColumns(
               INSTANCE.compatFeatureName(),
               matches.stream().map(tuple -> tuple._2.getDataType()).collect(toList()));
+        }
+      };
+
+  /**
+   * Checks that in the schema column mapping is set up such that the physicalName is equal to
+   * "col-[fieldId]". This check assumes column mapping is enabled (and so should be performed after
+   * that check).
+   */
+  private static final IcebergCompatCheck PHYSICAL_NAMES_MATCH_FIELD_IDS_CHECK =
+      (inputContext) -> {
+        List<Tuple2<List<String>, StructField>> invalidFields =
+            SchemaUtils.filterRecursively(
+                inputContext.newMetadata.getSchema(),
+                /* recurseIntoMapAndArrayTypes= */ true,
+                /* stopOnFirstMatch = */ false,
+                field -> {
+                  String physicalName = ColumnMapping.getPhysicalName(field);
+                  long columnId = ColumnMapping.getColumnId(field);
+                  return !physicalName.equals(String.format("col-%s", columnId));
+                });
+        if (!invalidFields.isEmpty()) {
+          List<String> invalidFieldsFormatted =
+              invalidFields.stream()
+                  .map(
+                      pair ->
+                          String.format(
+                              "%s(physicalName='%s', columnId=%s)",
+                              concatWithDot(pair._1),
+                              ColumnMapping.getPhysicalName(pair._2),
+                              ColumnMapping.getColumnId(pair._2)))
+                  .collect(toList());
+          throw DeltaErrors.icebergWriterCompatInvalidPhysicalName(invalidFieldsFormatted);
         }
       };
 
@@ -303,6 +349,7 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
     return Stream.of(
             UNSUPPORTED_FEATURES_CHECK,
             UNSUPPORTED_TYPES_CHECK,
+            PHYSICAL_NAMES_MATCH_FIELD_IDS_CHECK,
             INVARIANTS_INACTIVE_CHECK,
             CHANGE_DATA_FEED_INACTIVE_CHECK,
             CHECK_CONSTRAINTS_INACTIVE_CHECK,
