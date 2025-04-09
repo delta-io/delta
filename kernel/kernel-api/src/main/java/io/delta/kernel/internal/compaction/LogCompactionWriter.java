@@ -44,21 +44,22 @@ public class LogCompactionWriter {
 
   private static final Logger logger = LoggerFactory.getLogger(LogCompactionWriter.class);
 
-  private final Path logPath;
+  private final Path tablePath;
   private final long startVersion;
   private final long endVersion;
   private final long minFileRetentionTimestampMillis;
 
   public LogCompactionWriter(
-      Path logPath, long startVersion, long endVersion, long minFileRetentionTimestampMillis) {
-    this.logPath = requireNonNull(logPath);
+      Path tablePath, long startVersion, long endVersion, long minFileRetentionTimestampMillis) {
+    this.tablePath = requireNonNull(tablePath);
     this.startVersion = startVersion;
     this.endVersion = endVersion;
     this.minFileRetentionTimestampMillis = minFileRetentionTimestampMillis;
   }
 
   public void writeLogCompactionFile(Engine engine) throws IOException {
-    Path compactedPath = FileNames.logCompactionPath(logPath, startVersion, endVersion);
+    Path compactedPath =
+        FileNames.logCompactionPath(new Path(tablePath, "_delta_log"), startVersion, endVersion);
 
     logger.info(
         "Writing log compaction file for versions {} to {} to path: {}",
@@ -71,7 +72,7 @@ public class LogCompactionWriter {
         DeltaLogActionUtils.listDeltaLogFilesAsIter(
                 engine,
                 new HashSet<>(Arrays.asList(DeltaLogFileType.COMMIT)),
-                logPath,
+                tablePath,
                 startVersion,
                 Optional.of(endVersion),
                 false /* mustBeRecreatable */)
@@ -79,7 +80,7 @@ public class LogCompactionWriter {
 
     logger.info(
         "{}: Took {}ms to list commit files for log compaction",
-        logPath,
+        tablePath,
         System.currentTimeMillis() - startTimeMillis);
 
     if (deltas.isEmpty()) {
@@ -93,7 +94,7 @@ public class LogCompactionWriter {
     final long lastCommitTimestamp = getLast(deltas).getModificationTime();
 
     LogSegment segment =
-        new LogSegment(logPath, endVersion, deltas, emptyList(), lastCommitTimestamp);
+        new LogSegment(tablePath, endVersion, deltas, emptyList(), lastCommitTimestamp);
     CreateCheckpointIterator checkpointIterator =
         new CreateCheckpointIterator(engine, segment, minFileRetentionTimestampMillis);
     wrapEngineExceptionThrowsIO(

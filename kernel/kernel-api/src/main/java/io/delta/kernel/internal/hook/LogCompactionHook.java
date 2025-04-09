@@ -29,14 +29,14 @@ import java.io.IOException;
  */
 public class LogCompactionHook implements PostCommitHook {
 
-  private final Path logPath;
+  private final Path tablePath;
   private final long startVersion;
   private final long commitVersion;
   private final long minFileRetentionTimestampMillis;
 
   public LogCompactionHook(
-      Path logPath, long startVersion, long commitVersion, long minFileRetentionTimestampMillis) {
-    this.logPath = requireNonNull(logPath, "logPath cannot be null");
+      Path tablePath, long startVersion, long commitVersion, long minFileRetentionTimestampMillis) {
+    this.tablePath = requireNonNull(tablePath, "tablePath cannot be null");
     this.startVersion = startVersion;
     this.commitVersion = commitVersion;
     this.minFileRetentionTimestampMillis = minFileRetentionTimestampMillis;
@@ -46,7 +46,7 @@ public class LogCompactionHook implements PostCommitHook {
   public void threadSafeInvoke(Engine engine) throws IOException {
     LogCompactionWriter compactionWriter =
         new LogCompactionWriter(
-            logPath, startVersion, commitVersion, minFileRetentionTimestampMillis);
+            tablePath, startVersion, commitVersion, minFileRetentionTimestampMillis);
     compactionWriter.writeLogCompactionFile(engine);
   }
 
