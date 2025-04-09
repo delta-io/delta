@@ -151,7 +151,7 @@ class DeltaParquetFileFormatSuite extends DeltaParquetFileFormatSuiteBase {
           val deltaParquetFormat = new DeltaParquetFileFormat(
             deltaLog.snapshot.protocol,
             metadata,
-            nullableRowTrackingFields = false,
+            rowTrackingFieldsUpdated = false,
             optimizationsEnabled = false,
             if (enableDVs) Some(tablePath) else None)
 
@@ -257,7 +257,7 @@ class DeltaParquetFileFormatWithPredicatePushdownSuite extends DeltaParquetFileF
       val deltaParquetFormat = new DeltaParquetFileFormat(
         deltaLog.update().protocol,
         metadata,
-        nullableRowTrackingFields = false,
+        rowTrackingFieldsUpdated = false,
         optimizationsEnabled = true,
         Some(tablePath))
 
