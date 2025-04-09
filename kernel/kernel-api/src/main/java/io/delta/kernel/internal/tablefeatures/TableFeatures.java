@@ -597,8 +597,61 @@ public class TableFeatures {
         .contains(DOMAIN_METADATA_W_FEATURE);
   }
 
+  public static boolean hasInvariants(StructType tableSchema) {
+    return !SchemaUtils.filterRecursively(
+            tableSchema,
+            // invariants are not allowed in maps or arrays
+            /* recurseIntoMapOrArrayElements = */ false,
+            /* stopOnFirstMatch */ true,
+            /* filter */ field -> field.getMetadata().contains("delta.invariants"))
+        .isEmpty();
+  }
+
+  public static boolean hasCheckConstraints(Metadata metadata) {
+    return metadata.getConfiguration().keySet().stream()
+        .anyMatch(s -> s.startsWith("delta.constraints."));
+  }
+
   public static boolean isClusteringTableFeatureSupported(Protocol protocol) {
     return protocol.supportsFeature(CLUSTERING_W_FEATURE);
+  }
+
+  public static boolean hasIdentityColumns(Metadata metadata) {
+    return !SchemaUtils.filterRecursively(
+            metadata.getSchema(),
+            /* recurseIntoMapOrArrayElements = */ false, // don't expected identity columns in
+            // nested columns
+            /* stopOnFirstMatch */ true,
+            /* filter */ field -> {
+              FieldMetadata fieldMetadata = field.getMetadata();
+
+              // Check if the metadata contains the required keys
+              boolean hasStart = fieldMetadata.contains("delta.identity.start");
+              boolean hasStep = fieldMetadata.contains("delta.identity.step");
+              boolean hasInsert = fieldMetadata.contains("delta.identity.allowExplicitInsert");
+
+              // Verify that all or none of the three fields are present
+              if (!((hasStart == hasStep) && (hasStart == hasInsert))) {
+                throw new KernelException(
+                    String.format(
+                        "Inconsistent IDENTITY metadata for column %s detected: %s, %s, %s",
+                        field.getName(), hasStart, hasStep, hasInsert));
+              }
+
+              // Return true only if all three fields are present
+              return hasStart && hasStep && hasInsert;
+            })
+        .isEmpty();
+  }
+
+  public static boolean hasGeneratedColumns(Metadata metadata) {
+    return !SchemaUtils.filterRecursively(
+            metadata.getSchema(),
+            /* recurseIntoMapOrArrayElements = */ false, // don't expected generated columns in
+            // nested columns
+            /* stopOnFirstMatch */ true,
+            /* filter */ field -> field.getMetadata().contains("delta.generationExpression"))
+        .isEmpty();
   }
 
   /////////////////////////////////////////////////////////////////////////////////
@@ -642,21 +695,6 @@ public class TableFeatures {
     }
   }
 
-  public static boolean hasInvariants(StructType tableSchema) {
-    return !SchemaUtils.filterRecursively(
-            tableSchema,
-            // invariants are not allowed in maps or arrays
-            /* recurseIntoMapOrArrayElements = */ false,
-            /* stopOnFirstMatch */ true,
-            /* filter */ field -> field.getMetadata().contains("delta.invariants"))
-        .isEmpty();
-  }
-
-  public static boolean hasCheckConstraints(Metadata metadata) {
-    return metadata.getConfiguration().keySet().stream()
-        .anyMatch(s -> s.startsWith("delta.constraints."));
-  }
-
   /**
    * Check if the table schema has a column of type. Caution: works only for the primitive types.
    */
@@ -666,44 +704,6 @@ public class TableFeatures {
             /* recurseIntoMapOrArrayElements = */ true,
             /* stopOnFirstMatch */ true,
             /* filter */ field -> field.getDataType().equals(type))
-        .isEmpty();
-  }
-
-  public static boolean hasIdentityColumns(Metadata metadata) {
-    return !SchemaUtils.filterRecursively(
-            metadata.getSchema(),
-            /* recurseIntoMapOrArrayElements = */ false, // don't expected identity columns in
-            // nested columns
-            /* stopOnFirstMatch */ true,
-            /* filter */ field -> {
-              FieldMetadata fieldMetadata = field.getMetadata();
-
-              // Check if the metadata contains the required keys
-              boolean hasStart = fieldMetadata.contains("delta.identity.start");
-              boolean hasStep = fieldMetadata.contains("delta.identity.step");
-              boolean hasInsert = fieldMetadata.contains("delta.identity.allowExplicitInsert");
-
-              // Verify that all or none of the three fields are present
-              if (!((hasStart == hasStep) && (hasStart == hasInsert))) {
-                throw new KernelException(
-                    String.format(
-                        "Inconsistent IDENTITY metadata for column %s detected: %s, %s, %s",
-                        field.getName(), hasStart, hasStep, hasInsert));
-              }
-
-              // Return true only if all three fields are present
-              return hasStart && hasStep && hasInsert;
-            })
-        .isEmpty();
-  }
-
-  public static boolean hasGeneratedColumns(Metadata metadata) {
-    return !SchemaUtils.filterRecursively(
-            metadata.getSchema(),
-            /* recurseIntoMapOrArrayElements = */ false, // don't expected generated columns in
-            // nested columns
-            /* stopOnFirstMatch */ true,
-            /* filter */ field -> field.getMetadata().contains("delta.generationExpression"))
         .isEmpty();
   }
 }
