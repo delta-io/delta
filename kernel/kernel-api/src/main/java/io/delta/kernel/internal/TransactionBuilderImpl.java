@@ -221,11 +221,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       newMetadata = icebergCompatV2Metadata;
     }
 
-    Optional<Metadata> universalFormatMetadata =
-        IcebergUniversalFormatMetadataValidatorAndUpdater.validateAndUpdate(
-            snapshotMetadata, newMetadata.orElse(snapshotMetadata));
-    if (universalFormatMetadata.isPresent()) {
-      newMetadata = universalFormatMetadata;
+    if (newMetadata.isPresent()) {
+      IcebergUniversalFormatMetadataValidatorAndUpdater.validate(newMetadata.get());
     }
 
     /* ----- 4: Update the METADATA with column mapping info if applicable ----- */

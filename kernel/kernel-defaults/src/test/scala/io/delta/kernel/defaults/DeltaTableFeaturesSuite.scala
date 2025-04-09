@@ -298,17 +298,6 @@ class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
       val writtenSnapshot = latestSnapshot(table, engine)
       assert(TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.fromMetadata(
         writtenSnapshot.getMetadata).contains(UniversalFormats.FORMAT_ICEBERG))
-
-      val txn = table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
-        .withTableProperties(
-          engine,
-          Map(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "false").asJava)
-        .build(engine)
-      txn.commit(engine, emptyIterable())
-
-      val updatedSnapshot = latestSnapshot(table, engine)
-      assert(TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.fromMetadata(
-        updatedSnapshot.getMetadata).isEmpty)
     }
   }
 
@@ -317,7 +306,6 @@ class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
       createEmptyTable(engine, tablePath, testSchema)
 
       val table = Table.forPath(engine, tablePath)
-      val writtenSnapshot = latestSnapshot(table, engine)
 
       intercept[InvalidConfigurationValueException] {
         table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)

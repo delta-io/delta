@@ -18,55 +18,43 @@ package io.delta.kernel.internal.icebergcompat;
 import io.delta.kernel.exceptions.InvalidConfigurationValueException;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
-import java.util.Collections;
-import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
-import java.util.stream.Collectors;
 
-/** Utility class that enforces dependencies of UNIVERSAL_FORMAT_* options. */
+/**
+ * Utility class that enforces dependencies of UNIVERSAL_FORMAT_* options.
+ *
+ * <p>This class currently only does validation, in the future it might also update metadata to be
+ * conformant and thus has "Updater suffix".
+ */
 public class IcebergUniversalFormatMetadataValidatorAndUpdater {
   private IcebergUniversalFormatMetadataValidatorAndUpdater() {}
 
   /**
-   * Ensures the newMetadata is consistent with the enabled Universal output targets.
+   * Ensures the metadata is consistent with the enabled Universal output targets.
    *
-   * <p>If required {@linkplain TableConfig}s are no longer set to a supported a target format the
-   * target format will be removed from the returned {@linkplain Metadata} object. If the required
-   * configs were not set in {@code currentMetadata} then an exception is raised.
+   * <p>If required dependent {@linkplain TableConfig}s are not set in {@code metadata} then an
+   * exception is raised.
    *
    * <p>"hudi" is trivially compatible with Metadata.
    *
    * <p>"iceberg" requires that {@linkplain TableConfig#ICEBERG_COMPAT_V2_ENABLED} is set to true.
    *
-   * @return An updated newMetadata that removes invalid uniform values if the other required
-   *     TableConfig properties are not set. Optional.empty() is returned if no changes are
-   *     necessary.
-   * @throws InvalidConfigurationValueException newMetadata has ICEBERG universal format enabled and
-   *     {@linkplain TableConfig#ICEBERG_COMPAT_V2_ENABLED} is not enabled in newMetadata and not
-   *     enabled in currentMetadata.
+   * @throws InvalidConfigurationValueException metadata has ICEBERG universal format enabled and
+   *     {@linkplain TableConfig#ICEBERG_COMPAT_V2_ENABLED} is not enabled in metadata
    */
-  public static Optional<Metadata> validateAndUpdate(
-      Metadata currentMetadata, Metadata newMetadata) {
-    if (!newMetadata
+  public static void validate(Metadata metadata) {
+    if (!metadata
         .getConfiguration()
         .containsKey(TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey())) {
-      return Optional.empty();
-    }
-    Set<String> targetFormats =
-        TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.fromMetadata(newMetadata);
-    if (!targetFormats.contains(TableConfig.UniversalFormats.FORMAT_ICEBERG)) {
-      return Optional.empty();
+      return;
     }
 
-    if (TableConfig.ICEBERG_COMPAT_V2_ENABLED.fromMetadata(newMetadata)) {
-      return Optional.empty();
-    }
-
-    boolean wasIcebergCompatEnabled =
-        TableConfig.ICEBERG_COMPAT_V2_ENABLED.fromMetadata(currentMetadata);
-    if (!wasIcebergCompatEnabled) {
-      // The user is trying to turn on the new iceberg universal format without enabling iceberg v2.
+    Set<String> targetFormats = TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.fromMetadata(metadata);
+    boolean isIcebergEnabled = targetFormats.contains(TableConfig.UniversalFormats.FORMAT_ICEBERG);
+    boolean isIcebergCompatV2Enabled = TableConfig.ICEBERG_COMPAT_V2_ENABLED.fromMetadata(metadata);
+    if (isIcebergEnabled && !isIcebergCompatV2Enabled) {
+      // ICEBERG universal format is enabled but ICEBERG_COMPAT_V2_ENABLED is not set to true
+      // in metadata.
       throw new InvalidConfigurationValueException(
           TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey(),
           TableConfig.UniversalFormats.FORMAT_ICEBERG,
@@ -74,27 +62,5 @@ public class IcebergUniversalFormatMetadataValidatorAndUpdater {
               "%s must be set to \"true\" to enable iceberg uniform format.",
               TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey()));
     }
-
-    // The user disabled iceberg compat v2, so automatically remove iceberg from the list of target
-    // formats.
-    String updatedFormats =
-        targetFormats.stream()
-            .filter(s -> !TableConfig.UniversalFormats.FORMAT_ICEBERG.equals(s))
-            .collect(Collectors.joining(","));
-
-    if (updatedFormats.isEmpty()) {
-      // No reason to keep the key in the map.
-      return Optional.of(
-          newMetadata.withReplacedConfiguration(
-              newMetadata.getConfiguration().entrySet().stream()
-                  .filter(
-                      e ->
-                          !e.getKey().equals(TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey()))
-                  .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue))));
-    }
-    Map<String, String> updatedTargetMap =
-        Collections.singletonMap(
-            TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey(), updatedFormats);
-    return Optional.of(newMetadata.withMergedConfiguration(updatedTargetMap));
   }
 }

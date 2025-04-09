@@ -282,7 +282,7 @@ public class TableConfig<T> {
      */
     public static final String FORMAT_ICEBERG = "iceberg";
     /**
-     * The value to use to enable uniform exports to Iceberg for {@linkplain
+     * The value to use to enable uniform exports to Hudi for {@linkplain
      * TableConfig#UNIVERSAL_FORMAT_ENABLED_FORMATS}.
      */
     public static final String FORMAT_HUDI = "hudi";

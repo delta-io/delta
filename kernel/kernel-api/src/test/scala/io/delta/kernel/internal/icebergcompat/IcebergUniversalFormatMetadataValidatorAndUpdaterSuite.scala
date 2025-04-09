@@ -28,87 +28,39 @@ import org.scalatest.funsuite.AnyFunSuiteLike
 
 class IcebergUniversalFormatMetadataValidatorAndUpdaterSuite extends AnyFunSuiteLike
     with ColumnMappingSuiteBase {
-  test("validateAndUpdate should return empty when UNIVERSAL_FORMAT_ENABLED_FORMATS is not set") {
+  test("validateAndUpdate shouldn't throw when when no config is set") {
     val metadata = createMetadata(Map("unrelated_key" -> "unrelated_value"))
-    val result = IcebergUniversalFormatMetadataValidatorAndUpdater.validateAndUpdate(
-      createMetadata(),
+    IcebergUniversalFormatMetadataValidatorAndUpdater.validate(
       metadata)
-    assert(!result.isPresent)
   }
 
   test(
-    "validateAndUpdate should return empty when no iceberg in UNIVERSAL_FORMAT_ENABLED_FORMATS") {
+    "validate shouldn't throw with valid Hudi properties") {
     val metadata = createMetadata(Map(
       TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey -> "hudi",
       "unrelated_key" -> "unrelated_value"))
-    val result = IcebergUniversalFormatMetadataValidatorAndUpdater.validateAndUpdate(
-      createMetadata(),
-      metadata)
-    assert(!result.isPresent)
+    IcebergUniversalFormatMetadataValidatorAndUpdater.validate(metadata)
   }
 
-  test("validateAndUpdate should return empty when iceberg is enabled" +
-    " and ICEBERG_COMPAT_V2_ENABLED is true") {
+  test(
+    "validate shouldn't throw with Iceberg UNIVERSAL_FORMAT_ENABLED_FORMATS when compat is enabled") {
     val metadata = createMetadata(Map(
       TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey -> "iceberg,hudi",
       TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true",
       "unrelated_key" -> "unrelated_value"))
-    val result = IcebergUniversalFormatMetadataValidatorAndUpdater.validateAndUpdate(
-      createMetadata(),
-      metadata)
-    assert(!result.isPresent)
-  }
-
-  Seq(
-    Map(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "false"),
-    Map[String, String]()).foreach { disabledIcebergCompatV2Enabled =>
-    test(s"validateAndUpdate should remove iceberg when" +
-      s" ICEBERG_COMPAT_V2_ENABLED $disabledIcebergCompatV2Enabled") {
-      val metadata = createMetadata(Map(
-        TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey -> "iceberg,hudi",
-        "unrelated_key" -> "unrelated_value") ++ disabledIcebergCompatV2Enabled)
-      val result = IcebergUniversalFormatMetadataValidatorAndUpdater.validateAndUpdate(
-        createMetadata(Map(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true")),
-        metadata)
-      assert(result.isPresent)
-      assert(TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.fromMetadata(result.get()) == Set(
-        "hudi").asJava)
-
-      val updatedConfig = result.get().getConfiguration
-      assert(updatedConfig.get("unrelated_key") === "unrelated_value")
-    }
+    IcebergUniversalFormatMetadataValidatorAndUpdater.validate(metadata)
   }
 
   Seq(
     Map(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "false"),
     Map[String, String]()).foreach { disableIcebergCompatV2Enabled =>
-    test("validateAndUpdate should remove key entirely when only iceberg is present " +
-      s"and not compatible $disableIcebergCompatV2Enabled") {
-      val metadata = createMetadata(Map(
-        TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey -> "iceberg",
-        "unrelated_key" -> "unrelated_value"))
-      val result = IcebergUniversalFormatMetadataValidatorAndUpdater.validateAndUpdate(
-        createMetadata(Map(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true")),
-        metadata)
-      assert(result.isPresent)
-      val updatedConfig = result.get().getConfiguration
-      assert(!updatedConfig.containsKey(TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey))
-      assert(updatedConfig.get("unrelated_key") === "unrelated_value")
-    }
-  }
-
-  Seq(
-    Map(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "false"),
-    Map[String, String]()).foreach { disableIcebergCompatV2Enabled =>
-    test("validateAndUpdate should throw when iceberg compat is not enabled " +
-      s"and prior metadata did not contain the value $disableIcebergCompatV2Enabled") {
+    test(
+      s"validate should throw when iceberg compat is not enabled $disableIcebergCompatV2Enabled") {
       val metadata = createMetadata(Map(
         TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey -> "iceberg",
         "unrelated_key" -> "unrelated_value"))
       intercept[KernelException] {
-        IcebergUniversalFormatMetadataValidatorAndUpdater.validateAndUpdate(
-          createMetadata(),
-          metadata)
+        IcebergUniversalFormatMetadataValidatorAndUpdater.validate(metadata)
       }
     }
   }
