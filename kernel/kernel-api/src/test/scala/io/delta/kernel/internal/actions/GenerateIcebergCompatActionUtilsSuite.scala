@@ -73,7 +73,14 @@ class GenerateIcebergCompatActionUtilsSuite extends AnyFunSuite {
           partitionValues,
           dataChange)
       }.getMessage.contains(expectedErrorMessageContains))
-    // TODO test the Remove API here
+    assert(
+      intercept[UnsupportedOperationException] {
+        GenerateIcebergCompatActionUtils.generateIcebergCompatWriterV1RemoveAction(
+          txnStateRow,
+          dataFileStatus,
+          partitionValues,
+          dataChange)
+      }.getMessage.contains(expectedErrorMessageContains))
   }
 
   test("GenerateIcebergCompatActionUtils requires maxRetries=0") {
@@ -126,6 +133,20 @@ class GenerateIcebergCompatActionUtilsSuite extends AnyFunSuite {
       }.getMessage.contains("icebergCompatV2 compatibility requires 'numRecords' statistic"))
   }
 
+  test("GenerateIcebergCompatActionUtils cannot create remove with dataChange=true " +
+    "for append-only table") {
+    assert(
+      intercept[KernelException] {
+        GenerateIcebergCompatActionUtils.generateIcebergCompatWriterV1RemoveAction(
+          getTestTransactionStateRow(
+            compatibleTableProperties ++ Map(TableConfig.APPEND_ONLY_ENABLED.getKey -> "true")),
+          testDataFileStatusWithStatistics,
+          Collections.emptyMap(), // partitionValues
+          true // dataChange
+        )
+      }.getMessage.contains("Cannot modify append-only table"))
+  }
+
   /* ----- Valid cases ----- */
 
   private def validateAddAction(
@@ -162,6 +183,48 @@ class GenerateIcebergCompatActionUtilsSuite extends AnyFunSuite {
     assert(addRow.getString(AddFile.FULL_SCHEMA.indexOf("stats")) == expectedStatsString)
   }
 
+  private def validateRemoveAction(
+      row: Row,
+      expectedPath: String,
+      // expectedPartitionValues - for now this is not supported as anything other than empty
+      expectedSize: Long,
+      expectedDeletionTimestamp: Long,
+      expectedDataChange: Boolean,
+      expectedStatsString: Option[String]): Unit = {
+    assert(row.getSchema == SingleAction.FULL_SCHEMA)
+    (0 until SingleAction.FULL_SCHEMA.length()).foreach { idx =>
+      if (idx == SingleAction.REMOVE_FILE_ORDINAL) {
+        assert(!row.isNullAt(idx))
+      } else {
+        assert(row.isNullAt(idx))
+      }
+    }
+    val removeRow = row.getStruct(SingleAction.REMOVE_FILE_ORDINAL)
+    assert(removeRow.getSchema == RemoveFile.FULL_SCHEMA)
+
+    val removeFile = new RemoveFile(removeRow)
+    assert(removeFile.getPath == expectedPath)
+    assert(removeFile.getDeletionTimestamp.isPresent &&
+      removeFile.getDeletionTimestamp.get == expectedDeletionTimestamp)
+    assert(removeFile.getDataChange == expectedDataChange)
+    assert(removeFile.getExtendedFileMetadata.isPresent && removeFile.getExtendedFileMetadata.get)
+    assert(
+      removeFile.getPartitionValues.isPresent && removeFile.getPartitionValues.get.getSize == 0)
+    assert(removeFile.getSize.isPresent && removeFile.getSize.get == expectedSize)
+    if (expectedStatsString.nonEmpty) {
+      // We have to do our stats check differently since the RemoveFile::getStats API does not fully
+      // deserialize the statistics (only grabs the numRecords field)
+      assert(
+        removeRow.getString(RemoveFile.FULL_SCHEMA.indexOf("stats")) == expectedStatsString.get)
+    } else {
+      assert(removeRow.isNullAt(RemoveFile.FULL_SCHEMA.indexOf("stats")))
+    }
+    assert(!removeFile.getTags.isPresent)
+    assert(!removeFile.getDeletionVector.isPresent)
+    assert(!removeFile.getBaseRowId.isPresent)
+    assert(!removeFile.getDefaultRowCommitVersion.isPresent)
+  }
+
   test("generateIcebergCompatWriterV1AddAction creates correct add row") {
     Seq(true, false).foreach { dataChange =>
       val txnRow = getTestTransactionStateRow(compatibleTableProperties)
@@ -169,7 +232,7 @@ class GenerateIcebergCompatActionUtilsSuite extends AnyFunSuite {
         .serializeAsJson(TransactionStateRow.getPhysicalSchema(txnRow))
       validateAddAction(
         GenerateIcebergCompatActionUtils.generateIcebergCompatWriterV1AddAction(
-          getTestTransactionStateRow(compatibleTableProperties),
+          txnRow,
           testDataFileStatusWithStatistics,
           Collections.emptyMap(), // partitionValues
           dataChange),
@@ -181,8 +244,32 @@ class GenerateIcebergCompatActionUtilsSuite extends AnyFunSuite {
     }
   }
 
-  // Test remove (w stats, w out stats), (dataChange true, dataChange false)
-  // Validates that remove can be created without stats (while add cannot)
+  test("generateIcebergCompatWriterV1AddAction creates correct remove row") {
+    Seq(true, false).foreach { dataChange =>
+      // RemoveFiles are allowed to be missing statistics (where as AddFiles are not)
+      Seq(testDataFileStatusWithStatistics, testDataFileStatusWithoutStatistics).foreach {
+        fileStatus =>
+          val txnRow = getTestTransactionStateRow(compatibleTableProperties)
+          val statsString = if (fileStatus.getStatistics.isPresent) {
+            Some(fileStatus.getStatistics.get
+              .serializeAsJson(TransactionStateRow.getPhysicalSchema(txnRow)))
+          } else {
+            None
+          }
+          validateRemoveAction(
+            GenerateIcebergCompatActionUtils.generateIcebergCompatWriterV1RemoveAction(
+              txnRow,
+              fileStatus,
+              Collections.emptyMap(), // partitionValues
+              dataChange),
+            expectedPath = "file1.parquet",
+            expectedSize = 1000,
+            expectedDeletionTimestamp = 10,
+            expectedDataChange = dataChange,
+            expectedStatsString = statsString)
+      }
+    }
+  }
 }
 
 object GenerateIcebergCompatActionUtilsSuite {

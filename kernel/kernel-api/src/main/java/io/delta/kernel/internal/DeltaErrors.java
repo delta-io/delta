@@ -397,6 +397,13 @@ public final class DeltaErrors {
             + " but 'domainMetadata' is unsupported");
   }
 
+  public static KernelException cannotModifyAppendOnlyTable(String tablePath) {
+    return new KernelException(
+        String.format(
+            "Cannot modify append-only table. Table `%s` has configuration %s=true.",
+            tablePath, TableConfig.APPEND_ONLY_ENABLED.getKey()));
+  }
+
   /* ------------------------ HELPER METHODS ----------------------------- */
   private static String formatTimestamp(long millisSinceEpochUTC) {
     return new Timestamp(millisSinceEpochUTC).toInstant().toString();
