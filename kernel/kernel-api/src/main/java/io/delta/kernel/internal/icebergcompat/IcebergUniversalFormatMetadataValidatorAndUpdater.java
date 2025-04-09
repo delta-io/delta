@@ -53,8 +53,6 @@ public class IcebergUniversalFormatMetadataValidatorAndUpdater {
     boolean isIcebergEnabled = targetFormats.contains(TableConfig.UniversalFormats.FORMAT_ICEBERG);
     boolean isIcebergCompatV2Enabled = TableConfig.ICEBERG_COMPAT_V2_ENABLED.fromMetadata(metadata);
     if (isIcebergEnabled && !isIcebergCompatV2Enabled) {
-      // ICEBERG universal format is enabled but ICEBERG_COMPAT_V2_ENABLED is not set to true
-      // in metadata.
       throw new InvalidConfigurationValueException(
           TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey(),
           TableConfig.UniversalFormats.FORMAT_ICEBERG,

@@ -301,7 +301,7 @@ class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
     }
   }
 
-  test("UNIVERSAL_FORMAT feature will throw if IcebergCompat was not enabled") {
+  test("UNIVERSAL_FORMAT feature will throw if icebergCompatV2 was not enabled") {
     withTempDirAndEngine { (tablePath, engine) =>
       createEmptyTable(engine, tablePath, testSchema)
 

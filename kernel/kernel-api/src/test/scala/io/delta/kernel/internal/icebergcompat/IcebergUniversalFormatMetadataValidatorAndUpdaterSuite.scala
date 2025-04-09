@@ -15,8 +15,6 @@
  */
 package io.delta.kernel.internal.icebergcompat
 
-import scala.collection.JavaConverters._
-
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.actions.Metadata
@@ -35,7 +33,7 @@ class IcebergUniversalFormatMetadataValidatorAndUpdaterSuite extends AnyFunSuite
   }
 
   test(
-    "validate shouldn't throw with valid Hudi properties") {
+    "validate shouldn't throw with valid Hudi enabled.") {
     val metadata = createMetadata(Map(
       TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey -> "hudi",
       "unrelated_key" -> "unrelated_value"))
@@ -43,7 +41,7 @@ class IcebergUniversalFormatMetadataValidatorAndUpdaterSuite extends AnyFunSuite
   }
 
   test(
-    "validate shouldn't throw with Iceberg UNIVERSAL_FORMAT_ENABLED_FORMATS when compat is enabled") {
+    "validate can enable iceberg universal compat is enabled and icebergCompatV2 is enabled") {
     val metadata = createMetadata(Map(
       TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey -> "iceberg,hudi",
       TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true",
@@ -53,9 +51,10 @@ class IcebergUniversalFormatMetadataValidatorAndUpdaterSuite extends AnyFunSuite
 
   Seq(
     Map(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "false"),
-    Map[String, String]()).foreach { disableIcebergCompatV2Enabled =>
+    Map[String, String]()).foreach { disableIcebergCompatV2 =>
     test(
-      s"validate should throw when iceberg compat is not enabled $disableIcebergCompatV2Enabled") {
+      "validate should throw when iceberg universal format is enabled and "
+        + s"icebergCompatV2 isn't $disableIcebergCompatV2") {
       val metadata = createMetadata(Map(
         TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey -> "iceberg",
         "unrelated_key" -> "unrelated_value"))
