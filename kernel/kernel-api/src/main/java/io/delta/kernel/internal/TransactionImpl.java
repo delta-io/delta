@@ -443,7 +443,7 @@ public class TransactionImpl implements Transaction {
       }
 
       // Action counters may be partially incremented from previous tries, reset the counters to 0
-      transactionMetrics.resetActionCounters();
+      transactionMetrics.resetCounters();
       boolean isAppendOnlyTable = APPEND_ONLY_ENABLED.fromMetadata(metadata);
 
       // Write the staged data to a delta file
@@ -455,7 +455,7 @@ public class TransactionImpl implements Transaction {
                     FileNames.deltaFile(logPath, commitAsVersion),
                     dataAndMetadataActions.map(
                         action -> {
-                          incrementMetricsForFileActionRow(action, transactionMetrics);
+                          incrementMetricsForFileActionRow(transactionMetrics, action);
                           if (!action.isNullAt(REMOVE_FILE_ORDINAL)) {
                             RemoveFile removeFile =
                                 new RemoveFile(action.getStruct(REMOVE_FILE_ORDINAL));
@@ -479,7 +479,7 @@ public class TransactionImpl implements Transaction {
     }
   }
 
-  private void incrementMetricsForFileActionRow(Row fileActionRow, TransactionMetrics txnMetrics) {
+  private void incrementMetricsForFileActionRow(TransactionMetrics txnMetrics, Row fileActionRow) {
     txnMetrics.totalActionsCounter.increment();
     if (!fileActionRow.isNullAt(ADD_FILE_ORDINAL)) {
       txnMetrics.addFilesCounter.increment();
@@ -499,7 +499,7 @@ public class TransactionImpl implements Transaction {
                               + "require that file size be provided but "
                               + "found null file size"));
       txnMetrics.removeFilesSizeInBytesCounter.increment(fileSize);
-      // TODO increment fileSizeHistogram
+      // TODO decrement fileSizeHistogram
     }
   }
 

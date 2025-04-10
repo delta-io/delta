@@ -47,7 +47,7 @@ public class TransactionMetrics {
    * (i.e. if an exception interrupts a file write). This allows us to reset the counters so that we
    * can increment them correctly from 0 on a retry.
    */
-  public void resetActionCounters() {
+  public void resetCounters() {
     addFilesCounter.reset();
     addFilesSizeInBytesCounter.reset();
     removeFilesCounter.reset();
