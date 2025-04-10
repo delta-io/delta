@@ -129,6 +129,21 @@ public class AddFile extends RowBackedAction {
         version -> fieldMap.put(FULL_SCHEMA.indexOf("defaultRowCommitVersion"), version));
     stats.ifPresent(
         stat -> fieldMap.put(FULL_SCHEMA.indexOf("stats"), stat.serializeAsJson(physicalSchema)));
+    deletionVector.ifPresent(
+        dv -> {
+          Map<Integer, Object> dvFieldMap = new HashMap<>();
+          StructType dvSchema = DeletionVectorDescriptor.READ_SCHEMA;
+
+          dvFieldMap.put(dvSchema.indexOf("storageType"), dv.getStorageType());
+          dvFieldMap.put(dvSchema.indexOf("pathOrInlineDv"), dv.getPathOrInlineDv());
+          dv.getOffset().ifPresent(offset -> dvFieldMap.put(dvSchema.indexOf("offset"), offset));
+          dvFieldMap.put(dvSchema.indexOf("sizeInBytes"), dv.getSizeInBytes());
+          dvFieldMap.put(dvSchema.indexOf("cardinality"), dv.getCardinality());
+
+          Row dvRow = new GenericRow(dvSchema, dvFieldMap);
+
+          fieldMap.put(FULL_SCHEMA.indexOf("deletionVector"), dvRow);
+        });
 
     return new GenericRow(FULL_SCHEMA, fieldMap);
   }
