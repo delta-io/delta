@@ -308,6 +308,7 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     Transaction.generateAppendActions(defaultEngine, state, writeResultIter, writeContext)
   }
 
+  // scalastyle:off argcount
   def createTxn(
       engine: Engine = defaultEngine,
       tablePath: String,
@@ -320,6 +321,7 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       maxRetries: Int = -1,
       clusteringCols: List[Column] = List.empty,
       logCompactionInterval: Int = 10): Transaction = {
+    // scalastyle:on argcount
 
     var txnBuilder = createWriteTxnBuilder(
       TableImpl.forPath(engine, tablePath, clock))
