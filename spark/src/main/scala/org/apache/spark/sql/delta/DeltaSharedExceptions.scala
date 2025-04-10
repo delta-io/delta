@@ -41,7 +41,8 @@ class DeltaAnalysisException(
   with DeltaThrowable {
   def getMessageParametersArray: Array[String] = messageParameters
   override def getErrorClass: String = errorClass
-  override def getMessageParameters: java.util.Map[String, String] =    DeltaThrowableHelper.getMessageParameters(errorClass, errorSubClass = null, messageParameters)
+  override def getMessageParameters: java.util.Map[String, String] =
+    DeltaThrowableHelper.getMessageParameters(errorClass, errorSubClass = null, messageParameters)
 }
 
 class DeltaIllegalArgumentException(
