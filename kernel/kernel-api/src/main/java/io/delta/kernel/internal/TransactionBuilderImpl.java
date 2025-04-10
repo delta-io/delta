@@ -382,10 +382,14 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       }
 
       // Clustering columns will be guaranteed to have physical names at this point
+      // Only the leaf part of the overall column needs to be taken since
+      // validation is performed on the leaf struct fields
+      // E.g. getClusteringColumns returns <physical_name_of_struct>.<physical_name_inner>,
+      // Only physical_name_inner is required for validation
       Set<String> clusteringColumnPhysicalNames =
           ClusteringUtils.getClusteringColumnsOptional(snapshot).orElse(Collections.emptyList())
               .stream()
-              .map(col -> col.getNames()[0])
+              .map(col -> col.getNames()[col.getNames().length - 1])
               .collect(toSet());
 
       SchemaUtils.validateUpdatedSchema(

@@ -465,6 +465,8 @@ public class SchemaUtils {
   private static void validateClusteringColumnsNotDropped(
       List<StructField> droppedFields, Set<String> clusteringColumnPhysicalNames) {
     for (StructField droppedField : droppedFields) {
+      // ToDo: At some point plumb through mapping of ID to full name, so we get better error
+      // messages
       if (clusteringColumnPhysicalNames.contains(getPhysicalName(droppedField))) {
         throw new KernelException(
             String.format("Cannot drop clustering column %s", droppedField.getName()));

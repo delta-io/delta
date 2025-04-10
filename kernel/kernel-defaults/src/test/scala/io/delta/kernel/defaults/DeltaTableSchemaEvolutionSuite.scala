@@ -15,6 +15,8 @@
  */
 package io.delta.kernel.defaults
 
+import java.util.Collections.emptySet
+
 import scala.collection.JavaConverters._
 import scala.collection.immutable.Seq
 
@@ -23,10 +25,12 @@ import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.expressions.Column
 import io.delta.kernel.internal.{SnapshotImpl, TableConfig}
-import io.delta.kernel.internal.clustering.ClusteringUtils
 import io.delta.kernel.internal.util.{ColumnMapping, ColumnMappingSuiteBase}
 import io.delta.kernel.types.{ArrayType, FieldMetadata, IntegerType, LongType, MapType, StringType, StructType}
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
+
+import org.scalatest.prop.TableDrivenPropertyChecks.forAll
+import org.scalatest.prop.Tables
 
 /**
  * ToDo: Clean this up by moving some common schemas to fixtures and abstracting
@@ -1196,31 +1200,63 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
     }
   }
 
-  test("Cannot drop clustering columns") {
-    withTempDirAndEngine { (tablePath, engine) =>
-      val table = Table.forPath(engine, tablePath)
-      val initialSchema = new StructType()
-        .add("data", StringType.STRING, true)
-        .add("clustering-col", IntegerType.INTEGER, true)
+  val primitiveSchemaWithClusteringColumn = new StructType()
+    .add("clustering_col", IntegerType.INTEGER)
+    .add("data", IntegerType.INTEGER)
 
-      createEmptyTable(
-        engine,
-        tablePath,
-        initialSchema,
-        clusteringCols = List(new Column("clustering-col")),
-        tableProperties = Map(
-          TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
-          TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"))
+  val nestedSchemaWithClusteringColumn = new StructType()
+    .add(
+      "struct",
+      new StructType()
+        .add("clustering_col", IntegerType.INTEGER)
+        .add("data", IntegerType.INTEGER),
+      true)
 
-      val currentSchema = table.getLatestSnapshot(engine).getSchema
-      val newSchema = new StructType()
-        .add("data", StringType.STRING, true, currentSchema.get("data").getMetadata)
+  private val updatedSchemaWithDroppedClusteringColumn = Tables.Table(
+    ("schemaBefore", "updatedSchemaWithDroppedClusteringColumn", "clusteringColumn"),
+    (
+      primitiveSchemaWithClusteringColumn,
+      new StructType()
+        .add(
+          "data",
+          StringType.STRING,
+          true,
+          primitiveSchemaWithClusteringColumn.get("data").getMetadata),
+      new Column("clustering_col")),
+    (
+      nestedSchemaWithClusteringColumn,
+      new StructType()
+        .add(
+          "struct",
+          new StructType()
+            .add(
+              "data",
+              IntegerType.INTEGER,
+              nestedSchemaWithClusteringColumn.get("struct").getDataType
+                .asInstanceOf[StructType].get("data").getMetadata),
+          true,
+          nestedSchemaWithClusteringColumn.get("struct").getMetadata),
+      new Column(Array("struct", "clustering_col"))))
 
-      assertSchemaEvolutionFails[KernelException](
-        table,
-        engine,
-        newSchema,
-        "Cannot drop clustering column clustering-col")
+  test("Cannot drop clustering column") {
+    forAll(updatedSchemaWithDroppedClusteringColumn) {
+      (schemaBefore, schemaAfter, clusteringColumn) =>
+        withTempDirAndEngine { (tablePath, engine) =>
+          val table = Table.forPath(engine, tablePath)
+          createEmptyTable(
+            engine,
+            tablePath,
+            schemaBefore,
+            clusteringCols = List(clusteringColumn),
+            tableProperties = Map(
+              TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
+              TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"))
+          assertSchemaEvolutionFails[KernelException](
+            table,
+            engine,
+            schemaAfter,
+            "Cannot drop clustering column clustering_col")
+        }
     }
   }
 
