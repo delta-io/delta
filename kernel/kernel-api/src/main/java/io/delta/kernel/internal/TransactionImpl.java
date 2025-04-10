@@ -443,7 +443,7 @@ public class TransactionImpl implements Transaction {
       }
 
       // Action counters may be partially incremented from previous tries, reset the counters to 0
-      transactionMetrics.resetActionCounters();
+      transactionMetrics.resetCounters();
       boolean isAppendOnlyTable = APPEND_ONLY_ENABLED.fromMetadata(metadata);
 
       // Write the staged data to a delta file
@@ -455,15 +455,8 @@ public class TransactionImpl implements Transaction {
                     FileNames.deltaFile(logPath, commitAsVersion),
                     dataAndMetadataActions.map(
                         action -> {
-                          transactionMetrics.totalActionsCounter.increment();
-                          if (!action.isNullAt(ADD_FILE_ORDINAL)) {
-                            transactionMetrics.addFilesCounter.increment();
-                            transactionMetrics.addFilesSizeInBytesCounter.increment(
-                                new AddFile(action.getStruct(ADD_FILE_ORDINAL)).getSize());
-                          } else if (!action.isNullAt(REMOVE_FILE_ORDINAL)) {
-                            transactionMetrics.removeFilesCounter.increment();
-                            // TODO add removeFileSizeInBytes and increment
-                            // TODO update fileSizeHistogram
+                          incrementMetricsForFileActionRow(transactionMetrics, action);
+                          if (!action.isNullAt(REMOVE_FILE_ORDINAL)) {
                             RemoveFile removeFile =
                                 new RemoveFile(action.getStruct(REMOVE_FILE_ORDINAL));
                             if (isAppendOnlyTable && removeFile.getDataChange()) {
@@ -483,6 +476,23 @@ public class TransactionImpl implements Transaction {
       throw e;
     } catch (IOException ioe) {
       throw new UncheckedIOException(ioe);
+    }
+  }
+
+  private void incrementMetricsForFileActionRow(TransactionMetrics txnMetrics, Row fileActionRow) {
+    txnMetrics.totalActionsCounter.increment();
+    if (!fileActionRow.isNullAt(ADD_FILE_ORDINAL)) {
+      txnMetrics.addFilesCounter.increment();
+      txnMetrics.addFilesSizeInBytesCounter.increment(
+          new AddFile(fileActionRow.getStruct(ADD_FILE_ORDINAL)).getSize());
+      // TODO increment fileSizeHistogram
+    } else if (!fileActionRow.isNullAt(REMOVE_FILE_ORDINAL)) {
+      txnMetrics.removeFilesCounter.increment();
+      RemoveFile removeFile = new RemoveFile(fileActionRow.getStruct(REMOVE_FILE_ORDINAL));
+      long fileSize =
+          removeFile.getSize().orElseThrow(DeltaErrorsInternal::missingRemoveFileSizeDuringCommit);
+      txnMetrics.removeFilesSizeInBytesCounter.increment(fileSize);
+      // TODO decrement fileSizeHistogram
     }
   }
 

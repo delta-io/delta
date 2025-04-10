@@ -199,7 +199,8 @@ public final class GenerateIcebergCompatActionUtils {
   // within RemoveFile.java until we add full support for deletes (which will likely involve
   // generating RemoveFiles directly from AddFiles anyway)
 
-  private static Row convertRemoveDataFileStatus(
+  @VisibleForTesting
+  public static Row convertRemoveDataFileStatus(
       StructType physicalSchema,
       URI tableRoot,
       DataFileStatus dataFileStatus,

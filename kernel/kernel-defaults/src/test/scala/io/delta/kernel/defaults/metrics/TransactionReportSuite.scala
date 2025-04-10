@@ -23,13 +23,15 @@ import io.delta.kernel._
 import io.delta.kernel.data.Row
 import io.delta.kernel.engine._
 import io.delta.kernel.internal.TableConfig
-import io.delta.kernel.internal.actions.{RemoveFile, SingleAction}
-import io.delta.kernel.internal.data.GenericRow
+import io.delta.kernel.internal.actions.{GenerateIcebergCompatActionUtils, SingleAction}
+import io.delta.kernel.internal.data.TransactionStateRow
+import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.metrics.Timer
 import io.delta.kernel.internal.util.Utils
 import io.delta.kernel.metrics.{SnapshotReport, TransactionMetricsResult, TransactionReport}
 import io.delta.kernel.types.{IntegerType, StructType}
 import io.delta.kernel.utils.{CloseableIterable, CloseableIterator, DataFileStatus}
+import io.delta.kernel.utils.CloseableIterable.inMemoryIterable
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -108,6 +110,7 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
       expectedCommitVersion: Option[Long] = None,
       expectedNumAttempts: Long = 1,
       expectedTotalAddFilesSizeInBytes: Long = 0,
+      expectedTotalRemoveFilesSizeInBytes: Long = 0,
       buildTransaction: (TransactionBuilder, Engine) => Transaction = (tb, e) => tb.build(e),
       engineInfo: String = "test-engine-info",
       operation: Operation = Operation.MANUAL_UPDATE): Unit = {
@@ -124,6 +127,7 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
       assert(txnMetrics.getTotalAddFilesSizeInBytes == expectedTotalAddFilesSizeInBytes)
       assert(txnMetrics.getNumRemoveFiles == expectedNumRemoveFiles)
       assert(txnMetrics.getNumTotalActions == expectedNumTotalActions)
+      assert(txnMetrics.getTotalRemoveFilesSizeInBytes == expectedTotalRemoveFilesSizeInBytes)
     }
 
     val (transactionReport, duration, snapshotReportOpt, exception) =
@@ -173,6 +177,24 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         transState,
         fileStatusIter,
         Transaction.getWriteContext(engine, transState, Collections.emptyMap())))
+  }
+
+  def generateRemoveActions(fileStatusIter: CloseableIterator[DataFileStatus])(
+      trans: Transaction,
+      engine: Engine): CloseableIterable[Row] = {
+    // For now we use GenerateIcebergCompatActionUtils to generate the remove rows since this is the
+    // only current API support in Kernel for generating removes; in the future when we support a
+    // more general API for removes we should use that here
+    inMemoryIterable(fileStatusIter.map { fileStatus =>
+      SingleAction.createRemoveFileSingleAction(
+        GenerateIcebergCompatActionUtils.convertRemoveDataFileStatus(
+          TransactionStateRow.getPhysicalSchema(trans.getTransactionState(engine)),
+          new Path(TransactionStateRow.getTablePath(trans.getTransactionState(engine))).toUri,
+          fileStatus,
+          Collections.emptyMap(), // partitionValues
+          true // dataChange
+        ))
+    })
   }
 
   test("TransactionReport: Basic append to existing table + update metadata") {
@@ -272,30 +294,51 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
     }
   }
 
-  test("TransactionReport: manually commit a remove file") {
+  test("TransactionReport: remove files from a table") {
     withTempDir { tempDir =>
       val path = tempDir.getCanonicalPath
-      // Set up delta table with version 0
-      spark.range(10).write.format("delta").mode("append").save(path)
 
-      val removeFileRow: Row = {
-        val fieldMap: Map[Integer, AnyRef] = Map(
-          Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("path")) -> "/path/for/remove/file",
-          Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("dataChange")) -> java.lang.Boolean.TRUE)
-        new GenericRow(RemoveFile.FULL_SCHEMA, fieldMap.asJava)
-      }
-
+      // Create a table and insert 1 file into it
       checkTransactionReport(
-        generateCommitActions = (_, _) =>
-          CloseableIterable.inMemoryIterable(
-            Utils.toCloseableIterator(
-              Seq(SingleAction.createRemoveFileSingleAction(removeFileRow)).iterator.asJava)),
+        generateCommitActions = generateAppendActions(fileStatusIter1),
+        path,
+        expectException = false,
+        expectedBaseSnapshotVersion = -1,
+        expectedNumAddFiles = 1,
+        expectedNumTotalActions = 4, // protocol, metadata, commitInfo, addFile
+        expectedCommitVersion = Some(0),
+        expectedTotalAddFilesSizeInBytes = 100,
+        buildTransaction = (transBuilder, engine) => {
+          transBuilder
+            .withSchema(engine, new StructType().add("id", IntegerType.INTEGER))
+            .build(engine)
+        })
+
+      // Remove the 1 file and insert 2 new ones
+      checkTransactionReport(
+        generateCommitActions = (txn, engine) =>
+          inMemoryIterable(generateAppendActions(fileStatusIter2)(txn, engine).iterator().combine(
+            generateRemoveActions(fileStatusIter1)(txn, engine).iterator())),
         path,
         expectException = false,
         expectedBaseSnapshotVersion = 0,
+        expectedNumAddFiles = 2,
         expectedNumRemoveFiles = 1,
-        expectedNumTotalActions = 2, // commitInfo + removeFile
-        expectedCommitVersion = Some(1))
+        expectedNumTotalActions = 4, // commitInfo, removeFile, 2 addFile
+        expectedCommitVersion = Some(1),
+        expectedTotalAddFilesSizeInBytes = 200,
+        expectedTotalRemoveFilesSizeInBytes = 100)
+
+      // Remove the two files inserted
+      checkTransactionReport(
+        generateCommitActions = generateRemoveActions(fileStatusIter2),
+        path,
+        expectException = false,
+        expectedBaseSnapshotVersion = 1,
+        expectedNumRemoveFiles = 2,
+        expectedNumTotalActions = 3, // commitInfo, 2 removeFile
+        expectedCommitVersion = Some(2),
+        expectedTotalRemoveFilesSizeInBytes = 200)
     }
   }
 
