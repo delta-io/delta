@@ -39,7 +39,7 @@ public class TransactionMetrics {
 
   public final Counter addFilesSizeInBytesCounter = new Counter();
 
-  // TODO: add removeFilesSizeInBytesCounter (and to TransactionMetricsResult)
+  public final Counter removeFilesSizeInBytesCounter = new Counter();
 
   /**
    * Resets the action counters (addFilesCounter, removeFilesCounter and totalActionsCounter) to 0.
@@ -52,6 +52,7 @@ public class TransactionMetrics {
     addFilesSizeInBytesCounter.reset();
     removeFilesCounter.reset();
     totalActionsCounter.reset();
+    removeFilesSizeInBytesCounter.reset();
   }
 
   public TransactionMetricsResult captureTransactionMetricsResult() {
@@ -63,6 +64,7 @@ public class TransactionMetrics {
       final long totalAddFilesSizeInBytes = addFilesSizeInBytesCounter.value();
       final long numRemoveFiles = removeFilesCounter.value();
       final long numTotalActions = totalActionsCounter.value();
+      final long totalRemoveFileSizeInBytes = removeFilesSizeInBytesCounter.value();
 
       @Override
       public long getTotalCommitDurationNs() {
@@ -93,6 +95,11 @@ public class TransactionMetrics {
       public long getTotalAddFilesSizeInBytes() {
         return totalAddFilesSizeInBytes;
       }
+
+      @Override
+      public long getTotalRemoveFilesSizeInBytes() {
+        return totalRemoveFileSizeInBytes;
+      }
     };
   }
 
@@ -100,12 +107,14 @@ public class TransactionMetrics {
   public String toString() {
     return String.format(
         "TransactionMetrics(totalCommitTimer=%s, commitAttemptsCounter=%s, addFilesCounter=%s, "
-            + "removeFilesCounter=%s, totalActionsCounter=%s, totalAddFilesSizeInBytes=%s)",
+            + "removeFilesCounter=%s, totalActionsCounter=%s, totalAddFilesSizeInBytes=%s,"
+            + "totalRemoveFilesSizeInBytes=%s)",
         totalCommitTimer,
         commitAttemptsCounter,
         addFilesCounter,
         removeFilesCounter,
         totalActionsCounter,
-        addFilesSizeInBytesCounter);
+        addFilesSizeInBytesCounter,
+        removeFilesSizeInBytesCounter);
   }
 }

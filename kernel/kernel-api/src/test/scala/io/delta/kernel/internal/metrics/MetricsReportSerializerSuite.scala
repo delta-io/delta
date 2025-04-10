@@ -120,7 +120,8 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |"numAddFiles":${transactionMetrics.getNumAddFiles},
          |"numRemoveFiles":${transactionMetrics.getNumRemoveFiles},
          |"numTotalActions":${transactionMetrics.getNumTotalActions},
-         |"totalAddFilesSizeInBytes":${transactionMetrics.getTotalAddFilesSizeInBytes}
+         |"totalAddFilesSizeInBytes":${transactionMetrics.getTotalAddFilesSizeInBytes},
+         |"totalRemoveFilesSizeInBytes":${transactionMetrics.getTotalRemoveFilesSizeInBytes}
          |}
          |}
          |""".stripMargin.replaceAll("\n", "")
@@ -139,6 +140,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
     transactionMetrics1.addFilesCounter.increment(82)
     transactionMetrics1.totalActionsCounter.increment(90)
     transactionMetrics1.addFilesSizeInBytesCounter.increment(100)
+    transactionMetrics1.removeFilesSizeInBytesCounter.increment(1000)
 
     val transactionReport1 = new TransactionReportImpl(
       "/table/path",
@@ -167,7 +169,8 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |"numAddFiles":82,
          |"numRemoveFiles":0,
          |"numTotalActions":90,
-         |"totalAddFilesSizeInBytes":100
+         |"totalAddFilesSizeInBytes":100,
+         |"totalRemoveFilesSizeInBytes":1000
          |}
          |}
          |""".stripMargin.replaceAll("\n", "")
