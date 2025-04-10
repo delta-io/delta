@@ -313,7 +313,7 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
       new File(tempDir, "_delta_log").listFiles().filter(_.getName.endsWith(".json"))
         .foreach(_.delete())
       if (coordinatedCommitsEnabledInTests) {
-        new File(new File(tempDir, "_delta_log"), "_commits")
+        new File(new File(tempDir, "_delta_log"), "_staged_commits")
           .listFiles()
           .filter(_.getName.endsWith(".json"))
           .foreach(_.delete())
