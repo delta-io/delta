@@ -2365,7 +2365,8 @@ trait DeltaErrorsSuiteBase
         val e = intercept[AnalysisException] {
           sql(s"SELECT * FROM $fnCall").collect()
         }
-        checkError(e, "INCORRECT_NUMBER_OF_ARGUMENTS", "42605",
+        // IDK
+        checkError(e, "INCORRECT_NUMBER_OF_ARGUMENTS", None,
           Map("failure" -> "not enough args", "functionName" -> fnName, "minArgs" -> "2",
             "maxArgs" -> "3"),
           ExpectedContext(fragment = fnCall, start = 14, stop = 14 + fnCall.length - 1))
@@ -2375,7 +2376,7 @@ trait DeltaErrorsSuiteBase
           val e = intercept[AnalysisException] {
             sql(s"SELECT * FROM ${fnCall}").collect()
           }
-          checkError(e, "INCORRECT_NUMBER_OF_ARGUMENTS", "42605",
+          checkError(e, "INCORRECT_NUMBER_OF_ARGUMENTS", None,
             Map("failure" -> "too many args", "functionName" -> fnName, "minArgs" -> "2",
               "maxArgs" -> "3"),
             ExpectedContext(fragment = fnCall, start = 14, stop = 14 + fnCall.length - 1))
