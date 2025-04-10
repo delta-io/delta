@@ -1412,26 +1412,6 @@ trait DeltaErrorsSuiteBase
         "dataType" -> "date"
       ))
     }
-    {
-      val e = intercept[DeltaTableFeatureException] {
-        throw DeltaErrors.tableFeatureDropHistoryTruncationNotAllowed()
-      }
-      checkError(e, "DELTA_FEATURE_DROP_HISTORY_TRUNCATION_NOT_ALLOWED", "0AKDE", Map.empty[String, String])
-    }
-    {
-      val logRetention = DeltaConfigs.LOG_RETENTION
-      val e = intercept[DeltaTableFeatureException] {
-        throw DeltaErrors.dropTableFeatureWaitForRetentionPeriod(
-          "test_feature",
-          Metadata(configuration = Map(logRetention.key -> "30 days"))
-        )
-      }
-      checkError(e, "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD", "0AKDE", Map(
-        "feature" -> "test_feature",
-          "logRetentionPeriodKey" -> "delta.logRetentionDuration",
-          "logRetentionPeriod" -> "30 days",
-          "truncateHistoryLogRetentionPeriod" -> "24 hours"))
-    }
   }
 
   test("test DeltaErrors methods -- part 2") {

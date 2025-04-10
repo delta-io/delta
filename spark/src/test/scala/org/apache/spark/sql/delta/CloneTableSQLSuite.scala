@@ -373,16 +373,6 @@ class CloneTableScalaDeletionVectorSuite
     enableDeletionVectors(spark.conf)
   }
 
-  override protected def uniqueFileActionGroupBy(action: FileAction): String = {
-    val filePath = action.pathAsUri.toString
-    val dvId = action match {
-      case add: AddFile => Option(add.deletionVector).map(_.uniqueId).getOrElse("")
-      case remove: RemoveFile => Option(remove.deletionVector).map(_.uniqueId).getOrElse("")
-      case _ => ""
-    }
-    filePath + dvId
-  }
-
   testAllClones("Cloning table with persistent DVs") { (source, target, isShallow) =>
     // Create source table
     writeMultiFileSourceTable(

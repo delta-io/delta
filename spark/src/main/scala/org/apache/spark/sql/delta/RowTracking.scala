@@ -72,11 +72,13 @@ object RowTracking {
   def createMetadataStructFields(
       protocol: Protocol,
       metadata: Metadata,
-      nullable: Boolean): Iterable[StructField] = {
-    RowId.createRowIdField(protocol, metadata, nullable) ++
-      RowId.createBaseRowIdField(protocol, metadata) ++
-      DefaultRowCommitVersion.createDefaultRowCommitVersionField(protocol, metadata) ++
-      RowCommitVersion.createMetadataStructField(protocol, metadata, nullable)
+      nullableConstantFields: Boolean,
+      nullableGeneratedFields: Boolean): Iterable[StructField] = {
+    RowId.createRowIdField(protocol, metadata, nullableGeneratedFields) ++
+      RowId.createBaseRowIdField(protocol, metadata, nullableConstantFields) ++
+      DefaultRowCommitVersion.createDefaultRowCommitVersionField(
+        protocol, metadata, nullableConstantFields) ++
+      RowCommitVersion.createMetadataStructField(protocol, metadata, nullableGeneratedFields)
   }
 
   /**

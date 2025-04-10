@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.rowid
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaIllegalStateException, DeltaLog, DeltaOperations, MaterializedRowId, RowId, RowTrackingFeature, Serializable, SnapshotIsolation}
+import org.apache.spark.sql.delta.{DataFrameUtils, DeltaConfigs, DeltaIllegalStateException, DeltaLog, DeltaOperations, DeltaTableUtils, MaterializedRowCommitVersion, MaterializedRowId, RowCommitVersion, RowId, RowTrackingFeature, Serializable, SnapshotIsolation}
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
@@ -31,6 +31,7 @@ import org.apache.parquet.column.Encoding
 import org.apache.parquet.column.ParquetProperties
 import org.apache.parquet.hadoop.ParquetOutputFormat
 
+import org.apache.spark.SparkException
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.execution.{FileSourceScanExec, SparkPlan}
@@ -825,6 +826,58 @@ class RowIdSuite extends QueryTest
           spark.read.format("delta").load(dir.toString).select("id", RowId.QUALIFIED_COLUMN_NAME),
           (0 until 10).map(i => Row(i, i)))
       }
+    }
+  }
+
+  test("missing base row ids and default row commit versions") {
+    val tableName = "my_table"
+    withTable(tableName) {
+      // Create a table with some rows without row tracking enabled.
+      spark.range(start = 0, end = 10).repartition(1).sortWithinPartitions("id")
+        .write.format("delta").mode("overwrite").saveAsTable(tableName)
+
+      // Hack to enable row tracking without triggering a backfill.
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+      val snapshot = deltaLog.update()
+      val actions = Seq(
+        snapshot.metadata.copy(
+          configuration = snapshot.metadata.configuration ++ Map(
+            DeltaConfigs.ROW_TRACKING_ENABLED.key -> "true",
+            MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP -> "x",
+            MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP -> "y"
+          )
+        )
+      )
+      deltaLog.startTransaction().commit(actions, DeltaOperations.ManualUpdate)
+
+      // Append some rows with base row ids and default row commit set on the files.
+      spark.range(start = 10, end = 20).repartition(1).sortWithinPartitions("id")
+        .write.format("delta").mode("append").saveAsTable(tableName)
+
+      // Ensure that we cannot read the row id and row commit version by default.
+      intercept[SparkException] {
+        spark.read.table(tableName).select("id", RowId.QUALIFIED_COLUMN_NAME).collect()
+      }
+      intercept[SparkException] {
+        spark.read.table(tableName).select("id", RowCommitVersion.QUALIFIED_COLUMN_NAME).collect()
+      }
+
+      // Create a dataframe that allows reading missing row ids and row commit versions.
+      val originalPlan = spark.read.table(tableName).queryExecution.analyzed
+      val transformedPlan = DeltaTableUtils.transformFileFormat(originalPlan) {
+        case format =>
+          format.copy(
+            nullableRowTrackingConstantFields = true,
+            nullableRowTrackingGeneratedFields = true
+          )
+      }
+      val df = DataFrameUtils.ofRows(spark, transformedPlan)
+
+      checkAnswer(
+        df.select("id", RowId.QUALIFIED_COLUMN_NAME, RowCommitVersion.QUALIFIED_COLUMN_NAME),
+        (0 until 10).map(i => Row(i, null, null)) ++
+          (0 until 10).map(i => Row(10 + i, i, 2))
+      )
     }
   }
 

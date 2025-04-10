@@ -41,9 +41,9 @@ object DefaultRowCommitVersion {
   }
 
   def createDefaultRowCommitVersionField(
-      protocol: Protocol, metadata: Metadata): Option[StructField] = {
+      protocol: Protocol, metadata: Metadata, nullable: Boolean): Option[StructField] = {
     Option.when(RowTracking.isEnabled(protocol, metadata)) {
-      MetadataStructField()
+      MetadataStructField(nullable)
     }
   }
 
@@ -52,11 +52,11 @@ object DefaultRowCommitVersion {
   private object MetadataStructField {
     private val METADATA_COL_ATTR_KEY = "__default_row_version_metadata_col"
 
-    def apply(): StructField =
+    def apply(nullable: Boolean): StructField =
       StructField(
         METADATA_STRUCT_FIELD_NAME,
         LongType,
-        nullable = false,
+        nullable,
         metadata = metadata)
 
     def unapply(field: StructField): Option[StructField] =
