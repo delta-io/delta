@@ -22,6 +22,8 @@ package io.delta.kernel.internal;
  */
 public class DeltaErrorsInternal {
 
+  private DeltaErrorsInternal() {}
+
   public static IllegalStateException missingRemoveFileSizeDuringCommit() {
     return new IllegalStateException(
         "Kernel APIs for creating remove file rows require that "
