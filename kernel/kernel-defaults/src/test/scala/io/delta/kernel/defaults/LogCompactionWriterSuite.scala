@@ -17,11 +17,14 @@ package io.delta.kernel.defaults
 
 import java.util.{Arrays, Collections, HashSet, Optional}
 
-import scala.collection.mutable
+import scala.collection.JavaConversions._
+import scala.collection.immutable.Seq
 
 import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.utils.TestRow
 import io.delta.kernel.engine.Engine
+import io.delta.kernel.expressions.Literal
+import io.delta.kernel.hook.PostCommitHook
 import io.delta.kernel.internal.DeltaLogActionUtils
 import io.delta.kernel.internal.actions._
 import io.delta.kernel.internal.fs.Path
@@ -29,7 +32,7 @@ import io.delta.kernel.internal.hook.LogCompactionHook
 import io.delta.kernel.internal.replay.ActionsIterator
 import io.delta.kernel.internal.util.FileNames.DeltaLogFileType
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
-import io.delta.kernel.types.StructType
+import io.delta.kernel.types.{IntegerType, StructType}
 import io.delta.kernel.utils.FileStatus
 
 import org.apache.spark.sql.delta.{DeltaLog, DomainMetadataTableFeature}
@@ -81,7 +84,7 @@ class LogCompactionWriterSuite extends CheckpointSuiteBase {
     Collections.reverse(files) // we want things in reverse order
     val actions =
       new ActionsIterator(engine, files, COMPACTED_SCHEMA, Optional.empty())
-    val removed = mutable.HashSet.empty[String]
+    val removed = scala.collection.mutable.HashSet.empty[String]
     var seenMetadata = false
     var seenProtocol = false
     val resBuilder = Seq.newBuilder[TestRow]
@@ -209,6 +212,36 @@ class LogCompactionWriterSuite extends CheckpointSuiteBase {
         val withCompactionData = readUsingSpark(tablePath)
 
         checkAnswer(withCompactionData, withoutCompactionData)
+      }
+    }
+  }
+
+  test("Hook is generated when expected") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val schema = new StructType().add("col", IntegerType.INTEGER)
+      createEmptyTable(engine, tablePath, schema)
+      for (i <- 0 until 6) {
+        val txn = createTxn(engine, tablePath, logCompactionInterval = 3)
+        val data = generateData(
+          schema,
+          Seq.empty,
+          Map.empty[String, Literal],
+          batchSize = 1,
+          numBatches = 1)
+        val commitResult =
+          commitAppendData(engine, txn, data = Seq(Map.empty[String, Literal] -> data))
+        if ((i + 1) % 3 == 0) {
+          // we expect a commit hook here
+          var foundHook = false
+          for (hook <- commitResult.getPostCommitHooks()) {
+            if (hook.getType() == PostCommitHook.PostCommitHookType.LOG_COMPACTION) {
+              foundHook = true
+              val logCompactionHook = hook.asInstanceOf[LogCompactionHook]
+              // todo: best way to look at internals and verify them
+            }
+          }
+          assert(foundHook)
+        }
       }
     }
   }

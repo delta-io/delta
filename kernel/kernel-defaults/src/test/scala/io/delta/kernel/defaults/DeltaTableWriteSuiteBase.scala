@@ -318,7 +318,8 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       clock: Clock = () => System.currentTimeMillis,
       withDomainMetadataSupported: Boolean = false,
       maxRetries: Int = -1,
-      clusteringCols: List[Column] = List.empty): Transaction = {
+      clusteringCols: List[Column] = List.empty,
+      logCompactionInterval: Int = 10): Transaction = {
 
     var txnBuilder = createWriteTxnBuilder(
       TableImpl.forPath(engine, tablePath, clock))
@@ -344,6 +345,8 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     if (maxRetries >= 0) {
       txnBuilder = txnBuilder.withMaxRetries(maxRetries)
     }
+
+    txnBuilder = txnBuilder.withLogCompactionInverval(logCompactionInterval)
 
     txnBuilder.build(engine)
   }
