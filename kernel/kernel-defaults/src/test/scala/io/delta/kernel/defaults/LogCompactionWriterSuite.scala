@@ -17,7 +17,7 @@ package io.delta.kernel.defaults
 
 import java.util.{Arrays, Collections, HashSet, Optional}
 
-import scala.collection.JavaConversions._
+import scala.collection.JavaConverters._
 import scala.collection.immutable.Seq
 
 import io.delta.kernel.Table
@@ -259,7 +259,7 @@ class LogCompactionWriterSuite extends CheckpointSuiteBase {
         val expectHook = ((commitNum + 1) % compactionInterval == 0)
         assert(LogCompactionWriter.shouldCompact(commitNum, compactionInterval) == expectHook)
         var foundHook = false
-        for (hook <- commitResult.getPostCommitHooks()) {
+        for (hook <- commitResult.getPostCommitHooks().asScala) {
           if (hook.getType() == PostCommitHook.PostCommitHookType.LOG_COMPACTION) {
             assert(!foundHook) // there should never be more than one
             foundHook = true
