@@ -114,7 +114,7 @@ trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBase {
     expectedErrorClass = "DELTA_AGGREGATION_NOT_SUPPORTED",
     expectedMessageParameters = Map(
       "operation" -> "UPDATE condition of MERGE operation",
-      "predicate" -> "(condition = (max(0) > 0))."))
+      "predicate" -> "(condition = (max(0) > 0))"))
 
   testMergeAnalysisException("update not matched condition - subquery")(
     mergeOn = "s.key = t.key",
@@ -137,7 +137,7 @@ trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBase {
     expectedErrorClass = "DELTA_AGGREGATION_NOT_SUPPORTED",
     expectedMessageParameters = Map(
       "operation" -> "DELETE condition of MERGE operation",
-      "predicate" -> "(condition = (max(0) > 0))."))
+      "predicate" -> "(condition = (max(0) > 0))"))
 
   testMergeAnalysisException("delete not matched condition - subquery")(
     mergeOn = "s.key = t.key",
