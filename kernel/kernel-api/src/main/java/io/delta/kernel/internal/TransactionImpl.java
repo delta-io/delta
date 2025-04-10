@@ -490,14 +490,7 @@ public class TransactionImpl implements Transaction {
       txnMetrics.removeFilesCounter.increment();
       RemoveFile removeFile = new RemoveFile(fileActionRow.getStruct(REMOVE_FILE_ORDINAL));
       long fileSize =
-          removeFile
-              .getSize()
-              .orElseThrow(
-                  () ->
-                      new IllegalStateException(
-                          "Kernel APIs for creating remove file rows "
-                              + "require that file size be provided but "
-                              + "found null file size"));
+          removeFile.getSize().orElseThrow(DeltaErrorsInternal::missingRemoveFileSizeDuringCommit);
       txnMetrics.removeFilesSizeInBytesCounter.increment(fileSize);
       // TODO decrement fileSizeHistogram
     }
