@@ -32,6 +32,9 @@ import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.FileStatus
 
+import org.apache.spark.sql.delta.{DeltaLog, DomainMetadataTableFeature}
+import org.apache.spark.sql.delta.DeltaOperations.Truncate
+import org.apache.spark.sql.delta.actions.{DomainMetadata => DeltaSparkDomainMetadata, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 /**
@@ -60,7 +63,8 @@ class LogCompactionWriterSuite extends CheckpointSuiteBase {
   }
 
   // Get the expected actions from the log.  We filter down to just the actions that end up in a
-  // compacted log file, and also filter out adds that have been removed
+  // compacted log file, and also filter out adds that have been removed as well as duplicate
+  // metadata/protocol actions
   def getActionsFromLog(
       tablePath: Path,
       engine: Engine,
@@ -78,23 +82,39 @@ class LogCompactionWriterSuite extends CheckpointSuiteBase {
     val actions =
       new ActionsIterator(engine, files, COMPACTED_SCHEMA, Optional.empty())
     val removed = mutable.HashSet.empty[String]
+    var seenMetadata = false
+    var seenProtocol = false
     val resBuilder = Seq.newBuilder[TestRow]
     while (actions.hasNext()) {
       val batch = actions.next().getColumnarBatch()
       val rows = batch.getRows()
       while (rows.hasNext()) {
         val row = rows.next()
+
         if (!row.isNullAt(2)) {
-          // this is a remove
+          // remove
           val removeRow = row.getStruct(2)
           val path = removeRow.getString(0)
           removed += path
         }
+
         if (!row.isNullAt(1)) {
-          // this is an add
+          // add
           val addRow = row.getStruct(1)
           val path = addRow.getString(0)
           if (!removed.contains(path)) {
+            resBuilder += TestRow(row)
+          }
+        } else if (!row.isNullAt(3)) {
+          // metadata
+          if (!seenMetadata) {
+            seenMetadata = true
+            resBuilder += TestRow(row)
+          }
+        } else if (!row.isNullAt(4)) {
+          // protocol
+          if (!seenProtocol) {
+            seenProtocol = true
             resBuilder += TestRow(row)
           }
         } else if (!rowIsNull(row)) {
@@ -126,21 +146,49 @@ class LogCompactionWriterSuite extends CheckpointSuiteBase {
     resBuilder.result()
   }
 
+  def addDomainMetadata(path: String): Unit = {
+    spark.sql(
+      s"""
+         |ALTER TABLE delta.`$path`
+         |SET TBLPROPERTIES
+         |('${TableFeatureProtocolUtils.propertyKey(DomainMetadataTableFeature)}' = 'enabled')
+         |""".stripMargin)
+
+    val deltaLog = DeltaLog.forTable(spark, path)
+    val domainMetadata = DeltaSparkDomainMetadata("testDomain1", "", false) ::
+      DeltaSparkDomainMetadata("testDomain2", "{\"key1\":\"value1\"", false) :: Nil
+    deltaLog.startTransaction().commit(domainMetadata, Truncate())
+  }
+
   Seq(false, true).foreach { includeRemoves =>
-    val testMsgUpdate = if (includeRemoves) " and removes" else ""
-    test(s"commits containing adds$testMsgUpdate") {
-      withTempDirAndEngine { (tablePath, engine) =>
-        addData(tablePath, alternateBetweenAddsAndRemoves = includeRemoves, numberIter = 10)
+    Seq(false, true).foreach { includeDM =>
+      val removesMsg = if (includeRemoves) " and removes" else ""
+      val dmMsg = if (includeDM) ", include multiple PandM and DomainMetadata" else ""
+      test(s"commits containing adds${removesMsg}${dmMsg}") {
+        withTempDirAndEngine { (tablePath, engine) =>
+          addData(tablePath, alternateBetweenAddsAndRemoves = includeRemoves, numberIter = 10)
+          if (includeDM) {
+            addDomainMetadata(tablePath)
+          }
 
-        val actionsFromCommits = getActionsFromLog(new Path(tablePath), engine, 0, 9)
+          val expectedLastCommit = if (includeDM) {
+            11 // 0-9 for add/removes + 2 for enable+set DomainMetatdata
+          } else {
+            9 // 0-9 for add/removes
+          }
 
-        val hook = new LogCompactionHook(new Path(tablePath), 0, 9, 0)
-        hook.threadSafeInvoke(engine)
-        val compactedPath =
-          tablePath + "/_delta_log/00000000000000000000.00000000000000000009.compacted.json"
-        val actionsFromCompacted = getActionsFromCompacted(compactedPath, engine)
+          val actionsFromCommits =
+            getActionsFromLog(new Path(tablePath), engine, 0, expectedLastCommit)
 
-        checkAnswer(actionsFromCompacted, actionsFromCommits)
+          val hook = new LogCompactionHook(new Path(tablePath), 0, expectedLastCommit, 0)
+          hook.threadSafeInvoke(engine)
+          val endCommitStr = f"$expectedLastCommit%020d"
+          val compactedPath =
+            tablePath + s"/_delta_log/00000000000000000000.${endCommitStr}.compacted.json"
+          val actionsFromCompacted = getActionsFromCompacted(compactedPath, engine)
+
+          checkAnswer(actionsFromCompacted, actionsFromCommits)
+        }
       }
     }
   }
