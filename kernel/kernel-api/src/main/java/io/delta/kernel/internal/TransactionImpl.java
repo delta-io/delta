@@ -508,13 +508,13 @@ public class TransactionImpl implements Transaction {
         .ifPresent(crcInfo -> postCommitHooks.add(new ChecksumSimpleHook(crcInfo, logPath)));
 
     if (logCompactionInterval > 0
-        && LogCompactionWriter.shouldCompact(commitAsVersion, logCompactionInterval)) {
-      long startVersion = commitAsVersion - logCompactionInterval + 1;
+        && LogCompactionWriter.shouldCompact(committedVersion, logCompactionInterval)) {
+      long startVersion = committedVersion - logCompactionInterval + 1;
       long minFileRetentionTimestampMillis =
-        System.currentTimeMillis() - TOMBSTONE_RETENTION.fromMetadata(metadata);
+          System.currentTimeMillis() - TOMBSTONE_RETENTION.fromMetadata(metadata);
       postCommitHooks.add(
-        new LogCompactionHook(
-          logPath, startVersion, commitAsVersion, minFileRetentionTimestampMillis));
+          new LogCompactionHook(
+              logPath, startVersion, committedVersion, minFileRetentionTimestampMillis));
     }
 
     return postCommitHooks;
