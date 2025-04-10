@@ -44,7 +44,8 @@ public class LogCompactionWriter {
 
   private static final Logger logger = LoggerFactory.getLogger(LogCompactionWriter.class);
 
-  private final Path tablePath;
+  private final Path dataPath;
+  private final Path logPath;
   private final long startVersion;
   private final long endVersion;
   // We need to know after what time we can cleanup remove tombstones. This is pulled from the table
@@ -53,16 +54,20 @@ public class LogCompactionWriter {
   private final long minFileRetentionTimestampMillis;
 
   public LogCompactionWriter(
-      Path tablePath, long startVersion, long endVersion, long minFileRetentionTimestampMillis) {
-    this.tablePath = requireNonNull(tablePath);
+      Path dataPath,
+      Path logPath,
+      long startVersion,
+      long endVersion,
+      long minFileRetentionTimestampMillis) {
+    this.dataPath = requireNonNull(dataPath);
+    this.logPath = requireNonNull(logPath);
     this.startVersion = startVersion;
     this.endVersion = endVersion;
     this.minFileRetentionTimestampMillis = minFileRetentionTimestampMillis;
   }
 
   public void writeLogCompactionFile(Engine engine) throws IOException {
-    Path compactedPath =
-        FileNames.logCompactionPath(new Path(tablePath, "_delta_log"), startVersion, endVersion);
+    Path compactedPath = FileNames.logCompactionPath(logPath, startVersion, endVersion);
 
     logger.info(
         "Writing log compaction file for versions {} to {} to path: {}",
@@ -75,7 +80,7 @@ public class LogCompactionWriter {
         DeltaLogActionUtils.listDeltaLogFilesAsIter(
                 engine,
                 new HashSet<>(Arrays.asList(DeltaLogFileType.COMMIT)),
-                tablePath,
+                dataPath,
                 startVersion,
                 Optional.of(endVersion),
                 false /* mustBeRecreatable */)
@@ -83,7 +88,7 @@ public class LogCompactionWriter {
 
     logger.info(
         "{}: Took {}ms to list commit files for log compaction",
-        tablePath,
+        dataPath,
         System.currentTimeMillis() - startTimeMillis);
 
     if (deltas.isEmpty()) {
@@ -97,7 +102,7 @@ public class LogCompactionWriter {
     final long lastCommitTimestamp = getLast(deltas).getModificationTime();
 
     LogSegment segment =
-        new LogSegment(tablePath, endVersion, deltas, emptyList(), lastCommitTimestamp);
+        new LogSegment(dataPath, endVersion, deltas, emptyList(), lastCommitTimestamp);
     CreateCheckpointIterator checkpointIterator =
         new CreateCheckpointIterator(engine, segment, minFileRetentionTimestampMillis);
     wrapEngineExceptionThrowsIO(
@@ -114,7 +119,8 @@ public class LogCompactionWriter {
 
   /** Utility to determine if log compaction should run for the given commit version. */
   public static boolean shouldCompact(long commitVersion, long compactionInterval) {
-    return commitVersion > 0 && (commitVersion % compactionInterval == 0);
+    // commits start at 0, so we add one to the commit version to check if we've hit the interval
+    return commitVersion > 0 && ((commitVersion + 1) % compactionInterval == 0);
   }
 
   /** Utility to convert an Iterator<FilteredColumnarBatch> into an Iterator<Row> */

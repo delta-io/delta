@@ -20,17 +20,21 @@ import java.util.{Arrays, Collections, HashSet, Optional}
 import scala.collection.JavaConversions._
 import scala.collection.immutable.Seq
 
+import io.delta.kernel.Table
 import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.utils.TestRow
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.hook.PostCommitHook
-import io.delta.kernel.internal.DeltaLogActionUtils
+import io.delta.kernel.internal.{DeltaLogActionUtils, SnapshotImpl}
+import io.delta.kernel.internal.TableConfig.TOMBSTONE_RETENTION
 import io.delta.kernel.internal.actions._
+import io.delta.kernel.internal.compaction.LogCompactionWriter
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.hook.LogCompactionHook
 import io.delta.kernel.internal.replay.ActionsIterator
 import io.delta.kernel.internal.util.FileNames.DeltaLogFileType
+import io.delta.kernel.internal.util.ManualClock
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.types.{IntegerType, StructType}
 import io.delta.kernel.utils.FileStatus
@@ -183,7 +187,15 @@ class LogCompactionWriterSuite extends CheckpointSuiteBase {
           val actionsFromCommits =
             getActionsFromLog(new Path(tablePath), engine, 0, expectedLastCommit)
 
-          val hook = new LogCompactionHook(new Path(tablePath), 0, expectedLastCommit, 0)
+          val dataPath = new Path(s"file:${tablePath}")
+          val logPath = new Path(s"file:${tablePath}", "_delta_log")
+
+          val hook = new LogCompactionHook(
+            dataPath,
+            logPath,
+            0,
+            expectedLastCommit,
+            0)
           hook.threadSafeInvoke(engine)
           val endCommitStr = f"$expectedLastCommit%020d"
           val compactedPath =
@@ -205,7 +217,9 @@ class LogCompactionWriterSuite extends CheckpointSuiteBase {
         spark.conf.set(DeltaSQLConf.DELTALOG_MINOR_COMPACTION_USE_FOR_READS.key, "false")
         val withoutCompactionData = readUsingSpark(tablePath)
 
-        val hook = new LogCompactionHook(new Path(tablePath), 0, 9, 0)
+        val dataPath = new Path(s"file:${tablePath}")
+        val logPath = new Path(s"file:${tablePath}", "_delta_log")
+        val hook = new LogCompactionHook(dataPath, logPath, 0, 9, 0)
         hook.threadSafeInvoke(engine)
 
         spark.conf.set(DeltaSQLConf.DELTALOG_MINOR_COMPACTION_USE_FOR_READS.key, "true")
@@ -216,12 +230,23 @@ class LogCompactionWriterSuite extends CheckpointSuiteBase {
     }
   }
 
-  test("Hook is generated when expected") {
+  test("Hook is generated correctly and when expected") {
     withTempDirAndEngine { (tablePath, engine) =>
+      val clock = new ManualClock(0)
       val schema = new StructType().add("col", IntegerType.INTEGER)
-      createEmptyTable(engine, tablePath, schema)
-      for (i <- 0 until 6) {
-        val txn = createTxn(engine, tablePath, logCompactionInterval = 3)
+      val dataPath = new Path(s"file:${tablePath}")
+      val logPath = new Path(s"file:${tablePath}", "_delta_log")
+      createEmptyTable(engine, tablePath, schema, clock = clock)
+      val table = Table.forPath(engine, tablePath)
+      val metadata = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl].getMetadata()
+      val tombstoneRetention = TOMBSTONE_RETENTION.fromMetadata(metadata)
+      clock.setTime(tombstoneRetention) // set to the retention time so (time - retention) == 0
+      val compactionInterval = 3
+      var hooksFound = 0
+      // start at 1 since the create of the table is 0
+      for (commitNum <- 1 to 5) {
+        val txn =
+          createTxn(engine, tablePath, clock = clock, logCompactionInterval = compactionInterval)
         val data = generateData(
           schema,
           Seq.empty,
@@ -230,19 +255,27 @@ class LogCompactionWriterSuite extends CheckpointSuiteBase {
           numBatches = 1)
         val commitResult =
           commitAppendData(engine, txn, data = Seq(Map.empty[String, Literal] -> data))
-        if ((i + 1) % 3 == 0) {
-          // we expect a commit hook here
-          var foundHook = false
-          for (hook <- commitResult.getPostCommitHooks()) {
-            if (hook.getType() == PostCommitHook.PostCommitHookType.LOG_COMPACTION) {
-              foundHook = true
-              val logCompactionHook = hook.asInstanceOf[LogCompactionHook]
-              // todo: best way to look at internals and verify them
-            }
+        // expect every compactionInterval
+        val expectHook = ((commitNum + 1) % compactionInterval == 0)
+        assert(LogCompactionWriter.shouldCompact(commitNum, compactionInterval) == expectHook)
+        var foundHook = false
+        for (hook <- commitResult.getPostCommitHooks()) {
+          if (hook.getType() == PostCommitHook.PostCommitHookType.LOG_COMPACTION) {
+            assert(!foundHook) // there should never be more than one
+            foundHook = true
+            hooksFound += 1
+            val logCompactionHook = hook.asInstanceOf[LogCompactionHook]
+            assert(logCompactionHook.getDataPath() == dataPath)
+            assert(logCompactionHook.getLogPath() == logPath)
+            assert(logCompactionHook.getStartVersion() == commitNum + 1 - compactionInterval)
+            assert(logCompactionHook.getCommitVersion() == commitNum)
+            assert(logCompactionHook.getMinFileRetentionTimestampMillis() == 0)
           }
-          assert(foundHook)
+          hook.threadSafeInvoke(engine)
         }
+        assert(foundHook == expectHook)
       }
+      assert(hooksFound == 2) // expect 0<->2 and 3<->5
     }
   }
 }

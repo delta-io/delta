@@ -19,6 +19,7 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.hook.PostCommitHook;
+import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.compaction.LogCompactionWriter;
 import io.delta.kernel.internal.fs.Path;
 import java.io.IOException;
@@ -29,14 +30,20 @@ import java.io.IOException;
  */
 public class LogCompactionHook implements PostCommitHook {
 
-  private final Path tablePath;
+  private final Path dataPath;
+  private final Path logPath;
   private final long startVersion;
   private final long commitVersion;
   private final long minFileRetentionTimestampMillis;
 
   public LogCompactionHook(
-      Path tablePath, long startVersion, long commitVersion, long minFileRetentionTimestampMillis) {
-    this.tablePath = requireNonNull(tablePath, "tablePath cannot be null");
+      Path dataPath,
+      Path logPath,
+      long startVersion,
+      long commitVersion,
+      long minFileRetentionTimestampMillis) {
+    this.dataPath = requireNonNull(dataPath, "dataPath cannot be null");
+    this.logPath = requireNonNull(logPath, "logPath cannot be null");
     this.startVersion = startVersion;
     this.commitVersion = commitVersion;
     this.minFileRetentionTimestampMillis = minFileRetentionTimestampMillis;
@@ -46,12 +53,37 @@ public class LogCompactionHook implements PostCommitHook {
   public void threadSafeInvoke(Engine engine) throws IOException {
     LogCompactionWriter compactionWriter =
         new LogCompactionWriter(
-            tablePath, startVersion, commitVersion, minFileRetentionTimestampMillis);
+            dataPath, logPath, startVersion, commitVersion, minFileRetentionTimestampMillis);
     compactionWriter.writeLogCompactionFile(engine);
   }
 
   @Override
   public PostCommitHookType getType() {
     return PostCommitHookType.LOG_COMPACTION;
+  }
+
+  @VisibleForTesting
+  public Path getDataPath() {
+    return dataPath;
+  }
+
+  @VisibleForTesting
+  public Path getLogPath() {
+    return logPath;
+  }
+
+  @VisibleForTesting
+  public long getStartVersion() {
+    return startVersion;
+  }
+
+  @VisibleForTesting
+  public long getCommitVersion() {
+    return commitVersion;
+  }
+
+  @VisibleForTesting
+  public long getMinFileRetentionTimestampMillis() {
+    return minFileRetentionTimestampMillis;
   }
 }
