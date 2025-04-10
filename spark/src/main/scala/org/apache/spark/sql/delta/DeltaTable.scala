@@ -422,6 +422,25 @@ object DeltaTableUtils extends PredicateHelper
   }
 
   /**
+   * Transform the file format in a logical plan and return the updated plan.
+   *
+   * @param target the logical plan in which the file format is replaced.
+   * @param rule   the rule to apply to the file format.
+   */
+  def transformFileFormat(
+      target: LogicalPlan)(
+      rule: PartialFunction[DeltaParquetFileFormat, DeltaParquetFileFormat]): LogicalPlan = {
+    target.transform {
+      case l@LogicalRelationWithTable(hfsr: HadoopFsRelation, _) =>
+        val newFileFormat = hfsr.fileFormat match {
+          case format: DeltaParquetFileFormat =>
+            rule.applyOrElse(format, identity[DeltaParquetFileFormat])
+        }
+        l.copy(relation = hfsr.copy(fileFormat = newFileFormat)(hfsr.sparkSession))
+    }
+  }
+
+  /**
    * Many Delta meta-queries involve nondeterminstic functions, which interfere with automatic
    * column pruning, so columns can be manually pruned from the scan. Note that partition columns
    * can never be dropped even if they're not referenced in the rest of the query.

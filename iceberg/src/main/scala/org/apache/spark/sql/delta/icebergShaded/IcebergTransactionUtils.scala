@@ -23,8 +23,7 @@ import java.time.format.DateTimeParseException
 import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaConfig, DeltaConfigs, DeltaErrors, DeltaLog, IcebergCompat, Snapshot}
-import org.apache.spark.sql.delta.DeltaConfigs.parseCalendarInterval
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, Snapshot}
 import org.apache.spark.sql.delta.actions.{AddFile, FileAction, RemoveFile}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.PartitionUtils.{timestampPartitionPattern, utcFormatter}
@@ -34,14 +33,12 @@ import org.apache.hadoop.fs.Path
 import shadedForDelta.org.apache.iceberg.{DataFile, DataFiles, FileFormat, PartitionSpec, Schema => IcebergSchema}
 import shadedForDelta.org.apache.iceberg.Metrics
 import shadedForDelta.org.apache.iceberg.StructLike
-import shadedForDelta.org.apache.iceberg.TableProperties
 import shadedForDelta.org.apache.iceberg.catalog.{Namespace, TableIdentifier => IcebergTableIdentifier}
 import shadedForDelta.org.apache.iceberg.hive.HiveCatalog
 import shadedForDelta.org.apache.iceberg.util.DateTimeUtil
 
 import org.apache.spark.sql.catalyst.{InternalRow, TableIdentifier => SparkTableIdentifier}
 import org.apache.spark.sql.types.{BinaryType, BooleanType, ByteType, DataType, DateType, DecimalType, DoubleType, FloatType, IntegerType, LongType, ShortType, StringType, StructType, TimestampNTZType, TimestampType}
-import org.apache.spark.unsafe.types.CalendarInterval
 
 object IcebergTransactionUtils
     extends DeltaLogging
@@ -81,9 +78,10 @@ object IcebergTransactionUtils
   /** Returns the (deletions, additions) iceberg table property changes. */
   def detectPropertiesChange(
       newProperties: Map[String, String],
-      prevPropertiesOpt: Map[String, String]): (Set[String], Map[String, String]) = {
-    val newPropertiesIcebergOnly = getIcebergPropertiesFromDeltaProperties(newProperties)
-    val prevPropertiesOptIcebergOnly = getIcebergPropertiesFromDeltaProperties(prevPropertiesOpt)
+      prevProperties: Map[String, String]): (Set[String], Map[String, String]) = {
+    val newPropertiesIcebergOnly = DeltaToIcebergConvert.TableProperties(newProperties)
+    val prevPropertiesOptIcebergOnly =
+      DeltaToIcebergConvert.TableProperties(prevProperties)
 
     if (prevPropertiesOptIcebergOnly == newPropertiesIcebergOnly) return (Set.empty, Map.empty)
 
@@ -91,21 +89,6 @@ object IcebergTransactionUtils
       prevPropertiesOptIcebergOnly.keySet.diff(newPropertiesIcebergOnly.keySet),
       newPropertiesIcebergOnly
     )
-  }
-
-  /**
-   * Only keep properties whose key starts with "delta.universalformat.config.iceberg"
-   * and strips the prefix from the key; Note the key is already normalized to lower case.
-   */
-  def getIcebergPropertiesFromDeltaProperties(
-      properties: Map[String, String]): Map[String, String] = {
-    val additionalPropertyFromDelta = additionalIcebergPropertiesFromDeltaProperties(properties)
-    val prefix = DeltaConfigs.DELTA_UNIVERSAL_FORMAT_ICEBERG_CONFIG_PREFIX
-    val specifiedProperty =
-      properties.filterKeys(_.startsWith(prefix)).map(kv => (kv._1.stripPrefix(prefix), kv._2))
-      .toMap
-    validateIcebergProperty(additionalPropertyFromDelta, specifiedProperty)
-    additionalPropertyFromDelta ++ specifiedProperty
   }
 
   /** Returns the mapping of logicalPartitionColName -> physicalPartitionColName */
@@ -179,31 +162,15 @@ object IcebergTransactionUtils
       logicalToPhysicalPartitionNames: Map[String, String],
       snapshot: Snapshot): DataFiles.Builder = {
     val absPath = canonicalizeFilePath(f, tablePath)
-    val schema = snapshot.schema
     var builder = DataFiles
       .builder(partitionSpec)
       .withPath(absPath)
       .withFileSizeInBytes(f.getFileSize)
       .withFormat(FileFormat.PARQUET)
-    val nameToDataTypes = schema.fields.map(f => f.name -> f.dataType).toMap
-
     if (partitionSpec.isPartitioned) {
-      val ICEBERG_NULL_PARTITION_VALUE = "__HIVE_DEFAULT_PARTITION__"
-      val partitionPath = partitionSpec.fields()
-      val partitionVals = new Array[Any](partitionSpec.fields().size())
-      for (i <- partitionVals.indices) {
-        val logicalPartCol = partitionPath.get(i).name()
-        val physicalPartKey = logicalToPhysicalPartitionNames(logicalPartCol)
-        // ICEBERG_NULL_PARTITION_VALUE is referred in Iceberg lib to mark NULL partition value
-        val partValue = Option(f.partitionValues.getOrElse(physicalPartKey, null))
-          .getOrElse(ICEBERG_NULL_PARTITION_VALUE)
-        val partitionColumnDataType = nameToDataTypes(logicalPartCol)
-        val icebergPartitionValue =
-          stringToIcebergPartitionValue(partitionColumnDataType, partValue, snapshot.version)
-        partitionVals(i) = icebergPartitionValue
-      }
-
-      builder = builder.withPartition(new Row(partitionVals))
+      builder = builder.withPartition(
+        DeltaToIcebergConvert.Partition.convertPartitionValues(
+          snapshot, partitionSpec, f.partitionValues, logicalToPhysicalPartitionNames))
     }
     builder
   }
@@ -215,7 +182,7 @@ object IcebergTransactionUtils
    * Follows deserialization as specified here
    * https://github.com/delta-io/delta/blob/master/PROTOCOL.md#Partition-Value-Serialization
    */
-  private def stringToIcebergPartitionValue(
+  private[delta] def stringToIcebergPartitionValue(
       elemType: DataType,
       partitionVal: String,
       version: Long): Any = {
@@ -301,88 +268,5 @@ object IcebergTransactionUtils
       case _ => Namespace.empty()
     }
     IcebergTableIdentifier.of(namespace, identifier.table)
-  }
-
-  // Additional iceberg properties inferred from delta properties
-  // If user doesn't specify the property in iceberg table, we infer it from delta properties
-  // Otherwise, we validate the user specified property with the inferred property
-  // Here's a list of additional properties:
-  // 1. iceberg's history.expire.max-snapshot-age-ms:
-  //  inferred as min of delta.logRetentionDuration and delta.deletedFileRetentionDuration
-  private def additionalIcebergPropertiesFromDeltaProperties(
-      properties: Map[String, String]): Map[String, String] = {
-    icebergRetentionPropertyFromDelta(properties) ++
-      icebergFormatVersion(properties)
-  }
-
-  private def icebergFormatVersion(
-      deltaProperties: Map[String, String]): Map[String, String] =
-    IcebergCompat
-      .anyEnabled(deltaProperties)
-      .filter(_.icebergFormatVersion != 1) // version 1 is default
-      .map((TableProperties.FORMAT_VERSION -> _.icebergFormatVersion.toString))
-      .toMap
-
-  private def icebergRetentionPropertyFromDelta(
-      deltaProperties: Map[String, String]): Map[String, String] = {
-    val icebergSnapshotRetentionFromDelta = deltaRetentionMsFrom(deltaProperties)
-    lazy val icebergDefault = TableProperties.MAX_SNAPSHOT_AGE_MS_DEFAULT
-    icebergSnapshotRetentionFromDelta.map { retentionMs =>
-      Map(TableProperties.MAX_SNAPSHOT_AGE_MS -> (retentionMs min icebergDefault).toString)
-    }.getOrElse(Map.empty)
-  }
-
-  // Given additional iceberg property constrained/inferred by Delta and
-  // user specified iceberg property, validate that they don't conflict
-  private def validateIcebergProperty(
-      additionalPropertyFromDelta: Map[String, String],
-      customizedProperty: Map[String, String]): Unit = {
-    validateIcebergRetentionWithDelta(additionalPropertyFromDelta, customizedProperty)
-  }
-
-  // Validation:
-  // Customized iceberg retention should be <= to the delta retention
-  // Which is min of logRetentionDuration and deletedFileRetentionDuration
-  private def validateIcebergRetentionWithDelta(
-      additionalPropertyFromDelta: Map[String, String],
-      usrSpecifiedProperty: Map[String, String]): Unit = {
-    lazy val defaultRetentionDelta =
-      calendarStrToMs(DeltaConfigs.LOG_RETENTION.defaultValue) min
-      calendarStrToMs(DeltaConfigs.TOMBSTONE_RETENTION.defaultValue)
-    lazy val retentionMsFromDelta = additionalPropertyFromDelta
-      .getOrElse(TableProperties.MAX_SNAPSHOT_AGE_MS, s"$defaultRetentionDelta").toLong
-
-    usrSpecifiedProperty.get(TableProperties.MAX_SNAPSHOT_AGE_MS).foreach { proposedMs =>
-      if (proposedMs.toLong > retentionMsFromDelta) {
-        throw new IllegalArgumentException(
-          s"Uniform iceberg's ${TableProperties.MAX_SNAPSHOT_AGE_MS} should be set >= " +
-          s" min of delta's ${DeltaConfigs.LOG_RETENTION.key} and" +
-          s" ${DeltaConfigs.TOMBSTONE_RETENTION.key}." +
-          s" Current delta retention min in MS: $retentionMsFromDelta," +
-          s" Proposed iceberg retention in Ms: $proposedMs")
-      }
-    }
-  }
-
-  private def deltaRetentionMsFrom(deltaProperties: Map[String, String]): Option[Long] = {
-    def getCalendarMsFrom(
-        conf: DeltaConfig[CalendarInterval], properties: Map[String, String]): Option[Long] = {
-      properties.get(conf.key).map(calendarStrToMs)
-    }
-
-    def minOf(a: Option[Long], b: Option[Long]): Option[Long] = (a, b) match {
-      case (Some(a), Some(b)) => Some(a min b)
-      case (a, b) => a orElse b
-    }
-
-    val logRetention = getCalendarMsFrom(DeltaConfigs.LOG_RETENTION, deltaProperties)
-    val vacuumRetention = getCalendarMsFrom(DeltaConfigs.TOMBSTONE_RETENTION, deltaProperties)
-    minOf(logRetention, vacuumRetention)
-  }
-
-  // Converts a string in calendar interval format to milliseconds
-  private def calendarStrToMs(calendarStr: String): Long = {
-    val interval = parseCalendarInterval(calendarStr)
-    DeltaConfigs.getMilliSeconds(interval)
   }
 }

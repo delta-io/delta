@@ -3183,7 +3183,8 @@ trait DeltaErrorsBase
       currentSchemaChangeVersion: Long,
       checkpointHash: Int,
       readerOptionsUnblock: Seq[String],
-      sqlConfsUnblock: Seq[String]): Throwable = {
+      sqlConfsUnblock: Seq[String],
+      prettyColumnChangeDetails: String): Throwable = {
     val unblockChangeOptions = readerOptionsUnblock.map { option =>
         s"""  .option("$option", "$currentSchemaChangeVersion")"""
       }.mkString("\n")
@@ -3206,51 +3207,7 @@ trait DeltaErrorsBase
         nonAdditiveSchemaChangeOpType,
         previousSchemaChangeVersion.toString,
         currentSchemaChangeVersion.toString,
-        currentSchemaChangeVersion.toString,
-        unblockChangeOptions,
-        unblockStreamOptions,
-        unblockChangeConfs,
-        unblockStreamConfs,
-        unblockAllConfs
-      )
-    )
-  }
-
-  def cannotContinueStreamingTypeWidening(
-      previousSchemaChangeVersion: Long,
-      currentSchemaChangeVersion: Long,
-      checkpointHash: Int,
-      readerOptionsUnblock: Seq[String],
-      sqlConfsUnblock: Seq[String],
-      wideningTypeChanges: Seq[TypeChange]): Throwable = {
-
-    val wideningTypeChangesStr = wideningTypeChanges.map { change =>
-        s"  ${SchemaUtils.prettyFieldName(change.fieldPath)}: ${change.fromType.sql} -> " +
-        s"${change.toType.sql}"
-      }.mkString("\n")
-
-    val unblockChangeOptions = readerOptionsUnblock.map { option =>
-        s"""  .option("$option", "$currentSchemaChangeVersion")"""
-      }.mkString("\n")
-    val unblockStreamOptions = readerOptionsUnblock.map { option =>
-        s"""  .option("$option", "always")"""
-      }.mkString("\n")
-    val unblockChangeConfs = sqlConfsUnblock.map { conf =>
-        s"""  SET $conf.ckpt_$checkpointHash = $currentSchemaChangeVersion;"""
-      }.mkString("\n")
-    val unblockStreamConfs = sqlConfsUnblock.map { conf =>
-        s"""  SET $conf.ckpt_$checkpointHash = "always";"""
-      }.mkString("\n")
-    val unblockAllConfs = sqlConfsUnblock.map { conf =>
-        s"""  SET $conf = "always";"""
-      }.mkString("\n")
-
-    new DeltaRuntimeException(
-      errorClass = "DELTA_STREAMING_CANNOT_CONTINUE_PROCESSING_TYPE_WIDENING",
-      messageParameters = Array(
-        previousSchemaChangeVersion.toString,
-        currentSchemaChangeVersion.toString,
-        wideningTypeChangesStr,
+        prettyColumnChangeDetails,
         currentSchemaChangeVersion.toString,
         unblockChangeOptions,
         unblockStreamOptions,

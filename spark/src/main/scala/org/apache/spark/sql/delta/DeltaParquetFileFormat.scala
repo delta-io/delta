@@ -58,7 +58,8 @@ import org.apache.spark.util.SerializableConfiguration
 case class DeltaParquetFileFormat(
     protocol: Protocol,
     metadata: Metadata,
-    nullableRowTrackingFields: Boolean = false,
+    nullableRowTrackingConstantFields: Boolean = false,
+    nullableRowTrackingGeneratedFields: Boolean = false,
     optimizationsEnabled: Boolean = true,
     tablePath: Option[String] = None,
     isCDCRead: Boolean = false)
@@ -77,6 +78,8 @@ case class DeltaParquetFileFormat(
   SparkSession.getActiveSession.ifDefined { session =>
     TypeWidening.assertTableReadable(session.sessionState.conf, protocol, metadata)
   }
+
+  require(!nullableRowTrackingConstantFields || nullableRowTrackingGeneratedFields)
 
 
   val columnMappingMode: DeltaColumnMappingMode = metadata.columnMappingMode
@@ -147,6 +150,7 @@ case class DeltaParquetFileFormat(
       case ff: DeltaParquetFileFormat =>
         ff.columnMappingMode == columnMappingMode &&
         ff.referenceSchema == referenceSchema &&
+        ff.nullableRowTrackingConstantFields == nullableRowTrackingConstantFields &&
         ff.optimizationsEnabled == optimizationsEnabled
       case _ => false
     }
@@ -255,7 +259,11 @@ case class DeltaParquetFileFormat(
     (protocol, metadata) match {
       // We should not expose row tracking fields for CDC reads.
       case (p, m) if RowId.isEnabled(p, m) && !isCDCRead =>
-        val extraFields = RowTracking.createMetadataStructFields(p, m, nullableRowTrackingFields)
+        val extraFields = RowTracking.createMetadataStructFields(
+          protocol,
+          metadata,
+          nullableConstantFields = nullableRowTrackingConstantFields,
+          nullableGeneratedFields = nullableRowTrackingGeneratedFields)
         super.metadataSchemaFields ++ extraFields
       case (p, m) if deletionVectorsReadable(p, m) => super.metadataSchemaFields
       case _ => super.metadataSchemaFields.filter(_ != ParquetFileFormat.ROW_INDEX_FIELD)
@@ -269,13 +277,13 @@ case class DeltaParquetFileFormat(
        dataSchema: StructType): OutputWriterFactory = {
     val factory = super.prepareWrite(sparkSession, job, options, dataSchema)
     val conf = ContextUtil.getConfiguration(job)
-    // Always write timestamp as TIMESTAMP_MICROS for Iceberg compat based on Iceberg spec
-    if (IcebergCompatV1.isEnabled(metadata) || IcebergCompatV2.isEnabled(metadata)) {
+    // Always write timestamp as TIMESTAMP_MICROS for IcebergCompat based on Iceberg spec
+    if (IcebergCompat.isAnyEnabled(metadata)) {
       conf.set(SQLConf.PARQUET_OUTPUT_TIMESTAMP_TYPE.key,
         SQLConf.ParquetOutputTimestampType.TIMESTAMP_MICROS.toString)
     }
-    if (IcebergCompatV2.isEnabled(metadata)) {
-      // For Uniform with IcebergCompatV2, we need to write nested field IDs for list and map
+    if (IcebergCompat.isGeqEnabled(metadata, 2)) {
+      // Starting from IcebergCompatV2, we need to write nested field IDs for list and map
       // types to the parquet schema. Spark currently does not support it so we hook in our
       // own write support class.
       ParquetOutputFormat.setWriteSupportClass(job, classOf[DeltaParquetWriteSupport])
@@ -286,16 +294,24 @@ case class DeltaParquetFileFormat(
   override def fileConstantMetadataExtractors: Map[String, PartitionedFile => Any] = {
     val extractBaseRowId: PartitionedFile => Any = { file =>
       file.otherConstantMetadataColumnValues.getOrElse(RowId.BASE_ROW_ID, {
-        throw new IllegalStateException(
-          s"Missing ${RowId.BASE_ROW_ID} value for file '${file.filePath}'")
+        if (nullableRowTrackingConstantFields) {
+          null
+        } else {
+          throw new IllegalStateException(
+            s"Missing ${RowId.BASE_ROW_ID} value for file '${file.filePath}'")
+        }
       })
     }
     val extractDefaultRowCommitVersion: PartitionedFile => Any = { file =>
       file.otherConstantMetadataColumnValues
         .getOrElse(DefaultRowCommitVersion.METADATA_STRUCT_FIELD_NAME, {
-          throw new IllegalStateException(
-            s"Missing ${DefaultRowCommitVersion.METADATA_STRUCT_FIELD_NAME} value " +
-              s"for file '${file.filePath}'")
+          if (nullableRowTrackingConstantFields) {
+            null
+          } else {
+            throw new IllegalStateException(
+              s"Missing ${DefaultRowCommitVersion.METADATA_STRUCT_FIELD_NAME} value " +
+                s"for file '${file.filePath}'")
+          }
         })
     }
     super.fileConstantMetadataExtractors

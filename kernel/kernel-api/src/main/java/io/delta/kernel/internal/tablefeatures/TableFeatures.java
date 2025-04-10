@@ -20,6 +20,7 @@ import static io.delta.kernel.internal.DeltaErrors.*;
 import static io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode.NONE;
 import static io.delta.kernel.types.TimestampNTZType.TIMESTAMP_NTZ;
 import static io.delta.kernel.types.VariantType.VARIANT;
+import static java.util.stream.Collectors.toMap;
 import static java.util.stream.Collectors.toSet;
 
 import io.delta.kernel.exceptions.KernelException;
@@ -38,6 +39,18 @@ import java.util.stream.Stream;
 
 /** Contains utility methods related to the Delta table feature support in protocol. */
 public class TableFeatures {
+
+  /**
+   * The prefix for setting an override of a feature option in {@linkplain Metadata} configuration.
+   *
+   * <p>Keys with this prefix should never be persisted in the Metadata action. The keys can be
+   * filtered out by using {@linkplain #extractFeaturePropertyOverrides}.
+   *
+   * <p>These overrides only support add the feature as supported in the Protocol action.
+   *
+   * <p>Disabling features via this method is unsupported.
+   */
+  public static String SET_TABLE_FEATURE_SUPPORTED_PREFIX = "delta.feature.";
 
   /////////////////////////////////////////////////////////////////////////////////
   /// START: Define the {@link TableFeature}s                                   ///
@@ -197,6 +210,19 @@ public class TableFeatures {
   private static class DomainMetadataFeature extends TableFeature.WriterFeature {
     DomainMetadataFeature() {
       super("domainMetadata", /* minWriterVersion = */ 7);
+    }
+  }
+
+  public static final TableFeature CLUSTERING_W_FEATURE = new ClusteringTableFeature();
+
+  private static class ClusteringTableFeature extends TableFeature.WriterFeature {
+    ClusteringTableFeature() {
+      super("clustering", /* minWriterVersion = */ 7);
+    }
+
+    @Override
+    public Set<TableFeature> requiredFeatures() {
+      return Collections.singleton(DOMAIN_METADATA_W_FEATURE);
     }
   }
 
@@ -376,6 +402,7 @@ public class TableFeatures {
               APPEND_ONLY_W_FEATURE,
               CHECKPOINT_V2_RW_FEATURE,
               CHANGE_DATA_FEED_W_FEATURE,
+              CLUSTERING_W_FEATURE,
               COLUMN_MAPPING_RW_FEATURE,
               CONSTRAINTS_W_FEATURE,
               DELETION_VECTORS_RW_FEATURE,
@@ -439,20 +466,24 @@ public class TableFeatures {
    * metadata. If the current protocol already satisfies the metadata requirements, return empty.
    *
    * @param newMetadata the new metadata to be applied to the table.
-   * @param needDomainMetadataSupport whether the table needs to explicitly support domain metadata.
+   * @param manuallyEnabledFeatures features that were requested to be added to the protocol.
    * @param currentProtocol the current protocol of the table.
    * @return the upgraded protocol and the set of new features that were enabled in the upgrade.
    */
   public static Optional<Tuple2<Protocol, Set<TableFeature>>> autoUpgradeProtocolBasedOnMetadata(
-      Metadata newMetadata, boolean needDomainMetadataSupport, Protocol currentProtocol) {
+      Metadata newMetadata,
+      Collection<TableFeature> manuallyEnabledFeatures,
+      Protocol currentProtocol) {
 
     Set<TableFeature> allNeededTableFeatures =
         extractAllNeededTableFeatures(newMetadata, currentProtocol);
-    if (needDomainMetadataSupport) {
+    if (manuallyEnabledFeatures != null && !manuallyEnabledFeatures.isEmpty()) {
+      // Note that any dependent features are handled below in the withFeatures call.
       allNeededTableFeatures =
-          Stream.concat(allNeededTableFeatures.stream(), Stream.of(DOMAIN_METADATA_W_FEATURE))
+          Stream.concat(allNeededTableFeatures.stream(), manuallyEnabledFeatures.stream())
               .collect(toSet());
     }
+
     Protocol required =
         new Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
             .withFeatures(allNeededTableFeatures)
@@ -468,6 +499,51 @@ public class TableFeatures {
     } else {
       return Optional.empty();
     }
+  }
+
+  /**
+   * Extracts features overrides from Metadata properties and returns an updated metadata if any
+   * overrides are present.
+   *
+   * <p>Overrides are specified using a key in th form {@linkplain
+   * #SET_TABLE_FEATURE_SUPPORTED_PREFIX} + {featureName}. (e.g. {@code
+   * delta.feature.icebergWriterCompatV1}). The value must be "supported" to add the feature.
+   * Currently, removing values is not handled.
+   *
+   * @return A set of features that had overrides and Metadata object with the properties removed if
+   *     any overrides were present.
+   * @throws KernelException if the feature name for the override is invalid or the value is not
+   *     equal to "supported".
+   */
+  public static Tuple2<Set<TableFeature>, Optional<Metadata>> extractFeaturePropertyOverrides(
+      Metadata currentMetadata) {
+    Set<TableFeature> features = new HashSet<>();
+    Map<String, String> properties = currentMetadata.getConfiguration();
+    for (Map.Entry<String, String> entry : properties.entrySet()) {
+      if (entry.getKey().startsWith(SET_TABLE_FEATURE_SUPPORTED_PREFIX)) {
+        String featureName = entry.getKey().substring(SET_TABLE_FEATURE_SUPPORTED_PREFIX.length());
+
+        TableFeature feature = getTableFeature(featureName);
+        features.add(feature);
+        if (!entry.getValue().equals("supported")) {
+          throw DeltaErrors.invalidConfigurationValueException(
+              entry.getKey(),
+              entry.getValue(),
+              "TableFeature override options may only have \"supported\" as there value");
+        }
+      }
+    }
+
+    if (features.isEmpty()) {
+      return new Tuple2<>(features, Optional.empty());
+    }
+
+    Map<String, String> cleanedProperties =
+        properties.entrySet().stream()
+            .filter(e -> !e.getKey().startsWith(SET_TABLE_FEATURE_SUPPORTED_PREFIX))
+            .collect(toMap(Map.Entry::getKey, Map.Entry::getValue));
+    return new Tuple2<>(
+        features, Optional.of(currentMetadata.withReplacedConfiguration(cleanedProperties)));
   }
 
   /** Utility method to check if the table with given protocol is readable by the Kernel. */
@@ -521,6 +597,63 @@ public class TableFeatures {
         .contains(DOMAIN_METADATA_W_FEATURE);
   }
 
+  public static boolean hasInvariants(StructType tableSchema) {
+    return !SchemaUtils.filterRecursively(
+            tableSchema,
+            // invariants are not allowed in maps or arrays
+            /* recurseIntoMapOrArrayElements = */ false,
+            /* stopOnFirstMatch */ true,
+            /* filter */ field -> field.getMetadata().contains("delta.invariants"))
+        .isEmpty();
+  }
+
+  public static boolean hasCheckConstraints(Metadata metadata) {
+    return metadata.getConfiguration().keySet().stream()
+        .anyMatch(s -> s.startsWith("delta.constraints."));
+  }
+
+  public static boolean isClusteringTableFeatureSupported(Protocol protocol) {
+    return protocol.supportsFeature(CLUSTERING_W_FEATURE);
+  }
+
+  public static boolean hasIdentityColumns(Metadata metadata) {
+    return !SchemaUtils.filterRecursively(
+            metadata.getSchema(),
+            /* recurseIntoMapOrArrayElements = */ false, // don't expected identity columns in
+            // nested columns
+            /* stopOnFirstMatch */ true,
+            /* filter */ field -> {
+              FieldMetadata fieldMetadata = field.getMetadata();
+
+              // Check if the metadata contains the required keys
+              boolean hasStart = fieldMetadata.contains("delta.identity.start");
+              boolean hasStep = fieldMetadata.contains("delta.identity.step");
+              boolean hasInsert = fieldMetadata.contains("delta.identity.allowExplicitInsert");
+
+              // Verify that all or none of the three fields are present
+              if (!((hasStart == hasStep) && (hasStart == hasInsert))) {
+                throw new KernelException(
+                    String.format(
+                        "Inconsistent IDENTITY metadata for column %s detected: %s, %s, %s",
+                        field.getName(), hasStart, hasStep, hasInsert));
+              }
+
+              // Return true only if all three fields are present
+              return hasStart && hasStep && hasInsert;
+            })
+        .isEmpty();
+  }
+
+  public static boolean hasGeneratedColumns(Metadata metadata) {
+    return !SchemaUtils.filterRecursively(
+            metadata.getSchema(),
+            /* recurseIntoMapOrArrayElements = */ false, // don't expected generated columns in
+            // nested columns
+            /* stopOnFirstMatch */ true,
+            /* filter */ field -> field.getMetadata().contains("delta.generationExpression"))
+        .isEmpty();
+  }
+
   /////////////////////////////////////////////////////////////////////////////////
   /// Private methods                                                           ///
   /////////////////////////////////////////////////////////////////////////////////
@@ -562,21 +695,6 @@ public class TableFeatures {
     }
   }
 
-  public static boolean hasInvariants(StructType tableSchema) {
-    return !SchemaUtils.filterRecursively(
-            tableSchema,
-            // invariants are not allowed in maps or arrays
-            /* recurseIntoMapOrArrayElements = */ false,
-            /* stopOnFirstMatch */ true,
-            /* filter */ field -> field.getMetadata().contains("delta.invariants"))
-        .isEmpty();
-  }
-
-  private static boolean hasCheckConstraints(Metadata metadata) {
-    return metadata.getConfiguration().keySet().stream()
-        .anyMatch(s -> s.startsWith("delta.constraints."));
-  }
-
   /**
    * Check if the table schema has a column of type. Caution: works only for the primitive types.
    */
@@ -586,44 +704,6 @@ public class TableFeatures {
             /* recurseIntoMapOrArrayElements = */ true,
             /* stopOnFirstMatch */ true,
             /* filter */ field -> field.getDataType().equals(type))
-        .isEmpty();
-  }
-
-  private static boolean hasIdentityColumns(Metadata metadata) {
-    return !SchemaUtils.filterRecursively(
-            metadata.getSchema(),
-            /* recurseIntoMapOrArrayElements = */ false, // don't expected identity columns in
-            // nested columns
-            /* stopOnFirstMatch */ true,
-            /* filter */ field -> {
-              FieldMetadata fieldMetadata = field.getMetadata();
-
-              // Check if the metadata contains the required keys
-              boolean hasStart = fieldMetadata.contains("delta.identity.start");
-              boolean hasStep = fieldMetadata.contains("delta.identity.step");
-              boolean hasInsert = fieldMetadata.contains("delta.identity.allowExplicitInsert");
-
-              // Verify that all or none of the three fields are present
-              if (!((hasStart == hasStep) && (hasStart == hasInsert))) {
-                throw new KernelException(
-                    String.format(
-                        "Inconsistent IDENTITY metadata for column %s detected: %s, %s, %s",
-                        field.getName(), hasStart, hasStep, hasInsert));
-              }
-
-              // Return true only if all three fields are present
-              return hasStart && hasStep && hasInsert;
-            })
-        .isEmpty();
-  }
-
-  private static boolean hasGeneratedColumns(Metadata metadata) {
-    return !SchemaUtils.filterRecursively(
-            metadata.getSchema(),
-            /* recurseIntoMapOrArrayElements = */ false, // don't expected generated columns in
-            // nested columns
-            /* stopOnFirstMatch */ true,
-            /* filter */ field -> field.getMetadata().contains("delta.generationExpression"))
         .isEmpty();
   }
 }

@@ -68,9 +68,9 @@ class DeltaSourceMetadataEvolutionSupportSuite
   private def expectTypeWideningBlocked(wideningTypeChanges: Seq[String]): ExpectedResult[Nothing] =
     ExpectedResult.Failure(ex => {
       assert(
-        ex.getErrorClass === "DELTA_STREAMING_CANNOT_CONTINUE_PROCESSING_TYPE_WIDENING")
-      assert(
-        ex.getMessageParameters.get("wideningTypeChanges") === wideningTypeChanges.mkString("\n"))
+        ex.getErrorClass === "DELTA_STREAMING_CANNOT_CONTINUE_PROCESSING_POST_SCHEMA_EVOLUTION")
+      assert(ex.getMessageParameters.get("columnChangeDetails")
+        .contains(wideningTypeChanges.mkString("\n")))
     })
 
   private def expectNonWideningTypeChangeError: ExpectedResult[Nothing] =
@@ -456,7 +456,7 @@ class DeltaSourceMetadataEvolutionSupportSuite
     name = "widen single column",
     fromDDL = "a byte",
     toDDL = "a int",
-    expectedResult = expectTypeWideningBlocked(Seq("  a: TINYINT -> INT")),
+    expectedResult = expectTypeWideningBlocked(Seq("'a': TINYINT -> INT")),
     unblock = Seq(
       Seq("allowSourceColumnTypeChange")
     )
@@ -528,7 +528,7 @@ class DeltaSourceMetadataEvolutionSupportSuite
     name = "widen and change to nullable",
     fromDDL = "a byte not null",
     toDDL = "a int",
-    expectedResult = expectTypeWideningBlocked(Seq("  a: TINYINT -> INT")),
+    expectedResult = expectTypeWideningBlocked(Seq("'a': TINYINT -> INT")),
     unblock = Seq(
       Seq("allowSourceColumnTypeChange")
     )
@@ -546,8 +546,8 @@ class DeltaSourceMetadataEvolutionSupportSuite
     fromDDL = "a map<byte, short>",
     toDDL = "a map<short, int>",
     expectedResult = expectTypeWideningBlocked(Seq(
-      "  a.key: TINYINT -> SMALLINT",
-      "  a.value: SMALLINT -> INT"
+      "'a.key': TINYINT -> SMALLINT",
+      "'a.value': SMALLINT -> INT"
     )),
     unblock = Seq(
       Seq("allowSourceColumnTypeChange")
@@ -558,7 +558,7 @@ class DeltaSourceMetadataEvolutionSupportSuite
     name = "widen array",
     fromDDL = "a array<byte>",
     toDDL = "a array<short>",
-    expectedResult = expectTypeWideningBlocked(Seq("  a.element: TINYINT -> SMALLINT")),
+    expectedResult = expectTypeWideningBlocked(Seq("'a.element': TINYINT -> SMALLINT")),
     unblock = Seq(
       Seq("allowSourceColumnTypeChange")
     )
@@ -568,7 +568,7 @@ class DeltaSourceMetadataEvolutionSupportSuite
     name = "widen struct",
     fromDDL = "a struct<x: byte>",
     toDDL = "a struct<x: short>",
-    expectedResult = expectTypeWideningBlocked(Seq("  a.x: TINYINT -> SMALLINT")),
+    expectedResult = expectTypeWideningBlocked(Seq("'a.x': TINYINT -> SMALLINT")),
     unblock = Seq(
       Seq("allowSourceColumnTypeChange")
     )

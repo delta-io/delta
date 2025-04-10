@@ -1849,12 +1849,17 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       ofs4.reservoirVersion == v1 + 1)
   }
 
-  protected def expectSqlConfException(opType: String, ver: Long, checkpointHash: Int) = {
+  protected def expectSqlConfException(
+      opType: String,
+      ver: Long,
+      columnChangeDetails: String,
+      checkpointHash: Int) = {
     ExpectFailure[DeltaRuntimeException] { e =>
       val se = e.asInstanceOf[DeltaRuntimeException]
       assert {
         se.getErrorClass == "DELTA_STREAMING_CANNOT_CONTINUE_PROCESSING_POST_SCHEMA_EVOLUTION" &&
           se.messageParameters(0) == opType && se.messageParameters(2) == ver.toString &&
+          se.messageParameters(3).contains(columnChangeDetails) &&
           se.messageParameters.exists(_.contains(checkpointHash.toString))
       }
     }
@@ -1900,6 +1905,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
     def testStreamFlow(
         changeSchema: DeltaLog => Unit,
         schemaChangeType: String,
+        columnChangeDetails: String,
         getConfKV: (Int, Long) => (String, String)): Unit = {
       withSimpleStreamingDf { (readDf, log) =>
         val ckptHash = (getDefaultCheckpoint(log).toString + "/sources/0").hashCode
@@ -1918,14 +1924,14 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
           StartStream(checkpointLocation = getDefaultCheckpoint(log).toString),
           ProcessAllAvailableIgnoreError,
           CheckAnswer(Nil: _*),
-          expectSqlConfException(schemaChangeType, v1, ckptHash)
+          expectSqlConfException(schemaChangeType, v1, columnChangeDetails, ckptHash)
         )
         // Another restart still fails
         testStream(readDf())(
           StartStream(checkpointLocation = getDefaultCheckpoint(log).toString),
           ProcessAllAvailableIgnoreError,
           CheckAnswer(Nil: _*),
-          expectSqlConfException(schemaChangeType, v1, ckptHash)
+          expectSqlConfException(schemaChangeType, v1, columnChangeDetails, ckptHash)
         )
         // With SQL Conf set we can move on
         val (k, v) = getConfKV(ckptHash, v1)
@@ -1962,7 +1968,14 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
             (s"${DeltaSQLConf.SQL_CONF_PREFIX}.streaming.$allow.ckpt_$ckptHash", ver.toString)
         )
       ).foreach { case (changeSchema, getConfKV) =>
-        testStreamFlow(changeSchema, schemaChangeType = "DROP COLUMN", getConfKV)
+        testStreamFlow(
+          changeSchema,
+          schemaChangeType = "DROP COLUMN",
+          columnChangeDetails =
+            s"""Columns dropped:
+               |'a'
+               |""".stripMargin,
+          getConfKV)
       }
     }
 
@@ -1984,7 +1997,15 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
             (s"${DeltaSQLConf.SQL_CONF_PREFIX}.streaming.$allow.ckpt_$ckptHash", ver.toString)
         )
       ).foreach { case (changeSchema, getConfKV) =>
-        testStreamFlow(changeSchema, schemaChangeType = "RENAME COLUMN", getConfKV)
+        testStreamFlow(
+          changeSchema,
+          schemaChangeType = "RENAME COLUMN",
+          columnChangeDetails =
+            s"""Columns renamed:
+               |'b' -> 'c'
+               |""".stripMargin,
+          getConfKV
+        )
       }
     }
   }

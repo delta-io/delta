@@ -18,6 +18,7 @@ package io.delta.kernel.internal;
 import static java.lang.String.format;
 
 import io.delta.kernel.exceptions.*;
+import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.tablefeatures.TableFeature;
 import io.delta.kernel.types.DataType;
@@ -251,6 +252,11 @@ public final class DeltaErrors {
     return new KernelException(format(msgFormat, fieldName, expected, actual));
   }
 
+  public static KernelException columnNotFoundInSchema(Column column, StructType tableSchema) {
+    return new KernelException(
+        format("Column '%s' was not found in the table schema: %s", column, tableSchema));
+  }
+
   /// Start: icebergCompat exceptions
   public static KernelException icebergCompatMissingNumRecordsStats(
       String compatVersion, DataFileStatus dataFileStatus) {
@@ -297,6 +303,27 @@ public final class DeltaErrors {
       String compatVersion, String feature) {
     throw new KernelException(
         format("%s: requires the feature '%s' to be enabled.", compatVersion, feature));
+  }
+
+  public static KernelException enablingIcebergWriterCompatV1OnExistingTable(String key) {
+    return new KernelException(
+        String.format(
+            "Cannot enable %s on an existing table. "
+                + "Enablement is only supported upon table creation.",
+            key));
+  }
+
+  public static KernelException icebergWriterCompatInvalidPhysicalName(List<String> invalidFields) {
+    return new KernelException(
+        String.format(
+            "IcebergWriterCompatV1 requires column mapping field physical names be equal to "
+                + "'col-[fieldId]', but this is not true for the following fields %s",
+            invalidFields));
+  }
+
+  public static KernelException disablingIcebergWriterCompatV1OnExistingTable(String key) {
+    return new KernelException(
+        String.format("Disabling %s on an existing table is not allowed.", key));
   }
   // End: icebergCompat exceptions
 
@@ -370,12 +397,11 @@ public final class DeltaErrors {
             + " but 'domainMetadata' is unsupported");
   }
 
-  public static KernelException enablingIcebergWriterCompatV1OnExistingTable(String key) {
+  public static KernelException cannotModifyAppendOnlyTable(String tablePath) {
     return new KernelException(
         String.format(
-            "Cannot enable %s on an existing table. "
-                + "Enablement is only supported upon table creation.",
-            key));
+            "Cannot modify append-only table. Table `%s` has configuration %s=true.",
+            tablePath, TableConfig.APPEND_ONLY_ENABLED.getKey()));
   }
 
   /* ------------------------ HELPER METHODS ----------------------------- */

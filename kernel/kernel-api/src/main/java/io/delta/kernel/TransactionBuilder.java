@@ -21,6 +21,7 @@ import io.delta.kernel.exceptions.ConcurrentTransactionException;
 import io.delta.kernel.exceptions.DomainDoesNotExistException;
 import io.delta.kernel.exceptions.InvalidConfigurationValueException;
 import io.delta.kernel.exceptions.UnknownConfigurationException;
+import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.types.StructType;
 import java.util.List;
@@ -34,11 +35,29 @@ import java.util.Map;
 @Evolving
 public interface TransactionBuilder {
   /**
-   * Set the schema of the table when creating a new table.
+   * Set the schema of the table. If setting the schema on an existing table for a schema evolution,
+   * then column mapping must be enabled. This API will preserve field metadata for fields such as
+   * field IDs and physical names. If field metadata is not specified for a field, it is considered
+   * as a new column and new IDs/physical names will be specified. The possible schema evolutions
+   * supported include column additions, removals, renames, and moves. If a schema evolution is
+   * performed, implementations must perform the following validations:
+   *
+   * <ul>
+   *   <li>No duplicate columns are allowed
+   *   <li>Column names contain only valid characters
+   *   <li>Data types are supported
+   *   <li>No new non-nullable fields are added
+   *   <li>Physical column name consistency is preserved in the new schema
+   *   <li>No type changes
+   *   <li>ToDo: Nested IDs for array/map types are preserved in the new schema
+   *   <li>ToDo: Validate invalid field reorderings
+   * </ul>
    *
    * @param engine {@link Engine} instance to use.
    * @param schema The new schema of the table.
    * @return updated {@link TransactionBuilder} instance.
+   * @throws io.delta.kernel.exceptions.KernelException in case column mapping is not enabled
+   * @throws IllegalArgumentException in case of any validation failure
    */
   TransactionBuilder withSchema(Engine engine, StructType schema);
 
@@ -47,10 +66,22 @@ public interface TransactionBuilder {
    *
    * @param engine {@link Engine} instance to use.
    * @param partitionColumns The partition columns of the table. These should be a subset of the
-   *     columns in the schema.
+   *     columns in the schema. Only top-level columns are allowed to be partitioned. Note:
+   *     Clustering columns and partition columns cannot coexist in a table.
    * @return updated {@link TransactionBuilder} instance.
    */
   TransactionBuilder withPartitionColumns(Engine engine, List<String> partitionColumns);
+
+  /**
+   * Set the list of clustering columns when create a new clustered table.
+   *
+   * @param engine {@link Engine} instance to use.
+   * @param clusteringColumns The clustering columns of the table. These should be a subset of the
+   *     columns in the schema. Both top-level and nested columns are allowed to be clustered. Note:
+   *     Clustering columns and partition columns cannot coexist in a table.
+   * @return updated {@link TransactionBuilder} instance.
+   */
+  TransactionBuilder withClusteringColumns(Engine engine, List<Column> clusteringColumns);
 
   /**
    * Set the transaction identifier for idempotent writes. Incremental processing systems (e.g.,

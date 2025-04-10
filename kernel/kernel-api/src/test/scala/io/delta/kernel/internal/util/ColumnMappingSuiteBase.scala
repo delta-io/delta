@@ -40,6 +40,25 @@ trait ColumnMappingSuiteBase extends VectorTestUtils {
   def assertColumnMapping(
       field: StructField,
       expId: Long,
+      isNewTable: Boolean,
+      isIcebergWriterCompatV1: Boolean): Unit = {
+    val logicalName = field.getName
+    val expPhysicalName = if (isIcebergWriterCompatV1) {
+      s"col-$expId"
+    } else {
+      if (isNewTable) {
+        "UUID"
+      } else {
+        logicalName
+      }
+    }
+    assertColumnMapping(field, expId, expPhysicalName)
+  }
+
+  /* Asserts that the given field has the expected column mapping info */
+  def assertColumnMapping(
+      field: StructField,
+      expId: Long,
       expPhysicalName: String = "UUID"): Unit = {
     assertThat(field.getMetadata.getEntries)
       .containsEntry(ColumnMapping.COLUMN_MAPPING_ID_KEY, expId.asInstanceOf[AnyRef])
@@ -67,6 +86,11 @@ trait ColumnMappingSuiteBase extends VectorTestUtils {
 
     def withIcebergCompatV2AndCMEnabled(): Metadata = {
       metadata.withIcebergCompatV2Enabled.withColumnMappingEnabled()
+    }
+
+    def withIcebergWriterCompatV1Enabled: Metadata = {
+      metadata.withMergedConfiguration(
+        Maps.newHashMap(TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey, "true"))
     }
   }
 
@@ -104,7 +128,8 @@ trait ColumnMappingSuiteBase extends VectorTestUtils {
   def verifyCMTestSchemaHasValidColumnMappingInfo(
       metadata: Metadata,
       isNewTable: Boolean = true,
-      enableIcebergComaptV2: Boolean = true): Unit = {
+      enableIcebergCompatV2: Boolean = true,
+      enableIcebergWriterCompatV1: Boolean = false): Unit = {
     var fieldId: Long = 0L
 
     def nextFieldId: Long = {
@@ -112,31 +137,58 @@ trait ColumnMappingSuiteBase extends VectorTestUtils {
       fieldId
     }
 
-    assertColumnMapping(metadata.getSchema.get("a"), nextFieldId, if (isNewTable) "UUID" else "a")
-    assertColumnMapping(metadata.getSchema.get("b"), nextFieldId, if (isNewTable) "UUID" else "b")
+    assertColumnMapping(
+      metadata.getSchema.get("a"),
+      nextFieldId,
+      isNewTable,
+      enableIcebergWriterCompatV1)
+    assertColumnMapping(
+      metadata.getSchema.get("b"),
+      nextFieldId,
+      isNewTable,
+      enableIcebergWriterCompatV1)
     val mapType = metadata.getSchema.get("b").getDataType.asInstanceOf[MapType]
     val innerStruct = mapType.getValueField.getDataType.asInstanceOf[StructType]
-    assertColumnMapping(innerStruct.get("d"), nextFieldId, if (isNewTable) "UUID" else "d")
-    assertColumnMapping(innerStruct.get("e"), nextFieldId, if (isNewTable) "UUID" else "e")
-    assertColumnMapping(innerStruct.get("f"), nextFieldId, if (isNewTable) "UUID" else "f")
+    assertColumnMapping(innerStruct.get("d"), nextFieldId, isNewTable, enableIcebergWriterCompatV1)
+    assertColumnMapping(innerStruct.get("e"), nextFieldId, isNewTable, enableIcebergWriterCompatV1)
+    assertColumnMapping(innerStruct.get("f"), nextFieldId, isNewTable, enableIcebergWriterCompatV1)
     val innerArray = innerStruct.get("f").getDataType.asInstanceOf[ArrayType]
     val structInArray = innerArray.getElementField.getDataType.asInstanceOf[StructType]
-    assertColumnMapping(structInArray.get("g"), nextFieldId, if (isNewTable) "UUID" else "g")
-    assertColumnMapping(structInArray.get("h"), nextFieldId, if (isNewTable) "UUID" else "h")
-    assertColumnMapping(metadata.getSchema.get("c"), nextFieldId, if (isNewTable) "UUID" else "c")
+    assertColumnMapping(
+      structInArray.get("g"),
+      nextFieldId,
+      isNewTable,
+      enableIcebergWriterCompatV1)
+    assertColumnMapping(
+      structInArray.get("h"),
+      nextFieldId,
+      isNewTable,
+      enableIcebergWriterCompatV1)
+    assertColumnMapping(
+      metadata.getSchema.get("c"),
+      nextFieldId,
+      isNewTable,
+      enableIcebergWriterCompatV1)
 
     // verify nested ids
-    if (enableIcebergComaptV2) {
+    if (enableIcebergCompatV2) {
+      val colBPrefix = if (enableIcebergWriterCompatV1) {
+        "col-2."
+      } else if (isNewTable) {
+        "col-"
+      } else {
+        "b."
+      }
       assertThat(metadata.getSchema.get("b").getMetadata.getEntries
         .get(COLUMN_MAPPING_NESTED_IDS_KEY).asInstanceOf[FieldMetadata].getEntries)
         .hasSize(2)
         .anySatisfy((k: AnyRef, v: AnyRef) => {
-          assertThat(k).asString.startsWith(if (isNewTable) "col-" else "b")
+          assertThat(k).asString.startsWith(colBPrefix)
           assertThat(k).asString.endsWith(".key")
           assertThat(v).isEqualTo(nextFieldId)
         })
         .anySatisfy((k: AnyRef, v: AnyRef) => {
-          assertThat(k).asString.startsWith(if (isNewTable) "col-" else "b")
+          assertThat(k).asString.startsWith(colBPrefix)
           assertThat(k).asString.endsWith(".value")
           assertThat(v).isEqualTo(nextFieldId)
         })
@@ -150,11 +202,18 @@ trait ColumnMappingSuiteBase extends VectorTestUtils {
         .doesNotContainKey(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY)
 
       // verify nested ids
+      val colFPrefix = if (enableIcebergWriterCompatV1) {
+        "col-5."
+      } else if (isNewTable) {
+        "col-"
+      } else {
+        "f."
+      }
       assertThat(innerStruct.get("f").getMetadata.getEntries
         .get(COLUMN_MAPPING_NESTED_IDS_KEY).asInstanceOf[FieldMetadata].getEntries)
         .hasSize(1)
         .anySatisfy((k: AnyRef, v: AnyRef) => {
-          assertThat(k).asString.startsWith(if (isNewTable) "col-" else "f")
+          assertThat(k).asString.startsWith(colFPrefix)
           assertThat(k).asString.endsWith(".element")
           assertThat(v).isEqualTo(nextFieldId)
         })

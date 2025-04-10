@@ -75,7 +75,8 @@ trait TypeWideningStreamingSourceTests
     def apply(): StreamAction =
       ExpectFailure[DeltaRuntimeException] { ex =>
         assert(ex.asInstanceOf[DeltaRuntimeException].getErrorClass ===
-          "DELTA_STREAMING_CANNOT_CONTINUE_PROCESSING_TYPE_WIDENING")
+          "DELTA_STREAMING_CANNOT_CONTINUE_PROCESSING_POST_SCHEMA_EVOLUTION")
+        assert(ex.asInstanceOf[DeltaRuntimeException].getMessage.contains("TYPE WIDENING"))
       }
   }
 
@@ -508,6 +509,12 @@ trait TypeWideningStreamingSourceTests
               "opType" -> "DROP AND TYPE WIDENING",
               "previousSchemaChangeVersion" -> "0",
               "currentSchemaChangeVersion" -> "2",
+              "columnChangeDetails" ->
+                s"""Columns dropped:
+                   |'b'
+                   |Columns with widened types:
+                   |'a': TINYINT -> INT
+                   |""".stripMargin,
               "unblockChangeOptions" ->
                 ".*allowSourceColumnDrop(.|\\n)*allowSourceColumnTypeChange.*",
               "unblockStreamOptions" ->

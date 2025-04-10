@@ -683,15 +683,6 @@ trait OptimisticTransactionImpl extends DeltaTransaction
       }
     }
 
-    if (spark.sessionState.conf
-      .getConf(DeltaSQLConf.REMOVE_EXISTS_DEFAULT_FROM_SCHEMA_ON_EVERY_METADATA_CHANGE)) {
-      val schemaWithRemovedExistsDefaults =
-        SchemaUtils.removeExistsDefaultMetadata(newMetadataTmp.schema)
-      if (schemaWithRemovedExistsDefaults != newMetadataTmp.schema) {
-        newMetadataTmp = newMetadataTmp.copy(schemaString = schemaWithRemovedExistsDefaults.json)
-      }
-    }
-
     // Table features Part 2: add manually-supported features specified in table properties, aka
     // those start with [[FEATURE_PROP_PREFIX]].
     //
@@ -815,6 +806,25 @@ trait OptimisticTransactionImpl extends DeltaTransaction
   def updateMetadataForTableOverwrite(proposedNewMetadata: Metadata): Unit = {
     isOverwritingSchema = true
     updateMetadata(proposedNewMetadata)
+  }
+
+  /**
+   * Remove the 'EXISTS_DEFAULT' metadata key from the schema. This is used for new tables that are
+   * not re-using data files of existing tables (i.e. CREATE TABLE, REPLACE TABLE, CTAS). It is not
+   * used on code paths of commands that create new tables but re-use data files (i.e. CONVERT TO
+   * DELTA, CLONE) because we cannot assure that 'EXISTS_DEFAULT' values is actually not required
+   * without reading the data.
+   */
+  def removeExistsDefaultFromSchema(): Unit = {
+    if (spark.sessionState.conf.getConf(DeltaSQLConf.REMOVE_EXISTS_DEFAULT_FROM_SCHEMA)) {
+      if (newMetadata.isDefined) {
+        val schemaWithRemovedExistsDefaults =
+          SchemaUtils.removeExistsDefaultMetadata(newMetadata.get.schema)
+        if (schemaWithRemovedExistsDefaults != newMetadata.get.schema) {
+          newMetadata = newMetadata.map(_.copy(schemaString = schemaWithRemovedExistsDefaults.json))
+        }
+      }
+    }
   }
 
   protected def assertMetadata(metadata: Metadata): Unit = {
@@ -2691,7 +2701,8 @@ trait OptimisticTransactionImpl extends DeltaTransaction
     OptimisticTransaction.clearActive()
 
     try {
-      postCommitHooks.foreach(runPostCommitHook(_, version, postCommitSnapshot, committedActions))
+      postCommitHooks.foreach(
+        runPostCommitHook(_, version, postCommitSnapshot, committedActions.toIterator))
     } finally {
       activeCommit.foreach(OptimisticTransaction.setActive)
     }
@@ -2701,7 +2712,7 @@ trait OptimisticTransactionImpl extends DeltaTransaction
       hook: PostCommitHook,
       version: Long,
       postCommitSnapshot: Snapshot,
-      committedActions: Seq[Action]): Unit = {
+      committedActions: Iterator[Action]): Unit = {
     try {
       hook.run(spark, this, version, postCommitSnapshot, committedActions)
     } catch {
