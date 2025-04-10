@@ -377,20 +377,18 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         throw new KernelException("Cannot update schema for table when column mapping is disabled");
       }
 
-      // TODO: revisit this once we want to support schema evolution with clustering columns
-      Optional<List<Column>> clusteringColumns =
-          ClusteringUtils.getClusteringColumnsOptional(snapshot);
-      if (clusteringColumns.isPresent() && !clusteringColumns.get().isEmpty()) {
-        throw new KernelException(
-            format(
-                "Update schema for table with clustering columns %s is not yet supported",
-                clusteringColumns.get()));
-      }
+      // Clustering columns will be guaranteed to have physical names at this point
+      Set<String> clusteringColumnPhysicalNames =
+          ClusteringUtils.getClusteringColumnsOptional(snapshot).orElse(Collections.emptyList())
+              .stream()
+              .map(col -> col.getNames()[0])
+              .collect(toSet());
 
       SchemaUtils.validateUpdatedSchema(
           oldMetadata.getSchema(),
           newMetadata.getSchema(),
           oldMetadata.getPartitionColNames(),
+          clusteringColumnPhysicalNames,
           newMetadata);
     }
   }
