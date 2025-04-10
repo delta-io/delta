@@ -1080,6 +1080,33 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
     }
   }
 
+  test("Cannot change clustering column type") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val initialSchema = new StructType()
+        .add("clustering_col", StringType.STRING, true)
+
+      createEmptyTable(
+        engine,
+        tablePath,
+        initialSchema,
+        clusteringCols = List(new Column("clustering_col")),
+        tableProperties = Map(
+          TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
+          TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"))
+
+      val currentSchema = table.getLatestSnapshot(engine).getSchema
+      val newSchema = new StructType()
+        .add("clustering_col", LongType.LONG, true, currentSchema.get("clustering_col").getMetadata)
+
+      assertSchemaEvolutionFails[IllegalArgumentException](
+        table,
+        engine,
+        newSchema,
+        "Cannot change the type of existing field clustering_col from string to long")
+    }
+  }
+
   test("Updating schema if physical columns are not preserved fails") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
@@ -1201,16 +1228,23 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
   }
 
   val primitiveSchemaWithClusteringColumn = new StructType()
-    .add("clustering_col", IntegerType.INTEGER)
-    .add("data", IntegerType.INTEGER)
+    .add(
+      "clustering_col",
+      IntegerType.INTEGER,
+      fieldMetadataForColumn(1, "clustering_col_physical"))
+    .add("data", IntegerType.INTEGER, fieldMetadataForColumn(2, "data_physical"))
 
   val nestedSchemaWithClusteringColumn = new StructType()
     .add(
       "struct",
       new StructType()
-        .add("clustering_col", IntegerType.INTEGER)
-        .add("data", IntegerType.INTEGER),
-      true)
+        .add(
+          "clustering_col",
+          IntegerType.INTEGER,
+          fieldMetadataForColumn(1, "clustering_col_physical"))
+        .add("data", IntegerType.INTEGER, fieldMetadataForColumn(2, "data_physical")),
+      true,
+      fieldMetadataForColumn(3, "struct_physical"))
 
   private val updatedSchemaWithDroppedClusteringColumn = Tables.Table(
     ("schemaBefore", "updatedSchemaWithDroppedClusteringColumn", "clusteringColumn"),
@@ -1219,7 +1253,7 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
       new StructType()
         .add(
           "data",
-          StringType.STRING,
+          IntegerType.INTEGER,
           true,
           primitiveSchemaWithClusteringColumn.get("data").getMetadata),
       new Column("clustering_col")),
@@ -1236,6 +1270,10 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
                 .asInstanceOf[StructType].get("data").getMetadata),
           true,
           nestedSchemaWithClusteringColumn.get("struct").getMetadata),
+      new Column(Array("struct", "clustering_col"))),
+    (
+      nestedSchemaWithClusteringColumn,
+      new StructType().add("id", IntegerType.INTEGER, fieldMetadataForColumn(4, "id")),
       new Column(Array("struct", "clustering_col"))))
 
   test("Cannot drop clustering column") {
