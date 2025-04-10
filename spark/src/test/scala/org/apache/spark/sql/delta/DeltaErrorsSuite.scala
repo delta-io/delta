@@ -1941,7 +1941,7 @@ trait DeltaErrorsSuiteBase
       checkError(e, "DELTA_CONFIGURE_SPARK_SESSION_WITH_EXTENSION_AND_CATALOG", "56038", Map(
         "sparkSessionExtensionName" -> classOf[DeltaSparkSessionExtension].getName,
         "catalogKey" -> SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key,
-        "catalogClassName" -> classOf[DeltaCatalog].getName,
+        "catalogClassName" -> classOf[DeltaCatalog].getName
       ))
     }
     {
