@@ -47,6 +47,9 @@ public class LogCompactionWriter {
   private final Path tablePath;
   private final long startVersion;
   private final long endVersion;
+  // We need to know after what time we can cleanup remove tombstones. This is pulled from the table
+  // metadata, which we have at hook creation time in TransactionImpl, so we just store it here so
+  // we can use it when we run this hook
   private final long minFileRetentionTimestampMillis;
 
   public LogCompactionWriter(
