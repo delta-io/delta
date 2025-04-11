@@ -104,6 +104,7 @@ public class SchemaUtils {
       StructType currentSchema,
       StructType newSchema,
       Set<String> currentPartitionColumns,
+      Set<String> clusteringColumnPhysicalNames,
       Metadata newMetadata) {
     checkArgument(
         isColumnMappingModeEnabled(
@@ -111,7 +112,7 @@ public class SchemaUtils {
         "Cannot validate updated schema when column mapping is disabled");
     validateSchema(newSchema, true /*columnMappingEnabled*/);
     validatePartitionColumns(newSchema, new ArrayList<>(currentPartitionColumns));
-    validateSchemaEvolution(currentSchema, newSchema, newMetadata);
+    validateSchemaEvolution(currentSchema, newSchema, newMetadata, clusteringColumnPhysicalNames);
   }
 
   /**
@@ -423,13 +424,16 @@ public class SchemaUtils {
 
   /* Validate if a given schema evolution is safe for a given column mapping mode*/
   private static void validateSchemaEvolution(
-      StructType currentSchema, StructType newSchema, Metadata metadata) {
+      StructType currentSchema,
+      StructType newSchema,
+      Metadata metadata,
+      Set<String> clusteringColumnPhysicalNames) {
     ColumnMappingMode columnMappingMode =
         ColumnMapping.getColumnMappingMode(metadata.getConfiguration());
     switch (columnMappingMode) {
       case ID:
       case NAME:
-        validateSchemaEvolutionById(currentSchema, newSchema);
+        validateSchemaEvolutionById(currentSchema, newSchema, clusteringColumnPhysicalNames);
         return;
       case NONE:
         throw new UnsupportedOperationException(
@@ -444,7 +448,8 @@ public class SchemaUtils {
    * Validates a given schema evolution by using field ID as the source of truth for identifying
    * fields
    */
-  private static void validateSchemaEvolutionById(StructType currentSchema, StructType newSchema) {
+  private static void validateSchemaEvolutionById(
+      StructType currentSchema, StructType newSchema, Set<String> clusteringColumnPhysicalNames) {
     Map<Integer, StructField> currentFieldsById = fieldsById(currentSchema);
     Map<Integer, StructField> updatedFieldsById = fieldsById(newSchema);
     SchemaChanges schemaChanges = computeSchemaChangesById(currentFieldsById, updatedFieldsById);
@@ -452,7 +457,19 @@ public class SchemaUtils {
     // Validates that the updated schema does not contain breaking changes in terms of types and
     // nullability
     validateUpdatedSchemaCompatibility(schemaChanges);
+    validateClusteringColumnsNotDropped(
+        schemaChanges.removedFields(), clusteringColumnPhysicalNames);
     // ToDo Potentially validate IcebergCompatV2 nested IDs
+  }
+
+  private static void validateClusteringColumnsNotDropped(
+      List<StructField> droppedFields, Set<String> clusteringColumnPhysicalNames) {
+    for (StructField droppedField : droppedFields) {
+      if (clusteringColumnPhysicalNames.contains(getPhysicalName(droppedField))) {
+        throw new KernelException(
+            String.format("Cannot drop clustering column %s", droppedField.getName()));
+      }
+    }
   }
 
   /**

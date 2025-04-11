@@ -22,7 +22,8 @@ import io.delta.kernel.{Operation, Table}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.expressions.Column
-import io.delta.kernel.internal.TableConfig
+import io.delta.kernel.internal.{SnapshotImpl, TableConfig}
+import io.delta.kernel.internal.clustering.ClusteringUtils
 import io.delta.kernel.internal.util.{ColumnMapping, ColumnMappingSuiteBase}
 import io.delta.kernel.types.{ArrayType, FieldMetadata, IntegerType, LongType, MapType, StringType, StructType}
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
@@ -408,6 +409,41 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
 
       assertColumnMapping(updatedInnerStruct.get("field_to_add"), 6, "field_to_add")
 
+    }
+  }
+
+  test("Renaming clustering columns") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val initialSchema = new StructType()
+        .add("clustering-col", StringType.STRING, true)
+
+      createEmptyTable(
+        engine,
+        tablePath,
+        initialSchema,
+        clusteringCols = List(new Column("clustering-col")),
+        tableProperties = Map(
+          TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
+          TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"))
+
+      val currentSchema = table.getLatestSnapshot(engine).getSchema
+      val expectedSchema = new StructType()
+        .add(
+          "renamed-clustering-col",
+          StringType.STRING,
+          true,
+          currentSchema.get("clustering-col").getMetadata)
+
+      table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
+        .withSchema(engine, expectedSchema)
+        .build(engine)
+        .commit(engine, emptyIterable())
+
+      val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      val actualSchema = snapshot.getSchema
+
+      assert(expectedSchema == actualSchema)
     }
   }
 
@@ -1160,33 +1196,31 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
     }
   }
 
-  // TODO: need to remove this once we support schema evolution with clustering columns
-  test("Cannot update schema with clustering columns") {
+  test("Cannot drop clustering columns") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
       val initialSchema = new StructType()
-        .add("a", StringType.STRING, true)
-        .add("c", IntegerType.INTEGER, true)
+        .add("data", StringType.STRING, true)
+        .add("clustering-col", IntegerType.INTEGER, true)
 
       createEmptyTable(
         engine,
         tablePath,
         initialSchema,
-        clusteringCols = List(new Column("c")),
+        clusteringCols = List(new Column("clustering-col")),
         tableProperties = Map(
           TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
           TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"))
 
       val currentSchema = table.getLatestSnapshot(engine).getSchema
       val newSchema = new StructType()
-        .add("c", StringType.STRING, true, currentSchema.get("c").getMetadata)
-        .add("a", StringType.STRING, true, currentSchema.get("a").getMetadata)
+        .add("data", StringType.STRING, true, currentSchema.get("data").getMetadata)
 
       assertSchemaEvolutionFails[KernelException](
         table,
         engine,
         newSchema,
-        "Update schema for table with clustering columns")
+        "Cannot drop clustering column clustering-col")
     }
   }
 
