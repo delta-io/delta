@@ -15,7 +15,10 @@
  */
 package io.delta.kernel.internal.metrics;
 
+import io.delta.kernel.internal.stats.FileSizeHistogram;
 import io.delta.kernel.metrics.TransactionMetricsResult;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Stores the metrics for an ongoing transaction. These metrics are updated and recorded throughout
@@ -38,6 +41,9 @@ public class TransactionMetrics {
   public final Counter totalActionsCounter = new Counter();
 
   public final Counter addFilesSizeInBytesCounter = new Counter();
+
+  public final AtomicReference<Optional<FileSizeHistogram>> fileSizeHistogramReference =
+      new AtomicReference<>(Optional.empty());
 
   // TODO: add removeFilesSizeInBytesCounter (and to TransactionMetricsResult)
 
@@ -63,6 +69,7 @@ public class TransactionMetrics {
       final long totalAddFilesSizeInBytes = addFilesSizeInBytesCounter.value();
       final long numRemoveFiles = removeFilesCounter.value();
       final long numTotalActions = totalActionsCounter.value();
+      final Optional<FileSizeHistogram> fileSizeHistogram = fileSizeHistogramReference.get();
 
       @Override
       public long getTotalCommitDurationNs() {
@@ -92,6 +99,11 @@ public class TransactionMetrics {
       @Override
       public long getTotalAddFilesSizeInBytes() {
         return totalAddFilesSizeInBytes;
+      }
+
+      @Override
+      public Optional<FileSizeHistogram> getFileSizeHistogram() {
+        return fileSizeHistogram;
       }
     };
   }

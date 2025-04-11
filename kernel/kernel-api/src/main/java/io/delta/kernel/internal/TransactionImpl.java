@@ -474,6 +474,8 @@ public class TransactionImpl implements Transaction {
                             // TODO update fileSizeHistogram
                             RemoveFile removeFile =
                                 new RemoveFile(action.getStruct(REMOVE_FILE_ORDINAL));
+                            fileSizeHistogram.ifPresent(
+                                histogram -> histogram.remove(removeFile.getSize().get()));
                             if (isAppendOnlyTable && removeFile.getDataChange()) {
                               throw DeltaErrors.cannotModifyAppendOnlyTable(dataPath.toString());
                             }
@@ -485,7 +487,7 @@ public class TransactionImpl implements Transaction {
           },
           "Write file actions to JSON log file `%s`",
           FileNames.deltaFile(logPath, commitAsVersion));
-
+      transactionMetrics.fileSizeHistogramReference.set(fileSizeHistogram);
       return commitAsVersion;
     } catch (FileAlreadyExistsException e) {
       throw e;
@@ -501,13 +503,13 @@ public class TransactionImpl implements Transaction {
   }
 
   private List<PostCommitHook> generatePostCommitHooks(
-      long committedVersion, TransactionMetricsResult txnMetrics, Optional<FileSizeHistogram> fileSizeHistogram) {
+      long committedVersion, TransactionMetricsResult txnMetrics) {
     List<PostCommitHook> postCommitHooks = new ArrayList<>();
     if (isReadyForCheckpoint(committedVersion)) {
       postCommitHooks.add(new CheckpointHook(dataPath, committedVersion));
     }
 
-    buildPostCommitCrcInfoIfCurrentCrcAvailable(committedVersion, txnMetrics, fileSizeHistogram)
+    buildPostCommitCrcInfoIfCurrentCrcAvailable(committedVersion, txnMetrics)
         .ifPresent(crcInfo -> postCommitHooks.add(new ChecksumSimpleHook(crcInfo, logPath)));
 
     return postCommitHooks;
@@ -575,9 +577,7 @@ public class TransactionImpl implements Transaction {
   }
 
   private Optional<CRCInfo> buildPostCommitCrcInfoIfCurrentCrcAvailable(
-      long commitAtVersion,
-      TransactionMetricsResult metricsResult,
-      Optional<FileSizeHistogram> fileSizeHistogram) {
+      long commitAtVersion, TransactionMetricsResult metricsResult) {
     if (isNewTable) {
       return Optional.of(
           new CRCInfo(
@@ -587,7 +587,7 @@ public class TransactionImpl implements Transaction {
               metricsResult.getTotalAddFilesSizeInBytes(),
               metricsResult.getNumAddFiles(),
               Optional.of(txnId.toString()),
-              fileSizeHistogram));
+              metricsResult.getFileSizeHistogram()));
     }
 
     return readSnapshot
@@ -605,7 +605,7 @@ public class TransactionImpl implements Transaction {
                     lastCrcInfo.getTableSizeBytes() + metricsResult.getTotalAddFilesSizeInBytes(),
                     lastCrcInfo.getNumFiles() + metricsResult.getNumAddFiles(),
                     Optional.of(txnId.toString()),
-                    fileSizeHistogram));
+                    metricsResult.getFileSizeHistogram()));
   }
 
   /**

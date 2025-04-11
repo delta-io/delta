@@ -273,8 +273,6 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
   }
 
   test("TransactionReport: manually commit a remove file") {
-    // TODO: re-enable this test once remove file is supported.
-    assume(false)
     withTempDir { tempDir =>
       val path = tempDir.getCanonicalPath
       // Set up delta table with version 0

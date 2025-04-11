@@ -55,22 +55,22 @@ public class FileSizeHistogram {
   }
 
   /**
-   * Creates a FileSizeHistogram from a Row object.
-   * This method converts a Row object into a FileSizeHistogram instance. The Row must conform
-   * to the FULL_SCHEMA defined for FileSizeHistogram.
+   * Creates a FileSizeHistogram from a Row object. This method converts a Row object into a
+   * FileSizeHistogram instance. The Row must conform to the FULL_SCHEMA defined for
+   * FileSizeHistogram.
    *
-   * @param row The Row object containing histogram data. Must not be null and must match FULL_SCHEMA.
+   * @param row The Row object containing histogram data. Must not be null and must match
+   *     FULL_SCHEMA.
    * @return A new FileSizeHistogram instance created from the provided Row.
    * @throws NullPointerException if the row is null
    * @throws IllegalArgumentException if the row's schema doesn't match FULL_SCHEMA
-   **/
+   */
   public static FileSizeHistogram fromRow(Row row) {
     requireNonNull(row);
     checkArgument(FULL_SCHEMA.equals(row.getSchema()));
     return fromColumnVector(
-        VectorUtils.buildColumnVector(Collections.singletonList(row), FULL_SCHEMA), 0).orElseThrow(
-            () -> new IllegalStateException("Expects file Histogram non empty")
-    );
+            VectorUtils.buildColumnVector(Collections.singletonList(row), FULL_SCHEMA), 0)
+        .orElseThrow(() -> new IllegalStateException("Expects file Histogram non empty"));
   }
 
   /** Creates a FileSizeHistogram from a column vector. */

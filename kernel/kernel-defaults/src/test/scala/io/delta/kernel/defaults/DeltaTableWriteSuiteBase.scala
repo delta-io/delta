@@ -17,6 +17,7 @@ package io.delta.kernel.defaults
 
 import java.io.File
 import java.nio.file.{Files, Paths}
+import java.util.Collections.emptyMap
 import java.util.Optional
 
 import scala.collection.JavaConverters._
@@ -39,9 +40,10 @@ import io.delta.kernel.internal.util.{Clock, FileNames, VectorUtils}
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
+import io.delta.kernel.statistics.DataFileStatistics
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.StructType
-import io.delta.kernel.utils.{CloseableIterable, CloseableIterator, FileStatus}
+import io.delta.kernel.utils.{CloseableIterable, CloseableIterator, DataFileStatus, FileStatus}
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 
 import org.apache.spark.sql.delta.VersionNotFoundException
@@ -569,5 +571,24 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       engine: Engine,
       dataActions: CloseableIterable[Row]): TransactionCommitResult = {
     txn.commit(engine, dataActions)
+  }
+
+  protected def generateDataFileStatus(
+      tablePath: String,
+      fileName: String,
+      fileSize: Long = 1000,
+      includeStats: Boolean = true): DataFileStatus = {
+    val filePath = defaultEngine.getFileSystemClient.resolvePath(tablePath + "/" + fileName)
+    new DataFileStatus(
+      filePath,
+      fileSize,
+      10,
+      if (includeStats) {
+        Optional.of(new DataFileStatistics(
+          100,
+          emptyMap(),
+          emptyMap(),
+          emptyMap()))
+      } else Optional.empty())
   }
 }

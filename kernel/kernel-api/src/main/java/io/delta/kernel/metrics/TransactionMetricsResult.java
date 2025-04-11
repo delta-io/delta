@@ -16,6 +16,8 @@
 package io.delta.kernel.metrics;
 
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
+import io.delta.kernel.internal.stats.FileSizeHistogram;
+import java.util.Optional;
 
 /** Stores the metrics results for a {@link TransactionReport} */
 @JsonPropertyOrder({
@@ -24,7 +26,8 @@ import com.fasterxml.jackson.annotation.JsonPropertyOrder;
   "numAddFiles",
   "numRemoveFiles",
   "numTotalActions",
-  "totalAddFilesSizeInBytes"
+  "totalAddFilesSizeInBytes",
+  "fileSizeHistogram"
 })
 public interface TransactionMetricsResult {
 
@@ -58,5 +61,5 @@ public interface TransactionMetricsResult {
    */
   long getTotalAddFilesSizeInBytes();
 
-  // TODO add fileSizeHistogram
+  Optional<FileSizeHistogram> getFileSizeHistogram();
 }
