@@ -160,7 +160,10 @@ public class FileSizeHistogram {
     return boundaries;
   }
 
-  /** Creates a FileSizeHistogram instance from a FileSizeHistogramResult. */
+  /**
+   * Loads a FileSizeHistogram instance from a {@link FileSizeHistogramResult}. It is used for
+   * load the information about file size histogram from a {@link TransactionMetricsResult}
+   **/
   public static FileSizeHistogram fromFileSizeHistogramResult(
       FileSizeHistogramResult fileSizeHistogramResult) {
     requireNonNull(fileSizeHistogramResult);
