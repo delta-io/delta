@@ -39,24 +39,6 @@ class CommitIcebergActionSuite extends DeltaTableWriteSuiteBase {
   private val tblPropertiesIcebergWriterCompatV1Enabled = Map(
     TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey -> "true")
 
-  private def generateDataFileStatus(
-      tablePath: String,
-      fileName: String,
-      includeStats: Boolean = true): DataFileStatus = {
-    val filePath = defaultEngine.getFileSystemClient.resolvePath(tablePath + "/" + fileName)
-    new DataFileStatus(
-      filePath,
-      1000,
-      10,
-      if (includeStats) {
-        Optional.of(new DataFileStatistics(
-          100,
-          emptyMap(),
-          emptyMap(),
-          emptyMap()))
-      } else Optional.empty())
-  }
-
   /* ----- Error cases ----- */
 
   test("requires that maxRetries = 0") {

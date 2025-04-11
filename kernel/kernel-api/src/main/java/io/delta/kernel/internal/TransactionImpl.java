@@ -46,6 +46,7 @@ import io.delta.kernel.internal.metrics.TransactionReportImpl;
 import io.delta.kernel.internal.replay.ConflictChecker;
 import io.delta.kernel.internal.replay.ConflictChecker.TransactionRebaseState;
 import io.delta.kernel.internal.rowtracking.RowTracking;
+import io.delta.kernel.internal.stats.FileSizeHistogram;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.*;
 import io.delta.kernel.internal.util.Clock;
@@ -597,8 +598,9 @@ public class TransactionImpl implements Transaction {
               metricsResult.getTotalAddFilesSizeInBytes(),
               metricsResult.getNumAddFiles(),
               Optional.of(txnId.toString()),
-              Optional.empty() // once we support writing CRC populate here
-              ));
+              metricsResult
+                  .getTableFileSizeHistogram()
+                  .map(FileSizeHistogram::fromFileSizeHistogramResult)));
     }
 
     return currentCrcInfo
@@ -610,12 +612,16 @@ public class TransactionImpl implements Transaction {
                     commitAtVersion,
                     metadata,
                     protocol,
-                    // TODO: handle RemoveFiles for calculating table size and num of files.
-                    lastCrcInfo.getTableSizeBytes() + metricsResult.getTotalAddFilesSizeInBytes(),
-                    lastCrcInfo.getNumFiles() + metricsResult.getNumAddFiles(),
+                    lastCrcInfo.getTableSizeBytes()
+                        + metricsResult.getTotalAddFilesSizeInBytes()
+                        - metricsResult.getTotalRemoveFilesSizeInBytes(),
+                    lastCrcInfo.getNumFiles()
+                        + metricsResult.getNumAddFiles()
+                        - metricsResult.getNumRemoveFiles(),
                     Optional.of(txnId.toString()),
-                    Optional.empty() // once we support writing CRC populate here
-                    ));
+                    metricsResult
+                        .getTableFileSizeHistogram()
+                        .map(FileSizeHistogram::fromFileSizeHistogramResult)));
   }
 
   /**

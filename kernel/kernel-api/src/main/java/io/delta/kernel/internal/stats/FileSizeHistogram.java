@@ -160,7 +160,14 @@ public class FileSizeHistogram {
     return boundaries;
   }
 
-  // TODO factory from FileSizeHistogramResult
+  public static FileSizeHistogram fromFileSizeHistogramResult(
+      FileSizeHistogramResult fileSizeHistogramResult) {
+    requireNonNull(fileSizeHistogramResult);
+    return new FileSizeHistogram(
+        fileSizeHistogramResult.getSortedBinBoundaries(),
+        fileSizeHistogramResult.getFileCounts(),
+        fileSizeHistogramResult.getTotalBytes());
+  }
 
   ////////////////////////////////////
   // Member variables and methods  //
