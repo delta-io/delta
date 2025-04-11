@@ -369,7 +369,7 @@ public class TransactionImpl implements Transaction {
         ConflictChecker.resolveConflicts(engine, readSnapshot, commitAsVersion, this, dataActions);
     long rebasedVersion = rebaseState.getLatestVersion();
     this.currentCrcInfo =
-            ChecksumReader.getCRCInfo(engine, logPath, rebasedVersion, rebasedVersion);
+        ChecksumReader.getCRCInfo(engine, logPath, rebasedVersion, rebasedVersion);
     long newCommitAsVersion = rebasedVersion + 1;
     checkArgument(
         commitAsVersion < newCommitAsVersion,
@@ -601,9 +601,9 @@ public class TransactionImpl implements Transaction {
               ));
     }
 
-    return  currentCrcInfo
-            // Ensure current currentCrcInfo is exactly commitAtVersion - 1
-            .filter(crcInfo -> commitAtVersion == crcInfo.getVersion() + 1)
+    return currentCrcInfo
+        // Ensure current currentCrcInfo is exactly commitAtVersion - 1
+        .filter(crcInfo -> commitAtVersion == crcInfo.getVersion() + 1)
         .map(
             lastCrcInfo ->
                 new CRCInfo(

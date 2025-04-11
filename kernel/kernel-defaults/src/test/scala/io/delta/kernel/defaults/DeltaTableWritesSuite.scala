@@ -900,7 +900,6 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
   test("insert into table - write stats and validate they can be read by Spark ") {
     withTempDirAndEngine { (tblPath, engine) =>
-
       // Configure the table property for stats collection via TableConfig.
       val numIndexedCols = 5
       val tableProperties = Map(TableConfig.
