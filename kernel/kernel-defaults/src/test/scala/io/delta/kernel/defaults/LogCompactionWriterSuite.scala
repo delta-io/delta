@@ -151,7 +151,7 @@ class LogCompactionWriterSuite extends CheckpointSuiteBase {
 
   def getActionsFromCompacted(
       compactedPath: String,
-      engine: Engine): Seq[Row] = {
+      engine: Engine): scala.collection.Seq[Row] = {
     val fileStatus = FileStatus.of(compactedPath, 0, 0)
     val batches = engine
       .getJsonHandler()
@@ -159,15 +159,7 @@ class LogCompactionWriterSuite extends CheckpointSuiteBase {
         singletonCloseableIterator(fileStatus),
         COMPACTED_SCHEMA,
         Optional.empty())
-    val resBuilder = Seq.newBuilder[Row]
-    while (batches.hasNext()) {
-      val batch = batches.next()
-      val rows = batch.getRows()
-      while (rows.hasNext()) {
-        resBuilder += rows.next()
-      }
-    }
-    resBuilder.result()
+    batches.toSeq.flatMap(_.getRows().toSeq)
   }
 
   def addDomainMetadata(path: String, d1Val: String, d2Val: String): Unit = {
