@@ -218,7 +218,7 @@ public class CRCInfo {
   @Override
   public int hashCode() {
     return Objects.hash(
-        version, metadata, protocol, tableSizeBytes, numFiles, txnId, fileSizeHistogram);
+        version, metadata, protocol, tableSizeBytes, numFiles, txnId, domainMetadata, fileSizeHistogram);
   }
 
   @Override
