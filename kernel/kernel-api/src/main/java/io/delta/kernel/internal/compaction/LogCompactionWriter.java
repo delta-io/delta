@@ -29,11 +29,11 @@ import io.delta.kernel.internal.replay.CreateCheckpointIterator;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.FileNames.DeltaLogFileType;
+import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import java.io.IOException;
-import java.util.Arrays;
-import java.util.HashSet;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import org.slf4j.Logger;
@@ -79,7 +79,7 @@ public class LogCompactionWriter {
     final List<FileStatus> deltas =
         DeltaLogActionUtils.listDeltaLogFilesAsIter(
                 engine,
-                new HashSet<>(Arrays.asList(DeltaLogFileType.COMMIT)),
+                Collections.singleton(DeltaLogFileType.COMMIT),
                 dataPath,
                 startVersion,
                 Optional.of(endVersion),
@@ -139,13 +139,7 @@ public class LogCompactionWriter {
         return false;
       }
       while ((current == null || !current.hasNext()) && sourceBatches.hasNext()) {
-        if (current != null) {
-          try {
-            current.close();
-          } catch (IOException e) {
-            logger.warn("Error closing previous batch rows", e);
-          }
-        }
+        Utils.closeCloseables(current);
         FilteredColumnarBatch next = sourceBatches.next();
         current = next.getRows();
       }
@@ -163,10 +157,7 @@ public class LogCompactionWriter {
     @Override
     public void close() throws IOException {
       isClosed = true;
-      if (current != null) {
-        current.close();
-      }
-      sourceBatches.close();
+      Utils.closeCloseables(current, sourceBatches);
     }
   }
 }

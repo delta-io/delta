@@ -124,8 +124,10 @@ public interface TransactionBuilder {
   TransactionBuilder withMaxRetries(int maxRetries);
 
   /**
-   * Set the number of commits between log compactions. Defaults to 10. Set to 0 to disable log
-   * compactions.
+   * Set the number of commits between log compactions. Defaults to 0 (disabled). For more
+   * information see the Delta protocol section <a
+   * href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#log-compaction-files">Log
+   * Compaction Files</a>.
    *
    * @param logCompactionInterval The commits between log compactions
    * @return updated {@link TransactionBuilder} instance

@@ -15,7 +15,7 @@
  */
 package io.delta.kernel.defaults
 
-import java.util.{Arrays, Collections, HashSet, Optional}
+import java.util.{Collections, Optional}
 
 import scala.collection.JavaConverters._
 import scala.collection.immutable.Seq
@@ -79,7 +79,7 @@ class LogCompactionWriterSuite extends CheckpointSuiteBase {
       endVersion: Long): Seq[TestRow] = {
     val files = DeltaLogActionUtils.listDeltaLogFilesAsIter(
       engine,
-      new HashSet(Arrays.asList(DeltaLogFileType.COMMIT)),
+      Collections.singleton(DeltaLogFileType.COMMIT),
       tablePath,
       startVersion,
       Optional.of(endVersion),
