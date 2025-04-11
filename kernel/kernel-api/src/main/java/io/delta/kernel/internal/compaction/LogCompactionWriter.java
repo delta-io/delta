@@ -20,7 +20,6 @@ import static io.delta.kernel.internal.lang.ListUtils.getLast;
 import static java.util.Collections.emptyList;
 import static java.util.Objects.requireNonNull;
 
-import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaLogActionUtils;
@@ -107,7 +106,7 @@ public class LogCompactionWriter {
         new CreateCheckpointIterator(engine, segment, minFileRetentionTimestampMillis);
     wrapEngineExceptionThrowsIO(
         () -> {
-          try (CloseableIterator<Row> rows = new FilteredBatchToRowIter(checkpointIterator)) {
+          try (CloseableIterator<Row> rows = Utils.intoRows(checkpointIterator)) {
             engine.getJsonHandler().writeJsonFileAtomically(compactedPath.toString(), rows, false);
           }
           logger.info("Successfully wrote log compaction file `{}`", compactedPath);
@@ -121,43 +120,5 @@ public class LogCompactionWriter {
   public static boolean shouldCompact(long commitVersion, long compactionInterval) {
     // commits start at 0, so we add one to the commit version to check if we've hit the interval
     return commitVersion > 0 && ((commitVersion + 1) % compactionInterval == 0);
-  }
-
-  /** Utility to convert an Iterator<FilteredColumnarBatch> into an Iterator<Row> */
-  private static class FilteredBatchToRowIter implements CloseableIterator<Row> {
-    private final CloseableIterator<FilteredColumnarBatch> sourceBatches;
-    private CloseableIterator<Row> current;
-    private boolean isClosed = false;
-
-    FilteredBatchToRowIter(CloseableIterator<FilteredColumnarBatch> sourceBatches) {
-      this.sourceBatches = sourceBatches;
-    }
-
-    @Override
-    public boolean hasNext() {
-      if (isClosed) {
-        return false;
-      }
-      while ((current == null || !current.hasNext()) && sourceBatches.hasNext()) {
-        Utils.closeCloseables(current);
-        FilteredColumnarBatch next = sourceBatches.next();
-        current = next.getRows();
-      }
-      return current != null && current.hasNext();
-    }
-
-    @Override
-    public Row next() {
-      if (!hasNext()) {
-        throw new java.util.NoSuchElementException("No more rows available");
-      }
-      return current.next();
-    }
-
-    @Override
-    public void close() throws IOException {
-      isClosed = true;
-      Utils.closeCloseables(current, sourceBatches);
-    }
   }
 }
