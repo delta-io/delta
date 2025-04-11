@@ -305,17 +305,23 @@ trait DeltaColumnMappingBase extends DeltaLogging {
     }
   }
 
-  /** Set physical name based on field path, skip if field path not found in the map */
+  /**
+   * Set physical name based on field path, skip if field path not found in the map. All comparisons
+   * are case-insensitive.
+   */
   def setPhysicalNames(
       schema: StructType,
       fieldPathToPhysicalName: Map[Seq[String], String]): StructType = {
     if (fieldPathToPhysicalName.isEmpty) {
       schema
     } else {
+      val lowerCasedFieldPathToPhysicalNameMap =
+        fieldPathToPhysicalName.map { case (k, v) => k.map(_.toLowerCase(Locale.ROOT)) -> v }
       SchemaMergingUtils.transformColumns(schema) { (parent, field, _) =>
-        val path = parent :+ field.name
-        if (fieldPathToPhysicalName.contains(path)) {
-          assignPhysicalName(field, fieldPathToPhysicalName(path))
+        // Column comparison is case-insensitive.
+        val path = (parent :+ field.name).map(_.toLowerCase(Locale.ROOT))
+        if (lowerCasedFieldPathToPhysicalNameMap.contains(path)) {
+          assignPhysicalName(field, lowerCasedFieldPathToPhysicalNameMap(path))
         } else {
           field
         }
