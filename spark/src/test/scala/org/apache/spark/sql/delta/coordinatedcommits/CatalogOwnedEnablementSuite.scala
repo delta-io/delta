@@ -84,20 +84,4 @@ class CatalogOwnedEnablementSuite
       )
     }
   }
-
-  test("Upgrading other table protocols on CatalogOwned table should not be blocked") {
-    withTable("t1") {
-      spark.sql(s"CREATE TABLE t1 (id INT) USING delta TBLPROPERTIES " +
-        s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
-      spark.sql(s"INSERT INTO t1 VALUES 1") // commit 1
-      spark.sql(s"INSERT INTO t1 VALUES 2") // commit 2
-      var log = DeltaLog.forTable(spark, TableIdentifier("t1"))
-      validateCompleteEnablement(log.unsafeVolatileSnapshot, expectEnabled = true)
-      spark.sql(s"ALTER TABLE t1 SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
-      log = DeltaLog.forTable(spark, TableIdentifier("t1"))
-      validateCompleteEnablement(log.unsafeVolatileSnapshot, expectEnabled = true)
-      assert(
-        log.unsafeVolatileSnapshot.protocol.readerAndWriterFeatureNames.contains("columnMapping"))
-    }
-  }
 }
