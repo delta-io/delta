@@ -1979,16 +1979,17 @@ trait OptimisticTransactionImpl extends DeltaTransaction
     // There be at most one metadata entry at this point.
     // Update the global `newMetadata` and `newProtocol` with any extra metadata and protocol
     // changes needed for pre-requisite features.
-    val protocolChanges =
-      newProtocol.toSeq ++ metadatasAndProtocols.collect { case p: Protocol => p }
+    val protocolActions = metadatasAndProtocols.collect { case p: Protocol => p }
+    val protocolChangesBeforeUpdate = newProtocol.toSeq ++ protocolActions
     updateMetadataAndProtocolWithRequiredFeatures(
-      metadataChanges.headOption, protocolChanges)
+      metadataChanges.headOption, protocolChangesBeforeUpdate)
 
     // A protocol change can be *explicit*, i.e. specified as a Protocol action as part of the
     // commit actions, or *implicit*. Implicit protocol changes are mostly caused by setting
     // new table properties that enable features that require a protocol upgrade. These implicit
     // changes are usually captured in newProtocol. In case there is more than one protocol action,
     // it is likely that it is due to a mix of explicit and implicit changes.
+    val protocolChanges = newProtocol.toSeq ++ protocolActions
     if (protocolChanges.length > 1) {
       recordDeltaEvent(deltaLog, "delta.protocolCheck.multipleProtocolActions", data = Map(
         "protocolChanges" -> protocolChanges
