@@ -172,7 +172,9 @@ public class CRCInfo {
 
     // Add optional fields
     txnId.ifPresent(txn -> values.put(getSchemaIndex(TXN_ID), txn));
-    // TODO write fileSizeHistogram here
+    fileSizeHistogram.ifPresent(
+        fileSizeHistogram ->
+            values.put(getSchemaIndex(FILE_SIZE_HISTOGRAM), fileSizeHistogram.toRow()));
     return new GenericRow(CRC_FILE_SCHEMA, values);
   }
 

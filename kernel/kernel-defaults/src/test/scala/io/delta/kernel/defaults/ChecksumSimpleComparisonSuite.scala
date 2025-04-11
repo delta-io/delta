@@ -125,8 +125,8 @@ class ChecksumSimpleComparisonSuite extends DeltaTableWriteSuiteBase with TestUt
         crcInfo.getTableSizeBytes,
         crcInfo.getNumFiles,
         Optional.empty(),
-        // This will be empty since neither Kernel nor Spark writes fileSizeHistogram to CRCInfo yet
-        crcInfo.getFileSizeHistogram)
+        // TODO: check file size histogram once https://github.com/delta-io/delta/pull/3907 merged.
+        Optional.empty())
     }
   }
 
