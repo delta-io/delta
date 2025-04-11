@@ -158,16 +158,11 @@ trait DeltaSourceBase extends Source
     snapshotAtSourceInit.metadata.columnMappingMode != NoMapping
 
   /**
-   * Feature flag enabling reading from a Delta source that had a widening type change applied.
-   */
-  protected lazy val allowTypeWidening: Boolean =
-    spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_ALLOW_TYPE_WIDENING_STREAMING_SOURCE)
-
-  /**
    * Whether we are streaming from a table that has the type widening table feature enabled.
    */
-  protected lazy val isStreamingFromTypeWideningTable: Boolean =
-    TypeWidening.isSupported(snapshotAtSourceInit.protocol)
+  protected lazy val typeWideningEnabled: Boolean =
+    spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_ALLOW_TYPE_WIDENING_STREAMING_SOURCE) &&
+      TypeWidening.isSupported(snapshotAtSourceInit.protocol)
 
   /**
    * Whether we should track widening type changes to allow users to accept them and resume
@@ -582,8 +577,7 @@ trait DeltaSourceBase extends Source
     }
 
     // Perform schema check if we need to, considering all escape flags.
-    if (!allowUnsafeStreamingReadOnColumnMappingSchemaChanges ||
-        (allowTypeWidening && isStreamingFromTypeWideningTable) ||
+    if (!allowUnsafeStreamingReadOnColumnMappingSchemaChanges || typeWideningEnabled ||
         !forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart) {
       startVersionSnapshotOpt.foreach { snapshot =>
         checkReadIncompatibleSchemaChanges(
@@ -644,9 +638,11 @@ trait DeltaSourceBase extends Source
     }
 
     def shouldTrackSchema: Boolean =
-      if (allowTypeWidening && isStreamingFromTypeWideningTable &&
-        enableSchemaTrackingForTypeWidening &&
+      if (typeWideningEnabled && enableSchemaTrackingForTypeWidening &&
         TypeWidening.containsWideningTypeChanges(oldMetadata.schema, newMetadata.schema)) {
+        // If schema tracking is enabled for type widening, we will detect widening type changes and
+        // block the stream until the user sets `allowSourceColumnTypeChange` - similar to handling
+        // DROP/RENAME for column mapping.
         true
       } else if (allowUnsafeStreamingReadOnColumnMappingSchemaChanges) {
         false
@@ -683,12 +679,12 @@ trait DeltaSourceBase extends Source
       // nullable, or in other words, `schema` should not tighten nullability from `schemaChange`,
       // because we don't ever want to read back any nulls when the read schema is non-nullable.
       val shouldForbidTightenNullability = !forceEnableUnsafeReadOnNullabilityChange
-      // By default, widening type changes are handled using schema tracking - see above - and
-      // aren't going through this code path. That is unless schema tracking for type widening is
-      // explicitly disabled (internal conf), in which case we allow widening type changes here.
+      // If schema tracking is disabled for type widening, we allow widening type changes to go
+      // through without requiring the user to set `allowSourceColumnTypeChange`. The schema change
+      // will cause the stream to fail with a retryable exception, and the stream will restart using
+      // the new schema.
       val typeWideningMode =
-        if (allowTypeWidening && isStreamingFromTypeWideningTable &&
-            !enableSchemaTrackingForTypeWidening) {
+        if (typeWideningEnabled && !enableSchemaTrackingForTypeWidening) {
           TypeWideningMode.AllTypeWidening
         } else {
          TypeWideningMode.NoTypeWidening
