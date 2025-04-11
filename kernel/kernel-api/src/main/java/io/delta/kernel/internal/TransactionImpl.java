@@ -35,6 +35,7 @@ import io.delta.kernel.hook.PostCommitHook;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.checksum.CRCInfo;
+import io.delta.kernel.internal.checksum.ChecksumReader;
 import io.delta.kernel.internal.clustering.ClusteringUtils;
 import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.internal.fs.Path;
@@ -90,6 +91,7 @@ public class TransactionImpl implements Transaction {
   private Metadata metadata;
   private boolean shouldUpdateMetadata;
   private int maxRetries;
+  private Optional<CRCInfo> currentCrcInfo;
 
   private boolean closed; // To avoid trying to commit the same transaction again.
 
@@ -122,6 +124,7 @@ public class TransactionImpl implements Transaction {
     this.shouldUpdateProtocol = shouldUpdateProtocol;
     this.maxRetries = maxRetries;
     this.clock = clock;
+    this.currentCrcInfo = readSnapshot.getCurrentCrcInfo();
   }
 
   @Override
@@ -365,7 +368,10 @@ public class TransactionImpl implements Transaction {
         maxRetries);
     TransactionRebaseState rebaseState =
         ConflictChecker.resolveConflicts(engine, readSnapshot, commitAsVersion, this, dataActions);
-    long newCommitAsVersion = rebaseState.getLatestVersion() + 1;
+    long rebasedVersion = rebaseState.getLatestVersion();
+    this.currentCrcInfo =
+        ChecksumReader.getCRCInfo(engine, logPath, rebasedVersion, rebasedVersion);
+    long newCommitAsVersion = rebasedVersion + 1;
     checkArgument(
         commitAsVersion < newCommitAsVersion,
         "New commit version %d should be greater than the previous commit attempt version %d.",
@@ -597,11 +603,9 @@ public class TransactionImpl implements Transaction {
                   .map(FileSizeHistogram::fromFileSizeHistogramResult)));
     }
 
-    return readSnapshot
-        .getCurrentCrcInfo()
-        // in the case of a conflicting txn and successful retry the readSnapshot may not be
-        // commitVersion - 1
-        .filter(lastCrcInfo -> commitAtVersion == lastCrcInfo.getVersion() + 1)
+    return currentCrcInfo
+        // Ensure current currentCrcInfo is exactly commitAtVersion - 1
+        .filter(crcInfo -> commitAtVersion == crcInfo.getVersion() + 1)
         .map(
             lastCrcInfo ->
                 new CRCInfo(
