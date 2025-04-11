@@ -15,7 +15,9 @@
  */
 package io.delta.kernel.metrics;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
+import java.util.Optional;
 
 /** Stores the metrics results for a {@link TransactionReport} */
 @JsonPropertyOrder({
@@ -65,5 +67,10 @@ public interface TransactionMetricsResult {
    */
   long getTotalRemoveFilesSizeInBytes();
 
-  // TODO add fileSizeHistogram
+  /**
+   * @return the file size histogram information for the table version committed in this
+   *     transaction. For a failed transaction this metric may be incomplete.
+   */
+  @JsonIgnore
+  Optional<FileSizeHistogramResult> getTableFileSizeHistogram();
 }

@@ -124,7 +124,9 @@ class ChecksumSimpleComparisonSuite extends DeltaTableWriteSuiteBase with TestUt
         crcInfo.getProtocol,
         crcInfo.getTableSizeBytes,
         crcInfo.getNumFiles,
-        Optional.empty())
+        Optional.empty(),
+        // This will be empty since neither Kernel nor Spark writes fileSizeHistogram to CRCInfo yet
+        crcInfo.getFileSizeHistogram)
     }
   }
 
