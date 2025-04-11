@@ -38,14 +38,14 @@ class ChecksumStatsSuite extends DeltaTableWriteSuiteBase {
 
   test("Check stats in checksum are correct") {
     withTempDirAndEngine { (tablePath, engine) =>
-        // Currently only table with IcebergWriterCompatV1 could easily
-        // support both add/remove files.
-       val tableProperties = Map(
-          TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey -> "true"))
+      // Currently only table with IcebergWriterCompatV1 could easily
+      // support both add/remove files.
+      val tableProperties = Map(
+        TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey -> "true")
       createEmptyTable(engine, tablePath, testSchema, tableProperties = tableProperties)
       val expectedFileSizeHistogram = FileSizeHistogram.createDefaultHistogram()
 
-      val dataFiles = Map("file1.parquet" -> 100, "file2.parquet" -> 100802)
+      val dataFiles = Map("file1.parquet" -> 100L, "file2.parquet" -> 100802L)
       addFiles(engine, tablePath, dataFiles, expectedFileSizeHistogram)
       checkCrcCorrect(
         engine,
