@@ -48,6 +48,12 @@ trait CommitCoordinatorBuilder {
   def build(spark: SparkSession, conf: Map[String, String]): CommitCoordinatorClient
 }
 
+/** An extended builder interface for [[CommitCoordinatorClient]] with CatalogOwned table feature */
+trait CatalogOwnedCommitCoordinatorBuilder extends CommitCoordinatorBuilder {
+  /** Returns a catalog-owned commit-coordinator client based for the given catalog. */
+  def buildForCatalog(spark: SparkSession, catalogName: String): CommitCoordinatorClient
+}
+
 /** Factory to get the correct [[CommitCoordinatorClient]] for a table */
 object CommitCoordinatorProvider {
   // mapping from different commit-coordinator names to the corresponding
@@ -109,4 +115,33 @@ object CommitCoordinatorProvider {
     new DynamoDBCommitCoordinatorClientBuilder()
   )
   initialCommitCoordinatorBuilders.foreach(registerBuilder)
+}
+
+/** Factory to get the correct [[CatalogOwnedCommitCoordinatorBuilder]] for a catalog-owned table */
+object CatalogOwnedCommitCoordinatorProvider {
+  // mapping from catalog names to the corresponding [[CatalogOwnedCommitCoordinatorBuilder]]s.
+  private val catalogNameToBuilderMapping =
+    mutable.Map.empty[String, CatalogOwnedCommitCoordinatorBuilder]
+
+  // Visible only for UTs
+  private[delta] def clearBuilders(): Unit = synchronized {
+    catalogNameToBuilderMapping.clear()
+  }
+
+  /** Registers a new [[CommitCoordinatorBuilder]] with the [[CommitCoordinatorProvider]] */
+  def registerBuilder(
+      catalogName: String, commitCoordinatorBuilder: CatalogOwnedCommitCoordinatorBuilder): Unit =
+    synchronized {
+      catalogNameToBuilderMapping.get(catalogName) match {
+        case Some(existingBuilder: CommitCoordinatorBuilder) =>
+          throw new IllegalArgumentException(
+            s"commit-coordinator for catalog: $catalogName already" +
+              s" registered with builder ${existingBuilder.getClass.getName}")
+        case None =>
+          catalogNameToBuilderMapping.put(catalogName, commitCoordinatorBuilder)
+      }
+    }
+
+  def getBuilder(catalogName: String): Option[CatalogOwnedCommitCoordinatorBuilder] =
+    catalogNameToBuilderMapping.get(catalogName)
 }

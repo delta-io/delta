@@ -45,7 +45,6 @@ import io.delta.kernel.internal.metrics.TransactionReportImpl;
 import io.delta.kernel.internal.replay.ConflictChecker;
 import io.delta.kernel.internal.replay.ConflictChecker.TransactionRebaseState;
 import io.delta.kernel.internal.rowtracking.RowTracking;
-import io.delta.kernel.internal.stats.FileSizeHistogram;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.*;
 import io.delta.kernel.internal.util.Clock;
@@ -255,7 +254,13 @@ public class TransactionImpl implements Transaction {
   public TransactionCommitResult commit(Engine engine, CloseableIterable<Row> dataActions)
       throws ConcurrentWriteException {
     checkState(!closed, "Transaction is already attempted to commit. Create a new transaction.");
-    TransactionMetrics transactionMetrics = new TransactionMetrics();
+    // For a new table or when fileSizeHistogram is available in the CRC of the readSnapshot
+    // we update it in the commit. When it is not available we do nothing.
+    TransactionMetrics transactionMetrics =
+        isNewTable
+            ? TransactionMetrics.forNewTable()
+            : TransactionMetrics.withExistingTableFileSizeHistogram(
+                readSnapshot.getCurrentCrcInfo().flatMap(CRCInfo::getFileSizeHistogram));
     try {
       long committedVersion =
           transactionMetrics.totalCommitTimer.time(
@@ -330,6 +335,9 @@ public class TransactionImpl implements Transaction {
             commitAsVersion = rebaseState.getLatestVersion() + 1;
             dataActions = rebaseState.getUpdatedDataActions();
             domainMetadatas = Optional.of(rebaseState.getUpdatedDomainMetadatas());
+            // Action counters may be partially incremented from previous tries, reset the counters
+            // to 0 and drop fileSizeHistogram
+            transactionMetrics.resetActionMetricsForRetry();
           }
         }
         numTries++;
@@ -443,14 +451,8 @@ public class TransactionImpl implements Transaction {
         }
       }
 
-      // Action counters may be partially incremented from previous tries, reset the counters to 0
-      transactionMetrics.resetActionCounters();
       boolean isAppendOnlyTable = APPEND_ONLY_ENABLED.fromMetadata(metadata);
 
-      Optional<FileSizeHistogram> fileSizeHistogram =
-          isNewTable
-              ? Optional.of(FileSizeHistogram.createDefaultHistogram())
-              : readSnapshot.getCurrentCrcInfo().flatMap(CRCInfo::getFileSizeHistogram);
       // Write the staged data to a delta file
       wrapEngineExceptionThrowsIO(
           () -> {
@@ -460,22 +462,10 @@ public class TransactionImpl implements Transaction {
                     FileNames.deltaFile(logPath, commitAsVersion),
                     dataAndMetadataActions.map(
                         action -> {
-                          transactionMetrics.totalActionsCounter.increment();
-                          if (!action.isNullAt(ADD_FILE_ORDINAL)) {
-                            long addFileSize =
-                                new AddFile(action.getStruct(ADD_FILE_ORDINAL)).getSize();
-
-                            transactionMetrics.addFilesCounter.increment();
-                            transactionMetrics.addFilesSizeInBytesCounter.increment(addFileSize);
-                            fileSizeHistogram.ifPresent(histogram -> histogram.insert(addFileSize));
-                          } else if (!action.isNullAt(REMOVE_FILE_ORDINAL)) {
-                            transactionMetrics.removeFilesCounter.increment();
-                            // TODO add removeFileSizeInBytes and increment
-                            // TODO update fileSizeHistogram
+                          incrementMetricsForFileActionRow(transactionMetrics, action);
+                          if (!action.isNullAt(REMOVE_FILE_ORDINAL)) {
                             RemoveFile removeFile =
                                 new RemoveFile(action.getStruct(REMOVE_FILE_ORDINAL));
-                            fileSizeHistogram.ifPresent(
-                                histogram -> histogram.remove(removeFile.getSize().get()));
                             if (isAppendOnlyTable && removeFile.getDataChange()) {
                               throw DeltaErrors.cannotModifyAppendOnlyTable(dataPath.toString());
                             }
@@ -487,12 +477,24 @@ public class TransactionImpl implements Transaction {
           },
           "Write file actions to JSON log file `%s`",
           FileNames.deltaFile(logPath, commitAsVersion));
-      transactionMetrics.fileSizeHistogramReference.set(fileSizeHistogram);
+
       return commitAsVersion;
     } catch (FileAlreadyExistsException e) {
       throw e;
     } catch (IOException ioe) {
       throw new UncheckedIOException(ioe);
+    }
+  }
+
+  private void incrementMetricsForFileActionRow(TransactionMetrics txnMetrics, Row fileActionRow) {
+    txnMetrics.totalActionsCounter.increment();
+    if (!fileActionRow.isNullAt(ADD_FILE_ORDINAL)) {
+      txnMetrics.updateForAddFile(new AddFile(fileActionRow.getStruct(ADD_FILE_ORDINAL)).getSize());
+    } else if (!fileActionRow.isNullAt(REMOVE_FILE_ORDINAL)) {
+      RemoveFile removeFile = new RemoveFile(fileActionRow.getStruct(REMOVE_FILE_ORDINAL));
+      long removeFileSize =
+          removeFile.getSize().orElseThrow(DeltaErrorsInternal::missingRemoveFileSizeDuringCommit);
+      txnMetrics.updateForRemoveFile(removeFileSize);
     }
   }
 
@@ -579,6 +581,8 @@ public class TransactionImpl implements Transaction {
   private Optional<CRCInfo> buildPostCommitCrcInfoIfCurrentCrcAvailable(
       long commitAtVersion, TransactionMetricsResult metricsResult) {
     if (isNewTable) {
+      // We don't need to worry about conflicting transaction here since new tables always commit
+      // metadata (and thus fail any conflicts)
       return Optional.of(
           new CRCInfo(
               commitAtVersion,
@@ -587,7 +591,8 @@ public class TransactionImpl implements Transaction {
               metricsResult.getTotalAddFilesSizeInBytes(),
               metricsResult.getNumAddFiles(),
               Optional.of(txnId.toString()),
-              metricsResult.getFileSizeHistogram()));
+              Optional.empty() // once we support writing CRC populate here
+              ));
     }
 
     return readSnapshot
@@ -605,7 +610,8 @@ public class TransactionImpl implements Transaction {
                     lastCrcInfo.getTableSizeBytes() + metricsResult.getTotalAddFilesSizeInBytes(),
                     lastCrcInfo.getNumFiles() + metricsResult.getNumAddFiles(),
                     Optional.of(txnId.toString()),
-                    metricsResult.getFileSizeHistogram()));
+                    Optional.empty() // once we support writing CRC populate here
+                    ));
   }
 
   /**

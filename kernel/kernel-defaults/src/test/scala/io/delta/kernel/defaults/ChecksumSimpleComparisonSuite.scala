@@ -117,8 +117,7 @@ class ChecksumSimpleComparisonSuite extends DeltaTableWriteSuiteBase with TestUt
   }
 
   implicit class CrcInfoOpt(private val crcInfo: CRCInfo) {
-    // TODO: check file size histogram once https://github.com/delta-io/delta/pull/3907 is merged.
-    def withoutTransactionIdAndFileSizeHistogram: CRCInfo = {
+    def withoutTransactionId: CRCInfo = {
       new CRCInfo(
         crcInfo.getVersion,
         crcInfo.getMetadata.withDeterministicIdAndCreateTime,
@@ -126,7 +125,8 @@ class ChecksumSimpleComparisonSuite extends DeltaTableWriteSuiteBase with TestUt
         crcInfo.getTableSizeBytes,
         crcInfo.getNumFiles,
         Optional.empty(),
-        Optional.empty())
+        // This will be empty since neither Kernel nor Spark writes fileSizeHistogram to CRCInfo yet
+        crcInfo.getFileSizeHistogram)
     }
   }
 
@@ -145,8 +145,7 @@ class ChecksumSimpleComparisonSuite extends DeltaTableWriteSuiteBase with TestUt
     val sparkCrc = readCrcInfo(engine, sparkTablePath, version)
     val kernelCrc = readCrcInfo(engine, kernelTablePath, version)
     // Remove the randomly generated TxnId
-    assert(sparkCrc.withoutTransactionIdAndFileSizeHistogram
-      === kernelCrc.withoutTransactionIdAndFileSizeHistogram)
+    assert(sparkCrc.withoutTransactionId === kernelCrc.withoutTransactionId)
   }
 
   private def readCrcInfo(engine: Engine, path: String, version: Long): CRCInfo = {

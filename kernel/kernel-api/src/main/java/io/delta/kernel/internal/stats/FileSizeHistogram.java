@@ -23,6 +23,7 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.util.InternalUtils;
 import io.delta.kernel.internal.util.VectorUtils;
+import io.delta.kernel.metrics.FileSizeHistogramResult;
 import io.delta.kernel.types.ArrayType;
 import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.StructType;
@@ -178,6 +179,8 @@ public class FileSizeHistogram {
     return boundaries;
   }
 
+  // TODO factory from FileSizeHistogramResult
+
   ////////////////////////////////////
   // Member variables and methods  //
   ////////////////////////////////////
@@ -274,6 +277,30 @@ public class FileSizeHistogram {
         VectorUtils.buildArrayValue(
             Arrays.stream(totalBytes).boxed().collect(Collectors.toList()), LongType.LONG));
     return new GenericRow(FULL_SCHEMA, value);
+  }
+
+  public FileSizeHistogramResult captureFileSizeHistogramResult() {
+    return new FileSizeHistogramResult() {
+      final long[] copiedSortedBinBoundaries =
+          Arrays.copyOf(sortedBinBoundaries, sortedBinBoundaries.length);
+      final long[] copiedFileCounts = Arrays.copyOf(fileCounts, fileCounts.length);
+      final long[] copiedTotalBytes = Arrays.copyOf(totalBytes, totalBytes.length);
+
+      @Override
+      public long[] getSortedBinBoundaries() {
+        return copiedSortedBinBoundaries;
+      }
+
+      @Override
+      public long[] getFileCounts() {
+        return copiedFileCounts;
+      }
+
+      @Override
+      public long[] getTotalBytes() {
+        return copiedTotalBytes;
+      }
+    };
   }
 
   @Override

@@ -23,8 +23,8 @@ import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
 import io.delta.kernel.internal.checksum.CRCInfo.CRC_FILE_SCHEMA
 import io.delta.kernel.internal.data.GenericRow
 import io.delta.kernel.internal.fs.Path
-import io.delta.kernel.internal.stats.FileSizeHistogram
 import io.delta.kernel.internal.types.DataTypeJsonSerDe
+import io.delta.kernel.internal.util.VectorUtils
 import io.delta.kernel.internal.util.VectorUtils.{buildArrayValue, buildColumnVector, stringStringMapValue}
 import io.delta.kernel.test.{BaseMockJsonHandler, MockEngineUtils}
 import io.delta.kernel.types.{StringType, StructType}
@@ -33,7 +33,7 @@ import io.delta.kernel.utils.CloseableIterator
 import org.scalatest.funsuite.AnyFunSuite
 
 /**
- * Test suite for Checksum writing functionality.
+ * Test suite for ChecksumWriter functionality.
  */
 class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
 
@@ -59,19 +59,11 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
       val version = 1L
       val tableSizeBytes = 100L
       val numFiles = 1L
-      val fileSizeHistogram = FileSizeHistogram.createDefaultHistogram()
-      fileSizeHistogram.insert(tableSizeBytes)
 
+      // TODO when we support writing fileSizeHistogram as part of CRC update this to be non-empty
       checksumWriter.writeCheckSum(
         mockEngine(jsonHandler = jsonHandler),
-        new CRCInfo(
-          version,
-          metadata,
-          protocol,
-          tableSizeBytes,
-          numFiles,
-          txn,
-          Optional.of(fileSizeHistogram)))
+        new CRCInfo(version, metadata, protocol, tableSizeBytes, numFiles, txn, Optional.empty()))
 
       verifyChecksumFile(jsonHandler, version)
       verifyChecksumContent(
@@ -80,8 +72,7 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
         numFiles,
         metadata,
         protocol,
-        txn,
-        fileSizeHistogram)
+        txn)
     }
 
     // Test with and without transaction ID
@@ -101,8 +92,7 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
       expectedNumFiles: Long,
       expectedMetadata: Metadata,
       expectedProtocol: Protocol,
-      expectedTxnId: Optional[String],
-      expectedFileSizeHistogram: FileSizeHistogram): Unit = {
+      expectedTxnId: Optional[String]): Unit = {
     assert(!actualCheckSumRow.isNullAt(TABLE_SIZE_BYTES_IDX) && actualCheckSumRow.getLong(
       TABLE_SIZE_BYTES_IDX) == expectedTableSizeBytes)
     assert(!actualCheckSumRow.isNullAt(
@@ -119,9 +109,8 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
     } else {
       assert(actualCheckSumRow.isNullAt(TXN_ID_IDX))
     }
-
-    assert(expectedFileSizeHistogram === FileSizeHistogram.fromRow(
-      actualCheckSumRow.getStruct(FILE_SIZE_HISTOGRAM_IDX)))
+    // TODO once we support writing fileSizeHistogram as part of CRC check it here
+    assert(actualCheckSumRow.isNullAt(FILE_SIZE_HISTOGRAM_IDX))
   }
 
   private def createTestMetadata(): Metadata = {
