@@ -45,11 +45,8 @@ class ChecksumStatsSuite extends DeltaTableWriteSuiteBase {
       createEmptyTable(engine, tablePath, testSchema, tableProperties = tableProperties)
       val expectedFileSizeHistogram = FileSizeHistogram.createDefaultHistogram()
 
-      addFiles(
-        engine,
-        tablePath,
-        Map("file1.parquet" -> 100, "file2.parquet" -> 100802),
-        expectedFileSizeHistogram)
+      val dataFiles = Map("file1.parquet" -> 100, "file2.parquet" -> 100802)
+      addFiles(engine, tablePath, dataFiles, expectedFileSizeHistogram)
       checkCrcCorrect(
         engine,
         tablePath,
