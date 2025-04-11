@@ -259,7 +259,7 @@ public class TransactionImpl implements Transaction {
     TransactionMetrics transactionMetrics =
         isNewTable
             ? TransactionMetrics.forNewTable()
-            : TransactionMetrics.withExistingFileSizeHistogram(
+            : TransactionMetrics.withExistingTableFileSizeHistogram(
                 readSnapshot.getCurrentCrcInfo().flatMap(CRCInfo::getFileSizeHistogram));
     try {
       long committedVersion =

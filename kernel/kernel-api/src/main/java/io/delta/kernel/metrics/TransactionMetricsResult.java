@@ -72,5 +72,5 @@ public interface TransactionMetricsResult {
    *     transaction. For a failed transaction this metric may be incomplete.
    */
   @JsonIgnore
-  Optional<FileSizeHistogramResult> getFileSizeHistogram();
+  Optional<FileSizeHistogramResult> getTableFileSizeHistogram();
 }

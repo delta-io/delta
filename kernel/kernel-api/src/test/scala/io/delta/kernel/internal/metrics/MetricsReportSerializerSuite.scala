@@ -188,7 +188,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
       "test-engine-2",
       Optional.empty(), /* committedVersion */
       // empty/un-incremented transaction metrics
-      TransactionMetrics.withExistingFileSizeHistogram(Optional.empty()),
+      TransactionMetrics.withExistingTableFileSizeHistogram(Optional.empty()),
       snapshotReport2,
       Optional.empty() /* exception */
     )

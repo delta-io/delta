@@ -136,14 +136,14 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
       // support.
       expectedFileSizeHistogramResult match {
         case Some(expectedHistogram) =>
-          assert(txnMetrics.getFileSizeHistogram.isPresent)
-          txnMetrics.getFileSizeHistogram.toScala.foreach { foundHistogram =>
+          assert(txnMetrics.getTableFileSizeHistogram.isPresent)
+          txnMetrics.getTableFileSizeHistogram.toScala.foreach { foundHistogram =>
             assert(expectedHistogram.getSortedBinBoundaries sameElements
               foundHistogram.getSortedBinBoundaries)
             assert(expectedHistogram.getFileCounts sameElements foundHistogram.getFileCounts)
             assert(expectedHistogram.getTotalBytes sameElements foundHistogram.getTotalBytes)
           }
-        case None => assert(!txnMetrics.getFileSizeHistogram.isPresent)
+        case None => assert(!txnMetrics.getTableFileSizeHistogram.isPresent)
       }
     }
 
