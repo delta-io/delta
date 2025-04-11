@@ -803,8 +803,6 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
   test("insert into table - idempotent writes") {
     withTempDirAndEngine { (tblPath, engine) =>
-      // TODO: re-enable when CRC_FULL post commit hook is added, txn2 requires CRC_FULL
-      assume(this.suiteName != ("DeltaTableWriteWithCrcSuite"))
       val data = Seq(Map("part1" -> ofInt(1), "part2" -> ofInt(2)) -> dataPartitionBatches1)
       var expData = Seq.empty[TestRow] // as the data in inserted, update this.
 
@@ -902,8 +900,6 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
   test("insert into table - write stats and validate they can be read by Spark ") {
     withTempDirAndEngine { (tblPath, engine) =>
-      // TODO: re-enable when CRC_FULL post commit hook is added, txn2 requires CRC_FULL
-      assume(this.suiteName != ("DeltaTableWriteWithCrcSuite"))
 
       // Configure the table property for stats collection via TableConfig.
       val numIndexedCols = 5
@@ -930,7 +926,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         schema,
         partCols = Seq.empty,
         tableProperties = tableProperties)
-      txn.commit(engine, emptyIterable())
+      commitTransaction(txn, engine, emptyIterable())
 
       val dataBatches1 = generateData(schema, Seq.empty, Map.empty, batchSize = 10, numBatches = 1)
       val dataBatches2 = generateData(schema, Seq.empty, Map.empty, batchSize = 20, numBatches = 1)
@@ -1004,17 +1000,15 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
   test("conflicts - creating new table - table created by other txn after current txn start") {
     withTempDirAndEngine { (tablePath, engine) =>
-      // TODO: re-enable when CRC_FULL post commit hook is added
-      assume(this.suiteName != ("DeltaTableWriteWithCrcSuite"))
       val losingTx = createTestTxn(engine, tablePath, Some(testSchema))
 
       // don't commit losingTxn, instead create a new txn and commit it
       val winningTx = createTestTxn(engine, tablePath, Some(testSchema))
-      val winningTxResult = winningTx.commit(engine, emptyIterable())
+      val winningTxResult = commitTransaction(winningTx, engine, emptyIterable())
 
       // now attempt to commit the losingTxn
       val ex = intercept[ProtocolChangedException] {
-        losingTx.commit(engine, emptyIterable())
+        commitTransaction(losingTx, engine, emptyIterable())
       }
       assert(ex.getMessage.contains(
         "Transaction has encountered a conflict and can not be committed."))
@@ -1044,7 +1038,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
       // now attempt to commit the losingTxn
       val ex = intercept[MetadataChangedException] {
-        losingTx.commit(engine, emptyIterable())
+        commitTransaction(losingTx, engine, emptyIterable())
       }
       assert(ex.getMessage.contains("The metadata of the Delta table has been changed " +
         "by a concurrent update. Please try the operation again."))
@@ -1054,8 +1048,6 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
   // Different scenarios that have multiple winning txns and with a checkpoint in between.
   Seq(1, 5, 12).foreach { numWinningTxs =>
     test(s"conflicts - concurrent data append ($numWinningTxs) after the losing txn has started") {
-      // TODO: re-enable when CRC_FULL post commit hook is added
-      assume(this.suiteName != ("DeltaTableWriteWithCrcSuite"))
       withTempDirAndEngine { (tablePath, engine) =>
         val testData = Seq(Map.empty[String, Literal] -> dataBatches1)
         var expData = Seq.empty[TestRow]
@@ -1078,7 +1070,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         val actions = inMemoryIterable(stageData(txn1State, Map.empty, dataBatches2))
         expData ++= dataBatches2.flatMap(_.toTestRows)
 
-        val txn1Result = txn1.commit(engine, actions)
+        val txn1Result = commitTransaction(txn1, engine, actions)
 
         verifyCommitResult(
           txn1Result,
