@@ -40,7 +40,15 @@ public interface PostCommitHook {
      * transaction commits. This operation has a minimal latency with no requirement of reading
      * previous checkpoint or logs.
      */
-    CHECKSUM_SIMPLE
+    CHECKSUM_SIMPLE,
+
+    /**
+     * Writes a log compaction file that merges a range of commit JSON files into a single file.
+     * This hook is triggered on a configurable interval (e.g., every 10 commits) and reduces the
+     * number of small log files that need to be read when reconstructing the table state, thereby
+     * improving read performance.
+     */
+    LOG_COMPACTION
   }
 
   /** Invokes the post commit operation whose implementation must be thread safe. */
