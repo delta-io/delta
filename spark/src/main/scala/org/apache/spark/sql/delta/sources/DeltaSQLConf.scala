@@ -2496,6 +2496,13 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_SHARING_FORCE_DELTA_FORMAT =
+    buildConf("spark.sql.delta.sharing.forceDeltaFormat")
+      .doc("Force queries to use delta format when no responseFormat is specified.")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
   ///////////////////
   // IDENTITY COLUMN
   ///////////////////
