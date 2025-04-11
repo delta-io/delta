@@ -24,6 +24,7 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.data.GenericRow;
+import io.delta.kernel.internal.stats.FileSizeHistogram;
 import io.delta.kernel.internal.util.InternalUtils;
 import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.StringType;
@@ -46,6 +47,7 @@ public class CRCInfo {
   private static final String METADATA = "metadata";
   private static final String PROTOCOL = "protocol";
   private static final String TXN_ID = "txnId";
+  private static final String FILE_SIZE_HISTOGRAM = "fileSizeHistogram";
 
   public static final StructType CRC_FILE_SCHEMA =
       new StructType()
@@ -55,7 +57,8 @@ public class CRCInfo {
           .add(NUM_PROTOCOL, LongType.LONG)
           .add(METADATA, Metadata.FULL_SCHEMA)
           .add(PROTOCOL, Protocol.FULL_SCHEMA)
-          .add(TXN_ID, StringType.STRING, /*nullable*/ true);
+          .add(TXN_ID, StringType.STRING, /*nullable*/ true)
+          .add(FILE_SIZE_HISTOGRAM, FileSizeHistogram.FULL_SCHEMA, /*nullable*/ true);
 
   public static Optional<CRCInfo> fromColumnarBatch(
       long version, ColumnarBatch batch, int rowId, String crcFilePath) {
@@ -79,13 +82,18 @@ public class CRCInfo {
         txnIdColumnVector.isNullAt(rowId)
             ? Optional.empty()
             : Optional.of(txnIdColumnVector.getString(rowId));
+    Optional<FileSizeHistogram> fileSizeHistogram =
+        FileSizeHistogram.fromColumnVector(
+            batch.getColumnVector(getSchemaIndex(FILE_SIZE_HISTOGRAM)), rowId);
 
     //  protocol and metadata are nullable per fromColumnVector's implementation.
     if (protocol == null || metadata == null) {
       logger.warn("Invalid checksum file missing protocol and/or metadata: {}", crcFilePath);
       return Optional.empty();
     }
-    return Optional.of(new CRCInfo(version, metadata, protocol, tableSizeBytes, numFiles, txnId));
+    return Optional.of(
+        new CRCInfo(
+            version, metadata, protocol, tableSizeBytes, numFiles, txnId, fileSizeHistogram));
   }
 
   private final long version;
@@ -94,6 +102,7 @@ public class CRCInfo {
   private final long tableSizeBytes;
   private final long numFiles;
   private final Optional<String> txnId;
+  private final Optional<FileSizeHistogram> fileSizeHistogram;
 
   public CRCInfo(
       long version,
@@ -101,7 +110,8 @@ public class CRCInfo {
       Protocol protocol,
       long tableSizeBytes,
       long numFiles,
-      Optional<String> txnId) {
+      Optional<String> txnId,
+      Optional<FileSizeHistogram> fileSizeHistogram) {
     checkArgument(tableSizeBytes >= 0);
     checkArgument(numFiles >= 0);
     this.version = version;
@@ -110,6 +120,7 @@ public class CRCInfo {
     this.tableSizeBytes = tableSizeBytes;
     this.numFiles = numFiles;
     this.txnId = requireNonNull(txnId);
+    this.fileSizeHistogram = requireNonNull(fileSizeHistogram);
   }
 
   /** The version of the Delta table that this CRCInfo represents. */
@@ -139,6 +150,11 @@ public class CRCInfo {
     return txnId;
   }
 
+  /** The {@link FileSizeHistogram} stored in this CRCInfo. */
+  public Optional<FileSizeHistogram> getFileSizeHistogram() {
+    return fileSizeHistogram;
+  }
+
   /**
    * Encode as a {@link Row} object with the schema {@link CRCInfo#CRC_FILE_SCHEMA}.
    *
@@ -156,12 +172,14 @@ public class CRCInfo {
 
     // Add optional fields
     txnId.ifPresent(txn -> values.put(getSchemaIndex(TXN_ID), txn));
+    // TODO write fileSizeHistogram here
     return new GenericRow(CRC_FILE_SCHEMA, values);
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(version, metadata, protocol, tableSizeBytes, numFiles, txnId);
+    return Objects.hash(
+        version, metadata, protocol, tableSizeBytes, numFiles, txnId, fileSizeHistogram);
   }
 
   @Override
@@ -175,7 +193,8 @@ public class CRCInfo {
         && numFiles == other.numFiles
         && metadata.equals(other.metadata)
         && protocol.equals(other.protocol)
-        && txnId.equals(other.txnId);
+        && txnId.equals(other.txnId)
+        && fileSizeHistogram.equals(other.fileSizeHistogram);
   }
 
   private static int getSchemaIndex(String fieldName) {

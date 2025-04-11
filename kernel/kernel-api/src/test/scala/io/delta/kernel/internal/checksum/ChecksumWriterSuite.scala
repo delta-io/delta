@@ -47,6 +47,7 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
   private val TXN_ID_IDX = CRC_FILE_SCHEMA.indexOf("txnId")
   private val METADATA_IDX = CRC_FILE_SCHEMA.indexOf("metadata")
   private val PROTOCOL_IDX = CRC_FILE_SCHEMA.indexOf("protocol")
+  private val FILE_SIZE_HISTOGRAM_IDX = CRC_FILE_SCHEMA.indexOf("fileSizeHistogram")
 
   test("write checksum") {
     val jsonHandler = new MockCheckSumFileJsonWriter()
@@ -59,9 +60,10 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
       val tableSizeBytes = 100L
       val numFiles = 1L
 
+      // TODO when we support writing fileSizeHistogram as part of CRC update this to be non-empty
       checksumWriter.writeCheckSum(
         mockEngine(jsonHandler = jsonHandler),
-        new CRCInfo(version, metadata, protocol, tableSizeBytes, numFiles, txn))
+        new CRCInfo(version, metadata, protocol, tableSizeBytes, numFiles, txn, Optional.empty()))
 
       verifyChecksumFile(jsonHandler, version)
       verifyChecksumContent(
@@ -107,6 +109,8 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
     } else {
       assert(actualCheckSumRow.isNullAt(TXN_ID_IDX))
     }
+    // TODO once we support writing fileSizeHistogram as part of CRC check it here
+    assert(actualCheckSumRow.isNullAt(FILE_SIZE_HISTOGRAM_IDX))
   }
 
   private def createTestMetadata(): Metadata = {

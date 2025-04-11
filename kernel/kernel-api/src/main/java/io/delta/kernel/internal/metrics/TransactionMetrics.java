@@ -15,7 +15,10 @@
  */
 package io.delta.kernel.internal.metrics;
 
+import io.delta.kernel.internal.stats.FileSizeHistogram;
+import io.delta.kernel.metrics.FileSizeHistogramResult;
 import io.delta.kernel.metrics.TransactionMetricsResult;
+import java.util.Optional;
 
 /**
  * Stores the metrics for an ongoing transaction. These metrics are updated and recorded throughout
@@ -27,32 +30,82 @@ import io.delta.kernel.metrics.TransactionMetricsResult;
  */
 public class TransactionMetrics {
 
+  /** @return a fresh TransactionMetrics object with a default fileSizeHistogram (with 0 counts) */
+  public static TransactionMetrics forNewTable() {
+    return new TransactionMetrics(Optional.of(FileSizeHistogram.createDefaultHistogram()));
+  }
+
+  /** @return a fresh TransactionMetrics object with an initial fileSizeHistogram as provided */
+  public static TransactionMetrics withExistingFileSizeHistogram(
+      Optional<FileSizeHistogram> fileSizeHistogram) {
+    return new TransactionMetrics(fileSizeHistogram);
+  }
+
   public final Timer totalCommitTimer = new Timer();
 
   public final Counter commitAttemptsCounter = new Counter();
 
-  public final Counter addFilesCounter = new Counter();
+  private final Counter addFilesCounter = new Counter();
 
-  public final Counter removeFilesCounter = new Counter();
+  private final Counter removeFilesCounter = new Counter();
 
   public final Counter totalActionsCounter = new Counter();
 
-  public final Counter addFilesSizeInBytesCounter = new Counter();
+  private final Counter addFilesSizeInBytesCounter = new Counter();
 
-  public final Counter removeFilesSizeInBytesCounter = new Counter();
+  private final Counter removeFilesSizeInBytesCounter = new Counter();
+
+  private Optional<FileSizeHistogram> fileSizeHistogram;
+
+  private TransactionMetrics(Optional<FileSizeHistogram> fileSizeHistogram) {
+    this.fileSizeHistogram = fileSizeHistogram;
+  }
 
   /**
-   * Resets the action counters (addFilesCounter, removeFilesCounter and totalActionsCounter) to 0.
-   * Action counters may be partially incremented if an action iterator is not read to completion
-   * (i.e. if an exception interrupts a file write). This allows us to reset the counters so that we
-   * can increment them correctly from 0 on a retry.
+   * Updates the metrics for a seen AddFile with size {@code addFileSize}. Specifically, updates
+   * addFilesCounter, addFilesSizeInBytesCounter, and fileSizeHistogram. Note, it does NOT increment
+   * totalActionsCounter, this needs to be done separately.
    */
-  public void resetCounters() {
+  public void updateForAddFile(long addFileSize) {
+    addFilesCounter.increment();
+    addFilesSizeInBytesCounter.increment(addFileSize);
+    fileSizeHistogram.ifPresent(histogram -> histogram.insert(addFileSize));
+  }
+
+  /**
+   * Updates the metrics for a seen RemoveFile with size {@code removeFileSize}. Specifically,
+   * updates removeFilesCounter, removeFilesSizeInBytesCounter, and fileSizeHistogram. Note, it does
+   * NOT increment totalActionsCounter, this needs to be done separately.
+   */
+  public void updateForRemoveFile(long removeFileSize) {
+    removeFilesCounter.increment();
+    removeFilesSizeInBytesCounter.increment(removeFileSize);
+    fileSizeHistogram.ifPresent(histogram -> histogram.remove(removeFileSize));
+  }
+
+  /**
+   * Resets any action metrics for a failed commit to prepare them for retrying. Specifically,
+   *
+   * <ul>
+   *   <li>Resets addFilesCounter, removeFilesCounter, totalActionsCounter,
+   *       addFilesSizeInBytesCounter, and removeFilesSizeInBytesCounter to 0
+   *   <li>Sets fileSizeHistogram to be empty since we don't know the updated distribution after the
+   *       conflicting txn committed
+   * </ul>
+   *
+   * Action counters / fileSizeHistogram may be partially incremented if an action iterator is not
+   * read to completion (i.e. if an exception interrupts a file write). This allows us to reset the
+   * counters so that we can increment them correctly from 0 on a retry.
+   */
+  public void resetActionMetricsForRetry() {
     addFilesCounter.reset();
     addFilesSizeInBytesCounter.reset();
     removeFilesCounter.reset();
     totalActionsCounter.reset();
     removeFilesSizeInBytesCounter.reset();
+    // For now, on retry we set fileSizeHistogram = Optional.empty() because we don't know the
+    // correct state of fileSizeHistogram after conflicting transaction has committed
+    fileSizeHistogram = Optional.empty();
   }
 
   public TransactionMetricsResult captureTransactionMetricsResult() {
@@ -65,6 +118,8 @@ public class TransactionMetrics {
       final long numRemoveFiles = removeFilesCounter.value();
       final long numTotalActions = totalActionsCounter.value();
       final long totalRemoveFileSizeInBytes = removeFilesSizeInBytesCounter.value();
+      final Optional<FileSizeHistogramResult> fileSizeHistogramResult =
+          fileSizeHistogram.map(FileSizeHistogram::captureFileSizeHistogramResult);
 
       @Override
       public long getTotalCommitDurationNs() {
@@ -100,6 +155,11 @@ public class TransactionMetrics {
       public long getTotalRemoveFilesSizeInBytes() {
         return totalRemoveFileSizeInBytes;
       }
+
+      @Override
+      public Optional<FileSizeHistogramResult> getFileSizeHistogram() {
+        return fileSizeHistogramResult;
+      }
     };
   }
 
@@ -108,13 +168,14 @@ public class TransactionMetrics {
     return String.format(
         "TransactionMetrics(totalCommitTimer=%s, commitAttemptsCounter=%s, addFilesCounter=%s, "
             + "removeFilesCounter=%s, totalActionsCounter=%s, totalAddFilesSizeInBytes=%s,"
-            + "totalRemoveFilesSizeInBytes=%s)",
+            + "totalRemoveFilesSizeInBytes=%s, fileSizeHistogram=%s)",
         totalCommitTimer,
         commitAttemptsCounter,
         addFilesCounter,
         removeFilesCounter,
         totalActionsCounter,
         addFilesSizeInBytesCounter,
-        removeFilesSizeInBytesCounter);
+        removeFilesSizeInBytesCounter,
+        fileSizeHistogram);
   }
 }

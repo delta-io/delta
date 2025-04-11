@@ -27,8 +27,9 @@ import io.delta.kernel.internal.actions.{GenerateIcebergCompatActionUtils, Singl
 import io.delta.kernel.internal.data.TransactionStateRow
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.metrics.Timer
+import io.delta.kernel.internal.stats.FileSizeHistogram
 import io.delta.kernel.internal.util.Utils
-import io.delta.kernel.metrics.{SnapshotReport, TransactionMetricsResult, TransactionReport}
+import io.delta.kernel.metrics.{FileSizeHistogramResult, SnapshotReport, TransactionMetricsResult, TransactionReport}
 import io.delta.kernel.types.{IntegerType, StructType}
 import io.delta.kernel.utils.{CloseableIterable, CloseableIterator, DataFileStatus}
 import io.delta.kernel.utils.CloseableIterable.inMemoryIterable
@@ -111,6 +112,7 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
       expectedNumAttempts: Long = 1,
       expectedTotalAddFilesSizeInBytes: Long = 0,
       expectedTotalRemoveFilesSizeInBytes: Long = 0,
+      expectedFileSizeHistogramResult: Option[FileSizeHistogramResult] = None,
       buildTransaction: (TransactionBuilder, Engine) => Transaction = (tb, e) => tb.build(e),
       engineInfo: String = "test-engine-info",
       operation: Operation = Operation.MANUAL_UPDATE): Unit = {
@@ -128,6 +130,20 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
       assert(txnMetrics.getNumRemoveFiles == expectedNumRemoveFiles)
       assert(txnMetrics.getNumTotalActions == expectedNumTotalActions)
       assert(txnMetrics.getTotalRemoveFilesSizeInBytes == expectedTotalRemoveFilesSizeInBytes)
+
+      // For now since we don't support writing fileSizeHistogram yet we only expect this to be
+      // present on the first write to a table. We will update these tests when we add write support.
+      expectedFileSizeHistogramResult match {
+        case Some(expectedHistogram) =>
+          assert(txnMetrics.getFileSizeHistogram.isPresent)
+          txnMetrics.getFileSizeHistogram.toScala.foreach { foundHistogram =>
+            assert(expectedHistogram.getSortedBinBoundaries sameElements
+              foundHistogram.getSortedBinBoundaries)
+            assert(expectedHistogram.getFileCounts sameElements foundHistogram.getFileCounts)
+            assert(expectedHistogram.getTotalBytes sameElements foundHistogram.getTotalBytes)
+          }
+        case None => assert(!txnMetrics.getFileSizeHistogram.isPresent)
+      }
     }
 
     val (transactionReport, duration, snapshotReportOpt, exception) =
@@ -197,6 +213,13 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
     })
   }
 
+  def incrementFileSizeHistogram(
+      histogram: FileSizeHistogram,
+      fileStatusIter: CloseableIterator[DataFileStatus]): FileSizeHistogram = {
+    fileStatusIter.forEach(fs => histogram.insert(fs.getSize))
+    histogram
+  }
+
   test("TransactionReport: Basic append to existing table + update metadata") {
     withTempDir { tempDir =>
       val path = tempDir.getCanonicalPath
@@ -254,6 +277,8 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         expectedBaseSnapshotVersion = -1,
         expectedNumTotalActions = 3, // protocol, metadata, commitInfo
         expectedCommitVersion = Some(0),
+        expectedFileSizeHistogramResult = Some(
+          FileSizeHistogram.createDefaultHistogram().captureFileSizeHistogramResult()),
         buildTransaction = (transBuilder, engine) => {
           transBuilder
             .withSchema(engine, new StructType().add("id", IntegerType.INTEGER))
@@ -286,6 +311,10 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         expectedNumTotalActions = 4, // protocol, metadata, commitInfo
         expectedCommitVersion = Some(0),
         expectedTotalAddFilesSizeInBytes = 100,
+        expectedFileSizeHistogramResult = Some(
+          incrementFileSizeHistogram(
+            FileSizeHistogram.createDefaultHistogram(),
+            fileStatusIter1).captureFileSizeHistogramResult()),
         buildTransaction = (transBuilder, engine) => {
           transBuilder
             .withSchema(engine, new StructType().add("id", IntegerType.INTEGER))
@@ -308,6 +337,10 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         expectedNumTotalActions = 4, // protocol, metadata, commitInfo, addFile
         expectedCommitVersion = Some(0),
         expectedTotalAddFilesSizeInBytes = 100,
+        expectedFileSizeHistogramResult = Some(
+          incrementFileSizeHistogram(
+            FileSizeHistogram.createDefaultHistogram(),
+            fileStatusIter1).captureFileSizeHistogramResult()),
         buildTransaction = (transBuilder, engine) => {
           transBuilder
             .withSchema(engine, new StructType().add("id", IntegerType.INTEGER))
@@ -360,7 +393,9 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         expectedNumTotalActions = 2, // commitInfo + removeFile
         expectedCommitVersion = Some(2),
         expectedNumAttempts = 2,
-        expectedTotalAddFilesSizeInBytes = 100)
+        expectedTotalAddFilesSizeInBytes = 100,
+        // This should always be empty on retries until we support updating based on concurrent txn
+        expectedFileSizeHistogramResult = None)
     }
   }
 

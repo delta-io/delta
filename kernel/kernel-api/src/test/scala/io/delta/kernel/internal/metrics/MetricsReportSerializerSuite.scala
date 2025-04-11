@@ -134,13 +134,13 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
     val exception = new RuntimeException("something something failed")
 
     // Initialize transaction metrics and record some values
-    val transactionMetrics1 = new TransactionMetrics()
+    val transactionMetrics1 = TransactionMetrics.forNewTable();
     transactionMetrics1.totalCommitTimer.record(200)
     transactionMetrics1.commitAttemptsCounter.increment(2)
-    transactionMetrics1.addFilesCounter.increment(82)
+    transactionMetrics1.updateForAddFile(1000)
+    transactionMetrics1.updateForAddFile(100)
+    transactionMetrics1.updateForRemoveFile(1000)
     transactionMetrics1.totalActionsCounter.increment(90)
-    transactionMetrics1.addFilesSizeInBytesCounter.increment(100)
-    transactionMetrics1.removeFilesSizeInBytesCounter.increment(1000)
 
     val transactionReport1 = new TransactionReportImpl(
       "/table/path",
@@ -166,10 +166,10 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |"transactionMetrics":{
          |"totalCommitDurationNs":200,
          |"numCommitAttempts":2,
-         |"numAddFiles":82,
-         |"numRemoveFiles":0,
+         |"numAddFiles":2,
+         |"numRemoveFiles":1,
          |"numTotalActions":90,
-         |"totalAddFilesSizeInBytes":100,
+         |"totalAddFilesSizeInBytes":1100,
          |"totalRemoveFilesSizeInBytes":1000
          |}
          |}
@@ -181,13 +181,14 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
     // Initialize snapshot report for the empty table case
     val snapshotReport2 = SnapshotReportImpl.forSuccess(
       SnapshotQueryContext.forVersionSnapshot("/table/path", -1))
-    // Empty option for alll possible fields (committedVersion, exception)
+    // Empty option for all possible fields (committedVersion, exception)
     val transactionReport2 = new TransactionReportImpl(
       "/table/path",
       "test-operation-2",
       "test-engine-2",
       Optional.empty(), /* committedVersion */
-      new TransactionMetrics(), // empty/un-incremented transaction metrics
+      // empty/un-incremented transaction metrics
+      TransactionMetrics.withExistingFileSizeHistogram(Optional.empty()),
       snapshotReport2,
       Optional.empty() /* exception */
     )
