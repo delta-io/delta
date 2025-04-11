@@ -65,7 +65,7 @@ class ChecksumStatsSuite extends DeltaTableWriteSuiteBase {
         tablePath,
         version = 2,
         expectedFileCount = 1,
-        expectedTableSize = 100802,
+        expectedTableSize = 100902 - 100,
         expectedFileSizeHistogram = expectedFileSizeHistogram)
     }
   }
