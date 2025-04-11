@@ -21,18 +21,20 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
+import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.data.GenericRow;
+import io.delta.kernel.internal.data.StructRow;
 import io.delta.kernel.internal.stats.FileSizeHistogram;
 import io.delta.kernel.internal.util.InternalUtils;
+import io.delta.kernel.internal.util.VectorUtils;
+import io.delta.kernel.types.ArrayType;
 import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Optional;
+import java.util.*;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -47,6 +49,7 @@ public class CRCInfo {
   private static final String METADATA = "metadata";
   private static final String PROTOCOL = "protocol";
   private static final String TXN_ID = "txnId";
+  private static final String DOMAIN_METADATA = "domainMetadata";
   private static final String FILE_SIZE_HISTOGRAM = "fileSizeHistogram";
 
   public static final StructType CRC_FILE_SCHEMA =
@@ -58,6 +61,7 @@ public class CRCInfo {
           .add(METADATA, Metadata.FULL_SCHEMA)
           .add(PROTOCOL, Protocol.FULL_SCHEMA)
           .add(TXN_ID, StringType.STRING, /*nullable*/ true)
+          .add(DOMAIN_METADATA, new ArrayType(DomainMetadata.FULL_SCHEMA, false), /*nullable*/ true)
           .add(FILE_SIZE_HISTOGRAM, FileSizeHistogram.FULL_SCHEMA, /*nullable*/ true);
 
   public static Optional<CRCInfo> fromColumnarBatch(
@@ -82,6 +86,14 @@ public class CRCInfo {
         txnIdColumnVector.isNullAt(rowId)
             ? Optional.empty()
             : Optional.of(txnIdColumnVector.getString(rowId));
+    ColumnVector domainMetadataVector = batch.getColumnVector(getSchemaIndex(DOMAIN_METADATA));
+    Optional<List<DomainMetadata>> domainMetadata =
+        domainMetadataVector.isNullAt(rowId)
+            ? Optional.empty()
+            : Optional.of(
+                VectorUtils.toJavaList(domainMetadataVector.getArray(rowId)).stream()
+                    .map(row -> DomainMetadata.fromRow((StructRow) row))
+                    .collect(Collectors.toList()));
     Optional<FileSizeHistogram> fileSizeHistogram =
         FileSizeHistogram.fromColumnVector(
             batch.getColumnVector(getSchemaIndex(FILE_SIZE_HISTOGRAM)), rowId);
@@ -93,7 +105,14 @@ public class CRCInfo {
     }
     return Optional.of(
         new CRCInfo(
-            version, metadata, protocol, tableSizeBytes, numFiles, txnId, fileSizeHistogram));
+            version,
+            metadata,
+            protocol,
+            tableSizeBytes,
+            numFiles,
+            txnId,
+            domainMetadata,
+            fileSizeHistogram));
   }
 
   private final long version;
@@ -102,6 +121,7 @@ public class CRCInfo {
   private final long tableSizeBytes;
   private final long numFiles;
   private final Optional<String> txnId;
+  private final Optional<List<DomainMetadata>> domainMetadata;
   private final Optional<FileSizeHistogram> fileSizeHistogram;
 
   public CRCInfo(
@@ -111,15 +131,19 @@ public class CRCInfo {
       long tableSizeBytes,
       long numFiles,
       Optional<String> txnId,
+      Optional<List<DomainMetadata>> domainMetadata,
       Optional<FileSizeHistogram> fileSizeHistogram) {
     checkArgument(tableSizeBytes >= 0);
     checkArgument(numFiles >= 0);
+    // Live Domain Metadata actions at this version, excluding tombstones.
+    domainMetadata.ifPresent(dms -> dms.forEach(dm -> checkArgument(!dm.isRemoved())));
     this.version = version;
     this.metadata = requireNonNull(metadata);
     this.protocol = requireNonNull(protocol);
     this.tableSizeBytes = tableSizeBytes;
     this.numFiles = numFiles;
     this.txnId = requireNonNull(txnId);
+    this.domainMetadata = requireNonNull(domainMetadata);
     this.fileSizeHistogram = requireNonNull(fileSizeHistogram);
   }
 
@@ -150,6 +174,10 @@ public class CRCInfo {
     return txnId;
   }
 
+  public Optional<List<DomainMetadata>> getDomainMetadata() {
+    return domainMetadata;
+  }
+
   /** The {@link FileSizeHistogram} stored in this CRCInfo. */
   public Optional<FileSizeHistogram> getFileSizeHistogram() {
     return fileSizeHistogram;
@@ -172,6 +200,15 @@ public class CRCInfo {
 
     // Add optional fields
     txnId.ifPresent(txn -> values.put(getSchemaIndex(TXN_ID), txn));
+    domainMetadata.ifPresent(
+        domainMetadataList ->
+            values.put(
+                getSchemaIndex(DOMAIN_METADATA),
+                VectorUtils.buildArrayValue(
+                    domainMetadataList.stream()
+                        .map(DomainMetadata::toRow)
+                        .collect(Collectors.toList()),
+                    DomainMetadata.FULL_SCHEMA)));
     fileSizeHistogram.ifPresent(
         fileSizeHistogram ->
             values.put(getSchemaIndex(FILE_SIZE_HISTOGRAM), fileSizeHistogram.toRow()));
@@ -196,6 +233,7 @@ public class CRCInfo {
         && metadata.equals(other.metadata)
         && protocol.equals(other.protocol)
         && txnId.equals(other.txnId)
+        && domainMetadata.equals(other.domainMetadata)
         && fileSizeHistogram.equals(other.fileSizeHistogram);
   }
 
