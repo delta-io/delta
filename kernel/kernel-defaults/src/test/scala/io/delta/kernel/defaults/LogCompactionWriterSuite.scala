@@ -58,6 +58,15 @@ class LogCompactionWriterSuite extends CheckpointSuiteBase {
       // .add("cdc", new StructType())
       .add("domainMetadata", DomainMetadata.FULL_SCHEMA);
 
+  val ADD_INDEX = 1
+  val REMOVE_INDEX = 2
+  val METADATA_INDEX = 3
+  val PROTOCOL_INDEX = 4
+  val DM_INDEX = 5
+
+  val ADD_REM_PATH_INDEX = 0
+  val DM_NAME_INDEX = 0
+
   // check if a row is all null
   def rowIsNull(row: Row): Boolean = {
     val schema = row.getSchema()
@@ -76,7 +85,7 @@ class LogCompactionWriterSuite extends CheckpointSuiteBase {
       tablePath: Path,
       engine: Engine,
       startVersion: Long,
-      endVersion: Long): Seq[TestRow] = {
+      endVersion: Long): scala.collection.Seq[TestRow] = {
     val files = DeltaLogActionUtils.listDeltaLogFilesAsIter(
       engine,
       Collections.singleton(DeltaLogFileType.COMMIT),
@@ -89,47 +98,55 @@ class LogCompactionWriterSuite extends CheckpointSuiteBase {
     val actions =
       new ActionsIterator(engine, files, COMPACTED_SCHEMA, Optional.empty())
     val removed = scala.collection.mutable.HashSet.empty[String]
+    val seenDomains = scala.collection.mutable.HashSet.empty[String]
     var seenMetadata = false
     var seenProtocol = false
-    val resBuilder = Seq.newBuilder[TestRow]
-    while (actions.hasNext()) {
-      val batch = actions.next().getColumnarBatch()
-      val rows = batch.getRows()
-      while (rows.hasNext()) {
-        val row = rows.next()
-
-        if (!row.isNullAt(2)) {
-          // remove
-          val removeRow = row.getStruct(2)
-          val path = removeRow.getString(0)
+    actions.toSeq.flatMap { wrapper =>
+      wrapper.getColumnarBatch().getRows.toSeq.flatMap { row =>
+        if (!row.isNullAt(REMOVE_INDEX)) {
+          val removeRow = row.getStruct(REMOVE_INDEX)
+          val path = removeRow.getString(ADD_REM_PATH_INDEX)
           removed += path
         }
 
-        if (!row.isNullAt(1)) {
-          // add
-          val addRow = row.getStruct(1)
-          val path = addRow.getString(0)
+        if (!row.isNullAt(ADD_INDEX)) {
+          val addRow = row.getStruct(ADD_INDEX)
+          val path = addRow.getString(ADD_REM_PATH_INDEX)
           if (!removed.contains(path)) {
-            resBuilder += TestRow(row)
+            Some(TestRow(row))
+          } else {
+            None
           }
-        } else if (!row.isNullAt(3)) {
-          // metadata
+        } else if (!row.isNullAt(METADATA_INDEX)) {
           if (!seenMetadata) {
             seenMetadata = true
-            resBuilder += TestRow(row)
+            Some(TestRow(row))
+          } else {
+            None
           }
-        } else if (!row.isNullAt(4)) {
-          // protocol
+        } else if (!row.isNullAt(PROTOCOL_INDEX)) {
           if (!seenProtocol) {
             seenProtocol = true
-            resBuilder += TestRow(row)
+            Some(TestRow(row))
+          } else {
+            None
+          }
+        } else if (!row.isNullAt(DM_INDEX)) {
+          val dm = row.getStruct(DM_INDEX)
+          val domain = dm.getString(DM_NAME_INDEX)
+          if (!seenDomains.contains(domain)) {
+            seenDomains += domain
+            Some(TestRow(row))
+          } else {
+            None
           }
         } else if (!rowIsNull(row)) {
-          resBuilder += TestRow(row)
+          Some(TestRow(row))
+        } else {
+          None
         }
       }
     }
-    resBuilder.result()
   }
 
   def getActionsFromCompacted(
@@ -153,7 +170,7 @@ class LogCompactionWriterSuite extends CheckpointSuiteBase {
     resBuilder.result()
   }
 
-  def addDomainMetadata(path: String): Unit = {
+  def addDomainMetadata(path: String, d1Val: String, d2Val: String): Unit = {
     spark.sql(
       s"""
          |ALTER TABLE delta.`$path`
@@ -162,8 +179,8 @@ class LogCompactionWriterSuite extends CheckpointSuiteBase {
          |""".stripMargin)
 
     val deltaLog = DeltaLog.forTable(spark, path)
-    val domainMetadata = DeltaSparkDomainMetadata("testDomain1", "", false) ::
-      DeltaSparkDomainMetadata("testDomain2", "{\"key1\":\"value1\"", false) :: Nil
+    val domainMetadata = DeltaSparkDomainMetadata("testDomain1", d1Val, false) ::
+      DeltaSparkDomainMetadata("testDomain2", d2Val, false) :: Nil
     deltaLog.startTransaction().commit(domainMetadata, Truncate())
   }
 
@@ -173,15 +190,16 @@ class LogCompactionWriterSuite extends CheckpointSuiteBase {
       val dmMsg = if (includeDM) ", include multiple PandM and DomainMetadata" else ""
       test(s"commits containing adds${removesMsg}${dmMsg}") {
         withTempDirAndEngine { (tablePath, engine) =>
-          addData(tablePath, alternateBetweenAddsAndRemoves = includeRemoves, numberIter = 10)
+          addData(tablePath, alternateBetweenAddsAndRemoves = includeRemoves, numberIter = 8)
           if (includeDM) {
-            addDomainMetadata(tablePath)
+            addDomainMetadata(tablePath, "", "{\"key1\":\"value1\"}")
+            addDomainMetadata(tablePath, "here", "{\"key2\":\"value2\"}")
           }
 
           val expectedLastCommit = if (includeDM) {
-            11 // 0-9 for add/removes + 2 for enable+set DomainMetatdata
+            11 // 0-7 for add/removes + 2 for enable+set DomainMetatdata
           } else {
-            9 // 0-9 for add/removes
+            7 // 0-7 for add/removes
           }
 
           val actionsFromCommits =
