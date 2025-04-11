@@ -40,7 +40,7 @@ class DeltaAnalysisException(
     cause = cause)
   with DeltaThrowable {
   def getMessageParametersArray: Array[String] = messageParameters
-  override def getErrorClass: String = errorClass
+  // ??? override def getErrorClass: String = errorClass
   override def getMessageParameters: java.util.Map[String, String] =
     DeltaThrowableHelper.getMessageParameters(errorClass, errorSubClass = null, messageParameters)
 }
