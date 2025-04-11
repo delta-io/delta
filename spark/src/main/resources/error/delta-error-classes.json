@@ -299,13 +299,13 @@
   },
   "DELTA_CANNOT_UPDATE_ARRAY_FIELD" : {
     "message" : [
-      "Cannot update %1$s field %2$s type: update the element by updating %2$s.element"
+      "Cannot update <tableName> field <fieldName> type: update the element by updating `<fieldName>.element`."
     ],
     "sqlState" : "429BQ"
   },
   "DELTA_CANNOT_UPDATE_MAP_FIELD" : {
     "message" : [
-      "Cannot update %1$s field %2$s type: update a map by updating %2$s.key or %2$s.value"
+      "Cannot update <tableName> field <fieldName> type: update a map by updating `<fieldName>.key` or `<fieldName>.value`."
     ],
     "sqlState" : "429BQ"
   },
@@ -572,7 +572,7 @@
   },
   "DELTA_CONCURRENT_WRITE" : {
     "message" : [
-      "ConcurrentWriteException: A concurrent transaction has written new data since the current transaction read the table. Please try the operation again.\nRefer to <docLink> for more details."
+      "ConcurrentWriteException: A concurrent transaction has written new data since the current transaction read the table. Please try the operation again.<conflictingCommit>\nRefer to <docLink> for more details."
     ],
     "sqlState" : "2D521"
   },
@@ -687,12 +687,7 @@
   },
   "DELTA_CREATE_EXTERNAL_TABLE_WITHOUT_TXN_LOG" : {
     "message" : [
-      "",
-      "You are trying to create an external table <tableName>",
-      "from `%2$s` using Delta, but there is no transaction log present at",
-      "`%2$s/_delta_log`. Check the upstream job to make sure that it is writing using",
-      "format(\"delta\") and that the path is the root of the table.",
-      "",
+      "You are trying to create an external table <tableName> from `<path>` using Delta, but there is no transaction log present at `<logPath>`. Check the upstream job to make sure that it is writing using format(\"delta\") and that the path is the root of the table.",
       "To learn more about Delta, see <docLink>"
     ],
     "sqlState" : "42K03"
@@ -763,7 +758,7 @@
       "The specified properties do not match the existing properties at <path>.",
       "",
       "== Specified ==",
-      "<specificiedProperties>",
+      "<specifiedProperties>",
       "",
       "== Existing ==",
       "<existingProperties>",
@@ -1549,7 +1544,7 @@
   },
   "DELTA_INVALID_PROTOCOL_DOWNGRADE" : {
     "message" : [
-      "Protocol version cannot be downgraded from <oldProtocol> to <newProtocol>"
+      "Protocol version cannot be downgraded from (<oldProtocol>) to (<newProtocol>)"
     ],
     "sqlState" : "KD004"
   },
@@ -1711,7 +1706,7 @@
   },
   "DELTA_MISSING_COLUMN" : {
     "message" : [
-      "Cannot find <columName> in table columns: <columnList>"
+      "Cannot find <columnName> in table columns: <columnList>"
     ],
     "sqlState" : "42703"
   },
@@ -2649,7 +2644,7 @@
   "DELTA_UNKNOWN_CONFIGURATION" : {
     "message" : [
       "Unknown configuration was specified: <config>",
-      "To disable this check, set <config>=true in the Spark session configuration."
+      "To disable this check, set <disableCheckConfig>=true in the Spark session configuration."
     ],
     "sqlState" : "F0000"
   },
@@ -3057,11 +3052,8 @@
   },
   "DELTA_ZORDERING_ON_COLUMN_WITHOUT_STATS" : {
     "message" : [
-      "Z-Ordering on <cols> will be",
-      " ineffective, because we currently do not collect stats for these columns.",
-      " You can disable",
-      " this check by setting",
-      " '%%sql set <zorderColStatKey> = false'"
+      "Z-Ordering on <cols> will be ineffective, because we currently do not collect stats for these columns. You can disable this check by setting",
+      " 'set <zorderColStatKey> = false'"
     ],
     "sqlState" : "KD00D"
   },
@@ -3085,7 +3077,7 @@
     "message" : [
       "<failure>, <functionName> requires at least <minArgs> arguments and at most <maxArgs> arguments."
     ],
-    "sqlState" : "22023"
+    "sqlState" : "42605"
   },
   "RESERVED_CDC_COLUMNS_ON_WRITE" : {
     "message" : [

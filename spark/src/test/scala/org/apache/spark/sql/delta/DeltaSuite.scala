@@ -2710,24 +2710,24 @@ class DeltaSuite extends QueryTest
       spark.conf.set("spark.databricks.delta.write.txnVersion", "0")
       spark.sql(s"INSERT INTO $tableName (col1, col2) VALUES (3, 0)")
       // this should throw an exception as the txn version is automatically reset
-      val e1 = intercept[IllegalArgumentException] {
+      val e1 = intercept[DeltaIllegalArgumentException] {
         spark.sql(s"INSERT INTO $tableName (col1, col2) VALUES (4, 0)")
       }
-      assert(e1.getMessage == "[DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS] " +
-        "Invalid options for idempotent Dataframe writes: " +
+      checkError(e1, "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS", "42616", Map("reason" -> (
         "Both spark.databricks.delta.write.txnAppId and spark.databricks.delta.write.txnVersion " +
-        "must be specified for idempotent Delta writes")
+          "must be specified for idempotent Delta writes")
+      ))
       // this write should succeed as it's using a newer version than the latest
       spark.conf.set("spark.databricks.delta.write.txnVersion", "10")
       spark.sql(s"INSERT INTO $tableName (col1, col2) VALUES (2, 0)")
       // this should throw an exception as the txn version is automatically reset
-      val e2 = intercept[IllegalArgumentException] {
+      val e2 = intercept[DeltaIllegalArgumentException] {
         spark.sql(s"INSERT INTO $tableName (col1, col2) VALUES (3, 0)")
       }
-      assert(e2.getMessage == "[DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS] " +
-        "Invalid options for idempotent Dataframe writes: " +
+      checkError(e2, "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS", "42616", Map("reason" -> (
         "Both spark.databricks.delta.write.txnAppId and spark.databricks.delta.write.txnVersion " +
-        "must be specified for idempotent Delta writes")
+          "must be specified for idempotent Delta writes")
+      ))
 
       val res = spark.sql(s"SELECT col1 FROM $tableName")
         .orderBy(asc("col1"))
