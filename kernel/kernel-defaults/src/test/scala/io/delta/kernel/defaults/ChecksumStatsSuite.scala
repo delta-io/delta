@@ -76,6 +76,16 @@ class ChecksumStatsSuite extends DeltaTableWriteSuiteBase {
     }
   }
 
+  /**
+   * Verifies that the CRC information at the given version matches expectations.
+   *
+   * @param engine The Delta Kernel engine
+   * @param tablePath Path to the Delta table
+   * @param version The table version to check
+   * @param expectedFileCount Expected number of files in the table
+   * @param expectedTableSize Expected total size of all files in bytes
+   * @param expectedFileSizeHistogram Expected file size histogram
+   */
   def checkCrcCorrect(
       engine: Engine,
       tablePath: String,
@@ -83,7 +93,6 @@ class ChecksumStatsSuite extends DeltaTableWriteSuiteBase {
       expectedFileCount: Long,
       expectedTableSize: Long,
       expectedFileSizeHistogram: FileSizeHistogram): Unit = {
-    // Verify checksum exists and stats
     val crcInfo = ChecksumReader.getCRCInfo(
       engine,
       new Path(tablePath + "/_delta_log"),
