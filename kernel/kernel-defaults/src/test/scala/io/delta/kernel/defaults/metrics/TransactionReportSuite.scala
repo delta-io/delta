@@ -132,7 +132,8 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
       assert(txnMetrics.getTotalRemoveFilesSizeInBytes == expectedTotalRemoveFilesSizeInBytes)
 
       // For now since we don't support writing fileSizeHistogram yet we only expect this to be
-      // present on the first write to a table. We will update these tests when we add write support.
+      // present on the first write to a table. We will update these tests when we add write
+      // support.
       expectedFileSizeHistogramResult match {
         case Some(expectedHistogram) =>
           assert(txnMetrics.getFileSizeHistogram.isPresent)
