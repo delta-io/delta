@@ -36,69 +36,43 @@ import io.delta.kernel.utils.CloseableIterable.inMemoryIterable
  */
 class ChecksumStatsSuite extends DeltaTableWriteSuiteBase {
 
-  // Currently only table with IcebergWriterCompatV1 could easily
-  // support both add/remove files.
-  private val tblPropertiesWithIcebergWriterCompatV1 = Map(
-    TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey -> "true")
-
   test("Check stats in checksum are correct") {
     withTempDirAndEngine { (tablePath, engine) =>
       createEmptyTable(
         engine,
         tablePath,
         testSchema,
-        tableProperties = tblPropertiesWithIcebergWriterCompatV1)
+        // Currently only table with IcebergWriterCompatV1 could easily
+        // support both add/remove files.
+        tableProperties = Map(
+          TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey -> "true"))
       val expectedFileSizeHistogram = FileSizeHistogram.createDefaultHistogram()
 
-      {
-        val txn = createTxn(engine, tablePath, maxRetries = 0)
-        val actionsToCommit = Seq(
-          GenerateIcebergCompatActionUtils.generateIcebergCompatWriterV1AddAction(
-            txn.getTransactionState(engine),
-            generateDataFileStatus(tablePath, "file1.parquet", fileSize = 100),
-            Collections.emptyMap(),
-            true /* dataChange */ ),
-          GenerateIcebergCompatActionUtils.generateIcebergCompatWriterV1AddAction(
-            txn.getTransactionState(engine),
-            generateDataFileStatus(tablePath, "file2.parquet", fileSize = 100802),
-            Collections.emptyMap(),
-            true /* dataChange */ ))
-        expectedFileSizeHistogram.insert(100)
-        expectedFileSizeHistogram.insert(100802)
-        commitTransaction(
-          txn,
-          engine,
-          inMemoryIterable(toCloseableIterator(actionsToCommit.asJava.iterator())))
-        checkCrcCorrect(
-          engine,
-          tablePath,
-          version = 1,
-          expectedFileCount = 2,
-          expectedTableSize = 100902,
-          expectedFileSizeHistogram = expectedFileSizeHistogram)
-      }
+      addFiles(
+        engine,
+        tablePath,
+        Map("file1.parquet" -> 100, "file2.parquet" -> 100802),
+        expectedFileSizeHistogram)
+      checkCrcCorrect(
+        engine,
+        tablePath,
+        version = 1,
+        expectedFileCount = 2,
+        expectedTableSize = 100902,
+        expectedFileSizeHistogram = expectedFileSizeHistogram)
 
-      {
-        val txn = createTxn(engine, tablePath, maxRetries = 0)
-        val actionsToCommit = Seq(
-          GenerateIcebergCompatActionUtils.generateIcebergCompatWriterV1RemoveAction(
-            txn.getTransactionState(engine),
-            generateDataFileStatus(tablePath, "file1.parquet", fileSize = 100),
-            Collections.emptyMap(),
-            true /* dataChange */ ))
-        expectedFileSizeHistogram.remove(100)
-        commitTransaction(
-          txn,
-          engine,
-          inMemoryIterable(toCloseableIterator(actionsToCommit.asJava.iterator())))
-        checkCrcCorrect(
-          engine,
-          tablePath,
-          version = 2,
-          expectedFileCount = 2,
-          expectedTableSize = 100902,
-          expectedFileSizeHistogram = expectedFileSizeHistogram)
-      }
+      removeFiles(
+        engine,
+        tablePath,
+        Map("file1.parquet" -> 100),
+        expectedFileSizeHistogram)
+      checkCrcCorrect(
+        engine,
+        tablePath,
+        version = 2,
+        expectedFileCount = 1,
+        expectedTableSize = 100802,
+        expectedFileSizeHistogram = expectedFileSizeHistogram)
     }
   }
 
@@ -109,7 +83,7 @@ class ChecksumStatsSuite extends DeltaTableWriteSuiteBase {
       expectedFileCount: Long,
       expectedTableSize: Long,
       expectedFileSizeHistogram: FileSizeHistogram): Unit = {
-    // Verify checksum exists and content are correct.
+    // Verify checksum exists and stats
     val crcInfo = ChecksumReader.getCRCInfo(
       engine,
       new Path(tablePath + "/_delta_log"),
@@ -121,28 +95,66 @@ class ChecksumStatsSuite extends DeltaTableWriteSuiteBase {
     assert(crcInfo.getFileSizeHistogram === Optional.of(expectedFileSizeHistogram))
   }
 
-  def deleteOneFile(engine: Engine, tablePath: String): Unit = {
+  /**
+   * Adds files to the table and updates the expected histogram.
+   *
+   * @param engine The Delta Kernel engine
+   * @param tablePath Path to the Delta table
+   * @param filesToAdd Map of file paths to their sizes
+   * @param histogram The histogram to update with new file sizes
+   */
+  private def addFiles(
+      engine: Engine,
+      tablePath: String,
+      filesToAdd: Map[String, Long],
+      histogram: FileSizeHistogram): Unit = {
+
     val txn = createTxn(engine, tablePath, maxRetries = 0)
-    val firstFile =
-      InternalScanFileUtils.getAddFileStatus(Table.forPath(
-        engine,
-        tablePath).getLatestSnapshot(engine).asInstanceOf[
-        SnapshotImpl].getScanBuilder.build().getScanFiles(engine).next().getRows.next())
-    val actionsToCommit = Seq(
-      GenerateIcebergCompatActionUtils.generateIcebergCompatWriterV1RemoveAction(
+
+    val actionsToCommit = filesToAdd.map { case (path, size) =>
+      histogram.insert(size)
+      GenerateIcebergCompatActionUtils.generateIcebergCompatWriterV1AddAction(
         txn.getTransactionState(engine),
-        new DataFileStatus(
-          firstFile.getPath,
-          firstFile.getSize,
-          firstFile.getModificationTime,
-          Optional.empty()),
+        generateDataFileStatus(tablePath, path, fileSize = size),
         Collections.emptyMap(),
-        true /* dataChange */ ))
+        true /* dataChange */ )
+    }.toSeq
+
     commitTransaction(
       txn,
       engine,
       inMemoryIterable(toCloseableIterator(actionsToCommit.asJava.iterator())))
+  }
 
+  /**
+   * Removes files from the table and updates the expected histogram.
+   *
+   * @param engine The Delta Kernel engine
+   * @param tablePath Path to the Delta table
+   * @param filesToRemove Map of file paths to their sizes
+   * @param histogram The histogram to update by removing file sizes
+   */
+  private def removeFiles(
+      engine: Engine,
+      tablePath: String,
+      filesToRemove: Map[String, Long],
+      histogram: FileSizeHistogram): Unit = {
+
+    val txn = createTxn(engine, tablePath, maxRetries = 0)
+
+    val actionsToCommit = filesToRemove.map { case (path, size) =>
+      histogram.remove(size)
+      GenerateIcebergCompatActionUtils.generateIcebergCompatWriterV1RemoveAction(
+        txn.getTransactionState(engine),
+        generateDataFileStatus(tablePath, path, fileSize = size),
+        Collections.emptyMap(),
+        true /* dataChange */ )
+    }.toSeq
+
+    commitTransaction(
+      txn,
+      engine,
+      inMemoryIterable(toCloseableIterator(actionsToCommit.asJava.iterator())))
   }
 
   override def commitTransaction(
