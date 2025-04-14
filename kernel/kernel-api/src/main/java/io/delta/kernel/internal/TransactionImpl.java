@@ -596,6 +596,7 @@ public class TransactionImpl implements Transaction {
               metricsResult.getTotalAddFilesSizeInBytes(),
               metricsResult.getNumAddFiles(),
               Optional.of(txnId.toString()),
+              Optional.empty(), // TODO: populate domain metadata
               metricsResult
                   .getTableFileSizeHistogram()
                   .map(FileSizeHistogram::fromFileSizeHistogramResult)));
@@ -617,6 +618,7 @@ public class TransactionImpl implements Transaction {
                         + metricsResult.getNumAddFiles()
                         - metricsResult.getNumRemoveFiles(),
                     Optional.of(txnId.toString()),
+                    Optional.empty(), // TODO: populate domain metadata
                     metricsResult
                         .getTableFileSizeHistogram()
                         .map(FileSizeHistogram::fromFileSizeHistogramResult)));
