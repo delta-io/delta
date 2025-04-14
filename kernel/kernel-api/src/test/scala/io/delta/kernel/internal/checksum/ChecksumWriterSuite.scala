@@ -99,13 +99,14 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
         new DomainMetadata("domain1", "", false /* removed */ ),
         new DomainMetadata("domain2", "", false /* removed */ )).toSet.asJava))
     // Per protocol, domain metadata list should exclude tombstone.
-    intercept[IllegalArgumentException] {
+    val exception = intercept[IllegalArgumentException] {
       testChecksumWrite(
         Optional.empty(),
         Optional.of(Seq(
           new DomainMetadata("domain1", "", true /* removed */ ),
           new DomainMetadata("domain2", "", false /* removed */ )).toSet.asJava))
     }
+    assert(exception.getMessage.contains("Domain metadata in CRC should exclude tombstones"))
   }
 
   private def verifyChecksumFile(jsonHandler: MockCheckSumFileJsonWriter, version: Long): Unit = {
@@ -121,7 +122,7 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
       expectedMetadata: Metadata,
       expectedProtocol: Protocol,
       expectedTxnId: Optional[String],
-      domainMetadata: Optional[util.Set[DomainMetadata]]): Unit = {
+      expectedDomainMetadata: Optional[util.Set[DomainMetadata]]): Unit = {
     assert(!actualCheckSumRow.isNullAt(TABLE_SIZE_BYTES_IDX) && actualCheckSumRow.getLong(
       TABLE_SIZE_BYTES_IDX) == expectedTableSizeBytes)
     assert(!actualCheckSumRow.isNullAt(
@@ -139,10 +140,10 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
       assert(actualCheckSumRow.isNullAt(TXN_ID_IDX))
     }
 
-    if (domainMetadata.isPresent) {
+    if (expectedDomainMetadata.isPresent) {
       assert(VectorUtils.toJavaList[Row](actualCheckSumRow.getArray(DOMAIN_METADATA_IDX)).asScala
         .map(DomainMetadata.fromRow).toSet
-        === domainMetadata.get().asScala)
+        === expectedDomainMetadata.get().asScala)
     } else {
       assert(actualCheckSumRow.isNullAt(DOMAIN_METADATA_IDX))
     }

@@ -129,7 +129,16 @@ public class CRCInfo {
     checkArgument(numFiles >= 0);
     // Live Domain Metadata actions at this version, excluding tombstones.
     this.domainMetadata = requireNonNull(domainMetadata);
-    domainMetadata.ifPresent(dms -> dms.forEach(dm -> checkArgument(!dm.isRemoved())));
+    domainMetadata.ifPresent(
+        dms ->
+            dms.forEach(
+                dm ->
+                    checkArgument(
+                        !dm.isRemoved(),
+                        String.format(
+                            "Domain metadata in CRC should exclude tombstones, "
+                                + "found removed domain metadata: %s.",
+                            dm.getDomain()))));
     this.version = version;
     this.metadata = requireNonNull(metadata);
     this.protocol = requireNonNull(protocol);
