@@ -2173,4 +2173,17 @@ class DeltaColumnMappingSuite extends QueryTest
       }
     }
   }
+
+  test("unit test physical name assigning is case-insensitive") {
+    val schema = new StructType()
+      .add("A", IntegerType)
+      .add("b", IntegerType)
+    val fieldPathToPhysicalName = Map(Seq("a") -> "x", Seq("b") -> "y")
+    val schemaWithPhysicalNames = DeltaColumnMapping.setPhysicalNames(
+      schema = schema,
+      fieldPathToPhysicalName = fieldPathToPhysicalName)
+    assert(DeltaColumnMapping.getLogicalNameToPhysicalNameMap(schemaWithPhysicalNames) === Map(
+      Seq("A") -> Seq("x"),
+      Seq("b") -> Seq("y")))
+  }
 }

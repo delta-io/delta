@@ -91,6 +91,7 @@ public class TransactionImpl implements Transaction {
   private Metadata metadata;
   private boolean shouldUpdateMetadata;
   private int maxRetries;
+  private Optional<CRCInfo> currentCrcInfo;
 
   private boolean closed; // To avoid trying to commit the same transaction again.
 
@@ -123,6 +124,7 @@ public class TransactionImpl implements Transaction {
     this.shouldUpdateProtocol = shouldUpdateProtocol;
     this.maxRetries = maxRetries;
     this.clock = clock;
+    this.currentCrcInfo = readSnapshot.getCurrentCrcInfo();
   }
 
   @Override
@@ -358,8 +360,10 @@ public class TransactionImpl implements Transaction {
             commitAsVersion = rebaseState.getLatestVersion() + 1;
             dataActions = rebaseState.getUpdatedDataActions();
             domainMetadatas = Optional.of(rebaseState.getUpdatedDomainMetadatas());
+            currentCrcInfo = rebaseState.getUpdatedCrcInfo();
             // Action counters may be partially incremented from previous tries, reset the counters
             // to 0 and drop fileSizeHistogram
+            // TODO: reconcile fileSizeHistogram.
             transactionMetrics.resetActionMetricsForRetry();
           }
         }
@@ -620,11 +624,9 @@ public class TransactionImpl implements Transaction {
                   .map(FileSizeHistogram::fromFileSizeHistogramResult)));
     }
 
-    return readSnapshot
-        .getCurrentCrcInfo()
-        // in the case of a conflicting txn and successful retry the readSnapshot may not be
-        // commitVersion - 1
-        .filter(lastCrcInfo -> commitAtVersion == lastCrcInfo.getVersion() + 1)
+    return currentCrcInfo
+        // Ensure current currentCrcInfo is exactly commitAtVersion - 1
+        .filter(crcInfo -> commitAtVersion == crcInfo.getVersion() + 1)
         .map(
             lastCrcInfo ->
                 new CRCInfo(
