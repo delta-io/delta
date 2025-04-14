@@ -66,6 +66,7 @@ class DeltaTableWriteWithCrcSuite extends DeltaTableWritesSuite {
       checksumVersion)
     assert(crcInfo.isPresent)
     // TODO: check metadata, protocol, domain metadata and file size.
+    
     assert(crcInfo.get().getNumFiles
       === collectScanFileRows(currentSnapshot.getScanBuilder.build()).size)
   }
