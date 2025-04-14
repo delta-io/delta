@@ -87,13 +87,13 @@ public class CRCInfo {
             ? Optional.empty()
             : Optional.of(txnIdColumnVector.getString(rowId));
     ColumnVector domainMetadataVector = batch.getColumnVector(getSchemaIndex(DOMAIN_METADATA));
-    Optional<List<DomainMetadata>> domainMetadata =
+    Optional<Set<DomainMetadata>> domainMetadata =
         domainMetadataVector.isNullAt(rowId)
             ? Optional.empty()
             : Optional.of(
                 VectorUtils.toJavaList(domainMetadataVector.getArray(rowId)).stream()
                     .map(row -> DomainMetadata.fromRow((StructRow) row))
-                    .collect(Collectors.toList()));
+                    .collect(Collectors.toSet()));
     Optional<FileSizeHistogram> fileSizeHistogram =
         FileSizeHistogram.fromColumnVector(
             batch.getColumnVector(getSchemaIndex(FILE_SIZE_HISTOGRAM)), rowId);
@@ -121,7 +121,7 @@ public class CRCInfo {
   private final long tableSizeBytes;
   private final long numFiles;
   private final Optional<String> txnId;
-  private final Optional<List<DomainMetadata>> domainMetadata;
+  private final Optional<Set<DomainMetadata>> domainMetadata;
   private final Optional<FileSizeHistogram> fileSizeHistogram;
 
   public CRCInfo(
@@ -131,7 +131,7 @@ public class CRCInfo {
       long tableSizeBytes,
       long numFiles,
       Optional<String> txnId,
-      Optional<List<DomainMetadata>> domainMetadata,
+      Optional<Set<DomainMetadata>> domainMetadata,
       Optional<FileSizeHistogram> fileSizeHistogram) {
     checkArgument(tableSizeBytes >= 0);
     checkArgument(numFiles >= 0);
@@ -174,7 +174,7 @@ public class CRCInfo {
     return txnId;
   }
 
-  public Optional<List<DomainMetadata>> getDomainMetadata() {
+  public Optional<Set<DomainMetadata>> getDomainMetadata() {
     return domainMetadata;
   }
 
@@ -201,11 +201,11 @@ public class CRCInfo {
     // Add optional fields
     txnId.ifPresent(txn -> values.put(getSchemaIndex(TXN_ID), txn));
     domainMetadata.ifPresent(
-        domainMetadataList ->
+        domainMetadataSet ->
             values.put(
                 getSchemaIndex(DOMAIN_METADATA),
                 VectorUtils.buildArrayValue(
-                    domainMetadataList.stream()
+                    domainMetadataSet.stream()
                         .map(DomainMetadata::toRow)
                         .collect(Collectors.toList()),
                     DomainMetadata.FULL_SCHEMA)));

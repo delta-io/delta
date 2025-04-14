@@ -18,7 +18,7 @@ package io.delta.kernel.internal.checksum
 import java.util
 import java.util.{Collections, Optional}
 
-import scala.collection.JavaConverters.{asScalaBufferConverter, seqAsJavaListConverter}
+import scala.collection.JavaConverters.{asScalaBufferConverter, asScalaSetConverter, seqAsJavaListConverter, setAsJavaSetConverter}
 
 import io.delta.kernel.data.Row
 import io.delta.kernel.exceptions.TableNotFoundException
@@ -61,7 +61,7 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
 
     def testChecksumWrite(
         txn: Optional[String],
-        domainMetadata: Optional[util.List[DomainMetadata]]): Unit = {
+        domainMetadata: Optional[util.Set[DomainMetadata]]): Unit = {
       val version = 1L
       val tableSizeBytes = 100L
       val numFiles = 1L
@@ -97,14 +97,14 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
       Optional.empty(),
       Optional.of(Seq(
         new DomainMetadata("domain1", "", false /* removed */ ),
-        new DomainMetadata("domain2", "", false /* removed */ )).asJava))
+        new DomainMetadata("domain2", "", false /* removed */ )).toSet.asJava))
     // Per protocol, domain metadata list should exclude tombstone.
     intercept[IllegalArgumentException] {
       testChecksumWrite(
         Optional.empty(),
         Optional.of(Seq(
           new DomainMetadata("domain1", "", true /* removed */ ),
-          new DomainMetadata("domain2", "", false /* removed */ )).asJava))
+          new DomainMetadata("domain2", "", false /* removed */ )).toSet.asJava))
     }
   }
 
@@ -121,7 +121,7 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
       expectedMetadata: Metadata,
       expectedProtocol: Protocol,
       expectedTxnId: Optional[String],
-      domainMetadata: Optional[util.List[DomainMetadata]]): Unit = {
+      domainMetadata: Optional[util.Set[DomainMetadata]]): Unit = {
     assert(!actualCheckSumRow.isNullAt(TABLE_SIZE_BYTES_IDX) && actualCheckSumRow.getLong(
       TABLE_SIZE_BYTES_IDX) == expectedTableSizeBytes)
     assert(!actualCheckSumRow.isNullAt(
@@ -141,7 +141,7 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
 
     if (domainMetadata.isPresent) {
       assert(VectorUtils.toJavaList[Row](actualCheckSumRow.getArray(DOMAIN_METADATA_IDX)).asScala
-        .map(DomainMetadata.fromRow)
+        .map(DomainMetadata.fromRow).toSet
         === domainMetadata.get().asScala)
     } else {
       assert(actualCheckSumRow.isNullAt(DOMAIN_METADATA_IDX))
