@@ -23,7 +23,7 @@ import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumnInfo}
 import org.apache.spark.sql.delta.ClassicColumnConversions._
-import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaLog, DeltaTableUtils}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaLog, DeltaParquetFileFormat, DeltaTableUtils}
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
 import org.apache.spark.sql.delta.implicits._
@@ -1203,6 +1203,15 @@ trait DataSkippingReaderBase
     dataSkippingType
   }
 
+  private def excludeIgnorableFilters(filters: Seq[Expression]): Seq[Expression] = {
+    filters.filterNot { f =>
+      // deletion vector column condition. e.g. __delta_internal_is_row_deleted#2723 = 0
+      (f.references.size == 1 &&
+      f.references.head.toString.contains(DeltaParquetFileFormat.IS_ROW_DELETED_COLUMN_NAME)) ||
+        f.equals(TrueLiteral)
+    }
+  }
+
   /**
    * Gathers files that should be included in a scan based on the given predicates.
    * Statistics about the amount of data that will be read are gathered and returned.
@@ -1210,9 +1219,10 @@ trait DataSkippingReaderBase
    * take into account DVs. Consumers of this method might commit the file. The semantics
    * of the statistics need to be consistent across all files.
    */
-  override def filesForScan(filters: Seq[Expression], keepNumRecords: Boolean): DeltaScan = {
+  override def filesForScan(allFilters: Seq[Expression], keepNumRecords: Boolean): DeltaScan = {
+    val filters = excludeIgnorableFilters(allFilters)
     val startTime = System.currentTimeMillis()
-    if (filters == Seq(TrueLiteral) || filters.isEmpty || schema.isEmpty) {
+    if (filters.forall(_.equals(TrueLiteral)) || filters.isEmpty || schema.isEmpty) {
       recordDeltaOperation(deltaLog, "delta.skipping.none") {
         // When there are no filters we can just return allFiles with no extra processing
         val dataSize = DataSize(
