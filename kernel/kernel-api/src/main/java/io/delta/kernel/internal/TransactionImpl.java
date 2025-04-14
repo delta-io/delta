@@ -341,6 +341,7 @@ public class TransactionImpl implements Transaction {
             domainMetadatas = Optional.of(rebaseState.getUpdatedDomainMetadatas());
             // Action counters may be partially incremented from previous tries, reset the counters
             // to 0 and drop fileSizeHistogram
+            // TODO: reconcile fileSizeHistogram.
             transactionMetrics.resetActionMetricsForRetry();
           }
         }
