@@ -125,8 +125,7 @@ class ChecksumSimpleComparisonSuite extends DeltaTableWriteSuiteBase with TestUt
         crcInfo.getTableSizeBytes,
         crcInfo.getNumFiles,
         Optional.empty(),
-        // TODO: check domain metadata.
-        Optional.empty(),
+        crcInfo.getDomainMetadata,
         // TODO: check file size histogram once https://github.com/delta-io/delta/pull/3907 merged.
         Optional.empty())
     }

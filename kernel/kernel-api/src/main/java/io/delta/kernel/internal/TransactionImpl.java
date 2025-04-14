@@ -251,17 +251,13 @@ public class TransactionImpl implements Transaction {
   }
 
   public Optional<Set<DomainMetadata>> getActiveDomainMetadatas() {
-    // For new tables, just include domainMetadatasAdded. Newly added domain metadata cannot be
-    // removed.
-    // If row tracking is enabled
     if (isNewTable) {
       return Optional.of(
           getDomainMetadatasToCommit().stream()
               .filter(dm -> !dm.isRemoved())
               .collect(Collectors.toSet()));
     }
-    return readSnapshot
-        .getCurrentCrcInfo()
+    return currentCrcInfo
         .flatMap(CRCInfo::getDomainMetadata)
         .map(
             oldDomainMetadata -> {

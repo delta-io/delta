@@ -26,6 +26,7 @@ import io.delta.kernel.exceptions._
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.{SnapshotImpl, TableImpl, TransactionImpl}
 import io.delta.kernel.internal.actions.DomainMetadata
+import io.delta.kernel.internal.checksum.ChecksumReader
 import io.delta.kernel.internal.rowtracking.RowTrackingMetadataDomain
 import io.delta.kernel.utils.CloseableIterable
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
@@ -62,6 +63,24 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
     // Get the latest snapshot of the table
     val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
     assertDomainMetadata(snapshot, expectedValue)
+    assertDomainMetadataInCrc(table, engine, expectedValue)
+  }
+
+  private def assertDomainMetadataInCrc(
+      table: Table,
+      engine: Engine,
+      expectedValue: Map[String, DomainMetadata]): Unit = {
+    val latestSnapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+    val crcInfo = ChecksumReader.getCRCInfo(
+      engine,
+      latestSnapshot.getLogPath,
+      latestSnapshot.getVersion,
+      latestSnapshot.getVersion)
+    assert(crcInfo.isPresent)
+    assert(crcInfo.get().getDomainMetadata.isPresent)
+    assert(crcInfo.get().getDomainMetadata.get().asScala
+      .map(metadata => metadata.getDomain -> metadata)
+      .toMap === expectedValue.filter { case (_, value) => !value.isRemoved })
   }
 
   private def createTxnWithDomainMetadatas(
