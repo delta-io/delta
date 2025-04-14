@@ -25,7 +25,6 @@ import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.data.GenericRow;
-import io.delta.kernel.internal.data.StructRow;
 import io.delta.kernel.internal.stats.FileSizeHistogram;
 import io.delta.kernel.internal.util.InternalUtils;
 import io.delta.kernel.internal.util.VectorUtils;
@@ -86,14 +85,6 @@ public class CRCInfo {
         txnIdColumnVector.isNullAt(rowId)
             ? Optional.empty()
             : Optional.of(txnIdColumnVector.getString(rowId));
-    ColumnVector domainMetadataVector = batch.getColumnVector(getSchemaIndex(DOMAIN_METADATA));
-    Optional<Set<DomainMetadata>> domainMetadata =
-        domainMetadataVector.isNullAt(rowId)
-            ? Optional.empty()
-            : Optional.of(
-                VectorUtils.toJavaList(domainMetadataVector.getArray(rowId)).stream()
-                    .map(row -> DomainMetadata.fromRow((StructRow) row))
-                    .collect(Collectors.toSet()));
     Optional<FileSizeHistogram> fileSizeHistogram =
         FileSizeHistogram.fromColumnVector(
             batch.getColumnVector(getSchemaIndex(FILE_SIZE_HISTOGRAM)), rowId);
@@ -111,7 +102,8 @@ public class CRCInfo {
             tableSizeBytes,
             numFiles,
             txnId,
-            domainMetadata,
+            // TODO: load domain metadata from CRC.
+            Optional.empty(),
             fileSizeHistogram));
   }
 
@@ -136,6 +128,7 @@ public class CRCInfo {
     checkArgument(tableSizeBytes >= 0);
     checkArgument(numFiles >= 0);
     // Live Domain Metadata actions at this version, excluding tombstones.
+    this.domainMetadata = requireNonNull(domainMetadata);
     domainMetadata.ifPresent(dms -> dms.forEach(dm -> checkArgument(!dm.isRemoved())));
     this.version = version;
     this.metadata = requireNonNull(metadata);
@@ -143,7 +136,6 @@ public class CRCInfo {
     this.tableSizeBytes = tableSizeBytes;
     this.numFiles = numFiles;
     this.txnId = requireNonNull(txnId);
-    this.domainMetadata = requireNonNull(domainMetadata);
     this.fileSizeHistogram = requireNonNull(fileSizeHistogram);
   }
 
