@@ -61,6 +61,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.FileAlreadyExistsException;
 import java.util.*;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -245,6 +246,23 @@ public class TransactionImpl implements Transaction {
     }
     domainMetadatas = Optional.of(finalDomainMetadatas);
     return finalDomainMetadatas;
+  }
+
+  public Optional<Set<DomainMetadata>> getActiveDomainMetadatas() {
+    // For new tables, just include domainMetadatasAdded. Newly added domain metadata cannot be removed.
+    if (isNewTable) {
+      return Optional.of(new HashSet<>(domainMetadatasAdded.values()));
+    }
+    return readSnapshot
+            .getCurrentCrcInfo()
+            .flatMap(CRCInfo::getDomainMetadata)
+            .map(oldDomainMetadata -> {
+              Map<String, DomainMetadata> domainMetadataMap = oldDomainMetadata.stream()
+                      .collect(Collectors.toMap(DomainMetadata::getDomain, Function.identity()));
+              domainMetadataMap.putAll(domainMetadatasAdded);
+              domainMetadatasRemoved.forEach(domainMetadataMap::remove);
+              return new HashSet<>(domainMetadataMap.values());
+            });
   }
 
   public Protocol getProtocol() {
