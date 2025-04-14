@@ -35,7 +35,6 @@ import io.delta.kernel.hook.PostCommitHook;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.checksum.CRCInfo;
-import io.delta.kernel.internal.checksum.ChecksumReader;
 import io.delta.kernel.internal.clustering.ClusteringUtils;
 import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.internal.fs.Path;
@@ -339,12 +338,7 @@ public class TransactionImpl implements Transaction {
             commitAsVersion = rebaseState.getLatestVersion() + 1;
             dataActions = rebaseState.getUpdatedDataActions();
             domainMetadatas = Optional.of(rebaseState.getUpdatedDomainMetadatas());
-            this.currentCrcInfo =
-                ChecksumReader.getCRCInfo(
-                    engine,
-                    logPath,
-                    rebaseState.getLatestVersion(),
-                    rebaseState.getLatestVersion());
+            currentCrcInfo = rebaseState.getUpdatedCrcInfo();
             // Action counters may be partially incremented from previous tries, reset the counters
             // to 0 and drop fileSizeHistogram
             // TODO: reconcile fileSizeHistogram.
