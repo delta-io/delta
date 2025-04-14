@@ -91,12 +91,12 @@ public class CRCInfo {
             batch.getColumnVector(getSchemaIndex(FILE_SIZE_HISTOGRAM)), rowId);
     ColumnVector domainMetadataVector = batch.getColumnVector(getSchemaIndex(DOMAIN_METADATA));
     Optional<Set<DomainMetadata>> domainMetadata =
-            domainMetadataVector.isNullAt(rowId)
-                    ? Optional.empty()
-                    : Optional.of(
-                    VectorUtils.toJavaList(domainMetadataVector.getArray(rowId)).stream()
-                            .map(row -> DomainMetadata.fromRow((StructRow) row))
-                            .collect(Collectors.toSet()));
+        domainMetadataVector.isNullAt(rowId)
+            ? Optional.empty()
+            : Optional.of(
+                VectorUtils.toJavaList(domainMetadataVector.getArray(rowId)).stream()
+                    .map(row -> DomainMetadata.fromRow((StructRow) row))
+                    .collect(Collectors.toSet()));
 
     //  protocol and metadata are nullable per fromColumnVector's implementation.
     if (protocol == null || metadata == null) {

@@ -87,7 +87,7 @@ public class TransactionImpl implements Transaction {
   private final Clock clock;
   private final Map<String, DomainMetadata> domainMetadatasAdded = new HashMap<>();
   private final Set<String> domainMetadatasRemoved = new HashSet<>();
-  private Optional<List<DomainMetadata>> domainMetadatas = Optional.empty();
+  private Optional<List<DomainMetadata>> domainMetadatasToCommit = Optional.empty();
   private Metadata metadata;
   private boolean shouldUpdateMetadata;
   private int maxRetries;
@@ -201,17 +201,17 @@ public class TransactionImpl implements Transaction {
    * @return A list of {@link DomainMetadata} containing domain metadata to be committed in this
    *     transaction.
    */
-  public List<DomainMetadata> getDomainMetadatas() {
+  public List<DomainMetadata> getDomainMetadatasToCommit() {
     // If we have already processed the domain metadatas, then return the list.
-    if (domainMetadatas.isPresent()) {
-      return domainMetadatas.get();
+    if (domainMetadatasToCommit.isPresent()) {
+      return domainMetadatasToCommit.get();
     }
     generateClusteringDomainMetadataIfNeeded();
     if (domainMetadatasAdded.isEmpty() && domainMetadatasRemoved.isEmpty()) {
       // If no domain metadatas are added or removed, return an empty list. This is to avoid
       // unnecessary loading of the domain metadatas from the snapshot (which is an expensive
       // operation).
-      domainMetadatas = Optional.of(Collections.emptyList());
+      domainMetadatasToCommit = Optional.of(Collections.emptyList());
       return Collections.emptyList();
     }
 
@@ -246,27 +246,37 @@ public class TransactionImpl implements Transaction {
             dataPath.toString(), domainName, readSnapshot.getVersion());
       }
     }
-    domainMetadatas = Optional.of(finalDomainMetadatas);
+    domainMetadatasToCommit = Optional.of(finalDomainMetadatas);
     return finalDomainMetadatas;
   }
 
   public Optional<Set<DomainMetadata>> getActiveDomainMetadatas() {
-    // For new tables, just include domainMetadatasAdded. Newly added domain metadata cannot be removed.
+    // For new tables, just include domainMetadatasAdded. Newly added domain metadata cannot be
+    // removed.
     // If row tracking is enabled
     if (isNewTable) {
-      return domainMetadatas.map(dms -> dms.stream().filter(dm -> !dm.isRemoved()).collect(Collectors.toSet()));
+      return Optional.of(
+          getDomainMetadatasToCommit().stream()
+              .filter(dm -> !dm.isRemoved())
+              .collect(Collectors.toSet()));
     }
-    // TODO: Load domain metadata from CRC in state construction, domainMetadatas
     return readSnapshot
-            .getCurrentCrcInfo()
-            .flatMap(CRCInfo::getDomainMetadata)
-            .map(oldDomainMetadata -> {
-              Map<String, DomainMetadata> domainMetadataMap = oldDomainMetadata.stream()
+        .getCurrentCrcInfo()
+        .flatMap(CRCInfo::getDomainMetadata)
+        .map(
+            oldDomainMetadata -> {
+              Map<String, DomainMetadata> domainMetadataMap =
+                  oldDomainMetadata.stream()
                       .collect(Collectors.toMap(DomainMetadata::getDomain, Function.identity()));
-              domainMetadataMap.putAll(domainMetadatasAdded);
-              domainMetadatasRemoved.forEach(domainMetadataMap::remove);
-
-
+              getDomainMetadatasToCommit()
+                  .forEach(
+                      domainMetadata -> {
+                        if (domainMetadata.isRemoved()) {
+                          domainMetadataMap.remove(domainMetadata.getDomain());
+                        } else {
+                          domainMetadataMap.put(domainMetadata.getDomain(), domainMetadata);
+                        }
+                      });
               return new HashSet<>(domainMetadataMap.values());
             });
   }
@@ -319,7 +329,7 @@ public class TransactionImpl implements Transaction {
       CommitInfo attemptCommitInfo = generateCommitAction(engine);
       updateMetadataWithICTIfRequired(
           engine, attemptCommitInfo.getInCommitTimestamp(), readSnapshot.getVersion());
-      List<DomainMetadata> resolvedDomainMetadatas = getDomainMetadatas();
+      List<DomainMetadata> resolvedDomainMetadatas = getDomainMetadatasToCommit();
 
       // If row tracking is supported, assign base row IDs and default row commit versions to any
       // AddFile actions that do not yet have them. If the row ID high watermark changes, emit a
@@ -332,7 +342,7 @@ public class TransactionImpl implements Transaction {
                 Optional.empty() /* winningTxnRowIdHighWatermark */,
                 dataActions,
                 resolvedDomainMetadatas);
-        domainMetadatas = Optional.of(updatedDomainMetadata);
+        domainMetadatasToCommit = Optional.of(updatedDomainMetadata);
         dataActions =
             RowTracking.assignBaseRowIdAndDefaultRowCommitVersion(
                 readSnapshot,
@@ -359,7 +369,7 @@ public class TransactionImpl implements Transaction {
                 resolveConflicts(engine, commitAsVersion, attemptCommitInfo, numTries, dataActions);
             commitAsVersion = rebaseState.getLatestVersion() + 1;
             dataActions = rebaseState.getUpdatedDataActions();
-            domainMetadatas = Optional.of(rebaseState.getUpdatedDomainMetadatas());
+            domainMetadatasToCommit = Optional.of(rebaseState.getUpdatedDomainMetadatas());
             currentCrcInfo = rebaseState.getUpdatedCrcInfo();
             // Action counters may be partially incremented from previous tries, reset the counters
             // to 0 and drop fileSizeHistogram
@@ -454,7 +464,7 @@ public class TransactionImpl implements Transaction {
     }
     setTxnOpt.ifPresent(setTxn -> metadataActions.add(createTxnSingleAction(setTxn.toRow())));
 
-    List<DomainMetadata> resolvedDomainMetadatas = getDomainMetadatas();
+    List<DomainMetadata> resolvedDomainMetadatas = getDomainMetadatasToCommit();
 
     // Check for duplicate domain metadata and if the protocol supports
     DomainMetadataUtils.validateDomainMetadatas(resolvedDomainMetadatas, protocol);
@@ -618,7 +628,7 @@ public class TransactionImpl implements Transaction {
               metricsResult.getTotalAddFilesSizeInBytes(),
               metricsResult.getNumAddFiles(),
               Optional.of(txnId.toString()),
-              Optional.empty(), // TODO: populate domain metadata
+              getActiveDomainMetadatas(),
               metricsResult
                   .getTableFileSizeHistogram()
                   .map(FileSizeHistogram::fromFileSizeHistogramResult)));
@@ -640,7 +650,7 @@ public class TransactionImpl implements Transaction {
                         + metricsResult.getNumAddFiles()
                         - metricsResult.getNumRemoveFiles(),
                     Optional.of(txnId.toString()),
-                    Optional.empty(), // TODO: populate domain metadata
+                    getActiveDomainMetadatas(),
                     metricsResult
                         .getTableFileSizeHistogram()
                         .map(FileSizeHistogram::fromFileSizeHistogramResult)));
