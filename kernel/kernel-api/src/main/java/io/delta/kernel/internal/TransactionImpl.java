@@ -339,6 +339,12 @@ public class TransactionImpl implements Transaction {
             commitAsVersion = rebaseState.getLatestVersion() + 1;
             dataActions = rebaseState.getUpdatedDataActions();
             domainMetadatas = Optional.of(rebaseState.getUpdatedDomainMetadatas());
+            this.currentCrcInfo =
+                ChecksumReader.getCRCInfo(
+                    engine,
+                    logPath,
+                    rebaseState.getLatestVersion(),
+                    rebaseState.getLatestVersion());
             // Action counters may be partially incremented from previous tries, reset the counters
             // to 0 and drop fileSizeHistogram
             // TODO: reconcile fileSizeHistogram.
@@ -369,10 +375,7 @@ public class TransactionImpl implements Transaction {
         maxRetries);
     TransactionRebaseState rebaseState =
         ConflictChecker.resolveConflicts(engine, readSnapshot, commitAsVersion, this, dataActions);
-    long rebasedVersion = rebaseState.getLatestVersion();
-    this.currentCrcInfo =
-        ChecksumReader.getCRCInfo(engine, logPath, rebasedVersion, rebasedVersion);
-    long newCommitAsVersion = rebasedVersion + 1;
+    long newCommitAsVersion = rebaseState.getLatestVersion() + 1;
     checkArgument(
         commitAsVersion < newCommitAsVersion,
         "New commit version %d should be greater than the previous commit attempt version %d.",
