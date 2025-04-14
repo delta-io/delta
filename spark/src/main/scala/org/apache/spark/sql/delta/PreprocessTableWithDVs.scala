@@ -20,10 +20,10 @@ import org.apache.spark.sql.delta.DeltaParquetFileFormat._
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils.deletionVectorsReadable
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.PreparedDeltaFileIndex
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, EqualTo, Literal}
-import org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral
 import org.apache.spark.sql.catalyst.plans.logical.{Filter, LogicalPlan, Project}
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation, LogicalRelationWithTable}
 import org.apache.spark.sql.execution.datasources.FileFormat.METADATA_NAME
@@ -86,9 +86,15 @@ object ScanWithDeletionVectors {
     // 3. Unnecessary pinned snapshot requirements break legitimate use cases like transaction
     //    read tracking with TahoeLogFileIndex (e.g., OptimisticTransaction.withNewTransaction)
     // 4. Performance: Avoids forcing expensive pinned snapshots when not needed
-    val filesWithDVs = index
-      .matchingFiles(partitionFilters = Seq(TrueLiteral), dataFilters = Seq(TrueLiteral))
-      .filter(_.deletionVector != null)
+    val filesWithDVs = index match {
+      // Reuse the files of an already prepared scan instead of listing the table again.
+      case p: PreparedDeltaFileIndex =>
+        p.preparedScan.files.distinct.filter(_.deletionVector != null)
+      case _ =>
+        index
+          .matchingFiles(partitionFilters = Nil, dataFilters = Nil)
+          .filter(_.deletionVector != null)
+    }
     if (filesWithDVs.isEmpty) return None
 
     // At this point, we know there are actual files with DVs, so we need a pinned snapshot.
