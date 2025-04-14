@@ -250,9 +250,11 @@ public class TransactionImpl implements Transaction {
 
   public Optional<Set<DomainMetadata>> getActiveDomainMetadatas() {
     // For new tables, just include domainMetadatasAdded. Newly added domain metadata cannot be removed.
+    // If row tracking is enabled
     if (isNewTable) {
-      return Optional.of(new HashSet<>(domainMetadatasAdded.values()));
+      return domainMetadatas.map(dms -> dms.stream().filter(dm -> !dm.isRemoved()).collect(Collectors.toSet()));
     }
+    // TODO: Load domain metadata from CRC in state construction, domainMetadatas
     return readSnapshot
             .getCurrentCrcInfo()
             .flatMap(CRCInfo::getDomainMetadata)
@@ -261,6 +263,8 @@ public class TransactionImpl implements Transaction {
                       .collect(Collectors.toMap(DomainMetadata::getDomain, Function.identity()));
               domainMetadataMap.putAll(domainMetadatasAdded);
               domainMetadatasRemoved.forEach(domainMetadataMap::remove);
+
+
               return new HashSet<>(domainMetadataMap.values());
             });
   }
