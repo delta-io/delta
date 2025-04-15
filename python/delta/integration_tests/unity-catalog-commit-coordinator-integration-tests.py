@@ -71,8 +71,6 @@ spark = SparkSession \
 
 MANAGED_CC_TABLE_FULL_PATH = f"{CATALOG_NAME}.{SCHEMA}.{MANAGED_CC_TABLE}"
 MANAGED_NON_CC_TABLE_FULL_PATH = f"{CATALOG_NAME}.{SCHEMA}.{MANAGED_NON_CC_TABLE}"
-S3_FORBIDDEN_ACCESS_ERROR = ("Forbidden (Service: Amazon S3; Status Code: 403; "
-                             "Error Code: 403 Forbidden;")
 
 
 class UnityCatalogCommitCoordinatorTestSuite(unittest.TestCase):
