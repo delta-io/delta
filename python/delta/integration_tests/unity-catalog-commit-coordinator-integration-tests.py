@@ -81,24 +81,24 @@ class UnityCatalogCommitCoordinatorTestSuite(unittest.TestCase):
         self.setup_df.write.mode("overwrite").insertInto(MANAGED_CC_TABLE_FULL_PATH)
 
     # Helper methods
-    def read(self, table_name) -> DataFrame:
+    def read(self, table_name: str) -> DataFrame:
         return spark.read.table(table_name)
 
-    def read_with_timestamp(self, timestamp, table_name) -> DataFrame:
+    def read_with_timestamp(self, timestamp: str, table_name: str) -> DataFrame:
         return spark.read.option("timestampAsOf", timestamp).table(table_name)
 
-    def read_with_cdf_timestamp(self, timestamp, table_name) -> DataFrame:
+    def read_with_cdf_timestamp(self, timestamp: str, table_name: str) -> DataFrame:
         return spark.read.option('readChangeFeed', 'true').option(
             "startingTimestamp", timestamp).table(table_name)
 
-    def create_df_with_rows(self, list_of_rows) -> DataFrame:
+    def create_df_with_rows(self, list_of_rows: list) -> DataFrame:
         return spark.createDataFrame(list_of_rows,
                                      schema=StructType([StructField("id", IntegerType(), True)]))
 
-    def get_table_history(self, table_name) -> DataFrame:
+    def get_table_history(self, table_name: str) -> DataFrame:
         return spark.sql(f"DESCRIBE HISTORY {table_name};")
 
-    def append(self, table_name) -> None:
+    def append(self, table_name: str) -> None:
         single_col_df = spark.createDataFrame(
             [(4, ),  (5, )], schema=StructType([StructField("id", IntegerType(), True)]))
         single_col_df.writeTo(table_name).append()
