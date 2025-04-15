@@ -90,12 +90,11 @@ public class LogCompactionWriter {
         dataPath,
         System.currentTimeMillis() - startTimeMillis);
 
-    if (deltas.isEmpty()) {
-      logger.warn(
-          "Asked to do a log compaction between {} and {}, but there are no files to compact",
-          startVersion,
-          endVersion);
-      return;
+    if (deltas.size() != (endVersion - startVersion + 1)) {
+      throw new IllegalArgumentException(
+          String.format(
+              "Asked to compact between versions %d and %d, but found %d delta files",
+              startVersion, endVersion, deltas.size()));
     }
 
     final long lastCommitTimestamp = getLast(deltas).getModificationTime();

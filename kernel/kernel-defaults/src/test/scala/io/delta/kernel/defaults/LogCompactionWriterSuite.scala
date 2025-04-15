@@ -240,6 +240,20 @@ class LogCompactionWriterSuite extends CheckpointSuiteBase {
     }
   }
 
+  test(s"Error if not enough commits") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      addData(tablePath, alternateBetweenAddsAndRemoves = false, numberIter = 2)
+      val dataPath = new Path(s"file:${tablePath}")
+      val logPath = new Path(s"file:${tablePath}", "_delta_log")
+      val hook = new LogCompactionHook(dataPath, logPath, 0, 5, 0)
+      val ex = intercept[IllegalArgumentException] {
+        hook.threadSafeInvoke(engine)
+      }
+      assert(ex.getMessage.contains(
+        "Asked to compact between versions 0 and 5, but found 2 delta files"))
+    }
+  }
+
   test("Hook is generated correctly and when expected") {
     withTempDirAndEngine { (tablePath, engine) =>
       val clock = new ManualClock(0)
