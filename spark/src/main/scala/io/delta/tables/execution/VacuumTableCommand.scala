@@ -22,6 +22,7 @@ import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, UnaryNode}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.UnresolvedTable
 import org.apache.spark.sql.catalyst.analysis.UnresolvedTableImplicits._
+import org.apache.spark.sql.catalyst.catalog.CatalogTableType
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaTableIdentifier, DeltaTableUtils, UnresolvedDeltaPathOrIdentifier}
 import org.apache.spark.sql.delta.commands.DeltaCommand
