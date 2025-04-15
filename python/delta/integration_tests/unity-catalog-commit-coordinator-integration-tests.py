@@ -95,10 +95,10 @@ class UnityCatalogCommitCoordinatorTestSuite(unittest.TestCase):
         return spark.createDataFrame(list_of_rows,
                                      schema=StructType([StructField("id", IntegerType(), True)]))
 
-    def get_table_history(self, table_name):
+    def get_table_history(self, table_name) -> DataFrame:
         return spark.sql(f"DESCRIBE HISTORY {table_name};")
 
-    def append(self, table_name):
+    def append(self, table_name) -> None:
         single_col_df = spark.createDataFrame(
             [(4, ),  (5, )], schema=StructType([StructField("id", IntegerType(), True)]))
         single_col_df.writeTo(table_name).append()
@@ -123,7 +123,7 @@ class UnityCatalogCommitCoordinatorTestSuite(unittest.TestCase):
                              self.create_df_with_rows([(1, ), (2, ), (3, ), (4, ), (5, )]))
 
     # Utility Functions #
-    def test_optimize(self):
+    def test_optimize(self) -> None:
         spark.sql(f"OPTIMIZE {MANAGED_CC_TABLE_FULL_PATH}")
         updated_tbl = self.read(MANAGED_CC_TABLE_FULL_PATH).toDF("id")
         assertDataFrameEqual(updated_tbl, self.create_df_with_rows([(1, ), (2, ), (3, )]))
@@ -131,20 +131,20 @@ class UnityCatalogCommitCoordinatorTestSuite(unittest.TestCase):
         # Check that the last operation was optimize
         assert(tbl_history[0].operation == "OPTIMIZE")
 
-    def test_history(self):
+    def test_history(self) -> None:
         tbl_history = self.get_table_history(MANAGED_CC_TABLE_FULL_PATH).collect()
         last_row = tbl_history[0]
         # Check the last operation which is test setup (overwrite table with 3 new rows)
         assert(last_row.operation == "WRITE")
         assert(last_row.operationMetrics['numOutputRows'] == '3')
 
-    def test_time_travel_read(self):
+    def test_time_travel_read(self) -> None:
         current_timestamp = str(datetime.datetime.now())
         self.append(MANAGED_CC_TABLE_FULL_PATH)
         updated_tbl = self.read_with_timestamp(current_timestamp, MANAGED_CC_TABLE_FULL_PATH)
         assertDataFrameEqual(updated_tbl, self.setup_df)
 
-    def test_restore(self):
+    def test_restore(self) -> None:
         current_timestamp = str(datetime.datetime.now())
         self.append(MANAGED_CC_TABLE_FULL_PATH)
         spark.sql(f"RESTORE TABLE {MANAGED_CC_TABLE_FULL_PATH} "
@@ -152,7 +152,7 @@ class UnityCatalogCommitCoordinatorTestSuite(unittest.TestCase):
         updated_tbl = self.read(MANAGED_CC_TABLE_FULL_PATH).toDF("id")
         assertDataFrameEqual(updated_tbl, self.setup_df)
 
-    def test_change_data_feed(self):
+    def test_change_data_feed(self) -> None:
         current_timestamp = str(datetime.datetime.now())
         self.append(MANAGED_CC_TABLE_FULL_PATH)
         updated_tbl = self.read_with_cdf_timestamp(
@@ -160,34 +160,34 @@ class UnityCatalogCommitCoordinatorTestSuite(unittest.TestCase):
         assertDataFrameEqual(updated_tbl.select("id"), self.create_df_with_rows([(4, ), (5, )]))
 
     # Dataframe Writer V1 Tests #
-    def test_insert_into_append(self):
+    def test_insert_into_append(self) -> None:
         single_col_df = spark.createDataFrame([(4, ), (5, )], schema=["id"])
         single_col_df.write.mode("append").insertInto(MANAGED_CC_TABLE_FULL_PATH)
         updated_tbl = self.read(MANAGED_CC_TABLE_FULL_PATH).toDF("id")
         assertDataFrameEqual(updated_tbl,
                              self.create_df_with_rows([(1, ), (2, ), (3, ), (4, ), (5, )]))
 
-    def test_insert_into_overwrite(self):
+    def test_insert_into_overwrite(self) -> None:
         single_col_df = spark.createDataFrame([(5, )], schema=["id"])
         single_col_df.write.mode("overwrite").insertInto(MANAGED_CC_TABLE_FULL_PATH, True)
         updated_tbl = self.read(MANAGED_CC_TABLE_FULL_PATH).toDF("id")
         assertDataFrameEqual(updated_tbl, self.create_df_with_rows([(5, )]))
 
-    def test_insert_into_overwrite_replace_where(self):
+    def test_insert_into_overwrite_replace_where(self) -> None:
         single_col_df = spark.createDataFrame([(5, )], schema=["id"])
         single_col_df.write.mode("overwrite").option("replaceWhere", "id > 1").insertInto(
             f"{MANAGED_CC_TABLE_FULL_PATH}", True)
         updated_tbl = self.read(MANAGED_CC_TABLE_FULL_PATH).toDF("id")
         assertDataFrameEqual(updated_tbl, self.create_df_with_rows([(1, ), (5, )]))
 
-    def test_insert_into_overwrite_partition_overwrite(self):
+    def test_insert_into_overwrite_partition_overwrite(self) -> None:
         single_col_df = spark.createDataFrame([(5,)], schema=["id"])
         single_col_df.write.mode("overwrite").option(
             "partitionOverwriteMode", "dynamic").insertInto(MANAGED_CC_TABLE_FULL_PATH, True)
         updated_tbl = self.read(MANAGED_CC_TABLE_FULL_PATH).toDF("id")
         assertDataFrameEqual(updated_tbl, self.create_df_with_rows([(5,)]))
 
-    def test_save_as_table_append_existing_table(self):
+    def test_save_as_table_append_existing_table(self) -> None:
         single_col_df = spark.createDataFrame(
             [(4, ), (5, )], schema=StructType([StructField("id", IntegerType(), True)]))
         single_col_df.write.format("delta").mode("append").saveAsTable(MANAGED_CC_TABLE_FULL_PATH)
@@ -196,7 +196,7 @@ class UnityCatalogCommitCoordinatorTestSuite(unittest.TestCase):
                              self.create_df_with_rows([(1, ), (2, ), (3, ), (4, ), (5, )]))
 
     # Setting mode to append should work, however cc tables do not allow path based access.
-    def test_save_append_using_path(self):
+    def test_save_append_using_path(self) -> None:
         single_col_df = spark.createDataFrame([(4, ), (5, )])
         # Fetch managed table path and attempt to side-step UC
         # and directly update table using path based access.
@@ -211,20 +211,20 @@ class UnityCatalogCommitCoordinatorTestSuite(unittest.TestCase):
         assertDataFrameEqual(updated_tbl, self.setup_df)
 
     # DataFrame V2 Tests #
-    def test_append(self):
+    def test_append(self) -> None:
         self.append(MANAGED_CC_TABLE_FULL_PATH)
         updated_tbl = self.read(MANAGED_CC_TABLE_FULL_PATH).toDF("id")
         assertDataFrameEqual(updated_tbl,
                              self.create_df_with_rows([(1, ), (2, ), (3, ), (4, ), (5, )]))
 
-    def test_overwrite(self):
+    def test_overwrite(self) -> None:
         single_col_df = spark.createDataFrame(
             [(5,)], schema=StructType([StructField("id", IntegerType(), True)]))
         single_col_df.writeTo(MANAGED_CC_TABLE_FULL_PATH).overwrite(lit(True))
         updated_tbl = self.read(MANAGED_CC_TABLE_FULL_PATH).toDF("id")
         assertDataFrameEqual(updated_tbl, self.create_df_with_rows([(5,)]))
 
-    def test_overwrite_partitions(self):
+    def test_overwrite_partitions(self) -> None:
         single_col_df = spark.createDataFrame(
             [(5,)], schema=StructType([StructField("id", IntegerType(), True)]))
         single_col_df.writeTo(MANAGED_CC_TABLE_FULL_PATH).overwritePartitions()
@@ -232,7 +232,7 @@ class UnityCatalogCommitCoordinatorTestSuite(unittest.TestCase):
         assertDataFrameEqual(updated_tbl, self.create_df_with_rows([(5,)]))
 
     # CREATE TABLE is currently not supported by UC.
-    def test_create(self):
+    def test_create(self) -> None:
         single_col_df = spark.createDataFrame(
             [(5,)], schema=StructType([StructField("id", IntegerType(), True)]))
         try:
@@ -240,22 +240,22 @@ class UnityCatalogCommitCoordinatorTestSuite(unittest.TestCase):
         except py4j.protocol.Py4JJavaError as error:
             assert("io.unitycatalog.spark.UCProxy.createTable" in str(error))
 
-    def test_write_to_managed_table_without_cc(self):
+    def test_write_to_managed_table_without_cc(self) -> None:
         try:
             self.append(MANAGED_NON_CC_TABLE_FULL_PATH)
         except py4j.protocol.Py4JJavaError as error:
             assert("[TASK_WRITE_FAILED] Task failed while writing rows to s3" in str(error))
 
-    def test_read_from_managed_table_without_cc(self):
+    def test_read_from_managed_table_without_cc(self) -> None:
         self.read(MANAGED_NON_CC_TABLE_FULL_PATH)
 
-    def test_write_to_managed_cc_table(self):
+    def test_write_to_managed_cc_table(self) -> None:
         self.append(MANAGED_CC_TABLE_FULL_PATH)
         updated_tbl = self.read(MANAGED_CC_TABLE_FULL_PATH).toDF("id")
         assertDataFrameEqual(updated_tbl,
                              self.create_df_with_rows([(1, ), (2, ), (3, ), (4, ), (5, )]))
 
-    def test_read_from_managed_cc_table(self):
+    def test_read_from_managed_cc_table(self) -> None:
         self.read(MANAGED_CC_TABLE_FULL_PATH)
         updated_tbl = self.read(MANAGED_CC_TABLE_FULL_PATH).toDF("id")
         assertDataFrameEqual(updated_tbl, self.setup_df)
