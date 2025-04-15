@@ -3707,6 +3707,12 @@ trait DeltaErrorsBase
     case s: StructType => s.treeString
     case other => other.simpleString
   }
+
+  def deltaCannotVacuumManagedTable(): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_UNSUPPORTED_VACUUM_ON_MANAGED_TABLE",
+      messageParameters = Array.empty)
+  }
 }
 
 object DeltaErrors extends DeltaErrorsBase
