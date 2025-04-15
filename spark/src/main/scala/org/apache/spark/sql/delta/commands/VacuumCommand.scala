@@ -245,6 +245,9 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       val snapshot = table.update()
       deltaLog.protocolWrite(snapshot.protocol)
 
+      // Vacuum can break clones by removing files that clones still references for managed tables
+      // eventually the catalog should track this dependency to avoid breaking clones
+      // but for now we block running vacuum on catalog owned managed tables.
       if (table.catalogTable.exists(_.tableType == CatalogTableType.MANAGED)
         && snapshot.isCatalogOwned) {
         throw DeltaErrors.deltaCannotVacuumManagedTable()
