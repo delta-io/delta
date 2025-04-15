@@ -207,7 +207,8 @@ class UnityCatalogCommitCoordinatorTestSuite(unittest.TestCase):
         try:
             single_col_df.write.format("delta").save(mode="append", path=tbl_path)
         except Exception as error:
-            assert(S3_FORBIDDEN_ACCESS_ERROR in str(error))
+            assert("Forbidden (Service: Amazon S3; Status Code: 403; "
+                   "Error Code: 403 Forbidden;" in str(error))
         updated_tbl = self.read(MANAGED_CC_TABLE_FULL_PATH).toDF("id")
         assertDataFrameEqual(updated_tbl, self.setup_df)
 
