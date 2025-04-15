@@ -38,7 +38,7 @@ import org.apache.spark.sql.delta.test.DeltaTestImplicits.OptimisticTxnTestHelpe
 
 import org.apache.hadoop.fs.Path
 
-class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
+class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase with CrcTestUtils {
 
   private def assertDomainMetadata(
       snapshot: SnapshotImpl,
@@ -63,24 +63,7 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
     // Get the latest snapshot of the table
     val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
     assertDomainMetadata(snapshot, expectedValue)
-    assertDomainMetadataInCrc(table, engine, expectedValue)
-  }
-
-  private def assertDomainMetadataInCrc(
-      table: Table,
-      engine: Engine,
-      expectedValue: Map[String, DomainMetadata]): Unit = {
-    val latestSnapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-    val crcInfo = ChecksumReader.getCRCInfo(
-      engine,
-      latestSnapshot.getLogPath,
-      latestSnapshot.getVersion,
-      latestSnapshot.getVersion)
-    assert(crcInfo.isPresent)
-    assert(crcInfo.get().getDomainMetadata.isPresent)
-    assert(crcInfo.get().getDomainMetadata.get().asScala
-      .map(metadata => metadata.getDomain -> metadata)
-      .toMap === expectedValue.filter { case (_, value) => !value.isRemoved })
+    verifyChecksumValid(table.getPath(engine))
   }
 
   private def createTxnWithDomainMetadatas(
@@ -199,11 +182,7 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
       txn: Transaction,
       engine: Engine,
       dataActions: CloseableIterable[Row]): TransactionCommitResult = {
-    val result = txn.commit(engine, dataActions)
-    result.getPostCommitHooks
-      .stream()
-      .forEach(hook => hook.threadSafeInvoke(engine))
-    result
+    withCrcSimpleExecuted(txn.commit(engine, dataActions), engine)
   }
 
   test("create table w/o domain metadata") {

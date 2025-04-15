@@ -18,8 +18,10 @@ package io.delta.kernel.defaults
 import scala.collection.JavaConverters._
 import scala.collection.immutable.Seq
 
+import io.delta.kernel.{Table, Transaction, TransactionCommitResult}
 import io.delta.kernel.Operation.{CREATE_TABLE, WRITE}
-import io.delta.kernel.Table
+import io.delta.kernel.data.Row
+import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.{KernelException, TableAlreadyExistsException}
 import io.delta.kernel.expressions.{Column, Literal}
 import io.delta.kernel.expressions.Literal.ofInt
@@ -29,6 +31,7 @@ import io.delta.kernel.internal.clustering.ClusteringMetadataDomain
 import io.delta.kernel.internal.util.ColumnMapping
 import io.delta.kernel.types.{MapType, StructType}
 import io.delta.kernel.types.IntegerType.INTEGER
+import io.delta.kernel.utils.CloseableIterable
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
 
 import org.apache.spark.sql.delta.DeltaLog
@@ -36,7 +39,7 @@ import org.apache.spark.sql.delta.clustering.{ClusteringMetadataDomain => SparkC
 
 import org.apache.hadoop.fs.Path
 
-class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
+class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase with CrcTestUtils {
 
   private val testingDomainMetadata = new DomainMetadata(
     "delta.clustering",
@@ -48,6 +51,14 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
       expectedDomainMetadata: DomainMetadata = testingDomainMetadata): Unit = {
     assert(snapshot.getDomainMetadataMap.get(ClusteringMetadataDomain.DOMAIN_NAME)
       == expectedDomainMetadata)
+    verifyChecksumValid(snapshot.getDataPath.toString)
+  }
+
+  override def commitTransaction(
+      txn: Transaction,
+      engine: Engine,
+      dataActions: CloseableIterable[Row]): TransactionCommitResult = {
+    withCrcSimpleExecuted(txn.commit(engine, dataActions), engine)
   }
 
   test("build table txn: clustering column should be part of the schema") {
