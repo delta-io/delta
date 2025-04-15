@@ -51,6 +51,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase with CrcTestUti
       expectedDomainMetadata: DomainMetadata = testingDomainMetadata): Unit = {
     assert(snapshot.getDomainMetadataMap.get(ClusteringMetadataDomain.DOMAIN_NAME)
       == expectedDomainMetadata)
+    // verifyChecksumValid will check the domain metadata in CRC against the latest snapshot.
     verifyChecksumValid(snapshot.getDataPath.toString)
   }
 
