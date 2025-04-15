@@ -201,6 +201,9 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       manuallyEnabledFeatures.add(TableFeatures.CLUSTERING_W_FEATURE);
     }
 
+    // This will remove feature properties (i.e. metadata properties in the form of
+    // "delta.feature.*") from metadata. There should be one TableFeature in the returned set for
+    // each property removed.
     Tuple2<Set<TableFeature>, Optional<Metadata>> newFeaturesAndMetadata =
         TableFeatures.extractFeaturePropertyOverrides(newMetadata.orElse(snapshotMetadata));
     manuallyEnabledFeatures.addAll(newFeaturesAndMetadata._1);

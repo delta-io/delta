@@ -1309,6 +1309,17 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_TYPE_WIDENING_ENABLE_STREAMING_SCHEMA_TRACKING =
+    buildConf("typeWidening.enableStreamingSchemaTracking")
+      .doc("Whether to enable schema tracking when streaming from a Delta source that had a " +
+        "widening type change applied. This allows blocking the stream on restart until the user " +
+        "acknowledges the type change. When disabled, we will not initialize a schema tracking " +
+        "log when first detecting a type change and will automatically accept the type change " +
+        "instead.")
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_TYPE_WIDENING_BYPASS_STREAMING_TYPE_CHANGE_CHECK =
     buildConf("typeWidening.bypassStreamingTypeChangeCheck")
       .doc("Controls the check performed when a type change is detected when streaming from a " +
@@ -2495,6 +2506,13 @@ trait DeltaSQLConfBase {
       .internal()
       .booleanConf
       .createWithDefault(true)
+
+  val DELTA_SHARING_FORCE_DELTA_FORMAT =
+    buildConf("spark.sql.delta.sharing.forceDeltaFormat")
+      .doc("Force queries to use delta format when no responseFormat is specified.")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
 
   ///////////////////
   // IDENTITY COLUMN

@@ -1088,10 +1088,19 @@ trait DeltaErrorsBase
   }
 
   def deltaVersionsNotContiguousException(
-      spark: SparkSession, deltaVersions: Seq[Long]): Throwable = {
+      spark: SparkSession,
+      deltaVersions: Seq[Long],
+      startVersion: Long,
+      endVersion: Long,
+      versionToLoad: Long): Throwable = {
     new DeltaIllegalStateException(
       errorClass = "DELTA_VERSIONS_NOT_CONTIGUOUS",
-      messageParameters = Array(deltaVersions.mkString(", "))
+      messageParameters = Array(
+        deltaVersions.mkString(", "),
+        startVersion.toString,
+        endVersion.toString,
+        versionToLoad.toString
+      )
     )
   }
 
@@ -3697,6 +3706,12 @@ trait DeltaErrorsBase
   private def dataTypeToString(dt: DataType): String = dt match {
     case s: StructType => s.treeString
     case other => other.simpleString
+  }
+
+  def deltaCannotVacuumManagedTable(): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_UNSUPPORTED_VACUUM_ON_MANAGED_TABLE",
+      messageParameters = Array.empty)
   }
 }
 

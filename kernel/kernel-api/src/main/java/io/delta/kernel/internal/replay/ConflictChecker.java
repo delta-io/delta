@@ -33,6 +33,8 @@ import io.delta.kernel.internal.*;
 import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.actions.SetTransaction;
+import io.delta.kernel.internal.checksum.CRCInfo;
+import io.delta.kernel.internal.checksum.ChecksumReader;
 import io.delta.kernel.internal.rowtracking.RowTracking;
 import io.delta.kernel.internal.rowtracking.RowTrackingMetadataDomain;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
@@ -163,13 +165,18 @@ public class ConflictChecker {
               attemptDataActions);
     }
 
+    Optional<CRCInfo> updatedCrcInfo =
+        ChecksumReader.getCRCInfo(
+            engine, snapshot.getLogPath(), lastWinningVersion, lastWinningVersion);
+
     // if we get here, we have successfully rebased (i.e no logical conflicts)
     // against the winning transactions
     return new TransactionRebaseState(
         lastWinningVersion,
         getLastCommitTimestamp(lastWinningVersion, lastWinningTxn, winningCommitInfoOpt.get()),
         updatedDataActions,
-        updatedDomainMetadatas);
+        updatedDomainMetadatas,
+        updatedCrcInfo);
   }
 
   /**
@@ -187,16 +194,19 @@ public class ConflictChecker {
     private final long latestCommitTimestamp;
     private final CloseableIterable<Row> updatedDataActions;
     private final List<DomainMetadata> updatedDomainMetadatas;
+    private final Optional<CRCInfo> updatedCrcInfo;
 
     public TransactionRebaseState(
         long latestVersion,
         long latestCommitTimestamp,
         CloseableIterable<Row> updatedDataActions,
-        List<DomainMetadata> updatedDomainMetadatas) {
+        List<DomainMetadata> updatedDomainMetadatas,
+        Optional<CRCInfo> updatedCrcInfo) {
       this.latestVersion = latestVersion;
       this.latestCommitTimestamp = latestCommitTimestamp;
       this.updatedDataActions = updatedDataActions;
       this.updatedDomainMetadatas = updatedDomainMetadatas;
+      this.updatedCrcInfo = updatedCrcInfo;
     }
 
     /**
@@ -225,6 +235,10 @@ public class ConflictChecker {
 
     public List<DomainMetadata> getUpdatedDomainMetadatas() {
       return updatedDomainMetadatas;
+    }
+
+    public Optional<CRCInfo> getUpdatedCrcInfo() {
+      return updatedCrcInfo;
     }
   }
 

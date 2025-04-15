@@ -47,6 +47,7 @@ import io.delta.kernel.internal.metrics.TransactionReportImpl;
 import io.delta.kernel.internal.replay.ConflictChecker;
 import io.delta.kernel.internal.replay.ConflictChecker.TransactionRebaseState;
 import io.delta.kernel.internal.rowtracking.RowTracking;
+import io.delta.kernel.internal.stats.FileSizeHistogram;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.*;
 import io.delta.kernel.internal.util.Clock;
@@ -92,6 +93,7 @@ public class TransactionImpl implements Transaction {
   private boolean shouldUpdateMetadata;
   private int maxRetries;
   private int logCompactionInterval;
+  private Optional<CRCInfo> currentCrcInfo;
 
   private boolean closed; // To avoid trying to commit the same transaction again.
 
@@ -126,6 +128,7 @@ public class TransactionImpl implements Transaction {
     this.maxRetries = maxRetries;
     this.logCompactionInterval = logCompactionInterval;
     this.clock = clock;
+    this.currentCrcInfo = readSnapshot.getCurrentCrcInfo();
   }
 
   @Override
@@ -259,7 +262,13 @@ public class TransactionImpl implements Transaction {
   public TransactionCommitResult commit(Engine engine, CloseableIterable<Row> dataActions)
       throws ConcurrentWriteException {
     checkState(!closed, "Transaction is already attempted to commit. Create a new transaction.");
-    TransactionMetrics transactionMetrics = new TransactionMetrics();
+    // For a new table or when fileSizeHistogram is available in the CRC of the readSnapshot
+    // we update it in the commit. When it is not available we do nothing.
+    TransactionMetrics transactionMetrics =
+        isNewTable
+            ? TransactionMetrics.forNewTable()
+            : TransactionMetrics.withExistingTableFileSizeHistogram(
+                readSnapshot.getCurrentCrcInfo().flatMap(CRCInfo::getFileSizeHistogram));
     try {
       long committedVersion =
           transactionMetrics.totalCommitTimer.time(
@@ -334,6 +343,11 @@ public class TransactionImpl implements Transaction {
             commitAsVersion = rebaseState.getLatestVersion() + 1;
             dataActions = rebaseState.getUpdatedDataActions();
             domainMetadatas = Optional.of(rebaseState.getUpdatedDomainMetadatas());
+            currentCrcInfo = rebaseState.getUpdatedCrcInfo();
+            // Action counters may be partially incremented from previous tries, reset the counters
+            // to 0 and drop fileSizeHistogram
+            // TODO: reconcile fileSizeHistogram.
+            transactionMetrics.resetActionMetricsForRetry();
           }
         }
         numTries++;
@@ -447,8 +461,6 @@ public class TransactionImpl implements Transaction {
         }
       }
 
-      // Action counters may be partially incremented from previous tries, reset the counters to 0
-      transactionMetrics.resetActionCounters();
       boolean isAppendOnlyTable = APPEND_ONLY_ENABLED.fromMetadata(metadata);
 
       // Write the staged data to a delta file
@@ -460,15 +472,8 @@ public class TransactionImpl implements Transaction {
                     FileNames.deltaFile(logPath, commitAsVersion),
                     dataAndMetadataActions.map(
                         action -> {
-                          transactionMetrics.totalActionsCounter.increment();
-                          if (!action.isNullAt(ADD_FILE_ORDINAL)) {
-                            transactionMetrics.addFilesCounter.increment();
-                            transactionMetrics.addFilesSizeInBytesCounter.increment(
-                                new AddFile(action.getStruct(ADD_FILE_ORDINAL)).getSize());
-                          } else if (!action.isNullAt(REMOVE_FILE_ORDINAL)) {
-                            transactionMetrics.removeFilesCounter.increment();
-                            // TODO add removeFileSizeInBytes and increment
-                            // TODO update fileSizeHistogram
+                          incrementMetricsForFileActionRow(transactionMetrics, action);
+                          if (!action.isNullAt(REMOVE_FILE_ORDINAL)) {
                             RemoveFile removeFile =
                                 new RemoveFile(action.getStruct(REMOVE_FILE_ORDINAL));
                             if (isAppendOnlyTable && removeFile.getDataChange()) {
@@ -488,6 +493,18 @@ public class TransactionImpl implements Transaction {
       throw e;
     } catch (IOException ioe) {
       throw new UncheckedIOException(ioe);
+    }
+  }
+
+  private void incrementMetricsForFileActionRow(TransactionMetrics txnMetrics, Row fileActionRow) {
+    txnMetrics.totalActionsCounter.increment();
+    if (!fileActionRow.isNullAt(ADD_FILE_ORDINAL)) {
+      txnMetrics.updateForAddFile(new AddFile(fileActionRow.getStruct(ADD_FILE_ORDINAL)).getSize());
+    } else if (!fileActionRow.isNullAt(REMOVE_FILE_ORDINAL)) {
+      RemoveFile removeFile = new RemoveFile(fileActionRow.getStruct(REMOVE_FILE_ORDINAL));
+      long removeFileSize =
+          removeFile.getSize().orElseThrow(DeltaErrorsInternal::missingRemoveFileSizeDuringCommit);
+      txnMetrics.updateForRemoveFile(removeFileSize);
     }
   }
 
@@ -585,6 +602,8 @@ public class TransactionImpl implements Transaction {
   private Optional<CRCInfo> buildPostCommitCrcInfoIfCurrentCrcAvailable(
       long commitAtVersion, TransactionMetricsResult metricsResult) {
     if (isNewTable) {
+      // We don't need to worry about conflicting transaction here since new tables always commit
+      // metadata (and thus fail any conflicts)
       return Optional.of(
           new CRCInfo(
               commitAtVersion,
@@ -592,24 +611,33 @@ public class TransactionImpl implements Transaction {
               protocol,
               metricsResult.getTotalAddFilesSizeInBytes(),
               metricsResult.getNumAddFiles(),
-              Optional.of(txnId.toString())));
+              Optional.of(txnId.toString()),
+              Optional.empty(), // TODO: populate domain metadata
+              metricsResult
+                  .getTableFileSizeHistogram()
+                  .map(FileSizeHistogram::fromFileSizeHistogramResult)));
     }
 
-    return readSnapshot
-        .getCurrentCrcInfo()
-        // in the case of a conflicting txn and successful retry the readSnapshot may not be
-        // commitVersion - 1
-        .filter(lastCrcInfo -> commitAtVersion == lastCrcInfo.getVersion() + 1)
+    return currentCrcInfo
+        // Ensure current currentCrcInfo is exactly commitAtVersion - 1
+        .filter(crcInfo -> commitAtVersion == crcInfo.getVersion() + 1)
         .map(
             lastCrcInfo ->
                 new CRCInfo(
                     commitAtVersion,
                     metadata,
                     protocol,
-                    // TODO: handle RemoveFiles for calculating table size and num of files.
-                    lastCrcInfo.getTableSizeBytes() + metricsResult.getTotalAddFilesSizeInBytes(),
-                    lastCrcInfo.getNumFiles() + metricsResult.getNumAddFiles(),
-                    Optional.of(txnId.toString())));
+                    lastCrcInfo.getTableSizeBytes()
+                        + metricsResult.getTotalAddFilesSizeInBytes()
+                        - metricsResult.getTotalRemoveFilesSizeInBytes(),
+                    lastCrcInfo.getNumFiles()
+                        + metricsResult.getNumAddFiles()
+                        - metricsResult.getNumRemoveFiles(),
+                    Optional.of(txnId.toString()),
+                    Optional.empty(), // TODO: populate domain metadata
+                    metricsResult
+                        .getTableFileSizeHistogram()
+                        .map(FileSizeHistogram::fromFileSizeHistogramResult)));
   }
 
   /**

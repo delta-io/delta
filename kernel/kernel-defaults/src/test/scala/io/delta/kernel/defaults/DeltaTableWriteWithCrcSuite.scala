@@ -22,6 +22,7 @@ import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.utils.TestRow
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
+import io.delta.kernel.internal.SnapshotImpl
 import io.delta.kernel.internal.checksum.ChecksumReader
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.types.StructType
@@ -56,12 +57,16 @@ class DeltaTableWriteWithCrcSuite extends DeltaTableWritesSuite {
   /** Ensure checksum is readable by CRC reader. */
   def verifyChecksumValid(
       tablePath: String): Unit = {
-    val checksumVersion = latestSnapshot(tablePath, defaultEngine).getVersion
+    val currentSnapshot = latestSnapshot(tablePath, defaultEngine)
+    val checksumVersion = currentSnapshot.getVersion
     val crcInfo = ChecksumReader.getCRCInfo(
       defaultEngine,
       new Path(f"$tablePath/_delta_log/"),
       checksumVersion,
       checksumVersion)
     assert(crcInfo.isPresent)
+    // TODO: check metadata, protocol, domain metadata and file size.
+    assert(crcInfo.get().getNumFiles
+      === collectScanFileRows(currentSnapshot.getScanBuilder.build()).size)
   }
 }
