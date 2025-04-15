@@ -156,8 +156,8 @@ class UnityCatalogCommitCoordinatorTestSuite(unittest.TestCase):
         current_timestamp = str(datetime.datetime.now())
         self.append(MANAGED_CC_TABLE_FULL_PATH)
         updated_tbl = self.read_with_cdf_timestamp(
-            current_timestamp, MANAGED_CC_TABLE_FULL_PATH).select("id").toDF("id")
-        assertDataFrameEqual(updated_tbl, self.create_df_with_rows([(4, ), (5, )]))
+            current_timestamp, MANAGED_CC_TABLE_FULL_PATH).select("id", "_change_type")
+        assertDataFrameEqual(updated_tbl.select("id"), self.create_df_with_rows([(4, ), (5, )]))
 
     # Dataframe Writer V1 Tests #
     def test_insert_into_append(self):
@@ -231,6 +231,7 @@ class UnityCatalogCommitCoordinatorTestSuite(unittest.TestCase):
         updated_tbl = self.read(MANAGED_CC_TABLE_FULL_PATH).toDF("id")
         assertDataFrameEqual(updated_tbl, self.create_df_with_rows([(5,)]))
 
+    # CREATE TABLE is currently not supported by UC.
     def test_create(self):
         single_col_df = spark.createDataFrame(
             [(5,)], schema=StructType([StructField("id", IntegerType(), True)]))
