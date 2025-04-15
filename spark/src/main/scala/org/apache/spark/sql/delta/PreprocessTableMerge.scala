@@ -91,7 +91,8 @@ case class PreprocessTableMerge(override val conf: SQLConf)
     }
     val generatedColumns = GeneratedColumn.getGeneratedColumns(
       tahoeFileIndex.snapshotAtAnalysis)
-    if (generatedColumns.nonEmpty && !deltaLogicalPlan.isInstanceOf[LogicalRelation]) {
+    if (generatedColumns.nonEmpty &&
+        !GeneratedColumn.allowDMLTargetPlan(deltaLogicalPlan, conf)) {
       throw DeltaErrors.operationOnTempViewWithGenerateColsNotSupported("MERGE INTO")
     }
 

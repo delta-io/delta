@@ -2077,6 +2077,24 @@ trait GeneratedColumnSuiteBase
       )
     }
   }
+
+  test("DML into table with generated column, char column and readSideCharPadding=true") {
+    val tableName = "table"
+    withTable(tableName) {
+      withSQLConf(SQLConf.READ_SIDE_CHAR_PADDING.key -> "true") {
+        createTable(tableName, None, "c1 INT, c2 CHAR(5), c3 INT", Map("c3" -> "c1 + 1"), Nil)
+        spark.sql(
+          s"""
+             |MERGE INTO $tableName AS TARGET
+             |USING (SELECT id as c1, cast(id AS CHAR(5)) as c2 FROM RANGE(10)) AS SOURCE
+             |ON TARGET.c1 = SOURCE.c1
+             |WHEN MATCHED THEN UPDATE SET c1 = SOURCE.c1, c2 = SOURCE.c2
+             |WHEN NOT MATCHED THEN INSERT (c1, c2) VALUES (SOURCE.c1, SOURCE.c2)
+             |""".stripMargin)
+        spark.sql(s"UPDATE $tableName SET c2 = 'upd' WHERE c1 = 1")
+      }
+    }
+  }
 }
 
 class GeneratedColumnSuite extends GeneratedColumnSuiteBase
