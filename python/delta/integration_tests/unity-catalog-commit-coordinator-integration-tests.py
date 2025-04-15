@@ -20,7 +20,7 @@ import threading
 import json
 import unittest
 
-import py4j.protocol
+import py4j
 from pyspark.sql import SparkSession, DataFrame
 import datetime
 import uuid
