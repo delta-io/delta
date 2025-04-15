@@ -68,6 +68,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   private Optional<List<Column>> clusteringColumns = Optional.empty();
   private Optional<SetTransaction> setTxnOpt = Optional.empty();
   private Optional<Map<String, String>> tableProperties = Optional.empty();
+  private Optional<Set<String>> unsetTablePropertiesKeys = Optional.empty();
   private boolean needDomainMetadataSupport = false;
 
   /**
@@ -125,6 +126,15 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   }
 
   @Override
+  public TransactionBuilder withUnsetTableProperties(Set<String> propertyKeys) {
+    checkArgument(
+        propertyKeys.stream().noneMatch(key -> key.toLowerCase(Locale.ROOT).startsWith("delta.")),
+        "Unsetting 'delta.' table properties is currently unsupported");
+    this.unsetTablePropertiesKeys = Optional.of(Collections.unmodifiableSet(propertyKeys));
+    return this;
+  }
+
+  @Override
   public TransactionBuilder withMaxRetries(int maxRetries) {
     checkArgument(maxRetries >= 0, "maxRetries must be >= 0");
     this.maxRetries = maxRetries;
@@ -174,6 +184,14 @@ public class TransactionBuilderImpl implements TransactionBuilder {
 
     if (!newProperties.isEmpty()) {
       newMetadata = Optional.of(snapshotMetadata.withMergedConfiguration(newProperties));
+    }
+
+    if (unsetTablePropertiesKeys.isPresent()) {
+      newMetadata =
+          Optional.of(
+              newMetadata
+                  .orElse(snapshotMetadata)
+                  .withConfigurationKeysUnset(unsetTablePropertiesKeys.get()));
     }
 
     if (schema.isPresent() && !isNewTable) {
@@ -297,6 +315,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
    *   <li>The provided schema is valid (e.g. no duplicate columns, valid names)
    *   <li>Partition columns provided are valid (e.g. they exist, valid data types)
    *   <li>Concurrent txn has not already committed to the table with same txnId
+   *   <li>Set and unset table properties do not overlap
    * </ul>
    */
   private void validateTransactionInputs(Engine engine, SnapshotImpl snapshot, boolean isNewTable) {
@@ -343,6 +362,16 @@ public class TransactionBuilderImpl implements TransactionBuilder {
                 txnId.getAppId(), txnId.getVersion(), lastTxnVersion.get());
           }
         });
+
+    if (unsetTablePropertiesKeys.isPresent() && tableProperties.isPresent()) {
+      Set<String> invalidPropertyKeys =
+          unsetTablePropertiesKeys.get().stream()
+              .filter(key -> tableProperties.get().containsKey(key))
+              .collect(toSet());
+      if (!invalidPropertyKeys.isEmpty()) {
+        throw DeltaErrors.overlappingTablePropertiesSetAndUnset(invalidPropertyKeys);
+      }
+    }
   }
 
   /**

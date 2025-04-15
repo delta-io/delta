@@ -26,6 +26,7 @@ import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.types.StructType;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Builder for creating a {@link Transaction} to mutate a Delta table.
@@ -113,6 +114,19 @@ public interface TransactionBuilder {
    * @since 3.3.0
    */
   TransactionBuilder withTableProperties(Engine engine, Map<String, String> properties);
+  
+  /**
+   * Unset the provided table properties on the table. If a property does not exist this is a no-op.
+   * For now this is only supported for user-properties (in other words, does not support 'delta.'
+   * prefixed properties). An exception will be thrown upon calling
+   * {@link TransactionBuilder#build(Engine)} if the same key is both set and unset in the same
+   * transaction.
+   *
+   * @param propertyKeys the table property keys to unset (remove from the table properties)
+   * @return updated {@link TransactionBuilder} instance.
+   * @throws IllegalArgumentException if 'delta.' prefixed keys are provided
+   */
+  TransactionBuilder withUnsetTableProperties(Set<String> propertyKeys);
 
   /**
    * Set the maximum number of times to retry a transaction if a concurrent write is detected. This

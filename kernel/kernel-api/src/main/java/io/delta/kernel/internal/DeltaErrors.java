@@ -257,6 +257,14 @@ public final class DeltaErrors {
         format("Column '%s' was not found in the table schema: %s", column, tableSchema));
   }
 
+  public static KernelException overlappingTablePropertiesSetAndUnset(Set<String> violatingKeys) {
+    return new KernelException(
+        format(
+            "Cannot set and unset the same table property in the same transaction. "
+                + "Properties set and unset: %s",
+            violatingKeys));
+  }
+
   /// Start: icebergCompat exceptions
   public static KernelException icebergCompatMissingNumRecordsStats(
       String compatVersion, DataFileStatus dataFileStatus) {
