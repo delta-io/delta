@@ -250,7 +250,10 @@ public class TransactionImpl implements Transaction {
     return finalDomainMetadatas;
   }
 
-  public Optional<Set<DomainMetadata>> getActiveDomainMetadatas() {
+  /**
+   * Returns the set of active domain metadata of the table, removed domain metadata are excluded.
+   */
+  private Optional<Set<DomainMetadata>> getActiveDomainMetadatas() {
     if (isNewTable) {
       return Optional.of(
           getDomainMetadatasToCommit().stream()
