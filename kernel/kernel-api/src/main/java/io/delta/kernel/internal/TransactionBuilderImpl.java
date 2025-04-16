@@ -126,7 +126,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   }
 
   @Override
-  public TransactionBuilder withUnsetTableProperties(Set<String> propertyKeys) {
+  public TransactionBuilder withTablePropertiesRemoved(Set<String> propertyKeys) {
     checkArgument(
         propertyKeys.stream().noneMatch(key -> key.toLowerCase(Locale.ROOT).startsWith("delta.")),
         "Unsetting 'delta.' table properties is currently unsupported");

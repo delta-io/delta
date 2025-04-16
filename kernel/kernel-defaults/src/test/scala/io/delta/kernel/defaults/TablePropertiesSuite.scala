@@ -114,7 +114,7 @@ class TablePropertiesSuite extends DeltaTableWriteSuiteBase {
       Seq("delta.checkpointInterval", "DELTA.checkpointInterval").foreach { key =>
         val e = intercept[IllegalArgumentException] {
           createWriteTxnBuilder(Table.forPath(defaultEngine, tablePath.getAbsolutePath))
-            .withUnsetTableProperties(Set(key).asJava)
+            .withTablePropertiesRemoved(Set(key).asJava)
         }
         assert(
           e.getMessage.contains("Unsetting 'delta.' table properties is currently unsupported"))
@@ -129,7 +129,7 @@ class TablePropertiesSuite extends DeltaTableWriteSuiteBase {
 
       val e = intercept[KernelException] {
         createWriteTxnBuilder(Table.forPath(defaultEngine, tablePath))
-          .withUnsetTableProperties(Set("foo.key").asJava)
+          .withTablePropertiesRemoved(Set("foo.key").asJava)
           .withTableProperties(defaultEngine, Map("foo.key" -> "value").asJava)
           .build(defaultEngine)
       }
@@ -152,7 +152,7 @@ class TablePropertiesSuite extends DeltaTableWriteSuiteBase {
       // Try to set and unset the existing property
       val e = intercept[KernelException] {
         createWriteTxnBuilder(Table.forPath(defaultEngine, tablePath))
-          .withUnsetTableProperties(Set("foo.key").asJava)
+          .withTablePropertiesRemoved(Set("foo.key").asJava)
           .withTableProperties(defaultEngine, Map("foo.key" -> "value").asJava)
           .build(defaultEngine)
       }
@@ -175,7 +175,7 @@ class TablePropertiesSuite extends DeltaTableWriteSuiteBase {
 
       // Remove 1 of the properties set
       createWriteTxnBuilder(Table.forPath(defaultEngine, tablePath))
-        .withUnsetTableProperties(Set("foo.key").asJava)
+        .withTablePropertiesRemoved(Set("foo.key").asJava)
         .build(defaultEngine)
         .commit(defaultEngine, emptyIterable())
       assertPropsDNE(tablePath, Set("foo.key"))
@@ -184,7 +184,7 @@ class TablePropertiesSuite extends DeltaTableWriteSuiteBase {
 
       // Can unset a property that DNE
       createWriteTxnBuilder(Table.forPath(defaultEngine, tablePath))
-        .withUnsetTableProperties(Set("not.a.key").asJava)
+        .withTablePropertiesRemoved(Set("not.a.key").asJava)
         .build(defaultEngine)
         .commit(defaultEngine, emptyIterable())
       assertPropsDNE(tablePath, Set("not.a.key"))
@@ -193,7 +193,7 @@ class TablePropertiesSuite extends DeltaTableWriteSuiteBase {
 
       // Can be simultaneous with setTblProps as long as no overlap
       createWriteTxnBuilder(Table.forPath(defaultEngine, tablePath))
-        .withUnsetTableProperties(Set("FOO.KEY").asJava)
+        .withTablePropertiesRemoved(Set("FOO.KEY").asJava)
         .withTableProperties(defaultEngine, Map("foo.key" -> "value-new").asJava)
         .build(defaultEngine)
         .commit(defaultEngine, emptyIterable())

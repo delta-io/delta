@@ -105,7 +105,9 @@ public interface TransactionBuilder {
 
   /**
    * Set the table properties for the table. When the table already contains the property with same
-   * key, it gets replaced if it doesn't have the same value.
+   * key, it gets replaced if it doesn't have the same value. Note, user-properties (those without a
+   * '.delta' prefix) are case-sensitive. Delta-properties are case-insensitive and are normalized
+   * to their expected case before writing to the log.
    *
    * @param engine {@link Engine} instance to use.
    * @param properties The table properties to set. These are key-value pairs that can be used to
@@ -114,19 +116,19 @@ public interface TransactionBuilder {
    * @since 3.3.0
    */
   TransactionBuilder withTableProperties(Engine engine, Map<String, String> properties);
-  
+
   /**
    * Unset the provided table properties on the table. If a property does not exist this is a no-op.
    * For now this is only supported for user-properties (in other words, does not support 'delta.'
-   * prefixed properties). An exception will be thrown upon calling
-   * {@link TransactionBuilder#build(Engine)} if the same key is both set and unset in the same
-   * transaction.
+   * prefixed properties). An exception will be thrown upon calling {@link
+   * TransactionBuilder#build(Engine)} if the same key is both set and unset in the same
+   * transaction. Note, user-properties (those without a '.delta' prefix) are case-sensitive.
    *
    * @param propertyKeys the table property keys to unset (remove from the table properties)
    * @return updated {@link TransactionBuilder} instance.
    * @throws IllegalArgumentException if 'delta.' prefixed keys are provided
    */
-  TransactionBuilder withUnsetTableProperties(Set<String> propertyKeys);
+  TransactionBuilder withTablePropertiesRemoved(Set<String> propertyKeys);
 
   /**
    * Set the maximum number of times to retry a transaction if a concurrent write is detected. This
