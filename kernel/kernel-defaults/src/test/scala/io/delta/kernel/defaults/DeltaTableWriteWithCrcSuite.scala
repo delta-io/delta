@@ -36,13 +36,13 @@ import io.delta.kernel.utils.CloseableIterable
  * Test suite that run all tests in DeltaTableWritesSuite with CRC file written
  * after each delta commit. This test suite will verify that the written CRC files are valid.
  */
-class DeltaTableWriteWithCrcSuite extends DeltaTableWritesSuite with CrcTestUtils {
+class DeltaTableWriteWithCrcSuite extends DeltaTableWritesSuite {
 
   override def commitTransaction(
       txn: Transaction,
       engine: Engine,
       dataActions: CloseableIterable[Row]): TransactionCommitResult = {
-    withCrcSimpleExecuted(txn.commit(engine, dataActions), engine)
+    executeCrcSimple(txn.commit(engine, dataActions), engine)
   }
 
   override def verifyWrittenContent(
@@ -50,6 +50,6 @@ class DeltaTableWriteWithCrcSuite extends DeltaTableWritesSuite with CrcTestUtil
       expSchema: StructType,
       expData: Seq[TestRow]): Unit = {
     super.verifyWrittenContent(path, expSchema, expData)
-    verifyChecksumValid(path)
+    verifyChecksum(path)
   }
 }

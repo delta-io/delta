@@ -39,7 +39,7 @@ import org.apache.spark.sql.delta.clustering.{ClusteringMetadataDomain => SparkC
 
 import org.apache.hadoop.fs.Path
 
-class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase with CrcTestUtils {
+class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
 
   private val testingDomainMetadata = new DomainMetadata(
     "delta.clustering",
@@ -52,14 +52,14 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase with CrcTestUti
     assert(snapshot.getDomainMetadataMap.get(ClusteringMetadataDomain.DOMAIN_NAME)
       == expectedDomainMetadata)
     // verifyChecksumValid will check the domain metadata in CRC against the latest snapshot.
-    verifyChecksumValid(snapshot.getDataPath.toString)
+    verifyChecksum(snapshot.getDataPath.toString)
   }
 
   override def commitTransaction(
       txn: Transaction,
       engine: Engine,
       dataActions: CloseableIterable[Row]): TransactionCommitResult = {
-    withCrcSimpleExecuted(txn.commit(engine, dataActions), engine)
+    executeCrcSimple(txn.commit(engine, dataActions), engine)
   }
 
   test("build table txn: clustering column should be part of the schema") {

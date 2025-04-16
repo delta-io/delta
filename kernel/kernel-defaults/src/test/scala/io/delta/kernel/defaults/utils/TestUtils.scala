@@ -24,14 +24,17 @@ import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
 import io.delta.golden.GoldenTableUtils
-import io.delta.kernel.{Scan, Snapshot, Table}
+import io.delta.kernel.{Scan, Snapshot, Table, TransactionCommitResult}
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch, MapValue, Row}
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.defaults.internal.data.vector.{DefaultGenericVector, DefaultStructVector}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.{Column, Predicate}
-import io.delta.kernel.internal.InternalScanFileUtils
+import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
+import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl}
+import io.delta.kernel.internal.checksum.ChecksumReader
 import io.delta.kernel.internal.data.ScanStateRow
+import io.delta.kernel.internal.fs.{Path => KernelPath}
 import io.delta.kernel.internal.util.Utils
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.types._
@@ -747,4 +750,32 @@ trait TestUtils extends Assertions with SQLHelper {
     versions.foreach(v =>
       Files.deleteIfExists(
         new File(FileNames.checksumFile(new Path(s"$tablePath/_delta_log"), v).toString).toPath))
+
+  def executeCrcSimple(result: TransactionCommitResult, engine: Engine): TransactionCommitResult = {
+    result.getPostCommitHooks
+      .stream()
+      .filter(hook => hook.getType == PostCommitHookType.CHECKSUM_SIMPLE)
+      .forEach(hook => hook.threadSafeInvoke(engine))
+    result
+  }
+
+  /** Ensure checksum is readable by CRC reader and correct. */
+  def verifyChecksum(tablePath: String): Unit = {
+    val currentSnapshot = latestSnapshot(tablePath, defaultEngine)
+    val checksumVersion = currentSnapshot.getVersion
+    val crcInfo = ChecksumReader.getCRCInfo(
+      defaultEngine,
+      new KernelPath(f"$tablePath/_delta_log/"),
+      checksumVersion,
+      checksumVersion)
+    assert(crcInfo.isPresent)
+    // TODO: check metadata, protocol and file size.
+    assert(crcInfo.get().getNumFiles
+      === collectScanFileRows(currentSnapshot.getScanBuilder.build()).size)
+    assert(crcInfo.get().getDomainMetadata === Optional.of(
+      currentSnapshot.asInstanceOf[SnapshotImpl].getDomainMetadataMap.values().asScala
+        .filterNot(_.isRemoved)
+        .toSet
+        .asJava))
+  }
 }

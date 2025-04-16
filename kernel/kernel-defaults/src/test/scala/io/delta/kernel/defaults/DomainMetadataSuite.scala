@@ -38,7 +38,7 @@ import org.apache.spark.sql.delta.test.DeltaTestImplicits.OptimisticTxnTestHelpe
 
 import org.apache.hadoop.fs.Path
 
-class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase with CrcTestUtils {
+class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
 
   private def assertDomainMetadata(
       snapshot: SnapshotImpl,
@@ -63,8 +63,8 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
     // Get the latest snapshot of the table
     val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
     assertDomainMetadata(snapshot, expectedValue)
-    // verifyChecksumValid will check the domain metadata in CRC against the lastest snapshot.
-    verifyChecksumValid(table.getPath(engine))
+    // verifyChecksum will check the domain metadata in CRC against the lastest snapshot.
+    verifyChecksum(table.getPath(engine))
   }
 
   private def createTxnWithDomainMetadatas(
@@ -183,7 +183,7 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
       txn: Transaction,
       engine: Engine,
       dataActions: CloseableIterable[Row]): TransactionCommitResult = {
-    withCrcSimpleExecuted(txn.commit(engine, dataActions), engine)
+    executeCrcSimple(txn.commit(engine, dataActions), engine)
   }
 
   test("create table w/o domain metadata") {
