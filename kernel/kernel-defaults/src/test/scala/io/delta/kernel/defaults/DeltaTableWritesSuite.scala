@@ -22,7 +22,7 @@ import scala.collection.immutable.Seq
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel._
-import io.delta.kernel.Operation.{CREATE_TABLE, WRITE}
+import io.delta.kernel.Operation.{CREATE_TABLE, MANUAL_UPDATE, WRITE}
 import io.delta.kernel.data.{ColumnarBatch, FilteredColumnarBatch, Row}
 import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
 import io.delta.kernel.defaults.utils.TestRow
@@ -97,14 +97,66 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       commitTransaction(txn, engine, emptyIterable())
 
       {
-        val ex = intercept[TableAlreadyExistsException] {
+        intercept[TableAlreadyExistsException] {
           table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
-            .withPartitionColumns(engine, Seq("part1", "part2").asJava)
             .build(engine)
         }
-        assert(ex.getMessage.contains("Table already exists, but provided new partition columns." +
-          " Partition columns can only be set on a new table."))
       }
+
+      // Provide schema
+      {
+        intercept[TableAlreadyExistsException] {
+          table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+            .withSchema(engine, testSchema)
+            .build(engine)
+        }
+      }
+
+      // Provide partition columns
+      {
+        intercept[TableAlreadyExistsException] {
+          table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+            .withSchema(engine, testPartitionSchema)
+            .withPartitionColumns(engine, testPartitionColumns.asJava)
+            .build(engine)
+        }
+      }
+    }
+  }
+
+  test("create table - table is concurrently created before txn commits") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val txn1 = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+        .withSchema(engine, testSchema).build(engine)
+
+      val txn2 = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+        .withSchema(engine, testSchema).build(engine)
+      commitTransaction(txn2, engine, emptyIterable())
+
+      intercept[ConcurrentWriteException] {
+        commitTransaction(txn1, engine, emptyIterable())
+      }
+    }
+  }
+
+  test("cannot provide partition columns for existing table") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+
+      val txn = txnBuilder.withSchema(engine, testSchema).build(engine)
+      commitTransaction(txn, engine, emptyIterable())
+
+      val ex = intercept[TableAlreadyExistsException] {
+        // Use operation != CREATE_TABLE since this fails earlier if the table already exists
+        table.createTransactionBuilder(engine, testEngineInfo, WRITE)
+          .withSchema(engine, testPartitionSchema)
+          .withPartitionColumns(engine, testPartitionColumns.asJava)
+          .build(engine)
+      }
+      assert(ex.getMessage.contains("Table already exists, but provided new partition columns." +
+        " Partition columns can only be set on a new table."))
     }
   }
 
@@ -125,7 +177,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       assert(txnResult.getVersion === 0)
       assertCheckpointReadiness(txnResult, isReadyForCheckpoint = false)
 
-      verifyCommitInfo(tablePath = tablePath, version = 0)
+      verifyCommitInfo(tablePath = tablePath, version = 0, operation = CREATE_TABLE)
       verifyWrittenContent(tablePath, testSchema, Seq.empty)
     }
   }
@@ -341,7 +393,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       assert(txnResult.getVersion === 0)
       assertCheckpointReadiness(txnResult, isReadyForCheckpoint = false)
 
-      verifyCommitInfo(tablePath, version = 0, Seq("Part1", "part2"))
+      verifyCommitInfo(tablePath, version = 0, Seq("Part1", "part2"), operation = CREATE_TABLE)
       verifyWrittenContent(tablePath, schema, Seq.empty)
     }
   }
@@ -362,7 +414,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         assert(txnResult.getVersion === 0)
         assertCheckpointReadiness(txnResult, isReadyForCheckpoint = false)
 
-        verifyCommitInfo(tablePath, version = 0)
+        verifyCommitInfo(tablePath, version = 0, operation = CREATE_TABLE)
         verifyWrittenContent(tablePath, schema, Seq.empty)
       }
     }
@@ -1129,7 +1181,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       tablePath: String,
       schema: Option[StructType] = None): Transaction = {
     val table = Table.forPath(engine, tablePath)
-    var txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+    var txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, MANUAL_UPDATE)
     schema.foreach(s => txnBuilder = txnBuilder.withSchema(engine, s))
     txnBuilder.build(engine)
   }
