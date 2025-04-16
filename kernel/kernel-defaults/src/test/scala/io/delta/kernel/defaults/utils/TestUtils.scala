@@ -772,6 +772,7 @@ trait TestUtils extends Assertions with SQLHelper {
     // TODO: check metadata, protocol and file size.
     assert(crcInfo.get().getNumFiles
       === collectScanFileRows(currentSnapshot.getScanBuilder.build()).size)
+    // CRC does not store tombstones.
     assert(crcInfo.get().getDomainMetadata === Optional.of(
       currentSnapshot.asInstanceOf[SnapshotImpl].getDomainMetadataMap.values().asScala
         .filterNot(_.isRemoved)
