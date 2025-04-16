@@ -263,25 +263,24 @@ For example, suppose the `_delta_log` directory contains the following files:
 ```
 00000000000000000000.json
 00000000000000000001.json
-00000000000000000002.json
 00000000000000000002.checkpoint.parquet
-00000000000000000003.json
+00000000000000000002.json
 00000000000000000003.00000000000000000005.compacted.json
+00000000000000000003.json
 00000000000000000004.json
 00000000000000000005.json
+00000000000000000006.json
 00000000000000000007.json
-_staged_commits/00000000000000000006.3a0d65cd-4056-49b8-937b-95f9e3ee90e5.json // ratified
 _staged_commits/00000000000000000007.016ae953-37a9-438e-8683-9a9a4a79a395.json // ratified and published
 _staged_commits/00000000000000000008.7d17ac10-5cc3-401b-bd1a-9c82dd2ea032.json // ratified
 _staged_commits/00000000000000000008.b91807ba-fe18-488c-a15e-c4807dbd2174.json // rejected
 _staged_commits/00000000000000000010.0f707846-cd18-4e01-b40e-84ee0ae987b0.json // not yet ratified
-_staged_commits/00000000000000000010.7a980438-cb67-4b89-82d2-86f73239b6d6.json // not yet ratified
+_staged_commits/00000000000000000010.7a980438-cb67-4b89-82d2-86f73239b6d6.json // partial file
 ```
 
 Further, suppose the catalog stores the following ratified commits:
 ```
 {
-  6  -> "00000000000000000006.3a0d65cd-4056-49b8-937b-95f9e3ee90e5.json",
   7  -> "00000000000000000007.016ae953-37a9-438e-8683-9a9a4a79a395.json",
   8  -> "00000000000000000008.7d17ac10-5cc3-401b-bd1a-9c82dd2ea032.json",
   9  -> <inline commit: content stored by the catalog directly>
@@ -295,7 +294,7 @@ Some things to note are:
 - neither of the two staged commits for version 10 have been ratified
 
 To read such tables, Delta clients must first contact the catalog to get the ratified commits. This
-informs the Delta client of commits [6, 9] as well as the latest ratified version, 9.
+informs the Delta client of commits [7, 9] as well as the latest ratified version, 9.
 
 If this information is insufficient to construct a complete snapshot of the table, Delta clients
 must LIST the `_delta_log` directory to get information about the published commits. For commits
@@ -367,20 +366,13 @@ whether the client-side, server-side, or both catalog components initiate publis
 Implementations are strongly encouraged to publish commits promptly. This reduces the number of
 commits the catalog needs to store internally (and serve up to readers).
 
-Importantly, no ordering constraints apply to publishing. That is, version `v - 1` does not need to
-be published before version `v`. This will allow for parallel publishing and achieving higher
-throughput. It will enable catalog implementations to publish ratified commits right away without
-the need for synchronization or coordination between conurrent writers.
+Commits must be published _in order_. That is, version `v - 1` must be published _before_ version
+`v`.
 
-Because of this, "gaps" may appears in the `_delta_log` in the filesystem: cases where versions `v`
-and `v + 2` are published, but version `v + 1` is not.
-
-**NOTE**: Because commit publishing can happen at any time and in any order after the commit
-succeeds, the file modification timestamp of the published file will not accurately reflect the
-original commit time. For this reason, catalog-owned tables must use
-[in-commit-timestamps](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#in-commit-timestamps)
-to ensure stability of time travel reads. Refer to
-[Writer Requirements for Catalog-Owned Tables](#writer-requirements-for-catalog-owned-tables)
+**NOTE**: Because commit publishing can happen at any time after the commit succeeds, the file
+modification timestamp of the published file will not accurately reflect the original commit time.
+For this reason, catalog-owned tables must use [in-commit-timestamps](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#in-commit-timestamps)
+to ensure stability of time travel reads. Refer to [Writer Requirements for Catalog-Owned Tables](#writer-requirements-for-catalog-owned-tables)
 section for more details.
 
 ## Maintenance Operations on Catalog-owned Tables
