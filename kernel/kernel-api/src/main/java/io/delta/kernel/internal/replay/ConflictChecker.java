@@ -145,7 +145,7 @@ public class ConflictChecker {
 
     // Initialize updated actions for the next commit attempt with the current attempt's actions
     CloseableIterable<Row> updatedDataActions = attemptDataActions;
-    List<DomainMetadata> updatedDomainMetadatas = transaction.getDomainMetadatasToCommit();
+    List<DomainMetadata> updatedDomainMetadatas = transaction.computeDomainMetadatasToCommit();
 
     if (TableFeatures.isRowTrackingSupported(transaction.getProtocol())) {
       updatedDomainMetadatas =
@@ -154,7 +154,7 @@ public class ConflictChecker {
               transaction.getProtocol(),
               lastWinningRowIdHighWatermark,
               attemptDataActions,
-              transaction.getDomainMetadatasToCommit());
+              transaction.computeDomainMetadatasToCommit());
       updatedDataActions =
           RowTracking.assignBaseRowIdAndDefaultRowCommitVersion(
               snapshot,
@@ -292,7 +292,7 @@ public class ConflictChecker {
     DomainMetadataUtils.populateDomainMetadataMap(
         domainMetadataVector, winningTxnDomainMetadataMap);
 
-    for (DomainMetadata currentTxnDM : this.transaction.getDomainMetadatasToCommit()) {
+    for (DomainMetadata currentTxnDM : this.transaction.computeDomainMetadatasToCommit()) {
       // For each domain metadata action in the current transaction, check if it has a conflict with
       // the winning transaction.
       String domainName = currentTxnDM.getDomain();
