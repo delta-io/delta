@@ -67,7 +67,7 @@ object DeltaTestImplicits {
             // If neither metadata nor protocol is explicitly passed, then use default Metadata and
             // with the maximum protocol.
             txn.updateMetadataForNewTable(Metadata())
-            val enableCatalogOwnedByDefault = txn.getSparkSession.conf.getOption(
+            val enableCatalogOwnedByDefault = SparkSession.active.conf.getOption(
               TableFeatureProtocolUtils.defaultPropertyKey(CatalogOwnedTableFeature))
                 .contains("supported")
             if (enableCatalogOwnedByDefault) {
