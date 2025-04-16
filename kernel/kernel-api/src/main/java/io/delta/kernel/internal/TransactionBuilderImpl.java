@@ -31,6 +31,7 @@ import static java.util.stream.Collectors.toSet;
 import io.delta.kernel.*;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.KernelException;
+import io.delta.kernel.exceptions.TableAlreadyExistsException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.*;
@@ -142,6 +143,9 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     SnapshotImpl snapshot;
     try {
       snapshot = (SnapshotImpl) table.getLatestSnapshot(engine);
+      if (operation == Operation.CREATE_TABLE) {
+        throw new TableAlreadyExistsException(table.getPath(engine), "Operation = CREATE_TABLE");
+      }
     } catch (TableNotFoundException tblf) {
       String tablePath = table.getPath(engine);
       logger.info("Table {} doesn't exist yet. Trying to create a new table.", tablePath);

@@ -266,7 +266,7 @@ public class CreateTableAndInsertData extends BaseTableWriter {
                 table.createTransactionBuilder(
                         engine,
                         "Examples", /* engineInfo */
-                        Operation.CREATE_TABLE);
+                        Operation.WRITE);
 
         // Build the transaction - no need to provide the schema as the table already exists.
         Transaction txn = txnBuilder.build(engine);
@@ -337,7 +337,7 @@ public class CreateTableAndInsertData extends BaseTableWriter {
                 table.createTransactionBuilder(
                         engine,
                         "Examples", /* engineInfo */
-                        Operation.CREATE_TABLE);
+                        Operation.WRITE);
 
         // Set the transaction identifiers for idempotent writes
         // Delta/Kernel makes sure that there exists only one transaction in the Delta log
