@@ -24,7 +24,7 @@ import scala.collection.immutable.{ListMap, Seq}
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.{Meta, Operation, Table, Transaction, TransactionBuilder, TransactionCommitResult}
-import io.delta.kernel.Operation.CREATE_TABLE
+import io.delta.kernel.Operation.MANUAL_UPDATE
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch, Row}
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
@@ -499,7 +499,7 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       version: Long,
       partitionCols: Seq[String] = Seq.empty,
       isBlindAppend: Boolean = true,
-      operation: Operation = CREATE_TABLE): Unit = {
+      operation: Operation = MANUAL_UPDATE): Unit = {
     val row = spark.sql(s"DESCRIBE HISTORY delta.`$tablePath`")
       .filter(s"version = $version")
       .select(

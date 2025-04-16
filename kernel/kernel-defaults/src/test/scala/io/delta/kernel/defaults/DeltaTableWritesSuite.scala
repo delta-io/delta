@@ -22,7 +22,7 @@ import scala.collection.immutable.Seq
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel._
-import io.delta.kernel.Operation.{CREATE_TABLE, WRITE}
+import io.delta.kernel.Operation.{CREATE_TABLE, MANUAL_UPDATE, WRITE}
 import io.delta.kernel.data.{ColumnarBatch, FilteredColumnarBatch, Row}
 import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
 import io.delta.kernel.defaults.utils.TestRow
@@ -177,7 +177,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       assert(txnResult.getVersion === 0)
       assertCheckpointReadiness(txnResult, isReadyForCheckpoint = false)
 
-      verifyCommitInfo(tablePath = tablePath, version = 0)
+      verifyCommitInfo(tablePath = tablePath, version = 0, operation = CREATE_TABLE)
       verifyWrittenContent(tablePath, testSchema, Seq.empty)
     }
   }
@@ -393,7 +393,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       assert(txnResult.getVersion === 0)
       assertCheckpointReadiness(txnResult, isReadyForCheckpoint = false)
 
-      verifyCommitInfo(tablePath, version = 0, Seq("Part1", "part2"))
+      verifyCommitInfo(tablePath, version = 0, Seq("Part1", "part2"), operation = CREATE_TABLE)
       verifyWrittenContent(tablePath, schema, Seq.empty)
     }
   }
@@ -414,7 +414,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         assert(txnResult.getVersion === 0)
         assertCheckpointReadiness(txnResult, isReadyForCheckpoint = false)
 
-        verifyCommitInfo(tablePath, version = 0)
+        verifyCommitInfo(tablePath, version = 0, operation = CREATE_TABLE)
         verifyWrittenContent(tablePath, schema, Seq.empty)
       }
     }
@@ -1181,7 +1181,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       tablePath: String,
       schema: Option[StructType] = None): Transaction = {
     val table = Table.forPath(engine, tablePath)
-    var txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+    var txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, MANUAL_UPDATE)
     schema.foreach(s => txnBuilder = txnBuilder.withSchema(engine, s))
     txnBuilder.build(engine)
   }
