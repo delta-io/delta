@@ -2453,16 +2453,17 @@ trait DeltaErrorsSuiteBase
         Map("externalLocation" -> "external-location", "targetIdentifier" -> "`table1`"))
     }
     {
-      DeltaTableValueFunctions.supportedFnNames.foreach { fnName => {
-        val fnCall = s"${fnName}()"
-        val e = intercept[DeltaAnalysisException] {
-          sql(s"SELECT * FROM $fnCall").collect()
+      DeltaTableValueFunctions.supportedFnNames.foreach { fnName =>
+        {
+          val fnCall = s"${fnName}()"
+          val e = intercept[DeltaAnalysisException] {
+            sql(s"SELECT * FROM $fnCall").collect()
+          }
+          checkError(e, "INCORRECT_NUMBER_OF_ARGUMENTS", "42605",
+            Map("failure" -> "not enough args", "functionName" -> fnName, "minArgs" -> "2",
+              "maxArgs" -> "3"),
+            ExpectedContext(fragment = fnCall, start = 14, stop = 14 + fnCall.length - 1))
         }
-        checkError(e, "INCORRECT_NUMBER_OF_ARGUMENTS", "42605",
-          Map("failure" -> "not enough args", "functionName" -> fnName, "minArgs" -> "2",
-            "maxArgs" -> "3"),
-          ExpectedContext(fragment = fnCall, start = 14, stop = 14 + fnCall.length - 1))
-      }
         {
           val fnCall = s"${fnName}(1, 2, 3, 4, 5)"
           val e = intercept[DeltaAnalysisException] {
