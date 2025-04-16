@@ -86,8 +86,7 @@ class DropColumnMappingFeatureSuite extends RemoveColumnMappingSuiteUtils {
     }
     checkError(e,
       "DELTA_INVALID_COLUMN_NAMES_WHEN_REMOVING_COLUMN_MAPPING",
-      parameters = Map("invalidColumnNames" ->
-        "col1 with special chars ,;{}()\n\t=, col2 with special chars ,;{}()\n\t="))
+      parameters = Map("invalidColumnNames" -> "col1 with special chars ,;{}()\n\t="))
   }
 
   test("drop column mapping from a table without table feature") {

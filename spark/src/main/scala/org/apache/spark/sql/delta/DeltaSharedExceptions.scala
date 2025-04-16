@@ -32,7 +32,9 @@ class DeltaAnalysisException(
   extends AnalysisException(
     message = DeltaThrowableHelper.getMessage(errorClass, messageParameters),
     messageParameters = DeltaThrowableHelper
-      .getMessageParameters(errorClass, errorSubClass = null, messageParameters).asScala.toMap,
+        .getParameterNames(errorClass, errorSubClass = null)
+        .zip(messageParameters)
+        .toMap,
     errorClass = Some(errorClass),
     line = origin.flatMap(_.line),
     startPosition = origin.flatMap(_.startPosition),
@@ -41,10 +43,6 @@ class DeltaAnalysisException(
   with DeltaThrowable {
   def getMessageParametersArray: Array[String] = messageParameters
   override def getErrorClass: String = errorClass
-  override def getMessageParameters: java.util.Map[String, String] =
-    DeltaThrowableHelper.getMessageParameters(errorClass, errorSubClass = null, messageParameters)
-  override def withPosition(origin: Origin): AnalysisException =
-    new DeltaAnalysisException(errorClass, messageParameters, cause, Some(origin))
 }
 
 class DeltaIllegalArgumentException(
@@ -58,7 +56,8 @@ class DeltaIllegalArgumentException(
   def getMessageParametersArray: Array[String] = messageParameters
 
   override def getMessageParameters: java.util.Map[String, String] = {
-    DeltaThrowableHelper.getMessageParameters(errorClass, errorSubClass = null, messageParameters)
+    DeltaThrowableHelper.getParameterNames(errorClass, errorSubClass = null)
+      .zip(messageParameters).toMap.asJava
   }
 }
 
@@ -72,7 +71,8 @@ class DeltaUnsupportedOperationException(
   def getMessageParametersArray: Array[String] = messageParameters
 
   override def getMessageParameters: java.util.Map[String, String] = {
-    DeltaThrowableHelper.getMessageParameters(errorClass, errorSubClass = null, messageParameters)
+    DeltaThrowableHelper.getParameterNames(errorClass, errorSubClass = null)
+      .zip(messageParameters).toMap.asJava
   }
 }
 
@@ -99,7 +99,8 @@ class DeltaArithmeticException(
   override def getErrorClass: String = errorClass
 
   override def getMessageParameters: java.util.Map[String, String] = {
-    DeltaThrowableHelper.getMessageParameters(errorClass, errorSubClass = null, messageParameters)
+    DeltaThrowableHelper.getParameterNames(errorClass, errorSubClass = null)
+      .zip(messageParameters).toMap.asJava
   }
 }
 

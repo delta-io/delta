@@ -126,6 +126,7 @@ class DeltaInvariantViolationException(
   override def getErrorClass: String = errorClass
 
   override def getMessageParameters: util.Map[String, String] = {
-    DeltaThrowableHelper.getMessageParameters(errorClass, errorSubClass = null, messageParameters)
+    DeltaThrowableHelper.getParameterNames(errorClass, errorSubClass = null)
+      .zip(messageParameters).toMap.asJava
   }
 }

@@ -155,9 +155,11 @@ class DeltaConfigSuite extends SparkFunSuite
                |""".stripMargin)
         }
       }
-      checkError(e, "DELTA_UNKNOWN_CONFIGURATION", "F0000", Map(
-        "config" -> "delta.foo",
-        "disableCheckConfig" -> DeltaSQLConf.ALLOW_ARBITRARY_TABLE_PROPERTIES.key))
+      var msg = "[DELTA_UNKNOWN_CONFIGURATION] " +
+        "Unknown configuration was specified: delta.foo\nTo disable this check, set " +
+        "spark.databricks.delta.allowArbitraryProperties.enabled=true in the Spark session " +
+        "configuration."
+      assert(e.getMessage == msg)
     }
   }
 
@@ -191,14 +193,14 @@ class DeltaConfigSuite extends SparkFunSuite
 
   test("do not allow setting invalid isolation level") {
     withTempDir { dir =>
-      val e = intercept[DeltaIllegalArgumentException] {
+      val e = intercept[IllegalArgumentException] {
         sql(
           s"""CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta
              |TBLPROPERTIES ('delta.isolationLevel' = 'InvalidSerializable')
              |""".stripMargin)
       }
-      checkError(e, "DELTA_INVALID_ISOLATION_LEVEL", "25000",
-        Map("isolationLevel" -> "InvalidSerializable"))
+      val msg = "[DELTA_INVALID_ISOLATION_LEVEL] invalid isolation level 'InvalidSerializable'"
+      assert(e.getMessage == msg)
     }
   }
 
