@@ -73,6 +73,23 @@ trait OptimisticTransactionLegacyTests
     }
   }
 
+  test("block read+append against append with write-serializable isolation level") {
+    withTempDir { tempDir =>
+      val log = DeltaLog.forTable(spark, tempDir)
+      // Initialize the log.
+      val conf = Map(DeltaConfigs.ISOLATION_LEVEL.key -> "WriteSerializable")
+      log.startTransaction().commitManually(Metadata(configuration = conf))
+
+      val txn = log.startTransaction()
+      // reads the table
+      txn.filterFiles()
+      val winningTxn = log.startTransaction()
+      winningTxn.commit(addA :: Nil, ManualUpdate)
+      txn.commit(addB :: Nil, ManualUpdate)
+      checkAnswer(log.update().allFiles.select("path"), Row("a") :: Row("b") :: Nil)
+    }
+  }
+
   test("allow blind-append against any data change") {
     withTempDir { tempDir =>
       val log = DeltaLog.forTable(spark, tempDir)
