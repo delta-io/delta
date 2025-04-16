@@ -48,10 +48,10 @@ Making the catalog the source of truth for commits to a table brings several imp
 
 > ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#delta-log-entries)***
 
-Delta files are stored as JSON in a directory at the root of the table named `_delta_log`, and
-together with checkpoints make up the log of all changes that have occurred to a table. Delta files
-are the unit of atomicity for a table, and are named using the next available version number,
-zero-padded to 20 digits.
+<ins>Delta Log Entries, also known as Delta files</ins>, are stored as JSON in a directory at the
+root of the table named `_delta_log`, and together with checkpoints make up the log of all changes
+that have occurred to a table. Delta files are the unit of atomicity for a table, and are named
+using the next available version number, zero-padded to 20 digits.
 
 For example:
 
@@ -59,13 +59,19 @@ For example:
 ./_delta_log/00000000000000000000.json
 ```
 
-<ins>**Note:** If the [`catalogOwned` table feature](#catalog-owned-tables) is enabled on the table,
-recently ratified commits may not yet be published to the `_delta_log` directory - they may be
-hosted directly by the catalog or reside in the `_delta_log/_staged_commits` directory. Delta
-clients must contact the table's owning catalog in order to find the information about the
-[ratified, potentially-unpublished commits](#publishing-commits).</ins>
+<ins>Delta files use newline-delimited JSON format, where every action is stored as a single-line
+JSON document. A Delta file, corresponding to version `v`, contains an atomic set of
+[_actions_](#Actions) that should be applied to the previous table state corresponding to version
+`v-1`, in order to construct the `v`th snapshot of the table. An action changes one aspect of the
+table's state, for example, adding or removing a file.</ins>
 
-<ins>The `_delta_log/_staged_commits` directory is the staging area for proposed [staged](#staged-commit)
+<ins>**Note:** If the [`catalogOwned` table feature](#catalog-owned-tables) is enabled on the table,
+recently ratified commits may not yet be published to the `_delta_log` directory as normal Delta
+files - they may be stored directly by the catalog or reside in the `_delta_log/_staged_commits`
+directory. Delta clients must contact the table's owning catalog in order to find the information
+about the [ratified, potentially-unpublished commits](#publishing-commits).</ins>
+
+<ins>The `_delta_log/_staged_commits` directory is the staging area for [staged](#staged-commit)
 commits. Delta files in this directory have a UUID embedded into them and follow the pattern
 `<version>.<uuid>.json`, where the version corresponds to the proposed commit version, zero-padded
 to 20 digits.</ins>
@@ -94,13 +100,7 @@ not attempt to directly interpret the contents of that directory. Refer to
 ~~Delta files use new-line delimited JSON format, where every action is stored as a single line JSON
 document. A delta file, `n.json`, contains an atomic set of [_actions_](#actions) that should be
 applied to the previous table state, `n-1.json`, in order to the construct `n`th snapshot of the
-table. An action changes one aspect of the table's state, for example, adding or removing a file.~~
-
-<ins>Delta files use newline-delimited JSON format, where every action is stored as a single-line
-JSON document. A Delta file, corresponding to version `v`, contains an atomic set of
-[_actions_](#Actions) that should be applied to the previous table state corresponding to version
-`v-1`, in order to construct the `v`th snapshot of the table. An action changes one aspect of the
-table's state, for example, adding or removing a file.</ins>
+table. An action changes one aspect of the table's state, for example, adding or removing a file.~~ 
 
 ### Commit Provenance Information
 
@@ -153,22 +153,26 @@ Before we can go into details of this protocol feature, we must first align our 
 ## Terminology: Commits
 
 A commit is a set of [actions](#actions) that transform a Delta table from version `v - 1` to `v`.
-A commit contains the same content as a [Delta file](#delta-log-entries).
+It contains the same kind of content as is stored in a [Delta file](#delta-log-entries).
+
+
+A commit may be stored in the file system as a Delta file - either _published_ or _staged_ - or
+stored _inline_ in the owning catalog, using whatever format the owning catalog prefers.
 
 There are several types of commits:
 
 1. **Proposed commit**:  A commit that a Delta client has proposed for the next version of the
-   table. It could be "staged" or "inline". It will either become "ratified" or be rejected.
+   table. It could be _staged_ or _inline_. It will either become _ratified_ or be rejected.
 
-2. **Staged commit** <a name="staged-commit"></a>: A proposed commit that is written to disk at
+2. **Staged commit** <a name="staged-commit"></a>: A commit that is written to disk at
    `_delta_log/_staged_commits/<v>.<uuid>.json`. It has the same content and format as a published
    Delta file.
     - Here, the `uuid` is a random UUID that is generated for each commit and `v` is the version
       which is proposed to be committed, zero-padded to 20 digits.
     - The catalog stores only the location, not the content, of a staged commit.
-    - The mere existence of one of these files does not mean that the file is a _ratified_ commit.
-      It might correspond to a failed or in-progress commit attempt.
-    - The catalog is the source of truth around which staged commits are "ratified".
+    - The mere existence of one of these files does not mean that the file has been ratified or even
+      proposed. It might correspond to a failed or in-progress commit attempt.
+    - The catalog is the source of truth around which staged commits are ratified.
 
 3. **Inline commit** <a name="inline-commit"></a>: A proposed commit that is not written to disk but
    rather has its content sent to the catalog for the catalog to store directly.
