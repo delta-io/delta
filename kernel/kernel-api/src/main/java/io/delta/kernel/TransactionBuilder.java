@@ -20,6 +20,7 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.ConcurrentTransactionException;
 import io.delta.kernel.exceptions.DomainDoesNotExistException;
 import io.delta.kernel.exceptions.InvalidConfigurationValueException;
+import io.delta.kernel.exceptions.TableAlreadyExistsException;
 import io.delta.kernel.exceptions.UnknownConfigurationException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.TableConfig;
@@ -150,6 +151,9 @@ public interface TransactionBuilder {
    *     TableConfig}.
    * @throws DomainDoesNotExistException if removing a domain that does not exist in the latest
    *     version of the table
+   * @throws TableAlreadyExistsException if the operation provided when calling {@link
+   *     Table#createTransactionBuilder(Engine, String, Operation)} is CREATE_TABLE and the table
+   *     already exists
    */
   Transaction build(Engine engine);
 }
