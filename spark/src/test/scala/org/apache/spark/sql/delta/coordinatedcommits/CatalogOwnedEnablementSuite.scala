@@ -170,10 +170,10 @@ class CatalogOwnedEnablementSuite
               s"Unsupported operation: $operation for property: $property")
         }
         checkError(
-          exception = error,
-          condition = expectedError.getErrorClass,
-          sqlState = if (operation != "DOWNGRADE") Some(expectedError.getSqlState) else None,
-          parameters = expectedError.getMessageParameters.asScala.toMap)
+          error,
+          expectedError.getErrorClass,
+          if (operation != "DOWNGRADE") Some(expectedError.getSqlState) else None,
+          expectedError.getMessageParameters.asScala.toMap)
       }
     }
   }
