@@ -165,7 +165,7 @@ public class Utils {
     }
   }
 
-  /** Convert a ClosableIterator<FilteredColumnarBatch> into a CloseableIterator<Row> */
+  /** Convert a ClosableIterator of FilteredColumnarBatch into a CloseableIterator of Row */
   public static CloseableIterator<Row> intoRows(
       CloseableIterator<FilteredColumnarBatch> sourceBatches) {
     return new FilteredBatchToRowIter(sourceBatches);
