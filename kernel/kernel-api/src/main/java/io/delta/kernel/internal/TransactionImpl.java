@@ -275,7 +275,7 @@ public class TransactionImpl implements Transaction {
                 resolveConflicts(engine, commitAsVersion, attemptCommitInfo, numTries, dataActions);
             commitAsVersion = rebaseState.getLatestVersion() + 1;
             dataActions = rebaseState.getUpdatedDataActions();
-            domainMetadatas = Optional.of(rebaseState.getUpdatedDomainMetadatas());
+            domainMetadataState.setComputedDomainMetadatas(rebaseState.getUpdatedDomainMetadatas());
             currentCrcInfo = rebaseState.getUpdatedCrcInfo();
             // Action counters may be partially incremented from previous tries, reset the counters
             // to 0 and drop fileSizeHistogram
@@ -552,7 +552,7 @@ public class TransactionImpl implements Transaction {
               metricsResult.getTotalAddFilesSizeInBytes(),
               metricsResult.getNumAddFiles(),
               Optional.of(txnId.toString()),
-              getPostCommitDomainMetadatas(),
+              domainMetadataState.getPostCommitDomainMetadatas(),
               metricsResult
                   .getTableFileSizeHistogram()
                   .map(FileSizeHistogram::fromFileSizeHistogramResult)));
@@ -574,22 +574,10 @@ public class TransactionImpl implements Transaction {
                         + metricsResult.getNumAddFiles()
                         - metricsResult.getNumRemoveFiles(),
                     Optional.of(txnId.toString()),
-                    getPostCommitDomainMetadatas(),
+                    domainMetadataState.getPostCommitDomainMetadatas(),
                     metricsResult
                         .getTableFileSizeHistogram()
                         .map(FileSizeHistogram::fromFileSizeHistogramResult)));
-  }
-
-  /**
-   * Generate the domain metadata for the clustering columns if they are present in the transaction.
-   */
-  private void generateClusteringDomainMetadataIfNeeded() {
-    if (TableFeatures.isClusteringTableFeatureSupported(protocol) && !clusteringColumns.isEmpty()) {
-      DomainMetadata clusteringDomainMetadata =
-          ClusteringUtils.getClusteringDomainMetadata(clusteringColumns);
-      addDomainMetadataInternal(
-          clusteringDomainMetadata.getDomain(), clusteringDomainMetadata.getConfiguration());
-    }
   }
 
   /**
@@ -723,6 +711,36 @@ public class TransactionImpl implements Transaction {
     /** Sets the computed domain metadata list directly. Used during conflict resolution. */
     public void setComputedDomainMetadatas(List<DomainMetadata> updatedDomainMetadatas) {
       computedMetadatas = Optional.of(updatedDomainMetadatas);
+    }
+
+    /**
+     * Returns the set of active domain metadata of the table, removed domain metadata are excluded.
+     */
+    public Optional<Set<DomainMetadata>> getPostCommitDomainMetadatas() {
+      if (isNewTable) {
+        return Optional.of(
+            getComputedDomainMetadatasToCommit().stream()
+                .filter(dm -> !dm.isRemoved())
+                .collect(Collectors.toSet()));
+      }
+      return currentCrcInfo
+          .flatMap(CRCInfo::getDomainMetadata)
+          .map(
+              oldDomainMetadata -> {
+                Map<String, DomainMetadata> domainMetadataMap =
+                    oldDomainMetadata.stream()
+                        .collect(Collectors.toMap(DomainMetadata::getDomain, Function.identity()));
+                getComputedDomainMetadatasToCommit()
+                    .forEach(
+                        domainMetadata -> {
+                          if (domainMetadata.isRemoved()) {
+                            domainMetadataMap.remove(domainMetadata.getDomain());
+                          } else {
+                            domainMetadataMap.put(domainMetadata.getDomain(), domainMetadata);
+                          }
+                        });
+                return new HashSet<>(domainMetadataMap.values());
+              });
     }
 
     /**
