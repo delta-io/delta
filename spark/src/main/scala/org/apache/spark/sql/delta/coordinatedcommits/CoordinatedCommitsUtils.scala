@@ -21,7 +21,7 @@ import java.util.Optional
 import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{CoordinatedCommitsTableFeature, DeltaConfig, DeltaConfigs, DeltaIllegalArgumentException, DeltaLog, Snapshot, SnapshotDescriptor}
+import org.apache.spark.sql.delta.{CoordinatedCommitsTableFeature, DeltaConfig, DeltaConfigs, DeltaErrors, DeltaIllegalArgumentException, DeltaLog, Snapshot, SnapshotDescriptor}
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.commands.CloneTableCommand
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
@@ -31,6 +31,7 @@ import org.apache.spark.sql.delta.util.FileNames.{BackfilledDeltaFile, Compacted
 import io.delta.storage.LogStore
 import io.delta.storage.commit.{CommitCoordinatorClient, GetCommitsResponse => JGetCommitsResponse, TableIdentifier}
 import io.delta.storage.commit.actions.AbstractMetadata
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
@@ -92,6 +93,101 @@ object CatalogOwnedTableUtils {
       case _ =>
         throw new IllegalStateException(
           "Failed to resolve the catalog: " + identifier)
+    }
+  }
+
+  /** The only table property key that is used by Catalog-Owned. */
+  import UCCommitCoordinatorClient.UC_TABLE_ID_KEY
+
+  val ICT_TABLE_PROPERTY_CONFS = Seq(
+    DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED,
+    DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION,
+    DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP)
+
+  /**
+   * The main ICT table properties used as dependencies for Catalog-Owned enabled table.
+   */
+  val ICT_TABLE_PROPERTY_KEYS: Seq[String] = ICT_TABLE_PROPERTY_CONFS.map(_.key)
+
+  /**
+   * Whether the properties provided contains [[UCCommitCoordinatorClient.UC_TABLE_ID_KEY]].
+   */
+  private[delta] def containsUCTableId(properties: Map[String, String]): Boolean = {
+    properties.contains(UCCommitCoordinatorClient.UC_TABLE_ID_KEY)
+  }
+
+  /**
+   * Whether the properties provided contains [[UCCommitCoordinatorClient.UC_TABLE_ID_KEY]].
+   */
+  private[delta] def containsUCTableId(properties: Seq[String]): Boolean = {
+    properties.contains(UCCommitCoordinatorClient.UC_TABLE_ID_KEY)
+  }
+
+  /**
+   * Verifies that the property keys do not contain any ICT dependencies for Catalog-Owned.
+   */
+  private[delta] def verifyNotContainsICTConfigurations(
+      propKeys: Seq[String], command: String, errorClass: String): Unit = {
+    ICT_TABLE_PROPERTY_KEYS.foreach { key =>
+      if (propKeys.contains(key)) {
+        throw new DeltaIllegalArgumentException(
+          errorClass,
+          messageParameters = Array(command))
+      }
+    }
+  }
+
+  /**
+   * Validates the Catalog-Owned configurations in explicit command overrides for
+   * `AlterTableSetPropertiesDeltaCommand`.
+   *
+   * If [[CatalogOwnedTableFeature]] presents, we do NOT allow users to:
+   *    - Explicitly modify `ucTableId` through `ALTER TABLE SET TBLPROPERTIES`.
+   *      - `ucTableId` is a reserved property/field for Catalog-Owned tables.
+   *    - Modify any ICT properties that Catalog-Owned depends on.
+   */
+  def validatePropertiesForAlterTableSetPropertiesDeltaCommand(
+      snapshot: Snapshot,
+      propertyOverrides: Map[String, String]): Unit = {
+    if (snapshot.isCatalogOwned) {
+      // 1. Check whether user is trying to explicitly modify `ucTableId`.
+      //
+      // Note: We store `ucTableId` internally in
+      //       [[Metadata.configuration]] and this should NOT be visible to users.
+      //       As a result, we explicitly block users from modifying `ucTableId` via
+      //       `ALTER TABLE SET TBLPROPERTIES` and `ALTER TABLE UNSET TBLPROPERTIES`.
+      if (containsUCTableId(properties = propertyOverrides)) {
+        throw DeltaErrors.cannotModifyTableProperty(prop = UC_TABLE_ID_KEY)
+      }
+
+      // 2. For Catalog-Owned enabled tables, check the dependent ICT properties.
+      //    Specifically, we consider tables that contain [[UC_TABLE_ID_KEY]] as
+      //    Catalog-Owned enabled tables.
+      //
+      // Note: Upgrade/Downgrade have been blocked earlier, which do not need to be
+      //       checked here.
+      verifyNotContainsICTConfigurations(propertyOverrides.keys.toSeq, command = "ALTER",
+        errorClass = "DELTA_CANNOT_MODIFY_CATALOG_OWNED_DEPENDENCIES")
+    }
+  }
+
+  /**
+   * Validates the configurations to unset for `AlterTableUnsetPropertiesDeltaCommand`.
+   *
+   * If the table already has [[CatalogOwnedTableFeature]] present,
+   * we do not allow users to:
+   *  1. Unset `ucTableId` via `ALTER TABLE t UNSET TBLPROPERTIES ...`.
+   *  2. Unset any of the ICT properties that Catalog-Owned depends on.
+   */
+  def validatePropertiesForAlterTableUnsetPropertiesDeltaCommand(
+      snapshot: Snapshot,
+      propKeysToUnset: Seq[String]): Unit = {
+    if (snapshot.isCatalogOwned) {
+      if (containsUCTableId(properties = propKeysToUnset)) {
+        throw DeltaErrors.cannotModifyTableProperty(prop = UC_TABLE_ID_KEY)
+      }
+      verifyNotContainsICTConfigurations(propKeysToUnset, command = "ALTER",
+        errorClass = "DELTA_CANNOT_MODIFY_CATALOG_OWNED_DEPENDENCIES")
     }
   }
 }
@@ -567,7 +663,7 @@ object CoordinatedCommitsUtils extends DeltaLogging {
    *     Coordinated Commits configurations.
    *   - If the table does not exist, the explicit command property overrides must contain exactly
    *     the Coordinator Name and Coordinator Conf, and no Table Conf. Default configurations are
-   *     checked similarly if non of the three properties is present in explicit overrides.
+   *     checked similarly if none of the three properties is present in explicit overrides.
    */
   private[delta] def validateConfigurationsForCreateDeltaTableCommandImpl(
       spark: SparkSession,
