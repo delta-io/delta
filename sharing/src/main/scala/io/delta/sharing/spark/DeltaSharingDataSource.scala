@@ -314,6 +314,7 @@ private[sharing] class DeltaSharingDataSource
       options: DeltaSharingOptions,
       sqlContext: SQLContext): BaseRelation = {
     val path = options.options.getOrElse("path", throw DeltaSharingErrors.pathNotSpecifiedException)
+    logInfo(s"autoResolving BaseRelation for path:${path}, with options:${options.options}.")
     val parsedPath = DeltaSharingRestClient.parsePath(path)
 
     val responseFormat = {
@@ -322,6 +323,7 @@ private[sharing] class DeltaSharingDataSource
         // If the Spark config is enabled, force the query to return results in Delta format.
         // This is primarily used for testing the Delta format code path, even when the source
         // table doesn't include advanced features like deletion vector.
+        logInfo("Forcing delta sharing client to only accept delta format")
         DeltaSharingOptions.RESPONSE_FORMAT_DELTA
       }
       else {
@@ -353,6 +355,7 @@ private[sharing] class DeltaSharingDataSource
     )
 
     if (deltaTableMetadata.respondedFormat == DeltaSharingOptions.RESPONSE_FORMAT_PARQUET) {
+      logInfo(s"Resolved as parquet format for table path:$path, parameters:${options.options}")
       val deltaLog = RemoteDeltaLog(
         path = path,
         forStreaming = false,
@@ -361,6 +364,7 @@ private[sharing] class DeltaSharingDataSource
       )
       deltaLog.createRelation(options.versionAsOf, options.timestampAsOf, options.cdfOptions)
     } else if (deltaTableMetadata.respondedFormat == DeltaSharingOptions.RESPONSE_FORMAT_DELTA) {
+      logInfo(s"Resolved as delta format for table path:$path, parameters:${options.options}")
       val deltaSharingTableMetadata = DeltaSharingUtils.getDeltaSharingTableMetadata(
         table = dsTable,
         deltaTableMetadata = deltaTableMetadata
