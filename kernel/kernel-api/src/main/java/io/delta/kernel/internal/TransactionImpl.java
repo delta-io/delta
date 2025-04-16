@@ -250,36 +250,6 @@ public class TransactionImpl implements Transaction {
     return finalDomainMetadatas;
   }
 
-  /**
-   * Returns the set of active domain metadata of the table, removed domain metadata are excluded.
-   */
-  private Optional<Set<DomainMetadata>> getActiveDomainMetadatas() {
-    if (isNewTable) {
-      return Optional.of(
-          getDomainMetadatasToCommit().stream()
-              .filter(dm -> !dm.isRemoved())
-              .collect(Collectors.toSet()));
-    }
-    return currentCrcInfo
-        .flatMap(CRCInfo::getDomainMetadata)
-        .map(
-            oldDomainMetadata -> {
-              Map<String, DomainMetadata> domainMetadataMap =
-                  oldDomainMetadata.stream()
-                      .collect(Collectors.toMap(DomainMetadata::getDomain, Function.identity()));
-              getDomainMetadatasToCommit()
-                  .forEach(
-                      domainMetadata -> {
-                        if (domainMetadata.isRemoved()) {
-                          domainMetadataMap.remove(domainMetadata.getDomain());
-                        } else {
-                          domainMetadataMap.put(domainMetadata.getDomain(), domainMetadata);
-                        }
-                      });
-              return new HashSet<>(domainMetadataMap.values());
-            });
-  }
-
   public Protocol getProtocol() {
     return protocol;
   }
@@ -627,7 +597,7 @@ public class TransactionImpl implements Transaction {
               metricsResult.getTotalAddFilesSizeInBytes(),
               metricsResult.getNumAddFiles(),
               Optional.of(txnId.toString()),
-              getActiveDomainMetadatas(),
+              getPostCommitDomainMetadatas(),
               metricsResult
                   .getTableFileSizeHistogram()
                   .map(FileSizeHistogram::fromFileSizeHistogramResult)));
@@ -649,7 +619,7 @@ public class TransactionImpl implements Transaction {
                         + metricsResult.getNumAddFiles()
                         - metricsResult.getNumRemoveFiles(),
                     Optional.of(txnId.toString()),
-                    getActiveDomainMetadatas(),
+                    getPostCommitDomainMetadatas(),
                     metricsResult
                         .getTableFileSizeHistogram()
                         .map(FileSizeHistogram::fromFileSizeHistogramResult)));
@@ -665,6 +635,36 @@ public class TransactionImpl implements Transaction {
       addDomainMetadataInternal(
           clusteringDomainMetadata.getDomain(), clusteringDomainMetadata.getConfiguration());
     }
+  }
+
+  /**
+   * Returns the set of active domain metadata of the table, removed domain metadata are excluded.
+   */
+  private Optional<Set<DomainMetadata>> getPostCommitDomainMetadatas() {
+    if (isNewTable) {
+      return Optional.of(
+          getDomainMetadatasToCommit().stream()
+              .filter(dm -> !dm.isRemoved())
+              .collect(Collectors.toSet()));
+    }
+    return currentCrcInfo
+        .flatMap(CRCInfo::getDomainMetadata)
+        .map(
+            oldDomainMetadata -> {
+              Map<String, DomainMetadata> domainMetadataMap =
+                  oldDomainMetadata.stream()
+                      .collect(Collectors.toMap(DomainMetadata::getDomain, Function.identity()));
+              getDomainMetadatasToCommit()
+                  .forEach(
+                      domainMetadata -> {
+                        if (domainMetadata.isRemoved()) {
+                          domainMetadataMap.remove(domainMetadata.getDomain());
+                        } else {
+                          domainMetadataMap.put(domainMetadata.getDomain(), domainMetadata);
+                        }
+                      });
+              return new HashSet<>(domainMetadataMap.values());
+            });
   }
 
   /**
