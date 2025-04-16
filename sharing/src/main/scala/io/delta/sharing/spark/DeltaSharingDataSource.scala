@@ -323,7 +323,7 @@ private[sharing] class DeltaSharingDataSource
         // If the Spark config is enabled, force the query to return results in Delta format.
         // This is primarily used for testing the Delta format code path, even when the source
         // table doesn't include advanced features like deletion vector.
-        logInfo("Forcing delta sharing client to only accept delta format")
+        logInfo("Set delta sharing client to only accept delta format due to Spark config setting.")
         DeltaSharingOptions.RESPONSE_FORMAT_DELTA
       }
       else {
