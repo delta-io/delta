@@ -18,7 +18,6 @@ package org.apache.spark.sql.delta.coordinatedcommits
 
 import scala.collection.mutable
 
-import org.apache.spark.sql.delta.CatalogOwnedTableFeature
 import io.delta.dynamodbcommitcoordinator.DynamoDBCommitCoordinatorClientBuilder
 import io.delta.storage.commit.CommitCoordinatorClient
 
