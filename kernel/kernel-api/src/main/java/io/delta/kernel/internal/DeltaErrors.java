@@ -221,6 +221,11 @@ public final class DeltaErrors {
     return new KernelException(msg);
   }
 
+  public static KernelException conflictWithReservedInternalColumnName(String columnName) {
+    return new KernelException(
+        format("Cannot use column name '%s' because it is reserved for internal use", columnName));
+  }
+
   public static KernelException invalidColumnName(String columnName, String unsupportedChars) {
     return new KernelException(
         format(
@@ -416,6 +421,10 @@ public final class DeltaErrors {
     return new KernelException(
         "Feature 'rowTracking' is supported and depends on feature 'domainMetadata',"
             + " but 'domainMetadata' is unsupported");
+  }
+
+  public static KernelException cannotToggleRowTrackingOnExistingTable() {
+    return new KernelException("Row tracking support cannot be changed once the table is created.");
   }
 
   public static KernelException cannotModifyAppendOnlyTable(String tablePath) {
