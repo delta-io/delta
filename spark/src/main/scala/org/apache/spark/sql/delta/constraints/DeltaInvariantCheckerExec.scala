@@ -35,7 +35,7 @@ import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, UnaryNode}
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.catalyst.rules.RuleExecutor
 import org.apache.spark.sql.execution.{SparkPlan, SparkStrategy, UnaryExecNode}
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types.{ArrayType, StringType, StructType}
 
 /**
  * Operator that validates that records satisfy provided constraints before they are written into
@@ -50,17 +50,6 @@ case class DeltaInvariantChecker(
 
   override protected def withNewChildInternal(newChild: LogicalPlan): DeltaInvariantChecker =
     copy(child = newChild)
-}
-
-object DeltaInvariantChecker {
-  def apply(
-      spark: SparkSession,
-      child: LogicalPlan,
-      constraints: Seq[Constraint]): DeltaInvariantChecker = {
-    val invariantChecks =
-      DeltaInvariantCheckerExec.buildInvariantChecks(child.output, constraints, spark)
-    DeltaInvariantChecker(child, invariantChecks)
-  }
 }
 
 object DeltaInvariantCheckerStrategy extends SparkStrategy {
@@ -161,6 +150,57 @@ object DeltaInvariantCheckerExec extends DeltaLogging {
     }
   }
 
+  /**
+   * Resolve a null check expression. Most of the complexity comes from handling the case where
+   * the output doesn't contain a field we are checking for, so we need to propogate those in the
+   * checker as null literals.
+   */
+  private def resolveNullCheck(
+      expr: Expression,
+      output: Seq[Attribute],
+      currentLambdaVar: Option[NamedLambdaVariable]): Expression = {
+    expr match {
+      case UnresolvedAttribute(nameParts) =>
+        buildExtractor(output, nameParts).getOrElse(Literal(null))
+      case UnresolvedExtractValue(child, Literal(fieldName, StringType)) =>
+        resolveNullCheck(child, output, currentLambdaVar) match {
+          case l @ Literal(null, _) => l
+          case e => e.dataType match {
+            case StructType(fields) =>
+              val ordinal = fields.indexWhere(f =>
+                SchemaUtils.DELTA_COL_RESOLVER(f.name, fieldName.toString()))
+              if (ordinal == -1) {
+                Literal(null)
+              } else {
+                GetStructField(e, ordinal, Some(fieldName.toString()))
+              }
+            case _ =>
+              throw DeltaErrors.unSupportedInvariantNonStructType
+          }
+        }
+      case MapKeys(child) => resolveNullCheck(child, output, currentLambdaVar) match {
+        case l @ Literal(null, _) => l
+        case e => MapKeys(e)
+      }
+      case MapValues(child) => resolveNullCheck(child, output, currentLambdaVar) match {
+        case l @ Literal(null, _) => l
+        case e => MapValues(e)
+      }
+      case ArrayForAll(argument, function: LambdaFunction) =>
+        resolveNullCheck(argument, output, currentLambdaVar) match {
+          case l @ Literal(null, _) => l
+          case e =>
+            val elementType = e.dataType.asInstanceOf[ArrayType].elementType
+            val lambdaVar = NamedLambdaVariable(function.arguments.head.name, elementType, true)
+
+            val resolvedFunction = resolveNullCheck(function.function, output, Some(lambdaVar))
+            ArrayForAll(e, LambdaFunction(resolvedFunction, Seq(lambdaVar)))
+        }
+      case _: UnresolvedNamedLambdaVariable => currentLambdaVar.get
+      case e => e.mapChildren(resolveNullCheck(_, output, currentLambdaVar))
+    }
+  }
+
   def buildInvariantChecks(
       output: Seq[Attribute],
       constraints: Seq[Constraint],
@@ -168,10 +208,8 @@ object DeltaInvariantCheckerExec extends DeltaLogging {
     constraints.map { constraint =>
       val columnExtractors = mutable.Map[String, Expression]()
       val executableExpr = constraint match {
-        case n @ NotNull(column) =>
-          buildExtractor(output, column).getOrElse {
-            throw DeltaErrors.notNullColumnMissingException(n)
-          }
+        case n @ NotNull(column, expr) =>
+          resolveNullCheck(expr, output, None)
         case Check(name, expr) =>
           // We need to do two stages of resolution here:
           //  * Build the extractors to evaluate attribute references against input InternalRows.
