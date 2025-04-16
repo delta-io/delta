@@ -673,7 +673,8 @@ public class TransactionImpl implements Transaction {
           }
           result.add(domainToRemove.removed());
         } else {
-          // We must throw an error if the domain does not exist. Otherwise, there could be unexpected
+          // We must throw an error if the domain does not exist. Otherwise, there could be
+          // unexpected
           // behavior within conflict resolution. For example, consider the following
           // 1. Table has no domains set in V0
           // 2. txnA is started and wants to remove domain "foo"
