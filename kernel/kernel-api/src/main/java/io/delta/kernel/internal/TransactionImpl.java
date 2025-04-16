@@ -647,6 +647,9 @@ public class TransactionImpl implements Transaction {
       generateClusteringDomainMetadataIfNeeded();
 
       if (domainsToAdd.isEmpty() && domainsToRemove.isEmpty()) {
+        // If no domain metadatas are added or removed, return an empty list. This is to avoid
+        // unnecessary loading of the domain metadatas from the snapshot (which is an expensive
+        // operation).
         computedMetadatas = Optional.of(Collections.emptyList());
         return Collections.emptyList();
       }
@@ -658,13 +661,26 @@ public class TransactionImpl implements Transaction {
       Map<String, DomainMetadata> snapshotDomainMetadataMap = readSnapshot.getDomainMetadataMap();
       for (String domainName : domainsToRemove) {
         if (snapshotDomainMetadataMap.containsKey(domainName)) {
+          // Note: we know domainName is not already in finalDomainMetadatas because we do not allow
+          // removing and adding a domain with the same identifier in a single txn!
           DomainMetadata domainToRemove = snapshotDomainMetadataMap.get(domainName);
           if (domainToRemove.isRemoved()) {
+            // If the domain is already removed we throw an error to avoid any inconsistencies or
+            // ambiguity. The snapshot read by the connector is inconsistent with the snapshot
+            // loaded here as the domain to remove no longer exists.
             throw new DomainDoesNotExistException(
                 dataPath.toString(), domainName, readSnapshot.getVersion());
           }
           result.add(domainToRemove.removed());
         } else {
+          // We must throw an error if the domain does not exist. Otherwise, there could be unexpected
+          // behavior within conflict resolution. For example, consider the following
+          // 1. Table has no domains set in V0
+          // 2. txnA is started and wants to remove domain "foo"
+          // 3. txnB is started and adds domain "foo" and commits V1 before txnA
+          // 4. txnA needs to perform conflict resolution against the V1 commit from txnB
+          // Conflict resolution should fail but since the domain does not exist we cannot create
+          // a tombstone to mark it as removed and correctly perform conflict resolution.
           throw new DomainDoesNotExistException(
               dataPath.toString(), domainName, readSnapshot.getVersion());
         }
