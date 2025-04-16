@@ -103,7 +103,6 @@ public class TransactionImpl implements Transaction {
       checkArgument(
           !domainsToRemove.contains(domain),
           "Cannot add a domain that is removed in this transaction");
-
       checkState(!closed, "Cannot add a domain metadata after the transaction has completed");
 
       // Add the domain and invalidate cache
@@ -116,7 +115,6 @@ public class TransactionImpl implements Transaction {
       checkArgument(
           !domainsToAdd.containsKey(domain),
           "Cannot remove a domain that is added in this transaction");
-
       checkState(!closed, "Cannot remove a domain after the transaction has completed");
 
       // Mark for removal and invalidate cache
