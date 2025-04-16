@@ -95,6 +95,8 @@ public class ConflictChecker {
    * @param snapshot {@link SnapshotImpl} of the table when the losing transaction has started
    * @param transaction {@link TransactionImpl} that encountered the conflict (a.k.a the losing
    *     transaction)
+   * @param domainMetadatas List of {@link DomainMetadata} that the losing transaction is trying to
+   *     commit
    * @param dataActions {@link CloseableIterable} of data actions that the losing transaction is
    *     trying to commit
    * @return {@link TransactionRebaseState} that the losing transaction needs to rebase against
