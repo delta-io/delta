@@ -92,91 +92,6 @@ public class TransactionImpl implements Transaction {
 
   private boolean closed; // To avoid trying to commit the same transaction again.
 
-  /** Encapsulates the state of domain metadata within a transaction. */
-  private class DomainMetadataState {
-    private final Map<String, DomainMetadata> domainsToAdd = new HashMap<>();
-    private final Set<String> domainsToRemove = new HashSet<>();
-    private Optional<List<DomainMetadata>> computedMetadatas = Optional.empty();
-
-    /** Adds a domain metadata. Invalidates any cached computed state. */
-    public void addDomain(String domain, String config) {
-      checkArgument(
-          !domainsToRemove.contains(domain),
-          "Cannot add a domain that is removed in this transaction");
-      checkState(!closed, "Cannot add a domain metadata after the transaction has completed");
-
-      // Add the domain and invalidate cache
-      domainsToAdd.put(domain, new DomainMetadata(domain, config, false /* removed */));
-      computedMetadatas = Optional.empty();
-    }
-
-    /** Marks a domain for removal. Invalidates any cached computed state. */
-    public void removeDomain(String domain) {
-      checkArgument(
-          !domainsToAdd.containsKey(domain),
-          "Cannot remove a domain that is added in this transaction");
-      checkState(!closed, "Cannot remove a domain after the transaction has completed");
-
-      // Mark for removal and invalidate cache
-      domainsToRemove.add(domain);
-      computedMetadatas = Optional.empty();
-    }
-
-    /** Returns the list of domain metadata to be committed. */
-    public List<DomainMetadata> getComputedDomainMetadatasToCommit() {
-      if (computedMetadatas.isPresent()) {
-        return computedMetadatas.get();
-      }
-
-      generateClusteringDomainMetadataIfNeeded();
-
-      if (domainsToAdd.isEmpty() && domainsToRemove.isEmpty()) {
-        computedMetadatas = Optional.of(Collections.emptyList());
-        return Collections.emptyList();
-      }
-
-      // Add all domains added in the transaction
-      List<DomainMetadata> result = new ArrayList<>(domainsToAdd.values());
-
-      // Generate the tombstones for removed domains
-      Map<String, DomainMetadata> snapshotDomainMetadataMap = readSnapshot.getDomainMetadataMap();
-      for (String domainName : domainsToRemove) {
-        if (snapshotDomainMetadataMap.containsKey(domainName)) {
-          DomainMetadata domainToRemove = snapshotDomainMetadataMap.get(domainName);
-          if (domainToRemove.isRemoved()) {
-            throw new DomainDoesNotExistException(
-                dataPath.toString(), domainName, readSnapshot.getVersion());
-          }
-          result.add(domainToRemove.removed());
-        } else {
-          throw new DomainDoesNotExistException(
-              dataPath.toString(), domainName, readSnapshot.getVersion());
-        }
-      }
-
-      computedMetadatas = Optional.of(result);
-      return result;
-    }
-
-    /** Sets the computed domain metadata list directly. Used during conflict resolution. */
-    public void setComputedDomainMetadatas(List<DomainMetadata> updatedDomainMetadatas) {
-      computedMetadatas = Optional.of(updatedDomainMetadatas);
-    }
-
-    /**
-     * Generate the domain metadata for the clustering columns if they are present in the
-     * transaction.
-     */
-    private void generateClusteringDomainMetadataIfNeeded() {
-      if (TableFeatures.isClusteringTableFeatureSupported(protocol)
-          && !clusteringColumns.isEmpty()) {
-        DomainMetadata clusteringDomainMetadata =
-            ClusteringUtils.getClusteringDomainMetadata(clusteringColumns);
-        domainsToAdd.put(clusteringDomainMetadata.getDomain(), clusteringDomainMetadata);
-      }
-    }
-  }
-
   public TransactionImpl(
       boolean isNewTable,
       Path dataPath,
@@ -265,19 +180,6 @@ public class TransactionImpl implements Transaction {
     domainMetadataState.removeDomain(domain);
   }
 
-  /**
-   * Returns a list of the domain metadatas to commit. This consists of the domain metadatas added
-   * in the transaction using {@link Transaction#addDomainMetadata(String, String)} and the
-   * tombstones for the domain metadatas removed in the transaction using {@link
-   * Transaction#removeDomainMetadata(String)}.
-   *
-   * @return A list of {@link DomainMetadata} containing domain metadata to be committed in this
-   *     transaction.
-   */
-  public List<DomainMetadata> getComputedDomainMetadatasToCommit() {
-    return domainMetadataState.getComputedDomainMetadatasToCommit();
-  }
-
   public Protocol getProtocol() {
     return protocol;
   }
@@ -326,7 +228,8 @@ public class TransactionImpl implements Transaction {
       CommitInfo attemptCommitInfo = generateCommitAction(engine);
       updateMetadataWithICTIfRequired(
           engine, attemptCommitInfo.getInCommitTimestamp(), readSnapshot.getVersion());
-      List<DomainMetadata> resolvedDomainMetadatas = getComputedDomainMetadatasToCommit();
+      List<DomainMetadata> resolvedDomainMetadatas =
+          domainMetadataState.getComputedDomainMetadatasToCommit();
 
       // If row tracking is supported, assign base row IDs and default row commit versions to any
       // AddFile actions that do not yet have them. If the row ID high watermark changes, emit a
@@ -397,7 +300,13 @@ public class TransactionImpl implements Transaction {
         numTries,
         maxRetries);
     TransactionRebaseState rebaseState =
-        ConflictChecker.resolveConflicts(engine, readSnapshot, commitAsVersion, this, dataActions);
+        ConflictChecker.resolveConflicts(
+            engine,
+            readSnapshot,
+            commitAsVersion,
+            this,
+            domainMetadataState.getComputedDomainMetadatasToCommit(),
+            dataActions);
     long newCommitAsVersion = rebaseState.getLatestVersion() + 1;
     checkArgument(
         commitAsVersion < newCommitAsVersion,
@@ -461,7 +370,8 @@ public class TransactionImpl implements Transaction {
     }
     setTxnOpt.ifPresent(setTxn -> metadataActions.add(createTxnSingleAction(setTxn.toRow())));
 
-    List<DomainMetadata> resolvedDomainMetadatas = getComputedDomainMetadatasToCommit();
+    List<DomainMetadata> resolvedDomainMetadatas =
+        domainMetadataState.getComputedDomainMetadatasToCommit();
 
     // Check for duplicate domain metadata and if the protocol supports
     DomainMetadataUtils.validateDomainMetadatas(resolvedDomainMetadatas, protocol);
@@ -688,5 +598,98 @@ public class TransactionImpl implements Transaction {
     // [col2, col3.a] (assuming col3.a is encountered before col3.b).
     return SchemaUtils.collectLeafColumns(
         TransactionStateRow.getPhysicalSchema(transactionState), partitionColumns, numIndexedCols);
+  }
+
+  /** Encapsulates the state of domain metadata within a transaction. */
+  private class DomainMetadataState {
+    private final Map<String, DomainMetadata> domainsToAdd = new HashMap<>();
+    private final Set<String> domainsToRemove = new HashSet<>();
+    private Optional<List<DomainMetadata>> computedMetadatas = Optional.empty();
+
+    /** Adds a domain metadata. Invalidates any cached computed state. */
+    public void addDomain(String domain, String config) {
+      checkArgument(
+          !domainsToRemove.contains(domain),
+          "Cannot add a domain that is removed in this transaction");
+      checkState(!closed, "Cannot add a domain metadata after the transaction has completed");
+
+      // Add the domain and invalidate cache
+      domainsToAdd.put(domain, new DomainMetadata(domain, config, false /* removed */));
+      computedMetadatas = Optional.empty();
+    }
+
+    /** Marks a domain for removal. Invalidates any cached computed state. */
+    public void removeDomain(String domain) {
+      checkArgument(
+          !domainsToAdd.containsKey(domain),
+          "Cannot remove a domain that is added in this transaction");
+      checkState(!closed, "Cannot remove a domain after the transaction has completed");
+
+      // Mark for removal and invalidate cache
+      domainsToRemove.add(domain);
+      computedMetadatas = Optional.empty();
+    }
+
+    /**
+     * Returns a list of the domain metadatas to commit. This consists of the domain metadatas added
+     * in the transaction using {@link Transaction#addDomainMetadata(String, String)} and the
+     * tombstones for the domain metadatas removed in the transaction using {@link
+     * Transaction#removeDomainMetadata(String)}.
+     *
+     * @return A list of {@link DomainMetadata} containing domain metadata to be committed in this
+     *     transaction.
+     */
+    public List<DomainMetadata> getComputedDomainMetadatasToCommit() {
+      if (computedMetadatas.isPresent()) {
+        return computedMetadatas.get();
+      }
+
+      generateClusteringDomainMetadataIfNeeded();
+
+      if (domainsToAdd.isEmpty() && domainsToRemove.isEmpty()) {
+        computedMetadatas = Optional.of(Collections.emptyList());
+        return Collections.emptyList();
+      }
+
+      // Add all domains added in the transaction
+      List<DomainMetadata> result = new ArrayList<>(domainsToAdd.values());
+
+      // Generate the tombstones for removed domains
+      Map<String, DomainMetadata> snapshotDomainMetadataMap = readSnapshot.getDomainMetadataMap();
+      for (String domainName : domainsToRemove) {
+        if (snapshotDomainMetadataMap.containsKey(domainName)) {
+          DomainMetadata domainToRemove = snapshotDomainMetadataMap.get(domainName);
+          if (domainToRemove.isRemoved()) {
+            throw new DomainDoesNotExistException(
+                dataPath.toString(), domainName, readSnapshot.getVersion());
+          }
+          result.add(domainToRemove.removed());
+        } else {
+          throw new DomainDoesNotExistException(
+              dataPath.toString(), domainName, readSnapshot.getVersion());
+        }
+      }
+
+      computedMetadatas = Optional.of(result);
+      return result;
+    }
+
+    /** Sets the computed domain metadata list directly. Used during conflict resolution. */
+    public void setComputedDomainMetadatas(List<DomainMetadata> updatedDomainMetadatas) {
+      computedMetadatas = Optional.of(updatedDomainMetadatas);
+    }
+
+    /**
+     * Generate the domain metadata for the clustering columns if they are present in the
+     * transaction.
+     */
+    private void generateClusteringDomainMetadataIfNeeded() {
+      if (TableFeatures.isClusteringTableFeatureSupported(protocol)
+          && !clusteringColumns.isEmpty()) {
+        DomainMetadata clusteringDomainMetadata =
+            ClusteringUtils.getClusteringDomainMetadata(clusteringColumns);
+        domainsToAdd.put(clusteringDomainMetadata.getDomain(), clusteringDomainMetadata);
+      }
+    }
   }
 }
