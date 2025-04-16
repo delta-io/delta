@@ -98,14 +98,42 @@ public class TransactionImpl implements Transaction {
     private final Set<String> domainsToRemove = new HashSet<>();
     private Optional<List<DomainMetadata>> computedMetadatas = Optional.empty();
 
-    /** Adds a domain metadata. Invalidates any cached computed state. */
-    public void addDomain(String domain, String config, boolean validateUserControl) {
-      if (validateUserControl) {
-        checkArgument(
-            DomainMetadata.isUserControlledDomain(domain),
-            "Setting a system-controlled domain is not allowed: " + domain);
-      }
+    /**
+     * Adds a domain metadata with validation for user-controlled domains. Used for public API
+     * calls.
+     */
+    public void addUserDomain(String domain, String config) {
+      checkArgument(
+          DomainMetadata.isUserControlledDomain(domain),
+          "Setting a system-controlled domain is not allowed: " + domain);
 
+      addDomainInternal(domain, config);
+    }
+
+    /** Adds a domain metadata without validation. Used for internal operations like clustering. */
+    public void addInternalDomain(String domain, String config) {
+      addDomainInternal(domain, config);
+    }
+
+    /**
+     * Removes a domain metadata with validation for user-controlled domains. Used for public API
+     * calls.
+     */
+    public void removeUserDomain(String domain) {
+      checkArgument(
+          DomainMetadata.isUserControlledDomain(domain),
+          "Removing a system-controlled domain is not allowed: " + domain);
+
+      removeDomainInternal(domain);
+    }
+
+    /** Removes a domain metadata without validation. Used for internal operations. */
+    public void removeInternalDomain(String domain) {
+      removeDomainInternal(domain);
+    }
+
+    /** Internal implementation of domain addition logic. */
+    private void addDomainInternal(String domain, String config) {
       checkArgument(
           !domainsToRemove.contains(domain),
           "Cannot add a domain that is removed in this transaction");
@@ -117,14 +145,8 @@ public class TransactionImpl implements Transaction {
       computedMetadatas = Optional.empty();
     }
 
-    /** Marks a domain for removal. Invalidates any cached computed state. */
-    public void removeDomain(String domain, boolean validateUserControl) {
-      if (validateUserControl) {
-        checkArgument(
-            DomainMetadata.isUserControlledDomain(domain),
-            "Removing a system-controlled domain is not allowed: " + domain);
-      }
-
+    /** Internal implementation of domain removal logic. */
+    private void removeDomainInternal(String domain) {
       checkArgument(
           !domainsToAdd.containsKey(domain),
           "Cannot remove a domain that is added in this transaction");
@@ -249,7 +271,7 @@ public class TransactionImpl implements Transaction {
 
   @VisibleForTesting
   public void addDomainMetadataInternal(String domain, String config) {
-    domainMetadataState.addDomain(domain, config, false);
+    domainMetadataState.addInternalDomain(domain, config);
   }
 
   @Override
@@ -257,12 +279,12 @@ public class TransactionImpl implements Transaction {
     checkState(
         TableFeatures.isDomainMetadataSupported(protocol),
         "Unable to add domain metadata when the domain metadata table feature is disabled");
-    domainMetadataState.addDomain(domain, config, true);
+    domainMetadataState.addUserDomain(domain, config);
   }
 
   @VisibleForTesting
   public void removeDomainMetadataInternal(String domain) {
-    domainMetadataState.removeDomain(domain, false);
+    domainMetadataState.removeInternalDomain(domain);
   }
 
   @Override
@@ -270,7 +292,7 @@ public class TransactionImpl implements Transaction {
     checkState(
         TableFeatures.isDomainMetadataSupported(protocol),
         "Unable to add domain metadata when the domain metadata table feature is disabled");
-    domainMetadataState.removeDomain(domain, true);
+    domainMetadataState.removeUserDomain(domain);
   }
 
   /**
