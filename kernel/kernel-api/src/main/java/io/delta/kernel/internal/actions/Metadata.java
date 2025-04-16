@@ -141,6 +141,16 @@ public class Metadata {
   }
 
   /**
+   * Returns a new metadata object that has a new configuration which does not contain any of the
+   * keys provided in {@code keysToUnset}.
+   */
+  public Metadata withConfigurationKeysUnset(Set<String> keysToUnset) {
+    Map<String, String> newConfiguration = new HashMap<>(getConfiguration());
+    keysToUnset.forEach(newConfiguration::remove);
+    return withReplacedConfiguration(newConfiguration);
+  }
+
+  /**
    * Returns a new Metadata object with the configuration provided with newConfiguration (any prior
    * configuration is replaced).
    */

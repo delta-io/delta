@@ -20,12 +20,14 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.ConcurrentTransactionException;
 import io.delta.kernel.exceptions.DomainDoesNotExistException;
 import io.delta.kernel.exceptions.InvalidConfigurationValueException;
+import io.delta.kernel.exceptions.TableAlreadyExistsException;
 import io.delta.kernel.exceptions.UnknownConfigurationException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.types.StructType;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Builder for creating a {@link Transaction} to mutate a Delta table.
@@ -104,7 +106,9 @@ public interface TransactionBuilder {
 
   /**
    * Set the table properties for the table. When the table already contains the property with same
-   * key, it gets replaced if it doesn't have the same value.
+   * key, it gets replaced if it doesn't have the same value. Note, user-properties (those without a
+   * '.delta' prefix) are case-sensitive. Delta-properties are case-insensitive and are normalized
+   * to their expected case before writing to the log.
    *
    * @param engine {@link Engine} instance to use.
    * @param properties The table properties to set. These are key-value pairs that can be used to
@@ -115,6 +119,19 @@ public interface TransactionBuilder {
   TransactionBuilder withTableProperties(Engine engine, Map<String, String> properties);
 
   /**
+   * Unset the provided table properties on the table. If a property does not exist this is a no-op.
+   * For now this is only supported for user-properties (in other words, does not support 'delta.'
+   * prefixed properties). An exception will be thrown upon calling {@link
+   * TransactionBuilder#build(Engine)} if the same key is both set and unset in the same
+   * transaction. Note, user-properties (those without a '.delta' prefix) are case-sensitive.
+   *
+   * @param propertyKeys the table property keys to unset (remove from the table properties)
+   * @return updated {@link TransactionBuilder} instance.
+   * @throws IllegalArgumentException if 'delta.' prefixed keys are provided
+   */
+  TransactionBuilder withTablePropertiesRemoved(Set<String> propertyKeys);
+
+  /**
    * Set the maximum number of times to retry a transaction if a concurrent write is detected. This
    * defaults to 200
    *
@@ -122,6 +139,17 @@ public interface TransactionBuilder {
    * @return updated {@link TransactionBuilder} instance
    */
   TransactionBuilder withMaxRetries(int maxRetries);
+
+  /**
+   * Set the number of commits between log compactions. Defaults to 0 (disabled). For more
+   * information see the Delta protocol section <a
+   * href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#log-compaction-files">Log
+   * Compaction Files</a>.
+   *
+   * @param logCompactionInterval The commits between log compactions
+   * @return updated {@link TransactionBuilder} instance
+   */
+  TransactionBuilder withLogCompactionInverval(int logCompactionInterval);
 
   /**
    * Enables support for Domain Metadata on this table if it is not supported already. The table
@@ -150,6 +178,9 @@ public interface TransactionBuilder {
    *     TableConfig}.
    * @throws DomainDoesNotExistException if removing a domain that does not exist in the latest
    *     version of the table
+   * @throws TableAlreadyExistsException if the operation provided when calling {@link
+   *     Table#createTransactionBuilder(Engine, String, Operation)} is CREATE_TABLE and the table
+   *     already exists
    */
   Transaction build(Engine engine);
 }
