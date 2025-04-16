@@ -78,6 +78,9 @@ public class TransactionBuilderImpl implements TransactionBuilder {
    */
   private int maxRetries = 200;
 
+  /** Number of commits between producing a log compaction file. */
+  private int logCompactionInterval = 0;
+
   public TransactionBuilderImpl(TableImpl table, String engineInfo, Operation operation) {
     this.table = table;
     this.engineInfo = engineInfo;
@@ -129,6 +132,13 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   public TransactionBuilder withMaxRetries(int maxRetries) {
     checkArgument(maxRetries >= 0, "maxRetries must be >= 0");
     this.maxRetries = maxRetries;
+    return this;
+  }
+
+  @Override
+  public TransactionBuilder withLogCompactionInverval(int logCompactionInterval) {
+    checkArgument(logCompactionInterval >= 0, "logCompactionInterval must be >= 0");
+    this.logCompactionInterval = logCompactionInterval;
     return this;
   }
 
@@ -287,6 +297,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         newMetadata.isPresent() /* shouldUpdateMetadata */,
         newProtocol.isPresent() /* shouldUpdateProtocol */,
         maxRetries,
+        logCompactionInterval,
         table.getClock());
   }
 
