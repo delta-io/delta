@@ -59,7 +59,7 @@ trait ParquetSuiteBase extends TestUtils {
               Seq(
                 Option(stats.getMinValues.get(column)).map(_.getValue).orNull,
                 Option(stats.getMaxValues.get(column)).map(_.getValue).orNull,
-                Option(stats.getNullCounts.get(column)).orNull)
+                Option(stats.getNullCount.get(column)).orNull)
             } else {
               Seq(null, null, null)
             }
