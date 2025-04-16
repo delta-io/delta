@@ -257,8 +257,8 @@ public class TransactionImpl implements Transaction {
   @Override
   public void removeDomainMetadata(String domain) {
     checkState(
-            TableFeatures.isDomainMetadataSupported(protocol),
-            "Unable to add domain metadata when the domain metadata table feature is disabled");
+        TableFeatures.isDomainMetadataSupported(protocol),
+        "Unable to add domain metadata when the domain metadata table feature is disabled");
     checkArgument(
         DomainMetadata.isUserControlledDomain(domain),
         "Removing a system-controlled domain is not allowed: " + domain);
