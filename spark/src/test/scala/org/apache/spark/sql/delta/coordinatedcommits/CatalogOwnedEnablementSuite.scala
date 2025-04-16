@@ -46,8 +46,7 @@ class CatalogOwnedEnablementSuite
   private def addCatalogOwnedUCTableId(
       deltaLog: DeltaLog,
       tableUUID: String): Unit = {
-    val oldMetadata = deltaLog.update(
-      catalogTableOpt = deltaLog.initialCatalogTable).metadata
+    val oldMetadata = deltaLog.unsafeVolatileSnapshot.metadata
     val newMetadata =
       oldMetadata.copy(configuration = oldMetadata.configuration ++ Map(
         CATALOG_OWNED_UC_TABLE_ID -> tableUUID))
@@ -127,7 +126,7 @@ class CatalogOwnedEnablementSuite
       spark.sql(s"INSERT INTO $tableId VALUES 2") // commit 2
       val log = DeltaLog.forTable(spark, new TableIdentifier(tableId))
       validateCatalogOwnedCompleteEnablement(
-        log.update(catalogTableOpt = log.initialCatalogTable),
+        log.unsafeVolatileSnapshot,
         expectEnabled = createCatalogOwnedTableAtInit)
       // Blocking logic validation
       val sqlStr = operation match {
