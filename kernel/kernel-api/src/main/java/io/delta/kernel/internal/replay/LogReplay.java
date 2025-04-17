@@ -357,7 +357,7 @@ public class LogReplay {
   }
 
   /**
-   * Loads domain metadata map, either from snapshot hint (if valid) or from the log, then merges
+   * Loads domain metadata map, either from checksum (if valid) or from the log, then merges
    * any additional domains from the hint that don't exist in the log result.
    *
    * @param engine Engine to use for loading from log
@@ -373,12 +373,13 @@ public class LogReplay {
             checkState(
                 crc.getDomainMetadata().isPresent(),
                 "expects latestCrcInfo contains domain metadata"));
+    // TODO: we could try loading the freshest crc once again.
     if (latestCrcInfo.isPresent() && latestCrcInfo.get().getVersion() == getVersion()) {
       return latestCrcInfo.get().getDomainMetadata().get().stream()
           .collect(Collectors.toMap(DomainMetadata::getDomain, Function.identity()));
     }
 
-    // Otherwise, load from log with hint version as a starting point
+    // Otherwise, load from log with crc version as a starting point
     Map<String, DomainMetadata> resultMap =
         loadDomainMetadataMapFromLog(engine, latestCrcInfo.map(CRCInfo::getVersion));
 
