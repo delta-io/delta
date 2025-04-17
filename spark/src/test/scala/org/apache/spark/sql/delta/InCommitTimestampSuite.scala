@@ -264,7 +264,7 @@ class InCommitTimestampSuite
   }
 
   test("CREATE OR REPLACE should not disable ICT") {
-    withoutCoordinatedCommitsDefaultTableProperties {
+    withoutDefaultCCTableFeature {
       withSQLConf(
         DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> false.toString
       ) {

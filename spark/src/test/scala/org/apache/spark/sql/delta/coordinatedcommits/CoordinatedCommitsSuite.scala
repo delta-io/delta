@@ -26,7 +26,7 @@ import scala.collection.mutable.ArrayBuffer
 import com.databricks.spark.util.Log4jUsageLogger
 import com.databricks.spark.util.UsageRecord
 import org.apache.spark.sql.delta.{CommitStats, CoordinatedCommitsStats, CoordinatedCommitsTableFeature, DeltaOperations, DeltaUnsupportedOperationException, V2CheckpointTableFeature}
-import org.apache.spark.sql.delta.{CommitCoordinatorGetCommitsFailedException, DeltaIllegalArgumentException}
+import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CommitCoordinatorGetCommitsFailedException, DeltaIllegalArgumentException}
 import org.apache.spark.sql.delta.CoordinatedCommitType._
 import org.apache.spark.sql.delta.DeltaConfigs.{CHECKPOINT_INTERVAL, COORDINATED_COMMITS_COORDINATOR_CONF, COORDINATED_COMMITS_COORDINATOR_NAME, COORDINATED_COMMITS_TABLE_CONF, IN_COMMIT_TIMESTAMPS_ENABLED}
 import org.apache.spark.sql.delta.DeltaLog
@@ -54,12 +54,8 @@ import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.ManualClock
 
 class CoordinatedCommitsSuite
-    extends QueryTest
-    with DeltaSQLTestUtils
-    with SharedSparkSession
-    with DeltaSQLCommandTest
-    with CoordinatedCommitsTestUtils
-    with DeltaExceptionTestUtils {
+  extends CommitCoordinatorSuiteBase
+  with CoordinatedCommitsBaseSuite {
 
   import testImplicits._
 
@@ -68,11 +64,6 @@ class CoordinatedCommitsSuite
     super.sparkConf
       .set(COORDINATED_COMMITS_COORDINATOR_NAME.defaultTablePropertyKey, "tracking-in-memory")
       .set(COORDINATED_COMMITS_COORDINATOR_CONF.defaultTablePropertyKey, JsonUtils.toJson(Map()))
-  }
-
-  override def beforeEach(): Unit = {
-    super.beforeEach()
-    CommitCoordinatorProvider.clearNonDefaultBuilders()
   }
 
   test("helper method that recovers config from abstract metadata works properly") {
@@ -98,153 +89,110 @@ class CoordinatedCommitsSuite
     assert(JCoordinatedCommitsUtils.getCoordinatorConf(m4) === Map.empty.asJava)
   }
 
-
-  test("0th commit happens via filesystem") {
-    val commitCoordinatorName = "nobackfilling-commit-coordinator"
-    object NoBackfillingCommitCoordinatorBuilder$ extends CommitCoordinatorBuilder {
-
-      override def getName: String = commitCoordinatorName
-
-      override def build(spark: SparkSession, conf: Map[String, String]): CommitCoordinatorClient =
-        new InMemoryCommitCoordinator(batchSize = 5) {
-          override def commit(
-              logStore: LogStore,
-              hadoopConf: Configuration,
-              tableDesc: TableDescriptor,
-              commitVersion: Long,
-              actions: JIterator[String],
-              updatedActions: UpdatedActions): CommitResponse = {
-            throw new IllegalStateException("Fail commit request")
-          }
+  test("tableConf returned from registration API is recorded in deltaLog and passed " +
+    "to CommitCoordinatorClient in future for all the APIs") {
+    val tableConf = Map("tableID" -> "random-u-u-i-d", "1" -> "2").asJava
+    val trackingCommitCoordinatorClient = new TrackingCommitCoordinatorClient(
+      new InMemoryCommitCoordinator(batchSize = 10) {
+        override def registerTable(
+            logPath: Path,
+            tableIdentifier: Optional[TableIdentifier],
+            currentVersion: Long,
+            currentMetadata: AbstractMetadata,
+            currentProtocol: AbstractProtocol): java.util.Map[String, String] = {
+          super.registerTable(
+            logPath, tableIdentifier, currentVersion, currentMetadata, currentProtocol)
+          tableConf
         }
-    }
 
-    CommitCoordinatorProvider.registerBuilder(NoBackfillingCommitCoordinatorBuilder$)
-    withSQLConf(
-      COORDINATED_COMMITS_COORDINATOR_NAME.defaultTablePropertyKey -> commitCoordinatorName) {
-      withTempDir { tempDir =>
-        val tablePath = tempDir.getAbsolutePath
-        Seq(1).toDF.write.format("delta").save(tablePath)
-        val log = DeltaLog.forTable(spark, tablePath)
-        assert(log.store.listFrom(FileNames.listingPrefix(log.logPath, 0L)).exists { f =>
-          f.getPath.getName === "00000000000000000000.json"
-        })
+        override def getCommits(
+            tableDesc: TableDescriptor,
+            startVersion: java.lang.Long,
+            endVersion: java.lang.Long): JGetCommitsResponse = {
+          assert(tableDesc.getTableConf === tableConf)
+          super.getCommits(tableDesc, startVersion, endVersion)
+        }
+
+        override def commit(
+            logStore: LogStore,
+            hadoopConf: Configuration,
+            tableDesc: TableDescriptor,
+            commitVersion: Long,
+            actions: java.util.Iterator[String],
+            updatedActions: UpdatedActions): CommitResponse = {
+          assert(tableDesc.getTableConf === tableConf)
+          super.commit(logStore, hadoopConf, tableDesc, commitVersion, actions, updatedActions)
+        }
+
+        override def backfillToVersion(
+            logStore: LogStore,
+            hadoopConf: Configuration,
+            tableDesc: TableDescriptor,
+            version: Long,
+            lastKnownBackfilledVersionOpt: java.lang.Long): Unit = {
+          assert(tableDesc.getTableConf === tableConf)
+          super.backfillToVersion(
+            logStore,
+            hadoopConf,
+            tableDesc,
+            version,
+            lastKnownBackfilledVersionOpt)
+        }
       }
-    }
-  }
-
-  test("basic write") {
-    CommitCoordinatorProvider.registerBuilder(
-      TrackingInMemoryCommitCoordinatorBuilder(batchSize = 2))
+    )
+    val builder = TrackingInMemoryCommitCoordinatorBuilder(
+      batchSize = 10, Some(trackingCommitCoordinatorClient))
+    registerBuilder(builder)
     withTempDir { tempDir =>
       val tablePath = tempDir.getAbsolutePath
-      Seq(1).toDF.write.format("delta").mode("overwrite").save(tablePath) // version 0
-      Seq(2).toDF.write.format("delta").mode("overwrite").save(tablePath) // version 1
-      Seq(3).toDF.write.format("delta").mode("append").save(tablePath) // version 2
-
       val log = DeltaLog.forTable(spark, tablePath)
-      val commitsDir = new File(FileNames.commitDirPath(log.logPath).toUri)
-      val unbackfilledCommitVersions =
-        commitsDir
-          .listFiles()
-          .filterNot(f => f.getName.startsWith(".") && f.getName.endsWith(".crc"))
-          .map(_.getAbsolutePath)
-          .sortBy(path => path).map { commitPath =>
-            assert(FileNames.isDeltaFile(new Path(commitPath)))
-            FileNames.deltaVersion(new Path(commitPath))
-          }
-      assert(unbackfilledCommitVersions === Array(1, 2))
-      checkAnswer(sql(s"SELECT * FROM delta.`$tablePath`"), Seq(Row(2), Row(3)))
+      val commitCoordinatorConf = Map(COORDINATED_COMMITS_COORDINATOR_NAME.key -> builder.getName)
+      val newMetadata = Metadata().copy(configuration = commitCoordinatorConf)
+      log.startTransaction().commitManually(newMetadata)
+      assert(log.unsafeVolatileSnapshot.version === 0)
+      assert(log.unsafeVolatileSnapshot.metadata.coordinatedCommitsTableConf.asJava === tableConf)
+
+      log.startTransaction().commitManually(createTestAddFile("f1"))
+      log.startTransaction().commitManually(createTestAddFile("f2"))
+      log.checkpoint()
+      log.startTransaction().commitManually(createTestAddFile("f2"))
+
+      assert(trackingCommitCoordinatorClient.numCommitsCalled.get > 0)
+      assert(trackingCommitCoordinatorClient.numGetCommitsCalled.get > 0)
+      assert(trackingCommitCoordinatorClient.numBackfillToVersionCalled.get > 0)
     }
   }
 
-  test("cold snapshot initialization") {
-    val builder = TrackingInMemoryCommitCoordinatorBuilder(batchSize = 10)
-    val commitCoordinatorClient =
-      builder.build(spark, Map.empty).asInstanceOf[TrackingCommitCoordinatorClient]
-    CommitCoordinatorProvider.registerBuilder(builder)
+  test("transfer from one commit-coordinator to another commit-coordinator fails " +
+    "[CC-1 -> CC-2 fails]") {
+    clearBuilders()
+    val builder1 = TrackingInMemoryCommitCoordinatorBuilder(batchSize = 10)
+    val builder2 = new TrackingInMemoryCommitCoordinatorBuilder(batchSize = 10) {
+      override def getName: String = "tracking-in-memory-2"
+    }
+    Seq(builder1, builder2).foreach(registerBuilder(_))
+
     withTempDir { tempDir =>
       val tablePath = tempDir.getAbsolutePath
-      Seq(1).toDF.write.format("delta").mode("overwrite").save(tablePath) // version 0
-      DeltaLog.clearCache()
-      val usageLogs1 = Log4jUsageLogger.track {
-        checkAnswer(sql(s"SELECT * FROM delta.`$tablePath`"), Seq(Row(1)))
+      val log = DeltaLog.forTable(spark, tablePath)
+      // A new table will automatically get `tracking-in-memory` as the whole suite is configured to
+      // use it as default commit-coordinator via
+      // [[COORDINATED_COMMITS_COORDINATOR_NAME.defaultTablePropertyKey]].
+      log.startTransaction().commitManually(Metadata())
+      assert(log.unsafeVolatileSnapshot.version === 0L)
+      assert(log.unsafeVolatileSnapshot.tableCommitCoordinatorClientOpt.nonEmpty)
+
+      // Change commit-coordinator
+      val newCommitCoordinatorConf =
+        Map(COORDINATED_COMMITS_COORDINATOR_NAME.key -> builder2.getName)
+      val oldMetadata = log.unsafeVolatileSnapshot.metadata
+      val newMetadata = oldMetadata.copy(
+        configuration = oldMetadata.configuration ++ newCommitCoordinatorConf)
+      val ex = intercept[IllegalStateException] {
+        log.startTransaction().commitManually(newMetadata)
       }
-      val getCommitsUsageLogs1 = filterUsageRecords(
-        usageLogs1,
-        CoordinatedCommitsUsageLogs.COMMIT_COORDINATOR_CLIENT_GET_COMMITS)
-      val getCommitsEventData1 = JsonUtils.fromJson[Map[String, Any]](getCommitsUsageLogs1(0).blob)
-      assert(getCommitsEventData1("startVersion") === 0)
-      assert(getCommitsEventData1("versionToLoad") === -1)
-      assert(getCommitsEventData1("async") === "true")
-      assert(getCommitsEventData1("responseCommitsSize") === 0)
-      assert(getCommitsEventData1("responseLatestTableVersion") === -1)
-
-      Seq(2).toDF.write.format("delta").mode("overwrite").save(tablePath) // version 1
-      Seq(3).toDF.write.format("delta").mode("append").save(tablePath) // version 2
-      DeltaLog.clearCache()
-      commitCoordinatorClient.numGetCommitsCalled.set(0)
-      import testImplicits._
-      val result1 = sql(s"SELECT * FROM delta.`$tablePath`").collect()
-      assert(result1.length === 2 && result1.toSet === Set(Row(2), Row(3)))
-      assert(commitCoordinatorClient.numGetCommitsCalled.get === 2)
-    }
-  }
-
-  // Test commit-coordinator changed on concurrent cluster
-    testWithDefaultCommitCoordinatorUnset("snapshot is updated recursively when FS table" +
-      " is converted to commit-coordinator table on a concurrent cluster") {
-    val commitCoordinatorClient =
-      new TrackingCommitCoordinatorClient(new InMemoryCommitCoordinator(batchSize = 10))
-    val builder =
-      TrackingInMemoryCommitCoordinatorBuilder(batchSize = 10, Some(commitCoordinatorClient))
-    CommitCoordinatorProvider.registerBuilder(builder)
-
-    withTempDir { tempDir =>
-      val tablePath = tempDir.getAbsolutePath
-      val deltaLog1 = DeltaLog.forTable(spark, tablePath)
-      deltaLog1.startTransaction().commitManually(Metadata())
-      deltaLog1.startTransaction().commitManually(createTestAddFile("f1"))
-      deltaLog1.startTransaction().commitManually()
-      val snapshotV2 = deltaLog1.update()
-      assert(snapshotV2.version === 2)
-      assert(snapshotV2.tableCommitCoordinatorClientOpt.isEmpty)
-      DeltaLog.clearCache()
-
-      // Add new commit to convert FS table to coordinated-commits table
-      val deltaLog2 = DeltaLog.forTable(spark, tablePath)
-      enableCoordinatedCommits(deltaLog2, commitCoordinator = "tracking-in-memory")
-      deltaLog2.startTransaction().commitManually(createTestAddFile("f2"))
-      deltaLog2.startTransaction().commitManually()
-      val snapshotV5 = deltaLog2.unsafeVolatileSnapshot
-      assert(snapshotV5.version === 5)
-      assert(snapshotV5.tableCommitCoordinatorClientOpt.nonEmpty)
-      // only delta 4/5 will be un-backfilled and should have two dots in filename (x.uuid.json)
-      assert(snapshotV5.logSegment.deltas.count(_.getPath.getName.count(_ == '.') == 2) === 2)
-
-      val usageRecords = Log4jUsageLogger.track {
-        val newSnapshotV5 = deltaLog1.update()
-        assert(newSnapshotV5.version === 5)
-        assert(newSnapshotV5.logSegment.deltas === snapshotV5.logSegment.deltas)
-      }
-      assert(filterUsageRecords(usageRecords, "delta.readChecksum").size === 2)
-    }
-  }
-
-  test("update works correctly with InitialSnapshot") {
-    CommitCoordinatorProvider.registerBuilder(
-      TrackingInMemoryCommitCoordinatorBuilder(batchSize = 2))
-    withTempDir { tempDir =>
-      val tablePath = tempDir.getAbsolutePath
-      val clock = new ManualClock(System.currentTimeMillis())
-      val log = DeltaLog.forTable(spark, new Path(tablePath), clock)
-      assert(log.unsafeVolatileSnapshot.isInstanceOf[DummySnapshot])
-      assert(log.unsafeVolatileSnapshot.tableCommitCoordinatorClientOpt.isEmpty)
-      assert(log.getCapturedSnapshot().updateTimestamp == clock.getTimeMillis())
-      clock.advance(500)
-      log.update()
-      assert(log.unsafeVolatileSnapshot.isInstanceOf[DummySnapshot])
-      assert(log.getCapturedSnapshot().updateTimestamp == clock.getTimeMillis())
+      assert(ex.getMessage.contains(
+        "from one commit-coordinator to another commit-coordinator is not allowed"))
     }
   }
 
@@ -374,6 +322,193 @@ class CoordinatedCommitsSuite
       }
     }
   }
+}
+
+class CatalogOwnedSuite
+  extends CommitCoordinatorSuiteBase
+  with CatalogOwnedTestBaseSuite {
+
+  override def sparkConf: SparkConf = {
+    // Make sure all new tables in tests use CatalogOwned table feature by default.
+    super.sparkConf.set(defaultCatalogOwnedFeatureEnabledKey, "supported")
+  }
+}
+
+abstract class CommitCoordinatorSuiteBase
+  extends QueryTest
+  with CommitCoordinatorUtilBase
+  with DeltaSQLTestUtils
+  with SharedSparkSession
+  with DeltaSQLCommandTest
+  with DeltaExceptionTestUtils {
+
+  import testImplicits._
+
+  test("0th commit happens via filesystem") {
+    val commitCoordinatorName = "tracking-in-memory"
+    object NoBackfillingCommitCoordinatorBuilder$
+        extends CatalogOwnedCommitCoordinatorBuilder {
+
+      override def getName: String = commitCoordinatorName
+
+      override def build(spark: SparkSession, conf: Map[String, String]): CommitCoordinatorClient =
+        new InMemoryCommitCoordinator(batchSize = 5) {
+          override def commit(
+              logStore: LogStore,
+              hadoopConf: Configuration,
+              tableDesc: TableDescriptor,
+              commitVersion: Long,
+              actions: JIterator[String],
+              updatedActions: UpdatedActions): CommitResponse = {
+            throw new IllegalStateException("Fail commit request")
+          }
+        }
+
+      override def buildForCatalog(spark: SparkSession, name: String): CommitCoordinatorClient =
+        new InMemoryCommitCoordinator(batchSize = 5) {
+          override def commit(
+              logStore: LogStore,
+              hadoopConf: Configuration,
+              tableDesc: TableDescriptor,
+              commitVersion: Long,
+              actions: JIterator[String],
+              updatedActions: UpdatedActions): CommitResponse = {
+            throw new IllegalStateException("Fail commit request")
+          }
+        }
+    }
+
+    registerBuilder(NoBackfillingCommitCoordinatorBuilder$)
+    withDefaultCCTableFeature {
+      withTempDir { tempDir =>
+        val tablePath = tempDir.getAbsolutePath
+        Seq(1).toDF.write.format("delta").save(tablePath)
+        val log = DeltaLog.forTable(spark, tablePath)
+        assert(log.store.listFrom(FileNames.listingPrefix(log.logPath, 0L)).exists { f =>
+          f.getPath.getName === "00000000000000000000.json"
+        })
+      }
+    }
+  }
+
+  test("basic write") {
+    registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(batchSize = 2))
+    withTempDir { tempDir =>
+      val tablePath = tempDir.getAbsolutePath
+      Seq(1).toDF.write.format("delta").mode("overwrite").save(tablePath) // version 0
+      Seq(2).toDF.write.format("delta").mode("overwrite").save(tablePath) // version 1
+      Seq(3).toDF.write.format("delta").mode("append").save(tablePath) // version 2
+
+      val log = DeltaLog.forTable(spark, tablePath)
+      val commitsDir = new File(FileNames.commitDirPath(log.logPath).toUri)
+      val unbackfilledCommitVersions =
+        commitsDir
+          .listFiles()
+          .filterNot(f => f.getName.startsWith(".") && f.getName.endsWith(".crc"))
+          .map(_.getAbsolutePath)
+          .sortBy(path => path).map { commitPath =>
+            assert(FileNames.isDeltaFile(new Path(commitPath)))
+            FileNames.deltaVersion(new Path(commitPath))
+          }
+      assert(unbackfilledCommitVersions === Array(1, 2))
+      checkAnswer(sql(s"SELECT * FROM delta.`$tablePath`"), Seq(Row(2), Row(3)))
+    }
+  }
+
+  test("cold snapshot initialization") {
+    val builder = TrackingInMemoryCommitCoordinatorBuilder(batchSize = 10)
+    val commitCoordinatorClient =
+      builder.build(spark, Map.empty).asInstanceOf[TrackingCommitCoordinatorClient]
+    registerBuilder(builder)
+    withTempDir { tempDir =>
+      val tablePath = tempDir.getAbsolutePath
+      Seq(1).toDF.write.format("delta").mode("overwrite").save(tablePath) // version 0
+      DeltaLog.clearCache()
+      val usageLogs1 = Log4jUsageLogger.track {
+        checkAnswer(sql(s"SELECT * FROM delta.`$tablePath`"), Seq(Row(1)))
+      }
+      val getCommitsUsageLogs1 = filterUsageRecords(
+        usageLogs1,
+        CoordinatedCommitsUsageLogs.COMMIT_COORDINATOR_CLIENT_GET_COMMITS)
+      val getCommitsEventData1 = JsonUtils.fromJson[Map[String, Any]](getCommitsUsageLogs1(0).blob)
+      assert(getCommitsEventData1("startVersion") === 0)
+      assert(getCommitsEventData1("versionToLoad") === -1)
+      assert(getCommitsEventData1("async") === "true")
+      assert(getCommitsEventData1("responseCommitsSize") === 0)
+      assert(getCommitsEventData1("responseLatestTableVersion") === -1)
+
+      Seq(2).toDF.write.format("delta").mode("overwrite").save(tablePath) // version 1
+      Seq(3).toDF.write.format("delta").mode("append").save(tablePath) // version 2
+      DeltaLog.clearCache()
+      commitCoordinatorClient.numGetCommitsCalled.set(0)
+      import testImplicits._
+      val result1 = sql(s"SELECT * FROM delta.`$tablePath`").collect()
+      assert(result1.length === 2 && result1.toSet === Set(Row(2), Row(3)))
+      assert(commitCoordinatorClient.numGetCommitsCalled.get === 2)
+    }
+  }
+
+  // Test commit-coordinator changed on concurrent cluster
+  testWithDefaultCommitCoordinatorUnset("snapshot is updated recursively when FS table" +
+      " is converted to commit-coordinator table on a concurrent cluster") {
+    if (isCatalogOwnedTest) {
+      // TODO: CatalogOwned table cannot change its catalog, hence modify below to
+      // test race upgrade from normal table after implementing upgrade.
+      cancel("Upgrade is not yet supported for catalog owned tables")
+    }
+    val commitCoordinatorClient =
+      new TrackingCommitCoordinatorClient(new InMemoryCommitCoordinator(batchSize = 10))
+    val builder =
+      TrackingInMemoryCommitCoordinatorBuilder(batchSize = 10, Some(commitCoordinatorClient))
+    registerBuilder(builder)
+
+    withTempDir { tempDir =>
+      val tablePath = tempDir.getAbsolutePath
+      val deltaLog1 = DeltaLog.forTable(spark, tablePath)
+      deltaLog1.startTransaction().commitManually(Metadata())
+      deltaLog1.startTransaction().commitManually(createTestAddFile("f1"))
+      deltaLog1.startTransaction().commitManually()
+      val snapshotV2 = deltaLog1.update()
+      assert(snapshotV2.version === 2)
+      assert(snapshotV2.tableCommitCoordinatorClientOpt.isEmpty)
+      DeltaLog.clearCache()
+
+      // Add new commit to convert FS table to coordinated-commits table
+      val deltaLog2 = DeltaLog.forTable(spark, tablePath)
+      upgradeLogWithCCTableFeature(deltaLog2, commitCoordinator = "tracking-in-memory")
+      deltaLog2.startTransaction().commitManually(createTestAddFile("f2"))
+      deltaLog2.startTransaction().commitManually()
+      val snapshotV5 = deltaLog2.unsafeVolatileSnapshot
+      assert(snapshotV5.version === 5)
+      assert(snapshotV5.tableCommitCoordinatorClientOpt.nonEmpty)
+      // only delta 4/5 will be un-backfilled and should have two dots in filename (x.uuid.json)
+      assert(snapshotV5.logSegment.deltas.count(_.getPath.getName.count(_ == '.') == 2) === 2)
+
+      val usageRecords = Log4jUsageLogger.track {
+        val newSnapshotV5 = deltaLog1.update()
+        assert(newSnapshotV5.version === 5)
+        assert(newSnapshotV5.logSegment.deltas === snapshotV5.logSegment.deltas)
+      }
+      assert(filterUsageRecords(usageRecords, "delta.readChecksum").size === 2)
+    }
+  }
+
+  test("update works correctly with InitialSnapshot") {
+    registerBuilder(
+      TrackingInMemoryCommitCoordinatorBuilder(batchSize = 2))
+    withTempDir { tempDir =>
+      val tablePath = tempDir.getAbsolutePath
+      val clock = new ManualClock(System.currentTimeMillis())
+      val log = DeltaLog.forTable(spark, new Path(tablePath), clock)
+      assert(log.unsafeVolatileSnapshot.isInstanceOf[DummySnapshot])
+      assert(log.unsafeVolatileSnapshot.tableCommitCoordinatorClientOpt.isEmpty)
+      assert(log.getCapturedSnapshot().updateTimestamp == clock.getTimeMillis())
+      clock.advance(500)
+      log.update()
+      assert(log.unsafeVolatileSnapshot.isInstanceOf[DummySnapshot])
+      assert(log.getCapturedSnapshot().updateTimestamp == clock.getTimeMillis())
+    }
+  }
 
   // This test has the following setup:
   // 1. Table is created with CS1 as commit-coordinator.
@@ -394,6 +529,12 @@ class CoordinatedCommitsSuite
   // 8. Invoke deltaLog.update() two more times. 3rd attempt will succeed.
   //    - the recorded timestamp for this should be clock timestamp.
   test("failures inside getCommits, correct timestamp is added in CapturedSnapshot") {
+    if (isCatalogOwnedTest) {
+      // TODO: This test is important to test the robustness of the ability to resolve
+      // stale snapshot status interaction with upgrade/downgrade. Implement this suite
+      // for catalog owned tables once we enable upgrade.
+      cancel("Upgrade is not yet supported for catalog owned tables")
+    }
     val batchSize = 10
     val cs1 = new TrackingCommitCoordinatorClient(new InMemoryCommitCoordinator(batchSize))
     val cs2 = new TrackingCommitCoordinatorClient(new InMemoryCommitCoordinator(batchSize)) {
@@ -640,7 +781,7 @@ class CoordinatedCommitsSuite
       new TrackingCommitCoordinatorClient(new InMemoryCommitCoordinator(batchSize = 10))
     val builder =
       TrackingInMemoryCommitCoordinatorBuilder(batchSize = 10, Some(commitCoordinatorClient))
-    CommitCoordinatorProvider.registerBuilder(builder)
+    registerBuilder(builder)
     def checkGetSnapshotAt(
         deltaLog: DeltaLog,
         version: Long,
@@ -693,7 +834,7 @@ class CoordinatedCommitsSuite
       // Part-2: Validate getSnapshotAt API works as expected for coordinated commits tables when
       // the switch is made
       // commit 3
-      enableCoordinatedCommits(DeltaLog.forTable(spark, tablePath), "tracking-in-memory")
+      upgradeLogWithCCTableFeature(DeltaLog.forTable(spark, tablePath), "tracking-in-memory")
       // commit 4
       Seq(1).toDF.write.format("delta").mode("overwrite").save(tablePath)
       // the old deltaLog objects still points to version 2
@@ -736,7 +877,10 @@ class CoordinatedCommitsSuite
     }
   }
 
-  private def enableCoordinatedCommits(deltaLog: DeltaLog, commitCoordinator: String): Unit = {
+  private def upgradeLogWithCCTableFeature(deltaLog: DeltaLog, commitCoordinator: String): Unit = {
+    if (isCatalogOwnedTest) {
+      cancel("Upgrade is not yet supported for catalog owned tables")
+    }
     val oldMetadata = deltaLog.update().metadata
     val commitCoordinatorConf = (COORDINATED_COMMITS_COORDINATOR_NAME.key -> commitCoordinator)
     val newMetadata =
@@ -744,91 +888,24 @@ class CoordinatedCommitsSuite
     deltaLog.startTransaction().commitManually(newMetadata)
   }
 
-  test("tableConf returned from registration API is recorded in deltaLog and passed " +
-      "to CommitCoordinatorClient in future for all the APIs") {
-    val tableConf = Map("tableID" -> "random-u-u-i-d", "1" -> "2").asJava
-    val trackingCommitCoordinatorClient = new TrackingCommitCoordinatorClient(
-        new InMemoryCommitCoordinator(batchSize = 10) {
-          override def registerTable(
-              logPath: Path,
-              tableIdentifier: Optional[TableIdentifier],
-              currentVersion: Long,
-              currentMetadata: AbstractMetadata,
-              currentProtocol: AbstractProtocol): java.util.Map[String, String] = {
-            super.registerTable(
-              logPath, tableIdentifier, currentVersion, currentMetadata, currentProtocol)
-            tableConf
-          }
-
-          override def getCommits(
-              tableDesc: TableDescriptor,
-              startVersion: java.lang.Long,
-              endVersion: java.lang.Long): JGetCommitsResponse = {
-            assert(tableDesc.getTableConf === tableConf)
-            super.getCommits(tableDesc, startVersion, endVersion)
-          }
-
-          override def commit(
-              logStore: LogStore,
-              hadoopConf: Configuration,
-              tableDesc: TableDescriptor,
-              commitVersion: Long,
-              actions: java.util.Iterator[String],
-              updatedActions: UpdatedActions): CommitResponse = {
-            assert(tableDesc.getTableConf === tableConf)
-            super.commit(logStore, hadoopConf, tableDesc, commitVersion, actions, updatedActions)
-          }
-
-          override def backfillToVersion(
-              logStore: LogStore,
-              hadoopConf: Configuration,
-              tableDesc: TableDescriptor,
-              version: Long,
-              lastKnownBackfilledVersionOpt: java.lang.Long): Unit = {
-            assert(tableDesc.getTableConf === tableConf)
-            super.backfillToVersion(
-              logStore,
-              hadoopConf,
-              tableDesc,
-              version,
-              lastKnownBackfilledVersionOpt)
-          }
-        }
-    )
-    val builder = TrackingInMemoryCommitCoordinatorBuilder(
-      batchSize = 10, Some(trackingCommitCoordinatorClient))
-    CommitCoordinatorProvider.registerBuilder(builder)
-    withTempDir { tempDir =>
-      val tablePath = tempDir.getAbsolutePath
-      val log = DeltaLog.forTable(spark, tablePath)
-      val commitCoordinatorConf = Map(COORDINATED_COMMITS_COORDINATOR_NAME.key -> builder.getName)
-      val newMetadata = Metadata().copy(configuration = commitCoordinatorConf)
-      log.startTransaction().commitManually(newMetadata)
-      assert(log.unsafeVolatileSnapshot.version === 0)
-      assert(log.unsafeVolatileSnapshot.metadata.coordinatedCommitsTableConf.asJava === tableConf)
-
-      log.startTransaction().commitManually(createTestAddFile("f1"))
-      log.startTransaction().commitManually(createTestAddFile("f2"))
-      log.checkpoint()
-      log.startTransaction().commitManually(createTestAddFile("f2"))
-
-      assert(trackingCommitCoordinatorClient.numCommitsCalled.get > 0)
-      assert(trackingCommitCoordinatorClient.numGetCommitsCalled.get > 0)
-      assert(trackingCommitCoordinatorClient.numBackfillToVersionCalled.get > 0)
-    }
-  }
-
   for (upgradeExistingTable <- BOOLEAN_DOMAIN)
   testWithDifferentBackfillInterval("upgrade + downgrade [FS -> CC1 -> FS -> CC2]," +
       s" upgradeExistingTable = $upgradeExistingTable") { backfillInterval =>
-    withoutCoordinatedCommitsDefaultTableProperties {
-      CommitCoordinatorProvider.clearNonDefaultBuilders()
+    if (isCatalogOwnedTest) {
+      // TODO: Once upgrade is supported, this unit test can only test
+      // first upgrade part (FS -> CC1) because there is no CC1 -> FS -> CC2 transition
+      // in CatalogOwned table feature. Note that only one Catalog can exist for
+      // each table identifier.
+      cancel("Upgrade is not yet supported for catalog owned tables")
+    }
+    withoutDefaultCCTableFeature {
+      clearBuilders()
       val builder1 = TrackingInMemoryCommitCoordinatorBuilder(batchSize = backfillInterval)
       val builder2 = new TrackingInMemoryCommitCoordinatorBuilder(batchSize = backfillInterval) {
         override def getName: String = "tracking-in-memory-2"
       }
 
-      Seq(builder1, builder2).foreach(CommitCoordinatorProvider.registerBuilder(_))
+      Seq(builder1, builder2).foreach(registerBuilder(_))
       val cs1 = builder1
         .trackingInMemoryCommitCoordinatorClient
         .asInstanceOf[TrackingCommitCoordinatorClient]
@@ -1001,42 +1078,13 @@ class CoordinatedCommitsSuite
     }
   }
 
-  test("transfer from one commit-coordinator to another commit-coordinator fails " +
-    "[CC-1 -> CC-2 fails]") {
-    CommitCoordinatorProvider.clearNonDefaultBuilders()
-    val builder1 = TrackingInMemoryCommitCoordinatorBuilder(batchSize = 10)
-    val builder2 = new TrackingInMemoryCommitCoordinatorBuilder(batchSize = 10) {
-      override def getName: String = "tracking-in-memory-2"
-    }
-    Seq(builder1, builder2).foreach(CommitCoordinatorProvider.registerBuilder(_))
-
-    withTempDir { tempDir =>
-      val tablePath = tempDir.getAbsolutePath
-      val log = DeltaLog.forTable(spark, tablePath)
-      // A new table will automatically get `tracking-in-memory` as the whole suite is configured to
-      // use it as default commit-coordinator via
-      // [[COORDINATED_COMMITS_COORDINATOR_NAME.defaultTablePropertyKey]].
-      log.startTransaction().commitManually(Metadata())
-      assert(log.unsafeVolatileSnapshot.version === 0L)
-      assert(log.unsafeVolatileSnapshot.tableCommitCoordinatorClientOpt.nonEmpty)
-
-      // Change commit-coordinator
-      val newCommitCoordinatorConf =
-        Map(COORDINATED_COMMITS_COORDINATOR_NAME.key -> builder2.getName)
-      val oldMetadata = log.unsafeVolatileSnapshot.metadata
-      val newMetadata = oldMetadata.copy(
-        configuration = oldMetadata.configuration ++ newCommitCoordinatorConf)
-      val ex = intercept[IllegalStateException] {
-        log.startTransaction().commitManually(newMetadata)
-      }
-      assert(ex.getMessage.contains(
-        "from one commit-coordinator to another commit-coordinator is not allowed"))
-    }
-  }
 
   testWithDefaultCommitCoordinatorUnset("FS -> CC upgrade is not retried on a conflict") {
+    if (isCatalogOwnedTest) {
+      cancel("Upgrade is not yet supported for catalog owned tables")
+    }
     val builder = TrackingInMemoryCommitCoordinatorBuilder(batchSize = 10)
-    CommitCoordinatorProvider.registerBuilder(builder)
+    registerBuilder(builder)
 
     withTempDir { tempDir =>
       val tablePath = tempDir.getAbsolutePath
@@ -1052,10 +1100,13 @@ class CoordinatedCommitsSuite
   }
 
   testWithDefaultCommitCoordinatorUnset("FS -> CC upgrade with commitLarge API") {
+    if (isCatalogOwnedTest) {
+      cancel("Upgrade is not yet supported for catalog owned tables")
+    }
     val builder = TrackingInMemoryCommitCoordinatorBuilder(batchSize = 10)
     val cs =
       builder.trackingInMemoryCommitCoordinatorClient.asInstanceOf[TrackingCommitCoordinatorClient]
-    CommitCoordinatorProvider.registerBuilder(builder)
+    registerBuilder(builder)
     withTempDir { tempDir =>
       val tablePath = tempDir.getAbsolutePath
       Seq(1).toDF.write.format("delta").save(tablePath)
@@ -1117,6 +1168,9 @@ class CoordinatedCommitsSuite
   }
 
   test("Incomplete backfills are handled properly by next commit after CC to FS conversion") {
+    if (isCatalogOwnedTest) {
+      cancel("Downgrade is not yet supported for catalog owned tables")
+    }
     val batchSize = 10
     val neverBackfillingCommitCoordinator =
       new TrackingCommitCoordinatorClient(new InMemoryCommitCoordinator(batchSize) {
@@ -1127,10 +1181,10 @@ class CoordinatedCommitsSuite
           version: Long,
           lastKnownBackfilledVersionOpt: JLong): Unit = { }
       })
-    CommitCoordinatorProvider.clearNonDefaultBuilders()
+    clearBuilders()
     val builder =
       TrackingInMemoryCommitCoordinatorBuilder(batchSize, Some(neverBackfillingCommitCoordinator))
-    CommitCoordinatorProvider.registerBuilder(builder)
+    registerBuilder(builder)
 
     withTempDir { tempDir =>
       val tablePath = tempDir.getAbsolutePath
@@ -1172,7 +1226,7 @@ class CoordinatedCommitsSuite
     // Use a batch size of two so we don't immediately backfill in
     // the AbstractBatchBackfillingCommitCoordinatorClient and so the
     // CommitResponse contains the UUID-based commit.
-    CommitCoordinatorProvider.registerBuilder(
+    registerBuilder(
       TrackingInMemoryCommitCoordinatorBuilder(batchSize = 2))
 
     withTempDir { tempDir =>
@@ -1260,9 +1314,11 @@ class CoordinatedCommitsSuite
 
   for (ignoreMissingCCImpl <- BOOLEAN_DOMAIN)
   test(s"missing coordinator implementation [ignoreMissingCCImpl = $ignoreMissingCCImpl]") {
-    CommitCoordinatorProvider.clearNonDefaultBuilders()
-    CommitCoordinatorProvider.registerBuilder(
-      TrackingInMemoryCommitCoordinatorBuilder(batchSize = 2))
+    if (isCatalogOwnedTest) {
+      cancel("Error message is not yet customized for CatalogOwned table.")
+    }
+    clearBuilders()
+    registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(batchSize = 2))
     withTempDir { tempDir =>
       val tablePath = tempDir.getAbsolutePath
       Seq(0).toDF.write.format("delta").save(tablePath)
@@ -1270,7 +1326,7 @@ class CoordinatedCommitsSuite
         Seq(v).toDF.write.mode("append").format("delta").save(tablePath)
       }
       // The table has 3 backfilled commits [0, 1, 2] and 1 unbackfilled commit [3]
-      CommitCoordinatorProvider.clearNonDefaultBuilders()
+      clearBuilders()
 
       def getUsageLogsAndEnsurePresenceOfMissingCCImplLog(
           expectedFailIfImplUnavailable: Boolean)(f: => Unit): Seq[UsageRecord] = {
@@ -1355,11 +1411,14 @@ class CoordinatedCommitsSuite
       upgradeToCoordinatedCommitsVersion: Int,
       backfillInterval: Int,
       requiredDeltaLogVersions: Set[Int]): Map[Int, DeltaLog] = {
+    if (isCatalogOwnedTest) {
+      cancel("Upgrade is not yet supported for catalog owned tables")
+    }
     val commitCoordinatorClient =
       new TrackingCommitCoordinatorClient(new InMemoryCommitCoordinator(backfillInterval))
     val builder =
       TrackingInMemoryCommitCoordinatorBuilder(backfillInterval, Some(commitCoordinatorClient))
-    CommitCoordinatorProvider.registerBuilder(builder)
+    registerBuilder(builder)
     val versionToDeltaLogMapping = collection.mutable.Map.empty[Int, DeltaLog]
     withSQLConf(
       CHECKPOINT_INTERVAL.defaultTablePropertyKey -> "100") {
@@ -1568,8 +1627,12 @@ class CoordinatedCommitsSuite
   /////////////////////////////////////////////////////////////////////////////////////////////
 
   test("During ALTER, overriding Coordinated Commits configurations throws an exception.") {
-    CommitCoordinatorProvider.registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(1))
-    CommitCoordinatorProvider.registerBuilder(InMemoryCommitCoordinatorBuilder(1))
+    if (isCatalogOwnedTest) {
+      // TODO: Implement similar tests for blocking alter table CatalogOwned specific properties.
+      cancel("Upgrade is not yet supported for catalog owned tables")
+    }
+    registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(1))
+    registerBuilder(InMemoryCommitCoordinatorBuilder(1))
 
     withTempDir { tempDir =>
       sql(s"CREATE TABLE delta.`${tempDir.getAbsolutePath}` (id LONG) USING delta TBLPROPERTIES " +
@@ -1589,7 +1652,11 @@ class CoordinatedCommitsSuite
   }
 
   test("During ALTER, unsetting Coordinated Commits configurations throws an exception.") {
-    CommitCoordinatorProvider.registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(1))
+    if (isCatalogOwnedTest) {
+      // TODO: Implement similar tests for blocking alter table CatalogOwned specific properties.
+      cancel("Upgrade is not yet supported for catalog owned tables")
+    }
+    registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(1))
 
     withTempDir { tempDir =>
       sql(s"CREATE TABLE delta.`${tempDir.getAbsolutePath}` (id LONG) USING delta TBLPROPERTIES " +
@@ -1610,13 +1677,15 @@ class CoordinatedCommitsSuite
 
   test("During ALTER, overriding ICT configurations on (potential) Coordinated Commits tables " +
       "throws an exception.") {
-    CommitCoordinatorProvider.registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(1))
+    if (isCatalogOwnedTest) {
+      cancel("TODO: Implement this.")
+    }
+    registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(1))
 
     // For a table that had Coordinated Commits enabled before the ALTER command.
     withTempDir { tempDir =>
       sql(s"CREATE TABLE delta.`${tempDir.getAbsolutePath}` (id LONG) USING delta TBLPROPERTIES " +
-        s"('${COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'tracking-in-memory', " +
-        s"'${COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '${JsonUtils.toJson(Map())}')")
+        propertiesString)
       val e = interceptWithUnwrapping[DeltaIllegalArgumentException] {
         sql(s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` SET TBLPROPERTIES " +
           s"('${IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'false')")
@@ -1628,8 +1697,11 @@ class CoordinatedCommitsSuite
         parameters = Map("Command" -> "ALTER"))
     }
 
+    if (isCatalogOwnedTest) {
+      cancel("Upgrade is not yet supported for catalog owned tables")
+    }
     // For a table that is about to enable Coordinated Commits during the same ALTER command.
-    withoutCoordinatedCommitsDefaultTableProperties {
+    withoutDefaultCCTableFeature {
       withTempDir { tempDir =>
         sql(s"CREATE TABLE delta.`${tempDir.getAbsolutePath}` (id LONG) USING delta")
         val e = interceptWithUnwrapping[DeltaIllegalArgumentException] {
@@ -1649,12 +1721,14 @@ class CoordinatedCommitsSuite
 
   test("During ALTER, unsetting ICT configurations on Coordinated Commits tables throws an " +
       "exception.") {
-    CommitCoordinatorProvider.registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(1))
+    if (isCatalogOwnedTest) {
+      cancel("TODO: Implement this.")
+    }
+    registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(1))
 
     withTempDir { tempDir =>
       sql(s"CREATE TABLE delta.`${tempDir.getAbsolutePath}` (id LONG) USING delta TBLPROPERTIES " +
-        s"('${COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'tracking-in-memory', " +
-        s"'${COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '${JsonUtils.toJson(Map())}')")
+        propertiesString)
       val e = interceptWithUnwrapping[DeltaIllegalArgumentException] {
         sql(s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` UNSET TBLPROPERTIES " +
           s"('${IN_COMMIT_TIMESTAMPS_ENABLED.key}')")
@@ -1669,68 +1743,78 @@ class CoordinatedCommitsSuite
 
   test("During REPLACE, for non-CC tables, default CC configurations are ignored, but default " +
       "ICT confs are retained, and existing ICT confs are discarded") {
+    if (isCatalogOwnedTest) {
+      cancel("TODO: Implement this.")
+    }
     // Non-CC table, REPLACE with default CC and ICT confs => Non-CC, but with ICT confs.
     withTempDir { tempDir =>
-      withoutCoordinatedCommitsDefaultTableProperties {
+      withoutDefaultCCTableFeature {
         sql(s"CREATE TABLE delta.`${tempDir.getAbsolutePath}` (id LONG) USING delta")
       }
       withSQLConf(IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> "true") {
         sql(s"REPLACE TABLE delta.`${tempDir.getAbsolutePath}` (id STRING) USING delta")
       }
       assert(DeltaLog.forTable(spark, tempDir).snapshot.tableCommitCoordinatorClientOpt.isEmpty)
+      assert(!DeltaLog.forTable(spark, tempDir).snapshot.isCatalogOwned)
       assert(DeltaLog.forTable(spark, tempDir).snapshot.metadata.configuration.contains(
         IN_COMMIT_TIMESTAMPS_ENABLED.key))
     }
 
     // Non-CC table with ICT confs, REPLACE with only default CC confs => Non-CC, also no ICT confs.
     withTempDir { tempDir =>
-      withoutCoordinatedCommitsDefaultTableProperties {
+      withoutDefaultCCTableFeature {
         withSQLConf(IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> "true") {
           sql(s"CREATE TABLE delta.`${tempDir.getAbsolutePath}` (id LONG) USING delta")
         }
       }
       sql(s"REPLACE TABLE delta.`${tempDir.getAbsolutePath}` (id STRING) USING delta")
-      assert(DeltaLog.forTable(spark, tempDir).snapshot.tableCommitCoordinatorClientOpt.isEmpty)
-      assert(!DeltaLog.forTable(spark, tempDir).snapshot.metadata.configuration.contains(
-        IN_COMMIT_TIMESTAMPS_ENABLED.key))
+      val snapshot = DeltaLog.forTable(spark, tempDir).unsafeVolatileSnapshot
+      assert(snapshot.tableCommitCoordinatorClientOpt.isEmpty)
+      assert(!snapshot.isCatalogOwned)
+      assert(!snapshot.metadata.configuration.contains(IN_COMMIT_TIMESTAMPS_ENABLED.key))
     }
   }
 
   test("During REPLACE, for CC tables, existing CC and ICT configurations are both retained.") {
-    CommitCoordinatorProvider.registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(1))
+    if (isCatalogOwnedTest) {
+      cancel("TODO: Implement this.")
+    }
+    registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(1))
 
     withTempDir { tempDir =>
-      withoutCoordinatedCommitsDefaultTableProperties {
+      withoutDefaultCCTableFeature {
         sql(s"CREATE TABLE delta.`${tempDir.getAbsolutePath}` (id LONG) USING delta")
         sql(s"INSERT INTO delta.`${tempDir.getAbsolutePath}` VALUES (0)")
-        sql(s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` SET TBLPROPERTIES " +
-          s"('${COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'tracking-in-memory', " +
-          s"'${COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '${JsonUtils.toJson(Map())}')")
-        // All three ICT configurations should be set because Coordinated Commits is enabled later.
+        sql(s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` SET TBLPROPERTIES " + propertiesString)
+        // All three ICT configurations should be set because CC feature is enabled later.
         // REPLACE with default CC confs => CC, and all ICT confs.
         sql(s"REPLACE TABLE delta.`${tempDir.getAbsolutePath}` (id STRING) USING delta")
-        assert(DeltaLog.forTable(spark, tempDir).snapshot.tableCommitCoordinatorClientOpt.nonEmpty)
+        val snapshot = DeltaLog.forTable(spark, tempDir).unsafeVolatileSnapshot
+        assert(snapshot.tableCommitCoordinatorClientOpt.nonEmpty || snapshot.isCatalogOwned)
         CoordinatedCommitsUtils.ICT_TABLE_PROPERTY_KEYS.foreach { key =>
-          assert(DeltaLog.forTable(spark, tempDir).snapshot.metadata.configuration.contains(key))
+          assert(snapshot.metadata.configuration.contains(key))
         }
       }
     }
   }
 
-  test("CREATE LIKE does not copy Coordinated Commits configurations from the source table.") {
-    CommitCoordinatorProvider.registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(1))
+  test("CREATE LIKE does not copy commit coordinated related feature config from the source table.") {
+    registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(1))
 
     val source = "sourcetable"
     val target = "targettable"
-    sql(s"CREATE TABLE $source (id LONG) USING delta TBLPROPERTIES" +
-      s"('${COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'tracking-in-memory', " +
-      s"'${COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '${JsonUtils.toJson(Map())}')")
+    sql(s"CREATE TABLE $source (id LONG) USING delta TBLPROPERTIES" + propertiesString)
     sql(s"CREATE TABLE $target LIKE $source")
-    assert(DeltaLog.forTable(spark, target).snapshot.tableCommitCoordinatorClientOpt.isEmpty)
+    val snapshot = DeltaLog.forTable(spark, target).unsafeVolatileSnapshot
+    assert(snapshot.tableCommitCoordinatorClientOpt.isEmpty)
+    assert(!snapshot.isCatalogOwned)
   }
 
   test("CREATE an external table in a location with an existing table works correctly.") {
-    CommitCoordinatorProvider.registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(1))
+    if (isCatalogOwnedTest) {
+      cancel("TODO: Implement this.")
+    }
+    registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(1))
 
     // When the existing table has a commit coordinator, omitting CC configurations in the command
     // should not throw an exception, and the commit coordinator should be retained, so should ICT.
@@ -1738,14 +1822,12 @@ class CoordinatedCommitsSuite
       val tableName = "testtable"
       val tablePath = dir.getAbsolutePath
       sql(s"CREATE TABLE delta.`${dir.getAbsolutePath}` (id LONG) USING delta TBLPROPERTIES " +
-        s"('foo' = 'bar', " +
-        s"'${COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'tracking-in-memory', " +
-        s"'${COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '${JsonUtils.toJson(Map())}')")
+        s"('foo' = 'bar', " + propertiesString.substring(1))
       sql(s"CREATE TABLE $tableName (id LONG) USING delta TBLPROPERTIES " +
         s"('foo' = 'bar') LOCATION '${dir.getAbsolutePath}'")
-      assert(DeltaLog.forTable(spark, tablePath).snapshot.tableCommitCoordinatorClientOpt.nonEmpty)
-      assert(DeltaLog.forTable(spark, tablePath).snapshot.metadata.configuration.contains(
-        IN_COMMIT_TIMESTAMPS_ENABLED.key))
+      val snapshot = DeltaLog.forTable(spark, tablePath).snapshot
+      assert(snapshot.tableCommitCoordinatorClientOpt.nonEmpty || snapshot.isCatalogOwned)
+      assert(snapshot.metadata.configuration.contains(IN_COMMIT_TIMESTAMPS_ENABLED.key))
     }
   }
 }
