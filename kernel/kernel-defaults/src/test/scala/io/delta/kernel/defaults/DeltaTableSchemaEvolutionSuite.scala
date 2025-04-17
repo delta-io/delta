@@ -15,6 +15,8 @@
  */
 package io.delta.kernel.defaults
 
+import java.util.Collections.emptySet
+
 import scala.collection.JavaConverters._
 import scala.collection.immutable.Seq
 
@@ -22,10 +24,13 @@ import io.delta.kernel.{Operation, Table}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.expressions.Column
-import io.delta.kernel.internal.TableConfig
+import io.delta.kernel.internal.{SnapshotImpl, TableConfig}
 import io.delta.kernel.internal.util.{ColumnMapping, ColumnMappingSuiteBase}
 import io.delta.kernel.types.{ArrayType, FieldMetadata, IntegerType, LongType, MapType, StringType, StructType}
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
+
+import org.scalatest.prop.TableDrivenPropertyChecks.forAll
+import org.scalatest.prop.Tables
 
 /**
  * ToDo: Clean this up by moving some common schemas to fixtures and abstracting
@@ -408,6 +413,41 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
 
       assertColumnMapping(updatedInnerStruct.get("field_to_add"), 6, "field_to_add")
 
+    }
+  }
+
+  test("Renaming clustering columns") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val initialSchema = new StructType()
+        .add("clustering-col", StringType.STRING, true)
+
+      createEmptyTable(
+        engine,
+        tablePath,
+        initialSchema,
+        clusteringCols = List(new Column("clustering-col")),
+        tableProperties = Map(
+          TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
+          TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"))
+
+      val currentSchema = table.getLatestSnapshot(engine).getSchema
+      val expectedSchema = new StructType()
+        .add(
+          "renamed-clustering-col",
+          StringType.STRING,
+          true,
+          currentSchema.get("clustering-col").getMetadata)
+
+      table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
+        .withSchema(engine, expectedSchema)
+        .build(engine)
+        .commit(engine, emptyIterable())
+
+      val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      val actualSchema = snapshot.getSchema
+
+      assert(expectedSchema == actualSchema)
     }
   }
 
@@ -1040,6 +1080,33 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
     }
   }
 
+  test("Cannot change clustering column type") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val initialSchema = new StructType()
+        .add("clustering_col", StringType.STRING, true)
+
+      createEmptyTable(
+        engine,
+        tablePath,
+        initialSchema,
+        clusteringCols = List(new Column("clustering_col")),
+        tableProperties = Map(
+          TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
+          TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"))
+
+      val currentSchema = table.getLatestSnapshot(engine).getSchema
+      val newSchema = new StructType()
+        .add("clustering_col", LongType.LONG, true, currentSchema.get("clustering_col").getMetadata)
+
+      assertSchemaEvolutionFails[IllegalArgumentException](
+        table,
+        engine,
+        newSchema,
+        "Cannot change the type of existing field clustering_col from string to long")
+    }
+  }
+
   test("Updating schema if physical columns are not preserved fails") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
@@ -1160,33 +1227,74 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
     }
   }
 
-  // TODO: need to remove this once we support schema evolution with clustering columns
-  test("Cannot update schema with clustering columns") {
-    withTempDirAndEngine { (tablePath, engine) =>
-      val table = Table.forPath(engine, tablePath)
-      val initialSchema = new StructType()
-        .add("a", StringType.STRING, true)
-        .add("c", IntegerType.INTEGER, true)
+  val primitiveSchemaWithClusteringColumn = new StructType()
+    .add(
+      "clustering_col",
+      IntegerType.INTEGER,
+      fieldMetadataForColumn(1, "clustering_col_physical"))
+    .add("data", IntegerType.INTEGER, fieldMetadataForColumn(2, "data_physical"))
 
-      createEmptyTable(
-        engine,
-        tablePath,
-        initialSchema,
-        clusteringCols = List(new Column("c")),
-        tableProperties = Map(
-          TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
-          TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"))
+  val nestedSchemaWithClusteringColumn = new StructType()
+    .add(
+      "struct",
+      new StructType()
+        .add(
+          "clustering_col",
+          IntegerType.INTEGER,
+          fieldMetadataForColumn(1, "clustering_col_physical"))
+        .add("data", IntegerType.INTEGER, fieldMetadataForColumn(2, "data_physical")),
+      true,
+      fieldMetadataForColumn(3, "struct_physical"))
 
-      val currentSchema = table.getLatestSnapshot(engine).getSchema
-      val newSchema = new StructType()
-        .add("c", StringType.STRING, true, currentSchema.get("c").getMetadata)
-        .add("a", StringType.STRING, true, currentSchema.get("a").getMetadata)
+  private val updatedSchemaWithDroppedClusteringColumn = Tables.Table(
+    ("schemaBefore", "updatedSchemaWithDroppedClusteringColumn", "clusteringColumn"),
+    (
+      primitiveSchemaWithClusteringColumn,
+      new StructType()
+        .add(
+          "data",
+          IntegerType.INTEGER,
+          true,
+          primitiveSchemaWithClusteringColumn.get("data").getMetadata),
+      new Column("clustering_col")),
+    (
+      nestedSchemaWithClusteringColumn,
+      new StructType()
+        .add(
+          "struct",
+          new StructType()
+            .add(
+              "data",
+              IntegerType.INTEGER,
+              nestedSchemaWithClusteringColumn.get("struct").getDataType
+                .asInstanceOf[StructType].get("data").getMetadata),
+          true,
+          nestedSchemaWithClusteringColumn.get("struct").getMetadata),
+      new Column(Array("struct", "clustering_col"))),
+    (
+      nestedSchemaWithClusteringColumn,
+      new StructType().add("id", IntegerType.INTEGER, fieldMetadataForColumn(4, "id")),
+      new Column(Array("struct", "clustering_col"))))
 
-      assertSchemaEvolutionFails[KernelException](
-        table,
-        engine,
-        newSchema,
-        "Update schema for table with clustering columns")
+  test("Cannot drop clustering column") {
+    forAll(updatedSchemaWithDroppedClusteringColumn) {
+      (schemaBefore, schemaAfter, clusteringColumn) =>
+        withTempDirAndEngine { (tablePath, engine) =>
+          val table = Table.forPath(engine, tablePath)
+          createEmptyTable(
+            engine,
+            tablePath,
+            schemaBefore,
+            clusteringCols = List(clusteringColumn),
+            tableProperties = Map(
+              TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
+              TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"))
+          assertSchemaEvolutionFails[KernelException](
+            table,
+            engine,
+            schemaAfter,
+            "Cannot drop clustering column clustering_col")
+        }
     }
   }
 
