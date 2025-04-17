@@ -26,6 +26,7 @@ import io.delta.kernel.exceptions._
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.{SnapshotImpl, TableImpl, TransactionImpl}
 import io.delta.kernel.internal.actions.DomainMetadata
+import io.delta.kernel.internal.checksum.ChecksumReader
 import io.delta.kernel.internal.rowtracking.RowTrackingMetadataDomain
 import io.delta.kernel.utils.CloseableIterable
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
@@ -62,6 +63,8 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
     // Get the latest snapshot of the table
     val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
     assertDomainMetadata(snapshot, expectedValue)
+    // verifyChecksum will check the domain metadata in CRC against the lastest snapshot.
+    verifyChecksum(table.getPath(engine))
   }
 
   private def createTxnWithDomainMetadatas(
@@ -180,11 +183,7 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
       txn: Transaction,
       engine: Engine,
       dataActions: CloseableIterable[Row]): TransactionCommitResult = {
-    val result = txn.commit(engine, dataActions)
-    result.getPostCommitHooks
-      .stream()
-      .forEach(hook => hook.threadSafeInvoke(engine))
-    result
+    executeCrcSimple(txn.commit(engine, dataActions), engine)
   }
 
   test("create table w/o domain metadata") {

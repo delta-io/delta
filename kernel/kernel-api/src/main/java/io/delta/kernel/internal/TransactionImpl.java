@@ -63,6 +63,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.FileAlreadyExistsException;
 import java.util.*;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -551,7 +552,7 @@ public class TransactionImpl implements Transaction {
               metricsResult.getTotalAddFilesSizeInBytes(),
               metricsResult.getNumAddFiles(),
               Optional.of(txnId.toString()),
-              Optional.empty(), // TODO: populate domain metadata
+              domainMetadataState.getPostCommitDomainMetadatas(),
               metricsResult
                   .getTableFileSizeHistogram()
                   .map(FileSizeHistogram::fromFileSizeHistogramResult)));
@@ -573,7 +574,7 @@ public class TransactionImpl implements Transaction {
                         + metricsResult.getNumAddFiles()
                         - metricsResult.getNumRemoveFiles(),
                     Optional.of(txnId.toString()),
-                    Optional.empty(), // TODO: populate domain metadata
+                    domainMetadataState.getPostCommitDomainMetadatas(),
                     metricsResult
                         .getTableFileSizeHistogram()
                         .map(FileSizeHistogram::fromFileSizeHistogramResult)));
@@ -710,6 +711,36 @@ public class TransactionImpl implements Transaction {
     /** Sets the computed domain metadata list directly. Used during conflict resolution. */
     public void setComputedDomainMetadatas(List<DomainMetadata> updatedDomainMetadatas) {
       computedMetadatas = Optional.of(updatedDomainMetadatas);
+    }
+
+    /**
+     * Returns the set of active domain metadata of the table, removed domain metadata are excluded.
+     */
+    public Optional<Set<DomainMetadata>> getPostCommitDomainMetadatas() {
+      if (isNewTable) {
+        return Optional.of(
+            getComputedDomainMetadatasToCommit().stream()
+                .filter(dm -> !dm.isRemoved())
+                .collect(Collectors.toSet()));
+      }
+      return currentCrcInfo
+          .flatMap(CRCInfo::getDomainMetadata)
+          .map(
+              oldDomainMetadata -> {
+                Map<String, DomainMetadata> domainMetadataMap =
+                    oldDomainMetadata.stream()
+                        .collect(Collectors.toMap(DomainMetadata::getDomain, Function.identity()));
+                getComputedDomainMetadatasToCommit()
+                    .forEach(
+                        domainMetadata -> {
+                          if (domainMetadata.isRemoved()) {
+                            domainMetadataMap.remove(domainMetadata.getDomain());
+                          } else {
+                            domainMetadataMap.put(domainMetadata.getDomain(), domainMetadata);
+                          }
+                        });
+                return new HashSet<>(domainMetadataMap.values());
+              });
     }
 
     /**
