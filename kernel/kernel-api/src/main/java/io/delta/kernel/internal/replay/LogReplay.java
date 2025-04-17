@@ -45,6 +45,8 @@ import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.*;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * Replays a history of actions, resolving them to produce the current state of the table. The
@@ -153,7 +155,11 @@ public class LogReplay {
                 loadTableProtocolAndMetadata(
                     engine, logSegment, newerSnapshotHintAndCurrentCrcInfo._1, snapshotVersion));
     // Lazy loading of domain metadata only when needed
-    this.domainMetadataMap = new Lazy<>(() -> loadDomainMetadataMap(engine));
+    this.domainMetadataMap =
+        new Lazy<>(
+            () ->
+                loadDomainMetadataMap(
+                    newerSnapshotHintAndCurrentCrcInfo._1, engine, snapshotVersion));
   }
 
   /////////////////
@@ -352,6 +358,50 @@ public class LogReplay {
   }
 
   /**
+   * Loads domain metadata map, either from snapshot hint (if valid) or from the log, then merges
+   * any additional domains from the hint that don't exist in the log result.
+   *
+   * @param snapshotHint Optional snapshot hint that may contain cached metadata
+   * @param engine Engine to use for loading from log
+   * @param snapshotVersion Current snapshot version to check against
+   * @return Map of domain to domain metadata
+   */
+  private Map<String, DomainMetadata> loadDomainMetadataMap(
+      Optional<SnapshotHint> snapshotHint, Engine engine, long snapshotVersion) {
+
+    // Extract hint data safely if available
+    Optional<Long> hintVersion =
+        snapshotHint
+            .filter(hint -> snapshotVersion <= hint.getVersion())
+            .map(SnapshotHint::getVersion);
+    Optional<Set<DomainMetadata>> domainMetadataInHint =
+        snapshotHint.flatMap(SnapshotHint::getDomainMetadata);
+
+    // If hint is valid with matching version, use it directly
+    if (domainMetadataInHint.isPresent()
+        && hintVersion.isPresent()
+        && hintVersion.get() == snapshotVersion) {
+
+      return domainMetadataInHint.get().stream()
+          .collect(Collectors.toMap(DomainMetadata::getDomain, Function.identity()));
+    }
+
+    // Otherwise, load from log with hint version as a starting point
+    Map<String, DomainMetadata> resultMap =
+        loadDomainMetadataMapFromLog(
+            engine, domainMetadataInHint.isPresent() ? hintVersion : Optional.empty());
+
+    // Merge any domains from hint that don't exist in the result map
+    domainMetadataInHint.ifPresent(
+        metadataSet ->
+            metadataSet.stream()
+                .filter(dm -> !resultMap.containsKey(dm.getDomain()))
+                .forEach(dm -> resultMap.put(dm.getDomain(), dm)));
+
+    return resultMap;
+  }
+
+  /**
    * Retrieves a map of domainName to {@link DomainMetadata} from the log files.
    *
    * <p>Loading domain metadata requires an additional round of log replay so this is done lazily
@@ -359,11 +409,13 @@ public class LogReplay {
    * #loadTableProtocolAndMetadata}.
    *
    * @param engine The engine used to process the log files.
+   * @param stopVersion version to stop iterating
    * @return A map where the keys are domain names and the values are the corresponding {@link
    *     DomainMetadata} objects.
    * @throws UncheckedIOException if an I/O error occurs while closing the iterator.
    */
-  private Map<String, DomainMetadata> loadDomainMetadataMap(Engine engine) {
+  private Map<String, DomainMetadata> loadDomainMetadataMapFromLog(
+      Engine engine, Optional<Long> stopVersion) {
     try (CloseableIterator<ActionWrapper> reverseIter =
         new ActionsIterator(
             engine,
@@ -372,7 +424,9 @@ public class LogReplay {
             Optional.empty() /* checkpointPredicate */)) {
       Map<String, DomainMetadata> domainMetadataMap = new HashMap<>();
       while (reverseIter.hasNext()) {
-        final ColumnarBatch columnarBatch = reverseIter.next().getColumnarBatch();
+        ActionWrapper nextAction = reverseIter.next();
+        final long version = nextAction.getVersion();
+        final ColumnarBatch columnarBatch = nextAction.getColumnarBatch();
         assert (columnarBatch.getSchema().equals(DOMAIN_METADATA_READ_SCHEMA));
 
         final ColumnVector dmVector = columnarBatch.getColumnVector(0);
@@ -380,6 +434,11 @@ public class LogReplay {
         // We are performing a reverse log replay. This function ensures that only the first
         // encountered domain metadata for each domain is added to the map.
         DomainMetadataUtils.populateDomainMetadataMap(dmVector, domainMetadataMap);
+
+        // Check stop condition first for early termination
+        if (stopVersion.isPresent() && version + 1 == stopVersion.get()) {
+          break;
+        }
       }
       return domainMetadataMap;
     } catch (IOException ex) {

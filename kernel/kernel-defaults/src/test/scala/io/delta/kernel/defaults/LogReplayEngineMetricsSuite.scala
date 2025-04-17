@@ -48,14 +48,9 @@ import org.apache.spark.sql.functions.{col, log}
 import org.scalatest.funsuite.AnyFunSuite
 
 /**
- * Suite to test the engine metrics while replaying logs for getting the table protocol and
- * metadata (P&M) and scanning files. The metrics include how many files delta files, checkpoint
- * files read, size of checkpoint read set, and how many times `_last_checkpoint` is read etc.
- *
- * The goal is to test the behavior of calls to `readJsonFiles` and `readParquetFiles` that
- * Kernel makes. This calls determine the performance.
+ * Base trait for engine metrics test suites
  */
-class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
+trait EngineMetricsTestBase extends AnyFunSuite with TestUtils {
 
   // Disable writing checksums for this test suite
   // This test suite checks the files read when loading the P&M, however, with the crc optimization
@@ -69,7 +64,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
   // Test Helper Methods //
   /////////////////////////
 
-  private def withTempDirAndMetricsEngine(f: (String, MetricsEngine) => Unit): Unit = {
+  protected def withTempDirAndMetricsEngine(f: (String, MetricsEngine) => Unit): Unit = {
     val hadoopFileIO = new HadoopFileIO(new Configuration() {
       {
         // Set the batch sizes to small so that we get to test the multiple batch scenarios.
@@ -83,7 +78,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
     withTempDir { dir => f(dir.getAbsolutePath, engine) }
   }
 
-  private def loadPandMCheckMetrics(
+  protected def loadPandMCheckMetrics(
       snapshotFetchCall: => StructType,
       engine: MetricsEngine,
       expJsonVersionsRead: Seq[Long],
@@ -101,7 +96,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
       expChecksumReadSet = expChecksumReadSet)
   }
 
-  private def loadScanFilesCheckMetrics(
+  protected def loadScanFilesCheckMetrics(
       engine: MetricsEngine,
       table: Table,
       expJsonVersionsRead: Seq[Long],
@@ -122,7 +117,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
       expLastCheckpointReadCalls)
   }
 
-  def assertMetrics(
+  protected def assertMetrics(
       engine: MetricsEngine,
       expJsonVersionsRead: Seq[Long],
       expParquetVersionsRead: Seq[Long],
@@ -165,15 +160,35 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
     }
   }
 
-  private def appendCommit(path: String): Unit =
+  protected def appendCommit(path: String): Unit =
     spark.range(10).write.format("delta").mode("append").save(path)
 
-  private def checkpoint(path: String, actionsPerFile: Int): Unit = {
+  protected def checkpoint(path: String, actionsPerFile: Int): Unit = {
     withSQLConf(DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key -> actionsPerFile.toString) {
       DeltaLog.forTable(spark, path).checkpoint()
     }
   }
 
+  // Produce a test table with 0 to 11 .json, 0 to 11.crc, 10.checkpoint.parquet
+  protected def buildTableWithCrc(path: String): Unit = {
+    withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true") {
+      spark.sql(
+        s"CREATE TABLE delta.`$path` USING DELTA AS " +
+          s"SELECT 0L as id")
+      for (_ <- 0 to 10) { appendCommit(path) }
+    }
+  }
+}
+
+/**
+ * Suite to test the engine metrics while replaying logs for getting the table protocol and
+ * metadata (P&M) and scanning files. The metrics include how many files delta files, checkpoint
+ * files read, size of checkpoint read set, and how many times `_last_checkpoint` is read etc.
+ *
+ * The goal is to test the behavior of calls to `readJsonFiles` and `readParquetFiles` that
+ * Kernel makes. This calls determine the performance.
+ */
+class LogReplayEngineMetricsSuite extends EngineMetricsTestBase {
   ///////////
   // Tests //
   ///////////
@@ -211,12 +226,12 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
 
       // v13 changes the protocol (which also updates the metadata)
       spark.sql(s"""
-          |ALTER TABLE delta.`$path` SET TBLPROPERTIES (
-          |  'delta.minReaderVersion' = '2',
-          |  'delta.minWriterVersion' = '5',
-          |  'delta.columnMapping.mode' = 'name'
-          |)
-          |""".stripMargin)
+                   |ALTER TABLE delta.`$path` SET TBLPROPERTIES (
+                   |  'delta.minReaderVersion' = '2',
+                   |  'delta.minWriterVersion' = '5',
+                   |  'delta.columnMapping.mode' = 'name'
+                   |)
+                   |""".stripMargin)
 
       for (_ <- 14 to 16) { appendCommit(path) }
 
@@ -317,12 +332,12 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
 
       // v5 changes the protocol (which also updates the metadata)
       spark.sql(s"""
-          |ALTER TABLE delta.`$path` SET TBLPROPERTIES (
-          |  'delta.minReaderVersion' = '2',
-          |  'delta.minWriterVersion' = '5',
-          |  'delta.columnMapping.mode' = 'name'
-          |)
-          |""".stripMargin)
+                   |ALTER TABLE delta.`$path` SET TBLPROPERTIES (
+                   |  'delta.minReaderVersion' = '2',
+                   |  'delta.minWriterVersion' = '5',
+                   |  'delta.columnMapping.mode' = 'name'
+                   |)
+                   |""".stripMargin)
 
       loadPandMCheckMetrics(
         table.getLatestSnapshot(engine).getSchema(),
@@ -386,6 +401,12 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
       }
     }
   }
+}
+
+/**
+ * Suite to test the engine metrics for checksum-based loading of protocol and metadata
+ */
+class ChecksumEngineMetricsSuite extends EngineMetricsTestBase {
 
   /////////////////////////////////////////////////////////////////////////////////////////////////
   // Tests for loading P & M through checksums files                                            //
@@ -555,9 +576,8 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
     }
   }
 
-  test(
-    "checksum missing read version and the previous version, " +
-      "checkpoint exists the read version the previous version => use checkpoint") {
+  test("checksum missing read version and the previous version, " +
+    "checkpoint exists the read version the previous version => use checkpoint") {
     withTempDirAndMetricsEngine { (path, engine) =>
       // Produce a test table with 0 to 11 .json, 0 to 11.crc, 10.checkpoint.parquet
       buildTableWithCrc(path)
@@ -592,9 +612,8 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
     }
   }
 
-  test(
-    "checksum missing read version, " +
-      "both checksum and checkpoint exist the read version the previous version => use checksum") {
+  test("checksum missing read version, " +
+    "both checksum and checkpoint exist the read version the previous version => use checksum") {
     withTempDirAndMetricsEngine { (path, engine) =>
       // Produce a test table with 0 to 11 .json, 0 to 11.crc, 10.checkpoint.parquet
       buildTableWithCrc(path)
@@ -646,16 +665,6 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
         expParquetVersionsRead = Nil,
         expParquetReadSetSizes = Nil,
         expChecksumReadSet = Seq(10))
-    }
-  }
-
-  // Produce a test table with 0 to 11 .json, 0 to 11.crc, 10.checkpoint.parquet
-  def buildTableWithCrc(path: String): Unit = {
-    withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true") {
-      spark.sql(
-        s"CREATE TABLE delta.`$path` USING DELTA AS " +
-          s"SELECT 0L as id")
-      for (_ <- 0 to 10) { appendCommit(path) }
     }
   }
 }

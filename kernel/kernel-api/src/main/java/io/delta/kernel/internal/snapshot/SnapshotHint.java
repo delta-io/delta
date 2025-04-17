@@ -16,25 +16,38 @@
 
 package io.delta.kernel.internal.snapshot;
 
+import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.checksum.CRCInfo;
+import java.util.Optional;
+import java.util.Set;
 
 /** Contains summary information of a {@link io.delta.kernel.Snapshot}. */
 public class SnapshotHint {
   private final long version;
   private final Protocol protocol;
   private final Metadata metadata;
+  private final Optional<Set<DomainMetadata>> domainMetadata;
 
   /** Constructs a new SnapshotHint based on a CRCInfo */
   public static SnapshotHint fromCrcInfo(CRCInfo crcInfo) {
-    return new SnapshotHint(crcInfo.getVersion(), crcInfo.getProtocol(), crcInfo.getMetadata());
+    return new SnapshotHint(
+        crcInfo.getVersion(),
+        crcInfo.getProtocol(),
+        crcInfo.getMetadata(),
+        crcInfo.getDomainMetadata());
   }
 
-  public SnapshotHint(long version, Protocol protocol, Metadata metadata) {
+  public SnapshotHint(
+      long version,
+      Protocol protocol,
+      Metadata metadata,
+      Optional<Set<DomainMetadata>> domainMetadata) {
     this.version = version;
     this.protocol = protocol;
     this.metadata = metadata;
+    this.domainMetadata = domainMetadata;
   }
 
   public long getVersion() {
@@ -47,5 +60,9 @@ public class SnapshotHint {
 
   public Metadata getMetadata() {
     return metadata;
+  }
+
+  public Optional<Set<DomainMetadata>> getDomainMetadata() {
+    return domainMetadata;
   }
 }
