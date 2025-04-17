@@ -25,10 +25,8 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.InvalidTableException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.*;
-import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.checkpoints.*;
-import io.delta.kernel.internal.checksum.CRCInfo;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.ListUtils;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
@@ -186,8 +184,6 @@ public class SnapshotManager {
 
     long startTimeMillis = System.currentTimeMillis();
 
-    Optional<SnapshotHint> latestHint = Optional.ofNullable(latestSnapshotHint.get());
-
     LogReplay logReplay =
         new LogReplay(
             logPath,
@@ -195,7 +191,7 @@ public class SnapshotManager {
             initSegment.getVersion(),
             engine,
             initSegment,
-            latestHint,
+            Optional.ofNullable(latestSnapshotHint.get()),
             snapshotContext.getSnapshotMetrics());
 
     assertLogFilesBelongToTable(logPath, initSegment.allLogFilesUnsorted());
@@ -219,21 +215,8 @@ public class SnapshotManager {
         initSegment.getVersion(),
         startingFromStr);
 
-    Optional<Set<DomainMetadata>> freshDomainMetadataFromHint =
-        latestHint
-            .filter(h -> h.getVersion() == snapshot.getVersion())
-            .flatMap(SnapshotHint::getDomainMetadata);
-
     final SnapshotHint hint =
-        new SnapshotHint(
-            snapshot.getVersion(),
-            snapshot.getProtocol(),
-            snapshot.getMetadata(),
-            // If latestHint snapshot hint is used for loading P&M, carries over the domain
-            // metadata.
-            freshDomainMetadataFromHint.isPresent()
-                ? freshDomainMetadataFromHint
-                : snapshot.getCurrentCrcInfo().flatMap(CRCInfo::getDomainMetadata));
+        new SnapshotHint(snapshot.getVersion(), snapshot.getProtocol(), snapshot.getMetadata());
 
     registerHint(hint);
 
