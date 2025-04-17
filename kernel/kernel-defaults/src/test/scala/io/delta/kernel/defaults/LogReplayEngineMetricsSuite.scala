@@ -48,28 +48,19 @@ import org.apache.spark.sql.functions.{col, log}
 import org.scalatest.funsuite.AnyFunSuite
 
 /**
- * Suite to test the engine metrics while replaying logs for getting the table protocol and
- * metadata (P&M) and scanning files. The metrics include how many files delta files, checkpoint
- * files read, size of checkpoint read set, and how many times `_last_checkpoint` is read etc.
- *
- * The goal is to test the behavior of calls to `readJsonFiles` and `readParquetFiles` that
- * Kernel makes. This calls determine the performance.
+ * Base trait containing shared code for log replay metric testing.
  */
-class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
+trait LogReplayBaseTestSuite extends AnyFunSuite with TestUtils {
 
-  // Disable writing checksums for this test suite
-  // This test suite checks the files read when loading the P&M, however, with the crc optimization
-  // if crc are available, crc will be the only files read.
-  // We want to test the P&M loading when CRC are not available in the tests.
-  // Tests for tables with available CRC are included using resource test tables (and thus are
-  // unaffected by changing our confs for writes).
+  // Disable writing checksums for test suites that extend this trait
+  // This is to test P&M loading when CRC are not available
   spark.conf.set(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key, false)
 
   /////////////////////////
   // Test Helper Methods //
   /////////////////////////
 
-  private def withTempDirAndMetricsEngine(f: (String, MetricsEngine) => Unit): Unit = {
+  protected def withTempDirAndMetricsEngine(f: (String, MetricsEngine) => Unit): Unit = {
     val hadoopFileIO = new HadoopFileIO(new Configuration() {
       {
         // Set the batch sizes to small so that we get to test the multiple batch scenarios.
@@ -80,18 +71,25 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
 
     val engine = new MetricsEngine(hadoopFileIO)
 
-    withTempDir { dir => f(dir.getAbsolutePath, engine) }
+    withTempDir { dir =>
+      f(dir.getAbsolutePath, engine)
+    }
   }
 
-  private def loadPandMCheckMetrics(
-      snapshotFetchCall: => StructType,
+  protected def loadPandMCheckMetrics(
+      table: Table,
       engine: MetricsEngine,
       expJsonVersionsRead: Seq[Long],
       expParquetVersionsRead: Seq[Long],
       expParquetReadSetSizes: Seq[Long] = null,
-      expChecksumReadSet: Seq[Long] = null): Unit = {
+      expChecksumReadSet: Seq[Long] = null,
+      version: Long = -1): Unit = {
     engine.resetMetrics()
-    snapshotFetchCall
+
+    version match {
+      case -1 => table.getLatestSnapshot(engine).getSchema()
+      case ver => table.getSnapshotAsOfVersion(engine, ver).getSchema()
+    }
 
     assertMetrics(
       engine,
@@ -101,7 +99,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
       expChecksumReadSet = expChecksumReadSet)
   }
 
-  private def loadScanFilesCheckMetrics(
+  protected def loadScanFilesCheckMetrics(
       engine: MetricsEngine,
       table: Table,
       expJsonVersionsRead: Seq[Long],
@@ -122,7 +120,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
       expLastCheckpointReadCalls)
   }
 
-  def assertMetrics(
+  protected def assertMetrics(
       engine: MetricsEngine,
       expJsonVersionsRead: Seq[Long],
       expParquetVersionsRead: Seq[Long],
@@ -165,18 +163,25 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
     }
   }
 
-  private def appendCommit(path: String): Unit =
+  protected def appendCommit(path: String): Unit =
     spark.range(10).write.format("delta").mode("append").save(path)
 
-  private def checkpoint(path: String, actionsPerFile: Int): Unit = {
+  protected def checkpoint(path: String, actionsPerFile: Int): Unit = {
     withSQLConf(DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key -> actionsPerFile.toString) {
       DeltaLog.forTable(spark, path).checkpoint()
     }
   }
+}
 
-  ///////////
-  // Tests //
-  ///////////
+/**
+ * Suite to test the engine metrics while replaying logs for getting the table protocol and
+ * metadata (P&M) and scanning files. The metrics include how many files delta files, checkpoint
+ * files read, size of checkpoint read set, and how many times `_last_checkpoint` is read etc.
+ *
+ * The goal is to test the behavior of calls to `readJsonFiles` and `readParquetFiles` that
+ * Kernel makes. This calls determine the performance.
+ */
+class LogReplayEngineMetricsSuite extends LogReplayBaseTestSuite {
 
   test("no hint, no checkpoint, reads all files") {
     withTempDirAndMetricsEngine { (path, engine) =>
@@ -184,7 +189,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
 
       val table = Table.forPath(engine, path)
       loadPandMCheckMetrics(
-        table.getLatestSnapshot(engine).getSchema(),
+        table,
         engine,
         expJsonVersionsRead = 9L to 0L by -1L,
         expParquetVersionsRead = Nil)
@@ -197,7 +202,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
 
       val table = Table.forPath(engine, path)
       loadPandMCheckMetrics(
-        table.getLatestSnapshot(engine).getSchema(),
+        table,
         engine,
         expJsonVersionsRead = 14L to 11L by -1L,
         expParquetVersionsRead = Seq(10),
@@ -211,18 +216,18 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
 
       // v13 changes the protocol (which also updates the metadata)
       spark.sql(s"""
-          |ALTER TABLE delta.`$path` SET TBLPROPERTIES (
-          |  'delta.minReaderVersion' = '2',
-          |  'delta.minWriterVersion' = '5',
-          |  'delta.columnMapping.mode' = 'name'
-          |)
-          |""".stripMargin)
+                   |ALTER TABLE delta.`$path` SET TBLPROPERTIES (
+                   |  'delta.minReaderVersion' = '2',
+                   |  'delta.minWriterVersion' = '5',
+                   |  'delta.columnMapping.mode' = 'name'
+                   |)
+                   |""".stripMargin)
 
       for (_ <- 14 to 16) { appendCommit(path) }
 
       val table = Table.forPath(engine, path)
       loadPandMCheckMetrics(
-        table.getLatestSnapshot(engine).getSchema(),
+        table,
         engine,
         expJsonVersionsRead = 16L to 13L by -1L,
         expParquetVersionsRead = Nil)
@@ -241,7 +246,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
 
       // A hint is now saved at v14
       loadPandMCheckMetrics(
-        table.getLatestSnapshot(engine).getSchema(),
+        table,
         engine,
         expJsonVersionsRead = Nil,
         expParquetVersionsRead = Nil)
@@ -261,7 +266,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
       // Case: only one version change
       appendCommit(path) // v15
       loadPandMCheckMetrics(
-        table.getLatestSnapshot(engine).getSchema(),
+        table,
         engine,
         expJsonVersionsRead = Seq(15),
         expParquetVersionsRead = Nil)
@@ -271,7 +276,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
       // Case: several version changes
       for (_ <- 16 to 19) { appendCommit(path) }
       loadPandMCheckMetrics(
-        table.getLatestSnapshot(engine).getSchema(),
+        table,
         engine,
         expJsonVersionsRead = 19L to 16L by -1L,
         expParquetVersionsRead = Nil)
@@ -282,7 +287,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
       // and v19 hint are available
       appendCommit(path) // v20
       loadPandMCheckMetrics(
-        table.getLatestSnapshot(engine).getSchema(),
+        table,
         engine,
         expJsonVersionsRead = Nil,
         expParquetVersionsRead = Seq(20))
@@ -309,7 +314,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
         .save(path)
 
       loadPandMCheckMetrics(
-        table.getLatestSnapshot(engine).getSchema(),
+        table,
         engine,
         expJsonVersionsRead = Seq(4),
         expParquetVersionsRead = Nil)
@@ -317,15 +322,15 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
 
       // v5 changes the protocol (which also updates the metadata)
       spark.sql(s"""
-          |ALTER TABLE delta.`$path` SET TBLPROPERTIES (
-          |  'delta.minReaderVersion' = '2',
-          |  'delta.minWriterVersion' = '5',
-          |  'delta.columnMapping.mode' = 'name'
-          |)
-          |""".stripMargin)
+                   |ALTER TABLE delta.`$path` SET TBLPROPERTIES (
+                   |  'delta.minReaderVersion' = '2',
+                   |  'delta.minWriterVersion' = '5',
+                   |  'delta.columnMapping.mode' = 'name'
+                   |)
+                   |""".stripMargin)
 
       loadPandMCheckMetrics(
-        table.getLatestSnapshot(engine).getSchema(),
+        table,
         engine,
         expJsonVersionsRead = Seq(5),
         expParquetVersionsRead = Nil)
@@ -386,10 +391,12 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
       }
     }
   }
+}
 
-  /////////////////////////////////////////////////////////////////////////////////////////////////
-  // Tests for loading P & M through checksums files                                            //
-  /////////////////////////////////////////////////////////////////////////////////////////////////
+/**
+ * Suite to test the engine metrics when loading Protocol and Metadata through checksum files.
+ */
+class ChecksumLogReplayMetricsSuite extends LogReplayBaseTestSuite {
 
   Seq(-1L, 0L, 3L, 4L).foreach { version => // -1 means latest version
     test(s"checksum found at the read version: ${if (version == -1) "latest" else version}") {
@@ -399,16 +406,14 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
         val table = Table.forPath(engine, path)
 
         loadPandMCheckMetrics(
-          version match {
-            case -1 => table.getLatestSnapshot(engine).getSchema()
-            case ver => table.getSnapshotAsOfVersion(engine, ver).getSchema()
-          },
+          table,
           engine,
           // shouldn't need to read commit or checkpoint files as P&M are found through checksum
           expJsonVersionsRead = Nil,
           expParquetVersionsRead = Nil,
           expParquetReadSetSizes = Nil,
-          expChecksumReadSet = Seq(if (version == -1) 11 else version))
+          expChecksumReadSet = Seq(if (version == -1) 11 else version),
+          version)
       }
     }
   }
@@ -425,8 +430,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
       }
 
       loadPandMCheckMetrics(
-        Table.forPath(engine, path)
-          .getLatestSnapshot(engine).getSchema(),
+        Table.forPath(engine, path),
         engine,
         // 10.checkpoint found, so use it and combined with 11.crc
         expJsonVersionsRead = Seq(11),
@@ -436,9 +440,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
 
       loadPandMCheckMetrics(
         Table
-          .forPath(engine, path)
-          .getSnapshotAsOfVersion(engine, 6 /* versionId */ )
-          .getSchema(),
+          .forPath(engine, path),
         engine,
         // We find the checksum from crc at version 4, but still read commit files 5 and 6
         // to find the P&M which could have been updated in version 5 and 6.
@@ -447,18 +449,19 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
         expParquetReadSetSizes = Nil,
         // First attempted to read checksum for version 6, then we do a listing of
         // last 100 crc files and read the latest one which is version 4 (as version 5 is deleted)
-        expChecksumReadSet = Seq(6, 4))
+        expChecksumReadSet = Seq(6, 4),
+        version = 6)
 
       // now try to load version 3 and it should get P&M from checksum files only
       loadPandMCheckMetrics(
-        Table.forPath(engine, path)
-          .getSnapshotAsOfVersion(engine, 3 /* versionId */ ).getSchema(),
+        Table.forPath(engine, path),
         engine,
         // We find the checksum from crc at version 3, so shouldn't read anything else
         expJsonVersionsRead = Nil,
         expParquetVersionsRead = Nil,
         expParquetReadSetSizes = Nil,
-        expChecksumReadSet = Seq(3))
+        expChecksumReadSet = Seq(3),
+        version = 3)
     }
   }
 
@@ -477,7 +480,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
       val table = Table.forPath(engine, path)
 
       loadPandMCheckMetrics(
-        table.getSnapshotAsOfVersion(engine, 4 /* versionId */ ).getSchema(),
+        table,
         engine,
         // There are no checksum files for versions 4. Latest is at version 2.
         // We need to read the commit files 3 and 4 to get the P&M in addition the P&M from
@@ -488,12 +491,13 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
         // First attempted to read checksum for version 4 which doesn't exists,
         // then we do a listing of last 100 crc files and read the latest
         // one which is version 2 (as version 3-6 are deleted)
-        expChecksumReadSet = Seq(4, 2))
+        expChecksumReadSet = Seq(4, 2),
+        version = 4)
       // read version 4 which sets the snapshot P&M hint to 4
 
       // now try to load version 6 and we expect no checksums are read
       loadPandMCheckMetrics(
-        table.getSnapshotAsOfVersion(engine, 6 /* versionId */ ).getSchema(),
+        table,
         engine,
         // We have snapshot P&M hint at version 4, and no checksum after 2
         expJsonVersionsRead = Seq(6, 5),
@@ -502,7 +506,8 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
         // First we attempt to read at version 6, then we do a listing of last 100 crc files
         // bound by the snapshot hint which is at version 4 and we don't try to read checksums
         // beyond version 4
-        expChecksumReadSet = Seq(6))
+        expChecksumReadSet = Seq(6),
+        version = 6)
     }
   }
 
@@ -515,7 +520,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
       table.getLatestSnapshot(engine)
 
       loadPandMCheckMetrics(
-        table.getLatestSnapshot(engine).getSchema(),
+        table,
         engine,
         expJsonVersionsRead = Nil,
         expParquetVersionsRead = Nil,
@@ -544,14 +549,15 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
       val table = Table.forPath(engine, path)
 
       loadPandMCheckMetrics(
-        table.getSnapshotAsOfVersion(engine, 10).getSchema(),
+        table,
         engine,
         // 10.crc missing, 10.checkpoint.parquet exists.
         // Attempt to read 10.crc fails and read 10.checkpoint.parquet succeeds.
         expJsonVersionsRead = Nil,
         expParquetVersionsRead = Seq(10),
         expParquetReadSetSizes = Seq(1),
-        expChecksumReadSet = Seq(10))
+        expChecksumReadSet = Seq(10),
+        version = 10)
     }
   }
 
@@ -583,12 +589,13 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
       // 11.crc, 10.crc missing, 10.checkpoint.parquet exists.
       // Attempt to read 11.crc fails and read 10.checkpoint.parquet and 11.json succeeds.
       loadPandMCheckMetrics(
-        table.getSnapshotAsOfVersion(engine, 11).getSchema(),
+        table,
         engine,
         expJsonVersionsRead = Seq(11),
         expParquetVersionsRead = Seq(10),
         expParquetReadSetSizes = Seq(1),
-        expChecksumReadSet = Seq(11))
+        expChecksumReadSet = Seq(11),
+        version = 11)
     }
   }
 
@@ -616,12 +623,13 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
       // 11.crc, missing, 10.crc and 10.checkpoint.parquet exist.
       // Attempt to read 11.crc fails and read 10.checkpoint.parquet and 11.json succeeds.
       loadPandMCheckMetrics(
-        table.getSnapshotAsOfVersion(engine, 11).getSchema(),
+        table,
         engine,
         expJsonVersionsRead = Seq(11),
         expParquetVersionsRead = Nil,
         expParquetReadSetSizes = Nil,
-        expChecksumReadSet = Seq(11, 10))
+        expChecksumReadSet = Seq(11, 10),
+        version = 11)
     }
   }
 
@@ -640,12 +648,13 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
       val table = Table.forPath(engine, path)
 
       loadPandMCheckMetrics(
-        table.getSnapshotAsOfVersion(engine, checkpointVersion).getSchema(),
+        table,
         engine,
         expJsonVersionsRead = Nil,
         expParquetVersionsRead = Nil,
         expParquetReadSetSizes = Nil,
-        expChecksumReadSet = Seq(10))
+        expChecksumReadSet = Seq(10),
+        version = checkpointVersion)
     }
   }
 
