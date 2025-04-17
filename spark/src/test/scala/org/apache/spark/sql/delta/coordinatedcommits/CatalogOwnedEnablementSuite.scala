@@ -21,7 +21,7 @@ import java.util.UUID
 import scala.jdk.CollectionConverters._
 
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
+import org.apache.spark.sql.delta.test.{DeltaExceptionTestUtils, DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import org.apache.commons.lang3.NotImplementedException
@@ -30,7 +30,8 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 
 class CatalogOwnedEnablementSuite
   extends DeltaSQLTestUtils
-  with DeltaSQLCommandTest {
+  with DeltaSQLCommandTest
+  with DeltaExceptionTestUtils {
 
   override def beforeEach(): Unit = {
     super.beforeEach()
@@ -159,7 +160,7 @@ class CatalogOwnedEnablementSuite
             } else {
               // [[DeltaIllegalArgumentException]] will be thrown when trying to SET/UNSET
               // [[ICT_ENABLED_KEY]] via ALTER TABLE.
-              (intercept[DeltaIllegalArgumentException] { sql(sqlStr) },
+              (interceptWithUnwrapping[DeltaIllegalArgumentException] { sql(sqlStr) },
                 new DeltaIllegalArgumentException(
                   expectedErrorClass, expectedMessageParameters))
             }
@@ -186,7 +187,7 @@ class CatalogOwnedEnablementSuite
       property = ICT_ENABLED_KEY,
       operation = "SET",
       expectedErrorClass = "DELTA_CANNOT_MODIFY_CATALOG_OWNED_DEPENDENCIES",
-      expectedMessageParameters = Array("ALTER"),
+      expectedMessageParameters = Array.empty,
       tableId = "t1",
       setValue = Some("false"))
 
@@ -196,7 +197,7 @@ class CatalogOwnedEnablementSuite
       property = ICT_ENABLED_KEY,
       operation = "UNSET",
       expectedErrorClass = "DELTA_CANNOT_MODIFY_CATALOG_OWNED_DEPENDENCIES",
-      expectedMessageParameters = Array("ALTER"),
+      expectedMessageParameters = Array.empty,
       tableId = "t2",
       setValue = None)
   }

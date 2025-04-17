@@ -67,6 +67,22 @@ object CatalogOwnedTableUtils {
       )
     }
     .orElse {
+      if (Utils.isTesting) {
+        // In unit test with a path based access, it is possible to enable CatalogOwned with
+        // in-memory commit coordinator. In this case, we return table commit coordinator
+        // registered in the provider so that it can still test CatalogOwned table feature
+        // capability.
+        CatalogOwnedCommitCoordinatorProvider.getBuilder("spark_catalog")
+          .flatMap(builder => Some(builder.buildForCatalog(spark, "spark_catalog")))
+          .map { cc =>
+            return Some(TableCommitCoordinatorClient(
+              cc,
+              snapshot.deltaLog.logPath,
+              snapshot.metadata.configuration,
+              snapshot.deltaLog.newDeltaHadoopConf(),
+              snapshot.deltaLog.store))
+          }
+      }
       // This table is catalog owned table but catalogTableOpt is not defined. This means
       // that the caller is accessing this table by path-based or the calling code path is missing
       // the CatalogTable.
