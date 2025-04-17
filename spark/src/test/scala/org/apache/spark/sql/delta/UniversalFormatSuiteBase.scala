@@ -515,7 +515,7 @@ trait UniversalFormatMiscSuiteBase extends IcebergCompatUtilsBase with Universal
           executeSql(s"""
                  |CREATE TABLE $id (ID INT) USING DELTA LOCATION $loc TBLPROPERTIES (
                  |  'delta.universalFormat.enabledFormats' = '$invalidConf',
-                 |  'delta.icebergCompatV1.enabled' = 'true',
+                 |  'delta.enableIcebergCompatV1' = 'true',
                  |  'delta.columnMapping.mode' = 'name'
                  |)""".stripMargin)
         }.getMessage
