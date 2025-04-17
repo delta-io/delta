@@ -603,7 +603,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
    * not handle the aliasing).
    *
    * This function checks if the target plan is a bare reference to the Delta table, or if the
-   * transofrmations are the result of internal processing introduced not by the user, but
+   * transformations are the result of internal processing introduced not by the user, but
    * internally during analysis, which need to be taken into account and allowed.
    *
    * @param deltaLogicalPlan Target plan of the DML (Merge or Update)
