@@ -848,6 +848,13 @@ object DeltaLog extends DeltaLogging {
     apply(spark, rawPath, options = Map.empty, initialCatalogTable, clock)
 
 
+  /** Helper for creating a log for the table. */
+  private[delta] def forTable(spark: SparkSession,
+      dataPath: Path,
+      options: Map[String, String],
+      catalogTable: Option[CatalogTable]): DeltaLog =
+    apply(spark, logPathFor(dataPath), options, catalogTable, new SystemClock)
+
   /** Helper for getting a log, as well as the latest snapshot, of the table */
   def forTableWithSnapshot(spark: SparkSession, dataPath: String): (DeltaLog, Snapshot) =
     withFreshSnapshot { clock =>

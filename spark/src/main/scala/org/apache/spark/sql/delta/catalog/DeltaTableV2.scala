@@ -123,7 +123,11 @@ class DeltaTableV2 private[delta](
       } else {
         options
       }
-      DeltaLog.forTable(spark, rootPath, dataSourceOptions)
+        DeltaLog.forTable(
+          spark,
+          rootPath,
+          dataSourceOptions,
+          catalogTable)
     }
   }
 
