@@ -15,18 +15,28 @@
  */
 package io.delta.kernel.internal.util
 
-import java.util.Locale
+import java.util
+import java.util.{Locale, Optional}
 
 import scala.collection.JavaConverters._
+import scala.collection.JavaConverters.mapAsJavaMapConverter
+import scala.reflect.ClassTag
 
 import io.delta.kernel.exceptions.KernelException
-import io.delta.kernel.internal.util.SchemaUtils.{filterRecursively, validateSchema}
-import io.delta.kernel.types.{ArrayType, MapType, StringType, StructField, StructType}
+import io.delta.kernel.internal.actions.{Format, Metadata}
+import io.delta.kernel.internal.types.DataTypeJsonSerDe
+import io.delta.kernel.internal.util.ColumnMapping.{COLUMN_MAPPING_ID_KEY, COLUMN_MAPPING_MODE_KEY, COLUMN_MAPPING_NESTED_IDS_KEY, COLUMN_MAPPING_PHYSICAL_NAME_KEY, ColumnMappingMode}
+import io.delta.kernel.internal.util.SchemaUtils.{filterRecursively, validateSchema, validateUpdatedSchema}
+import io.delta.kernel.internal.util.VectorUtils.stringStringMapValue
+import io.delta.kernel.types.{ArrayType, DataType, FieldMetadata, IntegerType, LongType, MapType, StringType, StructField, StructType}
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.LongType.LONG
 import io.delta.kernel.types.TimestampType.TIMESTAMP
 
 import org.scalatest.funsuite.AnyFunSuite
+import org.scalatest.prop.TableDrivenPropertyChecks.forAll
+import org.scalatest.prop.TableFor2
+import org.scalatest.prop.Tables.Table
 
 class SchemaUtilsSuite extends AnyFunSuite {
   private def expectFailure(shouldContain: String*)(f: => Unit): Unit = {
@@ -308,6 +318,720 @@ class SchemaUtilsSuite extends AnyFunSuite {
         validateSchema(schema, true /* isColumnMappingEnabled */ )
       }
     }
+  }
+
+  ///////////////////////////////////////////////////////////////////////////
+  // computeSchemaChangesById
+  ///////////////////////////////////////////////////////////////////////////
+  test("Compute schema changes with added columns") {
+    val fieldMappingBefore = Map(
+      1 -> new StructField("id", IntegerType.INTEGER, true))
+
+    val fieldMappingAfter = Map(
+      1 -> new StructField("id", IntegerType.INTEGER, true),
+      2 -> new StructField("data", StringType.STRING, true))
+
+    val schemaChanges = schemaChangesHelper(fieldMappingBefore, fieldMappingAfter)
+
+    assert(schemaChanges.removedFields().isEmpty)
+    assert(schemaChanges.updatedFields().isEmpty)
+    assert(schemaChanges.addedFields().size() == 1)
+    assert(schemaChanges.addedFields().get(0) == fieldMappingAfter(2))
+  }
+
+  test("Compute schema changes with renamed fields") {
+    val fieldMappingBefore = Map(
+      1 -> new StructField("id", IntegerType.INTEGER, true))
+
+    val fieldMappingAfter = Map(
+      1 -> new StructField("renamed_id", IntegerType.INTEGER, true))
+
+    val schemaChanges = schemaChangesHelper(fieldMappingBefore, fieldMappingAfter)
+
+    assert(schemaChanges.addedFields().isEmpty)
+    assert(schemaChanges.removedFields().isEmpty)
+    assert(schemaChanges.updatedFields().size() == 1)
+    assert(schemaChanges.updatedFields().get(0) ==
+      new Tuple2(fieldMappingBefore(1), fieldMappingAfter(1)))
+  }
+
+  test("Compute schema changes with type changed columns") {
+    val fieldMappingBefore = Map(
+      1 -> new StructField("id", IntegerType.INTEGER, true))
+
+    val fieldMappingAfter = Map(
+      1 -> new StructField("promoted_to_long", LongType.LONG, true))
+
+    val schemaChanges = schemaChangesHelper(fieldMappingBefore, fieldMappingAfter)
+
+    assert(schemaChanges.addedFields().isEmpty)
+    assert(schemaChanges.removedFields().isEmpty)
+    assert(schemaChanges.updatedFields().size() == 1)
+    assert(schemaChanges.updatedFields().get(0) ==
+      new Tuple2(fieldMappingBefore(1), fieldMappingAfter(1)))
+  }
+
+  test("Compute schema changes with dropped fields") {
+    val fieldMappingBefore = Map(
+      1 -> new StructField("id", IntegerType.INTEGER, true),
+      2 -> new StructField("data", StringType.STRING, true))
+
+    val fieldMappingAfter = Map(
+      2 -> new StructField("data", StringType.STRING, true))
+
+    val schemaChanges = schemaChangesHelper(fieldMappingBefore, fieldMappingAfter)
+
+    assert(schemaChanges.addedFields().isEmpty)
+    assert(schemaChanges.updatedFields().isEmpty)
+    assert(schemaChanges.removedFields().size() == 1)
+    assert(schemaChanges.removedFields().get(0) == fieldMappingBefore(1))
+  }
+
+  test("Compute schema changes with nullability change") {
+    val fieldMappingBefore = Map(
+      1 -> new StructField("id", IntegerType.INTEGER, true),
+      2 -> new StructField("data", StringType.STRING, true))
+
+    val fieldMappingAfter = Map(
+      1 -> new StructField("id", IntegerType.INTEGER, true),
+      2 -> new StructField("required_data", StringType.STRING, false))
+
+    val schemaChanges = schemaChangesHelper(fieldMappingBefore, fieldMappingAfter)
+
+    assert(schemaChanges.addedFields().isEmpty)
+    assert(schemaChanges.removedFields().isEmpty)
+    assert(schemaChanges.updatedFields().size() == 1)
+    assert(schemaChanges.updatedFields().get(0) == new Tuple2(
+      fieldMappingBefore(2),
+      fieldMappingAfter(2)))
+  }
+
+  test("Compute schema changes with moved fields") {
+    val fieldMappingBefore = Map(
+      1 -> new StructField(
+        "struct",
+        new StructType()
+          .add(new StructField("id", IntegerType.INTEGER, true))
+          .add(new StructField("data", StringType.STRING, true)),
+        true),
+      2 -> new StructField("id", IntegerType.INTEGER, true),
+      3 -> new StructField("data", StringType.STRING, true))
+
+    val fieldMappingAfter = Map(
+      1 -> new StructField(
+        "struct",
+        new StructType()
+          .add(new StructField("data", StringType.STRING, true))
+          .add(new StructField("id", IntegerType.INTEGER, true)),
+        true),
+      2 -> new StructField("id", IntegerType.INTEGER, true),
+      3 -> new StructField("data", StringType.STRING, true))
+
+    val schemaChanges = schemaChangesHelper(fieldMappingBefore, fieldMappingAfter)
+
+    assert(schemaChanges.addedFields().isEmpty)
+    assert(schemaChanges.removedFields().isEmpty)
+    assert(schemaChanges.updatedFields().size() == 1)
+    assert(schemaChanges.updatedFields().get(0) == new Tuple2(
+      fieldMappingBefore(1),
+      fieldMappingAfter(1)))
+  }
+
+  test("Compute schema changes with field metadata changes") {
+    val fieldMappingBefore = Map(
+      1 -> new StructField(
+        "id",
+        IntegerType.INTEGER,
+        true,
+        FieldMetadata.builder().putString(
+          "metadata_col",
+          "metadata_val").build()))
+
+    val fieldMappingAfter = Map(
+      1 -> new StructField(
+        "id",
+        IntegerType.INTEGER,
+        true,
+        FieldMetadata.builder().putString(
+          "metadata_col",
+          "updated_metadata_val").build()))
+
+    val schemaChanges = schemaChangesHelper(fieldMappingBefore, fieldMappingAfter)
+
+    assert(schemaChanges.addedFields().isEmpty)
+    assert(schemaChanges.removedFields().isEmpty)
+    assert(schemaChanges.updatedFields().size() == 1)
+    assert(schemaChanges.updatedFields().get(0) == new Tuple2(
+      fieldMappingBefore(1),
+      fieldMappingAfter(1)))
+  }
+
+  private def schemaChangesHelper(
+      before: Map[Int, StructField],
+      after: Map[Int, StructField]): SchemaChanges = {
+    SchemaUtils.computeSchemaChangesById(
+      before.map {
+        case (k, v) => java.lang.Integer.valueOf(k) -> v
+      }.asJava,
+      after.map {
+        case (k, v) => java.lang.Integer.valueOf(k) -> v
+      }.asJava)
+  }
+
+  ///////////////////////////////////////////////////////////////////////////
+  // validateUpdatedSchema
+  ///////////////////////////////////////////////////////////////////////////
+  test("validateUpdatedSchema fails when column mapping is disabled") {
+    val current = new StructType().add(new StructField("id", IntegerType.INTEGER, true))
+    val updated = current.add(new StructField("data", StringType.STRING, true))
+
+    val e = intercept[IllegalArgumentException] {
+      val tblProperties = Map(COLUMN_MAPPING_MODE_KEY -> "none")
+      validateUpdatedSchema(
+        current,
+        updated,
+        Set.empty.asJava,
+        metadata(current, properties = tblProperties))
+    }
+
+    assert(e.getMessage == "Cannot validate updated schema when column mapping is disabled")
+  }
+
+  private val primitiveSchema = new StructType()
+    .add(
+      "id",
+      IntegerType.INTEGER,
+      true,
+      fieldMetadata(id = 1, physicalName = "id"))
+
+  private val mapWithStructKey = new StructType()
+    .add(
+      "map",
+      new MapType(
+        new StructType()
+          .add("id", IntegerType.INTEGER, true, fieldMetadata(id = 2, physicalName = "id")),
+        IntegerType.INTEGER,
+        false),
+      true,
+      fieldMetadata(id = 1, physicalName = "map"))
+
+  private val structWithArrayOfStructs = new StructType()
+    .add(
+      "top_level_struct",
+      new StructType().add(
+        "array",
+        new ArrayType(
+          new StructType().add("id", IntegerType.INTEGER, true, fieldMetadata(4, "id")),
+          false),
+        false,
+        fieldMetadata(2, "array_field")),
+      fieldMetadata(1, "top_level_struct"))
+
+  private val updatedSchemasWithInconsistentPhysicalNames = Table(
+    ("schemaBefore", "updatedSchemaWithInconsistentPhysicalNames"),
+    // Top level primitive has inconsistent physical name
+    (
+      primitiveSchema,
+      new StructType()
+        .add(
+          "renamed_id",
+          IntegerType.INTEGER,
+          true,
+          fieldMetadata(id = 1, physicalName = "inconsistent_name"))),
+    // Map with struct key has inconsistent physical name
+    (
+      mapWithStructKey,
+      new StructType()
+        .add(
+          "map",
+          new MapType(
+            new StructType()
+              .add(
+                "renamed_id",
+                IntegerType.INTEGER,
+                false,
+                fieldMetadata(id = 2, physicalName = "inconsistent_name")),
+            IntegerType.INTEGER,
+            false),
+          true,
+          fieldMetadata(id = 1, physicalName = "map"))),
+    // Struct with array of struct field where inner struct field has inconsistent physical name
+    (
+      structWithArrayOfStructs,
+      structWithArrayOfStructs(arrayType = new ArrayType(
+        new StructType().add(
+          "renamed_id",
+          IntegerType.INTEGER,
+          fieldMetadata(4, "inconsistent_name")),
+        false))))
+
+  test("validateUpdatedSchema fails when physical names are not consistent across ids") {
+    assertSchemaEvolutionFailure[IllegalArgumentException](
+      updatedSchemasWithInconsistentPhysicalNames,
+      "Existing field with id .* in current schema" +
+        " has physical name id which is different from inconsistent_name")
+  }
+
+  private val updatedSchemasMissingId = Table(
+    ("schemaBefore", "updatedSchemaWithMissingId"),
+    // Top level primitive missing field ID
+    (
+      primitiveSchema,
+      new StructType()
+        .add(
+          "renamed_id",
+          IntegerType.INTEGER,
+          true,
+          FieldMetadata.builder().putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, "id").build())),
+    // Map with struct key missing field ID
+    (
+      mapWithStructKey,
+      mapWithStructKey(mapType = new MapType(
+        new StructType()
+          .add(
+            "renamed_id",
+            IntegerType.INTEGER,
+            false,
+            FieldMetadata.builder().putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, "id").build()),
+        IntegerType.INTEGER,
+        false))),
+    // Struct with array of struct field where inner struct is missing ID
+    (
+      structWithArrayOfStructs,
+      structWithArrayOfStructs(new ArrayType(
+        new StructType().add(
+          "renamed_id",
+          IntegerType.INTEGER,
+          FieldMetadata.builder()
+            .putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, "id").build()),
+        false))))
+
+  test("validateUpdatedSchema fails when field is missing ID") {
+    assertSchemaEvolutionFailure[IllegalArgumentException](
+      updatedSchemasMissingId,
+      "Field renamed_id is missing column id")
+  }
+
+  private val updatedSchemasMissingPhysicalName = Table(
+    ("schemaBefore", "updatedSchemaWithMissingPhysicalName"),
+    // Top level primitive missing physical name
+    (
+      primitiveSchema,
+      new StructType()
+        .add(
+          "renamed_id",
+          IntegerType.INTEGER,
+          true,
+          FieldMetadata.builder().putLong(COLUMN_MAPPING_ID_KEY, 1).build())),
+    // Map with struct key missing physical name
+    (
+      mapWithStructKey,
+      mapWithStructKey(mapType = new MapType(
+        new StructType()
+          .add(
+            "renamed_id",
+            IntegerType.INTEGER,
+            false,
+            FieldMetadata.builder().putLong(COLUMN_MAPPING_ID_KEY, 1).build()),
+        IntegerType.INTEGER,
+        false))),
+    // Struct with array of struct field where inner struct is missing physical name
+    (
+      structWithArrayOfStructs,
+      structWithArrayOfStructs(arrayType = new ArrayType(
+        new StructType().add(
+          "renamed_id",
+          IntegerType.INTEGER,
+          FieldMetadata.builder()
+            .putLong(COLUMN_MAPPING_ID_KEY, 4L).build()),
+        false))))
+
+  test("validateUpdatedSchema fails when field is missing physical name") {
+    assertSchemaEvolutionFailure[IllegalArgumentException](
+      updatedSchemasMissingPhysicalName,
+      "Field renamed_id is missing physical name")
+  }
+
+  private val updatedSchemaHasDuplicateColumnId = Table(
+    ("schemaBefore", "updatedSchemaWithMissingPhysicalName"),
+    // Top level primitive has duplicate id
+    (
+      primitiveSchema,
+      primitiveSchema
+        .add(
+          "duplicate_id",
+          IntegerType.INTEGER,
+          true,
+          fieldMetadata(id = 1, physicalName = "duplicate_id"))),
+    // Map with struct key adds duplicate field
+    (
+      mapWithStructKey,
+      mapWithStructKey
+        .add(
+          "duplicate_id",
+          IntegerType.INTEGER,
+          fieldMetadata(id = 2, physicalName = "duplicate_id"))),
+    // Struct with array of struct field where field with duplicate ID is added
+    (
+      structWithArrayOfStructs,
+      structWithArrayOfStructs
+        .add(
+          "duplicate_id",
+          IntegerType.INTEGER,
+          fieldMetadata(4, "duplicate_id"))))
+
+  test("validateUpdatedSchema fails with schema with duplicate column ID") {
+    forAll(updatedSchemaHasDuplicateColumnId) { (schemaBefore, schemaAfter) =>
+      val e = intercept[IllegalArgumentException] {
+        validateUpdatedSchema(schemaBefore, schemaAfter, Set.empty.asJava, metadata(schemaBefore))
+      }
+
+      assert(e.getMessage.matches("Field duplicate_id with id .* already exists"))
+    }
+  }
+
+  private val validUpdatedSchemas = Table(
+    ("schemaBefore", "updatedSchemaWithRenamedColumns"),
+    // Top level primitive missing physical name
+    (
+      primitiveSchema,
+      new StructType()
+        .add(
+          "renamed_id",
+          IntegerType.INTEGER,
+          true,
+          fieldMetadata(id = 1, physicalName = "id"))),
+    // Map with struct key renamed
+    (
+      mapWithStructKey,
+      mapWithStructKey(
+        new MapType(
+          new StructType()
+            .add(
+              "renamed_id",
+              IntegerType.INTEGER,
+              true,
+              fieldMetadata(id = 2, physicalName = "id")),
+          IntegerType.INTEGER,
+          false),
+        fieldMetadata(id = 1, physicalName = "map"))),
+    // Struct with array of struct field where inner struct field is renamed
+    (
+      structWithArrayOfStructs,
+      new StructType()
+        .add(
+          "top_level_struct",
+          new StructType().add(
+            "array",
+            new ArrayType(
+              new StructType().add("renamed_id", IntegerType.INTEGER, fieldMetadata(4, "id")),
+              false),
+            false,
+            fieldMetadata(2, "array_field")),
+          fieldMetadata(1, "top_level_struct"))))
+
+  test("validateUpdatedSchema succeeds with valid ID and physical name") {
+    forAll(validUpdatedSchemas) { (schemaBefore, schemaAfter) =>
+      validateUpdatedSchema(schemaBefore, schemaAfter, Set.empty.asJava, metadata(schemaBefore))
+    }
+  }
+
+  private val nonNullableFieldAdded = Table(
+    ("schemaBefore", "schemaWithNonNullableFieldAdded"),
+    (
+      primitiveSchema,
+      primitiveSchema.add(
+        "required_field",
+        IntegerType.INTEGER,
+        false,
+        fieldMetadata(3, "required_field"))),
+    // Map with struct key where non-nullable field is added to struct
+    (
+      mapWithStructKey,
+      mapWithStructKey(
+        new MapType(
+          new StructType()
+            .add(
+              "renamed_id",
+              IntegerType.INTEGER,
+              false,
+              fieldMetadata(id = 2, physicalName = "id"))
+            .add(
+              "required_field",
+              IntegerType.INTEGER,
+              false,
+              fieldMetadata(id = 3, physicalName = "required_field")),
+          IntegerType.INTEGER,
+          false),
+        fieldMetadata(id = 1, physicalName = "map"))),
+    // Struct of array of structs where non-nullable field is added to struct
+    (
+      structWithArrayOfStructs,
+      structWithArrayOfStructs(
+        arrayType = new ArrayType(
+          new StructType().add(
+            "renamed_id",
+            IntegerType.INTEGER,
+            fieldMetadata(4, "id"))
+            .add("required_field", IntegerType.INTEGER, false, fieldMetadata(5, "required_field")),
+          false),
+        arrayName = "renamed_array")))
+
+  test("validateUpdatedSchema fails when non-nullable field is added") {
+    assertSchemaEvolutionFailure[KernelException](
+      nonNullableFieldAdded,
+      "Cannot add non-nullable field required_field")
+  }
+
+  private val existingFieldNullabilityTightened = Table(
+    ("schemaBefore", "schemaWithFieldNullabilityTightened"),
+    (
+      primitiveSchema,
+      new StructType()
+        .add(
+          "id",
+          IntegerType.INTEGER,
+          false,
+          fieldMetadata(id = 1, physicalName = "id"))),
+    // Map with struct key where existing id field has nullability tightened
+    (
+      mapWithStructKey,
+      mapWithStructKey(
+        new MapType(
+          new StructType()
+            .add(
+              "renamed_id",
+              IntegerType.INTEGER,
+              false,
+              fieldMetadata(id = 2, physicalName = "id")),
+          IntegerType.INTEGER,
+          false),
+        fieldMetadata(id = 1, physicalName = "map"))),
+    // Struct of array of structs where id field in inner struct has nullability tightened
+    (
+      structWithArrayOfStructs,
+      structWithArrayOfStructs(
+        arrayType = new ArrayType(
+          new StructType().add(
+            "renamed_id",
+            IntegerType.INTEGER,
+            false,
+            fieldMetadata(4, "id")),
+          false),
+        arrayName = "renamed_array")))
+
+  test("validateUpdatedSchema fails when existing nullability is tightened") {
+    assertSchemaEvolutionFailure[KernelException](
+      existingFieldNullabilityTightened,
+      "Cannot tighten the nullability of existing field id")
+  }
+
+  private val invalidTypeChange = Table(
+    ("schemaBefore", "schemaWithInvalidTypeChange"),
+    (
+      primitiveSchema,
+      new StructType()
+        .add(
+          "id",
+          StringType.STRING,
+          true,
+          fieldMetadata(id = 1, physicalName = "id"))),
+    // Map with struct key where id is changed to string
+    (
+      mapWithStructKey,
+      mapWithStructKey(
+        new MapType(
+          new StructType()
+            .add(
+              "renamed_id_as_string",
+              StringType.STRING,
+              true,
+              fieldMetadata(id = 2, physicalName = "id")),
+          IntegerType.INTEGER,
+          false),
+        fieldMetadata(id = 1, physicalName = "map"))),
+    // Struct of array of struct where inner id field is changed to string
+    (
+      structWithArrayOfStructs,
+      structWithArrayOfStructs(
+        arrayType = new ArrayType(
+          new StructType().add(
+            "renamed_id_as_string",
+            StringType.STRING,
+            true,
+            fieldMetadata(4, "id")),
+          false),
+        arrayName = "renamed_array")))
+
+  test("validateUpdatedSchema fails when invalid type change is performed") {
+    assertSchemaEvolutionFailure[KernelException](
+      invalidTypeChange,
+      "Cannot change the type of existing field id from integer to string")
+  }
+
+  private val validateAddedFields = Table(
+    ("schemaBefore", "schemaWithAddedField"),
+    (
+      primitiveSchema,
+      primitiveSchema
+        .add(
+          "data",
+          StringType.STRING,
+          true,
+          fieldMetadata(id = 2, physicalName = "data"))),
+    // Map with struct key where data field is added
+    (
+      mapWithStructKey,
+      mapWithStructKey(
+        new MapType(
+          new StructType()
+            .add(
+              "renamed_id",
+              IntegerType.INTEGER,
+              true,
+              fieldMetadata(id = 2, physicalName = "id"))
+            .add(
+              "data",
+              StringType.STRING,
+              true,
+              fieldMetadata(id = 3, physicalName = "data")),
+          IntegerType.INTEGER,
+          false),
+        fieldMetadata(id = 1, physicalName = "map"))),
+    // Struct of array of struct where inner struct has added string data field
+    (
+      structWithArrayOfStructs,
+      structWithArrayOfStructs(
+        arrayType = new ArrayType(
+          new StructType().add(
+            "renamed_id",
+            IntegerType.INTEGER,
+            true,
+            fieldMetadata(4, "id"))
+            .add(
+              "data",
+              StringType.STRING,
+              true,
+              fieldMetadata(5, "data")),
+          false),
+        arrayName = "renamed_array")))
+
+  test("validateUpdatedSchema succeeds when adding field") {
+    forAll(validateAddedFields) { (schemaBefore, schemaAfter) =>
+      validateUpdatedSchema(schemaBefore, schemaAfter, Set.empty.asJava, metadata(schemaBefore))
+    }
+  }
+
+  private val validateMetadataChange = Table(
+    ("schemaBefore", "schemaWithAddedField"),
+    // Adding column comment to id column
+    (
+      primitiveSchema,
+      new StructType()
+        .add(
+          "id",
+          IntegerType.INTEGER,
+          true,
+          FieldMetadata.builder().fromMetadata(fieldMetadata(
+            id = 1,
+            physicalName = "id")).putString("comment", "id comment").build())),
+    // Struct of array of struct where inner struct has added column comment to metadata
+    (
+      structWithArrayOfStructs,
+      structWithArrayOfStructs(
+        arrayType = new ArrayType(
+          new StructType().add(
+            "id",
+            IntegerType.INTEGER,
+            true,
+            FieldMetadata.builder().fromMetadata(fieldMetadata(4, "id")).putString(
+              "comment",
+              "id comment").build()),
+          false),
+        arrayName = "renamed_array")))
+
+  test("validateUpdatedSchema succeeds when updating field metadata") {
+    forAll(validateMetadataChange) { (schemaBefore, schemaAfter) =>
+      validateUpdatedSchema(schemaBefore, schemaAfter, Set.empty.asJava, metadata(schemaBefore))
+    }
+  }
+
+  private def mapWithStructKey(
+      mapType: DataType =
+        mapWithStructKey.get("map").getDataType,
+      mapFieldMetadata: FieldMetadata =
+        mapWithStructKey.get("map").getMetadata): StructType = {
+    new StructType()
+      .add(
+        "map",
+        mapType,
+        true,
+        mapFieldMetadata)
+  }
+
+  private def structWithArrayOfStructs(
+      arrayType: ArrayType =
+        structWithArrayOfStructs
+          .get("top_level_struct")
+          .getDataType.asInstanceOf[StructType]
+          .get("array").getDataType.asInstanceOf[ArrayType],
+      arrayMetadata: FieldMetadata =
+        structWithArrayOfStructs
+          .get("top_level_struct")
+          .getDataType.asInstanceOf[StructType]
+          .get("array").getMetadata,
+      arrayName: String = "array") = {
+    new StructType()
+      .add(
+        "top_level_struct",
+        new StructType().add(
+          arrayName,
+          arrayType,
+          false,
+          arrayMetadata),
+        fieldMetadata(1, "top_level_struct"))
+  }
+
+  private def assertSchemaEvolutionFailure[T <: Throwable](
+      evolutionCases: TableFor2[StructType, StructType],
+      expectedMessage: String,
+      tableProperties: Map[String, String] =
+        Map(ColumnMapping.COLUMN_MAPPING_MODE_KEY -> "id"))(implicit classTag: ClassTag[T]) {
+    forAll(evolutionCases) { (schemaBefore, schemaAfter) =>
+      val e = intercept[T] {
+        validateUpdatedSchema(
+          schemaBefore,
+          schemaAfter,
+          Set.empty.asJava,
+          metadata(schemaBefore, tableProperties))
+      }
+
+      assert(e.getMessage.matches(expectedMessage))
+    }
+  }
+
+  private def metadata(
+      schema: StructType,
+      properties: Map[String, String] =
+        Map(ColumnMapping.COLUMN_MAPPING_MODE_KEY -> "id")): Metadata = {
+    new Metadata(
+      "id",
+      Optional.empty(), /* name */
+      Optional.empty(), /* description */
+      new Format(),
+      DataTypeJsonSerDe.serializeDataType(schema),
+      schema,
+      VectorUtils.buildArrayValue(util.Arrays.asList(), StringType.STRING), // partitionColumns
+      Optional.empty(), // createdTime
+      stringStringMapValue(properties.asJava) // configurationMap
+    )
+  }
+
+  private def fieldMetadata(id: Integer, physicalName: String): FieldMetadata = {
+    FieldMetadata.builder()
+      .putLong(COLUMN_MAPPING_ID_KEY, id.longValue())
+      .putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, physicalName)
+      .build()
   }
 
   ///////////////////////////////////////////////////////////////////////////

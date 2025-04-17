@@ -37,6 +37,19 @@ import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{ArrayType, DataType, MapType, Metadata => SparkMetadata, MetadataBuilder, StructField, StructType}
 
+/**
+ * Information regarding a single dropped column.
+ * @param fieldPath The logical path of the dropped column.
+ */
+private[delta] case class DroppedColumn(fieldPath: Seq[String])
+
+/**
+ * Information regarding a single renamed column.
+ * @param fromFieldPath The logical path of the column before the rename.
+ * @param toFieldPath The logical path of the column after the rename.
+ */
+private[delta] case class RenamedColumn(fromFieldPath: Seq[String], toFieldPath: Seq[String])
+
 trait DeltaColumnMappingBase extends DeltaLogging {
   val PARQUET_FIELD_ID_METADATA_KEY = "parquet.field.id"
   val PARQUET_FIELD_NESTED_IDS_METADATA_KEY = "parquet.field.nested.ids"
@@ -292,17 +305,23 @@ trait DeltaColumnMappingBase extends DeltaLogging {
     }
   }
 
-  /** Set physical name based on field path, skip if field path not found in the map */
+  /**
+   * Set physical name based on field path, skip if field path not found in the map. All comparisons
+   * are case-insensitive.
+   */
   def setPhysicalNames(
       schema: StructType,
       fieldPathToPhysicalName: Map[Seq[String], String]): StructType = {
     if (fieldPathToPhysicalName.isEmpty) {
       schema
     } else {
+      val lowerCasedFieldPathToPhysicalNameMap =
+        fieldPathToPhysicalName.map { case (k, v) => k.map(_.toLowerCase(Locale.ROOT)) -> v }
       SchemaMergingUtils.transformColumns(schema) { (parent, field, _) =>
-        val path = parent :+ field.name
-        if (fieldPathToPhysicalName.contains(path)) {
-          assignPhysicalName(field, fieldPathToPhysicalName(path))
+        // Column comparison is case-insensitive.
+        val path = (parent :+ field.name).map(_.toLowerCase(Locale.ROOT))
+        if (lowerCasedFieldPathToPhysicalNameMap.contains(path)) {
+          assignPhysicalName(field, lowerCasedFieldPathToPhysicalNameMap(path))
         } else {
           field
         }
@@ -421,8 +440,8 @@ trait DeltaColumnMappingBase extends DeltaLogging {
       isOverwritingSchema: Boolean): Metadata = {
     val rawSchema = newMetadata.schema
     var maxId = DeltaConfigs.COLUMN_MAPPING_MAX_ID.fromMetaData(newMetadata) max
-                findMaxColumnId(rawSchema)
-    maxId = maxId.max(DeltaConfigs.COLUMN_MAPPING_MAX_ID.fromMetaData(oldMetadata))
+      DeltaConfigs.COLUMN_MAPPING_MAX_ID.fromMetaData(oldMetadata) max
+      findMaxColumnId(rawSchema)
     val startId = maxId
     val newSchema =
       SchemaMergingUtils.transformColumns(rawSchema)((path, field, _) => {
@@ -491,7 +510,8 @@ trait DeltaColumnMappingBase extends DeltaLogging {
         field.copy(metadata = builder.build())
       })
 
-    val (finalSchema, newMaxId) = if (IcebergCompatV2.isEnabled(newMetadata)) {
+    // Starting from IcebergCompatV2, we require writing field-id for List/Map nested fields
+    val (finalSchema, newMaxId) = if (IcebergCompat.isGeqEnabled(newMetadata, 2)) {
       rewriteFieldIdsForIceberg(newSchema, maxId)
     } else {
       (newSchema, maxId)
@@ -604,11 +624,8 @@ trait DeltaColumnMappingBase extends DeltaLogging {
    */
   def getPhysicalNameFieldMap(schema: StructType): Map[Seq[String], StructField] = {
     val physicalSchema = renameColumns(schema)
-
     val physicalSchemaFieldPaths = SchemaMergingUtils.explode(physicalSchema).map(_._1)
-
     val originalSchemaFields = SchemaMergingUtils.explode(schema).map(_._2)
-
     physicalSchemaFieldPaths.zip(originalSchemaFields).toMap
   }
 
@@ -622,6 +639,15 @@ trait DeltaColumnMappingBase extends DeltaLogging {
     val logicalSchemaFieldPaths = SchemaMergingUtils.explode(schema).map(_._1)
     val physicalSchemaFieldPaths = SchemaMergingUtils.explode(physicalSchema).map(_._1)
     logicalSchemaFieldPaths.zip(physicalSchemaFieldPaths).toMap
+  }
+
+  /**
+   * Returns a map from the physical name paths to the logical name paths for the given schema.
+   * The logical name path is the result of splitting a multi-part identifier, and the physical name
+   * path is result of replacing all names in the logical name path with their physical names.
+   */
+  def getPhysicalNameToLogicalNameMap(schema: StructType): Map[Seq[String], Seq[String]] = {
+    getLogicalNameToPhysicalNameMap(schema).map(_.swap)
   }
 
   /**
@@ -640,17 +666,35 @@ trait DeltaColumnMappingBase extends DeltaLogging {
       return false
     }
 
-    isDropColumnOperation(newSchema = newMetadata.schema, currentSchema = currentMetadata.schema)
-  }
-
-  def isDropColumnOperation(newSchema: StructType, currentSchema: StructType): Boolean = {
-    val newPhysicalToLogicalMap = getPhysicalNameFieldMap(newSchema)
-    val currentPhysicalToLogicalMap = getPhysicalNameFieldMap(currentSchema)
+    val newPhysicalToLogicalMap = getPhysicalNameFieldMap(newMetadata.schema)
+    val currentPhysicalToLogicalMap = getPhysicalNameFieldMap(currentMetadata.schema)
 
     // are any of the current physical names missing in the new schema?
     currentPhysicalToLogicalMap
       .keys
       .exists { k => !newPhysicalToLogicalMap.contains(k) }
+  }
+
+  /**
+   * Collects the columns that were dropped between the new schema and the current schema.
+   * @param newSchema The new schema after a potential drop.
+   * @param currentSchema The current schema before the drop.
+   * @return A sequence of column names that were dropped
+   */
+  def collectDroppedColumns(
+      newSchema: StructType,
+      currentSchema: StructType): Seq[DroppedColumn] = {
+    val newPhysicalToLogicalMap = getPhysicalNameToLogicalNameMap(newSchema)
+    val currentPhysicalToLogicalMap = getPhysicalNameToLogicalNameMap(currentSchema)
+
+    // are any of the current physical names missing in the new schema?
+    currentPhysicalToLogicalMap
+      .keySet
+      .diff(newPhysicalToLogicalMap.keySet)
+      .map { droppedPhysicalPath =>
+        DroppedColumn(currentPhysicalToLogicalMap(droppedPhysicalPath))
+      }
+      .toSeq
   }
 
   /**
@@ -669,18 +713,37 @@ trait DeltaColumnMappingBase extends DeltaLogging {
       return false
     }
 
-    isRenameColumnOperation(newSchema = newMetadata.schema, currentSchema = currentMetadata.schema)
-  }
-
-  def isRenameColumnOperation(newSchema: StructType, currentSchema: StructType): Boolean = {
-    val newPhysicalToLogicalMap = getPhysicalNameFieldMap(newSchema)
-    val currentPhysicalToLogicalMap = getPhysicalNameFieldMap(currentSchema)
+    val newPhysicalToLogicalMap = getPhysicalNameFieldMap(newMetadata.schema)
+    val currentPhysicalToLogicalMap = getPhysicalNameFieldMap(currentMetadata.schema)
 
     // do any two columns with the same physical name have different logical names?
     currentPhysicalToLogicalMap
       .exists { case (physicalPath, field) =>
         newPhysicalToLogicalMap.get(physicalPath).exists(_.name != field.name)
       }
+  }
+
+  /**
+   * Collects the column rename operations between the new schema and the current schema.
+   * @param newSchema The new schema after a potential rename.
+   * @param currentSchema The current schema before the rename.
+   * @return A sequence of (oldName, newName) tuples representing the column before and after rename
+   */
+  def collectRenamedColumns(
+      newSchema: StructType,
+      currentSchema: StructType): Seq[RenamedColumn] = {
+    val newPhysicalToLogicalMap = getPhysicalNameToLogicalNameMap(newSchema)
+    val currentPhysicalToLogicalMap = getPhysicalNameToLogicalNameMap(currentSchema)
+
+    // do any two columns with the same physical name have different logical names?
+    currentPhysicalToLogicalMap
+      .flatMap { case (physicalPath, logicalPath) =>
+        newPhysicalToLogicalMap.get(physicalPath).flatMap { newLogicalPath =>
+          if (logicalPath.last != newLogicalPath.last) {
+            Some(RenamedColumn(logicalPath, newLogicalPath))
+          } else None
+        }
+      }.toSet.toSeq
   }
 
   /**

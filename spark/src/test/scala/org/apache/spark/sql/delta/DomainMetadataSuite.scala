@@ -312,10 +312,8 @@ class DomainMetadataSuite
       val e = intercept[DeltaIllegalArgumentException] {
         deltaTable.startTransactionWithInitialSnapshot().commit(domainMetadata, Truncate())
       }
-      assertEquals(e.getMessage,
-        "[DELTA_DUPLICATE_DOMAIN_METADATA_INTERNAL_ERROR] " +
-          "Internal error: two DomainMetadata actions within the same transaction have " +
-          "the same domain testDomain1")
+      checkError(e, "DELTA_DUPLICATE_DOMAIN_METADATA_INTERNAL_ERROR", "42601",
+        Map("domainName" -> "testDomain1"))
     }
   }
 
@@ -327,10 +325,8 @@ class DomainMetadataSuite
       val e = intercept[DeltaIllegalArgumentException] {
         deltaLog.startTransaction().commit(domainMetadata, Truncate())
       }
-      assertEquals(e.getMessage,
-        "[DELTA_DOMAIN_METADATA_NOT_SUPPORTED] " +
-          "Detected DomainMetadata action(s) for domains [testDomain1], " +
-          "but DomainMetadataTableFeature is not enabled.")
+      checkError(e, "DELTA_DOMAIN_METADATA_NOT_SUPPORTED", "0A000",
+        Map("domainNames" -> "[testDomain1]"))
     }
   }
 

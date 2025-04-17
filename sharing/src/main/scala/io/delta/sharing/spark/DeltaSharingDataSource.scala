@@ -233,7 +233,7 @@ private[sharing] class DeltaSharingDataSource
 
     val userInputResponseFormat = options.options.get(DeltaSharingOptions.RESPONSE_FORMAT)
     if (userInputResponseFormat.isEmpty && !options.readChangeFeed) {
-      return autoResolveBaseRelationForSnapshotQuery(options)
+      return autoResolveBaseRelationForSnapshotQuery(options, sqlContext)
     }
 
     val path = options.options.getOrElse("path", throw DeltaSharingErrors.pathNotSpecifiedException)
@@ -311,16 +311,32 @@ private[sharing] class DeltaSharingDataSource
    * shared table), and then decide the code path on the client side.
    */
   private def autoResolveBaseRelationForSnapshotQuery(
-      options: DeltaSharingOptions): BaseRelation = {
+      options: DeltaSharingOptions,
+      sqlContext: SQLContext): BaseRelation = {
     val path = options.options.getOrElse("path", throw DeltaSharingErrors.pathNotSpecifiedException)
+    logInfo(s"autoResolving BaseRelation for path:${path}, with options:${options.options}.")
     val parsedPath = DeltaSharingRestClient.parsePath(path)
+
+    val responseFormat = {
+      if (sqlContext.sparkSession.sessionState.conf.getConf(
+        DeltaSQLConf.DELTA_SHARING_FORCE_DELTA_FORMAT)) {
+        // If the Spark config is enabled, force the query to return results in Delta format.
+        // This is primarily used for testing the Delta format code path, even when the source
+        // table doesn't include advanced features like deletion vector.
+        logInfo("Set delta sharing client to only accept delta format due to Spark config setting.")
+        DeltaSharingOptions.RESPONSE_FORMAT_DELTA
+      }
+      else {
+        s"${DeltaSharingOptions.RESPONSE_FORMAT_PARQUET}," +
+          s"${DeltaSharingOptions.RESPONSE_FORMAT_DELTA}"
+      }
+    }
 
     val client = DeltaSharingRestClient(
       profileFile = parsedPath.profileFile,
       forStreaming = false,
       // Indicating that the client is able to process response format in both parquet and delta.
-      responseFormat = s"${DeltaSharingOptions.RESPONSE_FORMAT_PARQUET}," +
-        s"${DeltaSharingOptions.RESPONSE_FORMAT_DELTA}",
+      responseFormat = responseFormat,
       // comma separated delta reader features, used to tell delta sharing server what delta
       // reader features the client is able to process.
       readerFeatures = DeltaSharingUtils.SUPPORTED_READER_FEATURES.mkString(",")
@@ -339,6 +355,7 @@ private[sharing] class DeltaSharingDataSource
     )
 
     if (deltaTableMetadata.respondedFormat == DeltaSharingOptions.RESPONSE_FORMAT_PARQUET) {
+      logInfo(s"Resolved as parquet format for table path:$path, parameters:${options.options}")
       val deltaLog = RemoteDeltaLog(
         path = path,
         forStreaming = false,
@@ -347,6 +364,7 @@ private[sharing] class DeltaSharingDataSource
       )
       deltaLog.createRelation(options.versionAsOf, options.timestampAsOf, options.cdfOptions)
     } else if (deltaTableMetadata.respondedFormat == DeltaSharingOptions.RESPONSE_FORMAT_DELTA) {
+      logInfo(s"Resolved as delta format for table path:$path, parameters:${options.options}")
       val deltaSharingTableMetadata = DeltaSharingUtils.getDeltaSharingTableMetadata(
         table = dsTable,
         deltaTableMetadata = deltaTableMetadata

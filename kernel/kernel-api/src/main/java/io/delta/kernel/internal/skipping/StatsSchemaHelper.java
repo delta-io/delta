@@ -43,12 +43,27 @@ public class StatsSchemaHelper {
   // Public static fields and methods
   //////////////////////////////////////////////////////////////////////////////////
 
+  /* Delta statistics field names for file statistics */
+  public static final String NUM_RECORDS = "numRecords";
+  public static final String MIN = "minValues";
+  public static final String MAX = "maxValues";
+  public static final String NULL_COUNT = "nullCount";
+
   /**
    * Returns true if the given literal is skipping-eligible. Delta tracks min/max stats for a
    * limited set of data types and only literals of those types are skipping eligible.
    */
   public static boolean isSkippingEligibleLiteral(Literal literal) {
     return isSkippingEligibleDataType(literal.getDataType());
+  }
+
+  /** Returns true if the given data type is eligible for MIN/MAX data skipping. */
+  public static boolean isSkippingEligibleDataType(DataType dataType) {
+    return SKIPPING_ELIGIBLE_TYPE_NAMES.contains(dataType.toString())
+        ||
+        // DecimalType is eligible but since its string includes scale + precision it needs to
+        // be matched separately
+        dataType instanceof DecimalType;
   }
 
   /**
@@ -200,12 +215,6 @@ public class StatsSchemaHelper {
   // Private static fields and methods
   //////////////////////////////////////////////////////////////////////////////////
 
-  /* Delta statistics field names for file statistics */
-  private static final String NUM_RECORDS = "numRecords";
-  private static final String MIN = "minValues";
-  private static final String MAX = "maxValues";
-  private static final String NULL_COUNT = "nullCount";
-
   private static final Set<String> SKIPPING_ELIGIBLE_TYPE_NAMES =
       new HashSet<String>() {
         {
@@ -221,15 +230,6 @@ public class StatsSchemaHelper {
           add("string");
         }
       };
-
-  /** Returns true if the given data type is eligible for MIN/MAX data skipping. */
-  private static boolean isSkippingEligibleDataType(DataType dataType) {
-    return SKIPPING_ELIGIBLE_TYPE_NAMES.contains(dataType.toString())
-        ||
-        // DecimalType is eligible but since its string includes scale + precision it needs to
-        // be matched separately
-        dataType instanceof DecimalType;
-  }
 
   /**
    * Given a data schema returns the expected schema for a min or max statistics column. This means

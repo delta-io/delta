@@ -34,7 +34,7 @@ import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
-import org.apache.spark.sql.delta.coordinatedcommits.{CoordinatedCommitsUtils, TableCommitCoordinatorClient}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.files._
 import org.apache.spark.sql.delta.hooks.{CheckpointHook, GenerateSymlinkManifest, HudiConverterHook, IcebergConverterHook, PostCommitHook, UpdateCatalogFactory}
 import org.apache.spark.sql.delta.hooks.ChecksumHook
@@ -49,6 +49,7 @@ import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, JsonUtils}
 import org.apache.spark.sql.util.ScalaExtensions._
 import io.delta.storage.commit._
 import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
+import org.apache.commons.lang3.NotImplementedException
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
@@ -467,10 +468,18 @@ trait OptimisticTransactionImpl extends DeltaTransaction
   private[delta] var preCommitLogSegment: LogSegment =
     snapshot.logSegment.copy(checkpointProvider = snapshot.checkpointProvider)
 
-  // The commit-coordinator of a table shouldn't change. If it is changed by a concurrent commit,
-  // then it will be detected as a conflict and the transaction will anyway fail.
   private[delta] val readSnapshotTableCommitCoordinatorClientOpt:
-    Option[TableCommitCoordinatorClient] = snapshot.getTableCommitCoordinatorForWrites
+      Option[TableCommitCoordinatorClient] = {
+    if (snapshot.isCatalogOwned) {
+      // Catalog owned table's commit coordinator is always determined by the catalog.
+      CatalogOwnedTableUtils.populateTableCommitCoordinatorFromCatalog(
+        spark, catalogTable, snapshot)
+    } else {
+      // The commit-coordinator of a table shouldn't change. If it is changed by a concurrent
+      // commit, then it will be detected as a conflict and the transaction will anyway fail.
+      snapshot.getTableCommitCoordinatorForWrites
+    }
+  }
 
   /**
    * Generates a timestamp which is greater than the commit timestamp
@@ -683,15 +692,6 @@ trait OptimisticTransactionImpl extends DeltaTransaction
       }
     }
 
-    if (spark.sessionState.conf
-      .getConf(DeltaSQLConf.REMOVE_EXISTS_DEFAULT_FROM_SCHEMA_ON_EVERY_METADATA_CHANGE)) {
-      val schemaWithRemovedExistsDefaults =
-        SchemaUtils.removeExistsDefaultMetadata(newMetadataTmp.schema)
-      if (schemaWithRemovedExistsDefaults != newMetadataTmp.schema) {
-        newMetadataTmp = newMetadataTmp.copy(schemaString = schemaWithRemovedExistsDefaults.json)
-      }
-    }
-
     // Table features Part 2: add manually-supported features specified in table properties, aka
     // those start with [[FEATURE_PROP_PREFIX]].
     //
@@ -722,6 +722,15 @@ trait OptimisticTransactionImpl extends DeltaTransaction
           TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION)
           .withFeatures(newFeaturesFromTableConf)
           .merge(newProtocolBeforeAddingFeatures))
+    }
+    // For CatalogOwned table feature, we don't support the upgrade yet.
+    newProtocol.foreach { p =>
+      if (!isCreatingNewTable &&
+          p.readerAndWriterFeatureNames.contains(CatalogOwnedTableFeature.name) &&
+          !existingFeatureNames.contains(CatalogOwnedTableFeature.name)) {
+        throw new NotImplementedException("Upgrading to CatalogOwned table is not yet " +
+          s"supported. Please create a new table with the CatalogOwned table feature.")
+      }
     }
 
     // We are done with protocol versions and features, time to remove related table properties.
@@ -817,6 +826,25 @@ trait OptimisticTransactionImpl extends DeltaTransaction
     updateMetadata(proposedNewMetadata)
   }
 
+  /**
+   * Remove the 'EXISTS_DEFAULT' metadata key from the schema. This is used for new tables that are
+   * not re-using data files of existing tables (i.e. CREATE TABLE, REPLACE TABLE, CTAS). It is not
+   * used on code paths of commands that create new tables but re-use data files (i.e. CONVERT TO
+   * DELTA, CLONE) because we cannot assure that 'EXISTS_DEFAULT' values is actually not required
+   * without reading the data.
+   */
+  def removeExistsDefaultFromSchema(): Unit = {
+    if (spark.sessionState.conf.getConf(DeltaSQLConf.REMOVE_EXISTS_DEFAULT_FROM_SCHEMA)) {
+      if (newMetadata.isDefined) {
+        val schemaWithRemovedExistsDefaults =
+          SchemaUtils.removeExistsDefaultMetadata(newMetadata.get.schema)
+        if (schemaWithRemovedExistsDefaults != newMetadata.get.schema) {
+          newMetadata = newMetadata.map(_.copy(schemaString = schemaWithRemovedExistsDefaults.json))
+        }
+      }
+    }
+  }
+
   protected def assertMetadata(metadata: Metadata): Unit = {
     assert(!CharVarcharUtils.hasCharVarchar(metadata.schema),
       "The schema in Delta log should not contain char/varchar type.")
@@ -869,9 +897,11 @@ trait OptimisticTransactionImpl extends DeltaTransaction
    * in the protocol but also be enabled. This method sets the flags required
    * to enable these pre-requisite features.
    */
-  private def getMetadataWithDependentFeaturesEnabled(metadata: Metadata): Metadata = {
-    DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.fromMetaData(metadata).map { _ =>
-      // coordinated-commits requires ICT to be enabled as per the spec.
+  private def getMetadataWithDependentFeaturesEnabled(
+      metadata: Metadata, protocols: Seq[Protocol]): Metadata = {
+    if (DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.fromMetaData(metadata).isDefined ||
+        protocols.exists(_.readerAndWriterFeatureNames.contains(CatalogOwnedTableFeature.name))) {
+      // coordinated-commits/catalog-owned require ICT to be enabled as per the spec.
       // If ICT is just in Protocol and not in Metadata,
       // then it is in a 'supported' state but not enabled.
       // In order to enable ICT, we have to set the table property in Metadata.
@@ -880,7 +910,9 @@ trait OptimisticTransactionImpl extends DeltaTransaction
           (DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key -> "true"))
       val configWithICT = metadata.configuration ++ ictEnablementConfigOpt
       metadata.copy(configuration = configWithICT)
-    }.getOrElse(metadata)
+    } else {
+      metadata
+    }
   }
 
   private def setNewProtocolWithFeaturesEnabledByMetadata(metadata: Metadata): Unit = {
@@ -1565,7 +1597,7 @@ trait OptimisticTransactionImpl extends DeltaTransaction
     // If a feature requires another feature to be enabled, we enable the required
     // feature in the metadata (if needed) and add it to the protocol.
     // e.g. Coordinated Commits requires ICT and VacuumProtocolCheck to be enabled.
-    updateMetadataAndProtocolWithRequiredFeatures(newMetadata)
+    updateMetadataAndProtocolWithRequiredFeatures(newMetadata, newProtocol.toSeq)
 
     def recordCommitLargeFailure(ex: Throwable, op: DeltaOperations.Operation): Unit = {
       val coordinatedCommitsExceptionOpt = ex match {
@@ -1905,12 +1937,14 @@ trait OptimisticTransactionImpl extends DeltaTransaction
    * The global `newMetadata` and `newProtocol` are updated with the new
    * metadata and protocol if needed.
    * @param metadataOpt The new metadata that is being set.
+   * @param protocols The new protocols that are being set.
    */
   protected def updateMetadataAndProtocolWithRequiredFeatures(
-      metadataOpt: Option[Metadata]): Unit = {
+      metadataOpt: Option[Metadata], protocols: Seq[Protocol]): Unit = {
     metadataOpt.foreach { m =>
       assertMetadata(m)
-      val metadataWithRequiredFeatureEnablementFlags = getMetadataWithDependentFeaturesEnabled(m)
+      val metadataWithRequiredFeatureEnablementFlags =
+        getMetadataWithDependentFeaturesEnabled(m, protocols)
       setNewProtocolWithFeaturesEnabledByMetadata(metadataWithRequiredFeatureEnablementFlags)
 
       // Also update `newMetadata` so that the behaviour later is consistent irrespective of whether
@@ -1945,15 +1979,17 @@ trait OptimisticTransactionImpl extends DeltaTransaction
     // There be at most one metadata entry at this point.
     // Update the global `newMetadata` and `newProtocol` with any extra metadata and protocol
     // changes needed for pre-requisite features.
-    updateMetadataAndProtocolWithRequiredFeatures(metadataChanges.headOption)
+    val protocolActions = metadatasAndProtocols.collect { case p: Protocol => p }
+    val protocolChangesBeforeUpdate = newProtocol.toSeq ++ protocolActions
+    updateMetadataAndProtocolWithRequiredFeatures(
+      metadataChanges.headOption, protocolChangesBeforeUpdate)
 
     // A protocol change can be *explicit*, i.e. specified as a Protocol action as part of the
     // commit actions, or *implicit*. Implicit protocol changes are mostly caused by setting
     // new table properties that enable features that require a protocol upgrade. These implicit
     // changes are usually captured in newProtocol. In case there is more than one protocol action,
     // it is likely that it is due to a mix of explicit and implicit changes.
-    val protocolChanges =
-      newProtocol.toSeq ++ metadatasAndProtocols.collect { case p: Protocol => p }
+    val protocolChanges = newProtocol.toSeq ++ protocolActions
     if (protocolChanges.length > 1) {
       recordDeltaEvent(deltaLog, "delta.protocolCheck.multipleProtocolActions", data = Map(
         "protocolChanges" -> protocolChanges
@@ -2691,7 +2727,8 @@ trait OptimisticTransactionImpl extends DeltaTransaction
     OptimisticTransaction.clearActive()
 
     try {
-      postCommitHooks.foreach(runPostCommitHook(_, version, postCommitSnapshot, committedActions))
+      postCommitHooks.foreach(
+        runPostCommitHook(_, version, postCommitSnapshot, committedActions.toIterator))
     } finally {
       activeCommit.foreach(OptimisticTransaction.setActive)
     }
@@ -2701,7 +2738,7 @@ trait OptimisticTransactionImpl extends DeltaTransaction
       hook: PostCommitHook,
       version: Long,
       postCommitSnapshot: Snapshot,
-      committedActions: Seq[Action]): Unit = {
+      committedActions: Iterator[Action]): Unit = {
     try {
       hook.run(spark, this, version, postCommitSnapshot, committedActions)
     } catch {

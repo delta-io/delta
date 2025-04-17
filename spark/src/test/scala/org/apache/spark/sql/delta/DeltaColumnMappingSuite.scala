@@ -1768,6 +1768,28 @@ class DeltaColumnMappingSuite extends QueryTest
     }
   }
 
+  test("restore Delta table with name column mapping enabled") {
+    withTempDir { dir =>
+      withTable("t1") {
+        sql(s"""
+               |CREATE OR REPLACE TABLE t1 (a long)
+               |USING DELTA
+               |LOCATION '${dir.getCanonicalPath}'
+               |TBLPROPERTIES('delta.columnMapping.mode'='name')""".stripMargin)
+        // Add column and drop the old one to increment max column ID
+        sql(s"ALTER TABLE t1 ADD COLUMN (b long)")
+        sql(s"ALTER TABLE t1 DROP COLUMN a")
+        sql(s"ALTER TABLE t1 RENAME COLUMN b to a")
+        val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
+        assert(log.update().metadata.configuration("delta.columnMapping.maxColumnId") == "2")
+        sql(s"RESTORE TABLE t1 TO VERSION AS OF 0")
+        // Restore should not reduce the max field id,
+        // but it should also not give out new field ids to the restored schema.
+        assert(log.update().metadata.configuration("delta.columnMapping.maxColumnId") == "2")
+      }
+    }
+  }
+
   test("verify internal table properties only if property exists in spec and existing metadata") {
     val withoutMaxColumnId = Map[String, String]("delta.columnMapping.mode" -> "name")
     val maxColumnIdOne = Map[String, String](
@@ -1947,13 +1969,8 @@ class DeltaColumnMappingSuite extends QueryTest
                |TBLPROPERTIES('${DeltaConfigs.COLUMN_MAPPING_MODE.key}'='none')
                |""".stripMargin)
         }
-        val condition = "DELTA_INVALID_CHARACTERS_IN_COLUMN_NAMES"
-        checkError(
-          e,
-          condition,
-          parameters = DeltaThrowableHelper
-            .getParameterNames(condition, errorSubClass = null)
-            .zip(invalidColumns).toMap
+        checkError(e, "DELTA_INVALID_CHARACTERS_IN_COLUMN_NAMES", "42K05",
+          Map("invalidColumnNames" -> invalidColumns.mkString(", "))
         )
       }
     }
@@ -2150,5 +2167,18 @@ class DeltaColumnMappingSuite extends QueryTest
         }
       }
     }
+  }
+
+  test("unit test physical name assigning is case-insensitive") {
+    val schema = new StructType()
+      .add("A", IntegerType)
+      .add("b", IntegerType)
+    val fieldPathToPhysicalName = Map(Seq("a") -> "x", Seq("b") -> "y")
+    val schemaWithPhysicalNames = DeltaColumnMapping.setPhysicalNames(
+      schema = schema,
+      fieldPathToPhysicalName = fieldPathToPhysicalName)
+    assert(DeltaColumnMapping.getLogicalNameToPhysicalNameMap(schemaWithPhysicalNames) === Map(
+      Seq("A") -> Seq("x"),
+      Seq("b") -> Seq("y")))
   }
 }

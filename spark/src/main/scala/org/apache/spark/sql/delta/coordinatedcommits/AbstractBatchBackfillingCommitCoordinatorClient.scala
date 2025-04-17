@@ -91,7 +91,7 @@ trait AbstractBatchBackfillingCommitCoordinatorClient
         null)
     }
 
-    // Write new commit file in _commits directory
+    // Write new commit file in `_staged_commits` directory
     val fileStatus = JCoordinatedCommitsUtils.writeUnbackfilledCommitFile(
       logStore, hadoopConf, logPath.toString, commitVersion, actions, generateUUID())
 

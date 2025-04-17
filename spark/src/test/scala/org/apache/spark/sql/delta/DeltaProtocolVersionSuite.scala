@@ -158,8 +158,10 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     withTempDir { path =>
       val log = createTableWithProtocol(Protocol(1, 1), path)
       assert(log.snapshot.protocol === Protocol(1, 1))
-      log.upgradeProtocol(Action.supportedProtocolVersion())
-      assert(log.snapshot.protocol === Action.supportedProtocolVersion())
+      log.upgradeProtocol(Action.supportedProtocolVersion(
+        featuresToExclude = Seq(CatalogOwnedTableFeature)))
+      assert(log.snapshot.protocol === Action.supportedProtocolVersion(
+        featuresToExclude = Seq(CatalogOwnedTableFeature)))
     }
   }
 

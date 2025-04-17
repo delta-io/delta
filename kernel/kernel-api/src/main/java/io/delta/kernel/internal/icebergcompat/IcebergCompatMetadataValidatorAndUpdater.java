@@ -118,7 +118,8 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
       this(property, validator, autoSetValue, (c) -> Optional.empty());
     }
 
-    Optional<Metadata> validateAndUpdate(IcebergCompatInputContext inputContext) {
+    Optional<Metadata> validateAndUpdate(
+        IcebergCompatInputContext inputContext, String compatVersion) {
       Metadata newMetadata = inputContext.newMetadata;
       T newestValue = property.fromMetadata(newMetadata);
       boolean newestValueOkay = validator.test(newestValue);
@@ -137,8 +138,8 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
           throw new KernelException(
               String.format(
                   "The value '%s' for the property '%s' is not compatible with "
-                      + "Iceberg compat requirements",
-                  newestValue, property.getKey()));
+                      + "%s requirements",
+                  newestValue, property.getKey(), compatVersion));
         }
       }
 
@@ -177,7 +178,8 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
         requiredDeltaTableProperties();
     for (IcebergCompatRequiredTablePropertyEnforcer requiredDeltaTableProperty :
         requiredDeltaTableProperties) {
-      Optional<Metadata> updated = requiredDeltaTableProperty.validateAndUpdate(inputContext);
+      Optional<Metadata> updated =
+          requiredDeltaTableProperty.validateAndUpdate(inputContext, compatFeatureName());
 
       if (updated.isPresent()) {
         inputContext = inputContext.withUpdatedMetadata(updated.get());
@@ -200,7 +202,7 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
     for (TableFeature requiredDependencyTableFeature : requiredDependencyTableFeatures()) {
       if (!inputContext.newProtocol.supportsFeature(requiredDependencyTableFeature)) {
         throw DeltaErrors.icebergCompatRequiredFeatureMissing(
-            compatVersion(), requiredDependencyTableFeature.featureName());
+            compatFeatureName(), requiredDependencyTableFeature.featureName());
       }
     }
 
@@ -212,7 +214,7 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
     return metadataUpdated ? Optional.of(inputContext.newMetadata) : Optional.empty();
   }
 
-  abstract String compatVersion();
+  abstract String compatFeatureName();
 
   abstract TableConfig<Boolean> requiredDeltaTableProperty();
 

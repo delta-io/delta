@@ -18,6 +18,7 @@ package io.delta.kernel.internal;
 import io.delta.kernel.exceptions.InvalidConfigurationValueException;
 import io.delta.kernel.exceptions.UnknownConfigurationException;
 import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.*;
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
 import java.util.*;
@@ -271,6 +272,36 @@ public class TableConfig<T> {
           "needs to be a boolean.",
           true);
 
+  public static class UniversalFormats {
+
+    /**
+     * The value that enables uniform exports to Iceberg for {@linkplain
+     * TableConfig#UNIVERSAL_FORMAT_ENABLED_FORMATS}.
+     *
+     * <p>{@link #ICEBERG_COMPAT_V2_ENABLED but also be set to true} to fully enable this feature.
+     */
+    public static final String FORMAT_ICEBERG = "iceberg";
+    /**
+     * The value to use to enable uniform exports to Hudi for {@linkplain
+     * TableConfig#UNIVERSAL_FORMAT_ENABLED_FORMATS}.
+     */
+    public static final String FORMAT_HUDI = "hudi";
+  }
+
+  private static final Collection<String> ALLOWED_UNIFORM_FORMATS =
+      Collections.unmodifiableList(
+          Arrays.asList(UniversalFormats.FORMAT_HUDI, UniversalFormats.FORMAT_ICEBERG));
+
+  /** Table config that allows for translation of Delta metadata to other table formats metadata. */
+  public static final TableConfig<Set<String>> UNIVERSAL_FORMAT_ENABLED_FORMATS =
+      new TableConfig<>(
+          "delta.universalFormat.enabledFormats",
+          null,
+          TableConfig::parseStringSet,
+          value -> ALLOWED_UNIFORM_FORMATS.containsAll(value),
+          String.format("each value must in the the set: %s", ALLOWED_UNIFORM_FORMATS),
+          true);
+
   /** All the valid properties that can be set on the table. */
   private static final Map<String, TableConfig<?>> VALID_PROPERTIES =
       Collections.unmodifiableMap(
@@ -287,16 +318,14 @@ public class TableConfig<T> {
               addConfig(this, TOMBSTONE_RETENTION);
               addConfig(this, CHECKPOINT_INTERVAL);
               addConfig(this, IN_COMMIT_TIMESTAMPS_ENABLED);
-              addConfig(this, TOMBSTONE_RETENTION);
-              addConfig(this, CHECKPOINT_INTERVAL);
-              addConfig(this, IN_COMMIT_TIMESTAMPS_ENABLED);
               addConfig(this, IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION);
               addConfig(this, IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP);
               addConfig(this, COLUMN_MAPPING_MODE);
               addConfig(this, ICEBERG_COMPAT_V2_ENABLED);
+              addConfig(this, ICEBERG_WRITER_COMPAT_V1_ENABLED);
               addConfig(this, COLUMN_MAPPING_MAX_COLUMN_ID);
               addConfig(this, DATA_SKIPPING_NUM_INDEXED_COLS);
-              addConfig(this, ICEBERG_WRITER_COMPAT_V1_ENABLED);
+              addConfig(this, UNIVERSAL_FORMAT_ENABLED_FORMATS);
             }
           });
 
@@ -321,7 +350,12 @@ public class TableConfig<T> {
       String key = kv.getKey().toLowerCase(Locale.ROOT);
       String value = kv.getValue();
 
-      if (key.startsWith("delta.")) {
+      boolean isTableFeatureOverrideKey =
+          key.startsWith(TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX);
+      boolean isTableConfigKey = key.startsWith("delta.");
+      // TableFeature override properties validation is handled separately in TransactionBuilder.
+      boolean shouldValidateProperties = isTableConfigKey && !isTableFeatureOverrideKey;
+      if (shouldValidateProperties) {
         // If it is a delta table property, make sure it is a supported property and editable
         if (!VALID_PROPERTIES.containsKey(key)) {
           throw DeltaErrors.unknownConfigurationException(kv.getKey());
@@ -335,8 +369,8 @@ public class TableConfig<T> {
         tableConfig.validate(value);
         validatedProperties.put(tableConfig.getKey(), value);
       } else {
-        // allow unknown properties to be set
-        validatedProperties.put(key, value);
+        // allow unknown properties to be set (and preserve their original case!)
+        validatedProperties.put(kv.getKey(), value);
       }
     }
     return validatedProperties;
@@ -408,5 +442,18 @@ public class TableConfig<T> {
     if (!validator.test(parsedValue)) {
       throw DeltaErrors.invalidConfigurationValueException(key, value, helpMessage);
     }
+  }
+
+  private static Set<String> parseStringSet(String value) {
+    if (value == null || value.isEmpty()) {
+      return Collections.emptySet();
+    }
+    String[] formats = value.split(",");
+    Set<String> config = new HashSet<>();
+
+    for (String format : formats) {
+      config.add(format.trim());
+    }
+    return config;
   }
 }

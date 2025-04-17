@@ -124,8 +124,8 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
         }
 
       assert(actStats === Seq(
-        "{\"numRecords\":10,\"minValues\":{},\"maxValues\":{},\"nullCounts\":{}}",
-        "{\"numRecords\":20,\"minValues\":{},\"maxValues\":{},\"nullCounts\":{}}"))
+        "{\"numRecords\":10,\"minValues\":{},\"maxValues\":{},\"nullCount\":{}}",
+        "{\"numRecords\":20,\"minValues\":{},\"maxValues\":{},\"nullCount\":{}}"))
     }
   }
 
@@ -156,7 +156,7 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
         VectorUtils.buildArrayValue(Seq.empty.asJava, StringType.STRING),
         Optional.empty(),
         stringStringMapValue(configMap.asJava))
-      val txnState = TransactionStateRow.of(metadata, "table path", schema)
+      val txnState = TransactionStateRow.of(metadata, "table path", 200 /* maxRetries */ )
 
       // Get statistics columns and define expected result
       val statsColumns = TransactionImpl.getStatisticsColumns(txnState)
@@ -262,7 +262,7 @@ object TransactionSuite extends VectorTestUtils with MockEngineUtils {
       Optional.empty(), // createdTime
       stringStringMapValue(configurationMap.asJava) // configurationMap
     )
-    TransactionStateRow.of(metadata, "table path", schema)
+    TransactionStateRow.of(metadata, "table path", 200 /* maxRetries */ )
   }
 
   def testStats(numRowsOpt: Option[Long]): Option[DataFileStatistics] = {

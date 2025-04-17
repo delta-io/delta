@@ -23,13 +23,16 @@ import io.delta.kernel._
 import io.delta.kernel.data.Row
 import io.delta.kernel.engine._
 import io.delta.kernel.internal.TableConfig
-import io.delta.kernel.internal.actions.{RemoveFile, SingleAction}
-import io.delta.kernel.internal.data.GenericRow
+import io.delta.kernel.internal.actions.{GenerateIcebergCompatActionUtils, SingleAction}
+import io.delta.kernel.internal.data.TransactionStateRow
+import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.metrics.Timer
+import io.delta.kernel.internal.stats.FileSizeHistogram
 import io.delta.kernel.internal.util.Utils
-import io.delta.kernel.metrics.{SnapshotReport, TransactionReport}
+import io.delta.kernel.metrics.{FileSizeHistogramResult, SnapshotReport, TransactionMetricsResult, TransactionReport}
 import io.delta.kernel.types.{IntegerType, StructType}
 import io.delta.kernel.utils.{CloseableIterable, CloseableIterator, DataFileStatus}
+import io.delta.kernel.utils.CloseableIterable.inMemoryIterable
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -51,7 +54,8 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
   def getTransactionAndSnapshotReport(
       createTransaction: Engine => Transaction,
       generateCommitActions: (Transaction, Engine) => CloseableIterable[Row],
-      expectException: Boolean)
+      expectException: Boolean,
+      validateTransactionMetrics: (TransactionMetricsResult, Long) => Unit)
       : (TransactionReport, Long, Option[SnapshotReport], Option[Exception]) = {
     val timer = new Timer()
 
@@ -59,7 +63,10 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
       engine => {
         val transaction = createTransaction(engine)
         val actionsToCommit = generateCommitActions(transaction, engine)
-        timer.time(() => transaction.commit(engine, actionsToCommit)) // Time the actual operation
+        val txnCommitResult = timer.time(() =>
+          transaction.commit(engine, actionsToCommit)) // Time the actual operation
+        // Validate the txn metrics returned in txnCommitResult
+        validateTransactionMetrics(txnCommitResult.getTransactionMetrics, timer.totalDurationNs())
       },
       expectException)
 
@@ -104,11 +111,41 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
       expectedCommitVersion: Option[Long] = None,
       expectedNumAttempts: Long = 1,
       expectedTotalAddFilesSizeInBytes: Long = 0,
+      expectedTotalRemoveFilesSizeInBytes: Long = 0,
+      expectedFileSizeHistogramResult: Option[FileSizeHistogramResult] = None,
       buildTransaction: (TransactionBuilder, Engine) => Transaction = (tb, e) => tb.build(e),
       engineInfo: String = "test-engine-info",
       operation: Operation = Operation.MANUAL_UPDATE): Unit = {
     // scalastyle:on
     assert(expectException == expectedCommitVersion.isEmpty)
+    def validateTransactionMetrics(txnMetrics: TransactionMetricsResult, duration: Long): Unit = {
+      // Since we cannot know the actual duration of commit we sanity check that they are > 0 and
+      // less than the total operation duration
+      assert(txnMetrics.getTotalCommitDurationNs > 0)
+      assert(txnMetrics.getTotalCommitDurationNs < duration)
+
+      assert(txnMetrics.getNumCommitAttempts == expectedNumAttempts)
+      assert(txnMetrics.getNumAddFiles == expectedNumAddFiles)
+      assert(txnMetrics.getTotalAddFilesSizeInBytes == expectedTotalAddFilesSizeInBytes)
+      assert(txnMetrics.getNumRemoveFiles == expectedNumRemoveFiles)
+      assert(txnMetrics.getNumTotalActions == expectedNumTotalActions)
+      assert(txnMetrics.getTotalRemoveFilesSizeInBytes == expectedTotalRemoveFilesSizeInBytes)
+
+      // For now since we don't support writing fileSizeHistogram yet we only expect this to be
+      // present on the first write to a table. We will update these tests when we add write
+      // support.
+      expectedFileSizeHistogramResult match {
+        case Some(expectedHistogram) =>
+          assert(txnMetrics.getTableFileSizeHistogram.isPresent)
+          txnMetrics.getTableFileSizeHistogram.toScala.foreach { foundHistogram =>
+            assert(expectedHistogram.getSortedBinBoundaries sameElements
+              foundHistogram.getSortedBinBoundaries)
+            assert(expectedHistogram.getFileCounts sameElements foundHistogram.getFileCounts)
+            assert(expectedHistogram.getTotalBytes sameElements foundHistogram.getTotalBytes)
+          }
+        case None => assert(!txnMetrics.getTableFileSizeHistogram.isPresent)
+      }
+    }
 
     val (transactionReport, duration, snapshotReportOpt, exception) =
       getTransactionAndSnapshotReport(
@@ -117,7 +154,8 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
             Table.forPath(engine, path).createTransactionBuilder(engine, engineInfo, operation),
             engine),
         generateCommitActions,
-        expectException)
+        expectException,
+        validateTransactionMetrics)
 
     // Verify contents
     assert(transactionReport.getTablePath == defaultEngine.getFileSystemClient.resolvePath(path))
@@ -143,18 +181,7 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
       })
     }
     assert(transactionReport.getCommittedVersion.toScala == expectedCommitVersion)
-
-    // Since we cannot know the actual duration of commit we sanity check that they are > 0 and
-    // less than the total operation duration
-    assert(transactionReport.getTransactionMetrics.getTotalCommitDurationNs > 0)
-    assert(transactionReport.getTransactionMetrics.getTotalCommitDurationNs < duration)
-
-    assert(transactionReport.getTransactionMetrics.getNumCommitAttempts == expectedNumAttempts)
-    assert(transactionReport.getTransactionMetrics.getNumAddFiles == expectedNumAddFiles)
-    assert(transactionReport.getTransactionMetrics.getTotalAddFilesSizeInBytes
-      == expectedTotalAddFilesSizeInBytes)
-    assert(transactionReport.getTransactionMetrics.getNumRemoveFiles == expectedNumRemoveFiles)
-    assert(transactionReport.getTransactionMetrics.getNumTotalActions == expectedNumTotalActions)
+    validateTransactionMetrics(transactionReport.getTransactionMetrics, duration)
   }
 
   def generateAppendActions(fileStatusIter: CloseableIterator[DataFileStatus])(
@@ -167,6 +194,31 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         transState,
         fileStatusIter,
         Transaction.getWriteContext(engine, transState, Collections.emptyMap())))
+  }
+
+  def generateRemoveActions(fileStatusIter: CloseableIterator[DataFileStatus])(
+      trans: Transaction,
+      engine: Engine): CloseableIterable[Row] = {
+    // For now we use GenerateIcebergCompatActionUtils to generate the remove rows since this is the
+    // only current API support in Kernel for generating removes; in the future when we support a
+    // more general API for removes we should use that here
+    inMemoryIterable(fileStatusIter.map { fileStatus =>
+      SingleAction.createRemoveFileSingleAction(
+        GenerateIcebergCompatActionUtils.convertRemoveDataFileStatus(
+          TransactionStateRow.getPhysicalSchema(trans.getTransactionState(engine)),
+          new Path(TransactionStateRow.getTablePath(trans.getTransactionState(engine))).toUri,
+          fileStatus,
+          Collections.emptyMap(), // partitionValues
+          true // dataChange
+        ))
+    })
+  }
+
+  def incrementFileSizeHistogram(
+      histogram: FileSizeHistogram,
+      fileStatusIter: CloseableIterator[DataFileStatus]): FileSizeHistogram = {
+    fileStatusIter.forEach(fs => histogram.insert(fs.getSize))
+    histogram
   }
 
   test("TransactionReport: Basic append to existing table + update metadata") {
@@ -226,6 +278,8 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         expectedBaseSnapshotVersion = -1,
         expectedNumTotalActions = 3, // protocol, metadata, commitInfo
         expectedCommitVersion = Some(0),
+        expectedFileSizeHistogramResult = Some(
+          FileSizeHistogram.createDefaultHistogram().captureFileSizeHistogramResult()),
         buildTransaction = (transBuilder, engine) => {
           transBuilder
             .withSchema(engine, new StructType().add("id", IntegerType.INTEGER))
@@ -258,6 +312,10 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         expectedNumTotalActions = 4, // protocol, metadata, commitInfo
         expectedCommitVersion = Some(0),
         expectedTotalAddFilesSizeInBytes = 100,
+        expectedFileSizeHistogramResult = Some(
+          incrementFileSizeHistogram(
+            FileSizeHistogram.createDefaultHistogram(),
+            fileStatusIter1).captureFileSizeHistogramResult()),
         buildTransaction = (transBuilder, engine) => {
           transBuilder
             .withSchema(engine, new StructType().add("id", IntegerType.INTEGER))
@@ -266,30 +324,55 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
     }
   }
 
-  test("TransactionReport: manually commit a remove file") {
+  test("TransactionReport: remove files from a table") {
     withTempDir { tempDir =>
       val path = tempDir.getCanonicalPath
-      // Set up delta table with version 0
-      spark.range(10).write.format("delta").mode("append").save(path)
 
-      val removeFileRow: Row = {
-        val fieldMap: Map[Integer, AnyRef] = Map(
-          Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("path")) -> "/path/for/remove/file",
-          Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("dataChange")) -> java.lang.Boolean.TRUE)
-        new GenericRow(RemoveFile.FULL_SCHEMA, fieldMap.asJava)
-      }
-
+      // Create a table and insert 1 file into it
       checkTransactionReport(
-        generateCommitActions = (_, _) =>
-          CloseableIterable.inMemoryIterable(
-            Utils.toCloseableIterator(
-              Seq(SingleAction.createRemoveFileSingleAction(removeFileRow)).iterator.asJava)),
+        generateCommitActions = generateAppendActions(fileStatusIter1),
+        path,
+        expectException = false,
+        expectedBaseSnapshotVersion = -1,
+        expectedNumAddFiles = 1,
+        expectedNumTotalActions = 4, // protocol, metadata, commitInfo, addFile
+        expectedCommitVersion = Some(0),
+        expectedTotalAddFilesSizeInBytes = 100,
+        expectedFileSizeHistogramResult = Some(
+          incrementFileSizeHistogram(
+            FileSizeHistogram.createDefaultHistogram(),
+            fileStatusIter1).captureFileSizeHistogramResult()),
+        buildTransaction = (transBuilder, engine) => {
+          transBuilder
+            .withSchema(engine, new StructType().add("id", IntegerType.INTEGER))
+            .build(engine)
+        })
+
+      // Remove the 1 file and insert 2 new ones
+      checkTransactionReport(
+        generateCommitActions = (txn, engine) =>
+          inMemoryIterable(generateAppendActions(fileStatusIter2)(txn, engine).iterator().combine(
+            generateRemoveActions(fileStatusIter1)(txn, engine).iterator())),
         path,
         expectException = false,
         expectedBaseSnapshotVersion = 0,
+        expectedNumAddFiles = 2,
         expectedNumRemoveFiles = 1,
-        expectedNumTotalActions = 2, // commitInfo + removeFile
-        expectedCommitVersion = Some(1))
+        expectedNumTotalActions = 4, // commitInfo, removeFile, 2 addFile
+        expectedCommitVersion = Some(1),
+        expectedTotalAddFilesSizeInBytes = 200,
+        expectedTotalRemoveFilesSizeInBytes = 100)
+
+      // Remove the two files inserted
+      checkTransactionReport(
+        generateCommitActions = generateRemoveActions(fileStatusIter2),
+        path,
+        expectException = false,
+        expectedBaseSnapshotVersion = 1,
+        expectedNumRemoveFiles = 2,
+        expectedNumTotalActions = 3, // commitInfo, 2 removeFile
+        expectedCommitVersion = Some(2),
+        expectedTotalRemoveFilesSizeInBytes = 200)
     }
   }
 
@@ -311,7 +394,9 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         expectedNumTotalActions = 2, // commitInfo + removeFile
         expectedCommitVersion = Some(2),
         expectedNumAttempts = 2,
-        expectedTotalAddFilesSizeInBytes = 100)
+        expectedTotalAddFilesSizeInBytes = 100,
+        // This should always be empty on retries until we support updating based on concurrent txn
+        expectedFileSizeHistogramResult = None)
     }
   }
 

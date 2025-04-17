@@ -33,6 +33,8 @@ import io.delta.kernel.internal.*;
 import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.actions.SetTransaction;
+import io.delta.kernel.internal.checksum.CRCInfo;
+import io.delta.kernel.internal.checksum.ChecksumReader;
 import io.delta.kernel.internal.rowtracking.RowTracking;
 import io.delta.kernel.internal.rowtracking.RowTrackingMetadataDomain;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
@@ -67,6 +69,7 @@ public class ConflictChecker {
   private final TransactionImpl transaction;
   private final long attemptVersion;
   private final CloseableIterable<Row> attemptDataActions;
+  private final List<DomainMetadata> attemptDomainMetadatas;
 
   // Helper states during conflict resolution
   private Optional<Long> lastWinningRowIdHighWatermark = Optional.empty();
@@ -75,10 +78,12 @@ public class ConflictChecker {
       SnapshotImpl snapshot,
       TransactionImpl transaction,
       long attemptVersion,
+      List<DomainMetadata> domainMetadatas,
       CloseableIterable<Row> dataActions) {
     this.snapshot = snapshot;
     this.transaction = transaction;
     this.attemptVersion = attemptVersion;
+    this.attemptDomainMetadatas = domainMetadatas;
     this.attemptDataActions = dataActions;
   }
 
@@ -90,6 +95,8 @@ public class ConflictChecker {
    * @param snapshot {@link SnapshotImpl} of the table when the losing transaction has started
    * @param transaction {@link TransactionImpl} that encountered the conflict (a.k.a the losing
    *     transaction)
+   * @param domainMetadatas List of {@link DomainMetadata} that the losing transaction is trying to
+   *     commit
    * @param dataActions {@link CloseableIterable} of data actions that the losing transaction is
    *     trying to commit
    * @return {@link TransactionRebaseState} that the losing transaction needs to rebase against
@@ -101,10 +108,11 @@ public class ConflictChecker {
       SnapshotImpl snapshot,
       long attemptVersion,
       TransactionImpl transaction,
+      List<DomainMetadata> domainMetadatas,
       CloseableIterable<Row> dataActions)
       throws ConcurrentWriteException {
     checkArgument(transaction.isBlindAppend(), "Current support is for blind appends only.");
-    return new ConflictChecker(snapshot, transaction, attemptVersion, dataActions)
+    return new ConflictChecker(snapshot, transaction, attemptVersion, domainMetadatas, dataActions)
         .resolveConflicts(engine);
   }
 
@@ -143,7 +151,7 @@ public class ConflictChecker {
 
     // Initialize updated actions for the next commit attempt with the current attempt's actions
     CloseableIterable<Row> updatedDataActions = attemptDataActions;
-    List<DomainMetadata> updatedDomainMetadatas = transaction.getDomainMetadatas();
+    List<DomainMetadata> updatedDomainMetadatas = attemptDomainMetadatas;
 
     if (TableFeatures.isRowTrackingSupported(transaction.getProtocol())) {
       updatedDomainMetadatas =
@@ -152,7 +160,7 @@ public class ConflictChecker {
               transaction.getProtocol(),
               lastWinningRowIdHighWatermark,
               attemptDataActions,
-              transaction.getDomainMetadatas());
+              attemptDomainMetadatas);
       updatedDataActions =
           RowTracking.assignBaseRowIdAndDefaultRowCommitVersion(
               snapshot,
@@ -163,13 +171,18 @@ public class ConflictChecker {
               attemptDataActions);
     }
 
+    Optional<CRCInfo> updatedCrcInfo =
+        ChecksumReader.getCRCInfo(
+            engine, snapshot.getLogPath(), lastWinningVersion, lastWinningVersion);
+
     // if we get here, we have successfully rebased (i.e no logical conflicts)
     // against the winning transactions
     return new TransactionRebaseState(
         lastWinningVersion,
         getLastCommitTimestamp(lastWinningVersion, lastWinningTxn, winningCommitInfoOpt.get()),
         updatedDataActions,
-        updatedDomainMetadatas);
+        updatedDomainMetadatas,
+        updatedCrcInfo);
   }
 
   /**
@@ -187,16 +200,19 @@ public class ConflictChecker {
     private final long latestCommitTimestamp;
     private final CloseableIterable<Row> updatedDataActions;
     private final List<DomainMetadata> updatedDomainMetadatas;
+    private final Optional<CRCInfo> updatedCrcInfo;
 
     public TransactionRebaseState(
         long latestVersion,
         long latestCommitTimestamp,
         CloseableIterable<Row> updatedDataActions,
-        List<DomainMetadata> updatedDomainMetadatas) {
+        List<DomainMetadata> updatedDomainMetadatas,
+        Optional<CRCInfo> updatedCrcInfo) {
       this.latestVersion = latestVersion;
       this.latestCommitTimestamp = latestCommitTimestamp;
       this.updatedDataActions = updatedDataActions;
       this.updatedDomainMetadatas = updatedDomainMetadatas;
+      this.updatedCrcInfo = updatedCrcInfo;
     }
 
     /**
@@ -225,6 +241,10 @@ public class ConflictChecker {
 
     public List<DomainMetadata> getUpdatedDomainMetadatas() {
       return updatedDomainMetadatas;
+    }
+
+    public Optional<CRCInfo> getUpdatedCrcInfo() {
+      return updatedCrcInfo;
     }
   }
 
@@ -278,7 +298,7 @@ public class ConflictChecker {
     DomainMetadataUtils.populateDomainMetadataMap(
         domainMetadataVector, winningTxnDomainMetadataMap);
 
-    for (DomainMetadata currentTxnDM : this.transaction.getDomainMetadatas()) {
+    for (DomainMetadata currentTxnDM : attemptDomainMetadatas) {
       // For each domain metadata action in the current transaction, check if it has a conflict with
       // the winning transaction.
       String domainName = currentTxnDM.getDomain();

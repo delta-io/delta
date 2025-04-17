@@ -39,7 +39,62 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.{TableIdentifier => CatalystTableIdentifier}
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.connector.catalog.CatalogPlugin
 import org.apache.spark.util.Utils
+
+object CatalogOwnedTableUtils {
+  // Populate table commit coordinator using table identifier inside CatalogTable.
+  def populateTableCommitCoordinatorFromCatalog(
+      spark: SparkSession,
+      catalogTableOpt: Option[CatalogTable],
+      snapshot: Snapshot): Option[TableCommitCoordinatorClient] = {
+    if (!snapshot.isCatalogOwned) {
+      return None
+    }
+    catalogTableOpt.map { catalogTable =>
+      // Resolve commit coordinator name by contacting catalog.
+      val cc = getCommitCoordinator(spark, catalogTable.identifier).getOrElse {
+        throw new IllegalStateException(
+          "Couldn't locate commit coordinator for: " + catalogTable.identifier)
+      }
+      TableCommitCoordinatorClient(
+        cc,
+        snapshot.deltaLog.logPath,
+        snapshot.metadata.configuration,
+        snapshot.deltaLog.newDeltaHadoopConf(),
+        snapshot.deltaLog.store
+      )
+    }
+    .orElse {
+      // This table is catalog owned table but catalogTableOpt is not defined. This means
+      // that the caller is accessing this table by path-based or the calling code path is missing
+      // the CatalogTable.
+      // TODO: Better error message with proper error code.
+      throw new IllegalStateException(
+        "Path based access is not supported for Catalog-Owned table: " + snapshot.path)
+    }
+  }
+
+  // Directly returns the commit coordinator client for the given catalog table.
+  def getCommitCoordinator(
+      spark: SparkSession, identifier: CatalystTableIdentifier): Option[CommitCoordinatorClient] = {
+    identifier.nameParts match {
+      case spark.sessionState.analyzer.CatalogAndIdentifier(catalog, _) =>
+        CatalogOwnedCommitCoordinatorProvider.getBuilder(catalog.name)
+          .map(_.buildForCatalog(spark, catalog.name)).orElse {
+            if (catalog.getClass.getName ==
+                UCCommitCoordinatorBuilder.UNITY_CATALOG_CONNECTOR_CLASS) {
+              Some(UCCommitCoordinatorBuilder.buildForCatalog(spark, catalog.name))
+            } else {
+              None
+            }
+          }
+      case _ =>
+        throw new IllegalStateException(
+          "Failed to resolve the catalog: " + identifier)
+    }
+  }
+}
 
 object CoordinatedCommitsUtils extends DeltaLogging {
 
@@ -271,9 +326,9 @@ object CoordinatedCommitsUtils extends DeltaLogging {
    * be a gap in the backfilled commit sequence.
    */
   def backfillWhenCoordinatedCommitsDisabled(snapshot: Snapshot): Unit = {
-    if (snapshot.getTableCommitCoordinatorForWrites.nonEmpty) {
-      // Coordinated commits is enabled on the table. Don't backfill as backfills are managed by
-      // commit-coordinators.
+    if (snapshot.getTableCommitCoordinatorForWrites.nonEmpty || snapshot.isCatalogOwned) {
+      // Coordinated commits or Catalog-owned is enabled on the table. Don't backfill
+      // as backfills are managed by commit-coordinators.
       return
     }
     val unbackfilledFilesAndVersions = snapshot.logSegment.deltas.collect {

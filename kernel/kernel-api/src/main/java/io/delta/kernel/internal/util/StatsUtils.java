@@ -30,7 +30,7 @@ public class StatsUtils {
   /**
    * Utility method to deserialize statistics from a JSON string. NOTE: Currently, this method only
    * deserializes the numRecords field and ignores other statistics (minValues, maxValues,
-   * nullCounts). Full deserialization support for all statistics will be added in a future update.
+   * nullCount). Full deserialization support for all statistics will be added in a future update.
    *
    * @param json Data statistics JSON string to deserialize.
    * @return An {@link Optional} containing the deserialized {@link DataFileStatistics} if present.

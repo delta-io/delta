@@ -41,6 +41,7 @@ import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.internal.MDC
 import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Encoder, SparkSession}
+import org.apache.spark.sql.catalyst.catalog.CatalogTableType
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
 import org.apache.spark.sql.functions.{col, count, lit, replace, startswith, substr, sum}
@@ -243,6 +244,14 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
 
       val snapshot = table.update()
       deltaLog.protocolWrite(snapshot.protocol)
+
+      // Vacuum can break clones by removing files that clones still references for managed tables
+      // eventually the catalog should track this dependency to avoid breaking clones
+      // but for now we block running vacuum on catalog owned managed tables.
+      if (table.catalogTable.exists(_.tableType == CatalogTableType.MANAGED)
+        && snapshot.isCatalogOwned) {
+        throw DeltaErrors.deltaCannotVacuumManagedTable()
+      }
 
       val snapshotTombstoneRetentionMillis = DeltaLog.tombstoneRetentionMillis(snapshot.metadata)
       val retentionMillis = retentionHours.map(h => TimeUnit.HOURS.toMillis(math.round(h)))

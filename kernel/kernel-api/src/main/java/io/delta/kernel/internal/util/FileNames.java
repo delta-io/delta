@@ -199,6 +199,18 @@ public final class FileNames {
     return output;
   }
 
+  /**
+   * Return the path that should be used for a log compaction file.
+   *
+   * @param logPath path to the delta log location
+   * @param startVersion the start version for the log compaction
+   * @param endVersion the end version for the log compaction
+   */
+  public static Path logCompactionPath(Path logPath, long startVersion, long endVersion) {
+    String fileName = String.format("%020d.%020d.compacted.json", startVersion, endVersion);
+    return new Path(logPath, fileName);
+  }
+
   /////////////////////////////
   // Is <type> file checkers //
   /////////////////////////////
