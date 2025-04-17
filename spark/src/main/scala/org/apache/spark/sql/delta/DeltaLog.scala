@@ -849,7 +849,8 @@ object DeltaLog extends DeltaLogging {
 
 
   /** Helper for creating a log for the table. */
-  private[delta] def forTable(spark: SparkSession,
+  private[delta] def forTable(
+      spark: SparkSession,
       dataPath: Path,
       options: Map[String, String],
       catalogTable: Option[CatalogTable]): DeltaLog =
