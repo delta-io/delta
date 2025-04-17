@@ -24,7 +24,6 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames;
 import static io.delta.kernel.internal.util.VectorUtils.buildArrayValue;
 import static io.delta.kernel.internal.util.VectorUtils.stringStringMapValue;
-import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.toSet;
 
@@ -104,9 +103,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
 
   @Override
   public TransactionBuilder withClusteringColumns(Engine engine, List<Column> clusteringColumns) {
-    if (!clusteringColumns.isEmpty()) {
-      this.clusteringColumns = Optional.of(clusteringColumns);
-    }
+    this.clusteringColumns = Optional.of(clusteringColumns);
     return this;
   }
 
@@ -296,10 +293,10 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     }
 
     /* ----- 6: Additional validation and adjustment ----- */
-    List<Column> casePreservingClusteringColumns =
-        SchemaUtils.casePreservingEligibleClusterColumns(
-            newMetadata.orElse(snapshotMetadata).getSchema(),
-            clusteringColumns.orElse(Collections.emptyList()));
+    StructType updatedSchema = newMetadata.orElse(snapshotMetadata).getSchema();
+    Optional<List<Column>> casePreservingClusteringColumnsOpt =
+        clusteringColumns.map(
+            cols -> SchemaUtils.casePreservingEligibleClusterColumns(updatedSchema, cols));
 
     return new TransactionImpl(
         isNewTable,
@@ -311,7 +308,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         newProtocol.orElse(snapshotProtocol),
         newMetadata.orElse(snapshotMetadata),
         setTxnOpt,
-        casePreservingClusteringColumns,
+        casePreservingClusteringColumnsOpt,
         newMetadata.isPresent() /* shouldUpdateMetadata */,
         newProtocol.isPresent() /* shouldUpdateProtocol */,
         maxRetries,
@@ -345,14 +342,6 @@ public class TransactionBuilderImpl implements TransactionBuilder {
             tablePath,
             "Table already exists, but provided new partition columns. "
                 + "Partition columns can only be set on a new table.");
-      }
-      if (clusteringColumns.isPresent()) {
-        throw tableAlreadyExists(
-            tablePath,
-            format(
-                "Table already exists, but provided new clustering columns %s. "
-                    + "Clustering columns can only be set on a new table for now.",
-                clusteringColumns.get()));
       }
     } else {
       checkArgument(

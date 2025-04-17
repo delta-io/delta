@@ -70,7 +70,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
           tablePath,
           isNewTable = true,
           testPartitionSchema,
-          clusteringCols = List(new Column("PART1"), new Column("part3")))
+          clusteringColsOpt = Some(List(new Column("PART1"), new Column("part3"))))
       }
       assert(ex.getMessage.contains("Column 'column(`part3`)' was not found in the table schema"))
     }
@@ -86,7 +86,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
           isNewTable = true,
           testPartitionSchema,
           partCols = Seq("part1"),
-          clusteringCols = List(new Column("PART1"), new Column("part2")))
+          clusteringColsOpt = Some(List(new Column("PART1"), new Column("part2"))))
       }
       assert(
         ex.getMessage
@@ -106,7 +106,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
           tablePath,
           isNewTable = true,
           testPartitionSchema,
-          clusteringCols = List(new Column("mapType")))
+          clusteringColsOpt = Some(List(new Column("mapType"))))
       }
       assert(ex.getMessage.contains("Clustering is not supported because the following column(s)"))
     }
@@ -118,7 +118,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
         engine,
         tablePath,
         testPartitionSchema,
-        clusteringCols = testClusteringColumns)
+        clusteringColsOpt = Some(testClusteringColumns))
 
       val table = Table.forPath(engine, tablePath)
       // Verify the clustering feature is included in the protocol
@@ -144,7 +144,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
         engine,
         tablePath,
         testPartitionSchema,
-        clusteringCols = testClusteringColumns,
+        clusteringColsOpt = Some(testClusteringColumns),
         tableProperties = Map(ColumnMapping.COLUMN_MAPPING_MODE_KEY -> "id"))
 
       val table = Table.forPath(engine, tablePath)
@@ -170,7 +170,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
         engine,
         tablePath,
         testPartitionSchema,
-        clusteringCols = List(new Column("pArT1"), new Column("PaRt2")))
+        clusteringColsOpt = Some(List(new Column("pArT1"), new Column("PaRt2"))))
 
       val table = Table.forPath(engine, tablePath)
       // Verify the clustering feature is included in the protocol
@@ -182,20 +182,55 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
     }
   }
 
-  test("update a table with clustering columns should be blocked") {
+  test("update a non-clustered table with clustering columns should succeed") {
     withTempDirAndEngine { (tablePath, engine) =>
       createEmptyTable(engine, tablePath, testPartitionSchema)
       val table = Table.forPath(engine, tablePath)
-      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, WRITE)
+      updateTableMetadata(engine, tablePath, clusteringColsOpt = Some(testClusteringColumns))
+      // Verify the clustering feature is included in the protocol
+      val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      // Verify the clustering domain metadata is written
+      verifyClusteringDomainMetadata(snapshot)
+    }
+  }
 
-      val ex = intercept[TableAlreadyExistsException] {
-        txnBuilder
-          .withClusteringColumns(engine, testClusteringColumns.asJava)
-          .build(engine)
-      }
-      assert(
-        ex.getMessage
-          .contains("Table already exists, but provided new clustering columns"))
+  test("update a clustered table with new clustering columns should succeed") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(
+        engine,
+        tablePath,
+        testPartitionSchema,
+        clusteringColsOpt = Some(testClusteringColumns))
+      val table = Table.forPath(engine, tablePath)
+      updateTableMetadata(engine, tablePath, clusteringColsOpt = Some(List(new Column("part1"))))
+      // Verify the clustering feature is included in the protocol
+      val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      // Verify the clustering domain metadata is written
+      val expectedDomainMetadata = new DomainMetadata(
+        "delta.clustering",
+        """{"clusteringColumns":[["part1"]]}""",
+        false)
+      verifyClusteringDomainMetadata(snapshot, expectedDomainMetadata)
+    }
+  }
+
+  test("update a clustered table with empty clustering columns should succeed") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(
+        engine,
+        tablePath,
+        testPartitionSchema,
+        clusteringColsOpt = Some(testClusteringColumns))
+      val table = Table.forPath(engine, tablePath)
+      updateTableMetadata(engine, tablePath, clusteringColsOpt = Some(List()))
+      // Verify the clustering feature is included in the protocol
+      val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      // Verify the clustering domain metadata is written
+      val expectedDomainMetadata = new DomainMetadata(
+        "delta.clustering",
+        """{"clusteringColumns":[]}""",
+        false)
+      verifyClusteringDomainMetadata(snapshot, expectedDomainMetadata)
     }
   }
 
@@ -208,7 +243,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
         tablePath,
         isNewTable = true,
         testPartitionSchema,
-        clusteringCols = testClusteringColumns,
+        clusteringColsOpt = Some(testClusteringColumns),
         data = testData)
 
       verifyCommitResult(commitResult, expVersion = 0, expIsReadyForCheckpoint = false)
@@ -233,7 +268,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
           tablePath,
           isNewTable = true,
           testPartitionSchema,
-          clusteringCols = testClusteringColumns,
+          clusteringColsOpt = Some(testClusteringColumns),
           data = Seq(Map.empty[String, Literal] -> dataClusteringBatches1))
 
         val expData = dataClusteringBatches1.flatMap(_.toTestRows)

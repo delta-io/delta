@@ -426,7 +426,7 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
         engine,
         tablePath,
         initialSchema,
-        clusteringCols = List(new Column("clustering-col")),
+        clusteringColsOpt = Some(List(new Column("clustering-col"))),
         tableProperties = Map(
           TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
           TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"))
@@ -1090,7 +1090,7 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
         engine,
         tablePath,
         initialSchema,
-        clusteringCols = List(new Column("clustering_col")),
+        clusteringColsOpt = Some(List(new Column("clustering_col"))),
         tableProperties = Map(
           TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
           TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"))
@@ -1285,7 +1285,7 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
             engine,
             tablePath,
             schemaBefore,
-            clusteringCols = List(clusteringColumn),
+            clusteringColsOpt = Some(List(clusteringColumn)),
             tableProperties = Map(
               TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
               TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"))

@@ -84,7 +84,7 @@ public class TransactionImpl implements Transaction {
   private final Protocol protocol;
   private final SnapshotImpl readSnapshot;
   private final Optional<SetTransaction> setTxnOpt;
-  private final List<Column> clusteringColumns;
+  private final Optional<List<Column>> clusteringColumnsOpt;
   private final boolean shouldUpdateProtocol;
   private final Clock clock;
   private final DomainMetadataState domainMetadataState = new DomainMetadataState();
@@ -106,7 +106,7 @@ public class TransactionImpl implements Transaction {
       Protocol protocol,
       Metadata metadata,
       Optional<SetTransaction> setTxnOpt,
-      List<Column> clusteringColumns,
+      Optional<List<Column>> clusteringColumnsOpt,
       boolean shouldUpdateMetadata,
       boolean shouldUpdateProtocol,
       int maxRetries,
@@ -121,7 +121,7 @@ public class TransactionImpl implements Transaction {
     this.protocol = protocol;
     this.metadata = metadata;
     this.setTxnOpt = setTxnOpt;
-    this.clusteringColumns = clusteringColumns;
+    this.clusteringColumnsOpt = clusteringColumnsOpt;
     this.shouldUpdateMetadata = shouldUpdateMetadata;
     this.shouldUpdateProtocol = shouldUpdateProtocol;
     this.maxRetries = maxRetries;
@@ -749,9 +749,9 @@ public class TransactionImpl implements Transaction {
      */
     private void generateClusteringDomainMetadataIfNeeded() {
       if (TableFeatures.isClusteringTableFeatureSupported(protocol)
-          && !clusteringColumns.isEmpty()) {
+          && clusteringColumnsOpt.isPresent()) {
         DomainMetadata clusteringDomainMetadata =
-            ClusteringUtils.getClusteringDomainMetadata(clusteringColumns);
+            ClusteringUtils.getClusteringDomainMetadata(clusteringColumnsOpt.get());
         domainsToAdd.put(clusteringDomainMetadata.getDomain(), clusteringDomainMetadata);
       }
     }
