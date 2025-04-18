@@ -645,15 +645,15 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
-  val REMOVE_EXISTS_DEFAULT_FROM_SCHEMA_ON_EVERY_METADATA_CHANGE =
-    buildConf("allowColumnDefaults.removeExistsDefaultFromSchemaOnMetadataChange")
+  val REMOVE_EXISTS_DEFAULT_FROM_SCHEMA =
+    buildConf("schema.removeExistsDefault")
       .internal()
-      .doc("When enabled, remove all field metadata entries using the 'EXISTS_DEFAULT' key " +
-        "from the schema whenever the table metadata is updated. 'EXISTS_DEFAULT' holds values " +
-        "that are used in Spark for existing rows when a new column with a default value is " +
-        "added to a table. Since we do not support adding columns with a default value in " +
-        "Delta, this configuration should always be removed, also when it was written by an " +
-        "older version that still put it into the schema.")
+      .doc("When enabled, do not store the 'EXISTS_DEFAULT' metadata key when a table with a " +
+        "default value is created and this table does not re-use existing data files." +
+        "'EXISTS_DEFAULT' holds values that are used in Spark for existing rows when a new column" +
+        "with a default value is added to a table. Since we do not support adding columns with a" +
+        "default value in Delta, this metadata key can be omitted, except in cases like when" +
+        "we convert a table to Delta that does actually require 'EXISTS_DEFAULT'.")
       .booleanConf
       .createWithDefault(true)
 
@@ -1305,6 +1305,17 @@ trait DeltaSQLConfBase {
   val DELTA_ALLOW_TYPE_WIDENING_STREAMING_SOURCE =
     buildConf("typeWidening.allowTypeChangeStreamingDeltaSource")
       .doc("Accept incoming widening type changes when streaming from a Delta source.")
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_TYPE_WIDENING_ENABLE_STREAMING_SCHEMA_TRACKING =
+    buildConf("typeWidening.enableStreamingSchemaTracking")
+      .doc("Whether to enable schema tracking when streaming from a Delta source that had a " +
+        "widening type change applied. This allows blocking the stream on restart until the user " +
+        "acknowledges the type change. When disabled, we will not initialize a schema tracking " +
+        "log when first detecting a type change and will automatically accept the type change " +
+        "instead.")
       .internal()
       .booleanConf
       .createWithDefault(true)
@@ -2346,6 +2357,44 @@ trait DeltaSQLConfBase {
     .booleanConf
     .createWithDefault(true)
 
+  val DELTA_CONVERT_ICEBERG_DECIMAL_STATS = buildConf("collectStats.convertIceberg.decimal")
+    .internal()
+    .doc("When enabled, attempts to convert Iceberg stats for DECIMAL to Delta stats" +
+      "when cloning from an Iceberg source.")
+    .booleanConf
+    .createWithDefault(true)
+
+  val DELTA_CONVERT_ICEBERG_DATE_STATS = buildConf("collectStats.convertIceberg.date")
+    .internal()
+    .doc("When enabled, attempts to convert Iceberg stats for DATE to Delta stats" +
+      "when cloning from an Iceberg source.")
+    .booleanConf
+    .createWithDefault(true)
+
+  val DELTA_CONVERT_ICEBERG_TIMESTAMP_STATS = buildConf("collectStats.convertIceberg.timestamp")
+    .internal()
+    .doc("When enabled, attempts to convert Iceberg stats for TIMESTAMP to Delta stats" +
+      "when cloning from an Iceberg source.")
+    .booleanConf
+    .createWithDefault(true)
+
+  /**
+   * For iceberg clone,
+   * When stats conversion from iceberg off, fallback to slow stats conversion enabled
+   * When stats conversion from iceberg on,
+   *  fallback to slow stats conversion will not happen if partial stats conversion enabled
+   *  fallback only happens if partial stats conversion disabled and iceberg has partial stats
+   *  - either minValues or maxValues is missing
+   */
+  val DELTA_CLONE_ICEBERG_ALLOW_PARTIAL_STATS =
+    buildConf("clone.iceberg.allowPartialStats")
+      .internal()
+      .doc("If true, allow converting partial stats from iceberg stats " +
+        "to delta stats during clone."
+      )
+      .booleanConf
+      .createWithDefault(true)
+
   /////////////////////
   // Optimized Write
   /////////////////////
@@ -2457,6 +2506,13 @@ trait DeltaSQLConfBase {
       .internal()
       .booleanConf
       .createWithDefault(true)
+
+  val DELTA_SHARING_FORCE_DELTA_FORMAT =
+    buildConf("spark.sql.delta.sharing.forceDeltaFormat")
+      .doc("Force queries to use delta format when no responseFormat is specified.")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
 
   ///////////////////
   // IDENTITY COLUMN

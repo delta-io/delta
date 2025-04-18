@@ -453,9 +453,11 @@ public class ParquetFileWriter {
                 numRows,
                 emptyMap() /* minValues */,
                 emptyMap() /* maxValues */,
-                emptyMap() /* nullCounts */);
+                emptyMap() /* nullCount */);
       } else {
-        stats = readDataFileStatistics(fileIO, resolvedPath, dataSchema, statsColumns);
+        stats =
+            readDataFileStatistics(
+                fileIO.newInputFile(resolvedPath, fileStatus.getSize()), dataSchema, statsColumns);
       }
 
       return new DataFileStatus(

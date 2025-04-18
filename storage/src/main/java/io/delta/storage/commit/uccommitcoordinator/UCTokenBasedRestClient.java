@@ -202,7 +202,7 @@ public class UCTokenBasedRestClient implements UCClient {
     newMetadata.ifPresent(m -> commitRequest.metadata = Metadata.fromAbstractMetadata(m));
     newProtocol.ifPresent(p -> commitRequest.protocol = Protocol.fromAbstractProtocol(p));
 
-    URI uri = URI.create(resolve(baseUri, "/delta/commits"));
+    URI uri = URI.create(resolve(baseUri, "/delta/preview/commits"));
     HttpPost request = new HttpPost(uri);
 
     try {
@@ -253,7 +253,7 @@ public class UCTokenBasedRestClient implements UCClient {
     endVersion.ifPresent(v -> getCommitsRequest.endVersion = v);
 
     // Create a custom HttpGet that allows body
-    URI uri = URI.create(resolve(baseUri, "/delta/commits"));
+    URI uri = URI.create(resolve(baseUri, "/delta/preview/commits"));
     HttpEntityEnclosingRequestBase httpRequest = new HttpEntityEnclosingRequestBase() {
       @Override
       public String getMethod() {

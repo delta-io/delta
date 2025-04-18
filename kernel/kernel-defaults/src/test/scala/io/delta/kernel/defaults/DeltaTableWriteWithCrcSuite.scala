@@ -14,7 +14,11 @@
  * limitations under the License.
  */
 package io.delta.kernel.defaults
+import java.util.Optional
+import java.util.stream.Collectors
+
 import scala.collection.immutable.Seq
+import scala.jdk.CollectionConverters.{collectionAsScalaIterableConverter, setAsJavaSetConverter}
 import scala.language.implicitConversions
 
 import io.delta.kernel.{Transaction, TransactionCommitResult}
@@ -22,6 +26,7 @@ import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.utils.TestRow
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
+import io.delta.kernel.internal.SnapshotImpl
 import io.delta.kernel.internal.checksum.ChecksumReader
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.types.StructType
@@ -37,12 +42,7 @@ class DeltaTableWriteWithCrcSuite extends DeltaTableWritesSuite {
       txn: Transaction,
       engine: Engine,
       dataActions: CloseableIterable[Row]): TransactionCommitResult = {
-    val result = txn.commit(engine, dataActions)
-    result.getPostCommitHooks
-      .stream()
-      .filter(hook => hook.getType == PostCommitHookType.CHECKSUM_SIMPLE)
-      .forEach(hook => hook.threadSafeInvoke(engine))
-    result
+    executeCrcSimple(txn.commit(engine, dataActions), engine)
   }
 
   override def verifyWrittenContent(
@@ -50,18 +50,6 @@ class DeltaTableWriteWithCrcSuite extends DeltaTableWritesSuite {
       expSchema: StructType,
       expData: Seq[TestRow]): Unit = {
     super.verifyWrittenContent(path, expSchema, expData)
-    verifyChecksumValid(path)
-  }
-
-  /** Ensure checksum is readable by CRC reader. */
-  def verifyChecksumValid(
-      tablePath: String): Unit = {
-    val checksumVersion = latestSnapshot(tablePath, defaultEngine).getVersion
-    val crcInfo = ChecksumReader.getCRCInfo(
-      defaultEngine,
-      new Path(f"$tablePath/_delta_log/"),
-      checksumVersion,
-      checksumVersion)
-    assert(crcInfo.isPresent)
+    verifyChecksum(path)
   }
 }

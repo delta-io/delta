@@ -242,6 +242,7 @@ public interface Transaction {
 
     boolean isIcebergCompatV2Enabled = isIcebergCompatV2Enabled(transactionState);
     URI tableRoot = new Path(getTablePath(transactionState)).toUri();
+    StructType physicalSchema = TransactionStateRow.getPhysicalSchema(transactionState);
     return fileStatusIter.map(
         dataFileStatus -> {
           if (isIcebergCompatV2Enabled) {
@@ -249,7 +250,7 @@ public interface Transaction {
           }
           AddFile addFileRow =
               AddFile.convertDataFileStatus(
-                  TransactionStateRow.getPhysicalSchema(transactionState),
+                  physicalSchema,
                   tableRoot,
                   dataFileStatus,
                   ((DataWriteContextImpl) dataWriteContext).getPartitionValues(),

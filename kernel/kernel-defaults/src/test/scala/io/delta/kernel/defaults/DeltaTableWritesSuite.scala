@@ -15,6 +15,8 @@
  */
 package io.delta.kernel.defaults
 
+import java.io.File
+import java.nio.file.Files
 import java.util.{Locale, Optional}
 
 import scala.collection.JavaConverters._
@@ -22,7 +24,7 @@ import scala.collection.immutable.Seq
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel._
-import io.delta.kernel.Operation.{CREATE_TABLE, WRITE}
+import io.delta.kernel.Operation.{CREATE_TABLE, MANUAL_UPDATE, WRITE}
 import io.delta.kernel.data.{ColumnarBatch, FilteredColumnarBatch, Row}
 import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
 import io.delta.kernel.defaults.utils.TestRow
@@ -32,12 +34,19 @@ import io.delta.kernel.expressions.Literal
 import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.internal.{ScanImpl, SnapshotImpl, TableConfig}
 import io.delta.kernel.internal.checkpoints.CheckpointerSuite.selectSingleElement
+import io.delta.kernel.internal.util.JsonUtils
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
 import io.delta.kernel.types._
+import io.delta.kernel.types.ByteType.BYTE
 import io.delta.kernel.types.DateType.DATE
+import io.delta.kernel.types.DecimalType
 import io.delta.kernel.types.DoubleType.DOUBLE
+import io.delta.kernel.types.FloatType.FLOAT
 import io.delta.kernel.types.IntegerType.INTEGER
+import io.delta.kernel.types.LongType.LONG
+import io.delta.kernel.types.ShortType.SHORT
 import io.delta.kernel.types.StringType.STRING
+import io.delta.kernel.types.StructType
 import io.delta.kernel.types.TimestampType.TIMESTAMP
 import io.delta.kernel.utils.CloseableIterable
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
@@ -97,23 +106,66 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       commitTransaction(txn, engine, emptyIterable())
 
       {
-        val ex = intercept[TableAlreadyExistsException] {
+        intercept[TableAlreadyExistsException] {
+          table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+            .build(engine)
+        }
+      }
+
+      // Provide schema
+      {
+        intercept[TableAlreadyExistsException] {
           table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
             .withSchema(engine, testSchema)
             .build(engine)
         }
-        assert(ex.getMessage.contains("Table already exists, but provided a new schema. " +
-          "Schema can only be set on a new table."))
       }
+
+      // Provide partition columns
       {
-        val ex = intercept[TableAlreadyExistsException] {
+        intercept[TableAlreadyExistsException] {
           table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
-            .withPartitionColumns(engine, Seq("part1", "part2").asJava)
+            .withSchema(engine, testPartitionSchema)
+            .withPartitionColumns(engine, testPartitionColumns.asJava)
             .build(engine)
         }
-        assert(ex.getMessage.contains("Table already exists, but provided new partition columns." +
-          " Partition columns can only be set on a new table."))
       }
+    }
+  }
+
+  test("create table - table is concurrently created before txn commits") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val txn1 = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+        .withSchema(engine, testSchema).build(engine)
+
+      val txn2 = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+        .withSchema(engine, testSchema).build(engine)
+      commitTransaction(txn2, engine, emptyIterable())
+
+      intercept[ConcurrentWriteException] {
+        commitTransaction(txn1, engine, emptyIterable())
+      }
+    }
+  }
+
+  test("cannot provide partition columns for existing table") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+
+      val txn = txnBuilder.withSchema(engine, testSchema).build(engine)
+      commitTransaction(txn, engine, emptyIterable())
+
+      val ex = intercept[TableAlreadyExistsException] {
+        // Use operation != CREATE_TABLE since this fails earlier if the table already exists
+        table.createTransactionBuilder(engine, testEngineInfo, WRITE)
+          .withSchema(engine, testPartitionSchema)
+          .withPartitionColumns(engine, testPartitionColumns.asJava)
+          .build(engine)
+      }
+      assert(ex.getMessage.contains("Table already exists, but provided new partition columns." +
+        " Partition columns can only be set on a new table."))
     }
   }
 
@@ -134,7 +186,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       assert(txnResult.getVersion === 0)
       assertCheckpointReadiness(txnResult, isReadyForCheckpoint = false)
 
-      verifyCommitInfo(tablePath = tablePath, version = 0)
+      verifyCommitInfo(tablePath = tablePath, version = 0, operation = CREATE_TABLE)
       verifyWrittenContent(tablePath, testSchema, Seq.empty)
     }
   }
@@ -350,7 +402,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       assert(txnResult.getVersion === 0)
       assertCheckpointReadiness(txnResult, isReadyForCheckpoint = false)
 
-      verifyCommitInfo(tablePath, version = 0, Seq("Part1", "part2"))
+      verifyCommitInfo(tablePath, version = 0, Seq("Part1", "part2"), operation = CREATE_TABLE)
       verifyWrittenContent(tablePath, schema, Seq.empty)
     }
   }
@@ -371,7 +423,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         assert(txnResult.getVersion === 0)
         assertCheckpointReadiness(txnResult, isReadyForCheckpoint = false)
 
-        verifyCommitInfo(tablePath, version = 0)
+        verifyCommitInfo(tablePath, version = 0, operation = CREATE_TABLE)
         verifyWrittenContent(tablePath, schema, Seq.empty)
       }
     }
@@ -812,8 +864,6 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
   test("insert into table - idempotent writes") {
     withTempDirAndEngine { (tblPath, engine) =>
-      // TODO: re-enable when CRC_FULL post commit hook is added, txn2 requires CRC_FULL
-      assume(this.suiteName != ("DeltaTableWriteWithCrcSuite"))
       val data = Seq(Map("part1" -> ofInt(1), "part2" -> ofInt(2)) -> dataPartitionBatches1)
       var expData = Seq.empty[TestRow] // as the data in inserted, update this.
 
@@ -911,9 +961,6 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
   test("insert into table - write stats and validate they can be read by Spark ") {
     withTempDirAndEngine { (tblPath, engine) =>
-      // TODO: re-enable when CRC_FULL post commit hook is added, txn2 requires CRC_FULL
-      assume(this.suiteName != ("DeltaTableWriteWithCrcSuite"))
-
       // Configure the table property for stats collection via TableConfig.
       val numIndexedCols = 5
       val tableProperties = Map(TableConfig.
@@ -939,7 +986,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         schema,
         partCols = Seq.empty,
         tableProperties = tableProperties)
-      txn.commit(engine, emptyIterable())
+      commitTransaction(txn, engine, emptyIterable())
 
       val dataBatches1 = generateData(schema, Seq.empty, Map.empty, batchSize = 10, numBatches = 1)
       val dataBatches2 = generateData(schema, Seq.empty, Map.empty, batchSize = 20, numBatches = 1)
@@ -1013,17 +1060,15 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
   test("conflicts - creating new table - table created by other txn after current txn start") {
     withTempDirAndEngine { (tablePath, engine) =>
-      // TODO: re-enable when CRC_FULL post commit hook is added
-      assume(this.suiteName != ("DeltaTableWriteWithCrcSuite"))
       val losingTx = createTestTxn(engine, tablePath, Some(testSchema))
 
       // don't commit losingTxn, instead create a new txn and commit it
       val winningTx = createTestTxn(engine, tablePath, Some(testSchema))
-      val winningTxResult = winningTx.commit(engine, emptyIterable())
+      val winningTxResult = commitTransaction(winningTx, engine, emptyIterable())
 
       // now attempt to commit the losingTxn
       val ex = intercept[ProtocolChangedException] {
-        losingTx.commit(engine, emptyIterable())
+        commitTransaction(losingTx, engine, emptyIterable())
       }
       assert(ex.getMessage.contains(
         "Transaction has encountered a conflict and can not be committed."))
@@ -1035,6 +1080,58 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       verifyCommitResult(winningTxResult, expVersion = 0, expIsReadyForCheckpoint = false)
       verifyCommitInfo(tablePath = tablePath, version = 0)
       verifyWrittenContent(tablePath, testSchema, Seq.empty)
+    }
+  }
+
+  test("insert into table - validate serialized json stats equal Spark written stats") {
+    withTempDirAndEngine { (kernelPath, engine) =>
+      // Test with all Skipping eligible types.
+      // TODO(Issue: 4284): Validate TIMESTAMP and TIMESTAMP_NTZ serialization
+      // format.
+      val schema = new StructType()
+        .add("byteCol", BYTE)
+        .add("shortCol", SHORT)
+        .add("intCol", INTEGER)
+        .add("longCol", LONG)
+        .add("floatCol", FLOAT)
+        .add("doubleCol", DOUBLE)
+        .add("stringCol", STRING)
+        .add("dateCol", DATE)
+        .add(
+          "structCol",
+          new StructType()
+            .add("nestedDecimal", DecimalType.USER_DEFAULT)
+            .add("nestedDoubleCol", DOUBLE))
+
+      // Write a batch of data using the Kernel
+      val batch =
+        generateData(schema, Seq.empty, Map.empty, batchSize = 10, numBatches = 1)
+      appendData(
+        engine,
+        kernelPath,
+        isNewTable = true,
+        schema,
+        partCols = Seq.empty,
+        data = Seq(Map.empty[String, Literal] -> batch))
+
+      // Write the same batch of data through Spark to a copy table.
+      withTempDir(tempDir => {})
+
+      val sparkPath = new File(kernelPath, "spark-copy").getAbsolutePath
+      spark.read.format("delta").load(kernelPath)
+        .write.format("delta").mode("overwrite").save(sparkPath)
+
+      val mapper = JsonUtils.mapper()
+      val kernelStats = collectStatsFromAddFiles(engine, kernelPath).map(mapper.readTree)
+      val sparkStats = collectStatsFromAddFiles(engine, sparkPath).map(mapper.readTree)
+
+      require(
+        kernelStats.nonEmpty && sparkStats.nonEmpty,
+        "stats collected from AddFiles should be non-empty")
+      assert(
+        kernelStats.toSet == sparkStats.toSet,
+        s"\nKernel stats:\n${kernelStats.mkString("\n")}\n" +
+          s"Spark  stats:\n${sparkStats.mkString("\n")}")
     }
   }
 
@@ -1053,7 +1150,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
       // now attempt to commit the losingTxn
       val ex = intercept[MetadataChangedException] {
-        losingTx.commit(engine, emptyIterable())
+        commitTransaction(losingTx, engine, emptyIterable())
       }
       assert(ex.getMessage.contains("The metadata of the Delta table has been changed " +
         "by a concurrent update. Please try the operation again."))
@@ -1063,8 +1160,6 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
   // Different scenarios that have multiple winning txns and with a checkpoint in between.
   Seq(1, 5, 12).foreach { numWinningTxs =>
     test(s"conflicts - concurrent data append ($numWinningTxs) after the losing txn has started") {
-      // TODO: re-enable when CRC_FULL post commit hook is added
-      assume(this.suiteName != ("DeltaTableWriteWithCrcSuite"))
       withTempDirAndEngine { (tablePath, engine) =>
         val testData = Seq(Map.empty[String, Literal] -> dataBatches1)
         var expData = Seq.empty[TestRow]
@@ -1087,7 +1182,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         val actions = inMemoryIterable(stageData(txn1State, Map.empty, dataBatches2))
         expData ++= dataBatches2.flatMap(_.toTestRows)
 
-        val txn1Result = txn1.commit(engine, actions)
+        val txn1Result = commitTransaction(txn1, engine, actions)
 
         verifyCommitResult(
           txn1Result,
@@ -1138,8 +1233,22 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       tablePath: String,
       schema: Option[StructType] = None): Transaction = {
     val table = Table.forPath(engine, tablePath)
-    var txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+    var txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, MANUAL_UPDATE)
     schema.foreach(s => txnBuilder = txnBuilder.withSchema(engine, s))
     txnBuilder.build(engine)
+  }
+
+  def collectStatsFromAddFiles(engine: Engine, path: String): Seq[String] = {
+    val snapshot = Table.forPath(engine, path).getLatestSnapshot(engine)
+    val scan = snapshot.getScanBuilder.build()
+    val scanFiles = scan.asInstanceOf[ScanImpl].getScanFiles(engine, true)
+
+    scanFiles.asScala.toList.flatMap { scanFile =>
+      scanFile.getRows.asScala.toList.flatMap { row =>
+        val add = row.getStruct(row.getSchema.indexOf("add"))
+        val idx = add.getSchema.indexOf("stats")
+        if (idx >= 0 && !add.isNullAt(idx)) List(add.getString(idx)) else Nil
+      }
+    }
   }
 }

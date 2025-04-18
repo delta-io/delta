@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.typewidening
 import java.io.File
 
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.{SparkException, SparkThrowable}
 import org.apache.spark.SparkArithmeticException
@@ -75,7 +76,8 @@ trait TypeWideningStreamingSourceTests
     def apply(): StreamAction =
       ExpectFailure[DeltaRuntimeException] { ex =>
         assert(ex.asInstanceOf[DeltaRuntimeException].getErrorClass ===
-          "DELTA_STREAMING_CANNOT_CONTINUE_PROCESSING_TYPE_WIDENING")
+          "DELTA_STREAMING_CANNOT_CONTINUE_PROCESSING_POST_SCHEMA_EVOLUTION")
+        assert(ex.asInstanceOf[DeltaRuntimeException].getMessage.contains("TYPE WIDENING"))
       }
   }
 
@@ -508,6 +510,12 @@ trait TypeWideningStreamingSourceTests
               "opType" -> "DROP AND TYPE WIDENING",
               "previousSchemaChangeVersion" -> "0",
               "currentSchemaChangeVersion" -> "2",
+              "columnChangeDetails" ->
+                s"""Columns dropped:
+                   |'b'
+                   |Columns with widened types:
+                   |'a': TINYINT -> INT
+                   |""".stripMargin,
               "unblockChangeOptions" ->
                 ".*allowSourceColumnDrop(.|\\n)*allowSourceColumnTypeChange.*",
               "unblockStreamOptions" ->
@@ -618,5 +626,39 @@ trait TypeWideningStreamingSourceTests
         )
       }
     }
+  }
+
+  test("disable schema tracking log using internal conf") {
+     withTempDir { dir =>
+       sql(s"CREATE TABLE delta.`$dir` (a byte) USING DELTA")
+       val checkpointDir = new File(dir, "sink_checkpoint")
+
+       def readStream(): DataFrame =
+         spark.readStream.format("delta").load(dir.getCanonicalPath)
+
+       // When we disable schema tracking for widening type changes, the stream should succeed
+       // without requiring the user to provide a schema tracking location or unblock the type
+       // change.
+       withSQLConf(
+         DeltaSQLConf.DELTA_TYPE_WIDENING_ENABLE_STREAMING_SCHEMA_TRACKING.key -> "false") {
+         testStream(readStream())(
+           StartStream(checkpointLocation = checkpointDir.toString),
+           Execute { _ => sql(s"INSERT INTO delta.`$dir` VALUES (1)") },
+           ProcessAllAvailable(),
+           Execute { _ => sql(s"ALTER TABLE delta.`$dir`ALTER COLUMN a TYPE int") },
+           ExpectFailure[DeltaIllegalStateException] { ex =>
+             assert(ex.asInstanceOf[SparkThrowable].getErrorClass ===
+               "DELTA_SCHEMA_CHANGED_WITH_VERSION")
+           }
+         )
+
+         testStream(readStream())(
+           StartStream(checkpointLocation = checkpointDir.toString),
+           Execute { _ => sql(s"INSERT INTO delta.`$dir` VALUES (123456789)") },
+           ProcessAllAvailable(),
+           CheckLastBatch(123456789)
+         )
+       }
+     }
   }
 }

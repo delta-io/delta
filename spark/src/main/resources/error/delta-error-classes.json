@@ -299,13 +299,13 @@
   },
   "DELTA_CANNOT_UPDATE_ARRAY_FIELD" : {
     "message" : [
-      "Cannot update %1$s field %2$s type: update the element by updating %2$s.element"
+      "Cannot update <tableName> field <fieldName> type: update the element by updating `<fieldName>.element`."
     ],
     "sqlState" : "429BQ"
   },
   "DELTA_CANNOT_UPDATE_MAP_FIELD" : {
     "message" : [
-      "Cannot update %1$s field %2$s type: update a map by updating %2$s.key or %2$s.value"
+      "Cannot update <tableName> field <fieldName> type: update a map by updating `<fieldName>.key` or `<fieldName>.value`."
     ],
     "sqlState" : "429BQ"
   },
@@ -572,7 +572,7 @@
   },
   "DELTA_CONCURRENT_WRITE" : {
     "message" : [
-      "ConcurrentWriteException: A concurrent transaction has written new data since the current transaction read the table. Please try the operation again.\nRefer to <docLink> for more details."
+      "ConcurrentWriteException: A concurrent transaction has written new data since the current transaction read the table. Please try the operation again.<conflictingCommit>\nRefer to <docLink> for more details."
     ],
     "sqlState" : "2D521"
   },
@@ -687,12 +687,7 @@
   },
   "DELTA_CREATE_EXTERNAL_TABLE_WITHOUT_TXN_LOG" : {
     "message" : [
-      "",
-      "You are trying to create an external table <tableName>",
-      "from `%2$s` using Delta, but there is no transaction log present at",
-      "`%2$s/_delta_log`. Check the upstream job to make sure that it is writing using",
-      "format(\"delta\") and that the path is the root of the table.",
-      "",
+      "You are trying to create an external table <tableName> from `<path>` using Delta, but there is no transaction log present at `<logPath>`. Check the upstream job to make sure that it is writing using format(\"delta\") and that the path is the root of the table.",
       "To learn more about Delta, see <docLink>"
     ],
     "sqlState" : "42K03"
@@ -763,7 +758,7 @@
       "The specified properties do not match the existing properties at <path>.",
       "",
       "== Specified ==",
-      "<specificiedProperties>",
+      "<specifiedProperties>",
       "",
       "== Existing ==",
       "<existingProperties>",
@@ -984,7 +979,7 @@
     "message" : [
       "Unable to operate on this table because the following table features are enabled in metadata but not listed in protocol: <features>."
     ],
-    "sqlState" : "0AKDE"
+    "sqlState" : "KD004"
   },
   "DELTA_FEATURES_REQUIRE_MANUAL_ENABLEMENT" : {
     "message" : [
@@ -996,7 +991,7 @@
       "",
       "Current supported feature(s): <supportedFeatures>."
     ],
-    "sqlState" : "0AKDE"
+    "sqlState" : "42000"
   },
   "DELTA_FEATURE_CAN_ONLY_DROP_CHECKPOINT_PROTECTION_WITH_HISTORY_TRUNCATION" : {
     "message" : [
@@ -1033,20 +1028,20 @@
       "Please try the operation again.",
       "<concurrentCommit>"
     ],
-    "sqlState" : "0AKDE"
+    "sqlState" : "40000"
   },
   "DELTA_FEATURE_DROP_DEPENDENT_FEATURE" : {
     "message" : [
       "Cannot drop table feature `<feature>` because some other features (<dependentFeatures>) in this table depends on `<feature>`.",
       "Consider dropping them first before dropping this feature."
     ],
-    "sqlState" : "0AKDE"
+    "sqlState" : "55000"
   },
   "DELTA_FEATURE_DROP_FEATURE_NOT_PRESENT" : {
     "message" : [
       "Cannot drop <feature> from this table because it is not currently present in the table's protocol."
     ],
-    "sqlState" : "0AKDE"
+    "sqlState" : "55000"
   },
   "DELTA_FEATURE_DROP_HISTORICAL_VERSIONS_EXIST" : {
     "message" : [
@@ -1058,26 +1053,26 @@
       "and then run:",
       "    ALTER TABLE table_name DROP FEATURE feature_name TRUNCATE HISTORY"
     ],
-    "sqlState" : "0AKDE"
+    "sqlState" : "22KD0"
   },
   "DELTA_FEATURE_DROP_HISTORY_TRUNCATION_NOT_ALLOWED" : {
     "message" : [
       "The particular feature does not require history truncation."
     ],
-    "sqlState" : "0AKDE"
+    "sqlState" : "42000"
   },
   "DELTA_FEATURE_DROP_NONREMOVABLE_FEATURE" : {
     "message" : [
       "Cannot drop <feature> because dropping this feature is not supported."
     ],
-    "sqlState" : "0AKDE"
+    "sqlState" : "0AKDC"
   },
   "DELTA_FEATURE_DROP_UNSUPPORTED_CLIENT_FEATURE" : {
     "message" : [
       "Cannot drop <feature> because it is not supported by this Delta version.",
       "Consider using Delta with a higher version."
     ],
-    "sqlState" : "0AKDE"
+    "sqlState" : "0AKDC"
   },
   "DELTA_FEATURE_DROP_WAIT_FOR_RETENTION_PERIOD" : {
     "message" : [
@@ -1095,19 +1090,19 @@
       "and then run:",
       "    ALTER TABLE table_name DROP FEATURE feature_name TRUNCATE HISTORY"
     ],
-    "sqlState" : "0AKDE"
+    "sqlState" : "22KD0"
   },
   "DELTA_FEATURE_REQUIRES_HIGHER_READER_VERSION" : {
     "message" : [
       "Unable to enable table feature <feature> because it requires a higher reader protocol version (current <current>). Consider upgrading the table's reader protocol version to <required>, or to a version which supports reader table features. Refer to <docLink> for more information on table protocol versions."
     ],
-    "sqlState" : "0AKDE"
+    "sqlState" : "55000"
   },
   "DELTA_FEATURE_REQUIRES_HIGHER_WRITER_VERSION" : {
     "message" : [
       "Unable to enable table feature <feature> because it requires a higher writer protocol version (current <current>). Consider upgrading the table's writer protocol version to <required>, or to a version which supports writer table features. Refer to <docLink> for more information on table protocol versions."
     ],
-    "sqlState" : "0AKDE"
+    "sqlState" : "55000"
   },
   "DELTA_FILE_ALREADY_EXISTS" : {
     "message" : [
@@ -1549,7 +1544,7 @@
   },
   "DELTA_INVALID_PROTOCOL_DOWNGRADE" : {
     "message" : [
-      "Protocol version cannot be downgraded from <oldProtocol> to <newProtocol>"
+      "Protocol version cannot be downgraded from (<oldProtocol>) to (<newProtocol>)"
     ],
     "sqlState" : "KD004"
   },
@@ -1676,7 +1671,7 @@
   },
   "DELTA_MERGE_UNRESOLVED_EXPRESSION" : {
     "message" : [
-      "Cannot resolve <sqlExpr> in <clause> given <cols>"
+      "Cannot resolve <sqlExpr> in <clause> given columns <cols>."
     ],
     "sqlState" : "42601"
   },
@@ -1711,7 +1706,7 @@
   },
   "DELTA_MISSING_COLUMN" : {
     "message" : [
-      "Cannot find <columName> in table columns: <columnList>"
+      "Cannot find <columnName> in table columns: <columnList>"
     ],
     "sqlState" : "42703"
   },
@@ -2340,6 +2335,8 @@
   "DELTA_STREAMING_CANNOT_CONTINUE_PROCESSING_POST_SCHEMA_EVOLUTION" : {
     "message" : [
       "We've detected one or more non-additive schema change(s) (<opType>) between Delta version <previousSchemaChangeVersion> and <currentSchemaChangeVersion> in the Delta streaming source.",
+      "Changes: ",
+      "<columnChangeDetails>",
       "Please check if you want to manually propagate the schema change(s) to the sink table before we proceed with stream processing using the finalized schema at version <currentSchemaChangeVersion>.",
       "Once you have fixed the schema of the sink table or have decided there is no need to fix, you can set the following configuration(s) to unblock the non-additive schema change(s) and continue stream processing.",
       "",
@@ -2350,32 +2347,6 @@
       "<unblockStreamOptions>",
       "",
       "Using SQL configuration(s):",
-      "To unblock for this particular stream just for this series of schema change(s):",
-      "<unblockChangeConfs>",
-      "To unblock for this particular stream:",
-      "<unblockStreamConfs>",
-      "To unblock for all streams:",
-      "<unblockAllConfs>",
-      ""
-    ],
-    "sqlState" : "KD002"
-  },
-  "DELTA_STREAMING_CANNOT_CONTINUE_PROCESSING_TYPE_WIDENING" : {
-    "message" : [
-      "We've detected one or more data types being widened between Delta version <previousSchemaChangeVersion> and <currentSchemaChangeVersion>:",
-      "<wideningTypeChanges>",
-      "",
-      "Your streaming query contains operations that may fail or produce different results after the type change(s).",
-      "Please check if you want to update your streaming query before we proceed with stream processing using the finalized schema at version <currentSchemaChangeVersion>.",
-      "Once you have updated your streaming query or have decided there is no need to update it, you can set the following configuration to unblock the type change(s) and continue stream processing.",
-      "",
-      "Using dataframe reader option:",
-      "To unblock for this particular stream just for this series of schema change(s):",
-      "<unblockChangeOptions>",
-      "To unblock for this particular stream:",
-      "<unblockStreamOptions>",
-      "",
-      "Using SQL configuration:",
       "To unblock for this particular stream just for this series of schema change(s):",
       "<unblockChangeConfs>",
       "To unblock for this particular stream:",
@@ -2673,7 +2644,7 @@
   "DELTA_UNKNOWN_CONFIGURATION" : {
     "message" : [
       "Unknown configuration was specified: <config>",
-      "To disable this check, set <config>=true in the Spark session configuration."
+      "To disable this check, set <disableCheckConfig>=true in the Spark session configuration."
     ],
     "sqlState" : "F0000"
   },
@@ -3011,6 +2982,12 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_UNSUPPORTED_VACUUM_ON_MANAGED_TABLE" : {
+    "message" : [
+      "Running vacuum on catalog owned managed tables is currently not supported."
+    ],
+    "sqlState" : "0AKDC"
+  },
   "DELTA_UNSUPPORTED_VACUUM_SPECIFIC_PARTITION" : {
     "message" : [
       "Please provide the base path (<baseDeltaPath>) when Vacuuming Delta tables. Vacuuming specific partitions is currently not supported."
@@ -3037,7 +3014,8 @@
   },
   "DELTA_VERSIONS_NOT_CONTIGUOUS" : {
     "message" : [
-      "Versions (<versionList>) are not contiguous."
+      "Versions (<versionList>) are not contiguous. ",
+      "A gap in the delta log between versions <startVersion> and <endVersion> was detected while trying to load version <versionToLoad>."
     ],
     "sqlState" : "KD00C"
   },
@@ -3080,11 +3058,8 @@
   },
   "DELTA_ZORDERING_ON_COLUMN_WITHOUT_STATS" : {
     "message" : [
-      "Z-Ordering on <cols> will be",
-      " ineffective, because we currently do not collect stats for these columns.",
-      " You can disable",
-      " this check by setting",
-      " '%%sql set <zorderColStatKey> = false'"
+      "Z-Ordering on <cols> will be ineffective, because we currently do not collect stats for these columns. You can disable this check by setting",
+      " SET <zorderColStatKey> = false"
     ],
     "sqlState" : "KD00D"
   },
@@ -3108,7 +3083,7 @@
     "message" : [
       "<failure>, <functionName> requires at least <minArgs> arguments and at most <maxArgs> arguments."
     ],
-    "sqlState" : "22023"
+    "sqlState" : "42605"
   },
   "RESERVED_CDC_COLUMNS_ON_WRITE" : {
     "message" : [
@@ -3185,11 +3160,6 @@
   "_LEGACY_ERROR_TEMP_DELTA_0010" : {
     "message" : [
       "<optionalPrefixMessage>Found unsupported expression <expression> while parsing target column name parts."
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_DELTA_0011" : {
-    "message" : [
-      "Failed to resolve plan."
     ]
   },
   "_LEGACY_ERROR_TEMP_DELTA_0012" : {

@@ -23,12 +23,20 @@ import io.delta.kernel.data.*;
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.types.DataTypeJsonSerDe;
+import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.types.*;
 import java.util.*;
 import java.util.stream.Collectors;
 
 public class Metadata {
+
+  public static Metadata fromRow(Row row) {
+    requireNonNull(row);
+    checkArgument(FULL_SCHEMA.equals(row.getSchema()));
+    return fromColumnVector(
+        VectorUtils.buildColumnVector(Collections.singletonList(row), FULL_SCHEMA), /* rowId */ 0);
+  }
 
   public static Metadata fromColumnVector(ColumnVector vector, int rowId) {
     if (vector.isNullAt(rowId)) {
@@ -120,9 +128,33 @@ public class Metadata {
                         .collect(Collectors.toList())));
   }
 
+  /**
+   * Returns a new metadata object that has a new configuration which is the combination of its
+   * current configuration and {@code configuration}.
+   *
+   * <p>For overlapping keys the values from {@code configuration} take precedence.
+   */
   public Metadata withMergedConfiguration(Map<String, String> configuration) {
     Map<String, String> newConfiguration = new HashMap<>(getConfiguration());
     newConfiguration.putAll(configuration);
+    return withReplacedConfiguration(newConfiguration);
+  }
+
+  /**
+   * Returns a new metadata object that has a new configuration which does not contain any of the
+   * keys provided in {@code keysToUnset}.
+   */
+  public Metadata withConfigurationKeysUnset(Set<String> keysToUnset) {
+    Map<String, String> newConfiguration = new HashMap<>(getConfiguration());
+    keysToUnset.forEach(newConfiguration::remove);
+    return withReplacedConfiguration(newConfiguration);
+  }
+
+  /**
+   * Returns a new Metadata object with the configuration provided with newConfiguration (any prior
+   * configuration is replaced).
+   */
+  public Metadata withReplacedConfiguration(Map<String, String> newConfiguration) {
     return new Metadata(
         this.id,
         this.name,
@@ -230,6 +262,18 @@ public class Metadata {
 
   public Map<String, String> getConfiguration() {
     return Collections.unmodifiableMap(configuration.get());
+  }
+
+  /**
+   * The full schema (including partition columns) with the field names converted to their physical
+   * names (column names used in the data files) based on the table's column mapping mode. When
+   * column mapping mode is ID, fieldId metadata is preserved in the field metadata; all column
+   * metadata is otherwise removed.
+   */
+  public StructType getPhysicalSchema() {
+    ColumnMapping.ColumnMappingMode mappingMode =
+        ColumnMapping.getColumnMappingMode(getConfiguration());
+    return ColumnMapping.convertToPhysicalSchema(schema, schema, mappingMode);
   }
 
   /**

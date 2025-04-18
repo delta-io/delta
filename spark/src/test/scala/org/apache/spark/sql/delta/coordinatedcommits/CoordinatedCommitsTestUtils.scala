@@ -23,7 +23,7 @@ import scala.collection.mutable
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaTestUtilsBase}
-import org.apache.spark.sql.delta.actions.{Action, CommitInfo, Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol}
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, JsonUtils}
 import io.delta.storage.LogStore
 import io.delta.storage.commit.{CommitCoordinatorClient, CommitResponse, GetCommitsResponse => JGetCommitsResponse, TableDescriptor, TableIdentifier, UpdatedActions}
@@ -182,7 +182,7 @@ case class TrackingInMemoryCommitCoordinatorBuilder(
     batchSize: Long,
     defaultCommitCoordinatorClientOpt: Option[CommitCoordinatorClient] = None,
     defaultCommitCoordinatorName: String = "tracking-in-memory")
-  extends CommitCoordinatorBuilder {
+  extends CatalogOwnedCommitCoordinatorBuilder {
   lazy val trackingInMemoryCommitCoordinatorClient =
     defaultCommitCoordinatorClientOpt.getOrElse {
       new TrackingCommitCoordinatorClient(
@@ -191,6 +191,11 @@ case class TrackingInMemoryCommitCoordinatorBuilder(
 
   override def getName: String = defaultCommitCoordinatorName
   override def build(spark: SparkSession, conf: Map[String, String]): CommitCoordinatorClient = {
+    trackingInMemoryCommitCoordinatorClient
+  }
+
+  override def buildForCatalog(
+      spark: SparkSession, catalogName: String): CommitCoordinatorClient = {
     trackingInMemoryCommitCoordinatorClient
   }
 }
