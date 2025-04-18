@@ -90,7 +90,7 @@ class CatalogOwnedEnablementSuite
   /**
    * Helper function to create a table and run the test.
    *
-   * @param f The test function to run with the generated table name.
+   * @param f The test function to run with the random-generated table name.
    */
   private def withRandomTable(
       createCatalogOwnedTableAtInit: Boolean)(f: String => Unit): Unit = {
