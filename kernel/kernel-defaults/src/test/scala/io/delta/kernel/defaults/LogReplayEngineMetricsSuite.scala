@@ -52,14 +52,6 @@ import org.scalatest.funsuite.AnyFunSuite
  */
 trait LogReplayBaseTestSuite extends AnyFunSuite with TestUtils {
 
-  // Disable writing checksums for test suites that extend this trait
-  // This is to test P&M loading when CRC are not available
-  spark.conf.set(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key, false)
-
-  /////////////////////////
-  // Test Helper Methods //
-  /////////////////////////
-
   protected def withTempDirAndMetricsEngine(f: (String, MetricsEngine) => Unit): Unit = {
     val hadoopFileIO = new HadoopFileIO(new Configuration() {
       {
@@ -97,27 +89,6 @@ trait LogReplayBaseTestSuite extends AnyFunSuite with TestUtils {
       expParquetVersionsRead,
       expParquetReadSetSizes,
       expChecksumReadSet = expChecksumReadSet)
-  }
-
-  protected def loadScanFilesCheckMetrics(
-      engine: MetricsEngine,
-      table: Table,
-      expJsonVersionsRead: Seq[Long],
-      expParquetVersionsRead: Seq[Long],
-      expParquetReadSetSizes: Seq[Long],
-      expLastCheckpointReadCalls: Option[Int] = None): Unit = {
-    engine.resetMetrics()
-    val scan = table.getLatestSnapshot(engine).getScanBuilder().build()
-    // get all scan files and iterate through them to trigger the metrics collection
-    val scanFiles = scan.getScanFiles(engine)
-    while (scanFiles.hasNext) scanFiles.next()
-
-    assertMetrics(
-      engine,
-      expJsonVersionsRead,
-      expParquetVersionsRead,
-      expParquetReadSetSizes,
-      expLastCheckpointReadCalls)
   }
 
   protected def assertMetrics(
@@ -166,21 +137,6 @@ trait LogReplayBaseTestSuite extends AnyFunSuite with TestUtils {
   protected def appendCommit(path: String): Unit =
     spark.range(10).write.format("delta").mode("append").save(path)
 
-  protected def checkpoint(path: String, actionsPerFile: Int): Unit = {
-    withSQLConf(DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key -> actionsPerFile.toString) {
-      DeltaLog.forTable(spark, path).checkpoint()
-    }
-  }
-
-  // Produce a test table with 0 to 11 .json, 0 to 11.crc, 10.checkpoint.parquet
-  protected def buildTableWithCrc(path: String): Unit = {
-    withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true") {
-      spark.sql(
-        s"CREATE TABLE delta.`$path` USING DELTA AS " +
-          s"SELECT 0L as id")
-      for (_ <- 0 to 10) { appendCommit(path) }
-    }
-  }
 }
 
 /**
@@ -192,6 +148,49 @@ trait LogReplayBaseTestSuite extends AnyFunSuite with TestUtils {
  * Kernel makes. This calls determine the performance.
  */
 class LogReplayEngineMetricsSuite extends LogReplayBaseTestSuite {
+
+  // Disable writing checksums for this test suite
+  // This test suite checks the files read when loading the P&M, however, with the crc optimization
+  // if crc are available, crc will be the only files read.
+  // We want to test the P&M loading when CRC are not available in the tests.
+  // Tests for tables with available CRC are included using resource test tables (and thus are
+  // unaffected by changing our confs for writes).
+  spark.conf.set(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key, false)
+
+  /////////////////////////
+  // Test Helper Methods //
+  /////////////////////////
+
+  def loadScanFilesCheckMetrics(
+                                 engine: MetricsEngine,
+                                 table: Table,
+                                 expJsonVersionsRead: Seq[Long],
+                                 expParquetVersionsRead: Seq[Long],
+                                 expParquetReadSetSizes: Seq[Long],
+                                 expLastCheckpointReadCalls: Option[Int] = None): Unit = {
+    engine.resetMetrics()
+    val scan = table.getLatestSnapshot(engine).getScanBuilder().build()
+    // get all scan files and iterate through them to trigger the metrics collection
+    val scanFiles = scan.getScanFiles(engine)
+    while (scanFiles.hasNext) scanFiles.next()
+
+    assertMetrics(
+      engine,
+      expJsonVersionsRead,
+      expParquetVersionsRead,
+      expParquetReadSetSizes,
+      expLastCheckpointReadCalls)
+  }
+
+  def checkpoint(path: String, actionsPerFile: Int): Unit = {
+    withSQLConf(DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key -> actionsPerFile.toString) {
+      DeltaLog.forTable(spark, path).checkpoint()
+    }
+  }
+
+  ///////////
+  // Tests //
+  ///////////
 
   test("no hint, no checkpoint, reads all files") {
     withTempDirAndMetricsEngine { (path, engine) =>
@@ -226,12 +225,12 @@ class LogReplayEngineMetricsSuite extends LogReplayBaseTestSuite {
 
       // v13 changes the protocol (which also updates the metadata)
       spark.sql(s"""
-                   |ALTER TABLE delta.`$path` SET TBLPROPERTIES (
-                   |  'delta.minReaderVersion' = '2',
-                   |  'delta.minWriterVersion' = '5',
-                   |  'delta.columnMapping.mode' = 'name'
-                   |)
-                   |""".stripMargin)
+          |ALTER TABLE delta.`$path` SET TBLPROPERTIES (
+          |  'delta.minReaderVersion' = '2',
+          |  'delta.minWriterVersion' = '5',
+          |  'delta.columnMapping.mode' = 'name'
+          |)
+          |""".stripMargin)
 
       for (_ <- 14 to 16) { appendCommit(path) }
 
@@ -408,6 +407,20 @@ class LogReplayEngineMetricsSuite extends LogReplayBaseTestSuite {
  */
 trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseTestSuite {
 
+  /////////////////////////
+  // Test Helper Methods //
+  /////////////////////////
+
+  // Produce a test table with 0 to 11 .json, 0 to 11.crc, 10.checkpoint.parquet
+  def buildTableWithCrc(path: String): Unit = {
+    withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true") {
+      spark.sql(
+        s"CREATE TABLE delta.`$path` USING DELTA AS " +
+          s"SELECT 0L as id")
+      for (_ <- 0 to 10) { appendCommit(path) }
+    }
+  }
+
   // Abstract method to be implemented by concrete test classes
   protected def loadSnapshotFieldsCheckMetrics(
       table: Table,
@@ -421,7 +434,10 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseTestSuite {
   // Method to adjust parquet read set sizes for different implementations
   protected def getExpectedParquetReadSetSizes(sizes: Seq[Long]): Seq[Long]
 
-  // Shared test cases
+  ///////////
+  // Tests //
+  ///////////
+
   Seq(-1L, 0L, 3L, 4L).foreach { version => // -1 means latest version
     test(s"checksum found at the read version: ${if (version == -1) "latest" else version}") {
       withTempDirAndMetricsEngine { (path, engine) =>
@@ -541,7 +557,7 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseTestSuite {
 /**
  * Suite to test the engine metrics when loading Protocol through checksum files.
  */
-class PandMLogReplayMetricsSuite extends ChecksumLogReplayMetricsTestBase {
+class PandMCheckSumLogReplayMetricsSuite extends ChecksumLogReplayMetricsTestBase {
   override protected def loadSnapshotFieldsCheckMetrics(
       table: Table,
       engine: MetricsEngine,
@@ -718,7 +734,7 @@ class PandMLogReplayMetricsSuite extends ChecksumLogReplayMetricsTestBase {
 /**
  * Suite to test the engine metrics when loading Domain Metadata through checksum files.
  */
-class DomainMetadataReplayMetricsSuite extends ChecksumLogReplayMetricsTestBase {
+class DomainMetadataCheckSumReplayMetricsSuite extends ChecksumLogReplayMetricsTestBase {
   override protected def loadSnapshotFieldsCheckMetrics(
       table: Table,
       engine: MetricsEngine,
