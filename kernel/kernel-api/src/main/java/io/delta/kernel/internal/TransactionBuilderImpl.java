@@ -101,6 +101,25 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     return this;
   }
 
+  /**
+   * There are three possible cases when handling clustering columns via `withClusteringColumns`:
+   *
+   * <ul>
+   *   <li>1. Clustering columns are not set (i.e., `withClusteringColumns` is not called):
+   *   <li>- No changes are made related to clustering.
+   *   <li>- For table creation, the table is initialized as a non-clustered table.
+   *   <li>- For table updates, the existing clustered or non-clustered state remains unchanged
+   *   <li>(i.e., no protocol or domain metadata updates).
+   *   <li>2. Clustering columns are an empty list:
+   *   <li>- This is equivalent to executing `ALTER TABLE ... CLUSTER BY NONE` in Delta.
+   *   <li>- The table remains a clustered table, but its clustering domain metadata is updated
+   *   <li>to reflect an empty list of clustering columns.
+   *   <li>3. Clustering columns are a non-empty list:
+   *   <li>- The table is treated as a clustered table.
+   *   <li>- We update the protocol (if needed) to include clustering writer support and set the
+   *   <li>clustering domain metadata accordingly.
+   * </ul>
+   */
   @Override
   public TransactionBuilder withClusteringColumns(Engine engine, List<Column> clusteringColumns) {
     this.clusteringColumns = Optional.of(clusteringColumns);

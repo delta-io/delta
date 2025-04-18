@@ -187,14 +187,13 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
       createEmptyTable(engine, tablePath, testPartitionSchema)
       val table = Table.forPath(engine, tablePath)
       updateTableMetadata(engine, tablePath, clusteringColsOpt = Some(testClusteringColumns))
-      // Verify the clustering feature is included in the protocol
+
       val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-      // Verify the clustering domain metadata is written
       verifyClusteringDomainMetadata(snapshot)
     }
   }
 
-  test("update a clustered table with new clustering columns should succeed") {
+  test("update a clustered table with subset of previous clustering columns should succeed") {
     withTempDirAndEngine { (tablePath, engine) =>
       createEmptyTable(
         engine,
@@ -203,12 +202,53 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
         clusteringColsOpt = Some(testClusteringColumns))
       val table = Table.forPath(engine, tablePath)
       updateTableMetadata(engine, tablePath, clusteringColsOpt = Some(List(new Column("part1"))))
-      // Verify the clustering feature is included in the protocol
+
       val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-      // Verify the clustering domain metadata is written
       val expectedDomainMetadata = new DomainMetadata(
         "delta.clustering",
         """{"clusteringColumns":[["part1"]]}""",
+        false)
+      verifyClusteringDomainMetadata(snapshot, expectedDomainMetadata)
+    }
+  }
+
+  test("update a clustered table with a overlap clustering columns should succeed") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(
+        engine,
+        tablePath,
+        testPartitionSchema,
+        clusteringColsOpt = Some(testClusteringColumns)
+      ) // Seq("part1", "part2")
+      val table = Table.forPath(engine, tablePath)
+      updateTableMetadata(
+        engine,
+        tablePath,
+        clusteringColsOpt = Some(List(new Column("part2"), new Column("id"))))
+
+      val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      val expectedDomainMetadata = new DomainMetadata(
+        "delta.clustering",
+        """{"clusteringColumns":[["part2"],["id"]]}""",
+        false)
+      verifyClusteringDomainMetadata(snapshot, expectedDomainMetadata)
+    }
+  }
+
+  test("update a clustered table with a non-overlap clustering columns should succeed") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(
+        engine,
+        tablePath,
+        testPartitionSchema,
+        clusteringColsOpt = Some(List(new Column("part1"))))
+      val table = Table.forPath(engine, tablePath)
+      updateTableMetadata(engine, tablePath, clusteringColsOpt = Some(List(new Column("part2"))))
+
+      val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      val expectedDomainMetadata = new DomainMetadata(
+        "delta.clustering",
+        """{"clusteringColumns":[["part2"]]}""",
         false)
       verifyClusteringDomainMetadata(snapshot, expectedDomainMetadata)
     }
@@ -223,14 +263,27 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
         clusteringColsOpt = Some(testClusteringColumns))
       val table = Table.forPath(engine, tablePath)
       updateTableMetadata(engine, tablePath, clusteringColsOpt = Some(List()))
-      // Verify the clustering feature is included in the protocol
+
       val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-      // Verify the clustering domain metadata is written
       val expectedDomainMetadata = new DomainMetadata(
         "delta.clustering",
         """{"clusteringColumns":[]}""",
         false)
       verifyClusteringDomainMetadata(snapshot, expectedDomainMetadata)
+    }
+  }
+
+  test("update a table with clustering columns doesn't exist in the table should fail") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(engine, tablePath, testPartitionSchema)
+      val ex = intercept[KernelException] {
+        updateTableMetadata(
+          engine,
+          tablePath,
+          clusteringColsOpt = Some(List(new Column("non-exist"))))
+      }
+      assert(
+        ex.getMessage.contains("Column 'column(`non-exist`)' was not found in the table schema"))
     }
   }
 
@@ -291,6 +344,60 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
         verifyCommitInfo(tablePath, version = 1, partitionCols = null, operation = WRITE)
         verifyWrittenContent(tablePath, testPartitionSchema, expData)
         verifyClusteringDomainMetadata(table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl])
+      }
+    }
+  }
+
+  test("insert into clustered table after update clusteringColumns should still work") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val expectedDomainMetadataAfterUpdate = new DomainMetadata(
+        "delta.clustering",
+        """{"clusteringColumns":[["id"],["part1"]]}""",
+        false)
+
+      {
+        val commitResult0 = appendData(
+          engine,
+          tablePath,
+          isNewTable = true,
+          testPartitionSchema,
+          clusteringColsOpt = Some(testClusteringColumns),
+          data = Seq(Map.empty[String, Literal] -> dataClusteringBatches1))
+
+        val expData = dataClusteringBatches1.flatMap(_.toTestRows)
+
+        verifyCommitResult(commitResult0, expVersion = 0, expIsReadyForCheckpoint = false)
+        verifyCommitInfo(tablePath, version = 0, operation = WRITE)
+        verifyWrittenContent(tablePath, testPartitionSchema, expData)
+        verifyClusteringDomainMetadata(table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl])
+      }
+      {
+        val commitResult1 = updateTableMetadata(
+          engine,
+          tablePath,
+          clusteringColsOpt = Some(List(new Column("id"), new Column("part1"))))
+
+        verifyCommitResult(commitResult1, expVersion = 1, expIsReadyForCheckpoint = false)
+        verifyClusteringDomainMetadata(
+          table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl],
+          expectedDomainMetadataAfterUpdate)
+      }
+      {
+        val commitResult2 = appendData(
+          engine,
+          tablePath,
+          data = Seq(Map.empty[String, Literal] -> dataClusteringBatches2))
+
+        val expData = dataClusteringBatches1.flatMap(_.toTestRows) ++
+          dataClusteringBatches2.flatMap(_.toTestRows)
+
+        verifyCommitResult(commitResult2, expVersion = 2, expIsReadyForCheckpoint = false)
+        verifyCommitInfo(tablePath, version = 2, partitionCols = null, operation = WRITE)
+        verifyWrittenContent(tablePath, testPartitionSchema, expData)
+        verifyClusteringDomainMetadata(
+          table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl],
+          expectedDomainMetadataAfterUpdate)
       }
     }
   }
