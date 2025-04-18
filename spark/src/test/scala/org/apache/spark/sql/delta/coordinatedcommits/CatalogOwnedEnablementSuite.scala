@@ -127,6 +127,21 @@ class CatalogOwnedEnablementSuite
     }
   }
 
+  test("Catalog-Owned: ALTER TABLE UNSET should be a no-op when trying to unset table feature") {
+    withRandomTable(createCatalogOwnedTableAtInit = true) { tableName =>
+      spark.sql(s"ALTER TABLE $tableName UNSET TBLPROPERTIES " +
+        s"('delta.feature.${CatalogOwnedTableFeature.name}')")
+      val log1 = DeltaLog.forTable(spark, new TableIdentifier(tableName))
+      assert(log1.unsafeVolatileSnapshot.isCatalogOwned === true)
+
+      // Without `delta.feature` namespace this should also hold
+      spark.sql(s"ALTER TABLE $tableName UNSET TBLPROPERTIES " +
+        s"('${CatalogOwnedTableFeature.name}')")
+      val log2 = DeltaLog.forTable(spark, new TableIdentifier(tableName))
+      assert(log2.unsafeVolatileSnapshot.isCatalogOwned === true)
+    }
+  }
+
   test("Catalog-Owned: ALTER TABLE should be blocked if attempts to" +
     " downgrade Catalog-Owned") {
     withRandomTable(createCatalogOwnedTableAtInit = true)  { tableName =>
