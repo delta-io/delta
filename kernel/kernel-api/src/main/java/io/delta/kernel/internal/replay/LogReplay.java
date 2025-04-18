@@ -45,6 +45,10 @@ import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.*;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Replays a history of actions, resolving them to produce the current state of the table. The
@@ -61,6 +65,8 @@ import java.util.*;
  * ColumnarBatch}s
  */
 public class LogReplay {
+
+  private static final Logger logger = LoggerFactory.getLogger(LogReplay.class);
 
   //////////////////////////
   // Static Schema Fields //
@@ -352,6 +358,24 @@ public class LogReplay {
   }
 
   /**
+   * Loads the domain metadata map, either from CRC info (if available) or from the transaction log.
+   *
+   * @param engine The engine to use for loading from log when necessary
+   * @return A map of domain names to their metadata
+   */
+  private Map<String, DomainMetadata> loadDomainMetadataMap(Engine engine) {
+    // First try to load from CRC info if available
+    if (currentCrcInfo.isPresent() && currentCrcInfo.get().getDomainMetadata().isPresent()) {
+      return currentCrcInfo.get().getDomainMetadata().get().stream()
+          .collect(Collectors.toMap(DomainMetadata::getDomain, Function.identity()));
+    }
+    // TODO: Incrementally load from CRC.
+    // Fall back to loading from the log
+    logger.debug("No domain metadata available in CRC info, loading from log");
+    return loadDomainMetadataMapFromLog(engine);
+  }
+
+  /**
    * Retrieves a map of domainName to {@link DomainMetadata} from the log files.
    *
    * <p>Loading domain metadata requires an additional round of log replay so this is done lazily
@@ -363,7 +387,7 @@ public class LogReplay {
    *     DomainMetadata} objects.
    * @throws UncheckedIOException if an I/O error occurs while closing the iterator.
    */
-  private Map<String, DomainMetadata> loadDomainMetadataMap(Engine engine) {
+  private Map<String, DomainMetadata> loadDomainMetadataMapFromLog(Engine engine) {
     try (CloseableIterator<ActionWrapper> reverseIter =
         new ActionsIterator(
             engine,
