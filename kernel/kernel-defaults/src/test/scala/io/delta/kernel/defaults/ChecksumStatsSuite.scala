@@ -27,8 +27,9 @@ import io.delta.kernel.internal.actions.{AddFile, GenerateIcebergCompatActionUti
 import io.delta.kernel.internal.checksum.ChecksumReader
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.stats.FileSizeHistogram
+import io.delta.kernel.internal.util.FileNames.checksumFile
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
-import io.delta.kernel.utils.{CloseableIterable, DataFileStatus}
+import io.delta.kernel.utils.{CloseableIterable, DataFileStatus, FileStatus}
 import io.delta.kernel.utils.CloseableIterable.inMemoryIterable
 
 /**
@@ -89,9 +90,9 @@ class ChecksumStatsSuite extends DeltaTableWriteSuiteBase {
       expectedFileSizeHistogram: FileSizeHistogram): Unit = {
     val crcInfo = ChecksumReader.getCRCInfo(
       engine,
-      new Path(tablePath + "/_delta_log"),
-      version,
-      version)
+      FileStatus.of(checksumFile(
+        new Path(tablePath + "/_delta_log"),
+        version).toString))
       .orElseThrow(() => new AssertionError("CRC information should be present"))
     assert(crcInfo.getNumFiles === expectedFileCount)
     assert(crcInfo.getTableSizeBytes === expectedTableSize)
