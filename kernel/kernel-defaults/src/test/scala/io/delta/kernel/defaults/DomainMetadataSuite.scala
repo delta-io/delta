@@ -62,9 +62,13 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
       expectedValue: Map[String, DomainMetadata]): Unit = {
     // Get the latest snapshot of the table
     val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-    assertDomainMetadata(snapshot, expectedValue)
+    // Loading from CRC will skip tombstone.
+    assertDomainMetadata(snapshot, expectedValue.filterNot(_._2.isRemoved))
     // verifyChecksum will check the domain metadata in CRC against the lastest snapshot.
     verifyChecksum(table.getPath(engine))
+    deleteChecksumFileForTable(table.getPath(engine), versions = Seq(snapshot.getVersion.toInt))
+    // Delete CRC and reload snapshot from log.
+    assertDomainMetadata(table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl], expectedValue)
   }
 
   private def createTxnWithDomainMetadatas(
@@ -470,9 +474,9 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
         val dm2 = new DomainMetadata("testDomain2", "", true)
         val dm3 = new DomainMetadata("testDomain3", "", false)
 
-        val snapshot = latestSnapshot(tablePath).asInstanceOf[SnapshotImpl]
         assertDomainMetadata(
-          snapshot,
+          Table.forPath(defaultEngine, tablePath),
+          defaultEngine,
           Map("testDomain1" -> dm1, "testDomain2" -> dm2, "testDomain3" -> dm3))
       }
     })
