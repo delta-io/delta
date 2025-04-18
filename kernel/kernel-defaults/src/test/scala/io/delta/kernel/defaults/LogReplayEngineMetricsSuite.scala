@@ -52,10 +52,6 @@ import org.scalatest.funsuite.AnyFunSuite
  */
 trait LogReplayBaseTestSuite extends AnyFunSuite with TestUtils {
 
-  // Disable writing checksums for test suites that extend this trait
-  // This is to test P&M loading when CRC are not available
-  spark.conf.set(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key, false)
-
   protected def withTempDirAndMetricsEngine(f: (String, MetricsEngine) => Unit): Unit = {
     val hadoopFileIO = new HadoopFileIO(new Configuration() {
       {
@@ -151,6 +147,14 @@ trait LogReplayBaseTestSuite extends AnyFunSuite with TestUtils {
  * Kernel makes. This calls determine the performance.
  */
 class LogReplayEngineMetricsSuite extends LogReplayBaseTestSuite {
+
+  // Disable writing checksums for this test suite
+  // This test suite checks the files read when loading the P&M, however, with the crc optimization
+  // if crc are available, crc will be the only files read.
+  // We want to test the P&M loading when CRC are not available in the tests.
+  // Tests for tables with available CRC are included using resource test tables (and thus are
+  // unaffected by changing our confs for writes).
+  spark.conf.set(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key, false)
 
   /////////////////////////
   // Test Helper Methods //
