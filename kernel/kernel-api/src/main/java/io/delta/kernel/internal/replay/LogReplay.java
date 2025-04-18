@@ -131,6 +131,8 @@ public class LogReplay {
   private final Lazy<Map<String, DomainMetadata>> domainMetadataMap;
   private final Optional<CRCInfo> currentCrcInfo;
 
+  private boolean read_log_compaction_files = false;
+
   public LogReplay(
       Path logPath,
       Path dataPath,

@@ -31,11 +31,16 @@ public final class FileNames {
 
   public enum DeltaLogFileType {
     COMMIT,
+    LOG_COMPACTION,
     CHECKPOINT
   }
 
   /** Example: 00000000000000000001.json */
   private static final Pattern DELTA_FILE_PATTERN = Pattern.compile("\\d+\\.json");
+
+  /** Example: 00000000000000000001.00000000000000000009.compacted.json */
+  private static final Pattern COMPACTION_FILE_PATTERN =
+      Pattern.compile("\\d+\\.\\d+\\.compacted\\.json");
 
   /** Example: 00000000000000000001.dc0f9f58-a1a0-46fd-971a-bd8b2e9dbb81.json */
   private static final Pattern UUID_DELTA_FILE_REGEX = Pattern.compile("(\\d+)\\.([^\\.]+)\\.json");
@@ -110,6 +115,23 @@ public final class FileNames {
     final String name = path.substring(slashIdx + 1);
     return Long.parseLong(name.split("\\.")[0]);
   }
+
+  /** Returns the start and end versions for the given compaction path. */
+  public static Tuple2<Long, Long> logCompactionVersions(Path path) {
+    final String[] split = path.getName().split("\\.");
+    return new Tuple2<>(Long.parseLong(split[0]), Long.parseLong(split[1]));
+  }
+
+  public static Tuple2<Long, Long> logCompactionVersions(String path) {
+    final int slashIdx = path.lastIndexOf(Path.SEPARATOR);
+    final String name = path.substring(slashIdx + 1);
+    final String[] split = name.split("\\.");
+    return new Tuple2<>(Long.parseLong(split[0]), Long.parseLong(split[1]));
+  }
+
+  // public static boolean deltaIsCoveredBy(String deltaPath, List<String> compactionFiles) {
+
+  // }
 
   /** Returns the version for the given checkpoint path. */
   public static long checkpointVersion(Path path) {
@@ -234,6 +256,11 @@ public final class FileNames {
     final String fileName = new Path(path).getName();
     return DELTA_FILE_PATTERN.matcher(fileName).matches()
         || UUID_DELTA_FILE_REGEX.matcher(fileName).matches();
+  }
+
+  public static boolean isLogCompactionFile(String path) {
+    final String fileName = new Path(path).getName();
+    return COMPACTION_FILE_PATTERN.matcher(fileName).matches();
   }
 
   public static boolean isChecksumFile(String checksumFilePath) {

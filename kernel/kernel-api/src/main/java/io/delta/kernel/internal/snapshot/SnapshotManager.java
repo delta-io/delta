@@ -277,7 +277,11 @@ public class SnapshotManager {
     final List<FileStatus> listedFileStatuses =
         DeltaLogActionUtils.listDeltaLogFilesAsIter(
                 engine,
-                new HashSet<>(Arrays.asList(DeltaLogFileType.COMMIT, DeltaLogFileType.CHECKPOINT)),
+                new HashSet<>(
+                    Arrays.asList(
+                        DeltaLogFileType.COMMIT,
+                        DeltaLogFileType.LOG_COMPACTION,
+                        DeltaLogFileType.CHECKPOINT)),
                 tablePath,
                 listFromStartVersion,
                 versionToLoadOpt,
@@ -310,18 +314,31 @@ public class SnapshotManager {
 
     logDebugFileStatuses("listedFileStatuses", listedFileStatuses);
 
-    ////////////////////////////////////////////////////////////////////////////
-    // Step 5: Partition $listedFileStatuses into the checkpoints and deltas. //
-    ////////////////////////////////////////////////////////////////////////////
+    //////////////////////////////////////////////////////////////////////////////////////////
+    // Step 5: Partition $listedFileStatuses into the checkpoints, deltas, and compactions. //
+    //////////////////////////////////////////////////////////////////////////////////////////
 
-    final Tuple2<List<FileStatus>, List<FileStatus>> listedCheckpointAndDeltaFileStatuses =
+    // initially partition in checkpoint | delta or compaction
+    final Tuple2<List<FileStatus>, List<FileStatus>>
+        listedCheckpointAndDeltaPlusCompactionFileStatuses =
+            ListUtils.partition(
+                listedFileStatuses,
+                fileStatus -> FileNames.isCheckpointFile(new Path(fileStatus.getPath()).getName()));
+    final List<FileStatus> listedCheckpointFileStatuses =
+        listedCheckpointAndDeltaPlusCompactionFileStatuses._1;
+    final List<FileStatus> listedDeltaPlusCompactionFileStatuses =
+        listedCheckpointAndDeltaPlusCompactionFileStatuses._2;
+
+    // now partition into checkpoint | delta | compaction
+    final Tuple2<List<FileStatus>, List<FileStatus>> listedDeltaAndCompactionFileStatuses =
         ListUtils.partition(
-            listedFileStatuses,
-            fileStatus -> FileNames.isCheckpointFile(new Path(fileStatus.getPath()).getName()));
-    final List<FileStatus> listedCheckpointFileStatuses = listedCheckpointAndDeltaFileStatuses._1;
-    final List<FileStatus> listedDeltaFileStatuses = listedCheckpointAndDeltaFileStatuses._2;
+            listedDeltaPlusCompactionFileStatuses,
+            fileStatus -> FileNames.isLogCompactionFile(new Path(fileStatus.getPath()).getName()));
+    final List<FileStatus> listedCompactionFileStatuses = listedDeltaAndCompactionFileStatuses._1;
+    final List<FileStatus> listedDeltaFileStatuses = listedDeltaAndCompactionFileStatuses._2;
 
     logDebugFileStatuses("listedCheckpointFileStatuses", listedCheckpointFileStatuses);
+    logDebugFileStatuses("listedCompactionFileStatuses", listedCompactionFileStatuses);
     logDebugFileStatuses("listedDeltaFileStatuses", listedDeltaFileStatuses);
 
     /////////////////////////////////////////////////////////////////////////////////////////////
@@ -368,6 +385,24 @@ public class SnapshotManager {
             .collect(Collectors.toList());
 
     logDebugFileStatuses("deltasAfterCheckpoint", deltasAfterCheckpoint);
+
+    /////////////////////////////////////////////////////////////////////////////////////////////
+    // Step 7.5: Grab all compactions in range [$latestCompleteCheckpointVersion + 1,
+    // $versionToLoad] //
+    /////////////////////////////////////////////////////////////////////////////////////////////
+
+    final List<FileStatus> compactionsAfterCheckpoint =
+        listedCompactionFileStatuses.stream()
+            .filter(
+                fs -> {
+                  final Tuple2<Long, Long> compactionVersions =
+                      FileNames.logCompactionVersions(new Path(fs.getPath()));
+                  return latestCompleteCheckpointVersion + 1 <= compactionVersions._1
+                      && compactionVersions._2 <= versionToLoadOpt.orElse(Long.MAX_VALUE);
+                })
+            .collect(Collectors.toList());
+
+    logDebugFileStatuses("compactionsAfterCheckpoint", compactionsAfterCheckpoint);
 
     ////////////////////////////////////////////////////////////////////
     // Step 8: Determine the version of the snapshot we can now load. //
@@ -492,6 +527,7 @@ public class SnapshotManager {
         logPath,
         newVersion,
         deltasAfterCheckpoint,
+        listedCompactionFileStatuses,
         latestCompleteCheckpointFileStatuses,
         lastCommitTimestamp);
   }
