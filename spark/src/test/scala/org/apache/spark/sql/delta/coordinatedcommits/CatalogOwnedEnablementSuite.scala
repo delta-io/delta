@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.coordinatedcommits
 
+import java.util.UUID
+
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.test.{DeltaExceptionTestUtils, DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.commons.lang3.NotImplementedException
@@ -92,7 +94,7 @@ class CatalogOwnedEnablementSuite
    */
   private def withTableIdAndAlterTableTestSetup(
       createCatalogOwnedTableAtInit: Boolean)(f: String => Unit): Unit = {
-    val tableId = "t1"
+    val tableId = UUID.randomUUID().toString.replace("-", "")
     withTable(tableId) {
       testCatalogOwnedAlterTableSetup(id = tableId, createCatalogOwnedTableAtInit)
       f(tableId)
