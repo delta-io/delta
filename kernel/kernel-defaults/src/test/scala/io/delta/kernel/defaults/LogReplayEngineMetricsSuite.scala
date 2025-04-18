@@ -220,12 +220,12 @@ class LogReplayEngineMetricsSuite extends LogReplayBaseTestSuite {
 
       // v13 changes the protocol (which also updates the metadata)
       spark.sql(s"""
-                   |ALTER TABLE delta.`$path` SET TBLPROPERTIES (
-                   |  'delta.minReaderVersion' = '2',
-                   |  'delta.minWriterVersion' = '5',
-                   |  'delta.columnMapping.mode' = 'name'
-                   |)
-                   |""".stripMargin)
+          |ALTER TABLE delta.`$path` SET TBLPROPERTIES (
+          |  'delta.minReaderVersion' = '2',
+          |  'delta.minWriterVersion' = '5',
+          |  'delta.columnMapping.mode' = 'name'
+          |)
+          |""".stripMargin)
 
       for (_ <- 14 to 16) { appendCommit(path) }
 
