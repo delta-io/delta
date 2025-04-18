@@ -100,7 +100,8 @@ public class LogCompactionWriter {
     final long lastCommitTimestamp = getLast(deltas).getModificationTime();
 
     LogSegment segment =
-        new LogSegment(dataPath, endVersion, deltas, emptyList(), lastCommitTimestamp);
+        new LogSegment(
+            dataPath, endVersion, deltas, emptyList(), Optional.empty(), lastCommitTimestamp);
     CreateCheckpointIterator checkpointIterator =
         new CreateCheckpointIterator(engine, segment, minFileRetentionTimestampMillis);
     wrapEngineExceptionThrowsIO(
