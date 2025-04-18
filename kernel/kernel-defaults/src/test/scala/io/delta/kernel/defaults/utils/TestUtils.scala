@@ -779,4 +779,8 @@ trait TestUtils extends Assertions with SQLHelper {
         .toSet
         .asJava))
   }
+
+  protected def buildCrcPath(basePath: String, version: Long): java.nio.file.Path = {
+    new File(FileNames.checksumFile(new Path(f"$basePath/_delta_log"), version).toString).toPath
+  }
 }

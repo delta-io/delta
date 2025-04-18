@@ -87,15 +87,21 @@ class ChecksumStatsSuite extends DeltaTableWriteSuiteBase {
       expectedFileCount: Long,
       expectedTableSize: Long,
       expectedFileSizeHistogram: FileSizeHistogram): Unit = {
-    val crcInfo = ChecksumReader.getCRCInfo(
-      engine,
-      new Path(tablePath + "/_delta_log"),
-      version,
-      version)
-      .orElseThrow(() => new AssertionError("CRC information should be present"))
-    assert(crcInfo.getNumFiles === expectedFileCount)
-    assert(crcInfo.getTableSizeBytes === expectedTableSize)
-    assert(crcInfo.getFileSizeHistogram === Optional.of(expectedFileSizeHistogram))
+    def verifyCrcExistsAndCorrect(): Unit = {
+      val crcInfo = ChecksumReader.getCRCInfo(
+        engine,
+        new Path(tablePath + "/_delta_log"),
+        version,
+        version)
+        .orElseThrow(() => new AssertionError("CRC information should be present"))
+      assert(crcInfo.getNumFiles === expectedFileCount)
+      assert(crcInfo.getTableSizeBytes === expectedTableSize)
+      assert(crcInfo.getFileSizeHistogram === Optional.of(expectedFileSizeHistogram))
+    }
+    verifyCrcExistsAndCorrect()
+    engine.getFileSystemClient.delete(buildCrcPath(tablePath, version).toString)
+    Table.forPath(engine, tablePath).checksum(engine, version)
+    verifyCrcExistsAndCorrect()
   }
 
   /**

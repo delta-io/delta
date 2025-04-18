@@ -156,10 +156,6 @@ class ChecksumSimpleComparisonSuite extends DeltaTableWriteSuiteBase with TestUt
       .orElseThrow(() => new IllegalStateException(s"CRC info not found for version $version"))
   }
 
-  private def buildCrcPath(basePath: String, version: Long): java.nio.file.Path = {
-    new File(FileNames.checksumFile(new Path(f"$basePath/_delta_log"), version).toString).toPath
-  }
-
   // TODO docs
   private def commitSparkChangeToKernel(
       path: String,

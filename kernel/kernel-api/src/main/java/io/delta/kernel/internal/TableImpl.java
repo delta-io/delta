@@ -22,10 +22,13 @@ import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.CheckpointAlreadyExistsException;
+import io.delta.kernel.exceptions.ChecksumAlreadyExistsException;
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.checkpoints.Checkpointer;
+import io.delta.kernel.internal.checksum.ChecksumUtils;
+import io.delta.kernel.internal.checksum.ChecksumWriter;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.metrics.SnapshotReportImpl;
@@ -77,6 +80,7 @@ public class TableImpl implements Table {
 
   private final String tablePath;
   private final Checkpointer checkpointer;
+  private final ChecksumWriter checksumWriter;
   private final SnapshotManager snapshotManager;
   private final Clock clock;
 
@@ -85,6 +89,7 @@ public class TableImpl implements Table {
     final Path dataPath = new Path(tablePath);
     final Path logPath = new Path(dataPath, "_delta_log");
     this.checkpointer = new Checkpointer(logPath);
+    this.checksumWriter = new ChecksumWriter(logPath);
     this.snapshotManager = new SnapshotManager(dataPath);
     this.clock = clock;
   }
@@ -137,6 +142,14 @@ public class TableImpl implements Table {
     final SnapshotImpl snapshotToCheckpoint =
         (SnapshotImpl) getSnapshotAsOfVersion(engine, version);
     checkpointer.checkpoint(engine, clock, snapshotToCheckpoint);
+  }
+
+  @Override
+  public void checksum(Engine engine, long version)
+      throws TableNotFoundException, ChecksumAlreadyExistsException, IOException {
+    final SnapshotImpl snapshotToWriteCrcFile =
+        (SnapshotImpl) getSnapshotAsOfVersion(engine, version);
+    ChecksumUtils.computeStateAndWriteChecksum(engine, snapshotToWriteCrcFile);
   }
 
   @Override
