@@ -32,7 +32,7 @@ import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.backfill.RowTrackingBackfillCommand
 import org.apache.spark.sql.delta.commands.columnmapping.RemoveColumnMappingCommand
 import org.apache.spark.sql.delta.constraints.{CharVarcharConstraint, Constraints}
-import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsUtils
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.redirect.RedirectFeature
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
@@ -165,8 +165,13 @@ case class AlterTableSetPropertiesDeltaCommand(
           true
       }.toMap
 
+      // For Coordinated Commits table validation
       CoordinatedCommitsUtils.validateConfigurationsForAlterTableSetPropertiesDeltaCommand(
-        metadata.configuration, filteredConfs)
+        existingConfs = metadata.configuration, propertyOverrides = filteredConfs)
+      // For Catalog Owned table validation
+      CatalogOwnedTableUtils.validatePropertiesForAlterTableSetPropertiesDeltaCommand(
+        txn.snapshot, propertyOverrides = filteredConfs)
+
       // If table redirect feature is updated, validates its property.
       RedirectFeature.validateTableRedirect(txn.snapshot, table.catalogTable, configuration)
       val newMetadata = metadata.copy(
@@ -234,7 +239,9 @@ case class AlterTableUnsetPropertiesDeltaCommand(
 
       if (!fromDropFeatureCommand) {
         CoordinatedCommitsUtils.validateConfigurationsForAlterTableUnsetPropertiesDeltaCommand(
-          metadata.configuration, normalizedKeys)
+          existingConfs = metadata.configuration, propKeysToUnset = normalizedKeys)
+        CatalogOwnedTableUtils.validatePropertiesForAlterTableUnsetPropertiesDeltaCommand(
+          txn.snapshot, propKeysToUnset = normalizedKeys)
       }
       val newConfiguration = metadata.configuration.filterNot {
         case (key, _) => normalizedKeys.contains(key)
