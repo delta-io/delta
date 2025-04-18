@@ -136,6 +136,7 @@ class CatalogOwnedEnablementSuite
       checkError(
         error,
         "DELTA_FEATURE_DROP_UNSUPPORTED_CLIENT_FEATURE",
+        sqlState = "0AKDC",
         parameters = Map("feature" -> CatalogOwnedTableFeature.name))
     }
   }
