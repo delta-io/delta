@@ -105,8 +105,8 @@ class CatalogOwnedEnablementSuite
         spark.sql(s"ALTER TABLE $tableId SET TBLPROPERTIES ('$ICT_ENABLED_KEY' = 'false')")
       }
       checkError(
-        exception = error,
-        condition = "DELTA_CANNOT_MODIFY_CATALOG_OWNED_DEPENDENCIES",
+        error,
+        "DELTA_CANNOT_MODIFY_CATALOG_OWNED_DEPENDENCIES",
         sqlState = "42616",
         parameters = Map[String, String]())
     }
@@ -118,8 +118,8 @@ class CatalogOwnedEnablementSuite
         spark.sql(s"ALTER TABLE $tableId UNSET TBLPROPERTIES ('$ICT_ENABLED_KEY')")
       }
       checkError(
-        exception = error,
-        condition = "DELTA_CANNOT_MODIFY_CATALOG_OWNED_DEPENDENCIES",
+        error,
+        "DELTA_CANNOT_MODIFY_CATALOG_OWNED_DEPENDENCIES",
         sqlState = "42616",
         parameters = Map[String, String]())
     }
@@ -132,8 +132,8 @@ class CatalogOwnedEnablementSuite
         spark.sql(s"ALTER TABLE $tableId DROP FEATURE '${CatalogOwnedTableFeature.name}'")
       }
       checkError(
-        exception = error,
-        condition = "DELTA_FEATURE_DROP_UNSUPPORTED_CLIENT_FEATURE",
+        error,
+        "DELTA_FEATURE_DROP_UNSUPPORTED_CLIENT_FEATURE",
         parameters = Map("feature" -> CatalogOwnedTableFeature.name))
     }
   }
