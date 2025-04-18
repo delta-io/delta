@@ -196,7 +196,7 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils {
         |  checkpoints=[
         |    FileStatus{path='/fake/path/to/table/_delta_log/00000000000000000010.checkpoint.parquet', size=10, modificationTime=100}
         |  ],
-        |  latestChecksum=FileStatus{path='/fake/path/to/table/_delta_log/00000000000000000010.crc', size=10, modificationTime=10},
+        |  lastSeenChecksum=FileStatus{path='/fake/path/to/table/_delta_log/00000000000000000010.crc', size=10, modificationTime=10},
         |  checkpointVersion=10,
         |  lastCommitTimestamp=1
         |}""".stripMargin
