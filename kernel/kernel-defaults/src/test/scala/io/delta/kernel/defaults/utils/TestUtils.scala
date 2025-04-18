@@ -35,10 +35,11 @@ import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl}
 import io.delta.kernel.internal.checksum.ChecksumReader
 import io.delta.kernel.internal.data.ScanStateRow
 import io.delta.kernel.internal.fs.{Path => KernelPath}
+import io.delta.kernel.internal.util.FileNames.checksumFile
 import io.delta.kernel.internal.util.Utils
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.types._
-import io.delta.kernel.utils.CloseableIterator
+import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 
 import org.apache.spark.sql.delta.util.FileNames
 
@@ -765,9 +766,9 @@ trait TestUtils extends Assertions with SQLHelper {
     val checksumVersion = currentSnapshot.getVersion
     val crcInfo = ChecksumReader.getCRCInfo(
       defaultEngine,
-      new KernelPath(f"$tablePath/_delta_log/"),
-      checksumVersion,
-      checksumVersion)
+      FileStatus.of(checksumFile(
+        new KernelPath(f"$tablePath/_delta_log/"),
+        checksumVersion).toString))
     assert(crcInfo.isPresent)
     // TODO: check metadata, protocol and file size.
     assert(crcInfo.get().getNumFiles
