@@ -162,12 +162,12 @@ class LogReplayEngineMetricsSuite extends LogReplayBaseTestSuite {
   /////////////////////////
 
   def loadScanFilesCheckMetrics(
-                                 engine: MetricsEngine,
-                                 table: Table,
-                                 expJsonVersionsRead: Seq[Long],
-                                 expParquetVersionsRead: Seq[Long],
-                                 expParquetReadSetSizes: Seq[Long],
-                                 expLastCheckpointReadCalls: Option[Int] = None): Unit = {
+      engine: MetricsEngine,
+      table: Table,
+      expJsonVersionsRead: Seq[Long],
+      expParquetVersionsRead: Seq[Long],
+      expParquetReadSetSizes: Seq[Long],
+      expLastCheckpointReadCalls: Option[Int] = None): Unit = {
     engine.resetMetrics()
     val scan = table.getLatestSnapshot(engine).getScanBuilder().build()
     // get all scan files and iterate through them to trigger the metrics collection
