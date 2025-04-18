@@ -65,23 +65,23 @@ class CatalogOwnedEnablementSuite
   /**
    * Test setup for ALTER TABLE commands on Catalog-Owned enabled tables.
    *
-   * @param id The id of the table to be created for the test.
+   * @param tableName The name of the table to be created for the test.
    * @param createCatalogOwnedTableAtInit Whether to enable Catalog-Owned table feature
    *                                      at the time of table creation.
    */
   private def testCatalogOwnedAlterTableSetup(
-      id: String,
+      tableName: String,
       createCatalogOwnedTableAtInit: Boolean): Unit = {
     if (createCatalogOwnedTableAtInit) {
-      spark.sql(s"CREATE TABLE $id (id INT) USING delta TBLPROPERTIES " +
+      spark.sql(s"CREATE TABLE $tableName (id INT) USING delta TBLPROPERTIES " +
         s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
     } else {
-      spark.sql(s"CREATE TABLE $id (id INT) USING delta")
+      spark.sql(s"CREATE TABLE $tableName (id INT) USING delta")
     }
     // Insert initial data to the table
-    spark.sql(s"INSERT INTO $id VALUES 1") // commit 1
-    spark.sql(s"INSERT INTO $id VALUES 2") // commit 2
-    val log = DeltaLog.forTable(spark, new TableIdentifier(id))
+    spark.sql(s"INSERT INTO $tableName VALUES 1") // commit 1
+    spark.sql(s"INSERT INTO $tableName VALUES 2") // commit 2
+    val log = DeltaLog.forTable(spark, new TableIdentifier(table = tableName))
     validateCatalogOwnedCompleteEnablement(
       snapshot = log.unsafeVolatileSnapshot,
       expectEnabled = createCatalogOwnedTableAtInit)
@@ -90,21 +90,21 @@ class CatalogOwnedEnablementSuite
   /**
    * Helper function to create a table and run the test.
    *
-   * @param f The test function to run with the generated table id.
+   * @param f The test function to run with the generated table name.
    */
-  private def withTableIdAndAlterTableTestSetup(
+  private def withRandomTable(
       createCatalogOwnedTableAtInit: Boolean)(f: String => Unit): Unit = {
-    val tableId = UUID.randomUUID().toString.replace("-", "")
-    withTable(tableId) {
-      testCatalogOwnedAlterTableSetup(id = tableId, createCatalogOwnedTableAtInit)
-      f(tableId)
+    val randomTableName = s"testTable_${UUID.randomUUID().toString.replace("-", "")}"
+    withTable(randomTableName) {
+      testCatalogOwnedAlterTableSetup(randomTableName, createCatalogOwnedTableAtInit)
+      f(randomTableName)
     }
   }
 
   test("Catalog-Owned: ALTER TABLE should be blocked if attempts to disable ICT") {
-    withTableIdAndAlterTableTestSetup(createCatalogOwnedTableAtInit = true) { tableId =>
+    withRandomTable(createCatalogOwnedTableAtInit = true) { tableName =>
       val error = interceptWithUnwrapping[DeltaIllegalArgumentException] {
-        spark.sql(s"ALTER TABLE $tableId SET TBLPROPERTIES ('$ICT_ENABLED_KEY' = 'false')")
+        spark.sql(s"ALTER TABLE $tableName SET TBLPROPERTIES ('$ICT_ENABLED_KEY' = 'false')")
       }
       checkError(
         error,
@@ -115,9 +115,9 @@ class CatalogOwnedEnablementSuite
   }
 
   test("Catalog-Owned: ALTER TABLE should be blocked if attempts to unset ICT") {
-    withTableIdAndAlterTableTestSetup(createCatalogOwnedTableAtInit = true) { tableId =>
+    withRandomTable(createCatalogOwnedTableAtInit = true) { tableName =>
       val error = interceptWithUnwrapping[DeltaIllegalArgumentException] {
-        spark.sql(s"ALTER TABLE $tableId UNSET TBLPROPERTIES ('$ICT_ENABLED_KEY')")
+        spark.sql(s"ALTER TABLE $tableName UNSET TBLPROPERTIES ('$ICT_ENABLED_KEY')")
       }
       checkError(
         error,
@@ -129,9 +129,9 @@ class CatalogOwnedEnablementSuite
 
   test("Catalog-Owned: ALTER TABLE should be blocked if attempts to" +
     " downgrade Catalog-Owned") {
-    withTableIdAndAlterTableTestSetup(createCatalogOwnedTableAtInit = true)  { tableId =>
+    withRandomTable(createCatalogOwnedTableAtInit = true)  { tableName =>
       val error = intercept[DeltaTableFeatureException] {
-        spark.sql(s"ALTER TABLE $tableId DROP FEATURE '${CatalogOwnedTableFeature.name}'")
+        spark.sql(s"ALTER TABLE $tableName DROP FEATURE '${CatalogOwnedTableFeature.name}'")
       }
       checkError(
         error,
@@ -142,12 +142,12 @@ class CatalogOwnedEnablementSuite
   }
 
   test("Catalog-Owned: Upgrade should be blocked since it is not supported yet") {
-    withTableIdAndAlterTableTestSetup(
+    withRandomTable(
       // Do not enable Catalog-Owned at the beginning when creating table
       createCatalogOwnedTableAtInit = false
-    ) { tableId =>
+    ) { tableName =>
       val error = intercept[NotImplementedException] {
-        spark.sql(s"ALTER TABLE $tableId SET TBLPROPERTIES " +
+        spark.sql(s"ALTER TABLE $tableName SET TBLPROPERTIES " +
           s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
       }
       assert(error.getMessage.contains("Upgrading to CatalogOwned table is not yet supported."))
