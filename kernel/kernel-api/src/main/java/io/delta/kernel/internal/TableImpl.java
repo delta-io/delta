@@ -149,6 +149,9 @@ public class TableImpl implements Table {
       throws TableNotFoundException, ChecksumAlreadyExistsException, IOException {
     final SnapshotImpl snapshotToWriteCrcFile =
         (SnapshotImpl) getSnapshotAsOfVersion(engine, version);
+    if(snapshotToWriteCrcFile.getCurrentCrcInfo().isPresent()) {
+      throw new ChecksumAlreadyExistsException(snapshotToWriteCrcFile.getVersion());
+    }
     ChecksumUtils.computeStateAndWriteChecksum(engine, snapshotToWriteCrcFile);
   }
 
