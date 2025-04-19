@@ -763,21 +763,27 @@ trait TestUtils extends Assertions with SQLHelper {
   def verifyChecksum(tablePath: String): Unit = {
     val currentSnapshot = latestSnapshot(tablePath, defaultEngine)
     val checksumVersion = currentSnapshot.getVersion
-    val crcInfo = ChecksumReader.getCRCInfo(
-      defaultEngine,
-      new KernelPath(f"$tablePath/_delta_log/"),
-      checksumVersion,
-      checksumVersion)
-    assert(crcInfo.isPresent)
-    // TODO: check metadata, protocol and file size.
-    assert(crcInfo.get().getNumFiles
-      === collectScanFileRows(currentSnapshot.getScanBuilder.build()).size)
-    // CRC does not store tombstones.
-    assert(crcInfo.get().getDomainMetadata === Optional.of(
-      currentSnapshot.asInstanceOf[SnapshotImpl].getDomainMetadataMap.values().asScala
-        .filterNot(_.isRemoved)
-        .toSet
-        .asJava))
+    def verifyCrcExistsAndCorrect(): Unit = {
+      val crcInfo = ChecksumReader.getCRCInfo(
+        defaultEngine,
+        new KernelPath(f"$tablePath/_delta_log/"),
+        checksumVersion,
+        checksumVersion)
+      assert(crcInfo.isPresent)
+      // TODO: check metadata, protocol and file size.
+      assert(crcInfo.get().getNumFiles
+        === collectScanFileRows(currentSnapshot.getScanBuilder.build()).size)
+      // CRC does not store tombstones.
+      assert(crcInfo.get().getDomainMetadata === Optional.of(
+        currentSnapshot.asInstanceOf[SnapshotImpl].getDomainMetadataMap.values().asScala
+          .filterNot(_.isRemoved)
+          .toSet
+          .asJava))
+    }
+    verifyCrcExistsAndCorrect()
+    defaultEngine.getFileSystemClient.delete(buildCrcPath(tablePath, checksumVersion).toString)
+    Table.forPath(defaultEngine, tablePath).checksum(defaultEngine, checksumVersion)
+    verifyCrcExistsAndCorrect()
   }
 
   protected def buildCrcPath(basePath: String, version: Long): java.nio.file.Path = {
