@@ -99,6 +99,7 @@ class ChecksumStatsSuite extends DeltaTableWriteSuiteBase {
       assert(crcInfo.getFileSizeHistogram === Optional.of(expectedFileSizeHistogram))
     }
     verifyCrcExistsAndCorrect()
+    // Delete existing CRC to regenerate a new one from state construction.
     engine.getFileSystemClient.delete(buildCrcPath(tablePath, version).toString)
     Table.forPath(engine, tablePath).checksum(engine, version)
     verifyCrcExistsAndCorrect()
