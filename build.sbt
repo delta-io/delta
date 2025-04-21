@@ -605,8 +605,7 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
       "junit" % "junit" % "4.13.2" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
       "org.slf4j" % "slf4j-log4j12" % "1.7.36" % "test",
-      "org.assertj" % "assertj-core" % "3.26.3" % "test",
-      "org.mockito" % "mockito-inline" % "4.11.0" % "test"
+      "org.assertj" % "assertj-core" % "3.26.3" % "test"
     ),
     // Shade jackson libraries so that connector developers don't have to worry
     // about jackson version conflicts.

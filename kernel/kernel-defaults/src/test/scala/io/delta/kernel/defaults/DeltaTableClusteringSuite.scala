@@ -51,8 +51,8 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
       expectedDomainMetadata: DomainMetadata = testingDomainMetadata): Unit = {
     assert(snapshot.getDomainMetadataMap.get(ClusteringMetadataDomain.DOMAIN_NAME)
       == expectedDomainMetadata)
-    // verifyChecksum will check the domain metadata in CRC against the latest snapshot.
-    verifyChecksum(snapshot.getDataPath.toString)
+    // verifyChecksumWithBothSimpleAndFull will check the domain metadata in CRC against the latest snapshot.
+    verifyChecksumWithBothSimpleAndFull(snapshot.getDataPath.toString)
   }
 
   override def commitTransaction(

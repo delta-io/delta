@@ -50,6 +50,6 @@ class DeltaTableWriteWithCrcSuite extends DeltaTableWritesSuite {
       expSchema: StructType,
       expData: Seq[TestRow]): Unit = {
     super.verifyWrittenContent(path, expSchema, expData)
-    verifyChecksum(path)
+    verifyChecksumWithBothSimpleAndFull(path)
   }
 }

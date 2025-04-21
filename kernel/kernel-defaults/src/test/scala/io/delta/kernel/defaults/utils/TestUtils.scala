@@ -759,31 +759,32 @@ trait TestUtils extends Assertions with SQLHelper {
     result
   }
 
+  def verifyChecksum(snapshot: Snapshot): Unit = {
+    val crcInfo = ChecksumReader.getCRCInfo(
+      defaultEngine,
+      new KernelPath(snapshot.asInstanceOf[SnapshotImpl].getLogPath.toString),
+      snapshot.getVersion,
+      snapshot.getVersion)
+    assert(crcInfo.isPresent)
+    // TODO: check metadata, protocol and file size.
+    assert(crcInfo.get().getNumFiles
+      === collectScanFileRows(snapshot.getScanBuilder.build()).size)
+    // CRC does not store tombstones.
+    assert(crcInfo.get().getDomainMetadata === Optional.of(
+      snapshot.asInstanceOf[SnapshotImpl].getDomainMetadataMap.values().asScala
+        .filterNot(_.isRemoved)
+        .toSet
+        .asJava))
+  }
+
   /** Ensure checksum is readable by CRC reader and correct. */
-  def verifyChecksum(tablePath: String): Unit = {
+  def verifyChecksumWithBothSimpleAndFull(tablePath: String): Unit = {
     val currentSnapshot = latestSnapshot(tablePath, defaultEngine)
     val checksumVersion = currentSnapshot.getVersion
-    def verifyCrcExistsAndCorrect(): Unit = {
-      val crcInfo = ChecksumReader.getCRCInfo(
-        defaultEngine,
-        new KernelPath(f"$tablePath/_delta_log/"),
-        checksumVersion,
-        checksumVersion)
-      assert(crcInfo.isPresent)
-      // TODO: check metadata, protocol and file size.
-      assert(crcInfo.get().getNumFiles
-        === collectScanFileRows(currentSnapshot.getScanBuilder.build()).size)
-      // CRC does not store tombstones.
-      assert(crcInfo.get().getDomainMetadata === Optional.of(
-        currentSnapshot.asInstanceOf[SnapshotImpl].getDomainMetadataMap.values().asScala
-          .filterNot(_.isRemoved)
-          .toSet
-          .asJava))
-    }
-    verifyCrcExistsAndCorrect()
+    verifyChecksum(currentSnapshot)
     defaultEngine.getFileSystemClient.delete(buildCrcPath(tablePath, checksumVersion).toString)
     Table.forPath(defaultEngine, tablePath).checksum(defaultEngine, checksumVersion)
-    verifyCrcExistsAndCorrect()
+    verifyChecksum(currentSnapshot)
   }
 
   protected def buildCrcPath(basePath: String, version: Long): java.nio.file.Path = {
