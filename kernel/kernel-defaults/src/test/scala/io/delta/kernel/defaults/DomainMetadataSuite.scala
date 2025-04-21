@@ -64,7 +64,7 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
     val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
     assertDomainMetadata(snapshot, expectedValue)
     // verifyChecksumWithBothSimpleAndFull will check the domain metadata in CRC against the lastest snapshot.
-    verifyChecksumWithBothSimpleAndFull(table.getPath(engine))
+    verifyChecksum(table.getPath(engine))
   }
 
   private def createTxnWithDomainMetadatas(

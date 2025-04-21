@@ -52,7 +52,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
     assert(snapshot.getDomainMetadataMap.get(ClusteringMetadataDomain.DOMAIN_NAME)
       == expectedDomainMetadata)
     // verifyChecksumWithBothSimpleAndFull will check the domain metadata in CRC against the latest snapshot.
-    verifyChecksumWithBothSimpleAndFull(snapshot.getDataPath.toString)
+    verifyChecksum(snapshot.getDataPath.toString)
   }
 
   override def commitTransaction(

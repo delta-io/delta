@@ -759,7 +759,7 @@ trait TestUtils extends Assertions with SQLHelper {
     result
   }
 
-  def verifyChecksum(snapshot: Snapshot): Unit = {
+  def verifyChecksumForSnapshot(snapshot: Snapshot): Unit = {
     val crcInfo = ChecksumReader.getCRCInfo(
       defaultEngine,
       new KernelPath(snapshot.asInstanceOf[SnapshotImpl].getLogPath.toString),
@@ -778,13 +778,13 @@ trait TestUtils extends Assertions with SQLHelper {
   }
 
   /** Ensure checksum is readable by CRC reader and correct. */
-  def verifyChecksumWithBothSimpleAndFull(tablePath: String): Unit = {
+  def verifyChecksum(tablePath: String): Unit = {
     val currentSnapshot = latestSnapshot(tablePath, defaultEngine)
     val checksumVersion = currentSnapshot.getVersion
-    verifyChecksum(currentSnapshot)
+    verifyChecksumForSnapshot(currentSnapshot)
     defaultEngine.getFileSystemClient.delete(buildCrcPath(tablePath, checksumVersion).toString)
     Table.forPath(defaultEngine, tablePath).checksum(defaultEngine, checksumVersion)
-    verifyChecksum(currentSnapshot)
+    verifyChecksumForSnapshot(currentSnapshot)
   }
 
   protected def buildCrcPath(basePath: String, version: Long): java.nio.file.Path = {

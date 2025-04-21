@@ -48,13 +48,13 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase {
         engine,
         tablePath).getSnapshotAsOfVersion(engine, 0).asInstanceOf[SnapshotImpl]
       ChecksumUtils.computeStateAndWriteChecksum(engine, snapshot0)
-      verifyChecksum(snapshot0)
+      verifyChecksumForSnapshot(snapshot0)
 
       val snapshot1 = Table.forPath(
         engine,
         tablePath).getSnapshotAsOfVersion(engine, 1).asInstanceOf[SnapshotImpl]
       ChecksumUtils.computeStateAndWriteChecksum(engine, snapshot1)
-      verifyChecksum(snapshot1)
+      verifyChecksumForSnapshot(snapshot1)
     }
   }
 
