@@ -189,6 +189,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
       updateTableMetadata(engine, tablePath, clusteringColsOpt = Some(testClusteringColumns))
 
       val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      assertHasWriterFeature(snapshot, "clustering")
       verifyClusteringDomainMetadata(snapshot)
     }
   }
@@ -204,6 +205,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
       updateTableMetadata(engine, tablePath, clusteringColsOpt = Some(List(new Column("part1"))))
 
       val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      assertHasWriterFeature(snapshot, "clustering")
       val expectedDomainMetadata = new DomainMetadata(
         "delta.clustering",
         """{"clusteringColumns":[["part1"]]}""",
@@ -227,6 +229,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
         clusteringColsOpt = Some(List(new Column("part2"), new Column("id"))))
 
       val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      assertHasWriterFeature(snapshot, "clustering")
       val expectedDomainMetadata = new DomainMetadata(
         "delta.clustering",
         """{"clusteringColumns":[["part2"],["id"]]}""",
@@ -250,6 +253,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
         "delta.clustering",
         """{"clusteringColumns":[["part2"]]}""",
         false)
+      assertHasWriterFeature(snapshot, "clustering")
       verifyClusteringDomainMetadata(snapshot, expectedDomainMetadata)
     }
   }
@@ -269,6 +273,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
         "delta.clustering",
         """{"clusteringColumns":[]}""",
         false)
+      assertHasWriterFeature(snapshot, "clustering")
       verifyClusteringDomainMetadata(snapshot, expectedDomainMetadata)
     }
   }
