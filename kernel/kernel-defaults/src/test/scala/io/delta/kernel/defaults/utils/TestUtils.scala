@@ -759,32 +759,53 @@ trait TestUtils extends Assertions with SQLHelper {
     result
   }
 
-  def verifyChecksumForSnapshot(snapshot: Snapshot): Unit = {
+  /**
+   * Verify checksum data matches the expected values in the snapshot.
+   * @param snapshot Snapshot to verify the checksum against
+   */
+  protected def verifyChecksumForSnapshot(snapshot: Snapshot): Unit = {
     val crcInfo = ChecksumReader.getCRCInfo(
       defaultEngine,
       new KernelPath(snapshot.asInstanceOf[SnapshotImpl].getLogPath.toString),
       snapshot.getVersion,
       snapshot.getVersion)
-    assert(crcInfo.isPresent)
+    assert(
+      crcInfo.isPresent,
+      s"CRC information should be present for version ${snapshot.getVersion}")
     // TODO: check metadata, protocol and file size.
-    assert(crcInfo.get().getNumFiles
-      === collectScanFileRows(snapshot.getScanBuilder.build()).size)
+    assert(
+      crcInfo.get().getNumFiles === collectScanFileRows(snapshot.getScanBuilder.build()).size,
+      "Number of files in checksum should match snapshot")
     // CRC does not store tombstones.
-    assert(crcInfo.get().getDomainMetadata === Optional.of(
-      snapshot.asInstanceOf[SnapshotImpl].getDomainMetadataMap.values().asScala
-        .filterNot(_.isRemoved)
-        .toSet
-        .asJava))
+    assert(
+      crcInfo.get().getDomainMetadata === Optional.of(
+        snapshot.asInstanceOf[SnapshotImpl].getDomainMetadataMap.values().asScala
+          .filterNot(_.isRemoved)
+          .toSet
+          .asJava),
+      "Domain metadata in checksum should match snapshot")
   }
 
-  /** Ensure checksum is readable by CRC reader and correct. */
+  /**
+   * Ensure checksum is readable by CRC reader, matches snapshot data, and can be regenerated.
+   * This test verifies:
+   * 1. The initial checksum exists and is correct
+   * 2. After deleting the checksum file, it can be regenerated with the same content
+   *
+   * @param tablePath Path to the Delta table
+   */
   def verifyChecksum(tablePath: String): Unit = {
     val currentSnapshot = latestSnapshot(tablePath, defaultEngine)
     val checksumVersion = currentSnapshot.getVersion
+
+    // Step 1: Verify initial checksum
     verifyChecksumForSnapshot(currentSnapshot)
-    // Delete existing CRC to regenerate a new one from state construction.
+
+    // Step 2: Delete and regenerate the checksum
     defaultEngine.getFileSystemClient.delete(buildCrcPath(tablePath, checksumVersion).toString)
     Table.forPath(defaultEngine, tablePath).checksum(defaultEngine, checksumVersion)
+
+    // Step 3: Verify regenerated checksum
     verifyChecksumForSnapshot(currentSnapshot)
   }
 
