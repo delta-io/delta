@@ -38,6 +38,7 @@ import io.delta.kernel.utils.FileStatus;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
+import java.util.stream.LongStream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -240,6 +241,8 @@ public class SnapshotManager {
    */
   @VisibleForTesting
   public LogSegment getLogSegmentForVersion(Engine engine, Optional<Long> versionToLoadOpt) {
+    final boolean USE_COMPACTED_FILES = true; // TODO: Where to config this
+
     final String versionToLoadStr = versionToLoadOpt.map(String::valueOf).orElse("latest");
     logger.info("Loading log segment for version {}", versionToLoadStr);
 
@@ -273,15 +276,17 @@ public class SnapshotManager {
     // Step 3: List the files from $startVersion to $versionToLoad //
     /////////////////////////////////////////////////////////////////
 
+    HashSet fileTypes =
+        new HashSet<>(Arrays.asList(DeltaLogFileType.COMMIT, DeltaLogFileType.CHECKPOINT));
+    if (USE_COMPACTED_FILES) {
+      fileTypes.add(DeltaLogFileType.LOG_COMPACTION);
+    }
+
     final long startTimeMillis = System.currentTimeMillis();
     final List<FileStatus> listedFileStatuses =
         DeltaLogActionUtils.listDeltaLogFilesAsIter(
                 engine,
-                new HashSet<>(
-                    Arrays.asList(
-                        DeltaLogFileType.COMMIT,
-                        DeltaLogFileType.LOG_COMPACTION,
-                        DeltaLogFileType.CHECKPOINT)),
+                fileTypes,
                 tablePath,
                 listFromStartVersion,
                 versionToLoadOpt,
@@ -391,22 +396,41 @@ public class SnapshotManager {
     // $versionToLoad] //
     /////////////////////////////////////////////////////////////////////////////////////////////
 
-    final List<FileStatus> compactionsAfterCheckpoint =
-        listedCompactionFileStatuses.stream()
-            .filter(
-                fs -> {
-                  final Tuple2<Long, Long> compactionVersions =
-                      FileNames.logCompactionVersions(new Path(fs.getPath()));
-                  return latestCompleteCheckpointVersion + 1 <= compactionVersions._1
-                      && compactionVersions._2 <= versionToLoadOpt.orElse(Long.MAX_VALUE);
-                })
-            .collect(Collectors.toList());
+    // track which versions are covered by compactions
+    final HashSet<Long> versionsCoveredByCompactedFiles = new HashSet();
+
+    final List<FileStatus> compactionsAfterCheckpoint;
+    if (USE_COMPACTED_FILES) {
+      compactionsAfterCheckpoint =
+          listedCompactionFileStatuses.stream()
+              .filter(
+                  fs -> {
+                    final Tuple2<Long, Long> compactionVersions =
+                        FileNames.logCompactionVersions(new Path(fs.getPath()));
+                    final boolean include =
+                        latestCompleteCheckpointVersion + 1 <= compactionVersions._1
+                            && compactionVersions._2 <= versionToLoadOpt.orElse(Long.MAX_VALUE);
+                    if (include) {
+                      LongStream.range(compactionVersions._1, compactionVersions._2)
+                          .forEachOrdered(
+                              v -> {
+                                versionsCoveredByCompactedFiles.add(v);
+                              });
+                    }
+                    return include;
+                  })
+              .collect(Collectors.toList());
+    } else {
+      compactionsAfterCheckpoint = Collections.emptyList();
+    }
 
     logDebugFileStatuses("compactionsAfterCheckpoint", compactionsAfterCheckpoint);
 
     ////////////////////////////////////////////////////////////////////
     // Step 8: Determine the version of the snapshot we can now load. //
     ////////////////////////////////////////////////////////////////////
+
+    // TODO: need to check compactions too?
 
     final List<Long> deltaVersionsAfterCheckpoint =
         deltasAfterCheckpoint.stream()
@@ -514,6 +538,19 @@ public class SnapshotManager {
                 })
             .orElse(Collections.emptyList());
 
+    // step 10.5, filter down the deltas if requested
+    List<FileStatus> finalDeltas = deltasAfterCheckpoint;
+    if (USE_COMPACTED_FILES) {
+      finalDeltas =
+          deltasAfterCheckpoint.stream()
+              .filter(
+                  fs -> {
+                    final long deltaVersion = FileNames.deltaVersion(new Path(fs.getPath()));
+                    return !versionsCoveredByCompactedFiles.contains(deltaVersion);
+                  })
+              .collect(Collectors.toList());
+    }
+
     ///////////////////////////////////////////////////
     // Step 11: Construct the LogSegment and return. //
     ///////////////////////////////////////////////////
@@ -526,8 +563,8 @@ public class SnapshotManager {
     return new LogSegment(
         logPath,
         newVersion,
-        deltasAfterCheckpoint,
-        listedCompactionFileStatuses,
+        finalDeltas,
+        compactionsAfterCheckpoint,
         latestCompleteCheckpointFileStatuses,
         lastCommitTimestamp);
   }

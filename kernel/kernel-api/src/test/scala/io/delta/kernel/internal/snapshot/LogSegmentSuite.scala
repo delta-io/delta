@@ -20,6 +20,7 @@ import java.util.Collections
 
 import scala.collection.JavaConverters._
 
+import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.test.MockFileSystemClientUtils
 import io.delta.kernel.utils.FileStatus
 
@@ -30,6 +31,9 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils {
   private val deltaFs11List = deltaFileStatuses(Seq(11)).toList.asJava
   private val deltaFs12List = deltaFileStatuses(Seq(12)).toList.asJava
   private val deltasFs11To12List = deltaFileStatuses(Seq(11, 12)).toList.asJava
+  private val compactionFs3To5List = compactedFileStatuses(Seq((3, 5))).toList.asJava
+  private val compactionFs3To5And8To10List =
+    compactedFileStatuses(Seq((3, 5), (8, 10))).toList.asJava
   private val badJsonsList = Collections.singletonList(
     FileStatus.of(s"${logPath.toString}/gibberish.json", 1, 1))
   private val badCheckpointsList = Collections.singletonList(
@@ -233,5 +237,62 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils {
         |}""".stripMargin
     // scalastyle:on line.size.limit
     assert(logSegment.toString === expectedToString)
+  }
+
+  test("allFilesWithCompactionsReversed -- 3 - 5 in middle") {
+    val logSegment = new LogSegment(
+      logPath,
+      6,
+      deltaFileStatuses(Seq.range(0, 7)).toList.asJava,
+      compactionFs3To5List,
+      Collections.emptyList(),
+      1)
+    val allFiles = logSegment.allFilesWithCompactionsReversed();
+
+    // expect to get 6, 3-5.compact, 2, 1, 0
+    val expected = List(
+      FileStatus.of(FileNames.deltaFile(logPath, 6), 6, 6 * 10),
+      FileStatus.of(FileNames.logCompactionPath(logPath, 3, 5).toString, 3, 3 * 10),
+      FileStatus.of(FileNames.deltaFile(logPath, 2), 2, 2 * 10),
+      FileStatus.of(FileNames.deltaFile(logPath, 1), 1, 1 * 10),
+      FileStatus.of(FileNames.deltaFile(logPath, 0), 0, 0 * 10)).asJava;
+    assert(allFiles === expected);
+  }
+
+  test("allFilesWithCompactionsReversed -- 3 - 5 at start") {
+    val logSegment = new LogSegment(
+      logPath,
+      7,
+      deltaFileStatuses(Seq.range(3, 8)).toList.asJava,
+      compactionFs3To5List,
+      Collections.emptyList(),
+      1)
+    val allFiles = logSegment.allFilesWithCompactionsReversed();
+
+    // expect to get 7, 6, 3-5.compact
+    val expected = List(
+      FileStatus.of(FileNames.deltaFile(logPath, 7), 7, 7 * 10),
+      FileStatus.of(FileNames.deltaFile(logPath, 6), 6, 6 * 10),
+      FileStatus.of(FileNames.logCompactionPath(logPath, 3, 5).toString, 3, 3 * 10)).asJava;
+    assert(allFiles === expected);
+  }
+
+  test("allFilesWithCompactionsReversed -- 3 - 5 at end") {
+    val logSegment = new LogSegment(
+      logPath,
+      5,
+      deltaFileStatuses(Seq.range(0, 6)).toList.asJava,
+      compactionFs3To5List,
+      Collections.emptyList(),
+      1)
+    val allFiles = logSegment.allFilesWithCompactionsReversed();
+
+    // expect to get 3-5.compact, 2, 1, 0
+    val expected = List(
+      FileStatus.of(FileNames.logCompactionPath(logPath, 3, 5).toString, 3, 3 * 10),
+      FileStatus.of(FileNames.deltaFile(logPath, 2), 2, 2 * 10),
+      FileStatus.of(FileNames.deltaFile(logPath, 1), 1, 1 * 10),
+      FileStatus.of(FileNames.deltaFile(logPath, 0), 0, 0 * 10)).asJava;
+    assert(allFiles === expected);
   }
 }

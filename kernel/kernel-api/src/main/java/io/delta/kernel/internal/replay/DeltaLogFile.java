@@ -43,7 +43,7 @@ public class DeltaLogFile {
       version = FileNames.deltaVersion(fileName);
     } else if (FileNames.isLogCompactionFile(fileName)) {
       logType = LogType.LOG_COMPACTION;
-      version = FileNames.logCompactionVersion(fileName);
+      version = FileNames.logCompactionVersions(fileName)._1;
     } else if (FileNames.isClassicCheckpointFile(fileName)) {
       logType = LogType.CHECKPOINT_CLASSIC;
       version = FileNames.checkpointVersion(fileName);

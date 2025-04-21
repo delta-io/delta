@@ -23,9 +23,12 @@ import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.lang.ListUtils;
 import io.delta.kernel.internal.util.FileNames;
+import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.utils.FileStatus;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
@@ -55,6 +58,8 @@ public class LogSegment {
   private final long lastCommitTimestamp;
   private final Lazy<List<FileStatus>> allFiles;
   private final Lazy<List<FileStatus>> allFilesReversed;
+  private final Lazy<List<FileStatus>> compactionsReversed;
+  private final Lazy<List<FileStatus>> allFilesWithCompactionsReversed;
 
   /**
    * Provides information around which files in the transaction log need to be read to create the
@@ -119,6 +124,8 @@ public class LogSegment {
             .map(fs -> FileNames.checkpointVersion(new Path(fs.getPath())))
             .allMatch(v -> checkpointVersionOpt.get().equals(v)),
         "All checkpoint files must have the same version");
+
+    // todo: ensure compactions don't overlap
 
     if (version != -1) {
       checkArgument(!deltas.isEmpty() || !checkpoints.isEmpty(), "No files to read");
@@ -186,6 +193,69 @@ public class LogSegment {
                         Comparator.comparing((FileStatus a) -> new Path(a.getPath()).getName())
                             .reversed())
                     .collect(Collectors.toList()));
+
+    this.compactionsReversed =
+        new Lazy<>(
+            () ->
+                compactions.stream()
+                    .sorted(
+                        Comparator.comparing((FileStatus a) -> new Path(a.getPath()).getName())
+                            .reversed())
+                    .collect(Collectors.toList()));
+
+    this.allFilesWithCompactionsReversed =
+        new Lazy<>(
+            () -> {
+              if (compactions.isEmpty()) {
+                return allFilesReversed.get();
+              } else {
+                final Iterator<FileStatus> deltaIt = allFilesReversed.get().iterator();
+                final Iterator<FileStatus> compactionIt = compactionsReversed.get().iterator();
+                FileStatus currentCompaction = compactionIt.next(); // safe we know it wasn't empty
+                Tuple2<Long, Long> currentCompactionVersions =
+                    FileNames.logCompactionVersions(currentCompaction.getPath());
+                ArrayList<FileStatus> ret = new ArrayList<FileStatus>();
+                FileStatus cur = null;
+                boolean skipping = false;
+                boolean advanceDeltas = true;
+                while (deltaIt.hasNext()) {
+                  if (advanceDeltas) {
+                    cur = deltaIt.next();
+                  } else {
+                    advanceDeltas = true;
+                  }
+                  long deltaVersion = FileNames.deltaVersion(cur.getPath());
+                  if (currentCompactionVersions != null
+                      && deltaVersion >= currentCompactionVersions._1
+                      && deltaVersion <= currentCompactionVersions._2) {
+                    // skip this delta file
+                    skipping = true;
+                  } else if (skipping) {
+                    // we were skipping so put the compaction in
+                    ret.add(currentCompaction);
+                    if (compactionIt.hasNext()) {
+                      currentCompaction = compactionIt.next();
+                      currentCompactionVersions =
+                          FileNames.logCompactionVersions(currentCompaction.getPath());
+                    } else {
+                      currentCompaction = null;
+                      currentCompactionVersions = null;
+                    }
+                    skipping = false; // not skipping anymore
+                    advanceDeltas = false; // need to reconsider this delta now
+                  } else {
+                    // not covered, and we weren't skipping, so just add this delta
+                    ret.add(cur);
+                  }
+                }
+                if (skipping) {
+                  // the compaction covered all the way up to the last delta file, so add it as the
+                  // last file
+                  ret.add(currentCompaction);
+                }
+                return ret;
+              }
+            });
   }
 
   /////////////////
@@ -245,6 +315,11 @@ public class LogSegment {
    */
   public List<FileStatus> allLogFilesReversed() {
     return allFilesReversed.get();
+  }
+
+  // todo: comment
+  public List<FileStatus> allFilesWithCompactionsReversed() {
+    return allFilesWithCompactionsReversed.get();
   }
 
   @Override
