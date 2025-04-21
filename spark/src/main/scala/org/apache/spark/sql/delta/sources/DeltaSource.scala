@@ -792,6 +792,11 @@ case class DeltaSource(
 
   logInfo(log"Filters being pushed down: ${MDC(DeltaLogKeys.FILTER, filters)}")
 
+  if (options.readChangeFeed) {
+    logInfo(log"Change feed enabled for delta_log_path" +
+      log"= ${MDC(DeltaLogKeys.PATH, deltaLog.logPath)}")
+  }
+
   /**
    * Get the changes starting from (startVersion, startIndex). The start point should not be
    * included in the result.
