@@ -35,17 +35,38 @@ import java.util.concurrent.atomic.LongAdder;
 import java.util.stream.Collectors;
 
 public class ChecksumUtils {
-
+  /**
+   * Computes the state of a Delta table and writes a checksum file based on the provided snapshot.
+   *
+   * <p>This method iterates through the table's data using a CreateCheckpointIterator to calculate:
+   *
+   * <ul>
+   *   <li>Total table size in bytes
+   *   <li>Total number of files
+   *   <li>File size histogram
+   *   <li>Domain metadata information
+   * </ul>
+   *
+   * <p>After computing these statistics, it writes a checksum file to the table's log path.
+   *
+   * @param engine The Engine instance used to access the underlying storage
+   * @param snapshot The SnapshotImpl instance representing the current state of the table
+   * @throws IOException If an I/O error occurs during checksum computation or writing
+   * @throws ChecksumAlreadyExistsException If a checksum already exists for the snapshot version
+   */
   public static void computeStateAndWriteChecksum(Engine engine, SnapshotImpl snapshot)
       throws IOException {
-    // TODO: Optimize using crc after https://github.com/delta-io/delta/pull/4112
+    if (snapshot.getCurrentCrcInfo().isPresent()) {
+      throw new ChecksumAlreadyExistsException(snapshot.getVersion());
+    }
+
+    // TODO: Optimize using last available crc after https://github.com/delta-io/delta/pull/4112
     LongAdder tableSizeByte = new LongAdder();
     LongAdder fileCount = new LongAdder();
     FileSizeHistogram fileSizeHistogram = FileSizeHistogram.createDefaultHistogram();
     Map<String, DomainMetadata> domainMetadataMap = new HashMap<>();
     ChecksumWriter checksumWriter = new ChecksumWriter(snapshot.getLogPath());
 
-    // TODO: Optimize using crc after https://github.com/delta-io/delta/pull/4112 where
     // snapshot.getLogSegment() could return last available CRC.
     // Set minFileRetentionTimestampMillis to infinite future to skip all removed files.
     try (CreateCheckpointIterator checkpointIterator =
