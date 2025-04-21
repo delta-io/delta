@@ -224,11 +224,14 @@ public class DeltaLogActionUtils {
     return listLogDir(engine, tablePath, startVersion)
         .breakableFilter(
             fs -> {
-              if (fileTypes.contains(DeltaLogFileType.COMMIT)
-                  && FileNames.isCommitFile(getName(fs.getPath()))) {
+              String fileName = getName(fs.getPath());
+              if (fileTypes.contains(DeltaLogFileType.COMMIT) && FileNames.isCommitFile(fileName)) {
+                // Here, we do nothing (we will consume this file).
+              } else if (fileTypes.contains(DeltaLogFileType.LOG_COMPACTION)
+                  && FileNames.isLogCompactionFile(fileName)) {
                 // Here, we do nothing (we will consume this file).
               } else if (fileTypes.contains(DeltaLogFileType.CHECKPOINT)
-                  && FileNames.isCheckpointFile(getName(fs.getPath()))
+                  && FileNames.isCheckpointFile(fileName)
                   && fs.getSize() > 0) {
                 // Checkpoint files of 0 size are invalid but may be ignored silently when read,
                 // hence we ignore them so that we never pick up such checkpoints.
@@ -238,7 +241,12 @@ public class DeltaLogActionUtils {
                 return BreakableFilterResult.EXCLUDE; // Here, we exclude and filter out this file.
               }
 
-              final long fileVersion = FileNames.getFileVersion(new Path(fs.getPath()));
+              final long fileVersion;
+              if (FileNames.isLogCompactionFile(fileName)) {
+                fileVersion = FileNames.logCompactionVersions(new Path(fs.getPath()))._1;
+              } else {
+                fileVersion = FileNames.getFileVersion(new Path(fs.getPath()));
+              }
 
               if (fileVersion < startVersion) {
                 throw new RuntimeException(

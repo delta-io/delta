@@ -218,7 +218,7 @@ public class LogSegment {
                 FileStatus cur = null;
                 boolean skipping = false;
                 boolean advanceDeltas = true;
-                while (deltaIt.hasNext()) {
+                while (deltaIt.hasNext() || !advanceDeltas) {
                   if (advanceDeltas) {
                     cur = deltaIt.next();
                   } else {

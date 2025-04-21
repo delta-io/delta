@@ -240,6 +240,8 @@ public class SnapshotManager {
    */
   @VisibleForTesting
   public LogSegment getLogSegmentForVersion(Engine engine, Optional<Long> versionToLoadOpt) {
+    final boolean USE_COMPACTED_FILES = true; // TODO: Where to config this
+
     final String versionToLoadStr = versionToLoadOpt.map(String::valueOf).orElse("latest");
     logger.info("Loading log segment for version {}", versionToLoadStr);
 
