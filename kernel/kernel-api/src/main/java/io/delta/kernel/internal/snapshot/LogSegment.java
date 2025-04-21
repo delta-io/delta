@@ -222,8 +222,30 @@ public class LogSegment {
   }
 
   /**
-   * Returns the most recent file checksum if available, the checksum file is not necessary to be
-   * the read version. Caller should take the responsibility of checking the version before use.
+   * Returns the most recent checksum file encountered during log file listing, if available.
+   *
+   * <p>Note: This checksum file's version may not match the requested snapshot version. It
+   * represents the latest checksum file that was discovered during log directory listing,
+   * regardless of its version. This is by design to avoid additional filesystem listing.
+   *
+   * <p>Callers must:
+   *
+   * <ul>
+   *   <li>Check if the Optional is present
+   *   <li>Verify the checksum file's version is appropriate for their use case
+   *   <li>Handle the case where the checksum file may be at an earlier or later version than the
+   *       snapshot they're working with
+   * </ul>
+   *
+   * <p>Example usage:
+   *
+   * <pre>{@code
+   * logSegment.getLastSeenChecksum()
+   *     .filter(checksum -> checksumVersion >= minRequiredVersion && checksumVersion <= maxAllowedVersion)
+   *     .flatMap(checksum -> ChecksumReader.getCRCInfo(engine, checksum));
+   * }</pre>
+   *
+   * @return Optional containing the most recent checksum file encountered, or empty if none found
    */
   public Optional<FileStatus> getLastSeenChecksum() {
     return lastSeenChecksum;

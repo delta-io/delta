@@ -226,24 +226,24 @@ public class DeltaLogActionUtils {
     return listLogDir(engine, tablePath, startVersion)
         .breakableFilter(
             fs -> {
-              if (fileTypes.contains(DeltaLogFileType.COMMIT)
-                  && FileNames.isCommitFile(fs.getPath())) {
+              String filePath = fs.getPath();
+              if (fileTypes.contains(DeltaLogFileType.COMMIT) && FileNames.isCommitFile(filePath)) {
                 // Here, we do nothing (we will consume this file).
               } else if (fileTypes.contains(DeltaLogFileType.CHECKPOINT)
-                  && FileNames.isCheckpointFile(fs.getPath())
+                  && FileNames.isCheckpointFile(filePath)
                   && fs.getSize() > 0) {
                 // Checkpoint files of 0 size are invalid but may be ignored silently when read,
                 // hence we ignore them so that we never pick up such checkpoints.
                 // Here, we do nothing (we will consume this file).
               } else if (fileTypes.contains(DeltaLogFileType.CHECKSUM)
-                  && FileNames.isChecksumFile(fs.getPath())) {
+                  && FileNames.isChecksumFile(filePath)) {
                 // Here, we do nothing (we will consume this file).
               } else {
                 logger.debug("Ignoring file {} as it is not of the desired type", fs.getPath());
                 return BreakableFilterResult.EXCLUDE; // Here, we exclude and filter out this file.
               }
 
-              final long fileVersion = FileNames.getFileVersion(new Path(fs.getPath()));
+              final long fileVersion = FileNames.getFileVersion(new Path(filePath));
 
               if (fileVersion < startVersion) {
                 throw new RuntimeException(
@@ -271,8 +271,8 @@ public class DeltaLogActionUtils {
                 }
               }
 
-              if (FileNames.isCommitFile(getName(fs.getPath()))
-                  || FileNames.isCheckpointFile(getName(fs.getPath()))) {
+              if (FileNames.isCommitFile(getName(filePath))
+                  || FileNames.isCheckpointFile(getName(filePath))) {
                 hasReturnedCommitOrCheckpoint.set(true);
               }
 
