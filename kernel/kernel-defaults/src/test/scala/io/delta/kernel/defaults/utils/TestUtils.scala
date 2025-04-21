@@ -782,6 +782,7 @@ trait TestUtils extends Assertions with SQLHelper {
     val currentSnapshot = latestSnapshot(tablePath, defaultEngine)
     val checksumVersion = currentSnapshot.getVersion
     verifyChecksumForSnapshot(currentSnapshot)
+    // Delete existing CRC to regenerate a new one from state construction.
     defaultEngine.getFileSystemClient.delete(buildCrcPath(tablePath, checksumVersion).toString)
     Table.forPath(defaultEngine, tablePath).checksum(defaultEngine, checksumVersion)
     verifyChecksumForSnapshot(currentSnapshot)
