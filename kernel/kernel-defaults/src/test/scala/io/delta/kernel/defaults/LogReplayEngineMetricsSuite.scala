@@ -339,7 +339,6 @@ class LogReplayEngineMetricsSuite extends LogReplayBaseTestSuite {
           |  'delta.columnMapping.mode' = 'name'
           |)
           |""".stripMargin)
-
       loadPandMCheckMetrics(
         table,
         engine,
