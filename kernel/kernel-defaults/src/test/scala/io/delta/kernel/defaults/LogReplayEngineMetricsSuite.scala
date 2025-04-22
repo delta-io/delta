@@ -49,6 +49,9 @@ import org.scalatest.funsuite.AnyFunSuite
 
 /**
  * Base trait containing shared code for log replay metric testing.
+ *
+ * This trait provides common infrastructure for testing how Delta log files are read
+ * during table operations, with utilities for metrics collection and verification.
  */
 trait LogReplayBaseTestSuite extends AnyFunSuite with TestUtils {
 
@@ -403,6 +406,9 @@ class LogReplayEngineMetricsSuite extends LogReplayBaseTestSuite {
 
 /**
  * Suite to test the engine metrics when loading Protocol and Metadata through checksum files.
+ *
+ * Tests verify the behavior of log replay when reading tables with checksum files available,
+ * focusing on optimizations where checksums provide metadata without reading log files.
  */
 class ChecksumLogReplayMetricsSuite extends LogReplayBaseTestSuite {
 
@@ -410,7 +416,13 @@ class ChecksumLogReplayMetricsSuite extends LogReplayBaseTestSuite {
   // Test Helper Methods //
   /////////////////////////
 
-  // Produce a test table with 0 to 11 .json, 0 to 11.crc, 10.checkpoint.parquet
+  /**
+   * Creates a test table with checksum files.
+   * Produces a table with versions 0 to 11 including .json files, .crc files,
+   * and a checkpoint at version 10.
+   *
+   * @param path Path where the table should be created
+   */
   def buildTableWithCrc(path: String): Unit = {
     withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true") {
       spark.sql(
@@ -420,9 +432,9 @@ class ChecksumLogReplayMetricsSuite extends LogReplayBaseTestSuite {
     }
   }
 
-  ///////////
-  // Tests //
-  ///////////
+  /////////////////////////
+  // Test Cases          //
+  /////////////////////////
 
   Seq(-1L, 0L, 3L, 4L).foreach { version => // -1 means latest version
     test(s"checksum found at the read version: ${if (version == -1) "latest" else version}") {
