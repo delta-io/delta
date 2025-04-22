@@ -18,8 +18,10 @@ package org.apache.spark.sql.delta
 
 import scala.collection.mutable
 
+import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.delta.actions.{AddFile, CommitInfo, Metadata, Protocol}
 import org.apache.spark.sql.delta.hooks.PostCommitHook
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.catalyst.catalog.{CatalogStatistics, CatalogTable}
 
@@ -49,6 +51,13 @@ trait DeltaTransaction {
   /** The end to end execution time of this transaction. */
   def txnExecutionTimeMs: Option[Long]
 
+  /**
+   * Default [[IsolationLevel]] as set in table metadata.
+   */
+  private[delta] def getDefaultIsolationLevel(): IsolationLevel = {
+    DeltaConfigs.ISOLATION_LEVEL.fromMetaData(metadata)
+  }
+
   /** Whether the txn should trigger a checkpoint after the commit */
   private[delta] var needsCheckpoint = false
 
@@ -57,5 +66,28 @@ trait DeltaTransaction {
 
   /** True if this transaction is a blind append. This is only valid after commit. */
   protected[delta] var isBlindAppend: Boolean = false
+
+  /**
+   * Return the user-defined metadata for the operation.
+   */
+  def getUserMetadata(op: Operation): Option[String] = {
+    // option wins over config if both are set
+    op.userMetadata match {
+      case data @ Some(_) => data
+      case None => spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_USER_METADATA)
+    }
+  }
+
+  /** The current spark session */
+  protected def spark: SparkSession = SparkSession.active
+
+  /**
+   * Sets needsCheckpoint if we should checkpoint the version that has just been committed.
+   */
+  protected def setNeedsCheckpoint(
+      committedVersion: Long, postCommitSnapshot: Snapshot): Unit = {
+    def checkpointInterval = deltaLog.checkpointInterval(postCommitSnapshot.metadata)
+    needsCheckpoint = committedVersion != 0 && committedVersion % checkpointInterval == 0
+  }
 
 }

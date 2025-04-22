@@ -277,8 +277,6 @@ trait OptimisticTransactionImpl extends DeltaTransaction
     snapshot.validateChecksum(Map("context" -> "transactionInitialization"))
   }
 
-  protected def spark = SparkSession.active
-
   /** Tracks the appIds that have been seen by this transaction. */
   protected val readTxn = new ArrayBuffer[String]
 
@@ -1108,17 +1106,6 @@ trait OptimisticTransactionImpl extends DeltaTransaction
       Some(getMetricsForOperation(op))
     } else {
       None
-    }
-  }
-
-  /**
-   * Return the user-defined metadata for the operation.
-   */
-  def getUserMetadata(op: Operation): Option[String] = {
-    // option wins over config if both are set
-    op.userMetadata match {
-      case data @ Some(_) => data
-      case None => spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_USER_METADATA)
     }
   }
 
@@ -2206,21 +2193,6 @@ trait OptimisticTransactionImpl extends DeltaTransaction
       Map("fromProtocol" -> extract(fromProtocol), "toProtocol" -> extract(toProtocol))
     }
     recordDeltaEvent(deltaLog, opType, data = payload)
-  }
-
-  /**
-  * Default [[IsolationLevel]] as set in table metadata.
-  */
-  private[delta] def getDefaultIsolationLevel(): IsolationLevel = {
-    DeltaConfigs.ISOLATION_LEVEL.fromMetaData(metadata)
-  }
-
-  /**
-   * Sets needsCheckpoint if we should checkpoint the version that has just been committed.
-   */
-  protected def setNeedsCheckpoint(committedVersion: Long, postCommitSnapshot: Snapshot): Unit = {
-    def checkpointInterval = deltaLog.checkpointInterval(postCommitSnapshot.metadata)
-    needsCheckpoint = committedVersion != 0 && committedVersion % checkpointInterval == 0
   }
 
   private[delta] def isCommitLockEnabled: Boolean = {
