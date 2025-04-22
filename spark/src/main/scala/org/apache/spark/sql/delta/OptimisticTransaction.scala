@@ -49,6 +49,7 @@ import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, JsonUtils}
 import org.apache.spark.sql.util.ScalaExtensions._
 import io.delta.storage.commit._
 import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import org.apache.commons.lang3.NotImplementedException
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
@@ -559,6 +560,19 @@ trait OptimisticTransactionImpl extends DeltaTransaction
       // (as in CLONE and SHALLOW CLONE).
       if (!ignoreDefaultProperties) {
         newMetadataTmp = withGlobalConfigDefaults(newMetadataTmp)
+        if (readVersion != -1) {
+          // `readVersion != -1` indicates the table already exists, which is the case
+          // for REPLACE command.
+          // Ignore the Catalog-Owned configuration if we are replacing an existing table.
+          // This remove the default spark config for Catalog-Owned if being added above.
+          // Users are *NOT* allowed to create a Catalog-Owned table with REPLACE TABLE
+          // so it's fine to filter it out here.
+          val oldMetadataTmpConf = newMetadataTmp.configuration
+          newMetadataTmp = newMetadataTmp.copy(
+            configuration = oldMetadataTmpConf.filter { case (k, _) =>
+              k != s"delta.feature.${CatalogOwnedTableFeature.name}"
+            })
+        }
       }
       isCreatingNewTable = true
     }
@@ -790,6 +804,13 @@ trait OptimisticTransactionImpl extends DeltaTransaction
   def updateMetadataForNewTableInReplace(metadata: Metadata): Unit = {
     assert(CoordinatedCommitsUtils.getExplicitCCConfigurations(metadata.configuration).isEmpty,
       "Command-specified Coordinated Commits configurations should have been blocked earlier.")
+    assert(!metadata.configuration.contains(UCCommitCoordinatorClient.UC_TABLE_ID_KEY),
+      "Command-specified Catalog-Owned table UUID (ucTableId) should have been blocked earlier.")
+    // Extract any existing ucTableId from the snapshot metadata.
+    val existingUCTableIdConf: Map[String, String] =
+      snapshot.metadata.configuration.filter { case (k, v) =>
+        k == UCCommitCoordinatorClient.UC_TABLE_ID_KEY
+      }
     // Extract the existing Coordinated Commits configurations and ICT dependency configurations
     // from the existing table metadata.
     val existingCCConfs =
@@ -803,11 +824,13 @@ trait OptimisticTransactionImpl extends DeltaTransaction
     // to remove them and retain the Coordinated Commits configurations from the existing table.
     val newConfsWithoutCC = newMetadata.get.configuration --
       CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS
-    var newConfs: Map[String, String] = newConfsWithoutCC ++ existingCCConfs
+    var newConfs: Map[String, String] = newConfsWithoutCC ++ existingCCConfs ++
+      existingUCTableIdConf
     // We also need to retain the existing ICT dependency configurations, but only when the
-    // existing table does have Coordinated Commits configurations. Otherwise, we treat the ICT
-    // configurations the same as any other configurations, by merging them from the default.
-    if (existingCCConfs.nonEmpty) {
+    // existing table does have Coordinated Commits configurations or Catalog-Owned property.
+    // Otherwise, we treat the ICT configurations the same as any other configurations,
+    // by merging them from the default.
+    if (existingCCConfs.nonEmpty || existingUCTableIdConf.nonEmpty) {
       val newConfsWithoutICT = newConfs -- CoordinatedCommitsUtils.ICT_TABLE_PROPERTY_KEYS
       newConfs = newConfsWithoutICT ++ existingICTConfs
     }

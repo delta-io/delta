@@ -25,18 +25,20 @@ import scala.util.control.NonFatal
 import org.apache.spark.sql.catalyst.TimeTravel
 import org.apache.spark.sql.delta.DataFrameUtils
 import org.apache.spark.sql.delta.DeltaErrors.{TemporallyUnstableInputException, TimestampEarlierThanCommitRetentionException}
+import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.catalog.IcebergTablePlaceHolder
 import org.apache.spark.sql.delta.commands._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
-import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsUtils
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils}
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources._
 import org.apache.spark.sql.delta.util.AnalysisHelper
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{AnalysisException, Dataset, SaveMode, SparkSession}
@@ -142,6 +144,10 @@ class DeltaAnalysis(session: SparkSession)
           CatalogTableType.EXTERNAL
         }
 
+
+      // Whether we are enabling Catalog-Owned via explicit property overrides.
+      var isEnablingCatalogOwnedViaExplicitPropertyOverrides: Boolean = false
+
       val catalogTableTarget =
         // If source table is Delta format
         if (src.provider.exists(DeltaSourceUtils.isDeltaDataSourceName)) {
@@ -151,16 +157,38 @@ class DeltaAnalysis(session: SparkSession)
           // used on the source delta table, then the corresponding fields would be set for the
           // sourceTable and needs to be removed from the targetTable's configuration. The fields
           // will then be set in the targetTable's configuration internally after.
-          // Coordinated commits configurations from the source delta table should also be left out,
-          // since CREATE LIKE is similar to CLONE, and we do not copy the commit coordinator from
-          // the source table. If users want a commit coordinator for the target table, they can
+          //
+          // Coordinated commits/Catalog-Owned configurations from the source delta table should
+          // also be left out, since CREATE LIKE is similar to CLONE, and we do not copy the
+          // commit coordinator from the source table.
+          // If users want a commit coordinator for the target table, they can
           // specify the configurations in the CREATE LIKE command explicitly.
           val sourceMetadata = deltaLogSrc.initialSnapshot.metadata
+
+          // Catalog-Owned: Specifying the table UUID in the TBLPROPERTIES clause
+          // should be blocked.
+          CatalogOwnedTableUtils.validateUCTableIdNotPresent(property = ctl.properties)
+
+          // Check whether we are trying to enable Catalog-Owned via explicit property overrides.
+          // The reason to check this is, if the source table is a Catalog-Owned table, and
+          // we are also trying to enable Catalog-Owned for the target table - We do *NOT*
+          // want to filter out [[CatalogOwnedTableFeature]] from the source table. If we do that,
+          // the resulting target table's protocol will *NOT* have CatalogOwned table feature
+          // present though we have explicitly specified it in the TBLPROPERTIES clause.
+          // This only applies to cases where source table has Catalog-Owned enabled.
+          // It works as intended if source table is a normal delta table.
+          if (TableFeatureProtocolUtils.getSupportedFeaturesFromTableConfigs(
+                configs = ctl.properties).contains(CatalogOwnedTableFeature)) {
+            isEnablingCatalogOwnedViaExplicitPropertyOverrides = true
+          }
+
           val config =
             sourceMetadata.configuration.-("delta.columnMapping.maxColumnId")
               .-(MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP)
               .-(MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP)
               .filterKeys(!CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS.contains(_)).toMap
+              // Catalog-Owned: Do not copy table UUID from source table
+              .filterKeys(_ != UCCommitCoordinatorClient.UC_TABLE_ID_KEY).toMap
 
           new CatalogTable(
             identifier = targetTableIdentifier,
@@ -197,6 +225,25 @@ class DeltaAnalysis(session: SparkSession)
         } else {
           None
         }
+      // Catalog-Owned: Do not copy over [[CatalogOwnedTableFeature]] from source table
+      //                except the certain case.
+      val protocolAfterFilteringCatalogOwnedFromSource = protocol match {
+        case Some(p) if !isEnablingCatalogOwnedViaExplicitPropertyOverrides =>
+          // Only filter out [[CatalogOwnedTableFeature]] when target table is not enabling
+          // CatalogOwned.
+          // E.g.,
+          // - CREATE TABLE t1 LIKE t2
+          //   - Filter CatalogOwned table feature out since target table is not enabling
+          //     CatalogOwned explicitly.
+          // - CREATE TABLE t1 LIKE t2 TBLPROPERTIES (
+          //     'delta.feature.catalogOwned-preview' = 'supported'
+          //   )
+          //   - Do not filter CatalogOwned table feature out if target table is enabling
+          //     CatalogOwned.
+          Some(CatalogOwnedTableUtils.filterOutCatalogOwnedTableFeature(protocol = p))
+        case _ =>
+          protocol
+      }
       val newDeltaCatalog = new DeltaCatalog()
       val existingTableOpt = newDeltaCatalog.getExistingTableIfExists(catalogTableTarget.identifier)
       val newTable = newDeltaCatalog
@@ -210,7 +257,7 @@ class DeltaAnalysis(session: SparkSession)
         mode = saveMode,
         query = None,
         output = ctl.output,
-        protocol = protocol,
+        protocol = protocolAfterFilteringCatalogOwnedFromSource,
         tableByPath = isTableByPath)
 
     // INSERT OVERWRITE by ordinal and df.insertInto()

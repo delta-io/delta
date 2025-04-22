@@ -16,13 +16,14 @@
 
 package org.apache.spark.sql.delta.coordinatedcommits
 
+import java.util.Locale
 import java.util.Optional
 
 import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{CoordinatedCommitsTableFeature, DeltaConfig, DeltaConfigs, DeltaErrors, DeltaIllegalArgumentException, DeltaLog, Snapshot, SnapshotDescriptor}
-import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
+import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CoordinatedCommitsTableFeature, DeltaConfig, DeltaConfigs, DeltaErrors, DeltaIllegalArgumentException, DeltaLog, Snapshot, SnapshotDescriptor}
+import org.apache.spark.sql.delta.actions.{Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.commands.CloneTableCommand
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -31,6 +32,7 @@ import org.apache.spark.sql.delta.util.FileNames.{BackfilledDeltaFile, Compacted
 import io.delta.storage.LogStore
 import io.delta.storage.commit.{CommitCoordinatorClient, GetCommitsResponse => JGetCommitsResponse, TableIdentifier}
 import io.delta.storage.commit.actions.AbstractMetadata
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
@@ -148,6 +150,85 @@ object CatalogOwnedTableUtils {
     if (snapshot.isCatalogOwned) {
       verifyNotContainsICTConfigurations(propKeys = propKeysToUnset)
     }
+  }
+
+  /**
+   * Validates the Catalog-Owned properties in explicit command overrides and default
+   * SparkSession properties for `CreateDeltaTableCommand`.
+   */
+  def validatePropertiesForCreateDeltaTableCommand(
+      spark: SparkSession,
+      tableExists: Boolean,
+      query: Option[LogicalPlan],
+      catalogTableProperties: Map[String, String]): Unit = {
+    val (command, propertyOverrides) = query match {
+      // For CLONE, we cannot use the properties from the catalog table, because they are already
+      // the result of merging the source table properties with the overrides, but we do not
+      // consider the source table properties for Catalog-Owned tables.
+      case Some(cmd: CloneTableCommand) =>
+        (if (tableExists) "REPLACE with CLONE" else "CREATE with CLONE",
+          cmd.tablePropertyOverrides)
+      case _ => (if (tableExists) "REPLACE" else "CREATE", catalogTableProperties)
+    }
+    // We do not allow users to modify [[UCCommitCoordinatorClient.UC_TABLE_ID_KEY]] and
+    // [[CatalogOwnedTableFeature.name]] in any explicit overrides for REPLACE command.
+    if (tableExists) {
+      // Must be "REPLACE" or "REPLACE with CLONE" if the table already exists.
+      assert(command == "REPLACE with CLONE" || command == "REPLACE",
+        s"Unexpected command: $command")
+      validateUCTableIdNotPresent(property = propertyOverrides)
+      // Blocks explicit enablements of Catalog-Owned through REPLACE commands.
+      // We *ignore* default enablement of Catalog-Owned for REPLACE commands.
+      if (TableFeatureProtocolUtils.getSupportedFeaturesFromTableConfigs(propertyOverrides)
+          .contains(CatalogOwnedTableFeature)) {
+        throw new IllegalStateException(
+          "Specifying Catalog-Owned in REPLACE TABLE command is not supported. " +
+          "Please use CREATE TABLE command to create a Catalog-Owned table.")
+      }
+    }
+  }
+
+  /**
+   * Filters out [[CatalogOwnedTableFeature]] from the provided protocol.
+   * This is used to ensure that the CatalogOwnedTableFeature is not included in the protocol
+   * for specific DDL commands, e.g., `CREATE CLONE`, `REPLACE CLONE`, `CREATE LIKE`.
+   *
+   * @param protocol The protocol to filter.
+   */
+  def filterOutCatalogOwnedTableFeature(protocol: Protocol): Protocol = {
+    /** Helper function to filter out CatalogOwnedTableFeature from the provided table features. */
+    def filterImpl(tableFeatures: Option[Set[String]]): Option[Set[String]] = {
+      tableFeatures.map(_.filter(_ != CatalogOwnedTableFeature.name))
+    }
+    protocol.copy(
+      readerFeatures = filterImpl(tableFeatures = protocol.readerFeatures),
+      writerFeatures = filterImpl(tableFeatures = protocol.writerFeatures)
+    )
+  }
+
+  /**
+   * Validates that the UC table ID is not present in the provided property (overrides).
+   * Errors out if it is present.
+   *
+   * @param property The property to validate.
+   */
+  def validateUCTableIdNotPresent(property: Map[String, String]): Unit = {
+    if (property.contains(UCCommitCoordinatorClient.UC_TABLE_ID_KEY)) {
+      throw DeltaErrors.cannotModifyTableProperty(
+        prop = UCCommitCoordinatorClient.UC_TABLE_ID_KEY)
+    }
+  }
+
+  /**
+   * Whether Catalog-Owned is enabled via default SparkSession configuration.
+   *
+   * @param spark The SparkSession to check.
+   * @return True if Catalog-Owned is enabled by default, false otherwise.
+   */
+  def defaultCatalogOwnedEnabled(spark: SparkSession): Boolean = {
+    spark.conf
+      .getOption(TableFeatureProtocolUtils.defaultPropertyKey(CatalogOwnedTableFeature))
+      .contains("supported")
   }
 }
 
