@@ -1547,6 +1547,7 @@ import Keys._
 lazy val copyDependencies = taskKey[Unit]("Copy all dependencies to a lib folder")
 
 lazy val kafka = (project in file("connectors/kafka"))
+  .enablePlugins(JupiterPlugin)
   .dependsOn(kernelApi)
   .dependsOn(kernelDefaults)
   .settings(
@@ -1559,8 +1560,13 @@ lazy val kafka = (project in file("connectors/kafka"))
       "org.apache.parquet" % "parquet-hadoop" % "1.13.1" excludeAll (
         ExclusionRule("com.github.luben", "zstd-jni")
       ),
+      "org.apache.hadoop" % "hadoop-common" % hadoopVersion,
+      "org.apache.hadoop" % "hadoop-aws" % hadoopVersion,
+      // Optional but safer: use the bundled AWS SDK that matches Hadoop
+      "com.amazonaws" % "aws-java-sdk-bundle" % "1.12.773",
       "org.apache.kafka" % "connect-api" % kafkaVersion,
       "org.apache.kafka" % "connect-json" % kafkaVersion,
+      "org.apache.kafka" % "connect-runtime" % kafkaVersion,
       "org.apache.kafka" % "kafka-clients" % kafkaVersion,
       "org.apache.iceberg" % "iceberg-core" % "1.6.1",
       "org.apache.iceberg" % "iceberg-common" % "1.6.1",
@@ -1591,6 +1597,11 @@ lazy val kafka = (project in file("connectors/kafka"))
       "org.apache.kafka" %% "kafka" % kafkaVersion % Test,
       "org.apache.kafka" %% "kafka" % kafkaVersion % Test classifier "test",
       "org.apache.kafka" % "kafka-clients" % kafkaVersion % Test classifier "test",
+      "net.aichler" % "jupiter-interface" % JupiterKeys.jupiterVersion.value % Test,
+      "org.slf4j" % "slf4j-api" % "2.0.13",
+      "org.apache.logging.log4j" % "log4j-api" % "2.20.0",
+      "org.apache.logging.log4j" % "log4j-core" % "2.20.0",
+      "org.apache.logging.log4j" % "log4j-slf4j2-impl" % "2.20.0"
     ),
     dependencyOverrides += "com.github.luben" % "zstd-jni" % "1.5.6-3",
     // Compile, patch and generated Iceberg JARs
@@ -1614,13 +1625,15 @@ lazy val kafka = (project in file("connectors/kafka"))
     assembly / assemblyMergeStrategy := {
       // Discard `module-info.class` to fix the `different file contents found` error.
       // TODO Upgrade SBT to 1.5 which will do this automatically
-      case "module-info.class" => MergeStrategy.discard
-      case PathList("mozilla", "public-suffix-list.txt") => MergeStrategy.first
-      case PathList("META-INF", "services", xs @ _*) => MergeStrategy.discard
-      case "META-INF/versions/9/module-info.class" => MergeStrategy.discard
-      case x =>
-        val oldStrategy = (assembly / assemblyMergeStrategy).value
-        oldStrategy(x)
+//      case "module-info.class" => MergeStrategy.discard
+//      case PathList("mozilla", "public-suffix-list.txt") => MergeStrategy.first
+//      case PathList("META-INF", "services", xs @ _*) => MergeStrategy.discard
+//      case "META-INF/versions/9/module-info.class" => MergeStrategy.discard
+//      case x =>
+//        val oldStrategy = (assembly / assemblyMergeStrategy).value
+//        oldStrategy(x)
+      case PathList("META-INF", _*) => MergeStrategy.discard
+      case _ => MergeStrategy.first
     },
     // Generate the package object to provide the version information in runtime.
     Compile / sourceGenerators += Def.task {

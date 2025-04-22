@@ -57,7 +57,24 @@ public class TestContext {
     return instance;
   }
 
+  public static void dockerLogin() {
+    try {
+      ProcessBuilder pb = new ProcessBuilder("docker", "login");
+      pb.inheritIO(); // Optional: pipes the output to console
+      Process process = pb.start();
+      int exitCode = process.waitFor();
+
+      if (exitCode != 0) {
+        throw new RuntimeException("Docker login failed with exit code: " + exitCode);
+      }
+    } catch (Exception ignored) {
+      System.out.println("@@@ fail: " + ignored);
+    }
+  }
+
   private TestContext() {
+    System.out.println("@@@");
+    dockerLogin();
     ComposeContainer container =
         new ComposeContainer(new File("./docker/docker-compose.yml"))
             .withStartupTimeout(Duration.ofMinutes(2))

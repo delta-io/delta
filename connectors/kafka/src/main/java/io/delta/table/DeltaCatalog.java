@@ -141,6 +141,8 @@ public class DeltaCatalog implements Catalog, SupportsNamespaces, Configurable<C
             });
     conf.set("fs.s3a.connection.ssl.enabled", "false");
     conf.set("fs.s3a.path.style.access", "true");
+    conf.set("fs.hdfs.impl", org.apache.hadoop.hdfs.DistributedFileSystem.class.getName());
+    conf.set("fs.file.impl", org.apache.hadoop.fs.LocalFileSystem.class.getName());
   }
 
   @Override

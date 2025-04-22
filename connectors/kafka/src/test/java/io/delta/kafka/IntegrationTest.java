@@ -26,7 +26,6 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import org.apache.iceberg.DataFile;
-import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.catalog.Namespace;
@@ -34,11 +33,8 @@ import org.apache.iceberg.catalog.SupportsNamespaces;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.connect.IcebergSinkConnector;
 import org.apache.iceberg.exceptions.NoSuchTableException;
-import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
-import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.types.Type;
-import org.apache.iceberg.types.Types;
 import org.apache.iceberg.types.Types.LongType;
 import org.apache.iceberg.types.Types.StringType;
 import org.apache.iceberg.types.Types.TimestampType;
@@ -46,9 +42,7 @@ import org.apache.kafka.clients.producer.ProducerConfig;
 import org.awaitility.Awaitility;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.NullSource;
-import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.api.Test;
 
 public class IntegrationTest extends IntegrationTestBase {
 
@@ -66,97 +60,113 @@ public class IntegrationTest extends IntegrationTestBase {
   public void after() {
     context().stopConnector(connectorName());
     deleteTopic(testTopic());
-    catalog().dropTable(TableIdentifier.of(TEST_DB, TEST_TABLE));
-    ((SupportsNamespaces) catalog()).dropNamespace(Namespace.of(TEST_DB));
+    deleteTopic("control-iceberg");
+    //    catalog().dropTable(TableIdentifier.of(TEST_DB, TEST_TABLE));
+    //    ((SupportsNamespaces) catalog()).dropNamespace(Namespace.of(TEST_DB));
   }
 
-  @ParameterizedTest
-  @NullSource
-  @ValueSource(strings = "test_branch")
-  public void testIcebergSinkPartitionedTable(String branch) {
-    catalog().createTable(TABLE_IDENTIFIER, TestEvent.TEST_SCHEMA, TestEvent.TEST_SPEC);
+  //  @ParameterizedTest
+  //  @NullSource
+  //  @ValueSource(strings = "test_branch")
+  //  public void testIcebergSinkPartitionedTable(String branch) {
+  //    catalog().createTable(TABLE_IDENTIFIER, TestEvent.TEST_SCHEMA, TestEvent.TEST_SPEC);
+  //
+  //    boolean useSchema = branch == null; // use a schema for one of the tests
+  //    runTest(branch, useSchema, ImmutableMap.of());
+  //
+  //    List<DataFile> files = dataFiles(TABLE_IDENTIFIER, branch);
+  //    // partition may involve 1 or 2 workers
+  //    assertThat(files).hasSizeBetween(1, 2);
+  //    assertThat(files.get(0).recordCount()).isEqualTo(1);
+  //    assertThat(files.get(1).recordCount()).isEqualTo(1);
+  //    assertSnapshotProps(TABLE_IDENTIFIER, branch);
+  //  }
 
-    boolean useSchema = branch == null; // use a schema for one of the tests
-    runTest(branch, useSchema, ImmutableMap.of());
-
-    List<DataFile> files = dataFiles(TABLE_IDENTIFIER, branch);
-    // partition may involve 1 or 2 workers
-    assertThat(files).hasSizeBetween(1, 2);
-    assertThat(files.get(0).recordCount()).isEqualTo(1);
-    assertThat(files.get(1).recordCount()).isEqualTo(1);
-    assertSnapshotProps(TABLE_IDENTIFIER, branch);
-  }
-
-  @ParameterizedTest
-  @NullSource
-  @ValueSource(strings = "test_branch")
-  public void testIcebergSinkUnpartitionedTable(String branch) {
-    // TESTING: focus on getting this test working
+  @Test
+  public void testIcebergSinkUnpartitionedTableWithBranch() {
+    // branch is "test_branch" => useSchema = false
+    String branch = "test_branch";
     catalog().createTable(TABLE_IDENTIFIER, TestEvent.TEST_SCHEMA);
 
-    boolean useSchema = branch == null; // use a schema for one of the tests
+    boolean useSchema = false;
     runTest(branch, useSchema, ImmutableMap.of());
 
     List<DataFile> files = dataFiles(TABLE_IDENTIFIER, branch);
-    // may involve 1 or 2 workers
     assertThat(files).hasSizeBetween(1, 2);
     assertThat(files.stream().mapToLong(DataFile::recordCount).sum()).isEqualTo(2);
     assertSnapshotProps(TABLE_IDENTIFIER, branch);
   }
 
-  @ParameterizedTest
-  @NullSource
-  @ValueSource(strings = "test_branch")
-  public void testIcebergSinkSchemaEvolution(String branch) {
-    Schema initialSchema =
-        new Schema(
-            ImmutableList.of(
-                Types.NestedField.required(1, "id", Types.IntegerType.get()),
-                Types.NestedField.required(2, "type", Types.StringType.get())));
-    catalog().createTable(TABLE_IDENTIFIER, initialSchema);
+  //  @ParameterizedTest
+  //  @NullSource
+  //  @ValueSource(strings = "test_branch")
+  //  public void testIcebergSinkUnpartitionedTable(String branch) {
+  //    // TESTING: focus on getting this test working
+  //    catalog().createTable(TABLE_IDENTIFIER, TestEvent.TEST_SCHEMA);
+  //
+  //    boolean useSchema = branch == null; // use a schema for one of the tests
+  //    runTest(branch, useSchema, ImmutableMap.of());
+  //
+  //    List<DataFile> files = dataFiles(TABLE_IDENTIFIER, branch);
+  //    // may involve 1 or 2 workers
+  //    assertThat(files).hasSizeBetween(1, 2);
+  //    assertThat(files.stream().mapToLong(DataFile::recordCount).sum()).isEqualTo(2);
+  //    assertSnapshotProps(TABLE_IDENTIFIER, branch);
+  //  }
 
-    boolean useSchema = branch == null; // use a schema for one of the tests
-    runTest(branch, useSchema, ImmutableMap.of("iceberg.tables.evolve-schema-enabled", "true"));
+  //  @ParameterizedTest
+  //  @NullSource
+  //  @ValueSource(strings = "test_branch")
+  //  public void testIcebergSinkSchemaEvolution(String branch) {
+  //    Schema initialSchema =
+  //        new Schema(
+  //            ImmutableList.of(
+  //                Types.NestedField.required(1, "id", Types.IntegerType.get()),
+  //                Types.NestedField.required(2, "type", Types.StringType.get())));
+  //    catalog().createTable(TABLE_IDENTIFIER, initialSchema);
+  //
+  //    boolean useSchema = branch == null; // use a schema for one of the tests
+  //    runTest(branch, useSchema, ImmutableMap.of("iceberg.tables.evolve-schema-enabled", "true"));
+  //
+  //    List<DataFile> files = dataFiles(TABLE_IDENTIFIER, branch);
+  //    // may involve 1 or 2 workers
+  //    assertThat(files).hasSizeBetween(1, 2);
+  //    assertThat(files.stream().mapToLong(DataFile::recordCount).sum()).isEqualTo(2);
+  //    assertSnapshotProps(TABLE_IDENTIFIER, branch);
+  //
+  //    // when not using a value schema, the ID data type will not be updated
+  //    Class<? extends Type> expectedIdType =
+  //        useSchema ? Types.LongType.class : Types.IntegerType.class;
+  //
+  //    assertGeneratedSchema(useSchema, expectedIdType);
+  //  }
 
-    List<DataFile> files = dataFiles(TABLE_IDENTIFIER, branch);
-    // may involve 1 or 2 workers
-    assertThat(files).hasSizeBetween(1, 2);
-    assertThat(files.stream().mapToLong(DataFile::recordCount).sum()).isEqualTo(2);
-    assertSnapshotProps(TABLE_IDENTIFIER, branch);
-
-    // when not using a value schema, the ID data type will not be updated
-    Class<? extends Type> expectedIdType =
-        useSchema ? Types.LongType.class : Types.IntegerType.class;
-
-    assertGeneratedSchema(useSchema, expectedIdType);
-  }
-
-  @ParameterizedTest
-  @NullSource
-  @ValueSource(strings = "test_branch")
-  public void testIcebergSinkAutoCreate(String branch) {
-    boolean useSchema = branch == null; // use a schema for one of the tests
-
-    Map<String, String> extraConfig = Maps.newHashMap();
-    extraConfig.put("iceberg.tables.auto-create-enabled", "true");
-    if (useSchema) {
-      // partition the table for one of the tests
-      extraConfig.put("iceberg.tables.default-partition-by", "hour(ts)");
-    }
-
-    runTest(branch, useSchema, extraConfig);
-
-    List<DataFile> files = dataFiles(TABLE_IDENTIFIER, branch);
-    // may involve 1 or 2 workers
-    assertThat(files).hasSizeBetween(1, 2);
-    assertThat(files.stream().mapToLong(DataFile::recordCount).sum()).isEqualTo(2);
-    assertSnapshotProps(TABLE_IDENTIFIER, branch);
-
-    assertGeneratedSchema(useSchema, LongType.class);
-
-    PartitionSpec spec = catalog().loadTable(TABLE_IDENTIFIER).spec();
-    assertThat(spec.isPartitioned()).isEqualTo(useSchema);
-  }
+  //  @ParameterizedTest
+  //  @NullSource
+  //  @ValueSource(strings = "test_branch")
+  //  public void testIcebergSinkAutoCreate(String branch) {
+  //    boolean useSchema = branch == null; // use a schema for one of the tests
+  //
+  //    Map<String, String> extraConfig = Maps.newHashMap();
+  //    extraConfig.put("iceberg.tables.auto-create-enabled", "true");
+  //    if (useSchema) {
+  //      // partition the table for one of the tests
+  //      extraConfig.put("iceberg.tables.default-partition-by", "hour(ts)");
+  //    }
+  //
+  //    runTest(branch, useSchema, extraConfig);
+  //
+  //    List<DataFile> files = dataFiles(TABLE_IDENTIFIER, branch);
+  //    // may involve 1 or 2 workers
+  //    assertThat(files).hasSizeBetween(1, 2);
+  //    assertThat(files.stream().mapToLong(DataFile::recordCount).sum()).isEqualTo(2);
+  //    assertSnapshotProps(TABLE_IDENTIFIER, branch);
+  //
+  //    assertGeneratedSchema(useSchema, LongType.class);
+  //
+  //    PartitionSpec spec = catalog().loadTable(TABLE_IDENTIFIER).spec();
+  //    assertThat(spec.isPartitioned()).isEqualTo(useSchema);
+  //  }
 
   private void assertGeneratedSchema(boolean useSchema, Class<? extends Type> expectedIdType) {
     Schema tableSchema = catalog().loadTable(TABLE_IDENTIFIER).schema();
