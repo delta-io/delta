@@ -76,9 +76,10 @@ trait CommitCoordinatorUtilBase {
 }
 
 trait CatalogOwnedTestBaseSuite
-    extends SparkFunSuite
-    with CommitCoordinatorUtilBase
-    with SharedSparkSession {
+  extends SparkFunSuite
+  with DeltaTestUtilsBase
+  with CommitCoordinatorUtilBase
+  with SharedSparkSession {
   val defaultCatalogOwnedFeatureEnabledKey =
     TableFeatureProtocolUtils.defaultPropertyKey(CatalogOwnedTableFeature)
 
