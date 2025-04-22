@@ -539,7 +539,7 @@ public class SnapshotManager {
                 return new Checkpointer(logPath).readLastCheckpointFile(engine).map(x -> x.version);
               } finally {
                 logger.info(
-                    "{}: Took {}ms for the task to read or attempt to read the last checkpoint file",
+                    "{}: Took {}ms for the task to read or attempt to read the `_last_checkpoint` file",
                     tablePath,
                     System.currentTimeMillis() - startTimeMillis);
               }
