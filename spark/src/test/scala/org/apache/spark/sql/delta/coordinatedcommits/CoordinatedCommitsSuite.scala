@@ -29,7 +29,7 @@ import org.apache.spark.sql.delta.{CommitStats, CoordinatedCommitsStats, Coordin
 import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CommitCoordinatorGetCommitsFailedException, DeltaIllegalArgumentException}
 import org.apache.spark.sql.delta.CoordinatedCommitType._
 import org.apache.spark.sql.delta.DeltaConfigs.{CHECKPOINT_INTERVAL, COORDINATED_COMMITS_COORDINATOR_CONF, COORDINATED_COMMITS_COORDINATOR_NAME, COORDINATED_COMMITS_TABLE_CONF, IN_COMMIT_TIMESTAMPS_ENABLED}
-import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.{DeltaLog, DeltaTestUtilsBase}
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.DummySnapshot
 import org.apache.spark.sql.delta.LogSegment
