@@ -339,6 +339,7 @@ abstract class CommitCoordinatorSuiteBase
   extends QueryTest
   with CommitCoordinatorUtilBase
   with DeltaSQLTestUtils
+  with DeltaTestUtilsBase
   with SharedSparkSession
   with DeltaSQLCommandTest
   with DeltaExceptionTestUtils {
