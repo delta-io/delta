@@ -233,15 +233,14 @@ public class LogSegment {
    * <ul>
    *   <li>Check if the Optional is present
    *   <li>Verify the checksum file's version is appropriate for their use case
-   *   <li>Handle the case where the checksum file may be at an earlier or later version than the
-   *       snapshot they're working with
+   *   <li>Handle the case where the checksum file may not be the same version they're working with
    * </ul>
    *
    * <p>Example usage:
    *
    * <pre>{@code
    * logSegment.getLastSeenChecksum()
-   *     .filter(checksum -> checksumVersion >= minRequiredVersion && checksumVersion <= maxAllowedVersion)
+   *     .filter(checksum -> checksumVersion == requiredVersion)
    *     .flatMap(checksum -> ChecksumReader.getCRCInfo(engine, checksum));
    * }</pre>
    *
