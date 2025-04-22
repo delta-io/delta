@@ -433,7 +433,7 @@ abstract class CloneTableBase(
     // For CREATE CLONE, check the default spark configuration for Catalog-Owned.
     val catalogOwnedEnabledByDefaultConf =
       if (CatalogOwnedTableUtils.defaultCatalogOwnedEnabled(spark)
-        && !tableExists(txn.snapshot)) {
+          && !tableExists(txn.snapshot)) {
         // Append [[CatalogOwnedTableFeature]] to the `configWithOverrides` below if table
         // does not exist, to ensure the final target protocol contains CatalogOwned
         // if enabled by default.
