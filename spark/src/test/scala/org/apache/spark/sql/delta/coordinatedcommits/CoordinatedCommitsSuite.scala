@@ -1798,7 +1798,8 @@ abstract class CommitCoordinatorSuiteBase
     }
   }
 
-  test("CREATE LIKE does not copy commit coordinated related feature config from the source table.") {
+  test("CREATE LIKE does not copy commit coordinated related feature config " +
+    "from the source table.") {
     registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(1))
 
     val source = "sourcetable"
