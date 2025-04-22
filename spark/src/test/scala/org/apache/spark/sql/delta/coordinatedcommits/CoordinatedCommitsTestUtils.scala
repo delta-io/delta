@@ -48,13 +48,13 @@ trait CommitCoordinatorUtilBase {
    * Runs the function `f` with commit coordinator table feature unset.
    * Any table created in function `f` have CatalogOwned/CoordinatedCommits disabled by default.
    */
-  def withoutDefaultCCTableFeature[T](f: => T): T
+  def withoutDefaultCCTableFeature(f: => Unit): Unit
 
   /**
    * Runs the function `f` with commit coordinator table feature set.
    * Any table created in function `f` have CatalogOwned/CoordinatedCommits enabled by default.`
    */
-  def withDefaultCCTableFeature[T](f: => T): T
+  def withDefaultCCTableFeature(f: => Unit): Unit
 
   /** Run the test with different backfill batch sizes: 1, 2, 10 */
   def testWithDifferentBackfillInterval(testName: String)(f: Int => Unit): Unit
@@ -123,7 +123,7 @@ trait CatalogOwnedTestBaseSuite
     }
   }
 
-  override def withDefaultCCTableFeature[T](f: => T): T = {
+  override def withDefaultCCTableFeature(f: => Unit): Unit = {
     val oldConfig = spark.conf.getOption(defaultCatalogOwnedFeatureEnabledKey)
     spark.conf.set(defaultCatalogOwnedFeatureEnabledKey, "supported")
     try { f } finally {
@@ -133,7 +133,7 @@ trait CatalogOwnedTestBaseSuite
     }
   }
 
-  override def withoutDefaultCCTableFeature[T](f: => T): T = {
+  override def withoutDefaultCCTableFeature(f: => Unit): Unit = {
     val oldConfig = spark.conf.getOption(defaultCatalogOwnedFeatureEnabledKey)
     spark.conf.unset(defaultCatalogOwnedFeatureEnabledKey)
     try { f } finally {
@@ -192,7 +192,7 @@ trait CoordinatedCommitsTestUtils
     }
   }
 
-  override def withDefaultCCTableFeature[T](f: => T): T = {
+  override def withDefaultCCTableFeature(f: => Unit): Unit = {
     val confJson = JsonUtils.toJson(defaultCommitsCoordinatorConf)
     withSQLConf(
       DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.defaultTablePropertyKey ->
@@ -202,7 +202,7 @@ trait CoordinatedCommitsTestUtils
     }
   }
 
-  override def withoutDefaultCCTableFeature[T](f: => T): T = {
+  override def withoutDefaultCCTableFeature(f: => Unit): Unit = {
     val defaultCoordinatedCommitsConfs = CoordinatedCommitsUtils
       .getDefaultCCConfigurations(spark, withDefaultKey = true)
     defaultCoordinatedCommitsConfs.foreach { case (defaultKey, _) =>

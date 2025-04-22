@@ -55,7 +55,6 @@ import org.apache.spark.util.ManualClock
 
 class CoordinatedCommitsSuite
   extends CommitCoordinatorSuiteBase
-  with DeltaTestUtilsBase
   with CoordinatedCommitsBaseSuite {
 
   import testImplicits._
