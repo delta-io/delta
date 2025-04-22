@@ -20,7 +20,6 @@ import java.util.Collections
 
 import scala.collection.JavaConverters._
 
-import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.test.MockFileSystemClientUtils
 import io.delta.kernel.utils.FileStatus
 
@@ -31,9 +30,6 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils {
   private val deltaFs11List = deltaFileStatuses(Seq(11)).toList.asJava
   private val deltaFs12List = deltaFileStatuses(Seq(12)).toList.asJava
   private val deltasFs11To12List = deltaFileStatuses(Seq(11, 12)).toList.asJava
-  private val compactionFs3To5List = compactedFileStatuses(Seq((3, 5))).toList.asJava
-  private val compactionFs3To5And8To10List =
-    compactedFileStatuses(Seq((3, 5), (8, 10))).toList.asJava
   private val badJsonsList = Collections.singletonList(
     FileStatus.of(s"${logPath.toString}/gibberish.json", 1, 1))
   private val badCheckpointsList = Collections.singletonList(
