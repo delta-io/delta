@@ -231,7 +231,8 @@ object CoordinatedCommitsUtils extends DeltaLogging {
     def tailFromSnapshot(): Iterator[(FileStatus, Long)] = {
       val currentSnapshotInDeltaLog = deltaLog.unsafeVolatileSnapshot
       if (currentSnapshotInDeltaLog.version == maxVersionSeen &&
-          currentSnapshotInDeltaLog.tableCommitCoordinatorClientOpt.isEmpty) {
+           (currentSnapshotInDeltaLog.tableCommitCoordinatorClientOpt.isEmpty &&
+           !currentSnapshotInDeltaLog.isCatalogOwned)) {
         // If the last version in listing is same as the `unsafeVolatileSnapshot` in deltaLog and
         // if that snapshot doesn't have a commit-coordinator => this table was not a
         // coordinated-commits table at the time of listing. This is because the commit which
