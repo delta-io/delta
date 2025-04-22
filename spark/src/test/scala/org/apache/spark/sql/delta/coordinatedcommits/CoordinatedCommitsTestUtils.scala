@@ -80,6 +80,7 @@ trait CatalogOwnedTestBaseSuite
   with DeltaTestUtilsBase
   with CommitCoordinatorUtilBase
   with SharedSparkSession {
+
   val defaultCatalogOwnedFeatureEnabledKey =
     TableFeatureProtocolUtils.defaultPropertyKey(CatalogOwnedTableFeature)
 
@@ -166,7 +167,6 @@ trait CatalogOwnedTestBaseSuite
 trait CoordinatedCommitsTestUtils
   extends DeltaTestUtilsBase
   with CommitCoordinatorUtilBase { self: SparkFunSuite with SharedSparkSession =>
-
 
   protected val defaultCommitsCoordinatorName = "tracking-in-memory"
   protected val defaultCommitsCoordinatorConf = Map("randomConf" -> "randomConfValue")
