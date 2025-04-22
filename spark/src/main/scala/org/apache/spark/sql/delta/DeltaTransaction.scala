@@ -23,6 +23,7 @@ import org.apache.spark.sql.delta.actions.{AddFile, CommitInfo, Metadata, Protoc
 import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.{CatalogStatistics, CatalogTable}
 
 /**
