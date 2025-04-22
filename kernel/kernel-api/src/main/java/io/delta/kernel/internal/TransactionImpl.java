@@ -662,17 +662,15 @@ public class TransactionImpl implements Transaction {
       }
 
       generateClusteringDomainMetadataIfNeeded();
-
-      if (domainsToAdd.isEmpty() && domainsToRemove.isEmpty()) {
-        // If no domain metadatas are added or removed, return an empty list. This is to avoid
-        // unnecessary loading of the domain metadatas from the snapshot (which is an expensive
-        // operation).
-        computedMetadatas = Optional.of(Collections.emptyList());
-        return Collections.emptyList();
-      }
-
       // Add all domains added in the transaction
       List<DomainMetadata> result = new ArrayList<>(domainsToAdd.values());
+
+      if (domainsToRemove.isEmpty()) {
+        // If no domain metadatas are removed we don't need to load the existing domain metadatas
+        // from the snapshot (which is an expensive operation)
+        computedMetadatas = Optional.of(result);
+        return result;
+      }
 
       // Generate the tombstones for removed domains
       Map<String, DomainMetadata> snapshotDomainMetadataMap = readSnapshot.getDomainMetadataMap();
