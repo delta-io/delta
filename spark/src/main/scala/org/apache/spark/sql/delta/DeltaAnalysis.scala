@@ -157,7 +157,6 @@ class DeltaAnalysis(session: SparkSession)
           // used on the source delta table, then the corresponding fields would be set for the
           // sourceTable and needs to be removed from the targetTable's configuration. The fields
           // will then be set in the targetTable's configuration internally after.
-          //
           // Coordinated commits/Catalog-Owned configurations from the source delta table should
           // also be left out, since CREATE LIKE is similar to CLONE, and we do not copy the
           // commit coordinator from the source table.

@@ -16,7 +16,6 @@
 
 package org.apache.spark.sql.delta.coordinatedcommits
 
-import java.util.Locale
 import java.util.Optional
 
 import scala.collection.JavaConverters._

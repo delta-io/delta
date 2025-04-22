@@ -430,17 +430,21 @@ abstract class CloneTableBase(
     // the table property overrides as table features set by it won't be in the transaction
     // metadata anymore.
     val validatedConfigurations = DeltaConfigs.validateConfigurations(tablePropertyOverrides)
-    val configWithOverrides = txn.metadata.configuration ++ validatedConfigurations ++
-      (if (CatalogOwnedTableUtils.defaultCatalogOwnedEnabled(spark) &&
-           !tableExists(txn.snapshot)) {
-        // Append [[CatalogOwnedTableFeature]] to the `configWithOverrides` if table
+    // For CREATE CLONE, check the default spark configuration for Catalog-Owned.
+    val catalogOwnedEnabledByDefaultConf =
+      if (CatalogOwnedTableUtils.defaultCatalogOwnedEnabled(spark)
+        && !tableExists(txn.snapshot)) {
+        // Append [[CatalogOwnedTableFeature]] to the `configWithOverrides` below if table
         // does not exist, to ensure the final target protocol contains CatalogOwned
-        // if enabled by default. We need this because CatalogOwned is enabled through
-        // single protocol without auxiliary metadata.
+        // if enabled by default.
+        // Note: We need this because CatalogOwned is enabled through single protocol
+        //       without auxiliary metadata.
         Map(s"delta.feature.${CatalogOwnedTableFeature.name}" -> "supported")
       } else {
         Map.empty
-      })
+      }
+    val configWithOverrides = txn.metadata.configuration ++ validatedConfigurations ++
+      catalogOwnedEnabledByDefaultConf
     val metadataWithOverrides = txn.metadata.copy(configuration = configWithOverrides)
     var (minReaderVersion, minWriterVersion, enabledFeatures) =
       Protocol.minProtocolComponentsFromMetadata(spark, metadataWithOverrides)

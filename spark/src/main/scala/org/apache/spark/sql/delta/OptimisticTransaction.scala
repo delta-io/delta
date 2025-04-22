@@ -560,19 +560,6 @@ trait OptimisticTransactionImpl extends DeltaTransaction
       // (as in CLONE and SHALLOW CLONE).
       if (!ignoreDefaultProperties) {
         newMetadataTmp = withGlobalConfigDefaults(newMetadataTmp)
-        if (readVersion != -1) {
-          // `readVersion != -1` indicates the table already exists, which is the case
-          // for REPLACE command.
-          // Ignore the Catalog-Owned configuration if we are replacing an existing table.
-          // This remove the default spark config for Catalog-Owned if being added above.
-          // Users are *NOT* allowed to create a Catalog-Owned table with REPLACE TABLE
-          // so it's fine to filter it out here.
-          val oldMetadataTmpConf = newMetadataTmp.configuration
-          newMetadataTmp = newMetadataTmp.copy(
-            configuration = oldMetadataTmpConf.filter { case (k, _) =>
-              k != s"delta.feature.${CatalogOwnedTableFeature.name}"
-            })
-        }
       }
       isCreatingNewTable = true
     }
@@ -819,6 +806,16 @@ trait OptimisticTransactionImpl extends DeltaTransaction
       CoordinatedCommitsUtils.getExplicitICTConfigurations(snapshot.metadata.configuration)
     // Update the metadata.
     updateMetadataForNewTable(metadata)
+    // Ignore the [[CatalogOwnedTableFeature]] if we are replacing an existing table.
+    // This remove the default spark config for Catalog-Owned if being added above.
+    // Users are *NOT* allowed to create a Catalog-Owned table with REPLACE TABLE
+    // so it's fine to filter it out here.
+    newProtocol = newProtocol match {
+      case Some(protocol) =>
+        Some(CatalogOwnedTableUtils.filterOutCatalogOwnedTableFeature(protocol))
+      case None =>
+        newProtocol
+    }
     // Now the `txn.metadata` contains all the command-specified properties and all the default
     // properties. The latter might still contain Coordinated Commits configurations, so we need
     // to remove them and retain the Coordinated Commits configurations from the existing table.
