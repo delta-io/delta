@@ -27,6 +27,7 @@ import io.delta.kernel.utils.FileStatus;
 public class DeltaLogFile {
   public enum LogType {
     COMMIT,
+    LOG_COMPACTION,
     CHECKPOINT_CLASSIC,
     MULTIPART_CHECKPOINT,
     V2_CHECKPOINT_MANIFEST,
@@ -40,6 +41,9 @@ public class DeltaLogFile {
     if (FileNames.isCommitFile(fileName)) {
       logType = LogType.COMMIT;
       version = FileNames.deltaVersion(fileName);
+    } else if (FileNames.isLogCompactionFile(fileName)) {
+      logType = LogType.LOG_COMPACTION;
+      version = FileNames.logCompactionVersions(fileName)._1;
     } else if (FileNames.isClassicCheckpointFile(fileName)) {
       logType = LogType.CHECKPOINT_CLASSIC;
       version = FileNames.checkpointVersion(fileName);

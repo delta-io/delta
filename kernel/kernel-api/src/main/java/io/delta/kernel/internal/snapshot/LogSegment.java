@@ -38,7 +38,8 @@ public class LogSegment {
   //////////////////////////////////
 
   public static LogSegment empty(Path logPath) {
-    return new LogSegment(logPath, -1, Collections.emptyList(), Collections.emptyList(), -1);
+    return new LogSegment(
+        logPath, -1, Collections.emptyList(), Collections.emptyList(), Collections.emptyList(), -1);
   }
 
   //////////////////////////////////
@@ -48,6 +49,7 @@ public class LogSegment {
   private final Path logPath;
   private final long version;
   private final List<FileStatus> deltas;
+  private final List<FileStatus> compactions;
   private final List<FileStatus> checkpoints;
   private final Optional<Long> checkpointVersionOpt;
   private final long lastCommitTimestamp;
@@ -74,6 +76,8 @@ public class LogSegment {
    * @param logPath The path to the _delta_log directory
    * @param version The Snapshot version to generate
    * @param deltas The delta commit files (.json) to read
+   * @param compactions Any found log compactions files that can be used in place of some or all of
+   *     the deltas
    * @param checkpoints The checkpoint file(s) to read
    * @param lastCommitTimestamp The "unadjusted" timestamp of the last commit within this segment.
    *     By unadjusted, we mean that the commit timestamps may not necessarily be monotonically
@@ -83,6 +87,7 @@ public class LogSegment {
       Path logPath,
       long version,
       List<FileStatus> deltas,
+      List<FileStatus> compactions,
       List<FileStatus> checkpoints,
       long lastCommitTimestamp) {
 
@@ -92,10 +97,14 @@ public class LogSegment {
 
     requireNonNull(logPath, "logPath is null");
     requireNonNull(deltas, "deltas is null");
+    requireNonNull(compactions, "compactions is null");
     requireNonNull(checkpoints, "checkpoints is null");
     checkArgument(
         deltas.stream().allMatch(fs -> FileNames.isCommitFile(fs.getPath())),
         "deltas must all be actual delta (commit) files");
+    checkArgument(
+        compactions.stream().allMatch(fs -> FileNames.isLogCompactionFile(fs.getPath())),
+        "compactions must all be actual log compaction files");
     checkArgument(
         checkpoints.stream().allMatch(fs -> FileNames.isCheckpointFile(fs.getPath())),
         "checkpoints must all be actual checkpoint files");
@@ -110,6 +119,8 @@ public class LogSegment {
             .map(fs -> FileNames.checkpointVersion(new Path(fs.getPath())))
             .allMatch(v -> checkpointVersionOpt.get().equals(v)),
         "All checkpoint files must have the same version");
+
+    // todo: ensure compactions don't overlap
 
     if (version != -1) {
       checkArgument(!deltas.isEmpty() || !checkpoints.isEmpty(), "No files to read");
@@ -160,6 +171,7 @@ public class LogSegment {
     this.logPath = logPath;
     this.version = version;
     this.deltas = deltas;
+    this.compactions = compactions;
     this.checkpoints = checkpoints;
     this.lastCommitTimestamp = lastCommitTimestamp;
 
