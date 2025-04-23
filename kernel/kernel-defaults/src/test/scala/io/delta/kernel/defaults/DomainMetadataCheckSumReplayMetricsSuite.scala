@@ -46,11 +46,11 @@ class DomainMetadataCheckSumReplayMetricsSuite extends ChecksumLogReplayMetricsT
       expChecksumReadSet = expChecksumReadSet)
   }
 
-  // Domain metadata loads double the parquet read sets because:
+  // Domain metadata requires reading checkpoint files twice:
   // 1. First read happens during loading Protocol & Metadata in snapshot construction.
   // 2. Second read happens specifically for domain metadata loading.
-  override protected def getExpectedParquetReadSetSizes(sizes: Seq[Long]): Seq[Long] = {
-    // we read the checkpoint twice: once for the P&M and once for domain metadata
+  override protected def getExpectedCheckpointReadSetSizes(sizes: Seq[Long]): Seq[Long] = {
+    // we read each checkpoint file twice: once for P&M and once for domain metadata
     sizes.flatMap(size => Seq(size, size))
   }
 }

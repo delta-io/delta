@@ -65,8 +65,8 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite {
       expChecksumReadSet: Seq[Long],
       version: Long = -1): Unit
 
-  // Method to adjust parquet read set sizes for different implementations
-  protected def getExpectedParquetReadSetSizes(sizes: Seq[Long]): Seq[Long] = sizes
+  // Method to adjust checkpoint file read set sizes for different implementations
+  protected def getExpectedCheckpointReadSetSizes(sizes: Seq[Long]): Seq[Long] = sizes
 
   ///////////
   // Tests //
@@ -118,7 +118,7 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite {
         // Attempt to read 10.crc fails and read 10.checkpoint.parquet succeeds.
         expJsonVersionsRead = Nil,
         expParquetVersionsRead = Seq(10),
-        expParquetReadSetSizes = getExpectedParquetReadSetSizes(Seq(1)),
+        expParquetReadSetSizes = getExpectedCheckpointReadSetSizes(Seq(1)),
         expChecksumReadSet = Seq(10),
         version = 10)
     }
@@ -156,7 +156,7 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite {
         engine,
         expJsonVersionsRead = Seq(11),
         expParquetVersionsRead = Seq(10),
-        expParquetReadSetSizes = getExpectedParquetReadSetSizes(Seq(1)),
+        expParquetReadSetSizes = getExpectedCheckpointReadSetSizes(Seq(1)),
         expChecksumReadSet = Seq(11),
         version = 11)
     }

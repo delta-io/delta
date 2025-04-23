@@ -371,7 +371,8 @@ public class LogReplay {
       return currentCrcInfo.get().getDomainMetadata().get().stream()
           .collect(Collectors.toMap(DomainMetadata::getDomain, Function.identity()));
     }
-    // TODO: Incrementally load domain metadata from CRC when current CRC is not available.
+    // TODO https://github.com/delta-io/delta/issues/4454: Incrementally load domain metadata from
+    // CRC when current CRC is not available.
     // Fall back to loading from the log
     logger.debug("No domain metadata available in CRC info, loading from log");
     return loadDomainMetadataMapFromLog(engine);

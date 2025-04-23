@@ -139,7 +139,7 @@ class PandMCheckSumLogReplayMetricsSuite extends ChecksumLogReplayMetricsTestBas
         // 10.checkpoint found, so use it and combined with 11.crc
         expJsonVersionsRead = Seq(11),
         expParquetVersionsRead = Seq(10),
-        expParquetReadSetSizes = getExpectedParquetReadSetSizes(Seq(1)),
+        expParquetReadSetSizes = getExpectedCheckpointReadSetSizes(Seq(1)),
         expChecksumReadSet = Seq(11))
 
       loadSnapshotFieldsCheckMetrics(
