@@ -17,13 +17,12 @@
 package io.delta.kernel.defaults
 import java.io.File
 import java.nio.file.Files
+
 import io.delta.kernel.Table
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.FileNames
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
-import java.util.Optional
-import scala.collection.mutable.ArrayBuffer
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 /**
  * Suite to test the engine metrics when loading Protocol and Metadata through checksum files.
@@ -49,13 +48,13 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite {
 
   // Abstract method to be implemented by concrete test classes
   protected def loadSnapshotFieldsCheckMetrics(
-                                                table: Table,
-                                                engine: MetricsEngine,
-                                                expJsonVersionsRead: Seq[Long],
-                                                expParquetVersionsRead: Seq[Long],
-                                                expParquetReadSetSizes: Seq[Long],
-                                                expChecksumReadSet: Seq[Long],
-                                                version: Long = -1): Unit
+      table: Table,
+      engine: MetricsEngine,
+      expJsonVersionsRead: Seq[Long],
+      expParquetVersionsRead: Seq[Long],
+      expParquetReadSetSizes: Seq[Long],
+      expChecksumReadSet: Seq[Long],
+      version: Long = -1): Unit
 
   // Method to adjust parquet read set sizes for different implementations
   protected def getExpectedParquetReadSetSizes(sizes: Seq[Long]): Seq[Long]
@@ -185,13 +184,13 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite {
  */
 class PandMCheckSumLogReplayMetricsSuite extends ChecksumLogReplayMetricsTestBase {
   override protected def loadSnapshotFieldsCheckMetrics(
-                                                         table: Table,
-                                                         engine: MetricsEngine,
-                                                         expJsonVersionsRead: Seq[Long],
-                                                         expParquetVersionsRead: Seq[Long],
-                                                         expParquetReadSetSizes: Seq[Long],
-                                                         expChecksumReadSet: Seq[Long],
-                                                         version: Long = -1): Unit = {
+      table: Table,
+      engine: MetricsEngine,
+      expJsonVersionsRead: Seq[Long],
+      expParquetVersionsRead: Seq[Long],
+      expParquetReadSetSizes: Seq[Long],
+      expChecksumReadSet: Seq[Long],
+      version: Long = -1): Unit = {
 
     loadPandMCheckMetrics(
       table,
@@ -362,13 +361,13 @@ class PandMCheckSumLogReplayMetricsSuite extends ChecksumLogReplayMetricsTestBas
  */
 class DomainMetadataCheckSumReplayMetricsSuite extends ChecksumLogReplayMetricsTestBase {
   override protected def loadSnapshotFieldsCheckMetrics(
-                                                         table: Table,
-                                                         engine: MetricsEngine,
-                                                         expJsonVersionsRead: Seq[Long],
-                                                         expParquetVersionsRead: Seq[Long],
-                                                         expParquetReadSetSizes: Seq[Long],
-                                                         expChecksumReadSet: Seq[Long],
-                                                         version: Long = -1): Unit = {
+      table: Table,
+      engine: MetricsEngine,
+      expJsonVersionsRead: Seq[Long],
+      expParquetVersionsRead: Seq[Long],
+      expParquetReadSetSizes: Seq[Long],
+      expChecksumReadSet: Seq[Long],
+      version: Long = -1): Unit = {
 
     engine.resetMetrics()
 
@@ -391,6 +390,3 @@ class DomainMetadataCheckSumReplayMetricsSuite extends ChecksumLogReplayMetricsT
     sizes.flatMap(size => Seq(size, size))
   }
 }
-
-
-
