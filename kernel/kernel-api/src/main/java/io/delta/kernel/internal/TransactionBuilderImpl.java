@@ -199,12 +199,15 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   }
 
   /**
-   * TODO docs!!
+   * Returns a built {@link Transaction} for this transaction builder (with the input provided by
+   * the user) given the provided parameters. This includes validation and updates as defined in the
+   * builder.
    *
-   * @param engine
-   * @param isNewTableDef
-   * @param existingSnapshot
-   * @return
+   * @param isNewTableDef whether we are defining a new table definition or not. This determines
+   *     what metadata to commit in the returned transaction, and what operations to allow or block.
+   * @param existingSnapshot the existing latest snapshot of the table (or empty for a new table).
+   *     This is used to validate that we can write to the table, and to get the protocol/metadata
+   *     when isNewTableDef=false.
    */
   protected TransactionImpl buildTransactionInternal(
       Engine engine, boolean isNewTableDef, Optional<SnapshotImpl> existingSnapshot) {
@@ -254,7 +257,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       Optional<Protocol> newProtocol = updatedProtocolAndMetadata._1;
       Optional<Metadata> newMetadata = updatedProtocolAndMetadata._2;
 
-      // TODO should we do the validation somewhere in previous fx and transform as part of
+      // TODO should we do the validation in validateTransactionInputs and transform as part of
       //  generating the domain in the txn?
       StructType updatedSchema = newMetadata.orElse(baseMetadata).getSchema();
       Optional<List<Column>> casePreservingClusteringColumnsOpt =
@@ -307,14 +310,13 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   }
 
   /**
-   * TODO docs
+   * Validates and makes any protocol or metadata updates as defined in this transaction builder.
    *
-   * @param engine
-   * @param baseMetadata
-   * @param baseProtocol
-   * @param isNewTableDef
-   * @param existingClusteringCols
-   * @return
+   * @param baseMetadata the starting metadata to update
+   * @param baseProtocol the starting protocol to update
+   * @param isNewTableDef whether we are defining a new table definition or not
+   * @param existingClusteringCols the existing clustering columns for the table (if it exists)
+   * @return an updated protocol and metadata if any updates are necessary
    */
   protected Tuple2<Optional<Protocol>, Optional<Metadata>> validateAndUpdateProtocolAndMetadata(
       Engine engine,
@@ -437,7 +439,12 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     return new Tuple2(newProtocol, newMetadata);
   }
 
-  // TODO docs
+  /**
+   * Validates that Kernel can write to the existing table with the latest snapshot as provided.
+   * This means (1) Kernel supports the reader and writer protocol of the table (2) if a transaction
+   * identifier has been provided in this txn builder, a concurrent write has not already committed
+   * this transaction.
+   */
   protected void validateWriteToExistingTable(Engine engine, SnapshotImpl snapshot) {
     // Validate the table has no features that Kernel doesn't yet support writing into it.
     TableFeatures.validateKernelCanWriteToTable(
@@ -453,7 +460,17 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         });
   }
 
-  // TODO docs
+  /**
+   * Validates the inputs to this transaction builder. This includes
+   *
+   * <ul>
+   *   <li>Partition columns are only set for a new table definition.
+   *   <li>Partition columns and clustering columns are not set at the same time.
+   *   <li>The provided schema is valid.
+   *   <li>The provided partition columns are valid.
+   *   <li>The provided table properties to set and unset do not overlap with each other.
+   * </ul>
+   */
   protected void validateTransactionInputs(Engine engine, boolean isNewTableDef) {
     String tablePath = table.getPath(engine);
     if (!isNewTableDef) {
@@ -487,7 +504,6 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     }
   }
 
-  // TODO docs updates
   /**
    * Validate that the change from oldMetadata to newMetadata is a valid change. For example, this
    * checks the following
@@ -496,6 +512,16 @@ public class TransactionBuilderImpl implements TransactionBuilder {
    *   <li>Column mapping mode can only go from none->name for existing table
    *   <li>icebergWriterCompatV1 cannot be enabled on existing tables (only supported upon table
    *       creation)
+   *   <li>Validates the universal format configs are valid.
+   *   <li>If there is schema evolution validates
+   *       <ul>
+   *         <li>column mapping is enabled
+   *         <li>column mapping mode is not changed in the same txn as schema change
+   *         <li>the new schema is a valid schema
+   *         <li>the schema change is a valid schema change
+   *         <li>the schema change is a valid schema change given the tables partition and
+   *             clustering columns
+   *       </ul>
    * </ul>
    */
   private void validateMetadataChange(
