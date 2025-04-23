@@ -21,6 +21,7 @@ import io.delta.kernel.Table
  * Suite to test the engine metrics when loading Domain Metadata through checksum files.
  */
 class DomainMetadataCheckSumReplayMetricsSuite extends ChecksumLogReplayMetricsTestBase {
+
   override protected def loadSnapshotFieldsCheckMetrics(
       table: Table,
       engine: MetricsEngine,
