@@ -26,6 +26,11 @@ import io.delta.kernel.internal.util.FileNames
  * Suite to test the engine metrics when loading Protocol and Metadata through checksum files.
  */
 class PandMCheckSumLogReplayMetricsSuite extends ChecksumLogReplayMetricsTestBase {
+
+  /////////////////////////
+  // Test Helper Methods //
+  /////////////////////////
+
   override protected def loadSnapshotFieldsCheckMetrics(
       table: Table,
       engine: MetricsEngine,
@@ -45,8 +50,9 @@ class PandMCheckSumLogReplayMetricsSuite extends ChecksumLogReplayMetricsTestBas
       version)
   }
 
-  // P&M loads don't double the parquet read sets
-  override protected def getExpectedParquetReadSetSizes(sizes: Seq[Long]): Seq[Long] = sizes
+  //////////
+  // Test //
+  //////////
 
   test("snapshot hint found for read version and crc found at read version => use hint") {
     withTempDirAndMetricsEngine { (path, engine) =>

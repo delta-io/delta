@@ -66,7 +66,7 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite {
       version: Long = -1): Unit
 
   // Method to adjust parquet read set sizes for different implementations
-  protected def getExpectedParquetReadSetSizes(sizes: Seq[Long]): Seq[Long]
+  protected def getExpectedParquetReadSetSizes(sizes: Seq[Long]): Seq[Long] = sizes
 
   ///////////
   // Tests //
