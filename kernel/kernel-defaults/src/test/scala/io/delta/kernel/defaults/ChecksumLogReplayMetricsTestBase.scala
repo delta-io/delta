@@ -40,18 +40,22 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite {
   /////////////////////////
 
   /**
-   * Creates a test table with checksum files.
-   * Produces a table with versions 0 to 11 including .json files, .crc files,
-   * and a checkpoint at version 10.
+   * Creates a temporary directory with a test engine and builds a table with CRC files.
+   * Returns the created table and engine for testing.
    *
-   * @param path Path where the table should be created
+   * @param f code to run with the table and engine
    */
-  def buildTableWithCrc(path: String): Unit = {
-    withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true") {
-      spark.sql(
-        s"CREATE TABLE delta.`$path` USING DELTA AS " +
-          s"SELECT 0L as id")
-      for (_ <- 0 to 10) { appendCommit(path) }
+  protected def withTableWithCrc(f: (Table, String, MetricsEngine) => Any): Unit = {
+    withTempDirAndMetricsEngine { (path, engine) =>
+      // Produce a test table with 0 to 11 .json, 0 to 11.crc, 10.checkpoint.parquet
+      withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true") {
+        spark.sql(
+          s"CREATE TABLE delta.`$path` USING DELTA AS " +
+            s"SELECT 0L as id")
+        for (_ <- 0 to 10) { appendCommit(path) }
+      }
+      val table = Table.forPath(engine, path)
+      f(table, path, engine)
     }
   }
 
@@ -75,11 +79,7 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite {
   Seq(-1L, 0L, 3L, 4L).foreach { readVersion => // -1 means latest version
     test(
       s"checksum found at the read version: ${if (readVersion == -1) "latest" else readVersion}") {
-      withTempDirAndMetricsEngine { (path, engine) =>
-        // Produce a test table with 0 to 11 .json, 0 to 11.crc, 10.checkpoint.parquet
-        buildTableWithCrc(path)
-        val table = Table.forPath(engine, path)
-
+      withTableWithCrc { (table, _, engine) =>
         loadSnapshotFieldsCheckMetrics(
           table,
           engine,
@@ -95,11 +95,9 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite {
 
   test(
     "checksum not found at read version and checkpoint exists at read version => use checkpoint") {
-    withTempDirAndMetricsEngine { (path, engine) =>
-      // Produce a test table with 0 to 11 .json, 0 to 11.crc, 10.checkpoint.parquet
-      buildTableWithCrc(path)
-      val checkpointVersion = 10;
-      val logPath = f"$path/_delta_log"
+    withTableWithCrc { (table, tablePath, engine) =>
+      val checkpointVersion = 10
+      val logPath = s"$tablePath/_delta_log"
       assert(
         Files.exists(
           new File(
@@ -109,8 +107,6 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite {
       assert(
         Files.deleteIfExists(
           new File(FileNames.checksumFile(new Path(logPath), checkpointVersion).toString).toPath))
-
-      val table = Table.forPath(engine, path)
 
       loadSnapshotFieldsCheckMetrics(
         table,
@@ -128,11 +124,9 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite {
   test(
     "checksum missing read version and the previous version, " +
       "checkpoint exists the read version the previous version => use checkpoint") {
-    withTempDirAndMetricsEngine { (path, engine) =>
-      // Produce a test table with 0 to 11 .json, 0 to 11.crc, 10.checkpoint.parquet
-      buildTableWithCrc(path)
-      val checkpointVersion = 10;
-      val logPath = f"$path/_delta_log"
+    withTableWithCrc { (table, tablePath, engine) =>
+      val checkpointVersion = 10
+      val logPath = s"$tablePath/_delta_log"
       assert(
         Files
           .exists(
@@ -148,8 +142,6 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite {
           new File(
             FileNames.checksumFile(new Path(logPath), checkpointVersion + 1).toString).toPath))
 
-      val table = Table.forPath(engine, path)
-
       // 11.crc, 10.crc missing, 10.checkpoint.parquet exists.
       // Attempt to read 11.crc fails and read 10.checkpoint.parquet and 11.json succeeds.
       loadSnapshotFieldsCheckMetrics(
@@ -164,18 +156,15 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite {
   }
 
   test("crc found at read version and checkpoint at read version => use checksum") {
-    withTempDirAndMetricsEngine { (path, engine) =>
-      // Produce a test table with 0 to 11 .json, 0 to 11.crc, 10.checkpoint.parquet
-      buildTableWithCrc(path)
-      val checkpointVersion = 10;
-      val logPath = new Path(s"$path/_delta_log")
+    withTableWithCrc { (table, tablePath, engine) =>
+      val checkpointVersion = 10
+      val logPath = new Path(s"$tablePath/_delta_log")
       assert(
         Files.exists(
           new File(
             FileNames
               .checkpointFileSingular(logPath, checkpointVersion)
               .toString).toPath))
-      val table = Table.forPath(engine, path)
 
       loadSnapshotFieldsCheckMetrics(
         table,
