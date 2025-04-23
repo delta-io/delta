@@ -18,8 +18,10 @@ package io.delta.kernel.internal.checksum;
 import static io.delta.kernel.internal.actions.SingleAction.CHECKPOINT_SCHEMA;
 import static io.delta.kernel.internal.util.Preconditions.checkState;
 
+import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.exceptions.ChecksumAlreadyExistsException;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.DomainMetadata;
@@ -35,10 +37,23 @@ import java.util.concurrent.atomic.LongAdder;
 import java.util.stream.Collectors;
 
 public class ChecksumUtils {
+
+  private ChecksumUtils() {}
+
+  // Index of ADD/REMOVE/DOMAIN_METADATA within checkpoint schema.
+  private static final int ADD_INDEX = CHECKPOINT_SCHEMA.indexOf("add");
+  private static final int REMOVE_INDEX = CHECKPOINT_SCHEMA.indexOf("remove");
+  private static final int DOMAIN_METADATA_INDEX = CHECKPOINT_SCHEMA.indexOf("domainMetadata");
+
+  // Index of size field within add AddFile
+  private static final int ADD_SIZE_INDEX = AddFile.FULL_SCHEMA.indexOf("size");
+
   /**
-   * Computes the state of a Delta table and writes a checksum file based on the provided snapshot.
+   * Computes the state of a Delta table and writes a checksum file for the provided snapshot's
+   * version. If a checksum file already exists for this version, this method returns without any
+   * changes.
    *
-   * <p>This method iterates through the table's data using a CreateCheckpointIterator to calculate:
+   * <p>The checksum file contains table statistics including:
    *
    * <ul>
    *   <li>Total table size in bytes
@@ -47,20 +62,18 @@ public class ChecksumUtils {
    *   <li>Domain metadata information
    * </ul>
    *
-   * <p>After computing these statistics, it writes a checksum file to the table's log path.
-   *
-   * <p>Note: For very large tables, this operation may be expensive as in worst case, it requires
-   * scanning all log files until the given version.
+   * <p>Note: For very large tables, this operation may be expensive as it requires scanning the
+   * table state to compute statistics.
    *
    * @param engine The Engine instance used to access the underlying storage
-   * @param snapshot The SnapshotImpl instance representing the current state of the table
+   * @param snapshot The SnapshotImpl instance representing the table at a specific version
    * @throws IOException If an I/O error occurs during checksum computation or writing
-   * @throws ChecksumAlreadyExistsException If a checksum already exists for the snapshot version
    */
   public static void computeStateAndWriteChecksum(Engine engine, SnapshotImpl snapshot)
       throws IOException {
+    // If checksum already exists, nothing to do
     if (snapshot.getCurrentCrcInfo().isPresent()) {
-      throw new ChecksumAlreadyExistsException(snapshot.getVersion());
+      return;
     }
 
     // TODO: Optimize using last available crc after https://github.com/delta-io/delta/pull/4112
@@ -70,59 +83,75 @@ public class ChecksumUtils {
     Map<String, DomainMetadata> domainMetadataMap = new HashMap<>();
     ChecksumWriter checksumWriter = new ChecksumWriter(snapshot.getLogPath());
 
-    // snapshot.getLogSegment() could return last available CRC.
-    // Set minFileRetentionTimestampMillis to infinite future to skip all removed files.
     try (CreateCheckpointIterator checkpointIterator =
         new CreateCheckpointIterator(
             engine,
             snapshot.getLogSegment(),
+            // Set minFileRetentionTimestampMillis to infinite future to skip all removed files
             Instant.ofEpochMilli(Long.MAX_VALUE).toEpochMilli())) {
-      checkpointIterator.forEachRemaining(
-          batch ->
-              batch
-                  .getRows()
-                  .forEachRemaining(
-                      row -> {
-                        checkState(
-                            row.isNullAt(CHECKPOINT_SCHEMA.indexOf("remove")),
-                            "unexpected remove row found when setting "
-                                + "minFileRetentionTimestampMillis to infinite future");
-                        if (!row.isNullAt(CHECKPOINT_SCHEMA.indexOf("add"))) {
-                          long addFileSize =
-                              new AddFile(row.getStruct(CHECKPOINT_SCHEMA.indexOf("add")))
-                                  .getSize();
-                          tableSizeByte.add(addFileSize);
-                          fileSizeHistogram.insert(addFileSize);
-                          fileCount.increment();
-                        }
-                        if (!row.isNullAt(CHECKPOINT_SCHEMA.indexOf("domainMetadata"))) {
-                          DomainMetadata domainMetadata =
-                              DomainMetadata.fromRow(
-                                  row.getStruct(CHECKPOINT_SCHEMA.indexOf("domainMetadata")));
-                          if (!domainMetadataMap.containsKey(domainMetadata.getDomain())) {
-                            domainMetadataMap.put(domainMetadata.getDomain(), domainMetadata);
-                          }
-                        }
-                      }));
-      checksumWriter.writeCheckSum(
-          engine,
-          new CRCInfo(
-              snapshot.getVersion(),
-              snapshot.getMetadata(),
-              snapshot.getProtocol(),
-              tableSizeByte.longValue(),
-              fileCount.longValue(),
-              Optional.empty() /* txnId */,
-              Optional.of(
-                  domainMetadataMap.values().stream()
-                      .filter(domainMetadata -> !domainMetadata.isRemoved())
-                      .collect(Collectors.toSet())),
-              Optional.of(fileSizeHistogram)));
 
-    } catch (FileAlreadyExistsException fileAlreadyExistsException) {
-      throw new ChecksumAlreadyExistsException(snapshot.getVersion());
+      while (checkpointIterator.hasNext()) {
+        FilteredColumnarBatch filteredBatch = checkpointIterator.next();
+        ColumnarBatch batch = filteredBatch.getData();
+        final int rowCount = batch.getSize();
+
+        // Step 1: Ensure there are no remove records
+        ColumnVector removeVector = batch.getColumnVector(REMOVE_INDEX);
+        for (int i = 0; i < rowCount; i++) {
+          checkState(
+              removeVector.isNullAt(i),
+              "unexpected remove row found when "
+                  + "setting minFileRetentionTimestampMillis to infinite future");
+        }
+
+        // Step 2: Process add file records - direct columnar access for better performance
+        ColumnVector addVector = batch.getColumnVector(ADD_INDEX);
+        for (int i = 0; i < rowCount; i++) {
+          if (!addVector.isNullAt(i)) {
+            // Direct access to size field in add file record for maximum performance
+            ColumnVector sizeVector = addVector.getChild(ADD_SIZE_INDEX);
+            long fileSize = sizeVector.getLong(i);
+
+            tableSizeByte.add(fileSize);
+            fileSizeHistogram.insert(fileSize);
+            fileCount.increment();
+          }
+        }
+
+        // Step 3: Process domain metadata records
+        ColumnVector domainMetadataVector = batch.getColumnVector(DOMAIN_METADATA_INDEX);
+        for (int i = 0; i < rowCount; i++) {
+          if (!domainMetadataVector.isNullAt(i)) {
+            DomainMetadata domainMetadata =
+                DomainMetadata.fromColumnVector(domainMetadataVector, i);
+            if (domainMetadata != null
+                && !domainMetadataMap.containsKey(domainMetadata.getDomain())) {
+              domainMetadataMap.put(domainMetadata.getDomain(), domainMetadata);
+            }
+          }
+        }
+      }
+
+      // Write the checksum file
+      try {
+        checksumWriter.writeCheckSum(
+            engine,
+            new CRCInfo(
+                snapshot.getVersion(),
+                snapshot.getMetadata(),
+                snapshot.getProtocol(),
+                tableSizeByte.longValue(),
+                fileCount.longValue(),
+                Optional.empty() /* txnId */,
+                Optional.of(
+                    domainMetadataMap.values().stream()
+                        .filter(domainMetadata -> !domainMetadata.isRemoved())
+                        .collect(Collectors.toSet())),
+                Optional.of(fileSizeHistogram)));
+      } catch (FileAlreadyExistsException e) {
+        // checksum file have been created while we were computing it.
+        // This is fine - the checksum now exists, which was our goal.
+      }
     }
   }
-
-  private ChecksumUtils() {}
 }

@@ -18,7 +18,6 @@ import scala.collection.immutable.Seq
 
 import io.delta.kernel.Table
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.exceptions.ChecksumAlreadyExistsException
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.SnapshotImpl
 import io.delta.kernel.internal.checksum.ChecksumUtils
@@ -58,19 +57,21 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase {
     }
   }
 
-  test("Create checksum fails for checksum already exists") {
+  test("Create checksum is idempotent") {
     withTempDirAndEngine { (tablePath, engine) =>
       initialTestTable(tablePath, engine)
 
       val snapshot = Table.forPath(
         engine,
         tablePath).getSnapshotAsOfVersion(engine, 0).asInstanceOf[SnapshotImpl]
-      ChecksumUtils.computeStateAndWriteChecksum(engine, snapshot)
 
-      val exception = intercept[ChecksumAlreadyExistsException] {
-        ChecksumUtils.computeStateAndWriteChecksum(engine, snapshot)
-      }
-      assert(exception.getMessage.contains("checksum for given version 0 already exists"))
+      // First call should create the checksum file
+      ChecksumUtils.computeStateAndWriteChecksum(engine, snapshot)
+      verifyChecksumForSnapshot(snapshot)
+
+      // Second call should be a no-op (no exception thrown)
+      ChecksumUtils.computeStateAndWriteChecksum(engine, snapshot)
+      verifyChecksumForSnapshot(snapshot)
     }
   }
 }

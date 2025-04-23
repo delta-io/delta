@@ -18,7 +18,6 @@ package io.delta.kernel;
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.CheckpointAlreadyExistsException;
-import io.delta.kernel.exceptions.ChecksumAlreadyExistsException;
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.TableImpl;
@@ -146,18 +145,17 @@ public interface Table {
       throws TableNotFoundException, CheckpointAlreadyExistsException, IOException;
 
   /**
-   * Create checksum file for the table at given version.
+   * Computes and writes a checksum file for the table at given version. If a checksum file already
+   * exists, this method does nothing.
    *
-   * <p>Note: For very large tables, this operation may be expensive as in worst case, it requires
-   * scanning all log files until the given version.
+   * <p>Note: For very large tables, this operation may be expensive as it requires scanning the log
+   * to compute table statistics.
    *
    * @param engine {@link Engine} instance to use.
-   * @param version Version to generate checksum file.
+   * @param version Version to generate checksum file for.
    * @throws TableNotFoundException if the table is not found
-   * @throws ChecksumAlreadyExistsException if a checksum already exists at the given version
    * @throws IOException for any I/O error.
    * @since 3.4.0
    */
-  void checksum(Engine engine, long version)
-      throws TableNotFoundException, ChecksumAlreadyExistsException, IOException;
+  void checksum(Engine engine, long version) throws TableNotFoundException, IOException;
 }

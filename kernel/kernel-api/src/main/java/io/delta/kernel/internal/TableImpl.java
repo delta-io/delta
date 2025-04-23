@@ -22,7 +22,6 @@ import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.CheckpointAlreadyExistsException;
-import io.delta.kernel.exceptions.ChecksumAlreadyExistsException;
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.actions.Protocol;
@@ -142,8 +141,7 @@ public class TableImpl implements Table {
   }
 
   @Override
-  public void checksum(Engine engine, long version)
-      throws TableNotFoundException, ChecksumAlreadyExistsException, IOException {
+  public void checksum(Engine engine, long version) throws TableNotFoundException, IOException {
     final SnapshotImpl snapshotToWriteCrcFile =
         (SnapshotImpl) getSnapshotAsOfVersion(engine, version);
     ChecksumUtils.computeStateAndWriteChecksum(engine, snapshotToWriteCrcFile);
