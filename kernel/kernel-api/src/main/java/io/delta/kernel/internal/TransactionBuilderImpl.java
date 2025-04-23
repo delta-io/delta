@@ -200,17 +200,16 @@ public class TransactionBuilderImpl implements TransactionBuilder {
 
   /**
    * TODO docs!!
+   *
    * @param engine
    * @param isNewTableDef
    * @param existingSnapshot
    * @return
    */
   protected TransactionImpl buildTransactionInternal(
-      Engine engine,
-      boolean isNewTableDef,
-      Optional<SnapshotImpl> existingSnapshot
-      ) {
-    checkArgument(isNewTableDef || existingSnapshot.isPresent(),
+      Engine engine, boolean isNewTableDef, Optional<SnapshotImpl> existingSnapshot) {
+    checkArgument(
+        isNewTableDef || existingSnapshot.isPresent(),
         "Existing snapshot must be provided if not defining a new table definition");
     Metadata baseMetadata;
     Protocol baseProtocol;
@@ -309,6 +308,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
 
   /**
    * TODO docs
+   *
    * @param engine
    * @param baseMetadata
    * @param baseProtocol
@@ -546,12 +546,12 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     }
   }
 
-  private SnapshotImpl getInitialEmptySnapshot(Engine engine, Metadata metadata, Protocol protocol) {
+  private SnapshotImpl getInitialEmptySnapshot(
+      Engine engine, Metadata metadata, Protocol protocol) {
     SnapshotQueryContext snapshotContext =
         SnapshotQueryContext.forVersionSnapshot(table.getPath(engine), -1);
     LogReplay logReplay =
-        getEmptyLogReplay(
-            engine, metadata, protocol, snapshotContext.getSnapshotMetrics());
+        getEmptyLogReplay(engine, metadata, protocol, snapshotContext.getSnapshotMetrics());
     return new InitialSnapshot(table.getDataPath(), logReplay, metadata, protocol, snapshotContext);
   }
 
