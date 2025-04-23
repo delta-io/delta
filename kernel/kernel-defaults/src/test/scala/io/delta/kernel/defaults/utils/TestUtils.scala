@@ -746,6 +746,12 @@ trait TestUtils extends Assertions with SQLHelper {
     resource.getFile
   }
 
+  def checkpointFileExistsForTable(tablePath: String, versions: Int): Boolean =
+    Files.exists(
+      new File(FileNames.checkpointFileSingular(
+        new Path(s"$tablePath/_delta_log"),
+        versions).toString).toPath)
+
   def deleteChecksumFileForTable(tablePath: String, versions: Seq[Int]): Unit =
     versions.foreach(v =>
       Files.deleteIfExists(

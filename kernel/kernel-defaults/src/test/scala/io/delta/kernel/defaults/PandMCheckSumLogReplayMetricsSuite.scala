@@ -15,8 +15,6 @@
  */
 
 package io.delta.kernel.defaults
-import java.io.File
-import java.nio.file.Files
 
 import io.delta.kernel.Table
 import io.delta.kernel.internal.fs.Path
@@ -70,13 +68,8 @@ class PandMCheckSumLogReplayMetricsSuite extends ChecksumLogReplayMetricsTestBas
 
   test("checksum not found at the read version, but uses snapshot hint lower bound") {
     withTableWithCrc { (table, tablePath, engine) =>
-      (3 to 6).foreach { version =>
-        assert(
-          Files.deleteIfExists(
-            new File(FileNames.checksumFile(
-              new Path(s"$tablePath/_delta_log"),
-              version).toString).toPath))
-      }
+      // Delete checksum files for versions 3 to 6
+      deleteChecksumFileForTable(tablePath, (3 to 6).toSeq)
 
       loadSnapshotFieldsCheckMetrics(
         table,
@@ -114,12 +107,7 @@ class PandMCheckSumLogReplayMetricsSuite extends ChecksumLogReplayMetricsTestBas
   // after incremental CRC loading for domain metadata implemented
   test("checksum not found at the read version, but found at a previous version") {
     withTableWithCrc { (table, tablePath, engine) =>
-      Seq(10L, 11L, 5L, 6L).foreach { version =>
-        assert(
-          Files.deleteIfExists(
-            new File(
-              FileNames.checksumFile(new Path(s"$tablePath/_delta_log"), version).toString).toPath))
-      }
+      deleteChecksumFileForTable(tablePath, Seq(10, 11, 5, 6))
 
       loadSnapshotFieldsCheckMetrics(
         table,
@@ -163,17 +151,8 @@ class PandMCheckSumLogReplayMetricsSuite extends ChecksumLogReplayMetricsTestBas
       "both checksum and checkpoint exist the read version the previous version => use checksum") {
     withTableWithCrc { (table, tablePath, engine) =>
       val checkpointVersion = 10
-      val logPath = new Path(s"$tablePath/_delta_log")
-      assert(
-        Files.exists(
-          new File(
-            FileNames
-              .checkpointFileSingular(logPath, checkpointVersion)
-              .toString).toPath))
-      assert(
-        Files.deleteIfExists(
-          new File(
-            FileNames.checksumFile(logPath, checkpointVersion + 1).toString).toPath))
+      assert(checkpointFileExistsForTable(tablePath, checkpointVersion))
+      deleteChecksumFileForTable(tablePath, Seq(checkpointVersion + 1))
 
       // 11.crc, missing, 10.crc and 10.checkpoint.parquet exist.
       // Attempt to read 11.crc fails and read 10.checkpoint.parquet and 11.json succeeds.

@@ -15,8 +15,6 @@
  */
 
 package io.delta.kernel.defaults
-import java.io.File
-import java.nio.file.Files
 
 import io.delta.kernel.Table
 import io.delta.kernel.internal.fs.Path
@@ -97,16 +95,8 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite {
     "checksum not found at read version and checkpoint exists at read version => use checkpoint") {
     withTableWithCrc { (table, tablePath, engine) =>
       val checkpointVersion = 10
-      val logPath = s"$tablePath/_delta_log"
-      assert(
-        Files.exists(
-          new File(
-            FileNames
-              .checkpointFileSingular(new Path(logPath), checkpointVersion)
-              .toString).toPath))
-      assert(
-        Files.deleteIfExists(
-          new File(FileNames.checksumFile(new Path(logPath), checkpointVersion).toString).toPath))
+      assert(checkpointFileExistsForTable(tablePath, checkpointVersion))
+      deleteChecksumFileForTable(tablePath, Seq(checkpointVersion))
 
       loadSnapshotFieldsCheckMetrics(
         table,
@@ -126,21 +116,8 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite {
       "checkpoint exists the read version the previous version => use checkpoint") {
     withTableWithCrc { (table, tablePath, engine) =>
       val checkpointVersion = 10
-      val logPath = s"$tablePath/_delta_log"
-      assert(
-        Files
-          .exists(
-            new File(
-              FileNames.checkpointFileSingular(
-                new Path(logPath),
-                checkpointVersion).toString).toPath))
-      assert(
-        Files.deleteIfExists(
-          new File(FileNames.checksumFile(new Path(logPath), checkpointVersion).toString).toPath))
-      assert(
-        Files.deleteIfExists(
-          new File(
-            FileNames.checksumFile(new Path(logPath), checkpointVersion + 1).toString).toPath))
+      assert(checkpointFileExistsForTable(tablePath, checkpointVersion))
+      deleteChecksumFileForTable(tablePath, Seq(checkpointVersion, checkpointVersion + 1))
 
       // 11.crc, 10.crc missing, 10.checkpoint.parquet exists.
       // Attempt to read 11.crc fails and read 10.checkpoint.parquet and 11.json succeeds.
@@ -158,13 +135,7 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite {
   test("crc found at read version and checkpoint at read version => use checksum") {
     withTableWithCrc { (table, tablePath, engine) =>
       val checkpointVersion = 10
-      val logPath = new Path(s"$tablePath/_delta_log")
-      assert(
-        Files.exists(
-          new File(
-            FileNames
-              .checkpointFileSingular(logPath, checkpointVersion)
-              .toString).toPath))
+      assert(checkpointFileExistsForTable(tablePath, checkpointVersion))
 
       loadSnapshotFieldsCheckMetrics(
         table,
