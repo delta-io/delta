@@ -49,6 +49,9 @@ public class ChecksumUtils {
    *
    * <p>After computing these statistics, it writes a checksum file to the table's log path.
    *
+   * <p>Note: For very large tables, this operation may be expensive as in worst case, it requires
+   * scanning all log files until the given version.
+   *
    * @param engine The Engine instance used to access the underlying storage
    * @param snapshot The SnapshotImpl instance representing the current state of the table
    * @throws IOException If an I/O error occurs during checksum computation or writing
@@ -120,4 +123,6 @@ public class ChecksumUtils {
       throw new ChecksumAlreadyExistsException(snapshot.getVersion());
     }
   }
+
+  private ChecksumUtils() {}
 }

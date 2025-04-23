@@ -148,6 +148,9 @@ public interface Table {
   /**
    * Create checksum file for the table at given version.
    *
+   * <p>Note: For very large tables, this operation may be expensive as in worst case, it requires
+   * scanning all log files until the given version.
+   *
    * @param engine {@link Engine} instance to use.
    * @param version Version to generate checksum file.
    * @throws TableNotFoundException if the table is not found
