@@ -66,7 +66,7 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite {
       expParquetVersionsRead: Seq[Long],
       expParquetReadSetSizes: Seq[Long],
       expChecksumReadSet: Seq[Long],
-      version: Long = -1): Unit
+      readVersion: Long = -1): Unit
 
   // Method to adjust checkpoint file read set sizes for different implementations
   protected def getExpectedCheckpointReadSetSizes(sizes: Seq[Long]): Seq[Long] = sizes
@@ -107,7 +107,7 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite {
         expParquetVersionsRead = Seq(10),
         expParquetReadSetSizes = getExpectedCheckpointReadSetSizes(Seq(1)),
         expChecksumReadSet = Seq(10),
-        version = 10)
+        readVersion = 10)
     }
   }
 
@@ -127,13 +127,12 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite {
         expParquetVersionsRead = Seq(10),
         expParquetReadSetSizes = getExpectedCheckpointReadSetSizes(Seq(1)),
         expChecksumReadSet = Seq(11),
-        version = 11)
+        readVersion = 11)
     }
   }
 
   test("crc found at read version and checkpoint at read version => use checksum") {
     withTableWithCrc { (table, _, engine) =>
-
       loadSnapshotFieldsCheckMetrics(
         table,
         engine,
@@ -141,7 +140,7 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite {
         expParquetVersionsRead = Nil,
         expParquetReadSetSizes = Nil,
         expChecksumReadSet = Seq(10),
-        version = 10)
+        readVersion = 10)
     }
   }
 }

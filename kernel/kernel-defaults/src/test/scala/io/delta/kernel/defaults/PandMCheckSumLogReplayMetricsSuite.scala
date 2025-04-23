@@ -36,7 +36,7 @@ class PandMCheckSumLogReplayMetricsSuite extends ChecksumLogReplayMetricsTestBas
       expParquetVersionsRead: Seq[Long],
       expParquetReadSetSizes: Seq[Long],
       expChecksumReadSet: Seq[Long],
-      version: Long = -1): Unit = {
+      readVersion: Long = -1): Unit = {
 
     loadPandMCheckMetrics(
       table,
@@ -45,14 +45,14 @@ class PandMCheckSumLogReplayMetricsSuite extends ChecksumLogReplayMetricsTestBas
       expParquetVersionsRead,
       expParquetReadSetSizes,
       expChecksumReadSet,
-      version)
+      readVersion)
   }
 
   //////////
   // Test //
   //////////
 
-  test("snapshot hint found for read version and crc found at read version => use hint") {
+  test("snapshot hint found for read version and crc found at read readVersion => use hint") {
     withTableWithCrc { (table, _, engine) =>
       table.getLatestSnapshot(engine)
 
@@ -84,7 +84,7 @@ class PandMCheckSumLogReplayMetricsSuite extends ChecksumLogReplayMetricsTestBas
         // then we do a listing of last 100 crc files and read the latest
         // one which is version 2 (as version 3-6 are deleted)
         expChecksumReadSet = Seq(2),
-        version = 4)
+        readVersion = 4)
       // read version 4 which sets the snapshot P&M hint to 4
 
       // now try to load version 6 and we expect no checksums are read
@@ -99,7 +99,7 @@ class PandMCheckSumLogReplayMetricsSuite extends ChecksumLogReplayMetricsTestBas
         // bound by the snapshot hint which is at version 4 and we don't try to read checksums
         // beyond version 4
         expChecksumReadSet = Nil,
-        version = 6)
+        readVersion = 6)
     }
   }
 
@@ -129,7 +129,7 @@ class PandMCheckSumLogReplayMetricsSuite extends ChecksumLogReplayMetricsTestBas
         // First attempted to read checksum for version 6, then we do a listing of
         // last 100 crc files and read the latest one which is version 4 (as version 5 is deleted)
         expChecksumReadSet = Seq(4),
-        version = 6)
+        readVersion = 6)
 
       // now try to load version 3 and it should get P&M from checksum files only
       loadSnapshotFieldsCheckMetrics(
@@ -140,7 +140,7 @@ class PandMCheckSumLogReplayMetricsSuite extends ChecksumLogReplayMetricsTestBas
         expParquetVersionsRead = Nil,
         expParquetReadSetSizes = Nil,
         expChecksumReadSet = Seq(3),
-        version = 3)
+        readVersion = 3)
     }
   }
 
@@ -162,7 +162,7 @@ class PandMCheckSumLogReplayMetricsSuite extends ChecksumLogReplayMetricsTestBas
         expParquetVersionsRead = Nil,
         expParquetReadSetSizes = Nil,
         expChecksumReadSet = Seq(10),
-        version = 11)
+        readVersion = 11)
     }
   }
 }

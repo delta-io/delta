@@ -29,11 +29,11 @@ class DomainMetadataCheckSumReplayMetricsSuite extends ChecksumLogReplayMetricsT
       expParquetVersionsRead: Seq[Long],
       expParquetReadSetSizes: Seq[Long],
       expChecksumReadSet: Seq[Long],
-      version: Long = -1): Unit = {
+      readVersion: Long = -1): Unit = {
 
     engine.resetMetrics()
 
-    version match {
+    readVersion match {
       case -1 => table.getLatestSnapshot(engine).getDomainMetadata("foo")
       case ver => table.getSnapshotAsOfVersion(engine, ver).getDomainMetadata("foo")
     }
