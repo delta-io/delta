@@ -66,8 +66,8 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
     assertDomainMetadata(snapshot, expectedValue.filterNot(_._2.isRemoved))
     // verifyChecksum will check the domain metadata in CRC against the lastest snapshot.
     verifyChecksum(table.getPath(engine))
-    deleteChecksumFileForTable(table.getPath(engine), versions = Seq(snapshot.getVersion.toInt))
     // Delete CRC and reload snapshot from log.
+    deleteChecksumFileForTable(table.getPath(engine), versions = Seq(snapshot.getVersion.toInt))
     assertDomainMetadata(table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl], expectedValue)
   }
 
