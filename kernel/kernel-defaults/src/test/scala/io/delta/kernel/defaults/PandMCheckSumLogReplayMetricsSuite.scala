@@ -52,7 +52,7 @@ class PandMCheckSumLogReplayMetricsSuite extends ChecksumLogReplayMetricsTestBas
   // Test //
   //////////
 
-  test("snapshot hint found for read version and crc found at read readVersion => use hint") {
+  test("snapshot hint found for read version and crc found at read version => use hint") {
     withTableWithCrc { (table, _, engine) =>
       table.getLatestSnapshot(engine)
 
