@@ -83,7 +83,7 @@ class PandMCheckSumLogReplayMetricsSuite extends ChecksumLogReplayMetricsTestBas
         // First attempted to read checksum for version 4 which doesn't exists,
         // then we do a listing of last 100 crc files and read the latest
         // one which is version 2 (as version 3-6 are deleted)
-        expChecksumReadSet = Seq(2),
+        expChecksumReadSet = Seq(4, 2),
         readVersion = 4)
       // read version 4 which sets the snapshot P&M hint to 4
 
