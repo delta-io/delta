@@ -128,7 +128,7 @@ class PandMCheckSumLogReplayMetricsSuite extends ChecksumLogReplayMetricsTestBas
         expParquetReadSetSizes = Nil,
         // First attempted to read checksum for version 6, then we do a listing of
         // last 100 crc files and read the latest one which is version 4 (as version 5 is deleted)
-        expChecksumReadSet = Seq(4),
+        expChecksumReadSet = Seq(6, 4),
         readVersion = 6)
 
       // now try to load version 3 and it should get P&M from checksum files only
@@ -161,7 +161,7 @@ class PandMCheckSumLogReplayMetricsSuite extends ChecksumLogReplayMetricsTestBas
         expJsonVersionsRead = Seq(11),
         expParquetVersionsRead = Nil,
         expParquetReadSetSizes = Nil,
-        expChecksumReadSet = Seq(10),
+        expChecksumReadSet = Seq(11, 10),
         readVersion = 11)
     }
   }
