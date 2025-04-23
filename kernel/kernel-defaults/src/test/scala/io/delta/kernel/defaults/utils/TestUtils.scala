@@ -791,8 +791,6 @@ trait TestUtils extends Assertions with SQLHelper {
    * This test verifies:
    * 1. The initial checksum exists and is correct
    * 2. After deleting the checksum file, it can be regenerated with the same content
-   *
-   * @param tablePath Path to the Delta table
    */
   def verifyChecksum(tablePath: String): Unit = {
     val currentSnapshot = latestSnapshot(tablePath, defaultEngine)
