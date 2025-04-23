@@ -51,6 +51,7 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite {
           s"CREATE TABLE delta.`$path` USING DELTA AS " +
             s"SELECT 0L as id")
         for (_ <- 0 to 10) { appendCommit(path) }
+        assert(checkpointFileExistsForTable(path, 10))
       }
       val table = Table.forPath(engine, path)
       f(table, path, engine)
@@ -95,7 +96,6 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite {
     "checksum not found at read version and checkpoint exists at read version => use checkpoint") {
     withTableWithCrc { (table, tablePath, engine) =>
       val checkpointVersion = 10
-      assert(checkpointFileExistsForTable(tablePath, checkpointVersion))
       deleteChecksumFileForTable(tablePath, Seq(checkpointVersion))
 
       loadSnapshotFieldsCheckMetrics(
@@ -116,7 +116,6 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite {
       "checkpoint exists the read version the previous version => use checkpoint") {
     withTableWithCrc { (table, tablePath, engine) =>
       val checkpointVersion = 10
-      assert(checkpointFileExistsForTable(tablePath, checkpointVersion))
       deleteChecksumFileForTable(tablePath, Seq(checkpointVersion, checkpointVersion + 1))
 
       // 11.crc, 10.crc missing, 10.checkpoint.parquet exists.
@@ -133,9 +132,7 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite {
   }
 
   test("crc found at read version and checkpoint at read version => use checksum") {
-    withTableWithCrc { (table, tablePath, engine) =>
-      val checkpointVersion = 10
-      assert(checkpointFileExistsForTable(tablePath, checkpointVersion))
+    withTableWithCrc { (table, _, engine) =>
 
       loadSnapshotFieldsCheckMetrics(
         table,
@@ -144,7 +141,7 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite {
         expParquetVersionsRead = Nil,
         expParquetReadSetSizes = Nil,
         expChecksumReadSet = Seq(10),
-        version = checkpointVersion)
+        version = 10)
     }
   }
 }

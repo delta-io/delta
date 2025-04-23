@@ -374,7 +374,7 @@ public class LogReplay {
     // TODO https://github.com/delta-io/delta/issues/4454: Incrementally load domain metadata from
     // CRC when current CRC is not available.
     // Fall back to loading from the log
-    logger.debug("No domain metadata available in CRC info, loading from log");
+    logger.info("No domain metadata available in CRC info, loading from log");
     return loadDomainMetadataMapFromLog(engine);
   }
 
