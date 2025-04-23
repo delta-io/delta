@@ -371,8 +371,7 @@ public class LogReplay {
       return currentCrcInfo.get().getDomainMetadata().get().stream()
           .collect(Collectors.toMap(DomainMetadata::getDomain, Function.identity()));
     }
-    // TODO: Incrementally load domain metadata from CRC for specific versions when full data
-    // is not available in the latest CRC.
+    // TODO: Incrementally load domain metadata from CRC when current CRC is not available.
     // Fall back to loading from the log
     logger.debug("No domain metadata available in CRC info, loading from log");
     return loadDomainMetadataMapFromLog(engine);
