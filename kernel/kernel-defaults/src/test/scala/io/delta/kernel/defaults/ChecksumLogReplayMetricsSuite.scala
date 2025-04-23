@@ -25,10 +25,13 @@ import io.delta.kernel.internal.util.FileNames
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 /**
- * Suite to test the engine metrics when loading Protocol and Metadata through checksum files.
+ * Base trait for testing log replay optimizations when reading tables with checksum files.
+ * This trait contains common test setup and test cases but allows specific metadata types
+ * to customize how they load and verify data.
  *
- * Tests verify the behavior of log replay when reading tables with checksum files available,
- * focusing on optimizations where checksums provide metadata without reading log files.
+ * Test subclasses implement specialized behavior for loading different items:
+ * - PandMCheckSumLogReplayMetricsSuite - tests Protocol and Metadata loading
+ * - DomainMetadataCheckSumReplayMetricsSuite - tests Domain Metadata loading
  */
 trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite {
 
@@ -186,7 +189,7 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite {
 }
 
 /**
- * Suite to test the engine metrics when loading Protocol through checksum files.
+ * Suite to test the engine metrics when loading Protocol and Metadata through checksum files.
  */
 class PandMCheckSumLogReplayMetricsSuite extends ChecksumLogReplayMetricsTestBase {
   override protected def loadSnapshotFieldsCheckMetrics(
@@ -390,9 +393,11 @@ class DomainMetadataCheckSumReplayMetricsSuite extends ChecksumLogReplayMetricsT
       expChecksumReadSet = expChecksumReadSet)
   }
 
-  // Domain metadata loads double the parquet read sets
+  // Domain metadata loads double the parquet read sets because:
+  // 1. First read happens during loading Protocol & Metadata in snapshot construction.
+  // 2. Second read happens specifically for domain metadata loading.
   override protected def getExpectedParquetReadSetSizes(sizes: Seq[Long]): Seq[Long] = {
-    // we read the checkpoint twice: once for the P &M and once for the scan files
+    // we read the checkpoint twice: once for the P&M and once for domain metadata
     sizes.flatMap(size => Seq(size, size))
   }
 }

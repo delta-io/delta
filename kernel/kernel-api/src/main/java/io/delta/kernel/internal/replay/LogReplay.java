@@ -359,6 +359,8 @@ public class LogReplay {
 
   /**
    * Loads the domain metadata map, either from CRC info (if available) or from the transaction log.
+   * Note that when loading from CRC info, tombstones (removed domains) are not preserved,
+   * while they are preserved when loading from the transaction log.
    *
    * @param engine The engine to use for loading from log when necessary
    * @return A map of domain names to their metadata
@@ -369,7 +371,8 @@ public class LogReplay {
       return currentCrcInfo.get().getDomainMetadata().get().stream()
           .collect(Collectors.toMap(DomainMetadata::getDomain, Function.identity()));
     }
-    // TODO: Incrementally load from CRC.
+    // TODO: Incrementally load domain metadata from CRC for specific versions when full data
+    // is not available in the latest CRC.
     // Fall back to loading from the log
     logger.debug("No domain metadata available in CRC info, loading from log");
     return loadDomainMetadataMapFromLog(engine);
