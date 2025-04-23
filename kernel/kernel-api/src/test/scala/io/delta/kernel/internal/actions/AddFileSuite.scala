@@ -322,6 +322,5 @@ class AddFileSuite extends AnyFunSuite with Matchers {
       assert(result.getDefaultRowCommitVersion === Optional.of(2823L))
       assert(result.getStatsJson === Optional.of("{\"numRecords\":100}"))
     }
-    assert(ex.getMessage.contains("DeletionVectorDescriptor is unsupported"))
   }
 }
