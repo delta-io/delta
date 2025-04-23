@@ -46,6 +46,8 @@ import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Replays a history of actions, resolving them to produce the current state of the table. The
@@ -66,6 +68,8 @@ public class LogReplay {
   //////////////////////////
   // Static Schema Fields //
   //////////////////////////
+
+  public static final Logger logger = LoggerFactory.getLogger(LogReplay.class);
 
   /** Read schema when searching for the latest Protocol and Metadata. */
   public static final StructType PROTOCOL_METADATA_READ_SCHEMA =
@@ -391,6 +395,24 @@ public class LogReplay {
   /**
    * Calculates the latest snapshot hint before or at the current snapshot version, returns the
    * CRCInfo if checksum file at the current version is read
+   *
+   * <p>Strategy for finding and using CRC (checksum) files:
+   *
+   * <ol>
+   *   <li>During initial log directory listing, the SnapshotManager captures all files including
+   *       commits, checkpoints, and checksums.
+   *   <li>The most recent checksum file discovered is stored in the LogSegment as
+   *       "lastSeenChecksum", regardless of its version.
+   *   <li>When loading table state information like Protocol, Metadata, or Domain data:
+   *       <ol>
+   *         <li>First check if there's a lastSeenChecksum in the LogSegment and if its version is
+   *             appropriate (>= lower bound, <= requested version)
+   *         <li>If a suitable checksum exists, generate version hint directly from it for
+   *             subsequence call use that
+   *         <li>If no suitable checksum exists, sub sequence call fall back to reading from log
+   *             files
+   *       </ol>
+   * </ol>
    */
   private Tuple2<Optional<SnapshotHint>, Optional<CRCInfo>>
       maybeGetNewerSnapshotHintAndCurrentCrcInfo(
@@ -419,12 +441,22 @@ public class LogReplay {
                 // Only read the CRC within 100 versions.
                 snapshotVersion - 100,
                 0L));
+
+    // Inside the method where checksum is processed from LogSegment
     Optional<CRCInfo> crcInfoOpt =
         logSegment
             .getLastSeenChecksum()
             .filter(
-                checksum ->
-                    FileNames.getFileVersion(new Path(checksum.getPath())) >= crcReadLowerBound)
+                checksum -> {
+                  long checksumVersion = FileNames.getFileVersion(new Path(checksum.getPath()));
+                  if (checksumVersion != snapshotVersion) {
+                    logger.debug(
+                        "Found checksum file for version {} when requesting version {}",
+                        checksumVersion,
+                        snapshotVersion);
+                  }
+                  return checksumVersion >= crcReadLowerBound;
+                })
             .flatMap(checksum -> ChecksumReader.getCRCInfo(engine, checksum));
 
     if (!crcInfoOpt.isPresent()) {
