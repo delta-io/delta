@@ -264,13 +264,7 @@ class AddFileSuite extends AnyFunSuite with Matchers {
       size = 100L,
       modificationTime = 200L,
       dataChange = true,
-      deletionVector = Some(
-        new DeletionVectorDescriptor(
-          "storage",
-          "s",
-          Optional.of(1),
-          25,
-          35)),
+      deletionVector = None,
       tags = Some(Map("tag1" -> "value1")),
       baseRowId = Some(67890L),
       defaultRowCommitVersion = Some(2823L),
@@ -279,16 +273,55 @@ class AddFileSuite extends AnyFunSuite with Matchers {
     val result = new RemoveFile(addFile.toRemoveFileRow(false, Optional.of(200L)))
 
     assert(result.getPath === "/path/to/file")
-    assert(result.getPartitionValues === Map("a" -> "1").asJava)
-    assert(result.getSize === 100L)
-    assert(result.getDeletionTimestamp === 200L)
-    assert(result.getDataChange === true)
-    assert(result.getDeletionVector === Optional.of(
-      new DeletionVectorDescriptor("storage", "s", Optional.of(1), 25, 35)))
+    assert(VectorUtils.toJavaMap[String, String](result.getPartitionValues.get()).asScala ===
+      Map("a" -> "1"))
+    assert(result.getSize === Optional.of(100L))
+    assert(result.getDeletionTimestamp === Optional.of(200L))
+    assert(result.getDataChange === false)
+    assert(result.getDeletionVector === Optional.empty())
     assert(VectorUtils.toJavaMap[String, String](result.getTags.get()).asScala ===
       Map[String, String]("tag1" -> "value1"))
     assert(result.getBaseRowId === Optional.of(67890L))
     assert(result.getDefaultRowCommitVersion === Optional.of(2823L))
     assert(result.getStatsJson === Optional.of("{\"numRecords\":100}"))
+  }
+
+  test("toRemoveFileRow: DV is not yet support") {
+    // Enabled when DVs are supported
+    val ex = intercept[IllegalArgumentException] {
+      val addFile = new AddFile(generateTestAddFileRow(
+        path = "/path/to/file",
+        partitionValues = Map("a" -> "1"),
+        size = 100L,
+        modificationTime = 200L,
+        dataChange = true,
+        deletionVector = Some(
+          new DeletionVectorDescriptor(
+            "storage",
+            "s",
+            Optional.of(1),
+            25,
+            35)),
+        tags = Some(Map("tag1" -> "value1")),
+        baseRowId = Some(67890L),
+        defaultRowCommitVersion = Some(2823L),
+        stats = Some("{\"numRecords\":100}")))
+
+      val result = new RemoveFile(addFile.toRemoveFileRow(false, Optional.of(200L)))
+
+      assert(result.getPath === "/path/to/file")
+      assert(result.getPartitionValues === Map("a" -> "1").asJava)
+      assert(result.getSize === 100L)
+      assert(result.getDeletionTimestamp === 200L)
+      assert(result.getDataChange === true)
+      assert(result.getDeletionVector === Optional.of(
+        new DeletionVectorDescriptor("storage", "s", Optional.of(1), 25, 35)))
+      assert(VectorUtils.toJavaMap[String, String](result.getTags.get()).asScala ===
+        Map[String, String]("tag1" -> "value1"))
+      assert(result.getBaseRowId === Optional.of(67890L))
+      assert(result.getDefaultRowCommitVersion === Optional.of(2823L))
+      assert(result.getStatsJson === Optional.of("{\"numRecords\":100}"))
+    }
+    assert(ex.getMessage.contains("DeletionVectorDescriptor is unsupported"))
   }
 }
