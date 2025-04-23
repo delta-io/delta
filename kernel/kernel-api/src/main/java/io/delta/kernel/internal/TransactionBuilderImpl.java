@@ -311,17 +311,22 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       newMetadata = columnMappingMetadata;
     }
 
-    /* ----- 5: Validate the metadata change ----- */
-    // Now that all the config and schema changes have been made validate the old vs new metadata
-    if (newMetadata.isPresent()) {
-      validateMetadataChange(snapshot, snapshotMetadata, newMetadata.get(), isNewTable);
-    }
-
-    /* ----- 6: Additional validation and adjustment ----- */
+    /* ----- 5: Validate the clustering columns if present ----- */
     StructType updatedSchema = newMetadata.orElse(snapshotMetadata).getSchema();
     Optional<List<Column>> casePreservingClusteringColumnsOpt =
         clusteringColumns.map(
             cols -> SchemaUtils.casePreservingEligibleClusterColumns(updatedSchema, cols));
+
+    /* ----- 6: Validate the metadata change ----- */
+    // Now that all the config and schema changes have been made validate the old vs new metadata
+    if (newMetadata.isPresent()) {
+      validateMetadataChange(
+          snapshot,
+          snapshotMetadata,
+          newMetadata.get(),
+          isNewTable,
+          casePreservingClusteringColumnsOpt);
+    }
 
     return new TransactionImpl(
         isNewTable,
@@ -392,6 +397,12 @@ public class TransactionBuilderImpl implements TransactionBuilder {
           }
         });
 
+    if (clusteringColumns.isPresent()
+        && snapshot.getMetadata().getPartitionColumns().getSize() != 0) {
+      throw new KernelException(
+          "Clustering columns and partition columns cannot coexist in a table");
+    }
+
     if (unsetTablePropertiesKeys.isPresent() && tableProperties.isPresent()) {
       Set<String> invalidPropertyKeys =
           unsetTablePropertiesKeys.get().stream()
@@ -414,7 +425,11 @@ public class TransactionBuilderImpl implements TransactionBuilder {
    * </ul>
    */
   private void validateMetadataChange(
-      SnapshotImpl snapshot, Metadata oldMetadata, Metadata newMetadata, boolean isNewTable) {
+      SnapshotImpl snapshot,
+      Metadata oldMetadata,
+      Metadata newMetadata,
+      boolean isNewTable,
+      Optional<List<Column>> newClusteringColumnsOpt) {
     ColumnMapping.verifyColumnMappingChange(
         oldMetadata.getConfiguration(), newMetadata.getConfiguration(), isNewTable);
     IcebergWriterCompatV1MetadataValidatorAndUpdater.validateIcebergWriterCompatV1Change(
@@ -445,7 +460,10 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       // E.g. getClusteringColumns returns <physical_name_of_struct>.<physical_name_inner>,
       // Only physical_name_inner is required for validation
       Set<String> clusteringColumnPhysicalNames =
-          ClusteringUtils.getClusteringColumnsOptional(snapshot).orElse(Collections.emptyList())
+          newClusteringColumnsOpt
+              .orElse(
+                  ClusteringUtils.getClusteringColumnsOptional(snapshot)
+                      .orElse(Collections.emptyList()))
               .stream()
               .map(col -> col.getNames()[col.getNames().length - 1])
               .collect(toSet());
