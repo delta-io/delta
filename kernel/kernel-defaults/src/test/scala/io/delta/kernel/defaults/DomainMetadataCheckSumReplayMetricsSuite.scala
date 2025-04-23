@@ -49,7 +49,7 @@ class DomainMetadataCheckSumReplayMetricsSuite extends ChecksumLogReplayMetricsT
   // Domain metadata requires reading checkpoint files twice:
   // 1. First read happens during loading Protocol & Metadata in snapshot construction.
   // 2. Second read happens specifically for domain metadata loading.
-  override protected def getExpectedCheckpointReadSetSizes(sizes: Seq[Long]): Seq[Long] = {
+  override protected def getExpectedCheckpointReadVersions(sizes: Seq[Long]): Seq[Long] = {
     // we read each checkpoint file twice: once for P&M and once for domain metadata
     sizes.flatMap(size => Seq(size, size))
   }
