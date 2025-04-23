@@ -98,7 +98,7 @@ class PandMCheckSumLogReplayMetricsSuite extends ChecksumLogReplayMetricsTestBas
         // First we attempt to read at version 6, then we do a listing of last 100 crc files
         // bound by the snapshot hint which is at version 4 and we don't try to read checksums
         // beyond version 4
-        expChecksumReadSet = Nil,
+        expChecksumReadSet = Seq(6),
         readVersion = 6)
     }
   }
