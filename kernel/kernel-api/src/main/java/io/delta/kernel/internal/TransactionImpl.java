@@ -76,7 +76,8 @@ public class TransactionImpl implements Transaction {
 
   private final UUID txnId = UUID.randomUUID();
 
-  private final boolean isNewTable; // the transaction is creating a new table
+  /*If the transaction is defining a new table from scratch (i.e. create table, replace table) */
+  private final boolean isNewTableDef;
   private final String engineInfo;
   private final Operation operation;
   private final Path dataPath;
@@ -97,7 +98,7 @@ public class TransactionImpl implements Transaction {
   private boolean closed; // To avoid trying to commit the same transaction again.
 
   public TransactionImpl(
-      boolean isNewTable,
+      boolean isNewTableDef,
       Path dataPath,
       Path logPath,
       SnapshotImpl readSnapshot,
@@ -112,7 +113,7 @@ public class TransactionImpl implements Transaction {
       int maxRetries,
       int logCompactionInterval,
       Clock clock) {
-    this.isNewTable = isNewTable;
+    this.isNewTableDef = isNewTableDef;
     this.dataPath = dataPath;
     this.logPath = logPath;
     this.readSnapshot = readSnapshot;
@@ -142,7 +143,7 @@ public class TransactionImpl implements Transaction {
 
   @Override
   public StructType getSchema(Engine engine) {
-    return readSnapshot.getSchema();
+    return metadata.getSchema();
   }
 
   @Override
@@ -197,7 +198,7 @@ public class TransactionImpl implements Transaction {
     // For a new table or when fileSizeHistogram is available in the CRC of the readSnapshot
     // we update it in the commit. When it is not available we do nothing.
     TransactionMetrics transactionMetrics =
-        isNewTable
+        readSnapshot.getVersion() < 0
             ? TransactionMetrics.forNewTable()
             : TransactionMetrics.withExistingTableFileSizeHistogram(
                 readSnapshot.getCurrentCrcInfo().flatMap(CRCInfo::getFileSizeHistogram));
@@ -367,10 +368,10 @@ public class TransactionImpl implements Transaction {
       throws FileAlreadyExistsException {
     List<Row> metadataActions = new ArrayList<>();
     metadataActions.add(createCommitInfoSingleAction(attemptCommitInfo.toRow()));
-    if (shouldUpdateMetadata || isNewTable) {
+    if (shouldUpdateMetadata) {
       metadataActions.add(createMetadataSingleAction(metadata.toRow()));
     }
-    if (shouldUpdateProtocol || isNewTable) {
+    if (shouldUpdateProtocol) {
       // In the future, we need to add metadata and action when there are any changes to them.
       metadataActions.add(createProtocolSingleAction(protocol.toRow()));
     }
@@ -511,7 +512,7 @@ public class TransactionImpl implements Transaction {
   }
 
   private Map<String, String> getOperationParameters() {
-    if (isNewTable) {
+    if (isNewTableDef) {
       List<String> partitionCols = VectorUtils.toJavaList(metadata.getPartitionColumns());
       String partitionBy =
           partitionCols.stream()
@@ -541,7 +542,7 @@ public class TransactionImpl implements Transaction {
 
   private Optional<CRCInfo> buildPostCommitCrcInfoIfCurrentCrcAvailable(
       long commitAtVersion, TransactionMetricsResult metricsResult) {
-    if (isNewTable) {
+    if (isNewTableDef) {
       // We don't need to worry about conflicting transaction here since new tables always commit
       // metadata (and thus fail any conflicts)
       return Optional.of(
@@ -717,7 +718,7 @@ public class TransactionImpl implements Transaction {
      * Returns the set of active domain metadata of the table, removed domain metadata are excluded.
      */
     public Optional<Set<DomainMetadata>> getPostCommitDomainMetadatas() {
-      if (isNewTable) {
+      if (readSnapshot.getVersion() < 0) {
         return Optional.of(
             getComputedDomainMetadatasToCommit().stream()
                 .filter(dm -> !dm.isRemoved())
