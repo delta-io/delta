@@ -72,8 +72,9 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite {
   // Tests //
   ///////////
 
-  Seq(-1L, 0L, 3L, 4L).foreach { version => // -1 means latest version
-    test(s"checksum found at the read version: ${if (version == -1) "latest" else version}") {
+  Seq(-1L, 0L, 3L, 4L).foreach { readVersion => // -1 means latest version
+    test(
+      s"checksum found at the read version: ${if (readVersion == -1) "latest" else readVersion}") {
       withTempDirAndMetricsEngine { (path, engine) =>
         // Produce a test table with 0 to 11 .json, 0 to 11.crc, 10.checkpoint.parquet
         buildTableWithCrc(path)
@@ -86,8 +87,8 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite {
           expJsonVersionsRead = Nil,
           expParquetVersionsRead = Nil,
           expParquetReadSetSizes = Nil,
-          expChecksumReadSet = Seq(if (version == -1) 11 else version),
-          version)
+          expChecksumReadSet = Seq(if (readVersion == -1) 11 else readVersion),
+          readVersion)
       }
     }
   }
