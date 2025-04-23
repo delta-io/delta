@@ -36,7 +36,13 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite {
   // Test Helper Methods //
   /////////////////////////
 
-  // Produce a test table with 0 to 11 .json, 0 to 11.crc, 10.checkpoint.parquet
+  /**
+   * Creates a test table with checksum files.
+   * Produces a table with versions 0 to 11 including .json files, .crc files,
+   * and a checkpoint at version 10.
+   *
+   * @param path Path where the table should be created
+   */
   def buildTableWithCrc(path: String): Unit = {
     withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true") {
       spark.sql(
