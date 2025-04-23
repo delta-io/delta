@@ -24,7 +24,6 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames;
 import static io.delta.kernel.internal.util.VectorUtils.buildArrayValue;
 import static io.delta.kernel.internal.util.VectorUtils.stringStringMapValue;
-import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.toSet;
 
@@ -102,11 +101,34 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     return this;
   }
 
+  /**
+   * There are three possible cases when handling clustering columns via `withClusteringColumns`:
+   *
+   * <ul>
+   *   <li>Clustering columns are not set (i.e., `withClusteringColumns` is not called):
+   *       <ul>
+   *         <li>No changes are made related to clustering.
+   *         <li>For table creation, the table is initialized as a non-clustered table.
+   *         <li>For table updates, the existing clustered or non-clustered state remains unchanged
+   *             (i.e., no protocol or domain metadata updates).
+   *       </ul>
+   *   <li>Clustering columns are an empty list:
+   *       <ul>
+   *         <li>This is equivalent to executing `ALTER TABLE ... CLUSTER BY NONE` in Delta.
+   *         <li>The table remains a clustered table, but its clustering domain metadata is updated
+   *             to reflect an empty list of clustering columns.
+   *       </ul>
+   *   <li>Clustering columns are a non-empty list:
+   *       <ul>
+   *         <li>The table is treated as a clustered table.
+   *         <li>We update the protocol (if needed) to include clustering writer support and set the
+   *             clustering domain metadata accordingly.
+   *       </ul>
+   * </ul>
+   */
   @Override
   public TransactionBuilder withClusteringColumns(Engine engine, List<Column> clusteringColumns) {
-    if (!clusteringColumns.isEmpty()) {
-      this.clusteringColumns = Optional.of(clusteringColumns);
-    }
+    this.clusteringColumns = Optional.of(clusteringColumns);
     return this;
   }
 
@@ -296,10 +318,10 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     }
 
     /* ----- 6: Additional validation and adjustment ----- */
-    List<Column> casePreservingClusteringColumns =
-        SchemaUtils.casePreservingEligibleClusterColumns(
-            newMetadata.orElse(snapshotMetadata).getSchema(),
-            clusteringColumns.orElse(Collections.emptyList()));
+    StructType updatedSchema = newMetadata.orElse(snapshotMetadata).getSchema();
+    Optional<List<Column>> casePreservingClusteringColumnsOpt =
+        clusteringColumns.map(
+            cols -> SchemaUtils.casePreservingEligibleClusterColumns(updatedSchema, cols));
 
     return new TransactionImpl(
         isNewTable,
@@ -311,7 +333,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         newProtocol.orElse(snapshotProtocol),
         newMetadata.orElse(snapshotMetadata),
         setTxnOpt,
-        casePreservingClusteringColumns,
+        casePreservingClusteringColumnsOpt,
         newMetadata.isPresent() /* shouldUpdateMetadata */,
         newProtocol.isPresent() /* shouldUpdateProtocol */,
         maxRetries,
@@ -345,14 +367,6 @@ public class TransactionBuilderImpl implements TransactionBuilder {
             tablePath,
             "Table already exists, but provided new partition columns. "
                 + "Partition columns can only be set on a new table.");
-      }
-      if (clusteringColumns.isPresent()) {
-        throw tableAlreadyExists(
-            tablePath,
-            format(
-                "Table already exists, but provided new clustering columns %s. "
-                    + "Clustering columns can only be set on a new table for now.",
-                clusteringColumns.get()));
       }
     } else {
       checkArgument(
@@ -417,24 +431,30 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         throw new KernelException("Cannot update mapping mode and perform schema evolution");
       }
 
+      // If the column mapping restriction is removed, clustering columns
+      // will need special handling during schema evolution since they won't have physical names
+      // ToDo: Support adding clustering columns
+
       if (!isColumnMappingModeEnabled(updatedMappingMode)) {
         throw new KernelException("Cannot update schema for table when column mapping is disabled");
       }
 
-      // TODO: revisit this once we want to support schema evolution with clustering columns
-      Optional<List<Column>> clusteringColumns =
-          ClusteringUtils.getClusteringColumnsOptional(snapshot);
-      if (clusteringColumns.isPresent() && !clusteringColumns.get().isEmpty()) {
-        throw new KernelException(
-            format(
-                "Update schema for table with clustering columns %s is not yet supported",
-                clusteringColumns.get()));
-      }
+      // Clustering columns will be guaranteed to have physical names at this point
+      // Only the leaf part of the overall column needs to be taken since
+      // validation is performed on the leaf struct fields
+      // E.g. getClusteringColumns returns <physical_name_of_struct>.<physical_name_inner>,
+      // Only physical_name_inner is required for validation
+      Set<String> clusteringColumnPhysicalNames =
+          ClusteringUtils.getClusteringColumnsOptional(snapshot).orElse(Collections.emptyList())
+              .stream()
+              .map(col -> col.getNames()[col.getNames().length - 1])
+              .collect(toSet());
 
       SchemaUtils.validateUpdatedSchema(
           oldMetadata.getSchema(),
           newMetadata.getSchema(),
           oldMetadata.getPartitionColNames(),
+          clusteringColumnPhysicalNames,
           newMetadata);
     }
   }

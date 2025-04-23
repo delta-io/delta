@@ -207,6 +207,12 @@
     ],
     "sqlState" : "42809"
   },
+  "DELTA_CANNOT_MODIFY_CATALOG_OWNED_DEPENDENCIES" : {
+    "message" : [
+      "Cannot override or unset in-commit timestamp table properties because this table is catalog-owned. Remove \"delta.enableInCommitTimestamps\", \"delta.inCommitTimestampEnablementVersion\", and \"delta.inCommitTimestampEnablementTimestamp\" from the TBLPROPERTIES clause and then retry the command."
+    ],
+    "sqlState" : "42616"
+  },
   "DELTA_CANNOT_MODIFY_COORDINATED_COMMITS_DEPENDENCIES" : {
     "message" : [
       "<Command> cannot override or unset in-commit timestamp table properties because coordinated commits is enabled in this table and depends on them. Please remove them (\"delta.enableInCommitTimestamps\", \"delta.inCommitTimestampEnablementVersion\", \"delta.inCommitTimestampEnablementTimestamp\") from the TBLPROPERTIES clause and then retry the command again."

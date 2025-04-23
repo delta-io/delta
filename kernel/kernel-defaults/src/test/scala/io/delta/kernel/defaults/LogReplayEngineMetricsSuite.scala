@@ -18,34 +18,13 @@ package io.delta.kernel.defaults
 
 import java.io.File
 import java.nio.file.Files
-import java.util
-import java.util.Optional
-
-import scala.collection.convert.ImplicitConversions._
-import scala.collection.mutable.ArrayBuffer
 
 import io.delta.kernel.Table
-import io.delta.kernel.data.ColumnarBatch
-import io.delta.kernel.defaults.engine.{DefaultEngine, DefaultJsonHandler, DefaultParquetHandler}
-import io.delta.kernel.defaults.engine.fileio.FileIO
-import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO
-import io.delta.kernel.defaults.utils.TestUtils
-import io.delta.kernel.engine.{Engine, ExpressionHandler, FileSystemClient}
-import io.delta.kernel.expressions.Predicate
-import io.delta.kernel.internal.checkpoints.Checkpointer
-import io.delta.kernel.internal.fs.Path
-import io.delta.kernel.internal.util.FileNames
-import io.delta.kernel.internal.util.Utils.toCloseableIterator
-import io.delta.kernel.types.StructType
-import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 
-import org.apache.spark.sql.delta.{DeltaConfig, DeltaLog}
+import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
-import org.apache.hadoop.conf.Configuration
-import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.functions.{col, log}
-import org.scalatest.funsuite.AnyFunSuite
+import org.apache.spark.sql.functions.col
 
 /**
  * Suite to test the engine metrics while replaying logs for getting the table protocol and
@@ -55,7 +34,7 @@ import org.scalatest.funsuite.AnyFunSuite
  * The goal is to test the behavior of calls to `readJsonFiles` and `readParquetFiles` that
  * Kernel makes. This calls determine the performance.
  */
-class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
+class LogReplayEngineMetricsSuite extends LogReplayBaseSuite {
 
   // Disable writing checksums for this test suite
   // This test suite checks the files read when loading the P&M, however, with the crc optimization
@@ -69,39 +48,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
   // Test Helper Methods //
   /////////////////////////
 
-  private def withTempDirAndMetricsEngine(f: (String, MetricsEngine) => Unit): Unit = {
-    val hadoopFileIO = new HadoopFileIO(new Configuration() {
-      {
-        // Set the batch sizes to small so that we get to test the multiple batch scenarios.
-        set("delta.kernel.default.parquet.reader.batch-size", "2");
-        set("delta.kernel.default.json.reader.batch-size", "2");
-      }
-    })
-
-    val engine = new MetricsEngine(hadoopFileIO)
-
-    withTempDir { dir => f(dir.getAbsolutePath, engine) }
-  }
-
-  private def loadPandMCheckMetrics(
-      snapshotFetchCall: => StructType,
-      engine: MetricsEngine,
-      expJsonVersionsRead: Seq[Long],
-      expParquetVersionsRead: Seq[Long],
-      expParquetReadSetSizes: Seq[Long] = null,
-      expChecksumReadSet: Seq[Long] = null): Unit = {
-    engine.resetMetrics()
-    snapshotFetchCall
-
-    assertMetrics(
-      engine,
-      expJsonVersionsRead,
-      expParquetVersionsRead,
-      expParquetReadSetSizes,
-      expChecksumReadSet = expChecksumReadSet)
-  }
-
-  private def loadScanFilesCheckMetrics(
+  def loadScanFilesCheckMetrics(
       engine: MetricsEngine,
       table: Table,
       expJsonVersionsRead: Seq[Long],
@@ -122,53 +69,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
       expLastCheckpointReadCalls)
   }
 
-  def assertMetrics(
-      engine: MetricsEngine,
-      expJsonVersionsRead: Seq[Long],
-      expParquetVersionsRead: Seq[Long],
-      expParquetReadSetSizes: Seq[Long] = null,
-      expLastCheckpointReadCalls: Option[Int] = None,
-      expChecksumReadSet: Seq[Long] = null): Unit = {
-    val actualJsonVersionsRead = engine.getJsonHandler.getVersionsRead
-    val actualParquetVersionsRead = engine.getParquetHandler.getVersionsRead
-
-    assert(
-      actualJsonVersionsRead === expJsonVersionsRead,
-      s"Expected to read json versions " +
-        s"$expJsonVersionsRead but read $actualJsonVersionsRead")
-    assert(
-      actualParquetVersionsRead === expParquetVersionsRead,
-      s"Expected to read parquet " +
-        s"versions $expParquetVersionsRead but read $actualParquetVersionsRead")
-
-    if (expParquetReadSetSizes != null) {
-      val actualParquetReadSetSizes = engine.getParquetHandler.checkpointReadRequestSizes
-      assert(
-        actualParquetReadSetSizes === expParquetReadSetSizes,
-        s"Expected parquet read set sizes " +
-          s"$expParquetReadSetSizes but read $actualParquetReadSetSizes")
-    }
-
-    expLastCheckpointReadCalls.foreach { expCalls =>
-      val actualCalls = engine.getJsonHandler.getLastCheckpointMetadataReadCalls
-      assert(
-        actualCalls === expCalls,
-        s"Expected to read last checkpoint metadata $expCalls times but read $actualCalls times")
-    }
-
-    if (expChecksumReadSet != null) {
-      val actualChecksumReadSet = engine.getJsonHandler.checksumsRead
-      assert(
-        actualChecksumReadSet === expChecksumReadSet,
-        s"Expected checksum read set " +
-          s"$expChecksumReadSet but read $actualChecksumReadSet")
-    }
-  }
-
-  private def appendCommit(path: String): Unit =
-    spark.range(10).write.format("delta").mode("append").save(path)
-
-  private def checkpoint(path: String, actionsPerFile: Int): Unit = {
+  def checkpoint(path: String, actionsPerFile: Int): Unit = {
     withSQLConf(DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key -> actionsPerFile.toString) {
       DeltaLog.forTable(spark, path).checkpoint()
     }
@@ -184,7 +85,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
 
       val table = Table.forPath(engine, path)
       loadPandMCheckMetrics(
-        table.getLatestSnapshot(engine).getSchema(),
+        table,
         engine,
         expJsonVersionsRead = 9L to 0L by -1L,
         expParquetVersionsRead = Nil)
@@ -197,7 +98,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
 
       val table = Table.forPath(engine, path)
       loadPandMCheckMetrics(
-        table.getLatestSnapshot(engine).getSchema(),
+        table,
         engine,
         expJsonVersionsRead = 14L to 11L by -1L,
         expParquetVersionsRead = Seq(10),
@@ -222,7 +123,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
 
       val table = Table.forPath(engine, path)
       loadPandMCheckMetrics(
-        table.getLatestSnapshot(engine).getSchema(),
+        table,
         engine,
         expJsonVersionsRead = 16L to 13L by -1L,
         expParquetVersionsRead = Nil)
@@ -241,7 +142,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
 
       // A hint is now saved at v14
       loadPandMCheckMetrics(
-        table.getLatestSnapshot(engine).getSchema(),
+        table,
         engine,
         expJsonVersionsRead = Nil,
         expParquetVersionsRead = Nil)
@@ -261,7 +162,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
       // Case: only one version change
       appendCommit(path) // v15
       loadPandMCheckMetrics(
-        table.getLatestSnapshot(engine).getSchema(),
+        table,
         engine,
         expJsonVersionsRead = Seq(15),
         expParquetVersionsRead = Nil)
@@ -271,7 +172,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
       // Case: several version changes
       for (_ <- 16 to 19) { appendCommit(path) }
       loadPandMCheckMetrics(
-        table.getLatestSnapshot(engine).getSchema(),
+        table,
         engine,
         expJsonVersionsRead = 19L to 16L by -1L,
         expParquetVersionsRead = Nil)
@@ -282,7 +183,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
       // and v19 hint are available
       appendCommit(path) // v20
       loadPandMCheckMetrics(
-        table.getLatestSnapshot(engine).getSchema(),
+        table,
         engine,
         expJsonVersionsRead = Nil,
         expParquetVersionsRead = Seq(20))
@@ -309,7 +210,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
         .save(path)
 
       loadPandMCheckMetrics(
-        table.getLatestSnapshot(engine).getSchema(),
+        table,
         engine,
         expJsonVersionsRead = Seq(4),
         expParquetVersionsRead = Nil)
@@ -325,7 +226,7 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
           |""".stripMargin)
 
       loadPandMCheckMetrics(
-        table.getLatestSnapshot(engine).getSchema(),
+        table,
         engine,
         expJsonVersionsRead = Seq(5),
         expParquetVersionsRead = Nil)
@@ -385,404 +286,5 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
           expLastCheckpointReadCalls = Some(1))
       }
     }
-  }
-
-  /////////////////////////////////////////////////////////////////////////////////////////////////
-  // Tests for loading P & M through checksums files                                            //
-  /////////////////////////////////////////////////////////////////////////////////////////////////
-
-  Seq(-1L, 0L, 3L, 4L).foreach { version => // -1 means latest version
-    test(s"checksum found at the read version: ${if (version == -1) "latest" else version}") {
-      withTempDirAndMetricsEngine { (path, engine) =>
-        // Produce a test table with 0 to 11 .json, 0 to 11.crc, 10.checkpoint.parquet
-        buildTableWithCrc(path)
-        val table = Table.forPath(engine, path)
-
-        loadPandMCheckMetrics(
-          version match {
-            case -1 => table.getLatestSnapshot(engine).getSchema()
-            case ver => table.getSnapshotAsOfVersion(engine, ver).getSchema()
-          },
-          engine,
-          // shouldn't need to read commit or checkpoint files as P&M are found through checksum
-          expJsonVersionsRead = Nil,
-          expParquetVersionsRead = Nil,
-          expParquetReadSetSizes = Nil,
-          expChecksumReadSet = Seq(if (version == -1) 11 else version))
-      }
-    }
-  }
-
-  test("checksum not found at the read version, but found at a previous version") {
-    withTempDirAndMetricsEngine { (path, engine) =>
-      // Produce a test table with 0 to 11 .json, 0 to 11.crc, 10.checkpoint.parquet
-      buildTableWithCrc(path)
-      Seq(10L, 11L, 5L, 6L).foreach { version =>
-        assert(
-          Files.deleteIfExists(
-            new File(
-              FileNames.checksumFile(new Path(f"$path/_delta_log"), version).toString).toPath))
-      }
-
-      loadPandMCheckMetrics(
-        Table.forPath(engine, path)
-          .getLatestSnapshot(engine).getSchema(),
-        engine,
-        // 10.checkpoint found, so use it and combined with 11.json
-        expJsonVersionsRead = Seq(11),
-        expParquetVersionsRead = Seq(10),
-        expParquetReadSetSizes = Seq(1),
-        expChecksumReadSet = Nil)
-
-      loadPandMCheckMetrics(
-        Table
-          .forPath(engine, path)
-          .getSnapshotAsOfVersion(engine, 6 /* versionId */ )
-          .getSchema(),
-        engine,
-        // We find the checksum from crc at version 4, but still read commit files 5 and 6
-        // to find the P&M which could have been updated in version 5 and 6.
-        expJsonVersionsRead = Seq(6, 5),
-        expParquetVersionsRead = Nil,
-        expParquetReadSetSizes = Nil,
-        // Latest checkpoint
-        expChecksumReadSet = Seq(4))
-
-      // now try to load version 3 and it should get P&M from checksum files only
-      loadPandMCheckMetrics(
-        Table.forPath(engine, path)
-          .getSnapshotAsOfVersion(engine, 3 /* versionId */ ).getSchema(),
-        engine,
-        // We find the checksum from crc at version 3, so shouldn't read anything else
-        expJsonVersionsRead = Nil,
-        expParquetVersionsRead = Nil,
-        expParquetReadSetSizes = Nil,
-        expChecksumReadSet = Seq(3))
-    }
-  }
-
-  test("checksum not found at the read version, but uses snapshot hint lower bound") {
-    withTempDirAndMetricsEngine { (path, engine) =>
-      // Produce a test table with 0 to 11 .json, 0 to 11.crc, 10.checkpoint.parquet
-      buildTableWithCrc(path)
-      (3 to 6).foreach { version =>
-        assert(
-          Files.deleteIfExists(
-            new File(FileNames.checksumFile(
-              new Path(f"$path/_delta_log"),
-              version).toString).toPath))
-      }
-
-      val table = Table.forPath(engine, path)
-
-      loadPandMCheckMetrics(
-        table.getSnapshotAsOfVersion(engine, 4 /* versionId */ ).getSchema(),
-        engine,
-        // There are no checksum files for versions 4. Latest is at version 2.
-        // We need to read the commit files 3 and 4 to get the P&M in addition the P&M from
-        // checksum file at version 2
-        expJsonVersionsRead = Seq(4, 3),
-        expParquetVersionsRead = Nil,
-        expParquetReadSetSizes = Nil,
-        expChecksumReadSet = Seq(2))
-      // read version 4 which sets the snapshot P&M hint to 4
-
-      // now try to load version 6 and we expect no checksums are read
-      loadPandMCheckMetrics(
-        table.getSnapshotAsOfVersion(engine, 6 /* versionId */ ).getSchema(),
-        engine,
-        // We have snapshot P&M hint at version 4, and no checksum after 2
-        expJsonVersionsRead = Seq(6, 5),
-        expParquetVersionsRead = Nil,
-        expParquetReadSetSizes = Nil,
-        expChecksumReadSet = Nil)
-    }
-  }
-
-  test("snapshot hint found for read version and crc found at read version => use hint") {
-    withTempDirAndMetricsEngine { (path, engine) =>
-      // Produce a test table with 0 to 11 .json, 0 to 11.crc, 10.checkpoint.parquet
-      buildTableWithCrc(path)
-
-      val table = Table.forPath(engine, path)
-      table.getLatestSnapshot(engine)
-
-      loadPandMCheckMetrics(
-        table.getLatestSnapshot(engine).getSchema(),
-        engine,
-        expJsonVersionsRead = Nil,
-        expParquetVersionsRead = Nil,
-        expParquetReadSetSizes = Nil,
-        expChecksumReadSet = Nil)
-    }
-  }
-
-  test(
-    "checksum not found at read version and checkpoint exists at read version => use checkpoint") {
-    withTempDirAndMetricsEngine { (path, engine) =>
-      // Produce a test table with 0 to 11 .json, 0 to 11.crc, 10.checkpoint.parquet
-      buildTableWithCrc(path)
-      val checkpointVersion = 10;
-      val logPath = f"$path/_delta_log"
-      assert(
-        Files.exists(
-          new File(
-            FileNames
-              .checkpointFileSingular(new Path(logPath), checkpointVersion)
-              .toString).toPath))
-      assert(
-        Files.deleteIfExists(
-          new File(FileNames.checksumFile(new Path(logPath), checkpointVersion).toString).toPath))
-
-      val table = Table.forPath(engine, path)
-
-      loadPandMCheckMetrics(
-        table.getSnapshotAsOfVersion(engine, 10).getSchema(),
-        engine,
-        // 10.crc missing, 10.checkpoint.parquet exists.
-        // Attempt to read 10.crc fails and read 10.checkpoint.parquet succeeds.
-        expJsonVersionsRead = Nil,
-        expParquetVersionsRead = Seq(10),
-        expParquetReadSetSizes = Seq(1),
-        expChecksumReadSet = Nil)
-    }
-  }
-
-  test(
-    "checksum missing read version and the previous version, " +
-      "checkpoint exists the read version the previous version => use checkpoint") {
-    withTempDirAndMetricsEngine { (path, engine) =>
-      // Produce a test table with 0 to 11 .json, 0 to 11.crc, 10.checkpoint.parquet
-      buildTableWithCrc(path)
-      val checkpointVersion = 10;
-      val logPath = f"$path/_delta_log"
-      assert(
-        Files
-          .exists(
-            new File(
-              FileNames.checkpointFileSingular(
-                new Path(logPath),
-                checkpointVersion).toString).toPath))
-      assert(
-        Files.deleteIfExists(
-          new File(FileNames.checksumFile(new Path(logPath), checkpointVersion).toString).toPath))
-      assert(
-        Files.deleteIfExists(
-          new File(
-            FileNames.checksumFile(new Path(logPath), checkpointVersion + 1).toString).toPath))
-
-      val table = Table.forPath(engine, path)
-
-      // 11.crc, 10.crc missing, 10.checkpoint.parquet exists.
-      // Read 10.checkpoint.parquet and 11.json succeeds.
-      loadPandMCheckMetrics(
-        table.getSnapshotAsOfVersion(engine, 11).getSchema(),
-        engine,
-        expJsonVersionsRead = Seq(11),
-        expParquetVersionsRead = Seq(10),
-        expParquetReadSetSizes = Seq(1),
-        expChecksumReadSet = Nil)
-    }
-  }
-
-  test(
-    "checksum missing read version, " +
-      "both checksum and checkpoint exist the read version the previous version => use checksum") {
-    withTempDirAndMetricsEngine { (path, engine) =>
-      // Produce a test table with 0 to 11 .json, 0 to 11.crc, 10.checkpoint.parquet
-      buildTableWithCrc(path)
-      val checkpointVersion = 10;
-      val logPath = new Path(s"$path/_delta_log")
-      assert(
-        Files.exists(
-          new File(
-            FileNames
-              .checkpointFileSingular(logPath, checkpointVersion)
-              .toString).toPath))
-      assert(
-        Files.deleteIfExists(
-          new File(
-            FileNames.checksumFile(logPath, checkpointVersion + 1).toString).toPath))
-
-      val table = Table.forPath(engine, path)
-
-      // 11.crc, missing, 10.crc and 10.checkpoint.parquet exist.
-      // Read 10.checkpoint.parquet and 11.json succeeds.
-      loadPandMCheckMetrics(
-        table.getSnapshotAsOfVersion(engine, 11).getSchema(),
-        engine,
-        expJsonVersionsRead = Seq(11),
-        expParquetVersionsRead = Nil,
-        expParquetReadSetSizes = Nil,
-        expChecksumReadSet = Seq(10))
-    }
-  }
-
-  test("crc found at read version and checkpoint at read version => use checksum") {
-    withTempDirAndMetricsEngine { (path, engine) =>
-      // Produce a test table with 0 to 11 .json, 0 to 11.crc, 10.checkpoint.parquet
-      buildTableWithCrc(path)
-      val checkpointVersion = 10;
-      val logPath = new Path(s"$path/_delta_log")
-      assert(
-        Files.exists(
-          new File(
-            FileNames
-              .checkpointFileSingular(logPath, checkpointVersion)
-              .toString).toPath))
-      val table = Table.forPath(engine, path)
-
-      loadPandMCheckMetrics(
-        table.getSnapshotAsOfVersion(engine, checkpointVersion).getSchema(),
-        engine,
-        expJsonVersionsRead = Nil,
-        expParquetVersionsRead = Nil,
-        expParquetReadSetSizes = Nil,
-        expChecksumReadSet = Seq(10))
-    }
-  }
-
-  test("crc found at older than read version - 100 => full log replay") {
-    withTempDirAndMetricsEngine { (path, engine) =>
-      buildTableWithCrc(path, 100)
-      (1 to 101).foreach { version =>
-        assert(
-          Files.deleteIfExists(
-            new File(FileNames.checksumFile(
-              new Path(f"$path/_delta_log"),
-              version).toString).toPath))
-        if (version % 10 == 0) {
-          assert(
-            Files.deleteIfExists(
-              new File(
-                FileNames.checkpointFileSingular(
-                  new Path(f"$path/_delta_log"),
-                  version).toString).toPath))
-        }
-      }
-      val table = Table.forPath(engine, path)
-
-      loadPandMCheckMetrics(
-        table.getSnapshotAsOfVersion(engine, 101).getSchema(),
-        engine,
-        expJsonVersionsRead = (0L to 101L).reverse,
-        expParquetVersionsRead = Nil,
-        expParquetReadSetSizes = Nil,
-        expChecksumReadSet = Nil)
-    }
-  }
-
-  def buildTableWithCrc(path: String, numOfWrite: Int = 10): Unit = {
-    withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true") {
-      spark.sql(
-        s"CREATE TABLE delta.`$path` USING DELTA AS " +
-          s"SELECT 0L as id")
-      for (_ <- 0 to numOfWrite) { appendCommit(path) }
-    }
-  }
-}
-
-////////////////////
-// Helper Classes //
-////////////////////
-
-/** An engine that records the Delta commit (.json) and checkpoint (.parquet) files read */
-class MetricsEngine(fileIO: FileIO) extends Engine {
-  private val impl = DefaultEngine.create(fileIO)
-  private val jsonHandler = new MetricsJsonHandler(fileIO)
-  private val parquetHandler = new MetricsParquetHandler(fileIO)
-
-  def resetMetrics(): Unit = {
-    jsonHandler.resetMetrics()
-    parquetHandler.resetMetrics()
-  }
-
-  override def getExpressionHandler: ExpressionHandler = impl.getExpressionHandler
-
-  override def getJsonHandler: MetricsJsonHandler = jsonHandler
-
-  override def getFileSystemClient: FileSystemClient = impl.getFileSystemClient
-
-  override def getParquetHandler: MetricsParquetHandler = parquetHandler
-}
-
-/**
- * Helper trait which wraps an underlying json/parquet read and collects the versions (e.g. 10.json,
- * 10.checkpoint.parquet) read
- */
-trait FileReadMetrics { self: Object =>
-  // number of times read is requested on `_last_checkpoint`
-  private var lastCheckpointMetadataReadCalls = 0
-
-  val checksumsRead = new ArrayBuffer[Long]() // versions of checksum files read
-
-  private val versionsRead = ArrayBuffer[Long]()
-
-  // Number of checkpoint files requested read in each readParquetFiles call
-  val checkpointReadRequestSizes = new ArrayBuffer[Long]()
-
-  private def updateVersionsRead(fileStatus: FileStatus): Unit = {
-    val path = new Path(fileStatus.getPath)
-    if (FileNames.isCommitFile(path.getName) || FileNames.isCheckpointFile(path.getName)) {
-      val version = FileNames.getFileVersion(path)
-
-      // We may split json/parquet reads, so don't record the same file multiple times
-      if (!versionsRead.contains(version)) {
-        versionsRead += version
-      }
-    } else if (Checkpointer.LAST_CHECKPOINT_FILE_NAME.equals(path.getName)) {
-      lastCheckpointMetadataReadCalls += 1
-    } else if (FileNames.isChecksumFile(path.getName)) {
-      checksumsRead += FileNames.getFileVersion(path)
-    }
-  }
-
-  def getVersionsRead: Seq[Long] = versionsRead
-
-  def getLastCheckpointMetadataReadCalls: Int = lastCheckpointMetadataReadCalls
-
-  def resetMetrics(): Unit = {
-    lastCheckpointMetadataReadCalls = 0
-    versionsRead.clear()
-    checkpointReadRequestSizes.clear()
-    checksumsRead.clear()
-  }
-
-  def collectReadFiles(fileIter: CloseableIterator[FileStatus]): CloseableIterator[FileStatus] = {
-    fileIter.map(file => {
-      updateVersionsRead(file)
-      file
-    })
-  }
-}
-
-/** A JsonHandler that collects metrics on the Delta commit (.json) files read */
-class MetricsJsonHandler(fileIO: FileIO)
-    extends DefaultJsonHandler(fileIO)
-    with FileReadMetrics {
-
-  override def readJsonFiles(
-      fileIter: CloseableIterator[FileStatus],
-      physicalSchema: StructType,
-      predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] = {
-    super.readJsonFiles(collectReadFiles(fileIter), physicalSchema, predicate)
-  }
-}
-
-/** A ParquetHandler that collects metrics on the Delta checkpoint (.parquet) files read */
-class MetricsParquetHandler(fileIO: FileIO)
-    extends DefaultParquetHandler(fileIO)
-    with FileReadMetrics {
-
-  override def readParquetFiles(
-      fileIter: CloseableIterator[FileStatus],
-      physicalSchema: StructType,
-      predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] = {
-    val fileReadSet = fileIter.toSeq
-    checkpointReadRequestSizes += fileReadSet.size
-    super.readParquetFiles(
-      collectReadFiles(toCloseableIterator(fileReadSet.iterator)),
-      physicalSchema,
-      predicate)
   }
 }
