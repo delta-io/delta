@@ -111,6 +111,13 @@ case class CreateDeltaTableCommand(
     } else if (mode == SaveMode.ErrorIfExists && tableExistsInCatalog) {
       throw DeltaErrors.tableAlreadyExists(table)
     }
+    val tableFeatures = TableFeatureProtocolUtils.
+      getSupportedFeaturesFromTableConfigs(table.properties)
+    if (!Utils.isTesting && (tableFeatures.contains(CatalogOwnedTableFeature) ||
+      sparkSession.conf.contains(
+        TableFeatureProtocolUtils.defaultPropertyKey(CatalogOwnedTableFeature)))) {
+      throw DeltaErrors.deltaCannotCreateCatalogOwnedTable()
+    }
 
     var tableWithLocation = if (tableExistsInCatalog) {
       val existingTable = existingTableOpt.get
