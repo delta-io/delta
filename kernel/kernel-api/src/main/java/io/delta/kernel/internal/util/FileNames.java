@@ -17,6 +17,7 @@
 package io.delta.kernel.internal.util;
 
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.utils.FileStatus;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
@@ -77,6 +78,20 @@ public final class FileNames {
       Pattern.compile("(\\d+)\\.checkpoint\\.\\d+\\.\\d+\\.parquet");
 
   public static final String SIDECAR_DIRECTORY = "_sidecars";
+
+  public static DeltaLogFileType determineFileType(FileStatus file) {
+    final String fileName = file.getPath().toString();
+
+    if (isCommitFile(fileName)) {
+      return DeltaLogFileType.COMMIT;
+    } else if (isCheckpointFile(fileName)) {
+      return DeltaLogFileType.CHECKPOINT;
+    } else if (isChecksumFile(fileName)) {
+      return DeltaLogFileType.CHECKSUM;
+    } else {
+      throw new IllegalStateException("Unexpected file type: " + fileName);
+    }
+  }
 
   ////////////////////////
   // Version extractors //

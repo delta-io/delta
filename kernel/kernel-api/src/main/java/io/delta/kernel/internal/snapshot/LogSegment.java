@@ -96,12 +96,17 @@ public class LogSegment {
     requireNonNull(logPath, "logPath is null");
     requireNonNull(deltas, "deltas is null");
     requireNonNull(checkpoints, "checkpoints is null");
+    requireNonNull(lastSeenChecksum, "lastSeenChecksum null");
     checkArgument(
         deltas.stream().allMatch(fs -> FileNames.isCommitFile(fs.getPath())),
         "deltas must all be actual delta (commit) files");
     checkArgument(
         checkpoints.stream().allMatch(fs -> FileNames.isCheckpointFile(fs.getPath())),
         "checkpoints must all be actual checkpoint files");
+
+    lastSeenChecksum.ifPresent(
+        checksumFile ->
+            checkArgument(FileNames.checksumVersion(new Path(checksumFile.getPath())) <= version));
 
     this.checkpointVersionOpt =
         checkpoints.isEmpty()

@@ -321,18 +321,7 @@ public class SnapshotManager {
         listedFileStatuses.stream()
             .collect(
                 Collectors.groupingBy(
-                    file -> {
-                      String fileName = file.getPath();
-                      if (FileNames.isCommitFile(fileName)) {
-                        return DeltaLogFileType.COMMIT;
-                      } else if (FileNames.isCheckpointFile(fileName)) {
-                        return DeltaLogFileType.CHECKPOINT;
-                      } else if (FileNames.isChecksumFile(fileName)) {
-                        return DeltaLogFileType.CHECKSUM;
-                      } else {
-                        throw new IllegalStateException("Unexpected file types");
-                      }
-                    },
+                    FileNames::determineFileType,
                     LinkedHashMap::new, // Ensure order is maintained
                     Collectors.toList()));
 
@@ -342,12 +331,12 @@ public class SnapshotManager {
     List<FileStatus> listedCheckpointFileStatuses =
         partitionedFiles.getOrDefault(DeltaLogFileType.CHECKPOINT, Collections.emptyList());
 
-    List<FileStatus> listedChecksumFileStatues =
+    List<FileStatus> listedChecksumFileStatuses =
         partitionedFiles.getOrDefault(DeltaLogFileType.CHECKSUM, Collections.emptyList());
 
     logDebugFileStatuses("listedCheckpointFileStatuses", listedCheckpointFileStatuses);
     logDebugFileStatuses("listedDeltaFileStatuses", listedDeltaFileStatuses);
-    logDebugFileStatuses("listedCheckSumFileStatuses", listedChecksumFileStatues);
+    logDebugFileStatuses("listedCheckSumFileStatuses", listedChecksumFileStatuses);
 
     /////////////////////////////////////////////////////////////////////////////////////////////
     // Step 6: Determine the latest complete checkpoint version. The intuition here is that we //
@@ -518,9 +507,9 @@ public class SnapshotManager {
         newVersion,
         deltasAfterCheckpoint,
         latestCompleteCheckpointFileStatuses,
-        listedChecksumFileStatues.isEmpty()
+        listedChecksumFileStatuses.isEmpty()
             ? Optional.empty()
-            : Optional.of(ListUtils.getLast(listedChecksumFileStatues)),
+            : Optional.of(ListUtils.getLast(listedChecksumFileStatuses)),
         lastCommitTimestamp);
   }
 

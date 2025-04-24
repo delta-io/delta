@@ -16,7 +16,6 @@
 package io.delta.kernel.internal;
 
 import static io.delta.kernel.internal.DeltaErrors.*;
-import static io.delta.kernel.internal.fs.Path.getName;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.data.ColumnVector;
@@ -271,8 +270,7 @@ public class DeltaLogActionUtils {
                 }
               }
 
-              if (FileNames.isCommitFile(getName(filePath))
-                  || FileNames.isCheckpointFile(getName(filePath))) {
+              if (FileNames.isCommitFile(filePath) || FileNames.isCheckpointFile(filePath)) {
                 hasReturnedCommitOrCheckpoint.set(true);
               }
 

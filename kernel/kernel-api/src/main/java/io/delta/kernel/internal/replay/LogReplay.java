@@ -442,7 +442,6 @@ public class LogReplay {
                 snapshotVersion - 100,
                 0L));
 
-    // Inside the method where checksum is processed from LogSegment
     Optional<CRCInfo> crcInfoOpt =
         logSegment
             .getLastSeenChecksum()
