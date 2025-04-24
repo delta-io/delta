@@ -56,7 +56,7 @@ For `IcebergWriterCompatV1` writers must ensure:
   ]
 }
 ```
-
+- The tags of AddFile action that represents a partitioned iceberg DataFile contain "ICEBERG_PARTITION_SPEC_ID", with value being the iceberg partition spec id (Integer), and "ICEBERG_PARTITION_DATA", with value being a JSON array of ByteBuffer-serialized strings from iceberg partition values.
 - The table does not contain any columns with the type `byte` or `short`
   - Note that these types _are_ allowed by `IcebergCompatV2`
   - Therefore the list of allowed types for a table with `IcebergWriterCompatV1` enabled is: [`integer`, `long`, `float`, `double`, `decimal`, `string`, `binary`, `boolean`, `timestamp`, `timestampNTZ`, `date`, `array`, `map`, `struct`].
