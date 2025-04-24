@@ -90,23 +90,34 @@ public class ChecksumUtils {
             // Set minFileRetentionTimestampMillis to infinite future to skip all removed files
             Instant.ofEpochMilli(Long.MAX_VALUE).toEpochMilli())) {
 
+      // Process all checkpoint batches
       while (checkpointIterator.hasNext()) {
         FilteredColumnarBatch filteredBatch = checkpointIterator.next();
         ColumnarBatch batch = filteredBatch.getData();
+        Optional<ColumnVector> selectionVector = filteredBatch.getSelectionVector();
         final int rowCount = batch.getSize();
 
-        // Step 1: Ensure there are no remove records
         ColumnVector removeVector = batch.getColumnVector(REMOVE_INDEX);
+        ColumnVector addVector = batch.getColumnVector(ADD_INDEX);
+        ColumnVector domainMetadataVector = batch.getColumnVector(DOMAIN_METADATA_INDEX);
+
+        // Process all selected rows in a single pass for optimal performance
         for (int i = 0; i < rowCount; i++) {
+          // Check if this row is selected
+          boolean isSelected =
+              !selectionVector.isPresent()
+                  || (!selectionVector.get().isNullAt(i) && selectionVector.get().getBoolean(i));
+          if (!isSelected) continue;
+
+          // Step 1: Ensure there are no remove records
+          // We set minFileRetentionTimestampMillis to infinite future to skip all removed files,
+          // so there should be no remove actions.
           checkState(
               removeVector.isNullAt(i),
               "unexpected remove row found when "
                   + "setting minFileRetentionTimestampMillis to infinite future");
-        }
 
-        // Step 2: Process add file records - direct columnar access for better performance
-        ColumnVector addVector = batch.getColumnVector(ADD_INDEX);
-        for (int i = 0; i < rowCount; i++) {
+          // Step 2: Process add file records - direct columnar access for better performance
           if (!addVector.isNullAt(i)) {
             // Direct access to size field in add file record for maximum performance
             ColumnVector sizeVector = addVector.getChild(ADD_SIZE_INDEX);
@@ -116,11 +127,8 @@ public class ChecksumUtils {
             fileSizeHistogram.insert(fileSize);
             fileCount.increment();
           }
-        }
 
-        // Step 3: Process domain metadata records
-        ColumnVector domainMetadataVector = batch.getColumnVector(DOMAIN_METADATA_INDEX);
-        for (int i = 0; i < rowCount; i++) {
+          // Step 3: Process domain metadata records
           if (!domainMetadataVector.isNullAt(i)) {
             DomainMetadata domainMetadata =
                 DomainMetadata.fromColumnVector(domainMetadataVector, i);
@@ -149,7 +157,7 @@ public class ChecksumUtils {
                         .collect(Collectors.toSet())),
                 Optional.of(fileSizeHistogram)));
       } catch (FileAlreadyExistsException e) {
-        // checksum file have been created while we were computing it.
+        // Checksum file has been created while we were computing it.
         // This is fine - the checksum now exists, which was our goal.
       }
     }
