@@ -77,7 +77,7 @@ class CoordinatedCommitsUtilsSuite extends QueryTest
       propertyOverrides: Map[String, String],
       defaultConfs: Seq[(String, String)],
       errorOpt: Option[DeltaIllegalArgumentException]): Unit = {
-    withoutCoordinatedCommitsDefaultTableProperties {
+    withoutDefaultCCTableFeature {
       withSQLConf(defaultConfs: _*) {
         if (errorOpt.isDefined) {
           val e = intercept[DeltaIllegalArgumentException] {
