@@ -240,7 +240,9 @@ public class SnapshotManager {
    */
   @VisibleForTesting
   public LogSegment getLogSegmentForVersion(Engine engine, Optional<Long> versionToLoadOpt) {
-    final boolean USE_COMPACTED_FILES = true; // TODO: Where to config this
+    // Defaulting to listing the files for now. This has low cost. We can make this a configurable
+    // option in the future if we need to.
+    final boolean USE_COMPACTED_FILES = true;
 
     final String versionToLoadStr = versionToLoadOpt.map(String::valueOf).orElse("latest");
     logger.info("Loading log segment for version {}", versionToLoadStr);
@@ -391,7 +393,7 @@ public class SnapshotManager {
     logDebugFileStatuses("deltasAfterCheckpoint", deltasAfterCheckpoint);
 
     /////////////////////////////////////////////////////////////////////////////////////////////
-    // Step 7.5: Grab all compactions in range [$latestCompleteCheckpointVersion + 1,
+    // Step 8: Grab all compactions in range [$latestCompleteCheckpointVersion + 1,
     // $versionToLoad] //
     /////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -414,7 +416,7 @@ public class SnapshotManager {
     logDebugFileStatuses("compactionsAfterCheckpoint", compactionsAfterCheckpoint);
 
     ////////////////////////////////////////////////////////////////////
-    // Step 8: Determine the version of the snapshot we can now load. //
+    // Step 9: Determine the version of the snapshot we can now load. //
     ////////////////////////////////////////////////////////////////////
 
     // TODO: need to check compactions too?
@@ -432,7 +434,7 @@ public class SnapshotManager {
     logger.info("New version to load: {}", newVersion);
 
     /////////////////////////////////////////////
-    // Step 9: Perform some basic validations. //
+    // Step 10: Perform some basic validations. //
     /////////////////////////////////////////////
 
     // Check that we have found at least one checkpoint or delta file
@@ -490,7 +492,7 @@ public class SnapshotManager {
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////////
-    // Step 10: Grab the actual checkpoint file statuses for latestCompleteCheckpointVersion. //
+    // Step 11: Grab the actual checkpoint file statuses for latestCompleteCheckpointVersion. //
     ////////////////////////////////////////////////////////////////////////////////////////////
 
     final List<FileStatus> latestCompleteCheckpointFileStatuses =
@@ -526,7 +528,7 @@ public class SnapshotManager {
             .orElse(Collections.emptyList());
 
     ///////////////////////////////////////////////////
-    // Step 11: Construct the LogSegment and return. //
+    // Step 12: Construct the LogSegment and return. //
     ///////////////////////////////////////////////////
 
     logger.info("Successfully constructed LogSegment at version {}", newVersion);

@@ -221,6 +221,10 @@ public class LogSegment {
     return deltas;
   }
 
+  public List<FileStatus> getCompactions() {
+    return compactions;
+  }
+
   public List<FileStatus> getCheckpoints() {
     return checkpoints;
   }
