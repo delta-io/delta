@@ -227,27 +227,11 @@ public class LogSegment {
   }
 
   /**
-   * Returns the most recent checksum file encountered during log file listing, if available.
+   * Returns the most recent checksum file encountered during log directory listing, if available.
    *
-   * <p>Note: This checksum file's version may not match the requested snapshot version. It
-   * represents the latest checksum file that was discovered during log directory listing,
-   * regardless of its version. This is by design to avoid additional filesystem listing.
-   *
-   * <p>Callers must:
-   *
-   * <ul>
-   *   <li>Check if the Optional is present
-   *   <li>Verify the checksum file's version is appropriate for their use case
-   *   <li>Handle the case where the checksum file may not be the same version they're working with
-   * </ul>
-   *
-   * <p>Example usage:
-   *
-   * <pre>{@code
-   * logSegment.getLastSeenChecksum()
-   *     .filter(checksum -> checksumVersion == requiredVersion)
-   *     .flatMap(checksum -> ChecksumReader.getCRCInfo(engine, checksum));
-   * }</pre>
+   * <p>Note: This checksum file's version is guaranteed to be less than or equal to the LogSegment
+   * version. Consumers of this method should apply their own bounds checking to ensure the checksum
+   * version is appropriate for their specific use case.
    *
    * @return Optional containing the most recent checksum file encountered, or empty if none found
    */
