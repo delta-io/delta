@@ -402,14 +402,15 @@ public class LogReplay {
    *   <li>During initial log directory listing, the SnapshotManager captures all files including
    *       commits, checkpoints, and checksums.
    *   <li>The most recent checksum file discovered is stored in the LogSegment as
-   *       "lastSeenChecksum", regardless of its version.
+   *       "lastSeenChecksum", regardless of its version, however, logSegment will make sure
+   *       last_check_point_version <= crc_version <= logSegment_version
    *   <li>When loading table state information like Protocol, Metadata, or Domain data:
    *       <ol>
    *         <li>First check if there's a lastSeenChecksum in the LogSegment and if its version is
    *             appropriate (>= lower bound, <= requested version)
    *         <li>If a suitable checksum exists, generate version hint directly from it for
    *             subsequence call use that
-   *         <li>If no suitable checksum exists, sub sequence call fall back to reading from log
+   *         <li>If no suitable checksum exists, subsequence call fall back to reading from log
    *             files
    *       </ol>
    * </ol>
