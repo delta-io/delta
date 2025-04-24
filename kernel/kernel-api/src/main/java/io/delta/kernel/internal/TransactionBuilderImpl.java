@@ -203,110 +203,121 @@ public class TransactionBuilderImpl implements TransactionBuilder {
    * the user) given the provided parameters. This includes validation and updates as defined in the
    * builder.
    *
-   * @param isNewTableDef whether we are defining a new table definition or not. This determines
+   * @param isCreateOrReplace whether we are defining a new table definition or not. This determines
    *     what metadata to commit in the returned transaction, and what operations to allow or block.
-   * @param existingSnapshot the existing latest snapshot of the table (or empty for a new table).
-   *     This is used to validate that we can write to the table, and to get the protocol/metadata
-   *     when isNewTableDef=false.
+   * @param latestSnapshot the latest snapshot of the table if it exists. For a new table this
+   *     should be empty. For replace table, this should be the latest snapshot of the table. This
+   *     is used to validate that we can write to the table, and to get the protocol/metadata when
+   *     isCreateOrReplace=false.
    */
   protected TransactionImpl buildTransactionInternal(
-      Engine engine, boolean isNewTableDef, Optional<SnapshotImpl> existingSnapshot) {
+      Engine engine, boolean isCreateOrReplace, Optional<SnapshotImpl> latestSnapshot) {
     checkArgument(
-        isNewTableDef || existingSnapshot.isPresent(),
+        isCreateOrReplace || latestSnapshot.isPresent(),
         "Existing snapshot must be provided if not defining a new table definition");
+    latestSnapshot.ifPresent(snapshot -> validateWriteToExistingTable(engine, snapshot));
+    validateTransactionInputs(engine, isCreateOrReplace);
+
+    boolean enablesDomainMetadataSupport =
+        needDomainMetadataSupport
+            && latestSnapshot.isPresent()
+            && !latestSnapshot
+                .get()
+                .getProtocol()
+                .supportsFeature(TableFeatures.DOMAIN_METADATA_W_FEATURE);
+
+    boolean needsMetadataOrProtocolUpdate =
+        isCreateOrReplace
+            || schema.isPresent() // schema evolution
+            || tableProperties.isPresent() // table properties updated
+            || unsetTablePropertiesKeys.isPresent() // table properties unset
+            || clusteringColumns.isPresent() // clustering columns changed
+            || enablesDomainMetadataSupport; // domain metadata support added
+
+    if (!needsMetadataOrProtocolUpdate) {
+      // Return early if there is no metadata or protocol updates and isCreateOrReplace=false
+      new TransactionImpl(
+          false, // isCreateOrReplace
+          table.getDataPath(),
+          table.getLogPath(),
+          latestSnapshot.get(),
+          engineInfo,
+          operation,
+          latestSnapshot.get().getProtocol(), // reuse latest protocol
+          latestSnapshot.get().getMetadata(), // reuse latest metadata
+          setTxnOpt,
+          Optional.empty(), /* clustering cols=empty */
+          false /* shouldUpdateMetadata=false */,
+          false /* shouldUpdateProtocol=false */,
+          maxRetries,
+          logCompactionInterval,
+          table.getClock());
+    }
+
+    // Otherwise, if this is a new table definition or there is a metadata or protocol update, we
+    // need to execute our protocol & metadata validation + update logic and possibly get an updated
+    // protocol and/or metadata
     Metadata baseMetadata;
     Protocol baseProtocol;
-    if (isNewTableDef) {
+    if (isCreateOrReplace) {
       // For a new table definition start with an empty initial metadata
       baseMetadata = getInitialMetadata();
     } else {
       // Otherwise, use the existing table metadata
-      baseMetadata = existingSnapshot.get().getMetadata();
+      baseMetadata = latestSnapshot.get().getMetadata();
     }
-    if (existingSnapshot.isPresent()) {
-      // If the table exists, start with the prior table protocol - this ensures we never downgrade
-      baseProtocol = existingSnapshot.get().getProtocol();
+    if (latestSnapshot.isPresent()) {
+      // If latestSnapshot is present it is either a write to an existing table or a replace table.
+      // In both cases we want to start with the prior table protocol to ensure we never downgrade
+      // protocols.
+      baseProtocol = latestSnapshot.get().getProtocol();
     } else {
-      // Otherwise, start with initial protocol
+      // Otherwise, start with initial protocol for a new table
       baseProtocol = getInitialProtocol();
     }
-    existingSnapshot.ifPresent(snapshot -> validateWriteToExistingTable(engine, snapshot));
-    validateTransactionInputs(engine, isNewTableDef);
 
-    boolean enablesDomainMetadataSupport =
-        needDomainMetadataSupport
-            && !baseProtocol.supportsFeature(TableFeatures.DOMAIN_METADATA_W_FEATURE);
+    // We use the existing clustering columns to validate schema evolution
+    Optional<List<Column>> existingClusteringCols =
+        isCreateOrReplace
+            ? Optional.empty()
+            : ClusteringUtils.getClusteringColumnsOptional(latestSnapshot.get());
+    Tuple2<Optional<Protocol>, Optional<Metadata>> updatedProtocolAndMetadata =
+        validateAndUpdateProtocolAndMetadata(
+            engine, baseMetadata, baseProtocol, isCreateOrReplace, existingClusteringCols);
+    Optional<Protocol> newProtocol = updatedProtocolAndMetadata._1;
+    Optional<Metadata> newMetadata = updatedProtocolAndMetadata._2;
 
-    // If this a new table definition or there is a metadata or protocol update, we need to execute
-    // our protocol & metadata validation/update logic
-    if (isNewTableDef
-        || schema.isPresent() // schema evolution
-        || tableProperties.isPresent() // table properties updated
-        || unsetTablePropertiesKeys.isPresent() // table properties updated
-        || clusteringColumns.isPresent() // clustering columns have changed
-        || enablesDomainMetadataSupport) {
+    // TODO should we do the validation in validateTransactionInputs and transform as part of
+    //  generating the domain in the txn?
+    StructType updatedSchema = newMetadata.orElse(baseMetadata).getSchema();
+    Optional<List<Column>> casePreservingClusteringColumnsOpt =
+        clusteringColumns.map(
+            cols -> SchemaUtils.casePreservingEligibleClusterColumns(updatedSchema, cols));
 
-      // We use the existing clustering columns to validate schema evolution
-      Optional<List<Column>> existingClusteringCols =
-          isNewTableDef
-              ? Optional.empty()
-              : ClusteringUtils.getClusteringColumnsOptional(existingSnapshot.get());
-      Tuple2<Optional<Protocol>, Optional<Metadata>> updatedProtocolAndMetadata =
-          validateAndUpdateProtocolAndMetadata(
-              engine, baseMetadata, baseProtocol, isNewTableDef, existingClusteringCols);
-      Optional<Protocol> newProtocol = updatedProtocolAndMetadata._1;
-      Optional<Metadata> newMetadata = updatedProtocolAndMetadata._2;
-
-      // TODO should we do the validation in validateTransactionInputs and transform as part of
-      //  generating the domain in the txn?
-      StructType updatedSchema = newMetadata.orElse(baseMetadata).getSchema();
-      Optional<List<Column>> casePreservingClusteringColumnsOpt =
-          clusteringColumns.map(
-              cols -> SchemaUtils.casePreservingEligibleClusterColumns(updatedSchema, cols));
-
-      if (!existingSnapshot.isPresent()) {
-        // For now, we generate an empty snapshot (with version -1) for a new table. In the future,
-        // we should define an internal interface to expose just the information the transaction
-        // needs instead of the entire SnapshotImpl class. This should also let us avoid creating
-        // this fake empty initial snapshot.
-        existingSnapshot = Optional.of(getInitialEmptySnapshot(engine, baseMetadata, baseProtocol));
-      }
-
-      return new TransactionImpl(
-          isNewTableDef,
-          table.getDataPath(),
-          table.getLogPath(),
-          existingSnapshot.get(),
-          engineInfo,
-          operation,
-          newProtocol.orElse(baseProtocol),
-          newMetadata.orElse(baseMetadata),
-          setTxnOpt,
-          casePreservingClusteringColumnsOpt,
-          newMetadata.isPresent() || isNewTableDef /* shouldUpdateMetadata */,
-          newProtocol.isPresent() || isNewTableDef /* shouldUpdateProtocol */,
-          maxRetries,
-          logCompactionInterval,
-          table.getClock());
-
-    } else {
-      return new TransactionImpl(
-          false, // isNewTableDef
-          table.getDataPath(),
-          table.getLogPath(),
-          existingSnapshot.get(),
-          engineInfo,
-          operation,
-          existingSnapshot.get().getProtocol(),
-          existingSnapshot.get().getMetadata(),
-          setTxnOpt,
-          Optional.empty(), /* clustering cols */
-          false /* shouldUpdateMetadata */,
-          false /* shouldUpdateProtocol */,
-          maxRetries,
-          logCompactionInterval,
-          table.getClock());
+    if (!latestSnapshot.isPresent()) {
+      // For now, we generate an empty snapshot (with version -1) for a new table. In the future,
+      // we should define an internal interface to expose just the information the transaction
+      // needs instead of the entire SnapshotImpl class. This should also let us avoid creating
+      // this fake empty initial snapshot.
+      latestSnapshot = Optional.of(getInitialEmptySnapshot(engine, baseMetadata, baseProtocol));
     }
+
+    return new TransactionImpl(
+        isCreateOrReplace,
+        table.getDataPath(),
+        table.getLogPath(),
+        latestSnapshot.get(),
+        engineInfo,
+        operation,
+        newProtocol.orElse(baseProtocol),
+        newMetadata.orElse(baseMetadata),
+        setTxnOpt,
+        casePreservingClusteringColumnsOpt,
+        newMetadata.isPresent() || isCreateOrReplace /* shouldUpdateMetadata */,
+        newProtocol.isPresent() || isCreateOrReplace /* shouldUpdateProtocol */,
+        maxRetries,
+        logCompactionInterval,
+        table.getClock());
   }
 
   /**
@@ -314,7 +325,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
    *
    * @param baseMetadata the starting metadata to update
    * @param baseProtocol the starting protocol to update
-   * @param isNewTableDef whether we are defining a new table definition or not
+   * @param isCreateOrReplace whether we are defining a new table definition or not
    * @param existingClusteringCols the existing clustering columns for the table (if it exists)
    * @return an updated protocol and metadata if any updates are necessary
    */
@@ -322,9 +333,9 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       Engine engine,
       Metadata baseMetadata,
       Protocol baseProtocol,
-      boolean isNewTableDef,
+      boolean isCreateOrReplace,
       Optional<List<Column>> existingClusteringCols) {
-    if (isNewTableDef) {
+    if (isCreateOrReplace) {
       checkArgument(!existingClusteringCols.isPresent());
     }
 
@@ -350,7 +361,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
                   .withConfigurationKeysUnset(unsetTablePropertiesKeys.get()));
     }
 
-    if (schema.isPresent() && !isNewTableDef) {
+    if (schema.isPresent() && !isCreateOrReplace) {
       newMetadata = Optional.of(newMetadata.orElse(baseMetadata).withNewSchema(schema.get()));
     }
 
@@ -401,21 +412,23 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     newMetadata.ifPresent(
         metadata ->
             IcebergWriterCompatV1MetadataValidatorAndUpdater.validateIcebergWriterCompatV1Change(
-                baseMetadata.getConfiguration(), metadata.getConfiguration(), isNewTableDef));
+                baseMetadata.getConfiguration(), metadata.getConfiguration(), isCreateOrReplace));
 
     // We must do our icebergWriterCompatV1 checks/updates FIRST since it has stricter column
     // mapping requirements (id mode) than icebergCompatV2. It also may enable icebergCompatV2.
     Optional<Metadata> icebergWriterCompatV1 =
         IcebergWriterCompatV1MetadataValidatorAndUpdater
             .validateAndUpdateIcebergWriterCompatV1Metadata(
-                isNewTableDef, newMetadata.orElse(baseMetadata), newProtocol.orElse(baseProtocol));
+                isCreateOrReplace,
+                newMetadata.orElse(baseMetadata),
+                newProtocol.orElse(baseProtocol));
     if (icebergWriterCompatV1.isPresent()) {
       newMetadata = icebergWriterCompatV1;
     }
 
     Optional<Metadata> icebergCompatV2Metadata =
         IcebergCompatV2MetadataValidatorAndUpdater.validateAndUpdateIcebergCompatV2Metadata(
-            isNewTableDef, newMetadata.orElse(baseMetadata), newProtocol.orElse(baseProtocol));
+            isCreateOrReplace, newMetadata.orElse(baseMetadata), newProtocol.orElse(baseProtocol));
     if (icebergCompatV2Metadata.isPresent()) {
       newMetadata = icebergCompatV2Metadata;
     }
@@ -424,7 +437,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     // We update the column mapping info here after all configuration changes are finished
     Optional<Metadata> columnMappingMetadata =
         ColumnMapping.updateColumnMappingMetadataIfNeeded(
-            newMetadata.orElse(baseMetadata), isNewTableDef);
+            newMetadata.orElse(baseMetadata), isCreateOrReplace);
     if (columnMappingMetadata.isPresent()) {
       newMetadata = columnMappingMetadata;
     }
@@ -433,7 +446,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     // Now that all the config and schema changes have been made validate the old vs new metadata
     if (newMetadata.isPresent()) {
       validateMetadataChange(
-          existingClusteringCols, baseMetadata, newMetadata.get(), isNewTableDef);
+          existingClusteringCols, baseMetadata, newMetadata.get(), isCreateOrReplace);
     }
 
     return new Tuple2(newProtocol, newMetadata);
@@ -471,9 +484,9 @@ public class TransactionBuilderImpl implements TransactionBuilder {
    *   <li>The provided table properties to set and unset do not overlap with each other.
    * </ul>
    */
-  protected void validateTransactionInputs(Engine engine, boolean isNewTableDef) {
+  protected void validateTransactionInputs(Engine engine, boolean isCreateOrReplace) {
     String tablePath = table.getPath(engine);
-    if (!isNewTableDef) {
+    if (!isCreateOrReplace) {
       if (partitionColumns.isPresent()) {
         throw tableAlreadyExists(
             tablePath,
@@ -528,15 +541,15 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       Optional<List<Column>> existingClusteringCols,
       Metadata oldMetadata,
       Metadata newMetadata,
-      boolean isNewTableDef) {
+      boolean isCreateOrReplace) {
     ColumnMapping.verifyColumnMappingChange(
-        oldMetadata.getConfiguration(), newMetadata.getConfiguration(), isNewTableDef);
+        oldMetadata.getConfiguration(), newMetadata.getConfiguration(), isCreateOrReplace);
     IcebergWriterCompatV1MetadataValidatorAndUpdater.validateIcebergWriterCompatV1Change(
-        oldMetadata.getConfiguration(), newMetadata.getConfiguration(), isNewTableDef);
+        oldMetadata.getConfiguration(), newMetadata.getConfiguration(), isCreateOrReplace);
     IcebergUniversalFormatMetadataValidatorAndUpdater.validate(newMetadata);
 
     // Validate the conditions for schema evolution and the updated schema if applicable
-    if (schema.isPresent() && !isNewTableDef) {
+    if (schema.isPresent() && !isCreateOrReplace) {
       ColumnMappingMode updatedMappingMode =
           ColumnMapping.getColumnMappingMode(newMetadata.getConfiguration());
       ColumnMappingMode currentMappingMode =

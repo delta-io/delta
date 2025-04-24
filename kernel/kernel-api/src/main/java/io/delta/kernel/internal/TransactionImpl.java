@@ -76,8 +76,8 @@ public class TransactionImpl implements Transaction {
 
   private final UUID txnId = UUID.randomUUID();
 
-  /*If the transaction is defining a new table from scratch (i.e. create table, replace table) */
-  private final boolean isNewTableDef;
+  /* If the transaction is defining a new table from scratch (i.e. create table, replace table) */
+  private final boolean isCreateOrReplace;
   private final String engineInfo;
   private final Operation operation;
   private final Path dataPath;
@@ -98,7 +98,7 @@ public class TransactionImpl implements Transaction {
   private boolean closed; // To avoid trying to commit the same transaction again.
 
   public TransactionImpl(
-      boolean isNewTableDef,
+      boolean isCreateOrReplace,
       Path dataPath,
       Path logPath,
       SnapshotImpl readSnapshot,
@@ -113,7 +113,7 @@ public class TransactionImpl implements Transaction {
       int maxRetries,
       int logCompactionInterval,
       Clock clock) {
-    this.isNewTableDef = isNewTableDef;
+    this.isCreateOrReplace = isCreateOrReplace;
     this.dataPath = dataPath;
     this.logPath = logPath;
     this.readSnapshot = readSnapshot;
@@ -512,7 +512,7 @@ public class TransactionImpl implements Transaction {
   }
 
   private Map<String, String> getOperationParameters() {
-    if (isNewTableDef) {
+    if (isCreateOrReplace) {
       List<String> partitionCols = VectorUtils.toJavaList(metadata.getPartitionColumns());
       String partitionBy =
           partitionCols.stream()
@@ -542,7 +542,7 @@ public class TransactionImpl implements Transaction {
 
   private Optional<CRCInfo> buildPostCommitCrcInfoIfCurrentCrcAvailable(
       long commitAtVersion, TransactionMetricsResult metricsResult) {
-    if (isNewTableDef) {
+    if (isCreateOrReplace) {
       // We don't need to worry about conflicting transaction here since new tables always commit
       // metadata (and thus fail any conflicts)
       return Optional.of(
