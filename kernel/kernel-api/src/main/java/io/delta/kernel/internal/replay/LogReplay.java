@@ -437,7 +437,6 @@ public class LogReplay {
                 // Prefer reading hint over CRC, so start listing from hint's version + 1,
                 // if hint is not present, read from version 0.
                 snapshotHint.map(SnapshotHint::getVersion).orElse(-1L) + 1,
-                logSegment.getCheckpointVersionOpt().orElse(0L),
                 // Only read the CRC within 100 versions.
                 snapshotVersion - 100,
                 0L));

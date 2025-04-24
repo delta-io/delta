@@ -169,7 +169,12 @@ public class LogSegment {
     this.version = version;
     this.deltas = deltas;
     this.checkpoints = checkpoints;
-    this.lastSeenChecksum = lastSeenChecksum;
+    this.lastSeenChecksum =
+        lastSeenChecksum.filter(
+            file ->
+                !checkpointVersionOpt.isPresent()
+                    || FileNames.checksumVersion(new Path(file.getPath()))
+                        >= checkpointVersionOpt.get());
     this.lastCommitTimestamp = lastCommitTimestamp;
 
     this.allFiles =
@@ -229,11 +234,16 @@ public class LogSegment {
   /**
    * Returns the most recent checksum file encountered during log directory listing, if available.
    *
-   * <p>Note: This checksum file's version is guaranteed to be less than or equal to the LogSegment
-   * version. Consumers of this method should apply their own bounds checking to ensure the checksum
-   * version is appropriate for their specific use case.
+   * <p>Note: This checksum file's version is guaranteed to:
    *
-   * @return Optional containing the most recent checksum file encountered, or empty if none found
+   * <ul>
+   *   <li>Be less than or equal to the LogSegment version (enforced by constructor)
+   *   <li>Be greater than or equal to the checkpoint version if a checkpoint exists (filtered
+   *       during initialization)
+   * </ul>
+   *
+   * @return Optional containing the most recent valid checksum file encountered, or empty if none
+   *     found
    */
   public Optional<FileStatus> getLastSeenChecksum() {
     return lastSeenChecksum;
