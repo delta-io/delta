@@ -31,10 +31,7 @@ import io.delta.kernel.statistics.DataFileStatistics;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.DataFileStatus;
 import java.net.URI;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Optional;
+import java.util.*;
 
 /** Delta log action representing an `AddFile` */
 public class AddFile extends RowBackedAction {
@@ -82,7 +79,8 @@ public class AddFile extends RowBackedAction {
       URI tableRoot,
       DataFileStatus dataFileStatus,
       Map<String, Literal> partitionValues,
-      boolean dataChange) {
+      boolean dataChange,
+      Map<String, String> tags) {
     Row row =
         createAddFileRow(
             physicalSchema,
@@ -92,7 +90,7 @@ public class AddFile extends RowBackedAction {
             dataFileStatus.getModificationTime(),
             dataChange,
             Optional.empty(), // deletionVector
-            Optional.empty(), // tags
+            Optional.of(VectorUtils.stringStringMapValue(tags)), // tags
             Optional.empty(), // baseRowId
             Optional.empty(), // defaultRowCommitVersion
             dataFileStatus.getStatistics());

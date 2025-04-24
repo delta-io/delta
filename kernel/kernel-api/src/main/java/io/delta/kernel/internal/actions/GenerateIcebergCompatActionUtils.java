@@ -39,6 +39,7 @@ import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.kernel.utils.DataFileStatus;
 import java.net.URI;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -64,7 +65,8 @@ public final class GenerateIcebergCompatActionUtils {
       Row transactionState,
       DataFileStatus fileStatus,
       Map<String, Literal> partitionValues,
-      boolean dataChange) {
+      boolean dataChange,
+      Map<String, String> tags) {
     Map<String, String> configuration = TransactionStateRow.getConfiguration(transactionState);
 
     /* ----- Validate that this is a valid usage of this API ----- */
@@ -90,8 +92,18 @@ public final class GenerateIcebergCompatActionUtils {
             tableRoot,
             fileStatus,
             partitionValues,
-            dataChange);
+            dataChange,
+            tags);
     return SingleAction.createAddFileSingleAction(addFile.toRow());
+  }
+
+  public static Row generateIcebergCompatWriterV1AddAction(
+      Row transactionState,
+      DataFileStatus fileStatus,
+      Map<String, Literal> partitionValues,
+      boolean dataChange) {
+    return generateIcebergCompatWriterV1AddAction(
+        transactionState, fileStatus, partitionValues, dataChange, Collections.emptyMap());
   }
 
   /**

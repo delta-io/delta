@@ -28,6 +28,7 @@ import io.delta.kernel.internal.{TableConfig, TableImpl}
 import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction
 import io.delta.kernel.internal.actions.{AddFile, GenerateIcebergCompatActionUtils, RemoveFile}
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
+import io.delta.kernel.internal.util.VectorUtils
 import io.delta.kernel.statistics.DataFileStatistics
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 import io.delta.kernel.utils.DataFileStatus
@@ -428,6 +429,58 @@ class CommitIcebergActionSuite extends DeltaTableWriteSuiteBase {
             Collections.emptyMap(),
             true /* dataChange */
           )
+        }
+      }
+    }
+  }
+
+  test("add tags for addFile") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // Create table
+      createEmptyTable(
+        engine,
+        tablePath,
+        testSchema,
+        tableProperties = tblPropertiesIcebergWriterCompatV1Enabled)
+
+      {
+        val txn = createTxn(engine, tablePath, maxRetries = 0)
+        val actionsToCommit = Seq(
+          GenerateIcebergCompatActionUtils.generateIcebergCompatWriterV1AddAction(
+            txn.getTransactionState(engine),
+            generateDataFileStatus(tablePath, "file1.parquet"),
+            Collections.emptyMap(),
+            true, /* dataChange */
+            Map("tag" -> "abc").asJava))
+        commitTransaction(
+          txn,
+          engine,
+          inMemoryIterable(toCloseableIterator(actionsToCommit.asJava.iterator())))
+      }
+
+      val version = 1
+      val rows = Table.forPath(engine, tablePath).asInstanceOf[TableImpl]
+        .getChanges(engine, version, version, Set(DeltaAction.ADD, DeltaAction.REMOVE).asJava)
+        .toSeq
+        .flatMap(_.getRows.toSeq)
+      val fileActions = rows.flatMap { row =>
+        if (!row.isNullAt(row.getSchema.indexOf("add"))) {
+          val addFile = new AddFile(row.getStruct(row.getSchema.indexOf("add")))
+          assert(addFile.getPartitionValues.getSize == 0)
+          assert(!addFile.getBaseRowId.isPresent)
+          assert(!addFile.getDefaultRowCommitVersion.isPresent)
+          assert(!addFile.getDeletionVector.isPresent)
+          assert(addFile.getStats.isPresent)
+          assert(addFile.getTags.isPresent)
+          assert(addFile.getTags.get().getSize
+            == 1)
+          Some(ExpectedAdd(
+            addFile.getPath,
+            addFile.getSize,
+            addFile.getModificationTime,
+            addFile.getDataChange))
+        } else {
+          None
         }
       }
     }
