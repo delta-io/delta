@@ -404,7 +404,7 @@ public class LogReplay {
    *   <li>The most recent checksum file discovered is stored in the LogSegment as
    *       "lastSeenChecksum", regardless of its version, however, logSegment will make sure
    *       last_check_point_version <= crc_version <= logSegment_version
-   *   <li>When loading table state information like Protocol, Metadata, or Domain data:
+   *   <li>When loading table state information like Protocol, Metadata, or Domain Metadata:
    *       <ol>
    *         <li>First check if there's a lastSeenChecksum in the LogSegment and if its version is
    *             appropriate (>= lower bound, <= requested version)
