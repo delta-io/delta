@@ -445,14 +445,14 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     /* ----- 5: Update the METADATA with materialized row tracking column name if applicable----- */
     Optional<Metadata> rowTrackingMetadata =
         MaterializedRowTrackingColumn.ROW_ID.assignMaterializedColumnNameIfNeeded(
-            newMetadata.orElse(snapshotMetadata));
+            newMetadata.orElse(baseMetadata));
     if (rowTrackingMetadata.isPresent()) {
       newMetadata = rowTrackingMetadata;
     }
 
     rowTrackingMetadata =
         MaterializedRowTrackingColumn.ROW_COMMIT_VERSION.assignMaterializedColumnNameIfNeeded(
-            newMetadata.orElse(snapshotMetadata));
+            newMetadata.orElse(baseMetadata));
     if (rowTrackingMetadata.isPresent()) {
       newMetadata = rowTrackingMetadata;
     }
@@ -604,7 +604,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     // Block enabling/disabling row tracking on existing tables because:
     // 1. Enabling requires backfilling row IDs/commit versions, which is not supported in Kernel
     // 2. Disabling is irreversible in Kernel (re-enabling not supported)
-    if (!isNewTable) {
+    if (!isCreateOrReplace) {
       boolean oldRowTrackingEnabledValue =
           TableConfig.ROW_TRACKING_ENABLED.fromMetadata(oldMetadata);
       boolean newRowTrackingEnabledValue =
