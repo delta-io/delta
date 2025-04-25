@@ -1082,8 +1082,7 @@ class DeltaMergeBuilder(object):
         """
         return DataFrame(
             self._jbuilder.execute(),
-            getattr(self._spark, "_wrapped", self._spark)  # type: ignore[attr-defined]
-            )
+            getattr(self._spark, "_wrapped", self._spark))  # type: ignore[attr-defined]
 
     def __getMatchedBuilder(
         self, condition: OptionalExpressionOrColumn = None
