@@ -88,6 +88,7 @@ object SparkMimaExcludes {
 
       // Changes in 4.0.0
       ProblemFilters.exclude[IncompatibleResultTypeProblem]("io.delta.tables.DeltaTable.improveUnsupportedOpError"),
+      ProblemFilters.exclude[IncompatibleResultTypeProblem]("io.delta.tables.DeltaMergeBuilder.improveUnsupportedOpError"),
       ProblemFilters.exclude[IncompatibleResultTypeProblem]("io.delta.tables.DeltaMergeBuilder.execute")
 
       // scalastyle:on line.size.limit
