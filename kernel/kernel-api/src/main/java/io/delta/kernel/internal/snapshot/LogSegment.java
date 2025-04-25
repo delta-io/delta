@@ -110,7 +110,9 @@ public class LogSegment {
 
     lastSeenChecksum.ifPresent(
         checksumFile ->
-            checkArgument(FileNames.checksumVersion(new Path(checksumFile.getPath())) <= version));
+            checkArgument(
+                FileNames.checksumVersion(new Path(checksumFile.getPath())) <= version,
+                "checksum file's version should be lower than logSegment's version"));
 
     this.checkpointVersionOpt =
         checkpoints.isEmpty()
@@ -178,7 +180,8 @@ public class LogSegment {
             file -> {
               long checksumVersion = FileNames.checksumVersion(new Path(file.getPath()));
               logger.debug(
-                  "Found checksum file for version {} with LogSegment version {} and checkpoint version {}",
+                  "Found checksum file for version {} in "
+                      + "LogSegment version {} and checkpoint version {}",
                   checksumVersion,
                   version,
                   checkpointVersionOpt);
