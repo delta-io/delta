@@ -3716,6 +3716,12 @@ trait DeltaErrorsBase
       errorClass = "DELTA_UNSUPPORTED_VACUUM_ON_MANAGED_TABLE",
       messageParameters = Array.empty)
   }
+
+  def deltaCannotCreateCatalogOwnedTable(): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_UNSUPPORTED_CATALOG_OWNED_TABLE_CREATION",
+      messageParameters = Array.empty)
+  }
 }
 
 object DeltaErrors extends DeltaErrorsBase
