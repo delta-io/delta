@@ -322,10 +322,10 @@ trait MergeIntoMetricsBase
     val numRowsInserted = metrics.get("numTargetRowsInserted").map(_.toLong).getOrElse(0L)
     val numRowsTouched =
       numRowsUpdated +
-        numRowsDeleted + 
+        numRowsDeleted +
         numRowsInserted
 
-    assert(mergeResultDf.collect() === 
+    assert(mergeResultDf.collect() ===
       Array(Row(numRowsTouched,
         numRowsUpdated,
         numRowsDeleted,
