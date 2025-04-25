@@ -434,7 +434,7 @@ class CommitIcebergActionSuite extends DeltaTableWriteSuiteBase {
     }
   }
 
-  test("add tags for addFile") {
+  test("Tags can be successfully passed for generating addFile") {
     withTempDirAndEngine { (tablePath, engine) =>
       // Create table
       createEmptyTable(
@@ -463,7 +463,7 @@ class CommitIcebergActionSuite extends DeltaTableWriteSuiteBase {
         .getChanges(engine, version, version, Set(DeltaAction.ADD, DeltaAction.REMOVE).asJava)
         .toSeq
         .flatMap(_.getRows.toSeq)
-      val fileActions = rows.flatMap { row =>
+      rows.foreach { row =>
         if (!row.isNullAt(row.getSchema.indexOf("add"))) {
           val addFile = new AddFile(row.getStruct(row.getSchema.indexOf("add")))
           assert(addFile.getPartitionValues.getSize == 0)
@@ -479,8 +479,6 @@ class CommitIcebergActionSuite extends DeltaTableWriteSuiteBase {
             addFile.getSize,
             addFile.getModificationTime,
             addFile.getDataChange))
-        } else {
-          None
         }
       }
     }
