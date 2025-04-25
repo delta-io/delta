@@ -18,6 +18,9 @@
  */
 package io.delta.table;
 
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.catalog.Catalog;
@@ -30,15 +33,12 @@ import org.apache.iceberg.hadoop.Configurable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-
 public class DeltaCatalog implements Catalog, SupportsNamespaces, Configurable<Configuration> {
   private static final Logger LOG = LoggerFactory.getLogger(DeltaCatalog.class);
 
   @Override
   public List<TableIdentifier> listTables(Namespace namespace) {
+    LOG.info("hello");
     throw new UnsupportedOperationException("Not implemented yet");
   }
 
@@ -68,7 +68,8 @@ public class DeltaCatalog implements Catalog, SupportsNamespaces, Configurable<C
   }
 
   @Override
-  public Map<String, String> loadNamespaceMetadata(Namespace namespace) throws NoSuchNamespaceException {
+  public Map<String, String> loadNamespaceMetadata(Namespace namespace)
+      throws NoSuchNamespaceException {
     throw new UnsupportedOperationException("Not implemented yet");
   }
 
@@ -78,12 +79,14 @@ public class DeltaCatalog implements Catalog, SupportsNamespaces, Configurable<C
   }
 
   @Override
-  public boolean setProperties(Namespace namespace, Map<String, String> properties) throws NoSuchNamespaceException {
+  public boolean setProperties(Namespace namespace, Map<String, String> properties)
+      throws NoSuchNamespaceException {
     throw new UnsupportedOperationException("Not implemented yet");
   }
 
   @Override
-  public boolean removeProperties(Namespace namespace, Set<String> properties) throws NoSuchNamespaceException {
+  public boolean removeProperties(Namespace namespace, Set<String> properties)
+      throws NoSuchNamespaceException {
     throw new UnsupportedOperationException("Not implemented yet");
   }
 
