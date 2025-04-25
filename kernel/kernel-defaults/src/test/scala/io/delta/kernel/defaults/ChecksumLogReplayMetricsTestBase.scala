@@ -112,7 +112,7 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite {
   }
 
   test(
-    "checksum missing read version and the previous version, " +
+    "checksum missing read version & the previous version, " +
       "checkpoint exists the read version the previous version => use checkpoint") {
     withTableWithCrc { (table, tablePath, engine) =>
       val checkpointVersion = 10
