@@ -443,6 +443,9 @@ class CommitIcebergActionSuite extends DeltaTableWriteSuiteBase {
         testSchema,
         tableProperties = tblPropertiesIcebergWriterCompatV1Enabled)
 
+      // Commit one add file with tags
+      val tags = Map("tag1" -> "abc", "tag2" -> "def")
+
       {
         val txn = createTxn(engine, tablePath, maxRetries = 0)
         val actionsToCommit = Seq(
@@ -451,36 +454,26 @@ class CommitIcebergActionSuite extends DeltaTableWriteSuiteBase {
             generateDataFileStatus(tablePath, "file1.parquet"),
             Collections.emptyMap(),
             true, /* dataChange */
-            Map("tag" -> "abc").asJava))
+            tags.asJava))
         commitTransaction(
           txn,
           engine,
           inMemoryIterable(toCloseableIterator(actionsToCommit.asJava.iterator())))
       }
 
+      // Read back committed ADD actions
       val version = 1
       val rows = Table.forPath(engine, tablePath).asInstanceOf[TableImpl]
-        .getChanges(engine, version, version, Set(DeltaAction.ADD, DeltaAction.REMOVE).asJava)
+        .getChanges(engine, version, version, Set(DeltaAction.ADD).asJava)
         .toSeq
         .flatMap(_.getRows.toSeq)
-      rows.foreach { row =>
-        if (!row.isNullAt(row.getSchema.indexOf("add"))) {
-          val addFile = new AddFile(row.getStruct(row.getSchema.indexOf("add")))
-          assert(addFile.getPartitionValues.getSize == 0)
-          assert(!addFile.getBaseRowId.isPresent)
-          assert(!addFile.getDefaultRowCommitVersion.isPresent)
-          assert(!addFile.getDeletionVector.isPresent)
-          assert(addFile.getStats.isPresent)
-          assert(addFile.getTags.isPresent)
-          assert(addFile.getTags.get().getSize
-            == 1)
-          Some(ExpectedAdd(
-            addFile.getPath,
-            addFile.getSize,
-            addFile.getModificationTime,
-            addFile.getDataChange))
-        }
-      }
+        .filterNot(row => row.isNullAt(row.getSchema.indexOf("add")))
+
+      assert(rows.size == 1)
+
+      val addFile = new AddFile(rows.head.getStruct(rows.head.getSchema.indexOf("add")))
+      assert(addFile.getTags.isPresent)
+      assert(VectorUtils.toJavaMap(addFile.getTags.get()).asScala.equals(tags))
     }
   }
 }

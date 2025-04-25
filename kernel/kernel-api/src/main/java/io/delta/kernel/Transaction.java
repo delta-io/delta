@@ -256,7 +256,8 @@ public interface Transaction {
                   dataFileStatus,
                   ((DataWriteContextImpl) dataWriteContext).getPartitionValues(),
                   true /* dataChange */,
-                  Collections.emptyMap());
+                  // TODO: populate tags in generateAppendActions
+                  Collections.emptyMap() /* tags */);
           return SingleAction.createAddFileSingleAction(addFileRow.toRow());
         });
   }

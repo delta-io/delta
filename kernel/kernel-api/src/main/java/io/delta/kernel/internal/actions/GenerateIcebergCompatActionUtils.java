@@ -55,6 +55,7 @@ public final class GenerateIcebergCompatActionUtils {
    * @param fileStatus the file status to create the add with (contains path, time, size, and stats)
    * @param partitionValues the partition values for the add
    * @param dataChange whether or not the add constitutes a dataChange (i.e. append vs. compaction)
+   * @param tags key-value metadata to be attached to the add action
    * @return add action row that can be included in the transaction
    * @throws UnsupportedOperationException if icebergWriterCompatV1 is not enabled
    * @throws UnsupportedOperationException if maxRetries != 0 in the transaction
