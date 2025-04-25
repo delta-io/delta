@@ -112,11 +112,12 @@ case class CreateDeltaTableCommand(
     } else if (mode == SaveMode.ErrorIfExists && tableExistsInCatalog) {
       throw DeltaErrors.tableAlreadyExists(table)
     }
+    // This check should be relaxed once the UC client supports creating tables,
+    // It gets bypassed in UTs to allow tests that use InMemoryCommitCoordinator to create tables
     val tableFeatures = TableFeatureProtocolUtils.
       getSupportedFeaturesFromTableConfigs(table.properties)
     if (!Utils.isTesting && (tableFeatures.contains(CatalogOwnedTableFeature) ||
-      sparkSession.conf.contains(
-        TableFeatureProtocolUtils.defaultPropertyKey(CatalogOwnedTableFeature)))) {
+      CatalogOwnedTableUtils.defaultCatalogOwnedEnabled(spark = sparkSession))) {
       throw DeltaErrors.deltaCannotCreateCatalogOwnedTable()
     }
 
