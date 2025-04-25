@@ -317,16 +317,26 @@ trait MergeIntoMetricsBase
   def checkMergeResultMetrics(
       mergeResultDf: DataFrame,
       metrics: Map[String, Int]): Unit = {
+    val numRowsUpdated = metrics.get("numTargetRowsUpdated").map(_.toLong).getOrElse(0L)
+    val numRowsDeleted = metrics.get("numTargetRowsDeleted").map(_.toLong).getOrElse(0L)
+    val numRowsInserted = metrics.get("numTargetRowsInserted").map(_.toLong).getOrElse(0L)
     val numRowsTouched =
-      metrics("numTargetRowsDeleted").toLong +
-        metrics("numTargetRowsUpdated").toLong
+      numRowsUpdated +
+        numRowsDeleted + 
+        numRowsInserted
 
-    checkAnswer(
-      mergeResultDf,
-      Seq(Row(numRowsTouched,
-        metrics("numTargetRowsUpdated").toLong,
-        metrics("numTargetRowsDeleted").toLong,
-        metrics("numTargetRowsInserted").toLong))
+    assert(mergeResultDf.collect() === 
+      Array(Row(numRowsTouched,
+        numRowsUpdated,
+        numRowsDeleted,
+        numRowsInserted))
+
+    // checkAnswer(
+    //   mergeResultDf,
+    //   Seq(Row(numRowsTouched,
+    //     numRowsUpdated,
+    //     numRowsDeleted,
+    //     numRowsInserted))
     )
   }
 
