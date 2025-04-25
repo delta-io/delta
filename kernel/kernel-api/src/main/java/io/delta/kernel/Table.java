@@ -155,7 +155,7 @@ public interface Table {
    * @param version Version to generate checksum file for.
    * @throws TableNotFoundException if the table is not found
    * @throws IOException for any I/O error.
-   * @since 3.4.0
+   * @since 4.0.0
    */
   void checksum(Engine engine, long version) throws TableNotFoundException, IOException;
 }
