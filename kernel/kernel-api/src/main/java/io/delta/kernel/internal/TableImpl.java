@@ -350,4 +350,8 @@ public class TableImpl implements Table {
     SnapshotReport snapshotReport = SnapshotReportImpl.forError(snapshotContext, e);
     engine.getMetricsReporters().forEach(reporter -> reporter.report(snapshotReport));
   }
+
+  public TransactionBuilder createReplaceTableTransactionBuilder(Engine engine, String engineInfo) {
+    return new ReplaceTableTransactionBuilderImpl(this, engineInfo);
+  }
 }

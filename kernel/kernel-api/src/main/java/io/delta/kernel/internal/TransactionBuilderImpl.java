@@ -54,6 +54,7 @@ import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import java.util.*;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -61,7 +62,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   private static final Logger logger = LoggerFactory.getLogger(TransactionBuilderImpl.class);
 
   private final long currentTimeMillis = System.currentTimeMillis();
-  private final TableImpl table;
+  protected final TableImpl table;
   private final String engineInfo;
   private final Operation operation;
   private Optional<StructType> schema = Optional.empty();
@@ -183,13 +184,16 @@ public class TransactionBuilderImpl implements TransactionBuilder {
 
   @Override
   public Transaction build(Engine engine) {
+    if (operation == Operation.REPLACE_TABLE) {
+      throw new UnsupportedOperationException("REPLACE TABLE is not yet supported");
+    }
     SnapshotImpl snapshot;
     try {
       snapshot = (SnapshotImpl) table.getLatestSnapshot(engine);
       if (operation == Operation.CREATE_TABLE) {
         throw new TableAlreadyExistsException(table.getPath(engine), "Operation = CREATE_TABLE");
       }
-      return buildTransactionInternal(engine, false /* isNewTableDef */, Optional.of(snapshot));
+      return buildTransactionInternal(engine, false /* isCreateOrReplace */, Optional.of(snapshot));
     } catch (TableNotFoundException tblf) {
       String tablePath = table.getPath(engine);
       logger.info("Table {} doesn't exist yet. Trying to create a new table.", tablePath);
@@ -262,6 +266,17 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     if (isCreateOrReplace) {
       // For a new table definition start with an empty initial metadata
       baseMetadata = getInitialMetadata();
+      // In the case of Replace table there are a few delta-specific properties we want to preserve
+      if (latestSnapshot.isPresent()) {
+        Map<String, String> propertiesToPreserve =
+            latestSnapshot.get().getMetadata().getConfiguration().entrySet().stream()
+                .filter(
+                    e ->
+                        ReplaceTableTransactionBuilderImpl.tablePropertyKeysToPreserve.contains(
+                            e.getKey()))
+                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+        baseMetadata = baseMetadata.withMergedConfiguration(propertiesToPreserve);
+      }
     } else {
       // Otherwise, use the existing table metadata
       baseMetadata = latestSnapshot.get().getMetadata();

@@ -22,10 +22,7 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Preconditions.checkState;
 import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
 
-import io.delta.kernel.Meta;
-import io.delta.kernel.Operation;
-import io.delta.kernel.Transaction;
-import io.delta.kernel.TransactionCommitResult;
+import io.delta.kernel.*;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.ConcurrentWriteException;
@@ -386,11 +383,20 @@ public class TransactionImpl implements Transaction {
     resolvedDomainMetadatas.forEach(
         dm -> metadataActions.add(createDomainMetadataSingleAction(dm.toRow())));
 
-    try (CloseableIterator<Row> stageDataIter = dataActions.iterator()) {
+    try (CloseableIterator<Row> userStageDataIter = dataActions.iterator()) {
+
+      CloseableIterator<Row> completeFileActionIter;
+      if (isReplaceTable()) {
+        // If this is a replace table operation we need to internally generate the remove file
+        // actions to reset the table state
+        completeFileActionIter = getRemoveActionsForReplace(engine).combine(userStageDataIter);
+      } else {
+        completeFileActionIter = userStageDataIter;
+      }
       // Create a new CloseableIterator that will return the metadata actions followed by the
       // data actions.
       CloseableIterator<Row> dataAndMetadataActions =
-          toCloseableIterator(metadataActions.iterator()).combine(stageDataIter);
+          toCloseableIterator(metadataActions.iterator()).combine(completeFileActionIter);
 
       if (commitAsVersion == 0) {
         // New table, create a delta log directory
@@ -663,6 +669,23 @@ public class TransactionImpl implements Transaction {
       }
 
       generateClusteringDomainMetadataIfNeeded();
+      if (isReplaceTable()) {
+        // In the case of replace table we need to completely reset the table state by removing
+        // any existing domain metadata
+        readSnapshot
+            .getDomainMetadataMap()
+            .forEach(
+                (domainName, domainMetadata) -> {
+                  if (!domainMetadata.isRemoved()) { // only care about active domains
+                    if (!domainsToAdd.containsKey(domainName)) {
+                      // We only need to remove the domain if it is not added (& thus overwritten)
+                      // in this current transaction. We cannot add and remove the same domain in
+                      // one transaction.
+                      removeDomain(domainName);
+                    }
+                  }
+                });
+      }
       // Add all domains added in the transaction
       List<DomainMetadata> result = new ArrayList<>(domainsToAdd.values());
 
@@ -751,8 +774,32 @@ public class TransactionImpl implements Transaction {
           && clusteringColumnsOpt.isPresent()) {
         DomainMetadata clusteringDomainMetadata =
             ClusteringUtils.getClusteringDomainMetadata(clusteringColumnsOpt.get());
-        domainsToAdd.put(clusteringDomainMetadata.getDomain(), clusteringDomainMetadata);
+        addDomain(
+            clusteringDomainMetadata.getDomain(), clusteringDomainMetadata.getConfiguration());
       }
     }
+  }
+
+  /**
+   * Returns the remove file rows to completely reset the table state in the case of a replace
+   * operation (i.e. removes every active add file in the table). These rows are already formatted
+   * as {@link SingleAction} rows and are ready to be committed.
+   */
+  private CloseableIterator<Row> getRemoveActionsForReplace(Engine engine) {
+    checkArgument(
+        readSnapshot.getVersion() >= 0, "Cannot generate removes for a snapshot with version < 0");
+    Scan scan = readSnapshot.getScanBuilder().build();
+    return Utils.intoRows(scan.getScanFiles(engine))
+        .map(
+            scanRow -> {
+              AddFile add = new AddFile(scanRow.getStruct(InternalScanFileUtils.ADD_FILE_ORDINAL));
+              return SingleAction.createRemoveFileSingleAction(
+                  add.toRemoveFileRow(true /* dataChange */, Optional.empty()));
+            });
+  }
+
+  /** Whether this transaction is a REPLACE TABLE operation */
+  private boolean isReplaceTable() {
+    return isCreateOrReplace && readSnapshot.getVersion() >= 0;
   }
 }
