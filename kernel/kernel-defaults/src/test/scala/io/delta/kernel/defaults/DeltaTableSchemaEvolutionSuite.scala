@@ -20,13 +20,17 @@ import java.util.Collections.emptySet
 import scala.collection.JavaConverters._
 import scala.collection.immutable.Seq
 
-import io.delta.kernel.{Operation, Table}
+import io.delta.kernel.{Operation, Table, Transaction, TransactionCommitResult}
+import io.delta.kernel.data.Row
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.expressions.Column
 import io.delta.kernel.internal.{SnapshotImpl, TableConfig}
+import io.delta.kernel.internal.actions.DomainMetadata
+import io.delta.kernel.internal.clustering.ClusteringMetadataDomain
 import io.delta.kernel.internal.util.{ColumnMapping, ColumnMappingSuiteBase}
 import io.delta.kernel.types.{ArrayType, FieldMetadata, IntegerType, LongType, MapType, StringType, StructType}
+import io.delta.kernel.utils.CloseableIterable
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
 
 import org.scalatest.prop.TableDrivenPropertyChecks.forAll
@@ -37,6 +41,13 @@ import org.scalatest.prop.Tables
  * the setup/run schema evolution/assert loop
  */
 class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with ColumnMappingSuiteBase {
+
+  override def commitTransaction(
+      txn: Transaction,
+      engine: Engine,
+      dataActions: CloseableIterable[Row]): TransactionCommitResult = {
+    executeCrcSimple(txn.commit(engine, dataActions), engine)
+  }
 
   test("Add nullable column succeeds and correctly updates maxFieldId") {
     withTempDirAndEngine { (tablePath, engine) =>
@@ -1295,6 +1306,54 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
             schemaAfter,
             "Cannot drop clustering column clustering_col")
         }
+    }
+  }
+
+  test("Updating schema should use the new clustering columns if passed") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val initialSchema = new StructType()
+        .add("a", StringType.STRING, true)
+        .add("b", StringType.STRING, true)
+        .add("c", IntegerType.INTEGER, true)
+
+      createEmptyTable(
+        engine,
+        tablePath,
+        initialSchema,
+        tableProperties = Map(
+          TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
+          TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"),
+        clusteringColsOpt = Some(List(new Column("b"))))
+      assertColumnMapping(table.getLatestSnapshot(engine).getSchema.get("c"), 3)
+
+      val currentSchema = table.getLatestSnapshot(engine).getSchema()
+      val newSchema = new StructType()
+        .add("a", StringType.STRING, true, currentSchema.get("a").getMetadata)
+
+      val txn = table.createTransactionBuilder(
+        engine,
+        testEngineInfo,
+        Operation.MANUAL_UPDATE)
+        .withSchema(engine, newSchema)
+        .withClusteringColumns(engine, List(new Column("a")).asJava)
+        .build(engine)
+      txn.commit(engine, emptyIterable())
+
+      val snapshot = table.getLatestSnapshot(engine)
+      val structType = snapshot.getSchema
+      assertColumnMapping(structType.get("a"), 1)
+      assert(getMaxFieldId(engine, tablePath) == 3)
+
+      val physicalName =
+        structType.get("a").getMetadata.get(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY)
+
+      val expectedDomainMetadata = new DomainMetadata(
+        "delta.clustering",
+        s"""{"clusteringColumns":[["$physicalName"]]}""",
+        false)
+
+      verifyClusteringDomainMetadata(snapshot.asInstanceOf[SnapshotImpl], expectedDomainMetadata)
     }
   }
 

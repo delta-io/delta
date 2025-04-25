@@ -46,15 +46,6 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
     """{"clusteringColumns":[["part1"],["part2"]]}""",
     false)
 
-  private def verifyClusteringDomainMetadata(
-      snapshot: SnapshotImpl,
-      expectedDomainMetadata: DomainMetadata = testingDomainMetadata): Unit = {
-    assert(snapshot.getDomainMetadataMap.get(ClusteringMetadataDomain.DOMAIN_NAME)
-      == expectedDomainMetadata)
-    // verifyChecksum will check the domain metadata in CRC against the latest snapshot.
-    verifyChecksum(snapshot.getDataPath.toString)
-  }
-
   override def commitTransaction(
       txn: Transaction,
       engine: Engine,
@@ -126,7 +117,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
       assertHasWriterFeature(snapshot, "clustering")
 
       // Verify the clustering domain metadata is written
-      verifyClusteringDomainMetadata(snapshot)
+      verifyClusteringDomainMetadata(snapshot, testingDomainMetadata)
 
       // Use Spark to read the table's clustering metadata domain and verify the result
       val deltaLog = DeltaLog.forTable(spark, new Path(tablePath))
@@ -178,7 +169,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
       assertHasWriterFeature(snapshot, "clustering")
 
       // Verify the clustering domain metadata is written
-      verifyClusteringDomainMetadata(snapshot)
+      verifyClusteringDomainMetadata(snapshot, testingDomainMetadata)
     }
   }
 
@@ -190,7 +181,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
 
       val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
       assertHasWriterFeature(snapshot, "clustering")
-      verifyClusteringDomainMetadata(snapshot)
+      verifyClusteringDomainMetadata(snapshot, testingDomainMetadata)
     }
   }
 
@@ -327,7 +318,9 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
         dataClusteringBatches1.flatMap(_.toTestRows))
 
       val table = Table.forPath(engine, tablePath)
-      verifyClusteringDomainMetadata(table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl])
+      verifyClusteringDomainMetadata(
+        table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl],
+        testingDomainMetadata)
     }
   }
 
@@ -349,7 +342,9 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
         verifyCommitResult(commitResult0, expVersion = 0, expIsReadyForCheckpoint = false)
         verifyCommitInfo(tablePath, version = 0, operation = WRITE)
         verifyWrittenContent(tablePath, testPartitionSchema, expData)
-        verifyClusteringDomainMetadata(table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl])
+        verifyClusteringDomainMetadata(
+          table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl],
+          testingDomainMetadata)
       }
       {
         val commitResult1 = appendData(
@@ -363,7 +358,9 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
         verifyCommitResult(commitResult1, expVersion = 1, expIsReadyForCheckpoint = false)
         verifyCommitInfo(tablePath, version = 1, partitionCols = null, operation = WRITE)
         verifyWrittenContent(tablePath, testPartitionSchema, expData)
-        verifyClusteringDomainMetadata(table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl])
+        verifyClusteringDomainMetadata(
+          table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl],
+          testingDomainMetadata)
       }
     }
   }
@@ -390,7 +387,9 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
         verifyCommitResult(commitResult0, expVersion = 0, expIsReadyForCheckpoint = false)
         verifyCommitInfo(tablePath, version = 0, operation = WRITE)
         verifyWrittenContent(tablePath, testPartitionSchema, expData)
-        verifyClusteringDomainMetadata(table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl])
+        verifyClusteringDomainMetadata(
+          table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl],
+          testingDomainMetadata)
       }
       {
         val commitResult1 = updateTableMetadata(

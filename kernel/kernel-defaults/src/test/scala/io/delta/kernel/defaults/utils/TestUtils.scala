@@ -32,7 +32,9 @@ import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.{Column, Predicate}
 import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
 import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl}
+import io.delta.kernel.internal.actions.DomainMetadata
 import io.delta.kernel.internal.checksum.ChecksumReader
+import io.delta.kernel.internal.clustering.ClusteringMetadataDomain
 import io.delta.kernel.internal.data.ScanStateRow
 import io.delta.kernel.internal.fs.{Path => KernelPath}
 import io.delta.kernel.internal.util.Utils
@@ -757,6 +759,15 @@ trait TestUtils extends Assertions with SQLHelper {
       .filter(hook => hook.getType == PostCommitHookType.CHECKSUM_SIMPLE)
       .forEach(hook => hook.threadSafeInvoke(engine))
     result
+  }
+
+  def verifyClusteringDomainMetadata(
+      snapshot: SnapshotImpl,
+      expectedDomainMetadata: DomainMetadata): Unit = {
+    assert(snapshot.getDomainMetadataMap.get(ClusteringMetadataDomain.DOMAIN_NAME)
+      == expectedDomainMetadata)
+    // verifyChecksum will check the domain metadata in CRC against the latest snapshot.
+    verifyChecksum(snapshot.getDataPath.toString)
   }
 
   /** Ensure checksum is readable by CRC reader and correct. */
