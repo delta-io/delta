@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.delta.MergeIntoMetricsShims._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
-import org.apache.spark.sql.{DataFrame, QueryTest}
+import org.apache.spark.sql.{DataFrame, QueryTest, Row}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.functions.expr
 import org.apache.spark.sql.test.SharedSparkSession
@@ -271,7 +271,9 @@ trait MergeIntoMetricsBase
         val sourceDfWithExtraCols = addExtraColumns(sourceDf)
 
         // Run MERGE INTO command
-        mergeCmdFn(targetTable, sourceDfWithExtraCols)
+        val mergeResultDf = mergeCmdFn(targetTable, sourceDfWithExtraCols)
+
+        checkMergeResultMetrics(mergeResultDf, expectedOpMetrics)
 
         // Query the operation metrics from the Delta log history.
         val operationMetrics: Map[String, String] = getOperationMetrics(targetTable.history(1))
@@ -310,6 +312,22 @@ trait MergeIntoMetricsBase
         checkMergeOperationCdfMetricsInvariants(operationMetrics, testConfig.cdfEnabled)
       }
     }
+  }
+
+  def checkMergeResultMetrics(
+      mergeResultDf: DataFrame,
+      metrics: Map[String, Int]): Unit = {
+    val numRowsTouched =
+      metrics("numTargetRowsDeleted").toLong +
+        metrics("numTargetRowsUpdated").toLong
+
+    checkAnswer(
+      mergeResultDf,
+      Seq(Row(numRowsTouched,
+        metrics("numTargetRowsUpdated").toLong,
+        metrics("numTargetRowsDeleted").toLong,
+        metrics("numTargetRowsInserted").toLong))
+    )
   }
 
   /////////////////////////////
@@ -1368,7 +1386,7 @@ object MergeIntoMetricsBase extends QueryTest with SharedSparkSession {
   // helpful types //
   ///////////////////
 
-  type MergeCmd = (io.delta.tables.DeltaTable, DataFrame) => Unit
+  type MergeCmd = (io.delta.tables.DeltaTable, DataFrame) => DataFrame
 
   /////////////////////
   // helpful methods //
