@@ -445,14 +445,14 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     /* ----- 5: Update the METADATA with materialized row tracking column name if applicable----- */
     Optional<Metadata> rowTrackingMetadata =
         MaterializedRowTrackingColumn.ROW_ID.assignMaterializedColumnNameIfNeeded(
-            newMetadata.orElse(snapshotMetadata), isNewTable);
+            newMetadata.orElse(snapshotMetadata));
     if (rowTrackingMetadata.isPresent()) {
       newMetadata = rowTrackingMetadata;
     }
 
     rowTrackingMetadata =
         MaterializedRowTrackingColumn.ROW_COMMIT_VERSION.assignMaterializedColumnNameIfNeeded(
-            newMetadata.orElse(snapshotMetadata), isNewTable);
+            newMetadata.orElse(snapshotMetadata));
     if (rowTrackingMetadata.isPresent()) {
       newMetadata = rowTrackingMetadata;
     }

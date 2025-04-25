@@ -15,7 +15,6 @@
  */
 package io.delta.kernel.internal.rowtracking;
 
-import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Collections.singletonMap;
 
 import io.delta.kernel.internal.DeltaErrors;
@@ -66,31 +65,25 @@ public final class MaterializedRowTrackingColumn {
   }
 
   /**
-   * Conditionally assigns a materialized row tracking column name to the metadata configuration.
-   * Currently, this is only allowed if row tracking is enabled on a new table.
+   * Assigns a materialized row tracking column name to the metadata configuration if row tracking
+   * is enabled and the column name has not been assigned yet.
    *
    * @param metadata The current Metadata of the table.
-   * @param isNewTable Flag indicating if the table is new.
    * @return An Optional containing updated metadata if the column name was assigned;
    *     Optional.empty() otherwise.
    */
-  public Optional<Metadata> assignMaterializedColumnNameIfNeeded(
-      Metadata metadata, boolean isNewTable) {
-    Boolean isRowTrackingEnabled = TableConfig.ROW_TRACKING_ENABLED.fromMetadata(metadata);
-    if (!isRowTrackingEnabled || !isNewTable) {
-      // Do nothing if row tracking is disabled or the table is not new.
+  public Optional<Metadata> assignMaterializedColumnNameIfNeeded(Metadata metadata) {
+    boolean isRowTrackingEnabled = TableConfig.ROW_TRACKING_ENABLED.fromMetadata(metadata);
+    boolean isMaterializedColumnNameAssigned =
+        metadata.getConfiguration().containsKey(materializedColumnNameProperty);
+
+    if (isRowTrackingEnabled && !isMaterializedColumnNameAssigned) {
+      return Optional.of(
+          metadata.withMergedConfiguration(
+              singletonMap(materializedColumnNameProperty, generateMaterializedColumnName())));
+    } else {
       return Optional.empty();
     }
-
-    checkArgument(
-        !metadata.getConfiguration().containsKey(materializedColumnNameProperty),
-        "The property "
-            + materializedColumnNameProperty
-            + " should not be present in the metadata configuration.");
-
-    return Optional.of(
-        metadata.withMergedConfiguration(
-            singletonMap(materializedColumnNameProperty, generateMaterializedColumnName())));
   }
 
   /**
