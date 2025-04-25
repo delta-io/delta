@@ -40,12 +40,9 @@ public class ChecksumUtils {
 
   private ChecksumUtils() {}
 
-  // Index of ADD/REMOVE/DOMAIN_METADATA within checkpoint schema.
   private static final int ADD_INDEX = CHECKPOINT_SCHEMA.indexOf("add");
   private static final int REMOVE_INDEX = CHECKPOINT_SCHEMA.indexOf("remove");
   private static final int DOMAIN_METADATA_INDEX = CHECKPOINT_SCHEMA.indexOf("domainMetadata");
-
-  // Index of size field within add AddFile
   private static final int ADD_SIZE_INDEX = AddFile.FULL_SCHEMA.indexOf("size");
 
   /**
