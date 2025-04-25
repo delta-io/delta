@@ -39,56 +39,56 @@ public class DeltaCatalog implements Catalog, SupportsNamespaces, Configurable<C
 
   @Override
   public List<TableIdentifier> listTables(Namespace namespace) {
-    return null;
+    throw new UnsupportedOperationException("Not implemented yet");
   }
 
   @Override
   public boolean dropTable(TableIdentifier identifier, boolean purge) {
-    return false;
+    throw new UnsupportedOperationException("Not implemented yet");
   }
 
   @Override
   public void renameTable(TableIdentifier from, TableIdentifier to) {
-
+    throw new UnsupportedOperationException("Not implemented yet");
   }
 
   @Override
   public Table loadTable(TableIdentifier identifier) {
-    return null;
+    throw new UnsupportedOperationException("Not implemented yet");
   }
 
   @Override
   public void createNamespace(Namespace namespace, Map<String, String> metadata) {
-
+    throw new UnsupportedOperationException("Not implemented yet");
   }
 
   @Override
   public List<Namespace> listNamespaces(Namespace namespace) throws NoSuchNamespaceException {
-    return null;
+    throw new UnsupportedOperationException("Not implemented yet");
   }
 
   @Override
   public Map<String, String> loadNamespaceMetadata(Namespace namespace) throws NoSuchNamespaceException {
-    return null;
+    throw new UnsupportedOperationException("Not implemented yet");
   }
 
   @Override
   public boolean dropNamespace(Namespace namespace) throws NamespaceNotEmptyException {
-    return false;
+    throw new UnsupportedOperationException("Not implemented yet");
   }
 
   @Override
   public boolean setProperties(Namespace namespace, Map<String, String> properties) throws NoSuchNamespaceException {
-    return false;
+    throw new UnsupportedOperationException("Not implemented yet");
   }
 
   @Override
   public boolean removeProperties(Namespace namespace, Set<String> properties) throws NoSuchNamespaceException {
-    return false;
+    throw new UnsupportedOperationException("Not implemented yet");
   }
 
   @Override
   public void setConf(Configuration conf) {
-
+    throw new UnsupportedOperationException("Not implemented yet");
   }
 }
