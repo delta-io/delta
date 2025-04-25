@@ -9,6 +9,6 @@ public class DeltaSinkConfig extends IcebergSinkConfig {
   }
 
   public static String version() {
-    return DeltaKafkaMeta.DELTA_KAFKA_CONNECT_VERSION;
+    return "3.3.0-SNAPSHOT";
   }
 }
