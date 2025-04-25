@@ -38,7 +38,6 @@ public class DeltaCatalog implements Catalog, SupportsNamespaces, Configurable<C
 
   @Override
   public List<TableIdentifier> listTables(Namespace namespace) {
-    LOG.info("hello");
     throw new UnsupportedOperationException("Not implemented yet");
   }
 
