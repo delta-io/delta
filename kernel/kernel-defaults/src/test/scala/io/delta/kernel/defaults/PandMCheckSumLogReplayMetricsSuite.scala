@@ -151,6 +151,7 @@ class PandMCheckSumLogReplayMetricsSuite extends ChecksumLogReplayMetricsTestBas
       "both checksum and checkpoint exist the read version the previous version => use checksum") {
     withTableWithCrc { (table, tablePath, engine) =>
       val checkpointVersion = 10
+      val readVersion = checkpointVersion + 1
       deleteChecksumFileForTable(tablePath, Seq(checkpointVersion + 1))
 
       // 11.crc, missing, 10.crc and 10.checkpoint.parquet exist.
@@ -158,11 +159,11 @@ class PandMCheckSumLogReplayMetricsSuite extends ChecksumLogReplayMetricsTestBas
       loadSnapshotFieldsCheckMetrics(
         table,
         engine,
-        expJsonVersionsRead = Seq(11),
+        expJsonVersionsRead = Seq(readVersion),
         expParquetVersionsRead = Nil,
         expParquetReadSetSizes = Nil,
-        expChecksumReadSet = Seq(11, 10),
-        readVersion = 11)
+        expChecksumReadSet = Seq(readVersion, checkpointVersion),
+        readVersion = readVersion)
     }
   }
 }
