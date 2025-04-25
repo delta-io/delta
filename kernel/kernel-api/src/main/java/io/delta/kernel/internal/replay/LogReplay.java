@@ -134,7 +134,6 @@ public class LogReplay {
   public LogReplay(
       Path logPath,
       Path dataPath,
-      long snapshotVersion,
       Engine engine,
       LogSegment logSegment,
       Optional<SnapshotHint> snapshotHint,
@@ -143,7 +142,7 @@ public class LogReplay {
     assertLogFilesBelongToTable(logPath, logSegment.allLogFilesUnsorted());
     Tuple2<Optional<SnapshotHint>, Optional<CRCInfo>> newerSnapshotHintAndCurrentCrcInfo =
         maybeGetNewerSnapshotHintAndCurrentCrcInfo(
-            engine, logSegment, snapshotHint, snapshotVersion);
+            engine, logSegment, snapshotHint, logSegment.getVersion());
     this.currentCrcInfo = newerSnapshotHintAndCurrentCrcInfo._2;
     this.dataPath = dataPath;
     this.logSegment = logSegment;
@@ -151,7 +150,10 @@ public class LogReplay {
         snapshotMetrics.loadInitialDeltaActionsTimer.time(
             () ->
                 loadTableProtocolAndMetadata(
-                    engine, logSegment, newerSnapshotHintAndCurrentCrcInfo._1, snapshotVersion));
+                    engine,
+                    logSegment,
+                    newerSnapshotHintAndCurrentCrcInfo._1,
+                    logSegment.getVersion()));
     // Lazy loading of domain metadata only when needed
     this.domainMetadataMap = new Lazy<>(() -> loadDomainMetadataMap(engine));
   }
