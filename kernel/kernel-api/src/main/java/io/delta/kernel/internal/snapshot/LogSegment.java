@@ -30,6 +30,8 @@ import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class LogSegment {
 
@@ -41,6 +43,8 @@ public class LogSegment {
     return new LogSegment(
         logPath, -1, Collections.emptyList(), Collections.emptyList(), Optional.empty(), -1);
   }
+
+  private static final Logger logger = LoggerFactory.getLogger(LogSegment.class);
 
   //////////////////////////////////
   // Member variables and methods //
@@ -171,10 +175,16 @@ public class LogSegment {
     this.checkpoints = checkpoints;
     this.lastSeenChecksum =
         lastSeenChecksum.filter(
-            file ->
-                !checkpointVersionOpt.isPresent()
-                    || FileNames.checksumVersion(new Path(file.getPath()))
-                        >= checkpointVersionOpt.get());
+            file -> {
+              long checksumVersion = FileNames.checksumVersion(new Path(file.getPath()));
+              logger.debug(
+                  "Found checksum file for version {} with LogSegment version {} and checkpoint version {}",
+                  checksumVersion,
+                  version,
+                  checkpointVersionOpt);
+              return !checkpointVersionOpt.isPresent()
+                  || checksumVersion >= checkpointVersionOpt.get();
+            });
     this.lastCommitTimestamp = lastCommitTimestamp;
 
     this.allFiles =

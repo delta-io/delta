@@ -44,8 +44,6 @@ import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.*;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Replays a history of actions, resolving them to produce the current state of the table. The
@@ -66,8 +64,6 @@ public class LogReplay {
   //////////////////////////
   // Static Schema Fields //
   //////////////////////////
-
-  public static final Logger logger = LoggerFactory.getLogger(LogReplay.class);
 
   /** Read schema when searching for the latest Protocol and Metadata. */
   public static final StructType PROTOCOL_METADATA_READ_SCHEMA =
@@ -133,7 +129,6 @@ public class LogReplay {
   private final Tuple2<Protocol, Metadata> protocolAndMetadata;
   private final Lazy<Map<String, DomainMetadata>> domainMetadataMap;
   private Optional<CRCInfo> cachedCrcInfo;
-  private final long snapshotVersion;
 
   public LogReplay(
       Path logPath,
@@ -145,7 +140,6 @@ public class LogReplay {
       SnapshotMetrics snapshotMetrics) {
 
     assertLogFilesBelongToTable(logPath, logSegment.allLogFilesUnsorted());
-    this.snapshotVersion = snapshotVersion;
     this.cachedCrcInfo = Optional.empty();
     this.dataPath = dataPath;
     this.logSegment = logSegment;
@@ -187,7 +181,7 @@ public class LogReplay {
 
   /** Returns the crc info for the current snapshot if the checksum file is read */
   public Optional<CRCInfo> getCurrentCrcInfo() {
-    return cachedCrcInfo.filter(crc -> crc.getVersion() == snapshotVersion);
+    return cachedCrcInfo.filter(crc -> crc.getVersion() == logSegment.getVersion());
   }
 
   /**
@@ -440,16 +434,8 @@ public class LogReplay {
         logSegment
             .getLastSeenChecksum()
             .filter(
-                checksum -> {
-                  long checksumVersion = FileNames.getFileVersion(new Path(checksum.getPath()));
-                  if (checksumVersion != snapshotVersion) {
-                    logger.debug(
-                        "Found checksum file for version {} when requesting version {}",
-                        checksumVersion,
-                        snapshotVersion);
-                  }
-                  return checksumVersion >= crcReadLowerBound;
-                })
+                checksum ->
+                    FileNames.getFileVersion(new Path(checksum.getPath())) >= crcReadLowerBound)
             .flatMap(checksum -> ChecksumReader.getCRCInfo(engine, checksum));
 
     if (!crcInfoOpt.isPresent()) {

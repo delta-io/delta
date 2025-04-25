@@ -32,6 +32,14 @@ import org.slf4j.LoggerFactory;
 public class ChecksumReader {
   private static final Logger logger = LoggerFactory.getLogger(ChecksumReader.class);
 
+  /**
+   * Load the CRCInfo from the provided checksum file.
+   *
+   * @param engine the engine to use for reading the checksum file
+   * @param checkSumFile the file status of the checksum file to read
+   * @return Optional {@link CRCInfo} containing the information included in the checksum file, such
+   *     as protocol, metadata.
+   */
   public static Optional<CRCInfo> getCRCInfo(Engine engine, FileStatus checkSumFile) {
     try (CloseableIterator<ColumnarBatch> iter =
         engine
