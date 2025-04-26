@@ -45,13 +45,13 @@ import org.slf4j.LoggerFactory;
 public class DeltaCatalog implements Catalog, SupportsNamespaces, Configurable<Configuration> {
   private static final Logger LOG = LoggerFactory.getLogger(DeltaCatalog.class);
   public static final String HIVE_WAREHOUSE_PROP = "hive.metastore.warehouse.dir";
-  private static final Joiner SLASH = Joiner.on("/");
 
   private Configuration conf = null;
   private String name = null;
   private Map<String, String> catalogProperties = null;
   private String warehouse = null;
   private FileIO fileIO = null;
+  private static final Joiner SLASH = Joiner.on("/");
 
   @Override
   public void initialize(String name, Map<String, String> properties) {
@@ -91,6 +91,8 @@ public class DeltaCatalog implements Catalog, SupportsNamespaces, Configurable<C
                     });
     conf.set("fs.s3a.connection.ssl.enabled", "false");
     conf.set("fs.s3a.path.style.access", "true");
+    conf.set("fs.hdfs.impl", org.apache.hadoop.hdfs.DistributedFileSystem.class.getName());
+    conf.set("fs.file.impl", org.apache.hadoop.fs.LocalFileSystem.class.getName());
   }
 
   @Override
@@ -108,9 +110,14 @@ public class DeltaCatalog implements Catalog, SupportsNamespaces, Configurable<C
     throw new UnsupportedOperationException("Not implemented yet");
   }
 
+  private String getTableLocation(TableIdentifier ident) {
+    return SLASH.join(warehouse, ident.name());
+  }
+
   @Override
   public Table loadTable(TableIdentifier identifier) {
-    throw new UnsupportedOperationException("Not implemented yet");
+    String tableLocation = getTableLocation(identifier);
+    return new DeltaTable(identifier, conf, tableLocation);
   }
 
   @Override

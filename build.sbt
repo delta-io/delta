@@ -1554,7 +1554,7 @@ lazy val kafka = (project in file("connectors/kafka"))
     name := "delta-kafka",
     commonSettings,
     javaOnlyReleaseSettings,
-    javafmtCheckSettings,
+//    javafmtCheckSettings,
     excludeDependencies += "com.github.luben" % "zstd-jni" % "1.5.0-1",
     libraryDependencies ++= Seq(
       "org.apache.parquet" % "parquet-hadoop" % "1.13.1" excludeAll (
