@@ -21,7 +21,12 @@ package io.delta.table;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+
+import com.google.common.base.Joiner;
+import com.google.common.base.Preconditions;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.iceberg.CatalogProperties;
+import org.apache.iceberg.CatalogUtil;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.catalog.Namespace;
@@ -30,11 +35,63 @@ import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.exceptions.NamespaceNotEmptyException;
 import org.apache.iceberg.exceptions.NoSuchNamespaceException;
 import org.apache.iceberg.hadoop.Configurable;
+import org.apache.iceberg.hadoop.HadoopFileIO;
+import org.apache.iceberg.io.FileIO;
+import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
+import org.apache.iceberg.util.LocationUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public class DeltaCatalog implements Catalog, SupportsNamespaces, Configurable<Configuration> {
   private static final Logger LOG = LoggerFactory.getLogger(DeltaCatalog.class);
+  public static final String HIVE_WAREHOUSE_PROP = "hive.metastore.warehouse.dir";
+  private static final Joiner SLASH = Joiner.on("/");
+
+  private Configuration conf = null;
+  private String name = null;
+  private Map<String, String> catalogProperties = null;
+  private String warehouse = null;
+  private FileIO fileIO = null;
+
+  @Override
+  public void initialize(String name, Map<String, String> properties) {
+    if (null == conf) {
+      LOG.warn("No Hadoop Configuration was set, using the default environment Configuration");
+      conf = new Configuration();
+    }
+
+    this.name = name;
+    this.catalogProperties = ImmutableMap.copyOf(properties);
+
+    if (properties.containsKey(CatalogProperties.WAREHOUSE_LOCATION)) {
+      this.warehouse =
+              LocationUtil.stripTrailingSlash(properties.get(CatalogProperties.WAREHOUSE_LOCATION));
+      conf.set(HIVE_WAREHOUSE_PROP, warehouse); // keep the Configuration in sync
+    } else {
+      throw new RuntimeException("warehouse should be specified");
+    }
+
+    Preconditions.checkArgument(
+            warehouse != null, "Missing required property: %s", CatalogProperties.WAREHOUSE_LOCATION);
+
+    String ioImpl = properties.get(CatalogProperties.FILE_IO_IMPL);
+    this.fileIO =
+            ioImpl == null ? new HadoopFileIO(conf) : CatalogUtil.loadFileIO(ioImpl, properties, conf);
+
+    // copy S3 properties to Hadoop Configuration
+    ImmutableMap.of(
+                    "s3.endpoint", "fs.s3a.endpoint",
+                    "s3.access-key-id", "fs.s3a.access.key",
+                    "s3.secret-access-key", "fs.s3a.secret.key")
+            .forEach(
+                    (s3Prop, hadoopProp) -> {
+                      if (properties.containsKey(s3Prop)) {
+                        conf.set(hadoopProp, properties.get(s3Prop));
+                      }
+                    });
+    conf.set("fs.s3a.connection.ssl.enabled", "false");
+    conf.set("fs.s3a.path.style.access", "true");
+  }
 
   @Override
   public List<TableIdentifier> listTables(Namespace namespace) {
@@ -91,6 +148,6 @@ public class DeltaCatalog implements Catalog, SupportsNamespaces, Configurable<C
 
   @Override
   public void setConf(Configuration conf) {
-    throw new UnsupportedOperationException("Not implemented yet");
+    this.conf = conf;
   }
 }
