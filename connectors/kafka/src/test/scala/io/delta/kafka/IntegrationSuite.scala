@@ -10,10 +10,12 @@ import org.slf4j.LoggerFactory
 import org.testcontainers.containers.ComposeContainer
 import org.testcontainers.containers.wait.strategy.Wait
 import org.apache.iceberg.types.Types
+import org.apache.kafka.clients.producer.{Callback, KafkaProducer, ProducerConfig, ProducerRecord, RecordMetadata}
 
 import scala.jdk.CollectionConverters._
 import java.io.File
 import java.time.Duration
+import java.util.Properties
 
 class IntegrationSuite extends AnyFunSuite with BeforeAndAfterAll {
 
@@ -22,6 +24,31 @@ class IntegrationSuite extends AnyFunSuite with BeforeAndAfterAll {
   val CONNECT_PORT = 8083
 
   var container: ComposeContainer = _
+
+  val kafkaProducer = {
+    val props = new Properties()
+    props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:9092")
+    props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG,
+      "org.apache.kafka.common.serialization.StringSerializer")
+    props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG,
+      "org.apache.kafka.common.serialization.StringSerializer")
+    new KafkaProducer[String, String](props)
+  }
+
+  def sendMessage(value: String, topic: String): Unit = {
+    val record = new ProducerRecord[String, String](topic, "", value)
+    kafkaProducer.send(record, new Callback {
+      override def onCompletion(metadata: RecordMetadata, exception: Exception): Unit = {
+        if (exception != null) {
+          LOG.error(s"Error sending message: ${exception.getMessage}")
+        } else {
+          LOG.info(s"Message sent to topic ${metadata.topic()}," +
+            s" partition ${metadata.partition()}, offset ${metadata.offset()}")
+        }
+      }
+    })
+    kafkaProducer.flush()
+  }
 
   def startContainer(): Unit = {
     container = new ComposeContainer(new File("./docker/docker-compose.yml"))
@@ -127,6 +154,7 @@ class IntegrationSuite extends AnyFunSuite with BeforeAndAfterAll {
     LOG.info("Successfully create the table")
     startConnector()
     // Send message to topic
+    sendMessage("""{"id": 1, "name": "peter"}""", "payments")
 
 
   }

@@ -9,6 +9,7 @@ import io.delta.kernel.Table;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import org.apache.iceberg.encryption.EncryptionManager;
+import org.apache.iceberg.encryption.PlaintextEncryptionManager;
 import org.apache.iceberg.hadoop.HadoopFileIO;
 import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.io.LocationProvider;
@@ -21,6 +22,11 @@ import java.util.Map;
 
 
 public class DeltaTable implements org.apache.iceberg.Table {
+
+    static final String LAST_ASSIGNED_ID_KEY = "delta.columnMapping.maxColumnId";
+    static final String NAME_MAPPING_KEY = "delta.universalFormat.iceberg.nameMapping";
+    private static final String COLUMN_MAPPING_MODE_KEY = "delta.columnMapping.mode";
+    private static final String UNIFORM_FORMAT_KEY = "delta.universalFormat.enabledFormats";
 
     private final TableIdentifier ident;
     private final String deltaTableLocation;
@@ -62,7 +68,7 @@ public class DeltaTable implements org.apache.iceberg.Table {
 
     @Override
     public Schema schema() {
-        throw new UnsupportedOperationException("Not implemented yet");
+        return snapshots.get(currentVersionId).schema();
     }
 
     @Override
@@ -72,7 +78,7 @@ public class DeltaTable implements org.apache.iceberg.Table {
 
     @Override
     public PartitionSpec spec() {
-        throw new UnsupportedOperationException("Not implemented yet");
+        return snapshots.get(currentVersionId).spec();
     }
 
     @Override
@@ -212,17 +218,17 @@ public class DeltaTable implements org.apache.iceberg.Table {
 
     @Override
     public FileIO io() {
-        throw new UnsupportedOperationException("Not implemented yet");
+        return io;
     }
 
     @Override
     public EncryptionManager encryption() {
-        throw new UnsupportedOperationException("Not implemented yet");
+        return PlaintextEncryptionManager.instance();
     }
 
     @Override
     public LocationProvider locationProvider() {
-        throw new UnsupportedOperationException("Not implemented yet");
+        return LocationProviders.locationsFor(deltaTableLocation, ImmutableMap.of());
     }
 
     @Override
