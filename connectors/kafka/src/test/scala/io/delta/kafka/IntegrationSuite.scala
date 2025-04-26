@@ -1,12 +1,17 @@
 package io.delta.kafka
 
+import io.minio.{BucketExistsArgs, MakeBucketArgs, MinioClient}
 import io.delta.table.DeltaCatalog
+import org.apache.iceberg.catalog.TableIdentifier
+import org.apache.iceberg.{CatalogProperties, Schema}
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.funsuite.AnyFunSuite
 import org.slf4j.LoggerFactory
 import org.testcontainers.containers.ComposeContainer
 import org.testcontainers.containers.wait.strategy.Wait
+import org.apache.iceberg.types.Types
 
+import scala.jdk.CollectionConverters._
 import java.io.File
 import java.time.Duration
 
@@ -50,6 +55,37 @@ class IntegrationSuite extends AnyFunSuite with BeforeAndAfterAll {
     }
   """
 
+  val schema = new Schema(
+    List(
+      Types.NestedField.required(1, "id", Types.LongType.get()),
+      Types.NestedField.required(2, "name", Types.StringType.get()),
+    ).asJava,
+    Set(1).map(Int.box).asJava
+  )
+
+  private def createBucket(bucketName: String): Unit = {
+    try {
+      // Initialize the Minio client
+      val minioClient = MinioClient.builder()
+        .endpoint("http://localhost:9000") // MinIO server URL
+        .credentials("minioadmin", "minioadmin") // Access key and secret key
+        .build()
+
+      // Create the bucket if it doesn't exist
+      if (!minioClient.bucketExists(BucketExistsArgs.builder().bucket(bucketName).build())) {
+        minioClient.makeBucket(
+          MakeBucketArgs.builder().bucket(bucketName).build()
+        )
+        LOG.info(s"Bucket '$bucketName' created successfully!")
+      } else {
+        LOG.info(s"Bucket '$bucketName' already exists.")
+      }
+
+    } catch {
+      case e: Throwable => LOG.error("Error occurred: " + e)
+    }
+  }
+
   def startConnector(): Unit = {
     val response = requests.put(
       url = "http://localhost:8083/connectors/DeltaSinkConnector/config",
@@ -70,7 +106,29 @@ class IntegrationSuite extends AnyFunSuite with BeforeAndAfterAll {
 
   override def beforeAll(): Unit = {
     startContainer()
+//    Thread.sleep(5000)
+    createBucket("warehouse")
+    // Create the table first
+    val catalog = new DeltaCatalog()
+    catalog.initialize(
+      "delta-catalog",
+      Map(
+        CatalogProperties.CATALOG_IMPL -> classOf[DeltaCatalog].getCanonicalName,
+        CatalogProperties.WAREHOUSE_LOCATION -> "s3a://warehouse/",
+        CatalogProperties.FILE_IO_IMPL -> "org.apache.iceberg.aws.s3.S3FileIO",
+        "s3.endpoint" -> s"http://localhost:9000",
+        "s3.access-key-id" -> "minioadmin",
+        "s3.secret-access-key" -> "minioadmin",
+        "s3.path-style-access" -> "true",
+        "client.region" -> "us-east-1"
+      ).asJava
+    )
+    catalog.createTable(TableIdentifier.of("payments"), schema)
+    LOG.info("Successfully create the table")
     startConnector()
+    // Send message to topic
+
+
   }
 
   override def afterAll(): Unit = {

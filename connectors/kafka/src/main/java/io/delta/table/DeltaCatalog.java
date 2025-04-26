@@ -24,9 +24,15 @@ import java.util.Set;
 
 import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
+import io.delta.kernel.Operation;
+import io.delta.kernel.defaults.engine.DefaultEngine;
+import io.delta.kernel.engine.Engine;
+import io.delta.kernel.types.StructType;
+import io.delta.kernel.utils.CloseableIterable;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.iceberg.CatalogProperties;
 import org.apache.iceberg.CatalogUtil;
+import org.apache.iceberg.Schema;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.catalog.Namespace;
@@ -38,6 +44,7 @@ import org.apache.iceberg.hadoop.Configurable;
 import org.apache.iceberg.hadoop.HadoopFileIO;
 import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
+import org.apache.iceberg.types.Types;
 import org.apache.iceberg.util.LocationUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -93,6 +100,20 @@ public class DeltaCatalog implements Catalog, SupportsNamespaces, Configurable<C
     conf.set("fs.s3a.path.style.access", "true");
     conf.set("fs.hdfs.impl", org.apache.hadoop.hdfs.DistributedFileSystem.class.getName());
     conf.set("fs.file.impl", org.apache.hadoop.fs.LocalFileSystem.class.getName());
+  }
+
+  @Override
+  public Table createTable(TableIdentifier identifier, Schema schema) {
+    String tableLocation = getTableLocation(identifier);
+    Engine engine = DefaultEngine.create(conf);
+    io.delta.kernel.Table kernelTable = io.delta.kernel.Table.forPath(engine, tableLocation);
+    kernelTable
+            .createTransactionBuilder(engine, "iceberg", Operation.CREATE_TABLE)
+            .withSchema(engine, SchemaUtils.fromIcebergSchema(schema.asStruct()))
+            .build(engine)
+            .commit(engine, CloseableIterable.emptyIterable());
+
+    return new DeltaTable(identifier, conf, tableLocation);
   }
 
   @Override

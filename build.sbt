@@ -1597,6 +1597,7 @@ lazy val kafka = (project in file("connectors/kafka"))
       "org.slf4j" % "slf4j-simple" % "2.0.0",
       "org.slf4j" % "slf4j-simple" % "2.0.0" % Test,
       "com.lihaoyi" %% "requests" % "0.9.0" % Test,
+      "io.minio" % "minio" % "8.3.5" % Test
     ),
     dependencyOverrides += "com.github.luben" % "zstd-jni" % "1.5.6-3",
     // Compile, patch and generated Iceberg JARs

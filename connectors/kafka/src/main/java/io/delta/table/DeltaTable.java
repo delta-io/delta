@@ -1,24 +1,58 @@
 package io.delta.table;
 
+import com.github.benmanes.caffeine.cache.LoadingCache;
+import com.github.benmanes.caffeine.cache.Caffeine;
+import com.google.common.collect.ImmutableMap;
+import io.delta.kernel.internal.actions.Metadata;
 import org.apache.iceberg.*;
+import io.delta.kernel.Table;
+import io.delta.kernel.defaults.engine.DefaultEngine;
+import io.delta.kernel.engine.Engine;
 import org.apache.iceberg.encryption.EncryptionManager;
+import org.apache.iceberg.hadoop.HadoopFileIO;
 import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.io.LocationProvider;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.iceberg.catalog.TableIdentifier;
+import org.apache.iceberg.util.DateTimeUtil;
 
 import java.util.List;
 import java.util.Map;
 
-public class DeltaTable implements Table {
+
+public class DeltaTable implements org.apache.iceberg.Table {
+
+    private final TableIdentifier ident;
+    private final String deltaTableLocation;
+    private final Table deltaTable;
+    private final Engine deltaEngine;
+    private final HadoopFileIO io;
+    private final LoadingCache<Long, DeltaSnapshot> snapshots;
+
+    private DeltaSnapshot currentVersion = null;
+
+    private long currentVersionId = 0;
 
     public DeltaTable(TableIdentifier ident, Configuration conf, String deltaTableLocation) {
-        throw new UnsupportedOperationException("Not implemented yet");
+        this.ident = ident;
+        this.deltaTableLocation = deltaTableLocation;
+        this.deltaEngine = DefaultEngine.create(conf);
+        this.deltaTable = Table.forPath(deltaEngine, deltaTableLocation);
+        this.io = new HadoopFileIO(conf);
+        this.snapshots =
+                Caffeine.newBuilder()
+                        .build(
+                                version -> new DeltaSnapshot(
+                                        location(),
+                                        deltaTable.getSnapshotAsOfVersion(deltaEngine, version), deltaEngine));
+
+        refresh();
     }
 
     @Override
     public void refresh() {
-        throw new UnsupportedOperationException("Not implemented yet");
+        this.currentVersionId = deltaTable.getLatestSnapshot(deltaEngine).getVersion(deltaEngine);
+        this.currentVersion = snapshots.get(currentVersionId);
     }
 
     @Override
@@ -56,14 +90,29 @@ public class DeltaTable implements Table {
         throw new UnsupportedOperationException("Not implemented yet");
     }
 
+    private Map<String, String> asProperties(Metadata metadata) {
+        // TODO: construct NameMapping from the schema
+        ImmutableMap.Builder<String, String> builder = ImmutableMap.builder();
+
+        builder.putAll(metadata.getConfiguration());
+        builder.put("format", "delta/" + metadata.getFormat().getProvider());
+        builder.put(TableProperties.UUID, metadata.getId());
+        metadata.getDescription().ifPresent(desc -> builder.put("comment", desc));
+        metadata
+                .getCreatedTime()
+                .ifPresent(ts -> builder.put("created-at", DateTimeUtil.formatTimestampMillis(ts)));
+
+        return builder.build();
+    }
+
     @Override
     public Map<String, String> properties() {
-        throw new UnsupportedOperationException("Not implemented yet");
+        return asProperties(currentVersion.metadata());
     }
 
     @Override
     public String location() {
-        throw new UnsupportedOperationException("Not implemented yet");
+        return deltaTableLocation;
     }
 
     @Override
