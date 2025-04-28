@@ -766,8 +766,6 @@ trait TestUtils extends Assertions with SQLHelper {
       expectedDomainMetadata: DomainMetadata): Unit = {
     assert(snapshot.getDomainMetadataMap.get(ClusteringMetadataDomain.DOMAIN_NAME)
       == expectedDomainMetadata)
-    // verifyChecksum will check the domain metadata in CRC against the latest snapshot.
-    verifyChecksum(snapshot.getDataPath.toString)
   }
 
   /** Ensure checksum is readable by CRC reader and correct. */

@@ -42,13 +42,6 @@ import org.scalatest.prop.Tables
  */
 class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with ColumnMappingSuiteBase {
 
-  override def commitTransaction(
-      txn: Transaction,
-      engine: Engine,
-      dataActions: CloseableIterable[Row]): TransactionCommitResult = {
-    executeCrcSimple(txn.commit(engine, dataActions), engine)
-  }
-
   test("Add nullable column succeeds and correctly updates maxFieldId") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
