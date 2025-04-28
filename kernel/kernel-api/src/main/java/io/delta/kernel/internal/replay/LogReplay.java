@@ -191,7 +191,7 @@ public class LogReplay {
     return logSegment.getVersion();
   }
 
-  /** Returns the crc info for the current snapshot if the checksum file is read */
+  /** Returns the crc info for the current snapshot if it is cached */
   public Optional<CRCInfo> getCurrentCrcInfo() {
     return crcInfoContext.getCacheCrcInfo(logSegment.getVersion());
   }
