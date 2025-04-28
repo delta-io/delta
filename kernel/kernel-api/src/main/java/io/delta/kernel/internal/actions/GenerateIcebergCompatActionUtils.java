@@ -39,6 +39,7 @@ import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.kernel.utils.DataFileStatus;
 import java.net.URI;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -54,6 +55,7 @@ public final class GenerateIcebergCompatActionUtils {
    * @param fileStatus the file status to create the add with (contains path, time, size, and stats)
    * @param partitionValues the partition values for the add
    * @param dataChange whether or not the add constitutes a dataChange (i.e. append vs. compaction)
+   * @param tags key-value metadata to be attached to the add action
    * @return add action row that can be included in the transaction
    * @throws UnsupportedOperationException if icebergWriterCompatV1 is not enabled
    * @throws UnsupportedOperationException if maxRetries != 0 in the transaction
@@ -64,7 +66,8 @@ public final class GenerateIcebergCompatActionUtils {
       Row transactionState,
       DataFileStatus fileStatus,
       Map<String, Literal> partitionValues,
-      boolean dataChange) {
+      boolean dataChange,
+      Map<String, String> tags) {
     Map<String, String> configuration = TransactionStateRow.getConfiguration(transactionState);
 
     /* ----- Validate that this is a valid usage of this API ----- */
@@ -90,8 +93,18 @@ public final class GenerateIcebergCompatActionUtils {
             tableRoot,
             fileStatus,
             partitionValues,
-            dataChange);
+            dataChange,
+            tags);
     return SingleAction.createAddFileSingleAction(addFile.toRow());
+  }
+
+  public static Row generateIcebergCompatWriterV1AddAction(
+      Row transactionState,
+      DataFileStatus fileStatus,
+      Map<String, Literal> partitionValues,
+      boolean dataChange) {
+    return generateIcebergCompatWriterV1AddAction(
+        transactionState, fileStatus, partitionValues, dataChange, Collections.emptyMap());
   }
 
   /**

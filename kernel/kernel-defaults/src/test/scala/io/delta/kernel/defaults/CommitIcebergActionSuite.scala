@@ -28,6 +28,7 @@ import io.delta.kernel.internal.{TableConfig, TableImpl}
 import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction
 import io.delta.kernel.internal.actions.{AddFile, GenerateIcebergCompatActionUtils, RemoveFile}
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
+import io.delta.kernel.internal.util.VectorUtils
 import io.delta.kernel.statistics.DataFileStatistics
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 import io.delta.kernel.utils.DataFileStatus
@@ -430,6 +431,49 @@ class CommitIcebergActionSuite extends DeltaTableWriteSuiteBase {
           )
         }
       }
+    }
+  }
+
+  test("Tags can be successfully passed for generating addFile") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // Create table
+      createEmptyTable(
+        engine,
+        tablePath,
+        testSchema,
+        tableProperties = tblPropertiesIcebergWriterCompatV1Enabled)
+
+      // Commit one add file with tags
+      val tags = Map("tag1" -> "abc", "tag2" -> "def")
+
+      {
+        val txn = createTxn(engine, tablePath, maxRetries = 0)
+        val actionsToCommit = Seq(
+          GenerateIcebergCompatActionUtils.generateIcebergCompatWriterV1AddAction(
+            txn.getTransactionState(engine),
+            generateDataFileStatus(tablePath, "file1.parquet"),
+            Collections.emptyMap(),
+            true, /* dataChange */
+            tags.asJava))
+        commitTransaction(
+          txn,
+          engine,
+          inMemoryIterable(toCloseableIterator(actionsToCommit.asJava.iterator())))
+      }
+
+      // Read back committed ADD actions
+      val version = 1
+      val rows = Table.forPath(engine, tablePath).asInstanceOf[TableImpl]
+        .getChanges(engine, version, version, Set(DeltaAction.ADD).asJava)
+        .toSeq
+        .flatMap(_.getRows.toSeq)
+        .filterNot(row => row.isNullAt(row.getSchema.indexOf("add")))
+
+      assert(rows.size == 1)
+
+      val addFile = new AddFile(rows.head.getStruct(rows.head.getSchema.indexOf("add")))
+      assert(addFile.getTags.isPresent)
+      assert(VectorUtils.toJavaMap(addFile.getTags.get()).asScala.equals(tags))
     }
   }
 }
