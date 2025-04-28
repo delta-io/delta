@@ -31,10 +31,7 @@ import io.delta.kernel.statistics.DataFileStatistics;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.DataFileStatus;
 import java.net.URI;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Optional;
+import java.util.*;
 
 /** Delta log action representing an `AddFile` */
 public class AddFile extends RowBackedAction {
@@ -82,7 +79,10 @@ public class AddFile extends RowBackedAction {
       URI tableRoot,
       DataFileStatus dataFileStatus,
       Map<String, Literal> partitionValues,
-      boolean dataChange) {
+      boolean dataChange,
+      Map<String, String> tags) {
+    Optional<MapValue> tagMapValue =
+        !tags.isEmpty() ? Optional.of(VectorUtils.stringStringMapValue(tags)) : Optional.empty();
     Row row =
         createAddFileRow(
             physicalSchema,
@@ -92,7 +92,7 @@ public class AddFile extends RowBackedAction {
             dataFileStatus.getModificationTime(),
             dataChange,
             Optional.empty(), // deletionVector
-            Optional.empty(), // tags
+            tagMapValue, // tags
             Optional.empty(), // baseRowId
             Optional.empty(), // defaultRowCommitVersion
             dataFileStatus.getStatistics());
@@ -175,6 +175,17 @@ public class AddFile extends RowBackedAction {
     return Optional.ofNullable(row.isNullAt(index) ? null : row.getMap(index));
   }
 
+  public Optional<String> getStatsJson() {
+    Optional<Integer> statsIndexOpt = getFieldIndexOpt("stats");
+    return statsIndexOpt.map(
+        index -> {
+          if (row.isNullAt(index)) {
+            return null;
+          }
+          return row.getString(index);
+        });
+  }
+
   public Optional<Long> getBaseRowId() {
     int index = getFieldIndex("baseRowId");
     return Optional.ofNullable(row.isNullAt(index) ? null : row.getLong(index));
@@ -207,6 +218,44 @@ public class AddFile extends RowBackedAction {
   public AddFile withNewDefaultRowCommitVersion(long defaultRowCommitVersion) {
     return new AddFile(
         toRowWithOverriddenValue("defaultRowCommitVersion", defaultRowCommitVersion));
+  }
+
+  /**
+   * Utility to generate a 'RemoveFile' action from this AddFile action.
+   *
+   * @param dataChange this will override the dataChange field in current AddFile
+   * @param deletionTimestamp the deletion timestamp of the operation, this will override the
+   *     modificationTime field in current AddFile
+   */
+  public Row toRemoveFileRow(boolean dataChange, Optional<Long> deletionTimestamp) {
+    Map<Integer, Object> fieldMap = new HashMap<>();
+    fieldMap.put(RemoveFile.FULL_SCHEMA.indexOf("path"), getPath());
+    fieldMap.put(
+        RemoveFile.FULL_SCHEMA.indexOf("deletionTimestamp"),
+        deletionTimestamp.orElse(System.currentTimeMillis()));
+    fieldMap.put(RemoveFile.FULL_SCHEMA.indexOf("dataChange"), dataChange);
+    fieldMap.put(RemoveFile.FULL_SCHEMA.indexOf("extendedFileMetadata"), true);
+    fieldMap.put(RemoveFile.FULL_SCHEMA.indexOf("partitionValues"), getPartitionValues());
+    fieldMap.put(RemoveFile.FULL_SCHEMA.indexOf("size"), getSize());
+    getStatsJson()
+        .ifPresent(statsJson -> fieldMap.put(RemoveFile.FULL_SCHEMA.indexOf("stats"), statsJson));
+    getTags().ifPresent(tags -> fieldMap.put(RemoveFile.FULL_SCHEMA.indexOf("tags"), tags));
+    if (!row.isNullAt(getFieldIndex("deletionVector"))) {
+      fieldMap.put(
+          RemoveFile.FULL_SCHEMA.indexOf("deletionVector"),
+          row.getStruct(getFieldIndex("deletionVector")));
+    }
+    getBaseRowId()
+        .ifPresent(
+            baseRowId -> fieldMap.put(RemoveFile.FULL_SCHEMA.indexOf("baseRowId"), baseRowId));
+    getDefaultRowCommitVersion()
+        .ifPresent(
+            defaultRowCommitVersion ->
+                fieldMap.put(
+                    RemoveFile.FULL_SCHEMA.indexOf("defaultRowCommitVersion"),
+                    defaultRowCommitVersion));
+
+    return new GenericRow(RemoveFile.FULL_SCHEMA, fieldMap);
   }
 
   @Override
