@@ -69,6 +69,14 @@ object IcebergStatsUtils extends DeltaLogging {
     TypeID.DECIMAL
   )
 
+  private val STATS_NULLCOUNT_ALLOW_TYPES = Set[TypeID](
+    TypeID.LIST,
+    TypeID.MAP,
+    TypeID.DATE,
+    TypeID.TIMESTAMP,
+    TypeID.DECIMAL
+  )
+
   private val CONFIGS_TO_STATS_ALLOW_TYPES = Map(
     DeltaSQLConf.DELTA_CONVERT_ICEBERG_DATE_STATS -> TypeID.DATE,
     DeltaSQLConf.DELTA_CONVERT_ICEBERG_TIMESTAMP_STATS -> TypeID.TIMESTAMP,
@@ -221,11 +229,16 @@ object IcebergStatsUtils extends DeltaLogging {
         statsAllowTypes: Set[TypeID]): Map[String, Any] = {
       fields.asScala.flatMap { field =>
         field.`type`() match {
-          // Both Iceberg and Delta do not maintain stats for List/Map. Ignore them
           case st: IcebergStructType =>
             Some(field.name ->
               collectStats(st.fields, valueMap, deserializer, statsAllowTypes))
           case pt: IcebergPrimitiveType
+            if valueMap.contains(field.fieldId) && statsAllowTypes.contains(pt.typeId) =>
+            Option(deserializer(pt, valueMap(field.fieldId))).map(field.name -> _)
+          case pt: IcebergListType
+            if valueMap.contains(field.fieldId) && statsAllowTypes.contains(pt.typeId) =>
+            Option(deserializer(pt, valueMap(field.fieldId))).map(field.name -> _)
+          case pt: IcebergMapType
             if valueMap.contains(field.fieldId) && statsAllowTypes.contains(pt.typeId) =>
             Option(deserializer(pt, valueMap(field.fieldId))).map(field.name -> _)
           case _ => None
@@ -242,7 +255,8 @@ object IcebergStatsUtils extends DeltaLogging {
         MIN -> collectStats(icebergSchema.columns, _, deserialize, statsAllowTypes)
       ) ++ nullCountMap.map(
         NULL_COUNT -> collectStats(
-          icebergSchema.columns, _, (_: IcebergType, v: Any) => v, statsAllowTypes
+          icebergSchema.columns, _, (_: IcebergType, v: Any) => v,
+            statsAllowTypes ++ STATS_NULLCOUNT_ALLOW_TYPES
         )
       )
     )
