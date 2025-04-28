@@ -530,7 +530,7 @@ class DeltaTableTestsMixin:
             [Row("Overwrite")],
             StructType([StructField("operationParameters.mode", StringType(), True)]))
 
-    def test_cdc(self):
+    def test_cdc(self) -> None:
         self.spark.range(0, 5).write.format("delta").save(self.tempFile)
         deltaTable = DeltaTable.forPath(self.spark, self.tempFile)
         # Enable Change Data Feed
