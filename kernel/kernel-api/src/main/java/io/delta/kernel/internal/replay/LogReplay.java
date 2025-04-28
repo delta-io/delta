@@ -372,6 +372,7 @@ public class LogReplay {
    */
   private Map<String, DomainMetadata> loadDomainMetadataMap(Engine engine) {
     // First try to load from CRC info if available
+    Optional<CRCInfo> currentCrcInfo = crcInfoContext.getCacheCrcInfo(getVersion());
     if (currentCrcInfo.isPresent() && currentCrcInfo.get().getDomainMetadata().isPresent()) {
       return currentCrcInfo.get().getDomainMetadata().get().stream()
           .collect(Collectors.toMap(DomainMetadata::getDomain, Function.identity()));
@@ -426,13 +427,11 @@ public class LogReplay {
   private class CrcInfoContext {
     private Optional<CRCInfo> cachedCrcInfo;
 
-    public CrcInfoContext() {
+    CrcInfoContext() {
       this.cachedCrcInfo = Optional.empty();
     }
 
-    /**
-     * Returns the cached CRC info for the specified version if available.
-     */
+    /** Returns the cached CRC info for the specified version if available. */
     public Optional<CRCInfo> getCacheCrcInfo(long version) {
       return cachedCrcInfo.filter(crc -> crc.getVersion() == version);
     }

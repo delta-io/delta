@@ -762,17 +762,17 @@ trait TestUtils extends Assertions with SQLHelper {
       engine: Engine,
       tablePath: String,
       version: Long): Unit = {
-    val logFile = new KernelPath(s"$tablePath/_delta_log");
+    val logPath = new KernelPath(s"$tablePath/_delta_log");
     val crcInfo = ChecksumReader.getCRCInfo(
       engine,
-      logFile,
-      version,
-      version).get()
+      FileStatus.of(checksumFile(
+        logPath,
+        version).toString)).get()
     // Delete it in hdfs.
     engine.getFileSystemClient.delete(FileNames.checksumFile(
       new Path(s"$tablePath/_delta_log"),
       version).toString)
-    val crcWriter = new ChecksumWriter(logFile)
+    val crcWriter = new ChecksumWriter(logPath)
     crcWriter.writeCheckSum(
       engine,
       new CRCInfo(
@@ -799,11 +799,12 @@ trait TestUtils extends Assertions with SQLHelper {
    * @param snapshot Snapshot to verify the checksum against
    */
   protected def verifyChecksumForSnapshot(snapshot: Snapshot): Unit = {
+    val logPath = snapshot.asInstanceOf[SnapshotImpl].getLogPath
     val crcInfo = ChecksumReader.getCRCInfo(
       defaultEngine,
       FileStatus.of(checksumFile(
-        new KernelPath(f"$tablePath/_delta_log/"),
-        checksumVersion).toString))
+        logPath,
+        snapshot.getVersion).toString))
     assert(crcInfo.isPresent)
     // TODO: check metadata, protocol and file size.
     assert(
