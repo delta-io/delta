@@ -71,7 +71,10 @@ object IcebergStatsUtils extends DeltaLogging {
 
   private val STATS_NULLCOUNT_ALLOW_TYPES = Set[TypeID](
     TypeID.LIST,
-    TypeID.MAP
+    TypeID.MAP,
+    TypeID.DATE,
+    TypeID.TIMESTAMP,
+    TypeID.DECIMAL
   )
 
   private val CONFIGS_TO_STATS_ALLOW_TYPES = Map(
