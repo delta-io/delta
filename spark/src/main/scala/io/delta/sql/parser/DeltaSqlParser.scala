@@ -72,7 +72,9 @@ import org.apache.spark.sql.types._
  * A SQL parser that tries to parse Delta commands. If failing to parse the SQL text, it will
  * forward the call to `delegate`.
  */
-class DeltaSqlParser(val delegate: ParserInterface) extends ParserInterface {
+class DeltaSqlParser(val delegate: ParserInterface)
+    extends ParserInterface
+    with DeltaSqlParserShims {
   private val builder = new DeltaSqlAstBuilder
   private val substitution = new VariableSubstitution
 
@@ -155,8 +157,6 @@ class DeltaSqlParser(val delegate: ParserInterface) extends ParserInterface {
   override def parseTableSchema(sqlText: String): StructType = delegate.parseTableSchema(sqlText)
 
   override def parseDataType(sqlText: String): DataType = delegate.parseDataType(sqlText)
-
-  override def parseRoutineParam(sqlText: String): StructType = delegate.parseRoutineParam(sqlText)
 }
 
 /**
