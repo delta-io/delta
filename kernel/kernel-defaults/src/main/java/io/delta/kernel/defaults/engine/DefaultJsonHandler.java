@@ -144,7 +144,7 @@ public class DefaultJsonHandler implements JsonHandler {
           currentFile = scanFileIter.next();
           SeekableInputStream stream = null;
           try {
-            stream = fileIO.newInputFile(currentFile.getPath()).newStream();
+            stream = fileIO.newInputFile(currentFile.getPath(), currentFile.getSize()).newStream();
             currentFileReader =
                 new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8));
           } catch (Exception e) {

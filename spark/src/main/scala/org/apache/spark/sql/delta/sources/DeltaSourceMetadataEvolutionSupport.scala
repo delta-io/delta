@@ -461,71 +461,140 @@ object DeltaSourceMetadataEvolutionSupport {
     val isTypeWidening: Boolean
     val sqlConfsUnblock: Seq[String]
     val readerOptionsUnblock: Seq[String]
+    val prettyColumnDetailsString: String
+
+    protected def getRenamedColumnsPrettyString(renamedColumns: Seq[RenamedColumn]): String = {
+      s"""Columns renamed:
+         |${renamedColumns.map { case RenamedColumn(fromFieldPath, toFieldPath) =>
+          s"'${SchemaUtils.prettyFieldName(fromFieldPath)}' -> " +
+            s"'${SchemaUtils.prettyFieldName(toFieldPath)}'"
+         }.mkString("\n")}
+         |""".stripMargin
+    }
+
+    protected def getDroppedColumnsPrettyString(droppedColumns: Seq[DroppedColumn]): String = {
+      s"""Columns dropped:
+         |${droppedColumns.map(
+            c => s"'${SchemaUtils.prettyFieldName(c.fieldPath)}'").mkString(", ")}
+         |""".stripMargin
+    }
+
+    protected def getWidenedColumnsPrettyString(widenedColumns: Seq[TypeChange]): String = {
+      s"""Columns with widened types:
+         |${widenedColumns.map { case TypeChange(_, fromType, toType, fieldPath) =>
+          s"'${SchemaUtils.prettyFieldName(fieldPath)}': ${fromType.sql} -> ${toType.sql}"
+         }.mkString("\n")}
+         |""".stripMargin
+    }
   }
 
   // Single types of schema change, typically caused by a single ALTER TABLE operation.
-  private case object SchemaChangeRename extends SchemaChangeType {
+  private case class SchemaChangeRename(renamedColumns: Seq[RenamedColumn])
+      extends SchemaChangeType {
     override val name = "RENAME COLUMN"
     override val (isRename, isDrop, isTypeWidening) = (true, false, false)
     override val sqlConfsUnblock: Seq[String] = Seq(SQL_CONF_UNBLOCK_RENAME)
     override val readerOptionsUnblock: Seq[String] = Seq(DeltaOptions.ALLOW_SOURCE_COLUMN_RENAME)
+    override val prettyColumnDetailsString: String = getRenamedColumnsPrettyString(renamedColumns)
   }
-  private case object SchemaChangeDrop extends SchemaChangeType {
+  private case class SchemaChangeDrop(droppedColumns: Seq[DroppedColumn]) extends SchemaChangeType {
     override val name = "DROP COLUMN"
     override val (isRename, isDrop, isTypeWidening) = (false, true, false)
     override val sqlConfsUnblock: Seq[String] = Seq(SQL_CONF_UNBLOCK_DROP)
     override val readerOptionsUnblock: Seq[String] = Seq(DeltaOptions.ALLOW_SOURCE_COLUMN_DROP)
+    override val prettyColumnDetailsString: String = getDroppedColumnsPrettyString(droppedColumns)
   }
-  private case object SchemaChangeTypeWidening extends SchemaChangeType {
+  private case class SchemaChangeTypeWidening(widenedColumns: Seq[TypeChange])
+      extends SchemaChangeType {
     override val name = "TYPE WIDENING"
     override val (isRename, isDrop, isTypeWidening) = (false, false, true)
     override val sqlConfsUnblock: Seq[String] = Seq(SQL_CONF_UNBLOCK_TYPE_CHANGE)
     override val readerOptionsUnblock: Seq[String] =
       Seq(DeltaOptions.ALLOW_SOURCE_COLUMN_TYPE_CHANGE)
+    override val prettyColumnDetailsString: String = getWidenedColumnsPrettyString(widenedColumns)
   }
 
   // Combinations of rename, drop and type change -> can be caused by a complete overwrite.
-  private case object SchemaChangeRenameAndDrop extends SchemaChangeType {
+  private case class SchemaChangeRenameAndDrop(
+      renamedColumns: Seq[RenamedColumn],
+      droppedColumns: Seq[DroppedColumn]) extends SchemaChangeType {
     override val name = "RENAME AND DROP COLUMN"
     override val (isRename, isDrop, isTypeWidening) = (true, true, false)
     override val sqlConfsUnblock: Seq[String] = Seq(SQL_CONF_UNBLOCK_RENAME_DROP)
     override val readerOptionsUnblock: Seq[String] =
       Seq(DeltaOptions.ALLOW_SOURCE_COLUMN_RENAME, DeltaOptions.ALLOW_SOURCE_COLUMN_DROP)
+    override val prettyColumnDetailsString: String =
+      getRenamedColumnsPrettyString(renamedColumns) + getDroppedColumnsPrettyString(droppedColumns)
   }
-  private case object SchemaChangeRenameAndTypeWidening extends SchemaChangeType {
+  private case class SchemaChangeRenameAndTypeWidening(
+      renamedColumns: Seq[RenamedColumn],
+      widenedColumns: Seq[TypeChange]) extends SchemaChangeType {
     override val name = "RENAME AND TYPE WIDENING"
     override val (isRename, isDrop, isTypeWidening) = (true, false, true)
     override val sqlConfsUnblock: Seq[String] =
       Seq(SQL_CONF_UNBLOCK_RENAME, SQL_CONF_UNBLOCK_TYPE_CHANGE)
     override val readerOptionsUnblock: Seq[String] =
       Seq(DeltaOptions.ALLOW_SOURCE_COLUMN_RENAME, DeltaOptions.ALLOW_SOURCE_COLUMN_DROP)
+    override val prettyColumnDetailsString: String =
+      getRenamedColumnsPrettyString(renamedColumns) + getWidenedColumnsPrettyString(widenedColumns)
   }
-  private case object SchemaChangeDropAndTypeWidening extends SchemaChangeType {
+  private case class SchemaChangeDropAndTypeWidening(
+      droppedColumns: Seq[DroppedColumn],
+      widenedColumns: Seq[TypeChange]) extends SchemaChangeType {
     override val name = "DROP AND TYPE WIDENING"
     override val (isRename, isDrop, isTypeWidening) = (false, true, true)
     override val sqlConfsUnblock: Seq[String] =
       Seq(SQL_CONF_UNBLOCK_DROP, SQL_CONF_UNBLOCK_TYPE_CHANGE)
     override val readerOptionsUnblock: Seq[String] =
       Seq(DeltaOptions.ALLOW_SOURCE_COLUMN_DROP, DeltaOptions.ALLOW_SOURCE_COLUMN_TYPE_CHANGE)
+    override val prettyColumnDetailsString: String =
+      getDroppedColumnsPrettyString(droppedColumns) + getWidenedColumnsPrettyString(widenedColumns)
   }
-  private case object SchemaChangeRenameAndDropAndTypeWidening extends SchemaChangeType {
+  private case class SchemaChangeRenameAndDropAndTypeWidening(
+      renamedColumns: Seq[RenamedColumn],
+      droppedColumns: Seq[DroppedColumn],
+      widenedColumns: Seq[TypeChange]) extends SchemaChangeType {
     override val name = "RENAME, DROP AND TYPE WIDENING"
     override val (isRename, isDrop, isTypeWidening) = (true, true, true)
     override val sqlConfsUnblock: Seq[String] =
       Seq(SQL_CONF_UNBLOCK_RENAME_DROP, SQL_CONF_UNBLOCK_TYPE_CHANGE)
     override val readerOptionsUnblock: Seq[String] =
       Seq(DeltaOptions.ALLOW_SOURCE_COLUMN_DROP, DeltaOptions.ALLOW_SOURCE_COLUMN_TYPE_CHANGE)
+    override val prettyColumnDetailsString: String =
+      getRenamedColumnsPrettyString(renamedColumns) +
+        getDroppedColumnsPrettyString(droppedColumns) +
+        getWidenedColumnsPrettyString(widenedColumns)
   }
 
-  private final val allSchemaChangeTypes = Seq(
-    SchemaChangeDrop,
-    SchemaChangeRename,
-    SchemaChangeTypeWidening,
-    SchemaChangeRenameAndDrop,
-    SchemaChangeRenameAndTypeWidening,
-    SchemaChangeDropAndTypeWidening,
-    SchemaChangeRenameAndDropAndTypeWidening
-  )
+  /**
+   * Build the final schema change descriptor after analyzing all possible schema changes.
+   * @param renamedColumns The columns that have been renamed.
+   * @param droppedColumns The columns that have been dropped.
+   * @param widenedColumns The columns that have been widened.
+   */
+  private def buildSchemaChangeDescriptor(
+      renamedColumns: Seq[RenamedColumn],
+      droppedColumns: Seq[DroppedColumn],
+      widenedColumns: Seq[TypeChange]): Option[SchemaChangeType] = {
+    (renamedColumns.nonEmpty, droppedColumns.nonEmpty, widenedColumns.nonEmpty) match {
+      case (true, false, false) =>
+        Some(SchemaChangeRename(renamedColumns))
+      case (false, true, false) =>
+        Some(SchemaChangeDrop(droppedColumns))
+      case (false, false, true) =>
+        Some(SchemaChangeTypeWidening(widenedColumns))
+      case (true, true, false) =>
+        Some(SchemaChangeRenameAndDrop(renamedColumns, droppedColumns))
+      case (true, false, true) =>
+        Some(SchemaChangeRenameAndTypeWidening(renamedColumns, widenedColumns))
+      case (false, true, true) =>
+        Some(SchemaChangeDropAndTypeWidening(droppedColumns, widenedColumns))
+      case (true, true, true) =>
+        Some(
+          SchemaChangeRenameAndDropAndTypeWidening(renamedColumns, droppedColumns, widenedColumns))
+      case _ => None
+    }
+  }
 
   /**
    * Determine the non-additive schema change type for an incoming schema change. None if it's
@@ -534,8 +603,8 @@ object DeltaSourceMetadataEvolutionSupport {
   private def determineNonAdditiveSchemaChangeType(
       spark: SparkSession,
       newSchema: StructType, oldSchema: StructType): Option[SchemaChangeType] = {
-    val isRenameColumn = DeltaColumnMapping.isRenameColumnOperation(newSchema, oldSchema)
-    val isDropColumn = DeltaColumnMapping.isDropColumnOperation(newSchema, oldSchema)
+    val renamedColumns = DeltaColumnMapping.collectRenamedColumns(newSchema, oldSchema)
+    val droppedColumns = DeltaColumnMapping.collectDroppedColumns(newSchema, oldSchema)
     // Use physical column names to identify type changes. Dropping a column and adding a new column
     // with a different type is historically allowed and is not considered a type change.
     val oldPhysicalSchema = DeltaColumnMapping.renameColumns(oldSchema)
@@ -545,11 +614,10 @@ object DeltaSourceMetadataEvolutionSupport {
     // checks - both widening and non-widening - can be disabled by flag to revert to historical
     // behavior where type changes are not considered a non-additive schema change and are allowed
     // to propagate without user action.
-    val isTypeWidening = allowTypeWidening(spark) && !bypassTypeChangeCheck(spark) &&
-      TypeWidening.containsWideningTypeChanges(from = oldPhysicalSchema, to = newPhysicalSchema)
-    allSchemaChangeTypes.find { c =>
-      (c.isDrop, c.isRename, c.isTypeWidening) == (isDropColumn, isRenameColumn, isTypeWidening)
-    }
+    val typeWideningChanges = if (allowTypeWidening(spark) && !bypassTypeChangeCheck(spark)) {
+      TypeWideningMetadata.collectTypeChanges(oldPhysicalSchema, newPhysicalSchema)
+    } else Seq.empty
+    buildSchemaChangeDescriptor(renamedColumns, droppedColumns, typeWideningChanges)
   }
 
   /**
@@ -680,29 +748,14 @@ object DeltaSourceMetadataEvolutionSupport {
         if (!isChangeUnblocked(
             spark, change, options, checkpointHash, currentSchemaChangeVersion)) {
           // Throw error to prompt user to set the correct confs
-          change match {
-            case SchemaChangeTypeWidening =>
-              val wideningTypeChanges = TypeWideningMetadata.collectTypeChanges(
-                from = previousSchema.dataSchema,
-                to = currentSchema.dataSchema
-              )
-              throw DeltaErrors.cannotContinueStreamingTypeWidening(
-                previousSchemaChangeVersion,
-                currentSchemaChangeVersion,
-                checkpointHash,
-                change.readerOptionsUnblock,
-                change.sqlConfsUnblock,
-                wideningTypeChanges)
-
-            case _ =>
-              throw DeltaErrors.cannotContinueStreamingPostSchemaEvolution(
-                change.name,
-                previousSchemaChangeVersion,
-                currentSchemaChangeVersion,
-                checkpointHash,
-                change.readerOptionsUnblock,
-                change.sqlConfsUnblock)
-          }
+          throw DeltaErrors.cannotContinueStreamingPostSchemaEvolution(
+            change.name,
+            previousSchemaChangeVersion,
+            currentSchemaChangeVersion,
+            checkpointHash,
+            change.readerOptionsUnblock,
+            change.sqlConfsUnblock,
+            change.prettyColumnDetailsString)
         }
     }
   }

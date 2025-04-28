@@ -376,6 +376,35 @@ trait DeltaSharingDataSourceDeltaSuiteBase
             "parquet"
           )
         }
+
+        // Build a parquet table and query with delta format
+        // Use a unique table name for this test as assertRequestedFormat is using a global map
+        val sharedParquetTableForDeltaFormat = "shared_parquet_table_for_delta_format"
+        // Use prepareMockedClientAndFileSystemResult not ForParquet because fromJson requires DeltaSharingMetadata
+        prepareMockedClientAndFileSystemResult(
+          deltaTableName,
+          sharedParquetTableForDeltaFormat
+        )
+        prepareMockedClientAndFileSystemResult(
+          deltaTableName,
+          sharedParquetTableForDeltaFormat,
+          limitHint = Some(1)
+        )
+        prepareMockedClientAndFileSystemResult(
+          deltaTableName,
+          sharedParquetTableForDeltaFormat,
+          versionAsOf = Some(1)
+        )
+        prepareMockedClientGetTableVersion(deltaTableName, sharedParquetTableForDeltaFormat)
+        val overrideConfigs = Map(DeltaSQLConf.DELTA_SHARING_FORCE_DELTA_FORMAT.key -> "true")
+        withSQLConf((overrideConfigs ++ getDeltaSharingClassesSQLConf).toSeq: _*) {
+          val profileFile = prepareProfileFile(tempDir)
+          testAutoResolve(
+            s"${profileFile.getCanonicalPath}#share1.default.$sharedParquetTableForDeltaFormat",
+            s"share1.default.$sharedParquetTableForDeltaFormat",
+            "delta"
+          )
+        }
       }
     }
   }

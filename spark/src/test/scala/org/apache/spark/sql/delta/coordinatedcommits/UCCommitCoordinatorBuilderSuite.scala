@@ -42,7 +42,7 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
     uri: Option[String] = None,
     token: Option[String] = None,
     metastoreId: Option[String] = None,
-    path: Option[String] = Some("io.unitycatalog.connectors.spark.UCSingleCatalog")
+    path: Option[String] = Some("io.unitycatalog.spark.UCSingleCatalog")
   )
 
   def setupCatalogs(configs: CatalogTestConfig*)(testCode: => Unit): Unit = {

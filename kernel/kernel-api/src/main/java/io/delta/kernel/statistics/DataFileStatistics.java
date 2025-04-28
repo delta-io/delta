@@ -25,6 +25,7 @@ import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.DeltaErrors;
+import io.delta.kernel.internal.skipping.StatsSchemaHelper;
 import io.delta.kernel.internal.util.JsonUtils;
 import io.delta.kernel.types.*;
 import java.io.IOException;
@@ -38,7 +39,12 @@ import java.util.Collections;
 import java.util.Map;
 import java.util.Objects;
 
-/** Statistics about data file in a Delta Lake table. */
+/**
+ * Encapsulates statistics for a data file in a Delta Lake table and provides methods to serialize
+ * those stats to JSON with basic physical-type validation. Note that connectors (e.g. Spark, Flink)
+ * are responsible for ensuring the correctness of collected stats, including any necessary string
+ * truncation, prior to constructing this class.
+ */
 public class DataFileStatistics {
   private static final DateTimeFormatter TIMESTAMP_FORMATTER =
       DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSX");
@@ -49,33 +55,35 @@ public class DataFileStatistics {
   private final long numRecords;
   private final Map<Column, Literal> minValues;
   private final Map<Column, Literal> maxValues;
-  private final Map<Column, Long> nullCounts;
+  private final Map<Column, Long> nullCount;
 
   /**
-   * Create a new instance of {@link DataFileStatistics}. The minValues, maxValues, and nullCounts
+   * Create a new instance of {@link DataFileStatistics}. The minValues, maxValues, and nullCount
    * are all required fields. This class is primarily used to serialize stats to JSON with type
-   * checking when constructing file actions and NOT used during data skipping.
+   * checking when constructing file actions and NOT used during data skipping. As such the column
+   * names in minValues, maxValues and nullCount should be that of the physical data schema that's
+   * reflected in the parquet files and NOT logical schema.
    *
    * @param numRecords Number of records in the data file.
    * @param minValues Map of column to minimum value of it in the data file. If the data file has
    *     all nulls for the column, the value will be null or not present in the map.
    * @param maxValues Map of column to maximum value of it in the data file. If the data file has
    *     all nulls for the column, the value will be null or not present in the map.
-   * @param nullCounts Map of column to number of nulls in the data file.
+   * @param nullCount Map of column to number of nulls in the data file.
    */
   public DataFileStatistics(
       long numRecords,
       Map<Column, Literal> minValues,
       Map<Column, Literal> maxValues,
-      Map<Column, Long> nullCounts) {
+      Map<Column, Long> nullCount) {
     Objects.requireNonNull(minValues, "minValues must not be null to serialize stats.");
     Objects.requireNonNull(maxValues, "maxValues must not be null to serialize stats.");
-    Objects.requireNonNull(nullCounts, "nullCounts must not be null to serialize stats.");
+    Objects.requireNonNull(nullCount, "nullCount must not be null to serialize stats.");
 
     this.numRecords = numRecords;
     this.minValues = Collections.unmodifiableMap(minValues);
     this.maxValues = Collections.unmodifiableMap(maxValues);
-    this.nullCounts = Collections.unmodifiableMap(nullCounts);
+    this.nullCount = Collections.unmodifiableMap(nullCount);
   }
 
   /**
@@ -113,8 +121,8 @@ public class DataFileStatistics {
    *
    * @return Map of column to number of nulls in the data file.
    */
-  public Map<Column, Long> getNullCounts() {
-    return nullCounts;
+  public Map<Column, Long> getNullCount() {
+    return nullCount;
   }
 
   /**
@@ -154,10 +162,10 @@ public class DataFileStatistics {
     return JsonUtils.generate(
         gen -> {
           gen.writeStartObject();
-          gen.writeNumberField("numRecords", numRecords);
+          gen.writeNumberField(StatsSchemaHelper.NUM_RECORDS, numRecords);
 
           if (physicalSchema != null) {
-            gen.writeObjectFieldStart("minValues");
+            gen.writeObjectFieldStart(StatsSchemaHelper.MIN);
             writeJsonValues(
                 gen,
                 physicalSchema,
@@ -166,7 +174,7 @@ public class DataFileStatistics {
                 (g, v) -> writeJsonValue(g, v));
             gen.writeEndObject();
 
-            gen.writeObjectFieldStart("maxValues");
+            gen.writeObjectFieldStart(StatsSchemaHelper.MAX);
             writeJsonValues(
                 gen,
                 physicalSchema,
@@ -175,11 +183,11 @@ public class DataFileStatistics {
                 (g, v) -> writeJsonValue(g, v));
             gen.writeEndObject();
 
-            gen.writeObjectFieldStart("nullCounts");
+            gen.writeObjectFieldStart(StatsSchemaHelper.NULL_COUNT);
             writeJsonValues(
                 gen,
                 physicalSchema,
-                nullCounts,
+                nullCount,
                 new Column(new String[0]),
                 (g, v) -> g.writeNumber(v));
             gen.writeEndObject();
@@ -201,7 +209,7 @@ public class DataFileStatistics {
     return numRecords == that.numRecords
         && Objects.equals(minValues, that.minValues)
         && Objects.equals(maxValues, that.maxValues)
-        && Objects.equals(nullCounts, that.nullCounts);
+        && Objects.equals(nullCount, that.nullCount);
   }
 
   @Override
@@ -209,8 +217,15 @@ public class DataFileStatistics {
     int result = Long.hashCode(numRecords);
     result = 31 * result + Objects.hash(minValues.keySet());
     result = 31 * result + Objects.hash(maxValues.keySet());
-    result = 31 * result + Objects.hash(nullCounts.keySet());
+    result = 31 * result + Objects.hash(nullCount.keySet());
     return result;
+  }
+
+  @Override
+  public String toString() {
+    return String.format(
+        "DataFileStatistics(numRecords=%s, minValues=%s, maxValues=%s, nullCount=%s)",
+        numRecords, minValues, maxValues, nullCount);
   }
 
   /////////////////////////////////////////////////////////////////////////////////

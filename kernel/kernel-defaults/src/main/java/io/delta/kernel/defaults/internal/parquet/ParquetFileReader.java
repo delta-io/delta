@@ -28,6 +28,7 @@ import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
+import io.delta.kernel.utils.FileStatus;
 import java.io.IOException;
 import java.util.*;
 import org.apache.hadoop.conf.Configuration;
@@ -58,7 +59,7 @@ public class ParquetFileReader {
   }
 
   public CloseableIterator<ColumnarBatch> read(
-      String path, StructType schema, Optional<Predicate> predicate) {
+      FileStatus fileStatus, StructType schema, Optional<Predicate> predicate) {
 
     final boolean hasRowIndexCol =
         schema.indexOf(StructField.METADATA_ROW_INDEX_COLUMN_NAME) >= 0
@@ -85,7 +86,8 @@ public class ParquetFileReader {
           hasNotConsumedNextElement = reader.nextKeyValue() && reader.getCurrentValue() != null;
           return hasNotConsumedNextElement;
         } catch (IOException | InterruptedException ex) {
-          throw new KernelEngineException("Error reading Parquet file: " + path, ex);
+          throw new KernelEngineException(
+              "Error reading Parquet file: " + fileStatus.getPath(), ex);
         }
       }
 
@@ -111,7 +113,7 @@ public class ParquetFileReader {
         if (reader == null) {
           org.apache.parquet.hadoop.ParquetFileReader fileReader = null;
           try {
-            InputFile inputFile = fileIO.newInputFile(path);
+            InputFile inputFile = fileIO.newInputFile(fileStatus.getPath(), fileStatus.getSize());
 
             // We need physical schema in order to construct a filter that can be
             // pushed into the `parquet-mr` reader. For that reason read the footer
@@ -153,7 +155,8 @@ public class ParquetFileReader {
             reader.initialize(fileReader, readOptions);
           } catch (IOException e) {
             Utils.closeCloseablesSilently(fileReader, reader);
-            throw new KernelEngineException("Error reading Parquet file: " + path, e);
+            throw new KernelEngineException(
+                "Error reading Parquet file: " + fileStatus.getPath(), e);
           }
         }
       }

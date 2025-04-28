@@ -18,7 +18,9 @@ package io.delta.kernel.internal;
 import static java.lang.String.format;
 
 import io.delta.kernel.exceptions.*;
+import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.DomainMetadata;
+import io.delta.kernel.internal.tablefeatures.TableFeature;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.DataFileStatus;
@@ -28,6 +30,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 /** Contains methods to create user-facing Delta exceptions. */
 public final class DeltaErrors {
@@ -249,6 +252,19 @@ public final class DeltaErrors {
     return new KernelException(format(msgFormat, fieldName, expected, actual));
   }
 
+  public static KernelException columnNotFoundInSchema(Column column, StructType tableSchema) {
+    return new KernelException(
+        format("Column '%s' was not found in the table schema: %s", column, tableSchema));
+  }
+
+  public static KernelException overlappingTablePropertiesSetAndUnset(Set<String> violatingKeys) {
+    return new KernelException(
+        format(
+            "Cannot set and unset the same table property in the same transaction. "
+                + "Properties set and unset: %s",
+            violatingKeys));
+  }
+
   /// Start: icebergCompat exceptions
   public static KernelException icebergCompatMissingNumRecordsStats(
       String compatVersion, DataFileStatus dataFileStatus) {
@@ -280,16 +296,42 @@ public final class DeltaErrors {
             compatVersion, dataType));
   }
 
-  public static KernelException icebergCompatDeletionVectorsUnsupported(String compatVersion) {
+  public static KernelException icebergCompatIncompatibleTableFeatures(
+      String compatVersion, Set<TableFeature> incompatibleFeatures) {
     throw new KernelException(
         format(
-            "Simultaneous support for %s and deletion vectors is not compatible.", compatVersion));
+            "Table features %s are incompatible with %s.",
+            incompatibleFeatures.stream()
+                .map(TableFeature::featureName)
+                .collect(Collectors.toList()),
+            compatVersion));
   }
 
   public static KernelException icebergCompatRequiredFeatureMissing(
       String compatVersion, String feature) {
     throw new KernelException(
         format("%s: requires the feature '%s' to be enabled.", compatVersion, feature));
+  }
+
+  public static KernelException enablingIcebergWriterCompatV1OnExistingTable(String key) {
+    return new KernelException(
+        String.format(
+            "Cannot enable %s on an existing table. "
+                + "Enablement is only supported upon table creation.",
+            key));
+  }
+
+  public static KernelException icebergWriterCompatInvalidPhysicalName(List<String> invalidFields) {
+    return new KernelException(
+        String.format(
+            "IcebergWriterCompatV1 requires column mapping field physical names be equal to "
+                + "'col-[fieldId]', but this is not true for the following fields %s",
+            invalidFields));
+  }
+
+  public static KernelException disablingIcebergWriterCompatV1OnExistingTable(String key) {
+    return new KernelException(
+        String.format("Disabling %s on an existing table is not allowed.", key));
   }
   // End: icebergCompat exceptions
 
@@ -361,6 +403,13 @@ public final class DeltaErrors {
     return new KernelException(
         "Feature 'rowTracking' is supported and depends on feature 'domainMetadata',"
             + " but 'domainMetadata' is unsupported");
+  }
+
+  public static KernelException cannotModifyAppendOnlyTable(String tablePath) {
+    return new KernelException(
+        String.format(
+            "Cannot modify append-only table. Table `%s` has configuration %s=true.",
+            tablePath, TableConfig.APPEND_ONLY_ENABLED.getKey()));
   }
 
   /* ------------------------ HELPER METHODS ----------------------------- */

@@ -401,7 +401,12 @@ class DeltaTable private[tables](
     val extension = com.google.protobuf.Any.pack(relation)
     val sparkRelation = spark_proto.Relation.newBuilder().setExtension(extension).build()
     val result = sparkSession.newDataFrame(_.mergeFrom(sparkRelation)).collectResult()
-    sparkSession.createDataFrame(result.toArray.toSeq.asJava, result.schema)
+    val data = try {
+      result.toArray.toSeq.asJava
+    } finally {
+      result.close()
+    }
+    sparkSession.createDataFrame(data, result.schema)
   }
 
   /**

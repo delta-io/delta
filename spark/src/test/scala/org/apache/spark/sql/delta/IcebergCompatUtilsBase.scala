@@ -27,12 +27,20 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 trait IcebergCompatUtilsBase extends QueryTest {
   override protected def spark: SparkSession
 
-  protected val compatVersion: Int = -1
+  protected val compatObject: IcebergCompatBase = null
 
-  protected val allCompatVersions: Seq[Int] = Seq(1, 2)
+  protected def compatVersion: Int = Option(compatObject).map(_.version.toInt).getOrElse(-1)
 
-  protected val allCompatTFs: Seq[WriterFeature with FeatureAutomaticallyEnabledByMetadata] =
-    Seq(IcebergCompatV1TableFeature, IcebergCompatV2TableFeature)
+  protected def enableCompatTableProperty: String = compatObject.config.key
+
+  protected val compatColumnMappingMode: String = "name"
+
+  protected val allCompatTFs = Map(
+    IcebergCompatV1 -> IcebergCompatV1TableFeature,
+    IcebergCompatV2 -> IcebergCompatV2TableFeature
+  )
+
+  protected def compatTableFeature: TableFeature = allCompatTFs(compatObject)
 
   protected val allReaderWriterVersions: Seq[(Int, Int)] = (1 to 3)
     .flatMap { r => (1 to 7).map(w => (r, w)) }
@@ -64,13 +72,11 @@ trait IcebergCompatUtilsBase extends QueryTest {
 
   protected def assertIcebergCompatProtocolAndProperties(
       tableId: String,
-      compatVersion: Int = compatVersion): Unit = {
-    assert(allCompatVersions.contains(compatVersion))
-
+      compatObj: IcebergCompatBase = compatObject): Unit = {
     val snapshot = DeltaLog.forTable(spark, TableIdentifier(tableId)).update()
     val protocol = snapshot.protocol
     val tblProperties = snapshot.getProperties
-    val tableFeature = allCompatTFs(compatVersion - 1)
+    val tableFeature = allCompatTFs(compatObj)
 
     val expectedMinReaderVersion = Math.max(
       ColumnMappingTableFeature.minReaderVersion,
@@ -85,7 +91,7 @@ trait IcebergCompatUtilsBase extends QueryTest {
     assert(protocol.minReaderVersion >= expectedMinReaderVersion)
     assert(protocol.minWriterVersion >= expectedMinWriterVersion)
     assert(protocol.writerFeatures.get.contains(tableFeature.name))
-    assert(tblProperties(s"delta.enableIcebergCompatV$compatVersion") === "true")
+    assert(tblProperties(compatObj.config.key) === "true")
     assert(Seq("name", "id").contains(tblProperties("delta.columnMapping.mode")))
   }
 

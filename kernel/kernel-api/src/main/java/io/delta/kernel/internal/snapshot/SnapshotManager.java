@@ -539,11 +539,10 @@ public class SnapshotManager {
   private void logDebugFileStatuses(String varName, List<FileStatus> fileStatuses) {
     if (logger.isDebugEnabled()) {
       logger.debug(
-          String.format(
-              "%s: %s",
-              varName,
-              Arrays.toString(
-                  fileStatuses.stream().map(x -> new Path(x.getPath()).getName()).toArray())));
+          "{}: {}",
+          varName,
+          Arrays.toString(
+              fileStatuses.stream().map(x -> new Path(x.getPath()).getName()).toArray()));
     }
   }
 }

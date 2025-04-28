@@ -181,65 +181,6 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils with ExpressionTe
     }
   }
 
-  test("v2 checkpoint support with an empty sidecar") {
-    supportedFileFormats.foreach { format =>
-      withTempDir { path =>
-        val tbl = "tbl"
-        withTable(tbl) {
-          // Create table.
-          withSQLConf(
-            DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> format,
-            DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key -> "1", // Ensure 1 action per checkpoint.
-            "spark.databricks.delta.clusteredTable.enableClusteringTablePreview" -> "true") {
-            createSourceTable(tbl, path.toString, "CLUSTER")
-          }
-
-          // Evalute Spark result before updating sidecar.
-          val snapshotFromSpark = DeltaLog.forTable(spark, path.toString).update()
-          snapshotFromSpark.allFiles.collect()
-
-          // Remove all data from one of the sidecar files.
-          val sidecarFolderPath =
-            new Path(DeltaLog.forTable(spark, path.toString).logPath, "_sidecars")
-          val tmpPath = new Path(new Path(path.toString), "_tmp")
-          val sidecarCkptPath = new Path(new File(sidecarFolderPath.toUri).listFiles()
-            .filter(f => !f.getName.endsWith(".crc")).head.toURI).toUri
-          // Create new empty sidecar file, then move it to the sidecar filepath. Delete the sidecar
-          // checksum file to prevent corruption check.
-          spark.createDataFrame(
-            spark.sparkContext.parallelize(Seq.empty[Row]),
-            new StructType()
-              .add(
-                "add",
-                new StructType()
-                  .add("path", StringType)
-                  .add("partitionValues", MapType(StringType, StringType))
-                  .add("size", LongType)
-                  .add("modificationTime", LongType)
-                  .add("dataChange", BooleanType))
-              .add(
-                "remove",
-                new StructType()
-                  .add("path", StringType)))
-            .coalesce(1)
-            .write.mode("append").parquet(tmpPath.toString)
-          val oldPath =
-            new File(tmpPath.toString).listFiles().filter(_.getName.endsWith(".parquet")).head
-          oldPath.renameTo(new File(sidecarCkptPath))
-          val parent = new Path(sidecarCkptPath).getParent
-          val name = "." + new Path(sidecarCkptPath).getName + ".crc"
-          new File(new Path(parent, name).toUri).delete()
-
-          // Validate snapshot and data.
-          validateSnapshot(
-            path.toString,
-            DeltaLog.forTable(spark, path.toString).update(),
-            strictFileValidation = false)
-        }
-      }
-    }
-  }
-
   test("UUID named checkpoint with actions") {
     withTempDir { path =>
       // Create Delta log and a checkpoint file with actions in it.

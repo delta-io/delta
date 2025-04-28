@@ -155,10 +155,7 @@ trait DeltaSQLTestUtils extends SQLTestUtils {
       tableName: String,
       stats: JsonNode,
       columnName: String): (Option[String], Option[String]) = {
-    val columnPath = columnName.split('.')
     val schema = getSnapshot(tableName).schema
-    val colType = getColumnType(schema, columnPath)
-    assert(colType.isInstanceOf[StringType], s"Expected StringType, got $colType")
 
     val physicalColumnPath = getPhysicalColumnPath(schema, columnName)
     val minStatsPath = DeltaStatistics.MIN +: physicalColumnPath

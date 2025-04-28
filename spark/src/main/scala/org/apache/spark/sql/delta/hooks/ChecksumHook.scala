@@ -43,7 +43,7 @@ object ChecksumHook extends PostCommitHook with DeltaLogging {
       txn: DeltaTransaction,
       committedVersion: Long,
       postCommitSnapshot: Snapshot,
-      committedActions: Seq[Action]): Unit = {
+      committedActions: Iterator[Action]): Unit = {
     // Only write the checksum if the postCommitSnapshot matches the version that was committed.
     if (postCommitSnapshot.version != committedVersion) return
     logInfo(

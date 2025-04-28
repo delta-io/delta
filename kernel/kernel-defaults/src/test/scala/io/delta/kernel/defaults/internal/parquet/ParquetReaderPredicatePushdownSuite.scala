@@ -182,7 +182,8 @@ class ParquetReaderPredicatePushdownSuite extends AnyFunSuite
   }
 
   private def assertConvertedFilterIsEmpty(predicate: Predicate, tablePath: String): Unit = {
-    val parquetFileSchema = parquetFiles(tablePath).map(footer(_)).head.getFileMetaData.getSchema
+    val parquetFileSchema =
+      parquetFiles(tablePath).map(_.getPath).map(footer(_)).head.getFileMetaData.getSchema
 
     assert(
       !ParquetFilterUtils.toParquetFilter(parquetFileSchema, predicate).isPresent,

@@ -26,7 +26,7 @@ import org.apache.spark.sql.delta.DeltaColumnMapping.filterColumnMappingProperti
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.actions.DomainMetadata
 import org.apache.spark.sql.delta.commands.DMLUtils.TaggedCommitData
-import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsUtils
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils}
 import org.apache.spark.sql.delta.hooks.{HudiConverterHook, IcebergConverterHook, UpdateCatalog, UpdateCatalogFactory}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -47,6 +47,7 @@ import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructType
+import org.apache.spark.util.Utils
 
 /**
  * Single entry point for all write or declaration operations for Delta tables accessed through
@@ -111,6 +112,14 @@ case class CreateDeltaTableCommand(
     } else if (mode == SaveMode.ErrorIfExists && tableExistsInCatalog) {
       throw DeltaErrors.tableAlreadyExists(table)
     }
+    // This check should be relaxed once the UC client supports creating tables,
+    // It gets bypassed in UTs to allow tests that use InMemoryCommitCoordinator to create tables
+    val tableFeatures = TableFeatureProtocolUtils.
+      getSupportedFeaturesFromTableConfigs(table.properties)
+    if (!Utils.isTesting && (tableFeatures.contains(CatalogOwnedTableFeature) ||
+      CatalogOwnedTableUtils.defaultCatalogOwnedEnabled(spark = sparkSession))) {
+      throw DeltaErrors.deltaCannotCreateCatalogOwnedTable()
+    }
 
     var tableWithLocation = if (tableExistsInCatalog) {
       val existingTable = existingTableOpt.get
@@ -142,6 +151,8 @@ case class CreateDeltaTableCommand(
     }
     val deltaLog = DeltaLog.forTable(sparkSession, tableLocation, fileSystemOptions)
     CoordinatedCommitsUtils.validateConfigurationsForCreateDeltaTableCommand(
+      sparkSession, deltaLog.tableExists, query, tableWithLocation.properties)
+    CatalogOwnedTableUtils.validatePropertiesForCreateDeltaTableCommand(
       sparkSession, deltaLog.tableExists, query, tableWithLocation.properties)
 
     recordDeltaOperation(deltaLog, "delta.ddl.createTable") {
@@ -301,6 +312,9 @@ case class CreateDeltaTableCommand(
         // overwrite.
         isTableReplace = isReplace && !isV1Writer
       )
+      // The 'deltaWriter' initialized the schema. Remove 'EXISTS_DEFAULT' metadata keys because
+      // they are not required on tables created by CTAS.
+      txn.removeExistsDefaultFromSchema()
       // Metadata updates for creating table (with any writer) and replacing table
       // (only with V1 writer) will be handled inside WriteIntoDelta.
       // For createOrReplace operation, metadata updates are handled here if the table already
@@ -393,6 +407,8 @@ case class CreateDeltaTableCommand(
           ))
 
         txn.updateMetadataForNewTable(newMetadata)
+        // Remove 'EXISTS_DEFAULT' because it is not required for tables created with CREATE TABLE.
+        txn.removeExistsDefaultFromSchema()
         protocol.foreach { protocol =>
           txn.updateProtocol(protocol)
         }
@@ -435,6 +451,8 @@ case class CreateDeltaTableCommand(
           options,
           sparkSession,
           tableWithLocation.schema)
+        // Remove 'EXISTS_DEFAULT' because it is not required for tables created with REPLACE TABLE.
+        txn.removeExistsDefaultFromSchema()
         // Truncate the table
         val operationTimestamp = System.currentTimeMillis()
         var actionsToCommit = Seq.empty[Action]

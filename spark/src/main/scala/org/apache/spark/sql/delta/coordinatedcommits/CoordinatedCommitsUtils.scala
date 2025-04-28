@@ -21,8 +21,8 @@ import java.util.Optional
 import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{CoordinatedCommitsTableFeature, DeltaConfig, DeltaConfigs, DeltaIllegalArgumentException, DeltaLog, Snapshot, SnapshotDescriptor}
-import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
+import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CoordinatedCommitsTableFeature, DeltaConfig, DeltaConfigs, DeltaErrors, DeltaIllegalArgumentException, DeltaLog, Snapshot, SnapshotDescriptor}
+import org.apache.spark.sql.delta.actions.{Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.commands.CloneTableCommand
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -31,6 +31,7 @@ import org.apache.spark.sql.delta.util.FileNames.{BackfilledDeltaFile, Compacted
 import io.delta.storage.LogStore
 import io.delta.storage.commit.{CommitCoordinatorClient, GetCommitsResponse => JGetCommitsResponse, TableIdentifier}
 import io.delta.storage.commit.actions.AbstractMetadata
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
@@ -39,7 +40,212 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.{TableIdentifier => CatalystTableIdentifier}
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.connector.catalog.CatalogPlugin
 import org.apache.spark.util.Utils
+
+object CatalogOwnedTableUtils {
+  // Populate table commit coordinator using table identifier inside CatalogTable.
+  def populateTableCommitCoordinatorFromCatalog(
+      spark: SparkSession,
+      catalogTableOpt: Option[CatalogTable],
+      snapshot: Snapshot): Option[TableCommitCoordinatorClient] = {
+    if (!snapshot.isCatalogOwned) {
+      return None
+    }
+    catalogTableOpt.map { catalogTable =>
+      // Resolve commit coordinator name by contacting catalog.
+      val cc = getCommitCoordinator(spark, catalogTable.identifier).getOrElse {
+        throw new IllegalStateException(
+          "Couldn't locate commit coordinator for: " + catalogTable.identifier)
+      }
+      TableCommitCoordinatorClient(
+        cc,
+        snapshot.deltaLog.logPath,
+        snapshot.metadata.configuration,
+        snapshot.deltaLog.newDeltaHadoopConf(),
+        snapshot.deltaLog.store
+      )
+    }
+    .orElse {
+      if (Utils.isTesting) {
+        // In unit test with a path based access, it is possible to enable CatalogOwned with
+        // in-memory commit coordinator. In this case, we return table commit coordinator
+        // registered in the provider so that it can still test CatalogOwned table feature
+        // capability.
+        CatalogOwnedCommitCoordinatorProvider.getBuilder("spark_catalog")
+          .flatMap(builder => Some(builder.buildForCatalog(spark, "spark_catalog")))
+          .map { cc =>
+            return Some(TableCommitCoordinatorClient(
+              cc,
+              snapshot.deltaLog.logPath,
+              snapshot.metadata.configuration,
+              snapshot.deltaLog.newDeltaHadoopConf(),
+              snapshot.deltaLog.store))
+          }
+      }
+      // This table is catalog owned table but catalogTableOpt is not defined. This means
+      // that the caller is accessing this table by path-based or the calling code path is missing
+      // the CatalogTable.
+      // TODO: Better error message with proper error code.
+      throw new IllegalStateException(
+        "Path based access is not supported for Catalog-Owned table: " + snapshot.path)
+    }
+  }
+
+  // Directly returns the commit coordinator client for the given catalog table.
+  def getCommitCoordinator(
+      spark: SparkSession, identifier: CatalystTableIdentifier): Option[CommitCoordinatorClient] = {
+    identifier.nameParts match {
+      case spark.sessionState.analyzer.CatalogAndIdentifier(catalog, _) =>
+        CatalogOwnedCommitCoordinatorProvider.getBuilder(catalog.name)
+          .map(_.buildForCatalog(spark, catalog.name)).orElse {
+            if (catalog.getClass.getName ==
+                UCCommitCoordinatorBuilder.UNITY_CATALOG_CONNECTOR_CLASS) {
+              Some(UCCommitCoordinatorBuilder.buildForCatalog(spark, catalog.name))
+            } else {
+              None
+            }
+          }
+      case _ =>
+        throw new IllegalStateException(
+          "Failed to resolve the catalog: " + identifier)
+    }
+  }
+
+  val ICT_TABLE_PROPERTY_CONFS = Seq(
+    DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED,
+    DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION,
+    DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP)
+
+  /**
+   * The main ICT table properties used as dependencies for Catalog-Owned enabled table.
+   */
+  val ICT_TABLE_PROPERTY_KEYS: Seq[String] = ICT_TABLE_PROPERTY_CONFS.map(_.key)
+
+  /**
+   * Verifies that the property keys do not contain any ICT dependencies for Catalog-Owned.
+   */
+  private[delta] def verifyNotContainsICTConfigurations(propKeys: Seq[String]): Unit = {
+    ICT_TABLE_PROPERTY_KEYS.foreach { key =>
+      if (propKeys.contains(key)) {
+        throw new DeltaIllegalArgumentException(
+          "DELTA_CANNOT_MODIFY_CATALOG_OWNED_DEPENDENCIES",
+          messageParameters = Array.empty)
+      }
+    }
+  }
+
+  /**
+   * Validates the Catalog-Owned configurations in explicit command overrides for
+   * `AlterTableSetPropertiesDeltaCommand`.
+   *
+   * If [[CatalogOwnedTableFeature]] presents, we do NOT allow users to
+   * modify any ICT properties that Catalog-Owned depends on.
+   */
+  def validatePropertiesForAlterTableSetPropertiesDeltaCommand(
+      snapshot: Snapshot,
+      propertyOverrides: Map[String, String]): Unit = {
+    if (snapshot.isCatalogOwned) {
+      // For Catalog-Owned enabled tables, check the dependent ICT properties.
+      // Note: Upgrade/Downgrade have been blocked earlier, which do not need to be
+      //       checked here.
+      verifyNotContainsICTConfigurations(propKeys = propertyOverrides.keys.toSeq)
+    }
+  }
+
+  /**
+   * Validates the configurations to unset for `AlterTableUnsetPropertiesDeltaCommand`.
+   *
+   * If the table already has [[CatalogOwnedTableFeature]] present,
+   * we do not allow users to unset any of the ICT properties that Catalog-Owned depends on.
+   */
+  def validatePropertiesForAlterTableUnsetPropertiesDeltaCommand(
+      snapshot: Snapshot,
+      propKeysToUnset: Seq[String]): Unit = {
+    if (snapshot.isCatalogOwned) {
+      verifyNotContainsICTConfigurations(propKeys = propKeysToUnset)
+    }
+  }
+
+  /**
+   * Validates the Catalog-Owned properties in explicit command overrides and default
+   * SparkSession properties for `CreateDeltaTableCommand`.
+   */
+  def validatePropertiesForCreateDeltaTableCommand(
+      spark: SparkSession,
+      tableExists: Boolean,
+      query: Option[LogicalPlan],
+      catalogTableProperties: Map[String, String]): Unit = {
+    val (command, propertyOverrides) = query match {
+      // For CLONE, we cannot use the properties from the catalog table, because they are already
+      // the result of merging the source table properties with the overrides, but we do not
+      // consider the source table properties for Catalog-Owned tables.
+      case Some(cmd: CloneTableCommand) =>
+        (if (tableExists) "REPLACE with CLONE" else "CREATE with CLONE",
+          cmd.tablePropertyOverrides)
+      case _ => (if (tableExists) "REPLACE" else "CREATE", catalogTableProperties)
+    }
+    // We do not allow users to modify [[UCCommitCoordinatorClient.UC_TABLE_ID_KEY]] and
+    // [[CatalogOwnedTableFeature.name]] in any explicit overrides for REPLACE command.
+    if (tableExists) {
+      // Must be "REPLACE" or "REPLACE with CLONE" if the table already exists.
+      assert(command == "REPLACE with CLONE" || command == "REPLACE",
+        s"Unexpected command: $command")
+      validateUCTableIdNotPresent(property = propertyOverrides)
+      // Blocks explicit enablements of Catalog-Owned through REPLACE commands.
+      // We *ignore* default enablement of Catalog-Owned for REPLACE commands.
+      if (TableFeatureProtocolUtils.getSupportedFeaturesFromTableConfigs(propertyOverrides)
+          .contains(CatalogOwnedTableFeature)) {
+        throw new IllegalStateException(
+          "Specifying Catalog-Owned in REPLACE TABLE command is not supported. " +
+          "Please use CREATE TABLE command to create a Catalog-Owned table.")
+      }
+    }
+  }
+
+  /**
+   * Filters out [[CatalogOwnedTableFeature]] from the provided protocol.
+   * This is used to ensure that the CatalogOwnedTableFeature is not included in the protocol
+   * for specific DDL commands, e.g., `CREATE CLONE`, `REPLACE CLONE`, `CREATE LIKE`.
+   *
+   * @param protocol The protocol to filter.
+   */
+  def filterOutCatalogOwnedTableFeature(protocol: Protocol): Protocol = {
+    /** Helper function to filter out CatalogOwnedTableFeature from the provided table features. */
+    def filterImpl(tableFeatures: Option[Set[String]]): Option[Set[String]] = {
+      tableFeatures.map(_.filter(_ != CatalogOwnedTableFeature.name))
+    }
+    protocol.copy(
+      readerFeatures = filterImpl(tableFeatures = protocol.readerFeatures),
+      writerFeatures = filterImpl(tableFeatures = protocol.writerFeatures)
+    )
+  }
+
+  /**
+   * Validates that the UC table ID is not present in the provided property (overrides).
+   * Errors out if it is present.
+   *
+   * @param property The property to validate.
+   */
+  def validateUCTableIdNotPresent(property: Map[String, String]): Unit = {
+    if (property.contains(UCCommitCoordinatorClient.UC_TABLE_ID_KEY)) {
+      throw DeltaErrors.cannotModifyTableProperty(
+        prop = UCCommitCoordinatorClient.UC_TABLE_ID_KEY)
+    }
+  }
+
+  /**
+   * Whether Catalog-Owned is enabled via default SparkSession configuration.
+   *
+   * @param spark The SparkSession to check.
+   * @return True if Catalog-Owned is enabled by default, false otherwise.
+   */
+  def defaultCatalogOwnedEnabled(spark: SparkSession): Boolean = {
+    spark.conf
+      .getOption(TableFeatureProtocolUtils.defaultPropertyKey(CatalogOwnedTableFeature))
+      .contains("supported")
+  }
+}
 
 object CoordinatedCommitsUtils extends DeltaLogging {
 
@@ -121,7 +327,8 @@ object CoordinatedCommitsUtils extends DeltaLogging {
     def tailFromSnapshot(): Iterator[(FileStatus, Long)] = {
       val currentSnapshotInDeltaLog = deltaLog.unsafeVolatileSnapshot
       if (currentSnapshotInDeltaLog.version == maxVersionSeen &&
-          currentSnapshotInDeltaLog.tableCommitCoordinatorClientOpt.isEmpty) {
+           (currentSnapshotInDeltaLog.tableCommitCoordinatorClientOpt.isEmpty &&
+           !currentSnapshotInDeltaLog.isCatalogOwned)) {
         // If the last version in listing is same as the `unsafeVolatileSnapshot` in deltaLog and
         // if that snapshot doesn't have a commit-coordinator => this table was not a
         // coordinated-commits table at the time of listing. This is because the commit which
@@ -271,9 +478,9 @@ object CoordinatedCommitsUtils extends DeltaLogging {
    * be a gap in the backfilled commit sequence.
    */
   def backfillWhenCoordinatedCommitsDisabled(snapshot: Snapshot): Unit = {
-    if (snapshot.getTableCommitCoordinatorForWrites.nonEmpty) {
-      // Coordinated commits is enabled on the table. Don't backfill as backfills are managed by
-      // commit-coordinators.
+    if (snapshot.getTableCommitCoordinatorForWrites.nonEmpty || snapshot.isCatalogOwned) {
+      // Coordinated commits or Catalog-owned is enabled on the table. Don't backfill
+      // as backfills are managed by commit-coordinators.
       return
     }
     val unbackfilledFilesAndVersions = snapshot.logSegment.deltas.collect {
@@ -512,7 +719,7 @@ object CoordinatedCommitsUtils extends DeltaLogging {
    *     Coordinated Commits configurations.
    *   - If the table does not exist, the explicit command property overrides must contain exactly
    *     the Coordinator Name and Coordinator Conf, and no Table Conf. Default configurations are
-   *     checked similarly if non of the three properties is present in explicit overrides.
+   *     checked similarly if none of the three properties is present in explicit overrides.
    */
   private[delta] def validateConfigurationsForCreateDeltaTableCommandImpl(
       spark: SparkSession,

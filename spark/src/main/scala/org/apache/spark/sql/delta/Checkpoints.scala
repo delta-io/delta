@@ -364,7 +364,7 @@ trait Checkpoints extends DeltaLogging {
     //
     // Sample directory structure with a gap if we don't backfill commit files:
     // _delta_log/
-    //   _commits/
+    //   _staged_commits/
     //     00017.$uuid.json
     //     00018.$uuid.json
     //   00015.json

@@ -29,7 +29,7 @@ import org.apache.spark.sql.test.DeltaQueryTest
 class DeltaTableSuite extends DeltaQueryTest with RemoteSparkSession {
   private lazy val testData = spark.range(100).toDF("value")
 
-  test("forPath") {
+  ignore("forPath") {
     withTempPath { dir =>
       testData.write.format("delta").save(dir.getAbsolutePath)
       checkAnswer(

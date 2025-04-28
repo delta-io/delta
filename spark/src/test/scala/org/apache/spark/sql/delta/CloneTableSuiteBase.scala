@@ -21,7 +21,7 @@ import java.util.Locale
 
 import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
 import org.apache.spark.sql.delta.DataFrameUtils
-import org.apache.spark.sql.delta.actions.{FileAction, Metadata, Protocol, SetTransaction, SingleAction, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.actions.{AddFile, FileAction, Metadata, Protocol, RemoveFile, SetTransaction, SingleAction, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands._
@@ -95,7 +95,15 @@ trait CloneTableSuiteBase extends QueryTest
   }
 
   // Extracted function so it can be overriden in subclasses.
-  protected def uniqueFileActionGroupBy(action: FileAction): String = action.pathAsUri.toString
+  protected def uniqueFileActionGroupBy(action: FileAction): String = {
+    val filePath = action.pathAsUri.toString
+    val dvId = action match {
+      case add: AddFile => Option(add.deletionVector).map(_.uniqueId).getOrElse("")
+      case remove: RemoveFile => Option(remove.deletionVector).map(_.uniqueId).getOrElse("")
+      case _ => ""
+    }
+    filePath + dvId
+  }
 
   import testImplicits._
   // scalastyle:off

@@ -17,6 +17,7 @@ package io.delta.kernel.defaults
 
 import java.io.File
 import java.nio.file.{Files, Paths}
+import java.util.Collections.emptyMap
 import java.util.Optional
 
 import scala.collection.JavaConverters._
@@ -24,12 +25,12 @@ import scala.collection.immutable.{ListMap, Seq}
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.{Meta, Operation, Table, Transaction, TransactionBuilder, TransactionCommitResult}
-import io.delta.kernel.Operation.CREATE_TABLE
+import io.delta.kernel.Operation.MANUAL_UPDATE
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch, Row}
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.expressions.Literal
+import io.delta.kernel.expressions.{Column, Literal}
 import io.delta.kernel.expressions.Literal.ofInt
 import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
 import io.delta.kernel.internal.{SnapshotImpl, TableConfig, TableImpl}
@@ -39,9 +40,10 @@ import io.delta.kernel.internal.util.{Clock, FileNames, VectorUtils}
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
+import io.delta.kernel.statistics.DataFileStatistics
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.StructType
-import io.delta.kernel.utils.{CloseableIterable, CloseableIterator, FileStatus}
+import io.delta.kernel.utils.{CloseableIterable, CloseableIterator, DataFileStatus, FileStatus}
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 
 import org.apache.spark.sql.delta.VersionNotFoundException
@@ -83,6 +85,21 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     Map("part1" -> ofInt(4), "part2" -> ofInt(5)),
     batchSize = 876,
     numBatches = 7)
+
+  val testClusteringColumns = List(new Column("part1"), new Column("part2"))
+  val dataClusteringBatches1 = generateData(
+    testPartitionSchema,
+    partitionCols = Seq.empty,
+    partitionValues = Map.empty,
+    batchSize = 200,
+    numBatches = 3)
+
+  val dataClusteringBatches2 = generateData(
+    testPartitionSchema,
+    partitionCols = Seq.empty,
+    partitionValues = Map.empty,
+    batchSize = 456,
+    numBatches = 5)
 
   def verifyLastCheckpointMetadata(tablePath: String, checkpointAt: Long, expSize: Long): Unit = {
     val filePath = f"$tablePath/_delta_log/_last_checkpoint"
@@ -293,6 +310,7 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     Transaction.generateAppendActions(defaultEngine, state, writeResultIter, writeContext)
   }
 
+  // scalastyle:off argcount
   def createTxn(
       engine: Engine = defaultEngine,
       tablePath: String,
@@ -300,19 +318,40 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       schema: StructType = null,
       partCols: Seq[String] = null,
       tableProperties: Map[String, String] = null,
-      clock: Clock = () => System.currentTimeMillis): Transaction = {
+      clock: Clock = () => System.currentTimeMillis,
+      withDomainMetadataSupported: Boolean = false,
+      maxRetries: Int = -1,
+      clusteringColsOpt: Option[List[Column]] = None,
+      logCompactionInterval: Int = 10): Transaction = {
+    // scalastyle:on argcount
 
     var txnBuilder = createWriteTxnBuilder(
       TableImpl.forPath(engine, tablePath, clock))
 
     if (isNewTable) {
       txnBuilder = txnBuilder.withSchema(engine, schema)
-        .withPartitionColumns(engine, partCols.asJava)
+      if (partCols != null) {
+        txnBuilder = txnBuilder.withPartitionColumns(engine, partCols.asJava)
+      }
+    }
+
+    if (clusteringColsOpt.isDefined) {
+      txnBuilder = txnBuilder.withClusteringColumns(engine, clusteringColsOpt.get.asJava)
     }
 
     if (tableProperties != null) {
       txnBuilder = txnBuilder.withTableProperties(engine, tableProperties.asJava)
     }
+
+    if (withDomainMetadataSupported) {
+      txnBuilder = txnBuilder.withDomainMetadataSupported()
+    }
+
+    if (maxRetries >= 0) {
+      txnBuilder = txnBuilder.withMaxRetries(maxRetries)
+    }
+
+    txnBuilder = txnBuilder.withLogCompactionInverval(logCompactionInterval)
 
     txnBuilder.build(engine)
   }
@@ -344,7 +383,8 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       schema: StructType,
       partCols: Seq[String] = Seq.empty,
       clock: Clock = () => System.currentTimeMillis,
-      tableProperties: Map[String, String] = null): TransactionCommitResult = {
+      tableProperties: Map[String, String] = null,
+      clusteringColsOpt: Option[List[Column]] = None): TransactionCommitResult = {
 
     appendData(
       engine,
@@ -354,7 +394,8 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       partCols,
       data = Seq.empty,
       clock,
-      tableProperties)
+      tableProperties,
+      clusteringColsOpt)
   }
 
   /** Update an existing table - metadata only changes (no data changes) */
@@ -363,7 +404,8 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       tablePath: String,
       schema: StructType = null, // non-null schema means schema change
       clock: Clock = () => System.currentTimeMillis,
-      tableProperties: Map[String, String] = null): TransactionCommitResult = {
+      tableProperties: Map[String, String] = null,
+      clusteringColsOpt: Option[List[Column]] = None): TransactionCommitResult = {
     appendData(
       engine,
       tablePath,
@@ -372,7 +414,8 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       Seq.empty,
       data = Seq.empty,
       clock,
-      tableProperties)
+      tableProperties,
+      clusteringColsOpt)
   }
 
   def appendData(
@@ -383,9 +426,18 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       partCols: Seq[String] = null,
       data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])],
       clock: Clock = () => System.currentTimeMillis,
-      tableProperties: Map[String, String] = null): TransactionCommitResult = {
+      tableProperties: Map[String, String] = null,
+      clusteringColsOpt: Option[List[Column]] = None): TransactionCommitResult = {
 
-    val txn = createTxn(engine, tablePath, isNewTable, schema, partCols, tableProperties, clock)
+    val txn = createTxn(
+      engine,
+      tablePath,
+      isNewTable,
+      schema,
+      partCols,
+      tableProperties,
+      clock,
+      clusteringColsOpt = clusteringColsOpt)
     commitAppendData(engine, txn, data)
   }
 
@@ -457,7 +509,7 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       version: Long,
       partitionCols: Seq[String] = Seq.empty,
       isBlindAppend: Boolean = true,
-      operation: Operation = CREATE_TABLE): Unit = {
+      operation: Operation = MANUAL_UPDATE): Unit = {
     val row = spark.sql(s"DESCRIBE HISTORY delta.`$tablePath`")
       .filter(s"version = $version")
       .select(
@@ -527,5 +579,24 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       engine: Engine,
       dataActions: CloseableIterable[Row]): TransactionCommitResult = {
     txn.commit(engine, dataActions)
+  }
+
+  protected def generateDataFileStatus(
+      tablePath: String,
+      fileName: String,
+      fileSize: Long = 1000,
+      includeStats: Boolean = true): DataFileStatus = {
+    val filePath = defaultEngine.getFileSystemClient.resolvePath(tablePath + "/" + fileName)
+    new DataFileStatus(
+      filePath,
+      fileSize,
+      10,
+      if (includeStats) {
+        Optional.of(new DataFileStatistics(
+          100,
+          emptyMap(),
+          emptyMap(),
+          emptyMap()))
+      } else Optional.empty())
   }
 }

@@ -102,7 +102,7 @@ trait AutoCompactBase extends PostCommitHook with DeltaLogging {
       txn: DeltaTransaction,
       committedVersion: Long,
       postCommitSnapshot: Snapshot,
-      actions: Seq[Action]): Unit = {
+      actions: Iterator[Action]): Unit = {
     val conf = spark.sessionState.conf
     val autoCompactTypeOpt = getAutoCompactType(conf, postCommitSnapshot.metadata)
     // Skip Auto Compact if current transaction is not qualified or the table is not qualified

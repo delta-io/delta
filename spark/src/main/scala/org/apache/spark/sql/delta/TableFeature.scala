@@ -370,6 +370,7 @@ object TableFeature {
       InCommitTimestampTableFeature,
       VariantTypePreviewTableFeature,
       VariantTypeTableFeature,
+      CatalogOwnedTableFeature,
       CoordinatedCommitsTableFeature,
       CheckpointProtectionTableFeature)
     if (isTesting && testingFeaturesEnabled) {
@@ -900,6 +901,28 @@ object CoordinatedCommitsTableFeature
   // This is a writer feature, so it should directly return false.
   override def actionUsesFeature(action: Action): Boolean = false
 }
+
+/** Table feature to represent tables that commits are managed by catalog */
+object CatalogOwnedTableFeature
+  extends ReaderWriterFeature(name = "catalogOwned-preview")
+  with RemovableFeature {
+
+  override def requiredFeatures: Set[TableFeature] =
+    Set(InCommitTimestampTableFeature, VacuumProtocolCheckTableFeature)
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand = {
+    // Note: We don't support downgrade for this feature yet.
+    throw DeltaErrors.dropTableFeatureFeatureNotSupportedByClient(name)
+  }
+
+  override def validateRemoval(snapshot: Snapshot): Boolean = {
+    !CoordinatedCommitsUtils.unbackfilledCommitsPresent(snapshot)
+  }
+
+  // Before downgrade, we require to backfill all unbackfilled commits, hence time-travel is safe.
+  override def actionUsesFeature(action: Action): Boolean = false
+}
+
 
 /** Common base shared by the preview and stable type widening table features. */
 abstract class TypeWideningTableFeatureBase(name: String) extends ReaderWriterFeature(name)

@@ -331,8 +331,6 @@ lazy val connectClient = (project in file("spark-connect/client"))
 
       // Test deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
-
-      // TODO understand why this is needed.
       "org.apache.spark" %% "spark-connect-client-jvm" % sparkVersion.value % "test" classifier "tests"
     ),
     // TODO this does not seem to work.
@@ -552,7 +550,7 @@ lazy val sharing = (project in file("sharing"))
     libraryDependencies ++= Seq(
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
 
-      "io.delta" %% "delta-sharing-client" % "1.2.2",
+      "io.delta" %% "delta-sharing-client" % "1.2.4",
 
       // Test deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",

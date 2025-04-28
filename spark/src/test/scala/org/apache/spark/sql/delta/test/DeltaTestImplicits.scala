@@ -17,10 +17,11 @@
 package org.apache.spark.sql.delta.test
 
 import java.io.File
+import java.sql.Timestamp
 
-import org.apache.spark.sql.delta.{DeltaLog, OptimisticTransaction, Snapshot}
+import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, DeltaHistoryManager, DeltaLog, OptimisticTransaction, Snapshot}
 import org.apache.spark.sql.delta.DeltaOperations.{ManualUpdate, Operation, Write}
-import org.apache.spark.sql.delta.actions.{Action, AddFile, Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{Action, AddFile, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.optimize.OptimizeMetrics
 import org.apache.spark.sql.delta.coordinatedcommits.TableCommitCoordinatorClient
@@ -66,7 +67,17 @@ object DeltaTestImplicits {
             // If neither metadata nor protocol is explicitly passed, then use default Metadata and
             // with the maximum protocol.
             txn.updateMetadataForNewTable(Metadata())
-            txn.updateProtocol(Action.supportedProtocolVersion())
+            val enableCatalogOwnedByDefault = SparkSession.active.conf.getOption(
+              TableFeatureProtocolUtils.defaultPropertyKey(CatalogOwnedTableFeature))
+                .contains("supported")
+            if (enableCatalogOwnedByDefault) {
+              txn.updateProtocol(Action.supportedProtocolVersion())
+            } else {
+              txn.updateProtocol(Action.supportedProtocolVersion(
+                // CatalogOwnedTableFeature is enabled by protocol only without metadata, and should
+                // not be enabled by default.
+                featuresToExclude = Seq(CatalogOwnedTableFeature)))
+            }
         }
         txn.commit(otherActions, op)
       } else {
@@ -91,6 +102,21 @@ object DeltaTestImplicits {
 
     def forTable(spark: SparkSession, dataPath: File, clock: Clock): DeltaLog = {
       DeltaLog.forTable(spark, new Path(dataPath.getCanonicalPath), clock)
+    }
+  }
+
+  implicit class DeltaHistoryManagerTestHelper(history: DeltaHistoryManager) {
+    def checkVersionExists(version: Long): Unit = {
+      history.checkVersionExists(version, catalogTableOpt = None)
+    }
+
+    def getActiveCommitAtTime(
+        timestamp: Long,
+        canReturnLastCommit: Boolean): DeltaHistoryManager.Commit = {
+      history.getActiveCommitAtTime(
+        new Timestamp(timestamp),
+        catalogTableOpt = None,
+        canReturnLastCommit)
     }
   }
 

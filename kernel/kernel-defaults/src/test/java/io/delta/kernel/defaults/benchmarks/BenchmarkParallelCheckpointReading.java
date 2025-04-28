@@ -223,18 +223,18 @@ public class BenchmarkParallelCheckpointReading {
           }
           List<Future<List<ColumnarBatch>>> futures = new ArrayList<>();
           while (fileIter.hasNext()) {
-            String path = fileIter.next().getPath();
-            futures.add(executorService.submit(() -> parquetFileReader(path, physicalSchema)));
+            futures.add(
+                executorService.submit(() -> parquetFileReader(fileIter.next(), physicalSchema)));
           }
           futuresIter = futures.iterator();
         }
       };
     }
 
-    List<ColumnarBatch> parquetFileReader(String filePath, StructType readSchema) {
+    List<ColumnarBatch> parquetFileReader(FileStatus fileStatus, StructType readSchema) {
       ParquetFileReader reader = new ParquetFileReader(fileIO);
       try (CloseableIterator<ColumnarBatch> batchIter =
-          reader.read(filePath, readSchema, Optional.empty())) {
+          reader.read(fileStatus, readSchema, Optional.empty())) {
         List<ColumnarBatch> batches = new ArrayList<>();
         while (batchIter.hasNext()) {
           batches.add(batchIter.next());

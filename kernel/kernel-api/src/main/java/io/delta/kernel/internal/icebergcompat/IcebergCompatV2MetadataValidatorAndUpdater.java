@@ -15,10 +15,8 @@
  */
 package io.delta.kernel.internal.icebergcompat;
 
-import static io.delta.kernel.internal.tablefeatures.TableFeatures.COLUMN_MAPPING_RW_FEATURE;
-import static io.delta.kernel.internal.tablefeatures.TableFeatures.DELETION_VECTORS_RW_FEATURE;
-import static io.delta.kernel.internal.tablefeatures.TableFeatures.ICEBERG_COMPAT_V2_W_FEATURE;
-import static io.delta.kernel.internal.tablefeatures.TableFeatures.TYPE_WIDENING_RW_FEATURE;
+import static io.delta.kernel.internal.tablefeatures.TableFeatures.*;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Collections.singletonList;
 import static java.util.stream.Collectors.toList;
 
@@ -27,12 +25,12 @@ import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.tablefeatures.TableFeature;
-import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
 import io.delta.kernel.internal.util.SchemaUtils;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.DataFileStatus;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Stream;
@@ -65,7 +63,7 @@ public class IcebergCompatV2MetadataValidatorAndUpdater
     if (!dataFileStatus.getStatistics().isPresent()) {
       // presence of stats means always has a non-null `numRecords`
       throw DeltaErrors.icebergCompatMissingNumRecordsStats(
-          INSTANCE.compatVersion(), dataFileStatus);
+          INSTANCE.compatFeatureName(), dataFileStatus);
     }
   }
 
@@ -80,10 +78,7 @@ public class IcebergCompatV2MetadataValidatorAndUpdater
       new IcebergCompatRequiredTablePropertyEnforcer<>(
           TableConfig.COLUMN_MAPPING_MODE,
           (value) -> ColumnMappingMode.NAME == value || ColumnMappingMode.ID == value,
-          ColumnMappingMode.NAME.value,
-          (inputContext) ->
-              ColumnMapping.updateColumnMappingMetadataIfNeeded(
-                  inputContext.newMetadata, inputContext.isCreatingNewTable));
+          ColumnMappingMode.NAME.value);
 
   private static final IcebergCompatCheck ICEBERG_COMPAT_V2_CHECK_NO_COMPAT_V1_ENABLED =
       (inputContext) -> {
@@ -93,7 +88,7 @@ public class IcebergCompatV2MetadataValidatorAndUpdater
                 .getConfiguration()
                 .getOrDefault("delta.enableIcebergCompatV1", "false"))) {
           throw DeltaErrors.icebergCompatIncompatibleVersionEnabled(
-              INSTANCE.compatVersion(), "delta.enableIcebergCompatV1");
+              INSTANCE.compatFeatureName(), "delta.enableIcebergCompatV1");
         }
       };
 
@@ -126,7 +121,7 @@ public class IcebergCompatV2MetadataValidatorAndUpdater
 
         if (!matches.isEmpty()) {
           throw DeltaErrors.icebergCompatUnsupportedTypeColumns(
-              INSTANCE.compatVersion(),
+              INSTANCE.compatFeatureName(),
               matches.stream().map(tuple -> tuple._2.getDataType()).collect(toList()));
         }
       };
@@ -137,9 +132,15 @@ public class IcebergCompatV2MetadataValidatorAndUpdater
               .newMetadata
               .getPartitionColNames()
               .forEach(
-                  partitonCol -> {
+                  partitionCol -> {
+                    int partitionFieldIndex =
+                        inputContext.newMetadata.getSchema().indexOf(partitionCol);
+                    checkArgument(
+                        partitionFieldIndex != -1,
+                        "Partition column %s not found in the schema",
+                        partitionCol);
                     DataType dataType =
-                        inputContext.newMetadata.getSchema().get(partitonCol).getDataType();
+                        inputContext.newMetadata.getSchema().at(partitionFieldIndex).getDataType();
                     boolean validType =
                         dataType instanceof ByteType
                             || dataType instanceof ShortType
@@ -156,7 +157,7 @@ public class IcebergCompatV2MetadataValidatorAndUpdater
                             || dataType instanceof TimestampNTZType;
                     if (!validType) {
                       throw DeltaErrors.icebergCompatUnsupportedTypePartitionColumn(
-                          INSTANCE.compatVersion(), dataType);
+                          INSTANCE.compatFeatureName(), dataType);
                     }
                   });
 
@@ -169,7 +170,8 @@ public class IcebergCompatV2MetadataValidatorAndUpdater
   private static final IcebergCompatCheck ICEBERG_COMPAT_V2_CHECK_HAS_NO_DELETION_VECTORS =
       (inputContext) -> {
         if (inputContext.newProtocol.supportsFeature(DELETION_VECTORS_RW_FEATURE)) {
-          throw DeltaErrors.icebergCompatDeletionVectorsUnsupported(INSTANCE.compatVersion());
+          throw DeltaErrors.icebergCompatIncompatibleTableFeatures(
+              INSTANCE.compatFeatureName(), Collections.singleton(DELETION_VECTORS_RW_FEATURE));
         }
       };
 
@@ -179,11 +181,14 @@ public class IcebergCompatV2MetadataValidatorAndUpdater
           // TODO: Currently Kernel has no support for writing with type widening. When it is
           //  supported extend this to allow a whitelist of supported type widening in Iceberg
           throw DeltaErrors.unsupportedTableFeature(TYPE_WIDENING_RW_FEATURE.featureName());
+        } else if (inputContext.newProtocol.supportsFeature(TYPE_WIDENING_PREVIEW_TABLE_FEATURE)) {
+          throw DeltaErrors.unsupportedTableFeature(
+              TYPE_WIDENING_PREVIEW_TABLE_FEATURE.featureName());
         }
       };
 
   @Override
-  String compatVersion() {
+  String compatFeatureName() {
     return "icebergCompatV2";
   }
 

@@ -24,15 +24,17 @@ import org.apache.hadoop.fs.Path;
 public class HadoopInputFile implements InputFile {
   private final FileSystem fs;
   private final Path path;
+  private final long fileSize;
 
-  public HadoopInputFile(FileSystem fs, Path path) {
+  public HadoopInputFile(FileSystem fs, Path path, long fileSize) {
     this.fs = fs;
     this.path = path;
+    this.fileSize = fileSize;
   }
 
   @Override
   public long length() throws IOException {
-    return fs.getFileStatus(path).getLen();
+    return fileSize;
   }
 
   @Override

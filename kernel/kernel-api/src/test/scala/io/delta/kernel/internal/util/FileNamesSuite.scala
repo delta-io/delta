@@ -107,6 +107,13 @@ class FileNamesSuite extends AnyFunSuite {
       new Path("/a/00000000000000000001.checkpoint.0000000005.0000000005.parquet")))
   }
 
+  test("logCompactionPath") {
+    assert(logCompactionPath(new Path("/a"), 1, 3) ==
+      new Path("/a/00000000000000000001.00000000000000000003.compacted.json"))
+    assert(logCompactionPath(new Path("/a/b"), 11, 300) ==
+      new Path("/a/b/00000000000000000011.00000000000000000300.compacted.json"))
+  }
+
   ///////////////////////////////////
   // Is <type> file checkers tests //
   ///////////////////////////////////

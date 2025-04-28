@@ -46,7 +46,7 @@ import org.apache.spark.util.Utils
 trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShims
     with SharedSparkSession
     with DeltaSQLCommandTest
-    with PredicateHelper
+    with DataSkippingDeltaTestsUtils
     with GivenWhenThen
     with ScanReportHelper {
 
@@ -1995,57 +1995,20 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
     }
   }
 
-  protected def parse(deltaLog: DeltaLog, predicate: String): Seq[Expression] = {
+  protected def parse(deltaLog: DeltaLog, predicate: String): Seq[Expression] =
+    super.parse(spark, deltaLog, predicate)
 
-    // We produce a wrong filter in this case otherwise
-    if (predicate == "True") return Seq(Literal.TrueLiteral)
-
-    val filtered = spark.read.format("delta").load(deltaLog.dataPath.toString).where(predicate)
-    filtered
-      .queryExecution
-      .optimizedPlan
-      .expressions
-      .flatMap(splitConjunctivePredicates)
-  }
-
-  /**
-   * Returns the number of files that should be included in a scan after applying the given
-   * predicate on a snapshot of the Delta log.
-   *
-   * @param deltaLog Delta log for a table.
-   * @param predicate Predicate to run on the Delta table.
-   * @param checkEmptyUnusedFilters If true, check if there were no unused filters, meaning
-   *                                the given predicate was used as data or partition filters.
-   * @return The number of files that should be included in a scan after applying the predicate.
-   */
   protected def filesRead(
       deltaLog: DeltaLog,
       predicate: String,
       checkEmptyUnusedFilters: Boolean = false): Int =
-    getFilesRead(deltaLog, predicate, checkEmptyUnusedFilters).size
+    super.filesRead(spark, deltaLog, predicate, checkEmptyUnusedFilters)
 
-  /**
-   * Returns the files that should be included in a scan after applying the given predicate on
-   * a snapshot of the Delta log.
-   * @param deltaLog Delta log for a table.
-   * @param predicate Predicate to run on the Delta table.
-   * @param checkEmptyUnusedFilters If true, check if there were no unused filters, meaning
-   *                                the given predicate was used as data or partition filters.
-   * @return The files that should be included in a scan after applying the predicate.
-   */
   protected def getFilesRead(
       deltaLog: DeltaLog,
       predicate: String,
-      checkEmptyUnusedFilters: Boolean = false): Seq[AddFile] = {
-    val parsed = parse(deltaLog, predicate)
-    val res = deltaLog.snapshot.filesForScan(parsed)
-    assert(res.total.files.get == deltaLog.snapshot.numOfFiles)
-    assert(res.total.bytesCompressed.get == deltaLog.snapshot.sizeInBytes)
-    assert(res.scanned.files.get == res.files.size)
-    assert(res.scanned.bytesCompressed.get == res.files.map(_.size).sum)
-    assert(!checkEmptyUnusedFilters || res.unusedFilters.isEmpty)
-    res.files
-  }
+      checkEmptyUnusedFilters: Boolean = false): Seq[AddFile] =
+    super.getFilesRead(spark, deltaLog, predicate, checkEmptyUnusedFilters)
 
   protected def checkResultsWithPartitions(
     tableDir: String,
@@ -2187,6 +2150,64 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
     }
   }
 }
+
+trait DataSkippingDeltaTestsUtils extends PredicateHelper {
+  protected def parse(
+      spark: SparkSession, deltaLog: DeltaLog, predicate: String): Seq[Expression] = {
+
+    // We produce a wrong filter in this case otherwise
+    if (predicate == "True") return Seq(Literal.TrueLiteral)
+
+    val filtered = spark.read.format("delta").load(deltaLog.dataPath.toString).where(predicate)
+    filtered
+      .queryExecution
+      .optimizedPlan
+      .expressions
+      .flatMap(splitConjunctivePredicates)
+  }
+
+  /**
+   * Returns the number of files that should be included in a scan after applying the given
+   * predicate on a snapshot of the Delta log.
+   *
+   * @param deltaLog Delta log for a table.
+   * @param predicate Predicate to run on the Delta table.
+   * @param checkEmptyUnusedFilters If true, check if there were no unused filters, meaning
+   *                                the given predicate was used as data or partition filters.
+   * @return The number of files that should be included in a scan after applying the predicate.
+   */
+  protected def filesRead(
+      spark: SparkSession,
+      deltaLog: DeltaLog,
+      predicate: String,
+      checkEmptyUnusedFilters: Boolean): Int =
+    getFilesRead(spark, deltaLog, predicate, checkEmptyUnusedFilters).size
+
+  /**
+   * Returns the files that should be included in a scan after applying the given predicate on
+   * a snapshot of the Delta log.
+   * @param deltaLog Delta log for a table.
+   * @param predicate Predicate to run on the Delta table.
+   * @param checkEmptyUnusedFilters If true, check if there were no unused filters, meaning
+   *                                the given predicate was used as data or partition filters.
+   * @return The files that should be included in a scan after applying the predicate.
+   */
+  protected def getFilesRead(
+      spark: SparkSession,
+      deltaLog: DeltaLog,
+      predicate: String,
+      checkEmptyUnusedFilters: Boolean): Seq[AddFile] = {
+    val parsed = parse(spark, deltaLog, predicate)
+    val res = deltaLog.snapshot.filesForScan(parsed)
+    assert(res.total.files.get == deltaLog.snapshot.numOfFiles)
+    assert(res.total.bytesCompressed.get == deltaLog.snapshot.sizeInBytes)
+    assert(res.scanned.files.get == res.files.size)
+    assert(res.scanned.bytesCompressed.get == res.files.map(_.size).sum)
+    assert(!checkEmptyUnusedFilters || res.unusedFilters.isEmpty)
+    res.files
+  }
+}
+
 
 trait DataSkippingDeltaTests extends DataSkippingDeltaTestsBase
 /** Tests code paths within DataSkippingReader.scala */

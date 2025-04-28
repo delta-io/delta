@@ -921,7 +921,8 @@ class DeltaSharingDataSourceCMSuite
           val error = intercept[StreamingQueryException] {
             processStreamWithSchemaTracking(tablePath, checkpointDir.toString, outputDir.toString)
           }.toString()
-          assert(error.contains("DELTA_STREAMING_CANNOT_CONTINUE_PROCESSING_TYPE_WIDENING"))
+          assert(error.contains("DELTA_STREAMING_CANNOT_CONTINUE_PROCESSING_POST_SCHEMA_EVOLUTION"))
+          assert(error.contains("TYPE WIDENING"))
           assert(error.contains("delta.streaming.allowSourceColumnTypeChange"))
 
           // Unblocking allows the type change to go through

@@ -46,6 +46,7 @@ import org.apache.spark.sql.types.{DataType, VariantShims}
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
+
 /** A DataSource V1 for integrating Delta into Spark SQL batch and Streaming APIs. */
 class DeltaDataSource
   extends RelationProvider
@@ -86,7 +87,8 @@ class DeltaDataSource
       throw DeltaErrors.timeTravelNotSupportedException
     }
 
-    val (_, snapshot) = DeltaLog.forTableWithSnapshot(sqlContext.sparkSession, new Path(path))
+    val snapshot =
+      DeltaLog.forTableWithSnapshot(sqlContext.sparkSession, new Path(path))._2
     // This is the analyzed schema for Delta streaming
     val readSchema = {
       // Check if we would like to merge consecutive schema changes, this would allow customers
@@ -138,8 +140,8 @@ class DeltaDataSource
       throw DeltaErrors.pathNotSpecifiedException
     })
     val options = new DeltaOptions(parameters, sqlContext.sparkSession.sessionState.conf)
-    val (deltaLog, snapshot) =
-      DeltaLog.forTableWithSnapshot(sqlContext.sparkSession, new Path(path))
+    val snapshot =
+      DeltaLog.forTableWithSnapshot(sqlContext.sparkSession, new Path(path))._2
     val schemaTrackingLogOpt =
       DeltaDataSource.getMetadataTrackingLogForDeltaSource(
         sqlContext.sparkSession, snapshot, parameters,
@@ -155,7 +157,7 @@ class DeltaDataSource
     }
     DeltaSource(
       sqlContext.sparkSession,
-      deltaLog,
+      snapshot.deltaLog,
       options,
       snapshot,
       metadataPath,

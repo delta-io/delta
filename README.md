@@ -74,7 +74,7 @@ There are two types of APIs provided by the Delta Lake project.
 
 Delta Lake guarantees backward compatibility for all Delta Lake tables (i.e., newer versions of Delta Lake will always be able to read tables written by older versions of Delta Lake). However, we reserve the right to break forward compatibility as new features are introduced to the transaction protocol (i.e., an older version of Delta Lake may not be able to read a table produced by a newer version).
 
-Breaking changes in the protocol are indicated by incrementing the minimum reader/writer version in the `Protocol` [action](https://github.com/delta-io/delta/blob/master/core/src/test/scala/org/apache/spark/sql/delta/ActionSerializerSuite.scala).
+Breaking changes in the protocol are indicated by incrementing the minimum reader/writer version in the `Protocol` [action](https://github.com/delta-io/delta/blob/master/spark/src/test/scala/org/apache/spark/sql/delta/ActionSerializerSuite.scala).
 
 ## Roadmap
 
@@ -168,6 +168,8 @@ IntelliJ is the recommended IDE to use when developing Delta Lake. To import Del
 3. Under `Import project from external model` select `sbt`. Click `Next`.
 4. Under `Project JDK` specify a valid Java `1.8` JDK and opt to use SBT shell for `project reload` and `builds`.
 5. Click `Finish`.
+6. In your terminal, run `build/sbt clean package`. Make sure you use Java `1.8`. The build will generate files 
+   that are necessary for Intellij to index the repository.
 
 ### Setup Verification
 
@@ -188,7 +190,11 @@ Error:(91, 22) not found: type DeltaSqlBaseParser
 ```
 
 then follow these steps:
-1. Compile using the SBT CLI: `build/sbt compile`.
+1. Ensure you are using Java `1.8`. You can set this using
+```
+export JAVA_HOME=`/usr/libexec/java_home -v 1.8`
+```
+2. Compile using the SBT CLI: `build/sbt clean compile`.
 2. Go to `File` > `Project Structure...` > `Modules` > `delta-spark`.
 3. In the right panel under `Source Folders` remove any `target` folders, e.g. `target/scala-2.12/src_managed/main [generated]`
 4. Click `Apply` and then re-run your test.

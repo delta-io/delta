@@ -105,7 +105,21 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
       this.postMetadataProcessor = postMetadataProcessor;
     }
 
-    Optional<Metadata> validateAndUpdate(IcebergCompatInputContext inputContext) {
+    /**
+     * Constructor for RequiredDeltaTableProperty
+     *
+     * @param property DeltaConfig we are checking
+     * @param validator A generic method to validate the given value
+     * @param autoSetValue The value to set if we can auto-set this value (e.g. during table
+     *     creation)
+     */
+    IcebergCompatRequiredTablePropertyEnforcer(
+        TableConfig<T> property, Predicate<T> validator, String autoSetValue) {
+      this(property, validator, autoSetValue, (c) -> Optional.empty());
+    }
+
+    Optional<Metadata> validateAndUpdate(
+        IcebergCompatInputContext inputContext, String compatVersion) {
       Metadata newMetadata = inputContext.newMetadata;
       T newestValue = property.fromMetadata(newMetadata);
       boolean newestValueOkay = validator.test(newestValue);
@@ -117,15 +131,15 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
           // Covers the case CREATE that did not explicitly specify the required table property.
           // In these cases, we set the property automatically.
           newMetadata =
-              newMetadata.withNewConfiguration(singletonMap(property.getKey(), autoSetValue));
+              newMetadata.withMergedConfiguration(singletonMap(property.getKey(), autoSetValue));
           return Optional.of(newMetadata);
         } else {
           // In all other cases, if the property value is not compatible
           throw new KernelException(
               String.format(
                   "The value '%s' for the property '%s' is not compatible with "
-                      + "Iceberg compat requirements",
-                  newestValue, property.getKey()));
+                      + "%s requirements",
+                  newestValue, property.getKey(), compatVersion));
         }
       }
 
@@ -164,7 +178,8 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
         requiredDeltaTableProperties();
     for (IcebergCompatRequiredTablePropertyEnforcer requiredDeltaTableProperty :
         requiredDeltaTableProperties) {
-      Optional<Metadata> updated = requiredDeltaTableProperty.validateAndUpdate(inputContext);
+      Optional<Metadata> updated =
+          requiredDeltaTableProperty.validateAndUpdate(inputContext, compatFeatureName());
 
       if (updated.isPresent()) {
         inputContext = inputContext.withUpdatedMetadata(updated.get());
@@ -187,7 +202,7 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
     for (TableFeature requiredDependencyTableFeature : requiredDependencyTableFeatures()) {
       if (!inputContext.newProtocol.supportsFeature(requiredDependencyTableFeature)) {
         throw DeltaErrors.icebergCompatRequiredFeatureMissing(
-            compatVersion(), requiredDependencyTableFeature.featureName());
+            compatFeatureName(), requiredDependencyTableFeature.featureName());
       }
     }
 
@@ -199,7 +214,7 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
     return metadataUpdated ? Optional.of(inputContext.newMetadata) : Optional.empty();
   }
 
-  abstract String compatVersion();
+  abstract String compatFeatureName();
 
   abstract TableConfig<Boolean> requiredDeltaTableProperty();
 

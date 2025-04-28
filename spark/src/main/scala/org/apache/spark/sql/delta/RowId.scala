@@ -141,11 +141,11 @@ object RowId {
       .putBoolean(BASE_ROW_ID_METADATA_COL_ATTR_KEY, value = true)
       .build()
 
-    def apply(): StructField =
+    def apply(nullable: Boolean): StructField =
       StructField(
         BASE_ROW_ID,
         LongType,
-        nullable = false,
+        nullable,
         metadata = metadata)
 
     def unapply(field: StructField): Option[StructField] =
@@ -165,9 +165,10 @@ object RowId {
   /**
    * The field readers can use to access the base row id column.
    */
-  def createBaseRowIdField(protocol: Protocol, metadata: Metadata): Option[StructField] =
+  def createBaseRowIdField(
+      protocol: Protocol, metadata: Metadata, nullable: Boolean): Option[StructField] =
     Option.when(RowId.isEnabled(protocol, metadata)) {
-      BaseRowIdMetadataStructField()
+      BaseRowIdMetadataStructField(nullable)
     }
 
   /** Row ID column name */

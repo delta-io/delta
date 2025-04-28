@@ -22,8 +22,8 @@ import java.util.concurrent.atomic.AtomicInteger
 import scala.collection.mutable
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaTestUtilsBase}
-import org.apache.spark.sql.delta.actions.{Action, CommitInfo, Metadata, Protocol}
+import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, DeltaConfigs, DeltaLog, DeltaTestUtilsBase}
+import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, JsonUtils}
 import io.delta.storage.LogStore
 import io.delta.storage.commit.{CommitCoordinatorClient, CommitResponse, GetCommitsResponse => JGetCommitsResponse, TableDescriptor, TableIdentifier, UpdatedActions}
@@ -36,8 +36,137 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.test.SharedSparkSession
 
+// This trait is built to serve as a base trait for tests built for both CatalogOwned
+// and commit-coordinators table feature.
+trait CommitCoordinatorUtilBase {
+  /**
+   * Runs a specific test with commit coordinator feature unset.
+   */
+  def testWithDefaultCommitCoordinatorUnset(testName: String)(f: => Unit)
+
+  /**
+   * Runs the function `f` with commit coordinator table feature unset.
+   * Any table created in function `f` have CatalogOwned/CoordinatedCommits disabled by default.
+   */
+  def withoutDefaultCCTableFeature(f: => Unit): Unit
+
+  /**
+   * Runs the function `f` with commit coordinator table feature set.
+   * Any table created in function `f` have CatalogOwned/CoordinatedCommits enabled by default.`
+   */
+  def withDefaultCCTableFeature(f: => Unit): Unit
+
+  /** Run the test with different backfill batch sizes: 1, 2, 10 */
+  def testWithDifferentBackfillInterval(testName: String)(f: Int => Unit): Unit
+
+  /** Register a builder to the appropriate builder provider. */
+  def registerBuilder(builder: CommitCoordinatorBuilder): Unit
+
+  /** Clear relevant table feature commit coordinator builders that are registered. */
+  def clearBuilders(): Unit
+
+  /** Returns the properties string to be used in the table creation for test. */
+  def propertiesString: String
+
+  /**
+   * Returns true if this test is about CatalogOwned table feature.
+   * Returns false if this test is about CoordinatedCommits tabel feature.
+   */
+  def isCatalogOwnedTest: Boolean
+}
+
+trait CatalogOwnedTestBaseSuite
+  extends SparkFunSuite
+  with DeltaTestUtilsBase
+  with CommitCoordinatorUtilBase
+  with SharedSparkSession {
+
+  val defaultCatalogOwnedFeatureEnabledKey =
+    TableFeatureProtocolUtils.defaultPropertyKey(CatalogOwnedTableFeature)
+
+  // If this config is not overridden, newly created table is not CatalogOwned by default.
+  def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = None
+
+  def catalogOwnedDefaultCreationEnabledInTests: Boolean =
+    catalogOwnedCoordinatorBackfillBatchSize.nonEmpty
+
+  override protected def sparkConf: SparkConf = {
+    if (catalogOwnedDefaultCreationEnabledInTests) {
+      super.sparkConf.set(defaultCatalogOwnedFeatureEnabledKey, "supported")
+    } else {
+      super.sparkConf
+    }
+  }
+
+  override def clearBuilders(): Unit = {
+    CatalogOwnedCommitCoordinatorProvider.clearBuilders()
+  }
+
+  override def propertiesString: String =
+    s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')"
+
+  override protected def beforeEach(): Unit = {
+    super.beforeEach()
+    CatalogOwnedCommitCoordinatorProvider.clearBuilders()
+    catalogOwnedCoordinatorBackfillBatchSize.foreach { batchSize =>
+      CatalogOwnedCommitCoordinatorProvider.registerBuilder(
+        "spark_catalog", TrackingInMemoryCommitCoordinatorBuilder(batchSize = batchSize))
+    }
+    DeltaLog.clearCache()
+  }
+
+  override def testWithDefaultCommitCoordinatorUnset(testName: String)(f: => Unit): Unit = {
+    test(testName) {
+      withoutDefaultCCTableFeature {
+        f
+      }
+    }
+  }
+
+  override def withDefaultCCTableFeature(f: => Unit): Unit = {
+    val oldConfig = spark.conf.getOption(defaultCatalogOwnedFeatureEnabledKey)
+    spark.conf.set(defaultCatalogOwnedFeatureEnabledKey, "supported")
+    try { f } finally {
+      if (oldConfig.isDefined) {
+        spark.conf.set(defaultCatalogOwnedFeatureEnabledKey, oldConfig.get)
+      }
+    }
+  }
+
+  override def withoutDefaultCCTableFeature(f: => Unit): Unit = {
+    val oldConfig = spark.conf.getOption(defaultCatalogOwnedFeatureEnabledKey)
+    spark.conf.unset(defaultCatalogOwnedFeatureEnabledKey)
+    try { f } finally {
+      if (oldConfig.isDefined) {
+        spark.conf.set(defaultCatalogOwnedFeatureEnabledKey, oldConfig.get)
+      }
+    }
+  }
+
+  override def testWithDifferentBackfillInterval(testName: String)(f: Int => Unit): Unit = {
+    Seq(1, 2, 10).foreach { backfillBatchSize =>
+      test(s"$testName [Backfill batch size: $backfillBatchSize]") {
+        CatalogOwnedCommitCoordinatorProvider.clearBuilders()
+        CatalogOwnedCommitCoordinatorProvider.registerBuilder(
+          "spark_catalog", TrackingInMemoryCommitCoordinatorBuilder(batchSize = backfillBatchSize))
+        f(backfillBatchSize)
+      }
+    }
+  }
+
+  override def registerBuilder(builder: CommitCoordinatorBuilder): Unit = {
+    assert(builder.isInstanceOf[CatalogOwnedCommitCoordinatorBuilder],
+      s"builder $builder(${builder.getName}) must be CatalogOwnedCommitCoordinatorBuilder")
+    CatalogOwnedCommitCoordinatorProvider.registerBuilder(
+      "spark_catalog", builder.asInstanceOf[CatalogOwnedCommitCoordinatorBuilder])
+  }
+
+  override def isCatalogOwnedTest: Boolean = true
+}
+
 trait CoordinatedCommitsTestUtils
-  extends DeltaTestUtilsBase { self: SparkFunSuite with SharedSparkSession =>
+  extends DeltaTestUtilsBase
+  with CommitCoordinatorUtilBase { self: SparkFunSuite with SharedSparkSession =>
 
   protected val defaultCommitsCoordinatorName = "tracking-in-memory"
   protected val defaultCommitsCoordinatorConf = Map("randomConf" -> "randomConfValue")
@@ -55,23 +184,25 @@ trait CoordinatedCommitsTestUtils
     }
   }
 
-  /**
-   * Runs a specific test with coordinated commits default properties unset.
-   * Any table created in this test won't have coordinated commits enabled by default.
-   */
-  def testWithDefaultCommitCoordinatorUnset(testName: String)(f: => Unit): Unit = {
+  override def testWithDefaultCommitCoordinatorUnset(testName: String)(f: => Unit): Unit = {
     test(testName) {
-      withoutCoordinatedCommitsDefaultTableProperties {
+      withoutDefaultCCTableFeature {
         f
       }
     }
   }
 
-  /**
-   * Runs the function `f` with coordinated commits default properties unset.
-   * Any table created in function `f` won't have coordinated commits enabled by default.
-   */
-  def withoutCoordinatedCommitsDefaultTableProperties[T](f: => T): T = {
+  override def withDefaultCCTableFeature(f: => Unit): Unit = {
+    val confJson = JsonUtils.toJson(defaultCommitsCoordinatorConf)
+    withSQLConf(
+      DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.defaultTablePropertyKey ->
+        defaultCommitsCoordinatorName,
+      DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.defaultTablePropertyKey -> confJson) {
+      f
+    }
+  }
+
+  override def withoutDefaultCCTableFeature(f: => Unit): Unit = {
     val defaultCoordinatedCommitsConfs = CoordinatedCommitsUtils
       .getDefaultCCConfigurations(spark, withDefaultKey = true)
     defaultCoordinatedCommitsConfs.foreach { case (defaultKey, _) =>
@@ -84,11 +215,6 @@ trait CoordinatedCommitsTestUtils
     }
   }
 
-  /**
-   * Runs the function `f` with coordinated commits default properties set to what is specified.
-   * Any table created in function `f` will have the `commitCoordinator` property set to the
-   * specified `commitCoordinatorName`.
-   */
   def withCustomCoordinatedCommitsTableProperties(
       commitCoordinatorName: String,
       conf: Map[String, String] = Map("randomConf" -> "randomConfValue"))(f: => Unit): Unit = {
@@ -101,8 +227,7 @@ trait CoordinatedCommitsTestUtils
     }
   }
 
-  /** Run the test with different backfill batch sizes: 1, 2, 10 */
-  def testWithDifferentBackfillInterval(testName: String)(f: Int => Unit): Unit = {
+  override def testWithDifferentBackfillInterval(testName: String)(f: Int => Unit): Unit = {
     Seq(1, 2, 10).foreach { backfillBatchSize =>
       test(s"$testName [Backfill batch size: $backfillBatchSize]") {
         CommitCoordinatorProvider.clearNonDefaultBuilders()
@@ -115,6 +240,23 @@ trait CoordinatedCommitsTestUtils
     }
   }
 
+  override def registerBuilder(builder: CommitCoordinatorBuilder): Unit = {
+    CommitCoordinatorProvider.registerBuilder(builder)
+  }
+
+  override def clearBuilders(): Unit = {
+    CommitCoordinatorProvider.clearNonDefaultBuilders()
+  }
+
+  override def propertiesString: String = {
+    val coordinatedCommitsConfJson = JsonUtils.toJson(defaultCommitsCoordinatorConf)
+    s"('${DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key}' =" +
+      s"'$defaultCommitsCoordinatorName', " +
+      s"'${DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '$coordinatedCommitsConfJson')"
+  }
+
+  override def isCatalogOwnedTest: Boolean = false
+
   /**
    * Run the test against a [[TrackingCommitCoordinatorClient]] with backfill batch size =
    * `batchBackfillSize`
@@ -124,12 +266,7 @@ trait CoordinatedCommitsTestUtils
       CommitCoordinatorProvider.clearNonDefaultBuilders()
       CommitCoordinatorProvider.registerBuilder(
         TrackingInMemoryCommitCoordinatorBuilder(backfillBatchSize))
-      val coordinatedCommitsCoordinatorJson = JsonUtils.toJson(defaultCommitsCoordinatorConf)
-      withSQLConf(
-          DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.defaultTablePropertyKey ->
-            defaultCommitsCoordinatorName,
-          DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.defaultTablePropertyKey ->
-            coordinatedCommitsCoordinatorJson) {
+      withDefaultCCTableFeature {
         f
       }
     }
@@ -182,7 +319,7 @@ case class TrackingInMemoryCommitCoordinatorBuilder(
     batchSize: Long,
     defaultCommitCoordinatorClientOpt: Option[CommitCoordinatorClient] = None,
     defaultCommitCoordinatorName: String = "tracking-in-memory")
-  extends CommitCoordinatorBuilder {
+  extends CatalogOwnedCommitCoordinatorBuilder {
   lazy val trackingInMemoryCommitCoordinatorClient =
     defaultCommitCoordinatorClientOpt.getOrElse {
       new TrackingCommitCoordinatorClient(
@@ -191,6 +328,11 @@ case class TrackingInMemoryCommitCoordinatorBuilder(
 
   override def getName: String = defaultCommitCoordinatorName
   override def build(spark: SparkSession, conf: Map[String, String]): CommitCoordinatorClient = {
+    trackingInMemoryCommitCoordinatorClient
+  }
+
+  override def buildForCatalog(
+      spark: SparkSession, catalogName: String): CommitCoordinatorClient = {
     trackingInMemoryCommitCoordinatorClient
   }
 }

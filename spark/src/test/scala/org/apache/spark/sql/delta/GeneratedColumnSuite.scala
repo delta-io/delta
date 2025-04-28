@@ -17,8 +17,6 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off typedlit
-// scalastyle:off import.ordering.noEmptyLine
-import java.io.PrintWriter
 import java.sql.{Date, Timestamp}
 
 import scala.collection.JavaConverters._
@@ -26,27 +24,19 @@ import scala.collection.JavaConverters._
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
-import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, InvariantViolationException, SchemaUtils}
+import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, InvariantViolationException}
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-import org.apache.spark.sql.delta.util.DateTimeUtils.SECONDS_PER_DAY
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import io.delta.tables.DeltaTableBuilder
 
-import org.apache.spark.SparkConf
-import org.apache.spark.sql.{AnalysisException, Column, DataFrame, Dataset, QueryTest, Row}
+import org.apache.spark.sql.{AnalysisException, Column, DataFrame, Dataset, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.expressions.Expression
-import org.apache.spark.sql.catalyst.util.DateTimeUtils.{getZoneId, stringToDate, stringToTimestamp, toJavaDate, toJavaTimestamp}
 import org.apache.spark.sql.catalyst.util.quietly
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.functions.{lit, make_dt_interval, struct, typedLit}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.{StreamingQueryException, Trigger}
-import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{ArrayType, DataType, DateType, IntegerType, LongType, MetadataBuilder, ShortType, StringType, StructField, StructType, TimestampType}
-import org.apache.spark.unsafe.types.UTF8String
 
 trait GeneratedColumnSuiteBase
     extends GeneratedColumnTest
@@ -2085,6 +2075,24 @@ trait GeneratedColumnSuiteBase
         .add("_commit_version", LongType)
         .add("_commit_timestamp", TimestampType)
       )
+    }
+  }
+
+  test("DML into table with generated column, char column and readSideCharPadding=true") {
+    val tableName = "table"
+    withTable(tableName) {
+      withSQLConf(SQLConf.READ_SIDE_CHAR_PADDING.key -> "true") {
+        createTable(tableName, None, "c1 INT, c2 CHAR(5), c3 INT", Map("c3" -> "c1 + 1"), Nil)
+        spark.sql(
+          s"""
+             |MERGE INTO $tableName AS TARGET
+             |USING (SELECT id as c1, cast(id AS CHAR(5)) as c2 FROM RANGE(10)) AS SOURCE
+             |ON TARGET.c1 = SOURCE.c1
+             |WHEN MATCHED THEN UPDATE SET c1 = SOURCE.c1, c2 = SOURCE.c2
+             |WHEN NOT MATCHED THEN INSERT (c1, c2) VALUES (SOURCE.c1, SOURCE.c2)
+             |""".stripMargin)
+        spark.sql(s"UPDATE $tableName SET c2 = 'upd' WHERE c1 = 1")
+      }
     }
   }
 }
