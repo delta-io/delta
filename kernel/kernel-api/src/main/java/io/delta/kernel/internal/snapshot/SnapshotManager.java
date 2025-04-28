@@ -324,24 +324,22 @@ public class SnapshotManager {
     // Step 5: Partition $listedFileStatuses into the checkpoints, deltas, and compactions. //
     //////////////////////////////////////////////////////////////////////////////////////////
 
-    // initially partition in checkpoint | delta or compaction
-    final Tuple2<List<FileStatus>, List<FileStatus>>
-        listedCheckpointAndDeltaPlusCompactionFileStatuses =
-            ListUtils.partition(
-                listedFileStatuses,
-                fileStatus -> FileNames.isCheckpointFile(new Path(fileStatus.getPath()).getName()));
-    final List<FileStatus> listedCheckpointFileStatuses =
-        listedCheckpointAndDeltaPlusCompactionFileStatuses._1;
-    final List<FileStatus> listedDeltaPlusCompactionFileStatuses =
-        listedCheckpointAndDeltaPlusCompactionFileStatuses._2;
+    Map<DeltaLogFileType, List<FileStatus>> partitionedFiles =
+        listedFileStatuses.stream()
+            .collect(
+                Collectors.groupingBy(
+                    FileNames::determineFileType,
+                    LinkedHashMap::new, // Ensure order is maintained
+                    Collectors.toList()));
 
-    // now partition into checkpoint | delta | compaction
-    final Tuple2<List<FileStatus>, List<FileStatus>> listedDeltaAndCompactionFileStatuses =
-        ListUtils.partition(
-            listedDeltaPlusCompactionFileStatuses,
-            fileStatus -> FileNames.isLogCompactionFile(new Path(fileStatus.getPath()).getName()));
-    final List<FileStatus> listedCompactionFileStatuses = listedDeltaAndCompactionFileStatuses._1;
-    final List<FileStatus> listedDeltaFileStatuses = listedDeltaAndCompactionFileStatuses._2;
+    List<FileStatus> listedDeltaFileStatuses =
+        partitionedFiles.getOrDefault(DeltaLogFileType.COMMIT, Collections.emptyList());
+
+    List<FileStatus> listedCheckpointFileStatuses =
+        partitionedFiles.getOrDefault(DeltaLogFileType.CHECKPOINT, Collections.emptyList());
+
+    List<FileStatus> listedCompactionFileStatuses =
+        partitionedFiles.getOrDefault(DeltaLogFileType.LOG_COMPACTION, Collections.emptyList());
 
     logDebugFileStatuses("listedCheckpointFileStatuses", listedCheckpointFileStatuses);
     logDebugFileStatuses("listedCompactionFileStatuses", listedCompactionFileStatuses);

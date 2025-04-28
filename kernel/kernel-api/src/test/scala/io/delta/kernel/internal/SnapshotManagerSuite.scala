@@ -733,41 +733,42 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
   test("One compaction") {
     testWithCompactionsNoCheckpoint(
-      Seq(0, 1, 2, 3, 4, 5),
-      Seq((0, 4)))
+      deltaVersions = 0L until 5L,
+      compactionVersions = Seq((0, 4)))
+
     testWithCompactionsNoCheckpoint(
-      Seq(0, 1, 2, 3, 4, 5),
-      Seq((0, 4)),
-      Optional.of(4))
+      deltaVersions = 0L until 5L,
+      compactionVersions = Seq((0, 4)),
+      versionToLoad = Optional.of(4))
   }
 
   test("Compaction extends too far") {
     testWithCompactionsNoCheckpoint(
-      Seq(0, 1, 2, 3, 4, 5),
-      Seq((3, 5)),
-      Optional.of(4))
+      deltaVersions = 0L until 5L,
+      compactionVersions = Seq((3, 5)),
+      versionToLoad = Optional.of(4))
   }
 
   test("Compaction after checkpoint") {
     testWithCheckpoints(
-      Seq(0, 1, 2, 3, 4, 5),
-      Seq(2),
+      deltaVersions = 0L until 5L,
+      checkpointVersions = Seq(2),
       multiCheckpointVersions = Seq.empty,
       compactionVersions = Seq((3, 5)))
   }
 
   test("Compaction starting before checkpoint") {
     testWithCheckpoints(
-      Seq(0, 1, 2, 3, 4, 5),
-      Seq(2),
+      deltaVersions = 0L until 5L,
+      checkpointVersions = Seq(2),
       multiCheckpointVersions = Seq.empty,
       compactionVersions = Seq((1, 5)))
   }
 
   test("Compaction starting same as checkpoint") {
     testWithCheckpoints(
-      Seq(0, 1, 2, 3, 4, 5),
-      Seq(2),
+      deltaVersions = 0L until 5L,
+      checkpointVersions = Seq(2),
       multiCheckpointVersions = Seq.empty,
       compactionVersions = Seq((2, 5)))
   }
