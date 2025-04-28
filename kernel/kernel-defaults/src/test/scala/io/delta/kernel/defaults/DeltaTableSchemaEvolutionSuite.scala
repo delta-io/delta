@@ -1320,27 +1320,25 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
         clusteringColsOpt = Some(List(new Column("b"))))
       assertColumnMapping(table.getLatestSnapshot(engine).getSchema.get("c"), 3)
 
-      val currentSchema = table.getLatestSnapshot(engine).getSchema()
       val newSchema = new StructType()
-        .add("a", StringType.STRING, true, currentSchema.get("a").getMetadata)
+        .add("d", StringType.STRING, true)
 
       val txn = table.createTransactionBuilder(
         engine,
         testEngineInfo,
         Operation.MANUAL_UPDATE)
         .withSchema(engine, newSchema)
-        .withClusteringColumns(engine, List(new Column("a")).asJava)
+        .withClusteringColumns(engine, List(new Column("d")).asJava)
         .build(engine)
       txn.commit(engine, emptyIterable())
 
       val snapshot = table.getLatestSnapshot(engine)
       val structType = snapshot.getSchema
-      assertColumnMapping(structType.get("a"), 1)
-      assert(getMaxFieldId(engine, tablePath) == 3)
+      assertColumnMapping(structType.get("d"), 4, "d")
+      assert(getMaxFieldId(engine, tablePath) == 4)
 
       val physicalName =
-        structType.get("a").getMetadata.get(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY)
-
+        structType.get("d").getMetadata.get(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY)
       val expectedDomainMetadata = new DomainMetadata(
         "delta.clustering",
         s"""{"clusteringColumns":[["$physicalName"]]}""",

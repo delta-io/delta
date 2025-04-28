@@ -280,21 +280,21 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     //  generating the domain in the txn?
     StructType updatedSchema = schema.orElse(baseMetadata.getSchema());
     Optional<List<Column>> casePreservingClusteringColumnsOpt =
-            clusteringColumns.map(
-                    cols -> SchemaUtils.casePreservingEligibleClusterColumns(updatedSchema, cols));
-    // We use the existing clustering columns to validate schema evolution
-    Optional<List<Column>> existingClusteringCols;
-    if (casePreservingClusteringColumnsOpt.isPresent()) {
-      existingClusteringCols = casePreservingClusteringColumnsOpt;
-    } else {
-      existingClusteringCols = isCreateOrReplace
-              ? Optional.empty()
-              : ClusteringUtils.getClusteringColumnsOptional(latestSnapshot.get());
-    }
+        clusteringColumns.map(
+            cols -> SchemaUtils.casePreservingEligibleClusterColumns(updatedSchema, cols));
+    // Fpr schema evolution validation, if new clustering columns are provided, use them. Otherwise,
+    // we use the
+    // existing clustering columns.
+    Optional<List<Column>> clusteringColsForValidation =
+        isCreateOrReplace
+            ? Optional.empty()
+            : (casePreservingClusteringColumnsOpt.isPresent()
+                ? casePreservingClusteringColumnsOpt
+                : ClusteringUtils.getClusteringColumnsOptional(latestSnapshot.get()));
 
     Tuple2<Optional<Protocol>, Optional<Metadata>> updatedProtocolAndMetadata =
         validateAndUpdateProtocolAndMetadata(
-            engine, baseMetadata, baseProtocol, isCreateOrReplace, existingClusteringCols);
+            engine, baseMetadata, baseProtocol, isCreateOrReplace, clusteringColsForValidation);
     Optional<Protocol> newProtocol = updatedProtocolAndMetadata._1;
     Optional<Metadata> newMetadata = updatedProtocolAndMetadata._2;
 
@@ -330,7 +330,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
    * @param baseMetadata the starting metadata to update
    * @param baseProtocol the starting protocol to update
    * @param isCreateOrReplace whether we are defining a new table definition or not
-   * @param existingClusteringCols the existing clustering columns for the table (if it exists)
+   * @param clusteringCols the updated or existing clustering columns for the table (if it exists)
    * @return an updated protocol and metadata if any updates are necessary
    */
   protected Tuple2<Optional<Protocol>, Optional<Metadata>> validateAndUpdateProtocolAndMetadata(
@@ -338,9 +338,9 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       Metadata baseMetadata,
       Protocol baseProtocol,
       boolean isCreateOrReplace,
-      Optional<List<Column>> existingClusteringCols) {
+      Optional<List<Column>> clusteringCols) {
     if (isCreateOrReplace) {
-      checkArgument(!existingClusteringCols.isPresent());
+      checkArgument(!clusteringCols.isPresent());
     }
 
     Optional<Metadata> newMetadata = Optional.empty();
@@ -449,8 +449,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     /* ----- 5: Validate the metadata change ----- */
     // Now that all the config and schema changes have been made validate the old vs new metadata
     if (newMetadata.isPresent()) {
-      validateMetadataChange(
-          existingClusteringCols, baseMetadata, newMetadata.get(), isCreateOrReplace);
+      validateMetadataChange(clusteringCols, baseMetadata, newMetadata.get(), isCreateOrReplace);
     }
 
     return new Tuple2(newProtocol, newMetadata);
@@ -460,7 +459,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
    * Validates that Kernel can write to the existing table with the latest snapshot as provided.
    * This means (1) Kernel supports the reader and writer protocol of the table (2) if a transaction
    * identifier has been provided in this txn builder, a concurrent write has not already committed
-   * this transaction (3) if clustering columns are set, the table should not be a partitioned table.
+   * this transaction (3) if clustering columns are set, the table should not be a partitioned
+   * table.
    */
   protected void validateWriteToExistingTable(Engine engine, SnapshotImpl snapshot) {
     // Validate the table has no features that Kernel doesn't yet support writing into it.
@@ -477,9 +477,9 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         });
 
     if (clusteringColumns.isPresent()
-            && snapshot.getMetadata().getPartitionColumns().getSize() != 0) {
+        && snapshot.getMetadata().getPartitionColumns().getSize() != 0) {
       throw new KernelException(
-              "Clustering columns and partition columns cannot coexist in a table");
+          "Clustering columns and partition columns cannot coexist in a table");
     }
   }
 
@@ -548,7 +548,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
    * </ul>
    */
   private void validateMetadataChange(
-      Optional<List<Column>> existingClusteringCols,
+      Optional<List<Column>> clusteringCols,
       Metadata oldMetadata,
       Metadata newMetadata,
       boolean isCreateOrReplace) {
@@ -582,7 +582,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       // E.g. getClusteringColumns returns <physical_name_of_struct>.<physical_name_inner>,
       // Only physical_name_inner is required for validation
       Set<String> clusteringColumnPhysicalNames =
-          existingClusteringCols.orElse(Collections.emptyList()).stream()
+          clusteringCols.orElse(Collections.emptyList()).stream()
               .map(col -> col.getNames()[col.getNames().length - 1])
               .collect(toSet());
 
