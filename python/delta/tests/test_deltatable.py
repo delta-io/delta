@@ -1090,8 +1090,8 @@ class DeltaTableTestsMixin:
             builder.addColumn(
                 "a",
                 "bigint",
-                generatedByDefaultAs=""
-            )  # type: ignore[arg-type]
+                generatedByDefaultAs=""  # type: ignore[arg-type]
+            )
 
         # bad generatedByDefaultAs - identity column data type must be Long
         with self.assertRaises(UnsupportedOperationException):
