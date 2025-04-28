@@ -121,7 +121,6 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils {
   }
 
   test("constructor -- skip checksum with version smaller than checkpoint version") {
-    // Test that checksums are filtered out if version < checkpoint version
     val checksumAtVersion9 = checksumFileStatus(9)
 
     val logSegment = new LogSegment(
