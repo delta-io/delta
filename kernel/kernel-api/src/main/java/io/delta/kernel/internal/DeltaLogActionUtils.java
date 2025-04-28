@@ -33,6 +33,7 @@ import io.delta.kernel.internal.lang.ListUtils;
 import io.delta.kernel.internal.replay.ActionsIterator;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.FileNames.DeltaLogFileType;
+import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.CloseableIterator.BreakableFilterResult;
@@ -243,11 +244,24 @@ public class DeltaLogActionUtils {
 
               final long fileVersion;
               if (FileNames.isLogCompactionFile(fileName)) {
+                Tuple2<Long, Long> compactionVersions =
+                    FileNames.logCompactionVersions(new Path(fs.getPath()));
                 // We use start version here. Below this is used to determine if we should stop
                 // listing because we've listed past the required version. But with a log compaction
                 // file, if the end version is passed the requested version, we don't want to stop,
                 // we just won't use the compaction file.
-                fileVersion = FileNames.logCompactionVersions(new Path(fs.getPath()))._1;
+                fileVersion = compactionVersions._1;
+
+                // Now check if the compaction end version is too far in the future, and don't
+                // include this file if it is
+                if (endVersionOpt.isPresent()) {
+                  final long endVersion = endVersionOpt.get();
+                  if (compactionVersions._2 > endVersion) {
+                    logger.debug(
+                        "Excluding compaction file as it covers past the end version {}", fileName);
+                    return BreakableFilterResult.EXCLUDE;
+                  }
+                }
               } else {
                 fileVersion = FileNames.getFileVersion(new Path(fs.getPath()));
               }
