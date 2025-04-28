@@ -31,10 +31,10 @@ import java.io.IOException;
 import java.nio.file.FileAlreadyExistsException;
 import java.time.Instant;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.LongAdder;
-import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -136,9 +136,13 @@ public class ChecksumUtils {
           if (!domainMetadataVector.isNullAt(i)) {
             DomainMetadata domainMetadata =
                 DomainMetadata.fromColumnVector(domainMetadataVector, i);
-            if (domainMetadata != null
-                && !domainMetadataMap.containsKey(domainMetadata.getDomain())) {
-              domainMetadataMap.put(domainMetadata.getDomain(), domainMetadata);
+            if (domainMetadata != null) {
+              checkState(
+                  !domainMetadataMap.containsKey(domainMetadata.getDomain()),
+                  "unexpected duplicate domain metadata rows");
+              if (!domainMetadata.isRemoved()) {
+                domainMetadataMap.put(domainMetadata.getDomain(), domainMetadata);
+              }
             }
           }
         }
@@ -155,10 +159,7 @@ public class ChecksumUtils {
                 tableSizeByte.longValue(),
                 fileCount.longValue(),
                 Optional.empty() /* txnId */,
-                Optional.of(
-                    domainMetadataMap.values().stream()
-                        .filter(domainMetadata -> !domainMetadata.isRemoved())
-                        .collect(Collectors.toSet())),
+                Optional.of(new HashSet<>(domainMetadataMap.values())),
                 Optional.of(fileSizeHistogram)));
       } catch (FileAlreadyExistsException e) {
         logger.info("Checksum file already exists for version {}", snapshot.getVersion());
