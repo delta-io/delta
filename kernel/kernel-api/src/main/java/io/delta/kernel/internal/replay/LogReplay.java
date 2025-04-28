@@ -141,7 +141,7 @@ public class LogReplay {
 
     assertLogFilesBelongToTable(logPath, logSegment.allLogFilesUnsorted());
 
-    // Ignore the snapshot hint whose version is larger.
+    // Ignore the snapshot hint whose version is larger than the snapshot version.
     if (snapshotHint.isPresent() && snapshotHint.get().getVersion() > snapshotVersion) {
       snapshotHint = Optional.empty();
     }
