@@ -74,4 +74,18 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase {
       verifyChecksumForSnapshot(snapshot)
     }
   }
+
+  test("Create checksum after checkpoint") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      initialTestTable(tablePath, engine)
+      Table.forPath(engine, tablePath).checkpoint(engine, 1)
+      val snapshot = Table.forPath(engine, tablePath)
+        .getSnapshotAsOfVersion(engine, 1)
+        .asInstanceOf[SnapshotImpl]
+
+      ChecksumUtils.computeStateAndWriteChecksum(engine, snapshot)
+
+      verifyChecksumForSnapshot(snapshot)
+    }
+  }
 }

@@ -35,10 +35,14 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class ChecksumUtils {
 
   private ChecksumUtils() {}
+
+  private static final Logger logger = LoggerFactory.getLogger(ChecksumUtils.class);
 
   private static final int ADD_INDEX = CHECKPOINT_SCHEMA.indexOf("add");
   private static final int REMOVE_INDEX = CHECKPOINT_SCHEMA.indexOf("remove");
@@ -70,6 +74,7 @@ public class ChecksumUtils {
       throws IOException {
     // If checksum already exists, nothing to do
     if (snapshot.getCurrentCrcInfo().isPresent()) {
+      logger.info("Checksum file already exists for version {}", snapshot.getVersion());
       return;
     }
 
@@ -100,10 +105,12 @@ public class ChecksumUtils {
 
         // Process all selected rows in a single pass for optimal performance
         for (int i = 0; i < rowCount; i++) {
-          // Check if this row is selected
+          // Fields referenced in the lambda should be effectively final.
+          int rowId = i;
           boolean isSelected =
-              !selectionVector.isPresent()
-                  || (!selectionVector.get().isNullAt(i) && selectionVector.get().getBoolean(i));
+              selectionVector
+                  .map(vec -> !vec.isNullAt(rowId) && vec.getBoolean(rowId))
+                  .orElse(true);
           if (!isSelected) continue;
 
           // Step 1: Ensure there are no remove records
@@ -154,6 +161,7 @@ public class ChecksumUtils {
                         .collect(Collectors.toSet())),
                 Optional.of(fileSizeHistogram)));
       } catch (FileAlreadyExistsException e) {
+        logger.info("Checksum file already exists for version {}", snapshot.getVersion());
         // Checksum file has been created while we were computing it.
         // This is fine - the checksum now exists, which was our goal.
       }
