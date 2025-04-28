@@ -65,10 +65,12 @@ setup(
         'delta': ['py.typed'],
     },
     install_requires=[
-        'pyspark>=3.5.3,<3.6.0',
+        # TODO update dependency once Spark preview is formally released
+        'pyspark @ https://dist.apache.org/repos/dist/dev/spark/v4.0.0-rc4-bin//pyspark-4.0.0.dev1.tar.gz',
+        # 'pyspark>=4.0.0',
         'importlib_metadata>=1.0.0',
     ],
-    python_requires='>=3.6',
+    python_requires='>=3.9',
     cmdclass={
         'verify': VerifyVersionCommand,
     }
