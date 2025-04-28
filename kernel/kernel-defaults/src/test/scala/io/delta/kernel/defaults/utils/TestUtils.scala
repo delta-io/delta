@@ -31,8 +31,8 @@ import io.delta.kernel.defaults.internal.data.vector.{DefaultGenericVector, Defa
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.{Column, Predicate}
 import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
-import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl}
-import io.delta.kernel.internal.checksum.ChecksumReader
+import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl, TableImpl}
+import io.delta.kernel.internal.checksum.{ChecksumReader, ChecksumWriter, CRCInfo}
 import io.delta.kernel.internal.data.ScanStateRow
 import io.delta.kernel.internal.fs.{Path => KernelPath}
 import io.delta.kernel.internal.util.Utils
@@ -746,10 +746,44 @@ trait TestUtils extends Assertions with SQLHelper {
     resource.getFile
   }
 
+  def checkpointFileExistsForTable(tablePath: String, versions: Int): Boolean =
+    Files.exists(
+      new File(FileNames.checkpointFileSingular(
+        new Path(s"$tablePath/_delta_log"),
+        versions).toString).toPath)
+
   def deleteChecksumFileForTable(tablePath: String, versions: Seq[Int]): Unit =
     versions.foreach(v =>
       Files.deleteIfExists(
         new File(FileNames.checksumFile(new Path(s"$tablePath/_delta_log"), v).toString).toPath))
+
+  def rewriteChecksumFileToExcludeDomainMetadata(
+      engine: Engine,
+      tablePath: String,
+      version: Long): Unit = {
+    val logFile = new KernelPath(s"$tablePath/_delta_log");
+    val crcInfo = ChecksumReader.getCRCInfo(
+      engine,
+      logFile,
+      version,
+      version).get()
+    // Delete it in hdfs.
+    engine.getFileSystemClient.delete(FileNames.checksumFile(
+      new Path(s"$tablePath/_delta_log"),
+      version).toString)
+    val crcWriter = new ChecksumWriter(logFile)
+    crcWriter.writeCheckSum(
+      engine,
+      new CRCInfo(
+        crcInfo.getVersion,
+        crcInfo.getMetadata,
+        crcInfo.getProtocol,
+        crcInfo.getTableSizeBytes,
+        crcInfo.getNumFiles,
+        crcInfo.getTxnId,
+        /* domainMetadata */ Optional.empty(),
+        crcInfo.getFileSizeHistogram))
+  }
 
   def executeCrcSimple(result: TransactionCommitResult, engine: Engine): TransactionCommitResult = {
     result.getPostCommitHooks
