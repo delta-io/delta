@@ -65,10 +65,9 @@ trait RemoteSparkSession extends BeforeAndAfterAll { self: Suite =>
   private val serverPort = 15003
   var spark: SparkSession = _
 
-  private val buildLocation = System.getProperty("delta.test.home")
   private val javaHome = System.getProperty("java.home")
 
-  private val resources = s"$buildLocation/spark-connect/client/target/scala-2.13/resource_managed/test"
+  private val sparkHome = System.getProperty("delta.spark.home")
 
   private lazy val server = {
     // We start SparkSubmit directly. This saves us from downloading an entire Spark distribution
@@ -76,7 +75,7 @@ trait RemoteSparkSession extends BeforeAndAfterAll { self: Suite =>
     // spark-submit.
     val command = Seq.newBuilder[String]
     command += s"$javaHome/bin/java"
-    command += "-cp" += resources + "/jars/*"
+    command += "-cp" += sparkHome + "/jars/*"
     command += "-Xmx1g"
     command += "-XX:+IgnoreUnrecognizedVMOptions"
     command += "--add-modules=jdk.incubator.vector"
@@ -105,10 +104,10 @@ trait RemoteSparkSession extends BeforeAndAfterAll { self: Suite =>
       "org.apache.spark.sql.connect.delta.DeltaRelationPlugin"
     command += "--conf" += "spark.connect.extensions.command.classes=" +
       "org.apache.spark.sql.connect.delta.DeltaCommandPlugin"
-    command += s"$resources/jars/unused-1.0.0.jar"
+    command += s"$sparkHome/jars/unused-1.0.0.jar"
 
     val builder = new ProcessBuilder(command.result(): _*)
-    builder.environment().put("SPARK_HOME", resources)
+    builder.environment().put("SPARK_HOME", sparkHome)
     builder.redirectError(ProcessBuilder.Redirect.INHERIT)
     builder.redirectOutput(ProcessBuilder.Redirect.INHERIT)
     builder.start()

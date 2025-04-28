@@ -335,25 +335,21 @@ lazy val connectClient = (project in file("spark-connect/client"))
     ),
     // TODO this does not seem to work.
     Test / excludeDependencies += ExclusionRule("org.apache.spark", "spark-connect-common_2.13"),
-    (Test / javaOptions) += s"-Ddelta.test.home=" + file(".").getAbsoluteFile.getParentFile,
-    (Test / resourceGenerators) += Def.task {
+    (Test / javaOptions) += {
       val fcp = (connectServer / Compile / fullClasspath).value
-      val destDir = (Test / resourceManaged).value / "jars"
+      val distDir = crossTarget.value / "test-dist"
+      val destDir = distDir / "jars"
       if (!destDir.exists()) {
         IO.createDirectory(destDir)
-        val files = mutable.Buffer.empty[File]
         // Create symlinks for all dependencies.
         fcp.distinct.foreach { entry =>
           val source = entry.data.toPath
           val target = destDir / entry.data.getName
           Files.createSymbolicLink(target.toPath, source)
-          files += target
         }
-        files
-      } else {
-        destDir.get()
       }
-    }
+      "-Ddelta.spark.home=" + distDir
+    },
   )
 
 lazy val connectServer = (project in file("spark-connect/server"))
