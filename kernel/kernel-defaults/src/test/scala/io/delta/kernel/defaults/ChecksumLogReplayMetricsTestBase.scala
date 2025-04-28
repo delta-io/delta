@@ -69,6 +69,8 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite {
       readVersion: Long = -1): Unit
 
   // Method to adjust list of versions of checkpoint file read.
+  // For example, if crc is missing and P&M is loaded from checkpoint.
+  // Domain metadata will load from checkpoint as well.
   protected def getExpectedCheckpointReadVersions(versions: Seq[Long]): Seq[Long] = versions
 
   ///////////
@@ -82,7 +84,7 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite {
         loadSnapshotFieldsCheckMetrics(
           table,
           engine,
-          // shouldn't need to read commit or checkpoint files as P&M are found through checksum
+          // shouldn't need to read commit or checkpoint files as P&M/DM are found through checksum
           expJsonVersionsRead = Nil,
           expParquetVersionsRead = Nil,
           expParquetReadSetSizes = Nil,
