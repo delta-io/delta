@@ -508,7 +508,6 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       tablePath: String,
       version: Long,
       partitionCols: Seq[String] = Seq.empty,
-      isBlindAppend: Boolean = true,
       operation: Operation = MANUAL_UPDATE): Unit = {
     val row = spark.sql(s"DESCRIBE HISTORY delta.`$tablePath`")
       .filter(s"version = $version")
@@ -523,7 +522,9 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     assert(row.getAs[Long]("version") === version)
     assert(row.getAs[Long]("partitionBy") ===
       (if (partitionCols == null) null else OBJ_MAPPER.writeValueAsString(partitionCols.asJava)))
-    assert(row.getAs[Boolean]("isBlindAppend") === isBlindAppend)
+    // For now we've hardcoded isBlindAppend=false, once we support more precise setting of this
+    // field we should update this check
+    assert(!row.getAs[Boolean]("isBlindAppend"))
     assert(row.getAs[Seq[String]]("engineInfo") ===
       "Kernel-" + Meta.KERNEL_VERSION + "/" + testEngineInfo)
     assert(row.getAs[String]("operation") === operation.getDescription)
