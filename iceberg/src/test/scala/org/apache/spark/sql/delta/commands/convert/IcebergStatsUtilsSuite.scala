@@ -95,7 +95,9 @@ class IcebergStatsUtilsSuite extends SparkFunSuite with SharedSparkSession {
       Integer.valueOf(6) -> JLong.valueOf(4),
       Integer.valueOf(8) -> JLong.valueOf(5),
       Integer.valueOf(10) -> JLong.valueOf(6),
-      Integer.valueOf(11) -> JLong.valueOf(7)
+      Integer.valueOf(11) -> JLong.valueOf(7),
+      Integer.valueOf(12) -> JLong.valueOf(8),
+      Integer.valueOf(14) -> JLong.valueOf(9)
     )
 
     val deltaStats = IcebergStatsUtils.icebergStatsToDelta(
@@ -117,7 +119,7 @@ class IcebergStatsUtilsSuite extends SparkFunSuite with SharedSparkSession {
         |"col_float":10.001,"col_long":4,"col_strt":{"sc_int":128,"sc_int2":512},
         |"col_boolean":true,"col_st":"maxval","col_binary":"AgIDBA=="},
         |"nullCount":{"col_int":0,"col_double":4,"col_float":3,"col_long":1,
-        |"col_strt":{"sc_int":6,"sc_int2":7},"col_st":2,"col_binary":5}}
+        |"col_strt":{"sc_int":6,"sc_int2":7},"col_st":2,"col_binary":5,"col_array":8,"col_map":9}}
         |""".stripMargin.replaceAll("\n", ""))
     assertResult(expectedStatsObj)(actualStatsObj)
   }
