@@ -759,24 +759,55 @@ trait TestUtils extends Assertions with SQLHelper {
     result
   }
 
-  /** Ensure checksum is readable by CRC reader and correct. */
+  /**
+   * Verify checksum data matches the expected values in the snapshot.
+   * @param snapshot Snapshot to verify the checksum against
+   */
+  protected def verifyChecksumForSnapshot(snapshot: Snapshot): Unit = {
+    val crcInfo = ChecksumReader.getCRCInfo(
+      defaultEngine,
+      new KernelPath(snapshot.asInstanceOf[SnapshotImpl].getLogPath.toString),
+      snapshot.getVersion,
+      snapshot.getVersion)
+    assert(
+      crcInfo.isPresent,
+      s"CRC information should be present for version ${snapshot.getVersion}")
+    // TODO: check metadata, protocol and file size.
+    assert(
+      crcInfo.get().getNumFiles === collectScanFileRows(snapshot.getScanBuilder.build()).size,
+      "Number of files in checksum should match snapshot")
+    // CRC does not store tombstones.
+    assert(
+      crcInfo.get().getDomainMetadata === Optional.of(
+        snapshot.asInstanceOf[SnapshotImpl].getDomainMetadataMap.values().asScala
+          .filterNot(_.isRemoved)
+          .toSet
+          .asJava),
+      "Domain metadata in checksum should match snapshot")
+  }
+
+  /**
+   * Ensure checksum is readable by CRC reader, matches snapshot data, and can be regenerated.
+   * This test verifies:
+   * 1. The initial checksum exists and is correct
+   * 2. After deleting the checksum file, it can be regenerated with the same content
+   */
   def verifyChecksum(tablePath: String): Unit = {
     val currentSnapshot = latestSnapshot(tablePath, defaultEngine)
     val checksumVersion = currentSnapshot.getVersion
-    val crcInfo = ChecksumReader.getCRCInfo(
-      defaultEngine,
-      new KernelPath(f"$tablePath/_delta_log/"),
-      checksumVersion,
-      checksumVersion)
-    assert(crcInfo.isPresent)
-    // TODO: check metadata, protocol and file size.
-    assert(crcInfo.get().getNumFiles
-      === collectScanFileRows(currentSnapshot.getScanBuilder.build()).size)
-    // CRC does not store tombstones.
-    assert(crcInfo.get().getDomainMetadata === Optional.of(
-      currentSnapshot.asInstanceOf[SnapshotImpl].getDomainMetadataMap.values().asScala
-        .filterNot(_.isRemoved)
-        .toSet
-        .asJava))
+
+    // Step 1: Verify initial checksum
+    verifyChecksumForSnapshot(currentSnapshot)
+
+    // Step 2: Delete and regenerate the checksum
+    defaultEngine.getFileSystemClient.delete(buildCrcPath(tablePath, checksumVersion).toString)
+    Table.forPath(defaultEngine, tablePath).checksum(defaultEngine, checksumVersion)
+
+    // Step 3: Verify regenerated checksum
+    verifyChecksumForSnapshot(currentSnapshot)
+  }
+
+  protected def buildCrcPath(basePath: String, version: Long): java.nio.file.Path = {
+    new File(FileNames.checksumFile(new Path(f"$basePath/_delta_log"), version).toString).toPath
   }
 }
