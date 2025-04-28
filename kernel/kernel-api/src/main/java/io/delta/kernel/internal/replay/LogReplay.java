@@ -140,6 +140,12 @@ public class LogReplay {
       SnapshotMetrics snapshotMetrics) {
 
     assertLogFilesBelongToTable(logPath, logSegment.allLogFilesUnsorted());
+
+    // Ignore the snapshot hint whose version is larger.
+    if (snapshotHint.isPresent() && snapshotHint.get().getVersion() > snapshotVersion) {
+      snapshotHint = Optional.empty();
+    }
+
     this.cachedCrcInfo = Optional.empty();
     this.dataPath = dataPath;
     this.logSegment = logSegment;
@@ -387,27 +393,8 @@ public class LogReplay {
   }
 
   /**
-   * Calculates the latest snapshot hint before or at the current snapshot version, cache the
-   * CRCInfo if checksum file at the current version is read
-   *
-   * <p>Strategy for finding and using CRC (checksum) files:
-   *
-   * <ol>
-   *   <li>During initial log directory listing, the SnapshotManager captures all files including
-   *       commits, checkpoints, and checksums.
-   *   <li>The most recent checksum file discovered is stored in the LogSegment as
-   *       "lastSeenChecksum", regardless of its version, however, logSegment will make sure
-   *       last_check_point_version <= crc_version <= logSegment_version
-   *   <li>When loading table state information like Protocol, Metadata, or Domain Metadata:
-   *       <ol>
-   *         <li>First check if there's a lastSeenChecksum in the LogSegment and if its version is
-   *             appropriate (>= lower bound, <= requested version)
-   *         <li>If a suitable checksum exists, generate version hint directly from it for
-   *             subsequence call use that
-   *         <li>If no suitable checksum exists, subsequence call fall back to reading from log
-   *             files
-   *       </ol>
-   * </ol>
+   * Attempts to build a newer snapshot hint from CRC that can be used for loading table state more
+   * efficiently. When CRC is read, update the cache.
    */
   private Optional<SnapshotHint> maybeGetNewerSnapshotHintAndUpdateCrcInfoCache(
       Engine engine,
@@ -421,13 +408,7 @@ public class LogReplay {
       return snapshotHint;
     }
 
-    // Ignore the snapshot hint whose version is larger.
-    if (snapshotHint.isPresent() && snapshotHint.get().getVersion() > snapshotVersion) {
-      snapshotHint = Optional.empty();
-    }
-
-    // Prefer reading hint over CRC to save 1 io, so start listing from hint's version + 1,
-    // if hint is not present, read from version 0.
+    // Prefer reading hint over CRC to save 1 io, only read crc if it is newer than snapshot hint.
     long crcReadLowerBound = snapshotHint.map(SnapshotHint::getVersion).orElse(-1L) + 1;
 
     Optional<CRCInfo> crcInfoOpt =

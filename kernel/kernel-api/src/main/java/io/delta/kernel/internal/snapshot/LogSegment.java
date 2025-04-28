@@ -179,12 +179,6 @@ public class LogSegment {
         lastSeenChecksum.filter(
             file -> {
               long checksumVersion = FileNames.checksumVersion(new Path(file.getPath()));
-              logger.debug(
-                  "Found checksum file for version {} in "
-                      + "LogSegment version {} and checkpoint version {}",
-                  checksumVersion,
-                  version,
-                  checkpointVersionOpt);
               return !checkpointVersionOpt.isPresent()
                   || checksumVersion >= checkpointVersionOpt.get();
             });
@@ -203,6 +197,8 @@ public class LogSegment {
                         Comparator.comparing((FileStatus a) -> new Path(a.getPath()).getName())
                             .reversed())
                     .collect(Collectors.toList()));
+
+    logger.debug("Created LogSegment: {}", this);
   }
 
   /////////////////
