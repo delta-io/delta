@@ -277,7 +277,7 @@ public class SnapshotManager {
     // Step 3: List the files from $startVersion to $versionToLoad //
     /////////////////////////////////////////////////////////////////
 
-    HashSet fileTypes =
+    Set<DeltaLogFileType> fileTypes =
         new HashSet<>(Arrays.asList(DeltaLogFileType.COMMIT, DeltaLogFileType.CHECKPOINT));
     if (USE_COMPACTED_FILES) {
       fileTypes.add(DeltaLogFileType.LOG_COMPACTION);
@@ -379,7 +379,6 @@ public class SnapshotManager {
     /////////////////////////////////////////////////////////////////////////////////////////////
     // Step 7: Grab all deltas in range [$latestCompleteCheckpointVersion + 1, $versionToLoad] //
     /////////////////////////////////////////////////////////////////////////////////////////////
-
     final List<FileStatus> deltasAfterCheckpoint =
         listedDeltaFileStatuses.stream()
             .filter(
@@ -392,10 +391,10 @@ public class SnapshotManager {
 
     logDebugFileStatuses("deltasAfterCheckpoint", deltasAfterCheckpoint);
 
-    /////////////////////////////////////////////////////////////////////////////////////////////
-    // Step 8: Grab all compactions in range [$latestCompleteCheckpointVersion + 1,
-    // $versionToLoad] //
-    /////////////////////////////////////////////////////////////////////////////////////////////
+    //////////////////////////////////////////////////////////////////////////////////
+    // Step 8: Grab all compactions in range [$latestCompleteCheckpointVersion + 1, //
+    //         $versionToLoad]                                                      //
+    //////////////////////////////////////////////////////////////////////////////////
 
     final List<FileStatus> compactionsAfterCheckpoint;
     if (USE_COMPACTED_FILES) {

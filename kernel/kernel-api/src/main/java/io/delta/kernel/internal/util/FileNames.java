@@ -123,10 +123,7 @@ public final class FileNames {
   }
 
   public static Tuple2<Long, Long> logCompactionVersions(String path) {
-    final int slashIdx = path.lastIndexOf(Path.SEPARATOR);
-    final String name = path.substring(slashIdx + 1);
-    final String[] split = name.split("\\.");
-    return new Tuple2<>(Long.parseLong(split[0]), Long.parseLong(split[1]));
+    return logCompactionVersions(new Path(path));
   }
 
   // public static boolean deltaIsCoveredBy(String deltaPath, List<String> compactionFiles) {

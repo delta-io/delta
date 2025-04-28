@@ -243,6 +243,10 @@ public class DeltaLogActionUtils {
 
               final long fileVersion;
               if (FileNames.isLogCompactionFile(fileName)) {
+                // We use start version here. Below this is used to determine if we should stop
+                // listing because we've listed past the required version. But with a log compaction
+                // file, if the end version is passed the requested version, we don't want to stop,
+                // we just won't use the compaction file.
                 fileVersion = FileNames.logCompactionVersions(new Path(fs.getPath()))._1;
               } else {
                 fileVersion = FileNames.getFileVersion(new Path(fs.getPath()));
