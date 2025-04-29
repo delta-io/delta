@@ -18,6 +18,7 @@ package io.delta.kernel.internal.replay;
 
 import static io.delta.kernel.internal.replay.LogReplayUtils.assertLogFilesBelongToTable;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
@@ -152,7 +153,7 @@ public class LogReplay {
       snapshotHint = Optional.empty();
     }
 
-    this.crcInfoContext = new CrcInfoContext();
+    this.crcInfoContext = new CrcInfoContext(engine);
     this.dataPath = dataPath;
     this.logSegment = logSegment;
     Optional<SnapshotHint> newerSnapshotHint =
@@ -193,7 +194,9 @@ public class LogReplay {
 
   /** Returns the crc info for the current snapshot if it is cached */
   public Optional<CRCInfo> getCurrentCrcInfo() {
-    return crcInfoContext.getCacheCrcInfo(logSegment.getVersion());
+    return crcInfoContext
+        .getLastSeenCrcInfo()
+        .filter(crcInfo -> crcInfo.getVersion() == getVersion());
   }
 
   /**
@@ -372,7 +375,7 @@ public class LogReplay {
    */
   private Map<String, DomainMetadata> loadDomainMetadataMap(Engine engine) {
     // First try to load from CRC info if available
-    Optional<CRCInfo> currentCrcInfo = crcInfoContext.getCacheCrcInfo(getVersion());
+    Optional<CRCInfo> currentCrcInfo = getCurrentCrcInfo();
     if (currentCrcInfo.isPresent() && currentCrcInfo.get().getDomainMetadata().isPresent()) {
       return currentCrcInfo.get().getDomainMetadata().get().stream()
           .collect(Collectors.toMap(DomainMetadata::getDomain, Function.identity()));
@@ -425,15 +428,23 @@ public class LogReplay {
    * info and extracting snapshot hints from CRC files.
    */
   private class CrcInfoContext {
-    private Optional<CRCInfo> cachedCrcInfo;
+    private final Engine engine;
+    private Optional<CRCInfo> cachedLastSeenCrcInfo;
 
-    CrcInfoContext() {
-      this.cachedCrcInfo = Optional.empty();
+    CrcInfoContext(Engine engine) {
+      this.engine = requireNonNull(engine);
+      this.cachedLastSeenCrcInfo = Optional.empty();
     }
 
-    /** Returns the cached CRC info for the specified version if available. */
-    public Optional<CRCInfo> getCacheCrcInfo(long version) {
-      return cachedCrcInfo.filter(crc -> crc.getVersion() == version);
+    /** Returns the CRC info persisted in the logSegment's lastSeenChecksum File  */
+    public Optional<CRCInfo> getLastSeenCrcInfo() {
+      if (!cachedLastSeenCrcInfo.isPresent()) {
+        cachedLastSeenCrcInfo =
+            logSegment
+                .getLastSeenChecksum()
+                .flatMap(crcFile -> ChecksumReader.getCRCInfo(engine, crcFile));
+      }
+      return cachedLastSeenCrcInfo;
     }
 
     /**
@@ -474,7 +485,7 @@ public class LogReplay {
       }
 
       CRCInfo crcInfo = crcInfoOpt.get();
-      this.cachedCrcInfo = Optional.of(crcInfo);
+      this.cachedLastSeenCrcInfo = Optional.of(crcInfo);
       checkArgument(
           crcInfo.getVersion() >= crcReadLowerBound && crcInfo.getVersion() <= snapshotVersion);
       // We found a CRCInfo of a version (a) older than the one we are looking for (snapshotVersion)
