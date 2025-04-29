@@ -112,6 +112,14 @@ object CatalogOwnedTableUtils {
     }
   }
 
+  /**
+   * Returns the catalog name from the given catalog table.
+   * If the catalog table is not present, returns None.
+   */
+  def getCatalogName(catalogTable: Option[CatalogTable]): Option[String] = {
+    catalogTable.flatMap(_.identifier.catalog)
+  }
+
   val ICT_TABLE_PROPERTY_CONFS = Seq(
     DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED,
     DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION,
