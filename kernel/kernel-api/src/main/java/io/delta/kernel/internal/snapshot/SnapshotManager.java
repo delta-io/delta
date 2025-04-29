@@ -416,8 +416,6 @@ public class SnapshotManager {
     // Step 9: Determine the version of the snapshot we can now load. //
     ////////////////////////////////////////////////////////////////////
 
-    // TODO: need to check compactions too?
-
     final List<Long> deltaVersionsAfterCheckpoint =
         deltasAfterCheckpoint.stream()
             .map(fileStatus -> FileNames.deltaVersion(new Path(fileStatus.getPath())))
