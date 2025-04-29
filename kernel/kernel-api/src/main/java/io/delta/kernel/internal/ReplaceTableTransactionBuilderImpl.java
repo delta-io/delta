@@ -34,7 +34,7 @@ public class ReplaceTableTransactionBuilderImpl extends TransactionBuilderImpl {
   @Override
   public Transaction build(Engine engine) {
     try {
-      withMaxRetries(0);
+      withMaxRetries(0); // We don't support conflict resolution yet so disable retries for now
       schema.orElseThrow(() -> requireSchemaForReplaceTable(table.getPath(engine)));
       // TODO we need to validate the schema:
       //   When re-using fieldIds we need to check that type & nullability is the same, otherwise
