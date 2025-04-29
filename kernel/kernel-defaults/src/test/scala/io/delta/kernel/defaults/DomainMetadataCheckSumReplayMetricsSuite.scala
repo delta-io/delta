@@ -76,9 +76,9 @@ class DomainMetadataCheckSumReplayMetricsSuite extends ChecksumLogReplayMetricsT
 
   test("read domain metadata fro checksum even if snapshot hint exists") {
     withTableWithCrc { (table, _, engine) =>
-      val readVersion = 11;
+      val readVersion = 11
+      // Get snapshot to produce a snapshot hit at version 11.
       table.getLatestSnapshot(engine)
-      // Get snapshot to produce a snapshot hit.
 
       loadSnapshotFieldsCheckMetrics(
         table,
