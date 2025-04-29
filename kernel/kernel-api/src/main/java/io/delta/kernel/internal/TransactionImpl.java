@@ -461,9 +461,10 @@ public class TransactionImpl implements Transaction {
   }
 
   public boolean isBlindAppend() {
-    // For now, Kernel just supports blind append.
-    // Change this when read-after-write is supported.
-    return true;
+    // TODO: for now we hard code this to false to avoid erroneously setting this to true for a
+    //  non-blind-append operation. We should revisit how to safely set this to true for actual
+    //  blind appends.
+    return false;
   }
 
   private List<PostCommitHook> generatePostCommitHooks(

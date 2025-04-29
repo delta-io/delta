@@ -40,6 +40,7 @@ import io.delta.kernel.statistics.DataFileStatistics;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.*;
 import java.net.URI;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
@@ -254,7 +255,9 @@ public interface Transaction {
                   tableRoot,
                   dataFileStatus,
                   ((DataWriteContextImpl) dataWriteContext).getPartitionValues(),
-                  true /* dataChange */);
+                  true /* dataChange */,
+                  // TODO: populate tags in generateAppendActions
+                  Collections.emptyMap() /* tags */);
           return SingleAction.createAddFileSingleAction(addFileRow.toRow());
         });
   }

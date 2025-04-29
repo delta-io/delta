@@ -26,6 +26,7 @@ import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.checkpoints.Checkpointer;
+import io.delta.kernel.internal.checksum.ChecksumUtils;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.metrics.SnapshotReportImpl;
@@ -137,6 +138,13 @@ public class TableImpl implements Table {
     final SnapshotImpl snapshotToCheckpoint =
         (SnapshotImpl) getSnapshotAsOfVersion(engine, version);
     checkpointer.checkpoint(engine, clock, snapshotToCheckpoint);
+  }
+
+  @Override
+  public void checksum(Engine engine, long version) throws TableNotFoundException, IOException {
+    final SnapshotImpl snapshotToWriteCrcFile =
+        (SnapshotImpl) getSnapshotAsOfVersion(engine, version);
+    ChecksumUtils.computeStateAndWriteChecksum(engine, snapshotToWriteCrcFile);
   }
 
   @Override

@@ -2719,6 +2719,12 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_UNSUPPORTED_CATALOG_OWNED_TABLE_CREATION" : {
+    "message" : [
+      "Creating a catalog owned table using delta is unsupported."
+    ],
+    "sqlState" : "0AKDC"
+  },
   "DELTA_UNSUPPORTED_CLONE_REPLACE_SAME_TABLE" : {
     "message" : [
       "",

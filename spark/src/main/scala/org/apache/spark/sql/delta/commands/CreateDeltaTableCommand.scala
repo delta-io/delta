@@ -47,6 +47,7 @@ import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructType
+import org.apache.spark.util.Utils
 
 /**
  * Single entry point for all write or declaration operations for Delta tables accessed through
@@ -110,6 +111,14 @@ case class CreateDeltaTableCommand(
       return Nil
     } else if (mode == SaveMode.ErrorIfExists && tableExistsInCatalog) {
       throw DeltaErrors.tableAlreadyExists(table)
+    }
+    // This check should be relaxed once the UC client supports creating tables,
+    // It gets bypassed in UTs to allow tests that use InMemoryCommitCoordinator to create tables
+    val tableFeatures = TableFeatureProtocolUtils.
+      getSupportedFeaturesFromTableConfigs(table.properties)
+    if (!Utils.isTesting && (tableFeatures.contains(CatalogOwnedTableFeature) ||
+      CatalogOwnedTableUtils.defaultCatalogOwnedEnabled(spark = sparkSession))) {
+      throw DeltaErrors.deltaCannotCreateCatalogOwnedTable()
     }
 
     var tableWithLocation = if (tableExistsInCatalog) {
