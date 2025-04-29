@@ -394,21 +394,16 @@ public class SnapshotManager {
     //         $versionToLoad]                                                      //
     //////////////////////////////////////////////////////////////////////////////////
 
-    final List<FileStatus> compactionsAfterCheckpoint;
-    if (USE_COMPACTED_FILES) {
-      compactionsAfterCheckpoint =
-          listedCompactionFileStatuses.stream()
-              .filter(
-                  fs -> {
-                    final Tuple2<Long, Long> compactionVersions =
-                        FileNames.logCompactionVersions(new Path(fs.getPath()));
-                    return latestCompleteCheckpointVersion + 1 <= compactionVersions._1
-                        && compactionVersions._2 <= versionToLoadOpt.orElse(Long.MAX_VALUE);
-                  })
-              .collect(Collectors.toList());
-    } else {
-      compactionsAfterCheckpoint = Collections.emptyList();
-    }
+    final List<FileStatus> compactionsAfterCheckpoint =
+        listedCompactionFileStatuses.stream()
+            .filter(
+                fs -> {
+                  final Tuple2<Long, Long> compactionVersions =
+                      FileNames.logCompactionVersions(new Path(fs.getPath()));
+                  return latestCompleteCheckpointVersion + 1 <= compactionVersions._1
+                      && compactionVersions._2 <= versionToLoadOpt.orElse(Long.MAX_VALUE);
+                })
+            .collect(Collectors.toList());
 
     logDebugFileStatuses("compactionsAfterCheckpoint", compactionsAfterCheckpoint);
 

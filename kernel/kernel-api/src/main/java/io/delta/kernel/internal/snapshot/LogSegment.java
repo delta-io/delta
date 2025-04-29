@@ -120,8 +120,6 @@ public class LogSegment {
             .allMatch(v -> checkpointVersionOpt.get().equals(v)),
         "All checkpoint files must have the same version");
 
-    // todo: ensure compactions don't overlap
-
     if (version != -1) {
       checkArgument(!deltas.isEmpty() || !checkpoints.isEmpty(), "No files to read");
 

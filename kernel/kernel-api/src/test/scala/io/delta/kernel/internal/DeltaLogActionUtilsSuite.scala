@@ -321,27 +321,27 @@ class DeltaLogActionUtilsSuite extends AnyFunSuite with MockFileSystemClientUtil
     files = deltaFileStatuses(0L to 4L) ++ compactedFileStatuses(Seq((3, 4))),
     startVersion = 0,
     endVersion = Optional.empty(),
-    expectedListedFiles = deltaFileStatuses(0L to 2L) ++ compactedFileStatuses(Seq((
-      3,
-      4))) ++ deltaFileStatuses(3L to 4L))
+    expectedListedFiles = deltaFileStatuses(0L to 2L) ++
+      compactedFileStatuses(Seq((3, 4))) ++
+      deltaFileStatuses(3L to 4L))
 
   testListWithCompactions(
     "compaction at end, with endVersion",
     files = deltaFileStatuses(0L to 4L) ++ compactedFileStatuses(Seq((3, 4))),
     startVersion = 0,
     endVersion = Optional.of(4),
-    expectedListedFiles = deltaFileStatuses(0L to 2L) ++ compactedFileStatuses(Seq((
-      3,
-      4))) ++ deltaFileStatuses(3L to 4L))
+    expectedListedFiles = deltaFileStatuses(0L to 2L) ++
+      compactedFileStatuses(Seq((3, 4))) ++
+      deltaFileStatuses(3L to 4L))
 
   testListWithCompactions(
     "compaction in middle, no endVersion",
     files = deltaFileStatuses(0L to 4L) ++ compactedFileStatuses(Seq((2, 4))),
     startVersion = 0,
     endVersion = Optional.empty(),
-    expectedListedFiles = deltaFileStatuses(0L to 1L) ++ compactedFileStatuses(Seq((
-      2,
-      4))) ++ deltaFileStatuses(2L to 4L))
+    expectedListedFiles = deltaFileStatuses(0L to 1L) ++
+      compactedFileStatuses(Seq((2, 4))) ++
+      deltaFileStatuses(2L to 4L))
 
   testListWithCompactions(
     "compaction over end, with endVersion",
@@ -369,29 +369,30 @@ class DeltaLogActionUtilsSuite extends AnyFunSuite with MockFileSystemClientUtil
     files = deltaFileStatuses(0L to 7L) ++ compactedFileStatuses(Seq((2, 4), (5, 7))),
     startVersion = 0,
     endVersion = Optional.empty(),
-    expectedListedFiles = deltaFileStatuses(0L to 1L) ++ compactedFileStatuses(Seq((
-      2,
-      4))) ++ deltaFileStatuses(2L to 4L) ++ compactedFileStatuses(Seq((
-      5,
-      7))) ++ deltaFileStatuses(5L to 7L))
+    expectedListedFiles = deltaFileStatuses(0L to 1L) ++
+      compactedFileStatuses(Seq((2, 4))) ++
+      deltaFileStatuses(2L to 4L) ++
+      compactedFileStatuses(Seq((5, 7))) ++
+      deltaFileStatuses(5L to 7L))
 
   testListWithCompactions(
     "multiple compactions, with endVersion, don't return second compaction",
     files = deltaFileStatuses(0L to 7L) ++ compactedFileStatuses(Seq((2, 4), (5, 7))),
     startVersion = 0,
     endVersion = Optional.of(6),
-    expectedListedFiles = deltaFileStatuses(0L to 1L) ++ compactedFileStatuses(Seq((
-      2,
-      4))) ++ deltaFileStatuses(2L to 4L) ++ deltaFileStatuses(5L to 6L))
+    expectedListedFiles = deltaFileStatuses(0L to 1L) ++
+      compactedFileStatuses(Seq((2, 4))) ++
+      deltaFileStatuses(2L to 4L) ++
+      deltaFileStatuses(5L to 6L))
 
   testListWithCompactions(
     "multiple compactions, no endVersion, start after first compaction",
     files = deltaFileStatuses(0L to 7L) ++ compactedFileStatuses(Seq((2, 4), (5, 7))),
     startVersion = 3,
     endVersion = Optional.empty(),
-    expectedListedFiles = deltaFileStatuses(3L to 4L) ++ compactedFileStatuses(Seq((
-      5,
-      7))) ++ deltaFileStatuses(5L to 7L))
+    expectedListedFiles = deltaFileStatuses(3L to 4L) ++
+      compactedFileStatuses(Seq((5, 7))) ++
+      deltaFileStatuses(5L to 7L))
 
   testListWithCompactions(
     "multiple compactions, with endVersion, return no compactions",
@@ -399,5 +400,4 @@ class DeltaLogActionUtilsSuite extends AnyFunSuite with MockFileSystemClientUtil
     startVersion = 3,
     endVersion = Optional.of(6),
     expectedListedFiles = deltaFileStatuses(3L to 6L))
-
 }

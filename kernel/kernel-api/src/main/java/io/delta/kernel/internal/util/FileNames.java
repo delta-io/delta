@@ -141,10 +141,6 @@ public final class FileNames {
     return logCompactionVersions(new Path(path));
   }
 
-  // public static boolean deltaIsCoveredBy(String deltaPath, List<String> compactionFiles) {
-
-  // }
-
   /** Returns the version for the given checkpoint path. */
   public static long checkpointVersion(Path path) {
     return Long.parseLong(path.getName().split("\\.")[0]);
