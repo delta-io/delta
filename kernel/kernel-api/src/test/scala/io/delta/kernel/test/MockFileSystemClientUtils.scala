@@ -43,9 +43,8 @@ trait MockFileSystemClientUtils extends MockEngineUtils {
     deltaVersions.map(v => FileStatus.of(FileNames.deltaFile(logPath, v), v, v * 10))
   }
 
-  /** Delta file statuses where the timestamp = 10*version */
+  /** Compaction file statuses where the timestamp = 10*version */
   def compactedFileStatuses(compactedVersions: Seq[(Long, Long)]): Seq[FileStatus] = {
-    // todo: validate no overlap?
     compactedVersions.map { case (s, e) =>
       FileStatus.of(FileNames.logCompactionPath(logPath, s, e).toString, s, s * 10)
     }
