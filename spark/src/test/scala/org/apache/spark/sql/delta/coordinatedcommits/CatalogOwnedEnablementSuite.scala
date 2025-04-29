@@ -157,7 +157,7 @@ class CatalogOwnedEnablementSuite
     }
   }
 
-  test("Catalog-Owned: CO_COMMIT should be recorded in usage_log for normal CO commit") {
+  test("CO_COMMIT should be recorded in usage_log for normal CO commit") {
     withRandomTable(createCatalogOwnedTableAtInit = true) { tableName =>
       val usageLog = Log4jUsageLogger.track {
         sql(s"INSERT INTO $tableName VALUES 3")
@@ -172,7 +172,7 @@ class CatalogOwnedEnablementSuite
     }
   }
 
-  test("Catalog-Owned: FS_TO_CO_UPGRADE_COMMIT should be recorded in usage_log when creating " +
+  test("FS_TO_CO_UPGRADE_COMMIT should be recorded in usage_log when creating " +
        "CatalogOwned table") {
     withTable("t1") {
       val usageLog = Log4jUsageLogger.track {
@@ -189,5 +189,4 @@ class CatalogOwnedEnablementSuite
           commitCoordinatorConf = Map.empty))
     }
   }
-
 }
