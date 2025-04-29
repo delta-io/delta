@@ -185,7 +185,7 @@ class CatalogOwnedEnablementSuite
         CoordinatedCommitsStats(
           coordinatedCommitsType = CoordinatedCommitType.FS_TO_CO_UPGRADE_COMMIT.toString,
           // catalogTable is not available for FS_TO_CO_UPGRADE_COMMIT
-          commitCoordinatorName = "",
+          commitCoordinatorName = "CATALOG_EMPTY",
           commitCoordinatorConf = Map.empty))
     }
   }

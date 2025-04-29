@@ -1834,9 +1834,10 @@ trait OptimisticTransactionImpl extends DeltaTransaction
       }
     CoordinatedCommitsStats(
       coordinatedCommitsType = coordinatedCommitsType.toString,
-      commitCoordinatorName = if (snapshot.isCatalogOwned) {
-        // FS -> CO upgrade commit is not included here,
-        // this is fine because `catalogTable` is not available
+      commitCoordinatorName = if (Set(CoordinatedCommitType.CO_COMMIT,
+        CoordinatedCommitType.FS_TO_CO_UPGRADE_COMMIT).contains(coordinatedCommitsType)) {
+        // The catalog for FS -> CO upgrade commit would be
+        // "CATALOG_EMPTY" because `catalogTable` is not available
         // for the 0th FS commit.
         catalogTable.flatMap { ct =>
           CatalogOwnedTableUtils.getCatalogName(
