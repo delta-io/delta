@@ -42,6 +42,7 @@ import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
+import io.delta.kernel.utils.FileStatus;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.*;
@@ -137,6 +138,8 @@ public class LogReplay {
   private final Lazy<Map<String, DomainMetadata>> domainMetadataMap;
   private final Optional<CRCInfo> currentCrcInfo;
 
+  private boolean read_log_compaction_files = true;
+
   public LogReplay(
       Path logPath,
       Path dataPath,
@@ -227,6 +230,18 @@ public class LogReplay {
   ////////////////////
 
   /**
+   * Get the files to use for this log replay, can be configured for example to use or not use log
+   * compaction files
+   */
+  private List<FileStatus> getLogReplayFiles(LogSegment logSegment) {
+    if (read_log_compaction_files) {
+      return logSegment.allFilesWithCompactionsReversed();
+    } else {
+      return logSegment.allLogFilesReversed();
+    }
+  }
+
+  /**
    * Returns the latest Protocol and Metadata from the delta files in the `logSegment`. Does *not*
    * validate that this delta-kernel connector understands the table at that protocol.
    *
@@ -251,7 +266,7 @@ public class LogReplay {
     try (CloseableIterator<ActionWrapper> reverseIter =
         new ActionsIterator(
             engine,
-            logSegment.allLogFilesReversed(),
+            getLogReplayFiles(logSegment),
             PROTOCOL_METADATA_READ_SCHEMA,
             Optional.empty())) {
       while (reverseIter.hasNext()) {
@@ -332,10 +347,7 @@ public class LogReplay {
   private Optional<Long> loadLatestTransactionVersion(Engine engine, String applicationId) {
     try (CloseableIterator<ActionWrapper> reverseIter =
         new ActionsIterator(
-            engine,
-            logSegment.allLogFilesReversed(),
-            SET_TRANSACTION_READ_SCHEMA,
-            Optional.empty())) {
+            engine, getLogReplayFiles(logSegment), SET_TRANSACTION_READ_SCHEMA, Optional.empty())) {
       while (reverseIter.hasNext()) {
         final ColumnarBatch columnarBatch = reverseIter.next().getColumnarBatch();
         assert (columnarBatch.getSchema().equals(SET_TRANSACTION_READ_SCHEMA));
@@ -394,7 +406,7 @@ public class LogReplay {
     try (CloseableIterator<ActionWrapper> reverseIter =
         new ActionsIterator(
             engine,
-            logSegment.allLogFilesReversed(),
+            getLogReplayFiles(logSegment),
             DOMAIN_METADATA_READ_SCHEMA,
             Optional.empty() /* checkpointPredicate */)) {
       Map<String, DomainMetadata> domainMetadataMap = new HashMap<>();
