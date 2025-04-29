@@ -436,7 +436,7 @@ public class LogReplay {
       this.cachedLastSeenCrcInfo = Optional.empty();
     }
 
-    /** Returns the CRC info persisted in the logSegment's lastSeenChecksum File  */
+    /** Returns the CRC info persisted in the logSegment's lastSeenChecksum File */
     public Optional<CRCInfo> getLastSeenCrcInfo() {
       if (!cachedLastSeenCrcInfo.isPresent()) {
         cachedLastSeenCrcInfo =
