@@ -210,10 +210,9 @@ public class TableImpl implements Table {
               if (shouldDropProtocolColumn) {
                 batchToReturn = batchToReturn.withDeletedColumnAt(protocolIdx);
               }
-              if (shouldDropCommitInfoColumn) {
-                batchToReturn =
-                    batchToReturn.withDeletedColumnAt(
-                        batchToReturn.getSchema().indexOf("commitInfo"));
+              int commitInfoIdx = batchToReturn.getSchema().indexOf("commitInfo");
+              if (shouldDropCommitInfoColumn && commitInfoIdx != -1) {
+                batchToReturn = batchToReturn.withDeletedColumnAt(commitInfoIdx);
               }
               return batchToReturn;
             });
