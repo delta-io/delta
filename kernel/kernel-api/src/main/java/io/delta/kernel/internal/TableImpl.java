@@ -186,7 +186,7 @@ public class TableImpl implements Table {
     Set<DeltaLogActionUtils.DeltaAction> copySet = new HashSet<>(actionSet);
     copySet.add(DeltaLogActionUtils.DeltaAction.PROTOCOL);
     // Always include commitInfo in the action set so that we can
-    // extract the inCommitTimetamp from it when set.
+    // extract the inCommitTimestamp from it when set.
     copySet.add(DeltaLogActionUtils.DeltaAction.COMMITINFO);
     // If protocol is not in the original requested actions we drop the column before returning
     boolean shouldDropProtocolColumn =
