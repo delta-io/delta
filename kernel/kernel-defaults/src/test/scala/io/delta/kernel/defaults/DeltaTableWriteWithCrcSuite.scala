@@ -43,7 +43,7 @@ trait DeltaTableWriteSuiteBaseWithCrc extends DeltaTableWriteSuiteBase {
       expSchema: StructType,
       expData: Seq[TestRow]): Unit = {
     super.verifyWrittenContent(path, expSchema, expData)
-    verifyChecksum(path, tableIsEmpty = expData.isEmpty)
+    verifyChecksum(path, expectEmptyTable = expData.isEmpty)
   }
 }
 

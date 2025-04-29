@@ -814,8 +814,6 @@ trait TestUtils extends Assertions with SQLHelper {
       assert(
         crcInfo.getNumFiles === collectScanFileRows(snapshot.getScanBuilder.build()).size,
         "Number of files in checksum should match snapshot")
-      assert(crcInfo.getNumFiles
-        === collectScanFileRows(currentSnapshot.getScanBuilder.build()).size)
       if (expectEmptyTable) {
         assert(crcInfo.getTableSizeBytes == 0)
         crcInfo.getFileSizeHistogram.toScala.foreach { fileSizeHistogram =>
