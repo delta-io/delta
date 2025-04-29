@@ -389,10 +389,9 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
   }
 
   /**
-   * Take input (iterator<T>, boolean) and produce an iterator<T, boolean>.
-   * When the input iterator has been created from a delta file, this function will
-   * try to use the inCommitTimestamp (if available) from the CommitInfo action as the commit
-   * timestamp for the file.
+   * Take input (iterator<T>, boolean) and produce an iterator<T, boolean>. When the input iterator
+   * has been created from a delta file, this function will try to use the inCommitTimestamp (if
+   * available) from the CommitInfo action as the commit timestamp for the file.
    */
   private CloseableIterator<ActionWrapper> combine(
       CloseableIterator<ColumnarBatch> fileReadDataIter,
@@ -411,9 +410,9 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
       ColumnarBatch firstAction = fileReadDataIter.next();
       firstActionList.add(firstAction);
       ColumnVector commitInfoVector = firstAction.getColumnVector(commitInfoOrdinal);
-      Optional<Long> ictOpt = InCommitTimestampUtils
-        .getCommitInfo(commitInfoVector)
-        .flatMap(CommitInfo::getInCommitTimestamp);
+      Optional<Long> ictOpt =
+          InCommitTimestampUtils.getCommitInfo(commitInfoVector)
+              .flatMap(CommitInfo::getInCommitTimestamp);
       if (ictOpt.isPresent()) {
         commitTimestamp = ictOpt;
       }

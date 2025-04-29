@@ -82,7 +82,8 @@ public class InCommitTimestampUtils {
    * Converts the given {@link ColumnVector} containing commit info to a {@link CommitInfo} object.
    *
    * @param commitInfoVector a ColumnVector containing commit info
-   * @return the commit info as a {@link CommitInfo} object, or an empty Optional if no commit info is found
+   * @return the commit info as a {@link CommitInfo} object, or an empty Optional if no commit info
+   *     is found
    */
   public static Optional<CommitInfo> getCommitInfo(ColumnVector commitInfoVector) {
     for (int rowId = 0; rowId < commitInfoVector.getSize(); rowId++) {

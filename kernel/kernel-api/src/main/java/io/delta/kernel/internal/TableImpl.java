@@ -205,11 +205,13 @@ public class TableImpl implements Table {
                 }
               }
               ColumnarBatch batchToReturn = batch;
-              if (shouldDropCommitInfoColumn) {
-                batchToReturn = batchToReturn.withDeletedColumnAt(batch.getSchema().indexOf("commitInfo"));
-              }
               if (shouldDropProtocolColumn) {
                 batchToReturn = batchToReturn.withDeletedColumnAt(protocolIdx);
+              }
+              if (shouldDropCommitInfoColumn) {
+                batchToReturn =
+                    batchToReturn.withDeletedColumnAt(
+                        batchToReturn.getSchema().indexOf("commitInfo"));
               }
               return batchToReturn;
             });

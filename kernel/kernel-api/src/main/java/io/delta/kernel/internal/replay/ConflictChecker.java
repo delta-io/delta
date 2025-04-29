@@ -137,7 +137,7 @@ public class ConflictChecker {
             ColumnarBatch batch = actionBatch.getColumnarBatch();
             if (actionBatch.getVersion() == lastWinningVersion) {
               Optional<CommitInfo> commitInfo =
-                InCommitTimestampUtils.getCommitInfo(batch.getColumnVector(COMMITINFO_ORDINAL));
+                  InCommitTimestampUtils.getCommitInfo(batch.getColumnVector(COMMITINFO_ORDINAL));
               winningCommitInfoOpt.set(commitInfo);
             }
 
