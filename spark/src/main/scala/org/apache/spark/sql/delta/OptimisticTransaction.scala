@@ -1838,8 +1838,7 @@ trait OptimisticTransactionImpl extends DeltaTransaction
         // FS -> CO upgrade commit is not included here,
         // this is fine because `catalogTable` is not available
         // for the 0th FS commit.
-        CatalogOwnedTableUtils.getCatalogName(catalogTable).getOrElse(
-          "CATALOG_EMPTY")
+        CatalogOwnedTableUtils.getCatalogName(catalogTable).getOrElse("CATALOG_EMPTY")
       } else {
         metadataToUse.coordinatedCommitsCoordinatorName.getOrElse("")
       },
