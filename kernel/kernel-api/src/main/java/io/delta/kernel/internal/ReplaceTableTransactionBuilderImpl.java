@@ -15,6 +15,8 @@
  */
 package io.delta.kernel.internal;
 
+import static io.delta.kernel.internal.DeltaErrors.requireSchemaForReplaceTable;
+
 import io.delta.kernel.Operation;
 import io.delta.kernel.Transaction;
 import io.delta.kernel.engine.Engine;
@@ -22,8 +24,6 @@ import io.delta.kernel.exceptions.TableNotFoundException;
 import java.util.HashSet;
 import java.util.Optional;
 import java.util.Set;
-
-import static io.delta.kernel.internal.DeltaErrors.requireSchemaForReplaceTable;
 
 public class ReplaceTableTransactionBuilderImpl extends TransactionBuilderImpl {
 
