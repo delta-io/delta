@@ -77,7 +77,8 @@ class TableChangesSuite extends AnyFunSuite with TestUtils with DeltaTableWriteS
     compareActions(kernelChanges, pruneSparkActionsByActionSet(sparkChanges, actionSet))
   }
 
-  // Golden table from Delta Standalone test
+  // deltalog-getChanges is golden table from Delta Standalone test while
+  // the ict variants are mostly identical except ICT-related properties.
   test("getChanges - golden table deltalog-getChanges valid queries") {
     withGoldenTable("deltalog-getChanges") { tablePath =>
       // request subset of actions
