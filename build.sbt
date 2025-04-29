@@ -167,8 +167,6 @@ lazy val commonSettings = Seq(
 
   // Unidoc settings: by default dont document any source file
   unidocSourceFilePatterns := Nil,
-
-  exportJars := true,
 )
 
 ////////////////////////////
@@ -232,7 +230,9 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
       "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED",
       "-Dlog4j.configurationFile=log4j2_spark_master.properties"
     ),
-
+    // For Delta Connect tests we create a Spark Distribution from the classpath. For this to work
+    // dependencies on other modules need to be exposed as a JAR, and not as a directory of classes.
+    exportJars := true,
     // Java-/Scala-/Uni-Doc Settings
     // This isn't working yet against Spark Master.
     // 1) delta-spark on Spark Master uses JDK 17. delta-iceberg uses JDK 8 or 11. For some reason,
@@ -333,22 +333,28 @@ lazy val connectClient = (project in file("spark-connect/client"))
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "org.apache.spark" %% "spark-connect-client-jvm" % sparkVersion.value % "test" classifier "tests"
     ),
-    // TODO this does not seem to work.
-    Test / excludeDependencies += ExclusionRule("org.apache.spark", "spark-connect-common_2.13"),
     (Test / javaOptions) += {
-      val fcp = (connectServer / Compile / fullClasspath).value
-      val distDir = crossTarget.value / "test-dist"
-      val destDir = distDir / "jars"
-      if (!destDir.exists()) {
-        IO.createDirectory(destDir)
+      // Create a (mini) Spark Distribution based on the server classpath.
+      val serverClassPath = (connectServer / Compile / fullClasspath).value
+      val distributionDir = crossTarget.value / "test-dist"
+      if (!distributionDir.exists()) {
+        val jarsDir = distributionDir / "jars"
+        IO.createDirectory(jarsDir)
         // Create symlinks for all dependencies.
-        fcp.distinct.foreach { entry =>
-          val source = entry.data.toPath
-          val target = destDir / entry.data.getName
-          Files.createSymbolicLink(target.toPath, source)
+        serverClassPath.distinct.foreach { entry =>
+          val jarFile = entry.data.toPath
+          val linkedJarFile = jarsDir / entry.data.getName
+          Files.createSymbolicLink(linkedJarFile.toPath, jarFile)
         }
+        // Create a symlink for the log4j properties
+        val confDir = distributionDir / "conf"
+        IO.createDirectory(confDir)
+        val log4jProps = (spark / Test / resourceDirectory).value / "log4j2_spark_master.properties"
+        val linkedLog4jProps = confDir / "log4j2.properties"
+        Files.createSymbolicLink(linkedLog4jProps.toPath, log4jProps.toPath)
       }
-      "-Ddelta.spark.home=" + distDir
+      // Return the location of the distribution directory.
+      "-Ddelta.spark.home=" + distributionDir
     },
   )
 
@@ -693,6 +699,7 @@ lazy val storage = (project in file("storage"))
   .settings (
     name := "delta-storage",
     commonSettings,
+    exportJars := true,
     javaOnlyReleaseSettings,
     libraryDependencies ++= Seq(
       // User can provide any 2.x or 3.x version. We don't use any new fancy APIs. Watch out for

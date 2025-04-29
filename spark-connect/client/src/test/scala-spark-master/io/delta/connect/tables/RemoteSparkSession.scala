@@ -38,6 +38,8 @@
 
 package io.delta.tables
 
+import java.io.File
+
 import org.scalatest.{BeforeAndAfterAll, Suite}
 
 import org.apache.spark.sql.connect.SparkSession
@@ -97,6 +99,7 @@ trait RemoteSparkSession extends BeforeAndAfterAll { self: Suite =>
     command += "-Djdk.reflect.useDirectMethodHandle=false"
     command += "-Dio.netty.tryReflectionSetAccessible=true"
     command += "-Dderby.connection.requireAuthentication=false"
+    command += "-Dlog4j.configurationFile=conf/log4j2.properties"
     command += "org.apache.spark.deploy.SparkSubmit"
     command += "--class" += "io.delta.tables.SimpleDeltaConnectService"
     command += "--conf" += s"spark.connect.grpc.binding.port=$serverPort"
@@ -108,6 +111,7 @@ trait RemoteSparkSession extends BeforeAndAfterAll { self: Suite =>
 
     val builder = new ProcessBuilder(command.result(): _*)
     builder.environment().put("SPARK_HOME", sparkHome)
+    builder.directory(new File(sparkHome))
     builder.redirectError(ProcessBuilder.Redirect.INHERIT)
     builder.redirectOutput(ProcessBuilder.Redirect.INHERIT)
     builder.start()
