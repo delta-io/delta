@@ -28,6 +28,7 @@ import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.*;
+import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.checkpoints.SidecarFile;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.*;
@@ -387,21 +388,57 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     }
   }
 
-  /** Take input (iterator<T>, boolean) and produce an iterator<T, boolean>. */
+  /**
+   * Take input (iterator<T>, boolean) and produce an iterator<T, boolean>.
+   * When the input iterator has been created from a delta file, this function will
+   * try to use the inCommitTimestamp (if available) from the CommitInfo action as the commit
+   * timestamp for the file.
+   */
   private CloseableIterator<ActionWrapper> combine(
       CloseableIterator<ColumnarBatch> fileReadDataIter,
       boolean isFromCheckpoint,
       long version,
       Optional<Long> timestamp) {
+    final List<ColumnarBatch> firstActionList = new ArrayList<>();
+    final int commitInfoOrdinal = deltaReadSchema.indexOf("commitInfo");
+    // For delta files, we want to use the inCommitTimestamp from commitInfo
+    // as the commit timestamp for the file.
+    // Since CommitInfo should be the first action in the delta when inCommitTimestamp is
+    // enabled, we will read the first action and try to extract the timestamp from it.
+    // We also cache the first action so that we can return it in the iterator.
+    Optional<Long> commitTimestamp = timestamp;
+    if (!isFromCheckpoint && fileReadDataIter.hasNext() && commitInfoOrdinal != -1) {
+      ColumnarBatch firstAction = fileReadDataIter.next();
+      firstActionList.add(firstAction);
+      ColumnVector commitInfoVector = firstAction.getColumnVector(commitInfoOrdinal);
+      Optional<Long> ictOpt = InCommitTimestampUtils
+        .getCommitInfo(commitInfoVector)
+        .flatMap(CommitInfo::getInCommitTimestamp);
+      if (ictOpt.isPresent()) {
+        commitTimestamp = ictOpt;
+      }
+    }
+    final Iterator<ColumnarBatch> firstActionIter = firstActionList.iterator();
+    final Optional<Long> finalResolvedCommitTimestamp = commitTimestamp;
+
     return new CloseableIterator<ActionWrapper>() {
       @Override
       public boolean hasNext() {
-        return fileReadDataIter.hasNext();
+        return firstActionIter.hasNext() || fileReadDataIter.hasNext();
       }
 
       @Override
       public ActionWrapper next() {
-        return new ActionWrapper(fileReadDataIter.next(), isFromCheckpoint, version, timestamp);
+        ColumnarBatch nextItem;
+        // If firstActionIter has any element, we have already partially consumed fileReadDataIter.
+        // We want to return the first action from firstActionIter and then the rest from
+        // fileReadDataIter.
+        if (firstActionIter.hasNext()) {
+          nextItem = firstActionIter.next();
+        } else {
+          nextItem = fileReadDataIter.next();
+        }
+        return new ActionWrapper(nextItem, isFromCheckpoint, version, finalResolvedCommitTimestamp);
       }
 
       @Override

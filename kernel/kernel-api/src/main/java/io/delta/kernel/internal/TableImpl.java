@@ -185,9 +185,13 @@ public class TableImpl implements Table {
     // Create a new action set that always contains protocol
     Set<DeltaLogActionUtils.DeltaAction> copySet = new HashSet<>(actionSet);
     copySet.add(DeltaLogActionUtils.DeltaAction.PROTOCOL);
+    copySet.add(DeltaLogActionUtils.DeltaAction.COMMITINFO);
     // If protocol is not in the original requested actions we drop the column before returning
     boolean shouldDropProtocolColumn =
         !actionSet.contains(DeltaLogActionUtils.DeltaAction.PROTOCOL);
+    // If ICT is not in the original requested actions we drop the column before returning
+    boolean shouldDropCommitInfoColumn =
+        !actionSet.contains(DeltaLogActionUtils.DeltaAction.COMMITINFO);
 
     return getRawChanges(engine, startVersion, endVersion, copySet)
         .map(
@@ -200,11 +204,14 @@ public class TableImpl implements Table {
                   TableFeatures.validateKernelCanReadTheTable(protocol, getDataPath().toString());
                 }
               }
-              if (shouldDropProtocolColumn) {
-                return batch.withDeletedColumnAt(protocolIdx);
-              } else {
-                return batch;
+              ColumnarBatch batchToReturn = batch;
+              if (shouldDropCommitInfoColumn) {
+                batchToReturn = batchToReturn.withDeletedColumnAt(batch.getSchema().indexOf("commitInfo"));
               }
+              if (shouldDropProtocolColumn) {
+                batchToReturn = batchToReturn.withDeletedColumnAt(protocolIdx);
+              }
+              return batchToReturn;
             });
   }
 

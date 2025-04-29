@@ -40,6 +40,7 @@ import io.delta.kernel.internal.rowtracking.RowTrackingMetadataDomain;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.DomainMetadataUtils;
 import io.delta.kernel.internal.util.FileNames;
+import io.delta.kernel.internal.util.InCommitTimestampUtils;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
@@ -136,7 +137,7 @@ public class ConflictChecker {
             ColumnarBatch batch = actionBatch.getColumnarBatch();
             if (actionBatch.getVersion() == lastWinningVersion) {
               Optional<CommitInfo> commitInfo =
-                  getCommitInfo(batch.getColumnVector(COMMITINFO_ORDINAL));
+                InCommitTimestampUtils.getCommitInfo(batch.getColumnVector(COMMITINFO_ORDINAL));
               winningCommitInfoOpt.set(commitInfo);
             }
 
@@ -326,21 +327,6 @@ public class ConflictChecker {
     }
 
     return winningTxnDomainMetadataMap;
-  }
-
-  /**
-   * Get the commit info from the winning transactions.
-   *
-   * @param commitInfoVector commit info rows from the winning transactions
-   * @return the commit info
-   */
-  private Optional<CommitInfo> getCommitInfo(ColumnVector commitInfoVector) {
-    for (int rowId = 0; rowId < commitInfoVector.getSize(); rowId++) {
-      if (!commitInfoVector.isNullAt(rowId)) {
-        return Optional.of(CommitInfo.fromColumnVector(commitInfoVector, rowId));
-      }
-    }
-    return Optional.empty();
   }
 
   private void handleTxn(ColumnVector txnVector) {
