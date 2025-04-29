@@ -78,41 +78,43 @@ class TableChangesSuite extends AnyFunSuite with TestUtils with DeltaTableWriteS
   }
 
   // deltalog-getChanges is golden table from Delta Standalone test while
-  // the ict variants are mostly identical except ICT-related properties.
-  test("getChanges - golden table deltalog-getChanges valid queries") {
-    withGoldenTable("deltalog-getChanges") { tablePath =>
-      // request subset of actions
-      testGetChangesVsSpark(
-        tablePath,
-        0,
-        2,
-        Set(DeltaAction.REMOVE))
-      testGetChangesVsSpark(
-        tablePath,
-        0,
-        2,
-        Set(DeltaAction.ADD))
-      testGetChangesVsSpark(
-        tablePath,
-        0,
-        2,
-        Set(DeltaAction.ADD, DeltaAction.REMOVE, DeltaAction.METADATA, DeltaAction.PROTOCOL))
-      // request full actions, various versions
-      testGetChangesVsSpark(
-        tablePath,
-        0,
-        2,
-        FULL_ACTION_SET)
-      testGetChangesVsSpark(
-        tablePath,
-        1,
-        2,
-        FULL_ACTION_SET)
-      testGetChangesVsSpark(
-        tablePath,
-        0,
-        0,
-        FULL_ACTION_SET)
+  // the ict variant is the same table with ICT enabled.
+  Seq("deltalog-getChanges", "deltalog-getChanges-ict-enabled").foreach { goldenTable =>
+    test(s"getChanges - golden table $goldenTable valid queries") {
+      withGoldenTable(goldenTable) { tablePath =>
+        // request subset of actions
+        testGetChangesVsSpark(
+          tablePath,
+          0,
+          2,
+          Set(DeltaAction.REMOVE))
+        testGetChangesVsSpark(
+          tablePath,
+          0,
+          2,
+          Set(DeltaAction.ADD))
+        testGetChangesVsSpark(
+          tablePath,
+          0,
+          2,
+          Set(DeltaAction.ADD, DeltaAction.REMOVE, DeltaAction.METADATA, DeltaAction.PROTOCOL))
+        // request full actions, various versions
+        testGetChangesVsSpark(
+          tablePath,
+          0,
+          2,
+          FULL_ACTION_SET)
+        testGetChangesVsSpark(
+          tablePath,
+          1,
+          2,
+          FULL_ACTION_SET)
+        testGetChangesVsSpark(
+          tablePath,
+          0,
+          0,
+          FULL_ACTION_SET)
+      }
     }
   }
 
