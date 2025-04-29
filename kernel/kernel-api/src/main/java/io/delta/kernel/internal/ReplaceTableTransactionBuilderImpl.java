@@ -23,6 +23,8 @@ import java.util.HashSet;
 import java.util.Optional;
 import java.util.Set;
 
+import static io.delta.kernel.internal.DeltaErrors.requireSchemaForReplaceTable;
+
 public class ReplaceTableTransactionBuilderImpl extends TransactionBuilderImpl {
 
   public ReplaceTableTransactionBuilderImpl(TableImpl table, String engineInfo) {
@@ -33,6 +35,7 @@ public class ReplaceTableTransactionBuilderImpl extends TransactionBuilderImpl {
   public Transaction build(Engine engine) {
     try {
       withMaxRetries(0);
+      schema.orElseThrow(() -> requireSchemaForReplaceTable(table.getPath(engine)));
       // TODO we need to validate the schema:
       //   When re-using fieldIds we need to check that type & nullability is the same, otherwise
       //   do not allow fieldId re-use and throw an error

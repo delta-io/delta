@@ -18,10 +18,16 @@ package io.delta.kernel.defaults
 import scala.collection.JavaConverters._
 import scala.collection.immutable.Seq
 
-import io.delta.kernel.{Operation, Table, Transaction}
+import io.delta.kernel.{Operation, Table, Transaction, TransactionBuilder}
 import io.delta.kernel.data.{FilteredColumnarBatch, Row}
+import io.delta.kernel.defaults.utils.TestRow
+import io.delta.kernel.engine.Engine
+import io.delta.kernel.exceptions.{ConcurrentTransactionException, ConcurrentWriteException, KernelException, TableNotFoundException}
 import io.delta.kernel.expressions.{Column, Literal}
-import io.delta.kernel.internal.{SnapshotImpl, TableImpl}
+import io.delta.kernel.internal.{SnapshotImpl, TableConfig, TableImpl}
+import io.delta.kernel.internal.clustering.{ClusteringMetadataDomain, ClusteringUtils}
+import io.delta.kernel.internal.tablefeatures.{TableFeature, TableFeatures}
+import io.delta.kernel.types.{IntegerType, StringType, StructType}
 import io.delta.kernel.utils.CloseableIterable
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 
@@ -30,240 +36,640 @@ import org.apache.spark.sql.delta.clustering.{ClusteringMetadataDomain => SparkC
 
 class DeltaReplaceTableSuite extends DeltaTableWriteSuiteBase {
 
-  def getAppendActions(
-      txn: Transaction,
-      data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])]): CloseableIterable[Row] = {
+  import DeltaReplaceTableSuite._
 
-    val txnState = txn.getTransactionState(defaultEngine)
-
-    val actions = data.map { case (partValues, partData) =>
-      stageData(txnState, partValues, partData)
+  private def createInitialTable(
+      engine: Engine,
+      tablePath: String,
+      schema: StructType = testSchema,
+      partitionColumns: Seq[String] = Seq.empty,
+      clusteringColumns: Option[List[Column]] = None,
+      tableProperties: Map[String, String] = null,
+      includeData: Boolean = true,
+      data: Option[Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])]] = None): Unit = {
+    if (includeData && schema != testSchema) {
+      require(data.nonEmpty)
+    }
+    val dataToWrite = if (includeData) {
+      data.getOrElse(Seq(Map.empty[String, Literal] -> (dataBatches1)))
+    } else {
+      Seq.empty
     }
 
-    actions.reduceLeftOption(_ combine _) match {
-      case Some(combinedActions) =>
-        inMemoryIterable(combinedActions)
+    appendData(
+      engine,
+      tablePath,
+      isNewTable = true,
+      schema,
+      partCols = partitionColumns,
+      clusteringColsOpt = clusteringColumns,
+      tableProperties = tableProperties,
+      data = dataToWrite)
+    checkTable(tablePath, dataToWrite.flatMap(_._2).flatMap(_.toTestRows))
+  }
+
+  private def getReplaceTxnBuilder(engine: Engine, tablePath: String): TransactionBuilder = {
+    Table.forPath(engine, tablePath).asInstanceOf[TableImpl]
+      .createReplaceTableTransactionBuilder(engine, testEngineInfo)
+  }
+
+  private def getReplaceTransaction(
+      engine: Engine,
+      tablePath: String,
+      schema: StructType = testSchema,
+      partitionColumns: Seq[String] = Seq.empty,
+      clusteringColumns: Option[Seq[Column]] = None,
+      transactionId: Option[(String, Long)] = None,
+      tableProperties: Map[String, String] = Map.empty,
+      domainsToAdd: Seq[(String, String)] = Seq.empty): Transaction = {
+    var txnBuilder = getReplaceTxnBuilder(engine, tablePath)
+      .withSchema(engine, schema)
+      .withPartitionColumns(engine, partitionColumns.asJava)
+      .withTableProperties(engine, tableProperties.asJava)
+
+    clusteringColumns.foreach { cols =>
+      txnBuilder = txnBuilder.withClusteringColumns(engine, cols.asJava)
+    }
+
+    transactionId.foreach { case (id, version) =>
+      txnBuilder = txnBuilder.withTransactionId(engine, id, version)
+    }
+
+    if (domainsToAdd.nonEmpty) {
+      txnBuilder = txnBuilder.withDomainMetadataSupported()
+    }
+
+    val txn = txnBuilder.build(engine)
+    domainsToAdd.foreach { case (domainName, config) =>
+      txn.addDomainMetadata(domainName, config)
+    }
+    txn
+  }
+
+  private def commitReplaceTable(
+      engine: Engine,
+      tablePath: String,
+      schema: StructType = testSchema,
+      partitionColumns: Seq[String] = Seq.empty,
+      clusteringColumns: Option[Seq[Column]] = None,
+      transactionId: Option[(String, Long)] = None,
+      tableProperties: Map[String, String] = Map.empty,
+      domainsToAdd: Seq[(String, String)] = Seq.empty,
+      data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])] = Seq.empty): Unit = {
+
+    val txn = getReplaceTransaction(
+      engine,
+      tablePath,
+      schema,
+      partitionColumns,
+      clusteringColumns,
+      transactionId,
+      tableProperties,
+      domainsToAdd)
+
+    commitTransaction(txn, engine, getAppendActions(txn, data))
+  }
+
+  // scalastyle:off argcount
+  private def checkReplaceTable(
+      engine: Engine,
+      tablePath: String,
+      schema: StructType = testSchema,
+      partitionColumns: Seq[String] = Seq.empty,
+      clusteringColumns: Option[Seq[Column]] = None,
+      transactionId: Option[(String, Long)] = None,
+      tableProperties: Map[String, String] = Map.empty,
+      domainsToAdd: Seq[(String, String)] = Seq.empty,
+      data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])] = Seq.empty,
+      expectedTableProperties: Option[Map[String, String]] = None,
+      expectedTableFeaturesSupported: Seq[TableFeature] = Seq.empty): Unit = {
+    // scalastyle:on argcount
+    val oldProtocol = getProtocol(engine, tablePath)
+
+    commitReplaceTable(
+      engine,
+      tablePath,
+      schema,
+      partitionColumns,
+      clusteringColumns,
+      transactionId,
+      tableProperties,
+      domainsToAdd,
+      data)
+
+    verifyWrittenContent(
+      tablePath,
+      schema,
+      data.flatMap(_._2).flatMap(_.toTestRows))
+
+    val snapshot = latestSnapshot(tablePath).asInstanceOf[SnapshotImpl]
+    assert(snapshot.getPartitionColumnNames.asScala == partitionColumns)
+
+    clusteringColumns match {
+      case Some(clusteringCols) =>
+        // Check clustering table feature is supported
+        assertHasWriterFeature(snapshot, "clustering")
+        assertHasWriterFeature(snapshot, "domainMetadata")
+        // Validate clustering columns are correct
+        // TODO when we support column mapping we will need to convert to physical-name here
+        assert(ClusteringUtils.getClusteringColumnsOptional(snapshot).toScala
+          .exists(_.asScala == clusteringCols))
       case None =>
-        emptyIterable[Row]
+        assert(!ClusteringMetadataDomain.fromSnapshot(snapshot).isPresent)
+    }
+
+    assert(snapshot.getMetadata.getConfiguration.asScala ==
+      expectedTableProperties.getOrElse(tableProperties))
+
+    val nonClusteringActiveDomains = snapshot.getDomainMetadataMap().asScala
+      .filter { case (domainName, domainMetadata) =>
+        !domainMetadata.isRemoved && domainName != ClusteringMetadataDomain.DOMAIN_NAME
+      }.map { case (domainName, domainMetadata) => (domainName, domainMetadata.getConfiguration) }
+    assert(nonClusteringActiveDomains.toSet == domainsToAdd.toSet)
+
+    val newProtocol = getProtocol(engine, tablePath)
+    // Check that we never downgrade the protocol
+    assert(oldProtocol.canUpgradeTo(newProtocol))
+    assert(expectedTableFeaturesSupported.forall(newProtocol.supportsFeature))
+
+    val row = spark.sql(s"DESCRIBE HISTORY delta.`$tablePath`")
+      .filter(s"version = ${snapshot.getVersion}")
+      .select("operation")
+      .collect().last
+    assert(row.getAs[String]("operation") == "REPLACE TABLE")
+  }
+
+  /* ----- ERROR CASES ------ */
+
+  test("CTAS with replace is blocked for now") {
+    // We will add this support in a future PR
+    withTempDirAndEngine { (tablePath, engine) =>
+      createInitialTable(engine, tablePath)
+      assert(
+        intercept[UnsupportedOperationException] {
+          commitReplaceTable(
+            engine,
+            tablePath,
+            data = Seq(Map.empty[String, Literal] -> (dataBatches2)))
+        }.getMessage.contains("Inserting data is not yet supported with REPLACE"))
     }
   }
 
-  def verifyClusteringColumns(tablePath: String, clusteringCols: Seq[String]): Unit = {
-    val table = Table.forPath(defaultEngine, tablePath)
-    // Verify the clustering feature is included in the protocol
-    val snapshot = table.getLatestSnapshot(defaultEngine).asInstanceOf[SnapshotImpl]
-    assertHasWriterFeature(snapshot, "clustering")
-
-    // Verify the clustering columns using Spark
-    val deltaLog = DeltaLog.forTable(spark, new org.apache.hadoop.fs.Path(tablePath))
-    val clusteringMetadataDomainRead =
-      SparkClusteringMetadataDomain.fromSnapshot(deltaLog.update())
-    assert(clusteringMetadataDomainRead.exists(_.clusteringColumns ===
-      clusteringCols.map(Seq(_))))
-  }
-
-  def verifyNoClustering(tablePath: String): Unit = {
-    val deltaLog = DeltaLog.forTable(spark, new org.apache.hadoop.fs.Path(tablePath))
-    val clusteringMetadataDomainRead =
-      SparkClusteringMetadataDomain.fromSnapshot(deltaLog.update())
-    assert(clusteringMetadataDomainRead.isEmpty)
-  }
-
-  test("replace with empty table") {
-    withTempDirAndEngine { (tblPath, engine) =>
+  test("Conflict resolution is disabled for replace table") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createInitialTable(engine, tablePath)
+      // Start replace transaction
+      val txn = getReplaceTransaction(engine, tablePath)
+      // Commit a simple blind append as a conflicting txn
       appendData(
         engine,
-        tblPath,
-        isNewTable = true,
-        testSchema,
-        partCols = Seq.empty,
-        data = Seq(Map.empty[String, Literal] -> (dataBatches1)))
-
-      checkTable(tblPath, dataBatches1.flatMap(_.toTestRows))
-
-      // Change the schema and partition columns
-      Table.forPath(engine, tblPath).asInstanceOf[TableImpl]
-        .createReplaceTableTransactionBuilder(engine, "test-info")
-        .withSchema(engine, testPartitionSchema)
-        .withPartitionColumns(engine, testPartitionColumns.asJava)
-        .build(engine)
-        .commit(engine, emptyIterable())
-
-      // Table should be empty
-      checkTable(tblPath, Seq(), expectedSchema = testPartitionSchema, expectedVersion = Some(1))
+        tablePath,
+        data = Seq(Map.empty[String, Literal] -> (dataBatches2)))
+      // Try to commit replace table and intercept conflicting txn (no conflict resolution)
+      intercept[ConcurrentWriteException] {
+        commitTransaction(txn, engine, emptyIterable())
+      }
     }
   }
 
-  test("replace with CTAS") {
-    withTempDirAndEngine { (tblPath, engine) =>
-      appendData(
-        engine,
-        tblPath,
-        isNewTable = true,
-        testSchema,
-        partCols = Seq.empty,
-        data = Seq(Map.empty[String, Literal] -> (dataBatches1)))
-
-      checkTable(tblPath, dataBatches1.flatMap(_.toTestRows))
-
-      // Replace with new data
-      val txn = Table.forPath(engine, tblPath).asInstanceOf[TableImpl]
-        .createReplaceTableTransactionBuilder(engine, "test-info")
-        .withSchema(engine, testSchema)
-        .build(engine)
-      txn.commit(engine, getAppendActions(txn, Seq(Map.empty[String, Literal] -> (dataBatches2))))
-
-      // Table should be not be empty
-      checkTable(
-        tblPath,
-        dataBatches2.flatMap(_.toTestRows),
-        expectedSchema = testSchema,
-        expectedVersion = Some(1))
+  test("Table::createTransactionBuilder does not allow REPLACE TABLE") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createInitialTable(engine, tablePath)
+      assert(intercept[UnsupportedOperationException] {
+        Table.forPath(engine, tablePath)
+          .createTransactionBuilder(engine, testEngineInfo, Operation.REPLACE_TABLE)
+          .build(engine)
+      }.getMessage.contains("REPLACE TABLE is not yet supported"))
     }
   }
 
-  test("replace clustering table with clustering table") {
-    withTempDirAndEngine { (tblPath, engine) =>
-      appendData(
-        engine,
-        tblPath,
-        isNewTable = true,
-        testPartitionSchema,
-        partCols = Seq.empty,
-        data = Seq(Map.empty[String, Literal] -> (dataClusteringBatches1)),
-        clusteringColsOpt = Some(testClusteringColumns))
-
-      checkTable(tblPath, dataClusteringBatches1.flatMap(_.toTestRows))
-      verifyClusteringColumns(tblPath, Seq("part1", "part2"))
-
-      // Change the clustering columns
-      val txn = Table.forPath(engine, tblPath).asInstanceOf[TableImpl]
-        .createReplaceTableTransactionBuilder(engine, "test-info")
-        .withSchema(engine, testPartitionSchema)
-        .withClusteringColumns(engine, Seq(new Column("id"), new Column("part1")).asJava)
-        .build(engine)
-      txn.commit(
-        engine,
-        getAppendActions(txn, Seq(Map.empty[String, Literal] -> (dataClusteringBatches2))))
-
-      // Table should be not be empty
-      checkTable(
-        tblPath,
-        dataClusteringBatches2.flatMap(_.toTestRows),
-        expectedSchema = testPartitionSchema,
-        expectedVersion = Some(1))
-      verifyClusteringColumns(tblPath, Seq("id", "part1"))
+  test("Cannot replace a table that does not exist") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      assert(
+        intercept[TableNotFoundException] {
+          commitReplaceTable(engine, tablePath)
+        }.getMessage.contains("Trying to replace a table that does not exist"))
     }
   }
 
-  test("replace unclustered table with clustering table") {
-    withTempDirAndEngine { (tblPath, engine) =>
-      appendData(
-        engine,
-        tblPath,
-        isNewTable = true,
-        testSchema,
-        partCols = Seq.empty,
-        data = Seq(Map.empty[String, Literal] -> (dataBatches1)))
-
-      checkTable(tblPath, dataBatches1.flatMap(_.toTestRows))
-      verifyNoClustering(tblPath)
-
-      // Add clustering cols + change schema + write data
-      val txn = Table.forPath(engine, tblPath).asInstanceOf[TableImpl]
-        .createReplaceTableTransactionBuilder(engine, "test-info")
-        .withSchema(engine, testPartitionSchema)
-        .withClusteringColumns(engine, Seq(new Column("id"), new Column("part1")).asJava)
-        .build(engine)
-      txn.commit(
-        engine,
-        getAppendActions(txn, Seq(Map.empty[String, Literal] -> (dataClusteringBatches2))))
-
-      // Table should be not be empty
-      checkTable(
-        tblPath,
-        dataClusteringBatches2.flatMap(_.toTestRows),
-        expectedSchema = testPartitionSchema,
-        expectedVersion = Some(1))
-      verifyClusteringColumns(tblPath, Seq("id", "part1"))
+  test("Cannot enable a feature that Kernel does not support") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createInitialTable(engine, tablePath)
+      assert(
+        intercept[KernelException] {
+          commitReplaceTable(
+            engine,
+            tablePath,
+            tableProperties = Map(TableConfig.CHANGE_DATA_FEED_ENABLED.getKey -> "true"))
+        }.getMessage.contains("Unsupported Delta writer feature"))
     }
   }
 
-  test("replace clustering table with unclustered table") {
-    withTempDirAndEngine { (tblPath, engine) =>
-      appendData(
+  test("Transaction identifier is used to preserve idempotent writes") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createInitialTable(engine, tablePath)
+      commitReplaceTable(
         engine,
-        tblPath,
-        isNewTable = true,
-        testPartitionSchema,
-        partCols = Seq.empty,
-        data = Seq(Map.empty[String, Literal] -> (dataClusteringBatches1)),
-        clusteringColsOpt = Some(testClusteringColumns))
-
-      checkTable(tblPath, dataClusteringBatches1.flatMap(_.toTestRows))
-      verifyClusteringColumns(tblPath, Seq("part1", "part2"))
-
-      // Replace with unclustered table and write data
-      val txn = Table.forPath(engine, tblPath).asInstanceOf[TableImpl]
-        .createReplaceTableTransactionBuilder(engine, "test-info")
-        .withSchema(engine, testSchema)
-        .build(engine)
-      txn.commit(
-        engine,
-        getAppendActions(txn, Seq(Map.empty[String, Literal] -> (dataBatches1))))
-
-      // Table should be not be empty
-      checkTable(
-        tblPath,
-        dataBatches1.flatMap(_.toTestRows),
-        expectedSchema = testSchema)
-      verifyNoClustering(tblPath)
+        tablePath,
+        transactionId = Some(("foo", 0)))
+      intercept[ConcurrentTransactionException] {
+        commitReplaceTable(
+          engine,
+          tablePath,
+          transactionId = Some(("foo", 0)))
+      }
     }
   }
 
-  test("replace with domain metadata for same domain every txn") {
-    // (1) checks that we don't remove plus add new one in replace txn (duplicate domain in 1 txn)
-    // (2) we remove stale ones that are not touched
-    withTempDirAndEngine { (tblPath, engine) =>
-      // Initial table with domain foo
-      val txn1 = Table.forPath(engine, tblPath).asInstanceOf[TableImpl]
+  test("Cannot replace a table with a protocol Kernel does not support") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      spark.sql(
+        s"""
+          |CREATE TABLE delta.`$tablePath` (id INT) USING DELTA
+          |TBLPROPERTIES('delta.enableChangeDataFeed' = 'true')
+          |""".stripMargin)
+      assert(
+        intercept[KernelException] {
+          commitReplaceTable(
+            engine,
+            tablePath)
+        }.getMessage.contains("Unsupported Delta writer feature"))
+    }
+  }
+
+  test("Must provide a schema for replace table transaction") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createInitialTable(engine, tablePath)
+      assert(intercept[KernelException] {
+        getReplaceTxnBuilder(engine, tablePath)
+          .build(engine)
+      }.getMessage.contains("Must provide a new schema for REPLACE TABLE"))
+    }
+  }
+
+  test("Cannot define both partition and clustering columns at the same time") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createInitialTable(engine, tablePath)
+      assert(intercept[IllegalArgumentException] {
+        getReplaceTransaction(
+          engine,
+          tablePath,
+          schema = testPartitionSchema,
+          partitionColumns = testPartitionColumns,
+          clusteringColumns = Some(testClusteringColumns))
+      }.getMessage.contains(
+        "Partition Columns and Clustering Columns cannot be set at the same time"))
+    }
+  }
+
+  test("Schema provided must be valid") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createInitialTable(engine, tablePath)
+      assert(intercept[KernelException] {
+        getReplaceTransaction(
+          engine,
+          tablePath,
+          schema = new StructType().add("col", IntegerType.INTEGER).add("col", IntegerType.INTEGER))
+      }.getMessage.contains(
+        "Schema contains duplicate columns"))
+    }
+  }
+
+  test("Partition columns provided must be valid") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createInitialTable(engine, tablePath)
+      assert(intercept[IllegalArgumentException] {
+        getReplaceTransaction(
+          engine,
+          tablePath,
+          partitionColumns = Seq("foo"))
+      }.getMessage.contains(
+        "Partition column foo not found in the schema"))
+    }
+  }
+
+  test("Clustering columns provided must be valid") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createInitialTable(engine, tablePath)
+      assert(intercept[KernelException] {
+        getReplaceTransaction(
+          engine,
+          tablePath,
+          clusteringColumns = Some(Seq(new Column("foo"))))
+      }.getMessage.contains(
+        "Column 'column(`foo`)' was not found in the table schema"))
+    }
+  }
+
+  test("icebergWriterCompatV1 checks are enforced") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createInitialTable(engine, tablePath)
+      assert(
+        intercept[KernelException] {
+          commitReplaceTable(
+            engine,
+            tablePath,
+            tableProperties = Map(
+              TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey -> "true",
+              TableConfig.COLUMN_MAPPING_MODE.getKey -> "name"))
+        }.getMessage.contains("The value 'name' for the property 'delta.columnMapping.mode' is " +
+          "not compatible with icebergWriterCompatV1 requirements"))
+    }
+  }
+
+  test("icebergCompatV2 checks are enforced") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createInitialTable(engine, tablePath)
+      assert(
+        intercept[KernelException] {
+          commitReplaceTable(
+            engine,
+            tablePath,
+            tableProperties = Map(
+              TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true",
+              TableConfig.DELETION_VECTORS_CREATION_ENABLED.getKey -> "true"))
+        }.getMessage.contains(
+          "Table features [deletionVectors] are incompatible with icebergCompatV2"))
+    }
+  }
+
+  /* ----------------- POSITIVE CASES ----------------- */
+
+  // TODO can we refactor other suites to run with both create + replace?
+
+  // TODO when we support CTAS parameterize these tests?
+  test("Basic case with no metadata changes") {
+    // This just checks that the table is cleared
+    withTempDirAndEngine { (tablePath, engine) =>
+      createInitialTable(engine, tablePath)
+      checkReplaceTable(engine, tablePath)
+    }
+  }
+
+  test("Basic case with initial empty table") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createInitialTable(engine, tablePath, includeData = false)
+      checkReplaceTable(engine, tablePath)
+    }
+  }
+
+  // Note, these tests cover things like transitioning between unpartitioned, partitioned, and
+  // clustered tables. This means it includes removing existing clustering domains when the initial
+  // table was clustered.
+  validSchemaDefs.foreach { initialSchemaDef =>
+    validSchemaDefs.foreach { replaceSchemaDef =>
+      test(s"Schema change from $initialSchemaDef to $replaceSchemaDef") {
+        withTempDirAndEngine { (tablePath, engine) =>
+          createInitialTable(
+            engine,
+            tablePath,
+            schema = initialSchemaDef.schema,
+            partitionColumns = initialSchemaDef.partitionColumns,
+            clusteringColumns = initialSchemaDef.clusteringColumns,
+            includeData = false)
+          checkReplaceTable(
+            engine,
+            tablePath,
+            schema = replaceSchemaDef.schema,
+            partitionColumns = replaceSchemaDef.partitionColumns,
+            clusteringColumns = replaceSchemaDef.clusteringColumns)
+        }
+      }
+    }
+  }
+
+  test("Case with DVs in the initial table") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      spark.sql(
+        s"""
+           |CREATE TABLE delta.`$tablePath` (id INT) USING DELTA
+           |TBLPROPERTIES('delta.enableDeletionVectors' = 'true')
+           |""".stripMargin)
+      spark.sql(
+        s"""
+           |INSERT INTO delta.`$tablePath` VALUES (0), (1), (2), (3)
+           |""".stripMargin)
+      spark.sql(
+        s"""
+           |DELETE FROM delta.`$tablePath` WHERE id > 1
+           |""".stripMargin)
+      checkTable(tablePath, Seq(TestRow(0), TestRow(1)))
+      checkReplaceTable(engine, tablePath) // check it is empty after (also DVs no longer enabled)
+    }
+  }
+
+  test("Existing table properties are removed") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createInitialTable(
+        engine,
+        tablePath,
+        tableProperties = Map(
+          TableConfig.APPEND_ONLY_ENABLED.getKey -> "true",
+          "user.facing.prop" -> "existing_prop"))
+      checkReplaceTable(engine, tablePath)
+    }
+  }
+
+  test("New table features are correctly enabled") {
+    // This also validates that withDomainMetadataSupported works
+    withTempDirAndEngine { (tablePath, engine) =>
+      createInitialTable(engine, tablePath)
+      checkReplaceTable(
+        engine,
+        tablePath,
+        tableProperties = Map(
+          TableConfig.DELETION_VECTORS_CREATION_ENABLED.getKey -> "true"),
+        domainsToAdd = Seq(("domain-name", "some-config")),
+        expectedTableFeaturesSupported =
+          Seq(TableFeatures.DELETION_VECTORS_RW_FEATURE, TableFeatures.DOMAIN_METADATA_W_FEATURE))
+    }
+  }
+
+  test("Domain metadata are reset (user-facing)") {
+    // (1) checks that we correctly override an existing domain with the new config if set in the
+    //     replace txn
+    // (2) checks we remove stale ones that are not set in the replace txn
+    withTempDirAndEngine { (tablePath, engine) =>
+      // Create initial table with 2 domains
+      val txn = Table.forPath(engine, tablePath).asInstanceOf[TableImpl]
         .createTransactionBuilder(engine, "test-info", Operation.CREATE_TABLE)
         .withSchema(engine, testSchema)
         .withDomainMetadataSupported()
         .build(engine)
-      txn1.addDomainMetadata("foo", "check1")
-      txn1.addDomainMetadata("foo2", "check2")
-      txn1.commit(
-        engine,
-        getAppendActions(txn1, Seq(Map.empty[String, Literal] -> (dataBatches1))))
+      txn.addDomainMetadata("domainToOverride", "check1")
+      txn.addDomainMetadata("domainToRemove", "check2")
+      commitTransaction(txn, engine, emptyIterable())
 
-      val snapshot1 = Table.forPath(engine, tblPath).getLatestSnapshot(engine)
-      assert(snapshot1.getDomainMetadata("foo").toScala.contains("check1"))
-      assert(snapshot1.getDomainMetadata("foo2").toScala.contains("check2"))
+      // Validate the 2 domains are present
+      val snapshot = Table.forPath(engine, tablePath).getLatestSnapshot(engine)
+      assert(snapshot.getDomainMetadata("domainToOverride").toScala.contains("check1"))
+      assert(snapshot.getDomainMetadata("domainToRemove").toScala.contains("check2"))
 
-      // Replace table and commit same domain
-      val txn2 = Table.forPath(engine, tblPath).asInstanceOf[TableImpl]
-        .createReplaceTableTransactionBuilder(engine, "test-info")
-        .withSchema(engine, testSchema)
-        .withDomainMetadataSupported()
-        .build(engine)
-      txn2.addDomainMetadata("foo", "check2")
-      txn2.commit(
+      // Replace table and override 1/2 of the domains
+      checkReplaceTable(
         engine,
-        getAppendActions(txn2, Seq(Map.empty[String, Literal] -> (dataBatches1))))
-      val snapshot2 = Table.forPath(engine, tblPath).getLatestSnapshot(engine)
-      assert(snapshot2.getDomainMetadata("foo").toScala.contains("check2"))
-      assert(!snapshot2.getDomainMetadata("foo2").isPresent)
+        tablePath,
+        domainsToAdd = Seq(("domainToOverride", "overridden-config")))
     }
   }
 
-  // TODO test removes are correctly created (incl with DVs, partitionValues, other fields?)
-  // TODO tests with column mapping
-  // TODO validates inputs correctly (i.e. requires a schema is provided)
-  //  and other stuff in txnBuilder checks
-  // TODO you can do things like enable CM mode ID, enable icebergWriterCompatV1
-  // TODO correct protocol (doesn't downgrade, includes any new features / upgrades)
-  // TODO test in TransactionReportSuite
+  test("Column mapping maxFieldId is preserved during REPLACE TABLE") {
+    // We should preserve maxFieldId regardless of column mapping mode (if a future replace
+    // operation re-enables id mode we should not start our fieldIds from 0)
+    withTempDirAndEngine { (tablePath, engine) =>
+      createInitialTable(
+        engine,
+        tablePath,
+        tableProperties = Map(
+          TableConfig.COLUMN_MAPPING_MODE.getKey -> "id"),
+        includeData = false // To avoid writing data with correct CM schema
+      )
+      checkReplaceTable(
+        engine,
+        tablePath,
+        expectedTableProperties = Some(Map(TableConfig.COLUMN_MAPPING_MAX_COLUMN_ID.getKey -> "1")))
+    }
+  }
 
-  // and I'm sure plenty more tests.. just noting down things as I think of them
+  test("icebergCompatV2 checks are executed and properties updated/auto-enabled") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createInitialTable(engine, tablePath)
+      // TODO once we support column mapping update this test
+      intercept[UnsupportedOperationException] {
+        checkReplaceTable(
+          engine,
+          tablePath,
+          tableProperties = Map(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"),
+          expectedTableProperties = Some(Map(
+            TableConfig.COLUMN_MAPPING_MODE.getKey -> "name",
+            TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true")),
+          expectedTableFeaturesSupported = Seq(
+            TableFeatures.ICEBERG_COMPAT_V2_W_FEATURE,
+            TableFeatures.COLUMN_MAPPING_RW_FEATURE))
+      }
+    }
+  }
+
+  // TODO - can we reuse the tests in IcebergWriterCompatV1Suite to run with both create table and
+  //  replace table?
+  test("icebergWriterCompatV1 checks are executed and properties updated/auto-enabled") {
+    // This also validates you can enable icebergWriterCompatV1 on an existing table during replace
+    withTempDirAndEngine { (tablePath, engine) =>
+      createInitialTable(engine, tablePath)
+      // TODO once we support column mapping update this test
+      intercept[UnsupportedOperationException] {
+        checkReplaceTable(
+          engine,
+          tablePath,
+          tableProperties = Map(TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey -> "true"),
+          expectedTableProperties = Some(Map(
+            TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey -> "true",
+            TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
+            TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true")),
+          expectedTableFeaturesSupported = Seq(
+            TableFeatures.ICEBERG_COMPAT_V2_W_FEATURE,
+            TableFeatures.ICEBERG_WRITER_COMPAT_V1,
+            TableFeatures.COLUMN_MAPPING_RW_FEATURE))
+      }
+    }
+  }
+
+  /* ---------- Column mapping and schema related tests  ----------- */
+
+  // TODO re-enable this when adding support for column mapping in a future PR
+  ignore("Column mapping id mode can be enabled even if not previously enabled") {
+    // Enabling ID mode is usually blocked for existing tables
+    withTempDirAndEngine { (tablePath, engine) =>
+      createInitialTable(engine, tablePath)
+      checkReplaceTable(
+        engine,
+        tablePath,
+        tableProperties = Map(
+          TableConfig.COLUMN_MAPPING_MODE.getKey -> "id"))
+    }
+  }
+
+  // Column mapping support will come in a future PR
+  Seq("id", "name").foreach { cmMode =>
+    test(s"Column mapping mode $cmMode is blocked for now") {
+      withTempDirAndEngine { (tablePath, engine) =>
+        createInitialTable(engine, tablePath)
+        intercept[UnsupportedOperationException] {
+          commitReplaceTable(
+            engine,
+            tablePath,
+            tableProperties = Map(
+              TableConfig.COLUMN_MAPPING_MODE.getKey -> cmMode))
+        }
+      }
+    }
+  }
+
+  test("When cmMode=None it is possible to have column with same name different type") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createInitialTable(
+        engine,
+        tablePath,
+        schema = new StructType()
+          .add("col1", StringType.STRING),
+        includeData = false)
+      checkReplaceTable(
+        engine,
+        tablePath,
+        schema = new StructType()
+          .add("col1", IntegerType.INTEGER))
+    }
+  }
+
+  // TODO tests for other internal domains besides clustering (i.e. inCommitTimestamp?)
+}
+
+object DeltaReplaceTableSuite {
+
+  case class SchemaDef(
+      schema: StructType,
+      partitionColumns: Seq[String] = Seq.empty,
+      clusteringColumns: Option[List[Column]] = None) {
+    override def toString: String = {
+      s"Schema=$schema, partCols=$partitionColumns, " +
+        s"clusteringColumns=${clusteringColumns.map(_.toString).getOrElse(List.empty)}"
+    }
+  }
+
+  val schemaA = new StructType()
+    .add("col1", IntegerType.INTEGER)
+    .add("col2", IntegerType.INTEGER)
+
+  val schemaB = new StructType()
+    .add("col4", StringType.STRING)
+    .add("col5", StringType.STRING)
+
+  val unpartitionedSchemaDefA = SchemaDef(schemaA)
+  val unpartitionedSchemaDefB = SchemaDef(schemaB)
+
+  val partitionedSchemaDefA_1 = SchemaDef(schemaA, partitionColumns = Seq("col1"))
+  val partitionedSchemaDefA_2 = SchemaDef(schemaA, partitionColumns = Seq("col2"))
+
+  val partitionedSchemaDefB = SchemaDef(schemaB, partitionColumns = Seq("col4"))
+
+  val clusteredSchemaDefA_1 = SchemaDef(
+    schemaA,
+    clusteringColumns = Some(List(new Column("col1"))))
+  val clusteredSchemaDefA_2 = SchemaDef(
+    schemaA,
+    clusteringColumns = Some(List(new Column("col2"))))
+
+  val clusteredSchemaDefB = SchemaDef(
+    schemaB,
+    clusteringColumns = Some(List(new Column("col4"))))
+
+  val validSchemaDefs = Seq(
+    unpartitionedSchemaDefA,
+    unpartitionedSchemaDefB,
+    partitionedSchemaDefA_1,
+    partitionedSchemaDefA_2,
+    partitionedSchemaDefB,
+    clusteredSchemaDefA_1,
+    clusteredSchemaDefA_2,
+    clusteredSchemaDefB)
 }

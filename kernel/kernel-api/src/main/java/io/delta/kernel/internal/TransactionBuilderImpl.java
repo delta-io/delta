@@ -19,6 +19,7 @@ import static io.delta.kernel.internal.DeltaErrors.requiresSchemaForNewTable;
 import static io.delta.kernel.internal.DeltaErrors.tableAlreadyExists;
 import static io.delta.kernel.internal.TransactionImpl.DEFAULT_READ_VERSION;
 import static io.delta.kernel.internal.TransactionImpl.DEFAULT_WRITE_VERSION;
+import static io.delta.kernel.internal.util.ColumnMapping.getColumnMappingMode;
 import static io.delta.kernel.internal.util.ColumnMapping.isColumnMappingModeEnabled;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames;
@@ -65,7 +66,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   protected final TableImpl table;
   private final String engineInfo;
   private final Operation operation;
-  private Optional<StructType> schema = Optional.empty();
+  protected Optional<StructType> schema = Optional.empty();
   private Optional<List<String>> partitionColumns = Optional.empty();
   private Optional<List<Column>> clusteringColumns = Optional.empty();
   private Optional<SetTransaction> setTxnOpt = Optional.empty();
@@ -315,6 +316,15 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       // needs instead of the entire SnapshotImpl class. This should also let us avoid creating
       // this fake empty initial snapshot.
       latestSnapshot = Optional.of(getInitialEmptySnapshot(engine, baseMetadata, baseProtocol));
+    }
+
+    // Block this for now - in a future PR we will enable this
+    if (operation == Operation.REPLACE_TABLE) {
+      if (getColumnMappingMode(newMetadata.orElse(baseMetadata).getConfiguration())
+          != ColumnMappingMode.NONE) {
+        throw new UnsupportedOperationException(
+            "REPLACE TABLE is not yet supported with column mapping");
+      }
     }
 
     return new TransactionImpl(

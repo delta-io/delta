@@ -14,30 +14,23 @@
  * limitations under the License.
  */
 package io.delta.kernel.defaults
-import java.util.Optional
-import java.util.stream.Collectors
 
 import scala.collection.immutable.Seq
-import scala.jdk.CollectionConverters.{collectionAsScalaIterableConverter, setAsJavaSetConverter}
 import scala.language.implicitConversions
 
 import io.delta.kernel.{Transaction, TransactionCommitResult}
 import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.utils.TestRow
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
-import io.delta.kernel.internal.SnapshotImpl
-import io.delta.kernel.internal.checksum.ChecksumReader
-import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.CloseableIterable
 
 /**
- * Test suite that run all tests in DeltaTableWritesSuite with CRC file written
- * after each delta commit. This test suite will verify that the written CRC files are valid.
+ * Trait to mixin into a test suite that extends [[DeltaTableWriteSuiteBase]] to run all the tests
+ * with CRC file written after each commit and verify the written CRC files are valid.
+ * Note, this requires the test suite uses [[commitTransaction]] and [[verifyWrittenContent]].
  */
-class DeltaTableWriteWithCrcSuite extends DeltaTableWritesSuite {
-
+trait DeltaTableWriteSuiteBaseWithCrc extends DeltaTableWriteSuiteBase {
   override def commitTransaction(
       txn: Transaction,
       engine: Engine,
@@ -50,6 +43,12 @@ class DeltaTableWriteWithCrcSuite extends DeltaTableWritesSuite {
       expSchema: StructType,
       expData: Seq[TestRow]): Unit = {
     super.verifyWrittenContent(path, expSchema, expData)
-    verifyChecksum(path)
+    verifyChecksum(path, tableIsEmpty = expData.isEmpty)
   }
 }
+
+class DeltaTableWriteWithCrcSuite extends DeltaTableWritesSuite
+    with DeltaTableWriteSuiteBaseWithCrc {}
+
+class DeltaReplaceTableWithCrcSuite extends DeltaReplaceTableSuite
+    with DeltaTableWriteSuiteBaseWithCrc {}

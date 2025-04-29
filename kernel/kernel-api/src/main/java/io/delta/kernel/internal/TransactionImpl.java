@@ -387,6 +387,11 @@ public class TransactionImpl implements Transaction {
 
       CloseableIterator<Row> completeFileActionIter;
       if (isReplaceTable()) {
+        // For now, block CTAS with replace; this will be unblocked in a follow-up PR
+        if (userStageDataIter.hasNext()) {
+          throw new UnsupportedOperationException(
+              "Inserting data is not yet supported with REPLACE");
+        }
         // If this is a replace table operation we need to internally generate the remove file
         // actions to reset the table state
         completeFileActionIter = getRemoveActionsForReplace(engine).combine(userStageDataIter);

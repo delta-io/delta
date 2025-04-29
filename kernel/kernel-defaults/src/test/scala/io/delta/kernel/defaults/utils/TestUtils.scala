@@ -35,6 +35,7 @@ import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl}
 import io.delta.kernel.internal.checksum.ChecksumReader
 import io.delta.kernel.internal.data.ScanStateRow
 import io.delta.kernel.internal.fs.{Path => KernelPath}
+import io.delta.kernel.internal.stats.FileSizeHistogram
 import io.delta.kernel.internal.util.Utils
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.types._
@@ -760,23 +761,31 @@ trait TestUtils extends Assertions with SQLHelper {
   }
 
   /** Ensure checksum is readable by CRC reader and correct. */
-  def verifyChecksum(tablePath: String): Unit = {
+  def verifyChecksum(tablePath: String, tableIsEmpty: Boolean = false): Unit = {
     val currentSnapshot = latestSnapshot(tablePath, defaultEngine)
     val checksumVersion = currentSnapshot.getVersion
-    val crcInfo = ChecksumReader.getCRCInfo(
+    val crcInfoOpt = ChecksumReader.getCRCInfo(
       defaultEngine,
       new KernelPath(f"$tablePath/_delta_log/"),
       checksumVersion,
       checksumVersion)
-    assert(crcInfo.isPresent)
-    // TODO: check metadata, protocol and file size.
-    assert(crcInfo.get().getNumFiles
-      === collectScanFileRows(currentSnapshot.getScanBuilder.build()).size)
-    // CRC does not store tombstones.
-    assert(crcInfo.get().getDomainMetadata === Optional.of(
-      currentSnapshot.asInstanceOf[SnapshotImpl].getDomainMetadataMap.values().asScala
-        .filterNot(_.isRemoved)
-        .toSet
-        .asJava))
+    assert(crcInfoOpt.isPresent)
+    crcInfoOpt.toScala.foreach { crcInfo =>
+      // TODO: check metadata, protocol and file size.
+      assert(crcInfo.getNumFiles
+        === collectScanFileRows(currentSnapshot.getScanBuilder.build()).size)
+      if (tableIsEmpty) {
+        assert(crcInfo.getTableSizeBytes == 0)
+        crcInfo.getFileSizeHistogram.toScala.foreach { fileSizeHistogram =>
+          assert(fileSizeHistogram == FileSizeHistogram.createDefaultHistogram)
+        }
+      }
+      // CRC does not store tombstones.
+      assert(crcInfo.getDomainMetadata === Optional.of(
+        currentSnapshot.asInstanceOf[SnapshotImpl].getDomainMetadataMap.values().asScala
+          .filterNot(_.isRemoved)
+          .toSet
+          .asJava))
+    }
   }
 }

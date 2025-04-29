@@ -33,7 +33,7 @@ public enum Operation {
   STREAMING_UPDATE("STREAMING UPDATE"),
 
   /** Recorded during REPLACE operation (may also be considered an overwrite) */
-  REPLACE_TABLE("Replace Table"),
+  REPLACE_TABLE("REPLACE TABLE"),
 
   /** For any operation that doesn't fit the above categories. */
   MANUAL_UPDATE("Manual Update");

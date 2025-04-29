@@ -22,7 +22,7 @@ import scala.collection.JavaConverters._
 import io.delta.kernel._
 import io.delta.kernel.data.Row
 import io.delta.kernel.engine._
-import io.delta.kernel.internal.TableConfig
+import io.delta.kernel.internal.{TableConfig, TableImpl}
 import io.delta.kernel.internal.actions.{GenerateIcebergCompatActionUtils, SingleAction}
 import io.delta.kernel.internal.data.TransactionStateRow
 import io.delta.kernel.internal.fs.Path
@@ -32,7 +32,7 @@ import io.delta.kernel.internal.util.Utils
 import io.delta.kernel.metrics.{FileSizeHistogramResult, SnapshotReport, TransactionMetricsResult, TransactionReport}
 import io.delta.kernel.types.{IntegerType, StructType}
 import io.delta.kernel.utils.{CloseableIterable, CloseableIterator, DataFileStatus}
-import io.delta.kernel.utils.CloseableIterable.inMemoryIterable
+import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -149,10 +149,15 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
 
     val (transactionReport, duration, snapshotReportOpt, exception) =
       getTransactionAndSnapshotReport(
-        engine =>
-          buildTransaction(
-            Table.forPath(engine, path).createTransactionBuilder(engine, engineInfo, operation),
-            engine),
+        engine => {
+          val txnBuilder = if (operation == Operation.REPLACE_TABLE) {
+            Table.forPath(engine, path).asInstanceOf[TableImpl]
+              .createReplaceTableTransactionBuilder(engine, engineInfo)
+          } else {
+            Table.forPath(engine, path).createTransactionBuilder(engine, engineInfo, operation)
+          }
+          buildTransaction(txnBuilder, engine)
+        },
         generateCommitActions,
         expectException,
         validateTransactionMetrics)
@@ -449,6 +454,43 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         expectedBaseSnapshotVersion = 0,
         expectedNumAttempts = 6, // 1 first try + 6 retries
         buildTransaction = (builder, engine) => builder.withMaxRetries(5).build(engine))
+    }
+  }
+
+  test("TransactionReport: REPLACE a non-empty table") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      // Set up a non-empty table at version 0 with add file size that we know
+      val txn = Table.forPath(defaultEngine, path)
+        .createTransactionBuilder(defaultEngine, "testEngineInfo", Operation.CREATE_TABLE)
+        .withSchema(defaultEngine, new StructType().add("col1", IntegerType.INTEGER))
+        .withDomainMetadataSupported()
+        .build(defaultEngine)
+      txn.addDomainMetadata("user-domain", "some config")
+      val result = txn.commit(
+        defaultEngine,
+        generateAppendActions(fileStatusIter1)(txn, defaultEngine))
+      // Write out the CRC so that we will have fileSizeHistogram in the next commit
+      result.getPostCommitHooks.asScala.foreach(_.threadSafeInvoke(defaultEngine))
+
+      // Check TransactionReport for REPLACE operation
+      checkTransactionReport(
+        generateCommitActions = (_, _) => emptyIterable(), // for now no CTAS
+        path,
+        expectException = false,
+        expectedBaseSnapshotVersion = 0,
+        expectedNumRemoveFiles = 1,
+        expectedNumTotalActions = 5, // protocol, metadata, commitInfo, domainMetadata (tombstone)
+        expectedCommitVersion = Some(1),
+        expectedTotalRemoveFilesSizeInBytes = 100,
+        expectedFileSizeHistogramResult = Some(
+          FileSizeHistogram.createDefaultHistogram().captureFileSizeHistogramResult()),
+        buildTransaction = (transBuilder, engine) => {
+          transBuilder
+            .withSchema(engine, new StructType().add("col1_new", IntegerType.INTEGER))
+            .build(engine)
+        },
+        operation = Operation.REPLACE_TABLE)
     }
   }
 
