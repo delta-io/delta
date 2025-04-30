@@ -81,7 +81,7 @@ class CatalogOwnedEnablementSuite
     // Insert initial data to the table
     spark.sql(s"INSERT INTO $tableName VALUES 1") // commit 1
     spark.sql(s"INSERT INTO $tableName VALUES 2") // commit 2
-    val log = DeltaLog.forTable(spark, new TableIdentifier(table = tableName))
+    val log = DeltaLog.forTable(spark, TableIdentifier(tableName))
     validateCatalogOwnedCompleteEnablement(
       snapshot = log.unsafeVolatileSnapshot,
       expectEnabled = createCatalogOwnedTableAtInit)
