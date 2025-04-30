@@ -30,6 +30,7 @@ import io.delta.kernel.internal.checkpoints.CheckpointInstance;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.Tuple2;
+import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
@@ -75,14 +76,13 @@ public final class DeltaHistoryManager {
       boolean mustBeRecreatable,
       boolean canReturnLastCommit,
       boolean canReturnEarliestCommit)
-      throws TableNotFoundException, IOException {
+      throws TableNotFoundException {
 
     long earliestVersion =
         (mustBeRecreatable)
             ? getEarliestRecreatableCommit(engine, logPath)
             : getEarliestDeltaFile(engine, logPath);
 
-    Metadata latestMetadata = latestSnapshot.getMetadata();
     Commit placeholderEarliestCommit =
         new Commit(earliestVersion, -1L /* timestamp */);
     Commit ictEnablementCommit = getICTEnablementCommit(latestSnapshot, placeholderEarliestCommit);
@@ -96,13 +96,22 @@ public final class DeltaHistoryManager {
         // start ICT search over [earliest available ICT version, latestVersion)
         boolean ictEnabledForEntireWindow = (ictEnablementCommit.version <= earliestVersion);
         Commit searchWindowLowerBoundCommit = ictEnabledForEntireWindow ? placeholderEarliestCommit : ictEnablementCommit;
-        result = getActiveCommitAtTimeFromICTRange(
-                timestamp,
-                searchWindowLowerBoundCommit,
-                latestSnapshot.getVersion() + 1,
-                engine,
-                latestSnapshot.getLogPath(),
-                10 /* numChunks */);
+        try {
+          result = getActiveCommitAtTimeFromICTRange(
+                  timestamp,
+                  searchWindowLowerBoundCommit,
+                  latestSnapshot.getVersion() + 1,
+                  engine,
+                  latestSnapshot.getLogPath(),
+                  10 /* numChunks */);
+        } catch (IOException e) {
+          // TODO: proper error message.
+          throw new RuntimeException(
+              "There was an error while reading a historical commit while performing a timestamp" +
+                      "based lookup. This can happen when the commit log is corrupted or when " +
+                      "there is a parallel operation like metadata cleanup that is deleting " +
+                      "commits. Please retry the query.", e);
+        }
       }
     } else {
       // ICT was NOT enabled as-of the requested time
@@ -113,8 +122,13 @@ public final class DeltaHistoryManager {
         // error correctly.
         // Else, when `canReturnEarliestCommit` is `true`, the earliest commit
         // is the desired result.
-        // The real timestamp of the earliest commit will be fetched later.
-        result = Optional.of(placeholderEarliestCommit);
+        // TODO: set the correct timestamp for the placeholderEarliestCommit.
+        Optional<CommitInfo> commitInfoOpt = CommitInfo.getCommitInfoOpt(
+                engine, latestSnapshot.getLogPath(), placeholderEarliestCommit.getVersion());
+        long ict =
+                CommitInfo.getRequiredInCommitTimestamp(
+                        commitInfoOpt, Long.toString(placeholderEarliestCommit.getVersion()), logPath);
+        result = Optional.of(new Commit(placeholderEarliestCommit.getVersion(), ict));
       } else {
         // start non-ICT search over [earliestVersion, ictEnablementVersion)
         // Search for the commit
@@ -126,19 +140,23 @@ public final class DeltaHistoryManager {
       }
     }
 
+    if (!result.isPresent()) {
+      // TODO: proper error message.
+      throw new RuntimeException(
+          String.format("No commit found at %s", logPath));
+    }
+    Commit commit = result.get();
 
     // If timestamp is before the earliest commit
     if (commit.timestamp > timestamp && !canReturnEarliestCommit) {
       throw DeltaErrors.timestampBeforeFirstAvailableCommit(
           logPath.getParent().toString(), /* use dataPath */
           timestamp,
-          commits.get(0).timestamp,
-          commits.get(0).version);
+          commit.timestamp,
+          commit.version);
     }
     // If timestamp is after the last commit of the table
-    if (commit == commits.get(commits.size() - 1)
-        && commit.timestamp < timestamp
-        && !canReturnLastCommit) {
+    if (commit.timestamp < timestamp && !canReturnLastCommit) {
       throw DeltaErrors.timestampAfterLatestCommit(
           logPath.getParent().toString(), /* use dataPath */
           timestamp,
