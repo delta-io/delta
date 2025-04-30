@@ -15,12 +15,11 @@
  */
 package io.delta.kernel.internal.util;
 
-import static io.delta.kernel.internal.TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED;
-
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
+import static io.delta.kernel.internal.TableConfig.*;
+
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.CommitInfo;
@@ -28,8 +27,6 @@ import io.delta.kernel.internal.actions.Metadata;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
-
-import static io.delta.kernel.internal.TableConfig.*;
 
 public class InCommitTimestampUtils {
 
@@ -49,11 +46,9 @@ public class InCommitTimestampUtils {
     if (didCurrentTransactionEnableICT(engine, metadata, readSnapshot) && commitVersion != 0) {
       Map<String, String> enablementTrackingProperties = new HashMap<>();
       enablementTrackingProperties.put(
-          IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.getKey(),
-          Long.toString(commitVersion));
+          IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.getKey(), Long.toString(commitVersion));
       enablementTrackingProperties.put(
-          IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.getKey(),
-          Long.toString(inCommitTimestamp));
+          IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.getKey(), Long.toString(inCommitTimestamp));
 
       Metadata newMetadata = metadata.withMergedConfiguration(enablementTrackingProperties);
       return Optional.of(newMetadata);
