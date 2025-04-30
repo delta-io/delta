@@ -175,9 +175,9 @@ trait ChecksumStatsSuiteBase extends DeltaTableWriteSuiteBase {
     val result = txn.commit(engine, dataActions)
     val checksumHook = result.getPostCommitHooks.stream().filter(hook =>
       hook.getType == getPostCommitHookType).findFirst()
-    if (checksumHook.isPresent) {
-      checksumHook.get().threadSafeInvoke(engine)
-    }
+    // When result.getVersion is 0, there will only be CHECKSUM_SIMPLE.
+    assert(result.getVersion == 0 || checksumHook.isPresent)
+    checksumHook.ifPresent(_.threadSafeInvoke(engine))
     result
   }
 
