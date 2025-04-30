@@ -27,6 +27,7 @@ import io.delta.kernel.{Operation, Table}
 import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.engine.Engine
+import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
 import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction
 import io.delta.kernel.internal.TableImpl
 import io.delta.kernel.internal.actions.{AddFile, Metadata, SingleAction}
@@ -46,9 +47,13 @@ import org.apache.spark.sql.functions.col
  * This suite ensures that both implementations generate consistent checksums
  * for various table operations.
  */
-class ChecksumSimpleComparisonSuite extends DeltaTableWriteSuiteBase with TestUtils {
+trait ChecksumComparisonSuiteBase extends DeltaTableWriteSuiteBase with TestUtils {
 
   private val PARTITION_COLUMN = "part"
+
+  protected def getPostCommitHookType: PostCommitHookType
+
+  protected def maybeDeleteChecksum(tablePath: String, version: Long): Unit = {}
 
   test("create table, insert data and verify checksum") {
     withTempDirAndEngine { (tablePath, engine) =>
@@ -65,11 +70,13 @@ class ChecksumSimpleComparisonSuite extends DeltaTableWriteSuiteBase with TestUt
         .forEach(hook => hook.threadSafeInvoke(engine))
       spark.sql(s"CREATE OR REPLACE TABLE delta.`${sparkTablePath}` (id LONG) USING DELTA")
       assertChecksumEquals(engine, sparkTablePath, kernelTablePath, 0)
+      maybeDeleteChecksum(kernelTablePath, 0)
 
       (1 to 10).foreach { version =>
         spark.range(0, version).write.format("delta").mode("append").save(sparkTablePath)
         commitSparkChangeToKernel(kernelTablePath, engine, sparkTablePath, version)
         assertChecksumEquals(engine, sparkTablePath, kernelTablePath, version)
+        maybeDeleteChecksum(kernelTablePath, version)
       }
     }
   }
@@ -91,12 +98,14 @@ class ChecksumSimpleComparisonSuite extends DeltaTableWriteSuiteBase with TestUt
         s"CREATE OR REPLACE TABLE delta.`${sparkTablePath}` " +
           s"(id LONG, part LONG) USING DELTA PARTITIONED BY (part)")
       assertChecksumEquals(engine, sparkTablePath, kernelTablePath, 0)
+      maybeDeleteChecksum(kernelTablePath, 0)
 
       (1 to 10).foreach { version =>
         spark.range(0, version).withColumn(PARTITION_COLUMN, col("id") % 2)
           .write.format("delta").mode("append").save(sparkTablePath)
         commitSparkChangeToKernel(kernelTablePath, engine, sparkTablePath, version)
         assertChecksumEquals(engine, sparkTablePath, kernelTablePath, version)
+        maybeDeleteChecksum(kernelTablePath, version)
       }
     }
   }
@@ -188,6 +197,25 @@ class ChecksumSimpleComparisonSuite extends DeltaTableWriteSuiteBase with TestUt
     txn
       .commit(engine, inMemoryIterable(toCloseableIterator(addFilesRows.iterator())))
       .getPostCommitHooks
+      .stream().filter(_.getType == getPostCommitHookType)
       .forEach(_.threadSafeInvoke(engine))
+  }
+}
+
+class ChecksumSimpleComparisonSuite extends ChecksumComparisonSuiteBase {
+
+  override def getPostCommitHookType
+      : PostCommitHookType =
+    PostCommitHookType.CHECKSUM_SIMPLE
+}
+
+class ChecksumFullComparisonSuite extends ChecksumComparisonSuiteBase {
+
+  override def getPostCommitHookType
+      : PostCommitHookType =
+    PostCommitHookType.CHECKSUM_FULL
+
+  override def maybeDeleteChecksum(tablePath: String, version: Long): Unit = {
+    deleteChecksumFileForTable(tablePath, Seq(version.toInt))
   }
 }
