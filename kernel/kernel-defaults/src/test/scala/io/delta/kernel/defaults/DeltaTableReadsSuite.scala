@@ -571,6 +571,19 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       expectedAnswer = (0 until 150).map(i => TestRow(i.toLong)))
   }
 
+  test("table with checkpoint and log compaction") {
+    checkTable(
+      path = getTestResourceFilePath("basic-with-checkpoint-and-log-compaction"),
+      expectedAnswer = (0 until 150).map(i => TestRow(i.toLong)))
+  }
+
+  test("table with checkpoint and log compaction, ignore last compaction") {
+    checkTable(
+      path = getTestResourceFilePath("basic-with-checkpoint-and-log-compaction"),
+      expectedAnswer = (0 until 130).map(i => TestRow(i.toLong)),
+      version = Some(12))
+  }
+
   test(s"table with spaces in the table path") {
     withTempDir { tempDir =>
       val target = tempDir.getCanonicalPath + s"/table- -path"

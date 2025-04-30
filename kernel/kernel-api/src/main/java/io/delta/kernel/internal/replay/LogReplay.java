@@ -227,14 +227,16 @@ public class LogReplay {
   // Helper Methods //
   ////////////////////
 
+  // For now we always read log compaction files. Plumb an option through to here if we ever want to
+  // make it configurable
+  private boolean readLogCompactionFiles = true;
+
   /**
    * Get the files to use for this log replay, can be configured for example to use or not use log
    * compaction files
    */
   private List<FileStatus> getLogReplayFiles(LogSegment logSegment) {
-    // For now, always read log compaction files. Plumb an option through to here if we ever want to
-    // make it configurable
-    if (true) {
+    if (readLogCompactionFiles) {
       return logSegment.allFilesWithCompactionsReversed();
     } else {
       return logSegment.allLogFilesReversed();
