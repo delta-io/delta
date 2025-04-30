@@ -325,7 +325,8 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
           }
         case LOG_COMPACTION:
           {
-            final long fileVersion = FileNames.logCompactionVersions(nextFilePath)._1;
+            // use end version as this is like a mini checkpoint, and that's what checkpoints do
+            final long fileVersion = FileNames.logCompactionVersions(nextFilePath)._2;
             return readCommitOrCompactionFile(fileVersion, nextFile);
           }
         case CHECKPOINT_CLASSIC:
