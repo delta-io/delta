@@ -205,7 +205,8 @@ class ChecksumFullStatsSuite extends ChecksumStatsSuiteBase {
       expectedFileCount,
       expectedTableSize,
       expectedFileSizeHistogram)
-    // Delete existing CRC to ensure subsequence CRC hook will be full.
-    assert(engine.getFileSystemClient.delete(buildCrcPath(tablePath, version).toString))
+    // Delete the checksum after the validation, so that the subsequence commit
+    // will generate CHECKSUM_FULL hook.
+    deleteChecksumFileForTable(tablePath.stripPrefix("file:"), Seq(version.toInt))
   }
 }
