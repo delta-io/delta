@@ -34,7 +34,7 @@ public class DeltaLogFile {
     SIDECAR
   }
 
-  public static DeltaLogFile forCommitOrCheckpoint(FileStatus file) {
+  public static DeltaLogFile forFileStatus(FileStatus file) {
     String fileName = new Path(file.getPath()).getName();
     LogType logType = null;
     long version = -1;
@@ -56,7 +56,7 @@ public class DeltaLogFile {
       version = FileNames.checkpointVersion(fileName);
     } else {
       throw new IllegalArgumentException(
-          "File is not a commit or checkpoint file: " + file.getPath());
+          "File is not a recognized delta log type: " + file.getPath());
     }
     return new DeltaLogFile(file, logType, version);
   }
@@ -83,6 +83,10 @@ public class DeltaLogFile {
     return logType;
   }
 
+  /**
+   * Get the version for this log file. Note that for LOG_COMPACTION files this returns the end
+   * version, similar to a checkpoint
+   */
   public long getVersion() {
     return version;
   }

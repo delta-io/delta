@@ -103,7 +103,7 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     this.checkpointPredicate = checkpointPredicate;
     this.filesList = new LinkedList<>();
     this.filesList.addAll(
-        files.stream().map(DeltaLogFile::forCommitOrCheckpoint).collect(Collectors.toList()));
+        files.stream().map(DeltaLogFile::forFileStatus).collect(Collectors.toList()));
     this.deltaReadSchema = deltaReadSchema;
     this.checkpointReadSchema = checkpointReadSchema;
     this.actionsIter = Optional.empty();
