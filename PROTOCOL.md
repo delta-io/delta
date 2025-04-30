@@ -1447,7 +1447,7 @@ The In-Commit Timestamps writer feature strongly associates a monotonically incr
 
 Enablement:
 - The table must be on Writer Version 7.
-- The feature `inCommitTimestamps` must exist in the table `protocol`'s `writerFeatures`.
+- The feature `inCommitTimestamp` must exist in the table `protocol`'s `writerFeatures`.
 - The table property `delta.enableInCommitTimestamps` must be set to `true`.
 
 ## Writer Requirements for In-Commit Timestamps
