@@ -103,7 +103,7 @@ public final class DeltaHistoryManager {
                   latestSnapshot.getVersion() + 1,
                   engine,
                   latestSnapshot.getLogPath(),
-                  10 /* numChunks */);
+                  4 /* numChunks */);
         } catch (IOException e) {
           // TODO: proper error message.
           throw new RuntimeException(
@@ -177,10 +177,10 @@ public final class DeltaHistoryManager {
       Path logPath,
       int numChunks)
       throws IOException {
+    final StructType COMMITINFO_READ_SCHEMA =
+            new StructType().add("commitInfo", CommitInfo.FULL_SCHEMA);
     Commit curStartCommit = startCommit;
     long curEnd = endVersion;
-    final StructType COMMITINFO_READ_SCHEMA =
-        new StructType().add("commitInfo", CommitInfo.FULL_SCHEMA);
     while (curStartCommit.version < curEnd) {
       long numVersionsInRange = curEnd - curStartCommit.version;
       long chunkSize = Math.max(numVersionsInRange / numChunks, 1);
