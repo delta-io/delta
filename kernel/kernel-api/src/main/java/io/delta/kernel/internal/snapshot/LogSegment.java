@@ -319,7 +319,12 @@ public class LogSegment {
     return allFilesReversed.get();
   }
 
-  // todo: comment
+  /**
+   * @return all files sorted in reverse order in this log segment, but omitting the deltas (.json)
+   *     files that are covered by log compaction files. This will include deltas (xxx.json) that
+   *     are not covered by a log compaction, compaction files (xxx.xxx.json), and checkpoints
+   *     (.checkpoint.parquet).
+   */
   public List<FileStatus> allFilesWithCompactionsReversed() {
     return allFilesWithCompactionsReversed.get();
   }
