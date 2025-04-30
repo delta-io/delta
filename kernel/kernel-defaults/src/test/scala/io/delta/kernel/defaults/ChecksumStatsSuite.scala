@@ -22,6 +22,7 @@ import scala.jdk.CollectionConverters.{asJavaIteratorConverter, mapAsJavaMapConv
 import io.delta.kernel.{Table, Transaction, TransactionCommitResult}
 import io.delta.kernel.data.Row
 import io.delta.kernel.engine.Engine
+import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
 import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl, TableConfig, TableImpl}
 import io.delta.kernel.internal.actions.{AddFile, GenerateIcebergCompatActionUtils, RemoveFile}
 import io.delta.kernel.internal.checksum.ChecksumReader
@@ -34,7 +35,7 @@ import io.delta.kernel.utils.CloseableIterable.inMemoryIterable
 /**
  * Functional e2e test suite for verifying file stats collection in CRC are correct.
  */
-class ChecksumStatsSuite extends DeltaTableWriteSuiteBase {
+trait ChecksumStatsSuiteBase extends DeltaTableWriteSuiteBase {
 
   test("Check stats in checksum are correct") {
     withTempDirAndEngine { (tablePath, engine) =>
@@ -80,7 +81,7 @@ class ChecksumStatsSuite extends DeltaTableWriteSuiteBase {
    * @param expectedTableSize Expected total size of all files in bytes
    * @param expectedFileSizeHistogram Expected file size histogram
    */
-  def checkCrcCorrect(
+  protected def checkCrcCorrect(
       engine: Engine,
       tablePath: String,
       version: Long,
@@ -172,9 +173,39 @@ class ChecksumStatsSuite extends DeltaTableWriteSuiteBase {
       engine: Engine,
       dataActions: CloseableIterable[Row]): TransactionCommitResult = {
     val result = txn.commit(engine, dataActions)
-    result.getPostCommitHooks
-      .stream()
-      .forEach(hook => hook.threadSafeInvoke(engine))
+    val checksumHook = result.getPostCommitHooks.stream().filter(hook =>
+      hook.getType == getPostCommitHookType).findFirst()
+    if (checksumHook.isPresent) {
+      checksumHook.get().threadSafeInvoke(engine)
+    }
     result
+  }
+
+  protected def getPostCommitHookType: PostCommitHookType
+}
+
+class ChecksumSimpleStatsSuite extends ChecksumStatsSuiteBase {
+  override def getPostCommitHookType: PostCommitHookType = PostCommitHookType.CHECKSUM_SIMPLE
+}
+
+class ChecksumSimpleFillSuite extends ChecksumStatsSuiteBase {
+  override def getPostCommitHookType: PostCommitHookType = PostCommitHookType.CHECKSUM_FULL
+
+  override def checkCrcCorrect(
+      engine: Engine,
+      tablePath: String,
+      version: Long,
+      expectedFileCount: Long,
+      expectedTableSize: Long,
+      expectedFileSizeHistogram: FileSizeHistogram): Unit = {
+    super.checkCrcCorrect(
+      engine,
+      tablePath,
+      version,
+      expectedFileCount,
+      expectedTableSize,
+      expectedFileSizeHistogram)
+    // Delete existing CRC to ensure subsequence CRC hook will be full.
+    assert(engine.getFileSystemClient.delete(buildCrcPath(tablePath, version).toString))
   }
 }

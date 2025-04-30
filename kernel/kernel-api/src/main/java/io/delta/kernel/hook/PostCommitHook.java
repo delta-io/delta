@@ -43,6 +43,12 @@ public interface PostCommitHook {
     CHECKSUM_SIMPLE,
 
     /**
+     * Writes a checksum file at the version committed by the transaction. This hook is present
+     * CHECKSUM_SIMPLE is missing, it requires construct table stats via log replay.
+     */
+    CHECKSUM_FULL,
+
+    /**
      * Writes a log compaction file that merges a range of commit JSON files into a single file.
      * This hook is triggered on a configurable interval (e.g., every 10 commits) and reduces the
      * number of small log files that need to be read when reconstructing the table state, thereby
