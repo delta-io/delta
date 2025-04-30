@@ -16,15 +16,21 @@
 package io.delta.kernel.internal;
 
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
+import static io.delta.kernel.internal.TableConfig.*;
 import static io.delta.kernel.internal.fs.Path.getName;
 
+import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.exceptions.TableNotFoundException;
+import io.delta.kernel.internal.actions.CommitInfo;
+import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.checkpoints.CheckpointInstance;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.Tuple2;
+import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import java.io.FileNotFoundException;
@@ -63,23 +69,63 @@ public final class DeltaHistoryManager {
    */
   public static Commit getActiveCommitAtTimestamp(
       Engine engine,
+      SnapshotImpl latestSnapshot,
       Path logPath,
       long timestamp,
       boolean mustBeRecreatable,
       boolean canReturnLastCommit,
       boolean canReturnEarliestCommit)
-      throws TableNotFoundException {
+      throws TableNotFoundException, IOException {
 
     long earliestVersion =
         (mustBeRecreatable)
             ? getEarliestRecreatableCommit(engine, logPath)
             : getEarliestDeltaFile(engine, logPath);
 
-    // Search for the commit
-    List<Commit> commits = getCommits(engine, logPath, earliestVersion);
-    Commit commit =
-        lastCommitBeforeOrAtTimestamp(commits, timestamp)
-            .orElse(commits.get(0)); // This is only returned if canReturnEarliestCommit (see below)
+    Metadata latestMetadata = latestSnapshot.getMetadata();
+    Commit placeholderEarliestCommit =
+        new Commit(earliestVersion, -1L /* timestamp */);
+    Commit ictEnablementCommit = getICTEnablementCommit(latestSnapshot, placeholderEarliestCommit);
+    Optional<Commit> result;
+    if (ictEnablementCommit.getTimestamp() <= timestamp) {
+      long latestSnapshotTimestamp = latestSnapshot.getTimestamp(engine);
+      if (latestSnapshotTimestamp <= timestamp) {
+        // We just proved we should use the latest snapshot
+        result = Optional.of(new Commit(latestSnapshot.getVersion(), latestSnapshotTimestamp));
+      } else {
+        // start ICT search over [earliest available ICT version, latestVersion)
+        boolean ictEnabledForEntireWindow = (ictEnablementCommit.version <= earliestVersion);
+        Commit searchWindowLowerBoundCommit = ictEnabledForEntireWindow ? placeholderEarliestCommit : ictEnablementCommit;
+        result = getActiveCommitAtTimeFromICTRange(
+                timestamp,
+                searchWindowLowerBoundCommit,
+                latestSnapshot.getVersion() + 1,
+                engine,
+                latestSnapshot.getLogPath(),
+                10 /* numChunks */);
+      }
+    } else {
+      // ICT was NOT enabled as-of the requested time
+      if (ictEnablementCommit.version <= earliestVersion) {
+        // We're searching for a non-ICT time but the non-ICT commits are all missing.
+        // If `canReturnEarliestCommit` is `false`, we need the details of the
+        // earliest commit to populate the TimestampEarlierThanCommitRetentionException
+        // error correctly.
+        // Else, when `canReturnEarliestCommit` is `true`, the earliest commit
+        // is the desired result.
+        // The real timestamp of the earliest commit will be fetched later.
+        result = Optional.of(placeholderEarliestCommit);
+      } else {
+        // start non-ICT search over [earliestVersion, ictEnablementVersion)
+        // Search for the commit
+        List<Commit> commits = getCommits(engine, logPath, earliestVersion);
+        Commit commit =
+                lastCommitBeforeOrAtTimestamp(commits, timestamp)
+                        .orElse(commits.get(0)); // This is only returned if canReturnEarliestCommit (see below)
+        result = Optional.of(commit);
+      }
+    }
+
 
     // If timestamp is before the earliest commit
     if (commit.timestamp > timestamp && !canReturnEarliestCommit) {
@@ -101,6 +147,102 @@ public final class DeltaHistoryManager {
     }
 
     return commit;
+  }
+
+  private static Optional<Commit> getActiveCommitAtTimeFromICTRange(
+      long timestamp,
+      Commit startCommit,
+      long endVersion,
+      Engine engine,
+      Path logPath,
+      int numChunks) throws IOException {
+    Commit curStartCommit = startCommit;
+    long curEnd = endVersion;
+    final StructType COMMITINFO_READ_SCHEMA =
+            new StructType().add("commitInfo", CommitInfo.FULL_SCHEMA);
+    while (curStartCommit.version < curEnd) {
+      long numVersionsInRange = curEnd - curStartCommit.version;
+      long chunkSize = Math.max(numVersionsInRange / numChunks, 1);
+      final long curStartVersion = curStartCommit.version;
+      final long curEndForIterator = curEnd;
+      CloseableIterator<FileStatus> filesToRead = new CloseableIterator<FileStatus>() {
+        long curVersion = curStartVersion;
+
+        @Override
+        public boolean hasNext() {
+          return curVersion + chunkSize < curEndForIterator;
+        }
+
+        @Override
+        public FileStatus next() {
+          curVersion += chunkSize;
+          return FileStatus.of(FileNames.deltaFile(logPath, curVersion));
+        }
+
+        @Override
+        public void close() throws IOException {
+          // No-op
+        }
+      };
+
+      CloseableIterator<ColumnarBatch> columnarBatchIter =
+              engine.getJsonHandler().readJsonFiles(filesToRead, COMMITINFO_READ_SCHEMA, Optional.empty() /* predicate */);
+      Optional<Commit> knownTightestLowerBoundCommit = Optional.empty();
+      long curVersion = curStartCommit.getVersion();
+      while (columnarBatchIter.hasNext()) {
+        final ColumnarBatch columnarBatch = columnarBatchIter.next();
+        assert (columnarBatch.getSchema().equals(COMMITINFO_READ_SCHEMA));
+        final ColumnVector commitInfoVector = columnarBatch.getColumnVector(0);
+        Optional<CommitInfo> commitInfo = Optional.empty();
+        for (int i = 0; i < commitInfoVector.getSize(); i++) {
+          if (!commitInfoVector.isNullAt(i)) {
+            commitInfo = Optional.ofNullable(CommitInfo.fromColumnVector(commitInfoVector, i));
+            break;
+          }
+        }
+        long ict =
+                CommitInfo.getRequiredInCommitTimestamp(commitInfo, Long.toString(curVersion), logPath);
+        if (ict > timestamp) {
+          break;
+        }
+        knownTightestLowerBoundCommit = Optional.of(new Commit(curVersion, ict));
+      }
+      if (!knownTightestLowerBoundCommit.isPresent()) {
+        // No commit found in this range, so we can stop searching
+        break;
+      }
+      Commit nextStartCommit = knownTightestLowerBoundCommit.get();
+      long nextEnd = Math.min(nextStartCommit.version + chunkSize, curEnd);
+      if (nextStartCommit.version + 2 > nextEnd ||
+          knownTightestLowerBoundCommit.get().timestamp == timestamp) {
+        return knownTightestLowerBoundCommit;
+      }
+      curStartCommit = nextStartCommit;
+      curEnd = nextEnd;
+    }
+    return Optional.empty();
+  }
+
+  private static Commit getICTEnablementCommit(SnapshotImpl snapshot, Commit placeholderEarliestCommit) {
+    Metadata metadata = snapshot.getMetadata();
+    if (!IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata)) {
+      // Pretend ICT will be enabled after the latest version and requested timestamp.
+      // This will force us to use the non-ICT search path.
+      return new Commit(snapshot.getVersion() + 1, Long.MAX_VALUE);
+    }
+    Optional<Long> enablementTimestampOpt =
+            IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.fromMetadata(metadata);
+    Optional<Long> enablementVersionOpt =
+            IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.fromMetadata(metadata);
+    if (enablementTimestampOpt.isPresent() && enablementVersionOpt.isPresent()) {
+      return new Commit(enablementVersionOpt.get(), enablementTimestampOpt.get());
+    } else if (!enablementTimestampOpt.isPresent() && !enablementVersionOpt.isPresent()) {
+      // This means that ICT has been enabled for the entire history.
+      return placeholderEarliestCommit;
+    } else {
+      throw new IllegalStateException(
+              "Both enablement version and timestamp should be present or absent together.");
+    }
   }
 
   /**

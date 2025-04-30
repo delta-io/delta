@@ -123,8 +123,10 @@ public class TableImpl implements Table {
       throws TableNotFoundException {
     SnapshotQueryContext snapshotContext =
         SnapshotQueryContext.forTimestampSnapshot(tablePath, millisSinceEpochUTC);
+    SnapshotImpl latestSnapshot = (SnapshotImpl) getLatestSnapshot(engine);
     try {
-      return snapshotManager.getSnapshotForTimestamp(engine, millisSinceEpochUTC, snapshotContext);
+      return snapshotManager.getSnapshotForTimestamp(
+          engine, latestSnapshot, millisSinceEpochUTC, snapshotContext);
     } catch (Exception e) {
       recordSnapshotErrorReport(engine, snapshotContext, e);
       throw e;
@@ -237,8 +239,10 @@ public class TableImpl implements Table {
    * @throws TableNotFoundException if no delta table is found
    */
   public long getVersionBeforeOrAtTimestamp(Engine engine, long millisSinceEpochUTC) {
+    SnapshotImpl latestSnapshot = (SnapshotImpl) getLatestSnapshot(engine);
     return DeltaHistoryManager.getActiveCommitAtTimestamp(
             engine,
+            latestSnapshot,
             getLogPath(),
             millisSinceEpochUTC,
             false, /* mustBeRecreatable */
@@ -272,9 +276,11 @@ public class TableImpl implements Table {
    * @throws TableNotFoundException if no delta table is found
    */
   public long getVersionAtOrAfterTimestamp(Engine engine, long millisSinceEpochUTC) {
+    SnapshotImpl latestSnapshot = (SnapshotImpl) getLatestSnapshot(engine);
     DeltaHistoryManager.Commit commit =
         DeltaHistoryManager.getActiveCommitAtTimestamp(
             engine,
+            latestSnapshot,
             getLogPath(),
             millisSinceEpochUTC,
             false, /* mustBeRecreatable */
