@@ -25,6 +25,7 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.InvalidTableException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.*;
+import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.checkpoints.*;
 import io.delta.kernel.internal.fs.Path;
@@ -111,7 +112,10 @@ public class SnapshotManager {
    * @throws InvalidTableException if the table is in an invalid state
    */
   public Snapshot getSnapshotForTimestamp(
-      Engine engine, long millisSinceEpochUTC, SnapshotQueryContext snapshotContext)
+      Engine engine,
+      SnapshotImpl latestSnapshot,
+      long millisSinceEpochUTC,
+      SnapshotQueryContext snapshotContext)
       throws TableNotFoundException {
     long versionToRead =
         snapshotContext
@@ -121,6 +125,7 @@ public class SnapshotManager {
                 () ->
                     DeltaHistoryManager.getActiveCommitAtTimestamp(
                             engine,
+                            latestSnapshot,
                             logPath,
                             millisSinceEpochUTC,
                             true /* mustBeRecreatable */,
