@@ -188,7 +188,7 @@ class ChecksumSimpleStatsSuite extends ChecksumStatsSuiteBase {
   override def getPostCommitHookType: PostCommitHookType = PostCommitHookType.CHECKSUM_SIMPLE
 }
 
-class ChecksumSimpleFillSuite extends ChecksumStatsSuiteBase {
+class ChecksumFullStatsSuite extends ChecksumStatsSuiteBase {
   override def getPostCommitHookType: PostCommitHookType = PostCommitHookType.CHECKSUM_FULL
 
   override def checkCrcCorrect(
