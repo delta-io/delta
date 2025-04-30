@@ -138,8 +138,6 @@ public class LogReplay {
   private final Lazy<Map<String, DomainMetadata>> domainMetadataMap;
   private final Optional<CRCInfo> currentCrcInfo;
 
-  private boolean read_log_compaction_files = true;
-
   public LogReplay(
       Path logPath,
       Path dataPath,
@@ -234,7 +232,9 @@ public class LogReplay {
    * compaction files
    */
   private List<FileStatus> getLogReplayFiles(LogSegment logSegment) {
-    if (read_log_compaction_files) {
+    // For now, always read log compaction files. Plumb an option through to here if we ever want to
+    // make it configurable
+    if (true) {
       return logSegment.allFilesWithCompactionsReversed();
     } else {
       return logSegment.allLogFilesReversed();
