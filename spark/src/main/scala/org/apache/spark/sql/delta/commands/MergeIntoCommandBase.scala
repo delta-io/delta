@@ -184,6 +184,7 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
     "numSourceRows" -> createMetric(sc, "number of source rows"),
     "numSourceRowsInSecondScan" ->
       createMetric(sc, "number of source rows (during repeated scan)"),
+    "operationNumSourceRows" -> createMetric(sc, "number of source rows (reported)"),
     "numTargetRowsCopied" -> createMetric(sc, "number of target rows rewritten unmodified"),
     "numTargetRowsInserted" -> createMetric(sc, "number of inserted rows"),
     "numTargetRowsUpdated" -> createMetric(sc, "number of updated rows"),
@@ -431,6 +432,23 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
         withStatusCode("DELTA", status) { executeThunk() }
       }
     }
+  }
+
+  // Whether the source was scanned the second time, and it was guaranteed to be a scan without
+  // pruning.
+  protected var secondSourceScanWasFullScan: Boolean = false
+
+  /**
+   * Sets operationNumSourceRows as numSourceRowsInSecondScan if the source was scanned without
+   * possibility of pruning in the 2nd scan. Uses numSourceRows otherwise.
+   */
+  protected def setOperationNumSourceRowsMetric(): Unit = {
+    val operationNumSourceRows = if (secondSourceScanWasFullScan) {
+      metrics("numSourceRowsInSecondScan").value
+    } else {
+      metrics("numSourceRows").value
+    }
+    metrics("operationNumSourceRows").set(operationNumSourceRows)
   }
 
   // Whether we actually scanned the source twice or the value in numSourceRowsInSecondScan is
