@@ -30,7 +30,6 @@ import io.delta.kernel.internal.checkpoints.CheckpointInstance;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.Tuple2;
-import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
@@ -83,8 +82,7 @@ public final class DeltaHistoryManager {
             ? getEarliestRecreatableCommit(engine, logPath)
             : getEarliestDeltaFile(engine, logPath);
 
-    Commit placeholderEarliestCommit =
-        new Commit(earliestVersion, -1L /* timestamp */);
+    Commit placeholderEarliestCommit = new Commit(earliestVersion, -1L /* timestamp */);
     Commit ictEnablementCommit = getICTEnablementCommit(latestSnapshot, placeholderEarliestCommit);
     Optional<Commit> result;
     if (ictEnablementCommit.getTimestamp() <= timestamp) {
@@ -95,9 +93,11 @@ public final class DeltaHistoryManager {
       } else {
         // start ICT search over [earliest available ICT version, latestVersion)
         boolean ictEnabledForEntireWindow = (ictEnablementCommit.version <= earliestVersion);
-        Commit searchWindowLowerBoundCommit = ictEnabledForEntireWindow ? placeholderEarliestCommit : ictEnablementCommit;
+        Commit searchWindowLowerBoundCommit =
+            ictEnabledForEntireWindow ? placeholderEarliestCommit : ictEnablementCommit;
         try {
-          result = getActiveCommitAtTimeFromICTRange(
+          result =
+              getActiveCommitAtTimeFromICTRange(
                   timestamp,
                   searchWindowLowerBoundCommit,
                   latestSnapshot.getVersion() + 1,
@@ -107,10 +107,11 @@ public final class DeltaHistoryManager {
         } catch (IOException e) {
           // TODO: proper error message.
           throw new RuntimeException(
-              "There was an error while reading a historical commit while performing a timestamp" +
-                      "based lookup. This can happen when the commit log is corrupted or when " +
-                      "there is a parallel operation like metadata cleanup that is deleting " +
-                      "commits. Please retry the query.", e);
+              "There was an error while reading a historical commit while performing a timestamp"
+                  + "based lookup. This can happen when the commit log is corrupted or when "
+                  + "there is a parallel operation like metadata cleanup that is deleting "
+                  + "commits. Please retry the query.",
+              e);
         }
       }
     } else {
@@ -123,27 +124,28 @@ public final class DeltaHistoryManager {
         // Else, when `canReturnEarliestCommit` is `true`, the earliest commit
         // is the desired result.
         // TODO: set the correct timestamp for the placeholderEarliestCommit.
-        Optional<CommitInfo> commitInfoOpt = CommitInfo.getCommitInfoOpt(
+        Optional<CommitInfo> commitInfoOpt =
+            CommitInfo.getCommitInfoOpt(
                 engine, latestSnapshot.getLogPath(), placeholderEarliestCommit.getVersion());
         long ict =
-                CommitInfo.getRequiredInCommitTimestamp(
-                        commitInfoOpt, Long.toString(placeholderEarliestCommit.getVersion()), logPath);
+            CommitInfo.getRequiredInCommitTimestamp(
+                commitInfoOpt, Long.toString(placeholderEarliestCommit.getVersion()), logPath);
         result = Optional.of(new Commit(placeholderEarliestCommit.getVersion(), ict));
       } else {
         // start non-ICT search over [earliestVersion, ictEnablementVersion)
         // Search for the commit
         List<Commit> commits = getCommits(engine, logPath, earliestVersion);
         Commit commit =
-                lastCommitBeforeOrAtTimestamp(commits, timestamp)
-                        .orElse(commits.get(0)); // This is only returned if canReturnEarliestCommit (see below)
+            lastCommitBeforeOrAtTimestamp(commits, timestamp)
+                .orElse(
+                    commits.get(0)); // This is only returned if canReturnEarliestCommit (see below)
         result = Optional.of(commit);
       }
     }
 
     if (!result.isPresent()) {
       // TODO: proper error message.
-      throw new RuntimeException(
-          String.format("No commit found at %s", logPath));
+      throw new RuntimeException(String.format("No commit found at %s", logPath));
     }
     Commit commit = result.get();
 
@@ -173,38 +175,42 @@ public final class DeltaHistoryManager {
       long endVersion,
       Engine engine,
       Path logPath,
-      int numChunks) throws IOException {
+      int numChunks)
+      throws IOException {
     Commit curStartCommit = startCommit;
     long curEnd = endVersion;
     final StructType COMMITINFO_READ_SCHEMA =
-            new StructType().add("commitInfo", CommitInfo.FULL_SCHEMA);
+        new StructType().add("commitInfo", CommitInfo.FULL_SCHEMA);
     while (curStartCommit.version < curEnd) {
       long numVersionsInRange = curEnd - curStartCommit.version;
       long chunkSize = Math.max(numVersionsInRange / numChunks, 1);
       final long curStartVersion = curStartCommit.version;
       final long curEndForIterator = curEnd;
-      CloseableIterator<FileStatus> filesToRead = new CloseableIterator<FileStatus>() {
-        long curVersion = curStartVersion;
+      CloseableIterator<FileStatus> filesToRead =
+          new CloseableIterator<FileStatus>() {
+            long curVersion = curStartVersion;
 
-        @Override
-        public boolean hasNext() {
-          return curVersion + chunkSize < curEndForIterator;
-        }
+            @Override
+            public boolean hasNext() {
+              return curVersion + chunkSize < curEndForIterator;
+            }
 
-        @Override
-        public FileStatus next() {
-          curVersion += chunkSize;
-          return FileStatus.of(FileNames.deltaFile(logPath, curVersion));
-        }
+            @Override
+            public FileStatus next() {
+              curVersion += chunkSize;
+              return FileStatus.of(FileNames.deltaFile(logPath, curVersion));
+            }
 
-        @Override
-        public void close() throws IOException {
-          // No-op
-        }
-      };
+            @Override
+            public void close() throws IOException {
+              // No-op
+            }
+          };
 
       CloseableIterator<ColumnarBatch> columnarBatchIter =
-              engine.getJsonHandler().readJsonFiles(filesToRead, COMMITINFO_READ_SCHEMA, Optional.empty() /* predicate */);
+          engine
+              .getJsonHandler()
+              .readJsonFiles(filesToRead, COMMITINFO_READ_SCHEMA, Optional.empty() /* predicate */);
       Optional<Commit> knownTightestLowerBoundCommit = Optional.empty();
       long curVersion = curStartCommit.getVersion();
       while (columnarBatchIter.hasNext()) {
@@ -219,7 +225,7 @@ public final class DeltaHistoryManager {
           }
         }
         long ict =
-                CommitInfo.getRequiredInCommitTimestamp(commitInfo, Long.toString(curVersion), logPath);
+            CommitInfo.getRequiredInCommitTimestamp(commitInfo, Long.toString(curVersion), logPath);
         if (ict > timestamp) {
           break;
         }
@@ -231,8 +237,8 @@ public final class DeltaHistoryManager {
       }
       Commit nextStartCommit = knownTightestLowerBoundCommit.get();
       long nextEnd = Math.min(nextStartCommit.version + chunkSize, curEnd);
-      if (nextStartCommit.version + 2 > nextEnd ||
-          knownTightestLowerBoundCommit.get().timestamp == timestamp) {
+      if (nextStartCommit.version + 2 > nextEnd
+          || knownTightestLowerBoundCommit.get().timestamp == timestamp) {
         return knownTightestLowerBoundCommit;
       }
       curStartCommit = nextStartCommit;
@@ -241,7 +247,8 @@ public final class DeltaHistoryManager {
     return Optional.empty();
   }
 
-  private static Commit getICTEnablementCommit(SnapshotImpl snapshot, Commit placeholderEarliestCommit) {
+  private static Commit getICTEnablementCommit(
+      SnapshotImpl snapshot, Commit placeholderEarliestCommit) {
     Metadata metadata = snapshot.getMetadata();
     if (!IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata)) {
       // Pretend ICT will be enabled after the latest version and requested timestamp.
@@ -249,9 +256,9 @@ public final class DeltaHistoryManager {
       return new Commit(snapshot.getVersion() + 1, Long.MAX_VALUE);
     }
     Optional<Long> enablementTimestampOpt =
-            IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.fromMetadata(metadata);
+        IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.fromMetadata(metadata);
     Optional<Long> enablementVersionOpt =
-            IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.fromMetadata(metadata);
+        IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.fromMetadata(metadata);
     if (enablementTimestampOpt.isPresent() && enablementVersionOpt.isPresent()) {
       return new Commit(enablementVersionOpt.get(), enablementTimestampOpt.get());
     } else if (!enablementTimestampOpt.isPresent() && !enablementVersionOpt.isPresent()) {
@@ -259,7 +266,7 @@ public final class DeltaHistoryManager {
       return placeholderEarliestCommit;
     } else {
       throw new IllegalStateException(
-              "Both enablement version and timestamp should be present or absent together.");
+          "Both enablement version and timestamp should be present or absent together.");
     }
   }
 
