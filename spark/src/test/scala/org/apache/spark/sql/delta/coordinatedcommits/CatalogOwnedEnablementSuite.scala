@@ -18,8 +18,10 @@ package org.apache.spark.sql.delta.coordinatedcommits
 
 import java.util.UUID
 
+import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.test.{DeltaExceptionTestUtils, DeltaSQLCommandTest, DeltaSQLTestUtils}
+import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.commons.lang3.NotImplementedException
 
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -27,6 +29,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 class CatalogOwnedEnablementSuite
   extends DeltaSQLTestUtils
   with DeltaSQLCommandTest
+  with DeltaTestUtilsBase
   with DeltaExceptionTestUtils {
 
   override def beforeEach(): Unit = {
@@ -176,6 +179,39 @@ class CatalogOwnedEnablementSuite
         parameters = Map(
           "feature" -> VacuumProtocolCheckTableFeature.name,
           "dependentFeatures" -> CatalogOwnedTableFeature.name))
+    }
+  }
+
+  test("CO_COMMIT should be recorded in usage_log for normal CO commit") {
+    withRandomTable(createCatalogOwnedTableAtInit = true) { tableName =>
+      val usageLog = Log4jUsageLogger.track {
+        sql(s"INSERT INTO $tableName VALUES 3")
+      }
+      val commitStatsUsageLog = filterUsageRecords(usageLog, "delta.commit.stats")
+      val commitStats = JsonUtils.fromJson[CommitStats](commitStatsUsageLog.head.blob)
+      assert(commitStats.coordinatedCommitsInfo ===
+        CoordinatedCommitsStats(
+          coordinatedCommitsType = CoordinatedCommitType.CO_COMMIT.toString,
+          commitCoordinatorName = "spark_catalog",
+          commitCoordinatorConf = Map.empty))
+    }
+  }
+
+  test("FS_TO_CO_UPGRADE_COMMIT should be recorded in usage_log when creating " +
+       "CatalogOwned table") {
+    withTable("t1") {
+      val usageLog = Log4jUsageLogger.track {
+        sql(s"CREATE TABLE t1 (id INT) USING delta TBLPROPERTIES " +
+          s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
+      }
+      val commitStatsUsageLog = filterUsageRecords(usageLog, "delta.commit.stats")
+      val commitStats = JsonUtils.fromJson[CommitStats](commitStatsUsageLog.head.blob)
+      assert(commitStats.coordinatedCommitsInfo ===
+        CoordinatedCommitsStats(
+          coordinatedCommitsType = CoordinatedCommitType.FS_TO_CO_UPGRADE_COMMIT.toString,
+          // catalogTable is not available for FS_TO_CO_UPGRADE_COMMIT
+          commitCoordinatorName = "CATALOG_EMPTY",
+          commitCoordinatorConf = Map.empty))
     }
   }
 }
