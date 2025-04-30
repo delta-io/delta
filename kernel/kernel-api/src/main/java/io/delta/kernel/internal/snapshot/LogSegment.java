@@ -201,59 +201,59 @@ public class LogSegment {
                             .reversed())
                     .collect(Collectors.toList()));
 
-    this.allFilesWithCompactionsReversed =
-        new Lazy<>(
-            () -> {
-              if (compactions.isEmpty()) {
-                return allFilesReversed.get();
-              } else {
-                final Iterator<FileStatus> deltaIt = allFilesReversed.get().iterator();
-                final Iterator<FileStatus> compactionIt = compactionsReversed.get().iterator();
-                FileStatus currentCompaction = compactionIt.next(); // safe we know it wasn't empty
-                Tuple2<Long, Long> currentCompactionVersions =
-                    FileNames.logCompactionVersions(currentCompaction.getPath());
-                ArrayList<FileStatus> ret = new ArrayList<FileStatus>();
-                FileStatus cur = null;
-                boolean skipping = false;
-                boolean advanceDeltas = true;
-                while (deltaIt.hasNext() || !advanceDeltas) {
-                  if (advanceDeltas) {
-                    cur = deltaIt.next();
-                  } else {
-                    advanceDeltas = true;
-                  }
-                  long deltaVersion = FileNames.deltaVersion(cur.getPath());
-                  if (currentCompactionVersions != null
-                      && deltaVersion >= currentCompactionVersions._1
-                      && deltaVersion <= currentCompactionVersions._2) {
-                    // skip this delta file
-                    skipping = true;
-                  } else if (skipping) {
-                    // we were skipping so put the compaction in
-                    ret.add(currentCompaction);
-                    if (compactionIt.hasNext()) {
-                      currentCompaction = compactionIt.next();
-                      currentCompactionVersions =
-                          FileNames.logCompactionVersions(currentCompaction.getPath());
-                    } else {
-                      currentCompaction = null;
-                      currentCompactionVersions = null;
-                    }
-                    skipping = false; // not skipping anymore
-                    advanceDeltas = false; // need to reconsider this delta now
-                  } else {
-                    // not covered, and we weren't skipping, so just add this delta
-                    ret.add(cur);
-                  }
-                }
-                if (skipping) {
-                  // the compaction covered all the way up to the last delta file, so add it as the
-                  // last file
-                  ret.add(currentCompaction);
-                }
-                return ret;
-              }
-            });
+    this.allFilesWithCompactionsReversed = new Lazy<>(() -> loadAllFilesWithCompactionsReversed());
+  }
+
+  private List<FileStatus> loadAllFilesWithCompactionsReversed() {
+    if (compactions.isEmpty()) {
+      return allFilesReversed.get();
+    } else {
+      final Iterator<FileStatus> deltaIt = allFilesReversed.get().iterator();
+      final Iterator<FileStatus> compactionIt = compactionsReversed.get().iterator();
+      FileStatus currentCompaction = compactionIt.next(); // safe we know it wasn't empty
+      Tuple2<Long, Long> currentCompactionVersions =
+          FileNames.logCompactionVersions(currentCompaction.getPath());
+      ArrayList<FileStatus> ret = new ArrayList<FileStatus>();
+      FileStatus cur = null;
+      boolean skipping = false;
+      boolean advanceDeltas = true;
+      while (deltaIt.hasNext() || !advanceDeltas) {
+        if (advanceDeltas) {
+          cur = deltaIt.next();
+        } else {
+          advanceDeltas = true;
+        }
+        long deltaVersion = FileNames.deltaVersion(cur.getPath());
+        if (currentCompactionVersions != null
+            && deltaVersion >= currentCompactionVersions._1
+            && deltaVersion <= currentCompactionVersions._2) {
+          // skip this delta file
+          skipping = true;
+        } else if (skipping) {
+          // we were skipping so put the compaction in
+          ret.add(currentCompaction);
+          if (compactionIt.hasNext()) {
+            currentCompaction = compactionIt.next();
+            currentCompactionVersions =
+                FileNames.logCompactionVersions(currentCompaction.getPath());
+          } else {
+            currentCompaction = null;
+            currentCompactionVersions = null;
+          }
+          skipping = false; // not skipping anymore
+          advanceDeltas = false; // need to reconsider this delta now
+        } else {
+          // not covered, and we weren't skipping, so just add this delta
+          ret.add(cur);
+        }
+      }
+      if (skipping) {
+        // the compaction covered all the way up to the last delta file, so add it as the
+        // last file
+        ret.add(currentCompaction);
+      }
+      return ret;
+    }
   }
 
   /////////////////
