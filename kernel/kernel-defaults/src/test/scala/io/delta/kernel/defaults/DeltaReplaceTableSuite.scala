@@ -620,8 +620,6 @@ class DeltaReplaceTableSuite extends DeltaTableWriteSuiteBase {
           .add("col1", IntegerType.INTEGER))
     }
   }
-
-  // TODO tests for other internal domains besides clustering (i.e. inCommitTimestamp?)
 }
 
 object DeltaReplaceTableSuite {
