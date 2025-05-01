@@ -81,7 +81,7 @@ trait ChecksumStatsSuiteBase extends DeltaTableWriteSuiteBase {
    * @param expectedTableSize Expected total size of all files in bytes
    * @param expectedFileSizeHistogram Expected file size histogram
    */
-   def checkCrcCorrect(
+  def checkCrcCorrect(
       engine: Engine,
       tablePath: String,
       version: Long,
