@@ -209,14 +209,12 @@ class ChecksumSimpleStatsSuite extends ChecksumStatsSuiteBase {
 class ChecksumFullStatsSuite extends ChecksumStatsSuiteBase {
   override def getPostCommitHookType: PostCommitHookType = PostCommitHookType.CHECKSUM_FULL
 
-  // Delete the checksum before we validate for the next test, so that
-  // the subsequent commit will generate CHECKSUM_FULL hook.
+  // Delete the checksum, so that the subsequent commit will generate CHECKSUM_FULL hook.
   override def addFiles(
       engine: Engine,
       tablePath: String,
       filesToAdd: Map[String, Long],
       histogram: FileSizeHistogram): Unit = {
-    // Delete previous version's checksum if present
     val previousVersion = Table.forPath(engine, tablePath).asInstanceOf[TableImpl]
       .getLatestSnapshot(engine).getVersion
     deleteChecksumFileForTable(tablePath.stripPrefix("file:"), Seq(previousVersion.toInt))
@@ -228,7 +226,6 @@ class ChecksumFullStatsSuite extends ChecksumStatsSuiteBase {
       tablePath: String,
       filesToRemove: Map[String, Long],
       histogram: FileSizeHistogram): Unit = {
-    // Delete previous version's checksum
     val previousVersion =
       Table.forPath(engine, tablePath).asInstanceOf[TableImpl].getLatestSnapshot(engine).getVersion
     deleteChecksumFileForTable(tablePath.stripPrefix("file:"), Seq(previousVersion.toInt))
