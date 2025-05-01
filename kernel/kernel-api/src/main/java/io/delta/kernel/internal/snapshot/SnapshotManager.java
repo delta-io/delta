@@ -523,8 +523,22 @@ public class SnapshotManager {
                 })
             .orElse(Collections.emptyList());
 
+    //////////////////////////////////////////
+    // Step 12: Grab the last seen checksum //
+    //////////////////////////////////////////
+
+    // In SnapshotManager.java
+    Optional<FileStatus> lastSeenChecksumFile = Optional.empty();
+    if (!listedChecksumFileStatuses.isEmpty()) {
+      FileStatus latestChecksum = ListUtils.getLast(listedChecksumFileStatuses);
+      long checksumVersion = FileNames.checksumVersion(new Path(latestChecksum.getPath()));
+      if (checksumVersion >= latestCompleteCheckpointVersion) {
+        lastSeenChecksumFile = Optional.of(latestChecksum);
+      }
+    }
+
     ///////////////////////////////////////////////////
-    // Step 12: Construct the LogSegment and return. //
+    // Step 13: Construct the LogSegment and return. //
     ///////////////////////////////////////////////////
 
     logger.info("Successfully constructed LogSegment at version {}", newVersion);
@@ -538,9 +552,7 @@ public class SnapshotManager {
         deltasAfterCheckpoint,
         compactionsAfterCheckpoint,
         latestCompleteCheckpointFileStatuses,
-        listedChecksumFileStatuses.isEmpty()
-            ? Optional.empty()
-            : Optional.of(ListUtils.getLast(listedChecksumFileStatuses)),
+        lastSeenChecksumFile,
         lastCommitTimestamp);
   }
 

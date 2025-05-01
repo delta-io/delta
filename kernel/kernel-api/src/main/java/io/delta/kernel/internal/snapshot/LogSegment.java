@@ -122,12 +122,6 @@ public class LogSegment {
         checkpoints.stream().allMatch(fs -> FileNames.isCheckpointFile(fs.getPath())),
         "checkpoints must all be actual checkpoint files");
 
-    lastSeenChecksum.ifPresent(
-        checksumFile ->
-            checkArgument(
-                FileNames.checksumVersion(new Path(checksumFile.getPath())) <= version,
-                "checksum file's version should be lower than logSegment's version"));
-
     this.checkpointVersionOpt =
         checkpoints.isEmpty()
             ? Optional.empty()
@@ -138,6 +132,22 @@ public class LogSegment {
             .map(fs -> FileNames.checkpointVersion(new Path(fs.getPath())))
             .allMatch(v -> checkpointVersionOpt.get().equals(v)),
         "All checkpoint files must have the same version");
+
+    lastSeenChecksum.ifPresent(
+        checksumFile -> {
+          long checksumVersion = FileNames.checksumVersion(new Path(checksumFile.getPath()));
+          checkArgument(
+              checksumVersion <= version,
+              "checksum file's version should be less than or equal to logSegment's version");
+          checkpointVersionOpt.ifPresent(
+              checkpointVersion ->
+                  checkArgument(
+                      checksumVersion >= checkpointVersion,
+                      "checksum file's version %s should be greater than or equal to "
+                          + "checkpoint version %s",
+                      checksumVersion,
+                      checkpointVersion));
+        });
 
     if (version != -1) {
       checkArgument(!deltas.isEmpty() || !checkpoints.isEmpty(), "No files to read");
@@ -190,13 +200,7 @@ public class LogSegment {
     this.deltas = deltas;
     this.compactions = compactions;
     this.checkpoints = checkpoints;
-    this.lastSeenChecksum =
-        lastSeenChecksum.filter(
-            file -> {
-              long checksumVersion = FileNames.checksumVersion(new Path(file.getPath()));
-              return !checkpointVersionOpt.isPresent()
-                  || checksumVersion >= checkpointVersionOpt.get();
-            });
+    this.lastSeenChecksum = lastSeenChecksum;
     this.lastCommitTimestamp = lastCommitTimestamp;
 
     this.allFiles =
