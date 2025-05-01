@@ -241,7 +241,12 @@ trait CDCReaderImpl extends DeltaLogging {
       versionKey: String,
       timestampKey: String): Option[ResolvedCDFVersion] = {
     if (options.containsKey(versionKey)) {
-      Some(ResolvedCDFVersion(options.get(versionKey).toLong, timestamp = None))
+      val version = options.get(versionKey)
+      try {
+        Some(ResolvedCDFVersion(version.toLong, timestamp = None))
+      } catch {
+        case _: NumberFormatException => throw DeltaErrors.versionInvalid(version)
+      }
     } else if (options.containsKey(timestampKey)) {
       val ts = options.get(timestampKey)
       val spec = DeltaTimeTravelSpec(Some(Literal(ts)), None, Some("cdcReader"))

@@ -498,6 +498,11 @@ trait DeltaErrorsBase
       pos = 0)
   }
 
+  /** Throwable used when a null 'start' or 'end' is provided in CDC reads. */
+  def nullRangeBoundaryInCDCRead(): Throwable = {
+    new DeltaIllegalArgumentException(errorClass = "DELTA_CDC_READ_NULL_RANGE_BOUNDARY")
+  }
+
   /**
    * Throwable used for invalid CDC 'start' and 'end' options, where end < start
    */
@@ -1505,6 +1510,13 @@ trait DeltaErrorsBase
     new DeltaAnalysisException(
       errorClass = "DELTA_TIMESTAMP_INVALID",
       messageParameters = Array(s"${expr.sql}")
+    )
+  }
+
+  def versionInvalid(version: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_VERSION_INVALID",
+      messageParameters = Array(s"$version")
     )
   }
 
