@@ -201,7 +201,7 @@ class DeltaReplaceTableSuite extends DeltaTableWriteSuiteBase {
 
   /* ----- ERROR CASES ------ */
 
-  test("CTAS with replace is blocked for now") {
+  test("RTAS is blocked for now") {
     // We will add this support in a future PR
     withTempDirAndEngine { (tablePath, engine) =>
       createInitialTable(engine, tablePath)
@@ -397,7 +397,7 @@ class DeltaReplaceTableSuite extends DeltaTableWriteSuiteBase {
 
   // TODO can we refactor other suites to run with both create + replace?
 
-  // TODO when we support CTAS parameterize these tests?
+  // TODO when we support RTAS parameterize these tests?
   test("Basic case with no metadata changes") {
     // This just checks that the table is cleared
     withTempDirAndEngine { (tablePath, engine) =>

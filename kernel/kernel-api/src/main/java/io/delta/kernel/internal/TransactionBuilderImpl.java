@@ -63,16 +63,17 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   private static final Logger logger = LoggerFactory.getLogger(TransactionBuilderImpl.class);
 
   private final long currentTimeMillis = System.currentTimeMillis();
-  protected final TableImpl table;
   private final String engineInfo;
   private final Operation operation;
-  protected Optional<StructType> schema = Optional.empty();
   private Optional<List<String>> partitionColumns = Optional.empty();
   private Optional<List<Column>> clusteringColumns = Optional.empty();
   private Optional<SetTransaction> setTxnOpt = Optional.empty();
   private Optional<Map<String, String>> tableProperties = Optional.empty();
   private Optional<Set<String>> unsetTablePropertiesKeys = Optional.empty();
   private boolean needDomainMetadataSupport = false;
+
+  protected final TableImpl table;
+  protected Optional<StructType> schema = Optional.empty();
 
   /**
    * Number of retries for concurrent write exceptions to resolve conflicts and retry commit. In
@@ -268,12 +269,12 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       // For a new table definition start with an empty initial metadata
       baseMetadata = getInitialMetadata();
       // In the case of Replace table there are a few delta-specific properties we want to preserve
-      if (latestSnapshot.isPresent()) {
+      if (latestSnapshot.isPresent()) { // replace = isCreateOrReplace && latestSnapshot.isPresent
         Map<String, String> propertiesToPreserve =
             latestSnapshot.get().getMetadata().getConfiguration().entrySet().stream()
                 .filter(
                     e ->
-                        ReplaceTableTransactionBuilderImpl.tablePropertyKeysToPreserve.contains(
+                        ReplaceTableTransactionBuilderImpl.TABLE_PROPERTY_KEYS_TO_PRESERVE.contains(
                             e.getKey()))
                 .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
         baseMetadata = baseMetadata.withMergedConfiguration(propertiesToPreserve);

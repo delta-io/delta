@@ -35,7 +35,7 @@ public class ReplaceTableTransactionBuilderImpl extends TransactionBuilderImpl {
   public Transaction build(Engine engine) {
     try {
       withMaxRetries(0); // We don't support conflict resolution yet so disable retries for now
-      schema.orElseThrow(() -> requireSchemaForReplaceTable(table.getPath(engine)));
+      schema.orElseThrow(() -> requireSchemaForReplaceTable());
       // TODO we need to validate the schema:
       //   When re-using fieldIds we need to check that type & nullability is the same, otherwise
       //   do not allow fieldId re-use and throw an error
@@ -47,11 +47,11 @@ public class ReplaceTableTransactionBuilderImpl extends TransactionBuilderImpl {
     }
   }
 
-  /*
-  Generally for replace table we want to reset all table state, however there are a few
-  delta-specific properties that we should preserve
-  */
-  protected static Set<String> tablePropertyKeysToPreserve =
+  /**
+   * Generally for replace table we want to reset all table state, however there are a few
+   * delta-specific properties that we should preserve
+   */
+  protected static final Set<String> TABLE_PROPERTY_KEYS_TO_PRESERVE =
       new HashSet<String>() {
         {
           add(TableConfig.COLUMN_MAPPING_MAX_COLUMN_ID.getKey());

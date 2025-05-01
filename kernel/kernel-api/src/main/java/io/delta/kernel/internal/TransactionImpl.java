@@ -384,10 +384,9 @@ public class TransactionImpl implements Transaction {
         dm -> metadataActions.add(createDomainMetadataSingleAction(dm.toRow())));
 
     try (CloseableIterator<Row> userStageDataIter = dataActions.iterator()) {
-
-      CloseableIterator<Row> completeFileActionIter;
+      final CloseableIterator<Row> completeFileActionIter;
       if (isReplaceTable()) {
-        // For now, block CTAS with replace; this will be unblocked in a follow-up PR
+        // For now, block RTAS; this will be unblocked in a follow-up PR
         if (userStageDataIter.hasNext()) {
           throw new UnsupportedOperationException(
               "Inserting data is not yet supported with REPLACE");
@@ -787,9 +786,8 @@ public class TransactionImpl implements Transaction {
   }
 
   /**
-   * Returns the remove file rows to completely reset the table state in the case of a replace
-   * operation (i.e. removes every active add file in the table). These rows are already formatted
-   * as {@link SingleAction} rows and are ready to be committed.
+   * Returns the remove file rows needed to remove every active add file in the table. These rows
+   * are already formatted as {@link SingleAction} rows and are ready to be committed.
    */
   private CloseableIterator<Row> getRemoveActionsForReplace(Engine engine) {
     checkArgument(

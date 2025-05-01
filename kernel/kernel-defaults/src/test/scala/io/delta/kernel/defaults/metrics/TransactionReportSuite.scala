@@ -475,7 +475,7 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
 
       // Check TransactionReport for REPLACE operation
       checkTransactionReport(
-        generateCommitActions = (_, _) => emptyIterable(), // for now no CTAS
+        generateCommitActions = (_, _) => emptyIterable(), // for now no RTAS
         path,
         expectException = false,
         expectedBaseSnapshotVersion = 0,
