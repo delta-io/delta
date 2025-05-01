@@ -43,8 +43,10 @@ public interface PostCommitHook {
     CHECKSUM_SIMPLE,
 
     /**
-     * Writes a checksum file at the version committed by the transaction. This hook is present
-     * CHECKSUM_SIMPLE is missing, it requires construct table stats via log replay.
+     * Writes a checksum file at the version committed by the transaction. This hook is present when
+     * CHECKSUM_SIMPLE is missing. It requires constructing table stats via full log replay, which
+     * can be expensive for large tables. Unlike CHECKSUM_SIMPLE, this always performs a full table
+     * state construction rather than incrementally computing from a previous CRC.
      */
     CHECKSUM_FULL,
 

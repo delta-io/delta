@@ -114,7 +114,7 @@ trait ChecksumStatsSuiteBase extends DeltaTableWriteSuiteBase {
    * @param filesToAdd Map of file paths to their sizes
    * @param histogram The histogram to update with new file sizes
    */
-  private def addFiles(
+  protected def addFiles(
       engine: Engine,
       tablePath: String,
       filesToAdd: Map[String, Long],
@@ -145,7 +145,7 @@ trait ChecksumStatsSuiteBase extends DeltaTableWriteSuiteBase {
    * @param filesToRemove Map of file paths to their sizes
    * @param histogram The histogram to update by removing file sizes
    */
-  private def removeFiles(
+  protected def removeFiles(
       engine: Engine,
       tablePath: String,
       filesToRemove: Map[String, Long],
@@ -173,6 +173,18 @@ trait ChecksumStatsSuiteBase extends DeltaTableWriteSuiteBase {
       engine: Engine,
       dataActions: CloseableIterable[Row]): TransactionCommitResult = {
     val result = txn.commit(engine, dataActions)
+
+    // Verify that we don't have both checksum hook types
+    val simpleHooks = result.getPostCommitHooks.stream()
+      .filter(hook => hook.getType == PostCommitHookType.CHECKSUM_SIMPLE)
+      .count()
+    val fullHooks = result.getPostCommitHooks.stream()
+      .filter(hook => hook.getType == PostCommitHookType.CHECKSUM_FULL)
+      .count()
+    assert(
+      simpleHooks == 0 || fullHooks == 0,
+      "Both CHECKSUM_SIMPLE and CHECKSUM_FULL hooks should not be present")
+
     val checksumHook = result.getPostCommitHooks.stream().filter(hook =>
       hook.getType == getPostCommitHookType).findFirst()
     // When result.getVersion is 0, there will only be CHECKSUM_SIMPLE.
@@ -191,22 +203,29 @@ class ChecksumSimpleStatsSuite extends ChecksumStatsSuiteBase {
 class ChecksumFullStatsSuite extends ChecksumStatsSuiteBase {
   override def getPostCommitHookType: PostCommitHookType = PostCommitHookType.CHECKSUM_FULL
 
-  override def checkCrcCorrect(
+  // Delete the checksum before we validate for the next test, so that
+  // the subsequent commit will generate CHECKSUM_FULL hook.
+  override def addFiles(
       engine: Engine,
       tablePath: String,
-      version: Long,
-      expectedFileCount: Long,
-      expectedTableSize: Long,
-      expectedFileSizeHistogram: FileSizeHistogram): Unit = {
-    super.checkCrcCorrect(
-      engine,
-      tablePath,
-      version,
-      expectedFileCount,
-      expectedTableSize,
-      expectedFileSizeHistogram)
-    // Delete the checksum after the validation, so that the subsequence commit
-    // will generate CHECKSUM_FULL hook.
-    deleteChecksumFileForTable(tablePath.stripPrefix("file:"), Seq(version.toInt))
+      filesToAdd: Map[String, Long],
+      histogram: FileSizeHistogram): Unit = {
+    // Delete previous version's checksum if present
+    val previousVersion = Table.forPath(engine, tablePath).asInstanceOf[TableImpl]
+      .getLatestSnapshot(engine).getVersion
+    deleteChecksumFileForTable(tablePath.stripPrefix("file:"), Seq(previousVersion.toInt))
+    super.addFiles(engine, tablePath, filesToAdd, histogram)
+  }
+
+  override def removeFiles(
+      engine: Engine,
+      tablePath: String,
+      filesToRemove: Map[String, Long],
+      histogram: FileSizeHistogram): Unit = {
+    // Delete previous version's checksum
+    val previousVersion =
+      Table.forPath(engine, tablePath).asInstanceOf[TableImpl].getLatestSnapshot(engine).getVersion
+    deleteChecksumFileForTable(tablePath.stripPrefix("file:"), Seq(previousVersion.toInt))
+    super.removeFiles(engine, tablePath, filesToRemove, histogram)
   }
 }

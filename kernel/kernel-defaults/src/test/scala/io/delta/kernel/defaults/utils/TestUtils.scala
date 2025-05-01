@@ -793,14 +793,6 @@ trait TestUtils extends Assertions with SQLHelper {
     result
   }
 
-  def executeCrcFull(result: TransactionCommitResult, engine: Engine): TransactionCommitResult = {
-    result.getPostCommitHooks
-      .stream()
-      .filter(hook => hook.getType == PostCommitHookType.CHECKSUM_FULL)
-      .forEach(hook => hook.threadSafeInvoke(engine))
-    result
-  }
-
   /**
    * Verify checksum data matches the expected values in the snapshot.
    * @param snapshot Snapshot to verify the checksum against
