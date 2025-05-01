@@ -403,22 +403,25 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     // as the commit timestamp for the file.
     // Since CommitInfo should be the first action in the delta when inCommitTimestamp is
     // enabled, we will read the first batch and try to extract the timestamp from it.
-    CloseableIterator<ColumnarBatch> firstBatchIter = Utils.emptyCloseableIterator();
+    // We also ensure that rewoundFileReadDataIter is identical to the original
+    // fileReadDataIter before any data was consumed.
+    final CloseableIterator<ColumnarBatch> rewoundFileReadDataIter;
     Optional<Long> commitTimestamp = timestamp;
-    if (!isFromCheckpoint && fileReadDataIter.hasNext() && commitInfoOrdinal != -1) {
+    if (!isFromCheckpoint && commitInfoOrdinal != -1 && fileReadDataIter.hasNext()) {
       ColumnarBatch firstBatch = fileReadDataIter.next();
-      firstBatchIter = singletonCloseableIterator(firstBatch);
       ColumnVector commitInfoVector = firstBatch.getColumnVector(commitInfoOrdinal);
       Optional<Long> ictOpt =
           CommitInfo.getCommitInfoOpt(commitInfoVector).flatMap(CommitInfo::getInCommitTimestamp);
       if (ictOpt.isPresent()) {
         commitTimestamp = ictOpt;
       }
+      // Create a new iterator that still has the first batch in it.
+      CloseableIterator<ColumnarBatch> firstBatchIter = singletonCloseableIterator(firstBatch);
+      rewoundFileReadDataIter = firstBatchIter.combine(fileReadDataIter);
+    } else {
+      rewoundFileReadDataIter = fileReadDataIter;
     }
     final Optional<Long> finalResolvedCommitTimestamp = commitTimestamp;
-    // Create a new iterotor that still has the first batch in it.
-    final CloseableIterator<ColumnarBatch> rewoundFileReadDataIter =
-        firstBatchIter.combine(firstBatchIter);
 
     return new CloseableIterator<ActionWrapper>() {
       @Override
