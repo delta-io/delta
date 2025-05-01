@@ -60,6 +60,32 @@ public class Utils {
   }
 
   /**
+   * Utility method to create an empty {@link CloseableIterator}.
+   *
+   * @param <T> Element type.
+   * @return A {@link CloseableIterator} with no elements.
+   */
+  public static <T> CloseableIterator<T> emptyCloseableIterator() {
+    return new CloseableIterator<T>() {
+
+      @Override
+      public void close() throws IOException {
+        // nothing to close
+      }
+
+      @Override
+      public boolean hasNext() {
+        return false;
+      }
+
+      @Override
+      public T next() {
+        throw new java.util.NoSuchElementException("No more elements available");
+      }
+    };
+  }
+
+  /**
    * Convert a {@link Iterator} to {@link CloseableIterator}. Useful when passing normal iterators
    * for arguments that require {@link CloseableIterator} type.
    *

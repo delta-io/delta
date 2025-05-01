@@ -17,11 +17,9 @@ package io.delta.kernel.internal.util;
 
 import static io.delta.kernel.internal.TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED;
 
-import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.TableConfig;
-import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.Metadata;
 import java.util.HashMap;
 import java.util.Map;
@@ -76,21 +74,5 @@ public class InCommitTimestampUtils {
         readSnapshot.getVersion() != -1
             && IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(readSnapshot.getMetadata());
     return isICTCurrentlyEnabled && !wasICTEnabledInReadSnapshot;
-  }
-
-  /**
-   * Converts the given {@link ColumnVector} containing commit info to a {@link CommitInfo} object.
-   *
-   * @param commitInfoVector a ColumnVector containing commit info
-   * @return the commit info as a {@link CommitInfo} object, or an empty Optional if no commit info
-   *     is found
-   */
-  public static Optional<CommitInfo> getCommitInfo(ColumnVector commitInfoVector) {
-    for (int rowId = 0; rowId < commitInfoVector.getSize(); rowId++) {
-      if (!commitInfoVector.isNullAt(rowId)) {
-        return Optional.of(CommitInfo.fromColumnVector(commitInfoVector, rowId));
-      }
-    }
-    return Optional.empty();
   }
 }

@@ -40,7 +40,6 @@ import io.delta.kernel.internal.rowtracking.RowTrackingMetadataDomain;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.DomainMetadataUtils;
 import io.delta.kernel.internal.util.FileNames;
-import io.delta.kernel.internal.util.InCommitTimestampUtils;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
@@ -137,7 +136,7 @@ public class ConflictChecker {
             ColumnarBatch batch = actionBatch.getColumnarBatch();
             if (actionBatch.getVersion() == lastWinningVersion) {
               Optional<CommitInfo> commitInfo =
-                  InCommitTimestampUtils.getCommitInfo(batch.getColumnVector(COMMITINFO_ORDINAL));
+                  CommitInfo.getCommitInfoOpt(batch.getColumnVector(COMMITINFO_ORDINAL));
               winningCommitInfoOpt.set(commitInfo);
             }
 
