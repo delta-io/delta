@@ -27,12 +27,12 @@ import io.delta.kernel.{Operation, Table}
 import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.engine.Engine
+import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
 import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction
 import io.delta.kernel.internal.TableImpl
 import io.delta.kernel.internal.actions.{AddFile, Metadata, SingleAction}
 import io.delta.kernel.internal.checksum.{ChecksumReader, CRCInfo}
 import io.delta.kernel.internal.fs.Path
-import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.internal.util.FileNames.checksumFile
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.types.LongType.LONG
@@ -48,9 +48,11 @@ import org.apache.spark.sql.functions.col
  * This suite ensures that both implementations generate consistent checksums
  * for various table operations.
  */
-class ChecksumSimpleComparisonSuite extends DeltaTableWriteSuiteBase with TestUtils {
+trait ChecksumComparisonSuiteBase extends DeltaTableWriteSuiteBase with TestUtils {
 
   private val PARTITION_COLUMN = "part"
+
+  protected def getPostCommitHookType: PostCommitHookType
 
   test("create table, insert data and verify checksum") {
     withTempDirAndEngine { (tablePath, engine) =>
@@ -160,8 +162,8 @@ class ChecksumSimpleComparisonSuite extends DeltaTableWriteSuiteBase with TestUt
       .orElseThrow(() => new IllegalStateException(s"CRC info not found for version $version"))
   }
 
-  // TODO docs
-  private def commitSparkChangeToKernel(
+  // Extracts the changes from spark table and commit the exactly same change to kernel table
+  protected def commitSparkChangeToKernel(
       path: String,
       engine: Engine,
       sparkTablePath: String,
@@ -192,6 +194,35 @@ class ChecksumSimpleComparisonSuite extends DeltaTableWriteSuiteBase with TestUt
     txn
       .commit(engine, inMemoryIterable(toCloseableIterator(addFilesRows.iterator())))
       .getPostCommitHooks
+      .stream().filter(_.getType == getPostCommitHookType)
       .forEach(_.threadSafeInvoke(engine))
+  }
+}
+
+class ChecksumSimpleComparisonSuite extends ChecksumComparisonSuiteBase {
+
+  override def getPostCommitHookType
+      : PostCommitHookType =
+    PostCommitHookType.CHECKSUM_SIMPLE
+}
+
+class ChecksumFullComparisonSuite extends ChecksumComparisonSuiteBase {
+
+  override def getPostCommitHookType
+      : PostCommitHookType =
+    PostCommitHookType.CHECKSUM_FULL
+
+  override def commitSparkChangeToKernel(
+      kernelTablePath: String,
+      engine: Engine,
+      sparkTablePath: String,
+      versionToConvert: Long): Unit = {
+
+    // Delete previous version's checksum to force CHECKSUM_FULL for next commit
+    if (versionToConvert > 0) {
+      deleteChecksumFileForTable(kernelTablePath, Seq((versionToConvert - 1).toInt))
+    }
+
+    super.commitSparkChangeToKernel(kernelTablePath, engine, sparkTablePath, versionToConvert)
   }
 }
