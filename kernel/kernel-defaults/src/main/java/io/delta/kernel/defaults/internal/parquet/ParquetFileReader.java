@@ -32,7 +32,6 @@ import io.delta.kernel.utils.FileStatus;
 import java.io.IOException;
 import java.util.*;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.parquet.ParquetReadOptions;
 import org.apache.parquet.filter2.compat.FilterCompat;
 import org.apache.parquet.filter2.predicate.FilterPredicate;
 import org.apache.parquet.format.converter.ParquetMetadataConverter;
@@ -130,22 +129,6 @@ public class ParquetFileReader {
             Optional<FilterPredicate> parquetPredicate =
                 predicate.flatMap(predicate -> toParquetFilter(parquetSchema, predicate));
 
-            // Disable the record level filtering as the `parquet-mr` evaluates
-            // the filter once the entire record has been materialized. Instead,
-            // we use the predicate to prune the row groups which is more efficient.
-            // In the future, we can consider using the record level filtering if a
-            // native Parquet reader is implemented in Kernel default module.
-            ParquetReadOptions readOptions =
-                ParquetReadOptions.builder()
-                    .useRecordFilter(false)
-                    .useStatsFilter(true) // only enable the row group level filtering
-                    .useBloomFilter(false)
-                    .useDictionaryFilter(false)
-                    .useColumnIndexFilter(false)
-                    .withRecordFilter(
-                        parquetPredicate.map(FilterCompat::get).orElse(FilterCompat.NOOP))
-                    .build();
-
             // Pass the already read footer to the reader to avoid reading it again.
             // TODO: We can avoid reading the footer again if we can pass the footer, but there is
             // no API to do that in the current version of parquet-mr which takes InputFile
@@ -157,6 +140,11 @@ public class ParquetFileReader {
                     return readSupport;
                   }
                 }.withFilter(parquetPredicate.map(FilterCompat::get).orElse(FilterCompat.NOOP))
+                    // Disable the record level filtering as the `parquet-mr` evaluates
+                    // the filter once the entire record has been materialized. Instead,
+                    // we use the predicate to prune the row groups which is more efficient.
+                    // In the future, we can consider using the record level filtering if a
+                    // native Parquet reader is implemented in Kernel default module.
                     .useRecordFilter(false)
                     .useStatsFilter(true) // only enable the row group level filtering
                     .useBloomFilter(false)
