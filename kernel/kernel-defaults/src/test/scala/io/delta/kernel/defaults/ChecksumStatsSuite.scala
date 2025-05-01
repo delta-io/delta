@@ -190,7 +190,7 @@ trait ChecksumStatsSuiteBase extends DeltaTableWriteSuiteBase {
     if (getPostCommitHookType == PostCommitHookType.CHECKSUM_SIMPLE) {
       // For CHECKSUM_SIMPLE, it should always be present
       assert(checksumHook.isPresent, "CHECKSUM_SIMPLE hook should be present")
-      // When result.getVersion is 0, there will only be CHECKSUM_SIMPLE.
+      // When result.getVersion is 0, there will only no CHECKSUM_FULL.
     } else if (result.getVersion > 0) {
       // For CHECKSUM_FULL, it should be present for versions > 0
       assert(checksumHook.isPresent, "CHECKSUM_FULL hook should be present for version > 0")
