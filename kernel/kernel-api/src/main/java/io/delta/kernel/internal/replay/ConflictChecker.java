@@ -136,7 +136,7 @@ public class ConflictChecker {
             ColumnarBatch batch = actionBatch.getColumnarBatch();
             if (actionBatch.getVersion() == lastWinningVersion) {
               Optional<CommitInfo> commitInfo =
-                  CommitInfo.getCommitInfoOpt(batch.getColumnVector(COMMITINFO_ORDINAL));
+                  getCommitInfo(batch.getColumnVector(COMMITINFO_ORDINAL));
               winningCommitInfoOpt.set(commitInfo);
             }
 
@@ -326,6 +326,21 @@ public class ConflictChecker {
     }
 
     return winningTxnDomainMetadataMap;
+  }
+
+  /**
+   * Get the commit info from the winning transactions.
+   *
+   * @param commitInfoVector commit info rows from the winning transactions
+   * @return the commit info
+   */
+  private Optional<CommitInfo> getCommitInfo(ColumnVector commitInfoVector) {
+    for (int rowId = 0; rowId < commitInfoVector.getSize(); rowId++) {
+      if (!commitInfoVector.isNullAt(rowId)) {
+        return Optional.of(CommitInfo.fromColumnVector(commitInfoVector, rowId));
+      }
+    }
+    return Optional.empty();
   }
 
   private void handleTxn(ColumnVector txnVector) {

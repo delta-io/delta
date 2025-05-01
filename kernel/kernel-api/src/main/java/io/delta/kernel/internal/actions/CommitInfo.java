@@ -261,20 +261,4 @@ public class CommitInfo {
     logger.info("No commit info found for commit of version {}", version);
     return Optional.empty();
   }
-
-  /**
-   * Converts the given {@link ColumnVector} to a {@link CommitInfo} object.
-   *
-   * @param columnVector a ColumnVector that potentially contains commit info
-   * @return the commit info as a {@link CommitInfo} object, or an empty Optional if no commit info
-   *     is found
-   */
-  public static Optional<CommitInfo> getCommitInfoOpt(ColumnVector columnVector) {
-    for (int rowId = 0; rowId < columnVector.getSize(); rowId++) {
-      if (!columnVector.isNullAt(rowId)) {
-        return Optional.of(CommitInfo.fromColumnVector(columnVector, rowId));
-      }
-    }
-    return Optional.empty();
-  }
 }

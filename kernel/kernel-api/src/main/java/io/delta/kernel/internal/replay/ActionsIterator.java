@@ -412,10 +412,12 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     if (!isFromCheckpoint && commitInfoOrdinal != -1 && fileReadDataIter.hasNext()) {
       ColumnarBatch firstBatch = fileReadDataIter.next();
       ColumnVector commitInfoVector = firstBatch.getColumnVector(commitInfoOrdinal);
-      Optional<Long> ictOpt =
-          CommitInfo.getCommitInfoOpt(commitInfoVector).flatMap(CommitInfo::getInCommitTimestamp);
-      if (ictOpt.isPresent()) {
-        commitTimestamp = ictOpt;
+      // CommitInfo is always the first action in the batch when inCommitTimestamp is enabled.
+      int expectedRowIdOfCommitInfo = 0;
+      CommitInfo commitInfo =
+          CommitInfo.fromColumnVector(commitInfoVector, expectedRowIdOfCommitInfo);
+      if (commitInfo != null && commitInfo.getInCommitTimestamp().isPresent()) {
+        commitTimestamp = commitInfo.getInCommitTimestamp();
       }
       // Create a new iterator that still has the first batch in it.
       CloseableIterator<ColumnarBatch> firstBatchIter = singletonCloseableIterator(firstBatch);
