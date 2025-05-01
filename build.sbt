@@ -227,7 +227,9 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
     Test / unmanagedSourceDirectories += (Test / baseDirectory).value / "src" / "test" / "scala-spark-master",
     Antlr4 / antlr4Version := "4.13.1",
     java17TestSettings,
-
+    Test / javaOptions ++= Seq(
+      "-Dlog4j.configurationFile=log4j2_spark_master.properties"
+    )
     /*
     TODO re-enable unidoc and add unidoc settings
     // Java-/Scala-/Uni-Doc Settings
