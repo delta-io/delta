@@ -35,7 +35,7 @@ import io.delta.kernel.internal.util.{FileNames, ManualClock, VectorUtils}
 import io.delta.kernel.utils.CloseableIterator
 
 import org.apache.spark.sql.delta.DeltaLog
-import org.apache.spark.sql.delta.actions.{Action => SparkAction, AddCDCFile, AddCDCFile => SparkAddCDCFile, AddFile, AddFile => SparkAddFile, CommitInfo => SparkCommitInfo, Metadata, Metadata => SparkMetadata, Protocol, Protocol => SparkProtocol, RemoveFile, RemoveFile => SparkRemoveFile, SetTransaction}
+import org.apache.spark.sql.delta.actions.{Action => SparkAction, AddCDCFile => SparkAddCDCFile, AddFile => SparkAddFile, CommitInfo => SparkCommitInfo, Metadata => SparkMetadata, Protocol => SparkProtocol, RemoveFile => SparkRemoveFile, SetTransaction => SparkSetTransaction}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits.OptimisticTxnTestHelper
 
 import org.apache.hadoop.fs.{Path => HadoopPath}
@@ -83,38 +83,39 @@ class TableChangesSuite extends AnyFunSuite with TestUtils with DeltaTableWriteS
   Seq(true, false).foreach { ictEnabled =>
     test(s"getChanges should return the same results as Spark [ictEnabled: $ictEnabled]") {
       withTempDir { tempDir =>
-        val tablePath = tempDir.getCanonicalPath
-          // The code to create this table is copied from GoldenTables.scala
-          {
-            val log = DeltaLog.forTable(spark, new HadoopPath(tablePath))
+        val tablePath = tempDir.getCanonicalPath()
+        // The code to create this table is copied from GoldenTables.scala.
+        // The part that enables ICT is a new addition.
+        val log = DeltaLog.forTable(spark, new HadoopPath(tablePath))
 
-            val schema = new StructType()
-              .add("part", IntegerType)
-              .add("id", IntegerType)
-            val configuration = if (ictEnabled) {
-              Map("delta.enableInCommitTimestamps" -> "true")
-            } else {
-              Map.empty[String, String]
-            }
-            val metadata = Metadata(schemaString = schema.json, configuration = configuration)
+        val schema = new StructType()
+          .add("part", IntegerType)
+          .add("id", IntegerType)
+        val configuration = if (ictEnabled) {
+          Map("delta.enableInCommitTimestamps" -> "true")
+        } else {
+          Map.empty[String, String]
+        }
+        val metadata = SparkMetadata(schemaString = schema.json, configuration = configuration)
 
-            val add1 = AddFile("fake/path/1", Map.empty, 1, 1, dataChange = true)
-            val txn1 = log.startTransaction()
-            txn1.commitManually(metadata :: add1 :: Nil: _*)
+        val add1 = SparkAddFile("fake/path/1", Map.empty, 1, 1, dataChange = true)
+        val txn1 = log.startTransaction()
+        txn1.commitManually(metadata :: add1 :: Nil: _*)
 
-            val addCDC2 = AddCDCFile(
-              "fake/path/2",
-              Map("partition_foo" -> "partition_bar"),
-              1,
-              Map("tag_foo" -> "tag_bar"))
-            val remove2 = RemoveFile("fake/path/1", Some(100), dataChange = true)
-            val txn2 = log.startTransaction()
-            txn2.commitManually(addCDC2 :: remove2 :: Nil: _*)
+        val addCDC2 = SparkAddCDCFile(
+          "fake/path/2",
+          Map("partition_foo" -> "partition_bar"),
+          1,
+          Map("tag_foo" -> "tag_bar"))
+        val remove2 = SparkRemoveFile("fake/path/1", Some(100), dataChange = true)
+        val txn2 = log.startTransaction()
+        txn2.commitManually(addCDC2 :: remove2 :: Nil: _*)
 
-            val setTransaction3 = SetTransaction("fakeAppId", 3L, Some(200))
-            val txn3 = log.startTransaction()
-            txn3.commitManually(Protocol(1, 2) :: setTransaction3 :: Nil: _*)
-          }
+        val setTransaction3 = SparkSetTransaction("fakeAppId", 3L, Some(200))
+        val txn3 = log.startTransaction()
+        val latestTableProtocol = log.snapshot.protocol
+        txn3.commitManually(latestTableProtocol :: setTransaction3 :: Nil: _*)
+
         // request subset of actions
         testGetChangesVsSpark(
           tablePath,
