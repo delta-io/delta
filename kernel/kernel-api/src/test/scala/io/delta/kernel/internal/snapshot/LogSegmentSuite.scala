@@ -180,23 +180,26 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils {
         1)
     }.getMessage
 
-    assert(exMsg.contains("checksum file's version should be lower than logSegment's version"))
+    assert(exMsg.contains(
+      "checksum file's version should be less than or equal to logSegment's version"))
   }
 
-  test("constructor -- skip checksum with version smaller than checkpoint version") {
+  test("constructor -- checksum version must be <= checkpoint version") {
     val checksumAtVersion9 = checksumFileStatus(9)
 
-    val logSegment = new LogSegment(
-      logPath,
-      12,
-      deltasFs11To12List,
-      Collections.emptyList(),
-      checkpointFs10List, // Checkpoint version is 10
-      Optional.of(checksumAtVersion9), // Checksum version is 9
-      1)
+    val exMsg = intercept[IllegalArgumentException] {
+      new LogSegment(
+        logPath,
+        12,
+        deltasFs11To12List,
+        Collections.emptyList(),
+        checkpointFs10List, // Checkpoint version is 10
+        Optional.of(checksumAtVersion9), // Checksum version is 9
+        1)
+    }.getMessage
 
-    // The checksum should be filtered out as it's before the checkpoint
-    assert(!logSegment.getLastSeenChecksum.isPresent)
+    assert(exMsg.contains(
+      "checksum file's version 9 should be greater than or equal to checkpoint version 10"))
   }
 
   test("constructor -- if deltas non-empty then first delta must equal checkpointVersion + 1") {
