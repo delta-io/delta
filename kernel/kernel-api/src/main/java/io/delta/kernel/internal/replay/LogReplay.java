@@ -429,7 +429,7 @@ public class LogReplay {
    *
    * <p>This class uses {@code maybeGetNewerSnapshotHintAndUpdateCache}
    * to calculate a {@code SnapshotHint} and also exposes a {@code getLastSeenCrcInfo} method.
-   * Their relationship are:
+   * Their relationship is:
    * <ul>
    *   <li>We want to find the latest {@code SnapshotHint} to use during log replay for Protocol and
    *       Metadata loading</li>
