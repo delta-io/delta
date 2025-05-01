@@ -22,6 +22,7 @@ import scala.jdk.CollectionConverters.{asJavaIteratorConverter, mapAsJavaMapConv
 import io.delta.kernel.{Table, Transaction, TransactionCommitResult}
 import io.delta.kernel.data.Row
 import io.delta.kernel.engine.Engine
+import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
 import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl, TableConfig, TableImpl}
 import io.delta.kernel.internal.actions.{AddFile, GenerateIcebergCompatActionUtils, RemoveFile}
 import io.delta.kernel.internal.checksum.ChecksumReader
@@ -34,7 +35,7 @@ import io.delta.kernel.utils.CloseableIterable.inMemoryIterable
 /**
  * Functional e2e test suite for verifying file stats collection in CRC are correct.
  */
-class ChecksumStatsSuite extends DeltaTableWriteSuiteBase {
+trait ChecksumStatsSuiteBase extends DeltaTableWriteSuiteBase {
 
   test("Check stats in checksum are correct") {
     withTempDirAndEngine { (tablePath, engine) =>
@@ -113,7 +114,7 @@ class ChecksumStatsSuite extends DeltaTableWriteSuiteBase {
    * @param filesToAdd Map of file paths to their sizes
    * @param histogram The histogram to update with new file sizes
    */
-  private def addFiles(
+  protected def addFiles(
       engine: Engine,
       tablePath: String,
       filesToAdd: Map[String, Long],
@@ -144,7 +145,7 @@ class ChecksumStatsSuite extends DeltaTableWriteSuiteBase {
    * @param filesToRemove Map of file paths to their sizes
    * @param histogram The histogram to update by removing file sizes
    */
-  private def removeFiles(
+  protected def removeFiles(
       engine: Engine,
       tablePath: String,
       filesToRemove: Map[String, Long],
@@ -172,9 +173,60 @@ class ChecksumStatsSuite extends DeltaTableWriteSuiteBase {
       engine: Engine,
       dataActions: CloseableIterable[Row]): TransactionCommitResult = {
     val result = txn.commit(engine, dataActions)
-    result.getPostCommitHooks
-      .stream()
-      .forEach(hook => hook.threadSafeInvoke(engine))
+
+    // Verify that we don't have both checksum hook types
+    val simpleHooks = result.getPostCommitHooks.stream()
+      .filter(hook => hook.getType == PostCommitHookType.CHECKSUM_SIMPLE)
+      .count()
+    val fullHooks = result.getPostCommitHooks.stream()
+      .filter(hook => hook.getType == PostCommitHookType.CHECKSUM_FULL)
+      .count()
+    assert(
+      simpleHooks == 0 || fullHooks == 0,
+      "Both CHECKSUM_SIMPLE and CHECKSUM_FULL hooks should not be present")
+
+    val checksumHook = result.getPostCommitHooks.stream().filter(hook =>
+      hook.getType == getPostCommitHookType).findFirst()
+    if (getPostCommitHookType == PostCommitHookType.CHECKSUM_SIMPLE) {
+      assert(checksumHook.isPresent, "CHECKSUM_SIMPLE hook should be present")
+      // When result.getVersion is 0, there will only no CHECKSUM_FULL.
+    } else if (result.getVersion > 0) {
+      assert(checksumHook.isPresent, "CHECKSUM_FULL hook should be present for version > 0")
+    }
+    checksumHook.ifPresent(_.threadSafeInvoke(engine))
     result
+  }
+
+  protected def getPostCommitHookType: PostCommitHookType
+}
+
+class ChecksumSimpleStatsSuite extends ChecksumStatsSuiteBase {
+  override def getPostCommitHookType: PostCommitHookType = PostCommitHookType.CHECKSUM_SIMPLE
+}
+
+class ChecksumFullStatsSuite extends ChecksumStatsSuiteBase {
+  override def getPostCommitHookType: PostCommitHookType = PostCommitHookType.CHECKSUM_FULL
+
+  // Delete the checksum, so that the subsequent commit will generate CHECKSUM_FULL hook.
+  override def addFiles(
+      engine: Engine,
+      tablePath: String,
+      filesToAdd: Map[String, Long],
+      histogram: FileSizeHistogram): Unit = {
+    val previousVersion = Table.forPath(engine, tablePath).asInstanceOf[TableImpl]
+      .getLatestSnapshot(engine).getVersion
+    deleteChecksumFileForTable(tablePath.stripPrefix("file:"), Seq(previousVersion.toInt))
+    super.addFiles(engine, tablePath, filesToAdd, histogram)
+  }
+
+  override def removeFiles(
+      engine: Engine,
+      tablePath: String,
+      filesToRemove: Map[String, Long],
+      histogram: FileSizeHistogram): Unit = {
+    val previousVersion =
+      Table.forPath(engine, tablePath).asInstanceOf[TableImpl].getLatestSnapshot(engine).getVersion
+    deleteChecksumFileForTable(tablePath.stripPrefix("file:"), Seq(previousVersion.toInt))
+    super.removeFiles(engine, tablePath, filesToRemove, histogram)
   }
 }
