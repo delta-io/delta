@@ -427,17 +427,18 @@ public class LogReplay {
    * Encapsulates CRC-related functionality and state for the LogReplay. This includes caching CRC
    * info and extracting snapshot hints from CRC files.
    *
-   * <p>Implementation Note: This class manages the relationship between snapshot hints and CRC
-   * info:
-   *
+   * <p>This class uses {@code maybeGetNewerSnapshotHintAndUpdateCache}
+   * to calculate a {@code SnapshotHint} and also exposes a {@code getLastSeenCrcInfo} method.
+   * Their relationship are:
    * <ul>
-   *   <li>The {@code maybeGetNewerSnapshotHintAndUpdateCache} method calculates a {@code
-   *       SnapshotHint} that can be used during log replay for Protocol and Metadata loading
-   *   <li>If not provided a SnapshotHint for this version, or provided a stale hint, it will try to
-   *       read the latest seen CRC file (if it exists), cache it, and create a newer hint
-   *   <li>When {@code getLastSeenCrcInfo} is called, it will either use the cached CRCInfo that was
-   *       already read and cached; or, if it was never cached (because the hint was sufficiently
-   *       new) it will read it, parse it, and cache it for the first time
+   *   <li>We want to find the latest {@code SnapshotHint} to use during log replay for Protocol and
+   *       Metadata loading</li>
+   *   <li>If we are not provided a SnapshotHint for this version, or are provided a stale hint,
+   *       we will try to read the latest seen (by file listing) CRC file (if it exists). If so,
+   *       we read it, cache it, and create a newer hint.</li>
+   *   <li>Then, when {@code getLastSeenCrcInfo} is called, we will either use the cached CRCInfo
+   *       that we have already read, parsed, and cached; or, if it was never cached (because
+   *       the hint was sufficiently new) we will read it, parse it, and cache it for the first time</li>
    * </ul>
    */
   private class CrcInfoContext {
