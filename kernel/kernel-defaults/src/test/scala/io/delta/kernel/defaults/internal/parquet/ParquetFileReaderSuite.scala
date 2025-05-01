@@ -207,6 +207,11 @@ class ParquetFileReaderSuite extends AnyFunSuite
     // error message we may get as result.
     // TODO: Uniformize rejecting unsupported conversions.
     assert(
+      ex.getMessage != null,
+      "Error message should not be null: "
+        + ex.getCause + ex.printStackTrace())
+
+    assert(
       ex.getMessage.contains("Can not read value") ||
         ex.getMessage.contains("column with Parquet type") ||
         ex.getMessage.contains("Unable to create Parquet converter for") ||
