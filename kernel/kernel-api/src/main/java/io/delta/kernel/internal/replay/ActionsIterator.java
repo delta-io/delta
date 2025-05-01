@@ -389,11 +389,11 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
   }
 
   /**
-   * Takes an input iterator of actions read from the file and metadata about the file read,
-   * and combines it to return an Iterator<ActionWrapper>. The timestamp in the ActionWrapper
-   * is only set when the input file is not a Checkpoint. The timestamp will be set to be
-   * the inCommitTimestamp of the delta file when available, otherwise it will be the
-   * modification time of the file.
+   * Takes an input iterator of actions read from the file and metadata about the file read, and
+   * combines it to return an Iterator<ActionWrapper>. The timestamp in the ActionWrapper is only
+   * set when the input file is not a Checkpoint. The timestamp will be set to be the
+   * inCommitTimestamp of the delta file when available, otherwise it will be the modification time
+   * of the file.
    */
   private CloseableIterator<ActionWrapper> combine(
       CloseableIterator<ColumnarBatch> fileReadDataIter,
