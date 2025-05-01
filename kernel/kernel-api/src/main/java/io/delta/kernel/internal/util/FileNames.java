@@ -93,8 +93,7 @@ public final class FileNames {
       return DeltaLogFileType.CHECKPOINT;
     } else if (isLogCompactionFile(fileName)) {
       return DeltaLogFileType.LOG_COMPACTION;
-    }
-    if (isChecksumFile(fileName)) {
+    } else if (isChecksumFile(fileName)) {
       return DeltaLogFileType.CHECKSUM;
     } else {
       throw new IllegalStateException("Unexpected file type: " + fileName);
