@@ -527,7 +527,6 @@ public class SnapshotManager {
     // Step 12: Grab the last seen checksum //
     //////////////////////////////////////////
 
-    // In SnapshotManager.java
     Optional<FileStatus> lastSeenChecksumFile = Optional.empty();
     if (!listedChecksumFileStatuses.isEmpty()) {
       FileStatus latestChecksum = ListUtils.getLast(listedChecksumFileStatuses);
