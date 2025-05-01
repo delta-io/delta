@@ -422,7 +422,6 @@ public class LogReplay {
       throw new UncheckedIOException("Could not close iterator", ex);
     }
   }
-
   /**
    * Encapsulates CRC-related functionality and state for the LogReplay. This includes caching CRC
    * info and extracting snapshot hints from CRC files.
