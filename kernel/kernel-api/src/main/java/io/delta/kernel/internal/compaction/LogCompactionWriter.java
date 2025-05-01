@@ -17,7 +17,6 @@ package io.delta.kernel.internal.compaction;
 
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 import static io.delta.kernel.internal.lang.ListUtils.getLast;
-import static java.util.Collections.emptyList;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.data.Row;
@@ -101,7 +100,13 @@ public class LogCompactionWriter {
 
     LogSegment segment =
         new LogSegment(
-            dataPath, endVersion, deltas, emptyList(), Optional.empty(), lastCommitTimestamp);
+            dataPath,
+            endVersion,
+            deltas,
+            Collections.emptyList(),
+            Collections.emptyList(),
+            Optional.empty(),
+            lastCommitTimestamp);
     CreateCheckpointIterator checkpointIterator =
         new CreateCheckpointIterator(engine, segment, minFileRetentionTimestampMillis);
     wrapEngineExceptionThrowsIO(

@@ -16,6 +16,7 @@
 package io.delta.kernel.internal;
 
 import static io.delta.kernel.internal.DeltaErrors.*;
+import static io.delta.kernel.internal.fs.Path.getName;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.data.ColumnVector;
@@ -32,6 +33,7 @@ import io.delta.kernel.internal.lang.ListUtils;
 import io.delta.kernel.internal.replay.ActionsIterator;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.FileNames.DeltaLogFileType;
+import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.CloseableIterator.BreakableFilterResult;
@@ -225,24 +227,49 @@ public class DeltaLogActionUtils {
     return listLogDir(engine, tablePath, startVersion)
         .breakableFilter(
             fs -> {
-              String filePath = fs.getPath();
-              if (fileTypes.contains(DeltaLogFileType.COMMIT) && FileNames.isCommitFile(filePath)) {
+              String fileName = getName(fs.getPath());
+              if (fileTypes.contains(DeltaLogFileType.COMMIT) && FileNames.isCommitFile(fileName)) {
+                // Here, we do nothing (we will consume this file).
+              } else if (fileTypes.contains(DeltaLogFileType.LOG_COMPACTION)
+                  && FileNames.isLogCompactionFile(fileName)) {
                 // Here, we do nothing (we will consume this file).
               } else if (fileTypes.contains(DeltaLogFileType.CHECKPOINT)
-                  && FileNames.isCheckpointFile(filePath)
+                  && FileNames.isCheckpointFile(fileName)
                   && fs.getSize() > 0) {
                 // Checkpoint files of 0 size are invalid but may be ignored silently when read,
                 // hence we ignore them so that we never pick up such checkpoints.
                 // Here, we do nothing (we will consume this file).
               } else if (fileTypes.contains(DeltaLogFileType.CHECKSUM)
-                  && FileNames.isChecksumFile(filePath)) {
+                  && FileNames.isChecksumFile(fileName)) {
                 // Here, we do nothing (we will consume this file).
               } else {
                 logger.debug("Ignoring file {} as it is not of the desired type", fs.getPath());
                 return BreakableFilterResult.EXCLUDE; // Here, we exclude and filter out this file.
               }
 
-              final long fileVersion = FileNames.getFileVersion(new Path(filePath));
+              final long fileVersion;
+              if (FileNames.isLogCompactionFile(fileName)) {
+                Tuple2<Long, Long> compactionVersions =
+                    FileNames.logCompactionVersions(new Path(fs.getPath()));
+                // We use start version here. Below this is used to determine if we should stop
+                // listing because we've listed past the required version. But with a log compaction
+                // file, if the end version is passed the requested version, we don't want to stop,
+                // we just won't use the compaction file.
+                fileVersion = compactionVersions._1;
+
+                // Now check if the compaction end version is too far in the future, and don't
+                // include this file if it is
+                if (endVersionOpt.isPresent()) {
+                  final long endVersion = endVersionOpt.get();
+                  if (compactionVersions._2 > endVersion) {
+                    logger.debug(
+                        "Excluding compaction file as it covers past the end version {}", fileName);
+                    return BreakableFilterResult.EXCLUDE;
+                  }
+                }
+              } else {
+                fileVersion = FileNames.getFileVersion(new Path(fs.getPath()));
+              }
 
               if (fileVersion < startVersion) {
                 throw new RuntimeException(
@@ -270,7 +297,9 @@ public class DeltaLogActionUtils {
                 }
               }
 
-              if (FileNames.isCommitFile(filePath) || FileNames.isCheckpointFile(filePath)) {
+              if (FileNames.isCommitFile(fileName)
+                  || FileNames.isCheckpointFile(fileName)
+                  || FileNames.isLogCompactionFile(fileName)) {
                 hasReturnedCommitOrCheckpoint.set(true);
               }
 

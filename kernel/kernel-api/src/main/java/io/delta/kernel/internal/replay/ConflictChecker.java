@@ -112,7 +112,9 @@ public class ConflictChecker {
       List<DomainMetadata> domainMetadatas,
       CloseableIterable<Row> dataActions)
       throws ConcurrentWriteException {
-    checkArgument(transaction.isBlindAppend(), "Current support is for blind appends only.");
+    // We currently set isBlindAppend=false in our CommitInfo to avoid unsafe resolution by other
+    // connectors. Here, we still can assume that conflict resolution is safe to perform in Kernel.
+    // checkArgument(transaction.isBlindAppend(), "Current support is for blind appends only.");
     return new ConflictChecker(snapshot, transaction, attemptVersion, domainMetadatas, dataActions)
         .resolveConflicts(engine);
   }
