@@ -263,16 +263,16 @@ public class CommitInfo {
   }
 
   /**
-   * Converts the given {@link ColumnVector} containing commit info to a {@link CommitInfo} object.
+   * Converts the given {@link ColumnVector} to a {@link CommitInfo} object.
    *
-   * @param commitInfoVector a ColumnVector containing commit info
+   * @param columnVector a ColumnVector that potentially contains commit info
    * @return the commit info as a {@link CommitInfo} object, or an empty Optional if no commit info
    *     is found
    */
-  public static Optional<CommitInfo> getCommitInfoOpt(ColumnVector commitInfoVector) {
-    for (int rowId = 0; rowId < commitInfoVector.getSize(); rowId++) {
-      if (!commitInfoVector.isNullAt(rowId)) {
-        return Optional.of(CommitInfo.fromColumnVector(commitInfoVector, rowId));
+  public static Optional<CommitInfo> getCommitInfoOpt(ColumnVector columnVector) {
+    for (int rowId = 0; rowId < columnVector.getSize(); rowId++) {
+      if (!columnVector.isNullAt(rowId)) {
+        return Optional.of(CommitInfo.fromColumnVector(columnVector, rowId));
       }
     }
     return Optional.empty();
