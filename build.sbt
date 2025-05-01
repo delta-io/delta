@@ -1647,7 +1647,10 @@ val createTargetClassesDir = taskKey[Unit]("create target classes dir")
 
 // Don't use these groups for any other projects
 lazy val sparkGroup = project
-  .aggregate(spark, contribs, storage, storageS3DynamoDB, sharing, hudi)
+  // remove sharing for now as it requires the delta-sharing-client to upgrade to Spark 4.0
+  // this hopefully allows us to run the CI for this group successfully; I've added a separate CI
+  // job just for the sharing tests
+  .aggregate(spark, contribs, storage, storageS3DynamoDB, hudi)
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,
