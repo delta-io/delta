@@ -206,27 +206,7 @@ class ParquetFileReaderSuite extends AnyFunSuite
     }
     // We don't properly reject conversions and the error we get vary a lot, this checks various
     // error message we may get as result.
-    // TODO: Uniformize rejecting unsupported conversions.
-    // scalastyle:off println
-    logger.error("Error message: " + ex.getClass.getName)
-    System.out.println("Error message: " + ex.getClass.getName)
-
-    var exTemp = ex
-    while (exTemp.getCause != null) {
-      logger.error("Cause: " + ex.getCause.getClass.getName)
-      System.out.println("Cause: " + ex.getCause.getClass.getName)
-      exTemp = ex.getCause
-    }
-
-    System.out.println(ex.printStackTrace())
-
-    // scalastyle:on println
-
-    assert(
-      ex.getMessage != null,
-      "Error message should not be null: "
-        + ex.getCause + ex.printStackTrace())
-
+    // TODO(delta-io/delta#4493): Uniformize rejecting unsupported conversions.
     assert(
       ex.getMessage.contains("Can not read value") ||
         ex.getMessage.contains("column with Parquet type") ||
@@ -258,9 +238,9 @@ class ParquetFileReaderSuite extends AnyFunSuite
 
       for (toType <- unsupportedTypes) {
         val readSchema = new StructType().add(column, toType)
-        // withClue(s"Converting $column to $toType") {
-        checkParquetReadError(inputLocation, readSchema)
-        // }
+        withClue(s"Converting $column to $toType") {
+          checkParquetReadError(inputLocation, readSchema)
+        }
       }
     }
   }
@@ -270,9 +250,9 @@ class ParquetFileReaderSuite extends AnyFunSuite
     // 'decimal' column is Decimal(10, 2) which fits into a long.
     for (toType <- ALL_TYPES.filterNot(_ == LongType.LONG)) {
       val readSchema = new StructType().add("decimal", toType)
-      // withClue(s"Converting decimal to $toType") {
-      checkParquetReadError(inputLocation, readSchema)
-      // }
+      withClue(s"Converting decimal to $toType") {
+        checkParquetReadError(inputLocation, readSchema)
+      }
     }
   }
 
