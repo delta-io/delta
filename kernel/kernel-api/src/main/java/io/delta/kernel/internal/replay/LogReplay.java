@@ -376,18 +376,27 @@ public class LogReplay {
   private Map<String, DomainMetadata> loadDomainMetadataMap(Engine engine) {
     // First try to load from CRC info if available
     Optional<CRCInfo> lastSeenCrcInfoOpt = crcInfoContext.getLastSeenCrcInfo();
-    if (!lastSeenCrcInfoOpt.isPresent() || !lastSeenCrcInfoOpt.get().getDomainMetadata().isPresent()) {
+    if (!lastSeenCrcInfoOpt.isPresent()
+        || !lastSeenCrcInfoOpt.get().getDomainMetadata().isPresent()) {
       logger.info("No domain metadata available in CRC info, loading from log");
       return loadDomainMetadataMapFromLog(engine, Optional.empty());
-
     }
     CRCInfo lastSeenCrcInfo = lastSeenCrcInfoOpt.get();
-    if(lastSeenCrcInfo.getVersion() == logSegment.getVersion()) {
+    if (lastSeenCrcInfo.getVersion() == logSegment.getVersion()) {
       return lastSeenCrcInfo.getDomainMetadata().get().stream()
-              .collect(Collectors.toMap(DomainMetadata::getDomain, Function.identity()));
+          .collect(Collectors.toMap(DomainMetadata::getDomain, Function.identity()));
     }
 
-
+    Map<String, DomainMetadata> domainMetadataMapFromLog =
+        loadDomainMetadataMapFromLog(engine, Optional.of(lastSeenCrcInfo.getVersion() + 1));
+    lastSeenCrcInfo.getDomainMetadata().get().stream()
+        .forEach(
+            domainMetadataInCrc -> {
+              if (!domainMetadataMapFromLog.containsKey(domainMetadataInCrc.getDomain())) {
+                domainMetadataMapFromLog.put(domainMetadataInCrc.getDomain(), domainMetadataInCrc);
+              }
+            });
+    return domainMetadataMapFromLog;
   }
 
   /**
@@ -403,7 +412,8 @@ public class LogReplay {
    *     DomainMetadata} objects.
    * @throws UncheckedIOException if an I/O error occurs while closing the iterator.
    */
-  private Map<String, DomainMetadata> loadDomainMetadataMapFromLog(Engine engine, Optional<Long> minLogVersion) {
+  private Map<String, DomainMetadata> loadDomainMetadataMapFromLog(
+      Engine engine, Optional<Long> minLogVersion) {
     try (CloseableIterator<ActionWrapper> reverseIter =
         new ActionsIterator(
             engine,
