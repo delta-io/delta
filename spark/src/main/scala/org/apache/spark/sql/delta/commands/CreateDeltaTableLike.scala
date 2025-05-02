@@ -169,7 +169,7 @@ trait CreateDeltaTableLike extends SQLConfHelper {
    * the behavior asked for by the user is clearer: .createOrReplace(), which means that we
    * should overwrite schema and/or partitioning. Therefore we have this hack.
    */
-  private def isV1Writer: Boolean = {
+  protected def isV1Writer: Boolean = {
     Thread.currentThread().getStackTrace.exists(_.toString.contains(
       Relocated.dataFrameWriterClassName + "."))
   }
