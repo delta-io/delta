@@ -105,6 +105,7 @@ public class LogCompactionWriter {
             deltas,
             Collections.emptyList(),
             Collections.emptyList(),
+            Optional.empty(),
             lastCommitTimestamp);
     CreateCheckpointIterator checkpointIterator =
         new CreateCheckpointIterator(engine, segment, minFileRetentionTimestampMillis);

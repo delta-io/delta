@@ -278,7 +278,9 @@ public class SnapshotManager {
     /////////////////////////////////////////////////////////////////
 
     Set<DeltaLogFileType> fileTypes =
-        new HashSet<>(Arrays.asList(DeltaLogFileType.COMMIT, DeltaLogFileType.CHECKPOINT));
+        new HashSet<>(
+            Arrays.asList(
+                DeltaLogFileType.COMMIT, DeltaLogFileType.CHECKPOINT, DeltaLogFileType.CHECKSUM));
     if (USE_COMPACTED_FILES) {
       fileTypes.add(DeltaLogFileType.LOG_COMPACTION);
     }
@@ -341,9 +343,13 @@ public class SnapshotManager {
     List<FileStatus> listedCompactionFileStatuses =
         partitionedFiles.getOrDefault(DeltaLogFileType.LOG_COMPACTION, Collections.emptyList());
 
+    List<FileStatus> listedChecksumFileStatuses =
+        partitionedFiles.getOrDefault(DeltaLogFileType.CHECKSUM, Collections.emptyList());
+
     logDebugFileStatuses("listedCheckpointFileStatuses", listedCheckpointFileStatuses);
     logDebugFileStatuses("listedCompactionFileStatuses", listedCompactionFileStatuses);
     logDebugFileStatuses("listedDeltaFileStatuses", listedDeltaFileStatuses);
+    logDebugFileStatuses("listedCheckSumFileStatuses", listedChecksumFileStatuses);
 
     /////////////////////////////////////////////////////////////////////////////////////////////
     // Step 6: Determine the latest complete checkpoint version. The intuition here is that we //
@@ -517,8 +523,21 @@ public class SnapshotManager {
                 })
             .orElse(Collections.emptyList());
 
+    //////////////////////////////////////////
+    // Step 12: Grab the last seen checksum //
+    //////////////////////////////////////////
+
+    Optional<FileStatus> lastSeenChecksumFile = Optional.empty();
+    if (!listedChecksumFileStatuses.isEmpty()) {
+      FileStatus latestChecksum = ListUtils.getLast(listedChecksumFileStatuses);
+      long checksumVersion = FileNames.checksumVersion(new Path(latestChecksum.getPath()));
+      if (checksumVersion >= latestCompleteCheckpointVersion) {
+        lastSeenChecksumFile = Optional.of(latestChecksum);
+      }
+    }
+
     ///////////////////////////////////////////////////
-    // Step 12: Construct the LogSegment and return. //
+    // Step 13: Construct the LogSegment and return. //
     ///////////////////////////////////////////////////
 
     logger.info("Successfully constructed LogSegment at version {}", newVersion);
@@ -532,6 +551,7 @@ public class SnapshotManager {
         deltasAfterCheckpoint,
         compactionsAfterCheckpoint,
         latestCompleteCheckpointFileStatuses,
+        lastSeenChecksumFile,
         lastCommitTimestamp);
   }
 

@@ -35,10 +35,11 @@ import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl, TableImpl}
 import io.delta.kernel.internal.checksum.{ChecksumReader, ChecksumWriter, CRCInfo}
 import io.delta.kernel.internal.data.ScanStateRow
 import io.delta.kernel.internal.fs.{Path => KernelPath}
+import io.delta.kernel.internal.util.FileNames.checksumFile
 import io.delta.kernel.internal.util.Utils
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.types._
-import io.delta.kernel.utils.CloseableIterator
+import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 
 import org.apache.spark.sql.delta.util.FileNames
 
@@ -761,17 +762,17 @@ trait TestUtils extends Assertions with SQLHelper {
       engine: Engine,
       tablePath: String,
       version: Long): Unit = {
-    val logFile = new KernelPath(s"$tablePath/_delta_log");
+    val logPath = new KernelPath(s"$tablePath/_delta_log");
     val crcInfo = ChecksumReader.getCRCInfo(
       engine,
-      logFile,
-      version,
-      version).get()
+      FileStatus.of(checksumFile(
+        logPath,
+        version).toString)).get()
     // Delete it in hdfs.
     engine.getFileSystemClient.delete(FileNames.checksumFile(
       new Path(s"$tablePath/_delta_log"),
       version).toString)
-    val crcWriter = new ChecksumWriter(logFile)
+    val crcWriter = new ChecksumWriter(logPath)
     crcWriter.writeCheckSum(
       engine,
       new CRCInfo(
@@ -798,14 +799,13 @@ trait TestUtils extends Assertions with SQLHelper {
    * @param snapshot Snapshot to verify the checksum against
    */
   protected def verifyChecksumForSnapshot(snapshot: Snapshot): Unit = {
+    val logPath = snapshot.asInstanceOf[SnapshotImpl].getLogPath
     val crcInfo = ChecksumReader.getCRCInfo(
       defaultEngine,
-      new KernelPath(snapshot.asInstanceOf[SnapshotImpl].getLogPath.toString),
-      snapshot.getVersion,
-      snapshot.getVersion)
-    assert(
-      crcInfo.isPresent,
-      s"CRC information should be present for version ${snapshot.getVersion}")
+      FileStatus.of(checksumFile(
+        logPath,
+        snapshot.getVersion).toString))
+    assert(crcInfo.isPresent)
     // TODO: check metadata, protocol and file size.
     assert(
       crcInfo.get().getNumFiles === collectScanFileRows(snapshot.getScanBuilder.build()).size,

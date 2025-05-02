@@ -18,8 +18,7 @@ package io.delta.kernel.internal.replay;
 
 import static io.delta.kernel.internal.replay.LogReplayUtils.assertLogFilesBelongToTable;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
-import static java.util.Arrays.asList;
-import static java.util.Collections.max;
+import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
@@ -38,6 +37,7 @@ import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.SnapshotHint;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.DomainMetadataUtils;
+import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
@@ -135,7 +135,7 @@ public class LogReplay {
   private final LogSegment logSegment;
   private final Tuple2<Protocol, Metadata> protocolAndMetadata;
   private final Lazy<Map<String, DomainMetadata>> domainMetadataMap;
-  private final Optional<CRCInfo> currentCrcInfo;
+  private final CrcInfoContext crcInfoContext;
 
   public LogReplay(
       Path logPath,
@@ -147,17 +147,23 @@ public class LogReplay {
       SnapshotMetrics snapshotMetrics) {
 
     assertLogFilesBelongToTable(logPath, logSegment.allLogFilesUnsorted());
-    Tuple2<Optional<SnapshotHint>, Optional<CRCInfo>> newerSnapshotHintAndCurrentCrcInfo =
-        maybeGetNewerSnapshotHintAndCurrentCrcInfo(
-            engine, logSegment, snapshotHint, snapshotVersion);
-    this.currentCrcInfo = newerSnapshotHintAndCurrentCrcInfo._2;
+
+    // Ignore the snapshot hint whose version is larger than the snapshot version.
+    if (snapshotHint.isPresent() && snapshotHint.get().getVersion() > snapshotVersion) {
+      snapshotHint = Optional.empty();
+    }
+
+    this.crcInfoContext = new CrcInfoContext(engine);
     this.dataPath = dataPath;
     this.logSegment = logSegment;
+    Optional<SnapshotHint> newerSnapshotHint =
+        crcInfoContext.maybeGetNewerSnapshotHintAndUpdateCache(
+            engine, logSegment, snapshotHint, snapshotVersion);
     this.protocolAndMetadata =
         snapshotMetrics.loadInitialDeltaActionsTimer.time(
             () ->
                 loadTableProtocolAndMetadata(
-                    engine, logSegment, newerSnapshotHintAndCurrentCrcInfo._1, snapshotVersion));
+                    engine, logSegment, newerSnapshotHint, snapshotVersion));
     // Lazy loading of domain metadata only when needed
     this.domainMetadataMap = new Lazy<>(() -> loadDomainMetadataMap(engine));
   }
@@ -186,9 +192,11 @@ public class LogReplay {
     return logSegment.getVersion();
   }
 
-  /** Returns the crc info for the current snapshot if the checksum file is read */
+  /** Returns the crc info for the current snapshot if it is cached */
   public Optional<CRCInfo> getCurrentCrcInfo() {
-    return currentCrcInfo;
+    return crcInfoContext
+        .getLastSeenCrcInfo()
+        .filter(crcInfo -> crcInfo.getVersion() == getVersion());
   }
 
   /**
@@ -367,6 +375,7 @@ public class LogReplay {
    */
   private Map<String, DomainMetadata> loadDomainMetadataMap(Engine engine) {
     // First try to load from CRC info if available
+    Optional<CRCInfo> currentCrcInfo = getCurrentCrcInfo();
     if (currentCrcInfo.isPresent() && currentCrcInfo.get().getDomainMetadata().isPresent()) {
       return currentCrcInfo.get().getDomainMetadata().get().stream()
           .collect(Collectors.toMap(DomainMetadata::getDomain, Function.identity()));
@@ -415,50 +424,87 @@ public class LogReplay {
   }
 
   /**
-   * Calculates the latest snapshot hint before or at the current snapshot version, returns the
-   * CRCInfo if checksum file at the current version is read
+   * Encapsulates CRC-related functionality and state for the LogReplay. This includes caching CRC
+   * info and extracting snapshot hints from CRC files.
+   *
+   * <p>This class uses {@code maybeGetNewerSnapshotHintAndUpdateCache} to calculate a {@code
+   * SnapshotHint} and also exposes a {@code getLastSeenCrcInfo} method. Their relationship is:
+   *
+   * <ul>
+   *   <li>We want to find the latest {@code SnapshotHint} to use during log replay for Protocol and
+   *       Metadata loading
+   *   <li>If we are not provided a SnapshotHint for this version, or are provided a stale hint, we
+   *       will try to read the latest seen (by file listing) CRC file (if it exists). If so, we
+   *       read it, cache it, and create a newer hint.
+   *   <li>Then, when {@code getLastSeenCrcInfo} is called, we will either use the cached CRCInfo
+   *       that we have already read, parsed, and cached; or, if it was never cached (because the
+   *       hint was sufficiently new) we will read it, parse it, and cache it for the first time
+   * </ul>
    */
-  private Tuple2<Optional<SnapshotHint>, Optional<CRCInfo>>
-      maybeGetNewerSnapshotHintAndCurrentCrcInfo(
-          Engine engine,
-          LogSegment logSegment,
-          Optional<SnapshotHint> snapshotHint,
-          long snapshotVersion) {
+  private class CrcInfoContext {
+    private final Engine engine;
+    private Optional<CRCInfo> cachedLastSeenCrcInfo;
 
-    // Snapshot hint's version is current.
-    if (snapshotHint.isPresent() && snapshotHint.get().getVersion() == snapshotVersion) {
-      return new Tuple2<>(snapshotHint, Optional.empty());
+    CrcInfoContext(Engine engine) {
+      this.engine = requireNonNull(engine);
+      this.cachedLastSeenCrcInfo = Optional.empty();
     }
 
-    // Ignore the snapshot hint whose version is larger.
-    if (snapshotHint.isPresent() && snapshotHint.get().getVersion() > snapshotVersion) {
-      snapshotHint = Optional.empty();
+    /** Returns the CRC info persisted in the logSegment's lastSeenChecksum File */
+    public Optional<CRCInfo> getLastSeenCrcInfo() {
+      if (!cachedLastSeenCrcInfo.isPresent()) {
+        cachedLastSeenCrcInfo =
+            logSegment
+                .getLastSeenChecksum()
+                .flatMap(crcFile -> ChecksumReader.getCRCInfo(engine, crcFile));
+      }
+      return cachedLastSeenCrcInfo;
     }
 
-    long crcSearchLowerBound =
-        max(
-            asList(
-                // Prefer reading hint over CRC, so start listing from hint's version + 1,
-                // if hint is not present, list from version 0.
-                snapshotHint.map(SnapshotHint::getVersion).orElse(-1L) + 1,
-                logSegment.getCheckpointVersionOpt().orElse(0L),
-                // Only find the CRC within 100 versions.
-                snapshotVersion - 100,
-                0L));
-    Optional<CRCInfo> crcInfoOpt =
-        ChecksumReader.getCRCInfo(
-            engine, logSegment.getLogPath(), snapshotVersion, crcSearchLowerBound);
-    if (!crcInfoOpt.isPresent()) {
-      return new Tuple2<>(snapshotHint, Optional.empty());
+    /**
+     * Attempts to build a newer snapshot hint from CRC that can be used for loading table state
+     * more efficiently. When CRC is read, updates the internal cache.
+     *
+     * @param engine The engine used to read CRC files
+     * @param logSegment The log segment containing checksum information
+     * @param snapshotHint Existing snapshot hint, if any
+     * @param snapshotVersion Target snapshot version
+     * @return An updated snapshot hint if a newer CRC file was found, otherwise the original hint
+     */
+    public Optional<SnapshotHint> maybeGetNewerSnapshotHintAndUpdateCache(
+        Engine engine,
+        LogSegment logSegment,
+        Optional<SnapshotHint> snapshotHint,
+        long snapshotVersion) {
+
+      // Snapshot hint's version is current so we could use it in loading P&M.
+      // No need to read crc.
+      if (snapshotHint.isPresent() && snapshotHint.get().getVersion() == snapshotVersion) {
+        return snapshotHint;
+      }
+
+      // Prefer reading hint over CRC to save 1 io, only read crc if it is newer than snapshot hint.
+      long crcReadLowerBound = snapshotHint.map(SnapshotHint::getVersion).orElse(-1L) + 1;
+
+      Optional<CRCInfo> crcInfoOpt =
+          logSegment
+              .getLastSeenChecksum()
+              .filter(
+                  checksum ->
+                      FileNames.getFileVersion(new Path(checksum.getPath())) >= crcReadLowerBound)
+              .flatMap(checksum -> ChecksumReader.getCRCInfo(engine, checksum));
+
+      if (!crcInfoOpt.isPresent()) {
+        return snapshotHint;
+      }
+
+      CRCInfo crcInfo = crcInfoOpt.get();
+      this.cachedLastSeenCrcInfo = Optional.of(crcInfo);
+      checkArgument(
+          crcInfo.getVersion() >= crcReadLowerBound && crcInfo.getVersion() <= snapshotVersion);
+      // We found a CRCInfo of a version (a) older than the one we are looking for (snapshotVersion)
+      // but (b) newer than the current hint. Use this CRCInfo to create a new hint, and return.
+      return Optional.of(SnapshotHint.fromCrcInfo(crcInfo));
     }
-    CRCInfo crcInfo = crcInfoOpt.get();
-    checkArgument(
-        crcInfo.getVersion() >= crcSearchLowerBound && crcInfo.getVersion() <= snapshotVersion);
-    // We found a CRCInfo of a version (a) older than the one we are looking for (snapshotVersion)
-    // but (b) newer than the current hint. Use this CRCInfo to create a new hint, and return this
-    // crc info if it matches the current version.
-    return new Tuple2<>(
-        Optional.of(SnapshotHint.fromCrcInfo(crcInfo)),
-        crcInfo.getVersion() == snapshotVersion ? crcInfoOpt : Optional.empty());
   }
 }

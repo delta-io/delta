@@ -50,6 +50,11 @@ trait MockFileSystemClientUtils extends MockEngineUtils {
     }
   }
 
+  /** Checksum file status for given a version */
+  def checksumFileStatus(deltaVersion: Long): FileStatus = {
+    FileStatus.of(FileNames.checksumFile(logPath, deltaVersion).toString, 10, 10)
+  }
+
   /** Checkpoint file statuses where the timestamp = 10*version */
   def singularCheckpointFileStatuses(checkpointVersions: Seq[Long]): Seq[FileStatus] = {
     assert(checkpointVersions.size == checkpointVersions.toSet.size)
