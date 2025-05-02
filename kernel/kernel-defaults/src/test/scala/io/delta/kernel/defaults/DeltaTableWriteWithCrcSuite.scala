@@ -22,8 +22,13 @@ import io.delta.kernel.{Transaction, TransactionCommitResult}
 import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.utils.TestRow
 import io.delta.kernel.engine.Engine
+import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
+import io.delta.kernel.internal.SnapshotImpl
+import io.delta.kernel.internal.checksum.ChecksumReader
+import io.delta.kernel.internal.fs.Path
+import io.delta.kernel.internal.util.FileNames.checksumFile
 import io.delta.kernel.types.StructType
-import io.delta.kernel.utils.CloseableIterable
+import io.delta.kernel.utils.{CloseableIterable, FileStatus}
 
 /**
  * Trait to mixin into a test suite that extends [[DeltaTableWriteSuiteBase]] to run all the tests

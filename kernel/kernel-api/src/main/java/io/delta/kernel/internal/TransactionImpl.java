@@ -37,6 +37,7 @@ import io.delta.kernel.internal.compaction.LogCompactionWriter;
 import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.hook.CheckpointHook;
+import io.delta.kernel.internal.hook.ChecksumFullHook;
 import io.delta.kernel.internal.hook.ChecksumSimpleHook;
 import io.delta.kernel.internal.hook.LogCompactionHook;
 import io.delta.kernel.internal.metrics.TransactionMetrics;
@@ -473,8 +474,13 @@ public class TransactionImpl implements Transaction {
       postCommitHooks.add(new CheckpointHook(dataPath, committedVersion));
     }
 
-    buildPostCommitCrcInfoIfCurrentCrcAvailable(committedVersion, txnMetrics)
-        .ifPresent(crcInfo -> postCommitHooks.add(new ChecksumSimpleHook(crcInfo, logPath)));
+    Optional<CRCInfo> crcInfo =
+        buildPostCommitCrcInfoIfCurrentCrcAvailable(committedVersion, txnMetrics);
+    if (crcInfo.isPresent()) {
+      postCommitHooks.add(new ChecksumSimpleHook(crcInfo.get(), logPath));
+    } else {
+      postCommitHooks.add(new ChecksumFullHook(dataPath, committedVersion));
+    }
 
     if (logCompactionInterval > 0
         && LogCompactionWriter.shouldCompact(committedVersion, logCompactionInterval)) {

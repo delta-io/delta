@@ -334,6 +334,10 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
       }
     }
 
+    if (joinType == "fullOuter" || joinType == "leftOuter") {
+      secondSourceScanWasFullScan = true
+    }
+
     logDebug(s"""writeAllChanges using $joinType join:
        |  source.output: ${source.outputSet}
        |  target.output: ${target.outputSet}

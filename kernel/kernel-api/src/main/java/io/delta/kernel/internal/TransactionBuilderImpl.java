@@ -647,7 +647,6 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     return new LogReplay(
         table.getLogPath(),
         table.getDataPath(),
-        -1,
         engine,
         LogSegment.empty(table.getLogPath()),
         Optional.empty(),

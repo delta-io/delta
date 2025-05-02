@@ -65,10 +65,18 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
     // Loading from CRC will skip tombstone.
     assertDomainMetadata(snapshot, expectedValue.filterNot(_._2.isRemoved))
     // verifyChecksum will check the domain metadata in CRC against the lastest snapshot.
-    verifyChecksum(table.getPath(engine))
+    val tablePath = table.getPath(engine)
+    verifyChecksum(tablePath)
     // Delete CRC and reload snapshot from log.
-    deleteChecksumFileForTable(table.getPath(engine), versions = Seq(snapshot.getVersion.toInt))
-    assertDomainMetadata(table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl], expectedValue)
+    deleteChecksumFileForTable(
+      tablePath.stripPrefix("file:"),
+      versions = Seq(snapshot.getVersion.toInt))
+    // Rebuild table to avoid loading domain metadata from cached crc info.
+    assertDomainMetadata(
+      Table.forPath(engine, tablePath).getLatestSnapshot(engine).asInstanceOf[SnapshotImpl],
+      expectedValue)
+    // Write CRC back so that subsequence operation could generate CRC incrementally.
+    table.checksum(engine, snapshot.getVersion)
   }
 
   private def createTxnWithDomainMetadatas(

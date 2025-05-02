@@ -71,7 +71,7 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite {
   // Method to adjust list of versions of checkpoint file read.
   // For example, if crc is missing and P&M is loaded from checkpoint.
   // Domain metadata will load from checkpoint as well.
-  protected def getExpectedCheckpointReadVersions(versions: Seq[Long]): Seq[Long] = versions
+  protected def getExpectedCheckpointReadSize(size: Seq[Long]): Seq[Long] = size
 
   ///////////
   // Tests //
@@ -107,15 +107,15 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite {
         // Attempt to read 10.crc fails and read 10.checkpoint.parquet succeeds.
         expJsonVersionsRead = Nil,
         expParquetVersionsRead = Seq(10),
-        expParquetReadSetSizes = getExpectedCheckpointReadVersions(Seq(1)),
-        expChecksumReadSet = Seq(10),
+        expParquetReadSetSizes = getExpectedCheckpointReadSize(Seq(1)),
+        expChecksumReadSet = Nil,
         readVersion = 10)
     }
   }
 
   test(
     "checksum missing read version & the previous version, " +
-      "checkpoint exists the read version the previous version => use checkpoint") {
+      "checkpoint exists the read version and the previous version => use checkpoint") {
     withTableWithCrc { (table, tablePath, engine) =>
       val checkpointVersion = 10
       deleteChecksumFileForTable(tablePath, Seq(checkpointVersion, checkpointVersion + 1))
@@ -127,8 +127,8 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite {
         engine,
         expJsonVersionsRead = Seq(11),
         expParquetVersionsRead = Seq(10),
-        expParquetReadSetSizes = getExpectedCheckpointReadVersions(Seq(1)),
-        expChecksumReadSet = Seq(11),
+        expParquetReadSetSizes = getExpectedCheckpointReadSize(Seq(1)),
+        expChecksumReadSet = Nil,
         readVersion = 11)
     }
   }

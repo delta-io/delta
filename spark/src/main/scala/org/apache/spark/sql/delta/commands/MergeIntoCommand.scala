@@ -209,6 +209,7 @@ case class MergeIntoCommand(
     checkNonDeterministicSource(spark)
 
     // Metrics should be recorded before commit (where they are written to delta logs).
+    setOperationNumSourceRowsMetric()
     metrics("executionTimeMs").set(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime))
     deltaTxn.registerSQLMetrics(spark, metrics)
 
