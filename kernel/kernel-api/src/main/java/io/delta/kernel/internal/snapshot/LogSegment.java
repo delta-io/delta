@@ -379,6 +379,7 @@ public class LogSegment {
         if (versions._2 < currentCompactionLo) {
           break;
         }
+        compactionPos += 1;
       }
     }
 

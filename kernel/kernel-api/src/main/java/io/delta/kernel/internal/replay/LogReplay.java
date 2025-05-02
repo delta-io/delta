@@ -216,7 +216,7 @@ public class LogReplay {
     final CloseableIterator<ActionWrapper> addRemoveIter =
         new ActionsIterator(
             engine,
-            logSegment.allLogFilesReversed(),
+            getLogReplayFiles(logSegment),
             getAddRemoveReadSchema(shouldReadStats),
             getAddReadSchema(shouldReadStats),
             checkpointPredicate);

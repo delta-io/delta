@@ -168,6 +168,8 @@ trait FileReadMetrics { self: Object =>
 
   private val versionsRead = ArrayBuffer[Long]()
 
+  private val compactionVersionsRead = ArrayBuffer[(Long, Long)]()
+
   // Number of checkpoint files requested read in each readParquetFiles call
   val checkpointReadRequestSizes = new ArrayBuffer[Long]()
 
@@ -184,10 +186,15 @@ trait FileReadMetrics { self: Object =>
       lastCheckpointMetadataReadCalls += 1
     } else if (FileNames.isChecksumFile(path.getName)) {
       checksumsRead += FileNames.getFileVersion(path)
+    } else if (FileNames.isLogCompactionFile(path.getName)) {
+      val versions = FileNames.logCompactionVersions(path)
+      compactionVersionsRead += ((versions._1, versions._2))
     }
   }
 
   def getVersionsRead: Seq[Long] = versionsRead
+
+  def getCompactionsRead: Seq[(Long, Long)] = compactionVersionsRead
 
   def getLastCheckpointMetadataReadCalls: Int = lastCheckpointMetadataReadCalls
 

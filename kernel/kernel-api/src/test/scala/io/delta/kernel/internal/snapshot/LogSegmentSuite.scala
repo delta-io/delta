@@ -311,4 +311,45 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils {
       FileStatus.of(FileNames.deltaFile(logPath, 2), 2, 2 * 10)).asJava;
     assert(allFiles === expected);
   }
+
+  test("allFilesWithCompactionsReversed -- 3 - 5, and 7 - 9") {
+    val logSegment = new LogSegment(
+      logPath,
+      10,
+      deltaFileStatuses(Seq.range(1, 11)).toList.asJava,
+      compactedFileStatuses(Seq((3, 5), (7, 9))).toList.asJava,
+      Collections.emptyList(),
+      1)
+    val allFiles = logSegment.allFilesWithCompactionsReversed();
+
+    // expect to get 10, 7-9.compact, 6, 3-5.compact, 2, 1
+    val expected = List(
+      FileStatus.of(FileNames.deltaFile(logPath, 10), 10, 10 * 10),
+      FileStatus.of(FileNames.logCompactionPath(logPath, 7, 9).toString, 7, 7 * 10),
+      FileStatus.of(FileNames.deltaFile(logPath, 6), 6, 6 * 10),
+      FileStatus.of(FileNames.logCompactionPath(logPath, 3, 5).toString, 3, 3 * 10),
+      FileStatus.of(FileNames.deltaFile(logPath, 2), 2, 2 * 10),
+      FileStatus.of(FileNames.deltaFile(logPath, 1), 1, 10)).asJava;
+    assert(allFiles === expected);
+  }
+
+  test("allFilesWithCompactionsReversed -- 3 - 5, and 4 - 8 (overlap)") {
+    val logSegment = new LogSegment(
+      logPath,
+      10,
+      deltaFileStatuses(Seq.range(2, 11)).toList.asJava,
+      compactedFileStatuses(Seq((3, 5), (4, 8))).toList.asJava,
+      Collections.emptyList(),
+      1)
+    val allFiles = logSegment.allFilesWithCompactionsReversed();
+
+    // expect to get 10, 9, 4-8.compact, 3, 2
+    val expected = List(
+      FileStatus.of(FileNames.deltaFile(logPath, 10), 10, 10 * 10),
+      FileStatus.of(FileNames.deltaFile(logPath, 9), 9, 9 * 10),
+      FileStatus.of(FileNames.logCompactionPath(logPath, 4, 8).toString, 4, 4 * 10),
+      FileStatus.of(FileNames.deltaFile(logPath, 3), 3, 3 * 10),
+      FileStatus.of(FileNames.deltaFile(logPath, 2), 2, 2 * 10)).asJava;
+    assert(allFiles === expected);
+  }
 }

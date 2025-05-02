@@ -24,10 +24,12 @@ import scala.collection.JavaConverters._
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.Table
+import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
 import io.delta.kernel.exceptions.{InvalidTableException, KernelException, TableNotFoundException}
 import io.delta.kernel.internal.TableImpl
 import io.delta.kernel.internal.fs.Path
+import io.delta.kernel.internal.hook.LogCompactionHook
 import io.delta.kernel.internal.util.{DateTimeConstants, FileNames}
 import io.delta.kernel.internal.util.InternalUtils.daysSinceEpoch
 import io.delta.kernel.types.{LongType, StructType}
@@ -35,6 +37,7 @@ import io.delta.kernel.types.{LongType, StructType}
 import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations}
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
 
+import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
 import org.apache.spark.sql.functions.col
 import org.scalatest.funsuite.AnyFunSuite
@@ -1062,5 +1065,121 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
         }
       }
     }
+  }
+
+  def testWithCompactions(
+      versionsToWrite: Seq[Int], // highest version MUST be last!
+      versionToRead: Option[Long],
+      compactions: Seq[(Int, Int)],
+      expectedDeltasToBeRead: Set[Int],
+      expectedCompactionsToBeRead: Set[(Int, Int)]) {
+    withTempDir { tmpDir =>
+      val tablePath = tmpDir.getCanonicalPath
+      val hadoopFileIO = new HadoopFileIO(new Configuration() {
+        {
+          // Set the batch sizes to small so that we get to test the multiple batch scenarios.
+          set("delta.kernel.default.parquet.reader.batch-size", "2");
+          set("delta.kernel.default.json.reader.batch-size", "2");
+        }
+      })
+      val engine = new MetricsEngine(hadoopFileIO)
+      versionsToWrite.foreach { i =>
+        spark.range(i * 10, i * 10 + 10).write
+          .format("delta")
+          .mode("append")
+          .save(tablePath)
+      }
+      val dataPath = new Path(s"file:${tablePath}")
+      val logPath = new Path(s"file:${tablePath}", "_delta_log")
+      // create the compaction file(s)
+      compactions.foreach { compaction =>
+        val hook = new LogCompactionHook(
+          dataPath,
+          logPath,
+          compaction._1,
+          compaction._2,
+          0)
+        hook.threadSafeInvoke(engine)
+      }
+      engine.resetMetrics()
+
+      val rowCount =
+        versionToRead.map(v => (v.toInt + 1) * 10).getOrElse((versionsToWrite.last + 1) * 10)
+
+      checkTable(
+        path = tablePath,
+        expectedAnswer = (0 until rowCount).map(i => TestRow(i.toLong)),
+        engine = engine,
+        version = versionToRead)
+
+      val actualJsonVersionsRead = engine.getJsonHandler.getVersionsRead
+      val actualCompactionsRead = engine.getJsonHandler.getCompactionsRead
+      assert(actualJsonVersionsRead.toSet == expectedDeltasToBeRead)
+      assert(actualCompactionsRead.toSet == expectedCompactionsToBeRead)
+    }
+  }
+
+  Seq(Seq((0, 3)), Seq((3, 5)), Seq((5, 9)), Seq((0, 3), (5, 8))).foreach {
+    compactions =>
+      val compactionStr = compactions.mkString(", ")
+      test(s"Compaction(s) at $compactionStr (no checkpoint)") {
+        // for these tests, write 0 - 9 (inclusive)
+        val versionsToWrite = (0 to 9)
+        var expectedDeltasToBeRead = versionsToWrite.toSet
+        compactions.foreach { compaction =>
+          // subtract out the compaction versions from the full set
+          expectedDeltasToBeRead &~= (compaction._1 to compaction._2).toSet
+        }
+        testWithCompactions(
+          versionsToWrite,
+          versionToRead = None,
+          compactions,
+          expectedDeltasToBeRead,
+          compactions.toSet)
+      }
+  }
+
+  Seq(Seq((3, 5)), Seq((8, 11)), Seq((8, 12), (11, 15)), Seq((11, 13), (15, 17))).foreach {
+    compactions =>
+      val compactionStr = compactions.mkString(", ")
+      test(s"Compaction(s) at $compactionStr (with checkpoint)") {
+        // for these tests, write 0 - 19 (inclusive), will checkpoint at 10
+        val versionsToWrite = (0 to 19)
+        val versionsAfterCheckpoint = (11 to 19)
+        var expectedDeltasToBeRead = versionsAfterCheckpoint.toSet
+        var expectedCompactionsToBeRead = Set[(Int, Int)]()
+        compactions.foreach { compaction =>
+          if (compaction._1 > 10) { // only use if after checkpoint
+            // subtract out the compaction versions from the full set
+            expectedDeltasToBeRead &~= (compaction._1 to compaction._2).toSet
+            // add to expected compactions
+            expectedCompactionsToBeRead += compaction
+          }
+        }
+        testWithCompactions(
+          versionsToWrite,
+          versionToRead = None,
+          compactions,
+          expectedDeltasToBeRead,
+          expectedCompactionsToBeRead)
+      }
+  }
+
+  test("Compaction with overlap") {
+    testWithCompactions(
+      versionsToWrite = (0 to 9),
+      versionToRead = None,
+      compactions = Seq((0, 3), (2, 4)),
+      expectedDeltasToBeRead = Set(0, 1, 5, 6, 7, 8, 9),
+      expectedCompactionsToBeRead = Set((2, 4)))
+  }
+
+  test("Compaction out of range") {
+    testWithCompactions(
+      versionsToWrite = (0 to 9),
+      versionToRead = Some(6),
+      compactions = Seq((1, 3), (5, 8)),
+      expectedDeltasToBeRead = Set(0, 4, 5, 6),
+      expectedCompactionsToBeRead = Set((1, 3)))
   }
 }
