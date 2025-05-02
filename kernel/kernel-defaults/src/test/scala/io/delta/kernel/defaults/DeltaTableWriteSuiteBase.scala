@@ -356,12 +356,11 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     txnBuilder.build(engine)
   }
 
-  def commitAppendData(
-      engine: Engine = defaultEngine,
+  def getAppendActions(
       txn: Transaction,
-      data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])]): TransactionCommitResult = {
+      data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])]): CloseableIterable[Row] = {
 
-    val txnState = txn.getTransactionState(engine)
+    val txnState = txn.getTransactionState(defaultEngine)
 
     val actions = data.map { case (partValues, partData) =>
       stageData(txnState, partValues, partData)
@@ -369,11 +368,17 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
 
     actions.reduceLeftOption(_ combine _) match {
       case Some(combinedActions) =>
-        val combineActions = inMemoryIterable(combinedActions)
-        commitTransaction(txn, engine, combineActions)
+        inMemoryIterable(combinedActions)
       case None =>
-        commitTransaction(txn, engine, emptyIterable[Row])
+        emptyIterable[Row]
     }
+  }
+
+  def commitAppendData(
+      engine: Engine = defaultEngine,
+      txn: Transaction,
+      data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])]): TransactionCommitResult = {
+    commitTransaction(txn, engine, getAppendActions(txn, data))
   }
 
   /** Utility to create table, with no data */

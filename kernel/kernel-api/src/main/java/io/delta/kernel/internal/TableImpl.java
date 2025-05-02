@@ -153,6 +153,10 @@ public class TableImpl implements Table {
     return new TransactionBuilderImpl(this, engineInfo, operation);
   }
 
+  public TransactionBuilder createReplaceTableTransactionBuilder(Engine engine, String engineInfo) {
+    return new ReplaceTableTransactionBuilderImpl(this, engineInfo);
+  }
+
   public Clock getClock() {
     return clock;
   }
