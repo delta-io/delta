@@ -204,6 +204,7 @@ class ParquetFileReaderSuite extends AnyFunSuite
     val ex = intercept[Throwable] {
       readParquetFilesUsingKernel(inputLocation, readSchema)
     }
+
     // We don't properly reject conversions and the error we get vary a lot, this checks various
     // error message we may get as result.
     // TODO(delta-io/delta#4493): Uniformize rejecting unsupported conversions.
