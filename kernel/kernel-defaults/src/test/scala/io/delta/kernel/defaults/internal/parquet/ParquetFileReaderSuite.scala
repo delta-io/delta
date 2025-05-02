@@ -207,13 +207,17 @@ class ParquetFileReaderSuite extends AnyFunSuite
     // We don't properly reject conversions and the error we get vary a lot, this checks various
     // error message we may get as result.
     // TODO: Uniformize rejecting unsupported conversions.
+    // scalastyle:off println
     logger.error("Error message: " + ex.getClass.getName)
+    System.out.println("Error message: " + ex.getMessage)
 
     var exTemp = ex
     while (exTemp.getCause != null) {
       logger.error("Cause: " + ex.getCause.getClass.getName)
+      System.out.println("Cause: " + ex.getCause.getClass.getName)
       exTemp = ex.getCause
     }
+    // scalastyle:on println
 
     assert(
       ex.getMessage != null,
