@@ -23,12 +23,13 @@ import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestRow}
 import io.delta.kernel.test.VectorTestUtils
 import io.delta.kernel.types._
 
-import org.apache.parquet.io.ParquetDecodingException
 import org.apache.spark.sql.internal.SQLConf
 import org.scalatest.funsuite.AnyFunSuite
+import org.slf4j.LoggerFactory
 
 class ParquetFileReaderSuite extends AnyFunSuite
     with ParquetSuiteBase with VectorTestUtils with ExpressionTestUtils {
+  private val logger = LoggerFactory.getLogger(classOf[ParquetFileReaderSuite])
 
   test("decimals encoded using dictionary encoding ") {
     // Below golden tables contains three decimal columns
@@ -203,9 +204,10 @@ class ParquetFileReaderSuite extends AnyFunSuite
     val ex = intercept[Throwable] {
       readParquetFilesUsingKernel(inputLocation, readSchema)
     }
+
     // We don't properly reject conversions and the error we get vary a lot, this checks various
     // error message we may get as result.
-    // TODO: Uniformize rejecting unsupported conversions.
+    // TODO(delta-io/delta#4493): Uniformize rejecting unsupported conversions.
     assert(
       ex.getMessage.contains("Can not read value") ||
         ex.getMessage.contains("column with Parquet type") ||
