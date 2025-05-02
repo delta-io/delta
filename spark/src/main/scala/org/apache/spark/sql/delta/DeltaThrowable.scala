@@ -30,5 +30,5 @@ trait DeltaThrowable extends SparkThrowable with DeltaThrowableConditionShim {
   // True if this error is an internal error.
   override def isInternalError: Boolean = DeltaThrowableHelper.isInternalError(this.getErrorClass)
 
-  override def getQueryContext(): Array[QueryContext] = new Array(0);
+  override def getQueryContext: Array[QueryContext] = new Array(0);
 }
