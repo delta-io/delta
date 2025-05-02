@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.SparkThrowable
+import org.apache.spark.{QueryContext, SparkThrowable}
 
 /**
  * The trait for all exceptions of Delta code path.
@@ -29,4 +29,6 @@ trait DeltaThrowable extends SparkThrowable with DeltaThrowableConditionShim {
 
   // True if this error is an internal error.
   override def isInternalError: Boolean = DeltaThrowableHelper.isInternalError(this.getErrorClass)
+
+  override def getQueryContext(): Array[QueryContext] = new Array(0);
 }
