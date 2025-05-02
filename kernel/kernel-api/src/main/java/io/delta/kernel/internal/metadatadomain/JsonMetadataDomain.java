@@ -15,6 +15,8 @@
  */
 package io.delta.kernel.internal.metadatadomain;
 
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonInclude;
@@ -100,9 +102,10 @@ public abstract class JsonMetadataDomain {
    */
   protected static <T> Optional<T> fromSnapshot(
       SnapshotImpl snapshot, Class<T> clazz, String domainName) {
-    return Optional.ofNullable(snapshot.getDomainMetadataMap().get(domainName))
-        .filter(domainMetadata -> !domainMetadata.isRemoved())
-        .map(domainMetadata -> fromJsonConfiguration(domainMetadata.getConfiguration(), clazz));
+    Optional<DomainMetadata> domainMetadata =
+        Optional.ofNullable(snapshot.getDomainMetadataMap().get(domainName));
+    domainMetadata.ifPresent(dm -> checkArgument(!dm.isRemoved()));
+    return domainMetadata.map(dm -> fromJsonConfiguration(dm.getConfiguration(), clazz));
   }
 
   /**

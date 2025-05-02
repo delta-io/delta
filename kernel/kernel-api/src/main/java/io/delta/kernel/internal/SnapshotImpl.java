@@ -17,6 +17,7 @@ package io.delta.kernel.internal;
 
 import static io.delta.kernel.internal.TableConfig.*;
 import static io.delta.kernel.internal.TableConfig.TOMBSTONE_RETENTION;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.ScanBuilder;
 import io.delta.kernel.Snapshot;
@@ -119,9 +120,10 @@ public class SnapshotImpl implements Snapshot {
 
   @Override
   public Optional<String> getDomainMetadata(String domain) {
-    return Optional.ofNullable(getDomainMetadataMap().get(domain))
-        .filter(dm -> !dm.isRemoved()) // only consider active domain metadatas (not tombstones)
-        .map(DomainMetadata::getConfiguration);
+    Optional<DomainMetadata> domainMetadata =
+        Optional.ofNullable(getDomainMetadataMap().get(domain));
+    domainMetadata.ifPresent(dm -> checkArgument(!dm.isRemoved()));
+    return domainMetadata.map(DomainMetadata::getConfiguration);
   }
 
   @Override

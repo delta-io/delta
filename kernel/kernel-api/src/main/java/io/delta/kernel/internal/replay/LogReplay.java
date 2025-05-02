@@ -384,7 +384,9 @@ public class LogReplay {
     // CRC when current CRC is not available.
     // Fall back to loading from the log
     logger.info("No domain metadata available in CRC info, loading from log");
-    return loadDomainMetadataMapFromLog(engine);
+    return loadDomainMetadataMapFromLog(engine).entrySet().stream()
+        .filter(entry -> !entry.getValue().isRemoved())
+        .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
   }
 
   /**
