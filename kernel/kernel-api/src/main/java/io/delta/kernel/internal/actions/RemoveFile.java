@@ -84,13 +84,14 @@ public class RemoveFile extends RowBackedAction {
         : Optional.of(row.getLong(getFieldIndex("size")));
   }
 
-  public Optional<DataFileStatistics> getStats() {
+  public Optional<String> getStatsJson() {
     return getFieldIndexOpt("stats")
         .flatMap(
-            index ->
-                row.isNullAt(index)
-                    ? Optional.empty()
-                    : StatsUtils.deserializeFromJson(row.getString(index)));
+            index -> row.isNullAt(index) ? Optional.empty() : Optional.of(row.getString(index)));
+  }
+
+  public Optional<DataFileStatistics> getStats() {
+    return getStatsJson().flatMap(StatsUtils::deserializeFromJson);
   }
 
   public Optional<MapValue> getTags() {

@@ -49,6 +49,7 @@ import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, JsonUtils}
 import org.apache.spark.sql.util.ScalaExtensions._
 import io.delta.storage.commit._
 import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import org.apache.commons.lang3.NotImplementedException
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
@@ -66,7 +67,8 @@ import org.apache.spark.util.{Clock, Utils}
 
 object CoordinatedCommitType extends Enumeration {
   type CoordinatedCommitType = Value
-  val FS_COMMIT, CC_COMMIT, FS_TO_CC_UPGRADE_COMMIT, CC_TO_FS_DOWNGRADE_COMMIT = Value
+  val FS_COMMIT, CC_COMMIT, CO_COMMIT,
+    FS_TO_CC_UPGRADE_COMMIT, FS_TO_CO_UPGRADE_COMMIT, CC_TO_FS_DOWNGRADE_COMMIT = Value
 }
 
 case class CoordinatedCommitsStats(
@@ -788,6 +790,13 @@ trait OptimisticTransactionImpl extends DeltaTransaction
   def updateMetadataForNewTableInReplace(metadata: Metadata): Unit = {
     assert(CoordinatedCommitsUtils.getExplicitCCConfigurations(metadata.configuration).isEmpty,
       "Command-specified Coordinated Commits configurations should have been blocked earlier.")
+    assert(!metadata.configuration.contains(UCCommitCoordinatorClient.UC_TABLE_ID_KEY),
+      "Command-specified Catalog-Owned table UUID (ucTableId) should have been blocked earlier.")
+    // Extract any existing ucTableId from the snapshot metadata.
+    val existingUCTableIdConf: Map[String, String] =
+      snapshot.metadata.configuration.filter { case (k, v) =>
+        k == UCCommitCoordinatorClient.UC_TABLE_ID_KEY
+      }
     // Extract the existing Coordinated Commits configurations and ICT dependency configurations
     // from the existing table metadata.
     val existingCCConfs =
@@ -796,16 +805,28 @@ trait OptimisticTransactionImpl extends DeltaTransaction
       CoordinatedCommitsUtils.getExplicitICTConfigurations(snapshot.metadata.configuration)
     // Update the metadata.
     updateMetadataForNewTable(metadata)
+    // Ignore the [[CatalogOwnedTableFeature]] if we are replacing an existing table.
+    // This remove the default spark config for Catalog-Owned if being added above.
+    // Users are *NOT* allowed to create a Catalog-Owned table with REPLACE TABLE
+    // so it's fine to filter it out here.
+    newProtocol = newProtocol match {
+      case Some(protocol) =>
+        Some(CatalogOwnedTableUtils.filterOutCatalogOwnedTableFeature(protocol))
+      case None =>
+        newProtocol
+    }
     // Now the `txn.metadata` contains all the command-specified properties and all the default
     // properties. The latter might still contain Coordinated Commits configurations, so we need
     // to remove them and retain the Coordinated Commits configurations from the existing table.
     val newConfsWithoutCC = newMetadata.get.configuration --
       CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS
-    var newConfs: Map[String, String] = newConfsWithoutCC ++ existingCCConfs
+    var newConfs: Map[String, String] = newConfsWithoutCC ++ existingCCConfs ++
+      existingUCTableIdConf
     // We also need to retain the existing ICT dependency configurations, but only when the
-    // existing table does have Coordinated Commits configurations. Otherwise, we treat the ICT
-    // configurations the same as any other configurations, by merging them from the default.
-    if (existingCCConfs.nonEmpty) {
+    // existing table does have Coordinated Commits configurations or Catalog-Owned property.
+    // Otherwise, we treat the ICT configurations the same as any other configurations,
+    // by merging them from the default.
+    if (existingCCConfs.nonEmpty || existingUCTableIdConf.nonEmpty) {
       val newConfsWithoutICT = newConfs -- CoordinatedCommitsUtils.ICT_TABLE_PROPERTY_KEYS
       newConfs = newConfsWithoutICT ++ existingICTConfs
     }
@@ -1786,19 +1807,49 @@ trait OptimisticTransactionImpl extends DeltaTransaction
   def createCoordinatedCommitsStats(): CoordinatedCommitsStats = {
     val (coordinatedCommitsType, metadataToUse) =
       readSnapshotTableCommitCoordinatorClientOpt match {
+        // TODO: Capture the CO -> FS downgrade case when we start
+        //       supporting downgrade for CO.
+        case Some(_) if snapshot.isCatalogOwned =>                             // CO commit
+          (CoordinatedCommitType.CO_COMMIT, snapshot.metadata)
         case Some(_) if metadata.coordinatedCommitsCoordinatorName.isEmpty =>  // CC -> FS
           (CoordinatedCommitType.CC_TO_FS_DOWNGRADE_COMMIT, snapshot.metadata)
+        // Only the 0th commit to a table can be a FS -> CO upgrade for now.
+        // Upgrading an existing FS table to CO through ALTER TABLE is not supported yet.
+        case None if this.newProtocol.exists(_.readerAndWriterFeatureNames
+            .contains(CatalogOwnedTableFeature.name)) =>                       // FS -> CO
+          (CoordinatedCommitType.FS_TO_CO_UPGRADE_COMMIT, metadata)
         case None if metadata.coordinatedCommitsCoordinatorName.isDefined =>   // FS -> CC
           (CoordinatedCommitType.FS_TO_CC_UPGRADE_COMMIT, metadata)
         case Some(_) =>                                                        // CC commit
           (CoordinatedCommitType.CC_COMMIT, snapshot.metadata)
         case None =>                                                           // FS commit
           (CoordinatedCommitType.FS_COMMIT, snapshot.metadata)
+        // Errors out in rest of the cases.
+        case _ =>
+          throw new IllegalStateException(
+            "Unexpected state found when trying " +
+            s"to generate CoordinatedCommitsStats for table ${deltaLog.logPath}. " +
+            s"$readSnapshotTableCommitCoordinatorClientOpt, " +
+            s"$metadata, $snapshot, $catalogTable")
       }
     CoordinatedCommitsStats(
-      coordinatedCommitsType.toString,
-      metadataToUse.coordinatedCommitsCoordinatorName.getOrElse(""),
-      metadataToUse.coordinatedCommitsCoordinatorConf)
+      coordinatedCommitsType = coordinatedCommitsType.toString,
+      commitCoordinatorName = if (Set(CoordinatedCommitType.CO_COMMIT,
+        CoordinatedCommitType.FS_TO_CO_UPGRADE_COMMIT).contains(coordinatedCommitsType)) {
+        // The catalog for FS -> CO upgrade commit would be
+        // "CATALOG_EMPTY" because `catalogTable` is not available
+        // for the 0th FS commit.
+        catalogTable.flatMap { ct =>
+          CatalogOwnedTableUtils.getCatalogName(
+            spark,
+            identifier = ct.identifier)
+        }.getOrElse("CATALOG_EMPTY")
+      } else {
+        metadataToUse.coordinatedCommitsCoordinatorName.getOrElse("")
+      },
+      // For Catalog-Owned table, the coordinator conf for UC-CC is [[Map.empty]]
+      // so we don't distinguish between CO/CC here.
+      commitCoordinatorConf = metadataToUse.coordinatedCommitsCoordinatorConf)
   }
 
   /**

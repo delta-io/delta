@@ -19,6 +19,7 @@ import static io.delta.kernel.internal.DeltaErrors.concurrentDomainMetadataActio
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 import static io.delta.kernel.internal.TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED;
 import static io.delta.kernel.internal.actions.SingleAction.*;
+import static io.delta.kernel.internal.util.FileNames.checksumFile;
 import static io.delta.kernel.internal.util.FileNames.deltaFile;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Preconditions.checkState;
@@ -111,7 +112,9 @@ public class ConflictChecker {
       List<DomainMetadata> domainMetadatas,
       CloseableIterable<Row> dataActions)
       throws ConcurrentWriteException {
-    checkArgument(transaction.isBlindAppend(), "Current support is for blind appends only.");
+    // We currently set isBlindAppend=false in our CommitInfo to avoid unsafe resolution by other
+    // connectors. Here, we still can assume that conflict resolution is safe to perform in Kernel.
+    // checkArgument(transaction.isBlindAppend(), "Current support is for blind appends only.");
     return new ConflictChecker(snapshot, transaction, attemptVersion, domainMetadatas, dataActions)
         .resolveConflicts(engine);
   }
@@ -173,7 +176,8 @@ public class ConflictChecker {
 
     Optional<CRCInfo> updatedCrcInfo =
         ChecksumReader.getCRCInfo(
-            engine, snapshot.getLogPath(), lastWinningVersion, lastWinningVersion);
+            engine,
+            FileStatus.of(checksumFile(snapshot.getLogPath(), lastWinningVersion).toString()));
 
     // if we get here, we have successfully rebased (i.e no logical conflicts)
     // against the winning transactions

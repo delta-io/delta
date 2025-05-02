@@ -29,8 +29,9 @@ import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
 import io.delta.kernel.internal.SnapshotImpl
 import io.delta.kernel.internal.checksum.ChecksumReader
 import io.delta.kernel.internal.fs.Path
+import io.delta.kernel.internal.util.FileNames.checksumFile
 import io.delta.kernel.types.StructType
-import io.delta.kernel.utils.CloseableIterable
+import io.delta.kernel.utils.{CloseableIterable, FileStatus}
 
 /**
  * Test suite that run all tests in DeltaTableWritesSuite with CRC file written

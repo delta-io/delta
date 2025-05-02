@@ -43,6 +43,18 @@ trait MockFileSystemClientUtils extends MockEngineUtils {
     deltaVersions.map(v => FileStatus.of(FileNames.deltaFile(logPath, v), v, v * 10))
   }
 
+  /** Compaction file statuses where the timestamp = 10*version */
+  def compactedFileStatuses(compactedVersions: Seq[(Long, Long)]): Seq[FileStatus] = {
+    compactedVersions.map { case (s, e) =>
+      FileStatus.of(FileNames.logCompactionPath(logPath, s, e).toString, s, s * 10)
+    }
+  }
+
+  /** Checksum file status for given a version */
+  def checksumFileStatus(deltaVersion: Long): FileStatus = {
+    FileStatus.of(FileNames.checksumFile(logPath, deltaVersion).toString, 10, 10)
+  }
+
   /** Checkpoint file statuses where the timestamp = 10*version */
   def singularCheckpointFileStatuses(checkpointVersions: Seq[Long]): Seq[FileStatus] = {
     assert(checkpointVersions.size == checkpointVersions.toSet.size)
