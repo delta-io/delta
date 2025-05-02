@@ -805,15 +805,20 @@ trait OptimisticTransactionImpl extends DeltaTransaction
       CoordinatedCommitsUtils.getExplicitICTConfigurations(snapshot.metadata.configuration)
     // Update the metadata.
     updateMetadataForNewTable(metadata)
-    // Ignore the [[CatalogOwnedTableFeature]] if we are replacing an existing table.
+    // Ignore the [[CatalogOwnedTableFeature]] if we are replacing an existing normal
+    // table *without* CatalogOwned enabled.
     // This remove the default spark config for Catalog-Owned if being added above.
     // Users are *NOT* allowed to create a Catalog-Owned table with REPLACE TABLE
     // so it's fine to filter it out here.
-    newProtocol = newProtocol match {
-      case Some(protocol) =>
-        Some(CatalogOwnedTableUtils.filterOutCatalogOwnedTableFeature(protocol))
-      case None =>
-        newProtocol
+    val isExistingCatalogOwnedTable = snapshot.protocol
+      .readerAndWriterFeatureNames.contains(CatalogOwnedTableFeature.name)
+    if (!isExistingCatalogOwnedTable) {
+      newProtocol = newProtocol match {
+        case Some(protocol) =>
+          Some(CatalogOwnedTableUtils.filterOutCatalogOwnedTableFeature(protocol))
+        case None =>
+          newProtocol
+      }
     }
     // Now the `txn.metadata` contains all the command-specified properties and all the default
     // properties. The latter might still contain Coordinated Commits configurations, so we need
@@ -823,10 +828,10 @@ trait OptimisticTransactionImpl extends DeltaTransaction
     var newConfs: Map[String, String] = newConfsWithoutCC ++ existingCCConfs ++
       existingUCTableIdConf
     // We also need to retain the existing ICT dependency configurations, but only when the
-    // existing table does have Coordinated Commits configurations or Catalog-Owned property.
+    // existing table does have Coordinated Commits configurations or Catalog-Owned enabled.
     // Otherwise, we treat the ICT configurations the same as any other configurations,
     // by merging them from the default.
-    if (existingCCConfs.nonEmpty || existingUCTableIdConf.nonEmpty) {
+    if (existingCCConfs.nonEmpty || isExistingCatalogOwnedTable) {
       val newConfsWithoutICT = newConfs -- CoordinatedCommitsUtils.ICT_TABLE_PROPERTY_KEYS
       newConfs = newConfsWithoutICT ++ existingICTConfs
     }
