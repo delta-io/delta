@@ -375,16 +375,19 @@ public class LogReplay {
    */
   private Map<String, DomainMetadata> loadDomainMetadataMap(Engine engine) {
     // First try to load from CRC info if available
-    Optional<CRCInfo> currentCrcInfo = getCurrentCrcInfo();
-    if (currentCrcInfo.isPresent() && currentCrcInfo.get().getDomainMetadata().isPresent()) {
-      return currentCrcInfo.get().getDomainMetadata().get().stream()
-          .collect(Collectors.toMap(DomainMetadata::getDomain, Function.identity()));
+    Optional<CRCInfo> lastSeenCrcInfoOpt = crcInfoContext.getLastSeenCrcInfo();
+    if (!lastSeenCrcInfoOpt.isPresent() || !lastSeenCrcInfoOpt.get().getDomainMetadata().isPresent()) {
+      logger.info("No domain metadata available in CRC info, loading from log");
+      return loadDomainMetadataMapFromLog(engine, Optional.empty());
+
     }
-    // TODO https://github.com/delta-io/delta/issues/4454: Incrementally load domain metadata from
-    // CRC when current CRC is not available.
-    // Fall back to loading from the log
-    logger.info("No domain metadata available in CRC info, loading from log");
-    return loadDomainMetadataMapFromLog(engine);
+    CRCInfo lastSeenCrcInfo = lastSeenCrcInfoOpt.get();
+    if(lastSeenCrcInfo.getVersion() == logSegment.getVersion()) {
+      return lastSeenCrcInfo.getDomainMetadata().get().stream()
+              .collect(Collectors.toMap(DomainMetadata::getDomain, Function.identity()));
+    }
+
+
   }
 
   /**
@@ -395,11 +398,12 @@ public class LogReplay {
    * #loadTableProtocolAndMetadata}.
    *
    * @param engine The engine used to process the log files.
+   * @param minLogVersion the minimum log version to read
    * @return A map where the keys are domain names and the values are the corresponding {@link
    *     DomainMetadata} objects.
    * @throws UncheckedIOException if an I/O error occurs while closing the iterator.
    */
-  private Map<String, DomainMetadata> loadDomainMetadataMapFromLog(Engine engine) {
+  private Map<String, DomainMetadata> loadDomainMetadataMapFromLog(Engine engine, Optional<Long> minLogVersion) {
     try (CloseableIterator<ActionWrapper> reverseIter =
         new ActionsIterator(
             engine,
@@ -408,7 +412,9 @@ public class LogReplay {
             Optional.empty() /* checkpointPredicate */)) {
       Map<String, DomainMetadata> domainMetadataMap = new HashMap<>();
       while (reverseIter.hasNext()) {
-        final ColumnarBatch columnarBatch = reverseIter.next().getColumnarBatch();
+        final ActionWrapper nextElem = reverseIter.next();
+        final long version = nextElem.getVersion();
+        final ColumnarBatch columnarBatch = nextElem.getColumnarBatch();
         assert (columnarBatch.getSchema().equals(DOMAIN_METADATA_READ_SCHEMA));
 
         final ColumnVector dmVector = columnarBatch.getColumnVector(0);
@@ -416,6 +422,9 @@ public class LogReplay {
         // We are performing a reverse log replay. This function ensures that only the first
         // encountered domain metadata for each domain is added to the map.
         DomainMetadataUtils.populateDomainMetadataMap(dmVector, domainMetadataMap);
+        if (minLogVersion.isPresent() && minLogVersion.get() == version) {
+          break;
+        }
       }
       return domainMetadataMap;
     } catch (IOException ex) {
