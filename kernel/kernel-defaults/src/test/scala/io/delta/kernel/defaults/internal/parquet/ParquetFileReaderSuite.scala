@@ -217,6 +217,9 @@ class ParquetFileReaderSuite extends AnyFunSuite
       System.out.println("Cause: " + ex.getCause.getClass.getName)
       exTemp = ex.getCause
     }
+
+    System.out.println(ex.printStackTrace())
+
     // scalastyle:on println
 
     assert(
