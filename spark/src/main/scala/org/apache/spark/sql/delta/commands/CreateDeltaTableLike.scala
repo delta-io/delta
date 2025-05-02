@@ -18,10 +18,10 @@ package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.{DeltaErrors, Snapshot}
+import org.apache.spark.sql.delta.Relocated
 import org.apache.spark.sql.delta.hooks.{UpdateCatalog, UpdateCatalogFactory}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
-import org.apache.spark.sql.DataFrameWriter
 import org.apache.spark.sql.{SaveMode, SparkSession}
 import org.apache.spark.sql.catalyst.SQLConfHelper
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
@@ -169,8 +169,8 @@ trait CreateDeltaTableLike extends SQLConfHelper {
    * the behavior asked for by the user is clearer: .createOrReplace(), which means that we
    * should overwrite schema and/or partitioning. Therefore we have this hack.
    */
-  protected def isV1Writer: Boolean = {
+  private def isV1Writer: Boolean = {
     Thread.currentThread().getStackTrace.exists(_.toString.contains(
-      classOf[DataFrameWriter[_]].getCanonicalName + "."))
+      Relocated.dataFrameWriterClassName + "."))
   }
 }

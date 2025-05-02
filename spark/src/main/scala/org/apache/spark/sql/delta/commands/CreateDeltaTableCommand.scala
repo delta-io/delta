@@ -21,7 +21,6 @@ import java.util.concurrent.TimeUnit
 
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.Relocated
 import org.apache.spark.sql.delta.DeltaColumnMapping.filterColumnMappingProperties
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.actions.DomainMetadata
@@ -709,19 +708,6 @@ case class CreateDeltaTableCommand(
       newMetadata = newMetadata.copy(configuration = updatedConfig)
       txn.updateMetadataForNewTableInReplace(newMetadata)
     }
-  }
-
-  /**
-   * Horrible hack to differentiate between DataFrameWriterV1 and V2 so that we can decide
-   * what to do with table metadata. In DataFrameWriterV1, mode("overwrite").saveAsTable,
-   * behaves as a CreateOrReplace table, but we have asked for "overwriteSchema" as an
-   * explicit option to overwrite partitioning or schema information. With DataFrameWriterV2,
-   * the behavior asked for by the user is clearer: .createOrReplace(), which means that we
-   * should overwrite schema and/or partitioning. Therefore we have this hack.
-   */
-  private def isV1Writer: Boolean = {
-    Thread.currentThread().getStackTrace.exists(_.toString.contains(
-      Relocated.dataFrameWriterClassName + "."))
   }
 
   /** Returns true if the current operation could be replacing a table. */
