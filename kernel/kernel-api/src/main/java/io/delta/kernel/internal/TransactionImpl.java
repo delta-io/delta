@@ -808,7 +808,6 @@ public class TransactionImpl implements Transaction {
             });
   }
 
-  /** Whether this transaction is a REPLACE TABLE operation */
   private boolean isReplaceTable() {
     return isCreateOrReplace && readSnapshot.getVersion() >= 0;
   }
