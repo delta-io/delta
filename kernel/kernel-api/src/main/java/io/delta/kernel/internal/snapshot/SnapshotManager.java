@@ -188,7 +188,6 @@ public class SnapshotManager {
         new LogReplay(
             logPath,
             tablePath,
-            initSegment.getVersion(),
             engine,
             initSegment,
             Optional.ofNullable(latestSnapshotHint.get()),

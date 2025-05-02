@@ -140,7 +140,6 @@ public class LogReplay {
   public LogReplay(
       Path logPath,
       Path dataPath,
-      long snapshotVersion,
       Engine engine,
       LogSegment logSegment,
       Optional<SnapshotHint> snapshotHint,
@@ -149,7 +148,7 @@ public class LogReplay {
     assertLogFilesBelongToTable(logPath, logSegment.allLogFilesUnsorted());
 
     // Ignore the snapshot hint whose version is larger than the snapshot version.
-    if (snapshotHint.isPresent() && snapshotHint.get().getVersion() > snapshotVersion) {
+    if (snapshotHint.isPresent() && snapshotHint.get().getVersion() > logSegment.getVersion()) {
       snapshotHint = Optional.empty();
     }
 
@@ -158,12 +157,12 @@ public class LogReplay {
     this.logSegment = logSegment;
     Optional<SnapshotHint> newerSnapshotHint =
         crcInfoContext.maybeGetNewerSnapshotHintAndUpdateCache(
-            engine, logSegment, snapshotHint, snapshotVersion);
+            engine, logSegment, snapshotHint, logSegment.getVersion());
     this.protocolAndMetadata =
         snapshotMetrics.loadInitialDeltaActionsTimer.time(
             () ->
                 loadTableProtocolAndMetadata(
-                    engine, logSegment, newerSnapshotHint, snapshotVersion));
+                    engine, logSegment, newerSnapshotHint, logSegment.getVersion()));
     // Lazy loading of domain metadata only when needed
     this.domainMetadataMap = new Lazy<>(() -> loadDomainMetadataMap(engine));
   }
