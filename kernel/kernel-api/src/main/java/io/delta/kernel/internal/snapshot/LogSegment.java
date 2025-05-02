@@ -113,6 +113,14 @@ public class LogSegment {
     checkArgument(
         checkpoints.stream().allMatch(fs -> FileNames.isCheckpointFile(fs.getPath())),
         "checkpoints must all be actual checkpoint files");
+    checkArgument(
+        compactions.stream()
+            .allMatch(
+                fs -> {
+                  Tuple2<Long, Long> versions = FileNames.logCompactionVersions(fs.getPath());
+                  return versions._1 < versions._2;
+                }),
+        "compactions must have start version less than end version");
 
     this.checkpointVersionOpt =
         checkpoints.isEmpty()
@@ -201,59 +209,17 @@ public class LogSegment {
                             .reversed())
                     .collect(Collectors.toList()));
 
-    this.allFilesWithCompactionsReversed = new Lazy<>(() -> loadAllFilesWithCompactionsReversed());
-  }
-
-  private List<FileStatus> loadAllFilesWithCompactionsReversed() {
-    if (compactions.isEmpty()) {
-      return allFilesReversed.get();
-    } else {
-      final Iterator<FileStatus> deltaIt = allFilesReversed.get().iterator();
-      final Iterator<FileStatus> compactionIt = compactionsReversed.get().iterator();
-      FileStatus currentCompaction = compactionIt.next(); // safe we know it wasn't empty
-      Tuple2<Long, Long> currentCompactionVersions =
-          FileNames.logCompactionVersions(currentCompaction.getPath());
-      ArrayList<FileStatus> ret = new ArrayList<FileStatus>();
-      FileStatus cur = null;
-      boolean skipping = false;
-      boolean advanceDeltas = true;
-      while (deltaIt.hasNext() || !advanceDeltas) {
-        if (advanceDeltas) {
-          cur = deltaIt.next();
-        } else {
-          advanceDeltas = true;
-        }
-        long deltaVersion = FileNames.deltaVersion(cur.getPath());
-        if (currentCompactionVersions != null
-            && deltaVersion >= currentCompactionVersions._1
-            && deltaVersion <= currentCompactionVersions._2) {
-          // skip this delta file
-          skipping = true;
-        } else if (skipping) {
-          // we were skipping so put the compaction in
-          ret.add(currentCompaction);
-          if (compactionIt.hasNext()) {
-            currentCompaction = compactionIt.next();
-            currentCompactionVersions =
-                FileNames.logCompactionVersions(currentCompaction.getPath());
-          } else {
-            currentCompaction = null;
-            currentCompactionVersions = null;
-          }
-          skipping = false; // not skipping anymore
-          advanceDeltas = false; // need to reconsider this delta now
-        } else {
-          // not covered, and we weren't skipping, so just add this delta
-          ret.add(cur);
-        }
-      }
-      if (skipping) {
-        // the compaction covered all the way up to the last delta file, so add it as the
-        // last file
-        ret.add(currentCompaction);
-      }
-      return ret;
-    }
+    this.allFilesWithCompactionsReversed =
+        new Lazy<>(
+            () -> {
+              if (compactions.isEmpty()) {
+                return allFilesReversed.get();
+              } else {
+                LogCompactionResolver resolver =
+                    new LogCompactionResolver(allFilesReversed.get(), compactionsReversed.get());
+                return resolver.resolveFiles();
+              }
+            });
   }
 
   /////////////////
@@ -354,5 +320,78 @@ public class LogSegment {
     }
     return "\n    "
         + list.stream().map(FileStatus::toString).collect(Collectors.joining(",\n    "));
+  }
+
+  // Class to resolve the final list of deltas + log compactions to return
+  private class LogCompactionResolver {
+    int compactionPos = 0;
+    long currentCompactionHi = -1;
+    long currentCompactionLo = -1;
+    final List<FileStatus> compactionsReversed;
+
+    final Iterator<FileStatus> deltaIt;
+
+    LogCompactionResolver(List<FileStatus> allFilesReversed, List<FileStatus> compactionsReversed) {
+      this.deltaIt = allFilesReversed.iterator();
+      this.compactionsReversed = compactionsReversed;
+    }
+
+    // We have two lists, one of deltas and one of compactions. Each is sorted in DESCENDING
+    // order. Given this, resolves as follows:
+    // - set a "hi/lo" goalpost around the next compactions
+    // - for each delta, if its version is:
+    //   - greater than the current compaction high point, include it, move to next delta
+    //   - less than (but not equal to) the current low point, skip it, move to next delta
+    //   - equal to the current compaction low point, we're above to transition out of the
+    //     compaction, so, include the compaction, find the next compaction that has a high
+    //     point lower than our current low point and set that to the current compaction to
+    //     consider. This deals with overlapping compactions in a greedy way, ensuring we
+    //     ignore any overlapping compactions.
+    List<FileStatus> resolveFiles() {
+      ArrayList<FileStatus> ret = new ArrayList<FileStatus>();
+      setHiLo();
+      while (deltaIt.hasNext()) {
+        FileStatus currentDelta = deltaIt.next();
+        long deltaVersion = FileNames.deltaVersion(currentDelta.getPath());
+        if (deltaVersion == currentCompactionLo) {
+          // we're about to cross out of the compaction. insert the compaction and advance to the
+          // next compaction. We don't want to include this delta here.
+          ret.add(compactionsReversed.get(compactionPos));
+          advanceCompactionPos();
+          setHiLo();
+        } else if (deltaVersion > currentCompactionHi) {
+          // this delta is not covered by the next compaction, include it.
+          ret.add(currentDelta);
+        }
+        // just skip the file if none of the above are true, it's covered by the current compaction
+      }
+      return ret;
+    }
+
+    // Advance the compaction pos until we're pointing a compaction that has a end lower than our
+    // current low mark (recall we move backwards through versions). This takes compactions in a
+    // greedy manner, and ensures we don't use any overlapping compactions.
+    private void advanceCompactionPos() {
+      compactionPos += 1;
+      while (compactionPos < compactionsReversed.size()) {
+        Tuple2<Long, Long> versions =
+            FileNames.logCompactionVersions(compactionsReversed.get(compactionPos).getPath());
+        if (versions._2 < currentCompactionLo) {
+          break;
+        }
+      }
+    }
+
+    // Set the high/low position based on the current compactionPos
+    private void setHiLo() {
+      if (compactionPos < compactionsReversed.size()) {
+        Tuple2<Long, Long> versions =
+            FileNames.logCompactionVersions(compactionsReversed.get(compactionPos).getPath());
+        currentCompactionLo = versions._1;
+        currentCompactionHi = versions._2;
+      } else {
+        currentCompactionLo = currentCompactionHi = -1;
+      }
+    }
   }
 }
