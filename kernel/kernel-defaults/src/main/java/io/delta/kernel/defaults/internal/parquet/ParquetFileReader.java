@@ -129,7 +129,6 @@ public class ParquetFileReader {
             Optional<FilterPredicate> parquetPredicate =
                 predicate.flatMap(predicate -> toParquetFilter(parquetSchema, predicate));
 
-            // Pass the already read footer to the reader to avoid reading it again.
             // TODO: We can avoid reading the footer again if we can pass the footer, but there is
             // no API to do that in the current version of parquet-mr which takes InputFile
             // as input.

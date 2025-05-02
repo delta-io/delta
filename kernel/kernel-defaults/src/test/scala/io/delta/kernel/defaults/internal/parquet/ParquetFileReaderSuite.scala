@@ -255,9 +255,9 @@ class ParquetFileReaderSuite extends AnyFunSuite
 
       for (toType <- unsupportedTypes) {
         val readSchema = new StructType().add(column, toType)
-        withClue(s"Converting $column to $toType") {
-          checkParquetReadError(inputLocation, readSchema)
-        }
+        // withClue(s"Converting $column to $toType") {
+        checkParquetReadError(inputLocation, readSchema)
+        // }
       }
     }
   }
@@ -267,9 +267,9 @@ class ParquetFileReaderSuite extends AnyFunSuite
     // 'decimal' column is Decimal(10, 2) which fits into a long.
     for (toType <- ALL_TYPES.filterNot(_ == LongType.LONG)) {
       val readSchema = new StructType().add("decimal", toType)
-      withClue(s"Converting decimal to $toType") {
-        checkParquetReadError(inputLocation, readSchema)
-      }
+      // withClue(s"Converting decimal to $toType") {
+      checkParquetReadError(inputLocation, readSchema)
+      // }
     }
   }
 
