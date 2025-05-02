@@ -182,16 +182,17 @@ public class TableImpl implements Table {
       long startVersion,
       long endVersion,
       Set<DeltaLogActionUtils.DeltaAction> actionSet) {
-    // Create a new action set that always contains protocol
+    // Create a new action set which is a super set of the requested actions.
+    // The extra actions are needed either for checks or to extract
+    // extra information. We will strip out the extra actions before
+    // returning the result.
     Set<DeltaLogActionUtils.DeltaAction> copySet = new HashSet<>(actionSet);
     copySet.add(DeltaLogActionUtils.DeltaAction.PROTOCOL);
-    // Always include commitInfo in copySet so that we can
-    // extract the inCommitTimestamp from it when available.
+    // commitInfo is needed to extract the inCommitTimestamp of delta files
     copySet.add(DeltaLogActionUtils.DeltaAction.COMMITINFO);
-    // If protocol is not in the original requested actions we drop the column before returning
+    // Determine whether the additional actions were in the original set.
     boolean shouldDropProtocolColumn =
         !actionSet.contains(DeltaLogActionUtils.DeltaAction.PROTOCOL);
-    // If CommitInfo is not in the original requested actions we drop the column before returning
     boolean shouldDropCommitInfoColumn =
         !actionSet.contains(DeltaLogActionUtils.DeltaAction.COMMITINFO);
 
@@ -211,7 +212,7 @@ public class TableImpl implements Table {
                 batchToReturn = batchToReturn.withDeletedColumnAt(protocolIdx);
               }
               int commitInfoIdx = batchToReturn.getSchema().indexOf("commitInfo");
-              if (shouldDropCommitInfoColumn && commitInfoIdx != -1) {
+              if (shouldDropCommitInfoColumn) {
                 batchToReturn = batchToReturn.withDeletedColumnAt(commitInfoIdx);
               }
               return batchToReturn;
