@@ -27,7 +27,7 @@ import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol, TableFeat
 import org.apache.spark.sql.delta.actions.DomainMetadata
 import org.apache.spark.sql.delta.commands.DMLUtils.TaggedCommitData
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils}
-import org.apache.spark.sql.delta.hooks.{HudiConverterHook, IcebergConverterHook, UpdateCatalog, UpdateCatalogFactory}
+import org.apache.spark.sql.delta.hooks.{HudiConverterHook, IcebergConverterHook}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -41,7 +41,6 @@ import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.execution.command.{LeafRunnableCommand, RunnableCommand}
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
@@ -53,30 +52,34 @@ import org.apache.spark.util.Utils
  * Single entry point for all write or declaration operations for Delta tables accessed through
  * the table name.
  *
- * @param table The table identifier for the Delta table
+ * @param table `CatalogTable` object representing the table to create
  * @param existingTableOpt The existing table for the same identifier if exists
  * @param mode The save mode when writing data. Relevant when the query is empty or set to Ignore
  *             with `CREATE TABLE IF NOT EXISTS`.
  * @param query The query to commit into the Delta table if it exist. This can come from
  *                - CTAS
  *                - saveAsTable
+ * @param operation The table creation mode
+ * @param tableByPath Whether the table is identified by path
+ * @param output SQL output of the command
  * @param protocol This is used to create a table with specific protocol version
  * @param createTableFunc If specified, call this function to create the table, instead of
  *                        Spark `SessionCatalog#createTable` which is backed by Hive Metastore.
  */
 case class CreateDeltaTableCommand(
-    table: CatalogTable,
-    existingTableOpt: Option[CatalogTable],
-    mode: SaveMode,
+    override val table: CatalogTable,
+    override val existingTableOpt: Option[CatalogTable],
+    override val mode: SaveMode,
     query: Option[LogicalPlan],
-    operation: TableCreationModes.CreationMode = TableCreationModes.Create,
-    tableByPath: Boolean = false,
+    override val operation: TableCreationModes.CreationMode = TableCreationModes.Create,
+    override val tableByPath: Boolean = false,
     override val output: Seq[Attribute] = Nil,
     protocol: Option[Protocol] = None,
     createTableFunc: Option[CatalogTable => Unit] = None)
   extends LeafRunnableCommand
   with DeltaCommand
-  with DeltaLogging {
+  with DeltaLogging
+  with CreateDeltaTableLike {
 
   @transient
   private lazy val sc: SparkContext = SparkContext.getOrCreate()
@@ -121,27 +124,7 @@ case class CreateDeltaTableCommand(
       throw DeltaErrors.deltaCannotCreateCatalogOwnedTable()
     }
 
-    var tableWithLocation = if (tableExistsInCatalog) {
-      val existingTable = existingTableOpt.get
-      table.storage.locationUri match {
-        case Some(location) if location.getPath != existingTable.location.getPath =>
-          throw DeltaErrors.tableLocationMismatch(table, existingTable)
-        case _ =>
-      }
-      table.copy(
-        storage = existingTable.storage,
-        tableType = existingTable.tableType)
-    } else if (table.storage.locationUri.isEmpty) {
-      // We are defining a new managed table
-      assert(table.tableType == CatalogTableType.MANAGED)
-      val loc = sparkSession.sessionState.catalog.defaultTablePath(table.identifier)
-      table.copy(storage = table.storage.copy(locationUri = Some(loc)))
-    } else {
-      // 1. We are defining a new external table
-      // 2. It's a managed table which already has the location populated. This can happen in DSV2
-      //    CTAS flow.
-      table
-    }
+    val tableWithLocation = getCatalogTableWithLocation(sparkSession)
 
     val tableLocation = getDeltaTablePath(tableWithLocation)
     // To be safe, here we only extract file system options from table storage properties, to create
@@ -251,7 +234,13 @@ case class CreateDeltaTableCommand(
       checkIfUpdatedSinceTs = Some(opStartTs),
       catalogTableOpt = Some(tableWithLocation))
     val didNotChangeMetadata = txnUsedForCommit.metadata == txnUsedForCommit.snapshot.metadata
-    updateCatalog(sparkSession, tableWithLocation, postCommitSnapshot, didNotChangeMetadata)
+    updateCatalog(
+      sparkSession,
+      tableWithLocation,
+      postCommitSnapshot,
+      query,
+      didNotChangeMetadata,
+      createTableFunc)
 
 
     if (UniversalFormat.icebergEnabled(postCommitSnapshot.metadata) &&
@@ -689,87 +678,6 @@ case class CreateDeltaTableCommand(
 
   private def getDeltaTablePath(table: CatalogTable): Path = {
     new Path(table.location)
-  }
-
-  /**
-   * Similar to getOperation, here we disambiguate the catalog alterations we need to do based
-   * on the table operation, and whether we have reached here through legacy code or DataSourceV2
-   * code paths.
-   */
-  private def updateCatalog(
-      spark: SparkSession,
-      table: CatalogTable,
-      snapshot: Snapshot,
-      didNotChangeMetadata: Boolean
-    ): Unit = {
-    val cleaned = cleanupTableDefinition(spark, table, snapshot)
-    operation match {
-      case _ if tableByPath => // do nothing with the metastore if this is by path
-      case TableCreationModes.Create =>
-        if (createTableFunc.isDefined) {
-          createTableFunc.get.apply(cleaned)
-        } else {
-          spark.sessionState.catalog.createTable(
-            cleaned,
-            ignoreIfExists = existingTableOpt.isDefined || mode == SaveMode.Ignore,
-            validateLocation = false)
-        }
-      case TableCreationModes.Replace | TableCreationModes.CreateOrReplace
-          if existingTableOpt.isDefined =>
-        UpdateCatalogFactory.getUpdateCatalogHook(table, spark).updateSchema(spark, snapshot)
-      case TableCreationModes.Replace =>
-        val ident = Identifier.of(table.identifier.database.toArray, table.identifier.table)
-        throw DeltaErrors.cannotReplaceMissingTableException(ident)
-      case TableCreationModes.CreateOrReplace =>
-        spark.sessionState.catalog.createTable(
-          cleaned,
-          ignoreIfExists = false,
-          validateLocation = false)
-    }
-  }
-
-  /** Clean up the information we pass on to store in the catalog. */
-  private def cleanupTableDefinition(spark: SparkSession, table: CatalogTable, snapshot: Snapshot)
-      : CatalogTable = {
-    // These actually have no effect on the usability of Delta, but feature flagging legacy
-    // behavior for now
-    val storageProps = if (conf.getConf(DeltaSQLConf.DELTA_LEGACY_STORE_WRITER_OPTIONS_AS_PROPS)) {
-      // Legacy behavior
-      table.storage
-    } else {
-      table.storage.copy(properties = Map.empty)
-    }
-
-    // If we have to update the catalog, use the correct schema and table properties, otherwise
-    // empty out the schema and property information
-    if (conf.getConf(DeltaSQLConf.DELTA_UPDATE_CATALOG_ENABLED)) {
-      // In the case we're creating a Delta table on an existing path and adopting the schema
-      val schema = if (table.schema.isEmpty) snapshot.schema else table.schema
-      val truncationThreshold = spark.sessionState.conf.getConf(
-        DeltaSQLConf.DELTA_UPDATE_CATALOG_LONG_FIELD_TRUNCATION_THRESHOLD)
-      val (truncatedSchema, additionalProperties) = UpdateCatalog.truncateSchemaIfNecessary(
-          snapshot.schema,
-          truncationThreshold)
-
-      table.copy(
-        schema = truncatedSchema,
-        // Hive does not allow for the removal of partition columns once stored.
-        // To avoid returning the incorrect schema when the partition columns change,
-        // we store the partition columns as regular data columns.
-        partitionColumnNames = Nil,
-        properties = UpdateCatalog.updatedProperties(snapshot)
-          ++ additionalProperties,
-        storage = storageProps,
-        tracksPartitionsInCatalog = true)
-    } else {
-      table.copy(
-        schema = new StructType(),
-        properties = Map.empty,
-        partitionColumnNames = Nil,
-        // Remove write specific options when updating the catalog
-        storage = storageProps,
-        tracksPartitionsInCatalog = true)
-    }
   }
 
   /**
