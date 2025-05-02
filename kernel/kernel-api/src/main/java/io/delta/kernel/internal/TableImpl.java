@@ -190,12 +190,19 @@ public class TableImpl implements Table {
       long startVersion,
       long endVersion,
       Set<DeltaLogActionUtils.DeltaAction> actionSet) {
-    // Create a new action set that always contains protocol
+    // Create a new action set which is a super set of the requested actions.
+    // The extra actions are needed either for checks or to extract
+    // extra information. We will strip out the extra actions before
+    // returning the result.
     Set<DeltaLogActionUtils.DeltaAction> copySet = new HashSet<>(actionSet);
     copySet.add(DeltaLogActionUtils.DeltaAction.PROTOCOL);
-    // If protocol is not in the original requested actions we drop the column before returning
+    // commitInfo is needed to extract the inCommitTimestamp of delta files
+    copySet.add(DeltaLogActionUtils.DeltaAction.COMMITINFO);
+    // Determine whether the additional actions were in the original set.
     boolean shouldDropProtocolColumn =
         !actionSet.contains(DeltaLogActionUtils.DeltaAction.PROTOCOL);
+    boolean shouldDropCommitInfoColumn =
+        !actionSet.contains(DeltaLogActionUtils.DeltaAction.COMMITINFO);
 
     return getRawChanges(engine, startVersion, endVersion, copySet)
         .map(
@@ -208,11 +215,15 @@ public class TableImpl implements Table {
                   TableFeatures.validateKernelCanReadTheTable(protocol, getDataPath().toString());
                 }
               }
+              ColumnarBatch batchToReturn = batch;
               if (shouldDropProtocolColumn) {
-                return batch.withDeletedColumnAt(protocolIdx);
-              } else {
-                return batch;
+                batchToReturn = batchToReturn.withDeletedColumnAt(protocolIdx);
               }
+              int commitInfoIdx = batchToReturn.getSchema().indexOf("commitInfo");
+              if (shouldDropCommitInfoColumn) {
+                batchToReturn = batchToReturn.withDeletedColumnAt(commitInfoIdx);
+              }
+              return batchToReturn;
             });
   }
 
