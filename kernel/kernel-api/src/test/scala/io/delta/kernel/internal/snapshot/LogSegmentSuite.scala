@@ -352,4 +352,20 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils {
       FileStatus.of(FileNames.deltaFile(logPath, 2), 2, 2 * 10)).asJava;
     assert(allFiles === expected);
   }
+
+  test("allFilesWithCompactionsReversed -- 3 - 5, whole range") {
+    val logSegment = new LogSegment(
+      logPath,
+      5,
+      deltaFileStatuses(Seq.range(3, 6)).toList.asJava,
+      compactedFileStatuses(Seq((3, 5))).toList.asJava,
+      Collections.emptyList(),
+      1)
+    val allFiles = logSegment.allFilesWithCompactionsReversed();
+
+    // expect to get 3-5.compact
+    val expected =
+      List(FileStatus.of(FileNames.logCompactionPath(logPath, 3, 5).toString, 3, 3 * 10)).asJava;
+    assert(allFiles === expected);
+  }
 }

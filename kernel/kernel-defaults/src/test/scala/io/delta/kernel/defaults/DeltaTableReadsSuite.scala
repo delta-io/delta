@@ -1174,6 +1174,15 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       expectedCompactionsToBeRead = Set((2, 4)))
   }
 
+  test("Compaction is whole range") {
+    testWithCompactions(
+      versionsToWrite = (0 to 5),
+      versionToRead = None,
+      compactions = Seq((0, 5)),
+      expectedDeltasToBeRead = Set(),
+      expectedCompactionsToBeRead = Set((0, 5)))
+  }
+
   test("Compaction out of range") {
     testWithCompactions(
       versionsToWrite = (0 to 9),
