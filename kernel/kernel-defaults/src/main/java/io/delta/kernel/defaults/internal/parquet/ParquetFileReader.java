@@ -18,7 +18,6 @@ package io.delta.kernel.defaults.internal.parquet;
 import static io.delta.kernel.defaults.internal.parquet.ParquetFilterUtils.toParquetFilter;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
-import static org.apache.parquet.hadoop.ParquetInputFormat.*;
 
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.exceptions.KernelEngineException;
@@ -31,8 +30,9 @@ import java.io.IOException;
 import java.util.*;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
+import org.apache.parquet.filter2.compat.FilterCompat;
 import org.apache.parquet.filter2.predicate.FilterPredicate;
-import org.apache.parquet.hadoop.ParquetRecordReaderWrapper;
+import org.apache.parquet.hadoop.ParquetReader;
 import org.apache.parquet.hadoop.api.InitContext;
 import org.apache.parquet.hadoop.api.ReadSupport;
 import org.apache.parquet.hadoop.metadata.ParquetMetadata;
@@ -60,7 +60,7 @@ public class ParquetFileReader {
 
     return new CloseableIterator<ColumnarBatch>() {
       private final BatchReadSupport readSupport = new BatchReadSupport(maxBatchSize, schema);
-      private ParquetRecordReaderWrapper<Object> reader;
+      private ParquetReader<Object> reader;
       private boolean hasNotConsumedNextElement;
 
       @Override
@@ -76,9 +76,10 @@ public class ParquetFileReader {
             return true;
           }
 
-          hasNotConsumedNextElement = reader.nextKeyValue() && reader.getCurrentValue() != null;
+          Object next = reader.read();
+          hasNotConsumedNextElement = next != null;
           return hasNotConsumedNextElement;
-        } catch (IOException | InterruptedException ex) {
+        } catch (IOException ex) {
           throw new KernelEngineException("Error reading Parquet file: " + path, ex);
         }
       }
@@ -115,28 +116,32 @@ public class ParquetFileReader {
                 org.apache.parquet.hadoop.ParquetFileReader.readFooter(confCopy, filePath);
 
             MessageType parquetSchema = footer.getFileMetaData().getSchema();
+
             Optional<FilterPredicate> parquetPredicate =
                 predicate.flatMap(predicate -> toParquetFilter(parquetSchema, predicate));
 
-            if (parquetPredicate.isPresent()) {
-              // clone the configuration to avoid modifying the original one
-              confCopy = new Configuration(confCopy);
+            // TODO: We can avoid reading the footer again if we can pass the footer, but there is
+            // no API to do that in the current version of parquet-mr which takes InputFile
+            // as input.
+            reader =
+                new ParquetReader.Builder<Object>(filePath) {
+                  @Override
+                  protected ReadSupport<Object> getReadSupport() {
+                    return readSupport;
+                  }
+                }.withFilter(parquetPredicate.map(FilterCompat::get).orElse(FilterCompat.NOOP))
+                    // Disable the record level filtering as the `parquet-mr` evaluates
+                    // the filter once the entire record has been materialized. Instead,
+                    // we use the predicate to prune the row groups which is more efficient.
+                    // In the future, we can consider using the record level filtering if a
+                    // native Parquet reader is implemented in Kernel default module.
+                    .useRecordFilter(false)
+                    .useStatsFilter(true) // only enable the row group level filtering
+                    .useBloomFilter(false)
+                    .useDictionaryFilter(false)
+                    .useColumnIndexFilter(false)
+                    .build();
 
-              setFilterPredicate(confCopy, parquetPredicate.get());
-              // Disable the record level filtering as the `parquet-mr` evaluates
-              // the filter once the entire record has been materialized. Instead,
-              // we use the predicate to prune the row groups which is more efficient.
-              // In the future, we can consider using the record level filtering if a
-              // native Parquet reader is implemented in Kernel default module.
-              confCopy.set(RECORD_FILTERING_ENABLED, "false");
-              confCopy.set(DICTIONARY_FILTERING_ENABLED, "false");
-              confCopy.set(COLUMN_INDEX_FILTERING_ENABLED, "false");
-            }
-
-            // Pass the already read footer to the reader to avoid reading it again.
-            fileReader = new ParquetFileReaderWithFooter(filePath, confCopy, footer);
-            reader = new ParquetRecordReaderWrapper<>(readSupport);
-            reader.initialize(fileReader, confCopy);
           } catch (IOException e) {
             Utils.closeCloseablesSilently(fileReader, reader);
             throw new KernelEngineException("Error reading Parquet file: " + path, e);
