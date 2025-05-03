@@ -162,6 +162,28 @@ public class LogSegment {
                 String.format("Delta versions must be contiguous: %s", deltaVersions));
           }
         }
+
+        // Check that our compactions are in range
+        checkArgument(
+            compactions.stream()
+                .allMatch(
+                    fs -> {
+                      Tuple2<Long, Long> versions = FileNames.logCompactionVersions(fs.getPath());
+                      return versions._2 <= version;
+                    }),
+            "compactions must have end version <= version");
+        this.checkpointVersionOpt.ifPresent(
+            checkpointVersion -> {
+              checkArgument(
+                  compactions.stream()
+                      .allMatch(
+                          fs -> {
+                            Tuple2<Long, Long> versions =
+                                FileNames.logCompactionVersions(fs.getPath());
+                            return versions._1 > checkpointVersion;
+                          }),
+                  "compactions must have start version > checkpointVersion");
+            });
       } else {
         this.checkpointVersionOpt.ifPresent(
             checkpointVersion -> {
