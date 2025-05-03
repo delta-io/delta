@@ -20,6 +20,7 @@ import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.utils.FileStatus;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public final class FileNames {
@@ -80,7 +81,7 @@ public final class FileNames {
 
   /** Example: 00000000000000000001.checkpoint.0000000020.0000000060.parquet */
   private static final Pattern MULTI_PART_CHECKPOINT_FILE_PATTERN =
-      Pattern.compile("(\\d+)\\.checkpoint\\.\\d+\\.\\d+\\.parquet");
+      Pattern.compile("(\\d+)\\.checkpoint\\.(\\d+)\\.(\\d+)\\.parquet");
 
   public static final String SIDECAR_DIRECTORY = "_sidecars";
 
@@ -153,6 +154,22 @@ public final class FileNames {
     final int slashIdx = path.lastIndexOf(Path.SEPARATOR);
     final String name = path.substring(slashIdx + 1);
     return Long.parseLong(name.split("\\.")[0]);
+  }
+
+  public static Tuple2<Integer, Integer> multiPartCheckpointPartAndNumParts(Path path) {
+    final String fileName = path.getName();
+    final Matcher matcher = MULTI_PART_CHECKPOINT_FILE_PATTERN.matcher(fileName);
+    if (!matcher.matches()) {
+      throw new IllegalArgumentException(
+          String.format("Path is not a multi-part checkpoint file: %s", fileName));
+    }
+    final int partNum = Integer.parseInt(matcher.group(2));
+    final int numParts = Integer.parseInt(matcher.group(3));
+    return new Tuple2<>(partNum, numParts);
+  }
+
+  public static Tuple2<Integer, Integer> multiPartCheckpointPartAndNumParts(String path) {
+    return multiPartCheckpointPartAndNumParts(new Path(path));
   }
 
   ///////////////////////////////////
