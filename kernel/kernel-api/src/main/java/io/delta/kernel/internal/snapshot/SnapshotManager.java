@@ -358,24 +358,24 @@ public class SnapshotManager {
 
     final List<CheckpointInstance> listedCheckpointInstances =
         listedCheckpointFileStatuses.stream()
-            .map(f -> new CheckpointInstance(f.getPath()))
+            .map(CheckpointInstance::new)
             .collect(Collectors.toList());
 
     final CheckpointInstance notLaterThanCheckpoint =
         versionToLoadOpt.map(CheckpointInstance::new).orElse(CheckpointInstance.MAX_VALUE);
 
-    final Optional<CheckpointInstance> latestCompleteCheckpointOpt =
-        Checkpointer.getLatestCompleteCheckpointFromList(
+    final Optional<CompleteCheckpointGroup> latestCompleteCheckpointGroupOpt =
+        CompleteCheckpointGroup.getLatestCompleteCheckpointGroup(
             listedCheckpointInstances, notLaterThanCheckpoint);
 
-    if (!latestCompleteCheckpointOpt.isPresent() && startCheckpointVersionOpt.isPresent()) {
+    if (!latestCompleteCheckpointGroupOpt.isPresent() && startCheckpointVersionOpt.isPresent()) {
       // In Step 1 we found a $startCheckpointVersion but now our LIST of the file system doesn't
       // see it. This means that the checkpoint we thought should exist no longer does.
       throw DeltaErrors.missingCheckpoint(tablePath.toString(), startCheckpointVersionOpt.get());
     }
 
     final long latestCompleteCheckpointVersion =
-        latestCompleteCheckpointOpt.map(x -> x.version).orElse(-1L);
+        latestCompleteCheckpointGroupOpt.map(x -> x.version).orElse(-1L);
 
     logger.info("Latest complete checkpoint version: {}", latestCompleteCheckpointVersion);
 
@@ -433,13 +433,13 @@ public class SnapshotManager {
     /////////////////////////////////////////////
 
     // Check that we have found at least one checkpoint or delta file
-    if (!latestCompleteCheckpointOpt.isPresent() && deltasAfterCheckpoint.isEmpty()) {
+    if (!latestCompleteCheckpointGroupOpt.isPresent() && deltasAfterCheckpoint.isEmpty()) {
       throw new InvalidTableException(
           tablePath.toString(), "No complete checkpoint found and no delta files found");
     }
 
     // Check that, for a checkpoint at version N, there's a delta file at N, too.
-    if (latestCompleteCheckpointOpt.isPresent()
+    if (latestCompleteCheckpointGroupOpt.isPresent()
         && listedDeltaFileStatuses.stream()
             .map(x -> FileNames.deltaVersion(new Path(x.getPath())))
             .noneMatch(v -> v == latestCompleteCheckpointVersion)) {
@@ -491,35 +491,8 @@ public class SnapshotManager {
     ////////////////////////////////////////////////////////////////////////////////////////////
 
     final List<FileStatus> latestCompleteCheckpointFileStatuses =
-        latestCompleteCheckpointOpt
-            .map(
-                latestCompleteCheckpoint -> {
-                  final Set<Path> newCheckpointPaths =
-                      new HashSet<>(latestCompleteCheckpoint.getCorrespondingFiles(logPath));
-
-                  final List<FileStatus> newCheckpointFileStatuses =
-                      listedCheckpointFileStatuses.stream()
-                          .filter(f -> newCheckpointPaths.contains(new Path(f.getPath())))
-                          .collect(Collectors.toList());
-
-                  logDebugFileStatuses("newCheckpointFileStatuses", newCheckpointFileStatuses);
-
-                  if (newCheckpointFileStatuses.size() != newCheckpointPaths.size()) {
-                    final String msg =
-                        format(
-                            "Seems like the checkpoint is corrupted. Failed in getting the file "
-                                + "information for:\n%s\namong\n%s",
-                            newCheckpointPaths.stream()
-                                .map(Path::toString)
-                                .collect(Collectors.joining("\n - ")),
-                            listedCheckpointFileStatuses.stream()
-                                .map(FileStatus::getPath)
-                                .collect(Collectors.joining("\n - ")));
-                    throw new IllegalStateException(msg);
-                  }
-
-                  return newCheckpointFileStatuses;
-                })
+        latestCompleteCheckpointGroupOpt
+            .map(CompleteCheckpointGroup::getFileStatuses)
             .orElse(Collections.emptyList());
 
     //////////////////////////////////////////
