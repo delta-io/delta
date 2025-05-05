@@ -169,21 +169,13 @@ public class LogSegment {
                 .allMatch(
                     fs -> {
                       Tuple2<Long, Long> versions = FileNames.logCompactionVersions(fs.getPath());
-                      return versions._2 <= version;
+                      boolean checkpointVersionOkay =
+                          checkpointVersionOpt
+                              .map(checkpointVersion -> versions._1 > checkpointVersion)
+                              .orElse(true);
+                      return checkpointVersionOkay && versions._2 <= version;
                     }),
-            "compactions must have end version <= version");
-        this.checkpointVersionOpt.ifPresent(
-            checkpointVersion -> {
-              checkArgument(
-                  compactions.stream()
-                      .allMatch(
-                          fs -> {
-                            Tuple2<Long, Long> versions =
-                                FileNames.logCompactionVersions(fs.getPath());
-                            return versions._1 > checkpointVersion;
-                          }),
-                  "compactions must have start version > checkpointVersion");
-            });
+            "compactions must have start version > checkpointVersion AND end version <= version");
       } else {
         this.checkpointVersionOpt.ifPresent(
             checkpointVersion -> {
@@ -222,12 +214,16 @@ public class LogSegment {
                             .reversed())
                     .collect(Collectors.toList()));
 
+    // we sort by the end version. since we work backward through the list, so this is the same as
+    // lexicographic, except when a compaction has a bigger range, which makes it "better", so we
+    // prefer it
     this.compactionsReversed =
         new Lazy<>(
             () ->
                 compactions.stream()
                     .sorted(
-                        Comparator.comparing((FileStatus a) -> new Path(a.getPath()).getName())
+                        Comparator.comparing(
+                                (FileStatus a) -> FileNames.logCompactionVersions(a.getPath())._2)
                             .reversed())
                     .collect(Collectors.toList()));
 
