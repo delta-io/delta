@@ -152,7 +152,7 @@ public class SnapshotImpl implements Snapshot {
   /**
    * Get the domain metadata map from the log replay, which lazily loads and replays a history of
    * domain metadata actions, resolving them to produce the current state of the domain metadata.
-   * Only active domain metadata should be in this map.
+   * Only active domain metadata are included in this map.
    *
    * @return A map where the keys are domain names and the values are {@link DomainMetadata}
    *     objects.
