@@ -157,7 +157,7 @@ class DeltaTableTestsMixin:
             .whenNotMatchedBySourceUpdate(set={"value": "value + 0"}) \
             .execute()
         self.__checkAnswer(merge_output,
-                           ([Row(6,  # affected rows
+                           ([Row(6,  # type: ignore[call-overload]
                                  4,  # updated rows (a and b in WHEN MATCHED
                                      # and c and d in WHEN NOT MATCHED BY SOURCE)
                                  0,  # deleted rows
