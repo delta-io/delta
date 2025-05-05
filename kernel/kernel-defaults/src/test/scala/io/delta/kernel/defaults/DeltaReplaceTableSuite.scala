@@ -19,24 +19,116 @@ import scala.collection.JavaConverters._
 import scala.collection.immutable.Seq
 
 import io.delta.kernel.{Operation, Table, Transaction, TransactionBuilder}
-import io.delta.kernel.data.{FilteredColumnarBatch, Row}
+import io.delta.kernel.data.FilteredColumnarBatch
 import io.delta.kernel.defaults.utils.TestRow
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.{ConcurrentTransactionException, ConcurrentWriteException, KernelException, TableNotFoundException}
 import io.delta.kernel.expressions.{Column, Literal}
+import io.delta.kernel.expressions.Literal.{ofInt, ofString}
 import io.delta.kernel.internal.{SnapshotImpl, TableConfig, TableImpl}
 import io.delta.kernel.internal.clustering.{ClusteringMetadataDomain, ClusteringUtils}
 import io.delta.kernel.internal.tablefeatures.{TableFeature, TableFeatures}
 import io.delta.kernel.types.{IntegerType, StringType, StructType}
-import io.delta.kernel.utils.CloseableIterable
-import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
-
-import org.apache.spark.sql.delta.DeltaLog
-import org.apache.spark.sql.delta.clustering.{ClusteringMetadataDomain => SparkClusteringMetadataDomain}
+import io.delta.kernel.utils.CloseableIterable.emptyIterable
 
 class DeltaReplaceTableSuite extends DeltaTableWriteSuiteBase {
 
-  import DeltaReplaceTableSuite._
+  /* -------- Test values to use -------- */
+
+  case class SchemaDef(
+      schema: StructType,
+      partitionColumns: Seq[String] = Seq.empty,
+      clusteringColumns: Option[List[Column]] = None) {
+    override def toString: String = {
+      s"Schema=$schema, partCols=$partitionColumns, " +
+        s"clusteringColumns=${clusteringColumns.map(_.toString).getOrElse(List.empty)}"
+    }
+  }
+
+  val schemaA = new StructType()
+    .add("col1", IntegerType.INTEGER)
+    .add("col2", IntegerType.INTEGER)
+
+  val schemaB = new StructType()
+    .add("col4", StringType.STRING)
+    .add("col5", StringType.STRING)
+
+  val unpartitionedSchemaDefA = SchemaDef(schemaA)
+  val unpartitionedSchemaDefB = SchemaDef(schemaB)
+  val unpartitionedSchemaDefA_dataBatches = generateData(schemaA, Seq.empty, Map.empty, 200, 3)
+  val unpartitionedSchemaDefB_dataBatches = generateData(schemaB, Seq.empty, Map.empty, 200, 3)
+
+  val partitionedSchemaDefA_1 = SchemaDef(schemaA, partitionColumns = Seq("col1"))
+  val partitionedSchemaDefA_2 = SchemaDef(schemaA, partitionColumns = Seq("col2"))
+  val partitionedSchemaDefA_1_dataBatches = generateData(
+    schemaA,
+    partitionedSchemaDefA_1.partitionColumns,
+    Map("col1" -> ofInt(1)),
+    batchSize = 237,
+    numBatches = 3)
+  val partitionedSchemaDefA_2_dataBatches = generateData(
+    schemaA,
+    partitionedSchemaDefA_2.partitionColumns,
+    Map("col2" -> ofInt(5)),
+    batchSize = 400,
+    numBatches = 1)
+
+  val partitionedSchemaDefB = SchemaDef(schemaB, partitionColumns = Seq("col4"))
+  val partitionedSchemaDefB_dataBatches = generateData(
+    schemaB,
+    partitionedSchemaDefB.partitionColumns,
+    Map("col4" -> ofString("foo")),
+    batchSize = 100,
+    numBatches = 1)
+
+  val clusteredSchemaDefA_1 = SchemaDef(
+    schemaA,
+    clusteringColumns = Some(List(new Column("col1"))))
+  val clusteredSchemaDefA_2 = SchemaDef(
+    schemaA,
+    clusteringColumns = Some(List(new Column("col2"))))
+  val clusteredSchemaDefA_1_dataBatches = generateData(
+    schemaA,
+    partitionCols = Seq.empty,
+    partitionValues = Map.empty,
+    batchSize = 237,
+    numBatches = 3)
+  val clusteredSchemaDefA_2_dataBatches = generateData(
+    schemaA,
+    partitionCols = Seq.empty,
+    partitionValues = Map.empty,
+    batchSize = 100,
+    numBatches = 3)
+
+  val clusteredSchemaDefB = SchemaDef(
+    schemaB,
+    clusteringColumns = Some(List(new Column("col4"))))
+  val clusteredSchemaDefB_dataBatches = generateData(
+    schemaB,
+    partitionCols = Seq.empty,
+    partitionValues = Map.empty,
+    batchSize = 2,
+    numBatches = 1)
+
+  val validSchemaDefs = Map(
+    unpartitionedSchemaDefA ->
+      Seq(Map.empty[String, Literal] -> unpartitionedSchemaDefA_dataBatches),
+    unpartitionedSchemaDefB ->
+      Seq(Map.empty[String, Literal] -> unpartitionedSchemaDefB_dataBatches),
+    partitionedSchemaDefA_1 ->
+      Seq(Map("col1" -> ofInt(1)) -> partitionedSchemaDefA_1_dataBatches),
+    partitionedSchemaDefA_2 ->
+      Seq(Map("col2" -> ofInt(5)) -> partitionedSchemaDefA_2_dataBatches),
+    partitionedSchemaDefB ->
+      Seq(Map("col4" -> ofString("foo")) -> partitionedSchemaDefB_dataBatches),
+    clusteredSchemaDefA_1 ->
+      Seq(Map.empty[String, Literal] -> clusteredSchemaDefA_1_dataBatches),
+    clusteredSchemaDefA_2 ->
+      Seq(Map.empty[String, Literal] -> clusteredSchemaDefA_2_dataBatches),
+    clusteredSchemaDefB ->
+      Seq(Map.empty[String, Literal] -> clusteredSchemaDefB_dataBatches))
+
+  /* -------- Test methods -------- */
 
   private def createInitialTable(
       engine: Engine,
@@ -46,12 +138,10 @@ class DeltaReplaceTableSuite extends DeltaTableWriteSuiteBase {
       clusteringColumns: Option[List[Column]] = None,
       tableProperties: Map[String, String] = null,
       includeData: Boolean = true,
-      data: Option[Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])]] = None): Unit = {
-    if (includeData && schema != testSchema) {
-      require(data.nonEmpty)
-    }
+      data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])] =
+        Seq(Map.empty[String, Literal] -> (dataBatches1))): Unit = {
     val dataToWrite = if (includeData) {
-      data.getOrElse(Seq(Map.empty[String, Literal] -> (dataBatches1)))
+      data
     } else {
       Seq.empty
     }
@@ -200,20 +290,6 @@ class DeltaReplaceTableSuite extends DeltaTableWriteSuiteBase {
   }
 
   /* ----- ERROR CASES ------ */
-
-  test("RTAS is blocked for now") {
-    // We will add this support in a future PR
-    withTempDirAndEngine { (tablePath, engine) =>
-      createInitialTable(engine, tablePath)
-      assert(
-        intercept[UnsupportedOperationException] {
-          commitReplaceTable(
-            engine,
-            tablePath,
-            data = Seq(Map.empty[String, Literal] -> (dataBatches2)))
-        }.getMessage.contains("Inserting data is not yet supported with REPLACE"))
-    }
-  }
 
   test("Conflict resolution is disabled for replace table") {
     withTempDirAndEngine { (tablePath, engine) =>
@@ -393,31 +469,84 @@ class DeltaReplaceTableSuite extends DeltaTableWriteSuiteBase {
     }
   }
 
+  test("REPLACE is not supported on existing table with rowTracking feature") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createInitialTable(
+        engine,
+        tablePath,
+        tableProperties = Map("delta.feature.rowTracking" -> "supported"))
+      assert(
+        intercept[UnsupportedOperationException] {
+          commitReplaceTable(engine, tablePath)
+        }.getMessage.contains("REPLACE TABLE is not yet supported on row tracking tables"))
+    }
+  }
+
+  test("REPLACE is not supported when enabling rowTracking feature") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createInitialTable(engine, tablePath)
+      assert(
+        intercept[UnsupportedOperationException] {
+          commitReplaceTable(
+            engine,
+            tablePath,
+            tableProperties = Map("delta.feature.rowTracking" -> "supported"))
+        }.getMessage.contains("REPLACE TABLE is not yet supported on row tracking tables"))
+    }
+  }
+
   /* ----------------- POSITIVE CASES ----------------- */
 
   // TODO can we refactor other suites to run with both create + replace?
 
-  // TODO when we support RTAS parameterize these tests?
-  test("Basic case with no metadata changes") {
-    // This just checks that the table is cleared
-    withTempDirAndEngine { (tablePath, engine) =>
-      createInitialTable(engine, tablePath)
-      checkReplaceTable(engine, tablePath)
+  Seq(Seq(), Seq(Map.empty[String, Literal] -> (dataBatches1))).foreach { replaceData =>
+    test(s"Basic case with no metadata changes, insertData=${replaceData.nonEmpty}") {
+      withTempDirAndEngine { (tablePath, engine) =>
+        createInitialTable(engine, tablePath)
+        checkReplaceTable(engine, tablePath, data = replaceData)
+      }
     }
-  }
 
-  test("Basic case with initial empty table") {
-    withTempDirAndEngine { (tablePath, engine) =>
-      createInitialTable(engine, tablePath, includeData = false)
-      checkReplaceTable(engine, tablePath)
+    test(s"Basic case with initial empty table, insertData=${replaceData.nonEmpty}") {
+      withTempDirAndEngine { (tablePath, engine) =>
+        createInitialTable(engine, tablePath)
+        checkReplaceTable(engine, tablePath, data = replaceData)
+      }
     }
   }
 
   // Note, these tests cover things like transitioning between unpartitioned, partitioned, and
   // clustered tables. This means it includes removing existing clustering domains when the initial
   // table was clustered.
-  validSchemaDefs.foreach { initialSchemaDef =>
-    validSchemaDefs.foreach { replaceSchemaDef =>
+  validSchemaDefs.foreach { case (initialSchemaDef, initialData) =>
+    validSchemaDefs.foreach { case (replaceSchemaDef, replaceData) =>
+      Seq(true, false).foreach { initialTableEmpty =>
+        Seq(true, false).foreach { insertDataInReplace =>
+          test(s"Schema change from $initialSchemaDef to $replaceSchemaDef; " +
+            s"initialTableEmpty=$initialTableEmpty, insertDataInReplace=$insertDataInReplace") {
+            withTempDirAndEngine { (tablePath, engine) =>
+              createInitialTable(
+                engine,
+                tablePath,
+                schema = initialSchemaDef.schema,
+                partitionColumns = initialSchemaDef.partitionColumns,
+                clusteringColumns = initialSchemaDef.clusteringColumns,
+                includeData = !initialTableEmpty,
+                data = initialData)
+              checkReplaceTable(
+                engine,
+                tablePath,
+                schema = replaceSchemaDef.schema,
+                partitionColumns = replaceSchemaDef.partitionColumns,
+                clusteringColumns = replaceSchemaDef.clusteringColumns,
+                data = if (insertDataInReplace) replaceData else Seq.empty)
+            }
+          }
+
+        }
+
+      }
+
       test(s"Schema change from $initialSchemaDef to $replaceSchemaDef") {
         withTempDirAndEngine { (tablePath, engine) =>
           createInitialTable(
@@ -620,54 +749,4 @@ class DeltaReplaceTableSuite extends DeltaTableWriteSuiteBase {
           .add("col1", IntegerType.INTEGER))
     }
   }
-}
-
-object DeltaReplaceTableSuite {
-
-  case class SchemaDef(
-      schema: StructType,
-      partitionColumns: Seq[String] = Seq.empty,
-      clusteringColumns: Option[List[Column]] = None) {
-    override def toString: String = {
-      s"Schema=$schema, partCols=$partitionColumns, " +
-        s"clusteringColumns=${clusteringColumns.map(_.toString).getOrElse(List.empty)}"
-    }
-  }
-
-  val schemaA = new StructType()
-    .add("col1", IntegerType.INTEGER)
-    .add("col2", IntegerType.INTEGER)
-
-  val schemaB = new StructType()
-    .add("col4", StringType.STRING)
-    .add("col5", StringType.STRING)
-
-  val unpartitionedSchemaDefA = SchemaDef(schemaA)
-  val unpartitionedSchemaDefB = SchemaDef(schemaB)
-
-  val partitionedSchemaDefA_1 = SchemaDef(schemaA, partitionColumns = Seq("col1"))
-  val partitionedSchemaDefA_2 = SchemaDef(schemaA, partitionColumns = Seq("col2"))
-
-  val partitionedSchemaDefB = SchemaDef(schemaB, partitionColumns = Seq("col4"))
-
-  val clusteredSchemaDefA_1 = SchemaDef(
-    schemaA,
-    clusteringColumns = Some(List(new Column("col1"))))
-  val clusteredSchemaDefA_2 = SchemaDef(
-    schemaA,
-    clusteringColumns = Some(List(new Column("col2"))))
-
-  val clusteredSchemaDefB = SchemaDef(
-    schemaB,
-    clusteringColumns = Some(List(new Column("col4"))))
-
-  val validSchemaDefs = Seq(
-    unpartitionedSchemaDefA,
-    unpartitionedSchemaDefB,
-    partitionedSchemaDefA_1,
-    partitionedSchemaDefA_2,
-    partitionedSchemaDefB,
-    clusteredSchemaDefA_1,
-    clusteredSchemaDefA_2,
-    clusteredSchemaDefB)
 }
