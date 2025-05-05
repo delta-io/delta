@@ -61,6 +61,8 @@ class DeltaIllegalArgumentException(
   override def getMessageParameters: java.util.Map[String, String] = {
     DeltaThrowableHelper.getMessageParameters(errorClass, errorSubClass = null, messageParameters)
   }
+
+  override def getQueryContext: Array[QueryContext] = new Array(0);
 }
 
 class DeltaUnsupportedOperationException(
