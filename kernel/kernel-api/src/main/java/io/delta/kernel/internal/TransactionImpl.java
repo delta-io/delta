@@ -22,10 +22,7 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Preconditions.checkState;
 import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
 
-import io.delta.kernel.Meta;
-import io.delta.kernel.Operation;
-import io.delta.kernel.Transaction;
-import io.delta.kernel.TransactionCommitResult;
+import io.delta.kernel.*;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.ConcurrentWriteException;
@@ -40,6 +37,7 @@ import io.delta.kernel.internal.compaction.LogCompactionWriter;
 import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.hook.CheckpointHook;
+import io.delta.kernel.internal.hook.ChecksumFullHook;
 import io.delta.kernel.internal.hook.ChecksumSimpleHook;
 import io.delta.kernel.internal.hook.LogCompactionHook;
 import io.delta.kernel.internal.metrics.TransactionMetrics;
@@ -76,7 +74,8 @@ public class TransactionImpl implements Transaction {
 
   private final UUID txnId = UUID.randomUUID();
 
-  private final boolean isNewTable; // the transaction is creating a new table
+  /* If the transaction is defining a new table from scratch (i.e. create table, replace table) */
+  private final boolean isCreateOrReplace;
   private final String engineInfo;
   private final Operation operation;
   private final Path dataPath;
@@ -97,7 +96,7 @@ public class TransactionImpl implements Transaction {
   private boolean closed; // To avoid trying to commit the same transaction again.
 
   public TransactionImpl(
-      boolean isNewTable,
+      boolean isCreateOrReplace,
       Path dataPath,
       Path logPath,
       SnapshotImpl readSnapshot,
@@ -112,7 +111,7 @@ public class TransactionImpl implements Transaction {
       int maxRetries,
       int logCompactionInterval,
       Clock clock) {
-    this.isNewTable = isNewTable;
+    this.isCreateOrReplace = isCreateOrReplace;
     this.dataPath = dataPath;
     this.logPath = logPath;
     this.readSnapshot = readSnapshot;
@@ -142,7 +141,7 @@ public class TransactionImpl implements Transaction {
 
   @Override
   public StructType getSchema(Engine engine) {
-    return readSnapshot.getSchema();
+    return metadata.getSchema();
   }
 
   @Override
@@ -197,7 +196,7 @@ public class TransactionImpl implements Transaction {
     // For a new table or when fileSizeHistogram is available in the CRC of the readSnapshot
     // we update it in the commit. When it is not available we do nothing.
     TransactionMetrics transactionMetrics =
-        isNewTable
+        readSnapshot.getVersion() < 0
             ? TransactionMetrics.forNewTable()
             : TransactionMetrics.withExistingTableFileSizeHistogram(
                 readSnapshot.getCurrentCrcInfo().flatMap(CRCInfo::getFileSizeHistogram));
@@ -367,10 +366,10 @@ public class TransactionImpl implements Transaction {
       throws FileAlreadyExistsException {
     List<Row> metadataActions = new ArrayList<>();
     metadataActions.add(createCommitInfoSingleAction(attemptCommitInfo.toRow()));
-    if (shouldUpdateMetadata || isNewTable) {
+    if (shouldUpdateMetadata) {
       metadataActions.add(createMetadataSingleAction(metadata.toRow()));
     }
-    if (shouldUpdateProtocol || isNewTable) {
+    if (shouldUpdateProtocol) {
       // In the future, we need to add metadata and action when there are any changes to them.
       metadataActions.add(createProtocolSingleAction(protocol.toRow()));
     }
@@ -385,11 +384,24 @@ public class TransactionImpl implements Transaction {
     resolvedDomainMetadatas.forEach(
         dm -> metadataActions.add(createDomainMetadataSingleAction(dm.toRow())));
 
-    try (CloseableIterator<Row> stageDataIter = dataActions.iterator()) {
+    try (CloseableIterator<Row> userStageDataIter = dataActions.iterator()) {
+      final CloseableIterator<Row> completeFileActionIter;
+      if (isReplaceTable()) {
+        // For now, block RTAS; this will be unblocked in a follow-up PR
+        if (userStageDataIter.hasNext()) {
+          throw new UnsupportedOperationException(
+              "Inserting data is not yet supported with REPLACE");
+        }
+        // If this is a replace table operation we need to internally generate the remove file
+        // actions to reset the table state
+        completeFileActionIter = getRemoveActionsForReplace(engine).combine(userStageDataIter);
+      } else {
+        completeFileActionIter = userStageDataIter;
+      }
       // Create a new CloseableIterator that will return the metadata actions followed by the
       // data actions.
       CloseableIterator<Row> dataAndMetadataActions =
-          toCloseableIterator(metadataActions.iterator()).combine(stageDataIter);
+          toCloseableIterator(metadataActions.iterator()).combine(completeFileActionIter);
 
       if (commitAsVersion == 0) {
         // New table, create a delta log directory
@@ -449,9 +461,10 @@ public class TransactionImpl implements Transaction {
   }
 
   public boolean isBlindAppend() {
-    // For now, Kernel just supports blind append.
-    // Change this when read-after-write is supported.
-    return true;
+    // TODO: for now we hard code this to false to avoid erroneously setting this to true for a
+    //  non-blind-append operation. We should revisit how to safely set this to true for actual
+    //  blind appends.
+    return false;
   }
 
   private List<PostCommitHook> generatePostCommitHooks(
@@ -461,8 +474,13 @@ public class TransactionImpl implements Transaction {
       postCommitHooks.add(new CheckpointHook(dataPath, committedVersion));
     }
 
-    buildPostCommitCrcInfoIfCurrentCrcAvailable(committedVersion, txnMetrics)
-        .ifPresent(crcInfo -> postCommitHooks.add(new ChecksumSimpleHook(crcInfo, logPath)));
+    Optional<CRCInfo> crcInfo =
+        buildPostCommitCrcInfoIfCurrentCrcAvailable(committedVersion, txnMetrics);
+    if (crcInfo.isPresent()) {
+      postCommitHooks.add(new ChecksumSimpleHook(crcInfo.get(), logPath));
+    } else {
+      postCommitHooks.add(new ChecksumFullHook(dataPath, committedVersion));
+    }
 
     if (logCompactionInterval > 0
         && LogCompactionWriter.shouldCompact(committedVersion, logCompactionInterval)) {
@@ -511,7 +529,7 @@ public class TransactionImpl implements Transaction {
   }
 
   private Map<String, String> getOperationParameters() {
-    if (isNewTable) {
+    if (isCreateOrReplace) {
       List<String> partitionCols = VectorUtils.toJavaList(metadata.getPartitionColumns());
       String partitionBy =
           partitionCols.stream()
@@ -541,7 +559,7 @@ public class TransactionImpl implements Transaction {
 
   private Optional<CRCInfo> buildPostCommitCrcInfoIfCurrentCrcAvailable(
       long commitAtVersion, TransactionMetricsResult metricsResult) {
-    if (isNewTable) {
+    if (isCreateOrReplace) {
       // We don't need to worry about conflicting transaction here since new tables always commit
       // metadata (and thus fail any conflicts)
       return Optional.of(
@@ -662,17 +680,32 @@ public class TransactionImpl implements Transaction {
       }
 
       generateClusteringDomainMetadataIfNeeded();
-
-      if (domainsToAdd.isEmpty() && domainsToRemove.isEmpty()) {
-        // If no domain metadatas are added or removed, return an empty list. This is to avoid
-        // unnecessary loading of the domain metadatas from the snapshot (which is an expensive
-        // operation).
-        computedMetadatas = Optional.of(Collections.emptyList());
-        return Collections.emptyList();
+      if (isReplaceTable()) {
+        // In the case of replace table we need to completely reset the table state by removing
+        // any existing domain metadata
+        readSnapshot
+            .getDomainMetadataMap()
+            .forEach(
+                (domainName, domainMetadata) -> {
+                  if (!domainMetadata.isRemoved()) { // only care about active domains
+                    if (!domainsToAdd.containsKey(domainName)) {
+                      // We only need to remove the domain if it is not added (& thus overwritten)
+                      // in this current transaction. We cannot add and remove the same domain in
+                      // one transaction.
+                      removeDomain(domainName);
+                    }
+                  }
+                });
       }
-
       // Add all domains added in the transaction
       List<DomainMetadata> result = new ArrayList<>(domainsToAdd.values());
+
+      if (domainsToRemove.isEmpty()) {
+        // If no domain metadatas are removed we don't need to load the existing domain metadatas
+        // from the snapshot (which is an expensive operation)
+        computedMetadatas = Optional.of(result);
+        return result;
+      }
 
       // Generate the tombstones for removed domains
       Map<String, DomainMetadata> snapshotDomainMetadataMap = readSnapshot.getDomainMetadataMap();
@@ -717,7 +750,7 @@ public class TransactionImpl implements Transaction {
      * Returns the set of active domain metadata of the table, removed domain metadata are excluded.
      */
     public Optional<Set<DomainMetadata>> getPostCommitDomainMetadatas() {
-      if (isNewTable) {
+      if (readSnapshot.getVersion() < 0) {
         return Optional.of(
             getComputedDomainMetadatasToCommit().stream()
                 .filter(dm -> !dm.isRemoved())
@@ -752,8 +785,30 @@ public class TransactionImpl implements Transaction {
           && clusteringColumnsOpt.isPresent()) {
         DomainMetadata clusteringDomainMetadata =
             ClusteringUtils.getClusteringDomainMetadata(clusteringColumnsOpt.get());
-        domainsToAdd.put(clusteringDomainMetadata.getDomain(), clusteringDomainMetadata);
+        addDomain(
+            clusteringDomainMetadata.getDomain(), clusteringDomainMetadata.getConfiguration());
       }
     }
+  }
+
+  /**
+   * Returns the remove file rows needed to remove every active add file in the table. These rows
+   * are already formatted as {@link SingleAction} rows and are ready to be committed.
+   */
+  private CloseableIterator<Row> getRemoveActionsForReplace(Engine engine) {
+    checkArgument(
+        readSnapshot.getVersion() >= 0, "Cannot generate removes for a snapshot with version < 0");
+    Scan scan = readSnapshot.getScanBuilder().build();
+    return Utils.intoRows(scan.getScanFiles(engine))
+        .map(
+            scanRow -> {
+              AddFile add = new AddFile(scanRow.getStruct(InternalScanFileUtils.ADD_FILE_ORDINAL));
+              return SingleAction.createRemoveFileSingleAction(
+                  add.toRemoveFileRow(true /* dataChange */, Optional.empty()));
+            });
+  }
+
+  private boolean isReplaceTable() {
+    return isCreateOrReplace && readSnapshot.getVersion() >= 0;
   }
 }

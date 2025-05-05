@@ -356,12 +356,11 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     txnBuilder.build(engine)
   }
 
-  def commitAppendData(
-      engine: Engine = defaultEngine,
+  def getAppendActions(
       txn: Transaction,
-      data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])]): TransactionCommitResult = {
+      data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])]): CloseableIterable[Row] = {
 
-    val txnState = txn.getTransactionState(engine)
+    val txnState = txn.getTransactionState(defaultEngine)
 
     val actions = data.map { case (partValues, partData) =>
       stageData(txnState, partValues, partData)
@@ -369,11 +368,17 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
 
     actions.reduceLeftOption(_ combine _) match {
       case Some(combinedActions) =>
-        val combineActions = inMemoryIterable(combinedActions)
-        commitTransaction(txn, engine, combineActions)
+        inMemoryIterable(combinedActions)
       case None =>
-        commitTransaction(txn, engine, emptyIterable[Row])
+        emptyIterable[Row]
     }
+  }
+
+  def commitAppendData(
+      engine: Engine = defaultEngine,
+      txn: Transaction,
+      data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])]): TransactionCommitResult = {
+    commitTransaction(txn, engine, getAppendActions(txn, data))
   }
 
   /** Utility to create table, with no data */
@@ -508,7 +513,6 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       tablePath: String,
       version: Long,
       partitionCols: Seq[String] = Seq.empty,
-      isBlindAppend: Boolean = true,
       operation: Operation = MANUAL_UPDATE): Unit = {
     val row = spark.sql(s"DESCRIBE HISTORY delta.`$tablePath`")
       .filter(s"version = $version")
@@ -523,7 +527,9 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     assert(row.getAs[Long]("version") === version)
     assert(row.getAs[Long]("partitionBy") ===
       (if (partitionCols == null) null else OBJ_MAPPER.writeValueAsString(partitionCols.asJava)))
-    assert(row.getAs[Boolean]("isBlindAppend") === isBlindAppend)
+    // For now we've hardcoded isBlindAppend=false, once we support more precise setting of this
+    // field we should update this check
+    assert(!row.getAs[Boolean]("isBlindAppend"))
     assert(row.getAs[Seq[String]]("engineInfo") ===
       "Kernel-" + Meta.KERNEL_VERSION + "/" + testEngineInfo)
     assert(row.getAs[String]("operation") === operation.getDescription)
