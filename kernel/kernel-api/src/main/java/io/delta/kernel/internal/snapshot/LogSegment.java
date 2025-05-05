@@ -33,6 +33,8 @@ import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class LogSegment {
 
@@ -42,8 +44,16 @@ public class LogSegment {
 
   public static LogSegment empty(Path logPath) {
     return new LogSegment(
-        logPath, -1, Collections.emptyList(), Collections.emptyList(), Collections.emptyList(), -1);
+        logPath,
+        -1,
+        Collections.emptyList(),
+        Collections.emptyList(),
+        Collections.emptyList(),
+        Optional.empty(),
+        -1);
   }
+
+  private static final Logger logger = LoggerFactory.getLogger(LogSegment.class);
 
   //////////////////////////////////
   // Member variables and methods //
@@ -55,6 +65,7 @@ public class LogSegment {
   private final List<FileStatus> compactions;
   private final List<FileStatus> checkpoints;
   private final Optional<Long> checkpointVersionOpt;
+  private final Optional<FileStatus> lastSeenChecksum;
   private final long lastCommitTimestamp;
   private final Lazy<List<FileStatus>> allFiles;
   private final Lazy<List<FileStatus>> allFilesReversed;
@@ -94,6 +105,7 @@ public class LogSegment {
       List<FileStatus> deltas,
       List<FileStatus> compactions,
       List<FileStatus> checkpoints,
+      Optional<FileStatus> lastSeenChecksum,
       long lastCommitTimestamp) {
 
     ///////////////////////
@@ -104,6 +116,7 @@ public class LogSegment {
     requireNonNull(deltas, "deltas is null");
     requireNonNull(compactions, "compactions is null");
     requireNonNull(checkpoints, "checkpoints is null");
+    requireNonNull(lastSeenChecksum, "lastSeenChecksum null");
     checkArgument(
         deltas.stream().allMatch(fs -> FileNames.isCommitFile(fs.getPath())),
         "deltas must all be actual delta (commit) files");
@@ -132,6 +145,22 @@ public class LogSegment {
             .map(fs -> FileNames.checkpointVersion(new Path(fs.getPath())))
             .allMatch(v -> checkpointVersionOpt.get().equals(v)),
         "All checkpoint files must have the same version");
+
+    lastSeenChecksum.ifPresent(
+        checksumFile -> {
+          long checksumVersion = FileNames.checksumVersion(new Path(checksumFile.getPath()));
+          checkArgument(
+              checksumVersion <= version,
+              "checksum file's version should be less than or equal to logSegment's version");
+          checkpointVersionOpt.ifPresent(
+              checkpointVersion ->
+                  checkArgument(
+                      checksumVersion >= checkpointVersion,
+                      "checksum file's version %s should be greater than or equal to "
+                          + "checkpoint version %s",
+                      checksumVersion,
+                      checkpointVersion));
+        });
 
     if (version != -1) {
       checkArgument(!deltas.isEmpty() || !checkpoints.isEmpty(), "No files to read");
@@ -198,6 +227,7 @@ public class LogSegment {
     this.deltas = deltas;
     this.compactions = compactions;
     this.checkpoints = checkpoints;
+    this.lastSeenChecksum = lastSeenChecksum;
     this.lastCommitTimestamp = lastCommitTimestamp;
 
     this.allFiles =
@@ -238,6 +268,8 @@ public class LogSegment {
                 return resolver.resolveFiles();
               }
             });
+
+    logger.debug("Created LogSegment: {}", this);
   }
 
   /////////////////
@@ -283,6 +315,24 @@ public class LogSegment {
     return checkpointVersionOpt;
   }
 
+  /**
+   * Returns the most recent checksum file encountered during log directory listing, if available.
+   *
+   * <p>Note: This checksum file's version is guaranteed to:
+   *
+   * <ul>
+   *   <li>Be less than or equal to the LogSegment version (enforced by constructor)
+   *   <li>Be greater than or equal to the checkpoint version if a checkpoint exists (filtered
+   *       during initialization)
+   * </ul>
+   *
+   * @return Optional containing the most recent valid checksum file encountered, or empty if none
+   *     found
+   */
+  public Optional<FileStatus> getLastSeenChecksum() {
+    return lastSeenChecksum;
+  }
+
   public long getLastCommitTimestamp() {
     return lastCommitTimestamp;
   }
@@ -321,6 +371,7 @@ public class LogSegment {
             + "  version=%d,\n"
             + "  deltas=[%s\n  ],\n"
             + "  checkpoints=[%s\n  ],\n"
+            + "  lastSeenChecksum=%s,\n"
             + "  checkpointVersion=%s,\n"
             + "  lastCommitTimestamp=%d\n"
             + "}",
@@ -328,6 +379,7 @@ public class LogSegment {
         version,
         formatList(deltas),
         formatList(checkpoints),
+        lastSeenChecksum.map(FileStatus::toString).orElse("None"),
         checkpointVersionOpt.map(String::valueOf).orElse("None"),
         lastCommitTimestamp);
   }

@@ -33,7 +33,8 @@ public final class FileNames {
   public enum DeltaLogFileType {
     COMMIT,
     LOG_COMPACTION,
-    CHECKPOINT
+    CHECKPOINT,
+    CHECKSUM
   }
 
   /** Example: 00000000000000000001.json */
@@ -92,6 +93,8 @@ public final class FileNames {
       return DeltaLogFileType.CHECKPOINT;
     } else if (isLogCompactionFile(fileName)) {
       return DeltaLogFileType.LOG_COMPACTION;
+    } else if (isChecksumFile(fileName)) {
+      return DeltaLogFileType.CHECKSUM;
     } else {
       throw new IllegalStateException("Unexpected file type: " + fileName);
     }
