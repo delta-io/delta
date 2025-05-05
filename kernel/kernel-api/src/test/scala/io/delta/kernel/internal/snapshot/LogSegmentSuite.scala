@@ -16,7 +16,7 @@
 
 package io.delta.kernel.internal.snapshot
 
-import java.util.Collections
+import java.util.{Collections, List => JList}
 
 import scala.collection.JavaConverters._
 
@@ -237,135 +237,111 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils {
     assert(logSegment.toString === expectedToString)
   }
 
-  test("allFilesWithCompactionsReversed -- 3 - 5 in middle") {
-    val logSegment = new LogSegment(
+  def deltaFileStatus(v: Long): FileStatus =
+    FileStatus.of(FileNames.deltaFile(logPath, v), v, v * 10)
+
+  def logCompactionStatus(s: Long, e: Long): FileStatus =
+    FileStatus.of(FileNames.logCompactionPath(logPath, s, e).toString, s, s * 10)
+
+  private def parseExpectedString(expected: String): JList[FileStatus] = {
+    expected.split(",").map(_.trim).map { item =>
+      if (item.contains("-")) {
+        // compaction file contains a -
+        val parts = item.split("-").map(_.trim.toLong)
+        logCompactionStatus(parts(0), parts(1))
+      } else {
+        // delta file does not
+        deltaFileStatus(item.toLong)
+      }
+    }.toList.asJava
+  }
+
+  private def testCompactionCase(
+      deltas: Seq[Long],
+      compactions: Seq[(Long, Long)],
+      expected: String): Unit = {
+    val version = deltas.max
+    val deltas_list = deltaFileStatuses(deltas).toList.asJava
+    val compactions_list = compactedFileStatuses(compactions).toList.asJava
+    val segment = new LogSegment(
       logPath,
-      6,
-      deltaFileStatuses(Seq.range(0, 7)).toList.asJava,
-      compactionFs3To5List,
+      version,
+      deltas_list,
+      compactions_list,
       Collections.emptyList(),
       1)
-    val allFiles = logSegment.allFilesWithCompactionsReversed();
+    val expectedFiles = parseExpectedString(expected)
+    assert(segment.allFilesWithCompactionsReversed() === expectedFiles)
+  }
 
-    // expect to get 6, 3-5.compact, 2, 1, 0
-    val expected = List(
-      FileStatus.of(FileNames.deltaFile(logPath, 6), 6, 6 * 10),
-      FileStatus.of(FileNames.logCompactionPath(logPath, 3, 5).toString, 3, 3 * 10),
-      FileStatus.of(FileNames.deltaFile(logPath, 2), 2, 2 * 10),
-      FileStatus.of(FileNames.deltaFile(logPath, 1), 1, 1 * 10),
-      FileStatus.of(FileNames.deltaFile(logPath, 0), 0, 0 * 10)).asJava;
-    assert(allFiles === expected);
+  test("allFilesWithCompactionsReversed -- 3 - 5 in middle") {
+    testCompactionCase(
+      Seq.range(0, 7),
+      Seq((3, 5)),
+      "6, 3-5, 2, 1, 0")
   }
 
   test("allFilesWithCompactionsReversed -- 3 - 5 at start") {
-    val logSegment = new LogSegment(
-      logPath,
-      7,
-      deltaFileStatuses(Seq.range(3, 8)).toList.asJava,
-      compactionFs3To5List,
-      Collections.emptyList(),
-      1)
-    val allFiles = logSegment.allFilesWithCompactionsReversed();
-
-    // expect to get 7, 6, 3-5.compact
-    val expected = List(
-      FileStatus.of(FileNames.deltaFile(logPath, 7), 7, 7 * 10),
-      FileStatus.of(FileNames.deltaFile(logPath, 6), 6, 6 * 10),
-      FileStatus.of(FileNames.logCompactionPath(logPath, 3, 5).toString, 3, 3 * 10)).asJava;
-    assert(allFiles === expected);
+    testCompactionCase(
+      Seq.range(3, 8),
+      Seq((3, 5)),
+      "7, 6, 3-5")
   }
 
   test("allFilesWithCompactionsReversed -- 3 - 5 at end") {
-    val logSegment = new LogSegment(
-      logPath,
-      5,
-      deltaFileStatuses(Seq.range(0, 6)).toList.asJava,
-      compactionFs3To5List,
-      Collections.emptyList(),
-      1)
-    val allFiles = logSegment.allFilesWithCompactionsReversed();
-
-    // expect to get 3-5.compact, 2, 1, 0
-    val expected = List(
-      FileStatus.of(FileNames.logCompactionPath(logPath, 3, 5).toString, 3, 3 * 10),
-      FileStatus.of(FileNames.deltaFile(logPath, 2), 2, 2 * 10),
-      FileStatus.of(FileNames.deltaFile(logPath, 1), 1, 1 * 10),
-      FileStatus.of(FileNames.deltaFile(logPath, 0), 0, 0 * 10)).asJava;
-    assert(allFiles === expected);
+    testCompactionCase(
+      Seq.range(0, 6),
+      Seq((3, 5)),
+      "3-5, 2, 1, 0")
   }
 
   test("allFilesWithCompactionsReversed -- 3 - 5 at second to last") {
-    val logSegment = new LogSegment(
-      logPath,
-      6,
-      deltaFileStatuses(Seq.range(2, 7)).toList.asJava,
-      compactionFs3To5List,
-      Collections.emptyList(),
-      1)
-    val allFiles = logSegment.allFilesWithCompactionsReversed();
-
-    // expect to get 6, 3-5.compact, 2
-    val expected = List(
-      FileStatus.of(FileNames.deltaFile(logPath, 6), 6, 6 * 10),
-      FileStatus.of(FileNames.logCompactionPath(logPath, 3, 5).toString, 3, 3 * 10),
-      FileStatus.of(FileNames.deltaFile(logPath, 2), 2, 2 * 10)).asJava;
-    assert(allFiles === expected);
+    testCompactionCase(
+      Seq.range(2, 7),
+      Seq((3, 5)),
+      "6, 3-5, 2")
   }
 
   test("allFilesWithCompactionsReversed -- 3 - 5, and 7 - 9") {
-    val logSegment = new LogSegment(
-      logPath,
-      10,
-      deltaFileStatuses(Seq.range(1, 11)).toList.asJava,
-      compactedFileStatuses(Seq((3, 5), (7, 9))).toList.asJava,
-      Collections.emptyList(),
-      1)
-    val allFiles = logSegment.allFilesWithCompactionsReversed();
-
-    // expect to get 10, 7-9.compact, 6, 3-5.compact, 2, 1
-    val expected = List(
-      FileStatus.of(FileNames.deltaFile(logPath, 10), 10, 10 * 10),
-      FileStatus.of(FileNames.logCompactionPath(logPath, 7, 9).toString, 7, 7 * 10),
-      FileStatus.of(FileNames.deltaFile(logPath, 6), 6, 6 * 10),
-      FileStatus.of(FileNames.logCompactionPath(logPath, 3, 5).toString, 3, 3 * 10),
-      FileStatus.of(FileNames.deltaFile(logPath, 2), 2, 2 * 10),
-      FileStatus.of(FileNames.deltaFile(logPath, 1), 1, 10)).asJava;
-    assert(allFiles === expected);
+    testCompactionCase(
+      Seq.range(1, 11),
+      Seq((3, 5), (7, 9)),
+      "10, 7-9, 6, 3-5, 2, 1")
   }
 
   test("allFilesWithCompactionsReversed -- 3 - 5, and 4 - 8 (overlap)") {
-    val logSegment = new LogSegment(
-      logPath,
-      10,
-      deltaFileStatuses(Seq.range(2, 11)).toList.asJava,
-      compactedFileStatuses(Seq((3, 5), (4, 8))).toList.asJava,
-      Collections.emptyList(),
-      1)
-    val allFiles = logSegment.allFilesWithCompactionsReversed();
-
-    // expect to get 10, 9, 4-8.compact, 3, 2
-    val expected = List(
-      FileStatus.of(FileNames.deltaFile(logPath, 10), 10, 10 * 10),
-      FileStatus.of(FileNames.deltaFile(logPath, 9), 9, 9 * 10),
-      FileStatus.of(FileNames.logCompactionPath(logPath, 4, 8).toString, 4, 4 * 10),
-      FileStatus.of(FileNames.deltaFile(logPath, 3), 3, 3 * 10),
-      FileStatus.of(FileNames.deltaFile(logPath, 2), 2, 2 * 10)).asJava;
-    assert(allFiles === expected);
+    testCompactionCase(
+      Seq.range(2, 11),
+      Seq((3, 5), (4, 8)),
+      "10, 9, 4-8, 3, 2")
   }
 
   test("allFilesWithCompactionsReversed -- 3 - 5, whole range") {
-    val logSegment = new LogSegment(
-      logPath,
-      5,
-      deltaFileStatuses(Seq.range(3, 6)).toList.asJava,
-      compactedFileStatuses(Seq((3, 5))).toList.asJava,
-      Collections.emptyList(),
-      1)
-    val allFiles = logSegment.allFilesWithCompactionsReversed();
-
-    // expect to get 3-5.compact
-    val expected =
-      List(FileStatus.of(FileNames.logCompactionPath(logPath, 3, 5).toString, 3, 3 * 10)).asJava;
-    assert(allFiles === expected);
+    testCompactionCase(
+      Seq.range(3, 6),
+      Seq((3, 5)),
+      "3-5")
   }
+
+  test("allFilesWithCompactionsReversed -- consecutive compactions") {
+    testCompactionCase(
+      Seq.range(0, 13),
+      Seq((3, 5), (6, 8), (9, 11)),
+      "12, 9-11, 6-8, 3-5, 2, 1, 0")
+  }
+
+  test("allFilesWithCompactionsReversed -- contained range") {
+    testCompactionCase(
+      Seq.range(1, 12),
+      Seq((2, 10), (4, 8)),
+      "11, 2-10, 1")
+  }
+
+  test("allFilesWithCompactionsReversed -- complex ranges") {
+    testCompactionCase(
+      Seq.range(0, 21),
+      Seq((1, 3), (1, 5), (7, 10), (11, 14), (11, 12), (16, 20), (18, 20)),
+      "16-20, 15, 11-14, 7-10, 6, 1-5, 0")
+  }
+
 }

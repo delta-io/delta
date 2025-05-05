@@ -342,7 +342,11 @@ public class LogSegment {
 
   // Class to resolve the final list of deltas + log compactions to return
   private class LogCompactionResolver {
-    int compactionPos = 0;
+    // note that currentCompactionPos _always_ points to a valid compaction we'll be including, _or_
+    // past the end of the list of compactions (meaning we've consumed them all). The compaction
+    // pointed to will be added to the output when we hit a delta with a version equal to the low
+    // version of the compaction.
+    int currentCompactionPos = 0;
     long currentCompactionHi = -1;
     long currentCompactionLo = -1;
     final List<FileStatus> compactionsReversed;
@@ -359,8 +363,9 @@ public class LogSegment {
     // - set a "hi/lo" goalpost around the next compactions
     // - for each delta, if its version is:
     //   - greater than the current compaction high point, include it, move to next delta
-    //   - less than (but not equal to) the current low point, skip it, move to next delta
-    //   - equal to the current compaction low point, we're above to transition out of the
+    //   - less than (but not equal to) the current compaction low point, skip it, move to next
+    //     delta
+    //   - equal to the current compaction low point, we're about to transition out of the
     //     compaction, so, include the compaction, find the next compaction that has a high
     //     point lower than our current low point and set that to the current compaction to
     //     consider. This deals with overlapping compactions in a greedy way, ensuring we
@@ -374,7 +379,7 @@ public class LogSegment {
         if (deltaVersion == currentCompactionLo) {
           // we're about to cross out of the compaction. insert the compaction and advance to the
           // next compaction. We don't want to include this delta here.
-          ret.add(compactionsReversed.get(compactionPos));
+          ret.add(compactionsReversed.get(currentCompactionPos));
           advanceCompactionPos();
           setHiLo();
         } else if (deltaVersion > currentCompactionHi) {
@@ -390,22 +395,24 @@ public class LogSegment {
     // current low mark (recall we move backwards through versions). This takes compactions in a
     // greedy manner, and ensures we don't use any overlapping compactions.
     private void advanceCompactionPos() {
-      compactionPos += 1;
-      while (compactionPos < compactionsReversed.size()) {
+      currentCompactionPos += 1;
+      while (currentCompactionPos < compactionsReversed.size()) {
         Tuple2<Long, Long> versions =
-            FileNames.logCompactionVersions(compactionsReversed.get(compactionPos).getPath());
+            FileNames.logCompactionVersions(
+                compactionsReversed.get(currentCompactionPos).getPath());
         if (versions._2 < currentCompactionLo) {
           break;
         }
-        compactionPos += 1;
+        currentCompactionPos += 1;
       }
     }
 
-    // Set the high/low position based on the current compactionPos
+    // Set the high/low position based on the current currentCompactionPos
     private void setHiLo() {
-      if (compactionPos < compactionsReversed.size()) {
+      if (currentCompactionPos < compactionsReversed.size()) {
         Tuple2<Long, Long> versions =
-            FileNames.logCompactionVersions(compactionsReversed.get(compactionPos).getPath());
+            FileNames.logCompactionVersions(
+                compactionsReversed.get(currentCompactionPos).getPath());
         currentCompactionLo = versions._1;
         currentCompactionHi = versions._2;
       } else {
