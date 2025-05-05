@@ -184,6 +184,9 @@ public class LogReplay {
     return loadLatestTransactionVersion(engine, applicationId);
   }
 
+  /*
+  * Returns map for all active domain metadata.
+  **/
   public Map<String, DomainMetadata> getDomainMetadataMap() {
     return domainMetadataMap.get();
   }
@@ -367,7 +370,6 @@ public class LogReplay {
 
   /**
    * Loads the domain metadata map, either from CRC info (if available) or from the transaction log.
-   * Note that when loading from CRC info, tombstones (removed domains) are not preserved.
    *
    * @param engine The engine to use for loading from log when necessary
    * @return A map of domain names to their metadata

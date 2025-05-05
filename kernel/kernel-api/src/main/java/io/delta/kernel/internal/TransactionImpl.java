@@ -687,7 +687,9 @@ public class TransactionImpl implements Transaction {
           // Note: we know domainName is not already in finalDomainMetadatas because we do not allow
           // removing and adding a domain with the same identifier in a single txn!
           DomainMetadata domainToRemove = snapshotDomainMetadataMap.get(domainName);
-          checkArgument(!domainToRemove.isRemoved());
+          checkState(
+              !domainToRemove.isRemoved(),
+              "snapshotDomainMetadataMap should only contain active domain metadata");
           result.add(domainToRemove.removed());
         } else {
           // We must throw an error if the domain does not exist. Otherwise, there could be

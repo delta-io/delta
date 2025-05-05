@@ -17,7 +17,7 @@ package io.delta.kernel.internal;
 
 import static io.delta.kernel.internal.TableConfig.*;
 import static io.delta.kernel.internal.TableConfig.TOMBSTONE_RETENTION;
-import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import static io.delta.kernel.internal.util.Preconditions.checkState;
 
 import io.delta.kernel.ScanBuilder;
 import io.delta.kernel.Snapshot;
@@ -122,7 +122,11 @@ public class SnapshotImpl implements Snapshot {
   public Optional<String> getDomainMetadata(String domain) {
     Optional<DomainMetadata> domainMetadata =
         Optional.ofNullable(getDomainMetadataMap().get(domain));
-    domainMetadata.ifPresent(dm -> checkArgument(!dm.isRemoved()));
+    domainMetadata.ifPresent(
+        dm ->
+            checkState(
+                !dm.isRemoved(),
+                "getDomainMetadataMap() should only contain active domain metadata"));
     return domainMetadata.map(DomainMetadata::getConfiguration);
   }
 
@@ -155,6 +159,7 @@ public class SnapshotImpl implements Snapshot {
   /**
    * Get the domain metadata map from the log replay, which lazily loads and replays a history of
    * domain metadata actions, resolving them to produce the current state of the domain metadata.
+   * Only active domain metadata should be in this map.
    *
    * @return A map where the keys are domain names and the values are {@link DomainMetadata}
    *     objects.
