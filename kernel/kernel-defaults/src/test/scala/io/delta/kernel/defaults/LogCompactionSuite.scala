@@ -88,6 +88,14 @@ class LogCompactionSuite extends AnyFunSuite with DeltaTableWriteSuiteBase with 
       // compaction
       val dmCompactionsRead = metricEngine.getJsonHandler.getCompactionsRead
       assert(dmCompactionsRead.toSet === Set((0, 3)))
+
+      // ensure the data is all there
+      metricEngine.resetMetrics()
+      val expectedAnswer = dataBatches1.flatMap(_.toTestRows) ++ dataBatches2.flatMap(_.toTestRows)
+      checkTable(tblPath, expectedAnswer, engine = metricEngine)
+
+      val readCompactionsRead = metricEngine.getJsonHandler.getCompactionsRead
+      assert(readCompactionsRead.toSet === Set((0, 3)))
     }
   }
 
