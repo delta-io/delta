@@ -31,7 +31,7 @@ Struct field name | Parquet primitive type | Description
 -|-|-
 metadata | binary | (required) The binary-encoded Variant metadata, as described in [Parquet Variant binary encoding](https://github.com/apache/parquet-format/blob/master/VariantEncoding.md)
 value | binary | (optional) The binary-encoded Variant value, as described in [Parquet Variant binary encoding](https://github.com/apache/parquet-format/blob/master/VariantEncoding.md)
-typed_value | * | (optional) This can be any Parquet type, representing the data stored in the Variant. Details of the shredding scheme is found in the [Parquet Variant binary encoding](https://github.com/apache/parquet-format/blob/master/VariantShredding.md)
+typed_value | * | (optional) This can be any Parquet type, representing the data stored in the Variant. Details of the shredding scheme is found in the [Variant Shredding specification](https://github.com/apache/parquet-format/blob/master/VariantShredding.md)
 
 ## Writer Requirements for Variant Shredding
 
