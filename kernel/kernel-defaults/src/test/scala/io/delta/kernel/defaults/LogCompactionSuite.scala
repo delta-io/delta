@@ -15,15 +15,81 @@
  */
 package io.delta.kernel.defaults
 
+// import scala.collection.JavaConverters._
+import scala.collection.immutable.Seq
+
+import io.delta.kernel.Table
 import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
+import io.delta.kernel.expressions.Literal
+import io.delta.kernel.internal.SnapshotImpl
+import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.hook.LogCompactionHook
 
 import org.apache.hadoop.conf.Configuration
 import org.scalatest.funsuite.AnyFunSuite
 
-class LogCompactionSuite extends AnyFunSuite with TestUtils {
+class LogCompactionSuite extends AnyFunSuite with DeltaTableWriteSuiteBase with TestUtils {
+
+  test("Compaction containing different action types") {
+    withTempDirAndEngine { (tblPath, engine) =>
+      // commit 0 - add data
+      appendData(
+        engine,
+        tblPath,
+        isNewTable = true,
+        testSchema,
+        data = Seq(Map.empty[String, Literal] -> dataBatches1))
+
+      // commit 1 - set a metadata prop
+      val newTblProps = Map(TableConfig.CHECKPOINT_POLICY.getKey -> "v2")
+      updateTableMetadata(engine, tblPath, tableProperties = newTblProps)
+
+      // commit 2 - add domain metadata
+      val dmTxn = createTxn(
+        engine,
+        tblPath,
+        withDomainMetadataSupported = true)
+      dmTxn.addDomainMetadata("testDomain", "testConfig")
+      commitAppendData(engine, dmTxn, Seq.empty)
+
+      // commit 3 - add more data
+      appendData(
+        engine,
+        tblPath,
+        data = Seq(Map.empty[String, Literal] -> dataBatches2))
+
+      // create the compaction file(s)
+      val dataPath = new Path(s"file:${tblPath}")
+      val logPath = new Path(s"file:${tblPath}", "_delta_log")
+      val hook = new LogCompactionHook(dataPath, logPath, 0, 3, 0)
+      hook.threadSafeInvoke(engine)
+
+      val hadoopFileIO = new HadoopFileIO(new Configuration())
+      val metricEngine = new MetricsEngine(hadoopFileIO)
+      val table = Table.forPath(metricEngine, tblPath)
+
+      val snapshot = table.getLatestSnapshot(metricEngine).asInstanceOf[SnapshotImpl]
+      val checkpointProp =
+        snapshot.getMetadata().getConfiguration.get(TableConfig.CHECKPOINT_POLICY.getKey)
+      assert(checkpointProp == "v2")
+
+      // this is the read that the snapshot did
+      val propCompactionsRead = metricEngine.getJsonHandler.getCompactionsRead
+      assert(propCompactionsRead.toSet === Set((0, 3)))
+
+      metricEngine.resetMetrics()
+      val domainMetadata = snapshot.getDomainMetadata("testDomain")
+      assert(domainMetadata.isPresent())
+      assert(domainMetadata.get == "testConfig")
+
+      // getting domain metadata requires another log-reply, so check that this one also used the
+      // compaction
+      val dmCompactionsRead = metricEngine.getJsonHandler.getCompactionsRead
+      assert(dmCompactionsRead.toSet === Set((0, 3)))
+    }
+  }
 
   def testWithCompactions(
       versionsToWrite: Seq[Int], // highest version MUST be last!

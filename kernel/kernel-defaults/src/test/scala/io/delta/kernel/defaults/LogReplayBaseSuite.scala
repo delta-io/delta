@@ -201,6 +201,7 @@ trait FileReadMetrics { self: Object =>
   def resetMetrics(): Unit = {
     lastCheckpointMetadataReadCalls = 0
     versionsRead.clear()
+    compactionVersionsRead.clear()
     checkpointReadRequestSizes.clear()
     checksumsRead.clear()
   }
