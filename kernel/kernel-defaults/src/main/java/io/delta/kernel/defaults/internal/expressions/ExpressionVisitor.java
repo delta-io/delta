@@ -102,7 +102,7 @@ abstract class ExpressionVisitor<R> {
       case ">":
       case ">=":
       case "IS NOT DISTINCT FROM":
-        return visitComparator(new Predicate(name, children));
+        return visitComparator(uppercasePredicate(expression));
       case "ELEMENT_AT":
         return visitElementAt(expression);
       case "NOT":
@@ -120,11 +120,23 @@ abstract class ExpressionVisitor<R> {
       case "LIKE":
         return visitLike(new Predicate(name, children));
       case "STARTS_WITH":
-        return visitStartsWith(new Predicate(name, children));
+        return visitStartsWith(uppercasePredicate(expression));
       default:
         throw new UnsupportedOperationException(
             String.format("Scalar expression `%s` is not supported.", name));
     }
+  }
+
+  private static Predicate uppercasePredicate(ScalarExpression expression) {
+    String name = expression.getName().toUpperCase(Locale.ENGLISH);
+    if (expression instanceof CollatedPredicate) {
+      return new CollatedPredicate(
+            name,
+            expression.getChildren().get(0),
+            expression.getChildren().get(1),
+            ((CollatedPredicate) expression).getCollationIdentifier());
+    }
+    return new Predicate(name, expression.getChildren());
   }
 
   private static Predicate elemAsPredicate(List<Expression> expressions, int index) {
