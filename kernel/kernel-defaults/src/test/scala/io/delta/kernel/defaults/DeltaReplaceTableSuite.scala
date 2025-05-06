@@ -271,9 +271,9 @@ class DeltaReplaceTableSuite extends DeltaTableWriteSuiteBase {
     assert(snapshot.getMetadata.getConfiguration.asScala ==
       expectedTableProperties.getOrElse(tableProperties))
 
-    val nonClusteringActiveDomains = snapshot.getDomainMetadataMap().asScala
-      .filter { case (domainName, domainMetadata) =>
-        !domainMetadata.isRemoved && domainName != ClusteringMetadataDomain.DOMAIN_NAME
+    val nonClusteringActiveDomains = snapshot.getActiveDomainMetadataMap.asScala
+      .filter { case (domainName, _) =>
+        domainName != ClusteringMetadataDomain.DOMAIN_NAME
       }.map { case (domainName, domainMetadata) => (domainName, domainMetadata.getConfiguration) }
     assert(nonClusteringActiveDomains.toSet == domainsToAdd.toSet)
 
