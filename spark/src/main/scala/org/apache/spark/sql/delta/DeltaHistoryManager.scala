@@ -932,7 +932,7 @@ object DeltaHistory {
       userId = ci.userId,
       userName = ci.userName,
       operation = ci.operation,
-      operationParameters = ci.operationParameters,
+      operationParameters = ci.prettyOperationParameters,
       job = ci.job,
       notebook = ci.notebook,
       clusterId = ci.clusterId,

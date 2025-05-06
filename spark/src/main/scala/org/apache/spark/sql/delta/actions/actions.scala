@@ -35,7 +35,7 @@ import org.apache.spark.sql.delta.util.{DeltaFileOperations, JsonUtils, Utils =>
 import org.apache.spark.sql.delta.util.FileNames
 import com.fasterxml.jackson.annotation._
 import com.fasterxml.jackson.annotation.JsonInclude.Include
-import com.fasterxml.jackson.core.JsonGenerator
+import com.fasterxml.jackson.core.{JsonGenerator, JsonParser}
 import com.fasterxml.jackson.databind._
 import com.fasterxml.jackson.databind.annotation.{JsonDeserialize, JsonSerialize}
 import com.fasterxml.jackson.databind.node.ObjectNode
@@ -1152,6 +1152,7 @@ case class CommitInfo(
     userName: Option[String],
     operation: String,
     @JsonSerialize(using = classOf[JsonMapSerializer])
+    @JsonDeserialize(using = classOf[JsonMapDeserializer])
     operationParameters: Map[String, String],
     job: Option[JobInfo],
     notebook: Option[NotebookInfo],
@@ -1182,8 +1183,80 @@ case class CommitInfo(
   }
 
   override def getTimestamp: Long = timestamp.getTime
+
   @JsonIgnore
   override def getVersion: Long = version.get
+
+  /**
+   * Returns the operation parameters with unescaped string values for display (e.g., in DESCRIBE
+   * HISTORY output).
+   *
+   * Parses each value as JSON. If it is a textual node (e.g., "\"hello\""), returns the unescaped
+   * text ("hello"). Otherwise (e.g., "[\"a\",\"b\"]", "{\"key\":\"value\"}"), returns the node's
+   * full JSON representation. This process effectively removes any wrapping quotes and unescapes
+   * JSON-specific characters, ensuring that values originally stored as JSON string literals are
+   * presented in their natural, human-readable form.
+   * Operation Parameters Lifecycle:
+   *
+   * 1. On DeltaOperation:
+   *    - Operation parameters are stored as native Scala objects (String, Int, Boolean, Seq, etc.)
+   *    - Example: Map("catalogTable" -> "t1", "numFiles" -> 23L, "partitionedBy" -> Seq("a", "b"))
+   *
+   * 2. On initial CommitInfo:
+   *    - All parameter values are converted to JSON strings using JsonUtils.toJson
+   *    - String values get double-quoted: "t1" becomes "\"t1\""
+   *    - Complex objects become serialized JSON strings
+   *    - Example: Map("catalogTable" -> "\"t1\"", "numFiles" -> "23",
+   *        "partitionedBy" -> "\"[\\\"a\\\",\\\"b\\\"]\"")
+   *    - JsonUtils.toJson(null) returns "null" string
+   *
+   * 3. When serialized (written to storage):
+   *    - The entire CommitInfo object (including operation parameters) is serialized to JSON
+   *    - The operation parameters map is serialized with JsonMapSerializer
+   *    - Each parameter value (already a JSON string) is properly escaped
+   *    - nulls are stored as "null" string
+   *
+   * 4. When deserialized (read from storage):
+   *    - CommitInfo is deserialized using JsonUtils.fromJson with JsonMapDeserializer
+   *    - Parameter values remain as JSON strings, except:
+   *    - String "null" values are converted to actual null references
+   *    - Example: Map("catalogTable" -> "\"t1\"", "numFiles" -> "23", "k3" -> null)
+   *
+   * 5. When accessed via prettyOperationParameters:
+   *    - String values are unescaped (quotes removed): "\"t1\"" becomes "t1"
+   *    - Null references remain null (not converted back to string "null")
+   *    - Other JSON strings remain as valid JSON strings
+   *    - Example: Map("catalogTable" -> "t1", "numFiles" -> "23", "k3" -> null)
+   *
+   * Note about nulls:
+   *    - Native null -> String "null" (during initial conversion to CommitInfo)
+   *    - String "null" -> actual null reference (during deserialization)
+   *    - This asymmetric handling is maintained for backward compatibility when there was no
+   *      JsonMapDeserializer
+   *    - prettyOperationParameters maintains the above behavior
+   */
+  @JsonIgnore
+  def prettyOperationParameters: Map[String, String] = {
+    if (operationParameters == null) {
+      null
+    } else {
+      operationParameters.mapValues { value =>
+        if (value != null) {
+          val node = JsonUtils.mapper.readTree(value)
+          if (node.isTextual) {
+            // asText() returns the raw token the JSON parse encountered but only for scalar values:
+            // https://www.javadoc.io/doc/com.fasterxml.jackson.core/jackson-databind/latest/com/
+            // fasterxml/jackson/databind/JsonNode.html#isValueNode--
+            node.asText()
+          } else {
+            node.toString
+          }
+        } else {
+          null
+        }
+      }.toMap
+    }
+  }
 
 }
 
@@ -1432,5 +1505,25 @@ class JsonMapSerializer extends JsonSerializer[Map[String, String]] {
       }
     }
     jgen.writeEndObject()
+  }
+}
+
+/** Deserializes Maps containing JSON strings without extra escaping. */
+class JsonMapDeserializer extends JsonDeserializer[Map[String, String]] {
+  override def deserialize(jp: JsonParser, ctx: DeserializationContext): Map[String, String] = {
+    val mapper = jp.getCodec.asInstanceOf[ObjectMapper]
+    val node: JsonNode = mapper.readTree(jp)
+
+    node.fields().asScala.map { entry =>
+      val key = entry.getKey
+      val valueNode = entry.getValue
+      val value =
+        if (valueNode.isNull) {
+          null
+        } else {
+          mapper.writeValueAsString(valueNode)
+        }
+      (key, value)
+    }.toMap
   }
 }
