@@ -168,7 +168,7 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
       hadoopConf)
 
     if (nowEmptyPartitions.nonEmpty) {
-      deleteManifestFiles(manifestRootDirPath.toString, nowEmptyPartitions, hadoopConf)
+      deleteManifestFiles(manifestRootDirPath.toString, nowEmptyPartitions.toIterable, hadoopConf)
     }
 
     // Post stats
