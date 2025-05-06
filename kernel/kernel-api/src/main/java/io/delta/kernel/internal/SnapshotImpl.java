@@ -119,7 +119,7 @@ public class SnapshotImpl implements Snapshot {
 
   @Override
   public Optional<String> getDomainMetadata(String domain) {
-    return Optional.ofNullable(getDomainMetadataMap().get(domain))
+    return Optional.ofNullable(getActiveDomainMetadataMap().get(domain))
         .map(DomainMetadata::getConfiguration);
   }
 
@@ -157,8 +157,8 @@ public class SnapshotImpl implements Snapshot {
    * @return A map where the keys are domain names and the values are {@link DomainMetadata}
    *     objects.
    */
-  public Map<String, DomainMetadata> getDomainMetadataMap() {
-    return logReplay.getDomainMetadataMap();
+  public Map<String, DomainMetadata> getActiveDomainMetadataMap() {
+    return logReplay.getActiveDomainMetadataMap();
   }
 
   /** Returns the crc info for the current snapshot if the checksum file is read */

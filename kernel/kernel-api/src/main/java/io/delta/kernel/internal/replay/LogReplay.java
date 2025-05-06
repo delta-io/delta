@@ -134,7 +134,7 @@ public class LogReplay {
   private final Path dataPath;
   private final LogSegment logSegment;
   private final Tuple2<Protocol, Metadata> protocolAndMetadata;
-  private final Lazy<Map<String, DomainMetadata>> domainMetadataMap;
+  private final Lazy<Map<String, DomainMetadata>> activeDomainMetadataMap;
   private final CrcInfoContext crcInfoContext;
 
   public LogReplay(
@@ -165,7 +165,7 @@ public class LogReplay {
                 loadTableProtocolAndMetadata(
                     engine, logSegment, newerSnapshotHint, snapshotVersion));
     // Lazy loading of domain metadata only when needed
-    this.domainMetadataMap = new Lazy<>(() -> loadDomainMetadataMap(engine));
+    this.activeDomainMetadataMap = new Lazy<>(() -> loadDomainMetadataMap(engine));
   }
 
   /////////////////
@@ -187,8 +187,8 @@ public class LogReplay {
   /*
    * Returns map for all active domain metadata.
    **/
-  public Map<String, DomainMetadata> getDomainMetadataMap() {
-    return domainMetadataMap.get();
+  public Map<String, DomainMetadata> getActiveDomainMetadataMap() {
+    return activeDomainMetadataMap.get();
   }
 
   public long getVersion() {

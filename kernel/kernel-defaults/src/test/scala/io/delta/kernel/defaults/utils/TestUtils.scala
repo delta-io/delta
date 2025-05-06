@@ -813,7 +813,7 @@ trait TestUtils extends Assertions with SQLHelper {
     // CRC does not store tombstones.
     assert(
       crcInfo.get().getDomainMetadata === Optional.of(
-        snapshot.asInstanceOf[SnapshotImpl].getDomainMetadataMap.values().asScala
+        snapshot.asInstanceOf[SnapshotImpl].getActiveDomainMetadataMap.values().asScala
           .filterNot(_.isRemoved)
           .toSet
           .asJava),

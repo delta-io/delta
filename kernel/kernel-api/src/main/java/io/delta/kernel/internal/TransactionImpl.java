@@ -681,7 +681,8 @@ public class TransactionImpl implements Transaction {
       }
 
       // Generate the tombstones for removed domains
-      Map<String, DomainMetadata> snapshotDomainMetadataMap = readSnapshot.getDomainMetadataMap();
+      Map<String, DomainMetadata> snapshotDomainMetadataMap =
+          readSnapshot.getActiveDomainMetadataMap();
       for (String domainName : domainsToRemove) {
         if (snapshotDomainMetadataMap.containsKey(domainName)) {
           // Note: we know domainName is not already in finalDomainMetadatas because we do not allow

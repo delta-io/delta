@@ -44,7 +44,7 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
       snapshot: SnapshotImpl,
       expectedValue: Map[String, DomainMetadata]): Unit = {
     // Check using internal API
-    assert(expectedValue === snapshot.getDomainMetadataMap.asScala)
+    assert(expectedValue === snapshot.getActiveDomainMetadataMap.asScala)
     // Verify public API
     expectedValue.foreach { case (key, domainMetadata) =>
       snapshot.getDomainMetadata(key).toScala match {
