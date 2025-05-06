@@ -215,7 +215,7 @@ class DeltaTimeTravelSuite extends QueryTest
       }
       checkError(
         e,
-        condition = "DELTA_TIMESTAMP_GREATER_THAN_COMMIT",
+        "DELTA_TIMESTAMP_GREATER_THAN_COMMIT",
         sqlState = "42816",
         parameters = Map(
           "providedTimestamp" -> "2018-10-24 17:34:18.0",
@@ -535,7 +535,7 @@ class DeltaTimeTravelSuite extends QueryTest
       }
       checkError(
         e1,
-        condition = "DELTA_TIMESTAMP_GREATER_THAN_COMMIT",
+        "DELTA_TIMESTAMP_GREATER_THAN_COMMIT",
         sqlState = "42816",
         parameters = Map(
           "providedTimestamp" -> "2018-10-24 14:24:18.0",
@@ -549,7 +549,7 @@ class DeltaTimeTravelSuite extends QueryTest
       }
       checkError(
         e2,
-        condition = "DELTA_TIMESTAMP_GREATER_THAN_COMMIT",
+        "DELTA_TIMESTAMP_GREATER_THAN_COMMIT",
         sqlState = "42816",
         parameters = Map(
           "providedTimestamp" -> "2018-10-24 14:24:18.0",
@@ -796,7 +796,7 @@ class DeltaTimeTravelSuite extends QueryTest
 
         checkError(
           ex2,
-          condition = "DELTA_TIMESTAMP_GREATER_THAN_COMMIT",
+          "DELTA_TIMESTAMP_GREATER_THAN_COMMIT",
           sqlState = "42816",
           parameters = Map(
             "providedTimestamp" -> "2018-10-24 20:14:18.0",

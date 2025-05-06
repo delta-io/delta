@@ -373,7 +373,7 @@ trait DeltaTimeTravelTests extends QueryTest
       }
       checkError(
         e1,
-        condition = "DELTA_TIMESTAMP_GREATER_THAN_COMMIT",
+        "DELTA_TIMESTAMP_GREATER_THAN_COMMIT",
         sqlState = "42816",
         parameters = Map(
           "providedTimestamp" -> "2018-10-24 14:24:18.0",
@@ -386,7 +386,7 @@ trait DeltaTimeTravelTests extends QueryTest
       }
       checkError(
         e2,
-        condition = "DELTA_TIMESTAMP_GREATER_THAN_COMMIT",
+        "DELTA_TIMESTAMP_GREATER_THAN_COMMIT",
         sqlState = "42816",
         parameters = Map(
           "providedTimestamp" -> "2018-10-24 14:24:18.0",
