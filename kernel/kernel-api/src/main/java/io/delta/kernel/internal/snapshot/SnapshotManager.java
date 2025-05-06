@@ -252,15 +252,16 @@ public class SnapshotManager {
     //         the previous latest complete checkpoint at or before $versionToLoad.               //
     ////////////////////////////////////////////////////////////////////////////////////////////////
 
-    final Optional<Long> startCheckpointVersionOpt =
-        getStartCheckpointVersion(engine, versionToLoadOpt);
+    final Tuple2<Optional<Long>, Optional<CompleteCheckpointGroup>>
+        lastCheckpointVersionOrStartCompleteCheckpoint = getStartListVersionOrStartCompleteCheckpoint(engine, versionToLoadOpt);
 
     /////////////////////////////////////////////////////////////////
     // Step 2: Determine the actual version to start listing from. //
     /////////////////////////////////////////////////////////////////
 
     final long listFromStartVersion =
-        startCheckpointVersionOpt
+        startListVersionOrStartCompleteCheckpoint
+            ._1.map(lastCheckpoint
             .map(
                 version -> {
                   logger.info("Found a complete checkpoint at version {}.", version);
@@ -532,26 +533,29 @@ public class SnapshotManager {
   /////////////////////////
 
   /**
-   * Determine the starting checkpoint version that is at or before `versionToLoadOpt`. If no
-   * `versionToLoadOpt` is provided, will use the checkpoint pointed to by the _last_checkpoint
-   * file.
+   * If there is a target version to load, then look for the latest complete checkpoint at or before
+   * that target version and return Tuple2(Empty, Some(completeCheckpoint)).
+   *
+   * If there is no target version to load, then read the _last_checkpoint file that points to some
+   * checkpoint version v. If the file exists, return Tuple2(Some(v), Empty). Else, return
+   * Tuple2(Empty, Empty)
    */
-  private Optional<Long> getStartCheckpointVersion(Engine engine, Optional<Long> versionToLoadOpt) {
+  private Tuple2<Optional<Long>, Optional<CompleteCheckpointGroup>>
+      getLastCheckpointFileVersionOrLastCompleteCheckpoint(Engine engine, Optional<Long> versionToLoadOpt) {
     return versionToLoadOpt
         .map(
             versionToLoad -> {
               logger.info(
                   "Finding last complete checkpoint at or before version {}", versionToLoad);
               final long startTimeMillis = System.currentTimeMillis();
-              return Checkpointer.findLastCompleteCheckpointBefore(
-                      engine, logPath, versionToLoad + 1)
-                  .map(checkpointInstance -> checkpointInstance.version)
+              final Optional<CompleteCheckpointGroup> completeCheckpointGroup = Checkpointer
+                  .findLastCompleteCheckpointBefore(engine, logPath, versionToLoad + 1)
                   .map(
-                      checkpointVersion -> {
+                      checkpoint -> {
                         checkArgument(
-                            checkpointVersion <= versionToLoad,
+                            checkpoint.version <= versionToLoad,
                             "Last complete checkpoint version %s was not <= targetVersion %s",
-                            checkpointVersion,
+                            checkpoint.version,
                             versionToLoad);
 
                         logger.info(
@@ -560,11 +564,18 @@ public class SnapshotManager {
                             System.currentTimeMillis() - startTimeMillis,
                             versionToLoad);
 
-                        return checkpointVersion;
+                        return checkpoint;
                       });
+              return new Tuple2<>(Optional.<Long>empty(), completeCheckpointGroup);
             })
         .orElseGet(
-            () -> new Checkpointer(logPath).readLastCheckpointFile(engine).map(x -> x.version));
+            () -> {
+              final Optional<Long> lastCheckpointVersionOpt = new Checkpointer(logPath)
+                  .readLastCheckpointFile(engine) // Optional<CheckpointData>
+                  .map(x -> x.version);
+
+              return new Tuple2<>(lastCheckpointVersionOpt, Optional.empty());
+            });
   }
 
   private void logDebugFileStatuses(String varName, List<FileStatus> fileStatuses) {
